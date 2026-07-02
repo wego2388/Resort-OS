@@ -1,0 +1,434 @@
+"""app/modules/hr/api/router.py"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
+
+from app.core.deps import (
+    DbDep, get_admin_user, get_current_active_user,
+    get_manager_user, require_module,
+)
+from app.modules.hr import crud, services
+from app.modules.hr.schemas import (
+    AttendanceRecordCreate, AttendanceRecordRead,
+    DepartmentCreate, DepartmentRead,
+    EmployeeCreate, EmployeeRead, EmployeeUpdate,
+    EmployeePenaltyCreate, EmployeePenaltyRead,
+    LeaveApproveRequest, LeaveRejectRequest,
+    LeaveRequestCreate, LeaveRequestRead, LeaveStatusUpdate,
+    LeaveTypeCreate, LeaveTypeRead,
+    PayrollCalculateRequest, PayrollLineRead,
+    PayrollResultRead, PayrollRunCreate, PayrollRunRead,
+    RotaAssignmentCreate, RotaAssignmentRead,
+    ShiftCreate, ShiftRead,
+    ShiftSwapRequestCreate, ShiftSwapRequestRead,
+)
+from app.modules.core.schemas import PaginatedResponse
+
+router = APIRouter(tags=["hr"])
+_guard = Depends(require_module("hr"))
+
+
+# ── Employees ─────────────────────────────────────────────────────────
+
+@router.get("/hr/employees", response_model=PaginatedResponse, dependencies=[_guard])
+def list_employees(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    items, total = crud.list_employees(db, branch_id, status_filter,
+                                        skip=(page - 1) * size, limit=size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[EmployeeRead.model_validate(e) for e in items])
+
+
+@router.post("/hr/employees", response_model=EmployeeRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_employee(data: EmployeeCreate, db: DbDep, _=Depends(get_admin_user)):
+    try:
+        return services.create_employee(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/hr/employees/{employee_id}", response_model=EmployeeRead, dependencies=[_guard])
+def get_employee(employee_id: int, db: DbDep, _=Depends(get_current_active_user)):
+    emp = crud.get_employee(db, employee_id)
+    if not emp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
+    return EmployeeRead.model_validate(emp)
+
+
+@router.patch("/hr/employees/{employee_id}", response_model=EmployeeRead, dependencies=[_guard])
+def update_employee(employee_id: int, data: EmployeeUpdate, db: DbDep, _=Depends(get_admin_user)):
+    try:
+        return services.update_employee(db, employee_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.get("/hr/employees/{employee_id}/payslip",
+            response_model=PayrollResultRead, dependencies=[_guard])
+def get_payslip(
+    employee_id: int,
+    db: DbDep,
+    _=Depends(get_manager_user),
+    period_year:  int = Query(..., ge=2020),
+    period_month: int = Query(..., ge=1, le=12),
+    penalty_days: int = Query(0, ge=0),
+    unpaid_leave_days: int = Query(0, ge=0),
+    overtime_amount: float = Query(0.0, ge=0),
+):
+    from decimal import Decimal  # noqa: PLC0415
+    try:
+        return services.calculate_employee_payroll(
+            db, employee_id, period_year, period_month,
+            penalty_days, unpaid_leave_days, Decimal(str(overtime_amount)),
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Payroll Runs ──────────────────────────────────────────────────────
+
+@router.get("/hr/payroll-runs", response_model=PaginatedResponse, dependencies=[_guard])
+def list_payroll_runs(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    page: int = Query(1, ge=1),
+    size: int = Query(24, ge=1, le=60),
+):
+    items, total = crud.list_payroll_runs(db, branch_id, (page - 1) * size, size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[PayrollRunRead.model_validate(r) for r in items])
+
+
+# frontend/apps/admin/src/views/HRView.vue بينادي GET /hr/payroll/runs (مش
+# /hr/payroll-runs) — path مختلف عن الـ endpoint الأساسي فوق. alias بسيط
+# بيرجّع نفس البيانات بدل ما يرجّع 404 حقيقي.
+@router.get("/hr/payroll/runs", response_model=PaginatedResponse, dependencies=[_guard])
+def list_payroll_runs_alias(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    page: int = Query(1, ge=1),
+    size: int = Query(24, ge=1, le=60),
+):
+    return list_payroll_runs(db, _, branch_id, page, size)
+
+
+@router.post("/hr/payroll-runs", response_model=PayrollRunRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_payroll_run(data: PayrollRunCreate, db: DbDep, _=Depends(get_admin_user)):
+    try:
+        return services.run_payroll_for_branch(
+            db, data.branch_id, data.period_year, data.period_month
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/hr/payroll-runs/{run_id}", response_model=PayrollRunRead, dependencies=[_guard])
+def get_payroll_run(run_id: int, db: DbDep, _=Depends(get_manager_user)):
+    run = crud.get_payroll_run(db, run_id)
+    if not run:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "كشف الرواتب غير موجود")
+    return PayrollRunRead.model_validate(run)
+
+
+@router.post("/hr/payroll-runs/{run_id}/approve",
+             response_model=PayrollRunRead, dependencies=[_guard])
+def approve_payroll_run(run_id: int, db: DbDep, user=Depends(get_admin_user)):
+    try:
+        return services.approve_payroll_run(db, run_id, approved_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/hr/payroll-runs/{run_id}/lines",
+            response_model=list[PayrollLineRead], dependencies=[_guard])
+def list_payroll_lines(run_id: int, db: DbDep, _=Depends(get_manager_user)):
+    return [PayrollLineRead.model_validate(l) for l in crud.list_lines_for_run(db, run_id)]
+
+
+# ── Attendance ────────────────────────────────────────────────────────
+
+@router.post("/hr/attendance", response_model=AttendanceRecordRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def record_attendance(data: AttendanceRecordCreate, db: DbDep, _=Depends(get_manager_user)):
+    row = crud.upsert_attendance(db, data)
+    db.commit()
+    db.refresh(row)
+    return AttendanceRecordRead.model_validate(row)
+
+
+@router.get("/hr/attendance", response_model=PaginatedResponse, dependencies=[_guard])
+def list_attendance(
+    db: DbDep, _=Depends(get_manager_user),
+    employee_id: Optional[int] = Query(None),
+    branch_id:   Optional[int] = Query(None),
+    date_from:   Optional[date] = Query(None),
+    date_to:     Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+):
+    items, total = crud.list_attendance(db, employee_id, branch_id, date_from, date_to,
+                                        (page - 1) * size, size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[AttendanceRecordRead.model_validate(r) for r in items])
+
+
+# ── Departments ───────────────────────────────────────────────────────
+
+@router.get("/hr/departments", response_model=list[DepartmentRead], dependencies=[_guard])
+def list_departments(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+):
+    return [DepartmentRead.model_validate(d) for d in crud.list_departments(db, branch_id)]
+
+
+@router.post("/hr/departments", response_model=DepartmentRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_department(data: DepartmentCreate, db: DbDep, _=Depends(get_manager_user)):
+    dept = crud.create_department(db, data)
+    db.commit()
+    db.refresh(dept)
+    return DepartmentRead.model_validate(dept)
+
+
+# ── Shifts ────────────────────────────────────────────────────────────
+
+@router.get("/hr/shifts", response_model=list[ShiftRead], dependencies=[_guard])
+def list_shifts(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+):
+    return [ShiftRead.model_validate(s) for s in crud.list_shifts(db, branch_id)]
+
+
+@router.post("/hr/shifts", response_model=ShiftRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_shift(data: ShiftCreate, db: DbDep, _=Depends(get_manager_user)):
+    shift = crud.create_shift(db, data)
+    db.commit()
+    db.refresh(shift)
+    return ShiftRead.model_validate(shift)
+
+
+# ── Leave Types ───────────────────────────────────────────────────────
+
+@router.get("/hr/leave-types", response_model=list[LeaveTypeRead], dependencies=[_guard])
+def list_leave_types(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+):
+    return [LeaveTypeRead.model_validate(lt) for lt in crud.list_leave_types(db, branch_id)]
+
+
+@router.post("/hr/leave-types", response_model=LeaveTypeRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_leave_type(data: LeaveTypeCreate, db: DbDep, _=Depends(get_manager_user)):
+    lt = crud.create_leave_type(db, data)
+    db.commit()
+    db.refresh(lt)
+    return LeaveTypeRead.model_validate(lt)
+
+
+# ── Leave Requests ────────────────────────────────────────────────────
+
+@router.post("/hr/leave-requests", response_model=LeaveRequestRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_leave_request(data: LeaveRequestCreate, db: DbDep, _=Depends(get_current_active_user)):
+    try:
+        req = services.request_leave(
+            db,
+            employee_id=data.employee_id,
+            branch_id=data.branch_id,
+            leave_type_id=data.leave_type_id,
+            start_date=data.start_date,
+            end_date=data.end_date,
+            reason=data.reason,
+        )
+        return LeaveRequestRead.model_validate(req)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/hr/leave-requests", response_model=PaginatedResponse, dependencies=[_guard])
+def list_leave_requests(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id:   int = Query(...),
+    employee_id: Optional[int] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    items, total = crud.list_leave_requests(
+        db, branch_id, employee_id, status_filter, (page - 1) * size, size
+    )
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[LeaveRequestRead.model_validate(r) for r in items])
+
+
+@router.patch("/hr/leave-requests/{request_id}/approve",
+              response_model=LeaveRequestRead, dependencies=[_guard])
+def approve_leave_request(
+    request_id: int, body: LeaveApproveRequest, db: DbDep, _=Depends(get_manager_user)
+):
+    try:
+        req = services.approve_leave(db, request_id, body.approved_by)
+        return LeaveRequestRead.model_validate(req)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.patch("/hr/leave-requests/{request_id}/reject",
+              response_model=LeaveRequestRead, dependencies=[_guard])
+def reject_leave_request(
+    request_id: int, body: LeaveRejectRequest, db: DbDep, _=Depends(get_manager_user)
+):
+    try:
+        req = services.reject_leave(db, request_id, body.reason)
+        return LeaveRequestRead.model_validate(req)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── /hr/leaves alias ─────────────────────────────────────────────────
+# frontend/apps/admin/src/views/HRView.vue بينادي GET /hr/leaves و
+# PATCH /hr/leaves/{id} بـ body {"status": "approved"|"rejected"} — path
+# ومنطق مختلفين تماماً عن /hr/leave-requests فوق (مفيش route كان متوصّل
+# خالص، فكان 404 حقيقي). الـ GET alias بسيط. الـ PATCH بيحوّل الجسم
+# البسيط لنفس الـ approve/reject services الموجودة (المستخدم الحالي هو
+# approved_by، ورفض بسبب افتراضي لو الـ frontend مبعتش سبب).
+#
+# ⚠️ POST /hr/leaves (تقديم إجازة ذاتي من portal) و punch-in/punch-out و
+# payroll/payslips (self-service) مش متعملين هنا عمداً — بيحتاجوا ربط
+# Employee↔User (مفيش عمود user_id على Employee دلوقتي)، وده قرار data
+# model يستاهل مراجعة الأونر مش fix تلقائي جوه router. موثّق في التقرير.
+
+@router.get("/hr/leaves", response_model=PaginatedResponse, dependencies=[_guard])
+def list_leaves_alias(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id:   int = Query(...),
+    employee_id: Optional[int] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    return list_leave_requests(db, _, branch_id, employee_id, status_filter, page, size)
+
+
+@router.patch("/hr/leaves/{request_id}", response_model=LeaveRequestRead, dependencies=[_guard])
+def update_leave_status_alias(
+    request_id: int, body: LeaveStatusUpdate, db: DbDep, user=Depends(get_manager_user),
+):
+    try:
+        if body.status == "approved":
+            req = services.approve_leave(db, request_id, user.id)
+        else:
+            req = services.reject_leave(db, request_id, "مرفوض من الإدارة")
+        return LeaveRequestRead.model_validate(req)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Penalties ─────────────────────────────────────────────────────────
+
+@router.post("/hr/penalties", response_model=EmployeePenaltyRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_penalty(data: EmployeePenaltyCreate, db: DbDep, _=Depends(get_manager_user)):
+    penalty = crud.create_penalty(db, data)
+    db.commit()
+    db.refresh(penalty)
+    return EmployeePenaltyRead.model_validate(penalty)
+
+
+@router.get("/hr/penalties", response_model=list[EmployeePenaltyRead], dependencies=[_guard])
+def list_penalties(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id:   int = Query(...),
+    employee_id: Optional[int] = Query(None),
+    month:       Optional[str] = Query(None, description="YYYY-MM"),
+):
+    items = crud.list_penalties(db, branch_id, employee_id, month)
+    return [EmployeePenaltyRead.model_validate(p) for p in items]
+
+
+# ── Rota ──────────────────────────────────────────────────────────────
+
+@router.get("/hr/rota", response_model=list[RotaAssignmentRead], dependencies=[_guard])
+def get_rota(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id:   int = Query(...),
+    week_start:  date = Query(...),
+    week_end:    date = Query(...),
+    employee_id: Optional[int] = Query(None),
+):
+    items = crud.list_rota_assignments(db, branch_id, week_start, week_end, employee_id)
+    return [RotaAssignmentRead.model_validate(a) for a in items]
+
+
+@router.get("/hr/payroll/{run_id}/payslip/{employee_id}", dependencies=[_guard])
+def download_payslip(run_id: int, employee_id: int, db: DbDep, _=Depends(get_current_active_user)):
+    try:
+        pdf = services.generate_payslip_pdf(db, run_id, employee_id)
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=payslip-{run_id}-{employee_id}.pdf"},
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.get("/hr/payroll/{run_id}/excel", dependencies=[_guard])
+def download_payroll_excel(run_id: int, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        xlsx = services.generate_payroll_excel(db, run_id)
+        return Response(
+            content=xlsx,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename=payroll-{run_id}.xlsx"},
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post("/hr/rota/assignments", response_model=RotaAssignmentRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_rota_assignment(data: RotaAssignmentCreate, db: DbDep, _=Depends(get_manager_user)):
+    assignment = crud.create_rota_assignment(db, data)
+    db.commit()
+    db.refresh(assignment)
+    return RotaAssignmentRead.model_validate(assignment)
+
+
+@router.post("/hr/rota/swap-requests", response_model=ShiftSwapRequestRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_swap_request(data: ShiftSwapRequestCreate, db: DbDep, _=Depends(get_current_active_user)):
+    swap = crud.create_swap_request(db, data)
+    db.commit()
+    db.refresh(swap)
+    return ShiftSwapRequestRead.model_validate(swap)
+
+
+@router.patch("/hr/rota/swap-requests/{swap_id}/approve",
+              response_model=ShiftSwapRequestRead, dependencies=[_guard])
+def approve_swap_request(swap_id: int, db: DbDep, user=Depends(get_manager_user)):
+    swap = crud.get_swap_request(db, swap_id)
+    if not swap:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "طلب التبديل غير موجود")
+    if swap.status != "pending":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"الطلب في حالة '{swap.status}'")
+    approved = crud.approve_swap(db, swap, user.id)
+    db.commit()
+    db.refresh(approved)
+    return ShiftSwapRequestRead.model_validate(approved)

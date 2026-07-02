@@ -1,0 +1,6 @@
+# Keep the Docker build context (and thus the image) free of local dev
+# artifacts — these get rebuilt fresh inside the image at every build.
+**/node_modules
+**/dist
+**/.vite
+*.log

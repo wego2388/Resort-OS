@@ -1,0 +1,170 @@
+"""app/tasks/analytics_tasks.py — DailyStats generation"""
+from __future__ import annotations
+
+import logging
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+
+from app.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
+
+
+@celery_app.task(name="app.tasks.analytics_tasks.generate_daily_stats", bind=True, max_retries=2)
+def generate_daily_stats(self, branch_id: int | None = None, stat_date_str: str | None = None):
+    """
+    يُولِّد لقطة KPI يومية لكل الفروع.
+    يُشغَّل كل يوم 01:00 (بعد Night Audit).
+    """
+    try:
+        from app.core.database import SessionLocal          # noqa: PLC0415
+        from app.modules.core.models import Branch         # noqa: PLC0415
+
+        stat_date = (
+            date.fromisoformat(stat_date_str)
+            if stat_date_str
+            else date.today() - timedelta(days=1)
+        )
+
+        with SessionLocal() as db:
+            if branch_id:
+                branches = [db.query(Branch).filter(Branch.id == branch_id).first()]
+            else:
+                branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
+
+            for branch in filter(None, branches):
+                try:
+                    _build_stats(db, branch.id, stat_date)
+                    logger.info("DailyStats generated: branch=%s date=%s", branch.id, stat_date)
+                except Exception as exc:
+                    logger.error("DailyStats failed: branch=%s error=%s", branch.id, exc)
+
+    except Exception as exc:
+        logger.error("generate_daily_stats task failed: %s", exc)
+        raise self.retry(exc=exc, countdown=120)
+
+
+def _build_stats(db, branch_id: int, stat_date: date) -> None:
+    from app.modules.analytics.models import DailyStats  # noqa: PLC0415
+    from datetime import datetime as _dt                  # noqa: PLC0415
+
+    day_start = _dt.combine(stat_date, _dt.min.time())
+    day_end   = _dt.combine(stat_date, _dt.max.time())
+
+    # PMS
+    room_revenue    = Decimal("0")
+    occupied_rooms  = 0
+    total_rooms     = 0
+    adr             = Decimal("0")
+    revpar          = Decimal("0")
+    try:
+        from app.modules.pms.models import NightAuditLog, Room  # noqa: PLC0415
+        audit = db.query(NightAuditLog).filter(
+            NightAuditLog.branch_id == branch_id,
+            NightAuditLog.audit_date == stat_date,
+            NightAuditLog.status == "completed",
+        ).first()
+        if audit:
+            room_revenue   = audit.room_revenue
+            occupied_rooms = audit.occupied_rooms
+            total_rooms    = audit.total_rooms
+        else:
+            total_rooms = db.query(Room).filter(Room.branch_id == branch_id).count()
+
+        if occupied_rooms > 0:
+            adr = (room_revenue / occupied_rooms).quantize(Decimal("0.01"))
+        if total_rooms > 0:
+            revpar = (room_revenue / total_rooms).quantize(Decimal("0.01"))
+    except Exception:
+        pass
+
+    occupancy_pct = (
+        (Decimal(str(occupied_rooms)) / Decimal(str(total_rooms)) * 100).quantize(Decimal("0.01"))
+        if total_rooms else Decimal("0")
+    )
+
+    # Beach
+    beach_visitors = 0
+    beach_revenue  = Decimal("0")
+    try:
+        from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
+        txs = db.query(BeachTransaction).filter(
+            BeachTransaction.branch_id == branch_id,
+            BeachTransaction.visit_date == stat_date,
+        ).all()
+        beach_visitors = len(txs)
+        beach_revenue  = sum((t.total_paid for t in txs), Decimal("0"))
+    except Exception:
+        pass
+
+    # Restaurant
+    restaurant_covers  = 0
+    restaurant_revenue = Decimal("0")
+    try:
+        from app.modules.restaurant.models import Order  # noqa: PLC0415
+        orders = db.query(Order).filter(
+            Order.branch_id == branch_id,
+            Order.status == "paid",
+            Order.created_at >= day_start,
+            Order.created_at <= day_end,
+        ).all()
+        restaurant_covers  = sum(o.covers for o in orders if hasattr(o, "covers") and o.covers)
+        restaurant_revenue = sum((o.total for o in orders), Decimal("0"))
+    except Exception:
+        pass
+
+    # Cafe
+    cafe_revenue = Decimal("0")
+    try:
+        from app.modules.cafe.models import CafeOrder  # noqa: PLC0415
+        cafe_orders = db.query(CafeOrder).filter(
+            CafeOrder.branch_id == branch_id,
+            CafeOrder.status == "paid",
+            CafeOrder.created_at >= day_start,
+            CafeOrder.created_at <= day_end,
+        ).all()
+        cafe_revenue = sum((o.total for o in cafe_orders), Decimal("0"))
+    except Exception:
+        pass
+
+    total_revenue = room_revenue + beach_revenue + restaurant_revenue + cafe_revenue
+
+    # Upsert
+    existing = db.query(DailyStats).filter(
+        DailyStats.branch_id == branch_id,
+        DailyStats.stat_date == stat_date,
+    ).first()
+
+    if existing:
+        existing.occupied_rooms     = occupied_rooms
+        existing.total_rooms        = total_rooms
+        existing.occupancy_pct      = occupancy_pct
+        existing.adr                = adr
+        existing.revpar             = revpar
+        existing.room_revenue       = room_revenue
+        existing.beach_visitors     = beach_visitors
+        existing.beach_revenue      = beach_revenue
+        existing.restaurant_covers  = restaurant_covers
+        existing.restaurant_revenue = restaurant_revenue
+        existing.cafe_revenue       = cafe_revenue
+        existing.total_revenue      = total_revenue
+        existing.generated_at       = _dt.utcnow()
+    else:
+        db.add(DailyStats(
+            branch_id=branch_id,
+            stat_date=stat_date,
+            occupied_rooms=occupied_rooms,
+            total_rooms=total_rooms,
+            occupancy_pct=occupancy_pct,
+            adr=adr,
+            revpar=revpar,
+            room_revenue=room_revenue,
+            beach_visitors=beach_visitors,
+            beach_revenue=beach_revenue,
+            restaurant_covers=restaurant_covers,
+            restaurant_revenue=restaurant_revenue,
+            cafe_revenue=cafe_revenue,
+            total_revenue=total_revenue,
+            generated_at=_dt.utcnow(),
+        ))
+    db.commit()

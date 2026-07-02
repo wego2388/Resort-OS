@@ -1,0 +1,12 @@
+{
+  "name": "@resort-os/ui",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "peerDependencies": {
+    "vue": "^3.4.0",
+    "@resort-os/core": "workspace:*",
+    "vue-router": "^4.3.0",
+    "pinia": "^2.1.0"
+  }
+}

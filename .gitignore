@@ -1,0 +1,50 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Resort OS (El Kheima Beach) — root .gitignore
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Backend: Python ───────────────────────────────────────────────────────────
+backend/.venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+**/*.egg-info/
+backend/.pytest_cache/
+backend/htmlcov/
+backend/.coverage
+backend/.coverage.*
+backend/celerybeat-schedule
+*.sqlite3
+backend/test.db
+backend/uploads/
+
+# ── Backend: secrets / local env ──────────────────────────────────────────────
+# Real secrets live in backend/.env — never commit it.
+# backend/.env.example is a template with no real secrets and MUST stay tracked.
+backend/.env
+!backend/.env.example
+
+# ── Frontend: Node / pnpm monorepo ────────────────────────────────────────────
+**/node_modules/
+**/dist/
+frontend/apps/*/dist/
+**/.vite/
+*.tsbuildinfo
+
+# ── Logs ───────────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# ── OS / Editor cruft ──────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Misc local artifacts ───────────────────────────────────────────────────────
+# start.sh/stop.sh/status.sh write PID + log files to /tmp/resort-os-*, which is
+# outside this repo entirely (never inside the working tree), so nothing to
+# ignore here for that — listed for documentation purposes only.

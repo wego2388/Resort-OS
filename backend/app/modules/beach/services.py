@@ -1,0 +1,464 @@
+"""app/modules/beach/services.py — Business logic"""
+from __future__ import annotations
+
+from datetime import date, timedelta
+from decimal import Decimal
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.modules.beach import crud
+from app.modules.beach.models import BeachInventory, BeachTransaction
+from app.modules.beach.schemas import (
+    B2BCheckinRequest, BeachReservationCreate, BeachSellRequest,
+)
+from app.resort_os.beach_engine import (
+    B2BContractState,
+    BeachInventoryState,
+    calculate_b2b_price,
+    calculate_inventory_delta,
+    calculate_tx_price,
+    validate_b2b_checkin,
+    validate_entry,
+)
+
+
+def _get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
+    """يجلب الأسعار من Settings في DB (adult/child/resident + towel)."""
+    try:
+        from app.modules.core.crud import get_setting  # noqa: PLC0415
+        adult    = Decimal(get_setting(db, "beach.price.adult",    branch_id=branch_id) or "200")
+        child    = Decimal(get_setting(db, "beach.price.child",    branch_id=branch_id) or "100")
+        resident = Decimal(get_setting(db, "beach.price.resident", branch_id=branch_id) or "150")
+        towel    = Decimal(get_setting(db, "beach.price.towel",    branch_id=branch_id) or "50")
+        return {
+            "entry":          adult,
+            "entry_child":    child,
+            "entry_resident": resident,
+            "entry_towel":    adult + towel,
+            "towel_rent":     towel,
+        }
+    except Exception:
+        return {
+            "entry":          Decimal("200"),
+            "entry_child":    Decimal("100"),
+            "entry_resident": Decimal("150"),
+            "entry_towel":    Decimal("250"),
+            "towel_rent":     Decimal("50"),
+        }
+
+
+def _vat(amount: Decimal) -> Decimal:
+    return (amount * Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")).quantize(Decimal("0.01"))
+
+
+def sell_ticket(
+    db: Session,
+    branch_id: int,
+    data: BeachSellRequest,
+    tx_date: Optional[date] = None,
+) -> BeachTransaction:
+    tx_date = tx_date or date.today()
+
+    # جلب/إنشاء inventory
+    inv_row = crud.get_or_create_inventory(db, branch_id, tx_date)
+    inv_state = BeachInventoryState(
+        towels_available=inv_row.towels_available,
+        towels_used=inv_row.towels_used,
+        capacity_used=inv_row.capacity_used,
+        capacity_max=inv_row.capacity_max,
+    )
+
+    # validation
+    validation = validate_entry(inv_state, data.tx_type, data.quantity)
+    if not validation.valid:
+        raise ValueError(validation.error)
+
+    # حساب السعر
+    base_prices = _get_base_prices(db, branch_id)
+    surge_pct   = float(inv_row.surge_pct)
+    unit_price  = calculate_tx_price(data.tx_type, base_prices, surge_pct)
+    total       = unit_price * data.quantity
+    vat         = _vat(total)
+
+    # تحديث inventory
+    cap_delta, towel_delta = calculate_inventory_delta(data.tx_type, data.quantity)
+    crud.apply_inventory_delta(db, inv_row, cap_delta, towel_delta)
+
+    tx = crud.create_transaction(db, {
+        "branch_id":       branch_id,
+        "tx_type":         data.tx_type,
+        "quantity":        data.quantity,
+        "unit_price":      unit_price,
+        "total_amount":    total,
+        "vat_amount":      vat,
+        "surge_applied":   surge_pct > 0,
+        "tx_date":         tx_date,
+        "cashier_id":      data.cashier_id,
+        "folio_id":        data.folio_id,
+        "b2b_contract_id": data.b2b_contract_id,
+        "notes":           data.notes,
+    })
+
+    _post_beach_revenue_journal(db, tx)
+
+    db.commit()
+    db.refresh(tx)
+    return tx
+
+
+def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
+    """Dr. Cash (1100) / Cr. Beach Revenue (4300) — نفس نمط
+    pms.services._post_checkout_journal: يبتلع أي خطأ حتى لا يمنع إتمام
+    البيع الفعلي إذا فشل الترحيل المحاسبي."""
+    try:
+        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
+        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
+
+        cash_acc = get_account_by_code(db, tx.branch_id, "1100")
+        rev_acc  = get_account_by_code(db, tx.branch_id, "4300")
+        if not cash_acc or not rev_acc:
+            return
+
+        amount = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
+        if amount <= 0:
+            return
+
+        entry_data = JournalEntryCreate(
+            branch_id=tx.branch_id,
+            entry_date=tx.tx_date,
+            reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
+            description=f"إيرادات شاطئ — {tx.tx_type}",
+            source="beach",
+            source_id=tx.id,
+            lines=[
+                JournalLineCreate(account_id=cash_acc.id, debit=amount,  credit=Decimal("0")),
+                JournalLineCreate(account_id=rev_acc.id,  debit=Decimal("0"), credit=amount),
+            ],
+        )
+        create_journal_entry(db, entry_data, 0)
+    except Exception:
+        pass
+
+
+def b2b_checkin(
+    db: Session,
+    branch_id: int,
+    data: B2BCheckinRequest,
+    tx_date: Optional[date] = None,
+) -> BeachTransaction:
+    tx_date = tx_date or date.today()
+
+    contract_row = crud.get_b2b_contract(db, data.contract_id)
+    if not contract_row:
+        raise ValueError(f"العقد {data.contract_id} غير موجود")
+
+    contract_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
+    contract_state = B2BContractState(
+        contract_id=contract_row.id,
+        hotel_name=contract_row.hotel_name,
+        daily_quota=contract_row.daily_quota,
+        checked_in_today=contract_day.checked_in_count,
+        entry_price=contract_row.entry_price,
+        towel_price=contract_row.towel_price,
+        is_active=contract_row.is_active,
+    )
+
+    validation = validate_b2b_checkin(contract_state, data.guests_count)
+    if not validation.valid:
+        raise ValueError(validation.error)
+
+    # التحقق من inventory
+    inv_row = crud.get_or_create_inventory(db, branch_id, tx_date)
+    inv_state = BeachInventoryState(
+        towels_available=inv_row.towels_available,
+        towels_used=inv_row.towels_used,
+        capacity_used=inv_row.capacity_used,
+        capacity_max=inv_row.capacity_max,
+    )
+    tx_type = "entry_towel" if data.with_towel else "entry"
+    inv_validation = validate_entry(inv_state, tx_type, data.guests_count)
+    if not inv_validation.valid:
+        raise ValueError(inv_validation.error)
+
+    total = calculate_b2b_price(contract_state, data.guests_count, data.with_towel)
+    vat   = _vat(total)
+
+    cap_delta, towel_delta = calculate_inventory_delta(tx_type, data.guests_count)
+    crud.apply_inventory_delta(db, inv_row, cap_delta, towel_delta)
+
+    crud.increment_b2b_checkins(db, data.contract_id, tx_date, data.guests_count, total)
+
+    # تحذير الحصة (warning إذا بقي ≤ 5)
+    updated_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
+    if contract_state.quota_warning and not updated_day.notified_quota_warning:
+        updated_day.notified_quota_warning = True
+        db.flush()
+        # TODO: Celery task لإرسال WhatsApp
+
+    tx = crud.create_transaction(db, {
+        "branch_id":       branch_id,
+        "tx_type":         tx_type,
+        "quantity":        data.guests_count,
+        "unit_price":      contract_row.entry_price,
+        "total_amount":    total,
+        "vat_amount":      vat,
+        "surge_applied":   False,
+        "tx_date":         tx_date,
+        "cashier_id":      data.cashier_id,
+        "b2b_contract_id": data.contract_id,
+    })
+
+    _post_beach_revenue_journal(db, tx)
+
+    db.commit()
+    db.refresh(tx)
+    return tx
+
+
+def void_transaction(db: Session, tx_id: int, voided_by: int) -> BeachTransaction:
+    tx = crud.get_transaction(db, tx_id)
+    if not tx:
+        raise ValueError(f"العملية {tx_id} غير موجودة")
+    if tx.voided_at:
+        raise ValueError("العملية ملغاة مسبقاً")
+
+    # عكس الـ inventory
+    inv_row = crud.get_or_create_inventory(db, tx.branch_id, tx.tx_date)
+    cap_delta, towel_delta = calculate_inventory_delta(tx.tx_type, tx.quantity)
+    crud.apply_inventory_delta(db, inv_row, -cap_delta, -towel_delta)
+
+    tx = crud.void_transaction(db, tx, voided_by)
+    db.commit()
+    db.refresh(tx)
+    return tx
+
+
+TX_TYPE_LABELS: dict[str, str] = {
+    "entry":          "دخول بالغ",
+    "entry_child":    "دخول طفل",
+    "entry_resident": "دخول مقيم",
+    "entry_towel":    "دخول + فوطة",
+    "towel_rent":     "إيجار فوطة",
+    "towel_return":   "إعادة فوطة",
+}
+
+
+def generate_ticket_pdf(db: Session, tx_id: int) -> bytes:
+    """يُولّد PDF تذكرة دخول الشاطئ (thermal 80mm → يُحسب بـ A4 landscape صغير)."""
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    tx = crud.get_transaction(db, tx_id)
+    if not tx:
+        raise ValueError(f"العملية {tx_id} غير موجودة")
+
+    tx_label = TX_TYPE_LABELS.get(tx.tx_type, tx.tx_type)
+    fields = [
+        ("نوع التذكرة",  tx_label),
+        ("الكمية",       str(tx.quantity)),
+        ("سعر الوحدة",   f"{tx.unit_price:,.2f} EGP"),
+        ("ضريبة القيمة", f"{tx.vat_amount:,.2f} EGP"),
+        ("التاريخ",      str(tx.tx_date)),
+    ]
+    if tx.surge_applied:
+        fields.append(("Surge", "مطبّق"))
+
+    return builder.receipt_pdf(
+        reference=f"BCH-{tx.id:06d}",
+        title="تذكرة دخول الشاطئ",
+        fields=fields,
+        total=float(tx.total_amount),
+        currency="EGP",
+        note="شكراً لزيارتك — الخيمة بيتش ريزورت",
+    )
+
+
+def set_surge(db: Session, branch_id: int, surge_pct: Decimal, inv_date: Optional[date] = None) -> BeachInventory:
+    inv_date = inv_date or date.today()
+    if surge_pct < 0 or surge_pct > 200:
+        raise ValueError("surge_pct يجب أن يكون بين 0 و 200")
+    row = crud.set_surge_manual(db, branch_id, inv_date, surge_pct)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+TX_TYPE_LABELS_AR: dict[str, str] = {
+    "entry":          "دخول بالغ",
+    "entry_child":    "دخول طفل",
+    "entry_resident": "دخول مقيم",
+    "entry_towel":    "دخول + فوطة",
+    "towel_rent":     "إيجار فوطة",
+    "towel_return":   "إعادة فوطة",
+}
+
+
+def _pct_change(current: Decimal, previous: Decimal) -> Optional[float]:
+    if previous == 0:
+        return None
+    return round(float((current - previous) / previous * 100), 1)
+
+
+def get_eod_report(db: Session, branch_id: int, report_date: Optional[date] = None) -> dict:
+    """تقرير نهاية اليوم — إجمالي الدخول حسب النوع، إيرادات الفوط، ومقارنة
+    بالأمس والأسبوع الماضي (نفس اليوم)."""
+    report_date = report_date or date.today()
+    yesterday = report_date - timedelta(days=1)
+    last_week = report_date - timedelta(days=7)
+
+    today_data     = crud.get_eod_breakdown(db, branch_id, report_date)
+    yesterday_data = crud.get_eod_breakdown(db, branch_id, yesterday)
+    last_week_data = crud.get_eod_breakdown(db, branch_id, last_week)
+
+    towel_price = _get_base_prices(db, branch_id).get("towel_rent", Decimal("50"))
+    by_type = today_data["by_type"]
+    towel_revenue = (
+        by_type.get("towel_rent", {}).get("total_amount", Decimal("0"))
+        + by_type.get("entry_towel", {}).get("quantity", 0) * towel_price
+    )
+
+    by_type_rows = [
+        {
+            "tx_type":      tx_type,
+            "label":        TX_TYPE_LABELS_AR.get(tx_type, tx_type),
+            "quantity":     data["quantity"],
+            "count":        data["count"],
+            "total_amount": data["total_amount"],
+        }
+        for tx_type, data in sorted(by_type.items())
+    ]
+
+    return {
+        "date":              report_date,
+        "total_entries":     today_data["total_entries"],
+        "total_revenue":     today_data["total_revenue"],
+        "b2b_entries":       today_data["b2b_entries"],
+        "b2b_revenue":       today_data["b2b_revenue"],
+        "towel_revenue":     towel_revenue,
+        "voided_count":      today_data["voided_count"],
+        "by_type":           by_type_rows,
+        "yesterday": {
+            "date":          yesterday,
+            "total_entries": yesterday_data["total_entries"],
+            "total_revenue": yesterday_data["total_revenue"],
+        },
+        "last_week": {
+            "date":          last_week,
+            "total_entries": last_week_data["total_entries"],
+            "total_revenue": last_week_data["total_revenue"],
+        },
+        "vs_yesterday_pct":  _pct_change(today_data["total_revenue"], yesterday_data["total_revenue"]),
+        "vs_last_week_pct":  _pct_change(today_data["total_revenue"], last_week_data["total_revenue"]),
+    }
+
+
+def generate_eod_report_pdf(db: Session, branch_id: int, report_date: Optional[date] = None) -> bytes:
+    """PDF جاهز للطباعة لتقرير نهاية اليوم."""
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    report = get_eod_report(db, branch_id, report_date)
+
+    headers = ["نوع العملية", "الكمية", "عدد العمليات", "الإجمالي (EGP)"]
+    rows = [
+        [r["label"], str(r["quantity"]), str(r["count"]), f"{r['total_amount']:,.2f}"]
+        for r in report["by_type"]
+    ]
+
+    def _fmt_pct(pct: Optional[float]) -> str:
+        if pct is None:
+            return "—"
+        arrow = "▲" if pct >= 0 else "▼"
+        return f"{arrow} {abs(pct)}%"
+
+    summary = [
+        ("إجمالي الدخول",            str(report["total_entries"])),
+        ("إجمالي الإيرادات",         f"{report['total_revenue']:,.2f} EGP"),
+        ("دخول B2B",                 str(report["b2b_entries"])),
+        ("إيرادات B2B",              f"{report['b2b_revenue']:,.2f} EGP"),
+        ("إيرادات الفوط",            f"{report['towel_revenue']:,.2f} EGP"),
+        ("عمليات ملغاة",             str(report["voided_count"])),
+        ("مقارنة بالأمس",            _fmt_pct(report["vs_yesterday_pct"])),
+        ("مقارنة بالأسبوع الماضي",   _fmt_pct(report["vs_last_week_pct"])),
+    ]
+
+    return builder.table_pdf(
+        title="تقرير الشاطئ اليومي",
+        subtitle=str(report["date"]),
+        headers=headers,
+        rows=rows,
+        summary=summary,
+        footer="الخيمة بيتش ريزورت",
+    )
+
+
+def get_b2b_quota_status(db: Session, branch_id: int, day: Optional[date] = None) -> list[dict]:
+    """حالة حصص كل فنادق B2B النشطة اليوم — بيوصل quota_warning (≤5 أشخاص متبقين)
+    من beach_engine.B2BContractState اللي كان موجود بس مش متوصّل لأي endpoint."""
+    day = day or date.today()
+    rows = crud.list_b2b_contracts_with_today_usage(db, branch_id, day)
+
+    result = []
+    for contract, checked_in_today in rows:
+        state = B2BContractState(
+            contract_id=contract.id,
+            hotel_name=contract.hotel_name,
+            daily_quota=contract.daily_quota,
+            checked_in_today=checked_in_today,
+            entry_price=contract.entry_price,
+            towel_price=contract.towel_price,
+            is_active=contract.is_active,
+        )
+        result.append({
+            "contract_id":        state.contract_id,
+            "hotel_name":         state.hotel_name,
+            "daily_quota":        state.daily_quota,
+            "checked_in_today":   state.checked_in_today,
+            "remaining_quota":    state.remaining_quota,
+            "is_quota_exhausted": state.is_quota_exhausted,
+            "quota_warning":      state.quota_warning,
+        })
+    return result
+
+
+def check_in_reservation(
+    db: Session, reservation_id: int, cashier_id: Optional[int] = None,
+) -> "BeachReservation":
+    """تسجيل دخول فوري لحجز شاطئ عبر مسح QR — يحوّل الحجز لعملية بيع حقيقية
+    (يستهلك capacity/فوط زي أي تذكرة عادية) ويحدّث حالة الحجز لـ checked_in."""
+    res = crud.get_reservation(db, reservation_id)
+    if not res:
+        raise ValueError(f"الحجز {reservation_id} غير موجود")
+    if res.status == "checked_in":
+        raise ValueError("تم تسجيل الدخول لهذا الحجز بالفعل")
+    if res.status in ("cancelled", "no_show"):
+        raise ValueError("هذا الحجز ملغى ولا يمكن تسجيل دخوله")
+
+    sell_data = BeachSellRequest(
+        tx_type="entry_towel" if res.with_towel else "entry",
+        quantity=res.guests_count,
+        cashier_id=cashier_id,
+        notes=f"QR check-in — حجز #{res.id} ({res.guest_name})",
+    )
+    tx = sell_ticket(db, res.branch_id, sell_data)
+
+    res = crud.update_reservation_status(db, res, "checked_in", tx_id=tx.id)
+    db.commit()
+    db.refresh(res)
+    return res
+
+
+def create_reservation(db: Session, data: BeachReservationCreate) -> "BeachReservation":
+    from app.modules.beach.models import BeachReservation  # noqa: PLC0415
+    # حساب التكلفة التقديرية
+    base_prices = _get_base_prices(db, data.branch_id)
+    tx_type = "entry_towel" if data.with_towel else "entry"
+    unit_price = calculate_tx_price(tx_type, base_prices)
+    total = unit_price * data.guests_count
+
+    res = crud.create_reservation(db, data)
+    res.total_amount = total
+    db.flush()
+    db.commit()
+    db.refresh(res)
+    return res

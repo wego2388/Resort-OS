@@ -1,0 +1,12 @@
+# Keep the Docker build context free of local dev/runtime artifacts.
+.venv/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+htmlcov/
+.coverage
+celerybeat-schedule
+.env
+*.log
+test.db
+*.sqlite3

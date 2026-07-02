@@ -1,0 +1,129 @@
+<script setup lang="ts">
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import axios from 'axios'
+
+const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
+const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+
+interface AttRecord {
+  id: number; date: string; check_in?: string; check_out?: string
+  hours_worked?: number; status: string
+}
+
+const records = ref<AttRecord[]>([])
+const todayRecord = ref<AttRecord | null>(null)
+const loading = ref(false)
+const punching = ref(false)
+const today = new Date().toISOString().split('T')[0]
+const currentTime = ref(new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
+
+let clockInterval: ReturnType<typeof setInterval>
+onMounted(() => { clockInterval = setInterval(() => { currentTime.value = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }, 1000) })
+onUnmounted(() => clearInterval(clockInterval))
+
+const isClockedIn = computed(() => !!(todayRecord.value?.check_in && !todayRecord.value?.check_out))
+const isCompleted  = computed(() => !!(todayRecord.value?.check_in && todayRecord.value?.check_out))
+
+const statusConfig: Record<string, { label: string; color: string }> = {
+  present:  { label: 'حاضر',    color: 'text-green-600 bg-green-50' },
+  absent:   { label: 'غائب',    color: 'text-red-600 bg-red-50' },
+  late:     { label: 'متأخر',   color: 'text-amber-600 bg-amber-50' },
+  half_day: { label: 'نصف يوم', color: 'text-blue-600 bg-blue-50' },
+}
+
+async function fetchAttendance() {
+  loading.value = true
+  try {
+    const res = await axios.get('/api/v1/hr/attendance', { headers: h, params: { branch_id: branchId, limit: 30 } })
+    records.value = res.data.records ?? res.data.items ?? res.data
+    todayRecord.value = records.value.find(r => r.date === today) ?? null
+  } catch(e) { console.error(e) }
+  finally { loading.value = false }
+}
+
+async function punch() {
+  if (isCompleted.value || punching.value) return
+  punching.value = true
+  try {
+    if (!isClockedIn.value) {
+      const { data } = await axios.post('/api/v1/hr/attendance/punch-in', { branch_id: branchId }, { headers: h })
+      todayRecord.value = data
+    } else {
+      const { data } = await axios.post(`/api/v1/hr/attendance/${todayRecord.value!.id}/punch-out`, {}, { headers: h })
+      todayRecord.value = data
+    }
+    await fetchAttendance()
+  } catch(e) { console.error(e) }
+  finally { punching.value = false }
+}
+
+onMounted(fetchAttendance)
+</script>
+
+<template>
+  <div dir="rtl" class="space-y-4">
+    <!-- Clock + Punch card -->
+    <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm text-center">
+      <div class="text-sm text-gray-500 mb-1">الوقت الحالي</div>
+      <div class="text-4xl font-mono font-black text-gray-900 mb-5" dir="ltr">{{ currentTime }}</div>
+
+      <div v-if="todayRecord" class="flex items-center justify-center gap-8 text-sm mb-5">
+        <div class="text-center">
+          <div class="text-gray-400 text-xs mb-1">تسجيل الدخول</div>
+          <div class="font-bold text-gray-900 text-lg">{{ todayRecord.check_in ?? '—' }}</div>
+        </div>
+        <div class="w-px h-10 bg-stone-200"/>
+        <div class="text-center">
+          <div class="text-gray-400 text-xs mb-1">تسجيل الخروج</div>
+          <div class="font-bold text-gray-900 text-lg">{{ todayRecord.check_out ?? '—' }}</div>
+        </div>
+        <div class="w-px h-10 bg-stone-200"/>
+        <div class="text-center">
+          <div class="text-gray-400 text-xs mb-1">الساعات</div>
+          <div class="font-bold text-gray-900 text-lg">{{ todayRecord.hours_worked?.toFixed(1) ?? '—' }}h</div>
+        </div>
+      </div>
+
+      <button @click="punch" :disabled="punching || isCompleted"
+        :class="[
+          'w-full max-w-xs py-4 rounded-2xl text-lg font-black transition-all shadow-lg active:scale-95',
+          isCompleted ? 'bg-gray-200 text-gray-400 cursor-not-allowed' :
+          isClockedIn ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white',
+        ]"
+      >
+        {{ punching ? 'جاري...' : isCompleted ? '✓ تم إنهاء الدوام' : isClockedIn ? '🔴 تسجيل الخروج' : '🟢 تسجيل الحضور' }}
+      </button>
+    </div>
+
+    <!-- History -->
+    <div class="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-stone-100 flex items-center justify-between">
+        <span class="font-bold text-gray-900">سجل آخر 30 يوم</span>
+        <button @click="fetchAttendance" :class="['text-xs text-gray-400 hover:text-blue-600', loading ? 'animate-spin' : '']">↻</button>
+      </div>
+      <div v-if="loading" class="p-8 text-center text-gray-400 text-sm">جاري التحميل...</div>
+      <div v-else class="divide-y divide-stone-100">
+        <div v-for="rec in records" :key="rec.id" class="flex items-center justify-between px-5 py-3">
+          <div>
+            <div class="text-sm font-medium text-gray-900">
+              {{ new Date(rec.date).toLocaleDateString('ar-EG', { weekday: 'short', month: 'short', day: 'numeric' }) }}
+            </div>
+            <div class="text-xs text-gray-400 mt-0.5 dir-ltr" dir="ltr">
+              {{ rec.check_in ?? '—' }} → {{ rec.check_out ?? '—' }}
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <span class="text-sm text-gray-600 font-medium">{{ rec.hours_worked?.toFixed(1) ?? '—' }}h</span>
+            <span :class="['px-2.5 py-0.5 rounded-full text-xs font-medium', statusConfig[rec.status]?.color ?? 'text-gray-600 bg-gray-50']">
+              {{ statusConfig[rec.status]?.label ?? rec.status }}
+            </span>
+          </div>
+        </div>
+        <div v-if="records.length === 0" class="px-5 py-12 text-center text-gray-400">
+          <div class="text-3xl mb-2">📅</div>
+          <p>لا توجد سجلات حضور</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>

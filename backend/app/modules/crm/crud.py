@@ -1,0 +1,252 @@
+"""app/modules/crm/crud.py — CRUD خالص، لا business logic"""
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from app.modules.crm.models import Activity, Customer, CustomerInteraction, Opportunity, Lead, CallNote, Campaign, GuestProfile, LeadSource
+from app.modules.crm.schemas import (
+    ActivityCreate, ActivityUpdate,
+    CustomerCreate, CustomerUpdate,
+    InteractionCreate,
+    OpportunityCreate, OpportunityUpdate,
+)
+
+
+# ── Customer ──────────────────────────────────────────────────────────
+
+def get_customer(db: Session, customer_id: int) -> Optional[Customer]:
+    return db.query(Customer).filter(Customer.id == customer_id).first()
+
+
+def list_customers(
+    db: Session,
+    branch_id: int,
+    segment: Optional[str] = None,
+    search: Optional[str] = None,
+    blacklisted: Optional[bool] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[Customer], int]:
+    q = db.query(Customer).filter(Customer.branch_id == branch_id)
+    if segment:
+        q = q.filter(Customer.segment == segment)
+    if search:
+        like = f"%{search}%"
+        q = q.filter(
+            Customer.full_name.ilike(like) |
+            Customer.phone.ilike(like) |
+            Customer.email.ilike(like)
+        )
+    if blacklisted is not None:
+        q = q.filter(Customer.blacklisted.is_(blacklisted))
+    total = q.count()
+    items = q.order_by(Customer.full_name).offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_customer(db: Session, data: CustomerCreate) -> Customer:
+    obj = Customer(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def update_customer(db: Session, customer: Customer, data: CustomerUpdate) -> Customer:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(customer, field, value)
+    db.flush()
+    return customer
+
+
+def blacklist_customer(db: Session, customer: Customer, reason: str) -> Customer:
+    customer.blacklisted = True
+    customer.blacklist_reason = reason
+    db.flush()
+    return customer
+
+
+def unblacklist_customer(db: Session, customer: Customer) -> Customer:
+    customer.blacklisted = False
+    customer.blacklist_reason = None
+    db.flush()
+    return customer
+
+
+def update_customer_stats(
+    db: Session,
+    customer: Customer,
+    amount: Decimal,
+    visit_date: date,
+) -> Customer:
+    customer.total_spent += amount
+    customer.visits_count += 1
+    customer.last_visit = visit_date
+    db.flush()
+    return customer
+
+
+# ── Interaction ───────────────────────────────────────────────────────
+
+def list_interactions(
+    db: Session,
+    customer_id: int,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[CustomerInteraction], int]:
+    q = db.query(CustomerInteraction).filter(CustomerInteraction.customer_id == customer_id)
+    total = q.count()
+    items = q.order_by(CustomerInteraction.occurred_at.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_interaction(
+    db: Session,
+    data: InteractionCreate,
+    handled_by: int,
+) -> CustomerInteraction:
+    obj = CustomerInteraction(**data.model_dump(), handled_by=handled_by)
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+# ── Opportunity ───────────────────────────────────────────────────────
+
+def get_opportunity(db: Session, opp_id: int) -> Optional[Opportunity]:
+    return db.query(Opportunity).filter(Opportunity.id == opp_id).first()
+
+
+def list_opportunities(
+    db: Session,
+    branch_id: int,
+    stage: Optional[str] = None,
+    assigned_to: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[Opportunity], int]:
+    q = db.query(Opportunity).filter(Opportunity.branch_id == branch_id)
+    if stage:
+        q = q.filter(Opportunity.stage == stage)
+    if assigned_to:
+        q = q.filter(Opportunity.assigned_to == assigned_to)
+    total = q.count()
+    items = q.order_by(Opportunity.created_at.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_opportunity(db: Session, data: OpportunityCreate) -> Opportunity:
+    obj = Opportunity(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def update_opportunity(db: Session, opp: Opportunity, data: OpportunityUpdate) -> Opportunity:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(opp, field, value)
+    if data.stage in ("won", "lost") and not opp.closed_at:
+        opp.closed_at = datetime.utcnow()
+    db.flush()
+    return opp
+
+
+# ── Activity ──────────────────────────────────────────────────────────
+
+def get_activity(db: Session, activity_id: int) -> Optional[Activity]:
+    return db.query(Activity).filter(Activity.id == activity_id).first()
+
+
+def list_activities(
+    db: Session,
+    branch_id: int,
+    customer_id: Optional[int] = None,
+    assigned_to: Optional[int] = None,
+    status: Optional[str] = None,
+    due_before: Optional[date] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[Activity], int]:
+    q = db.query(Activity).filter(Activity.branch_id == branch_id)
+    if customer_id:
+        q = q.filter(Activity.customer_id == customer_id)
+    if assigned_to:
+        q = q.filter(Activity.assigned_to == assigned_to)
+    if status:
+        q = q.filter(Activity.status == status)
+    if due_before:
+        q = q.filter(Activity.due_date <= due_before)
+    total = q.count()
+    items = q.order_by(Activity.due_date).offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_activity(db: Session, data: ActivityCreate) -> Activity:
+    obj = Activity(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def update_activity(db: Session, activity: Activity, data: ActivityUpdate) -> Activity:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(activity, field, value)
+    if data.status == "done" and not activity.done_at:
+        activity.done_at = datetime.utcnow()
+    db.flush()
+    return activity
+
+
+# ── Lead ──────────────────────────────────────────────────────────────
+
+def create_lead(db: Session, data: dict) -> Lead:
+    obj = Lead(**data)
+    db.add(obj); db.commit(); db.refresh(obj); return obj
+
+def list_leads(db: Session, branch_id: int, stage: str | None = None) -> list[Lead]:
+    q = db.query(Lead).filter(Lead.branch_id == branch_id)
+    if stage:
+        q = q.filter(Lead.stage == stage)
+    return q.order_by(Lead.created_at.desc()).all()
+
+def get_lead(db: Session, lead_id: int) -> Lead | None:
+    return db.query(Lead).filter(Lead.id == lead_id).first()
+
+def update_lead(db: Session, lead: Lead, data: dict) -> Lead:
+    for k, v in data.items():
+        setattr(lead, k, v)
+    db.commit(); db.refresh(lead); return lead
+
+
+# ── GuestProfile ──────────────────────────────────────────────────────
+
+def get_or_create_guest_profile(db: Session, branch_id: int, phone: str, defaults: dict) -> GuestProfile:
+    profile = db.query(GuestProfile).filter(
+        GuestProfile.branch_id == branch_id,
+        GuestProfile.phone == phone,
+    ).first()
+    if not profile:
+        profile = GuestProfile(branch_id=branch_id, phone=phone, **defaults)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+    return profile
+
+def update_guest_profile_on_checkout(db: Session, branch_id: int, phone: str, spend: Decimal) -> None:
+    """يُحدَّث عند كل checkout."""
+    from datetime import date as _date
+    profile = db.query(GuestProfile).filter(
+        GuestProfile.branch_id == branch_id,
+        GuestProfile.phone == phone,
+    ).first()
+    if not profile:
+        return
+    profile.total_visits += 1
+    profile.last_stay = _date.today()
+    total = profile.avg_spend * (profile.total_visits - 1) + spend
+    if profile.total_visits > 0:
+        profile.avg_spend = (total / profile.total_visits).quantize(Decimal("0.01"))
+    db.commit()

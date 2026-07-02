@@ -1,0 +1,511 @@
+"""app/modules/finance/api/router.py"""
+from __future__ import annotations
+
+from datetime import date
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import Response
+from sqlalchemy.orm import Session
+
+from app.core.config import settings
+from app.core.deps import (
+    DbDep, get_admin_user, get_cashier_user,
+    get_current_active_user, get_db, get_manager_user, rate_limit_dep, require_module,
+)
+from app.modules.finance import crud, services
+from app.modules.finance.schemas import (
+    AccountCreate, AccountRead,
+    AccountingPeriodRead, BalanceSheetReport, CashierShiftClose, CashierShiftOpen,
+    CashierShiftRead, CheckCreate, CheckMoveStatus, CheckRead, ClosePeriodRequest,
+    ConditionalDiscountCreate, ConditionalDiscountRead, ConditionalDiscountUpdate,
+    CostCenterCreate, CostCenterRead, CostCenterReport,
+    DiscountCalculateRequest, ETAInvoiceRead, ETAInvoiceSubmitRequest,
+    FolioChargeCreate, FolioChargeRead,
+    FolioCreate, FolioRead, IncomeStatementReport, JournalEntryCreate, JournalEntryRead,
+    PaymentCreate, PaymentRead,
+    ShiftEndReport, TrialBalanceReport,
+)
+from app.modules.core.schemas import PaginatedResponse
+
+router = APIRouter(tags=["finance"])
+_guard = Depends(require_module("finance"))
+
+
+# ── Folios ────────────────────────────────────────────────────────────
+
+@router.get("/finance/folios", response_model=PaginatedResponse, dependencies=[_guard])
+def list_folios(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    status: Optional[str] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date]   = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    items, total = crud.list_folios(db, branch_id, status, date_from, date_to,
+                                    skip=(page - 1) * size, limit=size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[FolioRead.model_validate(f) for f in items])
+
+
+@router.post("/finance/folios", response_model=FolioRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_folio(data: FolioCreate, db: DbDep, _=Depends(get_cashier_user)):
+    return services.create_folio(db, data)
+
+
+@router.get("/finance/folios/{folio_id}", response_model=FolioRead, dependencies=[_guard])
+def get_folio(folio_id: int, db: DbDep, _=Depends(get_current_active_user)):
+    folio = crud.get_folio(db, folio_id)
+    if not folio:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الفوليو {folio_id} غير موجود")
+    return FolioRead.model_validate(folio)
+
+
+@router.post("/finance/folios/{folio_id}/charges",
+             response_model=FolioChargeRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def post_charge(folio_id: int, data: FolioChargeCreate, db: DbDep, _=Depends(get_cashier_user)):
+    try:
+        return services.post_charge(db, folio_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/finance/folios/{folio_id}/settle",
+             response_model=FolioRead, dependencies=[_guard])
+def settle_folio(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
+    try:
+        return services.settle_folio(db, folio_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/finance/folios/{folio_id}/payments",
+             response_model=PaymentRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depends(get_cashier_user)):
+    try:
+        return services.add_payment(db, folio_id, data, cashier_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/finance/folios/{folio_id}/statement/pdf", dependencies=[_guard])
+def download_folio_statement_pdf(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
+    try:
+        pdf = services.generate_folio_statement_pdf(db, folio_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=statement-{folio_id}.pdf"},
+    )
+
+
+@router.get("/finance/folios/report/export", dependencies=[_guard])
+def download_folios_report_excel(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+):
+    xlsx = services.generate_folios_report_excel(db, branch_id, date_from, date_to, status_filter)
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=all-invoices.xlsx"},
+    )
+
+
+# ── Cashier Shift / Safe (POS Day) ──────────────────────────────────────
+
+@router.post("/finance/shifts/open", response_model=CashierShiftRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def open_shift(data: CashierShiftOpen, db: DbDep, user=Depends(get_cashier_user)):
+    try:
+        return services.open_shift(db, user.id, user.id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/finance/shifts/current", response_model=CashierShiftRead, dependencies=[_guard])
+def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int = Query(...)):
+    shift = crud.get_open_shift(db, branch_id, user.id)
+    if not shift:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "لا توجد وردية مفتوحة")
+    return CashierShiftRead.model_validate(shift)
+
+
+@router.get("/finance/shifts", response_model=PaginatedResponse, dependencies=[_guard])
+def list_shifts(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    cashier_id: Optional[int] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=200),
+):
+    items, total = crud.list_shifts(db, branch_id, cashier_id, status_filter,
+                                     (page - 1) * size, size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[CashierShiftRead.model_validate(s) for s in items])
+
+
+@router.get("/finance/shifts/{shift_id}/report", response_model=ShiftEndReport, dependencies=[_guard])
+def shift_end_report(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
+    try:
+        return services.build_shift_end_report(db, shift_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.get("/finance/shifts/{shift_id}/report/pdf", dependencies=[_guard])
+def download_shift_end_report_pdf(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
+    try:
+        pdf = services.generate_shift_end_report_pdf(db, shift_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=shift-end-{shift_id}.pdf"},
+    )
+
+
+@router.post("/finance/shifts/{shift_id}/close", response_model=CashierShiftRead, dependencies=[_guard])
+def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(get_cashier_user)):
+    try:
+        return services.close_shift(db, shift_id, user.id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Discounts ─────────────────────────────────────────────────────────
+
+@router.get("/finance/discounts", response_model=PaginatedResponse, dependencies=[_guard])
+def list_discounts(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    active_only: bool = Query(True),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+):
+    items, total = crud.list_discounts(db, branch_id, active_only,
+                                       skip=(page - 1) * size, limit=size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[ConditionalDiscountRead.model_validate(d) for d in items])
+
+
+@router.post("/finance/discounts", response_model=ConditionalDiscountRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_discount(data: ConditionalDiscountCreate, db: DbDep, _=Depends(get_admin_user)):
+    try:
+        return services.create_discount(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.patch("/finance/discounts/{discount_id}",
+              response_model=ConditionalDiscountRead, dependencies=[_guard])
+def update_discount(
+    discount_id: int, data: ConditionalDiscountUpdate,
+    db: DbDep, _=Depends(get_admin_user),
+):
+    discount = crud.get_discount(db, discount_id)
+    if not discount:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الخصم غير موجود")
+    obj = crud.update_discount(db, discount, data)
+    db.commit()
+    db.refresh(obj)
+    return ConditionalDiscountRead.model_validate(obj)
+
+
+@router.delete("/finance/discounts/{discount_id}",
+               status_code=status.HTTP_204_NO_CONTENT, dependencies=[_guard])
+def delete_discount(discount_id: int, db: DbDep, _=Depends(get_admin_user)):
+    discount = crud.get_discount(db, discount_id)
+    if not discount:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الخصم غير موجود")
+    crud.delete_discount(db, discount)
+    db.commit()
+
+
+@router.post("/finance/calculate-discount", dependencies=[_guard])
+def calculate_discount_endpoint(
+    data: DiscountCalculateRequest, db: DbDep, _=Depends(get_current_active_user)
+):
+    result = services.calculate_order_discount(
+        db, data.branch_id, data.order_total,
+        data.item_count, data.customer_group, data.order_date,
+    )
+    return {
+        "applied":        result.applied,
+        "rule_id":        result.rule_id,
+        "discount_type":  result.discount_type,
+        "discount_value": result.discount_value,
+        "amount_saved":   result.amount_saved,
+        "final_amount":   result.final_amount,
+        "reason":         result.reason,
+    }
+
+
+# ── Accounts (Chart of Accounts) ─────────────────────────────────────
+
+@router.get("/finance/accounts", response_model=PaginatedResponse, dependencies=[_guard])
+def list_accounts(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    active_only: bool = Query(True),
+    page: int = Query(1, ge=1),
+    size: int = Query(200, ge=1, le=500),
+):
+    items, total = crud.list_accounts(db, branch_id, active_only,
+                                      skip=(page - 1) * size, limit=size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[AccountRead.model_validate(a) for a in items])
+
+
+@router.post("/finance/accounts", response_model=AccountRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        account = crud.create_account(db, data)
+        db.commit()
+        db.refresh(account)
+        return AccountRead.model_validate(account)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Journal Entries ───────────────────────────────────────────────────
+
+@router.post("/finance/journal-entries", response_model=JournalEntryRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def post_journal_entry(
+    data: JournalEntryCreate,
+    db: DbDep,
+    user=Depends(get_manager_user),
+):
+    try:
+        entry = services.post_journal_entry(db, data, user_id=user.id)
+        return JournalEntryRead.model_validate(entry)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/finance/journal-entries", response_model=PaginatedResponse, dependencies=[_guard])
+def list_journal_entries(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    source: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+):
+    items, total = crud.list_journal_entries(
+        db, branch_id, date_from, date_to, source,
+        skip=(page - 1) * size, limit=size,
+    )
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[JournalEntryRead.model_validate(e) for e in items])
+
+
+@router.get("/finance/journal-entries/{entry_id}", response_model=JournalEntryRead,
+            dependencies=[_guard])
+def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_manager_user)):
+    entry = crud.get_journal_entry(db, entry_id)
+    if not entry:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Journal entry {entry_id} not found")
+    return JournalEntryRead.model_validate(entry)
+
+
+# ── Accounting Periods ────────────────────────────────────────────────
+
+@router.get("/finance/periods", response_model=PaginatedResponse, dependencies=[_guard])
+def list_periods(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+):
+    items, total = crud.list_periods(db, branch_id, skip=(page - 1) * size, limit=size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[AccountingPeriodRead.model_validate(p) for p in items])
+
+
+@router.post("/finance/periods/{year}/{month}/close", response_model=AccountingPeriodRead,
+             dependencies=[_guard])
+def close_period(
+    year: int,
+    month: int,
+    data: ClosePeriodRequest,
+    db: DbDep,
+    user=Depends(get_manager_user),
+):
+    try:
+        period = services.close_accounting_period(
+            db, data.branch_id, year, month, closed_by=user.id
+        )
+        return AccountingPeriodRead.model_validate(period)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Checks ────────────────────────────────────────────────────────────
+
+@router.get("/finance/checks", response_model=list[CheckRead], dependencies=[_guard])
+def list_checks_endpoint(
+    branch_id: int = Query(...),
+    status: str | None = Query(None),
+    db: Session = Depends(get_db),
+    _=Depends(get_current_active_user),
+):
+    checks = crud.list_checks(db, branch_id, status)
+    return [CheckRead.model_validate(c) for c in checks]
+
+@router.post("/finance/checks", response_model=CheckRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_check_endpoint(
+    data: CheckCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    payload = data.model_dump()
+    payload["created_by"] = current_user.id
+    check = crud.create_check(db, payload)
+    return CheckRead.model_validate(check)
+
+@router.patch("/finance/checks/{check_id}/status", response_model=CheckRead, dependencies=[_guard])
+def move_check_status_endpoint(
+    check_id: int,
+    body: CheckMoveStatus,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_active_user),
+):
+    check_obj = crud.get_check(db, check_id)
+    if not check_obj:
+        raise HTTPException(404, "Check not found")
+    updated = crud.move_check_status(db, check_obj, body.to_status, current_user.id, body.notes)
+    return CheckRead.model_validate(updated)
+
+
+# ── Cost Centers ─────────────────────────────────────────────────────
+
+@router.get("/finance/cost-centers", response_model=list[CostCenterRead], dependencies=[_guard])
+def list_cost_centers(db: DbDep, _=Depends(get_manager_user),
+                      branch_id: int = Query(...), active_only: bool = Query(True)):
+    return [CostCenterRead.model_validate(c)
+            for c in crud.list_cost_centers(db, branch_id, active_only)]
+
+
+@router.post("/finance/cost-centers", response_model=CostCenterRead,
+             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+def create_cost_center(data: CostCenterCreate, db: DbDep, _=Depends(get_admin_user)):
+    obj = crud.create_cost_center(db, data)
+    db.commit(); db.refresh(obj)
+    return CostCenterRead.model_validate(obj)
+
+
+@router.get("/finance/cost-centers/report", response_model=CostCenterReport, dependencies=[_guard])
+def cost_center_report(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: date = Query(...), date_to: date = Query(...),
+):
+    """إيراد كل مركز تكلفة (فندق/مطعم/كافيه/شاطئ/تايم شير) كسطر منفصل."""
+    return services.get_cost_center_report(db, branch_id, date_from, date_to)
+
+
+# ── Financial Reports ─────────────────────────────────────────────────
+
+@router.get("/finance/reports/trial-balance", response_model=TrialBalanceReport, dependencies=[_guard])
+def trial_balance_report(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    as_of: date = Query(...),
+):
+    """ميزان المراجعة — كل حساب برصيده حتى تاريخ as_of، إجمالي المدين
+    لازم يساوي إجمالي الدائن (is_balanced)."""
+    return services.get_trial_balance(db, branch_id, as_of)
+
+
+@router.get("/finance/reports/income-statement", response_model=IncomeStatementReport, dependencies=[_guard])
+def income_statement_report(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+):
+    """قائمة الدخل — الإيرادات ناقص المصروفات خلال المدى، وصافي الربح."""
+    return services.get_income_statement(db, branch_id, date_from, date_to)
+
+
+@router.get("/finance/reports/balance-sheet", response_model=BalanceSheetReport, dependencies=[_guard])
+def balance_sheet_report(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    as_of: date = Query(...),
+):
+    """الميزانية العمومية — الأصول = الخصوم + حقوق الملكية + الأرباح
+    المحتجزة حتى تاريخ as_of (is_balanced)."""
+    return services.get_balance_sheet(db, branch_id, as_of)
+
+
+# ── ETA E-Invoice ────────────────────────────────────────────────────
+# rate-limited 100/60s per user per 08-SECURITY.md's eta:{} limit — protects
+# against retry storms against ETA's own (also rate-limited) submission API.
+
+@router.post(
+    "/finance/eta/invoices",
+    response_model=ETAInvoiceRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[_guard, Depends(rate_limit_dep("eta", 100, 60))],
+)
+async def submit_eta_invoice(
+    data: ETAInvoiceSubmitRequest,
+    db: DbDep,
+    _user=Depends(get_manager_user),
+):
+    try:
+        invoice = await services.submit_eta_invoice(db, settings, data)
+        return ETAInvoiceRead.model_validate(invoice)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get(
+    "/finance/eta/invoices",
+    response_model=PaginatedResponse,
+    dependencies=[_guard],
+)
+def list_eta_invoices(
+    db: DbDep, _user=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
+):
+    items, total = crud.list_eta_invoices(db, branch_id, status_filter, (page - 1) * size, size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[ETAInvoiceRead.model_validate(i) for i in items])
+
+
+@router.get(
+    "/finance/eta/invoices/{invoice_id}",
+    response_model=ETAInvoiceRead,
+    dependencies=[_guard],
+)
+def get_eta_invoice(invoice_id: int, db: DbDep, _user=Depends(get_manager_user)):
+    invoice = crud.get_eta_invoice(db, invoice_id)
+    if not invoice:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الفاتورة {invoice_id} غير موجودة")
+    return ETAInvoiceRead.model_validate(invoice)

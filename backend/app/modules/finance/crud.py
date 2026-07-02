@@ -1,0 +1,622 @@
+"""app/modules/finance/crud.py — CRUD خالص، لا business logic"""
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional
+
+from sqlalchemy.orm import Session
+
+from app.modules.finance.models import (
+    Account, AccountingPeriod, CashierShift, ConditionalDiscount, CostCenter, ETAInvoice,
+    Folio, FolioCharge, JournalEntry, JournalLine, Payment,
+    Check, CheckMovement, RevenueAuditLog,
+)
+from app.modules.finance.schemas import (
+    AccountCreate, ConditionalDiscountCreate, ConditionalDiscountUpdate,
+    CostCenterCreate, FolioCreate, FolioChargeCreate, JournalEntryCreate, PaymentCreate,
+)
+
+
+# ── ETA Invoice ──────────────────────────────────────────────────────
+
+def create_eta_invoice(
+    db: Session, branch_id: int, folio_id: Optional[int],
+    internal_id: str, document_json: str,
+) -> ETAInvoice:
+    inv = ETAInvoice(
+        branch_id=branch_id, folio_id=folio_id,
+        internal_id=internal_id, document_json=document_json,
+        status="pending",
+    )
+    db.add(inv)
+    db.flush()
+    return inv
+
+
+def get_eta_invoice(db: Session, invoice_id: int) -> Optional[ETAInvoice]:
+    return db.query(ETAInvoice).filter(ETAInvoice.id == invoice_id).first()
+
+
+def list_eta_invoices(
+    db: Session, branch_id: int, status: Optional[str] = None,
+    skip: int = 0, limit: int = 50,
+) -> tuple[list[ETAInvoice], int]:
+    q = db.query(ETAInvoice).filter(ETAInvoice.branch_id == branch_id)
+    if status:
+        q = q.filter(ETAInvoice.status == status)
+    total = q.count()
+    items = q.order_by(ETAInvoice.created_at.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def mark_eta_invoice_submitted(
+    db: Session, invoice: ETAInvoice, *,
+    status: str, submission_uuid: Optional[str] = None,
+    long_id: Optional[str] = None, response_json: Optional[str] = None,
+    error_message: Optional[str] = None,
+) -> ETAInvoice:
+    invoice.status = status
+    invoice.submission_uuid = submission_uuid
+    invoice.long_id = long_id
+    invoice.response_json = response_json
+    invoice.error_message = error_message
+    invoice.submitted_at = datetime.utcnow()
+    db.commit()
+    db.refresh(invoice)
+    return invoice
+
+
+# ── ConditionalDiscount ───────────────────────────────────────────────
+
+def get_discount(db: Session, discount_id: int) -> Optional[ConditionalDiscount]:
+    return db.query(ConditionalDiscount).filter(ConditionalDiscount.id == discount_id).first()
+
+
+def list_discounts(
+    db: Session,
+    branch_id: int,
+    active_only: bool = True,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[ConditionalDiscount], int]:
+    q = db.query(ConditionalDiscount).filter(ConditionalDiscount.branch_id == branch_id)
+    if active_only:
+        q = q.filter(ConditionalDiscount.is_active.is_(True))
+    total = q.count()
+    items = q.order_by(ConditionalDiscount.priority.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_discount(db: Session, data: ConditionalDiscountCreate) -> ConditionalDiscount:
+    obj = ConditionalDiscount(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def update_discount(
+    db: Session,
+    discount: ConditionalDiscount,
+    data: ConditionalDiscountUpdate,
+) -> ConditionalDiscount:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(discount, field, value)
+    db.flush()
+    return discount
+
+
+def delete_discount(db: Session, discount: ConditionalDiscount) -> None:
+    db.delete(discount)
+    db.flush()
+
+
+def increment_discount_uses(db: Session, discount_id: int) -> None:
+    row = get_discount(db, discount_id)
+    if row:
+        row.uses_count += 1
+        db.flush()
+
+
+# ── Folio ─────────────────────────────────────────────────────────────
+
+def get_folio(db: Session, folio_id: int) -> Optional[Folio]:
+    return db.query(Folio).filter(Folio.id == folio_id).first()
+
+
+def list_folios(
+    db: Session,
+    branch_id: int,
+    status: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[Folio], int]:
+    q = db.query(Folio).filter(Folio.branch_id == branch_id)
+    if status:
+        q = q.filter(Folio.status == status)
+    if date_from:
+        q = q.filter(Folio.check_in >= datetime.combine(date_from, datetime.min.time()))
+    if date_to:
+        q = q.filter(Folio.check_in <= datetime.combine(date_to, datetime.max.time()))
+    total = q.count()
+    items = q.order_by(Folio.created_at.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_folio(db: Session, data: FolioCreate) -> Folio:
+    folio = Folio(**data.model_dump())
+    db.add(folio)
+    db.flush()
+    return folio
+
+
+def close_folio(db: Session, folio: Folio) -> Folio:
+    folio.status = "closed"
+    db.flush()
+    return folio
+
+
+# ── FolioCharge ───────────────────────────────────────────────────────
+
+def add_charge(db: Session, folio_id: int, data: FolioChargeCreate) -> FolioCharge:
+    charge = FolioCharge(folio_id=folio_id, **data.model_dump())
+    db.add(charge)
+    db.flush()
+    return charge
+
+
+def settle_all_charges(db: Session, folio: Folio) -> None:
+    for charge in folio.charges:
+        charge.is_settled = True
+    db.flush()
+
+
+def recalculate_folio_total(db: Session, folio: Folio) -> Folio:
+    db.expire(folio, ["charges"])
+    folio.total = sum(
+        (c.amount + (c.vat_amount or Decimal("0")) for c in folio.charges),
+        Decimal("0"),
+    )
+    db.flush()
+    return folio
+
+
+# ── Payment ───────────────────────────────────────────────────────────
+
+def get_payment(db: Session, payment_id: int) -> Optional[Payment]:
+    return db.query(Payment).filter(Payment.id == payment_id).first()
+
+
+def list_payments(db: Session, folio_id: int) -> list[Payment]:
+    return (
+        db.query(Payment)
+        .filter(Payment.folio_id == folio_id, Payment.voided_at.is_(None))
+        .order_by(Payment.posted_at)
+        .all()
+    )
+
+
+def create_payment(db: Session, data: PaymentCreate, shift_id: Optional[int] = None) -> Payment:
+    payment = Payment(**data.model_dump(), shift_id=shift_id)
+    db.add(payment)
+    db.flush()
+    return payment
+
+
+def void_payment(db: Session, payment: Payment, voided_by: int) -> Payment:
+    payment.voided_at = datetime.utcnow()
+    payment.voided_by = voided_by
+    db.flush()
+    return payment
+
+
+# ── CashierShift (POS Day / Safe) ──────────────────────────────────────
+
+def get_open_shift(db: Session, branch_id: int, cashier_id: int) -> Optional[CashierShift]:
+    return (
+        db.query(CashierShift)
+        .filter(
+            CashierShift.branch_id == branch_id,
+            CashierShift.cashier_id == cashier_id,
+            CashierShift.status == "open",
+        )
+        .first()
+    )
+
+
+def get_shift(db: Session, shift_id: int) -> Optional[CashierShift]:
+    return db.query(CashierShift).filter(CashierShift.id == shift_id).first()
+
+
+def create_shift(
+    db: Session, branch_id: int, cashier_id: int, opened_by: int,
+    opening_float: Decimal, notes: Optional[str] = None,
+) -> CashierShift:
+    row = CashierShift(
+        branch_id=branch_id, cashier_id=cashier_id,
+        opened_at=datetime.utcnow(), opened_by=opened_by,
+        opening_float=opening_float, notes=notes,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def list_shifts(
+    db: Session, branch_id: int,
+    cashier_id: Optional[int] = None, status: Optional[str] = None,
+    skip: int = 0, limit: int = 50,
+) -> tuple[list[CashierShift], int]:
+    q = db.query(CashierShift).filter(CashierShift.branch_id == branch_id)
+    if cashier_id:
+        q = q.filter(CashierShift.cashier_id == cashier_id)
+    if status:
+        q = q.filter(CashierShift.status == status)
+    total = q.count()
+    items = q.order_by(CashierShift.opened_at.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def get_previous_closed_shift(
+    db: Session, branch_id: int, cashier_id: int, before_shift_id: int, before_opened_at: datetime,
+) -> Optional[CashierShift]:
+    return (
+        db.query(CashierShift)
+        .filter(
+            CashierShift.branch_id == branch_id,
+            CashierShift.cashier_id == cashier_id,
+            CashierShift.status == "closed",
+            CashierShift.id != before_shift_id,
+            CashierShift.opened_at < before_opened_at,
+        )
+        .order_by(CashierShift.opened_at.desc())
+        .first()
+    )
+
+
+def payments_for_shift(db: Session, shift_id: int) -> list[Payment]:
+    return db.query(Payment).filter(Payment.shift_id == shift_id).all()
+
+
+# ── Account (Chart of Accounts) ───────────────────────────────────────
+
+def create_account(db: Session, data: AccountCreate) -> Account:
+    account = Account(**data.model_dump())
+    db.add(account)
+    db.flush()
+    return account
+
+
+def get_account(db: Session, account_id: int) -> Optional[Account]:
+    return db.query(Account).filter(Account.id == account_id).first()
+
+
+def get_account_by_code(db: Session, branch_id: int, code: str) -> Optional[Account]:
+    return (
+        db.query(Account)
+        .filter(Account.branch_id == branch_id, Account.code == code)
+        .first()
+    )
+
+
+def list_accounts(
+    db: Session,
+    branch_id: int,
+    active_only: bool = True,
+    skip: int = 0,
+    limit: int = 200,
+) -> tuple[list[Account], int]:
+    q = db.query(Account).filter(Account.branch_id == branch_id)
+    if active_only:
+        q = q.filter(Account.is_active.is_(True))
+    total = q.count()
+    items = q.order_by(Account.code).offset(skip).limit(limit).all()
+    return items, total
+
+
+# ── JournalEntry ──────────────────────────────────────────────────────
+
+def create_journal_entry(
+    db: Session,
+    data: JournalEntryCreate,
+    user_id: int,
+) -> JournalEntry:
+    entry = JournalEntry(
+        branch_id=data.branch_id,
+        entry_date=data.entry_date,
+        reference=data.reference,
+        description=data.description,
+        status="posted",
+        created_by=user_id,
+        source=data.source,
+        source_id=data.source_id,
+    )
+    db.add(entry)
+    db.flush()
+    for line_data in data.lines:
+        line = JournalLine(
+            entry_id=entry.id,
+            account_id=line_data.account_id,
+            debit=line_data.debit,
+            credit=line_data.credit,
+            description=line_data.description,
+        )
+        db.add(line)
+    db.flush()
+    return entry
+
+
+def get_journal_entry(db: Session, entry_id: int) -> Optional[JournalEntry]:
+    return db.query(JournalEntry).filter(JournalEntry.id == entry_id).first()
+
+
+def list_journal_entries(
+    db: Session,
+    branch_id: int,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    source: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[JournalEntry], int]:
+    q = db.query(JournalEntry).filter(JournalEntry.branch_id == branch_id)
+    if date_from:
+        q = q.filter(JournalEntry.entry_date >= date_from)
+    if date_to:
+        q = q.filter(JournalEntry.entry_date <= date_to)
+    if source:
+        q = q.filter(JournalEntry.source == source)
+    total = q.count()
+    items = q.order_by(JournalEntry.entry_date.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+# ── AccountingPeriod ──────────────────────────────────────────────────
+
+def get_period_status(
+    db: Session,
+    branch_id: int,
+    year: int,
+    month: int,
+) -> Optional[AccountingPeriod]:
+    return (
+        db.query(AccountingPeriod)
+        .filter(
+            AccountingPeriod.branch_id == branch_id,
+            AccountingPeriod.year == year,
+            AccountingPeriod.month == month,
+        )
+        .first()
+    )
+
+
+def close_period(
+    db: Session,
+    branch_id: int,
+    year: int,
+    month: int,
+    closed_by: int,
+) -> AccountingPeriod:
+    period = get_period_status(db, branch_id, year, month)
+    if not period:
+        period = AccountingPeriod(
+            branch_id=branch_id,
+            year=year,
+            month=month,
+            status="closed",
+            closed_by=closed_by,
+            closed_at=datetime.utcnow(),
+        )
+        db.add(period)
+    else:
+        period.status = "closed"
+        period.closed_by = closed_by
+        period.closed_at = datetime.utcnow()
+    db.flush()
+    return period
+
+
+def list_periods(
+    db: Session,
+    branch_id: int,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[AccountingPeriod], int]:
+    q = db.query(AccountingPeriod).filter(AccountingPeriod.branch_id == branch_id)
+    total = q.count()
+    items = (
+        q.order_by(AccountingPeriod.year.desc(), AccountingPeriod.month.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return items, total
+
+
+# ── Check ─────────────────────────────────────────────────────────────
+
+def create_check(db: Session, data: dict) -> Check:
+    obj = Check(**data)
+    db.add(obj); db.commit(); db.refresh(obj); return obj
+
+def list_checks(db: Session, branch_id: int, status: str | None = None) -> list[Check]:
+    q = db.query(Check).filter(Check.branch_id == branch_id)
+    if status:
+        q = q.filter(Check.status == status)
+    return q.order_by(Check.due_date).all()
+
+def get_check(db: Session, check_id: int) -> Check | None:
+    return db.query(Check).filter(Check.id == check_id).first()
+
+def move_check_status(db: Session, check_obj: Check, to_status: str, moved_by: int, notes: str | None = None) -> Check:
+    movement = CheckMovement(
+        check_id=check_obj.id,
+        from_status=check_obj.status,
+        to_status=to_status,
+        moved_by=moved_by,
+        notes=notes,
+    )
+    check_obj.status = to_status
+    if to_status == "deposited":
+        from datetime import date as _date
+        check_obj.deposited_at = _date.today()
+    elif to_status == "cleared":
+        from datetime import date as _date
+        check_obj.cleared_at = _date.today()
+    elif to_status == "bounced":
+        from datetime import date as _date
+        check_obj.bounced_at = _date.today()
+    db.add(movement)
+    db.commit(); db.refresh(check_obj)
+    return check_obj
+
+
+# ── Cost Centers ─────────────────────────────────────────────────────
+
+def list_cost_centers(db: Session, branch_id: int, active_only: bool = True) -> list[CostCenter]:
+    q = db.query(CostCenter).filter(CostCenter.branch_id == branch_id)
+    if active_only:
+        q = q.filter(CostCenter.is_active.is_(True))
+    return q.order_by(CostCenter.code).all()
+
+
+def get_cost_center_by_code(db: Session, branch_id: int, code: str) -> Optional[CostCenter]:
+    return (
+        db.query(CostCenter)
+        .filter(CostCenter.branch_id == branch_id, CostCenter.code == code)
+        .first()
+    )
+
+
+def create_cost_center(db: Session, data: CostCenterCreate) -> CostCenter:
+    obj = CostCenter(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def sum_folio_charges_by_type(
+    db: Session, branch_id: int, charge_type: str, date_from: date, date_to: date,
+) -> Decimal:
+    from sqlalchemy import func  # noqa: PLC0415
+
+    total = (
+        db.query(func.coalesce(func.sum(FolioCharge.amount), 0))
+        .join(Folio, Folio.id == FolioCharge.folio_id)
+        .filter(
+            Folio.branch_id == branch_id,
+            FolioCharge.charge_type == charge_type,
+            func.date(FolioCharge.posted_at) >= date_from,
+            func.date(FolioCharge.posted_at) <= date_to,
+        )
+        .scalar()
+    )
+    return total or Decimal("0")
+
+
+def sum_beach_revenue(db: Session, branch_id: int, date_from: date, date_to: date) -> Decimal:
+    """إيراد الشاطئ مباشرة من beach_transactions — الموديول ده لسه ميرحّلش
+    لدفتر اليومية، فده أدق مصدر متاح حالياً."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
+
+    total = (
+        db.query(func.coalesce(func.sum(BeachTransaction.total_amount), 0))
+        .filter(
+            BeachTransaction.branch_id == branch_id,
+            BeachTransaction.voided_at.is_(None),
+            BeachTransaction.tx_type != "towel_return",
+            BeachTransaction.tx_date >= date_from,
+            BeachTransaction.tx_date <= date_to,
+        )
+        .scalar()
+    )
+    return total or Decimal("0")
+
+
+def sum_timeshare_revenue(db: Session, branch_id: int, date_from: date, date_to: date) -> Decimal:
+    """تحصيلات التايم شير الفعلية (أقساط مدفوعة + دفعات أولى) — التايم شير
+    بيرحّل للإيراد المؤجَّل (liability) مش حساب إيراد، فالأدق هنا التحصيل الفعلي."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment  # noqa: PLC0415
+
+    installments_paid = (
+        db.query(func.coalesce(func.sum(TimeshareInstallment.paid_amount), 0))
+        .join(TimeshareContract, TimeshareContract.id == TimeshareInstallment.contract_id)
+        .filter(
+            TimeshareContract.branch_id == branch_id,
+            TimeshareInstallment.paid_at.isnot(None),
+            func.date(TimeshareInstallment.paid_at) >= date_from,
+            func.date(TimeshareInstallment.paid_at) <= date_to,
+        )
+        .scalar()
+    ) or Decimal("0")
+
+    down_payments = (
+        db.query(func.coalesce(func.sum(TimeshareContract.down_payment), 0))
+        .filter(
+            TimeshareContract.branch_id == branch_id,
+            TimeshareContract.status != "cancelled",
+            TimeshareContract.start_date >= date_from,
+            TimeshareContract.start_date <= date_to,
+        )
+        .scalar()
+    ) or Decimal("0")
+
+    return installments_paid + down_payments
+
+
+def sum_journal_lines_by_account(
+    db: Session,
+    branch_id: int,
+    date_from: Optional[date],
+    date_to: date,
+) -> dict[int, tuple[Decimal, Decimal]]:
+    """إجمالي مدين/دائن لكل حساب من دفتر اليومية خلال المدى المطلوب
+    (date_from=None يعني من بداية الحسابات — لاستخدامه في trial balance
+    و balance sheet اللي بيحتاجوا الرصيد التراكمي وقت as_of)."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    q = (
+        db.query(
+            JournalLine.account_id,
+            func.coalesce(func.sum(JournalLine.debit), 0),
+            func.coalesce(func.sum(JournalLine.credit), 0),
+        )
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .filter(JournalEntry.branch_id == branch_id, JournalEntry.entry_date <= date_to)
+    )
+    if date_from:
+        q = q.filter(JournalEntry.entry_date >= date_from)
+    q = q.group_by(JournalLine.account_id)
+
+    return {
+        row[0]: (row[1] or Decimal("0"), row[2] or Decimal("0"))
+        for row in q.all()
+    }
+
+
+def sum_revenue_account_by_code(
+    db: Session, branch_id: int, account_code: str, date_from: date, date_to: date,
+) -> Decimal:
+    """إجمالي دائن حساب إيراد معيّن من دفتر اليومية — مصدر أدق من الجداول
+    المباشرة لأي موديول بيرحّل فعلياً لدفتر اليومية (زي PMS عند الـ checkout)."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    total = (
+        db.query(func.coalesce(func.sum(JournalLine.credit), 0))
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .join(Account, Account.id == JournalLine.account_id)
+        .filter(
+            JournalEntry.branch_id == branch_id,
+            Account.code == account_code,
+            JournalEntry.entry_date >= date_from,
+            JournalEntry.entry_date <= date_to,
+        )
+        .scalar()
+    )
+    return total or Decimal("0")

@@ -1,0 +1,21 @@
+{
+  "name": "@resort-os/core",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./api": "./src/api/index.ts",
+    "./stores": "./src/stores/index.ts",
+    "./types": "./src/types/index.ts",
+    "./composables": "./src/composables/index.ts"
+  },
+  "dependencies": {
+    "idb": "^8.0.3"
+  },
+  "peerDependencies": {
+    "vue": "^3.4.0",
+    "pinia": "^2.1.0",
+    "axios": "^1.6.0"
+  }
+}

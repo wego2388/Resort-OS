@@ -1,0 +1,383 @@
+"""
+tests/test_api/test_restaurant.py
+Integration tests for restaurant module.
+"""
+from __future__ import annotations
+
+import uuid
+from decimal import Decimal
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.modules.restaurant.schemas import OrderCreate, OrderItemCreate
+from app.modules.restaurant import services, crud
+
+
+def make_branch(db):
+    from app.modules.core.models import Branch
+    b = Branch(name="Restaurant Branch", name_ar="مطعم",
+               code=f"RST-{uuid.uuid4().hex[:8].upper()}")
+    db.add(b)
+    db.commit()
+    return b
+
+
+def make_menu_item(db, branch, available=True):
+    from app.modules.restaurant.models import MenuItem
+    item = MenuItem(
+        branch_id=branch.id,
+        name="شاورما دجاج",
+        price=Decimal("55.00"),
+        is_available=available,
+    )
+    db.add(item)
+    db.commit()
+    return item
+
+
+def make_table(db, branch, status="available"):
+    from app.modules.restaurant.models import DiningTable
+    t = DiningTable(
+        branch_id=branch.id,
+        table_number=f"T-{uuid.uuid4().hex[:6].upper()}",
+        capacity=4,
+        status=status,
+    )
+    db.add(t)
+    db.commit()
+    return t
+
+
+def make_order(db, branch, item, table=None):
+    data = OrderCreate(
+        table_id=table.id if table else None,
+        order_type="dine_in" if table else "takeaway",
+        guests_count=2,
+        items=[OrderItemCreate(menu_item_id=item.id, quantity=2)],
+    )
+    return services.create_order(db, branch.id, data, waiter_id=1)
+
+
+class TestMenuItem:
+
+    def test_create_menu_item(self, db):
+        branch = make_branch(db)
+        from app.modules.restaurant.models import MenuItem
+        item = MenuItem(branch_id=branch.id, name="كوكاكولا",
+                        price=Decimal("15.00"), is_available=True)
+        db.add(item)
+        db.flush()
+        assert item.id is not None
+        assert item.is_available is True
+
+    def test_unavailable_item_raises(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch, available=False)
+        data = OrderCreate(
+            order_type="takeaway",
+            items=[OrderItemCreate(menu_item_id=item.id, quantity=1)],
+        )
+        with pytest.raises(ValueError, match="غير متاح"):
+            services.create_order(db, branch.id, data)
+
+    def test_nonexistent_item_raises(self, db):
+        branch = make_branch(db)
+        data = OrderCreate(
+            order_type="takeaway",
+            items=[OrderItemCreate(menu_item_id=9999, quantity=1)],
+        )
+        with pytest.raises(ValueError):
+            services.create_order(db, branch.id, data)
+
+
+class TestOrder:
+
+    def test_create_dine_in_order(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table = make_table(db, branch)
+        order = make_order(db, branch, item, table)
+        assert order.order_number.startswith("ORD-")
+        assert order.status == "open"
+        assert order.order_type == "dine_in"
+        assert order.subtotal > Decimal("0")
+        assert order.vat_amount > Decimal("0")
+        assert order.total > order.subtotal
+
+    def test_create_dine_in_sets_table_occupied(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table = make_table(db, branch)
+        make_order(db, branch, item, table)
+        db.refresh(table)
+        assert table.status == "occupied"
+
+    def test_create_takeaway_order(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        data = OrderCreate(
+            order_type="takeaway",
+            items=[OrderItemCreate(menu_item_id=item.id, quantity=1)],
+        )
+        order = services.create_order(db, branch.id, data)
+        assert order.table_id is None
+        assert order.order_type == "takeaway"
+
+    def test_order_with_out_of_service_table_raises(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table = make_table(db, branch, status="out_of_service")
+        data = OrderCreate(
+            table_id=table.id,
+            order_type="dine_in",
+            items=[OrderItemCreate(menu_item_id=item.id, quantity=1)],
+        )
+        with pytest.raises(ValueError, match="خارج الخدمة"):
+            services.create_order(db, branch.id, data)
+
+    def test_subtotal_correct(self, db):
+        """subtotal = price * qty = 55 * 2 = 110"""
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table = make_table(db, branch)
+        order = make_order(db, branch, item, table)
+        assert order.subtotal == Decimal("110.00")
+
+
+class TestOrderStatus:
+
+    def test_update_status_to_in_kitchen(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+        updated = services.update_order_status(db, order.id, "in_kitchen")
+        assert updated.status == "in_kitchen"
+
+    def test_pay_order_frees_table(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table = make_table(db, branch)
+        order = make_order(db, branch, item, table)
+        services.update_order_status(db, order.id, "paid")
+        db.refresh(table)
+        assert table.status == "available"
+
+    def test_cancel_order_frees_table(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table = make_table(db, branch)
+        order = make_order(db, branch, item, table)
+        services.update_order_status(db, order.id, "cancelled")
+        db.refresh(table)
+        assert table.status == "available"
+
+    def test_cannot_change_paid_order_status(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "paid")
+        with pytest.raises(ValueError, match="paid"):
+            services.update_order_status(db, order.id, "in_kitchen")
+
+    def test_cannot_change_cancelled_order_status(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "cancelled")
+        with pytest.raises(ValueError, match="cancelled"):
+            services.update_order_status(db, order.id, "open")
+
+    def test_order_not_found_raises(self, db):
+        with pytest.raises(ValueError):
+            services.update_order_status(db, 9999, "paid")
+
+
+def make_finance_accounts(db, branch):
+    """يزرع 1100 (نقدية) و4200 (إيرادات المطعم) — الحسابين اللي
+    restaurant.services بيدوّر عليهم بالكود عند ترحيل قيد الإيراد."""
+    from app.modules.finance.models import Account
+    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+    revenue = Account(branch_id=branch.id, code="4200", name="Restaurant Revenue", account_type="revenue")
+    db.add_all([cash, revenue])
+    db.commit()
+    return cash, revenue
+
+
+class TestRestaurantRevenueJournalPosting:
+    """Gap حقيقي: دفع طلب مطعم كان يُنشئ FolioCharge(charge_type='restaurant')
+    بس — من غير أي قيد يومية، فحساب 4200 كان صفر دايماً (حتى لو المطعم بيبيع
+    فعلاً)."""
+
+    def test_paying_order_posts_balanced_journal_entry(self, db):
+        from app.modules.finance import crud as finance_crud
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        cash, revenue = make_finance_accounts(db, branch)
+        order = make_order(db, branch, item)
+
+        services.update_order_status(db, order.id, "paid")
+
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="restaurant")
+        assert total == 1
+        entry = entries[0]
+        assert entry.source_id == order.id
+        total_debit = sum(l.debit for l in entry.lines)
+        total_credit = sum(l.credit for l in entry.lines)
+        assert total_debit == total_credit == order.total
+
+        db.refresh(cash)
+        db.refresh(revenue)
+        cash_line = next(l for l in entry.lines if l.account_id == cash.id)
+        revenue_line = next(l for l in entry.lines if l.account_id == revenue.id)
+        assert cash_line.debit == order.total
+        assert revenue_line.credit == order.total
+
+    def test_in_kitchen_transition_does_not_post_journal(self, db):
+        """القيد لازم يترحّل بس عند الدفع، مش عند أي تغيير حالة تاني."""
+        from app.modules.finance import crud as finance_crud
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        make_finance_accounts(db, branch)
+        order = make_order(db, branch, item)
+
+        services.update_order_status(db, order.id, "in_kitchen")
+
+        _, total = finance_crud.list_journal_entries(db, branch.id, source="restaurant")
+        assert total == 0
+
+    def test_missing_accounts_does_not_block_payment(self, db):
+        """لو الحسابات مش موجودة، الدفع لازم ينجح عادي — نفس فلسفة
+        pms._post_checkout_journal (الفشل المحاسبي ميوقفش العملية الأساسية)."""
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+
+        paid = services.update_order_status(db, order.id, "paid")
+        assert paid.status == "paid"
+
+        from app.modules.finance import crud as finance_crud
+        _, total = finance_crud.list_journal_entries(db, branch.id, source="restaurant")
+        assert total == 0
+
+
+def make_linked_product(db, branch, initial_stock=Decimal("50")):
+    """يزرع warehouse + product ويربطهم بصنف قائمة جديد، مع تخزين ابتدائي
+    (StockMovement نوع purchase_in) — عشان نقدر نتحقق من الخصم عند الدفع."""
+    from app.modules.inventory.schemas import ProductCreate, StockMovementCreate, WarehouseCreate
+    from app.modules.inventory import services as inventory_services
+    from datetime import datetime as _dt
+
+    warehouse = inventory_services.create_warehouse(
+        db, WarehouseCreate(branch_id=branch.id, name="Main WH", code=f"WH-{uuid.uuid4().hex[:6].upper()}"),
+    )
+    product = inventory_services.create_product(
+        db, ProductCreate(
+            branch_id=branch.id, warehouse_id=warehouse.id,
+            name="لحم برجر", sku=f"BRG-{uuid.uuid4().hex[:6].upper()}", unit="piece",
+            cost_price=Decimal("10"),
+        ),
+    )
+    if initial_stock > 0:
+        inventory_services.record_movement(
+            db, StockMovementCreate(
+                branch_id=branch.id, product_id=product.id, warehouse_id=warehouse.id,
+                movement_type="purchase_in", quantity=initial_stock, unit_cost=Decimal("10"),
+                moved_at=_dt.utcnow(),
+            ), moved_by=1,
+        )
+    db.refresh(product)
+
+    from app.modules.restaurant.models import MenuItem
+    item = MenuItem(
+        branch_id=branch.id, name="برجر لحم", price=Decimal("120.00"),
+        is_available=True, linked_product_id=product.id,
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item, product
+
+
+class TestRestaurantInventoryDeduction:
+    """Gap حقيقي: دفع طلب مطعم كان لا يخصم أي حاجة من المخزون أبداً — حتى لو
+    الصنف بيستهلك مكونات حقيقية (لحم/خضار/إلخ). MenuItem مكانش فيه أي ربط
+    بـ inventory.Product خالص قبل كده."""
+
+    def test_paying_order_deducts_linked_product_stock(self, db):
+        branch = make_branch(db)
+        item, product = make_linked_product(db, branch, initial_stock=Decimal("50"))
+        order = make_order(db, branch, item)  # quantity=2 (see make_order helper)
+
+        services.update_order_status(db, order.id, "paid")
+
+        db.refresh(product)
+        assert product.current_stock == Decimal("48.000")
+
+    def test_paying_order_with_unlinked_item_does_not_touch_inventory(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)  # no linked_product_id
+        order = make_order(db, branch, item)
+
+        paid = services.update_order_status(db, order.id, "paid")
+        assert paid.status == "paid"  # لا استثناء، والصنف بيتجاوز بصمت
+
+    def test_insufficient_stock_does_not_block_payment(self, db):
+        """رصيد غير كافٍ لازم يتجاوز بصمت — الدفع لازم ينجح عادي (نفس فلسفة
+        عدم إيقاف العملية الأساسية بسبب فشل جانبي)."""
+        branch = make_branch(db)
+        item, product = make_linked_product(db, branch, initial_stock=Decimal("1"))
+        order = make_order(db, branch, item)  # quantity=2 > stock (1)
+
+        paid = services.update_order_status(db, order.id, "paid")
+        assert paid.status == "paid"
+
+        db.refresh(product)
+        assert product.current_stock == Decimal("1.000")  # لم يتغيّر — رُفض الخصم بصمت
+
+    def test_cancelled_item_is_skipped(self, db):
+        branch = make_branch(db)
+        item, product = make_linked_product(db, branch, initial_stock=Decimal("50"))
+        order = make_order(db, branch, item)
+        order_item = order.items[0]
+        crud.void_order_item(db, order_item, "طلب العميل", voided_by=1)
+        db.commit()
+
+        services.update_order_status(db, order.id, "paid")
+
+        db.refresh(product)
+        assert product.current_stock == Decimal("50.000")  # الصنف الملغى ميتخصمش
+
+
+class TestKDS:
+
+    def test_order_in_kitchen_creates_ticket(self, db):
+        """Quando un ordine va in_kitchen, deve essere creato un KitchenTicket."""
+        from app.modules.restaurant.models import KitchenTicket
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "in_kitchen")
+        tickets = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).all()
+        assert len(tickets) == 1
+        assert tickets[0].station == "kitchen"
+        assert tickets[0].module == "restaurant"
+        assert tickets[0].status == "pending"
+        assert isinstance(tickets[0].items_snapshot, list)
+        assert len(tickets[0].items_snapshot) > 0
+
+    def test_update_ticket_status(self, db):
+        """Aggiorna status ticket da pending a done."""
+        from app.modules.restaurant.models import KitchenTicket
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "in_kitchen")
+        ticket = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).first()
+        assert ticket is not None
+        updated = crud.update_ticket_status(db, ticket.id, "done")
+        db.commit()
+        assert updated.status == "done"
+        # verifica che il ticket non sia più nelle pending list
+        pending = crud.list_pending_tickets(db, branch.id, module="restaurant")
+        assert not any(t.id == ticket.id for t in pending)

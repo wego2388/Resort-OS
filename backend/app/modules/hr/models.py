@@ -1,0 +1,272 @@
+"""
+app/modules/hr/models.py
+HR Module — always_on
+Tables: employees, social_insurance_config, tax_bracket_configs,
+        employee_allowances, payroll_runs, payroll_lines,
+        attendance_records, leave_balances
+"""
+from __future__ import annotations
+
+from datetime import date, datetime
+from decimal import Decimal
+
+from sqlalchemy import (
+    Boolean, Date, DateTime, ForeignKey, Integer, JSON,
+    Numeric, String, Text, UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from wego_core.models.mixins import TimestampMixin
+from app.core.database import Base
+from app.core.encryption import EncryptedString
+
+
+class Employee(Base, TimestampMixin):
+    __tablename__ = "employees"
+
+    id:            Mapped[int]         = mapped_column(primary_key=True)
+    branch_id:     Mapped[int]         = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    employee_code: Mapped[str]         = mapped_column(String(20), unique=True)  # EMP-001
+    full_name:     Mapped[str]         = mapped_column(String(200))
+    national_id:   Mapped[str | None]  = mapped_column(EncryptedString(255), nullable=True)
+    position:      Mapped[str]         = mapped_column(String(100))
+    department:    Mapped[str | None]  = mapped_column(String(100), nullable=True)
+    basic_salary:  Mapped[Decimal]     = mapped_column(Numeric(10, 2))
+    hire_date:     Mapped[date]        = mapped_column(Date)
+    birth_date:    Mapped[date | None] = mapped_column(Date, nullable=True)
+    status:        Mapped[str]         = mapped_column(String(20), default="active")  # active|on_leave|terminated
+    phone:         Mapped[str | None]  = mapped_column(String(20), nullable=True)
+    email:         Mapped[str | None]  = mapped_column(String(100), nullable=True)
+
+    allowances: Mapped[list["EmployeeAllowance"]] = relationship("EmployeeAllowance", back_populates="employee", lazy="select")
+
+
+class SocialInsuranceConfig(Base, TimestampMixin):
+    __tablename__ = "social_insurance_configs"
+
+    id:                        Mapped[int]     = mapped_column(primary_key=True)
+    max_insurable_salary:      Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    employee_rate:             Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    employer_rate:             Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    personal_exemption_annual: Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    max_penalty_days_monthly:  Mapped[int]     = mapped_column(Integer, default=5)
+    effective_from:            Mapped[date]    = mapped_column(Date)
+    is_active:                 Mapped[bool]    = mapped_column(Boolean, default=True)
+
+
+class TaxBracketConfig(Base, TimestampMixin):
+    __tablename__ = "tax_bracket_configs"
+
+    id:             Mapped[int]         = mapped_column(primary_key=True)
+    lower_bound:    Mapped[Decimal]     = mapped_column(Numeric(12, 2))
+    upper_bound:    Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    rate:           Mapped[Decimal]     = mapped_column(Numeric(5, 4))
+    effective_from: Mapped[date]        = mapped_column(Date)
+    is_active:      Mapped[bool]        = mapped_column(Boolean, default=True)
+
+
+class EmployeeAllowance(Base, TimestampMixin):
+    __tablename__ = "employee_allowances"
+
+    id:             Mapped[int]     = mapped_column(primary_key=True)
+    employee_id:    Mapped[int]     = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    name:           Mapped[str]     = mapped_column(String(100))
+    amount:         Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    is_taxable:     Mapped[bool]    = mapped_column(Boolean, default=True)
+    is_pensionable: Mapped[bool]    = mapped_column(Boolean, default=False)
+    is_active:      Mapped[bool]    = mapped_column(Boolean, default=True)
+
+    employee: Mapped["Employee"] = relationship("Employee", back_populates="allowances")
+
+
+class PayrollRun(Base, TimestampMixin):
+    __tablename__ = "payroll_runs"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "period_year", "period_month", name="uq_payroll_period"),
+    )
+
+    id:           Mapped[int]            = mapped_column(primary_key=True)
+    branch_id:    Mapped[int]            = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    period_year:  Mapped[int]            = mapped_column(Integer)
+    period_month: Mapped[int]            = mapped_column(Integer)
+    status:       Mapped[str]            = mapped_column(String(20), default="draft")  # draft|approved|paid
+    total_gross:  Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    total_net:    Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    total_tax:    Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    total_si:     Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    approved_by:  Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    approved_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    lines: Mapped[list["PayrollLine"]] = relationship("PayrollLine", back_populates="run", lazy="select")
+
+
+class PayrollLine(Base, TimestampMixin):
+    __tablename__ = "payroll_lines"
+
+    id:                    Mapped[int]     = mapped_column(primary_key=True)
+    payroll_run_id:        Mapped[int]     = mapped_column(ForeignKey("payroll_runs.id", ondelete="CASCADE"))
+    employee_id:           Mapped[int]     = mapped_column(ForeignKey("employees.id", ondelete="RESTRICT"))
+    basic_salary:          Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    gross_salary:          Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    net_salary:            Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    employee_si:           Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    employer_si:           Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    monthly_tax:           Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    penalty_deduction:     Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    unpaid_leave_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    journal_entry:         Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON
+
+    run: Mapped["PayrollRun"] = relationship("PayrollRun", back_populates="lines")
+
+
+class AttendanceRecord(Base, TimestampMixin):
+    __tablename__ = "attendance_records"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "record_date", name="uq_attendance_employee_date"),
+    )
+
+    id:          Mapped[int]            = mapped_column(primary_key=True)
+    employee_id: Mapped[int]            = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    branch_id:   Mapped[int]            = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    record_date: Mapped[date]           = mapped_column(Date, index=True)
+    check_in:    Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    check_out:   Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    status:      Mapped[str]            = mapped_column(String(20), default="present")  # present|absent|late|leave|holiday
+    notes:       Mapped[str | None]     = mapped_column(String(300), nullable=True)
+
+
+class LeaveBalance(Base, TimestampMixin):
+    __tablename__ = "leave_balances"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "year", name="uq_leave_employee_year"),
+    )
+
+    id:               Mapped[int] = mapped_column(primary_key=True)
+    employee_id:      Mapped[int] = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    year:             Mapped[int] = mapped_column(Integer)
+    annual_entitled:  Mapped[int] = mapped_column(Integer)
+    annual_taken:     Mapped[int] = mapped_column(Integer, default=0)
+    sick_taken:       Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Department(Base, TimestampMixin):
+    __tablename__ = "departments"
+
+    id:           Mapped[int]          = mapped_column(primary_key=True)
+    branch_id:    Mapped[int]          = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    name:         Mapped[str]          = mapped_column(String(100))
+    name_ar:      Mapped[str | None]   = mapped_column(String(100), nullable=True)
+    manager_id:   Mapped[int | None]   = mapped_column(ForeignKey("employees.id", ondelete="SET NULL"), nullable=True)
+    budget_limit: Mapped[Decimal]      = mapped_column(Numeric(12, 2), default=Decimal("0"))
+
+
+class Shift(Base, TimestampMixin):
+    __tablename__ = "shifts"
+
+    id:             Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:      Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    name:           Mapped[str]        = mapped_column(String(100))
+    name_ar:        Mapped[str | None] = mapped_column(String(100), nullable=True)
+    start_time:     Mapped[str]        = mapped_column(String(5))   # "08:00"
+    end_time:       Mapped[str]        = mapped_column(String(5))   # "16:00"
+    duration_hours: Mapped[Decimal]    = mapped_column(Numeric(4, 2))
+
+
+class LeaveType(Base, TimestampMixin):
+    __tablename__ = "leave_types"
+
+    id:                 Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:          Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    name:               Mapped[str]        = mapped_column(String(100))
+    name_ar:            Mapped[str | None] = mapped_column(String(100), nullable=True)
+    is_paid:            Mapped[bool]       = mapped_column(Boolean, default=True)
+    max_days_per_year:  Mapped[int | None] = mapped_column(Integer, nullable=True)
+    requires_approval:  Mapped[bool]       = mapped_column(Boolean, default=True)
+
+
+class LeaveRequest(Base, TimestampMixin):
+    __tablename__ = "leave_requests"
+
+    id:               Mapped[int]             = mapped_column(primary_key=True)
+    employee_id:      Mapped[int]             = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    branch_id:        Mapped[int]             = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    leave_type_id:    Mapped[int]             = mapped_column(ForeignKey("leave_types.id", ondelete="RESTRICT"))
+    start_date:       Mapped[date]            = mapped_column(Date)
+    end_date:         Mapped[date]            = mapped_column(Date)
+    days_requested:   Mapped[int]             = mapped_column(Integer)
+    reason:           Mapped[str | None]      = mapped_column(String(500), nullable=True)
+    status:           Mapped[str]             = mapped_column(String(20), default="pending")  # pending|approved|rejected
+    approved_by:      Mapped[int | None]      = mapped_column(Integer, nullable=True)
+    approved_at:      Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rejection_reason: Mapped[str | None]      = mapped_column(String(300), nullable=True)
+
+    employee:   Mapped["Employee"]  = relationship("Employee", lazy="select", foreign_keys=[employee_id])
+    leave_type: Mapped["LeaveType"] = relationship("LeaveType", lazy="select")
+
+
+class PenaltyType(Base, TimestampMixin):
+    __tablename__ = "penalty_types"
+
+    id:           Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:    Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    name:         Mapped[str]        = mapped_column(String(100))
+    name_ar:      Mapped[str | None] = mapped_column(String(100), nullable=True)
+    penalty_days: Mapped[int]        = mapped_column(Integer, default=1)
+
+
+class EmployeePenalty(Base, TimestampMixin):
+    __tablename__ = "employee_penalties"
+
+    id:              Mapped[int]        = mapped_column(primary_key=True)
+    employee_id:     Mapped[int]        = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    branch_id:       Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    penalty_type_id: Mapped[int | None] = mapped_column(ForeignKey("penalty_types.id", ondelete="SET NULL"), nullable=True)
+    penalty_date:    Mapped[date]       = mapped_column(Date)
+    penalty_days:    Mapped[int]        = mapped_column(Integer, default=1)
+    reason:          Mapped[str]        = mapped_column(String(500))
+    applied_by:      Mapped[int]        = mapped_column(Integer)
+
+    employee: Mapped["Employee"] = relationship("Employee", lazy="select")
+
+
+class RotaTemplate(Base, TimestampMixin):
+    """Template settimanale per reparto."""
+    __tablename__ = "rota_templates"
+
+    id:            Mapped[int]  = mapped_column(primary_key=True)
+    branch_id:     Mapped[int]  = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    department_id: Mapped[int]  = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"))
+    name:          Mapped[str]  = mapped_column(String(100))
+    week_pattern:  Mapped[dict] = mapped_column(JSON)  # {"mon": {"morning": 3}, ...}
+    is_active:     Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class RotaAssignment(Base, TimestampMixin):
+    """Assegnazione turno individuale."""
+    __tablename__ = "rota_assignments"
+
+    id:            Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:     Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    employee_id:   Mapped[int]        = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    shift_id:      Mapped[int]        = mapped_column(ForeignKey("shifts.id", ondelete="RESTRICT"))
+    assigned_date: Mapped[date]       = mapped_column(Date, index=True)
+    status:        Mapped[str]        = mapped_column(String(20), default="scheduled")  # scheduled|confirmed|swapped|absent
+    notes:         Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    employee: Mapped["Employee"] = relationship("Employee", lazy="select")
+    shift:    Mapped["Shift"]    = relationship("Shift", lazy="select")
+
+
+class ShiftSwapRequest(Base, TimestampMixin):
+    """Richiesta di scambio turno tra dipendenti."""
+    __tablename__ = "shift_swap_requests"
+
+    id:                 Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:          Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    requester_id:       Mapped[int]        = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    target_employee_id: Mapped[int]        = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    from_assignment_id: Mapped[int]        = mapped_column(ForeignKey("rota_assignments.id", ondelete="CASCADE"))
+    to_assignment_id:   Mapped[int]        = mapped_column(ForeignKey("rota_assignments.id", ondelete="CASCADE"))
+    status:             Mapped[str]        = mapped_column(String(20), default="pending")  # pending|approved|rejected
+    approver_id:        Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reason:             Mapped[str | None] = mapped_column(String(300), nullable=True)

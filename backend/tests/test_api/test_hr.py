@@ -1,0 +1,570 @@
+"""
+tests/test_api/test_hr.py
+Integration tests for HR module.
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+
+import pytest
+from sqlalchemy.orm import Session
+
+from app.modules.hr.schemas import (
+    AttendanceRecordCreate,
+    DepartmentCreate,
+    EmployeeCreate,
+    EmployeeUpdate,
+    EmployeePenaltyCreate,
+    LeaveRequestCreate,
+    LeaveTypeCreate,
+    RotaAssignmentCreate,
+    ShiftCreate,
+    ShiftSwapRequestCreate,
+)
+from app.modules.hr import services, crud
+
+
+@pytest.fixture
+def branch(db: Session):
+    from app.modules.core.models import Branch
+    b = Branch(name="Test HR", name_ar="موارد بشرية اختبارية",
+               code=f"HR-{uuid.uuid4().hex[:6].upper()}")
+    db.add(b)
+    db.flush()
+    return b
+
+
+@pytest.fixture
+def si_config(db: Session):
+    """SocialInsuranceConfig مطلوب لـ payroll."""
+    from app.modules.hr.models import SocialInsuranceConfig
+    cfg = SocialInsuranceConfig(
+        max_insurable_salary=Decimal("9400.00"),
+        employee_rate=Decimal("0.1100"),
+        employer_rate=Decimal("0.1800"),
+        personal_exemption_annual=Decimal("15000.00"),
+        max_penalty_days_monthly=5,
+        effective_from=date(2024, 1, 1),
+        is_active=True,
+    )
+    db.add(cfg)
+    db.flush()
+    return cfg
+
+
+@pytest.fixture
+def tax_brackets(db: Session):
+    """شرائح ضريبية مطلوبة لـ payroll."""
+    from app.modules.hr.models import TaxBracketConfig
+    brackets = [
+        TaxBracketConfig(lower_bound=Decimal("0"),      upper_bound=Decimal("15000"),  rate=Decimal("0.0000"), effective_from=date(2024, 1, 1), is_active=True),
+        TaxBracketConfig(lower_bound=Decimal("15000"),  upper_bound=Decimal("30000"),  rate=Decimal("0.1000"), effective_from=date(2024, 1, 1), is_active=True),
+        TaxBracketConfig(lower_bound=Decimal("30000"),  upper_bound=Decimal("45000"),  rate=Decimal("0.1500"), effective_from=date(2024, 1, 1), is_active=True),
+        TaxBracketConfig(lower_bound=Decimal("45000"),  upper_bound=Decimal("60000"),  rate=Decimal("0.2000"), effective_from=date(2024, 1, 1), is_active=True),
+        TaxBracketConfig(lower_bound=Decimal("60000"),  upper_bound=None,              rate=Decimal("0.2250"), effective_from=date(2024, 1, 1), is_active=True),
+    ]
+    db.add_all(brackets)
+    db.flush()
+    return brackets
+
+
+@pytest.fixture
+def employee(db: Session, branch):
+    data = EmployeeCreate(
+        branch_id=branch.id,
+        employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name="محمد عبدالله",
+        position="محاسب",
+        department="المالية",
+        basic_salary=Decimal("5000.00"),
+        hire_date=date(2023, 1, 1),
+        birth_date=date(1990, 6, 15),
+    )
+    return services.create_employee(db, data)
+
+
+class TestEmployee:
+
+    def test_create_employee(self, db, branch):
+        data = EmployeeCreate(
+            branch_id=branch.id,
+            employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="سارة حسن",
+            position="موظفة استقبال",
+            basic_salary=Decimal("3500.00"),
+            hire_date=date(2024, 3, 1),
+        )
+        emp = services.create_employee(db, data)
+        assert emp.id is not None
+        assert emp.status == "active"
+
+    def test_duplicate_code_raises(self, db, branch, employee):
+        data = EmployeeCreate(
+            branch_id=branch.id,
+            employee_code=employee.employee_code,  # كود مكرر
+            full_name="موظف آخر",
+            position="نادل",
+            basic_salary=Decimal("2500.00"),
+            hire_date=date(2024, 1, 1),
+        )
+        with pytest.raises(ValueError, match="مستخدم مسبقاً"):
+            services.create_employee(db, data)
+
+    def test_update_employee(self, db, employee):
+        updated = services.update_employee(
+            db, employee.id,
+            EmployeeUpdate(position="مدير مالي", basic_salary=Decimal("8000.00")),
+        )
+        assert updated.position == "مدير مالي"
+        assert updated.basic_salary == Decimal("8000.00")
+
+    def test_terminate_employee(self, db, employee):
+        updated = services.update_employee(
+            db, employee.id,
+            EmployeeUpdate(status="terminated"),
+        )
+        assert updated.status == "terminated"
+
+    def test_employee_not_found_raises(self, db):
+        with pytest.raises(ValueError):
+            services.get_employee_or_404(db, 9999)
+
+
+class TestPayroll:
+
+    def test_calculate_employee_payroll(self, db, employee, si_config, tax_brackets):
+        result = services.calculate_employee_payroll(
+            db,
+            employee_id=employee.id,
+            period_year=2026,
+            period_month=6,
+        )
+        assert result.basic_salary == Decimal("5000.00")
+        assert result.gross_salary >= result.basic_salary
+        assert result.net_salary < result.gross_salary  # بعد الاستقطاعات
+        assert result.employee_si > Decimal("0")
+
+    def test_payroll_with_penalty(self, db, employee, si_config, tax_brackets):
+        result = services.calculate_employee_payroll(
+            db,
+            employee_id=employee.id,
+            period_year=2026,
+            period_month=6,
+            penalty_days=2,
+        )
+        assert result.penalty_deduction > Decimal("0")
+        # الراتب الصافي بعد الخصم أقل من الطبيعي
+        base_result = services.calculate_employee_payroll(
+            db, employee.id, 2026, 6,
+        )
+        assert result.net_salary < base_result.net_salary
+
+    def test_calculate_payroll_no_si_config_raises(self, db, employee):
+        """بدون SocialInsuranceConfig يُلقي خطأ."""
+        with pytest.raises(ValueError, match="تأمينات"):
+            services.calculate_employee_payroll(db, employee.id, 2026, 6)
+
+    def test_run_payroll_for_branch(self, db, branch, employee, si_config, tax_brackets):
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        assert run.id is not None
+        assert run.status == "draft"
+        assert run.total_gross > Decimal("0")
+        assert run.total_net > Decimal("0")
+
+    def test_duplicate_payroll_run_raises(self, db, branch, employee, si_config, tax_brackets):
+        services.run_payroll_for_branch(db, branch.id, 2026, 7)
+        with pytest.raises(ValueError, match="موجود مسبقاً"):
+            services.run_payroll_for_branch(db, branch.id, 2026, 7)
+
+    def test_approve_payroll_run(self, db, branch, employee, si_config, tax_brackets):
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 8)
+        approved = services.approve_payroll_run(db, run.id, approved_by=1)
+        assert approved.status == "approved"
+        assert approved.approved_by == 1
+        assert approved.approved_at is not None
+
+    def test_cannot_approve_non_draft_run(self, db, branch, employee, si_config, tax_brackets):
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 9)
+        services.approve_payroll_run(db, run.id, approved_by=1)
+        with pytest.raises(ValueError, match="approved"):
+            services.approve_payroll_run(db, run.id, approved_by=2)
+
+
+class TestAttendance:
+
+    def test_record_attendance(self, db, branch, employee):
+        data = AttendanceRecordCreate(
+            employee_id=employee.id,
+            branch_id=branch.id,
+            record_date=date.today(),
+            check_in=datetime.utcnow(),
+            status="present",
+        )
+        record = crud.upsert_attendance(db, data)
+        assert record.id is not None
+        assert record.status == "present"
+
+    def test_upsert_attendance_updates_existing(self, db, branch, employee):
+        today = date.today()
+        data = AttendanceRecordCreate(
+            employee_id=employee.id,
+            branch_id=branch.id,
+            record_date=today,
+            status="present",
+        )
+        rec1 = crud.upsert_attendance(db, data)
+
+        # تحديث نفس اليوم
+        data2 = AttendanceRecordCreate(
+            employee_id=employee.id,
+            branch_id=branch.id,
+            record_date=today,
+            status="late",
+            notes="تأخر 30 دقيقة",
+        )
+        rec2 = crud.upsert_attendance(db, data2)
+
+        assert rec1.id == rec2.id
+        assert rec2.status == "late"
+
+    def test_record_absence(self, db, branch, employee):
+        yesterday = date.today() - timedelta(days=1)
+        data = AttendanceRecordCreate(
+            employee_id=employee.id,
+            branch_id=branch.id,
+            record_date=yesterday,
+            status="absent",
+        )
+        record = crud.upsert_attendance(db, data)
+        assert record.status == "absent"
+
+
+class TestLeaveBalance:
+
+    def test_upsert_leave_balance(self, db, employee):
+        balance = crud.upsert_leave_balance(db, employee.id, year=2026, annual_entitled=21)
+        assert balance.id is not None
+        assert balance.annual_entitled == 21
+        assert balance.annual_taken == 0
+
+    def test_upsert_updates_existing(self, db, employee):
+        crud.upsert_leave_balance(db, employee.id, year=2026, annual_entitled=21)
+        updated = crud.upsert_leave_balance(db, employee.id, year=2026, annual_entitled=25)
+        # نفس السنة — يُحدَّث
+        balance = crud.get_leave_balance(db, employee.id, year=2026)
+        assert balance.annual_entitled == 25
+
+
+# ── Fixtures for new modules ──────────────────────────────────────────
+
+@pytest.fixture
+def leave_type(db: Session, branch):
+    data = LeaveTypeCreate(
+        branch_id=branch.id,
+        name="إجازة سنوية",
+        name_ar="Annual Leave",
+        is_paid=True,
+        max_days_per_year=21,
+        requires_approval=True,
+    )
+    lt = crud.create_leave_type(db, data)
+    db.commit()
+    db.refresh(lt)
+    return lt
+
+
+@pytest.fixture
+def shift(db: Session, branch):
+    data = ShiftCreate(
+        branch_id=branch.id,
+        name="Morning",
+        name_ar="الصباح",
+        start_time="08:00",
+        end_time="16:00",
+        duration_hours=Decimal("8"),
+    )
+    s = crud.create_shift(db, data)
+    db.commit()
+    db.refresh(s)
+    return s
+
+
+@pytest.fixture
+def department(db: Session, branch):
+    data = DepartmentCreate(
+        branch_id=branch.id,
+        name="Front Office",
+        name_ar="الاستقبال",
+        budget_limit=Decimal("50000"),
+    )
+    dept = crud.create_department(db, data)
+    db.commit()
+    db.refresh(dept)
+    return dept
+
+
+class TestLeaveManagement:
+
+    def test_create_leave_type(self, db, branch):
+        data = LeaveTypeCreate(
+            branch_id=branch.id,
+            name="إجازة مرضية",
+            is_paid=True,
+            max_days_per_year=15,
+            requires_approval=False,
+        )
+        lt = crud.create_leave_type(db, data)
+        db.commit()
+        assert lt.id is not None
+        assert lt.name == "إجازة مرضية"
+        assert lt.is_paid is True
+
+    def test_list_leave_types(self, db, branch, leave_type):
+        types = crud.list_leave_types(db, branch.id)
+        assert len(types) >= 1
+        assert any(lt.name == "إجازة سنوية" for lt in types)
+
+    def test_request_leave(self, db, branch, employee, leave_type):
+        start = date(2026, 8, 1)
+        end   = date(2026, 8, 5)
+        req = services.request_leave(
+            db,
+            employee_id=employee.id,
+            branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=start,
+            end_date=end,
+            reason="رحلة عائلية",
+        )
+        assert req.id is not None
+        assert req.status == "pending"
+        assert req.days_requested == 5
+
+    def test_request_leave_insufficient_balance(self, db, branch, employee, leave_type):
+        """الطلب يُرفض إذا تجاوز الرصيد المتاح."""
+        # أنشئ سلد إجازة مع 0 متبقٍ
+        balance = crud.upsert_leave_balance(db, employee.id, year=2026, annual_entitled=5)
+        balance.annual_taken = 5
+        db.flush()
+        db.commit()
+
+        with pytest.raises(ValueError, match="سلد"):
+            services.request_leave(
+                db,
+                employee_id=employee.id,
+                branch_id=branch.id,
+                leave_type_id=leave_type.id,
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 10),
+            )
+
+    def test_approve_leave_updates_balance(self, db, branch, employee, leave_type):
+        # أنشئ سلد فعلي
+        crud.upsert_leave_balance(db, employee.id, year=2026, annual_entitled=21)
+        db.commit()
+
+        start = date(2026, 10, 1)
+        end   = date(2026, 10, 3)
+        req = services.request_leave(
+            db,
+            employee_id=employee.id,
+            branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=start,
+            end_date=end,
+        )
+
+        approved = services.approve_leave(db, req.id, approved_by=1)
+        assert approved.status == "approved"
+        assert approved.approved_by == 1
+        assert approved.approved_at is not None
+
+        # السلد يُحدَّث
+        balance = crud.get_leave_balance(db, employee.id, 2026)
+        assert balance.annual_taken == 3
+
+    def test_reject_leave(self, db, branch, employee, leave_type):
+        req = services.request_leave(
+            db,
+            employee_id=employee.id,
+            branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=date(2026, 11, 1),
+            end_date=date(2026, 11, 2),
+        )
+        rejected = services.reject_leave(db, req.id, reason="فترة مكتظة")
+        assert rejected.status == "rejected"
+        assert rejected.rejection_reason == "فترة مكتظة"
+
+    def test_cannot_approve_already_processed_request(self, db, branch, employee, leave_type):
+        req = services.request_leave(
+            db,
+            employee_id=employee.id,
+            branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=date(2026, 12, 1),
+            end_date=date(2026, 12, 1),
+        )
+        services.approve_leave(db, req.id, approved_by=1)
+        with pytest.raises(ValueError, match="approved"):
+            services.approve_leave(db, req.id, approved_by=2)
+
+
+class TestPenalties:
+
+    def test_create_penalty(self, db, branch, employee):
+        data = EmployeePenaltyCreate(
+            employee_id=employee.id,
+            branch_id=branch.id,
+            penalty_date=date(2026, 6, 10),
+            penalty_days=1,
+            reason="تأخر متكرر",
+            applied_by=1,
+        )
+        penalty = crud.create_penalty(db, data)
+        db.commit()
+        assert penalty.id is not None
+        assert penalty.penalty_days == 1
+
+    def test_list_penalties_by_month(self, db, branch, employee):
+        # إنشاء عقوبتين في شهرين مختلفين
+        for day, month in [(5, 6), (7, 7)]:
+            crud.create_penalty(db, EmployeePenaltyCreate(
+                employee_id=employee.id,
+                branch_id=branch.id,
+                penalty_date=date(2026, month, day),
+                penalty_days=1,
+                reason="تأخر",
+                applied_by=1,
+            ))
+        db.commit()
+
+        june_penalties = crud.list_penalties(db, branch.id, employee_id=employee.id, month="2026-06")
+        july_penalties = crud.list_penalties(db, branch.id, employee_id=employee.id, month="2026-07")
+        assert len(june_penalties) >= 1
+        assert len(july_penalties) >= 1
+        # تأكد أن فلتر الشهر يعمل
+        assert all(p.penalty_date.month == 6 for p in june_penalties)
+        assert all(p.penalty_date.month == 7 for p in july_penalties)
+
+
+class TestRota:
+
+    def test_create_department(self, db, branch):
+        data = DepartmentCreate(
+            branch_id=branch.id,
+            name="Housekeeping",
+            name_ar="التدبير المنزلي",
+            budget_limit=Decimal("30000"),
+        )
+        dept = crud.create_department(db, data)
+        db.commit()
+        assert dept.id is not None
+        assert dept.name == "Housekeeping"
+
+    def test_list_departments(self, db, branch, department):
+        depts = crud.list_departments(db, branch.id)
+        assert len(depts) >= 1
+
+    def test_create_shift(self, db, branch):
+        data = ShiftCreate(
+            branch_id=branch.id,
+            name="Night",
+            name_ar="الليل",
+            start_time="23:00",
+            end_time="07:00",
+            duration_hours=Decimal("8"),
+        )
+        shift = crud.create_shift(db, data)
+        db.commit()
+        assert shift.id is not None
+        assert shift.start_time == "23:00"
+
+    def test_list_shifts(self, db, branch, shift):
+        shifts = crud.list_shifts(db, branch.id)
+        assert len(shifts) >= 1
+
+    def test_create_rota_assignment(self, db, branch, employee, shift):
+        data = RotaAssignmentCreate(
+            branch_id=branch.id,
+            employee_id=employee.id,
+            shift_id=shift.id,
+            assigned_date=date(2026, 7, 7),
+            notes="وردية إضافية",
+        )
+        assignment = crud.create_rota_assignment(db, data)
+        db.commit()
+        assert assignment.id is not None
+        assert assignment.status == "scheduled"
+
+    def test_list_rota_assignments_by_week(self, db, branch, employee, shift):
+        # إنشاء 3 مهام في أسابيع مختلفة
+        dates = [date(2026, 7, 7), date(2026, 7, 8), date(2026, 7, 15)]
+        for d in dates:
+            crud.create_rota_assignment(db, RotaAssignmentCreate(
+                branch_id=branch.id,
+                employee_id=employee.id,
+                shift_id=shift.id,
+                assigned_date=d,
+            ))
+        db.commit()
+
+        week1 = crud.list_rota_assignments(
+            db, branch.id, week_start=date(2026, 7, 6), week_end=date(2026, 7, 12)
+        )
+        week2 = crud.list_rota_assignments(
+            db, branch.id, week_start=date(2026, 7, 13), week_end=date(2026, 7, 19)
+        )
+        assert len(week1) >= 2
+        assert len(week2) >= 1
+
+    def test_shift_swap_request(self, db, branch, employee, shift):
+        """اختبار إنشاء وموافقة طلب تبديل الوردية."""
+        # إنشاء موظف ثانٍ
+        emp2_data = EmployeeCreate(
+            branch_id=branch.id,
+            employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="أحمد محمود",
+            position="نادل",
+            basic_salary=Decimal("3000.00"),
+            hire_date=date(2023, 6, 1),
+        )
+        emp2 = services.create_employee(db, emp2_data)
+
+        # إنشاء مهمتين
+        a1 = crud.create_rota_assignment(db, RotaAssignmentCreate(
+            branch_id=branch.id, employee_id=employee.id,
+            shift_id=shift.id, assigned_date=date(2026, 8, 5),
+        ))
+        a2 = crud.create_rota_assignment(db, RotaAssignmentCreate(
+            branch_id=branch.id, employee_id=emp2.id,
+            shift_id=shift.id, assigned_date=date(2026, 8, 6),
+        ))
+        db.commit()
+
+        # طلب تبديل
+        swap_data = ShiftSwapRequestCreate(
+            branch_id=branch.id,
+            requester_id=employee.id,
+            target_employee_id=emp2.id,
+            from_assignment_id=a1.id,
+            to_assignment_id=a2.id,
+            reason="ظرف طارئ",
+        )
+        swap = crud.create_swap_request(db, swap_data)
+        db.commit()
+        assert swap.status == "pending"
+
+        # الموافقة
+        approved_swap = crud.approve_swap(db, swap, approver_id=1)
+        db.commit()
+        assert approved_swap.status == "approved"
+        assert approved_swap.approver_id == 1
+
+        # تحقق من تبديل الموظفين
+        db.refresh(a1)
+        db.refresh(a2)
+        assert a1.employee_id == emp2.id
+        assert a2.employee_id == employee.id

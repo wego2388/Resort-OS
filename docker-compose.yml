@@ -1,0 +1,31 @@
+services:
+
+  db_postgres:
+    image: postgres:16
+    restart: unless-stopped
+    ports: ["5436:5432"]
+    environment:
+      POSTGRES_DB: resort_os
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-resort_dev_pass}
+    volumes: ["resort_pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis_cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports: ["6381:6379"]
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes: ["resort_redisdata:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  resort_pgdata:
+  resort_redisdata:
