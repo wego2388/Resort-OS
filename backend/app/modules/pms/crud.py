@@ -12,7 +12,7 @@ from app.modules.pms.models import (
     Booking, BookingRoom, HousekeepingTask, NightAuditLog, RatePlan, Room, RoomType,
 )
 from app.modules.pms.schemas import (
-    BookingCreate, RoomCreate, RoomTypeCreate, RoomStatusUpdate,
+    BookingCreate, RoomCreate, RoomTypeCreate,
 )
 
 

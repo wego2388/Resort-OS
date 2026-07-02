@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, Base, get_engine
 from app.core.config import settings
-from app.core.module_loader import MODULE_REGISTRY
 
 
 def seed_all(db: Session, *, reset: bool = False) -> None:
@@ -36,7 +35,6 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     print("🌱 Seeding data...")
     _seed_branch(db)
     _seed_super_admin(db)
-    _seed_module_states(db)
     _seed_social_insurance(db)
     _seed_tax_brackets(db)
     _seed_settings(db)
@@ -99,29 +97,6 @@ def _seed_super_admin(db: Session) -> None:
         "is_active": True,
     })
     print("  ✓ Super admin created (admin@resortos.local / change password immediately!)")
-
-
-def _seed_module_states(db: Session) -> None:
-    """ينشئ global module states من default_enabled في MODULE_REGISTRY."""
-    from app.modules.core.models import ModuleState
-
-    existing = {r.module_key for r in db.query(ModuleState).filter(
-        ModuleState.branch_id.is_(None)
-    ).all()}
-
-    for key, defn in MODULE_REGISTRY.items():
-        if key in existing:
-            continue
-        if defn.always_on:
-            continue  # always_on لا تحتاج صف في DB
-        db.add(ModuleState(
-            module_key=key,
-            enabled=defn.default_enabled,
-            branch_id=None,   # global
-        ))
-
-    db.flush()
-    print("  ✓ Module states seeded")
 
 
 def _seed_social_insurance(db: Session) -> None:

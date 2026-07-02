@@ -12,7 +12,7 @@ interface CostCenterLine { code: string; name: string; revenue: number; source: 
 
 const checks = ref<Check[]>([])
 const accounts = ref<Account[]>([])
-const financeData = ref<{ total_revenue: number; total_expense: number; net_profit: number } | null>(null)
+const financeData = ref<{ total_revenue: number; total_expense: number; net_income: number } | null>(null)
 const loading = ref(false)
 
 // ── Cost Centers ─────────────────────────────────────────────────────
@@ -48,8 +48,15 @@ async function loadTab(t: typeof tab.value) {
   loading.value = true
   try {
     if (t === 'overview') {
-      const res = await axios.get('/api/v1/finance/dashboard', { headers: h, params: { branch_id: branchId } })
-      financeData.value = res.data
+      const res = await axios.get('/api/v1/finance/reports/income-statement', {
+        headers: h,
+        params: { branch_id: branchId, date_from: firstOfMonth, date_to: today },
+      })
+      financeData.value = {
+        total_revenue: Number(res.data.total_revenue),
+        total_expense: Number(res.data.total_expense),
+        net_income: Number(res.data.net_income),
+      }
     } else if (t === 'checks') {
       const res = await axios.get('/api/v1/finance/checks', { headers: h, params: { branch_id: branchId } })
       checks.value = res.data.checks ?? res.data.items ?? res.data
@@ -103,8 +110,8 @@ onMounted(() => loadTab('overview'))
         </div>
         <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm text-center">
           <div class="text-sm text-gray-500 mb-2">صافي الربح</div>
-          <div :class="['text-3xl font-black', financeData.net_profit >= 0 ? 'text-blue-700' : 'text-red-500']">
-            {{ financeData.net_profit.toLocaleString('ar-EG') }}
+          <div :class="['text-3xl font-black', financeData.net_income >= 0 ? 'text-blue-700' : 'text-red-500']">
+            {{ financeData.net_income.toLocaleString('ar-EG') }}
           </div>
           <div class="text-xs text-gray-400 mt-1">جنيه</div>
         </div>

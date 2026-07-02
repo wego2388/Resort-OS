@@ -17,22 +17,6 @@ export interface Branch {
   is_active: boolean
 }
 
-// Mirrors the real GET /api/v1/modules response shape (app/modules/core/api/router.py
-// list_modules) — this previously listed `name`/`path`/`is_enabled`, none of which the
-// backend actually returns (`name_en`/`enabled` instead), so `isEnabled()` below always
-// evaluated to false. Never caught before because nothing called it (dead code) until
-// the staff app's router guard started using it for real (2026-07-01).
-export interface Module {
-  key: string
-  name_ar: string
-  name_en: string
-  icon: string
-  enabled: boolean
-  always_on: boolean
-  default_enabled: boolean
-  depends_on: string[]
-  nav_order: number
-}
 
 export interface ApiResponse<T> {
   data: T

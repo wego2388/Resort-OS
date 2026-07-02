@@ -8,12 +8,11 @@
 // display.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAuthStore, useModulesStore } from '@resort-os/core'
+import { useAuthStore } from '@resort-os/core'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const modules = useModulesStore()
 
 const currentTime = ref('')
 function updateClock() {
@@ -25,11 +24,10 @@ let clockInterval: ReturnType<typeof setInterval> | null = null
 onMounted(() => { updateClock(); clockInterval = setInterval(updateClock, 1000) })
 onUnmounted(() => { if (clockInterval) clearInterval(clockInterval) })
 
-const allNavItems = [
-  { path: '/kds/kitchen', label: 'المطبخ', icon: '🍳', module: 'restaurant' },
-  { path: '/kds/bar', label: 'البار', icon: '🍹', module: 'restaurant' },
+const navItems = [
+  { path: '/kds/kitchen', label: 'المطبخ', icon: '🍳' },
+  { path: '/kds/bar', label: 'البار', icon: '🍹' },
 ]
-const navItems = computed(() => allNavItems.filter((item) => modules.isEnabled(item.module)))
 
 function logout() {
   auth.logout()

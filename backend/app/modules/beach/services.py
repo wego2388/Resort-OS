@@ -86,6 +86,16 @@ def sell_ticket(
     cap_delta, towel_delta = calculate_inventory_delta(data.tx_type, data.quantity)
     crud.apply_inventory_delta(db, inv_row, cap_delta, towel_delta)
 
+    # ربط العملية بوردية الكاشير المفتوحة (لو موجودة) — نفس الباترن المستخدم
+    # في finance.services.add_payment، عشان مبيعات الشاطئ تظهر في تقرير نهاية
+    # الوردية بدل ما تفضل غير مرتبطة بأي وردية.
+    shift_id = None
+    if data.cashier_id:
+        from app.modules.finance.crud import get_open_shift  # noqa: PLC0415
+        open_shift = get_open_shift(db, branch_id, data.cashier_id)
+        if open_shift:
+            shift_id = open_shift.id
+
     tx = crud.create_transaction(db, {
         "branch_id":       branch_id,
         "tx_type":         data.tx_type,
@@ -99,6 +109,7 @@ def sell_ticket(
         "folio_id":        data.folio_id,
         "b2b_contract_id": data.b2b_contract_id,
         "notes":           data.notes,
+        "shift_id":        shift_id,
     })
 
     _post_beach_revenue_journal(db, tx)
@@ -217,7 +228,7 @@ def b2b_checkin(
     return tx
 
 
-def void_transaction(db: Session, tx_id: int, voided_by: int) -> BeachTransaction:
+def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> BeachTransaction:
     tx = crud.get_transaction(db, tx_id)
     if not tx:
         raise ValueError(f"العملية {tx_id} غير موجودة")
@@ -229,7 +240,7 @@ def void_transaction(db: Session, tx_id: int, voided_by: int) -> BeachTransactio
     cap_delta, towel_delta = calculate_inventory_delta(tx.tx_type, tx.quantity)
     crud.apply_inventory_delta(db, inv_row, -cap_delta, -towel_delta)
 
-    tx = crud.void_transaction(db, tx, voided_by)
+    tx = crud.void_transaction(db, tx, voided_by, reason)
     db.commit()
     db.refresh(tx)
     return tx
@@ -449,7 +460,6 @@ def check_in_reservation(
 
 
 def create_reservation(db: Session, data: BeachReservationCreate) -> "BeachReservation":
-    from app.modules.beach.models import BeachReservation  # noqa: PLC0415
     # حساب التكلفة التقديرية
     base_prices = _get_base_prices(db, data.branch_id)
     tx_type = "entry_towel" if data.with_towel else "entry"

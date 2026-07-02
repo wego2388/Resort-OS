@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ConditionalDiscountCreate(BaseModel):
@@ -44,6 +44,9 @@ class FolioCreate(BaseModel):
     guest_name: str = Field(..., max_length=200)
     check_in:   datetime
     check_out:  datetime
+    currency:   str = Field("EGP", pattern=r"^[A-Z]{3}$")
+    # عملة الفوليو — ثابتة طول عمره، افتراضها EGP للتوافق مع أي كود قديم
+    # مابيبعتش الحقل ده أصلاً.
 
 
 class FolioUpdate(BaseModel):
@@ -76,6 +79,7 @@ class FolioRead(BaseModel):
     check_out:  datetime
     status:     str
     total:      Decimal
+    currency:   str
     charges:    list[FolioChargeRead] = []
     created_at: datetime
     updated_at: datetime
@@ -109,6 +113,7 @@ class PaymentRead(BaseModel):
     folio_id:  int
     branch_id: int
     amount:    Decimal
+    currency:  str
     method:    str
     reference: Optional[str]
     notes:     Optional[str]
@@ -128,9 +133,28 @@ class CashierShiftOpen(BaseModel):
     notes:         Optional[str] = Field(None, max_length=1000)
 
 
+class CashCountLine(BaseModel):
+    denomination: Decimal = Field(..., gt=0)
+    quantity:     int     = Field(..., ge=0)
+
+
+class CashCountLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    denomination: Decimal
+    quantity:     int
+    subtotal:     Decimal
+
+
 class CashierShiftClose(BaseModel):
-    counted_cash: Decimal = Field(..., ge=0)
+    counted_cash: Optional[Decimal] = Field(None, ge=0)
+    cash_count:   Optional[list[CashCountLine]] = None
     notes:        Optional[str] = Field(None, max_length=1000)
+
+    @model_validator(mode="after")
+    def _require_counted_amount(self) -> "CashierShiftClose":
+        if self.counted_cash is None and not self.cash_count:
+            raise ValueError("لازم تدخل المبلغ المعدود (counted_cash) أو تفاصيل عدّ الفئات (cash_count)")
+        return self
 
 
 class CashierShiftRead(BaseModel):
@@ -172,9 +196,13 @@ class ShiftEndReport(BaseModel):
     expected_cash:         Decimal
     counted_cash:          Optional[Decimal]
     variance:              Optional[Decimal]
+    cash_count:            list[CashCountLineRead] = Field(default_factory=list)
     previous_shift_id:     Optional[int]
     previous_total_sales:  Optional[Decimal]
     delta_vs_previous:     Optional[Decimal]
+    reporting_currency:    str = "EGP"
+    # كل الإجماليات هنا EGP equivalent — أي دفعة بعملة غير EGP بتتحوّل بسعر
+    # الصرف وقت تاريخ الدفعة قبل الجمع (راجع build_shift_end_report).
 
 
 class DiscountCalculateRequest(BaseModel):
@@ -362,14 +390,50 @@ class CostCenterReportLine(BaseModel):
 
 
 class CostCenterReport(BaseModel):
-    branch_id:     int
-    date_from:     date
-    date_to:       date
-    lines:         list[CostCenterReportLine]
-    total_revenue: Decimal
+    branch_id:          int
+    date_from:          date
+    date_to:            date
+    lines:              list[CostCenterReportLine]
+    total_revenue:      Decimal
+    reporting_currency: str = "EGP"
+    # المصدر "direct" (REST/CAFE/BEACH) بيقرأ folio_charges/beach_transactions
+    # مباشرة — لو الفوليو بعملة غير EGP بيتحوّل هنا لـ EGP equivalent بسعر
+    # الصرف وقت الحركة نفسها قبل الجمع، عشان الفوليوهات المختلطة العملة ما
+    # تدّيش رقم غلط.
+
+
+# ── Exchange Rates (Multi-Currency) ───────────────────────────────────
+# ⚠️ الأسعار المزروعة افتراضياً (ensure_default_exchange_rates في services.py)
+# قيم dummy للتطوير/العرض فقط — مش أسعار حية. الإنتاج الحقيقي محتاج ربط
+# بمصدر رسمي (البنك المركزي المصري مثلاً) بدل الإدخال اليدوي/الافتراضي.
+
+class ExchangeRateCreate(BaseModel):
+    from_currency:  str = Field(..., pattern=r"^[A-Z]{3}$")
+    to_currency:    str = Field(..., pattern=r"^[A-Z]{3}$")
+    rate:           Decimal = Field(..., gt=0)
+    effective_date: date
+
+
+class ExchangeRateRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:             int
+    from_currency:  str
+    to_currency:    str
+    rate:           Decimal
+    effective_date: date
+    created_by:     int
+    created_at:     datetime
+    updated_at:     datetime
 
 
 # ── Financial Reports (Trial Balance / Income Statement / Balance Sheet) ─
+# ملاحظة عن العملة: دفتر اليومية (JournalEntry/JournalLine) نفسه لا يحمل حقل
+# عملة — كل موديول بيرحّل له (pms/restaurant/cafe/beach/hr/...) بيستخدم مبلغه
+# الأصلي بافتراض إنه EGP بالفعل (مفيش تحويل عملة داخل أي من هذه المسارات
+# اليوم). الفوليو/الدفعة (Folio/Payment) نظام موازٍ منفصل للفوترة، ومش بيترحّل
+# تلقائياً لدفتر اليومية. فالتقارير دي EGP-only بالفعل اليوم بحكم البنية —
+# `reporting_currency` هنا توثيق صريح لهذه الحقيقة (مش تحويل فعلي لأي قيمة)،
+# وتجهيز لو حصل ترحيل multi-currency فعلي لدفتر اليومية مستقبلاً.
 
 class TrialBalanceLine(BaseModel):
     account_code: str
@@ -380,12 +444,13 @@ class TrialBalanceLine(BaseModel):
 
 
 class TrialBalanceReport(BaseModel):
-    branch_id:    int
-    as_of:        date
-    lines:        list[TrialBalanceLine]
-    total_debit:  Decimal
-    total_credit: Decimal
-    is_balanced:  bool
+    branch_id:          int
+    as_of:              date
+    lines:              list[TrialBalanceLine]
+    total_debit:        Decimal
+    total_credit:       Decimal
+    is_balanced:        bool
+    reporting_currency: str = "EGP"
 
 
 class IncomeStatementLine(BaseModel):
@@ -395,14 +460,15 @@ class IncomeStatementLine(BaseModel):
 
 
 class IncomeStatementReport(BaseModel):
-    branch_id:      int
-    date_from:      date
-    date_to:        date
-    revenue_lines:  list[IncomeStatementLine]
-    expense_lines:  list[IncomeStatementLine]
-    total_revenue:  Decimal
-    total_expense:  Decimal
-    net_income:     Decimal
+    branch_id:          int
+    date_from:          date
+    date_to:            date
+    revenue_lines:      list[IncomeStatementLine]
+    expense_lines:      list[IncomeStatementLine]
+    total_revenue:      Decimal
+    total_expense:      Decimal
+    net_income:         Decimal
+    reporting_currency: str = "EGP"
 
 
 class BalanceSheetLine(BaseModel):
@@ -423,3 +489,4 @@ class BalanceSheetReport(BaseModel):
     total_equity:                 Decimal
     total_liabilities_and_equity: Decimal
     is_balanced:                  bool
+    reporting_currency:           str = "EGP"

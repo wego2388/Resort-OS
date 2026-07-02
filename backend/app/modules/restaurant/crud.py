@@ -11,7 +11,7 @@ from app.modules.restaurant.models import (
     MenuItemExtraGroup, Order, OrderItem, OrderItemExtra,
 )
 from app.modules.restaurant.schemas import (
-    MenuCategoryCreate, MenuItemCreate, MenuItemExtraGroupCreate, MenuItemUpdate, OrderCreate,
+    MenuCategoryCreate, MenuItemCreate, MenuItemExtraGroupCreate, MenuItemUpdate,
 )
 
 
@@ -173,7 +173,6 @@ def create_order_with_items(
     client_local_id: Optional[str] = None,
     status: str = "open",
 ) -> Order:
-    from decimal import Decimal
     order = Order(
         branch_id=branch_id,
         order_number=order_number,

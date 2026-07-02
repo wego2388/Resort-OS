@@ -17,7 +17,7 @@ def check_due_reminders(self):
     """
     try:
         from app.core.database import SessionLocal              # noqa: PLC0415
-        from app.modules.core.models import Branch, Notification # noqa: PLC0415
+        from app.modules.core.models import Branch # noqa: PLC0415
 
         today  = date.today()
         remind = today + timedelta(days=3)
@@ -39,7 +39,6 @@ def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
     """تذكيرات أقساط التايم شير."""
     try:
         from app.modules.timeshare.models import TimeshareInstallment  # noqa: PLC0415
-        from app.resort_os.timeshare_engine import should_send_installment_reminder  # noqa: PLC0415
         dues = (
             db.query(TimeshareInstallment)
             .filter(

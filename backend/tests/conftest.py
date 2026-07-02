@@ -142,7 +142,7 @@ def db(setup_db) -> Generator[Session, None, None]:
 def app(fake_redis):
     """FastAPI app مهيّأة للاختبار."""
     from app.main import create_app  # noqa: PLC0415
-    from app.core.deps import get_db, get_redis  # noqa: PLC0415
+    from app.core.deps import get_db  # noqa: PLC0415
 
     application = create_app()
 
@@ -150,11 +150,7 @@ def app(fake_redis):
     def _override_get_db():
         yield from get_test_db()
 
-    def _override_get_redis():
-        return fake_redis
-
     application.dependency_overrides[get_db] = _override_get_db
-    application.dependency_overrides[get_redis] = _override_get_redis
 
     return application
 
@@ -334,42 +330,6 @@ def celery_eager_mode():
         celery_app.conf.task_always_eager = False
     except ImportError:
         yield  # Celery غير موجود بعد — تجاهل
-
-
-# ─── Module Toggle Helper ─────────────────────────────────────────────
-#
-# Several modules default to `default_enabled=False` in MODULE_REGISTRY
-# (beach, pms, timeshare, leasing, crm, hub — see app/core/module_loader.py).
-# HTTP-level tests go through the real `require_module()` dependency, so a
-# freshly-created Branch with no ModuleState row will 403 with MODULE_DISABLED
-# on any of those modules' endpoints. Service-level tests never hit this
-# because they call services.xxx() directly, bypassing the router entirely.
-# Use this helper (committed, not flushed) to enable a module for a branch
-# (or globally if branch_id=None) before exercising its HTTP endpoints.
-#
-# ⚠️ is_module_enabled() caches the FULL enabled-module SET per branch_id in
-# Redis for 60s (module_loader.CACHE_TTL). Since `fake_redis` is a
-# session-scoped fixture shared by every test in the run, an earlier test
-# (e.g. one exercising the beach module) can poison the cache for a later
-# test (e.g. pms) within the same 60s window — the cached snapshot simply
-# won't have "pms" in its enabled set yet. That's why this helper takes the
-# `fake_redis` client explicitly and flushes it after every DB write, so the
-# very next request always recomputes the enabled-set fresh from DB.
-
-def enable_module_for_branch(db, fake_redis, module_key: str, branch_id: int | None = None) -> None:
-    from app.modules.core.models import ModuleState  # noqa: PLC0415
-
-    existing = (
-        db.query(ModuleState)
-        .filter(ModuleState.module_key == module_key, ModuleState.branch_id == branch_id)
-        .first()
-    )
-    if existing:
-        existing.enabled = True
-    else:
-        db.add(ModuleState(module_key=module_key, enabled=True, branch_id=branch_id))
-    db.commit()
-    fake_redis.flushall()
 
 
 # ─── Discount Engine Test Helpers ────────────────────────────────────

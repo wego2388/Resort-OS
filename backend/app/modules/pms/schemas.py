@@ -58,10 +58,6 @@ class BookingCreate(BaseModel):
     room_ids:          list[int] = Field(..., min_length=1)
     notes:             Optional[str] = None
 
-    def validate_dates(self) -> None:
-        if self.check_out <= self.check_in:
-            raise ValueError("check_out يجب أن يكون بعد check_in")
-
 
 class BookingRoomRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)

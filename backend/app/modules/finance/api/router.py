@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_db, get_manager_user, rate_limit_dep, require_module,
+    get_current_active_user, get_db, get_manager_user, rate_limit_dep,
 )
 from app.modules.finance import crud, services
 from app.modules.finance.schemas import (
@@ -21,6 +21,7 @@ from app.modules.finance.schemas import (
     ConditionalDiscountCreate, ConditionalDiscountRead, ConditionalDiscountUpdate,
     CostCenterCreate, CostCenterRead, CostCenterReport,
     DiscountCalculateRequest, ETAInvoiceRead, ETAInvoiceSubmitRequest,
+    ExchangeRateCreate, ExchangeRateRead,
     FolioChargeCreate, FolioChargeRead,
     FolioCreate, FolioRead, IncomeStatementReport, JournalEntryCreate, JournalEntryRead,
     PaymentCreate, PaymentRead,
@@ -29,12 +30,11 @@ from app.modules.finance.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["finance"])
-_guard = Depends(require_module("finance"))
 
 
 # ── Folios ────────────────────────────────────────────────────────────
 
-@router.get("/finance/folios", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/finance/folios", response_model=PaginatedResponse)
 def list_folios(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -52,12 +52,12 @@ def list_folios(
 
 
 @router.post("/finance/folios", response_model=FolioRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_folio(data: FolioCreate, db: DbDep, _=Depends(get_cashier_user)):
     return services.create_folio(db, data)
 
 
-@router.get("/finance/folios/{folio_id}", response_model=FolioRead, dependencies=[_guard])
+@router.get("/finance/folios/{folio_id}", response_model=FolioRead)
 def get_folio(folio_id: int, db: DbDep, _=Depends(get_current_active_user)):
     folio = crud.get_folio(db, folio_id)
     if not folio:
@@ -67,7 +67,7 @@ def get_folio(folio_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 @router.post("/finance/folios/{folio_id}/charges",
              response_model=FolioChargeRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def post_charge(folio_id: int, data: FolioChargeCreate, db: DbDep, _=Depends(get_cashier_user)):
     try:
         return services.post_charge(db, folio_id, data)
@@ -76,7 +76,7 @@ def post_charge(folio_id: int, data: FolioChargeCreate, db: DbDep, _=Depends(get
 
 
 @router.post("/finance/folios/{folio_id}/settle",
-             response_model=FolioRead, dependencies=[_guard])
+             response_model=FolioRead)
 def settle_folio(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         return services.settle_folio(db, folio_id)
@@ -86,7 +86,7 @@ def settle_folio(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
 
 @router.post("/finance/folios/{folio_id}/payments",
              response_model=PaymentRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depends(get_cashier_user)):
     try:
         return services.add_payment(db, folio_id, data, cashier_id=user.id)
@@ -94,7 +94,7 @@ def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depends(get_
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/finance/folios/{folio_id}/statement/pdf", dependencies=[_guard])
+@router.get("/finance/folios/{folio_id}/statement/pdf")
 def download_folio_statement_pdf(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         pdf = services.generate_folio_statement_pdf(db, folio_id)
@@ -107,7 +107,7 @@ def download_folio_statement_pdf(folio_id: int, db: DbDep, _=Depends(get_cashier
     )
 
 
-@router.get("/finance/folios/report/export", dependencies=[_guard])
+@router.get("/finance/folios/report/export")
 def download_folios_report_excel(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -126,7 +126,7 @@ def download_folios_report_excel(
 # ── Cashier Shift / Safe (POS Day) ──────────────────────────────────────
 
 @router.post("/finance/shifts/open", response_model=CashierShiftRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def open_shift(data: CashierShiftOpen, db: DbDep, user=Depends(get_cashier_user)):
     try:
         return services.open_shift(db, user.id, user.id, data)
@@ -134,7 +134,7 @@ def open_shift(data: CashierShiftOpen, db: DbDep, user=Depends(get_cashier_user)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/finance/shifts/current", response_model=CashierShiftRead, dependencies=[_guard])
+@router.get("/finance/shifts/current", response_model=CashierShiftRead)
 def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int = Query(...)):
     shift = crud.get_open_shift(db, branch_id, user.id)
     if not shift:
@@ -142,7 +142,7 @@ def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int 
     return CashierShiftRead.model_validate(shift)
 
 
-@router.get("/finance/shifts", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/finance/shifts", response_model=PaginatedResponse)
 def list_shifts(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -156,7 +156,7 @@ def list_shifts(
                              items=[CashierShiftRead.model_validate(s) for s in items])
 
 
-@router.get("/finance/shifts/{shift_id}/report", response_model=ShiftEndReport, dependencies=[_guard])
+@router.get("/finance/shifts/{shift_id}/report", response_model=ShiftEndReport)
 def shift_end_report(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         return services.build_shift_end_report(db, shift_id)
@@ -164,7 +164,7 @@ def shift_end_report(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
-@router.get("/finance/shifts/{shift_id}/report/pdf", dependencies=[_guard])
+@router.get("/finance/shifts/{shift_id}/report/pdf")
 def download_shift_end_report_pdf(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         pdf = services.generate_shift_end_report_pdf(db, shift_id)
@@ -177,7 +177,7 @@ def download_shift_end_report_pdf(shift_id: int, db: DbDep, _=Depends(get_cashie
     )
 
 
-@router.post("/finance/shifts/{shift_id}/close", response_model=CashierShiftRead, dependencies=[_guard])
+@router.post("/finance/shifts/{shift_id}/close", response_model=CashierShiftRead)
 def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(get_cashier_user)):
     try:
         return services.close_shift(db, shift_id, user.id, data)
@@ -187,7 +187,7 @@ def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(
 
 # ── Discounts ─────────────────────────────────────────────────────────
 
-@router.get("/finance/discounts", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/finance/discounts", response_model=PaginatedResponse)
 def list_discounts(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -203,7 +203,7 @@ def list_discounts(
 
 
 @router.post("/finance/discounts", response_model=ConditionalDiscountRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_discount(data: ConditionalDiscountCreate, db: DbDep, _=Depends(get_admin_user)):
     try:
         return services.create_discount(db, data)
@@ -212,7 +212,7 @@ def create_discount(data: ConditionalDiscountCreate, db: DbDep, _=Depends(get_ad
 
 
 @router.patch("/finance/discounts/{discount_id}",
-              response_model=ConditionalDiscountRead, dependencies=[_guard])
+              response_model=ConditionalDiscountRead)
 def update_discount(
     discount_id: int, data: ConditionalDiscountUpdate,
     db: DbDep, _=Depends(get_admin_user),
@@ -227,7 +227,7 @@ def update_discount(
 
 
 @router.delete("/finance/discounts/{discount_id}",
-               status_code=status.HTTP_204_NO_CONTENT, dependencies=[_guard])
+               status_code=status.HTTP_204_NO_CONTENT)
 def delete_discount(discount_id: int, db: DbDep, _=Depends(get_admin_user)):
     discount = crud.get_discount(db, discount_id)
     if not discount:
@@ -236,7 +236,7 @@ def delete_discount(discount_id: int, db: DbDep, _=Depends(get_admin_user)):
     db.commit()
 
 
-@router.post("/finance/calculate-discount", dependencies=[_guard])
+@router.post("/finance/calculate-discount")
 def calculate_discount_endpoint(
     data: DiscountCalculateRequest, db: DbDep, _=Depends(get_current_active_user)
 ):
@@ -257,7 +257,7 @@ def calculate_discount_endpoint(
 
 # ── Accounts (Chart of Accounts) ─────────────────────────────────────
 
-@router.get("/finance/accounts", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/finance/accounts", response_model=PaginatedResponse)
 def list_accounts(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -273,7 +273,7 @@ def list_accounts(
 
 
 @router.post("/finance/accounts", response_model=AccountRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         account = crud.create_account(db, data)
@@ -287,7 +287,7 @@ def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
 # ── Journal Entries ───────────────────────────────────────────────────
 
 @router.post("/finance/journal-entries", response_model=JournalEntryRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def post_journal_entry(
     data: JournalEntryCreate,
     db: DbDep,
@@ -300,7 +300,7 @@ def post_journal_entry(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/finance/journal-entries", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/finance/journal-entries", response_model=PaginatedResponse)
 def list_journal_entries(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -319,8 +319,7 @@ def list_journal_entries(
                              items=[JournalEntryRead.model_validate(e) for e in items])
 
 
-@router.get("/finance/journal-entries/{entry_id}", response_model=JournalEntryRead,
-            dependencies=[_guard])
+@router.get("/finance/journal-entries/{entry_id}", response_model=JournalEntryRead)
 def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_manager_user)):
     entry = crud.get_journal_entry(db, entry_id)
     if not entry:
@@ -330,7 +329,7 @@ def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 # ── Accounting Periods ────────────────────────────────────────────────
 
-@router.get("/finance/periods", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/finance/periods", response_model=PaginatedResponse)
 def list_periods(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -343,8 +342,7 @@ def list_periods(
                              items=[AccountingPeriodRead.model_validate(p) for p in items])
 
 
-@router.post("/finance/periods/{year}/{month}/close", response_model=AccountingPeriodRead,
-             dependencies=[_guard])
+@router.post("/finance/periods/{year}/{month}/close", response_model=AccountingPeriodRead)
 def close_period(
     year: int,
     month: int,
@@ -363,7 +361,7 @@ def close_period(
 
 # ── Checks ────────────────────────────────────────────────────────────
 
-@router.get("/finance/checks", response_model=list[CheckRead], dependencies=[_guard])
+@router.get("/finance/checks", response_model=list[CheckRead])
 def list_checks_endpoint(
     branch_id: int = Query(...),
     status: str | None = Query(None),
@@ -374,7 +372,7 @@ def list_checks_endpoint(
     return [CheckRead.model_validate(c) for c in checks]
 
 @router.post("/finance/checks", response_model=CheckRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_check_endpoint(
     data: CheckCreate,
     db: Session = Depends(get_db),
@@ -385,7 +383,7 @@ def create_check_endpoint(
     check = crud.create_check(db, payload)
     return CheckRead.model_validate(check)
 
-@router.patch("/finance/checks/{check_id}/status", response_model=CheckRead, dependencies=[_guard])
+@router.patch("/finance/checks/{check_id}/status", response_model=CheckRead)
 def move_check_status_endpoint(
     check_id: int,
     body: CheckMoveStatus,
@@ -401,7 +399,7 @@ def move_check_status_endpoint(
 
 # ── Cost Centers ─────────────────────────────────────────────────────
 
-@router.get("/finance/cost-centers", response_model=list[CostCenterRead], dependencies=[_guard])
+@router.get("/finance/cost-centers", response_model=list[CostCenterRead])
 def list_cost_centers(db: DbDep, _=Depends(get_manager_user),
                       branch_id: int = Query(...), active_only: bool = Query(True)):
     return [CostCenterRead.model_validate(c)
@@ -409,14 +407,14 @@ def list_cost_centers(db: DbDep, _=Depends(get_manager_user),
 
 
 @router.post("/finance/cost-centers", response_model=CostCenterRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_cost_center(data: CostCenterCreate, db: DbDep, _=Depends(get_admin_user)):
     obj = crud.create_cost_center(db, data)
     db.commit(); db.refresh(obj)
     return CostCenterRead.model_validate(obj)
 
 
-@router.get("/finance/cost-centers/report", response_model=CostCenterReport, dependencies=[_guard])
+@router.get("/finance/cost-centers/report", response_model=CostCenterReport)
 def cost_center_report(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -426,9 +424,33 @@ def cost_center_report(
     return services.get_cost_center_report(db, branch_id, date_from, date_to)
 
 
+# ── Exchange Rates (Multi-Currency) ──────────────────────────────────
+
+@router.get("/finance/exchange-rates", response_model=PaginatedResponse)
+def list_exchange_rates(
+    db: DbDep, _=Depends(get_current_active_user),
+    from_currency: Optional[str] = Query(None),
+    to_currency: Optional[str] = Query(None),
+    page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=200),
+):
+    items, total = services.list_exchange_rates(db, from_currency, to_currency, (page - 1) * size, size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[ExchangeRateRead.model_validate(r) for r in items])
+
+
+@router.post("/finance/exchange-rates", response_model=ExchangeRateRead,
+             status_code=status.HTTP_201_CREATED)
+def create_exchange_rate(data: ExchangeRateCreate, db: DbDep, user=Depends(get_manager_user)):
+    try:
+        obj = services.create_exchange_rate(db, data, created_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return ExchangeRateRead.model_validate(obj)
+
+
 # ── Financial Reports ─────────────────────────────────────────────────
 
-@router.get("/finance/reports/trial-balance", response_model=TrialBalanceReport, dependencies=[_guard])
+@router.get("/finance/reports/trial-balance", response_model=TrialBalanceReport)
 def trial_balance_report(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -439,7 +461,7 @@ def trial_balance_report(
     return services.get_trial_balance(db, branch_id, as_of)
 
 
-@router.get("/finance/reports/income-statement", response_model=IncomeStatementReport, dependencies=[_guard])
+@router.get("/finance/reports/income-statement", response_model=IncomeStatementReport)
 def income_statement_report(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -450,7 +472,7 @@ def income_statement_report(
     return services.get_income_statement(db, branch_id, date_from, date_to)
 
 
-@router.get("/finance/reports/balance-sheet", response_model=BalanceSheetReport, dependencies=[_guard])
+@router.get("/finance/reports/balance-sheet", response_model=BalanceSheetReport)
 def balance_sheet_report(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -469,7 +491,7 @@ def balance_sheet_report(
     "/finance/eta/invoices",
     response_model=ETAInvoiceRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[_guard, Depends(rate_limit_dep("eta", 100, 60))],
+    dependencies=[Depends(rate_limit_dep("eta", 100, 60))],
 )
 async def submit_eta_invoice(
     data: ETAInvoiceSubmitRequest,
@@ -486,7 +508,6 @@ async def submit_eta_invoice(
 @router.get(
     "/finance/eta/invoices",
     response_model=PaginatedResponse,
-    dependencies=[_guard],
 )
 def list_eta_invoices(
     db: DbDep, _user=Depends(get_manager_user),
@@ -502,7 +523,6 @@ def list_eta_invoices(
 @router.get(
     "/finance/eta/invoices/{invoice_id}",
     response_model=ETAInvoiceRead,
-    dependencies=[_guard],
 )
 def get_eta_invoice(invoice_id: int, db: DbDep, _user=Depends(get_manager_user)):
     invoice = crud.get_eta_invoice(db, invoice_id)

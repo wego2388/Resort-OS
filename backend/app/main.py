@@ -4,6 +4,8 @@ FastAPI application factory — نقطة دخول المشروع كاملة
 """
 from __future__ import annotations
 
+import importlib
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -18,19 +20,35 @@ from wego_core.correlation import CorrelationMiddleware
 from wego_core.monitoring.sentry import setup_sentry
 
 from app.core.config import settings
-from app.core.module_loader import register_all_routes
 from app.core.rate_limit import RateLimitMiddleware
+
+logger = logging.getLogger(__name__)
+
+# كل الموديولات دايمًا مفعّلة — مفيش نظام تفعيل/تعطيل. القايمة هنا بس لتحديد
+# ترتيب الـ router registration، مش لأي قرار وصول.
+_MODULE_KEYS = (
+    "core", "finance", "inventory", "hr", "restaurant", "cafe", "pms",
+    "timeshare", "beach", "maintenance", "crm", "analytics", "hub", "leasing",
+)
+
+
+def _register_all_routes(app: FastAPI) -> None:
+    """يُسجّل routers كل الموديولات عند startup — كلها دايمًا شغالة."""
+    for key in _MODULE_KEYS:
+        try:
+            mod = importlib.import_module(f"app.modules.{key}.api.router")
+            app.include_router(mod.router, prefix="/api/v1")
+            logger.info("✓ Router registered: %s", key)
+        except ModuleNotFoundError:
+            logger.debug("Router not yet implemented: %s — skipped", key)
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    يُسجّل كل routes عند startup.
-    لا تحكم هنا في الـ modules — require_module() dependency يتولى ذلك.
-    """
-    register_all_routes(app)
+    """يُسجّل كل routes عند startup."""
+    _register_all_routes(app)
     yield
 
 
@@ -83,7 +101,7 @@ def create_app() -> FastAPI:
     from app.core.me_router import router as me_router  # noqa: PLC0415
     app.include_router(me_router, prefix=f"{settings.API_PREFIX}/auth", tags=["auth"])
 
-    # باقي الـ routes تُسجَّل في lifespan عبر register_all_routes()
+    # باقي الـ routes تُسجَّل في lifespan عبر _register_all_routes()
 
     return app
 

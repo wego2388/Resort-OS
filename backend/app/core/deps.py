@@ -1,49 +1,22 @@
 """
 app/core/deps.py
 ═══════════════════════════════════════════════════════════════════════
-FastAPI Dependencies — Auth + Module Guard
-
-الاستخدام:
-    @router.get("/orders")
-    async def list_orders(
-        _: None = Depends(require_module("restaurant")),
-        user: User = Depends(get_current_active_user),
-        db: Session = Depends(get_db),
-    ):
-        ...
+FastAPI Dependencies — Auth
 ═══════════════════════════════════════════════════════════════════════
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
 from typing import Annotated
 
-import redis as redis_lib
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_db  # noqa: F401 — re-export; same callable wego_core's auth router uses
-from app.core.module_loader import MODULE_REGISTRY, is_module_enabled
 
 
 DbDep = Annotated[Session, Depends(get_db)]
-
-
-# ─────────────────────── Redis ───────────────────────────────────────
-
-@lru_cache
-def _get_redis_client() -> redis_lib.Redis:
-    settings = get_settings()
-    return redis_lib.from_url(settings.REDIS_URL, decode_responses=True)
-
-
-def get_redis() -> redis_lib.Redis:
-    return _get_redis_client()
-
-
-RedisDep = Annotated[redis_lib.Redis, Depends(get_redis)]
 
 
 # ─────────────────────── Auth ────────────────────────────────────────
@@ -190,44 +163,50 @@ def get_waiter_user(user=Depends(get_current_active_user)):
     return user
 
 
-# ─────────────────────── Module Guard ────────────────────────────────
+# ─────────────────────── Permission Matrix (fine-grained) ─────────────
+# طبقة إضافية فوق ROLE_LEVELS — "screen/action permission" زي
+# UsersScreenAccessDetails في نظام Trucker القديم، بس هنا additive مش
+# breaking: مفيش أي مستخدم عليه صف UserPermission صريح → يسلك تماماً زي
+# النظام الحالي (role level فقط). راجع app/modules/core/services.py::has_permission
+# و app/modules/core/models.py::UserPermission للتفاصيل الكاملة.
+#
+# الاستخدام (defense-in-depth — بيتضاف جنب role dependency الموجودة، مش بدلها):
+#     @router.post(
+#         "/finance/payments/{id}/void",
+#         dependencies=[Depends(require_permission("finance.void_payment", "execute"))],
+#     )
+#     def void_payment(..., user=Depends(get_cashier_user), ...):
+#         ...
+#
+# min_role_level بيمثّل "الحد المعتاد" لهذا الـ resource.action تحديداً
+# (ممكن يكون أعلى من role dependency الأساسية الموجودة على الـ endpoint —
+# ده بالظبط اللي بيسمح بمنح استثناء لمستخدم أقل role من الحد المعتاد).
 
-def require_module(module_key: str):
+def require_permission(resource: str, action: str, min_role_level: int = 60):
     """
-    Dependency يحمي أي endpoint بـ module check.
-
-    الاستخدام:
-        @router.get("/rooms")
-        async def list_rooms(_=Depends(require_module("pms")), ...):
+    Dependency للـ permission matrix — يُستخدم جنب role dependency الأساسية.
 
     المنطق:
-        - always_on modules → تمر فوراً بدون DB
-        - باقي modules → يتحقق من Redis/DB
-        - super_admin يرى كل شيء (لأغراض الإدارة)
+        1. لو فيه UserPermission صريح (منح/منع) لهذا الـ user+resource+action
+           → هو الحاكم، بغض النظر عن الـ role.
+        2. لو مفيش استثناء صريح → fallback لـ role level العادي
+           (user_level(user) >= min_role_level).
     """
     def _check(
         user=Depends(get_current_active_user),
         db: Session = Depends(get_db),
-        redis_client: redis_lib.Redis = Depends(get_redis),
     ) -> None:
-        # always_on لا تحتاج check
-        defn = MODULE_REGISTRY.get(module_key)
-        if defn and defn.always_on:
-            return
+        from app.modules.core.services import has_permission  # noqa: PLC0415
 
-        # super_admin يرى كل شيء
-        if user_level(user) >= 100:
-            return
-
-        branch_id = getattr(user, "branch_id", None)
-
-        if not is_module_enabled(module_key, db, redis_client, branch_id):
+        role_fallback = user_level(user) >= min_role_level
+        if not has_permission(db, user, resource, action, role_fallback=role_fallback):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
-                    "code": "MODULE_DISABLED",
-                    "message": f"الخدمة '{module_key}' غير مفعّلة لهذا الفرع",
-                    "module": module_key,
+                    "code": "PERMISSION_DENIED",
+                    "message": f"لا تملك صلاحية '{action}' على '{resource}'",
+                    "resource": resource,
+                    "action": action,
                 },
             )
 

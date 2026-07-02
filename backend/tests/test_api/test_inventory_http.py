@@ -3,7 +3,6 @@ tests/test_api/test_inventory_http.py
 HTTP-level tests for the inventory module — TestClient through real routing,
 permission dependencies and Pydantic validation (not direct service calls).
 
-⚠️ inventory is `always_on=True` in MODULE_REGISTRY — no module-enable step needed.
 ⚠️ Setup data created here must be `db.commit()`-ed, not `.flush()`-ed.
 """
 from __future__ import annotations

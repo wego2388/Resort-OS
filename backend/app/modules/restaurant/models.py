@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, JSON,
-    Numeric, String, Text, UniqueConstraint,
+    Numeric, String,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -166,20 +166,20 @@ class OrderItemExtra(Base, TimestampMixin):
 
 
 class KitchenTicket(Base, TimestampMixin):
-    """Ticket inviato alla cucina quando ordine va in_kitchen."""
+    """تذكرة تتبعت للمطبخ لما الطلب يروح in_kitchen."""
     __tablename__ = "kitchen_tickets"
 
     id:             Mapped[int]  = mapped_column(primary_key=True)
     branch_id:      Mapped[int]  = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
-    order_id:       Mapped[int]  = mapped_column(Integer)  # ID di orders o cafe_orders a seconda di module
+    order_id:       Mapped[int]  = mapped_column(Integer)  # ID من orders أو cafe_orders حسب module
     module:         Mapped[str]  = mapped_column(String(20), default="restaurant")  # restaurant|cafe
     station:        Mapped[str]  = mapped_column(String(50))  # hot|grill|cold|bar|...
-    items_snapshot: Mapped[dict] = mapped_column(JSON)  # lista items per questa stazione
+    items_snapshot: Mapped[dict] = mapped_column(JSON)  # الأصناف الخاصة بالمحطة دي بس
     status:         Mapped[str]  = mapped_column(String(20), default="pending")  # pending|in_progress|done
 
 
 class KDSScreen(Base, TimestampMixin):
-    """Configurazione schermo KDS (Kitchen Display System)."""
+    """إعداد شاشة KDS (Kitchen Display System)."""
     __tablename__ = "kds_screens"
 
     id:                   Mapped[int]  = mapped_column(primary_key=True)

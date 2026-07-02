@@ -7,7 +7,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.crm.models import Activity, Customer, CustomerInteraction, Opportunity, Lead, CallNote, Campaign, GuestProfile, LeadSource
+from app.modules.crm.models import Activity, Customer, CustomerInteraction, Opportunity, Lead, GuestProfile
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityUpdate,
     CustomerCreate, CustomerUpdate,

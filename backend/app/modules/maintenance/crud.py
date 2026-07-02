@@ -57,11 +57,6 @@ def update_asset(db: Session, asset: Asset, data: AssetUpdate) -> Asset:
     return asset
 
 
-def delete_asset(db: Session, asset: Asset) -> None:
-    db.delete(asset)
-    db.flush()
-
-
 # ── WorkOrder ─────────────────────────────────────────────────────────
 
 _WO_COUNTER_KEY = "wo_counter"

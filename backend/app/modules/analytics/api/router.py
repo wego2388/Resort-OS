@@ -11,16 +11,15 @@ from typing import Optional
 import asyncio
 import json
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Body, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
-from app.core.deps import DbDep, get_current_active_user, get_manager_user, require_module
+from app.core.deps import DbDep, get_current_active_user, get_manager_user
 from app.core.database import SessionLocal
 from app.modules.analytics import services
 from app.modules.analytics.schemas import UtilityReadingCreate, UtilityReadingRead
 
 router = APIRouter(tags=["analytics"])
-_guard = Depends(require_module("analytics"))
 
 
 def _safe_query(func, *args, **kwargs):
@@ -33,7 +32,7 @@ def _safe_query(func, *args, **kwargs):
 
 # ── Revenue Dashboard ─────────────────────────────────────────────────
 
-@router.get("/analytics/revenue", dependencies=[_guard])
+@router.get("/analytics/revenue")
 def revenue_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -109,7 +108,7 @@ def revenue_summary(
 
 # ── Occupancy ─────────────────────────────────────────────────────────
 
-@router.get("/analytics/occupancy", dependencies=[_guard])
+@router.get("/analytics/occupancy")
 def occupancy_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -145,7 +144,7 @@ def occupancy_summary(
 
 # ── HR Summary ────────────────────────────────────────────────────────
 
-@router.get("/analytics/hr", dependencies=[_guard])
+@router.get("/analytics/hr")
 def hr_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -174,7 +173,7 @@ def hr_summary(
 
 # ── Maintenance KPIs ──────────────────────────────────────────────────
 
-@router.get("/analytics/maintenance", dependencies=[_guard])
+@router.get("/analytics/maintenance")
 def maintenance_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -198,7 +197,7 @@ def maintenance_summary(
 
 # ── CRM Pipeline ─────────────────────────────────────────────────────
 
-@router.get("/analytics/crm", dependencies=[_guard])
+@router.get("/analytics/crm")
 def crm_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -234,7 +233,7 @@ def crm_summary(
 
 # ── Inventory Alerts ──────────────────────────────────────────────────
 
-@router.get("/analytics/inventory", dependencies=[_guard])
+@router.get("/analytics/inventory")
 def inventory_alerts(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -259,7 +258,7 @@ def inventory_alerts(
 
 # ── DailyStats ────────────────────────────────────────────────────────
 
-@router.get("/analytics/daily-stats", dependencies=[_guard])
+@router.get("/analytics/daily-stats")
 def get_daily_stats(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -294,12 +293,12 @@ def get_daily_stats(
 # CLAUDE.md § 11.6 (GET /restaurant/menu/categories) و TenantCashLog في leasing.
 
 @router.post("/analytics/utilities", response_model=UtilityReadingRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_utility_reading(data: UtilityReadingCreate, db: DbDep, user=Depends(get_manager_user)):
     return services.record_utility_reading(db, data, recorded_by=user.id)
 
 
-@router.get("/analytics/utilities", response_model=list[UtilityReadingRead], dependencies=[_guard])
+@router.get("/analytics/utilities", response_model=list[UtilityReadingRead])
 def list_utility_readings(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -309,7 +308,7 @@ def list_utility_readings(
     return services.list_utility_readings(db, branch_id, utility_type, period)
 
 
-@router.get("/analytics/energy", dependencies=[_guard])
+@router.get("/analytics/energy")
 def energy_kpis(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -326,7 +325,7 @@ def _compute_live_kpis(branch_id: int) -> dict:
         result: dict = {"branch_id": branch_id, "as_of": str(date.today())}
 
         try:
-            from app.modules.pms.models import Room, Booking  # noqa: PLC0415
+            from app.modules.pms.models import Room  # noqa: PLC0415
             total_rooms = db.query(Room).filter(Room.branch_id == branch_id).count()
             occupied    = db.query(Room).filter(
                 Room.branch_id == branch_id,
@@ -386,7 +385,7 @@ async def kpi_websocket(websocket: WebSocket, branch_id: int):
 
 # ── Guest Reviews ─────────────────────────────────────────────────────
 
-@router.get("/analytics/reviews", dependencies=[_guard])
+@router.get("/analytics/reviews")
 def list_reviews(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -422,7 +421,7 @@ def list_reviews(
     }
 
 
-@router.get("/analytics/reviews/insights", dependencies=[_guard])
+@router.get("/analytics/reviews/insights")
 def review_category_insights(db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...)):
     """Task B audit: ReviewCategory كان بيتسجّل فعلاً مع كل تقييم (submit_review)
     بس مفيش أي مكان بيقراه أو يجمّعه — السبيك بيطلب 'GSS score + per-category
@@ -432,7 +431,7 @@ def review_category_insights(db: DbDep, _=Depends(get_manager_user), branch_id: 
 
 # ── Full Dashboard ────────────────────────────────────────────────────
 
-@router.get("/analytics/dashboard", dependencies=[_guard])
+@router.get("/analytics/dashboard")
 def full_dashboard(
     db: DbDep,
     _=Depends(get_manager_user),

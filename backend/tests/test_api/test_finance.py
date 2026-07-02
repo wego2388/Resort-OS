@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.modules.finance.schemas import (
-    AccountCreate, CashierShiftClose, CashierShiftOpen, ConditionalDiscountCreate,
+    AccountCreate, CashCountLine, CashierShiftClose, CashierShiftOpen, ConditionalDiscountCreate,
     FolioCreate, FolioChargeCreate, JournalEntryCreate, JournalLineCreate, PaymentCreate,
 )
 from app.modules.finance import services, crud
@@ -268,14 +268,14 @@ class TestAccounting:
                 JournalLineCreate(account_id=account2.id, debit=Decimal("0"), credit=Decimal("200.00")),
             ],
         )
-        with pytest.raises(ValueError, match="Sbilanciato"):
+        with pytest.raises(ValueError, match="غير متوازن"):
             services.post_journal_entry(db, data, user_id=1)
 
     def test_validate_period_open_blocks_closed(self, db: Session, branch):
-        # Chiudi il periodo corrente
+        # اقفل الفترة الحالية
         today = date.today()
         services.close_accounting_period(db, branch.id, today.year, today.month, closed_by=1)
-        # Tenta di postare un entry nel periodo chiuso
+        # حاول ترحيل قيد في فترة مقفولة
         from app.modules.finance.schemas import AccountCreate as AC
         data_acc = AC(branch_id=branch.id, code="1099", name="Test Account", account_type="asset")
         acc = crud.create_account(db, data_acc)
@@ -295,7 +295,7 @@ class TestAccounting:
                 JournalLineCreate(account_id=acc2.id, debit=Decimal("0"), credit=Decimal("100")),
             ],
         )
-        with pytest.raises(ValueError, match="chiuso"):
+        with pytest.raises(ValueError, match="مقفولة"):
             services.post_journal_entry(db, entry_data, user_id=1)
 
     def test_close_period(self, db: Session, branch):
@@ -390,6 +390,41 @@ class TestCashierShift:
         assert closed.expected_cash == Decimal("800")
         assert closed.counted_cash == Decimal("790")
         assert closed.variance == Decimal("-10")
+
+    def test_close_shift_with_cash_count_computes_counted_cash_from_breakdown(self, db: Session, branch, folio):
+        """لو الكاشير عدّ الكاش بالفئة، الإجمالي المعدود لازم يتحسب من العدّ نفسه —
+        مش من رقم منفصل يكتبه — وتفاصيل العدّ تتحفظ للتدقيق."""
+        shift = services.open_shift(
+            db, cashier_id=25, opened_by=25,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("500")),
+        )
+        services.add_payment(db, folio.id, PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id, amount=Decimal("300"),
+            method="cash", posted_at=datetime.utcnow(), cashier_id=25,
+        ))
+        closed = services.close_shift(
+            db, shift.id, closed_by=25,
+            data=CashierShiftClose(cash_count=[
+                CashCountLine(denomination=Decimal("200"), quantity=3),
+                CashCountLine(denomination=Decimal("100"), quantity=2),
+                CashCountLine(denomination=Decimal("20"), quantity=5),
+            ]),
+        )
+        # 200×3 + 100×2 + 20×5 = 600 + 200 + 100 = 900
+        assert closed.counted_cash == Decimal("900")
+        assert closed.expected_cash == Decimal("800")
+        assert closed.variance == Decimal("100")
+
+        lines = crud.list_cash_count_lines(db, shift.id)
+        assert len(lines) == 3
+        subtotals = {(float(l.denomination), l.quantity): float(l.subtotal) for l in lines}
+        assert subtotals[(200.0, 3)] == 600.0
+        assert subtotals[(100.0, 2)] == 200.0
+        assert subtotals[(20.0, 5)] == 100.0
+
+    def test_close_shift_requires_counted_amount_or_cash_count(self):
+        with pytest.raises(ValueError):
+            CashierShiftClose()
 
     def test_cannot_close_already_closed_shift(self, db: Session, branch):
         shift = services.open_shift(

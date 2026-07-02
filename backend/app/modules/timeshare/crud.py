@@ -107,13 +107,6 @@ def pay_installment(db: Session, inst: TimeshareInstallment, req: PayInstallment
     return inst
 
 
-def list_overdue_installments(db: Session, today: date) -> list[TimeshareInstallment]:
-    return db.query(TimeshareInstallment).filter(
-        TimeshareInstallment.due_date < today,
-        TimeshareInstallment.status.in_(["pending", "partial"]),
-    ).all()
-
-
 # ── CS Dashboard aggregates ──────────────────────────────────────────
 
 def list_active_contracts_with_aggregates(db: Session, branch_id: int) -> list:
@@ -237,6 +230,11 @@ def installments_summary(db: Session, branch_id: int) -> dict:
 
 
 def stats_by_partner(db: Session, branch_id: int) -> list:
+    """
+    عقود نشطة (غير ملغاة) مجمّعة حسب الشريك — مع صافي حصة المنتجع
+    (resort_share) من إجمالي الدفعات الأولى بعد خصم نصيب الشريك
+    (partner_share_pct) — مصدر: elkheima-beach-resort خاصية khayma_share.
+    """
     from sqlalchemy import func  # noqa: PLC0415
 
     return (
@@ -245,6 +243,12 @@ def stats_by_partner(db: Session, branch_id: int) -> list:
             func.count(TimeshareContract.id).label("contracts"),
             func.coalesce(func.sum(TimeshareContract.total_value), 0).label("total_value"),
             func.coalesce(func.sum(TimeshareContract.down_payment), 0).label("total_down"),
+            func.coalesce(
+                func.sum(
+                    TimeshareContract.down_payment
+                    * (1 - TimeshareContract.partner_share_pct / 100)
+                ), 0,
+            ).label("resort_share"),
         )
         .filter(TimeshareContract.branch_id == branch_id, TimeshareContract.status != "cancelled")
         .group_by(TimeshareContract.partner_company)

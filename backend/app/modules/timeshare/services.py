@@ -13,7 +13,6 @@ from app.modules.timeshare.schemas import (
 )
 from app.resort_os.timeshare_engine import (
     generate_installment_schedule,
-    get_first_installment_date,
 )
 
 
@@ -27,6 +26,8 @@ def get_contract_or_404(db: Session, contract_id: int) -> TimeshareContract:
 def create_contract(db: Session, data: TimeshareContractCreate, signed_by: int) -> TimeshareContract:
     if data.down_payment > data.total_value:
         raise ValueError("الدفعة الأولى لا يمكن أن تتجاوز إجمالي قيمة العقد")
+    if data.end_date and data.end_date <= data.start_date:
+        raise ValueError("تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية")
 
     contract = crud.create_contract(db, data, signed_by)
 
@@ -332,7 +333,8 @@ def get_stats(db: Session, branch_id: int) -> dict:
     return {
         "by_partner": [
             {"partner_company": r.partner_company, "contracts": r.contracts,
-             "total_value": float(r.total_value), "total_down": float(r.total_down)}
+             "total_value": float(r.total_value), "total_down": float(r.total_down),
+             "resort_share": float(r.resort_share)}
             for r in by_partner
         ],
         "by_room_type": [

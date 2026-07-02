@@ -18,7 +18,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
-from typing import NamedTuple
 
 
 # ─────────────────── Config DTOs (من DB) ─────────────────────────────

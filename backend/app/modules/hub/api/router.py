@@ -8,23 +8,22 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
-    get_manager_user, require_module,
+    get_manager_user,
 )
 from app.modules.hub import crud, services
 from app.modules.hub.schemas import (
     HubOfferCreate, HubOfferRead, HubOfferUpdate,
     HubPageCreate, HubPageRead, HubPageUpdate,
-    OnlineBookingCreate, OnlineBookingRead, OnlineBookingUpdate,
+    OnlineBookingCreate, OnlineBookingRead,
 )
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["hub"])
-_guard = Depends(require_module("hub"))
 
 
 # ── Pages ─────────────────────────────────────────────────────────────
 
-@router.get("/hub/pages", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/hub/pages", response_model=PaginatedResponse)
 def list_pages(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -41,7 +40,7 @@ def list_pages(
 
 
 @router.post("/hub/pages", response_model=HubPageRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_page(data: HubPageCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.create_page(db, data)
@@ -49,7 +48,7 @@ def create_page(data: HubPageCreate, db: DbDep, _=Depends(get_manager_user)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/hub/pages/{page_id}", response_model=HubPageRead, dependencies=[_guard])
+@router.get("/hub/pages/{page_id}", response_model=HubPageRead)
 def get_page(page_id: int, db: DbDep, _=Depends(get_current_active_user)):
     p = crud.get_page(db, page_id)
     if not p:
@@ -57,7 +56,7 @@ def get_page(page_id: int, db: DbDep, _=Depends(get_current_active_user)):
     return HubPageRead.model_validate(p)
 
 
-@router.get("/hub/pages/slug/{slug}", response_model=HubPageRead, dependencies=[_guard])
+@router.get("/hub/pages/slug/{slug}", response_model=HubPageRead)
 def get_page_by_slug(slug: str, db: DbDep, _=Depends(get_current_active_user)):
     p = crud.get_page_by_slug(db, slug)
     if not p:
@@ -65,7 +64,7 @@ def get_page_by_slug(slug: str, db: DbDep, _=Depends(get_current_active_user)):
     return HubPageRead.model_validate(p)
 
 
-@router.patch("/hub/pages/{page_id}", response_model=HubPageRead, dependencies=[_guard])
+@router.patch("/hub/pages/{page_id}", response_model=HubPageRead)
 def update_page(page_id: int, data: HubPageUpdate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.update_page(db, page_id, data)
@@ -74,7 +73,7 @@ def update_page(page_id: int, data: HubPageUpdate, db: DbDep, _=Depends(get_mana
 
 
 @router.delete("/hub/pages/{page_id}",
-               status_code=status.HTTP_204_NO_CONTENT, dependencies=[_guard])
+               status_code=status.HTTP_204_NO_CONTENT)
 def delete_page(page_id: int, db: DbDep, _=Depends(get_admin_user)):
     try:
         services.delete_page(db, page_id)
@@ -84,7 +83,7 @@ def delete_page(page_id: int, db: DbDep, _=Depends(get_admin_user)):
 
 # ── Offers ────────────────────────────────────────────────────────────
 
-@router.get("/hub/offers", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/hub/offers", response_model=PaginatedResponse)
 def list_offers(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -101,7 +100,7 @@ def list_offers(
 
 
 @router.post("/hub/offers", response_model=HubOfferRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_offer(data: HubOfferCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.create_offer(db, data)
@@ -109,7 +108,7 @@ def create_offer(data: HubOfferCreate, db: DbDep, _=Depends(get_manager_user)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/hub/offers/{offer_id}", response_model=HubOfferRead, dependencies=[_guard])
+@router.get("/hub/offers/{offer_id}", response_model=HubOfferRead)
 def get_offer(offer_id: int, db: DbDep, _=Depends(get_current_active_user)):
     o = crud.get_offer(db, offer_id)
     if not o:
@@ -117,7 +116,7 @@ def get_offer(offer_id: int, db: DbDep, _=Depends(get_current_active_user)):
     return HubOfferRead.model_validate(o)
 
 
-@router.patch("/hub/offers/{offer_id}", response_model=HubOfferRead, dependencies=[_guard])
+@router.patch("/hub/offers/{offer_id}", response_model=HubOfferRead)
 def update_offer(offer_id: int, data: HubOfferUpdate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.update_offer(db, offer_id, data)
@@ -127,7 +126,7 @@ def update_offer(offer_id: int, data: HubOfferUpdate, db: DbDep, _=Depends(get_m
 
 # ── Online Bookings ───────────────────────────────────────────────────
 
-@router.get("/hub/online-bookings", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/hub/online-bookings", response_model=PaginatedResponse)
 def list_online_bookings(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -145,7 +144,7 @@ def list_online_bookings(
 
 
 @router.post("/hub/online-bookings", response_model=OnlineBookingRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_online_booking(data: OnlineBookingCreate, db: DbDep,
                           _=Depends(get_current_active_user)):
     try:
@@ -154,7 +153,7 @@ def create_online_booking(data: OnlineBookingCreate, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/hub/online-bookings/{booking_id}", response_model=OnlineBookingRead, dependencies=[_guard])
+@router.get("/hub/online-bookings/{booking_id}", response_model=OnlineBookingRead)
 def get_online_booking(booking_id: int, db: DbDep, _=Depends(get_current_active_user)):
     b = crud.get_online_booking(db, booking_id)
     if not b:
@@ -163,7 +162,7 @@ def get_online_booking(booking_id: int, db: DbDep, _=Depends(get_current_active_
 
 
 @router.post("/hub/online-bookings/{booking_id}/confirm",
-             response_model=OnlineBookingRead, dependencies=[_guard])
+             response_model=OnlineBookingRead)
 def confirm_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
     try:
         return services.confirm_booking(db, booking_id, confirmed_by=user.id)
@@ -172,7 +171,7 @@ def confirm_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
 
 
 @router.post("/hub/online-bookings/{booking_id}/cancel",
-             response_model=OnlineBookingRead, dependencies=[_guard])
+             response_model=OnlineBookingRead)
 def cancel_booking(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.cancel_booking(db, booking_id)

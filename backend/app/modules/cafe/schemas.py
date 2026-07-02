@@ -20,6 +20,43 @@ class CafeCategoryRead(CafeCategoryCreate):
     id: int; is_active: bool; created_at: datetime
 
 
+# ─────────────────────── Extras / Modifiers ───────────────────────────
+
+class CafeMenuItemExtraCreate(BaseModel):
+    name:           str = Field(..., max_length=100)
+    name_ar:        Optional[str] = Field(None, max_length=100)
+    price_addition: Decimal = Field(Decimal("0"), ge=0)
+    is_available:   bool = True
+    sort_order:     int = 0
+
+
+class CafeMenuItemExtraRead(CafeMenuItemExtraCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id:       int
+    group_id: int
+
+
+class CafeMenuItemExtraGroupCreate(BaseModel):
+    name:       str = Field(..., max_length=100)
+    name_ar:    Optional[str] = Field(None, max_length=100)
+    min_select: int = Field(0, ge=0)
+    max_select: int = Field(1, ge=1)
+    sort_order: int = 0
+    options:    list[CafeMenuItemExtraCreate] = Field(default_factory=list)
+
+
+class CafeMenuItemExtraGroupRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:           int
+    cafe_item_id: int
+    name:         str
+    name_ar:      Optional[str]
+    min_select:   int
+    max_select:   int
+    sort_order:   int
+    options:      list[CafeMenuItemExtraRead] = []
+
+
 class CafeItemCreate(BaseModel):
     branch_id:           int
     category_id:         Optional[int] = None
@@ -30,6 +67,7 @@ class CafeItemCreate(BaseModel):
     is_available:        bool = True
     preparation_minutes: int = 5
     image_url:           Optional[str] = None
+    linked_product_id:   Optional[int] = None
 
 
 class CafeItemUpdate(BaseModel):
@@ -39,22 +77,26 @@ class CafeItemUpdate(BaseModel):
     is_available:        Optional[bool]    = None
     preparation_minutes: Optional[int]     = None
     category_id:         Optional[int]     = None
+    linked_product_id:   Optional[int]     = None
 
 
 class CafeItemRead(CafeItemCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int; created_at: datetime; updated_at: datetime
+    extra_groups: list[CafeMenuItemExtraGroupRead] = []
 
 
 class CafeTableRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; branch_id: int; table_number: str; capacity: int; status: str; section: Optional[str]
+    occupied_at: Optional[datetime] = None
 
 
 class CafeOrderItemCreate(BaseModel):
     item_id:  int
     quantity: int = Field(1, ge=1)
     notes:    Optional[str] = None
+    extra_ids: list[int] = Field(default_factory=list)  # CafeMenuItemExtra.id المختارة
 
 
 class CafeOrderCreate(BaseModel):
@@ -65,10 +107,26 @@ class CafeOrderCreate(BaseModel):
     items:      list[CafeOrderItemCreate] = Field(..., min_length=1)
 
 
+class CafeOrderItemVoidRequest(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=200)
+
+
+class CafeOrderItemExtraRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:             int
+    extra_id:       Optional[int]
+    extra_name:     str
+    price_addition: Decimal
+
+
 class CafeOrderItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; order_id: int; item_id: int; name: str
     unit_price: Decimal; quantity: int; notes: Optional[str]; status: str
+    extras: list[CafeOrderItemExtraRead] = []
+    voided_reason: Optional[str] = None
+    voided_by:     Optional[int] = None
+    voided_at:     Optional[datetime] = None
 
 
 class CafeOrderRead(BaseModel):
@@ -82,4 +140,4 @@ class CafeOrderRead(BaseModel):
 
 
 class CafeOrderStatusUpdate(BaseModel):
-    status: str = Field(..., pattern=r"^(open|in_kitchen|served|paid|cancelled)$")
+    status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")

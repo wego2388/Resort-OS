@@ -6,15 +6,16 @@ const token = localStorage.getItem('access_token') ?? ''
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const headers = computed(() => ({ Authorization: `Bearer ${token}` }))
 
-interface DrinkItem { name: string; name_ar: string; quantity: number; notes?: string }
+type TicketStatus = 'pending' | 'in_progress' | 'done'
+interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null }
 interface BarTicket {
-  id: number; order_id: number; table_number?: string
-  items: DrinkItem[]; status: 'pending' | 'preparing' | 'ready'
+  id: number; order_id: number; module: string
+  items_snapshot: TicketItem[]; status: TicketStatus
   created_at: string
 }
 
 const tickets = ref<BarTicket[]>([])
-const filterStatus = ref<string | null>(null)
+const filterStatus = ref<TicketStatus | null>(null)
 const now = ref(new Date())
 const isConnected = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
@@ -38,85 +39,64 @@ function ticketAge(createdAt: string) {
 }
 
 function ticketClasses(ticket: BarTicket) {
-  if (ticket.status === 'ready') return 'border-cyan-500 bg-cyan-900/30'
+  if (ticket.status === 'done') return 'border-cyan-500 bg-cyan-900/30'
   const age = ticketAge(ticket.created_at)
   if (age === 'urgent')  return 'border-red-500 bg-red-900/30 animate-pulse'
   if (age === 'warning') return 'border-amber-500 bg-amber-900/30'
   return 'border-slate-600 bg-slate-800'
 }
 
-function statusBadge(status: string) {
-  if (status === 'pending')   return { label: 'معلق',         color: 'bg-amber-500' }
-  if (status === 'preparing') return { label: 'جاري التحضير', color: 'bg-cyan-600' }
-  if (status === 'ready')     return { label: 'جاهز',         color: 'bg-green-500' }
-  return { label: status, color: 'bg-gray-500' }
+function statusBadge(status: TicketStatus) {
+  if (status === 'pending')     return { label: 'معلق',         color: 'bg-amber-500' }
+  if (status === 'in_progress') return { label: 'جاري التحضير', color: 'bg-cyan-600' }
+  return { label: 'جاهز', color: 'bg-green-500' }
 }
 
 async function fetchTickets() {
   try {
-    let ticketData: BarTicket[] = []
-    try {
-      const res = await axios.get('/api/v1/restaurant/kitchen/tickets', {
+    // البار بيستقبل من مصدرين: طلبات الكافيه كلها (مفيش تقسيم محطات فيها) + أصناف
+    // البار اللي اتطلبت من قائمة المطعم نفسها (مشروبات على طاولة مطعم مثلاً).
+    const [cafeRes, restaurantBarRes] = await Promise.all([
+      axios.get('/api/v1/restaurant/kitchen/tickets', {
         headers: headers.value,
-        params: { branch_id: branchId, status: 'pending,preparing', outlet_type: 'cafe' }
-      })
-      ticketData = res.data.tickets ?? res.data.items ?? res.data
-    } catch {
-      const res = await axios.get('/api/v1/restaurant/orders', {
+        params: { branch_id: branchId, module: 'cafe' },
+      }),
+      axios.get('/api/v1/restaurant/kitchen/tickets', {
         headers: headers.value,
-        params: { branch_id: branchId, status: 'pending,preparing', outlet_type: 'cafe', limit: 50 }
-      })
-      const orders = res.data.orders ?? res.data.items ?? res.data
-      ticketData = orders.map((o: any) => ({
-        id: o.id,
-        order_id: o.id,
-        table_number: o.table_number ?? o.table_id?.toString(),
-        items: o.items?.map((i: any) => ({
-          name: i.name,
-          name_ar: i.name_ar,
-          quantity: i.quantity,
-          notes: i.notes,
-        })) ?? [],
-        status: o.status === 'pending' ? 'pending' : o.status === 'preparing' ? 'preparing' : 'ready',
-        created_at: o.created_at,
-      }))
-    }
-    tickets.value = ticketData
+        params: { branch_id: branchId, module: 'restaurant', stations: 'bar' },
+      }),
+    ])
+    tickets.value = [...cafeRes.data, ...restaurantBarRes.data].sort(
+      (a: BarTicket, b: BarTicket) => a.created_at.localeCompare(b.created_at)
+    )
     isConnected.value = true
   } catch {
     isConnected.value = false
   }
 }
 
-async function markReady(ticketId: number) {
+async function advanceStatus(ticket: BarTicket) {
+  const next: TicketStatus = ticket.status === 'pending' ? 'in_progress' : 'done'
   try {
     await axios.patch(
-      `/api/v1/restaurant/kitchen/tickets/${ticketId}`,
-      { status: 'ready' },
+      `/api/v1/restaurant/kitchen/tickets/${ticket.id}/status`,
+      { status: next },
       { headers: headers.value }
     )
-    const t = tickets.value.find(t => t.id === ticketId)
-    if (t) t.status = 'ready'
-    setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticketId) }, 1800)
-  } catch {
-    try {
-      await axios.patch(
-        `/api/v1/restaurant/orders/${ticketId}/status`,
-        { status: 'ready' },
-        { headers: headers.value }
-      )
-      const t = tickets.value.find(t => t.id === ticketId)
-      if (t) t.status = 'ready'
-      setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticketId) }, 1800)
-    } catch(e) { console.error(e) }
+    ticket.status = next
+    if (next === 'done') {
+      setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticket.id) }, 1800)
+    }
+  } catch (e) {
+    console.error(e)
   }
 }
 
 const currentTime = computed(() =>
   now.value.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 )
-const pendingCount   = computed(() => tickets.value.filter(t => t.status === 'pending').length)
-const preparingCount = computed(() => tickets.value.filter(t => t.status === 'preparing').length)
+const pendingCount    = computed(() => tickets.value.filter(t => t.status === 'pending').length)
+const inProgressCount = computed(() => tickets.value.filter(t => t.status === 'in_progress').length)
 
 onMounted(() => {
   fetchTickets()
@@ -138,7 +118,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
         <h1 class="text-xl font-black tracking-wide">🥤 شاشة البار — Bar KDS</h1>
         <div class="flex gap-3 text-sm">
           <span class="px-2 py-0.5 bg-amber-600 rounded-full font-bold">معلق: {{ pendingCount }}</span>
-          <span class="px-2 py-0.5 bg-cyan-700 rounded-full font-bold">تحضير: {{ preparingCount }}</span>
+          <span class="px-2 py-0.5 bg-cyan-700 rounded-full font-bold">تحضير: {{ inProgressCount }}</span>
         </div>
       </div>
       <div class="flex items-center gap-4">
@@ -154,13 +134,12 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
     <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 flex gap-2">
       <button
         v-for="f in [
-          { val: null,        label: `الكل (${tickets.length})` },
-          { val: 'pending',   label: `معلق (${pendingCount})` },
-          { val: 'preparing', label: `تحضير (${preparingCount})` },
-          { val: 'ready',     label: 'جاهز' },
+          { val: null,          label: `الكل (${tickets.length})` },
+          { val: 'pending',     label: `معلق (${pendingCount})` },
+          { val: 'in_progress', label: `تحضير (${inProgressCount})` },
         ]"
         :key="String(f.val)"
-        @click="filterStatus = f.val"
+        @click="filterStatus = f.val as TicketStatus | null"
         :class="[
           'px-3 py-1 rounded-lg text-sm font-medium transition-colors',
           filterStatus === f.val
@@ -182,14 +161,14 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
       <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         <div
           v-for="ticket in filteredTickets"
-          :key="ticket.id"
+          :key="`${ticket.module}-${ticket.id}`"
           :class="['rounded-2xl border-2 p-4 flex flex-col transition-all', ticketClasses(ticket)]"
         >
           <!-- Ticket header -->
           <div class="flex items-center justify-between mb-3">
             <div>
               <div class="text-2xl font-black">#{{ ticket.order_id }}</div>
-              <div v-if="ticket.table_number" class="text-xs text-slate-400">طاولة {{ ticket.table_number }}</div>
+              <div class="text-xs text-slate-400">{{ ticket.module === 'cafe' ? 'كافيه' : 'مطعم' }}</div>
             </div>
             <div class="text-center">
               <div :class="['text-xs px-2 py-0.5 rounded-full font-bold text-white mb-1', statusBadge(ticket.status).color]">
@@ -209,15 +188,15 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
           <!-- Drinks list -->
           <ul class="flex-1 space-y-2 mb-3">
             <li
-              v-for="item in ticket.items"
-              :key="item.name"
+              v-for="item in ticket.items_snapshot"
+              :key="item.order_item_id"
               class="flex items-start gap-2 text-sm"
             >
               <span class="bg-cyan-700/60 text-white rounded-lg px-2 py-0.5 text-xs font-black flex-shrink-0 min-w-[1.5rem] text-center">
                 {{ item.quantity }}
               </span>
               <div class="flex-1">
-                <span class="font-medium leading-tight">{{ item.name_ar || item.name }}</span>
+                <span class="font-medium leading-tight">{{ item.name }}</span>
                 <p v-if="item.notes" class="text-xs text-amber-300 mt-0.5">⚠️ {{ item.notes }}</p>
               </div>
             </li>
@@ -229,8 +208,15 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
               {{ new Date(ticket.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) }}
             </div>
             <button
-              v-if="ticket.status !== 'ready'"
-              @click="markReady(ticket.id)"
+              v-if="ticket.status === 'pending'"
+              @click="advanceStatus(ticket)"
+              class="w-full py-3 bg-cyan-600 hover:bg-cyan-500 rounded-xl text-sm font-black transition-colors active:scale-95 tracking-wide"
+            >
+              ▶ بدء التحضير
+            </button>
+            <button
+              v-else-if="ticket.status === 'in_progress'"
+              @click="advanceStatus(ticket)"
               class="w-full py-3 bg-cyan-600 hover:bg-cyan-500 rounded-xl text-sm font-black transition-colors active:scale-95 tracking-wide"
             >
               ✓ جاهز

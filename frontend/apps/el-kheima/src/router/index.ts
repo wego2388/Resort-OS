@@ -1,5 +1,5 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
-import { useAuthStore, useModulesStore } from '@resort-os/core'
+import { useAuthStore } from '@resort-os/core'
 
 declare module 'vue-router' {
   interface RouteMeta {
@@ -7,9 +7,6 @@ declare module 'vue-router' {
     // Minimum role required, checked against the numeric ROLE_LEVELS map in
     // @resort-os/core's useAuthStore (mirrors backend app/core/deps.py).
     requiredRole?: string
-    // Module key checked against useModulesStore().isEnabled() (mirrors
-    // backend require_module() / MODULE_REGISTRY).
-    module?: string
     title?: string
   }
 }
@@ -67,9 +64,9 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredRole: 'cashier' },
     children: [
       { path: '', redirect: '/pos/beach' },
-      { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue'), meta: { module: 'beach' } },
-      { path: 'restaurant', name: 'pos-restaurant', component: () => import('../views/pos/RestaurantPOSView.vue'), meta: { module: 'restaurant' } },
-      { path: 'cafe', name: 'pos-cafe', component: () => import('../views/pos/CafePOSView.vue'), meta: { module: 'cafe' } },
+      { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue') },
+      { path: 'restaurant', name: 'pos-restaurant', component: () => import('../views/pos/RestaurantPOSView.vue') },
+      { path: 'cafe', name: 'pos-cafe', component: () => import('../views/pos/CafePOSView.vue') },
     ],
   },
 
@@ -80,8 +77,8 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredRole: 'waiter' },
     children: [
       { path: '', redirect: '/kds/kitchen' },
-      { path: 'kitchen', name: 'kds-kitchen', component: () => import('../views/kds/KitchenDisplayView.vue'), meta: { module: 'restaurant' } },
-      { path: 'bar', name: 'kds-bar', component: () => import('../views/kds/BarDisplayView.vue'), meta: { module: 'restaurant' } },
+      { path: 'kitchen', name: 'kds-kitchen', component: () => import('../views/kds/KitchenDisplayView.vue') },
+      { path: 'bar', name: 'kds-bar', component: () => import('../views/kds/BarDisplayView.vue') },
     ],
   },
 
@@ -92,10 +89,9 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     children: [
       { path: '', redirect: '/ops/rooms' },
-      { path: 'rooms', name: 'ops-rooms', component: () => import('../views/ops/RoomsView.vue'), meta: { module: 'pms', title: 'الغرف' } },
-      { path: 'bookings', name: 'ops-bookings', component: () => import('../views/ops/BookingsView.vue'), meta: { module: 'pms', title: 'الحجوزات' } },
-      { path: 'housekeeping', name: 'ops-housekeeping', component: () => import('../views/ops/HousekeepingView.vue'), meta: { module: 'pms', title: 'التنظيف' } },
-      { path: 'inventory', name: 'ops-inventory', component: () => import('../views/ops/InventoryView.vue'), meta: { module: 'inventory', title: 'المخزون' } },
+      { path: 'rooms', name: 'ops-rooms', component: () => import('../views/ops/RoomsView.vue'), meta: { title: 'الغرف' } },
+      { path: 'bookings', name: 'ops-bookings', component: () => import('../views/ops/BookingsView.vue'), meta: { title: 'الحجوزات' } },
+      { path: 'housekeeping', name: 'ops-housekeeping', component: () => import('../views/ops/HousekeepingView.vue'), meta: { title: 'التنظيف' } },
     ],
   },
 
@@ -107,15 +103,15 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', redirect: '/admin/dashboard' },
       { path: 'dashboard', name: 'admin-dashboard', component: () => import('../views/admin/DashboardView.vue'), meta: { title: 'لوحة التحكم' } },
-      { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { module: 'analytics', title: 'التحليلات' } },
-      { path: 'hr', name: 'admin-hr', component: () => import('../views/admin/HRView.vue'), meta: { module: 'hr', title: 'الموارد البشرية' } },
-      { path: 'finance', name: 'admin-finance', component: () => import('../views/admin/FinanceView.vue'), meta: { module: 'finance', title: 'المالية' } },
-      { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { module: 'timeshare', title: 'التايم شير' } },
-      { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { module: 'timeshare', title: 'لوحة المبيعات' } },
-      { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { module: 'beach', title: 'لوحة الشاطئ الحيّة' } },
-      { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { module: 'finance', title: 'الفاتورة الإلكترونية' } },
-      { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { module: 'inventory', title: 'المخزون' } },
-      { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { module: 'crm', title: 'إدارة العملاء' } },
+      { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { title: 'التحليلات' } },
+      { path: 'hr', name: 'admin-hr', component: () => import('../views/admin/HRView.vue'), meta: { title: 'الموارد البشرية' } },
+      { path: 'finance', name: 'admin-finance', component: () => import('../views/admin/FinanceView.vue'), meta: { title: 'المالية' } },
+      { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { title: 'التايم شير' } },
+      { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { title: 'لوحة المبيعات' } },
+      { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { title: 'لوحة الشاطئ الحيّة' } },
+      { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { title: 'الفاتورة الإلكترونية' } },
+      { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { title: 'المخزون' } },
+      { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { title: 'إدارة العملاء' } },
       { path: 'settings', name: 'admin-settings', component: () => import('../views/admin/SettingsView.vue'), meta: { requiredRole: 'admin', title: 'الإعدادات' } },
     ],
   },
@@ -124,7 +120,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/waiter',
     component: () => import('../layouts/FieldLayout.vue'),
-    meta: { requiresAuth: true, requiredRole: 'waiter', module: 'restaurant' },
+    meta: { requiresAuth: true, requiredRole: 'waiter' },
     children: [
       { path: '', redirect: '/waiter/tables' },
       { path: 'tables', name: 'waiter-tables', component: () => import('../views/waiter/TablesView.vue') },
@@ -140,9 +136,9 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     children: [
       { path: '', redirect: '/portal/attendance' },
-      { path: 'attendance', name: 'portal-attendance', component: () => import('../views/portal/AttendanceView.vue'), meta: { module: 'hr', title: 'الحضور والانصراف' } },
-      { path: 'leaves', name: 'portal-leaves', component: () => import('../views/portal/LeavesView.vue'), meta: { module: 'hr', title: 'طلبات الإجازة' } },
-      { path: 'payroll', name: 'portal-payroll', component: () => import('../views/portal/PayrollView.vue'), meta: { module: 'hr', title: 'الرواتب' } },
+      { path: 'attendance', name: 'portal-attendance', component: () => import('../views/portal/AttendanceView.vue'), meta: { title: 'الحضور والانصراف' } },
+      { path: 'leaves', name: 'portal-leaves', component: () => import('../views/portal/LeavesView.vue'), meta: { title: 'طلبات الإجازة' } },
+      { path: 'payroll', name: 'portal-payroll', component: () => import('../views/portal/PayrollView.vue'), meta: { title: 'الرواتب' } },
       { path: 'profile', name: 'portal-profile', component: () => import('../views/portal/ProfileView.vue'), meta: { title: 'ملفي الشخصي' } },
     ],
   },
@@ -159,9 +155,8 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach(async (to) => {
+router.beforeEach((to) => {
   const auth = useAuthStore()
-  const modules = useModulesStore()
 
   // 1. Auth gate
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
@@ -173,29 +168,8 @@ router.beforeEach(async (to) => {
     return homeRouteFor(auth.role)
   }
 
-  // Self-healing fetch: main.ts's boot() populates the modules store *before*
-  // the router's first navigation on a page reload (restoring an existing
-  // session) — but a fresh interactive login goes through useAuthStore.login()
-  // directly, which never touches useModulesStore. Without this, the module
-  // store stays empty after every interactive login, every `meta.module`
-  // check below fails closed, and the redirect target (`homeRouteFor`) is
-  // itself module-gated — an infinite /login <-> home redirect loop. Fetching
-  // here, once, covers both entry paths regardless of how auth state got set.
-  if (auth.isAuthenticated && modules.modules.length === 0) {
-    try {
-      await modules.fetchEnabled()
-    } catch {
-      // leave modules empty — isEnabled() defaults closed (fail-safe, not fail-open)
-    }
-  }
-
   // 2. Role gate — redirect to the user's own home, not a raw 403 page.
   if (to.meta.requiredRole && !auth.hasRole(to.meta.requiredRole)) {
-    return homeRouteFor(auth.role)
-  }
-
-  // 3. Module gate — same redirect treatment.
-  if (to.meta.module && !modules.isEnabled(to.meta.module)) {
     return homeRouteFor(auth.role)
   }
 

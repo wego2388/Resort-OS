@@ -5,25 +5,22 @@
 // and /portal/* — the three former apps that were all "back office chrome"
 // stylistically, just with different nav sections.
 //
-// Nav items are filtered through useAuthStore().hasRole() and
-// useModulesStore().isEnabled() — a user never sees a link for a section
-// their role/branch doesn't have, instead of finding out via a 403 after
-// clicking through.
+// Nav items are filtered through useAuthStore().hasRole() — a user never
+// sees a link for a section their role doesn't have, instead of finding out
+// via a 403 after clicking through.
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAuthStore, useModulesStore } from '@resort-os/core'
+import { useAuthStore } from '@resort-os/core'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const modules = useModulesStore()
 const sidebarOpen = ref(true)
 
 interface NavItem {
   path: string
   label: string
   icon: string
-  module?: string
   requiredRole?: string
 }
 interface NavSection {
@@ -35,30 +32,29 @@ const allSections: NavSection[] = [
   {
     label: 'العمليات',
     items: [
-      { path: '/ops/rooms', label: 'الغرف', icon: '🛏️', module: 'pms' },
-      { path: '/ops/bookings', label: 'الحجوزات', icon: '📋', module: 'pms' },
-      { path: '/ops/housekeeping', label: 'التنظيف', icon: '🧹', module: 'pms' },
-      { path: '/ops/inventory', label: 'المخزون (عمليات)', icon: '📦', module: 'inventory' },
+      { path: '/ops/rooms', label: 'الغرف', icon: '🛏️' },
+      { path: '/ops/bookings', label: 'الحجوزات', icon: '📋' },
+      { path: '/ops/housekeeping', label: 'التنظيف', icon: '🧹' },
     ],
   },
   {
     label: 'الرئيسية',
     items: [
       { path: '/admin/dashboard', label: 'لوحة التحكم', icon: '📊', requiredRole: 'manager' },
-      { path: '/admin/analytics', label: 'التحليلات', icon: '📈', module: 'analytics', requiredRole: 'manager' },
+      { path: '/admin/analytics', label: 'التحليلات', icon: '📈', requiredRole: 'manager' },
     ],
   },
   {
     label: 'الإدارة',
     items: [
-      { path: '/admin/hr', label: 'الموارد البشرية', icon: '👥', module: 'hr', requiredRole: 'manager' },
-      { path: '/admin/finance', label: 'المالية', icon: '💰', module: 'finance', requiredRole: 'manager' },
-      { path: '/admin/e-invoice', label: 'الفاتورة الإلكترونية', icon: '🧾', module: 'finance', requiredRole: 'manager' },
-      { path: '/admin/timeshare', label: 'التايم شير', icon: '🏨', module: 'timeshare', requiredRole: 'manager' },
-      { path: '/admin/sales', label: 'لوحة المبيعات', icon: '📞', module: 'timeshare', requiredRole: 'manager' },
-      { path: '/admin/beach-live', label: 'لوحة الشاطئ الحيّة', icon: '🏖️', module: 'beach', requiredRole: 'manager' },
-      { path: '/admin/inventory', label: 'المخزون', icon: '📦', module: 'inventory', requiredRole: 'manager' },
-      { path: '/admin/crm', label: 'إدارة العملاء', icon: '🤝', module: 'crm', requiredRole: 'manager' },
+      { path: '/admin/hr', label: 'الموارد البشرية', icon: '👥', requiredRole: 'manager' },
+      { path: '/admin/finance', label: 'المالية', icon: '💰', requiredRole: 'manager' },
+      { path: '/admin/e-invoice', label: 'الفاتورة الإلكترونية', icon: '🧾', requiredRole: 'manager' },
+      { path: '/admin/timeshare', label: 'التايم شير', icon: '🏨', requiredRole: 'manager' },
+      { path: '/admin/sales', label: 'لوحة المبيعات', icon: '📞', requiredRole: 'manager' },
+      { path: '/admin/beach-live', label: 'لوحة الشاطئ الحيّة', icon: '🏖️', requiredRole: 'manager' },
+      { path: '/admin/inventory', label: 'المخزون', icon: '📦', requiredRole: 'manager' },
+      { path: '/admin/crm', label: 'إدارة العملاء', icon: '🤝', requiredRole: 'manager' },
     ],
   },
   {
@@ -70,9 +66,9 @@ const allSections: NavSection[] = [
   {
     label: 'بوابة الموظفين',
     items: [
-      { path: '/portal/attendance', label: 'الحضور والانصراف', icon: '⏰', module: 'hr' },
-      { path: '/portal/leaves', label: 'طلبات الإجازة', icon: '🌴', module: 'hr' },
-      { path: '/portal/payroll', label: 'الرواتب', icon: '💳', module: 'hr' },
+      { path: '/portal/attendance', label: 'الحضور والانصراف', icon: '⏰' },
+      { path: '/portal/leaves', label: 'طلبات الإجازة', icon: '🌴' },
+      { path: '/portal/payroll', label: 'الرواتب', icon: '💳' },
       { path: '/portal/profile', label: 'ملفي الشخصي', icon: '👤' },
     ],
   },
@@ -83,9 +79,7 @@ const navSections = computed(() =>
     .map((section) => ({
       ...section,
       items: section.items.filter(
-        (item) =>
-          (!item.requiredRole || auth.hasRole(item.requiredRole)) &&
-          (!item.module || modules.isEnabled(item.module)),
+        (item) => !item.requiredRole || auth.hasRole(item.requiredRole),
       ),
     }))
     .filter((section) => section.items.length > 0),

@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean, Date, DateTime, ForeignKey, Integer,
@@ -52,6 +51,9 @@ class WorkOrder(Base, TimestampMixin):
     description:     Mapped[str | None]     = mapped_column(Text, nullable=True)
     order_type:      Mapped[str]            = mapped_column(String(30), default="corrective")
     # corrective|preventive|inspection
+    schedule_id:     Mapped[int | None]     = mapped_column(ForeignKey("preventive_schedules.id", ondelete="SET NULL"), nullable=True)
+    # الجدول الوقائي اللي ولّد أمر الصيانة ده (لو order_type="preventive") — لازم
+    # نعرف نرجع نحدّث next_due بتاعه لما الأمر يخلص، وإلا هيتعمل أمر جديد كل يوم للأبد
     priority:        Mapped[str]            = mapped_column(String(20), default="medium")
     # low|medium|high|critical
     status:          Mapped[str]            = mapped_column(String(30), default="open")

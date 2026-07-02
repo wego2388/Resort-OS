@@ -226,8 +226,12 @@ def generate_rent_receipt_pdf(db: Session, payment_id: int) -> bytes:
     if not contract:
         raise ValueError("العقد غير موجود")
 
+    # نحسب الغرامة لحظيًا وقت إصدار الإيصال بدل ما نعتمد على payment.penalty المخزّن،
+    # اللي بيفضل قديم إلى ما حد يستدعي apply_penalties() — القيمة المحسوبة هنا هي
+    # الحقيقة الحالية، وبنعرضها من غير ما نعدّل سجل الدفعة نفسه (إصدار إيصال مفروض
+    # يكون read-only، والتحديث الفعلي مسؤولية apply_penalties()).
     penalty = calculate_penalty(payment)
-    total = float(payment.paid_amount or payment.amount) + float(payment.penalty or 0)
+    total = float(payment.paid_amount or payment.amount) + float(penalty)
 
     fields = [
         ("المستأجر",       contract.tenant_name),
@@ -236,8 +240,8 @@ def generate_rent_receipt_pdf(db: Session, payment_id: int) -> bytes:
         ("تاريخ الاستحقاق", str(payment.due_date)),
         ("مبلغ الإيجار",   f"{payment.amount:,.2f} EGP"),
     ]
-    if payment.penalty and payment.penalty > 0:
-        fields.append(("غرامة التأخير", f"{payment.penalty:,.2f} EGP"))
+    if penalty > 0:
+        fields.append(("غرامة التأخير", f"{penalty:,.2f} EGP"))
     if payment.payment_method:
         fields.append(("طريقة الدفع", payment.payment_method))
 

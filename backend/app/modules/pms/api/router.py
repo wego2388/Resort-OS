@@ -8,30 +8,28 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
-    get_manager_user, require_module,
+    get_manager_user,
 )
 from app.modules.pms import crud, services
 from app.modules.pms.schemas import (
-    BookingCreate, BookingRead, BookingStatusUpdate,
-    HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
+    BookingCreate, BookingRead, HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
     NightAuditLogRead, RoomCreate, RoomRead,
     RoomStatusUpdate, RoomTypeCreate, RoomTypeRead,
 )
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["pms"])
-_guard = Depends(require_module("pms"))
 
 
 # ── Room Types ────────────────────────────────────────────────────────
 
-@router.get("/pms/room-types", response_model=list[RoomTypeRead], dependencies=[_guard])
+@router.get("/pms/room-types", response_model=list[RoomTypeRead])
 def list_room_types(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return [RoomTypeRead.model_validate(rt) for rt in crud.list_room_types(db, branch_id)]
 
 
 @router.post("/pms/room-types", response_model=RoomTypeRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_room_type(data: RoomTypeCreate, db: DbDep, _=Depends(get_admin_user)):
     obj = crud.create_room_type(db, data)
     db.commit(); db.refresh(obj)
@@ -40,7 +38,7 @@ def create_room_type(data: RoomTypeCreate, db: DbDep, _=Depends(get_admin_user))
 
 # ── Rooms ─────────────────────────────────────────────────────────────
 
-@router.get("/pms/rooms", response_model=list[RoomRead], dependencies=[_guard])
+@router.get("/pms/rooms", response_model=list[RoomRead])
 def list_rooms(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -51,7 +49,7 @@ def list_rooms(
     return [RoomRead.model_validate(r) for r in crud.list_rooms(db, branch_id, status_filter, room_type_id)]
 
 
-@router.get("/pms/rooms/available", response_model=list[RoomRead], dependencies=[_guard])
+@router.get("/pms/rooms/available", response_model=list[RoomRead])
 def available_rooms(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -65,14 +63,14 @@ def available_rooms(
 
 
 @router.post("/pms/rooms", response_model=RoomRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_room(data: RoomCreate, db: DbDep, _=Depends(get_admin_user)):
     obj = crud.create_room(db, data)
     db.commit(); db.refresh(obj)
     return RoomRead.model_validate(obj)
 
 
-@router.patch("/pms/rooms/{room_id}/status", response_model=RoomRead, dependencies=[_guard])
+@router.patch("/pms/rooms/{room_id}/status", response_model=RoomRead)
 def update_room_status(room_id: int, data: RoomStatusUpdate, db: DbDep, _=Depends(get_manager_user)):
     room = crud.get_room(db, room_id)
     if not room:
@@ -84,7 +82,7 @@ def update_room_status(room_id: int, data: RoomStatusUpdate, db: DbDep, _=Depend
 
 # ── Bookings ──────────────────────────────────────────────────────────
 
-@router.get("/pms/bookings", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/pms/bookings", response_model=PaginatedResponse)
 def list_bookings(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -103,7 +101,7 @@ def list_bookings(
 
 
 @router.post("/pms/bookings", response_model=BookingRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_booking(data: BookingCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.create_booking(db, data)
@@ -113,7 +111,7 @@ def create_booking(data: BookingCreate, db: DbDep, _=Depends(get_manager_user)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/pms/bookings/{booking_id}", response_model=BookingRead, dependencies=[_guard])
+@router.get("/pms/bookings/{booking_id}", response_model=BookingRead)
 def get_booking(booking_id: int, db: DbDep, _=Depends(get_current_active_user)):
     b = crud.get_booking(db, booking_id)
     if not b:
@@ -122,7 +120,7 @@ def get_booking(booking_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 
 @router.post("/pms/bookings/{booking_id}/checkin",
-             response_model=BookingRead, dependencies=[_guard])
+             response_model=BookingRead)
 def checkin(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.checkin_booking(db, booking_id)
@@ -131,7 +129,7 @@ def checkin(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 
 @router.post("/pms/bookings/{booking_id}/checkout",
-             response_model=BookingRead, dependencies=[_guard])
+             response_model=BookingRead)
 def checkout(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.checkout_booking(db, booking_id)
@@ -140,7 +138,7 @@ def checkout(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 
 @router.post("/pms/bookings/{booking_id}/cancel",
-             response_model=BookingRead, dependencies=[_guard])
+             response_model=BookingRead)
 def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
     try:
         return services.cancel_booking(db, booking_id, cancelled_by=user.id)
@@ -154,7 +152,7 @@ def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
 # HousekeepingTask تلقائياً) — بس مفيش route كان متوصّل، فكان 404 حقيقي
 # في الإنتاج زي حالة GET /restaurant/menu/categories المذكورة في § 11.6.
 
-@router.get("/pms/housekeeping/tasks", response_model=list[HousekeepingTaskRead], dependencies=[_guard])
+@router.get("/pms/housekeeping/tasks", response_model=list[HousekeepingTaskRead])
 def list_housekeeping_tasks(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -166,7 +164,7 @@ def list_housekeeping_tasks(
             for t in crud.list_housekeeping_tasks(db, branch_id, status_filter, room_id)]
 
 
-@router.patch("/pms/housekeeping/tasks/{task_id}", response_model=HousekeepingTaskRead, dependencies=[_guard])
+@router.patch("/pms/housekeeping/tasks/{task_id}", response_model=HousekeepingTaskRead)
 def update_housekeeping_task_status(
     task_id: int, data: HousekeepingTaskStatusUpdate, db: DbDep,
     _=Depends(get_current_active_user),
@@ -180,7 +178,7 @@ def update_housekeeping_task_status(
 
 # ── Night Audit ───────────────────────────────────────────────────────
 
-@router.get("/pms/night-audit", response_model=list[NightAuditLogRead], dependencies=[_guard])
+@router.get("/pms/night-audit", response_model=list[NightAuditLogRead])
 def list_night_audits(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -190,7 +188,7 @@ def list_night_audits(
             for l in crud.list_night_audits(db, branch_id, (page-1)*size, size)]
 
 
-@router.post("/pms/night-audit/run", response_model=NightAuditLogRead, dependencies=[_guard])
+@router.post("/pms/night-audit/run", response_model=NightAuditLogRead)
 def run_night_audit(
     db: DbDep,
     _=Depends(get_admin_user),

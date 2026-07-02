@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
-    get_manager_user, require_module,
+    get_manager_user,
 )
 from app.modules.maintenance import crud, services
 from app.modules.maintenance.schemas import (
@@ -19,12 +19,11 @@ from app.modules.maintenance.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["maintenance"])
-_guard = Depends(require_module("maintenance"))
 
 
 # ── Assets ────────────────────────────────────────────────────────────
 
-@router.get("/maintenance/assets", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/maintenance/assets", response_model=PaginatedResponse)
 def list_assets(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -41,7 +40,7 @@ def list_assets(
 
 
 @router.post("/maintenance/assets", response_model=AssetRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_asset(data: AssetCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.create_asset(db, data)
@@ -49,7 +48,7 @@ def create_asset(data: AssetCreate, db: DbDep, _=Depends(get_manager_user)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/maintenance/assets/{asset_id}", response_model=AssetRead, dependencies=[_guard])
+@router.get("/maintenance/assets/{asset_id}", response_model=AssetRead)
 def get_asset(asset_id: int, db: DbDep, _=Depends(get_current_active_user)):
     asset = crud.get_asset(db, asset_id)
     if not asset:
@@ -57,7 +56,7 @@ def get_asset(asset_id: int, db: DbDep, _=Depends(get_current_active_user)):
     return AssetRead.model_validate(asset)
 
 
-@router.patch("/maintenance/assets/{asset_id}", response_model=AssetRead, dependencies=[_guard])
+@router.patch("/maintenance/assets/{asset_id}", response_model=AssetRead)
 def update_asset(asset_id: int, data: AssetUpdate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.update_asset(db, asset_id, data)
@@ -66,7 +65,7 @@ def update_asset(asset_id: int, data: AssetUpdate, db: DbDep, _=Depends(get_mana
 
 
 @router.post("/maintenance/assets/{asset_id}/dispose",
-             response_model=AssetRead, dependencies=[_guard])
+             response_model=AssetRead)
 def dispose_asset(asset_id: int, db: DbDep, _=Depends(get_admin_user)):
     try:
         return services.dispose_asset(db, asset_id)
@@ -76,7 +75,7 @@ def dispose_asset(asset_id: int, db: DbDep, _=Depends(get_admin_user)):
 
 # ── Work Orders ───────────────────────────────────────────────────────
 
-@router.get("/maintenance/work-orders", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/maintenance/work-orders", response_model=PaginatedResponse)
 def list_work_orders(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -97,7 +96,7 @@ def list_work_orders(
 
 
 @router.post("/maintenance/work-orders", response_model=WorkOrderRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_work_order(data: WorkOrderCreate, db: DbDep, user=Depends(get_current_active_user)):
     try:
         return services.create_work_order(db, data, reported_by=user.id)
@@ -105,7 +104,7 @@ def create_work_order(data: WorkOrderCreate, db: DbDep, user=Depends(get_current
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/maintenance/work-orders/{order_id}", response_model=WorkOrderRead, dependencies=[_guard])
+@router.get("/maintenance/work-orders/{order_id}", response_model=WorkOrderRead)
 def get_work_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
     wo = crud.get_work_order(db, order_id)
     if not wo:
@@ -113,7 +112,7 @@ def get_work_order(order_id: int, db: DbDep, _=Depends(get_current_active_user))
     return WorkOrderRead.model_validate(wo)
 
 
-@router.patch("/maintenance/work-orders/{order_id}", response_model=WorkOrderRead, dependencies=[_guard])
+@router.patch("/maintenance/work-orders/{order_id}", response_model=WorkOrderRead)
 def update_work_order(order_id: int, data: WorkOrderUpdate, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.update_work_order(db, order_id, data)
@@ -122,7 +121,7 @@ def update_work_order(order_id: int, data: WorkOrderUpdate, db: DbDep, _=Depends
 
 
 @router.post("/maintenance/work-orders/{order_id}/complete",
-             response_model=WorkOrderRead, dependencies=[_guard])
+             response_model=WorkOrderRead)
 def complete_work_order(order_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.complete_work_order(db, order_id)
@@ -132,7 +131,7 @@ def complete_work_order(order_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 @router.post("/maintenance/work-orders/{order_id}/parts",
              response_model=WorkOrderRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def add_part(order_id: int, data: WorkOrderPartCreate, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.add_part_to_wo(db, order_id, data)
@@ -142,7 +141,7 @@ def add_part(order_id: int, data: WorkOrderPartCreate, db: DbDep, _=Depends(get_
 
 # ── Preventive Schedules ──────────────────────────────────────────────
 
-@router.get("/maintenance/preventive-schedules", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/maintenance/preventive-schedules", response_model=PaginatedResponse)
 def list_schedules(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -160,7 +159,7 @@ def list_schedules(
 
 @router.post("/maintenance/preventive-schedules",
              response_model=PreventiveScheduleRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_schedule(data: PreventiveScheduleCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.create_schedule(db, data)
@@ -169,7 +168,7 @@ def create_schedule(data: PreventiveScheduleCreate, db: DbDep, _=Depends(get_man
 
 
 @router.patch("/maintenance/preventive-schedules/{schedule_id}",
-              response_model=PreventiveScheduleRead, dependencies=[_guard])
+              response_model=PreventiveScheduleRead)
 def update_schedule(schedule_id: int, data: PreventiveScheduleUpdate,
                     db: DbDep, _=Depends(get_manager_user)):
     try:

@@ -9,24 +9,23 @@ from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_manager_user, require_module,
+    get_current_active_user, get_manager_user,
 )
 from app.modules.beach import crud, services
 from app.modules.beach.schemas import (
     B2BCheckinRequest, B2BContractCreate, B2BContractRead,
     BeachDailySummary, BeachInventoryRead, BeachReservationCreate,
     BeachReservationPublic, BeachReservationRead, BeachSellRequest,
-    BeachSurgeSet, BeachTransactionRead,
+    BeachSurgeSet, BeachTransactionRead, VoidTransactionRequest,
 )
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["beach"])
-_guard = Depends(require_module("beach"))
 
 
 # ── Inventory ─────────────────────────────────────────────────────────
 
-@router.get("/beach/inventory", response_model=BeachInventoryRead, dependencies=[_guard])
+@router.get("/beach/inventory", response_model=BeachInventoryRead)
 def get_inventory(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -40,7 +39,7 @@ def get_inventory(
 
 # ── Surge toggle (Manager only) ───────────────────────────────────
 
-@router.patch("/beach/surge", response_model=BeachInventoryRead, dependencies=[_guard])
+@router.patch("/beach/surge", response_model=BeachInventoryRead)
 def set_surge(
     data: BeachSurgeSet, db: DbDep,
     _=Depends(get_manager_user),
@@ -56,7 +55,7 @@ def set_surge(
 # ── Sell ──────────────────────────────────────────────────────────────
 
 @router.post("/beach/sell", response_model=BeachTransactionRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def sell_ticket(
     data: BeachSellRequest, db: DbDep,
     user=Depends(get_cashier_user),
@@ -71,7 +70,7 @@ def sell_ticket(
 
 
 @router.post("/beach/b2b-checkin", response_model=BeachTransactionRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def b2b_checkin(
     data: B2BCheckinRequest, db: DbDep,
     user=Depends(get_cashier_user),
@@ -87,7 +86,7 @@ def b2b_checkin(
 
 # ── Transactions ──────────────────────────────────────────────────────
 
-@router.get("/beach/transactions", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/beach/transactions", response_model=PaginatedResponse)
 def list_transactions(
     db: DbDep, _=Depends(get_cashier_user),
     branch_id: int           = Query(...),
@@ -99,7 +98,7 @@ def list_transactions(
                              items=[BeachTransactionRead.model_validate(t) for t in items])
 
 
-@router.get("/beach/transactions/{tx_id}/ticket", dependencies=[_guard])
+@router.get("/beach/transactions/{tx_id}/ticket")
 def download_ticket(tx_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         pdf = services.generate_ticket_pdf(db, tx_id)
@@ -113,17 +112,17 @@ def download_ticket(tx_id: int, db: DbDep, _=Depends(get_cashier_user)):
 
 
 @router.post("/beach/transactions/{tx_id}/void",
-             response_model=BeachTransactionRead, dependencies=[_guard])
-def void_transaction(tx_id: int, db: DbDep, user=Depends(get_manager_user)):
+             response_model=BeachTransactionRead)
+def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=Depends(get_manager_user)):
     try:
-        return services.void_transaction(db, tx_id, voided_by=user.id)
+        return services.void_transaction(db, tx_id, voided_by=user.id, reason=data.reason)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 # ── Daily Summary ─────────────────────────────────────────────────────
 
-@router.get("/beach/summary", response_model=BeachDailySummary, dependencies=[_guard])
+@router.get("/beach/summary", response_model=BeachDailySummary)
 def daily_summary(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int  = Query(...),
@@ -149,7 +148,7 @@ def daily_summary(
 
 # ── Daily EOD Report ────────────────────────────────────────────────────
 
-@router.get("/beach/eod-report", dependencies=[_guard])
+@router.get("/beach/eod-report")
 def get_eod_report(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...), report_date: Optional[date] = Query(None),
@@ -159,7 +158,7 @@ def get_eod_report(
     return services.get_eod_report(db, branch_id, report_date)
 
 
-@router.get("/beach/eod-report/pdf", dependencies=[_guard])
+@router.get("/beach/eod-report/pdf")
 def download_eod_report_pdf(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...), report_date: Optional[date] = Query(None),
@@ -175,14 +174,14 @@ def download_eod_report_pdf(
 
 # ── B2B Contracts ─────────────────────────────────────────────────────
 
-@router.get("/beach/b2b-contracts", response_model=list[B2BContractRead], dependencies=[_guard])
+@router.get("/beach/b2b-contracts", response_model=list[B2BContractRead])
 def list_contracts(db: DbDep, _=Depends(get_manager_user),
                    branch_id: int = Query(...), active_only: bool = Query(True)):
     return [B2BContractRead.model_validate(c)
             for c in crud.list_b2b_contracts(db, branch_id, active_only)]
 
 
-@router.get("/beach/b2b-contracts/status", dependencies=[_guard])
+@router.get("/beach/b2b-contracts/status")
 def get_b2b_quota_status(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...), day: Optional[date] = Query(None),
@@ -194,7 +193,7 @@ def get_b2b_quota_status(
 
 # ── Live Dashboard ────────────────────────────────────────────────────
 
-@router.get("/beach/live-dashboard", dependencies=[_guard])
+@router.get("/beach/live-dashboard")
 def get_live_dashboard(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -219,7 +218,7 @@ def get_live_dashboard(
 
 
 @router.post("/beach/b2b-contracts", response_model=B2BContractRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_contract(data: B2BContractCreate, db: DbDep, _=Depends(get_admin_user)):
     obj = crud.create_b2b_contract(db, data)
     db.commit(); db.refresh(obj)
@@ -228,7 +227,7 @@ def create_contract(data: B2BContractCreate, db: DbDep, _=Depends(get_admin_user
 
 # ── Reservations ──────────────────────────────────────────────────────
 
-@router.get("/beach/reservations", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/beach/reservations", response_model=PaginatedResponse)
 def list_reservations(
     db: DbDep, _=Depends(get_cashier_user),
     branch_id:    int           = Query(...),
@@ -243,7 +242,7 @@ def list_reservations(
 
 
 @router.post("/beach/reservations", response_model=BeachReservationRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_reservation(data: BeachReservationCreate, db: DbDep, _=Depends(get_cashier_user)):
     try:
         return services.create_reservation(db, data)
@@ -265,7 +264,7 @@ def get_reservation_public(reservation_id: int, db: DbDep):
 
 
 @router.post("/beach/reservations/{reservation_id}/checkin",
-             response_model=BeachReservationRead, dependencies=[_guard])
+             response_model=BeachReservationRead)
 def checkin_reservation(reservation_id: int, db: DbDep, user=Depends(get_cashier_user)):
     try:
         return services.check_in_reservation(db, reservation_id, cashier_id=user.id)

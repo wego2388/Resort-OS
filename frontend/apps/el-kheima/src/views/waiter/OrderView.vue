@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
 import { useOfflineQueue } from '@resort-os/core/composables'
+import ExtrasSelectionModal from '../../components/ExtrasSelectionModal.vue'
 
 const props = defineProps<{ tableId?: string }>()
 
@@ -13,10 +14,18 @@ const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getItem('access_token')}` }))
 const tableId = computed(() => (props.tableId ? parseInt(props.tableId) : null))
 
+interface ExtraOption { id: number; name: string; name_ar?: string | null; price_addition: number | string; is_available: boolean }
+interface ExtraGroup  { id: number; name: string; name_ar?: string | null; min_select: number; max_select: number; options: ExtraOption[] }
 interface Table    { id: number; table_number: string; status: string }
 interface Category { id: number; name: string; name_ar: string }
-interface MenuItem { id: number; name: string; name_ar: string; price: number; is_available: boolean; category_id: number | null }
-interface CartItem { menu_item_id: number; name: string; name_ar: string; price: number; quantity: number; notes: string }
+interface MenuItem {
+  id: number; name: string; name_ar: string; price: number; is_available: boolean
+  category_id: number | null; extra_groups: ExtraGroup[]
+}
+interface CartItem {
+  key: string; menu_item_id: number; name: string; name_ar: string; price: number
+  quantity: number; notes: string; extra_ids: number[]; extras: ExtraOption[]
+}
 
 const table             = ref<Table | null>(null)
 const categories        = ref<Category[]>([])
@@ -26,8 +35,13 @@ const cart              = ref<CartItem[]>([])
 const covers            = ref(1)
 const loading           = ref(false)
 const submitting        = ref(false)
+const holding           = ref(false)
 const successMsg        = ref('')
 const errorMsg          = ref('')
+
+// Extras selection modal — opened instead of a direct add() when the tapped
+// item has extra_groups (checked against MenuItemRead.extra_groups).
+const extrasModalItem = ref<MenuItem | null>(null)
 
 const filteredItems = computed(() =>
   selectedCategoryId.value !== null
@@ -35,24 +49,45 @@ const filteredItems = computed(() =>
     : menuItems.value.filter(i => i.is_available)
 )
 
-const total    = computed(() => cart.value.reduce((s, i) => s + i.price * i.quantity, 0))
+function lineUnitPrice(item: CartItem): number {
+  return item.price + item.extras.reduce((s, e) => s + Number(e.price_addition), 0)
+}
+
+const total    = computed(() => cart.value.reduce((s, i) => s + lineUnitPrice(i) * i.quantity, 0))
 const hasItems = computed(() => cart.value.length > 0)
 
-function addToCart(item: MenuItem) {
-  const existing = cart.value.find(c => c.menu_item_id === item.id)
+function onMenuItemTap(item: MenuItem) {
+  if (item.extra_groups && item.extra_groups.length > 0) {
+    extrasModalItem.value = item
+  } else {
+    addToCart(item, [], [])
+  }
+}
+
+function addToCart(item: MenuItem, extraIds: number[], extras: ExtraOption[]) {
+  const key = `${item.id}:${[...extraIds].sort((a, b) => a - b).join(',')}`
+  const existing = cart.value.find(c => c.key === key)
   if (existing) { existing.quantity++; return }
-  cart.value.push({ menu_item_id: item.id, name: item.name, name_ar: item.name_ar, price: item.price, quantity: 1, notes: '' })
+  cart.value.push({
+    key, menu_item_id: item.id, name: item.name, name_ar: item.name_ar,
+    price: item.price, quantity: 1, notes: '', extra_ids: extraIds, extras,
+  })
 }
 
-function removeFromCart(itemId: number) {
-  cart.value = cart.value.filter(c => c.menu_item_id !== itemId)
+function onExtrasConfirm(extraIds: number[], extras: ExtraOption[]) {
+  if (extrasModalItem.value) addToCart(extrasModalItem.value, extraIds, extras)
+  extrasModalItem.value = null
 }
 
-function adjustQty(itemId: number, delta: number) {
-  const item = cart.value.find(c => c.menu_item_id === itemId)
+function removeFromCart(key: string) {
+  cart.value = cart.value.filter(c => c.key !== key)
+}
+
+function adjustQty(key: string, delta: number) {
+  const item = cart.value.find(c => c.key === key)
   if (!item) return
   item.quantity = Math.max(0, item.quantity + delta)
-  if (item.quantity === 0) removeFromCart(itemId)
+  if (item.quantity === 0) removeFromCart(key)
 }
 
 async function loadData() {
@@ -82,26 +117,43 @@ async function loadData() {
   }
 }
 
+function buildOrderPayload() {
+  return {
+    table_id:     tableId.value,
+    order_type:   tableId.value ? 'dine_in' : 'takeaway',
+    guests_count: covers.value,
+    items: cart.value.map(i => ({
+      menu_item_id: i.menu_item_id,
+      quantity:     i.quantity,
+      notes:        i.notes || undefined,
+      extra_ids:    i.extra_ids,
+    })),
+  }
+}
+
 async function sendToKitchen() {
   if (!hasItems.value || submitting.value) return
   submitting.value = true
   try {
-    const payload = {
-      table_id:     tableId.value,
-      order_type:   tableId.value ? 'dine_in' : 'takeaway',
-      guests_count: covers.value,
-      items: cart.value.map(i => ({
-        menu_item_id: i.menu_item_id,
-        quantity:     i.quantity,
-        notes:        i.notes || undefined,
-      })),
-    }
-
+    const payload = buildOrderPayload()
     const data = await submitOrderOnlineOrQueue(branchId, payload)
 
     if (data === null) {
+      // Queued offline — /restaurant/orders/sync will create it once back
+      // online, but (known backend gap, not fixable from this view) the
+      // sync endpoint itself never performs the open→in_kitchen transition
+      // either, so a queued order still needs a manual nudge once synced.
       successMsg.value = '📥 الطلب محفوظ محلياً — هيتبعت للمطبخ أول ما النت يرجع'
     } else {
+      // Creating the order alone leaves it in status "open" — a
+      // KitchenTicket is only ever created by the open→in_kitchen PATCH
+      // (see services.update_order_status). Without this call the order
+      // existed but the kitchen never saw it — a real pre-existing bug.
+      await axios.patch(
+        `/api/v1/restaurant/orders/${data.id}/status`,
+        { status: 'in_kitchen' },
+        { headers: authHeaders.value },
+      )
       successMsg.value = 'تم إرسال الطلب للمطبخ ✓'
     }
     cart.value = []
@@ -115,6 +167,39 @@ async function sendToKitchen() {
     setTimeout(() => { errorMsg.value = '' }, 4000)
   } finally {
     submitting.value = false
+  }
+}
+
+/** Hold order (احتفظ بالطلب) — POST /restaurant/orders/hold. Deliberately
+ * NOT routed through useOfflineQueue: the offline sync contract
+ * (OrderSyncRequest/sync_offline_order) has no "hold" flag at all, so a
+ * queued "hold" would silently become a normal sent order once connectivity
+ * returns — worse than just telling the waiter to wait for a connection. */
+async function holdOrder() {
+  if (!hasItems.value || holding.value) return
+  holding.value = true
+  try {
+    await axios.post(
+      `/api/v1/restaurant/orders/hold?branch_id=${branchId}`,
+      buildOrderPayload(),
+      { headers: authHeaders.value },
+    )
+    successMsg.value = 'اتحفظ الطلب — هيلاقيه في "الطلبات المعلّقة" ✓'
+    cart.value = []
+    covers.value = 1
+    setTimeout(() => {
+      successMsg.value = ''
+      router.push('/waiter/tables')
+    }, 1500)
+  } catch (e: any) {
+    if (!isOnline.value || e?.code === 'ERR_NETWORK') {
+      errorMsg.value = 'الاحتفاظ بالطلب محتاج اتصال بالإنترنت'
+    } else {
+      errorMsg.value = e?.response?.data?.detail ?? 'فشل الاحتفاظ بالطلب'
+    }
+    setTimeout(() => { errorMsg.value = '' }, 4000)
+  } finally {
+    holding.value = false
   }
 }
 
@@ -170,9 +255,10 @@ onMounted(loadData)
         <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
           <button
             v-for="item in filteredItems" :key="item.id"
-            @click="addToCart(item)"
-            class="bg-white rounded-xl border border-stone-200 p-4 text-right hover:border-blue-400 active:scale-95 transition-all flex flex-col justify-between min-h-[96px] shadow-sm"
+            @click="onMenuItemTap(item)"
+            class="relative bg-white rounded-xl border border-stone-200 p-4 text-right hover:border-blue-400 active:scale-95 transition-all flex flex-col justify-between min-h-[96px] shadow-sm"
           >
+            <span v-if="item.extra_groups?.length" class="absolute top-2 left-2 text-[10px] bg-blue-100 text-blue-700 rounded-full px-1.5 py-0.5 font-bold">+إضافات</span>
             <div class="font-semibold text-gray-900 text-sm leading-tight mb-2">{{ item.name_ar || item.name }}</div>
             <div class="text-lg font-black text-blue-700">{{ item.price }}<span class="text-xs font-normal text-gray-400 mr-0.5">ج</span></div>
           </button>
@@ -195,18 +281,21 @@ onMounted(loadData)
             <p class="text-sm">اختر أصناف من القائمة</p>
           </div>
 
-          <div v-for="item in cart" :key="item.menu_item_id" class="bg-stone-50 rounded-lg p-3 border border-stone-200">
+          <div v-for="item in cart" :key="item.key" class="bg-stone-50 rounded-lg p-3 border border-stone-200">
             <div class="flex items-start justify-between mb-2 gap-1">
               <span class="text-sm font-semibold text-gray-900 leading-tight flex-1">{{ item.name_ar || item.name }}</span>
-              <button @click="removeFromCart(item.menu_item_id)" class="text-red-400 hover:text-red-600 text-lg leading-none w-6 h-6 flex items-center justify-center rounded hover:bg-red-50">×</button>
+              <button @click="removeFromCart(item.key)" class="text-red-400 hover:text-red-600 text-lg leading-none w-6 h-6 flex items-center justify-center rounded hover:bg-red-50">×</button>
+            </div>
+            <div v-if="item.extras.length" class="text-xs text-gray-500 mb-2">
+              {{ item.extras.map(e => `${e.name_ar || e.name}${Number(e.price_addition) > 0 ? ' (+' + e.price_addition + 'ج)' : ''}`).join('، ') }}
             </div>
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-1.5">
-                <button @click="adjustQty(item.menu_item_id, -1)" class="w-8 h-8 rounded bg-gray-200 text-base font-bold">−</button>
+                <button @click="adjustQty(item.key, -1)" class="w-8 h-8 rounded bg-gray-200 text-base font-bold">−</button>
                 <span class="text-sm font-bold w-6 text-center">{{ item.quantity }}</span>
-                <button @click="adjustQty(item.menu_item_id, 1)" class="w-8 h-8 rounded bg-blue-100 text-blue-700 text-base font-bold">+</button>
+                <button @click="adjustQty(item.key, 1)" class="w-8 h-8 rounded bg-blue-100 text-blue-700 text-base font-bold">+</button>
               </div>
-              <span class="text-sm font-bold text-blue-700">{{ item.price * item.quantity }} ج</span>
+              <span class="text-sm font-bold text-blue-700">{{ lineUnitPrice(item) * item.quantity }} ج</span>
             </div>
           </div>
         </div>
@@ -224,17 +313,32 @@ onMounted(loadData)
             <div v-if="errorMsg" class="bg-red-100 text-red-700 text-xs px-2 py-2 rounded-lg text-center font-medium">{{ errorMsg }}</div>
           </transition>
 
-          <button
-            @click="sendToKitchen"
-            :disabled="!hasItems || submitting"
-            class="w-full py-4 bg-blue-700 text-white rounded-xl font-bold text-base hover:bg-blue-800 disabled:opacity-40 active:scale-[0.98] transition-all"
-          >
-            {{ submitting ? 'جاري الإرسال...' : '🍳 إرسال للمطبخ' }}
-          </button>
+          <div class="grid grid-cols-2 gap-2">
+            <button
+              @click="holdOrder"
+              :disabled="!hasItems || submitting || holding"
+              class="py-3.5 rounded-xl border-2 border-amber-400 text-amber-700 font-bold text-sm hover:bg-amber-50 disabled:opacity-40 active:scale-[0.98] transition-all"
+            >
+              {{ holding ? 'جاري الحفظ...' : '⏸️ احتفظ بالطلب' }}
+            </button>
+            <button
+              @click="sendToKitchen"
+              :disabled="!hasItems || submitting || holding"
+              class="py-3.5 bg-blue-700 text-white rounded-xl font-bold text-sm hover:bg-blue-800 disabled:opacity-40 active:scale-[0.98] transition-all"
+            >
+              {{ submitting ? 'جاري الإرسال...' : '🍳 إرسال للمطبخ' }}
+            </button>
+          </div>
         </div>
       </div>
 
     </div>
+
+    <ExtrasSelectionModal
+      :item="extrasModalItem"
+      @confirm="onExtrasConfirm"
+      @close="extrasModalItem = null"
+    />
   </div>
 </template>
 

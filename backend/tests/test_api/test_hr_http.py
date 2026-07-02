@@ -10,7 +10,6 @@ api/router.py (which only had `/hr/payroll-runs` and `/hr/leave-requests`).
 Both were genuine 404s in production, same class of bug as the
 GET /restaurant/menu/categories case documented in CLAUDE.md § 11.6.
 
-⚠️ hr is `always_on=True` in MODULE_REGISTRY — no module-enable step needed.
 ⚠️ Setup data created here must be `db.commit()`-ed, not `.flush()`-ed.
 """
 from __future__ import annotations

@@ -6,16 +6,14 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import Response
-from sqlalchemy.orm import Session
 
 from app.core.deps import (
-    DbDep, get_cashier_user, get_current_active_user, get_db,
-    get_manager_user, get_waiter_user, require_module,
+    DbDep, get_cashier_user, get_current_active_user,
+    get_manager_user, get_waiter_user,
 )
 from app.modules.restaurant import crud, services
 from app.modules.restaurant.schemas import (
-    DiningTableRead, DiningTableStatusUpdate,
-    KDSScreenCreate, KDSScreenRead,
+    DiningTableRead, KDSScreenCreate, KDSScreenRead,
     KitchenTicketRead, TicketStatusUpdate,
     MenuCategoryCreate, MenuCategoryRead,
     MenuItemCreate, MenuItemExtraGroupCreate, MenuItemExtraGroupRead, MenuItemRead, MenuItemUpdate,
@@ -28,14 +26,13 @@ from app.modules.restaurant.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["restaurant"])
-_guard = Depends(require_module("restaurant"))
 
 
 # ── WebSocket KDS Manager ──────────────────────────────────────────────
 
 class ConnectionManager:
     def __init__(self):
-        self.active: dict[str, list[WebSocket]] = {}  # branch_id → list di WS
+        self.active: dict[str, list[WebSocket]] = {}  # branch_id → قائمة اتصالات WS
 
     async def connect(self, ws: WebSocket, branch_id: str):
         await ws.accept()
@@ -58,12 +55,13 @@ restaurant_manager = ConnectionManager()
 
 
 @router.websocket("/restaurant/ws/kds/{branch_id}")
-async def kds_websocket(ws: WebSocket, branch_id: int, db: Session = Depends(get_db)):
-    """WebSocket per KDS screens — riceve aggiornamenti ticket in tempo reale."""
+async def kds_websocket(ws: WebSocket, branch_id: int):
+    """اتصال WebSocket لشاشات الـ KDS — بث تحديثات التذاكر لحظيًا (server→client)،
+    وبيرد على أي رسالة من العميل بـ pong كـ heartbeat فقط (مفيش بروتوكول ثنائي الاتجاه)."""
     await restaurant_manager.connect(ws, str(branch_id))
     try:
         while True:
-            data = await ws.receive_text()
+            await ws.receive_text()
             await ws.send_json({"type": "pong"})
     except WebSocketDisconnect:
         restaurant_manager.disconnect(ws, str(branch_id))
@@ -73,7 +71,7 @@ async def kds_websocket(ws: WebSocket, branch_id: int, db: Session = Depends(get
 # ⚠️ لازم يفضل /menu/items (نفس مسار POST/PATCH تحت) — مش /menu بس. كان في
 # mismatch حقيقي هنا خلّى RestaurantPOSView.vue يرجّعله 405 في الإنتاج.
 
-@router.get("/restaurant/menu/categories", response_model=list[MenuCategoryRead], dependencies=[_guard])
+@router.get("/restaurant/menu/categories", response_model=list[MenuCategoryRead])
 def get_categories(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     """⚠️ RestaurantPOSView.vue كان بينادي المسار ده وهو مش موجود أصلاً (404 حقيقي في
     الإنتاج) — الـ import كان موجود من زمان بس الـ endpoint نفسه اتنسى."""
@@ -81,7 +79,7 @@ def get_categories(db: DbDep, _=Depends(get_current_active_user), branch_id: int
 
 
 @router.post("/restaurant/menu/categories", response_model=MenuCategoryRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_category(data: MenuCategoryCreate, db: DbDep, _=Depends(get_manager_user)):
     obj = crud.create_category(db, data)
     db.commit()
@@ -89,7 +87,7 @@ def create_category(data: MenuCategoryCreate, db: DbDep, _=Depends(get_manager_u
     return MenuCategoryRead.model_validate(obj)
 
 
-@router.get("/restaurant/menu/items", response_model=list[MenuItemRead], dependencies=[_guard])
+@router.get("/restaurant/menu/items", response_model=list[MenuItemRead])
 def get_menu(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -102,7 +100,7 @@ def get_menu(
 
 
 @router.post("/restaurant/menu/items", response_model=MenuItemRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_menu_item(data: MenuItemCreate, db: DbDep, _=Depends(get_manager_user)):
     obj = crud.create_menu_item(db, data)
     db.commit()
@@ -111,7 +109,7 @@ def create_menu_item(data: MenuItemCreate, db: DbDep, _=Depends(get_manager_user
 
 
 @router.patch("/restaurant/menu/items/{item_id}",
-              response_model=MenuItemRead, dependencies=[_guard])
+              response_model=MenuItemRead)
 def update_menu_item(item_id: int, data: MenuItemUpdate, db: DbDep, _=Depends(get_manager_user)):
     item = crud.get_menu_item(db, item_id)
     if not item:
@@ -124,7 +122,7 @@ def update_menu_item(item_id: int, data: MenuItemUpdate, db: DbDep, _=Depends(ge
 
 @router.post("/restaurant/menu/items/{item_id}/extra-groups",
              response_model=MenuItemExtraGroupRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_extra_group(item_id: int, data: MenuItemExtraGroupCreate, db: DbDep, _=Depends(get_manager_user)):
     item = crud.get_menu_item(db, item_id)
     if not item:
@@ -136,7 +134,7 @@ def create_extra_group(item_id: int, data: MenuItemExtraGroupCreate, db: DbDep, 
 
 
 @router.delete("/restaurant/menu/extra-groups/{group_id}",
-               status_code=status.HTTP_204_NO_CONTENT, dependencies=[_guard])
+               status_code=status.HTTP_204_NO_CONTENT)
 def delete_extra_group(group_id: int, db: DbDep, _=Depends(get_manager_user)):
     if not crud.delete_extra_group(db, group_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المجموعة غير موجودة")
@@ -145,14 +143,14 @@ def delete_extra_group(group_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 # ── Tables ────────────────────────────────────────────────────────────
 
-@router.get("/restaurant/tables", response_model=list[DiningTableRead], dependencies=[_guard])
+@router.get("/restaurant/tables", response_model=list[DiningTableRead])
 def list_tables(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return [DiningTableRead.model_validate(t) for t in crud.list_tables(db, branch_id)]
 
 
 # ── Orders ────────────────────────────────────────────────────────────
 
-@router.get("/restaurant/orders", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/restaurant/orders", response_model=PaginatedResponse)
 def list_orders(
     db: DbDep,
     _=Depends(get_cashier_user),
@@ -169,7 +167,7 @@ def list_orders(
 
 
 @router.post("/restaurant/orders", response_model=OrderRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_order(data: OrderCreate, db: DbDep, user=Depends(get_waiter_user),
                  branch_id: int = Query(...)):
     try:
@@ -179,7 +177,7 @@ def create_order(data: OrderCreate, db: DbDep, user=Depends(get_waiter_user),
 
 
 @router.post("/restaurant/orders/hold", response_model=OrderRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def hold_order(data: OrderCreate, db: DbDep, user=Depends(get_waiter_user),
                branch_id: int = Query(...)):
     """طلب معلّق (زي fb_hold عند Trucker) — الجرسون يحفظ الأوردر من غير ما
@@ -191,14 +189,14 @@ def hold_order(data: OrderCreate, db: DbDep, user=Depends(get_waiter_user),
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/restaurant/orders/held", response_model=list[OrderRead], dependencies=[_guard])
+@router.get("/restaurant/orders/held", response_model=list[OrderRead])
 def list_held_orders(db: DbDep, _=Depends(get_waiter_user), branch_id: int = Query(...)):
     """الجرسون يقدر يشوف الطلبات المعلّقة بس (مش كل الأوردرات — دي للكاشير)."""
     items, _total = crud.list_orders(db, branch_id, status="held", limit=100)
     return [OrderRead.model_validate(o) for o in items]
 
 
-@router.post("/restaurant/orders/sync", response_model=OrderSyncResponse, dependencies=[_guard])
+@router.post("/restaurant/orders/sync", response_model=OrderSyncResponse)
 def sync_offline_order(data: OrderSyncRequest, db: DbDep, user=Depends(get_waiter_user),
                        branch_id: int = Query(...)):
     """Offline POS sync — يستقبل طلب اتعمل وهو offline ويسوّيه مع حالة
@@ -215,7 +213,7 @@ def sync_offline_order(data: OrderSyncRequest, db: DbDep, user=Depends(get_waite
     )
 
 
-@router.get("/restaurant/orders/{order_id}", response_model=OrderRead, dependencies=[_guard])
+@router.get("/restaurant/orders/{order_id}", response_model=OrderRead)
 def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
     order = crud.get_order(db, order_id)
     if not order:
@@ -224,7 +222,7 @@ def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 
 @router.patch("/restaurant/orders/{order_id}/status",
-              response_model=OrderRead, dependencies=[_guard])
+              response_model=OrderRead)
 def update_order_status(order_id: int, data: OrderStatusUpdate,
                         db: DbDep, _=Depends(get_waiter_user)):
     try:
@@ -234,7 +232,7 @@ def update_order_status(order_id: int, data: OrderStatusUpdate,
 
 
 @router.patch("/restaurant/orders/{order_id}/items/{item_id}/void",
-              response_model=OrderRead, dependencies=[_guard])
+              response_model=OrderRead)
 def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest,
                     db: DbDep, user=Depends(get_cashier_user)):
     """إلغاء صنف واحد بسبب إجباري — كاشير أو أعلى بس (مش الجرسون)، زي أي
@@ -245,7 +243,7 @@ def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/restaurant/orders/{order_id}/receipt", dependencies=[_guard])
+@router.get("/restaurant/orders/{order_id}/receipt")
 def download_receipt(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         pdf = services.generate_receipt_pdf(db, order_id)
@@ -259,7 +257,7 @@ def download_receipt(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
 
 
 @router.post("/restaurant/orders/{order_id}/discount",
-             response_model=OrderRead, dependencies=[_guard])
+             response_model=OrderRead)
 def apply_discount(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         return services.apply_order_discount(db, order_id)
@@ -270,54 +268,54 @@ def apply_discount(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
 # ── Kitchen / KDS ────────────────────────────────────────────────────
 
 @router.get("/restaurant/kitchen/tickets",
-            response_model=list[KitchenTicketRead], dependencies=[_guard])
+            response_model=list[KitchenTicketRead])
 def list_kitchen_tickets(
     db: DbDep,
     _=Depends(get_current_active_user),
     branch_id: int = Query(...),
     stations: Optional[str] = Query(None, description="Comma-separated list of stations"),
+    module: str = Query("restaurant", pattern=r"^(restaurant|cafe)$"),
 ):
-    """Lista ticket pendenti per il KDS screen."""
+    """قائمة تذاكر الـ KDS المعلقة — لكل شاشة KDS (مطبخ/بار/...) حسب المحطة والموديول."""
     station_list = [s.strip() for s in stations.split(",")] if stations else None
-    tickets = services.get_kds_tickets(db, branch_id, stations=station_list)
+    tickets = services.get_kds_tickets(db, branch_id, stations=station_list, module=module)
     return [KitchenTicketRead.model_validate(t) for t in tickets]
 
 
 @router.patch("/restaurant/kitchen/tickets/{ticket_id}/status",
-              response_model=KitchenTicketRead, dependencies=[_guard])
+              response_model=KitchenTicketRead)
 def update_ticket_status(
     ticket_id: int,
     data: TicketStatusUpdate,
     db: DbDep,
     _=Depends(get_current_active_user),
 ):
-    """Aggiorna lo status di un ticket (pending → in_progress → done)."""
+    """يحدّث حالة تذكرة الـ KDS (pending → in_progress → done)."""
     ticket = crud.update_ticket_status(db, ticket_id, data.status)
     if not ticket:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Ticket {ticket_id} non trovato")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"التذكرة {ticket_id} غير موجودة")
     db.commit()
     db.refresh(ticket)
     return KitchenTicketRead.model_validate(ticket)
 
 
 @router.get("/restaurant/kds-screens",
-            response_model=list[KDSScreenRead], dependencies=[_guard])
+            response_model=list[KDSScreenRead])
 def list_kds_screens(
     db: DbDep,
     _=Depends(get_current_active_user),
     branch_id: int = Query(...),
 ):
-    """Lista schermi KDS configurati."""
+    """قائمة شاشات الـ KDS المُعدّة للفرع."""
     screens = crud.list_kds_screens(db, branch_id)
     return [KDSScreenRead.model_validate(s) for s in screens]
 
 
 @router.post("/restaurant/kds-screens",
              response_model=KDSScreenRead,
-             status_code=status.HTTP_201_CREATED,
-             dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_kds_screen(data: KDSScreenCreate, db: DbDep, _=Depends(get_manager_user)):
-    """Crea un nuovo schermo KDS (solo manager)."""
+    """ينشئ شاشة KDS جديدة (مدير بس)."""
     screen = crud.create_kds_screen(db, data.model_dump())
     db.commit()
     db.refresh(screen)

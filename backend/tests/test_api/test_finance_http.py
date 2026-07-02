@@ -10,8 +10,6 @@ had ~0% HTTP-level coverage before this session.
 ⚠️ Setup data created here must be `db.commit()`-ed, not `.flush()`-ed — the
 HTTP request goes through a different DB session (app.dependency_overrides
 [get_db]) than the `db` fixture injected directly into the test function.
-
-⚠️ finance is `always_on=True` in MODULE_REGISTRY — no module-enable step needed.
 """
 from __future__ import annotations
 
@@ -702,10 +700,7 @@ class TestAccountingPeriodHTTPFlow:
             headers=manager_headers,
         )
         assert resp.status_code == 400
-        # ملاحظة: validate_period_open في services.py بيرمي رسالة بالإيطالية
-        # ("è chiuso") مش عربي/إنجليزي — أثر من كتابة أصلية مختلطة اللغة في
-        # هذا الملف تحديداً (post_journal_entry/JournalEntry docstrings).
-        assert "chiuso" in resp.json()["detail"]
+        assert "مقفولة" in resp.json()["detail"]
 
 
 class TestCheckHTTPFlow:

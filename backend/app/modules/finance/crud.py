@@ -8,13 +8,14 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.modules.finance.models import (
-    Account, AccountingPeriod, CashierShift, ConditionalDiscount, CostCenter, ETAInvoice,
-    Folio, FolioCharge, JournalEntry, JournalLine, Payment,
-    Check, CheckMovement, RevenueAuditLog,
+    Account, AccountingPeriod, CashierShift, CashierShiftCashCount, ConditionalDiscount,
+    CostCenter, ETAInvoice, ExchangeRate, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
+    Check, CheckMovement,
 )
 from app.modules.finance.schemas import (
     AccountCreate, ConditionalDiscountCreate, ConditionalDiscountUpdate,
-    CostCenterCreate, FolioCreate, FolioChargeCreate, JournalEntryCreate, PaymentCreate,
+    CostCenterCreate, ExchangeRateCreate, FolioCreate, FolioChargeCreate,
+    JournalEntryCreate, PaymentCreate,
 )
 
 
@@ -198,8 +199,10 @@ def list_payments(db: Session, folio_id: int) -> list[Payment]:
     )
 
 
-def create_payment(db: Session, data: PaymentCreate, shift_id: Optional[int] = None) -> Payment:
-    payment = Payment(**data.model_dump(), shift_id=shift_id)
+def create_payment(
+    db: Session, data: PaymentCreate, shift_id: Optional[int] = None, currency: str = "EGP",
+) -> Payment:
+    payment = Payment(**data.model_dump(), shift_id=shift_id, currency=currency)
     db.add(payment)
     db.flush()
     return payment
@@ -259,6 +262,32 @@ def list_shifts(
     return items, total
 
 
+def create_cash_count_lines(
+    db: Session, shift_id: int, lines: list[dict],
+) -> list[CashierShiftCashCount]:
+    rows = [
+        CashierShiftCashCount(
+            shift_id=shift_id,
+            denomination=line["denomination"],
+            quantity=line["quantity"],
+            subtotal=line["denomination"] * line["quantity"],
+        )
+        for line in lines
+    ]
+    db.add_all(rows)
+    db.flush()
+    return rows
+
+
+def list_cash_count_lines(db: Session, shift_id: int) -> list[CashierShiftCashCount]:
+    return (
+        db.query(CashierShiftCashCount)
+        .filter(CashierShiftCashCount.shift_id == shift_id)
+        .order_by(CashierShiftCashCount.denomination.desc())
+        .all()
+    )
+
+
 def get_previous_closed_shift(
     db: Session, branch_id: int, cashier_id: int, before_shift_id: int, before_opened_at: datetime,
 ) -> Optional[CashierShift]:
@@ -287,10 +316,6 @@ def create_account(db: Session, data: AccountCreate) -> Account:
     db.add(account)
     db.flush()
     return account
-
-
-def get_account(db: Session, account_id: int) -> Optional[Account]:
-    return db.query(Account).filter(Account.id == account_id).first()
 
 
 def get_account_by_code(db: Session, branch_id: int, code: str) -> Optional[Account]:
@@ -482,14 +507,6 @@ def list_cost_centers(db: Session, branch_id: int, active_only: bool = True) -> 
     return q.order_by(CostCenter.code).all()
 
 
-def get_cost_center_by_code(db: Session, branch_id: int, code: str) -> Optional[CostCenter]:
-    return (
-        db.query(CostCenter)
-        .filter(CostCenter.branch_id == branch_id, CostCenter.code == code)
-        .first()
-    )
-
-
 def create_cost_center(db: Session, data: CostCenterCreate) -> CostCenter:
     obj = CostCenter(**data.model_dump())
     db.add(obj)
@@ -514,6 +531,28 @@ def sum_folio_charges_by_type(
         .scalar()
     )
     return total or Decimal("0")
+
+
+def list_folio_charges_by_type_with_currency(
+    db: Session, branch_id: int, charge_type: str, date_from: date, date_to: date,
+) -> list[tuple[Decimal, str, date]]:
+    """زي sum_folio_charges_by_type بس بيرجّع كل حركة لوحدها مع عملة الفوليو
+    وتاريخها (بدل الجمع في SQL) — عشان services يقدر يحوّل كل حركة لـ EGP
+    equivalent بسعر الصرف في تاريخها قبل الجمع، لو الفوليوهات مختلطة العملة."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    rows = (
+        db.query(FolioCharge.amount, Folio.currency, FolioCharge.posted_at)
+        .join(Folio, Folio.id == FolioCharge.folio_id)
+        .filter(
+            Folio.branch_id == branch_id,
+            FolioCharge.charge_type == charge_type,
+            func.date(FolioCharge.posted_at) >= date_from,
+            func.date(FolioCharge.posted_at) <= date_to,
+        )
+        .all()
+    )
+    return [(amount, currency or "EGP", posted_at.date()) for amount, currency, posted_at in rows]
 
 
 def sum_beach_revenue(db: Session, branch_id: int, date_from: date, date_to: date) -> Decimal:
@@ -620,3 +659,71 @@ def sum_revenue_account_by_code(
         .scalar()
     )
     return total or Decimal("0")
+
+
+# ── Exchange Rates (Multi-Currency) ───────────────────────────────────
+
+def create_exchange_rate(db: Session, data: ExchangeRateCreate, created_by: int) -> ExchangeRate:
+    obj = ExchangeRate(
+        from_currency=data.from_currency,
+        to_currency=data.to_currency,
+        rate=data.rate,
+        effective_date=data.effective_date,
+        created_by=created_by,
+    )
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def get_exchange_rate_exact(
+    db: Session, from_currency: str, to_currency: str, effective_date: date,
+) -> Optional[ExchangeRate]:
+    return (
+        db.query(ExchangeRate)
+        .filter(
+            ExchangeRate.from_currency == from_currency,
+            ExchangeRate.to_currency == to_currency,
+            ExchangeRate.effective_date == effective_date,
+        )
+        .first()
+    )
+
+
+def get_latest_exchange_rate(
+    db: Session, from_currency: str, to_currency: str, as_of: date,
+) -> Optional[ExchangeRate]:
+    """أحدث سعر صرف بتاريخ <= as_of لنفس زوج العملة — fallback منطقي بدل
+    اعتماد سعر يوم بعينه (لو مفيش سعر مسجل بالظبط في as_of)."""
+    return (
+        db.query(ExchangeRate)
+        .filter(
+            ExchangeRate.from_currency == from_currency,
+            ExchangeRate.to_currency == to_currency,
+            ExchangeRate.effective_date <= as_of,
+        )
+        .order_by(ExchangeRate.effective_date.desc())
+        .first()
+    )
+
+
+def list_exchange_rates(
+    db: Session,
+    from_currency: Optional[str] = None,
+    to_currency: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> tuple[list[ExchangeRate], int]:
+    q = db.query(ExchangeRate)
+    if from_currency:
+        q = q.filter(ExchangeRate.from_currency == from_currency)
+    if to_currency:
+        q = q.filter(ExchangeRate.to_currency == to_currency)
+    total = q.count()
+    items = (
+        q.order_by(ExchangeRate.effective_date.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
+    return items, total

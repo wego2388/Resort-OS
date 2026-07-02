@@ -133,3 +133,30 @@ class TestPreventiveSchedule:
         second = services.generate_preventive_work_orders(db, branch.id)
         assert first == 1
         assert second == 0  # موجود مسبقاً
+
+    def test_completing_preventive_wo_advances_schedule(self, db, branch, asset):
+        """لو خلّصنا أمر الصيانة الوقائي من غير ما نقدّم next_due، اليوم اللي بعده
+        هيتعمل أمر جديد لنفس الجدول من الأول — ده الباج اللي كان موجود واتصلح."""
+        from datetime import date, timedelta
+        from app.modules.maintenance.schemas import PreventiveScheduleCreate
+
+        sched_data = PreventiveScheduleCreate(
+            branch_id=branch.id, asset_id=asset.id,
+            title="فحص دوري", frequency_days=30,
+            next_due=date.today() - timedelta(days=1),
+        )
+        schedule = services.create_schedule(db, sched_data)
+
+        count = services.generate_preventive_work_orders(db, branch.id)
+        assert count == 1
+        wo = db.query(WorkOrder).filter(WorkOrder.branch_id == branch.id).first()
+        assert wo.schedule_id == schedule.id
+
+        services.complete_work_order(db, wo.id)
+        db.refresh(schedule)
+        assert schedule.last_done == date.today()
+        assert schedule.next_due == date.today() + timedelta(days=30)
+
+        # مفيش تكرار: next_due بقى في المستقبل، فمفروض معاد إنشاء أوامر جديدة
+        again = services.generate_preventive_work_orders(db, branch.id)
+        assert again == 0

@@ -2,8 +2,14 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import axios from 'axios'
+import { AppModal, AppBadge } from '@resort-os/ui'
+import OrderDetailModal from '../../components/OrderDetailModal.vue'
 
 interface Table { id: number; table_number: string; status: string; capacity: number; section: string | null }
+interface HeldOrder {
+  id: number; order_number: string; table_id: number | null
+  guests_count: number; total: number | string; order_type: string
+}
 
 const router = useRouter()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
@@ -11,6 +17,39 @@ const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getI
 
 const tables = ref<Table[]>([])
 const loading = ref(false)
+
+// ── Held orders (الطلبات المعلّقة) ─────────────────────────────────────
+const heldOrders    = ref<HeldOrder[]>([])
+const heldListOpen  = ref(false)
+const selectedOrderId = ref<number | null>(null)
+
+function tableLabel(order: HeldOrder): string {
+  if (!order.table_id) return 'Takeaway'
+  const t = tables.value.find(t => t.id === order.table_id)
+  return t ? `طاولة ${t.table_number}` : `طاولة #${order.table_id}`
+}
+
+async function loadHeldOrders() {
+  try {
+    const { data } = await axios.get('/api/v1/restaurant/orders/held', {
+      headers: authHeaders.value,
+      params: { branch_id: branchId },
+    })
+    heldOrders.value = data.items ?? data
+  } catch (e) {
+    console.error('Failed to load held orders', e)
+  }
+}
+
+function openHeldOrder(orderId: number) {
+  selectedOrderId.value = orderId
+}
+
+function onOrderDetailClosed() {
+  selectedOrderId.value = null
+  loadHeldOrders()
+  loadTables()
+}
 
 const sections = computed(() => {
   const map = new Map<string, Table[]>()
@@ -56,17 +95,29 @@ async function loadTables() {
   }
 }
 
-onMounted(loadTables)
+onMounted(() => {
+  loadTables()
+  loadHeldOrders()
+})
 </script>
 
 <template>
   <div class="page-container" dir="rtl">
-    <div class="flex items-center justify-between mb-5">
+    <div class="flex items-center justify-between mb-5 gap-2 flex-wrap">
       <h1 class="section-title mb-0">الطاولات</h1>
-      <button
-        @click="router.push('/waiter/order')"
-        class="px-4 py-3 bg-blue-700 text-white rounded-xl font-bold text-sm hover:bg-blue-800 active:scale-95 transition-all shadow-sm"
-      >📦 Takeaway (بدون طاولة)</button>
+      <div class="flex items-center gap-2">
+        <button
+          @click="heldListOpen = true"
+          class="relative px-4 py-3 bg-white border-2 border-amber-400 text-amber-700 rounded-xl font-bold text-sm hover:bg-amber-50 active:scale-95 transition-all shadow-sm"
+        >
+          ⏸️ الطلبات المعلّقة
+          <AppBadge v-if="heldOrders.length" variant="warning" size="sm" class="mr-1.5">{{ heldOrders.length }}</AppBadge>
+        </button>
+        <button
+          @click="router.push('/waiter/order')"
+          class="px-4 py-3 bg-blue-700 text-white rounded-xl font-bold text-sm hover:bg-blue-800 active:scale-95 transition-all shadow-sm"
+        >📦 Takeaway (بدون طاولة)</button>
+      </div>
     </div>
 
     <div v-if="loading" class="flex items-center justify-center h-40">
@@ -99,5 +150,33 @@ onMounted(loadTables)
         </div>
       </div>
     </div>
+
+    <!-- ── Held orders list ── -->
+    <AppModal :open="heldListOpen" title="الطلبات المعلّقة" size="sm" @close="heldListOpen = false">
+      <div v-if="heldOrders.length === 0" class="flex flex-col items-center justify-center py-10 text-gray-400">
+        <div class="text-3xl mb-2">⏸️</div>
+        <p class="text-sm">مفيش طلبات معلّقة دلوقتي</p>
+      </div>
+      <div v-else class="space-y-2">
+        <button
+          v-for="order in heldOrders"
+          :key="order.id"
+          @click="heldListOpen = false; openHeldOrder(order.id)"
+          class="w-full flex items-center justify-between gap-2 p-3 rounded-xl border-2 border-amber-200 bg-amber-50 hover:border-amber-400 transition-all text-right"
+        >
+          <div>
+            <div class="font-bold text-gray-900 text-sm">{{ order.order_number }}</div>
+            <div class="text-xs text-gray-500">{{ tableLabel(order) }} — {{ order.guests_count }} غطاء</div>
+          </div>
+          <div class="font-bold text-amber-700">{{ order.total }} ج</div>
+        </button>
+      </div>
+    </AppModal>
+
+    <OrderDetailModal
+      :order-id="selectedOrderId"
+      @close="onOrderDetailClosed"
+      @changed="loadHeldOrders"
+    />
   </div>
 </template>

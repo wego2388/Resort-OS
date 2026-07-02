@@ -6,16 +6,19 @@ const token = localStorage.getItem('access_token') ?? ''
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const headers = computed(() => ({ Authorization: `Bearer ${token}` }))
 
-interface TicketItem { name: string; name_ar: string; quantity: number; notes?: string }
+// محطات المطبخ — كل حاجة ما عدا البار (البار له شاشته الخاصة، BarDisplayView)
+const KITCHEN_STATIONS = 'hot,grill,cold,dessert'
+
+type TicketStatus = 'pending' | 'in_progress' | 'done'
+interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null }
 interface Ticket {
-  id: number; order_id: number; table_number?: string
-  items: TicketItem[]; status: 'pending' | 'preparing' | 'ready'
-  created_at: string; station?: string
+  id: number; order_id: number; station: string
+  items_snapshot: TicketItem[]; status: TicketStatus
+  created_at: string
 }
 
 const tickets = ref<Ticket[]>([])
-const filterStatus = ref<string | null>(null)
-const loading = ref(false)
+const filterStatus = ref<TicketStatus | null>(null)
 const now = ref(new Date())
 const isConnected = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
@@ -39,85 +42,58 @@ function ticketAge(createdAt: string) {
 }
 
 function ticketClasses(ticket: Ticket) {
-  if (ticket.status === 'ready') return 'border-green-500 bg-green-900/30'
+  if (ticket.status === 'done') return 'border-green-500 bg-green-900/30'
   const age = ticketAge(ticket.created_at)
   if (age === 'urgent')  return 'border-red-500 bg-red-900/30 animate-pulse'
   if (age === 'warning') return 'border-amber-500 bg-amber-900/30'
   return 'border-slate-600 bg-slate-800'
 }
 
-function statusLabel(status: string) {
-  if (status === 'pending')   return { label: 'معلق',          color: 'bg-amber-500' }
-  if (status === 'preparing') return { label: 'قيد التحضير',  color: 'bg-blue-500' }
-  if (status === 'ready')     return { label: 'جاهز',          color: 'bg-green-500' }
-  return { label: status, color: 'bg-gray-500' }
+function statusLabel(status: TicketStatus) {
+  if (status === 'pending')     return { label: 'معلق',          color: 'bg-amber-500' }
+  if (status === 'in_progress') return { label: 'قيد التحضير',  color: 'bg-blue-500' }
+  return { label: 'جاهز', color: 'bg-green-500' }
+}
+
+const stationLabel: Record<string, string> = {
+  hot: 'ساخن', grill: 'شواية', cold: 'بارد', dessert: 'حلويات', bar: 'بار',
 }
 
 async function fetchTickets() {
   try {
-    let ticketData: Ticket[] = []
-    try {
-      const res = await axios.get('/api/v1/restaurant/kitchen/tickets', {
-        headers: headers.value,
-        params: { branch_id: branchId, status: 'pending,preparing' }
-      })
-      ticketData = res.data.tickets ?? res.data.items ?? res.data
-    } catch {
-      const res = await axios.get('/api/v1/restaurant/orders', {
-        headers: headers.value,
-        params: { branch_id: branchId, status: 'pending,preparing', outlet_type: 'restaurant', limit: 50 }
-      })
-      const orders = res.data.orders ?? res.data.items ?? res.data
-      ticketData = orders.map((o: any) => ({
-        id: o.id,
-        order_id: o.id,
-        table_number: o.table_number ?? o.table_id?.toString(),
-        items: o.items?.map((i: any) => ({
-          name: i.name,
-          name_ar: i.name_ar,
-          quantity: i.quantity,
-          notes: i.notes
-        })) ?? [],
-        status: o.status === 'pending' ? 'pending' : o.status === 'preparing' ? 'preparing' : 'ready',
-        created_at: o.created_at,
-      }))
-    }
-    tickets.value = ticketData
+    const res = await axios.get('/api/v1/restaurant/kitchen/tickets', {
+      headers: headers.value,
+      params: { branch_id: branchId, module: 'restaurant', stations: KITCHEN_STATIONS },
+    })
+    tickets.value = res.data
     isConnected.value = true
   } catch {
     isConnected.value = false
   }
 }
 
-async function markReady(ticketId: number) {
+async function advanceStatus(ticket: Ticket) {
+  const next: TicketStatus = ticket.status === 'pending' ? 'in_progress' : 'done'
   try {
     await axios.patch(
-      `/api/v1/restaurant/kitchen/tickets/${ticketId}`,
-      { status: 'ready' },
+      `/api/v1/restaurant/kitchen/tickets/${ticket.id}/status`,
+      { status: next },
       { headers: headers.value }
     )
-    const t = tickets.value.find(t => t.id === ticketId)
-    if (t) t.status = 'ready'
-    setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticketId) }, 2000)
-  } catch {
-    try {
-      await axios.patch(
-        `/api/v1/restaurant/orders/${ticketId}/status`,
-        { status: 'ready' },
-        { headers: headers.value }
-      )
-      const t = tickets.value.find(t => t.id === ticketId)
-      if (t) t.status = 'ready'
-      setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticketId) }, 2000)
-    } catch(e) { console.error(e) }
+    ticket.status = next
+    if (next === 'done') {
+      setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticket.id) }, 2000)
+    }
+  } catch (e) {
+    console.error(e)
   }
 }
 
 const currentTime = computed(() =>
   now.value.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 )
-const pendingCount   = computed(() => tickets.value.filter(t => t.status === 'pending').length)
-const preparingCount = computed(() => tickets.value.filter(t => t.status === 'preparing').length)
+const pendingCount    = computed(() => tickets.value.filter(t => t.status === 'pending').length)
+const inProgressCount = computed(() => tickets.value.filter(t => t.status === 'in_progress').length)
 
 onMounted(() => {
   fetchTickets()
@@ -139,7 +115,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
         <h1 class="text-xl font-black tracking-wide">🍳 شاشة المطبخ — KDS</h1>
         <div class="flex gap-3 text-sm">
           <span class="px-2 py-0.5 bg-amber-600 rounded-full font-bold">معلق: {{ pendingCount }}</span>
-          <span class="px-2 py-0.5 bg-blue-600 rounded-full font-bold">تحضير: {{ preparingCount }}</span>
+          <span class="px-2 py-0.5 bg-blue-600 rounded-full font-bold">تحضير: {{ inProgressCount }}</span>
         </div>
       </div>
       <div class="flex items-center gap-4">
@@ -155,13 +131,12 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
     <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 flex gap-2">
       <button
         v-for="f in [
-          { val: null,        label: `الكل (${tickets.length})` },
-          { val: 'pending',   label: `معلق (${pendingCount})` },
-          { val: 'preparing', label: `تحضير (${preparingCount})` },
-          { val: 'ready',     label: 'جاهز' },
+          { val: null,           label: `الكل (${tickets.length})` },
+          { val: 'pending',      label: `معلق (${pendingCount})` },
+          { val: 'in_progress',  label: `تحضير (${inProgressCount})` },
         ]"
         :key="String(f.val)"
-        @click="filterStatus = f.val"
+        @click="filterStatus = f.val as TicketStatus | null"
         :class="[
           'px-3 py-1 rounded-lg text-sm font-medium transition-colors',
           filterStatus === f.val
@@ -190,7 +165,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
           <div class="flex items-center justify-between mb-3">
             <div>
               <div class="text-2xl font-black">#{{ ticket.order_id }}</div>
-              <div v-if="ticket.table_number" class="text-xs text-slate-400">طاولة {{ ticket.table_number }}</div>
+              <div class="text-xs text-slate-400">{{ stationLabel[ticket.station] ?? ticket.station }}</div>
             </div>
             <div class="text-left">
               <div :class="['text-xs px-2 py-0.5 rounded-full font-bold text-white mb-1', statusLabel(ticket.status).color]">
@@ -209,12 +184,12 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
 
           <!-- Items -->
           <ul class="flex-1 space-y-1.5 mb-3">
-            <li v-for="item in ticket.items" :key="item.name" class="text-sm">
+            <li v-for="item in ticket.items_snapshot" :key="item.order_item_id" class="text-sm">
               <div class="flex items-start gap-2">
                 <span class="bg-white/20 text-white rounded px-1.5 py-0.5 text-xs font-bold flex-shrink-0">
                   {{ item.quantity }}
                 </span>
-                <span class="leading-tight">{{ item.name_ar || item.name }}</span>
+                <span class="leading-tight">{{ item.name }}</span>
               </div>
               <p v-if="item.notes" class="text-xs text-amber-300 mr-6 mt-0.5">⚠️ {{ item.notes }}</p>
             </li>
@@ -226,8 +201,15 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
               {{ new Date(ticket.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) }}
             </div>
             <button
-              v-if="ticket.status !== 'ready'"
-              @click="markReady(ticket.id)"
+              v-if="ticket.status === 'pending'"
+              @click="advanceStatus(ticket)"
+              class="w-full py-2 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-bold transition-colors active:scale-95"
+            >
+              ▶ بدء التحضير
+            </button>
+            <button
+              v-else-if="ticket.status === 'in_progress'"
+              @click="advanceStatus(ticket)"
               class="w-full py-2 bg-green-600 hover:bg-green-500 rounded-xl text-sm font-bold transition-colors active:scale-95"
             >
               ✓ جاهز للتسليم

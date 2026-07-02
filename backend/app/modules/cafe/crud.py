@@ -7,8 +7,13 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.cafe.models import CafeCategory, CafeItem, CafeOrder, CafeOrderItem, CafeTable
-from app.modules.cafe.schemas import CafeCategoryCreate, CafeItemCreate, CafeItemUpdate, CafeOrderCreate
+from app.modules.cafe.models import (
+    CafeCategory, CafeItem, CafeMenuItemExtra, CafeMenuItemExtraGroup,
+    CafeOrder, CafeOrderItem, CafeOrderItemExtra, CafeTable,
+)
+from app.modules.cafe.schemas import (
+    CafeCategoryCreate, CafeItemCreate, CafeItemUpdate, CafeMenuItemExtraGroupCreate,
+)
 
 
 def list_categories(db: Session, branch_id: int) -> list[CafeCategory]:
@@ -47,9 +52,52 @@ def update_item(db: Session, item: CafeItem, data: CafeItemUpdate) -> CafeItem:
     db.flush(); return item
 
 
+# ── Extras / Modifiers ──────────────────────────────────────────────────
+
+def create_extra_group(db: Session, cafe_item_id: int, data: CafeMenuItemExtraGroupCreate) -> CafeMenuItemExtraGroup:
+    group = CafeMenuItemExtraGroup(
+        cafe_item_id=cafe_item_id,
+        name=data.name,
+        name_ar=data.name_ar,
+        min_select=data.min_select,
+        max_select=data.max_select,
+        sort_order=data.sort_order,
+    )
+    db.add(group)
+    db.flush()
+    for opt in data.options:
+        db.add(CafeMenuItemExtra(group_id=group.id, **opt.model_dump()))
+    db.flush()
+    return group
+
+
+def delete_extra_group(db: Session, group_id: int) -> bool:
+    group = db.query(CafeMenuItemExtraGroup).filter(CafeMenuItemExtraGroup.id == group_id).first()
+    if not group:
+        return False
+    db.delete(group)
+    db.flush()
+    return True
+
+
+# ── Tables ────────────────────────────────────────────────────────────
+
 def list_tables(db: Session, branch_id: int) -> list[CafeTable]:
     return db.query(CafeTable).filter(CafeTable.branch_id == branch_id).order_by(CafeTable.table_number).all()
 
+
+def get_table(db: Session, table_id: int) -> Optional[CafeTable]:
+    return db.query(CafeTable).filter(CafeTable.id == table_id).first()
+
+
+def update_table_status(db: Session, table: CafeTable, status: str) -> CafeTable:
+    table.status = status
+    table.occupied_at = datetime.utcnow() if status == "occupied" else None
+    db.flush()
+    return table
+
+
+# ── Orders ────────────────────────────────────────────────────────────
 
 def get_order(db: Session, order_id: int) -> Optional[CafeOrder]:
     return db.query(CafeOrder).filter(CafeOrder.id == order_id).first()
@@ -87,6 +135,7 @@ def create_order(
     table_id: Optional[int], notes: Optional[str],
     subtotal: Decimal, vat_amount: Decimal, service_charge: Decimal,
     total: Decimal, waiter_id: Optional[int], items_data: list[dict],
+    status: str = "open",
 ) -> CafeOrder:
     order = CafeOrder(
         branch_id=branch_id,
@@ -94,12 +143,35 @@ def create_order(
         order_type=order_type, table_id=table_id, notes=notes,
         subtotal=subtotal, vat_amount=vat_amount,
         service_charge=service_charge, total=total, waiter_id=waiter_id,
+        status=status,
     )
     db.add(order); db.flush()
     for d in items_data:
-        db.add(CafeOrderItem(order_id=order.id, **d))
+        extras = d.pop("extras", [])
+        order_item = CafeOrderItem(order_id=order.id, **d)
+        db.add(order_item)
+        db.flush()  # يحتاج order_item.id قبل ما نربط الإضافات
+        for extra_d in extras:
+            db.add(CafeOrderItemExtra(order_item_id=order_item.id, **extra_d))
     db.flush(); return order
 
 
 def update_order_status(db: Session, order: CafeOrder, status: str) -> CafeOrder:
     order.status = status; db.flush(); return order
+
+
+def get_order_item(db: Session, order_id: int, item_id: int) -> Optional[CafeOrderItem]:
+    return (
+        db.query(CafeOrderItem)
+        .filter(CafeOrderItem.id == item_id, CafeOrderItem.order_id == order_id)
+        .first()
+    )
+
+
+def void_order_item(db: Session, item: CafeOrderItem, reason: str, voided_by: int) -> CafeOrderItem:
+    item.status = "cancelled"
+    item.voided_reason = reason
+    item.voided_by = voided_by
+    item.voided_at = datetime.utcnow()
+    db.flush()
+    return item

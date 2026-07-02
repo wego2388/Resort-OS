@@ -37,6 +37,12 @@ class Employee(Base, TimestampMixin):
     status:        Mapped[str]         = mapped_column(String(20), default="active")  # active|on_leave|terminated
     phone:         Mapped[str | None]  = mapped_column(String(20), nullable=True)
     email:         Mapped[str | None]  = mapped_column(String(100), nullable=True)
+    # ربط اختياري بحساب تسجيل دخول (wego_core.models.user.User) — يسمح للموظف
+    # نفسه بمشاهدة حضوره/إجازاته/راتبه عبر /hr/me/*. NULL لموظفين موسميين/بدون
+    # حساب دخول. unique — كل User مربوط بموظف واحد كحد أقصى.
+    user_id:       Mapped[int | None]  = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, unique=True,
+    )
 
     allowances: Mapped[list["EmployeeAllowance"]] = relationship("EmployeeAllowance", back_populates="employee", lazy="select")
 
@@ -230,7 +236,7 @@ class EmployeePenalty(Base, TimestampMixin):
 
 
 class RotaTemplate(Base, TimestampMixin):
-    """Template settimanale per reparto."""
+    """قالب جدول أسبوعي لقسم معيّن."""
     __tablename__ = "rota_templates"
 
     id:            Mapped[int]  = mapped_column(primary_key=True)
@@ -242,7 +248,7 @@ class RotaTemplate(Base, TimestampMixin):
 
 
 class RotaAssignment(Base, TimestampMixin):
-    """Assegnazione turno individuale."""
+    """تعيين وردية لموظف معيّن."""
     __tablename__ = "rota_assignments"
 
     id:            Mapped[int]        = mapped_column(primary_key=True)
@@ -258,7 +264,7 @@ class RotaAssignment(Base, TimestampMixin):
 
 
 class ShiftSwapRequest(Base, TimestampMixin):
-    """Richiesta di scambio turno tra dipendenti."""
+    """طلب تبديل وردية بين موظفين."""
     __tablename__ = "shift_swap_requests"
 
     id:                 Mapped[int]        = mapped_column(primary_key=True)

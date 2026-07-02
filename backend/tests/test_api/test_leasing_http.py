@@ -3,16 +3,7 @@ tests/test_api/test_leasing_http.py
 HTTP-level tests for the leasing module — TestClient through real routing,
 permission dependencies and Pydantic validation (not direct service calls).
 
-⚠️ leasing defaults to MODULE_REGISTRY.leasing.default_enabled=False — must
-be enabled globally (branch_id=None). See
-tests/conftest.py::enable_module_for_branch for the fake_redis-cache-across
--test-files gotcha this depends on.
 ⚠️ Setup data created here must be `db.commit()`-ed, not `.flush()`-ed.
-
-Note: as of this session, no frontend app calls /api/v1/leasing/* yet
-(grep across frontend/apps found zero references) — unlike beach/pms/crm/hr,
-there was no route/wiring bug to find here since nothing consumes it yet.
-See Task B audit notes in project memory for the leasing-module-depth verdict.
 """
 from __future__ import annotations
 
@@ -22,16 +13,13 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import enable_module_for_branch
 
-
-def make_branch_committed(db, fake_redis):
+def make_branch_committed(db):
     from app.modules.core.models import Branch
     b = Branch(name="Leasing HTTP Branch", name_ar="فرع إيجارات",
                code=f"LSE-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
-    enable_module_for_branch(db, fake_redis, "leasing", branch_id=None)
     return b
 
 
@@ -66,7 +54,7 @@ def seed_leasing_accounts(db, branch):
 
 class TestLeasingContractFlow:
     def test_create_contract_generates_payment_schedule(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post("/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers)
         assert resp.status_code == 201, resp.text
         contract = resp.json()
@@ -74,7 +62,7 @@ class TestLeasingContractFlow:
         assert len(contract["payments"]) >= 11  # ~12 monthly payments over a year
 
     def test_pay_payment_updates_status(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -90,7 +78,7 @@ class TestLeasingContractFlow:
         assert pay_resp.json()["status"] == "paid"
 
     def test_apply_penalties_via_http(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -105,12 +93,12 @@ class TestLeasingContractFlow:
 class TestLeasingPermissions:
     def test_create_contract_requires_manager(self, client: TestClient, db, fake_redis, cashier_headers):
         """cashier (40) must not create lease contracts (manager=60 required)."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post("/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=cashier_headers)
         assert resp.status_code == 403
 
     def test_apply_penalties_requires_manager(self, client: TestClient, db, fake_redis, manager_headers, cashier_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -123,21 +111,21 @@ class TestLeasingPermissions:
 class TestLeasingValidation:
     def test_create_contract_rejects_end_before_start(self, client: TestClient, db, fake_redis, manager_headers):
         """end_date <= start_date is a business rule (ValueError -> 400), not a schema constraint."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         payload = contract_payload(branch.id)
         payload["end_date"] = str(date.today() - timedelta(days=10))
         resp = client.post("/api/v1/leasing/contracts", json=payload, headers=manager_headers)
         assert resp.status_code == 400
 
     def test_create_contract_rejects_zero_rent(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         payload = contract_payload(branch.id)
         payload["base_rent"] = "0"
         resp = client.post("/api/v1/leasing/contracts", json=payload, headers=manager_headers)
         assert resp.status_code == 422
 
     def test_pay_payment_rejects_invalid_method(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -169,7 +157,7 @@ class TestLeasingPenaltyTiers:
         return contract["id"], payment_id
 
     def test_no_penalty_before_8_days_overdue(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract_id, payment_id = self._make_overdue_payment(db, branch, manager_headers, client, days_overdue=5)
 
         client.post(f"/api/v1/leasing/contracts/{contract_id}/apply-penalties", headers=manager_headers)
@@ -179,7 +167,7 @@ class TestLeasingPenaltyTiers:
         assert Decimal(str(payment["penalty"])) == Decimal("0")
 
     def test_5pct_penalty_between_8_and_30_days_overdue(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract_id, payment_id = self._make_overdue_payment(db, branch, manager_headers, client, days_overdue=10)
 
         client.post(f"/api/v1/leasing/contracts/{contract_id}/apply-penalties", headers=manager_headers)
@@ -189,7 +177,7 @@ class TestLeasingPenaltyTiers:
         assert Decimal(str(payment["penalty"])) == (Decimal(str(payment["amount"])) * Decimal("0.05")).quantize(Decimal("0.01"))
 
     def test_10pct_penalty_beyond_30_days_overdue(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract_id, payment_id = self._make_overdue_payment(db, branch, manager_headers, client, days_overdue=35)
 
         client.post(f"/api/v1/leasing/contracts/{contract_id}/apply-penalties", headers=manager_headers)
@@ -206,7 +194,7 @@ class TestLeasingAccountingIntegration:
 
     def test_contract_with_deposit_posts_journal_entry(self, client: TestClient, db, fake_redis, manager_headers):
         from app.modules.finance.models import JournalEntry
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         seed_leasing_accounts(db, branch)
 
         payload = contract_payload(branch.id)
@@ -227,7 +215,7 @@ class TestLeasingAccountingIntegration:
 
     def test_contract_without_deposit_posts_no_journal_entry(self, client: TestClient, db, fake_redis, manager_headers):
         from app.modules.finance.models import JournalEntry
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         seed_leasing_accounts(db, branch)
 
         resp = client.post("/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers)
@@ -242,7 +230,7 @@ class TestLeasingAccountingIntegration:
 
     def test_pay_payment_posts_two_journal_entries(self, client: TestClient, db, fake_redis, manager_headers):
         from app.modules.finance.models import JournalEntry
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         seed_leasing_accounts(db, branch)
 
         contract = client.post(
@@ -276,7 +264,7 @@ class TestLeasingCashLog:
 
     def test_record_cash_log_posts_journal_entry_for_rent_payment(self, client: TestClient, db, fake_redis, manager_headers):
         from app.modules.finance.models import JournalEntry
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         seed_leasing_accounts(db, branch)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
@@ -305,7 +293,7 @@ class TestLeasingCashLog:
         """Only rent_payment/revenue_share cash logs post journal entries — a
         maintenance note shouldn't create phantom accounting entries."""
         from app.modules.finance.models import JournalEntry
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         seed_leasing_accounts(db, branch)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
@@ -330,7 +318,7 @@ class TestLeasingCashLog:
         assert entry is None
 
     def test_list_cash_logs_via_http(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -347,7 +335,7 @@ class TestLeasingCashLog:
 
     def test_create_cash_log_requires_manager(self, client: TestClient, db, fake_redis, manager_headers, cashier_headers):
         """cashier (40) must not record tenant cash-log entries — manager (60) required."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -360,7 +348,7 @@ class TestLeasingCashLog:
         assert resp.status_code == 403
 
     def test_create_cash_log_rejects_invalid_activity_type(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -376,7 +364,7 @@ class TestLeasingCashLog:
         assert resp.status_code == 422
 
     def test_create_cash_log_rejects_mismatched_contract_id(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean, Date, DateTime, ForeignKey, Integer,
@@ -48,6 +47,11 @@ class Folio(Base, TimestampMixin):
     check_out:  Mapped[datetime] = mapped_column(DateTime)
     status:     Mapped[str]      = mapped_column(String(20), default="open")
     total:      Mapped[Decimal]  = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    currency:   Mapped[str]      = mapped_column(String(3), default="EGP")
+    # عملة الفوليو — تتحدد مرة واحدة عند الإنشاء وهي المرجع الوحيد (source of
+    # truth) لكل charges/payments تحت نفس الفوليو. لا نخزّن عملة منفصلة لكل
+    # FolioCharge — نفس منطق folio.total (رصيد واحد مجمّع)، والافتراض إن كل
+    # حركات الفوليو بنفس عملته طول عمره (لا تحويل عملة نصف الطريق).
 
     charges:  Mapped[list["FolioCharge"]] = relationship("FolioCharge", back_populates="folio", lazy="select")
     payments: Mapped[list["Payment"]]     = relationship("Payment",     back_populates="folio", lazy="select")
@@ -77,6 +81,9 @@ class Payment(Base, TimestampMixin):
     folio_id:  Mapped[int]            = mapped_column(ForeignKey("folios.id", ondelete="RESTRICT"))
     branch_id: Mapped[int]            = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
     amount:    Mapped[Decimal]        = mapped_column(Numeric(10, 2))
+    currency:  Mapped[str]            = mapped_column(String(3), default="EGP")
+    # موروثة من folio.currency وقت إنشاء الدفعة (مش قابلة للتحديد من العميل
+    # مباشرة) — عشان نضمن اتساق عملة الفوليو مع كل دفعاته.
     method:    Mapped[str]            = mapped_column(String(30))
     reference: Mapped[str | None]     = mapped_column(String(100), nullable=True)
     notes:     Mapped[str | None]     = mapped_column(String(500), nullable=True)
@@ -111,12 +118,29 @@ class CashierShift(Base, TimestampMixin):
     notes:          Mapped[str | None]      = mapped_column(String(1000), nullable=True)
 
     payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="shift", lazy="select")
+    cash_count_lines: Mapped[list["CashierShiftCashCount"]] = relationship(
+        "CashierShiftCashCount", back_populates="shift", lazy="select", cascade="all, delete-orphan",
+    )
+
+
+class CashierShiftCashCount(Base, TimestampMixin):
+    """تفاصيل عدّ النقدية بالفئة (200ج × 5، 100ج × 3...) وقت قفل الوردية —
+    محفوظة للتدقيق حتى لو الكاشير غيّر رأيه أو حصل خلاف على الإجمالي المعدود."""
+    __tablename__ = "cashier_shift_cash_counts"
+
+    id:           Mapped[int]      = mapped_column(primary_key=True)
+    shift_id:     Mapped[int]      = mapped_column(ForeignKey("cashier_shifts.id", ondelete="CASCADE"), index=True)
+    denomination: Mapped[Decimal]  = mapped_column(Numeric(10, 2))
+    quantity:     Mapped[int]      = mapped_column(Integer)
+    subtotal:     Mapped[Decimal]  = mapped_column(Numeric(10, 2))
+
+    shift: Mapped["CashierShift"] = relationship("CashierShift", back_populates="cash_count_lines")
 
 
 # ── Double-Entry Accounting ────────────────────────────────────────────
 
 class Account(Base, TimestampMixin):
-    """Piano dei conti - Chart of Accounts"""
+    """دليل الحسابات (Chart of Accounts)"""
     __tablename__ = "accounts"
     __table_args__ = (UniqueConstraint("branch_id", "code", name="uq_accounts_branch_code"),)
 
@@ -133,7 +157,7 @@ class Account(Base, TimestampMixin):
 
 
 class JournalEntry(Base, TimestampMixin):
-    """Voce di giornale - master record"""
+    """قيد يومية - السجل الرئيسي"""
     __tablename__ = "journal_entries"
 
     id:          Mapped[int]      = mapped_column(primary_key=True)
@@ -150,7 +174,7 @@ class JournalEntry(Base, TimestampMixin):
 
 
 class JournalLine(Base, TimestampMixin):
-    """Riga di giornale - deve essere bilanciata (debit = credit)"""
+    """سطر قيد يومية - مجموع المدين لازم يساوي مجموع الدائن في القيد كله"""
     __tablename__ = "journal_lines"
 
     id:          Mapped[int]      = mapped_column(primary_key=True)
@@ -165,7 +189,7 @@ class JournalLine(Base, TimestampMixin):
 
 
 class AccountingPeriod(Base, TimestampMixin):
-    """Periodo contabile - blocca le voci di giornale"""
+    """فترة محاسبية - لو مقفولة، بتمنع ترحيل أي قيود يومية جديدة فيها"""
     __tablename__ = "accounting_periods"
     __table_args__ = (UniqueConstraint("branch_id", "year", "month", name="uq_period_branch_year_month"),)
 

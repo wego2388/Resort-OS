@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_current_active_user, get_manager_user, require_module
+from app.core.deps import DbDep, get_current_active_user, get_manager_user
 from app.modules.leasing import crud, services
 from app.modules.leasing.schemas import (
     LeaseContractCreate, LeaseContractRead, LeaseContractUpdate,
@@ -15,10 +15,9 @@ from app.modules.leasing.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["leasing"])
-_guard = Depends(require_module("leasing"))
 
 
-@router.get("/leasing/contracts", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/leasing/contracts", response_model=PaginatedResponse)
 def list_contracts(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -33,7 +32,7 @@ def list_contracts(
 
 
 @router.post("/leasing/contracts", response_model=LeaseContractRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_contract(data: LeaseContractCreate, db: DbDep, user=Depends(get_manager_user)):
     try:
         return services.create_contract(db, data, signed_by=user.id)
@@ -41,7 +40,7 @@ def create_contract(data: LeaseContractCreate, db: DbDep, user=Depends(get_manag
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/leasing/contracts/{contract_id}", response_model=LeaseContractRead, dependencies=[_guard])
+@router.get("/leasing/contracts/{contract_id}", response_model=LeaseContractRead)
 def get_contract(contract_id: int, db: DbDep, _=Depends(get_current_active_user)):
     c = crud.get_contract(db, contract_id)
     if not c:
@@ -49,7 +48,7 @@ def get_contract(contract_id: int, db: DbDep, _=Depends(get_current_active_user)
     return LeaseContractRead.model_validate(c)
 
 
-@router.patch("/leasing/contracts/{contract_id}", response_model=LeaseContractRead, dependencies=[_guard])
+@router.patch("/leasing/contracts/{contract_id}", response_model=LeaseContractRead)
 def update_contract(contract_id: int, data: LeaseContractUpdate, db: DbDep,
                     _=Depends(get_manager_user)):
     try:
@@ -58,7 +57,7 @@ def update_contract(contract_id: int, data: LeaseContractUpdate, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.post("/leasing/payments/{payment_id}/pay", response_model=LeasePaymentRead, dependencies=[_guard])
+@router.post("/leasing/payments/{payment_id}/pay", response_model=LeasePaymentRead)
 def pay_payment(payment_id: int, req: PayLeaseRequest, db: DbDep,
                 _=Depends(get_current_active_user)):
     try:
@@ -67,7 +66,7 @@ def pay_payment(payment_id: int, req: PayLeaseRequest, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.post("/leasing/contracts/{contract_id}/apply-penalties", dependencies=[_guard])
+@router.post("/leasing/contracts/{contract_id}/apply-penalties")
 def apply_penalties(contract_id: int, db: DbDep, _=Depends(get_manager_user)):
     updated = services.apply_penalties(db, contract_id)
     return {"updated": len(updated)}
@@ -80,7 +79,7 @@ def apply_penalties(contract_id: int, db: DbDep, _=Depends(get_manager_user)):
 # router — نفس فئة الباج الموثّقة في § 11.6 من CLAUDE.md، اتصلحت في مراجعة Task B.
 
 @router.post("/leasing/contracts/{contract_id}/cash-logs", response_model=TenantCashLogRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_cash_log(contract_id: int, data: TenantCashLogCreate, db: DbDep,
                     user=Depends(get_manager_user)):
     if data.contract_id != contract_id:
@@ -91,8 +90,7 @@ def create_cash_log(contract_id: int, data: TenantCashLogCreate, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/leasing/contracts/{contract_id}/cash-logs", response_model=list[TenantCashLogRead],
-            dependencies=[_guard])
+@router.get("/leasing/contracts/{contract_id}/cash-logs", response_model=list[TenantCashLogRead])
 def list_cash_logs(contract_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.list_cash_logs(db, contract_id)
@@ -100,7 +98,7 @@ def list_cash_logs(contract_id: int, db: DbDep, _=Depends(get_current_active_use
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
-@router.get("/leasing/payments/{payment_id}/receipt", dependencies=[_guard])
+@router.get("/leasing/payments/{payment_id}/receipt")
 def download_receipt(payment_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:
         pdf = services.generate_rent_receipt_pdf(db, payment_id)

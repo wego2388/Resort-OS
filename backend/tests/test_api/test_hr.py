@@ -241,6 +241,59 @@ class TestAttendance:
         assert record.status == "absent"
 
 
+class TestSelfServicePunch:
+    """POST /hr/me/attendance/punch-in|out — الفرونت إند مبني ومستني الـ endpoints
+    دي، بس مكنتش موجودة خالص في الباك إند (باج حقيقي اتصلح)."""
+
+    @pytest.fixture
+    def linked_user_id(self, db: Session, employee) -> int:
+        from wego_core.models.user import User
+        from wego_core.security import get_password_hash
+        user = User(
+            email=f"emp-{uuid.uuid4().hex[:6]}@test.local",
+            password_hash=get_password_hash("Test@12345"),
+            full_name="حساب موظف اختباري", role="employee", is_active=True,
+        )
+        db.add(user)
+        db.flush()
+        services.link_employee_to_user(db, employee, user.id)
+        return user.id
+
+    def test_punch_in_creates_today_record(self, db, linked_user_id):
+        record = services.punch_in(db, linked_user_id)
+        assert record.check_in is not None
+        assert record.record_date == date.today()
+
+    def test_cannot_punch_in_twice(self, db, linked_user_id):
+        services.punch_in(db, linked_user_id)
+        with pytest.raises(ValueError, match="بالفعل"):
+            services.punch_in(db, linked_user_id)
+
+    def test_punch_out_requires_punch_in_first(self, db, linked_user_id):
+        with pytest.raises(ValueError, match="الأول"):
+            services.punch_out(db, linked_user_id)
+
+    def test_punch_out_computes_hours_worked(self, db, linked_user_id):
+        from app.modules.hr.schemas import AttendanceRecordRead
+
+        record = services.punch_in(db, linked_user_id)
+        record.check_in = datetime.utcnow() - timedelta(hours=8)
+        db.commit()
+
+        out = services.punch_out(db, linked_user_id)
+        assert out.check_out is not None
+
+        read = AttendanceRecordRead.model_validate(out)
+        assert read.hours_worked is not None
+        assert 7.9 <= read.hours_worked <= 8.1
+
+    def test_cannot_punch_out_twice(self, db, linked_user_id):
+        services.punch_in(db, linked_user_id)
+        services.punch_out(db, linked_user_id)
+        with pytest.raises(ValueError, match="بالفعل"):
+            services.punch_out(db, linked_user_id)
+
+
 class TestLeaveBalance:
 
     def test_upsert_leave_balance(self, db, employee):

@@ -4,14 +4,14 @@ from __future__ import annotations
 import json
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.modules.hr import crud
-from app.modules.hr.models import Employee, LeaveRequest, PayrollRun
+from app.modules.hr.models import AttendanceRecord, Employee, LeaveRequest, PayrollRun
 from app.modules.hr.schemas import (
-    EmployeeCreate, EmployeeUpdate,
+    AttendanceRecordCreate, EmployeeCreate, EmployeeUpdate,
     PayrollResultRead, PayrollRunCreate,
 )
 from app.resort_os.hr_engine import (
@@ -19,7 +19,6 @@ from app.resort_os.hr_engine import (
     EmployeePayrollInput,
     SocialInsuranceConfig as SIConfig,
     TaxBracket,
-    annual_leave_entitlement,
     calculate_payroll,
 )
 
@@ -46,6 +45,66 @@ def update_employee(db: Session, employee_id: int, data: EmployeeUpdate) -> Empl
     db.commit()
     db.refresh(emp)
     return emp
+
+
+def link_employee_to_user(db: Session, emp: Employee, user_id: int) -> Employee:
+    """يربط Employee موجود بحساب User موجود — يسمح للموظف بالدخول على
+    /hr/me/* الخاصة به. emp لازم يكون موجود فعلاً (يتحقق منه الـ router قبل
+    النداء هنا، نفس نمط باقي الـ endpoints)."""
+    from wego_core.models.user import User  # noqa: PLC0415
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise ValueError(f"المستخدم {user_id} غير موجود")
+
+    existing = crud.get_employee_by_user_id(db, user_id)
+    if existing and existing.id != emp.id:
+        raise ValueError(f"المستخدم مرتبط بالفعل بموظف آخر (id={existing.id})")
+
+    emp.user_id = user_id
+    db.commit()
+    db.refresh(emp)
+    return emp
+
+
+def get_my_employee_or_404(db: Session, user_id: int) -> Employee:
+    """يجيب سجل Employee المرتبط بالمستخدم الحالي — لأي endpoint من /hr/me/*.
+    ValueError هنا يترجم لـ 404 في الراوتر (مش 500 ولا قائمة فاضية بصمت) —
+    الحالة الواقعية دي بتحصل مع أي حساب مش موظف فعلياً (زي super_admin
+    تجريبي)."""
+    emp = crud.get_employee_by_user_id(db, user_id)
+    if not emp:
+        raise ValueError("لا يوجد ملف موظف مرتبط بحسابك — تواصل مع الموارد البشرية")
+    return emp
+
+
+def punch_in(db: Session, user_id: int) -> AttendanceRecord:
+    emp = get_my_employee_or_404(db, user_id)
+    today = date.today()
+    existing = crud.get_attendance_for_date(db, emp.id, today)
+    if existing and existing.check_in:
+        raise ValueError("تم تسجيل الحضور بالفعل النهاردة")
+    record = crud.upsert_attendance(db, AttendanceRecordCreate(
+        employee_id=emp.id, branch_id=emp.branch_id,
+        record_date=today, check_in=datetime.utcnow(), status="present",
+    ))
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def punch_out(db: Session, user_id: int) -> AttendanceRecord:
+    emp = get_my_employee_or_404(db, user_id)
+    today = date.today()
+    existing = crud.get_attendance_for_date(db, emp.id, today)
+    if not existing or not existing.check_in:
+        raise ValueError("لازم تسجّل الحضور الأول قبل تسجيل الانصراف")
+    if existing.check_out:
+        raise ValueError("تم تسجيل الانصراف بالفعل النهاردة")
+    existing.check_out = datetime.utcnow()
+    db.commit()
+    db.refresh(existing)
+    return existing
 
 
 def calculate_employee_payroll(
@@ -271,7 +330,6 @@ def request_leave(
     end_date: "date",
     reason: Optional[str] = None,
 ) -> LeaveRequest:
-    from datetime import date as _date  # noqa: PLC0415
     days = (end_date - start_date).days + 1
     if days <= 0:
         raise ValueError("تاريخ نهاية الإجازة يجب أن يكون بعد تاريخ البداية")
@@ -292,6 +350,20 @@ def request_leave(
     db.commit()
     db.refresh(req)
     return req
+
+
+def request_my_leave(
+    db: Session,
+    user_id: int,
+    leave_type_id: int,
+    start_date: "date",
+    end_date: "date",
+    reason: Optional[str] = None,
+) -> LeaveRequest:
+    """نسخة self-service من request_leave — بتشتق employee_id/branch_id من
+    الموظف المرتبط بالمستخدم الحالي بدل ما تثق في جسم الطلب."""
+    emp = get_my_employee_or_404(db, user_id)
+    return request_leave(db, emp.id, emp.branch_id, leave_type_id, start_date, end_date, reason)
 
 
 def approve_leave(

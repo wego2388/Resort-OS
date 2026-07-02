@@ -6,7 +6,6 @@ export const ENDPOINTS = {
     me: '/api/v1/auth/me',
   },
   core: {
-    modules: '/api/v1/modules',
     branches: '/api/v1/branches',
     notifications: '/api/v1/notifications',
   },

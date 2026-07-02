@@ -5,18 +5,17 @@ import calendar
 from datetime import date, datetime
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.modules.hr.models import (
     AttendanceRecord, Department, Employee, EmployeeAllowance,
     EmployeePenalty, LeaveBalance, LeaveRequest, LeaveType,
-    PayrollLine, PayrollRun, PenaltyType,
-    RotaAssignment, ShiftSwapRequest, Shift,
+    PayrollLine, PayrollRun, RotaAssignment, ShiftSwapRequest, Shift,
     SocialInsuranceConfig, TaxBracketConfig,
 )
 from app.modules.hr.schemas import (
     AttendanceRecordCreate, DepartmentCreate, EmployeeCreate, EmployeeUpdate,
-    EmployeePenaltyCreate, LeaveRequestCreate, LeaveTypeCreate,
+    EmployeePenaltyCreate, LeaveTypeCreate,
     PayrollRunCreate, RotaAssignmentCreate, ShiftCreate, ShiftSwapRequestCreate,
 )
 
@@ -29,6 +28,10 @@ def get_employee(db: Session, employee_id: int) -> Optional[Employee]:
 
 def get_employee_by_code(db: Session, code: str) -> Optional[Employee]:
     return db.query(Employee).filter(Employee.employee_code == code).first()
+
+
+def get_employee_by_user_id(db: Session, user_id: int) -> Optional[Employee]:
+    return db.query(Employee).filter(Employee.user_id == user_id).first()
 
 
 def list_employees(
@@ -136,7 +139,37 @@ def list_lines_for_run(db: Session, run_id: int) -> list[PayrollLine]:
     return db.query(PayrollLine).filter(PayrollLine.payroll_run_id == run_id).all()
 
 
+def list_payslips_for_employee(
+    db: Session, employee_id: int, skip: int = 0, limit: int = 24,
+) -> tuple[list[PayrollLine], int]:
+    """قسائم راتب موظف معين — كشوف رواتب approved/paid فقط (مش draft، الأرقام
+    مش نهائية لسه). run محمّل مسبقاً (joinedload) لتفادي N+1."""
+    q = (
+        db.query(PayrollLine)
+        .join(PayrollRun, PayrollLine.payroll_run_id == PayrollRun.id)
+        .options(joinedload(PayrollLine.run))
+        .filter(PayrollLine.employee_id == employee_id, PayrollRun.status != "draft")
+    )
+    total = q.count()
+    items = (
+        q.order_by(PayrollRun.period_year.desc(), PayrollRun.period_month.desc())
+        .offset(skip).limit(limit).all()
+    )
+    return items, total
+
+
 # ── Attendance ────────────────────────────────────────────────────────
+
+def get_attendance_for_date(db: Session, employee_id: int, record_date: date) -> Optional[AttendanceRecord]:
+    return (
+        db.query(AttendanceRecord)
+        .filter(
+            AttendanceRecord.employee_id == employee_id,
+            AttendanceRecord.record_date == record_date,
+        )
+        .first()
+    )
+
 
 def upsert_attendance(db: Session, data: AttendanceRecordCreate) -> AttendanceRecord:
     row = (
@@ -216,10 +249,6 @@ def create_department(db: Session, data: DepartmentCreate) -> Department:
     return dept
 
 
-def get_department(db: Session, department_id: int) -> Optional[Department]:
-    return db.query(Department).filter(Department.id == department_id).first()
-
-
 def list_departments(db: Session, branch_id: int) -> list[Department]:
     return (
         db.query(Department)
@@ -258,10 +287,6 @@ def create_leave_type(db: Session, data: LeaveTypeCreate) -> LeaveType:
     db.add(lt)
     db.flush()
     return lt
-
-
-def get_leave_type(db: Session, leave_type_id: int) -> Optional[LeaveType]:
-    return db.query(LeaveType).filter(LeaveType.id == leave_type_id).first()
 
 
 def list_leave_types(db: Session, branch_id: int) -> list[LeaveType]:

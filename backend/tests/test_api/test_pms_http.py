@@ -12,9 +12,6 @@ ZERO route wired in api/router.py. Same class of bug as the
 GET /restaurant/menu/categories 404 documented in CLAUDE.md § 11.6.
 
 ⚠️ Setup data created here must be `db.commit()`-ed, not `.flush()`-ed.
-⚠️ pms defaults to MODULE_REGISTRY.pms.default_enabled=False — must be
-enabled globally (branch_id=None) since require_module() checks the
-*authenticated user's* branch_id, not the branch_id query param.
 """
 from __future__ import annotations
 
@@ -24,16 +21,13 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import enable_module_for_branch
 
-
-def make_branch_committed(db, fake_redis):
+def make_branch_committed(db):
     from app.modules.core.models import Branch
     b = Branch(name="PMS HTTP Branch", name_ar="فرع فندقي",
                code=f"PMS-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
-    enable_module_for_branch(db, fake_redis, "pms", branch_id=None)
     return b
 
 
@@ -58,7 +52,7 @@ class TestBookingLifecycleHTTP:
     def test_full_booking_checkin_checkout_creates_housekeeping_task(
         self, client: TestClient, db, fake_redis, manager_headers,
     ):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         room_type = make_room_type_committed(db, branch)
         room = make_room_committed(db, branch, room_type)
 
@@ -114,7 +108,7 @@ class TestBookingLifecycleHTTP:
         assert found["status"] == "available"
 
     def test_double_checkin_conflict_returns_409(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         room_type = make_room_type_committed(db, branch)
         room_a = make_room_committed(db, branch, room_type, "201")
         room_b = make_room_committed(db, branch, room_type, "202")
@@ -156,7 +150,7 @@ class TestBookingLifecycleHTTP:
 class TestPMSPermissions:
     def test_create_room_type_requires_admin(self, client: TestClient, db, fake_redis, manager_headers):
         """manager (60) must not create room types — admin (80) required."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/pms/room-types",
             json={"branch_id": branch.id, "name": "Suite", "base_rate": "1000.00", "max_occupancy": 4},
@@ -166,7 +160,7 @@ class TestPMSPermissions:
 
     def test_create_booking_requires_manager(self, client: TestClient, db, fake_redis, cashier_headers):
         """cashier (40) must not create bookings — manager (60) required."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         room_type = make_room_type_committed(db, branch)
         room = make_room_committed(db, branch, room_type)
         resp = client.post(
@@ -183,7 +177,7 @@ class TestPMSPermissions:
 
 class TestPMSValidation:
     def test_create_booking_rejects_empty_room_ids(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/pms/bookings",
             json={
@@ -196,7 +190,7 @@ class TestPMSValidation:
         assert resp.status_code == 422
 
     def test_housekeeping_status_update_rejects_invalid_status(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         room_type = make_room_type_committed(db, branch)
         room = make_room_committed(db, branch, room_type)
         from app.modules.pms.models import HousekeepingTask

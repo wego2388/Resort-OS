@@ -23,13 +23,14 @@ def make_branch(db):
     return b
 
 
-def make_menu_item(db, branch, available=True):
+def make_menu_item(db, branch, available=True, station="hot"):
     from app.modules.restaurant.models import MenuItem
     item = MenuItem(
         branch_id=branch.id,
         name="شاورما دجاج",
         price=Decimal("55.00"),
         is_available=available,
+        station=station,
     )
     db.add(item)
     db.commit()
@@ -55,6 +56,17 @@ def make_order(db, branch, item, table=None):
         order_type="dine_in" if table else "takeaway",
         guests_count=2,
         items=[OrderItemCreate(menu_item_id=item.id, quantity=2)],
+    )
+    return services.create_order(db, branch.id, data, waiter_id=1)
+
+
+def make_order_items(db, branch, items, table=None):
+    """items: list of MenuItem — بيعمل طلب فيه صنف واحد من كل واحد فيهم."""
+    data = OrderCreate(
+        table_id=table.id if table else None,
+        order_type="dine_in" if table else "takeaway",
+        guests_count=2,
+        items=[OrderItemCreate(menu_item_id=item.id, quantity=1) for item in items],
     )
     return services.create_order(db, branch.id, data, waiter_id=1)
 
@@ -352,19 +364,50 @@ class TestRestaurantInventoryDeduction:
 class TestKDS:
 
     def test_order_in_kitchen_creates_ticket(self, db):
-        """Quando un ordine va in_kitchen, deve essere creato un KitchenTicket."""
+        """لما الطلب يتحول لـ in_kitchen، لازم يتعمل KitchenTicket بمحطة الصنف الحقيقية."""
         from app.modules.restaurant.models import KitchenTicket
         branch = make_branch(db)
-        item = make_menu_item(db, branch)
+        item = make_menu_item(db, branch, station="grill")
         order = make_order(db, branch, item)
         services.update_order_status(db, order.id, "in_kitchen")
         tickets = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).all()
         assert len(tickets) == 1
-        assert tickets[0].station == "kitchen"
+        assert tickets[0].station == "grill"
         assert tickets[0].module == "restaurant"
         assert tickets[0].status == "pending"
         assert isinstance(tickets[0].items_snapshot, list)
         assert len(tickets[0].items_snapshot) > 0
+
+    def test_order_splits_into_one_ticket_per_station(self, db):
+        """طلب فيه أصناف من محطات مختلفة (hot/grill/bar) لازم يتقسم لتذكرة منفصلة لكل محطة."""
+        from app.modules.restaurant.models import KitchenTicket
+        branch = make_branch(db)
+        hot_item = make_menu_item(db, branch, station="hot")
+        grill_item = make_menu_item(db, branch, station="grill")
+        bar_item = make_menu_item(db, branch, station="bar")
+        order = make_order_items(db, branch, [hot_item, grill_item, bar_item])
+        services.update_order_status(db, order.id, "in_kitchen")
+
+        tickets = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).all()
+        stations = {t.station for t in tickets}
+        assert stations == {"hot", "grill", "bar"}
+        for ticket in tickets:
+            assert len(ticket.items_snapshot) == 1  # صنف واحد بس لكل تذكرة محطة
+
+    def test_cancelled_item_excluded_from_kitchen_ticket(self, db):
+        """صنف ملغى قبل ما الطلب يروح للمطبخ ميظهرش في تذكرة الـ KDS."""
+        from app.modules.restaurant.models import KitchenTicket
+        branch = make_branch(db)
+        hot_item = make_menu_item(db, branch, station="hot")
+        grill_item = make_menu_item(db, branch, station="grill")
+        order = make_order_items(db, branch, [hot_item, grill_item])
+        crud.void_order_item(db, order.items[1], "غلط في الطلب", voided_by=1)
+        db.commit()
+
+        services.update_order_status(db, order.id, "in_kitchen")
+        tickets = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).all()
+        assert len(tickets) == 1
+        assert tickets[0].station == "hot"
 
     def test_update_ticket_status(self, db):
         """Aggiorna status ticket da pending a done."""
@@ -381,3 +424,27 @@ class TestKDS:
         # verifica che il ticket non sia più nelle pending list
         pending = crud.list_pending_tickets(db, branch.id, module="restaurant")
         assert not any(t.id == ticket.id for t in pending)
+
+    def test_get_kds_tickets_module_isolation(self, db):
+        """services.get_kds_tickets بموديول 'cafe' لازم ميرجّعش تذاكر المطعم، والعكس."""
+        from app.modules.restaurant.models import KitchenTicket
+        branch = make_branch(db)
+        item = make_menu_item(db, branch, station="hot")
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "in_kitchen")
+
+        cafe_ticket = KitchenTicket(
+            branch_id=branch.id, order_id=999, module="cafe",
+            station="bar", items_snapshot=[], status="pending",
+        )
+        db.add(cafe_ticket)
+        db.commit()
+
+        restaurant_only = services.get_kds_tickets(db, branch.id, module="restaurant")
+        assert all(t.module == "restaurant" for t in restaurant_only)
+        assert any(t.order_id == order.id for t in restaurant_only)
+
+        cafe_only = services.get_kds_tickets(db, branch.id, module="cafe")
+        assert all(t.module == "cafe" for t in cafe_only)
+        assert any(t.id == cafe_ticket.id for t in cafe_only)
+        assert not any(t.order_id == order.id for t in cafe_only)

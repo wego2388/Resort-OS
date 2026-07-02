@@ -58,7 +58,13 @@ class BeachTransactionRead(BaseModel):
     b2b_contract_id: Optional[int]
     notes:           Optional[str]
     voided_at:       Optional[datetime]
+    voided_reason:   Optional[str] = None
+    shift_id:        Optional[int] = None
     created_at:      datetime
+
+
+class VoidTransactionRequest(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=200)
 
 
 class B2BContractCreate(BaseModel):

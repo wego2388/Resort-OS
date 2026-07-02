@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.restaurant import crud
-from app.modules.restaurant.models import KitchenTicket, KDSScreen, Order
+from app.modules.restaurant.models import KitchenTicket, MenuItem, Order
 from app.modules.restaurant.schemas import OrderCreate
 from app.resort_os.discount_engine import DiscountRule, OrderContext, calculate_discount
 
@@ -212,25 +212,36 @@ def update_order_status(db: Session, order_id: int, new_status: str) -> Order:
 
     order = crud.update_order_status(db, order, new_status)
 
-    # إرسال ticket للمطبخ عند تحويل الطلب لـ in_kitchen
+    # إرسال ticket لكل محطة (hot/grill/cold/bar/dessert) عند تحويل الطلب لـ in_kitchen
+    # — بنقسّم الأصناف حسب MenuItem.station بدل تذكرة واحدة لكل الطلب، عشان شاشة الـ
+    # KDS الخاصة بكل محطة (KDSScreen.stations) تعرض بس الأصناف اللي تخصها فعليًا.
     if new_status == "in_kitchen":
-        items_snapshot = [
-            {
+        active_items = [item for item in order.items if item.status != "cancelled"]
+        menu_item_ids = {item.menu_item_id for item in active_items}
+        station_by_menu_item = {
+            mi.id: mi.station
+            for mi in db.query(MenuItem).filter(MenuItem.id.in_(menu_item_ids)).all()
+        } if menu_item_ids else {}
+
+        items_by_station: dict[str, list[dict]] = {}
+        for item in active_items:
+            station = station_by_menu_item.get(item.menu_item_id, "hot")
+            items_by_station.setdefault(station, []).append({
                 "order_item_id": item.id,
                 "name":          item.name,
                 "quantity":      item.quantity,
                 "notes":         item.notes,
-            }
-            for item in order.items
-        ]
-        crud.create_kitchen_ticket(
-            db,
-            order_id=order.id,
-            branch_id=order.branch_id,
-            station="kitchen",
-            items_snapshot=items_snapshot,
-            module="restaurant",
-        )
+            })
+
+        for station, items_snapshot in items_by_station.items():
+            crud.create_kitchen_ticket(
+                db,
+                order_id=order.id,
+                branch_id=order.branch_id,
+                station=station,
+                items_snapshot=items_snapshot,
+                module="restaurant",
+            )
 
     # إعادة الطاولة للحالة available عند الدفع أو الإلغاء
     if new_status in ("paid", "cancelled") and order.table_id:
@@ -375,9 +386,11 @@ def get_kds_tickets(
     db: Session,
     branch_id: int,
     stations: Optional[list[str]] = None,
+    module: str = "restaurant",
 ) -> list[KitchenTicket]:
-    """Ritorna i ticket pendenti per il KDS."""
-    return crud.list_pending_tickets(db, branch_id, stations=stations, module="restaurant")
+    """يرجّع تذاكر الـ KDS المعلقة لفرع معيّن — فلترة اختيارية حسب المحطة و/أو الموديول
+    (مطعم أو كافيه، كل واحد فيهم بيعمل تذاكره في نفس الجدول)."""
+    return crud.list_pending_tickets(db, branch_id, stations=stations, module=module)
 
 
 def generate_receipt_pdf(db: Session, order_id: int) -> bytes:

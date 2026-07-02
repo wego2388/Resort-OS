@@ -11,8 +11,6 @@ existed and worked, but ZERO route was wired in api/router.py, and there
 were no Pydantic schemas for Lead at all. Same class of bug as the
 GET /restaurant/menu/categories 404 documented in CLAUDE.md § 11.6.
 
-⚠️ crm defaults to MODULE_REGISTRY.crm.default_enabled=False — must be
-enabled globally (branch_id=None). See tests/conftest.py::enable_module_for_branch.
 ⚠️ Setup data created here must be `db.commit()`-ed, not `.flush()`-ed.
 """
 from __future__ import annotations
@@ -21,16 +19,13 @@ import uuid
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import enable_module_for_branch
 
-
-def make_branch_committed(db, fake_redis):
+def make_branch_committed(db):
     from app.modules.core.models import Branch
     b = Branch(name="CRM HTTP Branch", name_ar="فرع عملاء",
                code=f"CRM-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
-    enable_module_for_branch(db, fake_redis, "crm", branch_id=None)
     return b
 
 
@@ -45,7 +40,7 @@ def make_customer_committed(db, branch):
 class TestCRMLeadsFlow:
     def test_create_list_and_advance_lead(self, client: TestClient, db, fake_redis, manager_headers):
         """Full round-trip through the exact endpoints CRMView.vue calls."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
 
         create_resp = client.post(
             "/api/v1/crm/leads",
@@ -73,7 +68,7 @@ class TestCRMLeadsFlow:
         assert advance_resp.json()["stage"] == "contacted"
 
     def test_lead_won_is_terminal(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         lead = client.post(
             "/api/v1/crm/leads",
             json={"branch_id": branch.id, "full_name": "نور الهدى", "interest": "leasing"},
@@ -92,7 +87,7 @@ class TestCRMLeadsFlow:
         assert second_resp.status_code == 400
 
     def test_lead_lost_records_reason(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         lead = client.post(
             "/api/v1/crm/leads",
             json={"branch_id": branch.id, "full_name": "كريم عادل"},
@@ -114,7 +109,7 @@ class TestCRMPermissions:
         """Any authenticated user (waiter) must not be able to blacklist a
         customer — manager+ required, unlike most other CRM endpoints."""
         from tests.conftest import _create_test_user, _make_token
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         customer = make_customer_committed(db, branch)
         _create_test_user("crm-waiter@test.local", "waiter")
         headers = {"Authorization": f"Bearer {_make_token('crm-waiter@test.local')}"}
@@ -129,7 +124,7 @@ class TestCRMPermissions:
 
 class TestCRMValidation:
     def test_create_lead_rejects_invalid_interest(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/crm/leads",
             json={"branch_id": branch.id, "full_name": "عميل", "interest": "spaceship"},
@@ -138,7 +133,7 @@ class TestCRMValidation:
         assert resp.status_code == 422
 
     def test_update_lead_rejects_invalid_stage(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         lead = client.post(
             "/api/v1/crm/leads", json={"branch_id": branch.id, "full_name": "عميل آخر"},
             headers=manager_headers,

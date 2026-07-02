@@ -7,7 +7,7 @@ const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Product {
   id: number; name: string; sku: string; unit: string
-  current_stock: number; reorder_level: number; category: string; unit_cost: number
+  current_stock: number; reorder_level: number; category: string; unit_cost: number | null
 }
 
 const products = ref<Product[]>([])
@@ -82,7 +82,7 @@ onMounted(fetchProducts)
                 </span>
               </td>
               <td class="px-4 py-3 text-sm text-gray-500">{{ p.reorder_level }} {{ p.unit }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ p.unit_cost.toLocaleString('ar-EG') }} ج</td>
+              <td class="px-4 py-3 text-sm text-gray-700">{{ (p.unit_cost ?? 0).toLocaleString('ar-EG') }} ج</td>
               <td class="px-4 py-3">
                 <span :class="['px-2 py-1 rounded-full text-xs font-medium', p.current_stock <= 0 ? 'bg-red-100 text-red-700' : p.current_stock <= p.reorder_level ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700']">
                   {{ p.current_stock <= 0 ? 'نفد' : p.current_stock <= p.reorder_level ? 'منخفض' : 'متاح' }}

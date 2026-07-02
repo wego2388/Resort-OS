@@ -7,8 +7,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
-    DbDep, get_admin_user, get_current_active_user,
-    get_manager_user, require_module,
+    DbDep, get_current_active_user,
+    get_manager_user,
 )
 from app.modules.crm import crud, services
 from app.modules.crm.schemas import (
@@ -22,12 +22,11 @@ from app.modules.crm.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["crm"])
-_guard = Depends(require_module("crm"))
 
 
 # ── Customers ─────────────────────────────────────────────────────────
 
-@router.get("/crm/customers", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/crm/customers", response_model=PaginatedResponse)
 def list_customers(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -45,12 +44,12 @@ def list_customers(
 
 
 @router.post("/crm/customers", response_model=CustomerRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_customer(data: CustomerCreate, db: DbDep, _=Depends(get_current_active_user)):
     return services.create_customer(db, data)
 
 
-@router.get("/crm/customers/{customer_id}", response_model=CustomerRead, dependencies=[_guard])
+@router.get("/crm/customers/{customer_id}", response_model=CustomerRead)
 def get_customer(customer_id: int, db: DbDep, _=Depends(get_current_active_user)):
     c = crud.get_customer(db, customer_id)
     if not c:
@@ -58,7 +57,7 @@ def get_customer(customer_id: int, db: DbDep, _=Depends(get_current_active_user)
     return CustomerRead.model_validate(c)
 
 
-@router.patch("/crm/customers/{customer_id}", response_model=CustomerRead, dependencies=[_guard])
+@router.patch("/crm/customers/{customer_id}", response_model=CustomerRead)
 def update_customer(customer_id: int, data: CustomerUpdate, db: DbDep,
                     _=Depends(get_current_active_user)):
     try:
@@ -68,7 +67,7 @@ def update_customer(customer_id: int, data: CustomerUpdate, db: DbDep,
 
 
 @router.post("/crm/customers/{customer_id}/blacklist",
-             response_model=CustomerRead, dependencies=[_guard])
+             response_model=CustomerRead)
 def blacklist_customer(customer_id: int, req: BlacklistRequest, db: DbDep,
                        _=Depends(get_manager_user)):
     try:
@@ -78,7 +77,7 @@ def blacklist_customer(customer_id: int, req: BlacklistRequest, db: DbDep,
 
 
 @router.delete("/crm/customers/{customer_id}/blacklist",
-               response_model=CustomerRead, dependencies=[_guard])
+               response_model=CustomerRead)
 def unblacklist_customer(customer_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.unblacklist_customer(db, customer_id)
@@ -92,7 +91,7 @@ def unblacklist_customer(customer_id: int, db: DbDep, _=Depends(get_manager_user
 # موجودين بالكامل من زمان، بس مفيش router endpoint خالص، فكان 404 حقيقي
 # في الإنتاج. نفس فئة الباج الموثّقة في CLAUDE.md § 11.6.
 
-@router.get("/crm/leads", response_model=list[LeadRead], dependencies=[_guard])
+@router.get("/crm/leads", response_model=list[LeadRead])
 def list_leads(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -102,12 +101,12 @@ def list_leads(
 
 
 @router.post("/crm/leads", response_model=LeadRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_lead(data: LeadCreate, db: DbDep, _=Depends(get_current_active_user)):
     return LeadRead.model_validate(services.create_lead(db, data))
 
 
-@router.get("/crm/leads/{lead_id}", response_model=LeadRead, dependencies=[_guard])
+@router.get("/crm/leads/{lead_id}", response_model=LeadRead)
 def get_lead(lead_id: int, db: DbDep, _=Depends(get_current_active_user)):
     lead = crud.get_lead(db, lead_id)
     if not lead:
@@ -115,7 +114,7 @@ def get_lead(lead_id: int, db: DbDep, _=Depends(get_current_active_user)):
     return LeadRead.model_validate(lead)
 
 
-@router.patch("/crm/leads/{lead_id}", response_model=LeadRead, dependencies=[_guard])
+@router.patch("/crm/leads/{lead_id}", response_model=LeadRead)
 def update_lead_stage(lead_id: int, data: LeadStageUpdate, db: DbDep,
                       _=Depends(get_current_active_user)):
     try:
@@ -127,7 +126,7 @@ def update_lead_stage(lead_id: int, data: LeadStageUpdate, db: DbDep,
 # ── Interactions ──────────────────────────────────────────────────────
 
 @router.get("/crm/customers/{customer_id}/interactions",
-            response_model=PaginatedResponse, dependencies=[_guard])
+            response_model=PaginatedResponse)
 def list_interactions(
     customer_id: int, db: DbDep,
     _=Depends(get_current_active_user),
@@ -141,7 +140,7 @@ def list_interactions(
 
 
 @router.post("/crm/interactions", response_model=InteractionRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def log_interaction(data: InteractionCreate, db: DbDep, user=Depends(get_current_active_user)):
     try:
         return services.log_interaction(db, data, handled_by=user.id)
@@ -151,7 +150,7 @@ def log_interaction(data: InteractionCreate, db: DbDep, user=Depends(get_current
 
 # ── Opportunities ─────────────────────────────────────────────────────
 
-@router.get("/crm/opportunities", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/crm/opportunities", response_model=PaginatedResponse)
 def list_opportunities(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -168,7 +167,7 @@ def list_opportunities(
 
 
 @router.post("/crm/opportunities", response_model=OpportunityRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_opportunity(data: OpportunityCreate, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.create_opportunity(db, data)
@@ -176,7 +175,7 @@ def create_opportunity(data: OpportunityCreate, db: DbDep, _=Depends(get_current
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.patch("/crm/opportunities/{opp_id}", response_model=OpportunityRead, dependencies=[_guard])
+@router.patch("/crm/opportunities/{opp_id}", response_model=OpportunityRead)
 def update_opportunity(opp_id: int, data: OpportunityUpdate, db: DbDep,
                        _=Depends(get_current_active_user)):
     try:
@@ -187,7 +186,7 @@ def update_opportunity(opp_id: int, data: OpportunityUpdate, db: DbDep,
 
 # ── Activities ────────────────────────────────────────────────────────
 
-@router.get("/crm/activities", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/crm/activities", response_model=PaginatedResponse)
 def list_activities(
     db: DbDep,
     _=Depends(get_current_active_user),
@@ -208,7 +207,7 @@ def list_activities(
 
 
 @router.post("/crm/activities", response_model=ActivityRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_activity(data: ActivityCreate, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.create_activity(db, data)
@@ -216,7 +215,7 @@ def create_activity(data: ActivityCreate, db: DbDep, _=Depends(get_current_activ
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.patch("/crm/activities/{activity_id}", response_model=ActivityRead, dependencies=[_guard])
+@router.patch("/crm/activities/{activity_id}", response_model=ActivityRead)
 def update_activity(activity_id: int, data: ActivityUpdate, db: DbDep,
                     _=Depends(get_current_active_user)):
     try:

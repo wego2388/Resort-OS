@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.pms import crud
 from app.modules.pms.models import Booking, NightAuditLog
-from app.modules.pms.schemas import BookingCreate, BookingRead
+from app.modules.pms.schemas import BookingCreate
 
 
 class BookingConflictError(Exception):
@@ -253,7 +253,6 @@ def run_night_audit(db: Session, branch_id: int, audit_date: date) -> NightAudit
 
 def _mark_no_shows(db: Session, branch_id: int, check_in_date: date) -> None:
     """يُحوّل الحجوزات التي لم تصل في يوم الدخول إلى no_show."""
-    from sqlalchemy import and_  # noqa: PLC0415
     rows = (
         db.query(Booking)
         .filter(

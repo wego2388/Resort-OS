@@ -5,7 +5,6 @@ Business Logic للـ Core Module
 
 القاعدة:
   - يستدعي crud.py للـ DB operations
-  - يستدعي module_loader للـ toggle logic
   - يرمي ValueError/PermissionError فقط (لا HTTPException)
   - الـ router يترجم الأخطاء
 ═══════════════════════════════════════════════════════════════════════
@@ -15,24 +14,17 @@ from __future__ import annotations
 import json
 from typing import Optional
 
-import redis as redis_lib
 from sqlalchemy.orm import Session
 
-from app.core.module_loader import (
-    MODULE_REGISTRY,
-    get_enabled_modules,
-    toggle_module,
-)
 from app.modules.core import crud
-from app.modules.core.models import Branch, Notification
+from app.modules.core.models import Branch, Notification, UserPermission
 from app.modules.core.schemas import (
     AuditLogCreate,
     BranchCreate,
     BranchUpdate,
-    ModuleRead,
-    ModuleToggleResult,
     NotificationCreate,
     SettingRead,
+    UserPermissionCreate,
 )
 
 
@@ -198,69 +190,105 @@ def upsert_setting(
     return SettingRead.model_validate(row)
 
 
-# ─────────────────────── Module Toggle ───────────────────────────────
+# ─────────────────────── Permission Matrix ───────────────────────────
+# طبقة إضافية فوق ROLE_LEVELS (app/core/deps.py) — لا تكسرها.
+#
+# القاعدة:
+#   1. لو فيه صف UserPermission صريح لـ user+resource+action (branch-scoped
+#      أو global) → هو الحاكم. سواء منح (allowed=True) أو منع (allowed=False)
+#      — بيكسب الـ role level تماماً.
+#   2. لو مفيش صف صريح → يرجع لسلوك الـ role القديم (fallback) بدون تغيير.
+#      الـ caller هو المسؤول عن تمرير الـ role fallback (عادة "المستخدم
+#      يحقق الحد الأدنى من role level للـ endpoint ده أصلاً").
 
-def get_all_modules(
+def has_permission(
     db: Session,
-    redis_client: redis_lib.Redis,
+    user,
+    resource: str,
+    action: str,
     branch_id: Optional[int] = None,
-) -> list[ModuleRead]:
+    *,
+    role_fallback: bool = True,
+) -> bool:
     """
-    يُرجع كل الـ modules مع حالتها.
-    يدمج MODULE_REGISTRY (تعريف) + DB (حالة) + Redis cache.
-    """
-    enabled_set = get_enabled_modules(db, redis_client, branch_id)
+    القرار:
+      1. استثناء صريح موجود (منح أو منع) → هو الحاكم، يكسب أي حاجة تانية.
+      2. مفيش استثناء → يرجع role_fallback كما هو.
 
-    result = []
-    for key, defn in sorted(MODULE_REGISTRY.items(), key=lambda x: x[1].nav_order):
-        result.append(ModuleRead(
-            key=key,
-            name_ar=defn.name_ar,
-            name_en=defn.name_en,
-            always_on=defn.always_on,
-            enabled=key in enabled_set,
-            default_enabled=defn.default_enabled,
-            depends_on=list(defn.depends_on),
-            icon=defn.icon,
-            nav_order=defn.nav_order,
-        ))
-    return result
-
-
-def toggle_module_state(
-    db: Session,
-    redis_client: redis_lib.Redis,
-    module_key: str,
-    enable: bool,
-    branch_id: Optional[int] = None,
-    changed_by: Optional[int] = None,
-) -> ModuleToggleResult:
+    role_fallback هي نتيجة تقييم الـ role القديم (مرّرها الـ caller —
+    عادة app.core.deps.require_permission بيحسبها من user_level(user) مقابل
+    حد أدنى معيّن لل resource/action ده). القيمة الافتراضية True فقط
+    للاستخدام المباشر بدون role context (مثلاً من داخل service tests).
     """
-    يفعّل/يعطّل module.
-    يرمي ValueError إذا:
-      - الـ module غير موجود
-      - always_on
-      - تعطيل module يعتمد عليه modules أخرى مفعّلة
-    """
-    result = toggle_module(
-        key=module_key,
-        enable=enable,
-        db=db,
-        redis_client=redis_client,
-        branch_id=branch_id,
-        changed_by=changed_by,
+    effective_branch_id = branch_id if branch_id is not None else getattr(user, "branch_id", None)
+
+    explicit = crud.find_explicit_permission(
+        db, user.id, resource, action, effective_branch_id,
     )
+    if explicit is not None:
+        return explicit.allowed
 
-    # audit log
+    return role_fallback
+
+
+def list_user_permissions(db: Session, user_id: int) -> list[UserPermission]:
+    return crud.list_user_permissions(db, user_id)
+
+
+def grant_permission(
+    db: Session,
+    user_id: int,
+    data: UserPermissionCreate,
+    granted_by: int,
+) -> UserPermission:
+    """منح أو منع صريح — upsert على نفس resource+action+branch."""
+    perm = crud.upsert_user_permission(db, user_id, data, granted_by=granted_by)
+
     crud.create_audit_log(db, AuditLogCreate(
-        user_id=changed_by,
-        branch_id=branch_id,
-        action="toggle",
-        entity_type="module",
-        new_data=json.dumps({"module": module_key, "enabled": enable}),
+        user_id=granted_by,
+        branch_id=data.branch_id,
+        action="grant_permission" if data.allowed else "deny_permission",
+        entity_type="user_permission",
+        entity_id=perm.id,
+        new_data=json.dumps({
+            "target_user_id": user_id,
+            "resource": data.resource,
+            "action": data.action,
+            "allowed": data.allowed,
+        }),
     ))
 
-    return ModuleToggleResult(**result)
+    db.commit()
+    db.refresh(perm)
+    return perm
+
+
+def revoke_permission(
+    db: Session,
+    permission_id: int,
+    revoked_by: int,
+) -> None:
+    """يحذف الاستثناء الصريح تماماً — المستخدم يرجع لسلوك role fallback."""
+    perm = crud.get_user_permission(db, permission_id)
+    if not perm:
+        raise ValueError(f"الصلاحية {permission_id} غير موجودة")
+
+    crud.create_audit_log(db, AuditLogCreate(
+        user_id=revoked_by,
+        branch_id=perm.branch_id,
+        action="revoke_permission",
+        entity_type="user_permission",
+        entity_id=perm.id,
+        old_data=json.dumps({
+            "target_user_id": perm.user_id,
+            "resource": perm.resource,
+            "action": perm.action,
+            "allowed": perm.allowed,
+        }),
+    ))
+
+    crud.delete_user_permission(db, perm)
+    db.commit()
 
 
 # ─────────────────────── Notification ────────────────────────────────

@@ -73,36 +73,6 @@ class SettingUpdate(BaseModel):
     value: str = Field(..., min_length=0)
 
 
-# ─────────────────────── Module ──────────────────────────────────────
-
-class ModuleRead(BaseModel):
-    """حالة module واحد"""
-    model_config = ConfigDict(from_attributes=True)
-
-    key:             str
-    name_ar:         str
-    name_en:         str
-    always_on:       bool
-    enabled:         bool
-    default_enabled: bool
-    depends_on:      list[str]
-    icon:            str
-    nav_order:       int
-
-
-class ModuleToggle(BaseModel):
-    """طلب toggle من الـ client"""
-    enable:    bool
-    branch_id: Optional[int] = Field(None, description="None = global")
-
-
-class ModuleToggleResult(BaseModel):
-    module:    str
-    enabled:   bool
-    scope:     str
-    effective: str
-
-
 # ─────────────────────── Notification ────────────────────────────────
 
 class NotificationRead(BaseModel):
@@ -181,6 +151,37 @@ class UserRoleUpdate(BaseModel):
     """super_admin فقط — تغيير role و/أو is_active لمستخدم."""
     role:      Optional[str] = Field(None, max_length=30)
     is_active: Optional[bool] = None
+
+
+# ─────────────────────── UserPermission ──────────────────────────────
+# انظر app/modules/core/models.py::UserPermission للشرح الكامل عن
+# resource/action naming scheme و branch scoping.
+
+class UserPermissionBase(BaseModel):
+    resource:  str  = Field(..., max_length=100,
+                             description='مثال: "finance.void_payment"، "restaurant.void_item"')
+    action:    str  = Field(..., max_length=30,
+                             pattern=r"^(view|create|edit|delete|void|approve|execute)$")
+    allowed:   bool = Field(True, description="True=منح صريح، False=منع صريح")
+    branch_id: Optional[int] = Field(None, description="None = كل الفروع")
+
+
+class UserPermissionCreate(UserPermissionBase):
+    pass
+
+
+class UserPermissionRead(UserPermissionBase):
+    model_config = ConfigDict(from_attributes=True)
+
+    id:          int
+    user_id:     int
+    granted_by:  Optional[int]
+    created_at:  datetime
+
+
+class UserPermissionGrantRequest(UserPermissionBase):
+    """للاستخدام من POST /core/permissions — بيحدد المستخدم المستهدف صراحةً."""
+    user_id: int
 
 
 # ─────────────────────── Pagination ──────────────────────────────────

@@ -74,6 +74,57 @@ class TestTimeshareContract:
         with pytest.raises(ValueError, match="الدفعة الأولى"):
             services.create_contract(db, data, signed_by=1)
 
+    def test_end_date_before_start_date_raises(self, db, branch):
+        """قاعدة عمل حقيقية من elkheima-beach-resort: end_date يجب أن يكون
+        بعد start_date — كانت ناقصة في resort-os (فقط عند التحقق من الـ schema
+        لم تكن هناك مقارنة بين الحقلين)."""
+        data = TimeshareContractCreate(
+            branch_id=branch.id,
+            customer_name="عميل",
+            room_type="2R",
+            total_value=Decimal("50000"),
+            down_payment=Decimal("5000"),
+            installments=12, installment_period=1,
+            first_installment_date=date(2026, 8, 1),
+            partner_share_pct=Decimal("0"),
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 6, 1),  # قبل start_date
+        )
+        with pytest.raises(ValueError, match="تاريخ الانتهاء"):
+            services.create_contract(db, data, signed_by=1)
+
+    def test_end_date_equal_start_date_raises(self, db, branch):
+        data = TimeshareContractCreate(
+            branch_id=branch.id,
+            customer_name="عميل",
+            room_type="2R",
+            total_value=Decimal("50000"),
+            down_payment=Decimal("5000"),
+            installments=12, installment_period=1,
+            first_installment_date=date(2026, 8, 1),
+            partner_share_pct=Decimal("0"),
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 1),
+        )
+        with pytest.raises(ValueError, match="تاريخ الانتهاء"):
+            services.create_contract(db, data, signed_by=1)
+
+    def test_end_date_after_start_date_succeeds(self, db, branch):
+        data = TimeshareContractCreate(
+            branch_id=branch.id,
+            customer_name="عميل",
+            room_type="2R",
+            total_value=Decimal("50000"),
+            down_payment=Decimal("5000"),
+            installments=12, installment_period=1,
+            first_installment_date=date(2026, 8, 1),
+            partner_share_pct=Decimal("0"),
+            start_date=date(2026, 7, 1),
+            end_date=date(2026, 7, 2),
+        )
+        c = services.create_contract(db, data, signed_by=1)
+        assert c.end_date == date(2026, 7, 2)
+
 
 class TestPayInstallment:
 
@@ -479,6 +530,25 @@ class TestTimeshareReports:
         assert stats["collection"]["collected"] >= float(inst.amount)
         assert stats["collection"]["rate"] > 0
         assert any(r["room_type"] == "2R" for r in stats["by_room_type"])
+
+    def test_get_stats_by_partner_includes_resort_net_share(self, db: Session, branch):
+        """صافي حصة المنتجع بعد نصيب الشريك (resort_share) — خاصية حقيقية من
+        elkheima-beach-resort (khayma_share) كانت محسوبة في الـ engine
+        (calculate_partner_share) لكن غير مُستخدَمة في أي مكان."""
+        data = TimeshareContractCreate(
+            branch_id=branch.id, customer_name="عميل شريك", room_type="4R",
+            total_value=Decimal("200000"), down_payment=Decimal("40000"),
+            installments=10, installment_period=1,
+            first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),
+            partner_share_pct=Decimal("30"), partner_company="شركة الشريك",
+        )
+        services.create_contract(db, data, signed_by=1)
+
+        stats = services.get_stats(db, branch.id)
+        row = next(r for r in stats["by_partner"] if r["partner_company"] == "شركة الشريك")
+        assert row["total_down"] == 40000.0
+        # 40000 * (1 - 30/100) = 28000
+        assert row["resort_share"] == 28000.0
 
     def test_list_installments_returns_summary(self, db: Session, branch, contract):
         result = services.list_installments(db, branch.id)

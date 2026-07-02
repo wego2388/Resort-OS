@@ -15,27 +15,20 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import enable_module_for_branch
 
-
-def make_branch_committed(db, fake_redis):
-    """Beach module defaults to disabled (MODULE_REGISTRY.beach.default_enabled=False).
-    require_module() checks the *authenticated user's* branch_id (None for test
-    fixture users, since they're never assigned to a branch) — so the module must
-    be enabled globally (branch_id=None), not on the branch created for test data."""
+def make_branch_committed(db):
     from app.modules.core.models import Branch
     b = Branch(name="Beach HTTP Branch", name_ar="فرع شاطئ",
                code=f"BCH-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
-    enable_module_for_branch(db, fake_redis, "beach", branch_id=None)
     return b
 
 
 class TestBeachReservationFlow:
     def test_reservation_checkin_consumes_inventory(self, client: TestClient, db, fake_redis, cashier_headers):
         """Full round-trip: create reservation -> checkin -> capacity_used goes up."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
 
         before = client.get(
             "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=cashier_headers,
@@ -74,7 +67,7 @@ class TestBeachReservationFlow:
         assert after.json()["capacity_used"] == cap_before + 2
 
     def test_double_checkin_rejected(self, client: TestClient, db, fake_redis, cashier_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         reservation = client.post(
             "/api/v1/beach/reservations",
             json={
@@ -90,7 +83,7 @@ class TestBeachReservationFlow:
 
     def test_reservation_public_view_no_auth(self, client: TestClient, db, fake_redis):
         """QR page reads reservation info without login."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         from app.modules.beach.models import BeachReservation
         res = BeachReservation(
             branch_id=branch.id, guest_name="ضيف QR", reservation_date=date.today(),
@@ -108,7 +101,7 @@ class TestBeachSellPermissions:
     def test_sell_requires_cashier_level(self, client: TestClient, db, fake_redis):
         """A waiter-level token must not be able to sell beach tickets (cashier+ required)."""
         from tests.conftest import _create_test_user, _make_token
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         _create_test_user("beach-waiter@test.local", "waiter")
         headers = {"Authorization": f"Bearer {_make_token('beach-waiter@test.local')}"}
 
@@ -122,7 +115,7 @@ class TestBeachSellPermissions:
 
     def test_surge_set_requires_manager(self, client: TestClient, db, fake_redis, cashier_headers):
         """Cashier-level token must not be allowed to set surge pricing (manager+ only)."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.patch(
             "/api/v1/beach/surge",
             params={"branch_id": branch.id},
@@ -132,7 +125,7 @@ class TestBeachSellPermissions:
         assert resp.status_code == 403
 
     def test_surge_set_by_manager_reflected_in_price(self, client: TestClient, db, fake_redis, manager_headers, cashier_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         surge_resp = client.patch(
             "/api/v1/beach/surge",
             params={"branch_id": branch.id},
@@ -155,7 +148,7 @@ class TestBeachSellPermissions:
 class TestBeachValidation:
     def test_sell_rejects_invalid_tx_type(self, client: TestClient, db, fake_redis, cashier_headers):
         """tx_type outside the allowed pattern must 422, not 500 or a silent pass."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/beach/sell",
             params={"branch_id": branch.id},
@@ -165,7 +158,7 @@ class TestBeachValidation:
         assert resp.status_code == 422
 
     def test_sell_rejects_zero_quantity(self, client: TestClient, db, fake_redis, cashier_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/beach/sell",
             params={"branch_id": branch.id},
@@ -175,7 +168,7 @@ class TestBeachValidation:
         assert resp.status_code == 422
 
     def test_sell_exceeding_capacity_rejected(self, client: TestClient, db, fake_redis, cashier_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/beach/sell",
             params={"branch_id": branch.id},
@@ -187,7 +180,7 @@ class TestBeachValidation:
 
 class TestBeachB2BContracts:
     def test_b2b_checkin_and_quota_status_via_http(self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         create_resp = client.post(
             "/api/v1/beach/b2b-contracts",
             json={
@@ -223,7 +216,7 @@ class TestBeachB2BContracts:
 
     def test_b2b_contract_create_requires_admin(self, client: TestClient, db, fake_redis, manager_headers):
         """manager-level (60) must not be allowed to create a B2B contract (admin=80 required)."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/beach/b2b-contracts",
             json={

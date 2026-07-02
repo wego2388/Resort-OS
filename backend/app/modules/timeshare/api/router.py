@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_current_active_user, get_manager_user, require_module
+from app.core.deps import DbDep, get_current_active_user, get_manager_user
 from app.modules.timeshare import crud, services
 from app.modules.timeshare.schemas import (
     PayInstallmentRequest, InstallmentRead,
@@ -18,10 +18,9 @@ from app.modules.timeshare.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["timeshare"])
-_guard = Depends(require_module("timeshare"))
 
 
-@router.get("/timeshare/contracts", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/timeshare/contracts", response_model=PaginatedResponse)
 def list_contracts(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -36,7 +35,7 @@ def list_contracts(
 
 
 @router.post("/timeshare/contracts", response_model=TimeshareContractRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_manager_user)):
     try:
         return services.create_contract(db, data, signed_by=user.id)
@@ -44,7 +43,7 @@ def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_m
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/timeshare/contracts/{contract_id}", response_model=TimeshareContractRead, dependencies=[_guard])
+@router.get("/timeshare/contracts/{contract_id}", response_model=TimeshareContractRead)
 def get_contract(contract_id: int, db: DbDep, _=Depends(get_current_active_user)):
     c = crud.get_contract(db, contract_id)
     if not c:
@@ -52,7 +51,7 @@ def get_contract(contract_id: int, db: DbDep, _=Depends(get_current_active_user)
     return TimeshareContractRead.model_validate(c)
 
 
-@router.patch("/timeshare/contracts/{contract_id}", response_model=TimeshareContractRead, dependencies=[_guard])
+@router.patch("/timeshare/contracts/{contract_id}", response_model=TimeshareContractRead)
 def update_contract(contract_id: int, data: TimeshareContractUpdate, db: DbDep,
                     _=Depends(get_manager_user)):
     try:
@@ -61,7 +60,7 @@ def update_contract(contract_id: int, data: TimeshareContractUpdate, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.post("/timeshare/installments/{inst_id}/pay", response_model=InstallmentRead, dependencies=[_guard])
+@router.post("/timeshare/installments/{inst_id}/pay", response_model=InstallmentRead)
 def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
                     _=Depends(get_current_active_user)):
     try:
@@ -70,13 +69,13 @@ def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/timeshare/waitlist", response_model=list[WaitlistRead], dependencies=[_guard])
+@router.get("/timeshare/waitlist", response_model=list[WaitlistRead])
 def list_waitlist(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return [WaitlistRead.model_validate(w) for w in crud.list_waitlist(db, branch_id)]
 
 
 @router.post("/timeshare/waitlist", response_model=WaitlistRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def add_to_waitlist(data: WaitlistCreate, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.add_to_waitlist(db, data)
@@ -84,7 +83,7 @@ def add_to_waitlist(data: WaitlistCreate, db: DbDep, _=Depends(get_current_activ
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/timeshare/contracts/{contract_id}/pdf", dependencies=[_guard])
+@router.get("/timeshare/contracts/{contract_id}/pdf")
 def download_contract_pdf(contract_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:
         pdf = services.generate_contract_pdf(db, contract_id)
@@ -99,17 +98,17 @@ def download_contract_pdf(contract_id: int, db: DbDep, _=Depends(get_current_act
 
 # ── CS Dashboard ─────────────────────────────────────────────────────
 
-@router.get("/timeshare/cs-summary", dependencies=[_guard])
+@router.get("/timeshare/cs-summary")
 def get_cs_summary(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return services.get_cs_summary(db, branch_id)
 
 
-@router.get("/timeshare/sales-dashboard", dependencies=[_guard])
+@router.get("/timeshare/sales-dashboard")
 def get_sales_dashboard(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return services.get_sales_dashboard(db, branch_id)
 
 
-@router.get("/timeshare/calendar", dependencies=[_guard])
+@router.get("/timeshare/calendar")
 def get_calendar(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...), year: Optional[int] = Query(None),
@@ -117,7 +116,7 @@ def get_calendar(
     return services.get_calendar(db, branch_id, year)
 
 
-@router.get("/timeshare/upcoming-visits", dependencies=[_guard])
+@router.get("/timeshare/upcoming-visits")
 def get_upcoming_visits(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...), days: int = Query(30, ge=1, le=365),
@@ -125,7 +124,7 @@ def get_upcoming_visits(
     return services.get_upcoming_visits(db, branch_id, days)
 
 
-@router.get("/timeshare/installments", dependencies=[_guard])
+@router.get("/timeshare/installments")
 def list_installments(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -143,12 +142,12 @@ def list_installments(
     }
 
 
-@router.get("/timeshare/stats", dependencies=[_guard])
+@router.get("/timeshare/stats")
 def get_stats(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return services.get_stats(db, branch_id)
 
 
-@router.post("/timeshare/contracts/{contract_id}/cancel", response_model=TimeshareContractRead, dependencies=[_guard])
+@router.post("/timeshare/contracts/{contract_id}/cancel", response_model=TimeshareContractRead)
 def cancel_contract(
     contract_id: int, data: TimeshareCancelRequest, db: DbDep,
     _=Depends(get_manager_user),
@@ -161,7 +160,7 @@ def cancel_contract(
 
 # ── Visits ───────────────────────────────────────────────────────────
 
-@router.get("/timeshare/visits", response_model=list[TimeshareVisitRead], dependencies=[_guard])
+@router.get("/timeshare/visits", response_model=list[TimeshareVisitRead])
 def list_visits(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -172,7 +171,7 @@ def list_visits(
 
 
 @router.post("/timeshare/visits", response_model=TimeshareVisitRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_visit(data: TimeshareVisitCreate, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.create_visit(db, data)
@@ -180,7 +179,7 @@ def create_visit(data: TimeshareVisitCreate, db: DbDep, _=Depends(get_current_ac
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.patch("/timeshare/visits/{visit_id}", response_model=TimeshareVisitRead, dependencies=[_guard])
+@router.patch("/timeshare/visits/{visit_id}", response_model=TimeshareVisitRead)
 def update_visit(visit_id: int, data: TimeshareVisitUpdate, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.update_visit(db, visit_id, data)
@@ -190,7 +189,7 @@ def update_visit(visit_id: int, data: TimeshareVisitUpdate, db: DbDep, _=Depends
 
 # ── Excel Import ─────────────────────────────────────────────────────
 
-@router.post("/timeshare/contracts/import-excel", dependencies=[_guard])
+@router.post("/timeshare/contracts/import-excel")
 async def import_contracts_excel(
     file: UploadFile, db: DbDep,
     branch_id: int = Query(...),

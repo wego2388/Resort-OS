@@ -3,24 +3,33 @@ import { ref, onMounted } from 'vue'
 import axios from 'axios'
 
 const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Payslip {
-  id: number; period_start: string; period_end: string
-  basic_salary: number; allowances: number; deductions: number; net_salary: number; status: string
+  id: number; period_year: number; period_month: number; status: string
+  basic_salary: number; gross_salary: number; net_salary: number
+  employee_si: number; monthly_tax: number
+  penalty_deduction: number; unpaid_leave_deduction: number
 }
 
 const payslips = ref<Payslip[]>([])
 const loading = ref(false)
 const expanded = ref<number | null>(null)
 
+const monthNames = ['', 'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+  'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر']
+
+function totalDeductions(slip: Payslip) {
+  return slip.employee_si + slip.monthly_tax + slip.penalty_deduction + slip.unpaid_leave_deduction
+}
+function totalAllowances(slip: Payslip) {
+  return slip.gross_salary - slip.basic_salary
+}
+
 async function fetchPayslips() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/payroll/payslips', {
-      headers: h, params: { branch_id: branchId }
-    })
-    payslips.value = res.data.payslips ?? res.data.items ?? res.data
+    const res = await axios.get('/api/v1/hr/me/payslips', { headers: h })
+    payslips.value = res.data.items ?? []
   } catch(e) { console.error(e) }
   finally { loading.value = false }
 }
@@ -42,17 +51,14 @@ onMounted(fetchPayslips)
           class="w-full px-5 py-4 flex items-center justify-between hover:bg-stone-50 transition-colors">
           <div class="text-right">
             <div class="font-bold text-gray-900">
-              {{ new Date(slip.period_start).toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' }) }}
-            </div>
-            <div class="text-xs text-gray-400 mt-0.5">
-              {{ new Date(slip.period_start).toLocaleDateString('ar-EG') }} – {{ new Date(slip.period_end).toLocaleDateString('ar-EG') }}
+              {{ monthNames[slip.period_month] }} {{ slip.period_year }}
             </div>
           </div>
           <div class="flex items-center gap-3">
             <div class="text-left">
               <div class="text-xl font-black text-blue-700">{{ Number(slip.net_salary).toLocaleString('ar-EG') }} <span class="text-sm font-normal">ج</span></div>
               <span :class="['px-2 py-0.5 rounded-full text-xs font-medium block text-center', slip.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700']">
-                {{ slip.status === 'paid' ? 'مصروف' : 'معلق' }}
+                {{ slip.status === 'paid' ? 'مصروف' : 'معتمد' }}
               </span>
             </div>
             <svg :class="['w-4 h-4 text-gray-400 transition-transform', expanded === slip.id ? 'rotate-180' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -68,12 +74,24 @@ onMounted(fetchPayslips)
             <span class="font-medium text-gray-900">{{ Number(slip.basic_salary).toLocaleString('ar-EG') }} ج</span>
           </div>
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500">البدلات والمكافآت</span>
-            <span class="font-medium text-green-600">+ {{ Number(slip.allowances).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-500">البدلات</span>
+            <span class="font-medium text-green-600">+ {{ Number(totalAllowances(slip)).toLocaleString('ar-EG') }} ج</span>
           </div>
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500">الخصومات</span>
-            <span class="font-medium text-red-500">- {{ Number(slip.deductions).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-500">التأمينات الاجتماعية</span>
+            <span class="font-medium text-red-500">- {{ Number(slip.employee_si).toLocaleString('ar-EG') }} ج</span>
+          </div>
+          <div class="flex justify-between text-sm">
+            <span class="text-gray-500">الضريبة الشهرية</span>
+            <span class="font-medium text-red-500">- {{ Number(slip.monthly_tax).toLocaleString('ar-EG') }} ج</span>
+          </div>
+          <div v-if="slip.penalty_deduction > 0" class="flex justify-between text-sm">
+            <span class="text-gray-500">خصم جزاءات</span>
+            <span class="font-medium text-red-500">- {{ Number(slip.penalty_deduction).toLocaleString('ar-EG') }} ج</span>
+          </div>
+          <div v-if="slip.unpaid_leave_deduction > 0" class="flex justify-between text-sm">
+            <span class="text-gray-500">خصم إجازة بدون راتب</span>
+            <span class="font-medium text-red-500">- {{ Number(slip.unpaid_leave_deduction).toLocaleString('ar-EG') }} ج</span>
           </div>
           <div class="flex justify-between text-base font-black pt-2 border-t border-stone-200">
             <span class="text-gray-900">صافي الراتب</span>

@@ -12,7 +12,6 @@ CRM leads in Task A, and TenantCashLog in leasing (Task B). Similarly,
 never read/aggregated anywhere. Both gaps were fixed; these tests cover the
 new endpoints end-to-end.
 
-⚠️ analytics is `always_on=True` in MODULE_REGISTRY — no module-enable step needed.
 ⚠️ Setup data created here must be `db.commit()`-ed, not `.flush()`-ed.
 """
 from __future__ import annotations

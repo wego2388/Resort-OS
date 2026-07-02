@@ -6,7 +6,6 @@ No database, no HTTP framework, no external services.
 """
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional
 
 
 # ── TX types (المصدر الوحيد للحقيقة) ─────────────────────────────────────────

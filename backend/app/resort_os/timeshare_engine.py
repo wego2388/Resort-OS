@@ -6,7 +6,7 @@ All functions accept plain Python objects and return plain Python objects.
 المصدر الأساسي: elkheima-beach-resort/api/finance/contracts.py
 هذا الـ engine يعزل الحسابات الحرجة ويجعلها قابلة للاختبار بدون DB.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from decimal import Decimal, ROUND_HALF_UP

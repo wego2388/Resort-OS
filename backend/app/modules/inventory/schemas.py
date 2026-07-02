@@ -215,5 +215,5 @@ class StockCountRead(BaseModel):
 
 
 class SubmitStockCountRequest(BaseModel):
-    """Aggiorna le counted_quantity per ogni riga."""
+    """يحدّث counted_quantity لكل سطر من سطور الجرد."""
     lines: list[dict]  # [{"line_id": int, "counted_quantity": Decimal}]

@@ -7,14 +7,16 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.finance import crud
 from app.modules.finance.models import (
-    AccountingPeriod, CashierShift, CostCenter, ETAInvoice, Folio, FolioCharge, JournalEntry, Payment,
+    AccountingPeriod, CashierShift, CostCenter, ETAInvoice, ExchangeRate,
+    Folio, FolioCharge, JournalEntry, Payment,
 )
 from app.modules.finance.schemas import (
     BalanceSheetLine, BalanceSheetReport,
-    CashierShiftClose, CashierShiftOpen, ConditionalDiscountCreate, CostCenterCreate,
-    CostCenterReport, CostCenterReportLine, FolioChargeCreate, FolioCreate,
+    CashCountLineRead, CashierShiftClose, CashierShiftOpen, ConditionalDiscountCreate, CostCenterCreate,
+    CostCenterReport, CostCenterReportLine, ExchangeRateCreate, FolioChargeCreate, FolioCreate,
     IncomeStatementLine, IncomeStatementReport,
     JournalEntryCreate, PaymentCreate, ShiftEndReport,
     TrialBalanceLine, TrialBalanceReport,
@@ -63,6 +65,11 @@ def _to_folio_summary(folio: Folio) -> FolioSummary:
 
 
 def create_folio(db: Session, data: FolioCreate) -> Folio:
+    supported = {c.strip().upper() for c in settings.SUPPORTED_CURRENCIES.split(",") if c.strip()}
+    if data.currency not in supported:
+        raise ValueError(
+            f"العملة {data.currency} غير مدعومة — العملات المتاحة: {', '.join(sorted(supported))}"
+        )
     folio = crud.create_folio(db, data)
     db.commit()
     db.refresh(folio)
@@ -189,7 +196,7 @@ def generate_folios_report_excel(
 
 
 def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Optional[int] = None) -> Payment:
-    get_folio_or_404(db, folio_id)
+    folio = get_folio_or_404(db, folio_id)
     if cashier_id and not data.cashier_id:
         data = data.model_copy(update={"cashier_id": cashier_id})
     shift_id = None
@@ -197,7 +204,9 @@ def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Opt
         open_shift = crud.get_open_shift(db, data.branch_id, data.cashier_id)
         if open_shift:
             shift_id = open_shift.id
-    payment = crud.create_payment(db, data, shift_id=shift_id)
+    # عملة الدفعة موروثة من الفوليو دايماً — مش قابلة للتحديد من العميل، عشان
+    # نضمن ما يحصلش mismatch بين عملة الفوليو وعملة دفعاته.
+    payment = crud.create_payment(db, data, shift_id=shift_id, currency=folio.currency)
     db.commit()
     db.refresh(payment)
     return payment
@@ -279,6 +288,10 @@ def build_shift_end_report(db: Session, shift_id: int) -> ShiftEndReport:
         expected_cash=expected_cash,
         counted_cash=shift.counted_cash,
         variance=shift.variance,
+        cash_count=[
+            CashCountLineRead.model_validate(line)
+            for line in crud.list_cash_count_lines(db, shift_id)
+        ],
         previous_shift_id=prev.id if prev else None,
         previous_total_sales=previous_total_sales,
         delta_vs_previous=delta_vs_previous,
@@ -317,6 +330,11 @@ def generate_shift_end_report_pdf(db: Session, shift_id: int) -> bytes:
         ("مقارنة بالوردية السابقة", _fmt_delta(r.delta_vs_previous)),
     ]
 
+    if r.cash_count:
+        summary.append(("— عدّ الكاش بالفئة —", ""))
+        for line in r.cash_count:
+            summary.append((f"{line.denomination:,.2f} EGP × {line.quantity}", f"{line.subtotal:,.2f} EGP"))
+
     return builder.table_pdf(
         title="تقرير نهاية الوردية",
         subtitle=f"وردية #{r.shift_id} — كاشير #{r.cashier_id}",
@@ -334,10 +352,25 @@ def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftCl
     if shift.status == "closed":
         raise ValueError("الوردية مقفولة بالفعل")
 
+    # لو الكاشير عدّ الكاش بالفئة (200ج × 5، 100ج × 3...)، الإجمالي المعدود بيتحسب من
+    # العدّ الفعلي مش من رقم يكتبه الكاشير بنفسه — ده أساس أي نظام POS جاد لتجنب الغش
+    # أو الغلط في الجمع، والتفاصيل بتتحفظ للتدقيق (راجع cashier_shift_cash_counts).
+    if data.cash_count:
+        counted_cash = sum(
+            (line.denomination * line.quantity for line in data.cash_count), Decimal("0")
+        )
+        crud.create_cash_count_lines(
+            db, shift_id,
+            [{"denomination": line.denomination, "quantity": line.quantity} for line in data.cash_count],
+        )
+    else:
+        assert data.counted_cash is not None  # مضمون بالـ model_validator في CashierShiftClose
+        counted_cash = data.counted_cash
+
     report = build_shift_end_report(db, shift_id)
     shift.expected_cash = report.expected_cash
-    shift.counted_cash = data.counted_cash
-    shift.variance = data.counted_cash - report.expected_cash
+    shift.counted_cash = counted_cash
+    shift.variance = counted_cash - report.expected_cash
     shift.status = "closed"
     shift.closed_at = datetime.utcnow()
     shift.closed_by = closed_by
@@ -397,19 +430,19 @@ def calculate_order_discount(
 # ── Double-Entry Accounting ────────────────────────────────────────────
 
 def validate_period_open(db: Session, branch_id: int, entry_date: date) -> None:
-    """Lancia ValueError se il periodo è chiuso/locked."""
+    """يرفع ValueError لو الفترة المحاسبية دي مقفولة (closed/locked)."""
     period = crud.get_period_status(db, branch_id, entry_date.year, entry_date.month)
     if period and period.status in ("closed", "locked"):
-        raise ValueError(f"Il periodo {entry_date.year}-{entry_date.month:02d} è chiuso")
+        raise ValueError(f"الفترة المحاسبية {entry_date.year}-{entry_date.month:02d} مقفولة")
 
 
 def post_journal_entry(db: Session, data: JournalEntryCreate, user_id: int) -> JournalEntry:
-    """Crea un JournalEntry bilanciato."""
+    """ينشئ قيد يومية متوازن (Debit = Credit)."""
     validate_period_open(db, data.branch_id, data.entry_date)
     total_debit = sum((l.debit for l in data.lines), Decimal("0"))
     total_credit = sum((l.credit for l in data.lines), Decimal("0"))
     if abs(total_debit - total_credit) > Decimal("0.01"):
-        raise ValueError(f"Sbilanciato: debit={total_debit}, credit={total_credit}")
+        raise ValueError(f"القيد غير متوازن: مدين={total_debit}, دائن={total_credit}")
     entry = crud.create_journal_entry(db, data, user_id)
     db.commit()
     db.refresh(entry)
@@ -487,6 +520,97 @@ async def submit_eta_invoice(db: Session, settings, data) -> ETAInvoice:
     return invoice
 
 
+# ── Exchange Rates (Multi-Currency) ───────────────────────────────────
+# ⚠️ ensure_default_exchange_rates() بيزرع أسعار dummy للتطوير/العرض بس (مش
+# حية/رسمية) — أي استخدام إنتاجي حقيقي محتاج ربط بمصدر رسمي (البنك المركزي
+# المصري مثلاً) واستبدال هذه الدالة أو تعطيلها.
+
+_DEFAULT_SEED_RATES: list[tuple[str, str, Decimal]] = [
+    ("USD", "EGP", Decimal("48.00")),
+    ("EUR", "EGP", Decimal("52.00")),
+]
+
+
+def ensure_default_exchange_rates(db: Session, created_by: int = 0) -> list[ExchangeRate]:
+    """يزرع سعر صرف افتراضي (dummy/dev) لـ USD وEUR مقابل EGP أول مرة بس —
+    idempotent زي ensure_default_cost_centers: لو أي زوج عملة عنده سعر
+    مسجّل بالفعل (أي تاريخ) منزرعش فوقه. لا تُستخدم كمصدر حقيقي في إنتاج."""
+    created: list[ExchangeRate] = []
+    for from_cur, to_cur, rate in _DEFAULT_SEED_RATES:
+        _, existing_count = crud.list_exchange_rates(db, from_cur, to_cur, limit=1)
+        if existing_count == 0:
+            obj = crud.create_exchange_rate(
+                db,
+                ExchangeRateCreate(
+                    from_currency=from_cur, to_currency=to_cur,
+                    rate=rate, effective_date=date.today(),
+                ),
+                created_by=created_by,
+            )
+            created.append(obj)
+    if created:
+        db.commit()
+    return created
+
+
+def get_rate(db: Session, from_currency: str, to_currency: str, as_of: date) -> Decimal:
+    """سعر الصرف من from_currency لـ to_currency بتاريخ as_of — بيرجّع أحدث
+    سعر مسجّل في as_of أو قبله (fallback منطقي، مش أحدث سعر مطلق). لو مفيش
+    سعر مباشر بيجرّب المعكوس (to→from) ويقلبه. لو مفيش أي سعر خالص بيرمي
+    ValueError واضح — من غير ما يفترض 1.0 بصمت (ده كان ممكن يطلع رقم غلط
+    تماماً في تقرير مالي حقيقي)."""
+    if from_currency == to_currency:
+        return Decimal("1")
+
+    ensure_default_exchange_rates(db)
+
+    direct = crud.get_latest_exchange_rate(db, from_currency, to_currency, as_of)
+    if direct:
+        return direct.rate
+
+    inverse = crud.get_latest_exchange_rate(db, to_currency, from_currency, as_of)
+    if inverse and inverse.rate != 0:
+        return Decimal("1") / inverse.rate
+
+    raise ValueError(
+        f"لا يوجد سعر صرف مسجّل من {from_currency} إلى {to_currency} "
+        f"بتاريخ {as_of} أو قبله — أضف سعر صرف عبر POST /finance/exchange-rates"
+    )
+
+
+def convert_to_egp(db: Session, amount: Decimal, currency: str, as_of: date) -> Decimal:
+    """اختصار شائع: تحويل مبلغ لـ EGP equivalent بسعر الصرف في تاريخ as_of."""
+    if currency == "EGP":
+        return amount
+    rate = get_rate(db, currency, "EGP", as_of)
+    return (amount * rate).quantize(Decimal("0.01"))
+
+
+def create_exchange_rate(db: Session, data: ExchangeRateCreate, created_by: int) -> ExchangeRate:
+    if data.from_currency == data.to_currency:
+        raise ValueError("from_currency و to_currency لازم يكونوا مختلفين")
+    existing = crud.get_exchange_rate_exact(db, data.from_currency, data.to_currency, data.effective_date)
+    if existing:
+        raise ValueError(
+            f"يوجد سعر صرف مسجّل بالفعل من {data.from_currency} إلى {data.to_currency} "
+            f"بتاريخ {data.effective_date} — عدّل السعر عن طريق تسجيل سعر جديد بتاريخ مختلف"
+        )
+    obj = crud.create_exchange_rate(db, data, created_by)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def list_exchange_rates(
+    db: Session,
+    from_currency: Optional[str] = None,
+    to_currency: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+):
+    return crud.list_exchange_rates(db, from_currency, to_currency, skip, limit)
+
+
 # ── Cost Centers ─────────────────────────────────────────────────────
 
 DEFAULT_COST_CENTERS = [
@@ -511,15 +635,28 @@ def ensure_default_cost_centers(db: Session, branch_id: int) -> list[CostCenter]
     return crud.list_cost_centers(db, branch_id, active_only=False)
 
 
+def _sum_folio_charges_in_egp(
+    db: Session, branch_id: int, charge_type: str, date_from: date, date_to: date,
+) -> Decimal:
+    """زي crud.sum_folio_charges_by_type بس بيحوّل كل حركة لـ EGP equivalent
+    بسعر الصرف في تاريخها قبل الجمع — لازم عشان فوليوهات مختلطة العملة
+    (بعد إضافة Folio.currency) ما تدّيش مجموع غلط لو جُمعت كأرقام خام."""
+    rows = crud.list_folio_charges_by_type_with_currency(db, branch_id, charge_type, date_from, date_to)
+    return sum((convert_to_egp(db, amount, currency, posted_date) for amount, currency, posted_date in rows),
+               Decimal("0"))
+
+
 def get_cost_center_report(db: Session, branch_id: int, date_from: date, date_to: date) -> CostCenterReport:
     """تقرير الإيراد حسب مركز التكلفة — المطعم/الكافيه/الشاطئ كل واحد سطر
     منفصل. البيانات بتيجي من مصدرين حسب الموديول: دفتر اليومية للي بيرحّل فعلياً
-    (الفندق عبر حساب 4100)، أو الجداول المباشرة للي لسه ميرحّلش (مطعم/كافيه/شاطئ)."""
+    (الفندق عبر حساب 4100)، أو الجداول المباشرة للي لسه ميرحّلش (مطعم/كافيه/شاطئ).
+    كل مبلغ من folio_charges بيتحوّل لـ EGP equivalent بسعر الصرف وقت الحركة
+    نفسها لو الفوليو مش EGP — التقرير كله EGP-only (reporting_currency)."""
     centers = {c.code: c for c in ensure_default_cost_centers(db, branch_id)}
 
     room_rev  = crud.sum_revenue_account_by_code(db, branch_id, "4100", date_from, date_to)
-    rest_rev  = crud.sum_folio_charges_by_type(db, branch_id, "restaurant", date_from, date_to)
-    cafe_rev  = crud.sum_folio_charges_by_type(db, branch_id, "cafe", date_from, date_to)
+    rest_rev  = _sum_folio_charges_in_egp(db, branch_id, "restaurant", date_from, date_to)
+    cafe_rev  = _sum_folio_charges_in_egp(db, branch_id, "cafe", date_from, date_to)
     beach_rev = crud.sum_beach_revenue(db, branch_id, date_from, date_to)
     ts_rev    = crud.sum_timeshare_revenue(db, branch_id, date_from, date_to)
 

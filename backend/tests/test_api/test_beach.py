@@ -193,7 +193,7 @@ class TestVoidTransaction:
         req = BeachSellRequest(tx_type="entry", quantity=1)
         tx = services.sell_ticket(db, branch.id, req)
 
-        voided = services.void_transaction(db, tx.id, voided_by=1)
+        voided = services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
         assert voided.voided_at is not None
         assert voided.voided_by == 1
 
@@ -208,7 +208,7 @@ class TestVoidTransaction:
         db.refresh(inv)
         used_after_sale = inv.capacity_used
 
-        services.void_transaction(db, tx.id, voided_by=1)
+        services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
         db.refresh(inv)
         assert inv.capacity_used == used_after_sale - 3
 
@@ -216,14 +216,53 @@ class TestVoidTransaction:
         branch = make_branch(db)
         req = BeachSellRequest(tx_type="entry", quantity=1)
         tx = services.sell_ticket(db, branch.id, req)
-        services.void_transaction(db, tx.id, voided_by=1)
+        services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
 
         with pytest.raises(ValueError, match="ملغاة"):
-            services.void_transaction(db, tx.id, voided_by=1)
+            services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
 
     def test_void_nonexistent_raises(self, db):
         with pytest.raises(ValueError):
-            services.void_transaction(db, 9999, voided_by=1)
+            services.void_transaction(db, 9999, voided_by=1, reason="اختبار")
+
+    def test_void_records_reason(self, db):
+        """التبرير إجباري — نفس منطق المطعم (void بسبب موثّق)."""
+        branch = make_branch(db)
+        req = BeachSellRequest(tx_type="entry", quantity=1)
+        tx = services.sell_ticket(db, branch.id, req)
+
+        voided = services.void_transaction(db, tx.id, voided_by=1, reason="غلط في الكمية")
+        assert voided.voided_reason == "غلط في الكمية"
+
+
+class TestShiftAttachment:
+
+    def test_sale_attaches_open_shift(self, db):
+        """بيع الشاطئ بيتربط بوردية الكاشير المفتوحة — عشان يظهر في تقرير
+        نهاية الوردية، نفس الباترن المستخدم في finance.services.add_payment."""
+        from app.modules.finance import services as finance_services
+        from app.modules.finance.schemas import CashierShiftOpen
+
+        branch = make_branch(db)
+        shift = finance_services.open_shift(
+            db, cashier_id=42, opened_by=42,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        req = BeachSellRequest(tx_type="entry", quantity=1, cashier_id=42)
+        tx = services.sell_ticket(db, branch.id, req)
+        assert tx.shift_id == shift.id
+
+    def test_sale_without_open_shift_has_no_shift_id(self, db):
+        branch = make_branch(db)
+        req = BeachSellRequest(tx_type="entry", quantity=1, cashier_id=999)
+        tx = services.sell_ticket(db, branch.id, req)
+        assert tx.shift_id is None
+
+    def test_sale_without_cashier_id_has_no_shift_id(self, db):
+        branch = make_branch(db)
+        req = BeachSellRequest(tx_type="entry", quantity=1)
+        tx = services.sell_ticket(db, branch.id, req)
+        assert tx.shift_id is None
 
 
 class TestSurgeToggle:
@@ -511,7 +550,7 @@ class TestDailySummary:
         today = date.today()
 
         tx = services.sell_ticket(db, branch.id, BeachSellRequest(tx_type="entry", quantity=1), tx_date=today)
-        services.void_transaction(db, tx.id, voided_by=1)
+        services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
 
         summary = crud.get_daily_summary(db, branch.id, today)
         assert summary["total_entries"] == 0
@@ -569,7 +608,7 @@ class TestEODReport:
         branch = make_branch(db)
         today = date.today()
         tx = services.sell_ticket(db, branch.id, BeachSellRequest(tx_type="entry", quantity=1), tx_date=today)
-        services.void_transaction(db, tx.id, voided_by=1)
+        services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
 
         report = services.get_eod_report(db, branch.id, today)
         assert report["total_entries"] == 0

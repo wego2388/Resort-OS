@@ -3,10 +3,9 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import axios from 'axios'
 
 const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface AttRecord {
-  id: number; date: string; check_in?: string; check_out?: string
+  id: number; record_date: string; check_in?: string; check_out?: string
   hours_worked?: number; status: string
 }
 
@@ -31,12 +30,17 @@ const statusConfig: Record<string, { label: string; color: string }> = {
   half_day: { label: 'نصف يوم', color: 'text-blue-600 bg-blue-50' },
 }
 
+function fmtTime(iso?: string) {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+}
+
 async function fetchAttendance() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/attendance', { headers: h, params: { branch_id: branchId, limit: 30 } })
-    records.value = res.data.records ?? res.data.items ?? res.data
-    todayRecord.value = records.value.find(r => r.date === today) ?? null
+    const res = await axios.get('/api/v1/hr/me/attendance', { headers: h, params: { size: 30 } })
+    records.value = res.data.items ?? []
+    todayRecord.value = records.value.find(r => r.record_date === today) ?? null
   } catch(e) { console.error(e) }
   finally { loading.value = false }
 }
@@ -46,10 +50,10 @@ async function punch() {
   punching.value = true
   try {
     if (!isClockedIn.value) {
-      const { data } = await axios.post('/api/v1/hr/attendance/punch-in', { branch_id: branchId }, { headers: h })
+      const { data } = await axios.post('/api/v1/hr/me/attendance/punch-in', {}, { headers: h })
       todayRecord.value = data
     } else {
-      const { data } = await axios.post(`/api/v1/hr/attendance/${todayRecord.value!.id}/punch-out`, {}, { headers: h })
+      const { data } = await axios.post('/api/v1/hr/me/attendance/punch-out', {}, { headers: h })
       todayRecord.value = data
     }
     await fetchAttendance()
@@ -70,12 +74,12 @@ onMounted(fetchAttendance)
       <div v-if="todayRecord" class="flex items-center justify-center gap-8 text-sm mb-5">
         <div class="text-center">
           <div class="text-gray-400 text-xs mb-1">تسجيل الدخول</div>
-          <div class="font-bold text-gray-900 text-lg">{{ todayRecord.check_in ?? '—' }}</div>
+          <div class="font-bold text-gray-900 text-lg">{{ fmtTime(todayRecord.check_in) }}</div>
         </div>
         <div class="w-px h-10 bg-stone-200"/>
         <div class="text-center">
           <div class="text-gray-400 text-xs mb-1">تسجيل الخروج</div>
-          <div class="font-bold text-gray-900 text-lg">{{ todayRecord.check_out ?? '—' }}</div>
+          <div class="font-bold text-gray-900 text-lg">{{ fmtTime(todayRecord.check_out) }}</div>
         </div>
         <div class="w-px h-10 bg-stone-200"/>
         <div class="text-center">
@@ -106,10 +110,10 @@ onMounted(fetchAttendance)
         <div v-for="rec in records" :key="rec.id" class="flex items-center justify-between px-5 py-3">
           <div>
             <div class="text-sm font-medium text-gray-900">
-              {{ new Date(rec.date).toLocaleDateString('ar-EG', { weekday: 'short', month: 'short', day: 'numeric' }) }}
+              {{ new Date(rec.record_date).toLocaleDateString('ar-EG', { weekday: 'short', month: 'short', day: 'numeric' }) }}
             </div>
             <div class="text-xs text-gray-400 mt-0.5 dir-ltr" dir="ltr">
-              {{ rec.check_in ?? '—' }} → {{ rec.check_out ?? '—' }}
+              {{ fmtTime(rec.check_in) }} → {{ fmtTime(rec.check_out) }}
             </div>
           </div>
           <div class="flex items-center gap-3">

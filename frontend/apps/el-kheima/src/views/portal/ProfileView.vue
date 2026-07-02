@@ -5,8 +5,8 @@ import axios from 'axios'
 const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 
 interface Profile {
-  id: number; full_name: string; username: string; email?: string
-  phone?: string; job_title?: string; department?: string; hire_date?: string
+  id: number; employee_code: string; full_name: string; email?: string
+  phone?: string; position: string; department?: string; hire_date: string
 }
 
 const profile = ref<Profile | null>(null)
@@ -19,7 +19,7 @@ const pwLoading = ref(false)
 async function fetchProfile() {
   loading.value = true
   try {
-    const { data } = await axios.get('/api/v1/auth/me', { headers: h })
+    const { data } = await axios.get('/api/v1/hr/me/profile', { headers: h })
     profile.value = data
   } catch(e) { console.error(e) }
   finally { loading.value = false }
@@ -68,10 +68,10 @@ onMounted(fetchProfile)
           <div>
             <div class="font-bold text-xl text-gray-900">{{ profile.full_name }}</div>
             <div class="text-gray-500 text-sm">
-              {{ profile.job_title ?? '' }}
+              {{ profile.position }}
               <span v-if="profile.department"> — {{ profile.department }}</span>
             </div>
-            <div class="text-xs text-gray-400 mt-0.5">@{{ profile.username }}</div>
+            <div class="text-xs text-gray-400 mt-0.5">{{ profile.employee_code }}</div>
           </div>
         </div>
 

@@ -6,13 +6,12 @@
 // offline via the same composable.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAuthStore, useModulesStore } from '@resort-os/core'
+import { useAuthStore } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const modules = useModulesStore()
 const { isOnline, pendingCount } = useOfflineQueue()
 
 const branchName = computed(() => `فرع ${auth.branchId}`)
@@ -30,20 +29,15 @@ onUnmounted(() => { if (clockInterval) clearInterval(clockInterval) })
 const isWaiter = computed(() => route.path.startsWith('/waiter'))
 
 const allNavItems = [
-  { path: '/pos/beach', label: 'الشاطئ', icon: '🏖️', module: 'beach' },
-  { path: '/pos/restaurant', label: 'المطعم', icon: '🍽️', module: 'restaurant' },
-  { path: '/pos/cafe', label: 'الكافيه', icon: '☕', module: 'cafe' },
-  { path: '/waiter/tables', label: 'الطاولات', icon: '🧑‍🍳', module: 'restaurant' },
+  { path: '/pos/beach', label: 'الشاطئ', icon: '🏖️' },
+  { path: '/pos/restaurant', label: 'المطعم', icon: '🍽️' },
+  { path: '/pos/cafe', label: 'الكافيه', icon: '☕' },
+  { path: '/waiter/tables', label: 'الطاولات', icon: '🧑‍🍳' },
 ]
 
-// Nav is scoped to the active section (pos vs waiter) and filtered through
-// the modules store so a user never sees a tab for a module their branch
-// doesn't have enabled — the concrete fix for "discover it via a 403" the
-// merge was meant to close.
+// Nav is scoped to the active section (pos vs waiter).
 const navItems = computed(() =>
-  allNavItems
-    .filter((item) => item.path.startsWith(isWaiter.value ? '/waiter' : '/pos'))
-    .filter((item) => modules.isEnabled(item.module)),
+  allNavItems.filter((item) => item.path.startsWith(isWaiter.value ? '/waiter' : '/pos')),
 )
 
 function logout() {

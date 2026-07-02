@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_current_active_user, get_manager_user, require_module
+from app.core.deps import DbDep, get_current_active_user, get_manager_user
 from app.modules.inventory import crud, services
 from app.modules.inventory.schemas import (
     CategoryCreate, CategoryRead, ProductCreate, ProductRead, ProductUpdate,
@@ -19,32 +19,31 @@ from app.modules.inventory.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["inventory"])
-_guard = Depends(require_module("inventory"))
 
 
-@router.get("/inventory/warehouses", response_model=list[WarehouseRead], dependencies=[_guard])
+@router.get("/inventory/warehouses", response_model=list[WarehouseRead])
 def list_warehouses(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return crud.list_warehouses(db, branch_id)
 
 
 @router.post("/inventory/warehouses", response_model=WarehouseRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_warehouse(data: WarehouseCreate, db: DbDep, _=Depends(get_manager_user)):
     return services.create_warehouse(db, data)
 
 
-@router.get("/inventory/categories", response_model=list[CategoryRead], dependencies=[_guard])
+@router.get("/inventory/categories", response_model=list[CategoryRead])
 def list_categories(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return crud.list_categories(db, branch_id)
 
 
 @router.post("/inventory/categories", response_model=CategoryRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_category(data: CategoryCreate, db: DbDep, _=Depends(get_manager_user)):
     return services.create_category(db, data)
 
 
-@router.get("/inventory/products", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/inventory/products", response_model=PaginatedResponse)
 def list_products(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -60,7 +59,7 @@ def list_products(
 
 
 @router.post("/inventory/products", response_model=ProductRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_product(data: ProductCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.create_product(db, data)
@@ -68,7 +67,7 @@ def create_product(data: ProductCreate, db: DbDep, _=Depends(get_manager_user)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/inventory/products/barcode-labels", dependencies=[_guard])
+@router.get("/inventory/products/barcode-labels")
 def download_barcode_labels_pdf(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -89,7 +88,7 @@ def download_barcode_labels_pdf(
     )
 
 
-@router.get("/inventory/products/{product_id}", response_model=ProductRead, dependencies=[_guard])
+@router.get("/inventory/products/{product_id}", response_model=ProductRead)
 def get_product(product_id: int, db: DbDep, _=Depends(get_current_active_user)):
     p = crud.get_product(db, product_id)
     if not p:
@@ -97,7 +96,7 @@ def get_product(product_id: int, db: DbDep, _=Depends(get_current_active_user)):
     return ProductRead.model_validate(p)
 
 
-@router.patch("/inventory/products/{product_id}", response_model=ProductRead, dependencies=[_guard])
+@router.patch("/inventory/products/{product_id}", response_model=ProductRead)
 def update_product(product_id: int, data: ProductUpdate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.update_product(db, product_id, data)
@@ -105,7 +104,7 @@ def update_product(product_id: int, data: ProductUpdate, db: DbDep, _=Depends(ge
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
-@router.get("/inventory/movements", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/inventory/movements", response_model=PaginatedResponse)
 def list_movements(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -120,7 +119,7 @@ def list_movements(
 
 
 @router.post("/inventory/movements", response_model=StockMovementRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def record_movement(data: StockMovementCreate, db: DbDep, user=Depends(get_manager_user)):
     try:
         return services.record_movement(db, data, moved_by=user.id)
@@ -128,7 +127,7 @@ def record_movement(data: StockMovementCreate, db: DbDep, user=Depends(get_manag
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/inventory/purchase-orders", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/inventory/purchase-orders", response_model=PaginatedResponse)
 def list_purchase_orders(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -142,12 +141,12 @@ def list_purchase_orders(
 
 
 @router.post("/inventory/purchase-orders", response_model=PurchaseOrderRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_purchase_order(data: PurchaseOrderCreate, db: DbDep, _=Depends(get_manager_user)):
     return services.create_purchase_order(db, data)
 
 
-@router.get("/inventory/purchase-orders/{po_id}", response_model=PurchaseOrderRead, dependencies=[_guard])
+@router.get("/inventory/purchase-orders/{po_id}", response_model=PurchaseOrderRead)
 def get_purchase_order(po_id: int, db: DbDep, _=Depends(get_manager_user)):
     po = crud.get_purchase_order(db, po_id)
     if not po:
@@ -156,7 +155,7 @@ def get_purchase_order(po_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 
 @router.post("/inventory/purchase-orders/{po_id}/receive",
-             response_model=PurchaseOrderRead, dependencies=[_guard])
+             response_model=PurchaseOrderRead)
 def receive_purchase_order(po_id: int, req: ReceiveItemsRequest, db: DbDep,
                            user=Depends(get_manager_user)):
     try:
@@ -168,7 +167,7 @@ def receive_purchase_order(po_id: int, req: ReceiveItemsRequest, db: DbDep,
 # ── Purchase Request Workflow ─────────────────────────────────────────
 
 @router.post("/inventory/purchase-requests", response_model=PurchaseRequestRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_purchase_request(data: PurchaseRequestCreate, db: DbDep,
                              _=Depends(get_current_active_user)):
     try:
@@ -177,7 +176,7 @@ def create_purchase_request(data: PurchaseRequestCreate, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/inventory/purchase-requests", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/inventory/purchase-requests", response_model=PaginatedResponse)
 def list_purchase_requests(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -190,8 +189,7 @@ def list_purchase_requests(
                              items=[PurchaseRequestRead.model_validate(pr) for pr in items])
 
 
-@router.get("/inventory/purchase-requests/{request_id}", response_model=PurchaseRequestRead,
-            dependencies=[_guard])
+@router.get("/inventory/purchase-requests/{request_id}", response_model=PurchaseRequestRead)
 def get_purchase_request(request_id: int, db: DbDep, _=Depends(get_current_active_user)):
     pr = crud.get_purchase_request(db, request_id)
     if not pr:
@@ -200,7 +198,7 @@ def get_purchase_request(request_id: int, db: DbDep, _=Depends(get_current_activ
 
 
 @router.patch("/inventory/purchase-requests/{request_id}/approve",
-              response_model=PurchaseRequestRead, dependencies=[_guard])
+              response_model=PurchaseRequestRead)
 def approve_purchase_request(request_id: int, body: ApproveRequest, db: DbDep,
                               user=Depends(get_manager_user)):
     try:
@@ -210,7 +208,7 @@ def approve_purchase_request(request_id: int, body: ApproveRequest, db: DbDep,
 
 
 @router.patch("/inventory/purchase-requests/{request_id}/reject",
-              response_model=PurchaseRequestRead, dependencies=[_guard])
+              response_model=PurchaseRequestRead)
 def reject_purchase_request(request_id: int, body: RejectRequest, db: DbDep,
                              user=Depends(get_manager_user)):
     try:
@@ -221,7 +219,7 @@ def reject_purchase_request(request_id: int, body: RejectRequest, db: DbDep,
 
 
 @router.post("/inventory/purchase-requests/{request_id}/convert",
-             response_model=PurchaseOrderRead, dependencies=[_guard])
+             response_model=PurchaseOrderRead)
 def convert_purchase_request(request_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.convert_to_purchase_order(db, request_id)
@@ -232,12 +230,12 @@ def convert_purchase_request(request_id: int, db: DbDep, _=Depends(get_manager_u
 # ── Stock Count ───────────────────────────────────────────────────────
 
 @router.post("/inventory/stock-counts", response_model=StockCountRead,
-             status_code=status.HTTP_201_CREATED, dependencies=[_guard])
+             status_code=status.HTTP_201_CREATED)
 def create_stock_count(data: StockCountCreate, db: DbDep, _=Depends(get_manager_user)):
     return services.create_stock_count(db, data)
 
 
-@router.get("/inventory/stock-counts", response_model=PaginatedResponse, dependencies=[_guard])
+@router.get("/inventory/stock-counts", response_model=PaginatedResponse)
 def list_stock_counts(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),
@@ -251,7 +249,7 @@ def list_stock_counts(
 
 
 @router.patch("/inventory/stock-counts/{count_id}/submit",
-              response_model=StockCountRead, dependencies=[_guard])
+              response_model=StockCountRead)
 def submit_stock_count(count_id: int, req: SubmitStockCountRequest, db: DbDep,
                        _=Depends(get_current_active_user)):
     try:
@@ -261,7 +259,7 @@ def submit_stock_count(count_id: int, req: SubmitStockCountRequest, db: DbDep,
 
 
 @router.patch("/inventory/stock-counts/{count_id}/approve",
-              response_model=StockCountRead, dependencies=[_guard])
+              response_model=StockCountRead)
 def approve_stock_count(count_id: int, db: DbDep, user=Depends(get_manager_user)):
     try:
         return services.approve_stock_count(db, count_id, approved_by=user.id)

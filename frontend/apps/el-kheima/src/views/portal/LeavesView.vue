@@ -1,26 +1,30 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import axios from 'axios'
 
 const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Leave {
-  id: number; leave_type: string; start_date: string; end_date: string
-  days: number; status: string; reason?: string
+  id: number; leave_type_id: number; start_date: string; end_date: string
+  days_requested: number; status: string; reason?: string
 }
+interface LeaveType { id: number; name: string; name_ar?: string }
 
 const leaves = ref<Leave[]>([])
+const leaveTypes = ref<LeaveType[]>([])
 const loading = ref(false)
 const showModal = ref(false)
 const submitting = ref(false)
 const successMsg = ref('')
 const errorMsg = ref('')
-const form = ref({ leave_type: 'annual', start_date: '', end_date: '', reason: '' })
+const form = ref({ leave_type_id: null as number | null, start_date: '', end_date: '', reason: '' })
 
-const leaveTypes: Record<string, string> = {
-  annual: 'إجازة سنوية', sick: 'إجازة مرضية', emergency: 'طارئ', unpaid: 'بدون راتب'
-}
+const leaveTypeLabel = computed(() => (id: number) => {
+  const t = leaveTypes.value.find(lt => lt.id === id)
+  return t ? (t.name_ar || t.name) : `نوع #${id}`
+})
+
 const statusColors: Record<string, string> = {
   pending: 'bg-amber-100 text-amber-700',
   approved: 'bg-green-100 text-green-700',
@@ -36,24 +40,39 @@ function calcDays() {
   return Math.max(0, Math.round(diff / 86400000) + 1)
 }
 
+async function fetchLeaveTypes() {
+  try {
+    const res = await axios.get('/api/v1/hr/leave-types', { headers: h, params: { branch_id: branchId } })
+    leaveTypes.value = res.data
+    if (leaveTypes.value.length && form.value.leave_type_id === null) {
+      form.value.leave_type_id = leaveTypes.value[0].id
+    }
+  } catch(e) { console.error(e) }
+}
+
 async function fetchLeaves() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/leaves', { headers: h, params: { branch_id: branchId } })
-    leaves.value = res.data.requests ?? res.data.items ?? res.data
+    const res = await axios.get('/api/v1/hr/me/leaves', { headers: h })
+    leaves.value = res.data.items ?? []
   } catch(e) { console.error(e) }
   finally { loading.value = false }
 }
 
 async function requestLeave() {
-  if (!form.value.start_date || !form.value.end_date) {
-    errorMsg.value = 'الرجاء تحديد تاريخ البداية والنهاية'; return
+  if (!form.value.start_date || !form.value.end_date || !form.value.leave_type_id) {
+    errorMsg.value = 'الرجاء تحديد نوع الإجازة وتاريخ البداية والنهاية'; return
   }
   submitting.value = true; errorMsg.value = ''
   try {
-    await axios.post('/api/v1/hr/leaves', { branch_id: branchId, ...form.value }, { headers: h })
+    await axios.post('/api/v1/hr/me/leaves/request', {
+      leave_type_id: form.value.leave_type_id,
+      start_date: form.value.start_date,
+      end_date: form.value.end_date,
+      reason: form.value.reason || null,
+    }, { headers: h })
     showModal.value = false
-    form.value = { leave_type: 'annual', start_date: '', end_date: '', reason: '' }
+    form.value = { leave_type_id: leaveTypes.value[0]?.id ?? null, start_date: '', end_date: '', reason: '' }
     successMsg.value = 'تم تقديم طلب الإجازة بنجاح ✓'
     setTimeout(() => successMsg.value = '', 4000)
     await fetchLeaves()
@@ -62,7 +81,7 @@ async function requestLeave() {
   } finally { submitting.value = false }
 }
 
-onMounted(fetchLeaves)
+onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
 </script>
 
 <template>
@@ -83,13 +102,13 @@ onMounted(fetchLeaves)
         class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
         <div class="flex items-start justify-between">
           <div>
-            <div class="font-semibold text-gray-900">{{ leaveTypes[leave.leave_type] ?? leave.leave_type }}</div>
+            <div class="font-semibold text-gray-900">{{ leaveTypeLabel(leave.leave_type_id) }}</div>
             <div class="text-sm text-gray-500 mt-0.5">
               {{ new Date(leave.start_date).toLocaleDateString('ar-EG') }}
               ←
               {{ new Date(leave.end_date).toLocaleDateString('ar-EG') }}
             </div>
-            <div class="text-xs text-gray-400 mt-0.5">{{ leave.days }} {{ leave.days === 1 ? 'يوم' : 'أيام' }}</div>
+            <div class="text-xs text-gray-400 mt-0.5">{{ leave.days_requested }} {{ leave.days_requested === 1 ? 'يوم' : 'أيام' }}</div>
             <div v-if="leave.reason" class="text-xs text-gray-500 mt-1.5 italic border-r-2 border-stone-200 pr-2">{{ leave.reason }}</div>
           </div>
           <span :class="['px-2.5 py-1 rounded-full text-xs font-medium flex-shrink-0', statusColors[leave.status] ?? 'bg-gray-100 text-gray-600']">
@@ -116,9 +135,9 @@ onMounted(fetchLeaves)
           <div class="space-y-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">نوع الإجازة</label>
-              <select v-model="form.leave_type"
+              <select v-model="form.leave_type_id"
                 class="w-full border border-stone-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <option v-for="(label, val) in leaveTypes" :key="val" :value="val">{{ label }}</option>
+                <option v-for="lt in leaveTypes" :key="lt.id" :value="lt.id">{{ lt.name_ar || lt.name }}</option>
               </select>
             </div>
             <div class="grid grid-cols-2 gap-3">

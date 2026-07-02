@@ -20,45 +20,58 @@ def mark_overdue(self):
 
         with SessionLocal() as db:
             try:
-                from app.modules.timeshare.models import (  # noqa: PLC0415
-                    TimeshareInstallment, TimeshareContract,
-                )
-                from app.resort_os.timeshare_engine import should_freeze_booking  # noqa: PLC0415
-                from decimal import Decimal  # noqa: PLC0415
-
-                # تحديث الأقساط المتأخرة
-                overdue_insts = (
-                    db.query(TimeshareInstallment)
-                    .filter(
-                        TimeshareInstallment.due_date < today,
-                        TimeshareInstallment.status == "pending",
-                    )
-                    .all()
-                )
-                for inst in overdue_insts:
-                    inst.status = "overdue"
-
-                # حساب المبالغ المتأخرة لكل عقد وتجميد الحجز
-                contracts = db.query(TimeshareContract).filter(
-                    TimeshareContract.status == "active"
-                ).all()
-                for contract in contracts:
-                    overdue_total = sum(
-                        i.amount for i in contract.installments
-                        if i.status == "overdue"
-                    ) if hasattr(contract, "installments") else Decimal("0")
-                    if should_freeze_booking(overdue_total):
-                        contract.booking_frozen = True
-
+                overdue_count = _mark_overdue(db, today)
                 db.commit()
-                logger.info("Timeshare overdue processed: count=%s", len(overdue_insts))
-
+                logger.info("Timeshare overdue processed: count=%s", overdue_count)
             except ImportError:
                 logger.debug("Timeshare module not yet built — skipped")
 
     except Exception as exc:
         logger.error("timeshare mark_overdue failed: %s", exc)
         raise self.retry(exc=exc, countdown=600)
+
+
+def _mark_overdue(db, today: date) -> int:
+    """
+    الجزء القابل للاختبار: يُحدِّث حالة الأقساط المتأخرة إلى overdue ثم يُجمِّد
+    حق الحجز (booking_frozen) لأي عقد نشط لديه أقساط متأخرة.
+
+    ⚠️ لا تستخدم `contract.installments` هنا — ده عمود عدد الأقساط (int)،
+    العلاقة الصحيحة هي `contract.installments_list`.
+    """
+    from app.modules.timeshare.models import (  # noqa: PLC0415
+        TimeshareInstallment, TimeshareContract,
+    )
+    from app.resort_os.timeshare_engine import should_freeze_booking  # noqa: PLC0415
+    from decimal import Decimal  # noqa: PLC0415
+
+    # تحديث الأقساط المتأخرة — بما فيها اللي سُدِّدت جزئياً (partial) ولسه متأخرة،
+    # وإلا القسط ده مش هيتحسب أبداً في overdue_total تحت (اللي بيفلتر status=="overdue"
+    # بس)، فعقد فيه قسط مدفوع جزئياً ومتأخر ميتجمّدش حقه في الحجز رغم إنه متأخر فعلاً.
+    overdue_insts = (
+        db.query(TimeshareInstallment)
+        .filter(
+            TimeshareInstallment.due_date < today,
+            TimeshareInstallment.status.in_(["pending", "partial"]),
+        )
+        .all()
+    )
+    for inst in overdue_insts:
+        inst.status = "overdue"
+
+    # حساب المبالغ المتأخرة لكل عقد وتجميد الحجز
+    contracts = db.query(TimeshareContract).filter(
+        TimeshareContract.status == "active"
+    ).all()
+    for contract in contracts:
+        overdue_total = sum(
+            i.amount for i in contract.installments_list
+            if i.status == "overdue"
+        ) or Decimal("0")
+        if should_freeze_booking(overdue_total):
+            contract.booking_frozen = True
+
+    return len(overdue_insts)
 
 
 @celery_app.task(name="app.tasks.timeshare_tasks.send_visit_reminders", bind=True)
@@ -74,8 +87,7 @@ def send_visit_reminders(self):
             try:
                 from app.modules.timeshare.models import TimeshareContract  # noqa: PLC0415
                 from app.resort_os.timeshare_engine import (  # noqa: PLC0415
-                    TimeshareContractData, find_next_visit,
-                    should_send_visit_reminder,
+                    find_next_visit, should_send_visit_reminder,
                 )
 
                 contracts = db.query(TimeshareContract).filter(

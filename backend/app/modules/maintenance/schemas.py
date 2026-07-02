@@ -61,6 +61,7 @@ class WorkOrderCreate(BaseModel):
     assigned_to:    Optional[int] = None
     scheduled_date: Optional[date] = None
     notes:          Optional[str] = None
+    schedule_id:    Optional[int] = None
 
 
 class WorkOrderUpdate(BaseModel):
@@ -103,6 +104,7 @@ class WorkOrderRead(BaseModel):
     title:          str
     description:    Optional[str]
     order_type:     str
+    schedule_id:    Optional[int]
     priority:       str
     status:         str
     assigned_to:    Optional[int]

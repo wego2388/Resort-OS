@@ -1,18 +1,17 @@
 """
 app/modules/core/models.py
 ═══════════════════════════════════════════════════════════════════════
-Core Module Models — always_on
-جداول: users, roles, branches, settings, audit_logs, module_states, notifications
+Core Module Models
+جداول: users, roles, branches, settings, audit_logs, notifications
 ═══════════════════════════════════════════════════════════════════════
 """
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 
 from wego_core.models.mixins import TimestampMixin
 from app.core.database import Base
@@ -51,35 +50,6 @@ class Setting(Base, TimestampMixin):
     # branch_id=X   → per-branch override
 
 
-# ─────────────────────── ModuleState ─────────────────────────────────
-
-class ModuleState(Base, TimestampMixin):
-    """
-    Per-branch module state مع fallback لـ global.
-
-    branch_id=NULL → global default (يؤثر على كل الفروع)
-    branch_id=X   → per-branch override (يكسب global)
-
-    مثال:
-      global:   pms=True  → كل الفروع عندها PMS
-      branch:1  pms=False → الفرع 1 بدون PMS رغم global
-    """
-    __tablename__ = "module_states"
-    __table_args__ = (
-        UniqueConstraint("module_key", "branch_id", name="uq_module_branch"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    module_key: Mapped[str] = mapped_column(String(50))
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    branch_id: Mapped[int | None] = mapped_column(
-        ForeignKey("branches.id"), nullable=True, index=True
-    )
-    changed_by: Mapped[int | None] = mapped_column(
-        ForeignKey("users.id"), nullable=True
-    )
-
-
 # ────────────────────────── Notification ─────────────────────────────
 
 class Notification(Base, TimestampMixin):
@@ -111,3 +81,36 @@ class AuditLog(Base, TimestampMixin):
     new_data: Mapped[str | None] = mapped_column(Text)  # JSON
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(String(500))
+
+
+# ────────────────────────── UserPermission ───────────────────────────
+# Permission-matrix layer — additive على نظام الـ ROLE_LEVELS الموجود
+# (app/core/deps.py). الفكرة:
+#   - النظام الافتراضي يبقى role level (waiter=30, cashier=40, ...)
+#   - أي مستخدم ممكن ياخد استثناء صريح: منح (allowed=True) أو منع
+#     (allowed=False) لـ resource.action معيّن — بيكسب الـ role تماماً
+#   - resource = "<module_key>.<sub_area>" (زي "finance.void_payment"،
+#     "restaurant.void_item") — نفس أسماء الموديولات المستخدمة في
+#     app/main.py::_MODULE_KEYS عشان يفضل introspectable ومتسق
+#   - action  = "view"|"create"|"edit"|"delete"|"void"|"approve"|"execute"...
+#   - branch_id=NULL → المنحة/المنع سارية على كل الفروع
+#     branch_id=X   → سارية على فرع محدد فقط
+
+class UserPermission(Base, TimestampMixin):
+    __tablename__ = "user_permissions"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "resource", "action", "branch_id",
+            name="uq_user_permission_scope",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    resource: Mapped[str] = mapped_column(String(100), index=True)   # e.g. "finance.void_payment"
+    action: Mapped[str] = mapped_column(String(30))                  # e.g. "execute"
+    allowed: Mapped[bool] = mapped_column(Boolean, default=True)      # True=منح صريح، False=منع صريح
+    branch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("branches.id"), nullable=True, index=True
+    )
+    granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)

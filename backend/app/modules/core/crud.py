@@ -12,21 +12,21 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.modules.core.models import (
     AuditLog,
     Branch,
-    ModuleState,
     Notification,
     Setting,
+    UserPermission,
 )
 from app.modules.core.schemas import (
     AuditLogCreate,
     BranchCreate,
     BranchUpdate,
     NotificationCreate,
+    UserPermissionCreate,
 )
 
 
@@ -142,58 +142,6 @@ def upsert_setting(
     return row
 
 
-# ─────────────────────── ModuleState ─────────────────────────────────
-
-def get_module_state(
-    db: Session,
-    module_key: str,
-    branch_id: Optional[int] = None,
-) -> Optional[ModuleState]:
-    return (
-        db.query(ModuleState)
-        .filter(
-            ModuleState.module_key == module_key,
-            ModuleState.branch_id == branch_id,
-        )
-        .first()
-    )
-
-
-def list_module_states(
-    db: Session,
-    branch_id: Optional[int] = None,
-) -> list[ModuleState]:
-    return (
-        db.query(ModuleState)
-        .filter(ModuleState.branch_id == branch_id)
-        .order_by(ModuleState.module_key)
-        .all()
-    )
-
-
-def upsert_module_state(
-    db: Session,
-    module_key: str,
-    enabled: bool,
-    branch_id: Optional[int] = None,
-    changed_by: Optional[int] = None,
-) -> ModuleState:
-    row = get_module_state(db, module_key, branch_id)
-    if row:
-        row.enabled = enabled
-        row.changed_by = changed_by
-    else:
-        row = ModuleState(
-            module_key=module_key,
-            enabled=enabled,
-            branch_id=branch_id,
-            changed_by=changed_by,
-        )
-        db.add(row)
-    db.flush()
-    return row
-
-
 # ─────────────────────── Notification ────────────────────────────────
 
 def get_notification(db: Session, notification_id: int) -> Optional[Notification]:
@@ -272,6 +220,111 @@ def list_users(db: Session, skip: int = 0, limit: int = 20):
 def get_user(db: Session, user_id: int):
     from wego_core.models.user import User  # noqa: PLC0415
     return db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
+
+
+# ─────────────────────── UserPermission ──────────────────────────────
+
+def get_user_permission(
+    db: Session,
+    permission_id: int,
+) -> Optional[UserPermission]:
+    return db.query(UserPermission).filter(UserPermission.id == permission_id).first()
+
+
+def find_explicit_permission(
+    db: Session,
+    user_id: int,
+    resource: str,
+    action: str,
+    branch_id: Optional[int] = None,
+) -> Optional[UserPermission]:
+    """
+    يبحث عن استثناء صريح (منح أو منع) لـ user+resource+action.
+    الأولوية: تطابق branch محدد أولاً، ثم global (branch_id=NULL).
+    ده هو الـ lookup اللي بيستخدمه has_permission() في services.py.
+    """
+    if branch_id is not None:
+        row = (
+            db.query(UserPermission)
+            .filter(
+                UserPermission.user_id == user_id,
+                UserPermission.resource == resource,
+                UserPermission.action == action,
+                UserPermission.branch_id == branch_id,
+            )
+            .first()
+        )
+        if row is not None:
+            return row
+
+    return (
+        db.query(UserPermission)
+        .filter(
+            UserPermission.user_id == user_id,
+            UserPermission.resource == resource,
+            UserPermission.action == action,
+            UserPermission.branch_id.is_(None),
+        )
+        .first()
+    )
+
+
+def list_user_permissions(
+    db: Session,
+    user_id: int,
+) -> list[UserPermission]:
+    return (
+        db.query(UserPermission)
+        .filter(UserPermission.user_id == user_id)
+        .order_by(UserPermission.resource, UserPermission.action)
+        .all()
+    )
+
+
+def create_user_permission(
+    db: Session,
+    user_id: int,
+    data: UserPermissionCreate,
+    granted_by: Optional[int] = None,
+) -> UserPermission:
+    perm = UserPermission(
+        user_id=user_id,
+        granted_by=granted_by,
+        **data.model_dump(),
+    )
+    db.add(perm)
+    db.flush()
+    return perm
+
+
+def upsert_user_permission(
+    db: Session,
+    user_id: int,
+    data: UserPermissionCreate,
+    granted_by: Optional[int] = None,
+) -> UserPermission:
+    """منح/منع لنفس الـ resource+action+branch يُحدّث الصف الموجود بدل تكرار."""
+    row = (
+        db.query(UserPermission)
+        .filter(
+            UserPermission.user_id == user_id,
+            UserPermission.resource == data.resource,
+            UserPermission.action == data.action,
+            UserPermission.branch_id == data.branch_id,
+        )
+        .first()
+    )
+    if row:
+        row.allowed = data.allowed
+        row.granted_by = granted_by
+        db.flush()
+        return row
+    return create_user_permission(db, user_id, data, granted_by)
+
+
+def delete_user_permission(db: Session, permission: UserPermission) -> None:
+    db.delete(permission)
+    db.flush()
 
 
 # ─────────────────────── AuditLog ────────────────────────────────────

@@ -26,7 +26,7 @@ the VPS, see [`DEPLOYMENT.md`](./DEPLOYMENT.md) for how to stand it up.
 
 | App | Path | Audience | Dev port |
 |---|---|---|---|
-| `el-kheima` | `frontend/apps/el-kheima` | Staff (POS, KDS, back office, waiter, employee portal) — one app, role/module-gated routing | 3001 |
+| `el-kheima` | `frontend/apps/el-kheima` | Staff (POS, KDS, back office, waiter, employee self-service portal) — one app, role-gated routing | 3001 |
 | `qr` | `frontend/apps/qr` | Guests scanning a table/beach QR code (menu + ordering, unauthenticated) | 3005 |
 | `public` | `frontend/apps/public` | Guest-facing booking/marketing site (unauthenticated) | 3007 |
 
@@ -81,11 +81,11 @@ modules/<name>/
 └── api/router.py # HTTP layer — translates service errors into HTTP responses
 ```
 
-The 14 modules: `core`, `finance`, `inventory`, `hr` (always-on — every
-deployment needs them), plus `restaurant`, `cafe`, `pms`, `timeshare`,
-`beach`, `maintenance`, `crm`, `analytics`, `hub`, `leasing`. Every module can
-be toggled on/off per branch (`PATCH /api/v1/core/modules/{key}`); the
-frontend hides routes/nav items for disabled modules via `useModulesStore`.
+The 14 modules: `core`, `finance`, `inventory`, `hr`, `restaurant`, `cafe`,
+`pms`, `timeshare`, `beach`, `maintenance`, `crm`, `analytics`, `hub`,
+`leasing` — all permanently active (no enable/disable toggle; this is a
+single-property deployment, not a multi-tenant product with per-customer
+feature sets).
 
 Pure business logic with no FastAPI/SQLAlchemy dependency (Egyptian payroll
 calculation, beach capacity/surge rules, timeshare installment schedules,
@@ -98,5 +98,5 @@ logging, Sentry) comes from the external `wego_core` package rather than being
 reimplemented per project — see `CLAUDE.md` §6 for the full list of what's used
 from it and `DEPLOYMENT.md` for how it's built into the Docker image.
 
-For the deeper engineering charter (auth chain, role levels, module system,
-critical gotchas, security rules) see [`CLAUDE.md`](./CLAUDE.md).
+For the deeper engineering charter (auth chain, role levels, critical
+gotchas, security rules) see [`CLAUDE.md`](./CLAUDE.md).

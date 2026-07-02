@@ -103,3 +103,24 @@ class TestLeasePayment:
         req = PayLeaseRequest(paid_amount=payment.amount, payment_method="cash")
         paid = services.pay_payment(db, payment.id, req)
         assert paid.status == "partial"
+
+    def test_receipt_pdf_uses_freshly_computed_penalty_not_stale_column(self, db, contract):
+        """payment.penalty ممكن يكون قديم لحد ما apply_penalties() تتنادى — الإيصال
+        المفروض يعرض الغرامة المحسوبة لحظيًا مش القيمة المخزّنة الممكن تكون صفر."""
+        from app.modules.leasing.services import calculate_penalty
+
+        payment = contract.payments[0]  # متأخر فعليًا (تاريخ استحقاقه فات من شهور)
+        assert payment.penalty in (None, Decimal("0"))  # العمود المخزّن لسه صفر/فاضي
+        fresh_penalty = calculate_penalty(payment)
+        assert fresh_penalty > 0  # فعلاً متأخر ولازم غرامة حقيقية
+
+        pdf = services.generate_rent_receipt_pdf(db, payment.id)
+        assert pdf.startswith(b"%PDF")
+
+        import subprocess, tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as f:
+            f.write(pdf); f.flush()
+            text = subprocess.run(
+                ["pdftotext", f.name, "-"], capture_output=True, text=True
+            ).stdout
+        assert f"{fresh_penalty:,.2f}" in text

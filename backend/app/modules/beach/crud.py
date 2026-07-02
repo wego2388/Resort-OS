@@ -5,7 +5,6 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.modules.beach.models import (
@@ -90,9 +89,10 @@ def get_transaction(db: Session, tx_id: int) -> Optional[BeachTransaction]:
     return db.query(BeachTransaction).filter(BeachTransaction.id == tx_id).first()
 
 
-def void_transaction(db: Session, tx: BeachTransaction, voided_by: int) -> BeachTransaction:
+def void_transaction(db: Session, tx: BeachTransaction, voided_by: int, reason: str) -> BeachTransaction:
     tx.voided_at = datetime.utcnow()
     tx.voided_by = voided_by
+    tx.voided_reason = reason
     db.flush()
     return tx
 

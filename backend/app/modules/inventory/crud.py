@@ -10,13 +10,11 @@ from sqlalchemy.orm import Session
 from app.modules.inventory.models import (
     Category, Product, PurchaseOrder, PurchaseOrderItem,
     PurchaseRequest, PurchaseRequestItem, PurchaseApproval,
-    StockCount, StockCountLine,
-    StockMovement, Warehouse,
+    StockCount, StockMovement, Warehouse,
 )
 from app.modules.inventory.schemas import (
     CategoryCreate, ProductCreate, ProductUpdate,
     PurchaseOrderCreate, StockMovementCreate, WarehouseCreate,
-    PurchaseRequestCreate,
 )
 
 

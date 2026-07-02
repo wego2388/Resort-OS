@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean, Date, DateTime, ForeignKey, Integer,
-    Numeric, String, Text, UniqueConstraint,
+    Numeric, String, Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

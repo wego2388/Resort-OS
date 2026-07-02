@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class EmployeeCreate(BaseModel):
@@ -20,6 +20,7 @@ class EmployeeCreate(BaseModel):
     birth_date:    Optional[date] = None
     phone:         Optional[str] = Field(None, max_length=20)
     email:         Optional[str] = Field(None, max_length=100)
+    user_id:       Optional[int] = None  # ربط اختياري بحساب دخول عند الإنشاء
 
 
 class EmployeeUpdate(BaseModel):
@@ -38,6 +39,11 @@ class EmployeeRead(EmployeeCreate):
     status:     str
     created_at: datetime
     updated_at: datetime
+
+
+class EmployeeLinkUserRequest(BaseModel):
+    """PATCH /hr/employees/{id}/link-user body — ربط موظف بحساب دخول موجود."""
+    user_id: int
 
 
 class AllowanceRead(BaseModel):
@@ -131,6 +137,13 @@ class AttendanceRecordRead(AttendanceRecordCreate):
     model_config = ConfigDict(from_attributes=True)
     id:         int
     created_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def hours_worked(self) -> Optional[float]:
+        if not self.check_in or not self.check_out:
+            return None
+        return round((self.check_out - self.check_in).total_seconds() / 3600, 2)
 
 
 class LeaveBalanceRead(BaseModel):
@@ -326,3 +339,52 @@ class ShiftSwapRequestRead(BaseModel):
     approver_id:        Optional[int]
     reason:             Optional[str]
     created_at:         datetime
+
+
+# ── Self-Service (/hr/me/*) ───────────────────────────────────────────
+# مخصّصة للموظف نفسه، مربوطة بـ Employee.user_id = current_user.id — أضيق
+# نطاقاً عمداً من الـ schemas الإدارية فوق (لا تكشف بيانات موظفين آخرين).
+
+class MyLeaveRequestCreate(BaseModel):
+    """POST /hr/me/leaves/request body — employee_id/branch_id يُشتقّان من
+    الموظف المرتبط بالمستخدم الحالي، مش من الـ client."""
+    leave_type_id: int
+    start_date:    date
+    end_date:      date
+    reason:        Optional[str] = Field(None, max_length=500)
+
+
+class MyProfileRead(BaseModel):
+    """GET /hr/me/profile — بيانات الموظف الأساسية لصاحب الحساب نفسه فقط.
+    national_id مسموح هنا (بيانات الشخص عن نفسه) — لكن مفيش أي endpoint
+    آخر جوه /hr/me/* بيرجّع national_id لموظف تاني."""
+    model_config = ConfigDict(from_attributes=True)
+    id:            int
+    branch_id:     int
+    employee_code: str
+    full_name:     str
+    national_id:   Optional[str] = None
+    position:      str
+    department:    Optional[str] = None
+    hire_date:     date
+    birth_date:    Optional[date] = None
+    phone:         Optional[str] = None
+    email:         Optional[str] = None
+    status:        str
+
+
+class MyPayslipRead(BaseModel):
+    """GET /hr/me/payslips — للقراءة فقط، من كشوف رواتب معتمدة/مصروفة فقط
+    (مش draft — الأرقام مش نهائية لسه)."""
+    id:                     int
+    payroll_run_id:         int
+    period_year:            int
+    period_month:           int
+    status:                 str
+    basic_salary:           Decimal
+    gross_salary:           Decimal
+    net_salary:             Decimal
+    employee_si:            Decimal
+    monthly_tax:            Decimal
+    penalty_deduction:      Decimal
+    unpaid_leave_deduction: Decimal

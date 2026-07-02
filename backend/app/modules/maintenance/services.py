@@ -1,8 +1,7 @@
 """app/modules/maintenance/services.py — Business logic"""
 from __future__ import annotations
 
-from datetime import date, timedelta
-from typing import Optional
+from datetime import date
 
 from sqlalchemy.orm import Session
 
@@ -105,6 +104,12 @@ def complete_work_order(db: Session, order_id: int) -> WorkOrder:
             asset = crud.get_asset(db, wo.asset_id)
             if asset and asset.status == "under_maintenance":
                 asset.status = "operational"
+    # لو الأمر ده وقائي وجاي من جدول دوري، لازم نقدّم next_due — وإلا
+    # generate_preventive_work_orders هيفضل يعمل أمر جديد لنفس الجدول كل يوم للأبد
+    if wo.order_type == "preventive" and wo.schedule_id:
+        schedule = crud.get_schedule(db, wo.schedule_id)
+        if schedule:
+            crud.mark_schedule_done(db, schedule, done_date=date.today())
     db.commit()
     db.refresh(wo)
     return wo
@@ -175,6 +180,7 @@ def generate_preventive_work_orders(db: Session, branch_id: int) -> int:
             priority="medium",
             assigned_to=schedule.assigned_to,
             scheduled_date=today,
+            schedule_id=schedule.id,
         )
         crud.create_work_order(db, wo_data, reported_by=0)
         created += 1

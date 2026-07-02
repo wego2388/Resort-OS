@@ -14,9 +14,6 @@ Endpoints:
   GET    /api/v1/settings/{key}
   PUT    /api/v1/settings/{key}
 
-  GET    /api/v1/modules
-  POST   /api/v1/modules/{key}/toggle
-
   GET    /api/v1/notifications
   PATCH  /api/v1/notifications/{id}/read
   POST   /api/v1/notifications/read-all
@@ -26,24 +23,24 @@ Endpoints:
   GET    /api/v1/users
   GET    /api/v1/users/{id}
   PATCH  /api/v1/users/{id}/role
+
+  GET    /api/v1/permissions?user_id=
+  POST   /api/v1/permissions
+  DELETE /api/v1/permissions/{id}
 ═══════════════════════════════════════════════════════════════════════
 """
 from __future__ import annotations
 
-from typing import Annotated, Optional
+from typing import Optional
 
-import redis as redis_lib
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy.orm import Session
 
 from app.core.deps import (
     DbDep,
-    RedisDep,
     get_admin_user,
     get_current_active_user,
     get_manager_user,
     get_super_admin_user,
-    require_module,
 )
 from app.modules.core import crud, services
 from app.modules.core.schemas import (
@@ -51,22 +48,18 @@ from app.modules.core.schemas import (
     BranchCreate,
     BranchRead,
     BranchUpdate,
-    ModuleRead,
-    ModuleToggle,
-    ModuleToggleResult,
-    NotificationCreate,
     NotificationRead,
     PaginatedResponse,
     SettingRead,
     SettingUpdate,
+    UserPermissionGrantRequest,
+    UserPermissionRead,
     UserRead,
     UserRoleUpdate,
 )
 
 router = APIRouter(tags=["core"])
 
-# core هو always_on — require_module يمر فوراً بدون DB check
-_module_guard = Depends(require_module("core"))
 
 
 # ─────────────────────── Branches ────────────────────────────────────
@@ -74,7 +67,6 @@ _module_guard = Depends(require_module("core"))
 @router.get(
     "/branches",
     response_model=PaginatedResponse,
-    dependencies=[_module_guard],
 )
 def list_branches(
     db: DbDep,
@@ -97,7 +89,6 @@ def list_branches(
     "/branches",
     response_model=BranchRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[_module_guard],
 )
 def create_branch(
     data: BranchCreate,
@@ -114,7 +105,6 @@ def create_branch(
 @router.get(
     "/branches/{branch_id}",
     response_model=BranchRead,
-    dependencies=[_module_guard],
 )
 def get_branch(
     branch_id: int,
@@ -130,7 +120,6 @@ def get_branch(
 @router.patch(
     "/branches/{branch_id}",
     response_model=BranchRead,
-    dependencies=[_module_guard],
 )
 def update_branch(
     branch_id: int,
@@ -147,7 +136,6 @@ def update_branch(
 @router.delete(
     "/branches/{branch_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[_module_guard],
 )
 def delete_branch(
     branch_id: int,
@@ -165,7 +153,6 @@ def delete_branch(
 @router.get(
     "/settings",
     response_model=list[SettingRead],
-    dependencies=[_module_guard],
 )
 def list_settings(
     db: DbDep,
@@ -179,7 +166,6 @@ def list_settings(
 @router.get(
     "/settings/{key}",
     response_model=SettingRead,
-    dependencies=[_module_guard],
 )
 def get_setting(
     key: str,
@@ -196,7 +182,6 @@ def get_setting(
 @router.put(
     "/settings/{key}",
     response_model=SettingRead,
-    dependencies=[_module_guard],
 )
 def upsert_setting(
     key: str,
@@ -208,53 +193,11 @@ def upsert_setting(
     return services.upsert_setting(db, key, data.value, branch_id, updated_by=user.id)
 
 
-# ─────────────────────── Modules ─────────────────────────────────────
-
-@router.get(
-    "/modules",
-    response_model=list[ModuleRead],
-    dependencies=[_module_guard],
-)
-def list_modules(
-    db: DbDep,
-    redis_client: RedisDep,
-    _user=Depends(get_current_active_user),
-    branch_id: Optional[int] = Query(None),
-):
-    return services.get_all_modules(db, redis_client, branch_id)
-
-
-@router.post(
-    "/modules/{module_key}/toggle",
-    response_model=ModuleToggleResult,
-    dependencies=[_module_guard],
-)
-def toggle_module(
-    module_key: str,
-    data: ModuleToggle,
-    db: DbDep,
-    redis_client: RedisDep,
-    user=Depends(get_super_admin_user),
-):
-    try:
-        return services.toggle_module_state(
-            db=db,
-            redis_client=redis_client,
-            module_key=module_key,
-            enable=data.enable,
-            branch_id=data.branch_id,
-            changed_by=user.id,
-        )
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-
-
 # ─────────────────────── Notifications ───────────────────────────────
 
 @router.get(
     "/notifications",
     response_model=PaginatedResponse,
-    dependencies=[_module_guard],
 )
 def list_notifications(
     db: DbDep,
@@ -282,7 +225,6 @@ def list_notifications(
 @router.patch(
     "/notifications/{notification_id}/read",
     response_model=NotificationRead,
-    dependencies=[_module_guard],
 )
 def mark_notification_read(
     notification_id: int,
@@ -300,7 +242,6 @@ def mark_notification_read(
 
 @router.post(
     "/notifications/read-all",
-    dependencies=[_module_guard],
 )
 def mark_all_notifications_read(
     db: DbDep,
@@ -316,7 +257,6 @@ def mark_all_notifications_read(
 @router.get(
     "/audit-logs",
     response_model=PaginatedResponse,
-    dependencies=[_module_guard],
 )
 def list_audit_logs(
     db: DbDep,
@@ -355,7 +295,6 @@ def list_audit_logs(
 @router.get(
     "/users",
     response_model=PaginatedResponse,
-    dependencies=[_module_guard],
 )
 def list_users(
     db: DbDep,
@@ -376,7 +315,6 @@ def list_users(
 @router.get(
     "/users/{user_id}",
     response_model=UserRead,
-    dependencies=[_module_guard],
 )
 def get_user(
     user_id: int,
@@ -392,7 +330,6 @@ def get_user(
 @router.patch(
     "/users/{user_id}/role",
     response_model=UserRead,
-    dependencies=[_module_guard],
 )
 def update_user_role(
     user_id: int,
@@ -405,5 +342,61 @@ def update_user_role(
             db, user_id, role=data.role, is_active=data.is_active, updated_by=user.id,
         )
         return UserRead.model_validate(updated)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ─────────────────────── Permission Matrix ───────────────────────────
+# طبقة استثناءات فوق ROLE_LEVELS — انظر app/modules/core/models.py::UserPermission
+# و app/core/deps.py::require_permission للشرح الكامل.
+# منح/منع صريح: super_admin فقط (ده تحكّم حسّاس بيغيّر صلاحيات فعلية).
+# عرض: manager+ (يحتاجها أي مدير يراجع صلاحيات فريقه).
+
+@router.get(
+    "/permissions",
+    response_model=list[UserPermissionRead],
+)
+def list_user_permissions(
+    db: DbDep,
+    _user=Depends(get_manager_user),
+    user_id: int = Query(..., description="المستخدم المطلوب عرض صلاحياته"),
+):
+    rows = services.list_user_permissions(db, user_id)
+    return [UserPermissionRead.model_validate(r) for r in rows]
+
+
+@router.post(
+    "/permissions",
+    response_model=UserPermissionRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def grant_user_permission(
+    data: UserPermissionGrantRequest,
+    db: DbDep,
+    user=Depends(get_super_admin_user),
+):
+    from app.modules.core.schemas import UserPermissionCreate  # noqa: PLC0415
+
+    perm_data = UserPermissionCreate(
+        resource=data.resource,
+        action=data.action,
+        allowed=data.allowed,
+        branch_id=data.branch_id,
+    )
+    perm = services.grant_permission(db, data.user_id, perm_data, granted_by=user.id)
+    return UserPermissionRead.model_validate(perm)
+
+
+@router.delete(
+    "/permissions/{permission_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_user_permission(
+    permission_id: int,
+    db: DbDep,
+    user=Depends(get_super_admin_user),
+):
+    try:
+        services.revoke_permission(db, permission_id, revoked_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))

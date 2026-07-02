@@ -4,11 +4,6 @@ HTTP-level tests for the timeshare module — TestClient through real routing,
 permission dependencies and Pydantic validation (not direct service calls).
 
 ⚠️ Setup data created here must be `db.commit()`-ed, not `.flush()`-ed.
-⚠️ timeshare defaults to MODULE_REGISTRY.timeshare.default_enabled=False —
-must be enabled globally (branch_id=None) since require_module() checks the
-*authenticated user's* branch_id, not the branch_id query param. See
-tests/conftest.py::enable_module_for_branch for the full explanation
-(including the fake_redis cache-poisoning gotcha across test files).
 """
 from __future__ import annotations
 
@@ -18,16 +13,13 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import enable_module_for_branch
 
-
-def make_branch_committed(db, fake_redis):
+def make_branch_committed(db):
     from app.modules.core.models import Branch
     b = Branch(name="Timeshare HTTP Branch", name_ar="فرع تايم شير",
                code=f"TS-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
-    enable_module_for_branch(db, fake_redis, "timeshare", branch_id=None)
     return b
 
 
@@ -49,7 +41,7 @@ def contract_payload(branch_id: int) -> dict:
 
 class TestTimeshareContractFlow:
     def test_create_contract_generates_installment_schedule(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
 
         resp = client.post(
             "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
@@ -64,7 +56,7 @@ class TestTimeshareContractFlow:
         assert len(get_resp.json()["installments_list"]) == 4
 
     def test_pay_installment_updates_status(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -81,7 +73,7 @@ class TestTimeshareContractFlow:
         assert Decimal(str(pay_resp.json()["paid_amount"])) == Decimal(str(inst_amount))
 
     def test_cancel_contract_via_http(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -98,14 +90,14 @@ class TestTimeshareContractFlow:
 class TestTimesharePermissions:
     def test_create_contract_requires_manager(self, client: TestClient, db, fake_redis, cashier_headers):
         """cashier (40) must not be able to create timeshare contracts (manager=60 required)."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=cashier_headers,
         )
         assert resp.status_code == 403
 
     def test_cancel_contract_requires_manager(self, client: TestClient, db, fake_redis, manager_headers, cashier_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
@@ -120,7 +112,7 @@ class TestTimesharePermissions:
 
 class TestTimeshareValidation:
     def test_create_contract_rejects_invalid_room_type(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         payload = contract_payload(branch.id)
         payload["room_type"] = "10R"
         resp = client.post("/api/v1/timeshare/contracts", json=payload, headers=manager_headers)
@@ -128,14 +120,14 @@ class TestTimeshareValidation:
 
     def test_create_contract_rejects_down_payment_exceeding_total(self, client: TestClient, db, fake_redis, manager_headers):
         """down_payment > total_value is a business rule (ValueError -> 400), not a schema constraint."""
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         payload = contract_payload(branch.id)
         payload["down_payment"] = "200000.00"
         resp = client.post("/api/v1/timeshare/contracts", json=payload, headers=manager_headers)
         assert resp.status_code == 400
 
     def test_pay_installment_rejects_invalid_method(self, client: TestClient, db, fake_redis, manager_headers):
-        branch = make_branch_committed(db, fake_redis)
+        branch = make_branch_committed(db)
         contract = client.post(
             "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
         ).json()
