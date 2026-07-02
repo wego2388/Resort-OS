@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 
 interface Payslip {
   id: number; period_year: number; period_month: number; status: string
@@ -28,7 +27,7 @@ function totalAllowances(slip: Payslip) {
 async function fetchPayslips() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/me/payslips', { headers: h })
+    const res = await api.get('/api/v1/hr/me/payslips')
     payslips.value = res.data.items ?? []
   } catch(e) { console.error(e) }
   finally { loading.value = false }

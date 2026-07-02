@@ -94,9 +94,42 @@ def checkin_booking(db: Session, booking_id: int) -> Booking:
         if room:
             crud.update_room_status(db, room, "occupied")
 
+    # فتح Folio للحجز لو مفيش واحد بالفعل — ده اللي بيسمح للضيف "يحمّل على
+    # حسابه" مشتريات من موديولات تانية (مطعم/شاطئ/كافيه) طول إقامته، وتتحاسب
+    # كلها مع بعض وقت الخروج بدل ما كل قسم ياخد كاش منفصل (Charge to Room).
+    if not booking.folio_id:
+        from app.modules.finance.crud import create_folio  # noqa: PLC0415
+        from app.modules.finance.schemas import FolioCreate  # noqa: PLC0415
+        folio = create_folio(db, FolioCreate(
+            branch_id=booking.branch_id,
+            guest_name=booking.guest_name,
+            check_in=datetime.combine(booking.check_in, datetime.min.time()),
+            check_out=datetime.combine(booking.check_out, datetime.min.time()),
+        ))
+        booking.folio_id = folio.id
+
     db.commit()
     db.refresh(booking)
     return booking
+
+
+def find_active_folio_for_room(db: Session, branch_id: int, room_id: int) -> Optional[int]:
+    """يرجّع folio_id الحجز الـ checked_in حاليًا في الغرفة دي، لو موجود —
+    الأساس اللي بتقوم عليه "الدفع على حساب الغرفة" في موديولات تانية (مطعم/
+    شاطئ/كافيه): الموظف يديله رقم الغرفة، والنظام يلاقي فوليو الضيف المقيم
+    فيها ويحمّل عليه بدل ما ياخد كاش فورًا."""
+    from app.modules.pms.models import BookingRoom  # noqa: PLC0415
+    booking = (
+        db.query(Booking)
+        .join(BookingRoom, BookingRoom.booking_id == Booking.id)
+        .filter(
+            Booking.branch_id == branch_id,
+            Booking.status == "checked_in",
+            BookingRoom.room_id == room_id,
+        )
+        .first()
+    )
+    return booking.folio_id if booking else None
 
 
 def checkout_booking(db: Session, booking_id: int) -> Booking:
@@ -119,8 +152,11 @@ def checkout_booking(db: Session, booking_id: int) -> Booking:
                 "priority":  "high",
             })
 
-    # Revenue Journal Entry
+    # Revenue Journal Entry + تحديث إحصائيات العميل (لو مربوط بعميل CRM)
     _post_checkout_journal(db, booking)
+    if booking.customer_id:
+        from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
+        record_customer_visit(db, booking.customer_id, booking.total_rate, booking.check_out)
 
     db.commit()
     db.refresh(booking)
@@ -129,36 +165,18 @@ def checkout_booking(db: Session, booking_id: int) -> Booking:
 
 def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
     """Dr. Cash (1100) / Cr. Room Revenue (4100)."""
-    try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
-        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
-        from datetime import date as _date  # noqa: PLC0415
-        from decimal import Decimal as _D  # noqa: PLC0415
+    from datetime import date as _date  # noqa: PLC0415
+    from decimal import Decimal as _D  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
-        cash_acc = get_account_by_code(db, booking.branch_id, "1100")
-        rev_acc  = get_account_by_code(db, booking.branch_id, "4100")
-        if not cash_acc or not rev_acc:
-            return
-
-        amount = booking.total_rate or _D("0")
-        if amount <= 0:
-            return
-
-        entry_data = JournalEntryCreate(
-            branch_id=booking.branch_id,
-            entry_date=_date.today(),
-            reference=f"CHK-{booking.booking_number}",
-            description=f"إيرادات غرف — {booking.booking_number}",
-            source="pms",
-            source_id=booking.id,
-            lines=[
-                JournalLineCreate(account_id=cash_acc.id, debit=amount,   credit=_D("0")),
-                JournalLineCreate(account_id=rev_acc.id,  debit=_D("0"),  credit=amount),
-            ],
-        )
-        create_journal_entry(db, entry_data, 0)
-    except Exception:
-        pass
+    post_simple_revenue_journal(
+        db, booking.branch_id, _date.today(),
+        debit_account_code="1100", credit_account_code="4100",
+        amount=booking.total_rate or _D("0"),
+        reference=f"CHK-{booking.booking_number}",
+        description=f"إيرادات غرف — {booking.booking_number}",
+        source="pms", source_id=booking.id,
+    )
 
 
 def cancel_booking(db: Session, booking_id: int, cancelled_by: int) -> Booking:

@@ -18,7 +18,7 @@ from app.modules.finance.schemas import (
     CashCountLineRead, CashierShiftClose, CashierShiftOpen, ConditionalDiscountCreate, CostCenterCreate,
     CostCenterReport, CostCenterReportLine, ExchangeRateCreate, FolioChargeCreate, FolioCreate,
     IncomeStatementLine, IncomeStatementReport,
-    JournalEntryCreate, PaymentCreate, ShiftEndReport,
+    JournalEntryCreate, JournalLineCreate, PaymentCreate, ShiftEndReport,
     TrialBalanceLine, TrialBalanceReport,
 )
 from app.resort_os.discount_engine import (
@@ -376,10 +376,19 @@ def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftCl
     shift.closed_by = closed_by
     if data.notes:
         shift.notes = f"{shift.notes}\n{data.notes}" if shift.notes else data.notes
+    if data.handover_note:
+        shift.handover_note = data.handover_note
 
     db.commit()
     db.refresh(shift)
     return shift
+
+
+def get_latest_handover_note(db: Session, branch_id: int) -> Optional[str]:
+    """آخر ملاحظة تسليم من آخر وردية مقفولة في الفرع ده — بيشوفها اللي هيفتح
+    الوردية الجاية قبل ما يبدأ، عشان يعرف أي حاجة معلّقة من الوردية اللي قبله."""
+    shift = crud.get_latest_closed_shift(db, branch_id)
+    return shift.handover_note if shift else None
 
 
 # ── Discount ──────────────────────────────────────────────────────────
@@ -449,6 +458,68 @@ def post_journal_entry(db: Session, data: JournalEntryCreate, user_id: int) -> J
     return entry
 
 
+def post_simple_revenue_journal(
+    db: Session,
+    branch_id: int,
+    entry_date: date,
+    debit_account_code: str,
+    credit_account_code: str,
+    amount: Decimal,
+    reference: str,
+    description: str,
+    source: str,
+    source_id: Optional[int],
+    created_by: int = 0,
+    currency: str = "EGP",
+) -> Optional[JournalEntry]:
+    """يرحّل قيد بسيط بسطرين (Dr. حساب / Cr. حساب) — النمط المتكرر اللي كان
+    منسوخ في 6 موديولات (مطعم/كافيه/شاطئ/PMS/تايم شير/إيجارات) كل واحد بنسخته
+    الخاصة. بيبتلع أي خطأ عمدًا (حساب مش معرّف للفرع، مبلغ صفري...) وبيرجّع
+    None بدل ما يرفع — عشان فشل الترحيل المحاسبي ميمنعش إتمام العملية
+    التشغيلية الحقيقية (بيع/حجز/عقد) اللي استدعته. لاحظ إنه بينادي
+    crud.create_journal_entry مباشرة مش post_journal_entry — يعني من غير
+    التحقق من قفل الفترة المحاسبية، بنفس السلوك القديم قبل التوحيد.
+
+    لو currency مش EGP: amount هي القيمة بالعملة الأصلية، وبتتحوّل هنا لـ EGP
+    بسعر الصرف وقت entry_date (نفس آلية convert_to_egp المستخدمة للفواتير) —
+    السطور (debit/credit) دايمًا EGP-equivalent عشان التقارير المجمّعة تفضل
+    صح، وbعملة/سعر الصرف الأصليين بيتسجّلوا على القيد نفسه للمراجعة."""
+    try:
+        if amount <= 0:
+            return None
+        debit_acc = crud.get_account_by_code(db, branch_id, debit_account_code)
+        credit_acc = crud.get_account_by_code(db, branch_id, credit_account_code)
+        if not debit_acc or not credit_acc:
+            return None
+
+        currency = (currency or "EGP").upper()
+        if currency == "EGP":
+            egp_amount, fx_rate = amount, Decimal("1")
+        else:
+            egp_amount = convert_to_egp(db, amount, currency, entry_date)
+            if egp_amount <= 0:
+                return None
+            fx_rate = (egp_amount / amount).quantize(Decimal("0.000001"))
+
+        entry_data = JournalEntryCreate(
+            branch_id=branch_id,
+            entry_date=entry_date,
+            reference=reference,
+            description=description,
+            source=source,
+            source_id=source_id,
+            currency=currency,
+            fx_rate=fx_rate,
+            lines=[
+                JournalLineCreate(account_id=debit_acc.id, debit=egp_amount, credit=Decimal("0")),
+                JournalLineCreate(account_id=credit_acc.id, debit=Decimal("0"), credit=egp_amount),
+            ],
+        )
+        return crud.create_journal_entry(db, entry_data, created_by)
+    except Exception:
+        return None
+
+
 def close_accounting_period(
     db: Session,
     branch_id: int,
@@ -457,6 +528,15 @@ def close_accounting_period(
     closed_by: int,
 ) -> AccountingPeriod:
     period = crud.close_period(db, branch_id, year, month, closed_by)
+
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    create_audit_log(db, AuditLogCreate(
+        user_id=closed_by, branch_id=branch_id, action="close_period",
+        entity_type="accounting_period", entity_id=period.id,
+        new_data=f'{{"year": {year}, "month": {month}, "status": "{period.status}"}}',
+    ))
+
     db.commit()
     db.refresh(period)
     return period

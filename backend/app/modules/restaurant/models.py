@@ -122,6 +122,9 @@ class Order(Base, TimestampMixin):
     waiter_id:               Mapped[int | None]  = mapped_column(Integer, nullable=True)
     folio_id:                Mapped[int | None]  = mapped_column(Integer, nullable=True)
     applied_discount_rule_id:Mapped[int | None]  = mapped_column(Integer, nullable=True)
+    customer_id:             Mapped[int | None]  = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
+    # ربط اختياري بعميل CRM — لو موجود، دفع الطلب بيحدّث total_spent/visits_count
+    # بتاعه تلقائيًا (راجع crm.services.record_visit)
     client_local_id:         Mapped[str | None]  = mapped_column(String(60), nullable=True, unique=True)
     # UUID من IndexedDB عند الـ offline POS — يمنع تكرار الطلب لو الـ client
     # حاول الـ sync تاني بعد انقطاع اتصال جزئي (نفس الطلب يرجع بدل ما يتكرر)

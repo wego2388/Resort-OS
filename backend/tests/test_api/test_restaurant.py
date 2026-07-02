@@ -175,6 +175,30 @@ class TestOrderStatus:
         db.refresh(table)
         assert table.status == "available"
 
+    def test_pay_order_updates_linked_customer_stats(self, db):
+        from app.modules.crm import services as crm_services
+        from app.modules.crm.schemas import CustomerCreate
+
+        branch = make_branch(db)
+        customer = crm_services.create_customer(db, CustomerCreate(
+            branch_id=branch.id, full_name="عميل مطعم دائم",
+        ))
+        assert customer.visits_count == 0
+        assert customer.total_spent == Decimal("0")
+
+        item = make_menu_item(db, branch)
+        data = OrderCreate(
+            order_type="takeaway", guests_count=1,
+            items=[OrderItemCreate(menu_item_id=item.id, quantity=2)],
+            customer_id=customer.id,
+        )
+        order = services.create_order(db, branch.id, data, waiter_id=1)
+        services.update_order_status(db, order.id, "paid")
+
+        db.refresh(customer)
+        assert customer.visits_count == 1
+        assert customer.total_spent == order.total
+
     def test_cancel_order_frees_table(self, db):
         branch = make_branch(db)
         item = make_menu_item(db, branch)
@@ -448,3 +472,63 @@ class TestKDS:
         assert all(t.module == "cafe" for t in cafe_only)
         assert any(t.id == cafe_ticket.id for t in cafe_only)
         assert not any(t.order_id == order.id for t in cafe_only)
+
+
+class TestChargeToRoom:
+    """الدفع على حساب الغرفة — طلب مطعم لضيف مقيم بيتحمّل على فوليو الحجز
+    بدل ما ياخد كاش فوري، ويتحاسب مع باقي مشترياته وقت خروجه."""
+
+    def _make_checked_in_booking(self, db, branch):
+        import uuid as _uuid
+        from datetime import date as _date, timedelta as _td
+        from app.modules.pms.models import Room, RoomType
+        from app.modules.pms.schemas import BookingCreate
+        from app.modules.pms import services as pms_services
+
+        rt = RoomType(branch_id=branch.id, name="Standard", base_rate=Decimal("500.00"), max_occupancy=2)
+        db.add(rt); db.flush()
+        room = Room(branch_id=branch.id, room_type_id=rt.id, name=f"R-{_uuid.uuid4().hex[:6].upper()}",
+                    floor=1, status="available")
+        db.add(room); db.flush()
+
+        data = BookingCreate(
+            branch_id=branch.id, guest_name="ضيف مقيم", guest_phone="01000000001",
+            check_in=_date.today(), check_out=_date.today() + _td(days=2),
+            adults=2, children=0, room_ids=[room.id],
+        )
+        booking = pms_services.create_booking(db, data)
+        booking = pms_services.checkin_booking(db, booking.id)
+        return booking, room
+
+    def test_checkin_opens_a_folio(self, db):
+        branch = make_branch(db)
+        booking, _ = self._make_checked_in_booking(db, branch)
+        assert booking.folio_id is not None
+
+    def test_charge_order_to_room_adds_folio_charge_not_cash(self, db):
+        from app.modules.finance import crud as finance_crud
+
+        branch = make_branch(db)
+        booking, room = self._make_checked_in_booking(db, branch)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+
+        paid = services.update_order_status(db, order.id, "paid", charge_to_room_id=room.id)
+        assert paid.folio_id == booking.folio_id
+
+        folio = finance_crud.get_folio(db, booking.folio_id)
+        charges = folio.charges
+        assert any(c.ref_order_id == order.id for c in charges)
+        matching = next(c for c in charges if c.ref_order_id == order.id)
+        assert matching.amount == order.subtotal
+
+        # مفيش قيد كاش فوري اتسجل لأوردر اتحمّل على الغرفة
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="restaurant")
+        assert total == 0
+
+    def test_charge_to_room_fails_for_empty_room(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+        with pytest.raises(ValueError, match="مفيش ضيف مسجّل دخول"):
+            services.update_order_status(db, order.id, "paid", charge_to_room_id=99999)

@@ -57,6 +57,7 @@ class BookingCreate(BaseModel):
     source:            str = Field("direct", pattern=r"^(direct|online|b2b|phone)$")
     room_ids:          list[int] = Field(..., min_length=1)
     notes:             Optional[str] = None
+    customer_id:       Optional[int] = None
 
 
 class BookingRoomRead(BaseModel):
@@ -83,6 +84,7 @@ class BookingRead(BaseModel):
     status:           str
     source:           str
     folio_id:         Optional[int]
+    customer_id:      Optional[int] = None
     total_rate:       Decimal
     notes:            Optional[str]
     rooms:            list[BookingRoomRead] = []

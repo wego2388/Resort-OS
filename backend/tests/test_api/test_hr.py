@@ -127,6 +127,34 @@ class TestEmployee:
         )
         assert updated.status == "terminated"
 
+    def test_salary_change_writes_audit_log(self, db, employee):
+        from app.modules.core.crud import list_audit_logs
+        from wego_core.models.user import User
+        from wego_core.security import get_password_hash
+        user = User(email=f"hrmgr-{uuid.uuid4().hex[:6]}@test.local",
+                    password_hash=get_password_hash("Test@12345"),
+                    full_name="HR Manager", role="admin", is_active=True)
+        db.add(user); db.flush()
+
+        old_salary = employee.basic_salary
+        services.update_employee(
+            db, employee.id,
+            EmployeeUpdate(basic_salary=Decimal("9500.00")),
+            updated_by=user.id,
+        )
+        logs, _ = list_audit_logs(db, entity_type="employee", entity_id=employee.id)
+        salary_logs = [l for l in logs if l.action == "update_salary"]
+        assert len(salary_logs) == 1
+        assert salary_logs[0].user_id == user.id
+        assert str(old_salary) in salary_logs[0].old_data
+        assert "9500.00" in salary_logs[0].new_data
+
+    def test_non_salary_update_does_not_write_audit_log(self, db, employee):
+        from app.modules.core.crud import list_audit_logs
+        services.update_employee(db, employee.id, EmployeeUpdate(position="مشرف"))
+        logs, _ = list_audit_logs(db, entity_type="employee", entity_id=employee.id)
+        assert not any(l.action == "update_salary" for l in logs)
+
     def test_employee_not_found_raises(self, db):
         with pytest.raises(ValueError):
             services.get_employee_or_404(db, 9999)
@@ -292,6 +320,75 @@ class TestSelfServicePunch:
         services.punch_out(db, linked_user_id)
         with pytest.raises(ValueError, match="بالفعل"):
             services.punch_out(db, linked_user_id)
+
+
+class TestLeaderboard:
+    """لوحة أداء الموظفين — لازم تكون مبيعات حقيقية من الطلبات المدفوعة فعليًا،
+    مش أرقام مصنوعة."""
+
+    def _make_paid_restaurant_order(self, db, branch, waiter_user_id, amount):
+        import uuid as _uuid
+        from app.modules.restaurant.models import MenuItem
+        from app.modules.restaurant.schemas import OrderCreate, OrderItemCreate
+        from app.modules.restaurant import services as rest_services
+
+        item = MenuItem(branch_id=branch.id, name=f"Item {_uuid.uuid4().hex[:4]}", price=amount)
+        db.add(item); db.commit()
+        data = OrderCreate(order_type="takeaway", guests_count=1,
+                            items=[OrderItemCreate(menu_item_id=item.id, quantity=1)])
+        order = rest_services.create_order(db, branch.id, data, waiter_id=waiter_user_id)
+        rest_services.update_order_status(db, order.id, "paid")
+        return order
+
+    def test_leaderboard_ranks_by_real_sales(self, db, branch, employee):
+        from decimal import Decimal as D
+        from wego_core.models.user import User
+        from wego_core.security import get_password_hash
+
+        top_user = User(email=f"top-{uuid.uuid4().hex[:6]}@test.local",
+                         password_hash=get_password_hash("Test@12345"),
+                         full_name="Top Seller", role="waiter", is_active=True)
+        low_user = User(email=f"low-{uuid.uuid4().hex[:6]}@test.local",
+                         password_hash=get_password_hash("Test@12345"),
+                         full_name="Low Seller", role="waiter", is_active=True)
+        db.add_all([top_user, low_user]); db.flush()
+        services.link_employee_to_user(db, employee, top_user.id)
+
+        self._make_paid_restaurant_order(db, branch, top_user.id, D("500"))
+        self._make_paid_restaurant_order(db, branch, top_user.id, D("300"))
+        self._make_paid_restaurant_order(db, branch, low_user.id, D("50"))
+
+        # نطاق يومين حوالين اليوم (مش يوم واحد بالظبط) — الـ timestamps بتتسجل
+        # بتوقيت UTC من السيرفر بينما date.today() المحلي ممكن يكون قدّامه
+        # بساعتين/تلاتة، فيوم واحد بالظبط عرضة لفلاكي قريب من منتصف الليل.
+        today = date.today()
+        board = services.get_sales_leaderboard(
+            db, branch.id, today - timedelta(days=1), today + timedelta(days=1),
+        )
+
+        assert board[0].user_id == top_user.id
+        assert board[0].employee_name == employee.full_name
+        assert board[0].order_count == 2
+        assert board[1].user_id == low_user.id
+        assert board[1].employee_name is None  # مفيش Employee مربوط بيه
+        assert board[0].total_sales > board[1].total_sales
+
+    def test_leaderboard_ignores_unpaid_orders(self, db, branch):
+        from app.modules.restaurant.models import MenuItem
+        from app.modules.restaurant.schemas import OrderCreate, OrderItemCreate
+        from app.modules.restaurant import services as rest_services
+
+        item = MenuItem(branch_id=branch.id, name="Unpaid Item", price=Decimal("100"))
+        db.add(item); db.commit()
+        data = OrderCreate(order_type="takeaway", guests_count=1,
+                            items=[OrderItemCreate(menu_item_id=item.id, quantity=1)])
+        rest_services.create_order(db, branch.id, data, waiter_id=999)  # لسه "open"، مش paid
+
+        today = date.today()
+        board = services.get_sales_leaderboard(
+            db, branch.id, today - timedelta(days=1), today + timedelta(days=1),
+        )
+        assert not any(e.user_id == 999 for e in board)
 
 
 class TestLeaveBalance:

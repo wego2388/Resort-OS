@@ -121,6 +121,7 @@ class OrderCreate(BaseModel):
     order_type:  str = Field("dine_in", pattern=r"^(dine_in|takeaway|delivery|room_service)$")
     guests_count:int = Field(1, ge=1)
     notes:       Optional[str] = Field(None, max_length=500)
+    customer_id: Optional[int] = None
     items:       list[OrderItemCreate] = Field(..., min_length=1)
 
 
@@ -169,6 +170,7 @@ class OrderRead(BaseModel):
     notes:                    Optional[str]
     waiter_id:                Optional[int]
     applied_discount_rule_id: Optional[int]
+    customer_id:              Optional[int]
     items:                    list[OrderItemRead] = []
     created_at:               datetime
     updated_at:               datetime
@@ -176,6 +178,9 @@ class OrderRead(BaseModel):
 
 class OrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
+    charge_to_room_id: Optional[int] = None
+    # لو موجود وقت status="paid": يدوّر على الحجز الـ checked_in في الغرفة دي
+    # ويحمّل قيمة الطلب على فوليو الضيف بدل ما ياخد كاش فورًا (Charge to Room)
 
 
 # ─────────────────────── Offline POS Sync ─────────────────────────────

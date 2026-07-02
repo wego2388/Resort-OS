@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -88,14 +87,14 @@ const filteredClients = computed(() => {
 
 // ── Loaders ──────────────────────────────────────────────────────────────
 async function loadSummary() {
-  try { const r = await axios.get('/api/v1/timeshare/cs-summary', { headers: h, params: { branch_id: branchId } }); summary.value = r.data }
+  try { const r = await api.get('/api/v1/timeshare/cs-summary', { params: { branch_id: branchId } }); summary.value = r.data }
   catch (e) { console.error(e) }
 }
 
 async function loadCalendar() {
   calLoading.value = true
   try {
-    const r = await axios.get('/api/v1/timeshare/calendar', { headers: h, params: { branch_id: branchId, year: calYear.value } })
+    const r = await api.get('/api/v1/timeshare/calendar', { params: { branch_id: branchId, year: calYear.value } })
     calendar.value = r.data
   } catch (e) { console.error(e) } finally { calLoading.value = false }
 }
@@ -103,7 +102,7 @@ async function loadCalendar() {
 async function loadClients() {
   clientsLoading.value = true
   try {
-    const r = await axios.get('/api/v1/timeshare/contracts', { headers: h, params: { branch_id: branchId, size: 100 } })
+    const r = await api.get('/api/v1/timeshare/contracts', { params: { branch_id: branchId, size: 100 } })
     allClients.value = r.data.items ?? []
   } catch (e) { console.error(e) } finally { clientsLoading.value = false }
 }
@@ -115,7 +114,7 @@ async function loadInstallments() {
     if (installStatus.value) params.status = installStatus.value
     if (installMonth.value) params.month = installMonth.value
     if (installSearch.value) params.search = installSearch.value
-    const r = await axios.get('/api/v1/timeshare/installments', { headers: h, params })
+    const r = await api.get('/api/v1/timeshare/installments', { params })
     installments.value = r.data.installments ?? []
     installSummary.value = r.data.summary ?? { overdue_total: 0, pending_total: 0 }
   } catch (e) { console.error(e) } finally { installLoading.value = false }
@@ -147,10 +146,10 @@ async function submitPayment() {
   if (!payModal.amount || payModal.saving) return
   payModal.saving = true
   try {
-    await axios.post(`/api/v1/timeshare/installments/${payModal.inst_id}/pay`, {
+    await api.post(`/api/v1/timeshare/installments/${payModal.inst_id}/pay`, {
       paid_amount: payModal.amount, payment_method: payModal.method,
       receipt_number: payModal.receipt_number || undefined,
-    }, { headers: h })
+    })
     payModal.open = false
     await Promise.all([loadSummary(), loadInstallments(), loadClients()])
   } catch (e: any) { alert(e?.response?.data?.detail ?? 'فشل في تسجيل الدفعة') }
@@ -163,7 +162,7 @@ async function toggleStatus(c: Contract) {
   const next = c.status === 'active' ? 'suspended' : 'active'
   statusSaving.value = c.id
   try {
-    await axios.patch(`/api/v1/timeshare/contracts/${c.id}`, { status: next }, { headers: h })
+    await api.patch(`/api/v1/timeshare/contracts/${c.id}`, { status: next })
     c.status = next
     await loadSummary()
   } catch (e: any) { alert(e?.response?.data?.detail ?? 'خطأ في تغيير الحالة') }
@@ -173,7 +172,7 @@ async function toggleStatus(c: Contract) {
 async function cancelContract(c: Contract) {
   if (!confirm(`إلغاء عقد ${c.customer_name}؟`)) return
   try {
-    await axios.post(`/api/v1/timeshare/contracts/${c.id}/cancel`, { cancel_amount: 0 }, { headers: h })
+    await api.post(`/api/v1/timeshare/contracts/${c.id}/cancel`, { cancel_amount: 0 })
     c.status = 'cancelled'
     await loadSummary()
   } catch (e: any) { alert(e?.response?.data?.detail ?? 'خطأ في الإلغاء') }
@@ -191,8 +190,8 @@ async function submitImport() {
   try {
     const form = new FormData()
     form.append('file', importModal.file)
-    const r = await axios.post('/api/v1/timeshare/contracts/import-excel', form, {
-      headers: { ...h, 'Content-Type': 'multipart/form-data' }, params: { branch_id: branchId },
+    const r = await api.post('/api/v1/timeshare/contracts/import-excel', form, {
+      headers: { 'Content-Type': 'multipart/form-data' }, params: { branch_id: branchId },
     })
     importModal.result = r.data
     await Promise.all([loadClients(), loadSummary()])

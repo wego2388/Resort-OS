@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'leads' | 'customers' | 'campaigns'>('leads')
 
@@ -40,7 +39,7 @@ const segmentColors: Record<string, string> = {
 async function loadLeads() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/crm/leads', { headers: h, params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/crm/leads', { params: { branch_id: branchId } })
     leads.value = res.data.leads ?? res.data.items ?? res.data
   } catch(e) { console.error(e) }
   finally { loading.value = false }
@@ -49,7 +48,7 @@ async function loadLeads() {
 async function loadCustomers() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/crm/customers', { headers: h, params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/crm/customers', { params: { branch_id: branchId } })
     customers.value = res.data.customers ?? res.data.items ?? res.data
   } catch(e) { console.error(e) }
   finally { loading.value = false }
@@ -66,7 +65,7 @@ async function advanceLead(lead: Lead) {
   const next = flow[lead.stage]
   if (!next) return
   try {
-    await axios.patch(`/api/v1/crm/leads/${lead.id}`, { stage: next }, { headers: h })
+    await api.patch(`/api/v1/crm/leads/${lead.id}`, { stage: next })
     lead.stage = next
   } catch(e) { console.error(e) }
 }

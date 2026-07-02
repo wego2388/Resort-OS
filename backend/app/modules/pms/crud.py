@@ -180,6 +180,7 @@ def create_booking(
         source=data.source,
         notes=data.notes,
         total_rate=total_rate,
+        customer_id=data.customer_id,
     )
     db.add(booking)
     db.flush()

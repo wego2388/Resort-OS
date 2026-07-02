@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 
 interface Profile {
   id: number; employee_code: string; full_name: string; email?: string
@@ -19,7 +18,7 @@ const pwLoading = ref(false)
 async function fetchProfile() {
   loading.value = true
   try {
-    const { data } = await axios.get('/api/v1/hr/me/profile', { headers: h })
+    const { data } = await api.get('/api/v1/hr/me/profile')
     profile.value = data
   } catch(e) { console.error(e) }
   finally { loading.value = false }
@@ -37,10 +36,10 @@ async function changePassword() {
   }
   pwLoading.value = true; pwError.value = ''
   try {
-    await axios.post('/api/v1/auth/change-password', {
+    await api.post('/api/v1/auth/change-password', {
       current_password: pwForm.value.current_password,
       new_password: pwForm.value.new_password,
-    }, { headers: h })
+    })
     pwMsg.value = 'تم تغيير كلمة المرور بنجاح ✓'
     pwForm.value = { current_password: '', new_password: '', confirm_password: '' }
     setTimeout(() => pwMsg.value = '', 4000)

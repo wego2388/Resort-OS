@@ -91,8 +91,11 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': { target: 'http://localhost:8005', changeOrigin: true },
-      '/ws':  { target: 'ws://localhost:8005',  ws: true },
+      // ws: true هنا مهم — الـ WebSocket الحقيقي (KDS) مسجّل تحت نفس مسار
+      // /api/v1/... زي أي endpoint تاني، مش تحت /ws منفصل. الإعداد القديم
+      // (/ws بروكسي لمسار مختلف تمامًا عن مسار الـ backend الحقيقي) كان
+      // معناه إن أي اتصال WebSocket من الفرونت إند مستحيل يوصل للباك إند خالص.
+      '/api': { target: 'http://localhost:8005', changeOrigin: true, ws: true },
     },
   },
 })

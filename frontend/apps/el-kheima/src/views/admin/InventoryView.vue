@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Product {
@@ -27,7 +26,7 @@ const lowStockCount = () => products.value.filter(p => p.current_stock <= p.reor
 async function fetchProducts() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/inventory/products', { headers: h, params: { branch_id: branchId, limit: 200 } })
+    const res = await api.get('/api/v1/inventory/products', { params: { branch_id: branchId, limit: 200 } })
     products.value = res.data.products ?? res.data.items ?? res.data
   } catch(e) { console.error(e) }
   finally { loading.value = false }

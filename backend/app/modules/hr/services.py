@@ -39,8 +39,21 @@ def create_employee(db: Session, data: EmployeeCreate) -> Employee:
     return emp
 
 
-def update_employee(db: Session, employee_id: int, data: EmployeeUpdate) -> Employee:
+def update_employee(db: Session, employee_id: int, data: EmployeeUpdate, updated_by: Optional[int] = None) -> Employee:
     emp = get_employee_or_404(db, employee_id)
+    changes = data.model_dump(exclude_unset=True)
+
+    # الراتب الأساسي تغيير حساس — لازم أثر واضح لمين غيّره وإمتى ومن كام لكام
+    if "basic_salary" in changes and changes["basic_salary"] != emp.basic_salary:
+        from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+        from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+        create_audit_log(db, AuditLogCreate(
+            user_id=updated_by, branch_id=emp.branch_id, action="update_salary",
+            entity_type="employee", entity_id=emp.id,
+            old_data=f'{{"basic_salary": "{emp.basic_salary}"}}',
+            new_data=f'{{"basic_salary": "{changes["basic_salary"]}"}}',
+        ))
+
     emp = crud.update_employee(db, emp, data)
     db.commit()
     db.refresh(emp)
@@ -480,3 +493,78 @@ def reject_leave(
     db.commit()
     db.refresh(rejected)
     return rejected
+
+
+def get_sales_leaderboard(
+    db: Session, branch_id: int, date_from: date, date_to: date,
+) -> list["LeaderboardEntry"]:
+    """لوحة أداء الموظفين — إجمالي المبيعات الحقيقية لكل موظف عبر المطعم
+    والكافيه والشاطئ خلال المدى المطلوب، مرتّبة من الأعلى مبيعًا. waiter_id/
+    cashier_id في الطلبات هي User.id فعليًا (مش Employee.id) — بنربطها بجدول
+    الموظفين عبر Employee.user_id عشان نعرض الاسم، ولو مفيش موظف مرتبط
+    (حساب تجريبي مثلاً) بيتعرض برقم الحساب بس."""
+    from app.modules.hr.schemas import LeaderboardEntry  # noqa: PLC0415
+    from datetime import datetime as _dt  # noqa: PLC0415
+
+    dt_from = _dt.combine(date_from, _dt.min.time())
+    dt_to = _dt.combine(date_to, _dt.max.time())
+
+    totals: dict[int, Decimal] = {}
+    counts: dict[int, int] = {}
+
+    def _accumulate(user_id: Optional[int], amount: Decimal):
+        if not user_id:
+            return
+        totals[user_id] = totals.get(user_id, Decimal("0")) + amount
+        counts[user_id] = counts.get(user_id, 0) + 1
+
+    try:
+        from app.modules.restaurant.models import Order  # noqa: PLC0415
+        orders = db.query(Order).filter(
+            Order.branch_id == branch_id, Order.status == "paid",
+            Order.created_at >= dt_from, Order.created_at <= dt_to,
+        ).all()
+        for o in orders:
+            _accumulate(o.waiter_id, o.total)
+    except Exception:
+        pass
+
+    try:
+        from app.modules.cafe.models import CafeOrder  # noqa: PLC0415
+        orders = db.query(CafeOrder).filter(
+            CafeOrder.branch_id == branch_id, CafeOrder.status == "paid",
+            CafeOrder.created_at >= dt_from, CafeOrder.created_at <= dt_to,
+        ).all()
+        for o in orders:
+            _accumulate(o.waiter_id, o.total)
+    except Exception:
+        pass
+
+    try:
+        from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
+        txs = db.query(BeachTransaction).filter(
+            BeachTransaction.branch_id == branch_id,
+            BeachTransaction.tx_date >= date_from, BeachTransaction.tx_date <= date_to,
+            BeachTransaction.voided_at.is_(None),
+        ).all()
+        for tx in txs:
+            _accumulate(tx.cashier_id, tx.total_amount + tx.vat_amount)
+    except Exception:
+        pass
+
+    employees = {
+        e.user_id: e for e in db.query(Employee).filter(Employee.user_id.in_(totals.keys())).all()
+    } if totals else {}
+
+    entries = [
+        LeaderboardEntry(
+            user_id=uid,
+            employee_name=employees[uid].full_name if uid in employees else None,
+            employee_code=employees[uid].employee_code if uid in employees else None,
+            total_sales=amount,
+            order_count=counts[uid],
+        )
+        for uid, amount in totals.items()
+    ]
+    entries.sort(key=lambda e: e.total_sales, reverse=True)
+    return entries

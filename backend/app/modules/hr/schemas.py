@@ -388,3 +388,14 @@ class MyPayslipRead(BaseModel):
     monthly_tax:            Decimal
     penalty_deduction:      Decimal
     unpaid_leave_deduction: Decimal
+
+
+class LeaderboardEntry(BaseModel):
+    """صف واحد في لوحة أداء الموظفين — مبيعات حقيقية من المطعم/الكافيه/الشاطئ
+    مجمّعة بالموظف (عبر user_id، مش employee_id — waiter_id/cashier_id في
+    الطلبات كلها User.id فعليًا)، مش أرقام وهمية."""
+    user_id:        int
+    employee_name:  Optional[str] = None
+    employee_code:  Optional[str] = None
+    total_sales:    Decimal
+    order_count:    int

@@ -18,6 +18,7 @@ from app.modules.hr.schemas import (
     EmployeeCreate, EmployeeRead, EmployeeUpdate,
     EmployeeLinkUserRequest,
     EmployeePenaltyCreate, EmployeePenaltyRead,
+    LeaderboardEntry,
     LeaveApproveRequest, LeaveRejectRequest,
     LeaveRequestCreate, LeaveRequestRead, LeaveStatusUpdate,
     LeaveTypeCreate, LeaveTypeRead,
@@ -68,9 +69,9 @@ def get_employee(employee_id: int, db: DbDep, _=Depends(get_current_active_user)
 
 
 @router.patch("/hr/employees/{employee_id}", response_model=EmployeeRead)
-def update_employee(employee_id: int, data: EmployeeUpdate, db: DbDep, _=Depends(get_admin_user)):
+def update_employee(employee_id: int, data: EmployeeUpdate, db: DbDep, user=Depends(get_admin_user)):
     try:
-        return services.update_employee(db, employee_id, data)
+        return services.update_employee(db, employee_id, data, updated_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
@@ -108,6 +109,19 @@ def get_payslip(
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Leaderboard ───────────────────────────────────────────────────────
+
+@router.get("/hr/leaderboard", response_model=list[LeaderboardEntry])
+def sales_leaderboard(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: date = Query(...),
+    date_to: date = Query(...),
+):
+    """ترتيب الموظفين حسب إجمالي المبيعات الحقيقية (مطعم/كافيه/شاطئ) خلال المدى."""
+    return services.get_sales_leaderboard(db, branch_id, date_from, date_to)
 
 
 # ── Payroll Runs ──────────────────────────────────────────────────────

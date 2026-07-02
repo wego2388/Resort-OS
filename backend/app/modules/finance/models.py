@@ -116,6 +116,9 @@ class CashierShift(Base, TimestampMixin):
     counted_cash:   Mapped[Decimal | None]  = mapped_column(Numeric(10, 2), nullable=True)
     variance:       Mapped[Decimal | None]  = mapped_column(Numeric(10, 2), nullable=True)
     notes:          Mapped[str | None]      = mapped_column(String(1000), nullable=True)
+    handover_note:  Mapped[str | None]      = mapped_column(String(1000), nullable=True)
+    # ملاحظة تسليم للوردية الجاية تحديدًا (مختلفة عن notes العامة) — بتتكتب
+    # وقت القفل، وبيشوفها اللي هيفتح الوردية الجاية في نفس الفرع قبل ما يبدأ
 
     payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="shift", lazy="select")
     cash_count_lines: Mapped[list["CashierShiftCashCount"]] = relationship(
@@ -169,6 +172,13 @@ class JournalEntry(Base, TimestampMixin):
     created_by:  Mapped[int]      = mapped_column(Integer)
     source:      Mapped[str | None]  = mapped_column(String(50), nullable=True)
     source_id:   Mapped[int | None]  = mapped_column(Integer, nullable=True)
+    currency:    Mapped[str]      = mapped_column(String(3), default="EGP")
+    fx_rate:     Mapped[Decimal]  = mapped_column(Numeric(12, 6), default=Decimal("1"))
+    # مبالغ السطور (debit/credit) دايمًا EGP-equivalent — نفس اللي التقارير
+    # (trial balance/income statement/balance sheet) بتجمعها مباشرة من غير أي
+    # تحويل. currency/fx_rate هنا بيسجّلوا العملة الأصلية للقيد وسعر التحويل
+    # وقتها بس، عشان تقدر تعرض/تراجع المبلغ الأصلي (amount = line_amount /
+    # fx_rate) من غير ما تكسر أي جمع موجود فعلاً.
 
     lines: Mapped[list["JournalLine"]] = relationship("JournalLine", back_populates="entry", lazy="select")
 

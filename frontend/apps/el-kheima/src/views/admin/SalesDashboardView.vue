@@ -2,9 +2,8 @@
 // لوحة مبيعات التايم شير — لفريق المبيعات (مختلفة عن لوحة الإدارة في TimeshareView).
 // الهدف: مين نشط/متأخر/منتهي، مين يستاهل مكالمة النهاردة (بالتليفون)، والـ pipeline العام.
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface OverdueClient {
@@ -50,7 +49,7 @@ const formatDateAr = (d?: string | null) => {
 async function load() {
   loading.value = true
   try {
-    const r = await axios.get('/api/v1/timeshare/sales-dashboard', { headers: h, params: { branch_id: branchId } })
+    const r = await api.get('/api/v1/timeshare/sales-dashboard', { params: { branch_id: branchId } })
     dash.value = r.data
   } catch (e) {
     console.error(e)

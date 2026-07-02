@@ -105,6 +105,38 @@ class TestRestaurantOrderHTTP:
         assert body["items"][0]["quantity"] == 2
         assert Decimal(str(body["subtotal"])) == Decimal("160.00")
 
+    def test_in_kitchen_transition_broadcasts_to_kds_websocket(self, client: TestClient, db, waiter_headers):
+        """قبل كده: KDS كانت شاشات polling بس كل 15 ثانية — الـ WebSocket
+        endpoint كان موجود بس محدّش بيبعت عليه رسالة أبداً حتى لو اتعمل
+        تذكرة جديدة فعليًا. دلوقتي أي تذكرة جديدة/تحديث حالة بيبعت broadcast
+        لأي شاشة KDS متصلة على نفس الفرع لحظيًا."""
+        from unittest.mock import AsyncMock, patch
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+
+        order_resp = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        )
+        order_id = order_resp.json()["id"]
+
+        with patch(
+            "app.modules.restaurant.api.router.restaurant_manager.broadcast",
+            new_callable=AsyncMock,
+        ) as mock_broadcast:
+            resp = client.patch(
+                f"/api/v1/restaurant/orders/{order_id}/status",
+                json={"status": "in_kitchen"},
+                headers=waiter_headers,
+            )
+        assert resp.status_code == 200, resp.text
+        mock_broadcast.assert_called_once()
+        branch_arg, payload_arg = mock_broadcast.call_args[0]
+        assert branch_arg == str(branch.id)
+        assert payload_arg["type"] == "tickets_updated"
+
     def test_create_order_rejects_unavailable_item(self, client: TestClient, db, waiter_headers):
         from app.modules.restaurant.models import MenuItem
         branch = make_branch_committed(db)

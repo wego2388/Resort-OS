@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const token = localStorage.getItem('access_token') ?? ''
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const h = { Authorization: `Bearer ${token}` }
 
 interface Booking {
   id: number
@@ -78,8 +76,7 @@ function openCreateModal() {
 async function fetchBookings() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/pms/bookings', {
-      headers: h,
+    const res = await api.get('/api/v1/pms/bookings', {
       params: { branch_id: branchId, limit: 100 }
     })
     bookings.value = res.data.bookings ?? res.data.items ?? res.data
@@ -89,8 +86,7 @@ async function fetchBookings() {
 
 async function fetchRooms() {
   try {
-    const res = await axios.get('/api/v1/pms/rooms', {
-      headers: h,
+    const res = await api.get('/api/v1/pms/rooms', {
       params: { branch_id: branchId, status: 'available' }
     })
     rooms.value = res.data.rooms ?? res.data.items ?? res.data
@@ -106,10 +102,10 @@ async function createBooking() {
   submitting.value = true
   createError.value = ''
   try {
-    await axios.post('/api/v1/pms/bookings', {
+    await api.post('/api/v1/pms/bookings', {
       ...form.value,
       branch_id: branchId,
-    }, { headers: h })
+    })
     showCreateModal.value = false
     await fetchBookings()
   } catch(e: any) {
@@ -122,14 +118,14 @@ async function createBooking() {
 async function checkOut(booking: Booking) {
   if (!confirm(`تأكيد مغادرة ${booking.guest_name}؟`)) return
   try {
-    await axios.patch(`/api/v1/pms/bookings/${booking.id}`, { status: 'checked_out' }, { headers: h })
+    await api.patch(`/api/v1/pms/bookings/${booking.id}`, { status: 'checked_out' })
     booking.status = 'checked_out'
   } catch(e) { console.error(e) }
 }
 
 async function checkIn(booking: Booking) {
   try {
-    await axios.patch(`/api/v1/pms/bookings/${booking.id}`, { status: 'checked_in' }, { headers: h })
+    await api.patch(`/api/v1/pms/bookings/${booking.id}`, { status: 'checked_in' })
     booking.status = 'checked_in'
   } catch(e) { console.error(e) }
 }

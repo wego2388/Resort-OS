@@ -2,9 +2,8 @@
 // لوحة الشاطئ الحيّة — سعة حالية (gauge)، حصص فنادق B2B، وتنبيه تلقائي
 // لما فندق يوصل لـ 5 أشخاص أو أقل متبقين في حصته اليومية.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface B2BStatus {
@@ -43,7 +42,7 @@ function pctLabel(pct: number | null): string {
 async function loadEod() {
   eodLoading.value = true
   try {
-    const r = await axios.get('/api/v1/beach/eod-report', { headers: h, params: { branch_id: branchId } })
+    const r = await api.get('/api/v1/beach/eod-report', { params: { branch_id: branchId } })
     eod.value = r.data
   } catch (e) {
     console.error(e)
@@ -55,8 +54,8 @@ async function loadEod() {
 async function downloadEodPdf() {
   downloadingPdf.value = true
   try {
-    const res = await axios.get('/api/v1/beach/eod-report/pdf', {
-      headers: h, params: { branch_id: branchId }, responseType: 'blob',
+    const res = await api.get('/api/v1/beach/eod-report/pdf', {
+      params: { branch_id: branchId }, responseType: 'blob',
     })
     const url = URL.createObjectURL(res.data)
     const w = window.open(url, '_blank')
@@ -82,7 +81,7 @@ const gaugeColor = computed(() => {
 
 async function load() {
   try {
-    const r = await axios.get('/api/v1/beach/live-dashboard', { headers: h, params: { branch_id: branchId } })
+    const r = await api.get('/api/v1/beach/live-dashboard', { params: { branch_id: branchId } })
     dash.value = r.data
   } catch (e) {
     console.error(e)

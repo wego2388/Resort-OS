@@ -262,6 +262,15 @@ def list_shifts(
     return items, total
 
 
+def get_latest_closed_shift(db: Session, branch_id: int) -> Optional[CashierShift]:
+    return (
+        db.query(CashierShift)
+        .filter(CashierShift.branch_id == branch_id, CashierShift.status == "closed")
+        .order_by(CashierShift.closed_at.desc())
+        .first()
+    )
+
+
 def create_cash_count_lines(
     db: Session, shift_id: int, lines: list[dict],
 ) -> list[CashierShiftCashCount]:
@@ -357,6 +366,8 @@ def create_journal_entry(
         created_by=user_id,
         source=data.source,
         source_id=data.source_id,
+        currency=data.currency,
+        fx_rate=data.fx_rate,
     )
     db.add(entry)
     db.flush()

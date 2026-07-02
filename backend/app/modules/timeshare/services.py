@@ -54,36 +54,19 @@ def create_contract(db: Session, data: TimeshareContractCreate, signed_by: int) 
 
 def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract") -> None:
     """Dr. Cash (1100) / Cr. Deferred Revenue (2300) عند إنشاء العقد."""
-    try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
-        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
-        from datetime import date as _date  # noqa: PLC0415
-        from decimal import Decimal as _D  # noqa: PLC0415
+    from datetime import date as _date  # noqa: PLC0415
+    from decimal import Decimal as _D  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
-        cash_acc     = get_account_by_code(db, contract.branch_id, "1100")
-        def_rev_acc  = get_account_by_code(db, contract.branch_id, "2300")
-        if not cash_acc or not def_rev_acc:
-            return
-
-        amount = contract.down_payment or _D("0")
-        if amount <= 0:
-            return
-
-        entry_data = JournalEntryCreate(
-            branch_id=contract.branch_id,
-            entry_date=_date.today(),
-            reference=f"TS-DP-{contract.contract_number}",
-            description=f"دفعة أولى تايم شير — {contract.contract_number}",
-            source="timeshare",
-            source_id=contract.id,
-            lines=[
-                JournalLineCreate(account_id=cash_acc.id,    debit=amount,   credit=_D("0")),
-                JournalLineCreate(account_id=def_rev_acc.id, debit=_D("0"),  credit=amount),
-            ],
-        )
-        create_journal_entry(db, entry_data, contract.signed_by or 0)
-    except Exception:
-        pass
+    post_simple_revenue_journal(
+        db, contract.branch_id, _date.today(),
+        debit_account_code="1100", credit_account_code="2300",
+        amount=contract.down_payment or _D("0"),
+        reference=f"TS-DP-{contract.contract_number}",
+        description=f"دفعة أولى تايم شير — {contract.contract_number}",
+        source="timeshare", source_id=contract.id,
+        created_by=contract.signed_by or 0,
+    )
 
 
 def update_contract(db: Session, contract_id: int, data: TimeshareContractUpdate) -> TimeshareContract:

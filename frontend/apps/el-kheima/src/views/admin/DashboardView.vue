@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface DashboardData {
@@ -19,13 +18,13 @@ const today = new Date().toISOString().split('T')[0]
 async function fetchDashboard() {
   loading.value = true
   try {
-    const res = await axios.get(`/api/v1/analytics/dashboard/${branchId}`, { headers: h, params: { date: today } })
+    const res = await api.get(`/api/v1/analytics/dashboard/${branchId}`, { params: { date: today } })
     data.value = res.data
   } catch {
     try {
       const [beachRes, bookingsRes] = await Promise.allSettled([
-        axios.get(`/api/v1/beach/inventory/${branchId}`, { headers: h }),
-        axios.get('/api/v1/pms/bookings', { headers: h, params: { branch_id: branchId, status: 'checked_in', limit: 5 } }),
+        api.get(`/api/v1/beach/inventory/${branchId}`),
+        api.get('/api/v1/pms/bookings', { params: { branch_id: branchId, status: 'checked_in', limit: 5 } }),
       ])
       data.value = {
         today_revenue: 0, yesterday_revenue: 0,

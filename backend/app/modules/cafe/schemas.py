@@ -104,6 +104,7 @@ class CafeOrderCreate(BaseModel):
     table_id:   Optional[int] = None
     order_type: str = Field("dine_in", pattern=r"^(dine_in|takeaway|delivery)$")
     notes:      Optional[str] = None
+    customer_id: Optional[int] = None
     items:      list[CafeOrderItemCreate] = Field(..., min_length=1)
 
 
@@ -135,9 +136,11 @@ class CafeOrderRead(BaseModel):
     status: str; order_type: str; subtotal: Decimal; vat_amount: Decimal
     service_charge: Decimal; discount_amount: Decimal; total: Decimal
     notes: Optional[str]; waiter_id: Optional[int]
+    customer_id: Optional[int] = None
     items: list[CafeOrderItemRead] = []
     created_at: datetime; updated_at: datetime
 
 
 class CafeOrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
+    charge_to_room_id: Optional[int] = None

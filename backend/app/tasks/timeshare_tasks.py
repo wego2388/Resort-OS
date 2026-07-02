@@ -95,6 +95,8 @@ def send_visit_reminders(self):
                     TimeshareContract.week_number.isnot(None),
                 ).all()
 
+                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+
                 reminders_sent = 0
                 for c in contracts:
                     visit = find_next_visit(c.week_number, c.nights_per_year, today)
@@ -103,7 +105,11 @@ def send_visit_reminders(self):
                             "Visit reminder: contract=%s guest=%s visit_start=%s",
                             c.id, c.customer_name, visit.visit_start,
                         )
-                        # TODO: WhatsApp/SMS via notification service
+                        if c.customer_phone:
+                            send_whatsapp_message(
+                                c.customer_phone,
+                                f"تذكير: زيارتك القادمة في الخيمة بيتش تبدأ يوم {visit.visit_start:%Y-%m-%d} — نتشرف باستقبالك.",
+                            )
                         reminders_sent += 1
 
                 logger.info("Visit reminders sent: %s", reminders_sent)
@@ -130,6 +136,9 @@ def send_installment_reminders(self):
             try:
                 from app.modules.timeshare.models import TimeshareInstallment  # noqa: PLC0415
 
+                from app.modules.timeshare.models import TimeshareContract  # noqa: PLC0415
+                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+
                 due_soon = (
                     db.query(TimeshareInstallment)
                     .filter(
@@ -143,7 +152,14 @@ def send_installment_reminders(self):
                         "Installment reminder: id=%s amount=%s due=%s",
                         inst.id, inst.amount, inst.due_date,
                     )
-                    # TODO: WhatsApp notification
+                    contract = db.query(TimeshareContract).filter(
+                        TimeshareContract.id == inst.contract_id
+                    ).first()
+                    if contract and contract.customer_phone:
+                        send_whatsapp_message(
+                            contract.customer_phone,
+                            f"تذكير: قسط بقيمة {inst.amount:,.2f} ج.م مستحق يوم {inst.due_date:%Y-%m-%d} — عقد رقم {contract.contract_number}.",
+                        )
 
             except ImportError:
                 pass

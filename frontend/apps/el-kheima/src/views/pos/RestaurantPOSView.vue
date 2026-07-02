@@ -1,14 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
 
 const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue, lastPartialRejection } = useOfflineQueue()
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const authHeaders = computed(() => ({
-  Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-}))
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Table    { id: number; table_number: string; status: string; capacity: number }
@@ -104,16 +101,13 @@ async function loadData() {
   loading.value = true
   try {
     const [tablesRes, catsRes, itemsRes] = await Promise.all([
-      axios.get('/api/v1/restaurant/tables', {
-        headers: authHeaders.value,
+      api.get('/api/v1/restaurant/tables', {
         params: { branch_id: branchId },
       }),
-      axios.get('/api/v1/restaurant/menu/categories', {
-        headers: authHeaders.value,
+      api.get('/api/v1/restaurant/menu/categories', {
         params: { branch_id: branchId },
       }),
-      axios.get('/api/v1/restaurant/menu/items', {
-        headers: authHeaders.value,
+      api.get('/api/v1/restaurant/menu/items', {
         params: { branch_id: branchId, limit: 200 },
       }),
     ])
@@ -160,8 +154,7 @@ async function submitOrder() {
     const orderId = data.id ?? data.order_id
     if (orderId) {
       try {
-        const receiptRes = await axios.get(`/api/v1/restaurant/orders/${orderId}/receipt`, {
-          headers: authHeaders.value,
+        const receiptRes = await api.get(`/api/v1/restaurant/orders/${orderId}/receipt`, {
           responseType: 'blob',
         })
         const url = URL.createObjectURL(receiptRes.data)

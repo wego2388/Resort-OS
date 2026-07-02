@@ -58,35 +58,18 @@ def create_contract(db: Session, data: LeaseContractCreate, signed_by: int) -> L
 
 def _post_deposit_journal(db: "Session", contract: "LeaseContract") -> None:
     """Dr. الصندوق (1100) / Cr. تأمينات مستأجرين (2150) عند إنشاء عقد بتأمين."""
-    try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
-        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
-        from datetime import date as _date  # noqa: PLC0415
+    from datetime import date as _date  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
-        amount = contract.security_deposit or Decimal("0")
-        if amount <= 0:
-            return
-
-        cash_acc    = get_account_by_code(db, contract.branch_id, "1100")
-        deposit_acc = get_account_by_code(db, contract.branch_id, "2150")
-        if not cash_acc or not deposit_acc:
-            return
-
-        entry_data = JournalEntryCreate(
-            branch_id=contract.branch_id,
-            entry_date=_date.today(),
-            reference=f"LC-DEP-{contract.contract_number}",
-            description=f"تأمين عقد إيجار — {contract.contract_number} ({contract.tenant_name})",
-            source="leasing",
-            source_id=contract.id,
-            lines=[
-                JournalLineCreate(account_id=cash_acc.id,    debit=amount,  credit=Decimal("0")),
-                JournalLineCreate(account_id=deposit_acc.id, debit=Decimal("0"), credit=amount),
-            ],
-        )
-        create_journal_entry(db, entry_data, contract.signed_by or 0)
-    except Exception:
-        pass
+    post_simple_revenue_journal(
+        db, contract.branch_id, _date.today(),
+        debit_account_code="1100", credit_account_code="2150",
+        amount=contract.security_deposit or Decimal("0"),
+        reference=f"LC-DEP-{contract.contract_number}",
+        description=f"تأمين عقد إيجار — {contract.contract_number} ({contract.tenant_name})",
+        source="leasing", source_id=contract.id,
+        created_by=contract.signed_by or 0,
+    )
 
 
 def _post_rent_collection_journal(db: "Session", source_obj, contract: "LeaseContract", collected_amount: Decimal) -> None:

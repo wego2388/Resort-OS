@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers'>('overview')
 
@@ -26,8 +25,7 @@ const ccTotal = ref(0)
 async function loadCostCenters() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/finance/cost-centers/report', {
-      headers: h,
+    const res = await api.get('/api/v1/finance/cost-centers/report', {
       params: { branch_id: branchId, date_from: ccDateFrom.value, date_to: ccDateTo.value },
     })
     ccLines.value = res.data.lines ?? []
@@ -48,8 +46,7 @@ async function loadTab(t: typeof tab.value) {
   loading.value = true
   try {
     if (t === 'overview') {
-      const res = await axios.get('/api/v1/finance/reports/income-statement', {
-        headers: h,
+      const res = await api.get('/api/v1/finance/reports/income-statement', {
         params: { branch_id: branchId, date_from: firstOfMonth, date_to: today },
       })
       financeData.value = {
@@ -58,10 +55,10 @@ async function loadTab(t: typeof tab.value) {
         net_income: Number(res.data.net_income),
       }
     } else if (t === 'checks') {
-      const res = await axios.get('/api/v1/finance/checks', { headers: h, params: { branch_id: branchId } })
+      const res = await api.get('/api/v1/finance/checks', { params: { branch_id: branchId } })
       checks.value = res.data.checks ?? res.data.items ?? res.data
     } else if (t === 'accounts') {
-      const res = await axios.get('/api/v1/finance/accounts', { headers: h, params: { branch_id: branchId } })
+      const res = await api.get('/api/v1/finance/accounts', { params: { branch_id: branchId } })
       accounts.value = res.data.accounts ?? res.data.items ?? res.data
     } else if (t === 'cost-centers') {
       await loadCostCenters()
@@ -75,7 +72,7 @@ async function advanceCheck(check: Check) {
   const next = flow[check.status]
   if (!next) return
   try {
-    await axios.patch(`/api/v1/finance/checks/${check.id}/status`, { to_status: next }, { headers: h })
+    await api.patch(`/api/v1/finance/checks/${check.id}/status`, { to_status: next })
     check.status = next
   } catch (e) { console.error(e) }
 }

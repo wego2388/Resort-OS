@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves'>('employees')
 
@@ -21,7 +20,7 @@ const loading = ref(false)
 async function fetchEmployees() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/employees', { headers: h, params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/hr/employees', { params: { branch_id: branchId } })
     employees.value = res.data.employees ?? res.data.items ?? res.data
   } catch (e) { console.error(e) }
   finally { loading.value = false }
@@ -30,7 +29,7 @@ async function fetchEmployees() {
 async function fetchPayroll() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/payroll/runs', { headers: h, params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/hr/payroll/runs', { params: { branch_id: branchId } })
     payrollRuns.value = res.data.runs ?? res.data.items ?? res.data
   } catch (e) { console.error(e) }
   finally { loading.value = false }
@@ -39,7 +38,7 @@ async function fetchPayroll() {
 async function fetchLeaves() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/leaves', { headers: h, params: { branch_id: branchId, status: 'pending' } })
+    const res = await api.get('/api/v1/hr/leaves', { params: { branch_id: branchId, status: 'pending' } })
     leaveRequests.value = res.data.requests ?? res.data.items ?? res.data
   } catch (e) { console.error(e) }
   finally { loading.value = false }
@@ -54,14 +53,14 @@ async function loadTab(t: typeof tab.value) {
 
 async function approveLeave(id: number) {
   try {
-    await axios.patch(`/api/v1/hr/leaves/${id}`, { status: 'approved' }, { headers: h })
+    await api.patch(`/api/v1/hr/leaves/${id}`, { status: 'approved' })
     leaveRequests.value = leaveRequests.value.filter(l => l.id !== id)
   } catch (e) { console.error(e) }
 }
 
 async function rejectLeave(id: number) {
   try {
-    await axios.patch(`/api/v1/hr/leaves/${id}`, { status: 'rejected' }, { headers: h })
+    await api.patch(`/api/v1/hr/leaves/${id}`, { status: 'rejected' })
     leaveRequests.value = leaveRequests.value.filter(l => l.id !== id)
   } catch (e) { console.error(e) }
 }

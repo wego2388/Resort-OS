@@ -70,6 +70,7 @@ class Booking(Base, TimestampMixin):
     source:          Mapped[str]          = mapped_column(String(30), default="direct")
     # direct|online|b2b|phone
     folio_id:        Mapped[int | None]   = mapped_column(ForeignKey("folios.id", ondelete="SET NULL"), nullable=True)
+    customer_id:     Mapped[int | None]   = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
     total_rate:      Mapped[Decimal]      = mapped_column(Numeric(12, 2), default=Decimal("0"))
     notes:           Mapped[str | None]   = mapped_column(Text, nullable=True)
     cancelled_at:    Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

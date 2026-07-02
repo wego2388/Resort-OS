@@ -116,6 +116,7 @@ class CafeOrder(Base, TimestampMixin):
     notes:          Mapped[str | None] = mapped_column(String(500), nullable=True)
     waiter_id:      Mapped[int | None] = mapped_column(Integer, nullable=True)
     folio_id:       Mapped[int | None] = mapped_column(Integer, nullable=True)
+    customer_id:    Mapped[int | None] = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
 
     table: Mapped["CafeTable"] = relationship("CafeTable", lazy="select")
     items: Mapped[list["CafeOrderItem"]] = relationship(

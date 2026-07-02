@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 import { AppModal, AppBadge } from '@resort-os/ui'
 import OrderDetailModal from '../../components/OrderDetailModal.vue'
 
@@ -13,7 +13,6 @@ interface HeldOrder {
 
 const router = useRouter()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getItem('access_token')}` }))
 
 const tables = ref<Table[]>([])
 const loading = ref(false)
@@ -31,8 +30,7 @@ function tableLabel(order: HeldOrder): string {
 
 async function loadHeldOrders() {
   try {
-    const { data } = await axios.get('/api/v1/restaurant/orders/held', {
-      headers: authHeaders.value,
+    const { data } = await api.get('/api/v1/restaurant/orders/held', {
       params: { branch_id: branchId },
     })
     heldOrders.value = data.items ?? data
@@ -83,8 +81,7 @@ function openTable(table: Table) {
 async function loadTables() {
   loading.value = true
   try {
-    const { data } = await axios.get('/api/v1/restaurant/tables', {
-      headers: authHeaders.value,
+    const { data } = await api.get('/api/v1/restaurant/tables', {
       params: { branch_id: branchId },
     })
     tables.value = data.tables ?? data.items ?? data

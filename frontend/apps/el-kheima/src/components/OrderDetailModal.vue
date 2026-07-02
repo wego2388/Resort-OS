@@ -10,9 +10,8 @@
 //    transition does, per services.update_order_status) — so resuming a
 //    held order chains both PATCH calls before the kitchen actually sees it.
 import { ref, computed, watch } from 'vue'
-import axios from 'axios'
 import { AppModal, AppButton, AppBadge } from '@resort-os/ui'
-import { useAuthStore } from '@resort-os/core'
+import { api, useAuthStore } from '@resort-os/core'
 
 interface OrderItemExtra { id: number; extra_id: number | null; extra_name: string; price_addition: number | string }
 interface OrderItem {
@@ -44,7 +43,6 @@ const props = defineProps<{ orderId: number | null; tableLabel?: string }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 
 const auth = useAuthStore()
-const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getItem('access_token')}` }))
 const canVoid = computed(() => auth.hasRole('cashier'))
 
 const order = ref<OrderDetail | null>(null)
@@ -70,7 +68,7 @@ async function loadOrder() {
   loading.value = true
   errorMsg.value = ''
   try {
-    const { data } = await axios.get(`/api/v1/restaurant/orders/${props.orderId}`, { headers: authHeaders.value })
+    const { data } = await api.get(`/api/v1/restaurant/orders/${props.orderId}`)
     order.value = data
   } catch (e: any) {
     errorMsg.value = e?.response?.data?.detail ?? 'تعذّر تحميل الطلب'
@@ -101,10 +99,10 @@ async function confirmVoid() {
   }
   busy.value = true
   try {
-    const { data } = await axios.patch(
+    const { data } = await api.patch(
       `/api/v1/restaurant/orders/${order.value.id}/items/${voidingItemId.value}/void`,
       { reason },
-      { headers: authHeaders.value },
+      {},
     )
     order.value = data
     cancelVoidPrompt()
@@ -120,10 +118,10 @@ async function confirmVoid() {
 
 async function setStatus(status: string) {
   if (!order.value) return
-  await axios.patch(
+  await api.patch(
     `/api/v1/restaurant/orders/${order.value.id}/status`,
     { status },
-    { headers: authHeaders.value },
+    {},
   )
 }
 

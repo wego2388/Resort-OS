@@ -136,6 +136,7 @@ def create_order(
     subtotal: Decimal, vat_amount: Decimal, service_charge: Decimal,
     total: Decimal, waiter_id: Optional[int], items_data: list[dict],
     status: str = "open",
+    customer_id: Optional[int] = None,
 ) -> CafeOrder:
     order = CafeOrder(
         branch_id=branch_id,
@@ -143,7 +144,7 @@ def create_order(
         order_type=order_type, table_id=table_id, notes=notes,
         subtotal=subtotal, vat_amount=vat_amount,
         service_charge=service_charge, total=total, waiter_id=waiter_id,
-        status=status,
+        status=status, customer_id=customer_id,
     )
     db.add(order); db.flush()
     for d in items_data:

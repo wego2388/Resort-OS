@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
 import ExtrasSelectionModal from '../../components/ExtrasSelectionModal.vue'
 
@@ -11,7 +11,6 @@ const router = useRouter()
 const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue } = useOfflineQueue()
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const authHeaders = computed(() => ({ Authorization: `Bearer ${localStorage.getItem('access_token')}` }))
 const tableId = computed(() => (props.tableId ? parseInt(props.tableId) : null))
 
 interface ExtraOption { id: number; name: string; name_ar?: string | null; price_addition: number | string; is_available: boolean }
@@ -94,11 +93,11 @@ async function loadData() {
   loading.value = true
   try {
     const requests = [
-      axios.get('/api/v1/restaurant/menu/categories', { headers: authHeaders.value, params: { branch_id: branchId } }),
-      axios.get('/api/v1/restaurant/menu/items',      { headers: authHeaders.value, params: { branch_id: branchId } }),
+      api.get('/api/v1/restaurant/menu/categories', { params: { branch_id: branchId } }),
+      api.get('/api/v1/restaurant/menu/items',      { params: { branch_id: branchId } }),
     ]
     if (tableId.value) {
-      requests.push(axios.get('/api/v1/restaurant/tables', { headers: authHeaders.value, params: { branch_id: branchId } }))
+      requests.push(api.get('/api/v1/restaurant/tables', { params: { branch_id: branchId } }))
     }
     const [catsRes, itemsRes, tablesRes] = await Promise.all(requests)
 
@@ -149,10 +148,10 @@ async function sendToKitchen() {
       // KitchenTicket is only ever created by the open→in_kitchen PATCH
       // (see services.update_order_status). Without this call the order
       // existed but the kitchen never saw it — a real pre-existing bug.
-      await axios.patch(
+      await api.patch(
         `/api/v1/restaurant/orders/${data.id}/status`,
         { status: 'in_kitchen' },
-        { headers: authHeaders.value },
+        {},
       )
       successMsg.value = 'تم إرسال الطلب للمطبخ ✓'
     }
@@ -179,10 +178,10 @@ async function holdOrder() {
   if (!hasItems.value || holding.value) return
   holding.value = true
   try {
-    await axios.post(
+    await api.post(
       `/api/v1/restaurant/orders/hold?branch_id=${branchId}`,
       buildOrderPayload(),
-      { headers: authHeaders.value },
+      {},
     )
     successMsg.value = 'اتحفظ الطلب — هيلاقيه في "الطلبات المعلّقة" ✓'
     cart.value = []

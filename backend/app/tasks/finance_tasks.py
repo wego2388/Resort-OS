@@ -36,9 +36,11 @@ def check_due_reminders(self):
 
 
 def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
-    """تذكيرات أقساط التايم شير."""
+    """تذكيرات أقساط التايم شير (نداء مبكر 3 أيام قبل الاستحقاق — النداء التاني
+    عند 7 أيام موجود في timeshare_tasks.send_installment_reminders)."""
     try:
-        from app.modules.timeshare.models import TimeshareInstallment  # noqa: PLC0415
+        from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment  # noqa: PLC0415
+        from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
         dues = (
             db.query(TimeshareInstallment)
             .filter(
@@ -49,7 +51,14 @@ def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
         )
         for inst in dues:
             logger.info("Timeshare installment due reminder: id=%s due=%s", inst.id, inst.due_date)
-            # TODO: WhatsApp/SMS notification
+            contract = db.query(TimeshareContract).filter(
+                TimeshareContract.id == inst.contract_id
+            ).first()
+            if contract and contract.customer_phone:
+                send_whatsapp_message(
+                    contract.customer_phone,
+                    f"تذكير أخير: قسط بقيمة {inst.amount:,.2f} ج.م مستحق بعد 3 أيام ({inst.due_date:%Y-%m-%d}).",
+                )
     except ImportError:
         pass
 
@@ -57,7 +66,8 @@ def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
 def _check_leasing_dues(db, branch_id: int, remind_date: date) -> None:
     """تذكيرات دفعات الإيجار."""
     try:
-        from app.modules.leasing.models import LeasePayment  # noqa: PLC0415
+        from app.modules.leasing.models import LeaseContract, LeasePayment  # noqa: PLC0415
+        from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
         dues = (
             db.query(LeasePayment)
             .filter(
@@ -68,5 +78,11 @@ def _check_leasing_dues(db, branch_id: int, remind_date: date) -> None:
         )
         for p in dues:
             logger.info("Lease payment due reminder: id=%s due=%s", p.id, p.due_date)
+            contract = db.query(LeaseContract).filter(LeaseContract.id == p.contract_id).first()
+            if contract and contract.tenant_phone:
+                send_whatsapp_message(
+                    contract.tenant_phone,
+                    f"تذكير: دفعة إيجار بقيمة {p.amount:,.2f} ج.م مستحقة يوم {p.due_date:%Y-%m-%d}.",
+                )
     except ImportError:
         pass

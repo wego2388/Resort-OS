@@ -60,6 +60,7 @@ class BeachTransaction(Base, TimestampMixin):
     voided_by:       Mapped[int | None]      = mapped_column(Integer, nullable=True)
     voided_reason:   Mapped[str | None]      = mapped_column(String(200), nullable=True)
     shift_id:        Mapped[int | None]      = mapped_column(ForeignKey("cashier_shifts.id", ondelete="SET NULL"), nullable=True, index=True)
+    customer_id:     Mapped[int | None]      = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
 
 
 class B2BContract(Base, TimestampMixin):

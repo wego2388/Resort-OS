@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const token = localStorage.getItem('access_token') ?? ''
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const h = { Authorization: `Bearer ${token}` }
 
 interface HKTask {
   id: number
@@ -72,8 +70,7 @@ const statusCounts = computed(() =>
 async function fetchTasks() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/pms/housekeeping/tasks', {
-      headers: h,
+    const res = await api.get('/api/v1/pms/housekeeping/tasks', {
       params: { branch_id: branchId }
     })
     tasks.value = res.data.tasks ?? res.data.items ?? res.data
@@ -85,7 +82,7 @@ async function advanceStatus(task: HKTask) {
   const next = statusFlow[task.status]
   if (!next) return
   try {
-    await axios.patch(`/api/v1/pms/housekeeping/tasks/${task.id}`, { status: next }, { headers: h })
+    await api.patch(`/api/v1/pms/housekeeping/tasks/${task.id}`, { status: next })
     task.status = next
     if (next === 'available') {
       setTimeout(() => {

@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
+import { api, useResortWebSocket } from '@resort-os/core'
 
-const token = localStorage.getItem('access_token') ?? ''
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const headers = computed(() => ({ Authorization: `Bearer ${token}` }))
 
 type TicketStatus = 'pending' | 'in_progress' | 'done'
 interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null }
@@ -20,6 +18,16 @@ const now = ref(new Date())
 const isConnected = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
 let clockInterval: ReturnType<typeof setInterval>
+
+// نفس مبدأ KitchenDisplayView: WebSocket لحظي بإعادة اتصال تلقائية + polling
+// كل 15 ثانية كـ fallback احتياطي
+const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+const { status: wsStatus, onMessage } = useResortWebSocket(
+  `${wsProtocol}//${location.host}/api/v1/restaurant/ws/kds/${branchId}`,
+)
+onMessage((data: any) => {
+  if (data?.type === 'tickets_updated') fetchTickets()
+})
 
 const filteredTickets = computed(() =>
   filterStatus.value
@@ -57,12 +65,10 @@ async function fetchTickets() {
     // البار بيستقبل من مصدرين: طلبات الكافيه كلها (مفيش تقسيم محطات فيها) + أصناف
     // البار اللي اتطلبت من قائمة المطعم نفسها (مشروبات على طاولة مطعم مثلاً).
     const [cafeRes, restaurantBarRes] = await Promise.all([
-      axios.get('/api/v1/restaurant/kitchen/tickets', {
-        headers: headers.value,
+      api.get('/api/v1/restaurant/kitchen/tickets', {
         params: { branch_id: branchId, module: 'cafe' },
       }),
-      axios.get('/api/v1/restaurant/kitchen/tickets', {
-        headers: headers.value,
+      api.get('/api/v1/restaurant/kitchen/tickets', {
         params: { branch_id: branchId, module: 'restaurant', stations: 'bar' },
       }),
     ])
@@ -78,11 +84,9 @@ async function fetchTickets() {
 async function advanceStatus(ticket: BarTicket) {
   const next: TicketStatus = ticket.status === 'pending' ? 'in_progress' : 'done'
   try {
-    await axios.patch(
+    await api.patch(
       `/api/v1/restaurant/kitchen/tickets/${ticket.id}/status`,
-      { status: next },
-      { headers: headers.value }
-    )
+      { status: next })
     ticket.status = next
     if (next === 'done') {
       setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticket.id) }, 1800)
@@ -114,6 +118,10 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
         <div class="flex items-center gap-2">
           <div :class="['w-2.5 h-2.5 rounded-full', isConnected ? 'bg-cyan-400 animate-pulse' : 'bg-red-400']" />
           <span class="text-sm text-slate-300">{{ isConnected ? 'متصل' : 'منقطع' }}</span>
+        </div>
+        <div class="flex items-center gap-1.5" :title="wsStatus === 'connected' ? 'تحديث لحظي شغال' : 'بيحاول يعيد الاتصال...'">
+          <div :class="['w-2 h-2 rounded-full', wsStatus === 'connected' ? 'bg-cyan-300' : 'bg-slate-500 animate-pulse']" />
+          <span class="text-xs text-slate-400">{{ wsStatus === 'connected' ? 'لحظي' : '...جاري إعادة الاتصال' }}</span>
         </div>
         <h1 class="text-xl font-black tracking-wide">🥤 شاشة البار — Bar KDS</h1>
         <div class="flex gap-3 text-sm">

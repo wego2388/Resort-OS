@@ -38,7 +38,11 @@ class BeachSellRequest(BaseModel):
     quantity:        int = Field(1, ge=1)
     cashier_id:      Optional[int] = None
     folio_id:        Optional[int] = None
+    room_id:         Optional[int] = None
+    # لو موجود ومفيش folio_id مباشر: يدوّر على فوليو الضيف المقيم في الغرفة دي
+    # (Charge to Room) — راجع pms.services.find_active_folio_for_room
     b2b_contract_id: Optional[int] = None
+    customer_id:     Optional[int] = None
     notes:           Optional[str] = None
 
 
@@ -56,6 +60,7 @@ class BeachTransactionRead(BaseModel):
     cashier_id:      Optional[int]
     folio_id:        Optional[int]
     b2b_contract_id: Optional[int]
+    customer_id:     Optional[int] = None
     notes:           Optional[str]
     voided_at:       Optional[datetime]
     voided_reason:   Optional[str] = None

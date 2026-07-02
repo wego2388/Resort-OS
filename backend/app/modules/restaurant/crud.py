@@ -172,6 +172,7 @@ def create_order_with_items(
     items_data: list[dict],
     client_local_id: Optional[str] = None,
     status: str = "open",
+    customer_id: Optional[int] = None,
 ) -> Order:
     order = Order(
         branch_id=branch_id,
@@ -187,6 +188,7 @@ def create_order_with_items(
         waiter_id=waiter_id,
         client_local_id=client_local_id,
         status=status,
+        customer_id=customer_id,
     )
     db.add(order)
     db.flush()

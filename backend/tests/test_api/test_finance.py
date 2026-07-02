@@ -271,6 +271,114 @@ class TestAccounting:
         with pytest.raises(ValueError, match="غير متوازن"):
             services.post_journal_entry(db, data, user_id=1)
 
+    def test_post_simple_revenue_journal_creates_balanced_entry(self, db: Session, branch):
+        """الدالة المشتركة اللي بتحل محل النسخ المكررة في 6 موديولات (مطعم/كافيه/
+        شاطئ/PMS/تايم شير/إيجارات)."""
+        from app.modules.finance.schemas import AccountCreate as AC
+        cash = crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        rev = crud.create_account(db, AC(branch_id=branch.id, code="4200", name="Restaurant Revenue", account_type="revenue"))
+        db.commit()
+
+        entry = services.post_simple_revenue_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", credit_account_code="4200",
+            amount=Decimal("350.50"), reference="ORD-TEST-001",
+            description="اختبار الدالة المشتركة", source="restaurant", source_id=99,
+        )
+        assert entry is not None
+        assert entry.source == "restaurant"
+        assert entry.source_id == 99
+        lines = {l.account_id: (l.debit, l.credit) for l in entry.lines}
+        assert lines[cash.id] == (Decimal("350.50"), Decimal("0"))
+        assert lines[rev.id] == (Decimal("0"), Decimal("350.50"))
+
+    def test_post_simple_revenue_journal_noop_when_account_missing(self, db: Session, branch):
+        result = services.post_simple_revenue_journal(
+            db, branch.id, date.today(),
+            debit_account_code="9999", credit_account_code="8888",
+            amount=Decimal("100"), reference="X", description="X", source="x", source_id=None,
+        )
+        assert result is None
+
+    def test_post_simple_revenue_journal_converts_foreign_currency(self, db: Session, branch):
+        """قيد بعملة غير EGP — السطور المخزّنة لازم تكون EGP-equivalent (عشان
+        التقارير المجمّعة تفضل صح)، والقيد نفسه يسجّل العملة الأصلية وسعر
+        الصرف. 100 دولار × 48 = 4800 جنيه بالظبط (سعر الصرف الافتراضي)."""
+        from app.modules.finance.schemas import AccountCreate as AC
+        cash = crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        rev = crud.create_account(db, AC(branch_id=branch.id, code="4100", name="Room Revenue", account_type="revenue"))
+        db.commit()
+
+        entry = services.post_simple_revenue_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", credit_account_code="4100",
+            amount=Decimal("100"), reference="CHK-USD-001",
+            description="حجز بالدولار", source="pms", source_id=1,
+            currency="USD",
+        )
+        assert entry is not None
+        assert entry.currency == "USD"
+        assert entry.fx_rate == Decimal("48.000000")
+        lines = {l.account_id: (l.debit, l.credit) for l in entry.lines}
+        assert lines[cash.id] == (Decimal("4800.00"), Decimal("0"))
+        assert lines[rev.id] == (Decimal("0"), Decimal("4800.00"))
+
+    def test_post_simple_revenue_journal_noop_when_amount_zero(self, db: Session, branch):
+        from app.modules.finance.schemas import AccountCreate as AC
+        crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        crud.create_account(db, AC(branch_id=branch.id, code="4200", name="Revenue", account_type="revenue"))
+        db.commit()
+        result = services.post_simple_revenue_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", credit_account_code="4200",
+            amount=Decimal("0"), reference="X", description="X", source="x", source_id=None,
+        )
+        assert result is None
+
+    def test_close_period_writes_audit_log(self, db: Session, branch):
+        from app.modules.core.crud import list_audit_logs
+        from wego_core.models.user import User
+        from wego_core.security import get_password_hash
+        user = User(email=f"closer-{uuid.uuid4().hex[:6]}@test.local",
+                    password_hash=get_password_hash("Test@12345"),
+                    full_name="Closer", role="admin", is_active=True)
+        db.add(user); db.flush()
+
+        today = date.today()
+        services.close_accounting_period(db, branch.id, today.year, today.month, closed_by=user.id)
+        logs, _ = list_audit_logs(db, branch_id=branch.id, entity_type="accounting_period")
+        assert any(l.action == "close_period" and l.user_id == user.id for l in logs)
+
+    def test_handover_note_visible_to_next_shift_opener(self, db: Session, branch):
+        assert services.get_latest_handover_note(db, branch.id) is None
+
+        shift = services.open_shift(
+            db, cashier_id=30, opened_by=30,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        services.close_shift(
+            db, shift.id, closed_by=30,
+            data=CashierShiftClose(
+                counted_cash=Decimal("0"),
+                handover_note="فيه عميل هيجي الصبح يستلم طلبية معلّقة، خد بالك",
+            ),
+        )
+        note = services.get_latest_handover_note(db, branch.id)
+        assert note == "فيه عميل هيجي الصبح يستلم طلبية معلّقة، خد بالك"
+
+    def test_handover_note_uses_most_recently_closed_shift(self, db: Session, branch):
+        s1 = services.open_shift(db, cashier_id=31, opened_by=31,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")))
+        services.close_shift(db, s1.id, closed_by=31,
+            data=CashierShiftClose(counted_cash=Decimal("0"), handover_note="ملاحظة قديمة"))
+
+        s2 = services.open_shift(db, cashier_id=32, opened_by=32,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")))
+        services.close_shift(db, s2.id, closed_by=32,
+            data=CashierShiftClose(counted_cash=Decimal("0"), handover_note="ملاحظة جديدة"))
+
+        assert services.get_latest_handover_note(db, branch.id) == "ملاحظة جديدة"
+
     def test_validate_period_open_blocks_closed(self, db: Session, branch):
         # اقفل الفترة الحالية
         today = date.today()

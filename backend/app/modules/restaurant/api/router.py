@@ -223,12 +223,17 @@ def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 @router.patch("/restaurant/orders/{order_id}/status",
               response_model=OrderRead)
-def update_order_status(order_id: int, data: OrderStatusUpdate,
+async def update_order_status(order_id: int, data: OrderStatusUpdate,
                         db: DbDep, _=Depends(get_waiter_user)):
     try:
-        return services.update_order_status(db, order_id, data.status)
+        order = services.update_order_status(db, order_id, data.status, charge_to_room_id=data.charge_to_room_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if data.status == "in_kitchen":
+        # تذاكر جديدة اتعملت للمطبخ — نبث تحديث لأي شاشة KDS متصلة بدل ما
+        # تستنى الـ polling الدوري (15 ثانية) عشان تشوفها
+        await restaurant_manager.broadcast(str(order.branch_id), {"type": "tickets_updated", "order_id": order.id})
+    return order
 
 
 @router.patch("/restaurant/orders/{order_id}/items/{item_id}/void",
@@ -284,7 +289,7 @@ def list_kitchen_tickets(
 
 @router.patch("/restaurant/kitchen/tickets/{ticket_id}/status",
               response_model=KitchenTicketRead)
-def update_ticket_status(
+async def update_ticket_status(
     ticket_id: int,
     data: TicketStatusUpdate,
     db: DbDep,
@@ -296,6 +301,7 @@ def update_ticket_status(
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"التذكرة {ticket_id} غير موجودة")
     db.commit()
     db.refresh(ticket)
+    await restaurant_manager.broadcast(str(ticket.branch_id), {"type": "tickets_updated", "ticket_id": ticket.id})
     return KitchenTicketRead.model_validate(ticket)
 
 

@@ -1,7 +1,7 @@
 """app/modules/beach/services.py — Business logic"""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -61,6 +61,13 @@ def sell_ticket(
 ) -> BeachTransaction:
     tx_date = tx_date or date.today()
 
+    folio_id = data.folio_id
+    if not folio_id and data.room_id:
+        from app.modules.pms.services import find_active_folio_for_room  # noqa: PLC0415
+        folio_id = find_active_folio_for_room(db, branch_id, data.room_id)
+        if not folio_id:
+            raise ValueError(f"مفيش ضيف مسجّل دخول في الغرفة {data.room_id} حاليًا")
+
     # جلب/إنشاء inventory
     inv_row = crud.get_or_create_inventory(db, branch_id, tx_date)
     inv_state = BeachInventoryState(
@@ -106,13 +113,35 @@ def sell_ticket(
         "surge_applied":   surge_pct > 0,
         "tx_date":         tx_date,
         "cashier_id":      data.cashier_id,
-        "folio_id":        data.folio_id,
+        "folio_id":        folio_id,
         "b2b_contract_id": data.b2b_contract_id,
+        "customer_id":     data.customer_id,
         "notes":           data.notes,
         "shift_id":        shift_id,
     })
 
-    _post_beach_revenue_journal(db, tx)
+    # قيد الإيراد بس لو مفيش folio (كاش فوري) — لو محمّل على غرفة، بننشر
+    # charge على الفوليو بدل ما نسجّل إيراد فوري، والإيراد بيتسجّل وقت
+    # تسوية الفوليو كله عند خروج الضيف (نفس منطق restaurant/cafe)
+    if tx.folio_id:
+        try:
+            from app.modules.finance.crud import add_charge  # noqa: PLC0415
+            from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
+            add_charge(db, tx.folio_id, FolioChargeCreate(
+                charge_type="beach",
+                description=f"شاطئ — {tx.tx_type} × {tx.quantity}",
+                amount=tx.total_amount,
+                vat_amount=tx.vat_amount,
+                posted_at=datetime.combine(tx.tx_date, datetime.min.time()),
+                ref_beach_tx_id=tx.id,
+            ))
+        except Exception:
+            pass  # ميمنعش إتمام البيع لو فشل نشر الـ charge على الفوليو
+    else:
+        _post_beach_revenue_journal(db, tx)
+    if tx.customer_id:
+        from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
+        record_customer_visit(db, tx.customer_id, tx.total_amount + tx.vat_amount, tx.tx_date)
 
     db.commit()
     db.refresh(tx)
@@ -120,37 +149,17 @@ def sell_ticket(
 
 
 def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
-    """Dr. Cash (1100) / Cr. Beach Revenue (4300) — نفس نمط
-    pms.services._post_checkout_journal: يبتلع أي خطأ حتى لا يمنع إتمام
-    البيع الفعلي إذا فشل الترحيل المحاسبي."""
-    try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
-        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
+    """Dr. Cash (1100) / Cr. Beach Revenue (4300)."""
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
-        cash_acc = get_account_by_code(db, tx.branch_id, "1100")
-        rev_acc  = get_account_by_code(db, tx.branch_id, "4300")
-        if not cash_acc or not rev_acc:
-            return
-
-        amount = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
-        if amount <= 0:
-            return
-
-        entry_data = JournalEntryCreate(
-            branch_id=tx.branch_id,
-            entry_date=tx.tx_date,
-            reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
-            description=f"إيرادات شاطئ — {tx.tx_type}",
-            source="beach",
-            source_id=tx.id,
-            lines=[
-                JournalLineCreate(account_id=cash_acc.id, debit=amount,  credit=Decimal("0")),
-                JournalLineCreate(account_id=rev_acc.id,  debit=Decimal("0"), credit=amount),
-            ],
-        )
-        create_journal_entry(db, entry_data, 0)
-    except Exception:
-        pass
+    post_simple_revenue_journal(
+        db, tx.branch_id, tx.tx_date,
+        debit_account_code="1100", credit_account_code="4300",
+        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
+        description=f"إيرادات شاطئ — {tx.tx_type}",
+        source="beach", source_id=tx.id,
+    )
 
 
 def b2b_checkin(
@@ -201,12 +210,31 @@ def b2b_checkin(
 
     crud.increment_b2b_checkins(db, data.contract_id, tx_date, data.guests_count, total)
 
-    # تحذير الحصة (warning إذا بقي ≤ 5)
+    # تحذير الحصة (warning إذا بقي ≤ 5) — لازم يتحسب على العدد بعد الزيادة
+    # (increment_b2b_checkins فوق)، وإلا التحذير كان هيتأخر تسجيل دخول واحد
+    # كامل عن اللحظة الفعلية اللي الحصة توصل فيها للحد (باج توقيت حقيقي).
     updated_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
-    if contract_state.quota_warning and not updated_day.notified_quota_warning:
+    updated_state = B2BContractState(
+        contract_id=contract_row.id,
+        hotel_name=contract_row.hotel_name,
+        daily_quota=contract_row.daily_quota,
+        checked_in_today=updated_day.checked_in_count,
+        entry_price=contract_row.entry_price,
+        towel_price=contract_row.towel_price,
+        is_active=contract_row.is_active,
+    )
+    if updated_state.quota_warning and not updated_day.notified_quota_warning:
         updated_day.notified_quota_warning = True
         db.flush()
-        # TODO: Celery task لإرسال WhatsApp
+        if contract_row.contact_phone:
+            try:
+                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+                send_whatsapp_message(
+                    contract_row.contact_phone,
+                    f"تنبيه: حصة {contract_row.hotel_name} اليومية في الخيمة بيتش أوشكت على الانتهاء (≤5 متبقي).",
+                )
+            except Exception:
+                pass  # ميمنعش إتمام تسجيل الدخول لو فشل إرسال التنبيه
 
     tx = crud.create_transaction(db, {
         "branch_id":       branch_id,

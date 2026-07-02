@@ -66,6 +66,8 @@ def notify_overdue_work_orders(self):
         with SessionLocal() as db:
             try:
                 from app.modules.maintenance.models import WorkOrder  # noqa: PLC0415
+                from app.modules.hr.models import Employee  # noqa: PLC0415
+                from wego_core.whatsapp.service import notify_admin, send_whatsapp_message  # noqa: PLC0415
 
                 overdue = (
                     db.query(WorkOrder)
@@ -81,7 +83,17 @@ def notify_overdue_work_orders(self):
                         "Overdue WO: id=%s title=%s branch=%s priority=%s scheduled=%s",
                         wo.id, wo.title, wo.branch_id, wo.priority, wo.scheduled_date,
                     )
-                    # TODO: إشعار للمشرف المسؤول
+                    sent = False
+                    if wo.assigned_to:
+                        emp = db.query(Employee).filter(Employee.id == wo.assigned_to).first()
+                        if emp and emp.phone:
+                            send_whatsapp_message(
+                                emp.phone,
+                                f"أمر صيانة متأخر: {wo.title} — كان مجدول {wo.scheduled_date:%Y-%m-%d}.",
+                            )
+                            sent = True
+                    if not sent:
+                        notify_admin(f"أمر صيانة متأخر بلا موظف مسؤول: {wo.title} (WO #{wo.id}).")
 
                 logger.info("Overdue work orders found: %s", len(overdue))
 

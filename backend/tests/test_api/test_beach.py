@@ -370,6 +370,22 @@ class TestB2BQuotaStatus:
         assert status[0]["remaining_quota"] == 4
         assert status[0]["quota_warning"] is True
 
+    def test_quota_warning_sends_whatsapp_to_contract_contact(self, db):
+        from unittest.mock import patch
+        branch = make_branch(db)
+        contract = make_contract(db, branch, quota=8)
+        contract.contact_phone = "01055555555"
+        db.commit()
+
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=4)  # remaining = 4 → warning
+        with patch("wego_core.whatsapp.service.send_whatsapp_message", return_value=True) as mock_send:
+            services.b2b_checkin(db, branch.id, req)
+
+        mock_send.assert_called_once()
+        phone_arg, message_arg = mock_send.call_args[0]
+        assert phone_arg == "01055555555"
+        assert contract.hotel_name in message_arg
+
     def test_quota_exhausted(self, db):
         branch = make_branch(db)
         contract = make_contract(db, branch, quota=3)
@@ -682,6 +698,21 @@ class TestBeachRevenueJournalPosting:
         revenue_line = next(l for l in entry.lines if l.account_id == revenue.id)
         assert cash_line.debit == expected_amount
         assert revenue_line.credit == expected_amount
+
+    def test_sell_ticket_updates_linked_customer_stats(self, db):
+        from app.modules.crm import services as crm_services
+        from app.modules.crm.schemas import CustomerCreate
+
+        branch = make_branch(db)
+        customer = crm_services.create_customer(db, CustomerCreate(
+            branch_id=branch.id, full_name="عميل شاطئ دائم",
+        ))
+        tx = services.sell_ticket(db, branch.id, BeachSellRequest(
+            tx_type="entry", quantity=2, customer_id=customer.id,
+        ))
+        db.refresh(customer)
+        assert customer.visits_count == 1
+        assert customer.total_spent == tx.total_amount + tx.vat_amount
 
     def test_b2b_checkin_posts_journal_entry(self, db):
         from app.modules.finance import crud as finance_crud

@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const token = localStorage.getItem('access_token') ?? ''
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const h = { Authorization: `Bearer ${token}` }
 
 interface Room {
   id: number
@@ -41,7 +39,7 @@ const counts = computed(() =>
 async function fetchRooms() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/pms/rooms', { headers: h, params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId } })
     rooms.value = res.data.rooms ?? res.data.items ?? res.data
   } catch(e) { console.error(e) }
   finally { loading.value = false }

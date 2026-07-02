@@ -146,9 +146,12 @@ class CashCountLineRead(BaseModel):
 
 
 class CashierShiftClose(BaseModel):
-    counted_cash: Optional[Decimal] = Field(None, ge=0)
-    cash_count:   Optional[list[CashCountLine]] = None
-    notes:        Optional[str] = Field(None, max_length=1000)
+    counted_cash:  Optional[Decimal] = Field(None, ge=0)
+    cash_count:    Optional[list[CashCountLine]] = None
+    notes:         Optional[str] = Field(None, max_length=1000)
+    handover_note: Optional[str] = Field(None, max_length=1000)
+    # ملاحظة تسليم — بتظهر لصاحب الوردية الجاية في نفس الفرع (راجع
+    # GET /finance/shifts/handover-note) قبل ما يفتح ورديته
 
     @model_validator(mode="after")
     def _require_counted_amount(self) -> "CashierShiftClose":
@@ -172,6 +175,7 @@ class CashierShiftRead(BaseModel):
     counted_cash:  Optional[Decimal]
     variance:      Optional[Decimal]
     notes:         Optional[str]
+    handover_note: Optional[str] = None
     created_at:    datetime
 
 
@@ -257,6 +261,11 @@ class JournalEntryCreate(BaseModel):
     description: str = Field(..., max_length=500)
     source:      Optional[str] = Field(None, max_length=50)
     source_id:   Optional[int] = None
+    currency:    str = Field("EGP", max_length=3)
+    fx_rate:     Decimal = Field(Decimal("1"), gt=0)
+    # مبالغ lines لازم تكون بالفعل EGP-equivalent (بعد التحويل) — currency/fx_rate
+    # هنا بيسجّلوا بس عملة القيد الأصلية وسعر التحويل وقتها للعرض/المراجعة، مش
+    # للتحويل التلقائي وقت الإدخال.
     lines:       list[JournalLineCreate] = Field(..., min_length=2)
 
 
@@ -271,6 +280,8 @@ class JournalEntryRead(BaseModel):
     created_by:  int
     source:      Optional[str]
     source_id:   Optional[int]
+    currency:    str
+    fx_rate:     Decimal
     lines:       list[JournalLineRead] = []
     created_at:  datetime
     updated_at:  datetime

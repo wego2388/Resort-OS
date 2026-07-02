@@ -134,6 +134,13 @@ def open_shift(data: CashierShiftOpen, db: DbDep, user=Depends(get_cashier_user)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+@router.get("/finance/shifts/handover-note")
+def get_handover_note(db: DbDep, _=Depends(get_cashier_user), branch_id: int = Query(...)):
+    """آخر ملاحظة تسليم من آخر وردية مقفولة في الفرع — يشوفها الكاشير قبل
+    ما يفتح ورديته الجديدة."""
+    return {"handover_note": services.get_latest_handover_note(db, branch_id)}
+
+
 @router.get("/finance/shifts/current", response_model=CashierShiftRead)
 def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int = Query(...)):
     shift = crud.get_open_shift(db, branch_id, user.id)

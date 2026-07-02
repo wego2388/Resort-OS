@@ -64,12 +64,13 @@ def payroll_reminder(self):
         today = date.today()
         with SessionLocal() as db:
             branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
+            from wego_core.whatsapp.service import notify_admin  # noqa: PLC0415
             for branch in branches:
                 logger.info(
                     "Payroll reminder: branch=%s month=%s/%s",
                     branch.id, today.month, today.year,
                 )
-                # TODO: إرسال إشعار للمدير
+                notify_admin(f"تذكير: موعد إعداد كشف رواتب شهر {today.month}/{today.year} — فرع #{branch.id}.")
     except Exception as exc:
         logger.error("payroll_reminder failed: %s", exc)
 

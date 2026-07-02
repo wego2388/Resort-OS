@@ -41,6 +41,20 @@ def update_customer(db: Session, customer_id: int, data: CustomerUpdate) -> Cust
     return obj
 
 
+def record_customer_visit(db: Session, customer_id: int, amount, visit_date: date) -> None:
+    """يُستدعى من موديولات تانية (مطعم/كافيه/شاطئ/PMS) عند إتمام دفع مرتبط
+    بعميل CRM — بيحدّث total_spent/visits_count/last_visit. بيبتلع أي خطأ
+    عمدًا (عميل محذوف مثلاً) عشان فشل تحديث إحصائية CRM ميمنعش إتمام الدفع
+    الفعلي، نفس فلسفة post_simple_revenue_journal في finance."""
+    try:
+        customer = crud.get_customer(db, customer_id)
+        if not customer:
+            return
+        crud.update_customer_stats(db, customer, amount, visit_date)
+    except Exception:
+        pass
+
+
 def blacklist_customer(db: Session, customer_id: int, req: BlacklistRequest) -> Customer:
     customer = get_customer_or_404(db, customer_id)
     if customer.blacklisted:

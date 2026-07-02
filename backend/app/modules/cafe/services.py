@@ -106,6 +106,7 @@ def create_order(
         service_charge=svc_charge, total=total,
         waiter_id=waiter_id, items_data=items_data,
         status="held" if hold else "open",
+        customer_id=data.customer_id,
     )
 
     if data.table_id and data.order_type == "dine_in":
@@ -145,10 +146,20 @@ def generate_receipt_pdf(db: Session, order_id: int) -> bytes:
     )
 
 
-def update_order_status(db: Session, order_id: int, new_status: str) -> CafeOrder:
+def update_order_status(
+    db: Session, order_id: int, new_status: str, charge_to_room_id: Optional[int] = None,
+) -> CafeOrder:
     order = _get_order_or_404(db, order_id)
     if order.status in ("paid", "cancelled"):
         raise ValueError(f"لا يمكن تغيير حالة طلب '{order.status}'")
+
+    if new_status == "paid" and charge_to_room_id and not order.folio_id:
+        from app.modules.pms.services import find_active_folio_for_room  # noqa: PLC0415
+        folio_id = find_active_folio_for_room(db, order.branch_id, charge_to_room_id)
+        if not folio_id:
+            raise ValueError(f"مفيش ضيف مسجّل دخول في الغرفة {charge_to_room_id} حاليًا")
+        order.folio_id = folio_id
+
     order = crud.update_order_status(db, order, new_status)
 
     # إرسال ticket للمطبخ عند تحويل الطلب لـ in_kitchen
@@ -185,7 +196,7 @@ def update_order_status(db: Session, order_id: int, new_status: str) -> CafeOrde
             from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
             charge_data = FolioChargeCreate(
                 charge_type="cafe",
-                description=f"Ordine {order.order_number}",
+                description=f"طلب {order.order_number}",
                 amount=order.subtotal,
                 vat_amount=order.vat_amount,
                 posted_at=datetime.utcnow(),
@@ -193,12 +204,17 @@ def update_order_status(db: Session, order_id: int, new_status: str) -> CafeOrde
             )
             add_charge(db, order.folio_id, charge_data)
         except Exception:
-            pass  # non bloccare il pagamento se il folio fallisce
+            pass  # ميمنعش إتمام الدفع لو فشل نشر الـ charge على الفوليو
 
-    # قيد إيراد الكافيه + خصم المخزون عند الدفع
+    # قيد إيراد الكافيه (لو مفيش folio — راجع نفس الملاحظة في restaurant.services)
+    # + خصم المخزون + تحديث إحصائيات العميل عند الدفع
     if new_status == "paid":
-        _post_order_revenue_journal(db, order)
         _deduct_inventory_for_order(db, order)
+        if not order.folio_id:
+            _post_order_revenue_journal(db, order)
+        if order.customer_id:
+            from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
+            record_customer_visit(db, order.customer_id, order.total, order.created_at.date())
 
     db.commit()
     db.refresh(order)
@@ -237,38 +253,18 @@ def _deduct_inventory_for_order(db: Session, order: CafeOrder) -> None:
 
 
 def _post_order_revenue_journal(db: Session, order: "CafeOrder") -> None:
-    """Dr. Cash (1100) / Cr. Cafe Revenue (4400) — نفس نمط
-    pms.services._post_checkout_journal: يبتلع أي خطأ حتى لا يمنع إتمام
-    الدفع الفعلي إذا فشل الترحيل المحاسبي."""
-    try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
-        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
-        from datetime import date as _date  # noqa: PLC0415
+    """Dr. Cash (1100) / Cr. Cafe Revenue (4400)."""
+    from datetime import date as _date  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
-        cash_acc = get_account_by_code(db, order.branch_id, "1100")
-        rev_acc  = get_account_by_code(db, order.branch_id, "4400")
-        if not cash_acc or not rev_acc:
-            return
-
-        amount = order.total or Decimal("0")
-        if amount <= 0:
-            return
-
-        entry_data = JournalEntryCreate(
-            branch_id=order.branch_id,
-            entry_date=_date.today(),
-            reference=f"ORD-{order.order_number}",
-            description=f"إيرادات كافيه — {order.order_number}",
-            source="cafe",
-            source_id=order.id,
-            lines=[
-                JournalLineCreate(account_id=cash_acc.id, debit=amount,  credit=Decimal("0")),
-                JournalLineCreate(account_id=rev_acc.id,  debit=Decimal("0"), credit=amount),
-            ],
-        )
-        create_journal_entry(db, entry_data, 0)
-    except Exception:
-        pass
+    post_simple_revenue_journal(
+        db, order.branch_id, _date.today(),
+        debit_account_code="1100", credit_account_code="4400",
+        amount=order.total or Decimal("0"),
+        reference=f"ORD-{order.order_number}",
+        description=f"إيرادات كافيه — {order.order_number}",
+        source="cafe", source_id=order.id,
+    )
 
 
 def void_order_item(db: Session, order_id: int, item_id: int, reason: str, voided_by: int) -> CafeOrder:

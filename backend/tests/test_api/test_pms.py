@@ -205,6 +205,30 @@ class TestCheckinCheckout:
         # room moves to checkout_pending, awaiting housekeeping
         assert room.status == "checkout_pending"
 
+    def test_checkout_updates_linked_customer_stats(self, db):
+        from app.modules.crm import services as crm_services
+        from app.modules.crm.schemas import CustomerCreate
+
+        branch = make_branch(db)
+        customer = crm_services.create_customer(db, CustomerCreate(
+            branch_id=branch.id, full_name="نزيل دائم",
+        ))
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        data = BookingCreate(
+            branch_id=branch.id, guest_name="نزيل دائم", guest_phone="01000000099",
+            check_in=date.today() + timedelta(days=1),
+            check_out=date.today() + timedelta(days=3),
+            adults=2, children=0, room_ids=[room.id], customer_id=customer.id,
+        )
+        booking = services.create_booking(db, data)
+        services.checkin_booking(db, booking.id)
+        services.checkout_booking(db, booking.id)
+
+        db.refresh(customer)
+        assert customer.visits_count == 1
+        assert customer.total_spent == booking.total_rate
+
     def test_cannot_checkout_without_checkin(self, db):
         branch = make_branch(db)
         rt = make_room_type(db, branch)

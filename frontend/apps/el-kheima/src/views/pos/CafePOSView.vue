@@ -1,11 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const authHeaders = computed(() => ({
-  Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-}))
+const authHeaders = computed(() => ({}))
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Category { id: number; name: string; name_ar: string }
@@ -117,12 +115,10 @@ async function loadData() {
   loading.value = true
   try {
     const [catsRes, itemsRes] = await Promise.all([
-      axios.get('/api/v1/cafe/categories', {
-        headers: authHeaders.value,
+      api.get('/api/v1/cafe/categories', {
         params: { branch_id: branchId },
       }),
-      axios.get('/api/v1/cafe/items', {
-        headers: authHeaders.value,
+      api.get('/api/v1/cafe/items', {
         params: { branch_id: branchId },
       }),
     ])
@@ -156,15 +152,13 @@ async function submitOrder() {
       })),
     }
 
-    const { data } = await axios.post('/api/v1/cafe/orders', payload, {
-      headers: authHeaders.value,
-    })
+    const { data } = await api.post('/api/v1/cafe/orders', payload, {
+      })
 
     const orderId = data.id ?? data.order_id
     if (orderId) {
       try {
-        const receiptRes = await axios.get(`/api/v1/cafe/orders/${orderId}/receipt`, {
-          headers: authHeaders.value,
+        const receiptRes = await api.get(`/api/v1/cafe/orders/${orderId}/receipt`, {
           responseType: 'blob',
         })
         const url = URL.createObjectURL(receiptRes.data)

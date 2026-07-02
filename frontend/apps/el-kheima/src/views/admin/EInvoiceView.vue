@@ -3,9 +3,8 @@
 // ملاحظة: ETA_ENABLED=false افتراضياً في .env — الشاشة دي بتشتغل وتعرض حالة
 // "غير مفعّل" بوضوح بدل ما تفشل بصمت، وتشتغل فوراً لو حد فعّل بيانات اعتماد حقيقية.
 import { ref, reactive, onMounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface ETAInvoice {
@@ -50,8 +49,8 @@ function removeLine(i: number) { submitModal.items.splice(i, 1) }
 async function loadInvoices() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/finance/eta/invoices', {
-      headers: h, params: { branch_id: branchId, status: statusFilter.value || undefined },
+    const res = await api.get('/api/v1/finance/eta/invoices', {
+      params: { branch_id: branchId, status: statusFilter.value || undefined },
     })
     invoices.value = res.data.items ?? []
     total.value = res.data.total ?? 0
@@ -67,7 +66,7 @@ async function submitInvoice() {
   submitModal.saving = true
   submitModal.error = ''
   try {
-    await axios.post('/api/v1/finance/eta/invoices', {
+    await api.post('/api/v1/finance/eta/invoices', {
       branch_id: branchId,
       receiver_name: submitModal.receiver_name,
       receiver_rin: submitModal.receiver_rin || null,
@@ -75,7 +74,7 @@ async function submitInvoice() {
       line_items: submitModal.items.map(i => ({
         description: i.description, quantity: i.quantity, unit_price: i.unit_price,
       })),
-    }, { headers: h })
+    })
     submitModal.open = false
     await loadInvoices()
   } catch (e: any) {

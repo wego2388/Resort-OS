@@ -136,12 +136,16 @@ def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 
 @router.patch("/cafe/orders/{order_id}/status", response_model=CafeOrderRead)
-def update_order_status(order_id: int, data: CafeOrderStatusUpdate, db: DbDep,
+async def update_order_status(order_id: int, data: CafeOrderStatusUpdate, db: DbDep,
                         _=Depends(get_waiter_user)):
     try:
-        return services.update_order_status(db, order_id, data.status)
+        order = services.update_order_status(db, order_id, data.status, charge_to_room_id=data.charge_to_room_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if data.status == "in_kitchen":
+        from app.modules.restaurant.api.router import restaurant_manager  # noqa: PLC0415
+        await restaurant_manager.broadcast(str(order.branch_id), {"type": "tickets_updated", "order_id": order.id})
+    return order
 
 
 @router.patch("/cafe/orders/{order_id}/items/{item_id}/void",

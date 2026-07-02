@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
 interface BeachInventory {
   adult_capacity: number
@@ -80,9 +80,7 @@ function clearCart() {
 async function fetchInventory() {
   loading.value = true
   try {
-    const { data } = await axios.get(`/api/v1/beach/inventory/${branchId}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
-    })
+    const { data } = await api.get(`/api/v1/beach/inventory/${branchId}`)
     inventory.value = data
   } catch (e) {
     console.error('Failed to fetch beach inventory', e)
@@ -100,25 +98,19 @@ async function completeSale() {
     if (childQty.value > 0)    entries.push({ type: 'child',    quantity: childQty.value,    unit_price: prices.value.child })
     if (residentQty.value > 0) entries.push({ type: 'resident', quantity: residentQty.value, unit_price: prices.value.resident })
 
-    const authHeaders = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
-    const { data } = await axios.post(
-      '/api/v1/beach/sell',
-      {
-        branch_id: branchId,
-        entries,
-        towels: towelQty.value,
-        towel_price: prices.value.towel,
-        payment_method: paymentMethod.value,
-      },
-      { headers: authHeaders }
-    )
+    const { data } = await api.post('/api/v1/beach/sell', {
+      branch_id: branchId,
+      entries,
+      towels: towelQty.value,
+      towel_price: prices.value.towel,
+      payment_method: paymentMethod.value,
+    })
 
     // Print ticket PDF
     const txId = data.transaction_id ?? data.id
     if (txId) {
       try {
-        const ticketRes = await axios.get(`/api/v1/beach/transactions/${txId}/ticket`, {
-          headers: authHeaders,
+        const ticketRes = await api.get(`/api/v1/beach/transactions/${txId}/ticket`, {
           responseType: 'blob',
         })
         const url = URL.createObjectURL(ticketRes.data)

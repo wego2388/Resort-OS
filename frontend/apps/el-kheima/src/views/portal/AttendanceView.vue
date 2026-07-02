@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 
 interface AttRecord {
   id: number; record_date: string; check_in?: string; check_out?: string
@@ -38,7 +37,7 @@ function fmtTime(iso?: string) {
 async function fetchAttendance() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/me/attendance', { headers: h, params: { size: 30 } })
+    const res = await api.get('/api/v1/hr/me/attendance', { params: { size: 30 } })
     records.value = res.data.items ?? []
     todayRecord.value = records.value.find(r => r.record_date === today) ?? null
   } catch(e) { console.error(e) }
@@ -50,10 +49,10 @@ async function punch() {
   punching.value = true
   try {
     if (!isClockedIn.value) {
-      const { data } = await axios.post('/api/v1/hr/me/attendance/punch-in', {}, { headers: h })
+      const { data } = await api.post('/api/v1/hr/me/attendance/punch-in', {})
       todayRecord.value = data
     } else {
-      const { data } = await axios.post('/api/v1/hr/me/attendance/punch-out', {}, { headers: h })
+      const { data } = await api.post('/api/v1/hr/me/attendance/punch-out', {})
       todayRecord.value = data
     }
     await fetchAttendance()

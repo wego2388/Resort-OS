@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
-import axios from 'axios'
+import { api } from '@resort-os/core'
 
-const h = { Authorization: `Bearer ${localStorage.getItem('access_token')}` }
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Leave {
@@ -42,7 +41,7 @@ function calcDays() {
 
 async function fetchLeaveTypes() {
   try {
-    const res = await axios.get('/api/v1/hr/leave-types', { headers: h, params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/hr/leave-types', { params: { branch_id: branchId } })
     leaveTypes.value = res.data
     if (leaveTypes.value.length && form.value.leave_type_id === null) {
       form.value.leave_type_id = leaveTypes.value[0].id
@@ -53,7 +52,7 @@ async function fetchLeaveTypes() {
 async function fetchLeaves() {
   loading.value = true
   try {
-    const res = await axios.get('/api/v1/hr/me/leaves', { headers: h })
+    const res = await api.get('/api/v1/hr/me/leaves')
     leaves.value = res.data.items ?? []
   } catch(e) { console.error(e) }
   finally { loading.value = false }
@@ -65,12 +64,12 @@ async function requestLeave() {
   }
   submitting.value = true; errorMsg.value = ''
   try {
-    await axios.post('/api/v1/hr/me/leaves/request', {
+    await api.post('/api/v1/hr/me/leaves/request', {
       leave_type_id: form.value.leave_type_id,
       start_date: form.value.start_date,
       end_date: form.value.end_date,
       reason: form.value.reason || null,
-    }, { headers: h })
+    })
     showModal.value = false
     form.value = { leave_type_id: leaveTypes.value[0]?.id ?? null, start_date: '', end_date: '', reason: '' }
     successMsg.value = 'تم تقديم طلب الإجازة بنجاح ✓'
