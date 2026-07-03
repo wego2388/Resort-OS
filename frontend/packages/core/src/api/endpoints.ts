@@ -4,6 +4,9 @@ export const ENDPOINTS = {
     login: '/api/v1/auth/login',
     refresh: '/api/v1/auth/refresh',
     me: '/api/v1/auth/me',
+    setup2fa: '/api/v1/auth/2fa/setup',
+    enable2fa: '/api/v1/auth/2fa/enable',
+    disable2fa: '/api/v1/auth/2fa/disable',
   },
   core: {
     branches: '/api/v1/branches',
@@ -71,7 +74,12 @@ export const ENDPOINTS = {
     lowStock: '/api/v1/inventory/low-stock',
   },
   analytics: {
-    dashboard: (branchId: number) => `/api/v1/analytics/dashboard/${branchId}`,
+    // Note: there is no per-branch-id-in-path `/analytics/dashboard/{id}` route
+    // on the backend (it's `GET /analytics/dashboard?branch_id=`, a 30-day
+    // aggregate, not a "today" snapshot) — DashboardView.vue used to call a URL
+    // shape that never matched any real route (always 404, silently swallowed).
+    // `dailyStats` below is the real "today's numbers" endpoint and is what the
+    // dashboard actually uses now.
     dailyStats: '/api/v1/analytics/daily-stats',
     kpisWs: (branchId: number) => `ws://localhost:8005/ws/analytics/kpis/${branchId}`,
     kdsWs: (token: string) => `ws://localhost:8005/ws/kds/${token}`,

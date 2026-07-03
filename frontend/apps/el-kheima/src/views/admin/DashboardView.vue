@@ -1,42 +1,68 @@
 <script setup lang="ts">
+// Dashboard KPIs — was calling `/api/v1/analytics/dashboard/{branchId}` and
+// `/api/v1/beach/inventory/{branchId}` (branch id as a *path* segment); neither
+// route exists on the backend (real routes take `branch_id` as a *query* param:
+// GET /analytics/daily-stats?branch_id=, GET /beach/inventory?branch_id=), so
+// both calls always 404'd and every card silently fell back to 0 — an admin
+// opening the dashboard for the first time had no way to tell "no data yet"
+// apart from "this is broken". Rewired to the real endpoints below.
 import { ref, onMounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS } from '@resort-os/core'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface DashboardData {
   today_revenue: number; yesterday_revenue: number
   occupancy_rate: number; beach_sold_today: number
-  restaurant_covers_today: number; pending_hk_tasks: number
-  monthly_revenue: number; active_bookings: number
+  pending_hk_tasks: number; active_bookings: number
 }
 
 const data = ref<DashboardData | null>(null)
 const loading = ref(false)
-const today = new Date().toISOString().split('T')[0]
+const loadError = ref(false)
+
+function isoDate(d: Date) {
+  return d.toISOString().split('T')[0]
+}
+
+async function fetchDailyStats(stat_date: string) {
+  const { data } = await api.get(ENDPOINTS.analytics.dailyStats, { params: { branch_id: branchId, stat_date } })
+  // DailyStats is a nightly-computed snapshot — if today's row hasn't been
+  // built yet the endpoint returns `{stat_date, message}` with no numeric
+  // fields at all (see AnalyticsView.vue for the same contract).
+  if (data.message) return null
+  return data as {
+    occupancy_pct: number; beach_visitors: number
+    restaurant_covers: number; total_revenue: number
+  }
+}
 
 async function fetchDashboard() {
   loading.value = true
+  loadError.value = false
   try {
-    const res = await api.get(`/api/v1/analytics/dashboard/${branchId}`, { params: { date: today } })
-    data.value = res.data
+    const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
+
+    const [todayRes, yesterdayRes, bookingsRes, hkRes] = await Promise.allSettled([
+      fetchDailyStats(isoDate(new Date())),
+      fetchDailyStats(isoDate(yesterday)),
+      api.get(ENDPOINTS.pms.bookings, { params: { branch_id: branchId, status: 'checked_in', page: 1, size: 1 } }),
+      api.get(ENDPOINTS.pms.housekeeping, { params: { branch_id: branchId, status: 'pending' } }),
+    ])
+
+    const todayStats = todayRes.status === 'fulfilled' ? todayRes.value : null
+    const yesterdayStats = yesterdayRes.status === 'fulfilled' ? yesterdayRes.value : null
+
+    data.value = {
+      today_revenue: todayStats?.total_revenue ?? 0,
+      yesterday_revenue: yesterdayStats?.total_revenue ?? 0,
+      occupancy_rate: todayStats?.occupancy_pct ?? 0,
+      beach_sold_today: todayStats?.beach_visitors ?? 0,
+      active_bookings: bookingsRes.status === 'fulfilled' ? (bookingsRes.value.data.total ?? 0) : 0,
+      pending_hk_tasks: hkRes.status === 'fulfilled' ? (hkRes.value.data?.length ?? 0) : 0,
+    }
   } catch {
-    try {
-      const [beachRes, bookingsRes] = await Promise.allSettled([
-        api.get(`/api/v1/beach/inventory/${branchId}`),
-        api.get('/api/v1/pms/bookings', { params: { branch_id: branchId, status: 'checked_in', limit: 5 } }),
-      ])
-      data.value = {
-        today_revenue: 0, yesterday_revenue: 0,
-        occupancy_rate: 0,
-        beach_sold_today: beachRes.status === 'fulfilled' ? beachRes.value.data.adult_sold ?? 0 : 0,
-        restaurant_covers_today: 0,
-        pending_hk_tasks: 0, monthly_revenue: 0,
-        active_bookings: bookingsRes.status === 'fulfilled'
-          ? (bookingsRes.value.data.total ?? bookingsRes.value.data.items?.length ?? 0)
-          : 0,
-      }
-    } catch { /* ignore */ }
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -61,6 +87,11 @@ onMounted(fetchDashboard)
       <button @click="fetchDashboard" :class="['px-4 py-2 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors', loading ? 'opacity-70' : '']">
         {{ loading ? 'جاري التحديث...' : '🔄 تحديث' }}
       </button>
+    </div>
+
+    <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between mb-5">
+      <span>⚠️ تعذّر تحميل بعض بيانات لوحة التحكم — تأكد من اتصالك وحاول تاني</span>
+      <button @click="fetchDashboard" class="font-semibold underline hover:no-underline">إعادة المحاولة</button>
     </div>
 
     <!-- KPI Cards -->

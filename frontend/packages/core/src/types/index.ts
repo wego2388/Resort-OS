@@ -8,6 +8,12 @@ export interface User {
   // (see CLAUDE.md § 14 rule 5: "role جديد → ROLE_LEVELS في deps.py").
   role: string
   branch_id: number
+  // Returned by GET /auth/me (app/modules/core/schemas.py::UserRead). Mandatory
+  // for super_admin/accountant server-side (app/core/deps.py::MANDATORY_2FA_ROLES)
+  // — the frontend mirrors that gate in useAuthStore.needsTwoFactorSetup so the
+  // router can send the user straight to /2fa-setup instead of letting every
+  // other API call in the app silently 403 with no explanation.
+  two_factor_enabled?: boolean
 }
 
 export interface Branch {

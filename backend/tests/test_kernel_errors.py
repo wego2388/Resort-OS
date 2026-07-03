@@ -20,11 +20,11 @@ literal template's own placeholders, never the dynamic exception text.
 """
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.core.kernel.errors import SecureErrorMiddleware
+from app.core.kernel.errors import SecureErrorMiddleware, setup_error_handlers
 
 
 def _make_test_app(exc: Exception) -> FastAPI:
@@ -75,3 +75,46 @@ class TestSecureErrorMiddlewareBraceSafety:
             resp = client.get("/boom")
         assert resp.status_code == 500
         assert resp.json()["error_code"] == "database_error"
+
+
+class TestNotFoundHandlerPreservesRealMessages:
+    """Regression test for a real production bug found 2026-07-03 (QA pass):
+    the global `@app.exception_handler(404)` in setup_error_handlers()
+    unconditionally replaced *every* 404's message with a generic
+    "Path not found: {path}" string — including ones deliberately raised by
+    route code via `raise HTTPException(404, "some specific reason")`
+    (e.g. "Employee not found", "Booking not found" across the whole
+    project). Discovered live via GET /hr/me/profile for a user with no
+    linked Employee row: instead of the real
+    "لا يوجد ملف موظف مرتبط بحسابك" message, the client only ever saw
+    "Path not found: /api/v1/hr/me/profile" — indistinguishable from a typo'd
+    URL. Fix: only fall back to the generic message when Starlette's own
+    unmatched-route exception is the source (`detail` defaults to the literal
+    string "Not Found" in that case and only that case)."""
+
+    def _make_app(self) -> FastAPI:
+        app = FastAPI()
+        setup_error_handlers(app)
+
+        @app.get("/employees/{employee_id}")
+        def get_employee(employee_id: int):
+            raise HTTPException(404, "Employee not found")
+
+        return app
+
+    def test_explicit_http_exception_message_is_preserved(self):
+        app = self._make_app()
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get("/employees/999")
+        assert resp.status_code == 404
+        body = resp.json()
+        assert body["message"] == "Employee not found"
+
+    def test_unmatched_route_still_gets_generic_path_not_found(self):
+        app = self._make_app()
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get("/this-route-does-not-exist-at-all")
+        assert resp.status_code == 404
+        body = resp.json()
+        assert "Path not found" in body["message"]
+        assert "/this-route-does-not-exist-at-all" in body["message"]

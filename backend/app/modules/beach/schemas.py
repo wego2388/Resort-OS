@@ -21,6 +21,19 @@ class BeachInventoryRead(BaseModel):
     surge_pct:        Decimal
     available_slots:  int = 0
     capacity_pct:     int = 0
+    # الأسعار مش عمود في جدول beach_inventory — بتتحسب من settings الفرع
+    # (نفس الدالة اللي البيع الفعلي بيستخدمها، app.modules.beach.services
+    # .get_base_prices) ومُدمجة هنا وقت الـ router.get_inventory() عشان
+    # شاشة الـ POS تقدر تعرض السعر قبل ما الكاشير يعمل البيع فعليًا.
+    adult_price:      Decimal = Decimal("0")
+    child_price:      Decimal = Decimal("0")
+    resident_price:   Decimal = Decimal("0")
+    towel_price:      Decimal = Decimal("0")
+    surge_active:     bool = False
+    # app.resort_os.beach_engine.calculate_tx_price يفسّر surge_pct=50.0 كـ
+    # "+50%" (يعني الضرب في 1.5) — المضاعف ده نفسه، جاهز يتضرب في الأسعار
+    # مباشرة في الفرونت إند بدل ما يعيد نفس الحسبة تاني.
+    surge_multiplier: float = 1.0
 
     def model_post_init(self, __context: object) -> None:
         object.__setattr__(self, "available_slots",
@@ -29,7 +42,9 @@ class BeachInventoryRead(BaseModel):
             min(100, int(self.capacity_used / self.capacity_max * 100))
             if self.capacity_max > 0 else 100
         )
+        object.__setattr__(self, "surge_multiplier", 1.0 + float(self.surge_pct) / 100.0)
         object.__setattr__(self, "capacity_pct", cap_pct)
+        object.__setattr__(self, "surge_active", self.surge_pct > 0)
 
 
 class BeachSellRequest(BaseModel):

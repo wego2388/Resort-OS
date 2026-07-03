@@ -113,6 +113,57 @@ class TestRoom:
         assert crud.get_room(db, 9999) is None
 
 
+class TestGetAvailableRooms:
+    """باج حقيقي اتصلح 2026-07-03 (QA pass): الفلترة كانت بتشترط
+    Room.status == "available" حرفيًا — أي غرفة في حالة يومية عابرة
+    (occupied/reserved/checkout_pending لضيف تاني هيسيب الغرفة قبل تاريخ
+    الوصول المطلوب) كانت بتتشال بالكامل من نتيجة "الغرف المتاحة" حتى لو
+    مفيش أي تعارض حجز حقيقي في الفترة المطلوبة. اكتُشف لما شاشة "حجز جديد"
+    طلعت فاضية بالكامل رغم وجود غرفة وحيدة مش محجوزة فعليًا للفترة المطلوبة،
+    لمجرد إن حالتها الحالية "checkout_pending". status == "maintenance" بس
+    هو اللي المفروض يمنع الحجز فعليًا (عطل حقيقي في الغرفة)."""
+
+    def test_room_with_transient_status_is_still_available(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        for transient_status in ("occupied", "reserved", "checkout_pending"):
+            crud.update_room_status(db, room, transient_status)
+            db.flush()
+            check_in = date.today() + timedelta(days=100)
+            check_out = check_in + timedelta(days=2)
+            available = crud.get_available_rooms(db, branch.id, check_in, check_out)
+            assert room.id in [r.id for r in available], (
+                f"room in status '{transient_status}' with no overlapping booking "
+                "should still be bookable for a future date range"
+            )
+
+    def test_room_under_maintenance_is_excluded(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        crud.update_room_status(db, room, "maintenance")
+        db.flush()
+        check_in = date.today() + timedelta(days=100)
+        check_out = check_in + timedelta(days=2)
+        available = crud.get_available_rooms(db, branch.id, check_in, check_out)
+        assert room.id not in [r.id for r in available]
+
+    def test_room_with_overlapping_booking_is_excluded(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        check_in = date.today() + timedelta(days=100)
+        check_out = check_in + timedelta(days=3)
+        data = BookingCreate(
+            branch_id=branch.id, guest_name="ضيف",
+            check_in=check_in, check_out=check_out, room_ids=[room.id],
+        )
+        services.create_booking(db, data)
+        available = crud.get_available_rooms(db, branch.id, check_in, check_out)
+        assert room.id not in [r.id for r in available]
+
+
 class TestBooking:
 
     def test_create_booking_generates_number(self, db):

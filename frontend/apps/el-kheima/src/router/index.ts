@@ -57,6 +57,16 @@ export function homeRouteFor(role: string): string {
 const routes: RouteRecordRaw[] = [
   { path: '/login', component: () => import('@resort-os/ui').then((m) => ({ default: m.LoginView })) },
 
+  // Standalone (no layout) — same tier as /login. Reached either by force
+  // (router guard below, for MANDATORY_2FA_ROLES with two_factor_enabled=false)
+  // or voluntarily by any authenticated user who wants to turn 2FA on/off.
+  {
+    path: '/2fa-setup',
+    name: '2fa-setup',
+    component: () => import('../views/account/TwoFactorSetupView.vue'),
+    meta: { requiresAuth: true },
+  },
+
   // ── /pos — FieldLayout (lightweight, tablet/phone, on-floor cashier use) ──
   {
     path: '/pos',
@@ -172,6 +182,15 @@ router.beforeEach((to) => {
   // 2. Role gate — redirect to the user's own home, not a raw 403 page.
   if (to.meta.requiredRole && !auth.hasRole(to.meta.requiredRole)) {
     return homeRouteFor(auth.role)
+  }
+
+  // 3. Mandatory 2FA gate — mirrors backend app/core/deps.py's
+  // MANDATORY_2FA_ROLES check. Without this, a super_admin/accountant who
+  // hasn't finished 2FA setup lands on their normal home route and every
+  // API call there silently 403s (dashboards render all-zero, lists render
+  // empty) with no indication why. Force them to /2fa-setup first.
+  if (auth.isAuthenticated && auth.needsTwoFactorSetup && to.path !== '/2fa-setup') {
+    return '/2fa-setup'
   }
 
   return true

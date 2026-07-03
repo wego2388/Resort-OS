@@ -40,6 +40,18 @@ export const useAuthStore = defineStore('auth', () => {
     return userLevel >= minLevel
   }
 
+  // Mirrors backend app/core/deps.py::MANDATORY_2FA_ROLES exactly (same
+  // duplication pattern as ROLE_LEVELS above — see CLAUDE.md § 14 rule 5).
+  // Every request from these roles gets a 403 `2FA_REQUIRED` from the backend
+  // until two_factor_enabled is true; before this the frontend had zero
+  // awareness of that gate, so a super_admin/accountant without 2FA set up
+  // just saw every screen silently render empty/zeroed data.
+  const MANDATORY_2FA_ROLES = new Set(['super_admin', 'accountant'])
+
+  const needsTwoFactorSetup = computed(
+    () => !!user.value && MANDATORY_2FA_ROLES.has(role.value) && !user.value.two_factor_enabled,
+  )
+
   async function login(username: string, password: string) {
     isLoading.value = true
     const form = new URLSearchParams()
@@ -66,5 +78,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('access_token')
   }
 
-  return { user, token, isAuthenticated, role, branchId, isLoading, login, logout, fetchUser, hasRole }
+  return { user, token, isAuthenticated, role, branchId, isLoading, login, logout, fetchUser, hasRole, needsTwoFactorSetup }
 })

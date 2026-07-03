@@ -214,8 +214,20 @@ def setup_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(404)
     async def not_found_handler(request: Request, exc):
+        # ⚠️ باج حقيقي كان موجود من زمان: أي `raise HTTPException(404, "...")`
+        # حقيقي جوه أي route في الـ 14 موديول (زي "الموظف غير موجود"، "الحجز
+        # غير موجود") كان بيتلخبط هنا مع الحالة التانية (مفيش route مطابق
+        # أصلاً) — الاتنين كانوا بيرجعوا نفس الرسالة العامة "Path not found"،
+        # يعني كل رسالة 404 حقيقية في المشروع كله كانت بتوصل فاضية من التفاصيل
+        # (اتوثّق قبل كده في CLAUDE.md كباج معروف من مكتبة مشتركة، بس الـ kernel
+        # بقى مملوك بالكامل لـ resort-os دلوقتي فمفيش سبب نسيبه من غير حل).
+        # Starlette بيدّي أي HTTPException(404) من غير detail صريح القيمة
+        # الافتراضية `http.HTTPStatus(404).phrase` == "Not Found" بالظبط — وده
+        # بالظبط اللي بيحصل لما مفيش route مطابق أصلاً. أي قيمة تانية معناها
+        # الرسالة دي جت من route حقيقي اتنفّذ وقرر يرمي 404 بسبب محدد.
+        detail = getattr(exc, "detail", None)
+        message = detail if detail and detail != "Not Found" else f"Path not found: {request.url.path}"
         return JSONResponse(
             status_code=404,
-            content={"success": False, "error_code": "not_found",
-                     "message": f"Path not found: {request.url.path}"},
+            content={"success": False, "error_code": "not_found", "message": message},
         )

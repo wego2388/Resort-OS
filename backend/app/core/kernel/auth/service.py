@@ -237,6 +237,15 @@ class AuthService(BaseService):
             raise HTTPException(400, "2FA not enabled")
         if not pyotp.TOTP(user.two_factor_secret).verify(code, valid_window=1):
             raise HTTPException(400, "Invalid 2FA code")
+        # app.core.deps.get_current_active_user blocks *access* for
+        # MANDATORY_2FA_ROLES (super_admin/accountant) while 2FA is off, but
+        # nothing stopped one of those users from turning it back off right
+        # here — this endpoint had no idea the role-level mandate existed.
+        # Local import: kernel/ must stay importable standalone (no hard
+        # dependency on app.core.deps at module load time).
+        from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+        if getattr(user, "role", None) in MANDATORY_2FA_ROLES:
+            raise HTTPException(400, "التحقق بخطوتين إجباري لهذا الدور — لا يمكن تعطيله")
         user.two_factor_enabled = False
         user.two_factor_secret = None
         self.db.commit()

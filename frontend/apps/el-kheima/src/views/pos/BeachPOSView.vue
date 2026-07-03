@@ -20,11 +20,19 @@ function isNetworkError(err: unknown): boolean {
   return !!axiosErr.request && !axiosErr.response
 }
 
+// مطابق فعليًا لـ app/modules/beach/schemas.py::BeachInventoryRead — الشاطئ
+// عنده مجمّع سعة واحد (capacity_max/capacity_used) مش حصة منفصلة للبالغين
+// والأطفال؛ الأسعار (adult_price/...) وsurge_multiplier محسوبة سيرفر-سايد
+// ومُدمجة في نفس الرد (باج حقيقي كان هنا: الحقول دي كانت مش موجودة خالص في
+// الرد الحقيقي قبل كده، فكل سعر كان بيظهر "NaN" في الشاشة).
 interface BeachInventory {
-  adult_capacity: number
-  child_capacity: number
-  adult_sold: number
-  child_sold: number
+  capacity_max: number
+  capacity_used: number
+  available_slots: number
+  capacity_pct: number
+  towels_total: number
+  towels_available: number
+  towels_used: number
   adult_price: number
   child_price: number
   resident_price: number
@@ -68,7 +76,7 @@ async function syncPendingSales() {
     while (queue.length) {
       const sale = queue[0]
       try {
-        await api.post('/api/v1/beach/sell', sale.payload)
+        await api.post('/api/v1/beach/sell', sale.payload, { params: { branch_id: branchId } })
         syncedAny = true
       } catch (err) {
         if (isNetworkError(err)) break // still offline — keep FIFO order, retry later
@@ -99,6 +107,10 @@ const adultQty = ref(0)
 const childQty = ref(0)
 const residentQty = ref(0)
 const towelQty = ref(0)
+// UI-only for now — BeachSellRequest (backend) has no payment_method field,
+// beach cash reconciliation happens at cashier-shift level (see finance
+// module's shift close + cash count), not per-transaction. Kept as a visual
+// cue for the cashier, not sent to the server.
 const paymentMethod = ref<'cash' | 'card' | 'wallet'>('cash')
 
 // Ref for auto-focus after sale
@@ -124,16 +136,10 @@ const total = computed(() =>
 
 const hasItems = computed(() => total.value > 0)
 
-const availableAdults = computed(() =>
-  (inventory.value?.adult_capacity ?? 0) - (inventory.value?.adult_sold ?? 0)
-)
-const availableChildren = computed(() =>
-  (inventory.value?.child_capacity ?? 0) - (inventory.value?.child_sold ?? 0)
-)
-const occupancyPct = computed(() => {
-  if (!inventory.value || !inventory.value.adult_capacity) return 0
-  return Math.round((inventory.value.adult_sold / inventory.value.adult_capacity) * 100)
-})
+// الشاطئ عنده مجمّع سعة واحد بس (مفيش حصة منفصلة بالغ/طفل في الباك إند) —
+// available_slots/capacity_pct جايين جاهزين من السيرفر.
+const availableSlots = computed(() => inventory.value?.available_slots ?? 0)
+const occupancyPct = computed(() => inventory.value?.capacity_pct ?? 0)
 
 function adjust(type: 'adult' | 'child' | 'resident' | 'towel', delta: number) {
   if (type === 'adult')    adultQty.value    = Math.max(0, adultQty.value + delta)
@@ -152,12 +158,60 @@ function clearCart() {
 async function fetchInventory() {
   loading.value = true
   try {
-    const { data } = await api.get(`/api/v1/beach/inventory/${branchId}`)
+    // ⚠️ باج حقيقي كان هنا: `/api/v1/beach/inventory/${branchId}` (branch_id
+    // كجزء من الـ path) — الـ route الحقيقي (app/modules/beach/api/router.py)
+    // بياخد branch_id كـ query param، مش path segment، فالطلب كان بيرجع 404
+    // بصمت (console.error بس، من غير toast) في كل مرة الكاشير يفتح شاشة
+    // الشاطئ — يعني سعة/إشغال الشاطئ ما كانتش بتظهر أبداً.
+    const { data } = await api.get('/api/v1/beach/inventory', { params: { branch_id: branchId } })
     inventory.value = data
   } catch (e) {
     console.error('Failed to fetch beach inventory', e)
+    toast.error('تعذّر تحميل بيانات سعة الشاطئ — الأسعار/الإشغال قد لا تكون محدّثة')
   } finally {
     loading.value = false
+  }
+}
+
+interface BeachSaleLineItem { tx_type: string; quantity: number; cartKey: 'adult' | 'child' | 'resident' | 'towel' }
+
+// ⚠️ باج حقيقي كان هنا: كان الكود بيبني طلب واحد مجمّع (entries[] + towels +
+// towel_price + payment_method) ويبعته لـ /beach/sell — الـ schema الحقيقي
+// (app/modules/beach/schemas.py::BeachSellRequest) بياخد صنف واحد بس لكل
+// طلب (`tx_type` + `quantity`)، مفيش batching ولا payment_method خالص، وده
+// كان بيرجّع 422 "tx_type: Field required" في كل مرة أي كاشير يحاول يكمّل
+// بيع فيه أكتر من صنف — يعني شاشة الشاطئ كانت 100% معطّلة (زرار "إتمام
+// البيع" مايشتغلش أبداً). اتصلح ببناء طلب منفصل لكل صنف موجود في السلة.
+function buildCartLineItems(): BeachSaleLineItem[] {
+  const items: BeachSaleLineItem[] = []
+  if (adultQty.value > 0)    items.push({ tx_type: 'entry',          quantity: adultQty.value,    cartKey: 'adult' })
+  if (childQty.value > 0)    items.push({ tx_type: 'entry_child',    quantity: childQty.value,    cartKey: 'child' })
+  if (residentQty.value > 0) items.push({ tx_type: 'entry_resident', quantity: residentQty.value, cartKey: 'resident' })
+  if (towelQty.value > 0)    items.push({ tx_type: 'towel_rent',     quantity: towelQty.value,    cartKey: 'towel' })
+  return items
+}
+
+async function sellOne(item: BeachSaleLineItem) {
+  return api.post(
+    '/api/v1/beach/sell',
+    { tx_type: item.tx_type, quantity: item.quantity },
+    { params: { branch_id: branchId } },
+  )
+}
+
+async function printTicket(txId: number) {
+  try {
+    const ticketRes = await api.get(`/api/v1/beach/transactions/${txId}/ticket`, { responseType: 'blob' })
+    const url = URL.createObjectURL(ticketRes.data)
+    const w = window.open(url, '_blank')
+    if (!w) {
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `ticket-${txId}.pdf`
+      a.click()
+    }
+  } catch {
+    // ticket printing is optional — don't block success
   }
 }
 
@@ -165,70 +219,40 @@ async function completeSale() {
   if (!hasItems.value || submitting.value) return
   submitting.value = true
   try {
-    const entries: { type: string; quantity: number; unit_price: number }[] = []
-    if (adultQty.value > 0)    entries.push({ type: 'adult',    quantity: adultQty.value,    unit_price: prices.value.adult })
-    if (childQty.value > 0)    entries.push({ type: 'child',    quantity: childQty.value,    unit_price: prices.value.child })
-    if (residentQty.value > 0) entries.push({ type: 'resident', quantity: residentQty.value, unit_price: prices.value.resident })
+    const lineItems = buildCartLineItems()
+    const soldTxIds: number[] = []
+    let anyQueued = false
 
-    const payload = {
-      branch_id: branchId,
-      entries,
-      towels: towelQty.value,
-      towel_price: prices.value.towel,
-      payment_method: paymentMethod.value,
-    }
-
-    if (!navigator.onLine) {
-      queueSale(payload)
-      clearCart()
-      successMsg.value = '📥 البيع محفوظ — هيتزامن أول ما النت يرجع'
-      setTimeout(() => { successMsg.value = '' }, 4000)
-      await nextTick()
-      firstButtonRef.value?.focus()
-      return
-    }
-
-    let data: any
-    try {
-      const res = await api.post('/api/v1/beach/sell', payload)
-      data = res.data
-    } catch (err) {
-      if (isNetworkError(err)) {
-        queueSale(payload)
-        clearCart()
-        successMsg.value = '📥 البيع محفوظ — هيتزامن أول ما النت يرجع'
-        setTimeout(() => { successMsg.value = '' }, 4000)
-        await nextTick()
-        firstButtonRef.value?.focus()
-        return
+    for (const item of lineItems) {
+      if (!navigator.onLine) {
+        queueSale({ tx_type: item.tx_type, quantity: item.quantity })
+        anyQueued = true
+        continue
       }
-      throw err
-    }
-
-    // Print ticket PDF
-    const txId = data.transaction_id ?? data.id
-    if (txId) {
       try {
-        const ticketRes = await api.get(`/api/v1/beach/transactions/${txId}/ticket`, {
-          responseType: 'blob',
-        })
-        const url = URL.createObjectURL(ticketRes.data)
-        const w = window.open(url, '_blank')
-        if (!w) {
-          const a = document.createElement('a')
-          a.href = url
-          a.download = `ticket-${txId}.pdf`
-          a.click()
+        const res = await sellOne(item)
+        soldTxIds.push(res.data.id)
+      } catch (err) {
+        if (isNetworkError(err)) {
+          queueSale({ tx_type: item.tx_type, quantity: item.quantity })
+          anyQueued = true
+          continue
         }
-      } catch {
-        // ticket printing is optional — don't block success
+        // خطأ حقيقي من السيرفر (زي تجاوز السعة) — وقف هنا، الأصناف اللي
+        // اتباعت قبل كده فعلاً اتسجّلت (مش rollback جماعي، كل عملية مستقلة)
+        throw err
       }
     }
+
+    for (const txId of soldTxIds) await printTicket(txId)
 
     clearCart()
-    await fetchInventory()
-    successMsg.value = 'تم البيع بنجاح ✓'
-    setTimeout(() => { successMsg.value = '' }, 3000)
+    if (soldTxIds.length || anyQueued) await fetchInventory()
+
+    successMsg.value = anyQueued
+      ? '📥 جزء من البيع محفوظ (بدون نت) — هيتزامن أول ما النت يرجع'
+      : 'تم البيع بنجاح ✓'
+    setTimeout(() => { successMsg.value = '' }, 4000)
 
     // Auto-focus back to first price button
     await nextTick()
@@ -325,7 +349,7 @@ onUnmounted(() => {
             <div class="flex justify-between text-sm text-gray-600 mb-1">
               <span>الإشغال</span>
               <span class="font-medium">
-                {{ inventory.adult_sold }} / {{ inventory.adult_capacity }}
+                {{ inventory.capacity_used }} / {{ inventory.capacity_max }}
                 <span class="text-xs text-gray-400">({{ occupancyPct }}%)</span>
               </span>
             </div>
@@ -338,15 +362,15 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Available slots -->
+          <!-- Available slots — سعة الشاطئ مجمّعة (مفيش حصة منفصلة بالغ/طفل) -->
           <div class="grid grid-cols-2 gap-2">
             <div class="bg-blue-50 rounded-lg p-2.5 text-center">
-              <div class="text-2xl font-black text-blue-700">{{ availableAdults }}</div>
-              <div class="text-xs text-blue-600 mt-0.5">متاح (بالغ)</div>
+              <div class="text-2xl font-black text-blue-700">{{ availableSlots }}</div>
+              <div class="text-xs text-blue-600 mt-0.5">أماكن متاحة</div>
             </div>
-            <div class="bg-green-50 rounded-lg p-2.5 text-center">
-              <div class="text-2xl font-black text-green-700">{{ availableChildren }}</div>
-              <div class="text-xs text-green-600 mt-0.5">متاح (طفل)</div>
+            <div class="bg-amber-50 rounded-lg p-2.5 text-center">
+              <div class="text-2xl font-black text-amber-700">{{ inventory.towels_available }}</div>
+              <div class="text-xs text-amber-600 mt-0.5">فوط متاحة</div>
             </div>
           </div>
         </div>

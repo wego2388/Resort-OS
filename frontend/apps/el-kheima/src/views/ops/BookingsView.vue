@@ -1,5 +1,23 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+// Booking create/check-in/check-out flow — was fully broken end-to-end
+// (found + fixed during a live QA pass, 2026-07-03):
+//   1. createBooking() posted `room_id: number` — the real schema
+//      (app/modules/pms/schemas.py::BookingCreate) requires `room_ids:
+//      list[int]` (supports multi-room bookings); the mismatched field name
+//      meant every single "حفظ الحجز" click 422'd with "room_ids: Field
+//      required", never actually creating a booking.
+//   2. checkIn()/checkOut() called `PATCH /pms/bookings/{id}` — that route
+//      doesn't exist at all (real ones are `POST .../checkin` and
+//      `POST .../checkout`, no body) — both buttons always 404'd, so a
+//      booking could never actually be checked in or out from this screen.
+//   3. The room dropdown/list used field names (`room_number`, `room_type`)
+//      that don't exist on the real `RoomRead`/`BookingRoomRead` schemas
+//      (real fields: `name`, `room_type_id`, and bookings only expose rooms
+//      via a `rooms: BookingRoomRead[]` array keyed by `room_id`) — every
+//      "room" column rendered as blank/"—" and the create dropdown was
+//      permanently empty regardless of the (also fixed, see
+//      app/modules/pms/crud.py::get_available_rooms) backend availability bug.
+import { ref, computed, watch, onMounted } from 'vue'
 import { api } from '@resort-os/core'
 import { AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
@@ -11,19 +29,19 @@ interface Booking {
   id: number
   guest_name: string
   guest_phone?: string
-  room_number?: string
-  room_id?: number
+  rooms?: { room_id: number }[]
   check_in: string
   check_out: string
   status: 'pending' | 'confirmed' | 'checked_in' | 'checked_out' | 'cancelled'
-  total_price?: number
+  total_rate?: number
   notes?: string
 }
 
 interface RoomOption {
   id: number
-  room_number: string
-  room_type: string
+  name: string
+  floor: number
+  room_type_id: number
   status: string
 }
 
@@ -60,6 +78,7 @@ const statusCounts = computed(() =>
 // ─── Create modal ─────────────────────────────────────────────────────────────
 const showCreateModal = ref(false)
 const createError     = ref('')
+const roomsLoading    = ref(false)
 const form = ref({
   guest_name:  '',
   guest_phone: '',
@@ -72,6 +91,7 @@ const form = ref({
 function openCreateModal() {
   form.value = { guest_name: '', guest_phone: '', room_id: null, check_in: '', check_out: '', notes: '' }
   createError.value = ''
+  rooms.value = []
   showCreateModal.value = true
 }
 
@@ -80,44 +100,87 @@ async function fetchBookings() {
   loading.value = true
   try {
     const res = await api.get('/api/v1/pms/bookings', {
-      params: { branch_id: branchId, limit: 100 }
+      params: { branch_id: branchId, page: 1, size: 100 }
     })
-    bookings.value = res.data.bookings ?? res.data.items ?? res.data
+    bookings.value = res.data.items ?? res.data
   } catch(e) {
     console.error(e)
     toast.error('تعذّر تحميل الحجوزات')
   } finally { loading.value = false }
 }
 
-async function fetchRooms() {
+// كل الغرف (مهما كانت حالتها الحالية) — تُستخدم فقط لعرض اسم الغرفة في جدول
+// الحجوزات (roomLabel أسفل)، مش لتحديد إتاحة الحجز الجديد.
+const allRoomsById = ref<Record<number, RoomOption>>({})
+
+async function fetchAllRooms() {
   try {
-    const res = await api.get('/api/v1/pms/rooms', {
-      params: { branch_id: branchId, status: 'available' }
-    })
-    rooms.value = res.data.rooms ?? res.data.items ?? res.data
-  } catch(e) {
+    const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId } })
+    const list: RoomOption[] = res.data.items ?? res.data
+    allRoomsById.value = Object.fromEntries(list.map((r) => [r.id, r]))
+  } catch (e) {
     console.error(e)
-    toast.error('تعذّر تحميل قائمة الغرف المتاحة')
   }
 }
 
+function roomLabel(booking: Booking): string {
+  const roomId = booking.rooms?.[0]?.room_id
+  if (!roomId) return '—'
+  const extra = (booking.rooms?.length ?? 0) > 1 ? ` (+${(booking.rooms!.length - 1)})` : ''
+  return (allRoomsById.value[roomId]?.name ?? `#${roomId}`) + extra
+}
+
+// الغرف المتاحة فعليًا لفترة الحجز المطلوبة تحديدًا — لازم الاتنين تاريخ
+// موجودين الأول (GET /pms/rooms/available بياخد check_in/check_out إجباري).
+async function fetchAvailableRooms() {
+  if (!form.value.check_in || !form.value.check_out) {
+    rooms.value = []
+    return
+  }
+  roomsLoading.value = true
+  try {
+    const res = await api.get('/api/v1/pms/rooms/available', {
+      params: { branch_id: branchId, check_in: form.value.check_in, check_out: form.value.check_out },
+    })
+    rooms.value = res.data
+    // الغرفة المختارة سابقًا ممكن تبقى مش متاحة بعد تغيير التواريخ
+    if (form.value.room_id && !rooms.value.some((r) => r.id === form.value.room_id)) {
+      form.value.room_id = null
+    }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل قائمة الغرف المتاحة')
+  } finally {
+    roomsLoading.value = false
+  }
+}
+
+watch(() => [form.value.check_in, form.value.check_out], fetchAvailableRooms)
+
 async function createBooking() {
   if (!form.value.guest_name.trim()) { createError.value = 'اسم الضيف مطلوب'; return }
-  if (!form.value.room_id)            { createError.value = 'اختر الغرفة'; return }
   if (!form.value.check_in)           { createError.value = 'تاريخ الوصول مطلوب'; return }
   if (!form.value.check_out)          { createError.value = 'تاريخ المغادرة مطلوب'; return }
+  if (!form.value.room_id)            { createError.value = 'اختر الغرفة'; return }
 
   submitting.value = true
   createError.value = ''
   try {
     await api.post('/api/v1/pms/bookings', {
-      ...form.value,
-      branch_id: branchId,
+      guest_name:  form.value.guest_name,
+      guest_phone: form.value.guest_phone || undefined,
+      check_in:    form.value.check_in,
+      check_out:   form.value.check_out,
+      notes:       form.value.notes || undefined,
+      room_ids:    [form.value.room_id],
+      branch_id:   branchId,
     })
     showCreateModal.value = false
-    await fetchBookings()
+    await Promise.all([fetchBookings(), fetchAllRooms()])
   } catch(e: any) {
-    createError.value = e?.response?.data?.detail ?? 'حدث خطأ، حاول مجدداً'
+    createError.value = e?.response?.data?.detail
+      ?? e?.response?.data?.message
+      ?? 'حدث خطأ، حاول مجدداً'
   } finally {
     submitting.value = false
   }
@@ -127,8 +190,9 @@ async function checkOut(booking: Booking) {
   const ok = await confirm({ message: `تأكيد مغادرة ${booking.guest_name}؟`, danger: true })
   if (!ok) return
   try {
-    await api.patch(`/api/v1/pms/bookings/${booking.id}`, { status: 'checked_out' })
-    booking.status = 'checked_out'
+    const res = await api.post(`/api/v1/pms/bookings/${booking.id}/checkout`)
+    booking.status = res.data.status
+    toast.success('تم تسجيل مغادرة الضيف')
   } catch(e: any) {
     console.error(e)
     toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل مغادرة الضيف')
@@ -137,8 +201,9 @@ async function checkOut(booking: Booking) {
 
 async function checkIn(booking: Booking) {
   try {
-    await api.patch(`/api/v1/pms/bookings/${booking.id}`, { status: 'checked_in' })
-    booking.status = 'checked_in'
+    const res = await api.post(`/api/v1/pms/bookings/${booking.id}/checkin`)
+    booking.status = res.data.status
+    toast.success('تم تسجيل دخول الضيف')
   } catch(e: any) {
     console.error(e)
     toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل دخول الضيف')
@@ -151,7 +216,7 @@ function formatDate(d: string) {
 
 onMounted(() => {
   fetchBookings()
-  fetchRooms()
+  fetchAllRooms()
 })
 </script>
 
@@ -223,7 +288,7 @@ onMounted(() => {
               <div class="font-semibold text-gray-900">{{ b.guest_name }}</div>
               <div v-if="b.guest_phone" class="text-xs text-gray-400 dir-ltr">{{ b.guest_phone }}</div>
             </td>
-            <td class="px-4 py-3 font-medium text-gray-700">{{ b.room_number ?? b.room_id ?? '—' }}</td>
+            <td class="px-4 py-3 font-medium text-gray-700">{{ roomLabel(b) }}</td>
             <td class="px-4 py-3 text-gray-600">{{ formatDate(b.check_in) }}</td>
             <td class="px-4 py-3 text-gray-600">{{ formatDate(b.check_out) }}</td>
             <td class="px-4 py-3">
@@ -270,7 +335,7 @@ onMounted(() => {
           </span>
         </div>
         <div class="grid grid-cols-3 gap-2 text-xs text-gray-600 mb-3">
-          <div><span class="text-gray-400">غرفة: </span><strong>{{ b.room_number ?? b.room_id ?? '—' }}</strong></div>
+          <div><span class="text-gray-400">غرفة: </span><strong>{{ roomLabel(b) }}</strong></div>
           <div><span class="text-gray-400">وصول: </span>{{ formatDate(b.check_in) }}</div>
           <div><span class="text-gray-400">خروج: </span>{{ formatDate(b.check_out) }}</div>
         </div>
@@ -331,23 +396,7 @@ onMounted(() => {
               />
             </div>
 
-            <!-- Room selection -->
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1">الغرفة *</label>
-              <select
-                v-model="form.room_id"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
-              >
-                <option :value="null" disabled>اختر غرفة...</option>
-                <option
-                  v-for="room in rooms"
-                  :key="room.id"
-                  :value="room.id"
-                >{{ room.room_number }} — {{ room.room_type }}</option>
-              </select>
-            </div>
-
-            <!-- Dates -->
+            <!-- Dates (first — the room list below depends on this range) -->
             <div class="grid grid-cols-2 gap-3">
               <div>
                 <label class="block text-sm font-semibold text-gray-700 mb-1">تاريخ الوصول *</label>
@@ -367,6 +416,26 @@ onMounted(() => {
                   dir="ltr"
                 />
               </div>
+            </div>
+
+            <!-- Room selection — depends on the dates above -->
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 mb-1">الغرفة *</label>
+              <select
+                v-model="form.room_id"
+                :disabled="!form.check_in || !form.check_out || roomsLoading"
+                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white disabled:bg-gray-50 disabled:text-gray-400"
+              >
+                <option :value="null" disabled>اختر غرفة...</option>
+                <option
+                  v-for="room in rooms"
+                  :key="room.id"
+                  :value="room.id"
+                >{{ room.name }}</option>
+              </select>
+              <p v-if="!form.check_in || !form.check_out" class="text-xs text-gray-400 mt-1">اختر تاريخ الوصول والمغادرة أولاً لعرض الغرف المتاحة</p>
+              <p v-else-if="roomsLoading" class="text-xs text-gray-400 mt-1">جاري تحميل الغرف المتاحة...</p>
+              <p v-else-if="rooms.length === 0" class="text-xs text-amber-600 mt-1">لا توجد غرف متاحة في هذه الفترة</p>
             </div>
 
             <!-- Notes -->

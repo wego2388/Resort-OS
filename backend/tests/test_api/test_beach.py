@@ -102,6 +102,22 @@ class TestSellTicket:
         assert tx.unit_price > 0
         assert tx.total_amount > 0
 
+    def test_sell_uses_branch_configured_price_not_hardcoded_default(self, db):
+        """باج حقيقي اتصلح 2026-07-03: _get_base_prices كانت بتحاول تبني
+        Decimal من صف Setting كامل (ORM object) مباشرة بدل .value بتاعه —
+        ده كان بيرمي استثناء دايمًا لما فيه إعداد فعلي محفوظ، والـ
+        `except Exception` كان بيبلعه ويرجّع القيم الافتراضية الجاهزة
+        (200/100/150/50) دايمًا. يعني أي سعر شاطئ يتظبط من الإعدادات كان
+        بيتجاهل تمامًا وقت البيع الحقيقي."""
+        from app.modules.core.crud import upsert_setting
+        branch = make_branch(db)
+        upsert_setting(db, "beach.price.adult", "999", branch_id=branch.id)
+        db.commit()
+
+        req = BeachSellRequest(tx_type="entry", quantity=1)
+        tx = services.sell_ticket(db, branch.id, req)
+        assert tx.unit_price == Decimal("999")
+
     def test_sell_child_entry(self, db):
         branch = make_branch(db)
         req = BeachSellRequest(tx_type="entry_child", quantity=2)

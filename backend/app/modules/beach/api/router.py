@@ -34,7 +34,16 @@ def get_inventory(
 ):
     row = crud.get_or_create_inventory(db, branch_id, inv_date)
     db.commit()
-    return BeachInventoryRead.model_validate(row)
+    prices = services.get_base_prices(db, branch_id)
+    data = {
+        "id": row.id, "branch_id": row.branch_id, "inventory_date": row.inventory_date,
+        "capacity_max": row.capacity_max, "capacity_used": row.capacity_used,
+        "towels_total": row.towels_total, "towels_available": row.towels_available,
+        "towels_used": row.towels_used, "surge_pct": row.surge_pct,
+        "adult_price": prices["entry"], "child_price": prices["entry_child"],
+        "resident_price": prices["entry_resident"], "towel_price": prices["towel_rent"],
+    }
+    return BeachInventoryRead.model_validate(data)
 
 
 # ── Surge toggle (Manager only) ───────────────────────────────────

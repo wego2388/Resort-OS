@@ -25,13 +25,29 @@ from app.resort_os.beach_engine import (
 
 
 def _get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
-    """يجلب الأسعار من Settings في DB (adult/child/resident + towel)."""
+    """يجلب الأسعار من Settings في DB (adult/child/resident + towel).
+
+    ⚠️ باج حقيقي كان هنا (اتكشف واتصلح 2026-07-03 أثناء كتابة تست لباج تاني):
+    `get_setting()` بيرجّع صف `Setting` كامل (ORM object)، مش الـ string value —
+    الكود القديم كان بيعمل `Decimal(get_setting(...) or "200")` يعني بيحاول
+    يبني Decimal من الـ object نفسه مباشرة، وده كان بيرمي استثناء دايمًا لما
+    فيه إعداد فعلي محفوظ (كان بيشتغل بالغلط بس لما مفيش إعداد خالص، لأن
+    `None or "200"` بترجع "200" ويعدي عادي) — الـ `except Exception` كان بيبلع
+    الاستثناء ده بصمت ويرجّع نفس القيم الافتراضية الجاهزة. النتيجة: أي سعر
+    شاطئ مخصّص يتظبط من شاشة الإعدادات كان بيتجاهل بالكامل، والبيع الفعلي
+    (`/beach/sell`) كان دايمًا بيستخدم الأسعار الافتراضية الجاهزة (200/100/
+    150/50) بغض النظر عن أي تعديل حقيقي في الإعدادات."""
     try:
         from app.modules.core.crud import get_setting  # noqa: PLC0415
-        adult    = Decimal(get_setting(db, "beach.price.adult",    branch_id=branch_id) or "200")
-        child    = Decimal(get_setting(db, "beach.price.child",    branch_id=branch_id) or "100")
-        resident = Decimal(get_setting(db, "beach.price.resident", branch_id=branch_id) or "150")
-        towel    = Decimal(get_setting(db, "beach.price.towel",    branch_id=branch_id) or "50")
+
+        def _price(key: str, default: str) -> Decimal:
+            row = get_setting(db, key, branch_id=branch_id)
+            return Decimal(row.value if row is not None else default)
+
+        adult    = _price("beach.price.adult",    "200")
+        child    = _price("beach.price.child",    "100")
+        resident = _price("beach.price.resident", "150")
+        towel    = _price("beach.price.towel",    "50")
         return {
             "entry":          adult,
             "entry_child":    child,
@@ -47,6 +63,16 @@ def _get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
             "entry_towel":    Decimal("250"),
             "towel_rent":     Decimal("50"),
         }
+
+
+def get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
+    """نسخة عامة من _get_base_prices — يستخدمها الـ router عشان يضيف الأسعار
+    لرد GET /beach/inventory (باج حقيقي كان هنا: شاشة POS الشاطئ كانت مبنية
+    على افتراض إن /beach/inventory بيرجّع adult_price/child_price/... جاهزة،
+    بس الأسعار الحقيقية كانت متخزنة في جدول settings ومحسوبة سيرفر-سايد وقت
+    البيع بس، مفيش أي endpoint كان بيرجّعها للفرونت إند قبل كده — يعني شاشة
+    الشاطئ كانت بتعرض "NaN" في كل سعر لكل الوقت)."""
+    return _get_base_prices(db, branch_id)
 
 
 def _vat(amount: Decimal) -> Decimal:

@@ -97,6 +97,45 @@ class TestBeachReservationFlow:
         assert resp.json()["guest_name"] == "ضيف QR"
 
 
+class TestBeachInventoryPricing:
+    """باج حقيقي اتصلح 2026-07-03 (QA pass): GET /beach/inventory كان بيرجّع
+    الـ capacity/towels بس من غير أي سعر (adult_price/child_price/...) —
+    الأسعار الحقيقية متخزنة في جدول settings ومحسوبة سيرفر-سايد وقت البيع بس
+    (services._get_base_prices)، فمفيش endpoint كان بيرجّعها للفرونت إند خالص.
+    شاشة POS الشاطئ كانت مبنية على افتراض إنها موجودة في نفس الرد، فكل سعر كان
+    بيظهر "NaN" في الواجهة. اتصلح بدمج services.get_base_prices() (نسخة عامة
+    من الدالة الخاصة) في رد GET /beach/inventory."""
+
+    def test_inventory_includes_configured_prices(self, client: TestClient, db, fake_redis, cashier_headers):
+        from app.modules.core.crud import upsert_setting
+        branch = make_branch_committed(db)
+        upsert_setting(db, "beach.price.adult", "250", branch_id=branch.id)
+        upsert_setting(db, "beach.price.child", "120", branch_id=branch.id)
+        upsert_setting(db, "beach.price.resident", "180", branch_id=branch.id)
+        upsert_setting(db, "beach.price.towel", "60", branch_id=branch.id)
+        db.commit()
+
+        resp = client.get(
+            "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert Decimal(str(body["adult_price"])) == Decimal("250")
+        assert Decimal(str(body["child_price"])) == Decimal("120")
+        assert Decimal(str(body["resident_price"])) == Decimal("180")
+        assert Decimal(str(body["towel_price"])) == Decimal("60")
+
+    def test_inventory_surge_multiplier_reflects_surge_pct(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        surge_resp = client.patch(
+            "/api/v1/beach/surge", params={"branch_id": branch.id},
+            json={"surge_pct": 50}, headers=manager_headers,
+        )
+        assert surge_resp.status_code == 200, surge_resp.text
+        assert surge_resp.json()["surge_active"] is True
+        assert surge_resp.json()["surge_multiplier"] == 1.5
+
+
 class TestBeachSellPermissions:
     def test_sell_requires_cashier_level(self, client: TestClient, db, fake_redis):
         """A waiter-level token must not be able to sell beach tickets (cashier+ required)."""

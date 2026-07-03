@@ -107,9 +107,18 @@ def get_available_rooms(
         )
         .subquery()
     )
+    # ⚠️ باج حقيقي كان هنا: الفلترة كانت بتشترط Room.status == "available"
+    # حرفيًا، يعني أي غرفة في حالة يومية عابرة (reserved/occupied/checkout_pending
+    # لضيف تاني هيسيب الغرفة قبل تاريخ الوصول المطلوب هنا) كانت بتتشال بالكامل من
+    # نتيجة "الغرف المتاحة" حتى لو مفيش أي تعارض حجز حقيقي في الفترة المطلوبة —
+    # يعني في أي وقت فيه غرفة واحدة بس مش "available" في اللحظة دي، مستحيل تعمل
+    # حجز جديد لأي تاريخ مستقبلي خالص. status == "maintenance" بس هو اللي معناه
+    # "الغرفة مش قابلة للحجز فعليًا" (عطل حقيقي) — الباقي (reserved/occupied/
+    # checkout_pending) حالة اللحظة الحالية بس ومش لازم تمنع حجز فترة مستقبلية،
+    # ده أصلاً شغل الـ booked_room_ids subquery تحت.
     q = db.query(Room).filter(
         Room.branch_id == branch_id,
-        Room.status == "available",
+        Room.status != "maintenance",
         ~Room.id.in_(select(booked_room_ids.c.room_id)),
     )
     if room_type_id:
