@@ -50,7 +50,7 @@ const allSections: NavSection[] = [
       { path: '/admin/hr', label: 'الموارد البشرية', icon: '👥', requiredRole: 'manager' },
       { path: '/admin/finance', label: 'المالية', icon: '💰', requiredRole: 'manager' },
       { path: '/admin/e-invoice', label: 'الفاتورة الإلكترونية', icon: '🧾', requiredRole: 'manager' },
-      { path: '/admin/timeshare', label: 'التايم شير', icon: '🏨', requiredRole: 'manager' },
+      { path: '/admin/timeshare', label: 'التايم شير', icon: '🏨', requiredRole: 'supervisor' },
       { path: '/admin/sales', label: 'لوحة المبيعات', icon: '📞', requiredRole: 'manager' },
       { path: '/admin/beach-live', label: 'لوحة الشاطئ الحيّة', icon: '🏖️', requiredRole: 'manager' },
       { path: '/admin/inventory', label: 'المخزون', icon: '📦', requiredRole: 'manager' },

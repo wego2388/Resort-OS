@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
-import { api } from '@resort-os/core'
+import { api, useAuthStore } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppModal, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
+const auth = useAuthStore()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -250,7 +251,7 @@ onMounted(refreshAll)
     <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
       <h2 class="text-2xl font-black text-gray-900">🏨 التايم شير</h2>
       <div class="flex items-center gap-2">
-        <button @click="importModal.open = true; importModal.result = null"
+        <button v-if="auth.hasRole('manager')" @click="importModal.open = true; importModal.result = null"
           class="px-3 py-1.5 rounded-xl bg-white border border-stone-200 text-gray-600 text-xs font-bold hover:bg-stone-50 transition-all">
           📥 استيراد Excel
         </button>
@@ -477,11 +478,11 @@ onMounted(refreshAll)
             <div class="flex flex-wrap gap-2 pt-2 border-t border-stone-100">
               <button @click="openPayModalForContract(c)" class="px-4 py-2 rounded-xl bg-green-50 text-green-700 text-xs font-bold border border-green-200 hover:bg-green-100">💰 تسجيل دفعة</button>
               <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="px-4 py-2 rounded-xl bg-sky-50 text-sky-700 text-xs font-bold border border-sky-200 hover:bg-sky-100">📞 اتصال</a>
-              <button v-if="c.status === 'active'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
+              <button v-if="auth.hasRole('manager') && c.status === 'active'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
                 class="px-4 py-2 rounded-xl bg-yellow-50 text-yellow-700 text-xs font-bold border border-yellow-200 hover:bg-yellow-100 disabled:opacity-40">⏸️ تعليق</button>
-              <button v-else-if="c.status === 'suspended'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
+              <button v-else-if="auth.hasRole('manager') && c.status === 'suspended'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
                 class="px-4 py-2 rounded-xl bg-green-50 text-green-700 text-xs font-bold border border-green-200 hover:bg-green-100 disabled:opacity-40">▶️ تفعيل</button>
-              <AppButton v-if="c.status !== 'cancelled'" variant="danger" size="sm" @click="cancelContract(c)">🗑️ إلغاء</AppButton>
+              <AppButton v-if="auth.hasRole('manager') && c.status !== 'cancelled'" variant="danger" size="sm" @click="cancelContract(c)">🗑️ إلغاء</AppButton>
             </div>
           </div>
         </div>
@@ -568,7 +569,7 @@ onMounted(refreshAll)
     </AppModal>
 
     <!-- ══ IMPORT MODAL ══ -->
-    <AppModal :open="importModal.open" title="📥 استيراد عقود من Excel" @close="importModal.open = false">
+    <AppModal v-if="auth.hasRole('manager')" :open="importModal.open" title="📥 استيراد عقود من Excel" @close="importModal.open = false">
       <p class="text-xs text-gray-400 mb-4">
         الصف الأول = أسماء الأعمدة (customer_name, room_type, total_value, down_payment, installments, start_date, first_installment_date إلزامية).
       </p>

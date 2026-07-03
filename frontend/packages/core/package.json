@@ -8,10 +8,12 @@
     "./api": "./src/api/index.ts",
     "./stores": "./src/stores/index.ts",
     "./types": "./src/types/index.ts",
-    "./composables": "./src/composables/index.ts"
+    "./composables": "./src/composables/index.ts",
+    "./i18n": "./src/i18n/index.ts"
   },
   "dependencies": {
-    "idb": "^8.0.3"
+    "idb": "^8.0.3",
+    "vue-i18n": "^9.9.1"
   },
   "peerDependencies": {
     "vue": "^3.4.0",
