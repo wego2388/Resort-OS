@@ -309,6 +309,67 @@ class TestHeldOrders:
         assert resp.json()["status"] == "open"
 
 
+class TestOrderPaymentPermission:
+    """إتمام الدفع (status='paid') فعل مالي فعلي — يقفل الطاولة، ينشر charge
+    على الفوليو، يرحّل قيد إيراد، يخصم مخزون — نفس مستوى void_order_item.
+    قبل الفحص ده كان أي نادل (level 30) يقدر يقفل حساب لوحده."""
+
+    def test_waiter_cannot_mark_order_paid(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "paid"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_cashier_can_mark_order_paid(self, client: TestClient, db, waiter_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "paid"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "paid"
+
+    def test_waiter_can_still_send_order_to_kitchen(self, client: TestClient, db, waiter_headers):
+        """التحقق ده ماحطّش على أي حالة تانية غير 'paid' — النادل لسه يقدر
+        يبعت للمطبخ ويقدّم عادي."""
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "in_kitchen"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "in_kitchen"
+
+
 class TestVoidOrderItem:
     def test_void_requires_cashier_level(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
@@ -394,7 +455,7 @@ class TestTableOccupancy:
         assert found["status"] == "occupied"
         assert found["occupied_at"] is not None
 
-    def test_paid_order_clears_occupied_at(self, client: TestClient, db, waiter_headers):
+    def test_paid_order_clears_occupied_at(self, client: TestClient, db, waiter_headers, cashier_headers):
         branch = make_branch_committed(db)
         item = make_menu_item_committed(db, branch)
         table = make_table_committed(db, branch)
@@ -406,7 +467,8 @@ class TestTableOccupancy:
             headers=waiter_headers,
         ).json()
 
-        client.patch(f"/api/v1/restaurant/orders/{order['id']}/status", json={"status": "paid"}, headers=waiter_headers)
+        # إتمام الدفع فعل مالي (كاشير أو أعلى بس — راجع update_order_status)
+        client.patch(f"/api/v1/restaurant/orders/{order['id']}/status", json={"status": "paid"}, headers=cashier_headers)
 
         resp = client.get("/api/v1/restaurant/tables", params={"branch_id": branch.id}, headers=waiter_headers)
         found = next(t for t in resp.json() if t["id"] == table.id)

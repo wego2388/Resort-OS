@@ -9,7 +9,7 @@ from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep, get_cashier_user, get_current_active_user,
-    get_manager_user, get_waiter_user, require_permission,
+    get_manager_user, get_waiter_user, require_permission, user_level,
 )
 from app.modules.restaurant import crud, services
 from app.modules.restaurant.schemas import (
@@ -224,7 +224,13 @@ def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
 @router.patch("/restaurant/orders/{order_id}/status",
               response_model=OrderRead)
 async def update_order_status(order_id: int, data: OrderStatusUpdate,
-                        db: DbDep, _=Depends(get_waiter_user)):
+                        db: DbDep, user=Depends(get_waiter_user)):
+    # تحويل الطلب لـ "مدفوع" فعل مالي فعلي (يقفل الطاولة، ينشر charge على
+    # الفوليو، يرحّل قيد إيراد، يخصم مخزون) — نفس مستوى void_order_item،
+    # مش أي نادل يقدر يقفل الحساب. باقي الحالات (in_kitchen/served/...)
+    # فضلت على مستوى النادل عمداً — دي حركات تشغيل يومية مش مالية.
+    if data.status == "paid" and user_level(user) < 40:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "إتمام الدفع يتطلب صلاحية كاشير على الأقل")
     try:
         order = services.update_order_status(db, order_id, data.status, charge_to_room_id=data.charge_to_room_id)
     except ValueError as exc:

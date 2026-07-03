@@ -2,6 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
+import { AppModal, AppBadge, EmptyState } from '@resort-os/ui'
+import OrderDetailModal from '../../components/OrderDetailModal.vue'
 
 const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue, lastPartialRejection } = useOfflineQueue()
 
@@ -21,6 +23,10 @@ const selectedTable     = ref<Table | null>(null)
 const selectedCategoryId = ref<number | null>(null)
 const cart              = ref<CartItem[]>([])
 const covers            = ref(1)
+// UI-only عند وقت الطلب — الدفع الفعلي بيحصل لاحقًا (بعد ما الطلب يتقدّم)
+// من "الطلبات الجارية" تحت، فيه الكاشير بيختار طريقة الدفع الحقيقية وقت
+// إتمام الدفع (راجع OrderDetailModal + activeOrders تحت). مطعم dine-in
+// بيتاخد فيه الأوردر الأول والدفع بعدين، عكس الكافيه (بيع فوري عند الكاونتر).
 const paymentMethod     = ref<'cash' | 'card' | 'room'>('cash')
 const loading           = ref(false)
 const submitting        = ref(false)
@@ -30,6 +36,54 @@ const errorMsg          = ref('')
 // Note editor modal
 const editingNoteId  = ref<number | null>(null)
 const tempNote       = ref('')
+
+// ── Active orders (الطلبات الجارية) — نقطة الدخول الوحيدة للكاشير عشان
+// يلاقي طلب اتبعت للمطبخ ويقفل حسابه (يقدّم/يدفع) من غير ما يحتاج ID
+// جاهز. GET /restaurant/orders كاشير+ بس (list_orders)، فده متسق مع إن
+// الشاشة دي أصلاً محمية بـ requiredRole: 'cashier' في الراوتر.
+interface ActiveOrder { id: number; order_number: string; status: string; table_id: number | null; order_type: string; total: number | string }
+const activeOrdersOpen = ref(false)
+const activeOrders      = ref<ActiveOrder[]>([])
+const activeOrdersLoading = ref(false)
+const selectedOrderId   = ref<number | null>(null)
+
+const ACTIVE_STATUSES = new Set(['open', 'in_kitchen', 'served'])
+
+async function loadActiveOrders() {
+  activeOrdersLoading.value = true
+  try {
+    const { data } = await api.get('/api/v1/restaurant/orders', {
+      params: { branch_id: branchId, size: 100 },
+    })
+    const items: ActiveOrder[] = data.items ?? data
+    activeOrders.value = items.filter(o => ACTIVE_STATUSES.has(o.status))
+  } catch (e) {
+    console.error('Failed to load active orders', e)
+  } finally {
+    activeOrdersLoading.value = false
+  }
+}
+
+function openActiveOrders() {
+  activeOrdersOpen.value = true
+  loadActiveOrders()
+}
+
+function tableLabelFor(order: ActiveOrder): string {
+  if (!order.table_id) return 'Takeaway'
+  const t = tables.value.find(t => t.id === order.table_id)
+  return t ? `طاولة ${t.table_number}` : `طاولة #${order.table_id}`
+}
+
+function openOrder(orderId: number) {
+  activeOrdersOpen.value = false
+  selectedOrderId.value = orderId
+}
+
+function onOrderDetailClosed() {
+  selectedOrderId.value = null
+  loadActiveOrders()
+}
 
 // ── Computed ───────────────────────────────────────────────────────────────────
 const filteredItems = computed(() =>
@@ -153,6 +207,19 @@ async function submitOrder() {
 
     const orderId = data.id ?? data.order_id
     if (orderId) {
+      // ⚠️ باج حقيقي كان هنا (نفس اللي اتصلح في waiter/OrderView.vue.sendToKitchen):
+      // إنشاء الطلب لوحده بيسيبه في status "open" — تذكرة الـ KDS بترتبط بس
+      // بانتقالة open→in_kitchen (services.update_order_status). من غير
+      // الـ PATCH ده، أي طلب يتعمل من شاشة الكاشير هنا كان يوصل للسيرفر
+      // ويتسجّل، لكن المطبخ ماكانش يشوفه خالص.
+      try {
+        await api.patch(`/api/v1/restaurant/orders/${orderId}/status`, { status: 'in_kitchen' })
+      } catch (e) {
+        console.error('Failed to send order to kitchen', e)
+        errorMsg.value = 'اتسجّل الطلب لكن حصل خطأ في إرساله للمطبخ — راجعه من الطلبات الجارية'
+        setTimeout(() => { errorMsg.value = '' }, 5000)
+      }
+
       try {
         const receiptRes = await api.get(`/api/v1/restaurant/orders/${orderId}/receipt`, {
           responseType: 'blob',
@@ -175,7 +242,10 @@ async function submitOrder() {
   }
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadData()
+  loadActiveOrders()
+})
 </script>
 
 <template>
@@ -243,6 +313,15 @@ onMounted(loadData)
           >+</button>
         </div>
       </div>
+
+      <!-- Active orders (send served/complete payment) -->
+      <button
+        @click="openActiveOrders"
+        class="relative px-3 py-1.5 bg-white border-2 border-blue-400 text-blue-700 rounded-lg font-bold text-sm hover:bg-blue-50 transition-colors"
+      >
+        🧾 الطلبات الجارية
+        <AppBadge v-if="activeOrders.length" variant="info" size="sm" class="mr-1.5">{{ activeOrders.length }}</AppBadge>
+      </button>
 
       <!-- Category tabs -->
       <div class="flex gap-1 flex-wrap">
@@ -451,6 +530,37 @@ onMounted(loadData)
         </div>
       </div>
     </Transition>
+
+    <!-- ── Active orders list ── -->
+    <AppModal :open="activeOrdersOpen" title="الطلبات الجارية" size="sm" @close="activeOrdersOpen = false">
+      <div v-if="activeOrdersLoading" class="flex items-center justify-center py-8">
+        <div class="animate-spin w-7 h-7 border-4 border-blue-600 border-t-transparent rounded-full" />
+      </div>
+      <EmptyState v-else-if="activeOrders.length === 0" icon="🧾" title="مفيش طلبات جارية دلوقتي" />
+      <div v-else class="space-y-2">
+        <button
+          v-for="o in activeOrders"
+          :key="o.id"
+          @click="openOrder(o.id)"
+          class="w-full flex items-center justify-between gap-2 p-3 rounded-xl border-2 border-blue-100 bg-blue-50/50 hover:border-blue-400 transition-all text-right"
+        >
+          <div>
+            <div class="font-bold text-gray-900 text-sm">{{ o.order_number }}</div>
+            <div class="text-xs text-gray-500">{{ tableLabelFor(o) }}</div>
+          </div>
+          <div class="text-left">
+            <div class="font-bold text-blue-700">{{ o.total }} ج</div>
+            <div class="text-[11px] text-gray-400">{{ o.status }}</div>
+          </div>
+        </button>
+      </div>
+    </AppModal>
+
+    <OrderDetailModal
+      :order-id="selectedOrderId"
+      @close="onOrderDetailClosed"
+      @changed="loadActiveOrders"
+    />
 
   </div>
 </template>

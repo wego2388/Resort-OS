@@ -82,6 +82,10 @@ const categories         = ref<Category[]>([])
 const menuItems          = ref<MenuItem[]>([])
 const selectedCategoryId = ref<number | null>(null)
 const cart               = ref<CartItem[]>([])
+// UI-only, نفس فلسفة BeachPOSView.paymentMethod — الـ order/paid endpoints
+// (CafeOrderCreate + OrderStatusUpdate) مفيهاش payment_method خالص، الكاش
+// reconciliation بيحصل على مستوى قفل الوردية (finance shift close + cash
+// count) مش لكل عملية لوحدها. مجرد تلميح بصري للكاشير.
 const paymentMethod      = ref<'cash' | 'card' | 'wallet'>('cash')
 const loading            = ref(false)
 const loadError          = ref(false)
@@ -210,15 +214,19 @@ async function submitOrder() {
   if (!hasItems.value || submitting.value) return
   submitting.value = true
   try {
+    // ⚠️ باج حقيقي كان هنا: الـ payload كان بيبعت menu_item_id/unit_price/
+    // outlet_type/payment_method — مفيهاش أي حاجة من دول في
+    // CafeOrderCreate (app/modules/cafe/schemas.py)، واللي فعليًا مطلوب
+    // (items[].item_id) ماكانش بيتبعت خالص. النتيجة: كل طلب كافيه من الشاشة
+    // دي كان بيرجع 422 "field required" — الكافيه كان مستحيل تعمل منه أوردر
+    // حقيقي من الـ POS من أصله.
     const payload = {
-      branch_id:      branchId,
-      outlet_type:    'cafe',
-      payment_method: paymentMethod.value,
+      branch_id:  branchId,
+      order_type: 'takeaway',
       items: cart.value.map(i => ({
-        menu_item_id: i.menu_item_id,
-        quantity:     i.quantity,
-        unit_price:   i.price,
-        notes:        i.notes || undefined,
+        item_id:  i.menu_item_id,
+        quantity: i.quantity,
+        notes:    i.notes || undefined,
       })),
     }
 
@@ -247,6 +255,21 @@ async function submitOrder() {
 
     const orderId = data.id ?? data.order_id
     if (orderId) {
+      // إنشاء الطلب لوحده بيسيبه في status "open" — تذكرة الـ KDS (شاشة
+      // البار) بترتبط بس بانتقالة open→in_kitchen (services.update_order_status)،
+      // فمن غيرها الباريستا مايشوفش الطلب أبداً. الكافيه هنا بيع فوري
+      // (الكاشير هو اللي بياخد الطلب ويحصّل الكاش قبل التحضير)، فبعد ما
+      // المطبخ/البار يشوف الطلب بنقفل الدفع فورًا كمان — مفيش شاشة تانية
+      // في الكافيه ترجع تقفل الحساب لاحقًا.
+      try {
+        await api.patch(`/api/v1/cafe/orders/${orderId}/status`, { status: 'in_kitchen' })
+        await api.patch(`/api/v1/cafe/orders/${orderId}/status`, { status: 'paid' })
+      } catch (e) {
+        console.error('Failed to progress cafe order to paid', e)
+        errorMsg.value = 'اتسجّل الطلب لكن حصل خطأ في إتمام الدفع — راجعه من قائمة الطلبات'
+        setTimeout(() => { errorMsg.value = '' }, 5000)
+      }
+
       try {
         const receiptRes = await api.get(`/api/v1/cafe/orders/${orderId}/receipt`, {
           responseType: 'blob',
@@ -259,7 +282,7 @@ async function submitOrder() {
     }
 
     clearOrder()
-    successMsg.value = 'تم إرسال الطلب ✓'
+    successMsg.value = 'تم إرسال الطلب وإتمام الدفع ✓'
     setTimeout(() => { successMsg.value = '' }, 3000)
   } catch (e: any) {
     errorMsg.value = e?.response?.data?.detail ?? 'فشل في إرسال الطلب'

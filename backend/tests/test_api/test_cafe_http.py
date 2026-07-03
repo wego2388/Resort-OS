@@ -65,7 +65,25 @@ class TestCafeOrderFlow:
         assert body["status"] == "open"
         assert Decimal(str(body["subtotal"])) == Decimal("90.00")
 
-    def test_order_status_progresses_to_paid(self, client: TestClient, db, fake_redis, waiter_headers):
+    def test_order_status_progresses_to_paid(self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        item = make_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={"branch_id": branch.id, "order_type": "takeaway",
+                  "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        # إتمام الدفع فعل مالي (كاشير أو أعلى بس — راجع update_order_status)
+        resp = client.patch(
+            f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "paid"
+
+    def test_waiter_cannot_mark_order_paid(self, client: TestClient, db, fake_redis, waiter_headers):
+        """فعل مالي — الجرسون ملوش صلاحية يقفل حساب لوحده (نفس منطق void_order_item)."""
         branch = make_branch_committed(db)
         item = make_item_committed(db, branch)
         order = client.post(
@@ -78,8 +96,7 @@ class TestCafeOrderFlow:
         resp = client.patch(
             f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=waiter_headers,
         )
-        assert resp.status_code == 200, resp.text
-        assert resp.json()["status"] == "paid"
+        assert resp.status_code == 403
 
     def test_create_order_rejects_unavailable_item(self, client: TestClient, db, fake_redis, waiter_headers):
         branch = make_branch_committed(db)
@@ -283,7 +300,7 @@ class TestCafeVoidOrderItem:
             headers=waiter_headers,
         ).json()
         order_item_id = order["items"][0]["id"]
-        client.patch(f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=waiter_headers)
+        client.patch(f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=cashier_headers)
 
         resp = client.patch(
             f"/api/v1/cafe/orders/{order['id']}/items/{order_item_id}/void",
@@ -404,7 +421,7 @@ class TestCafeTableOccupancy:
         assert found["status"] == "occupied"
         assert found["occupied_at"] is not None
 
-    def test_paid_order_clears_occupied_at(self, client: TestClient, db, fake_redis, waiter_headers):
+    def test_paid_order_clears_occupied_at(self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers):
         branch = make_branch_committed(db)
         item = make_item_committed(db, branch)
         table = make_table_committed(db, branch)
@@ -416,7 +433,7 @@ class TestCafeTableOccupancy:
             headers=waiter_headers,
         ).json()
 
-        client.patch(f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=waiter_headers)
+        client.patch(f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=cashier_headers)
 
         resp = client.get("/api/v1/cafe/tables", params={"branch_id": branch.id}, headers=waiter_headers)
         found = next(t for t in resp.json() if t["id"] == table.id)
@@ -429,7 +446,7 @@ class TestCafeInventoryDeduction:
     at all, so paying a cafe order never touched inventory (unlike restaurant's
     MenuItem.linked_product_id → _deduct_inventory_for_order)."""
 
-    def test_paying_order_deducts_linked_stock(self, client: TestClient, db, fake_redis, waiter_headers):
+    def test_paying_order_deducts_linked_stock(self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers):
         from datetime import datetime as _dt
         from app.modules.inventory.models import Product, Warehouse
         from app.modules.inventory import services as inventory_services
@@ -472,7 +489,7 @@ class TestCafeInventoryDeduction:
             headers=waiter_headers,
         ).json()
 
-        resp = client.patch(f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=waiter_headers)
+        resp = client.patch(f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=cashier_headers)
         assert resp.status_code == 200, resp.text
 
         db.refresh(product)

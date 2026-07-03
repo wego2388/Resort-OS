@@ -7,7 +7,10 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_cashier_user, get_current_active_user, get_manager_user, get_waiter_user, require_permission
+from app.core.deps import (
+    DbDep, get_cashier_user, get_current_active_user, get_manager_user,
+    get_waiter_user, require_permission, user_level,
+)
 from app.modules.cafe import crud, services
 from app.modules.cafe.schemas import (
     CafeCategoryCreate, CafeCategoryRead,
@@ -138,7 +141,11 @@ def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 @router.patch("/cafe/orders/{order_id}/status", response_model=CafeOrderRead)
 async def update_order_status(order_id: int, data: CafeOrderStatusUpdate, db: DbDep,
-                        _=Depends(get_waiter_user)):
+                        user=Depends(get_waiter_user)):
+    # نفس القاعدة في restaurant.update_order_status: "مدفوع" فعل مالي
+    # (charge على فوليو، قيد إيراد، خصم مخزون) — كاشير أو أعلى بس.
+    if data.status == "paid" and user_level(user) < 40:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "إتمام الدفع يتطلب صلاحية كاشير على الأقل")
     try:
         order = services.update_order_status(db, order_id, data.status, charge_to_room_id=data.charge_to_room_id)
     except ValueError as exc:
