@@ -19,9 +19,26 @@ export default {
           surface: '#FFFFFF',
           border: '#E5E0D8',
         },
+        // Official El Kheima Beach Resort palette — see
+        // /home/wego/projects/elkheima-beach-resort-marketing/01_brand/VISUAL_IDENTITY_GUIDE.md
+        brand: {
+          ocean: '#0077BE',
+          sandy: '#E8D5B7',
+          sunset: '#FF6B35',
+          teal: '#006B7D',
+          warmwhite: '#FDFBF7',
+          coral: '#FFB4A2',
+          charcoal: '#2C3E50',
+          lightgray: '#ECF0F1',
+        },
       },
       fontFamily: {
         sans: ['Cairo', 'Tajawal', 'system-ui', 'sans-serif'],
+        // Latin glyphs render in Montserrat/Open Sans, Arabic glyphs fall
+        // back to Cairo/Tajawal automatically (per-character font fallback)
+        // — see VISUAL_IDENTITY_GUIDE.md typography section.
+        heading: ['Montserrat', 'Cairo', 'system-ui', 'sans-serif'],
+        body: ['"Open Sans"', 'Tajawal', 'system-ui', 'sans-serif'],
       },
     },
   },

@@ -1,0 +1,165 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 340" width="520" height="340">
+  <defs>
+    <!-- Sun: warm radial with bright center -->
+    <radialGradient id="sunG" cx="42%" cy="42%" r="58%">
+      <stop offset="0%"   stop-color="#FFF0A0"/>
+      <stop offset="25%"  stop-color="#FFB830"/>
+      <stop offset="60%"  stop-color="#F07818"/>
+      <stop offset="100%" stop-color="#C04800"/>
+    </radialGradient>
+
+    <!-- Tent right face: bright golden with depth -->
+    <linearGradient id="tR" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#F5C040"/>
+      <stop offset="30%"  stop-color="#D49010"/>
+      <stop offset="70%"  stop-color="#B07010"/>
+      <stop offset="100%" stop-color="#8A5000"/>
+    </linearGradient>
+
+    <!-- Tent left face: dark shadow side -->
+    <linearGradient id="tL" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#7A4800"/>
+      <stop offset="50%"  stop-color="#5A3200"/>
+      <stop offset="100%" stop-color="#3A1800"/>
+    </linearGradient>
+
+    <!-- Tent center highlight -->
+    <linearGradient id="tC" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#F8D060" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#C07820" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Flap left -->
+    <linearGradient id="fL" x1="100%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%"   stop-color="#C07820"/>
+      <stop offset="100%" stop-color="#6A3800"/>
+    </linearGradient>
+    <!-- Flap right -->
+    <linearGradient id="fR" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#E8A828"/>
+      <stop offset="100%" stop-color="#9A6010"/>
+    </linearGradient>
+
+    <!-- Waves -->
+    <linearGradient id="wv1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#005F70"/>
+      <stop offset="40%"  stop-color="#008FA0"/>
+      <stop offset="100%" stop-color="#005F70"/>
+    </linearGradient>
+    <linearGradient id="wv2" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#007080"/>
+      <stop offset="40%"  stop-color="#00A8BB"/>
+      <stop offset="100%" stop-color="#007080"/>
+    </linearGradient>
+
+    <!-- Sun soft glow -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <!-- Soft drop shadow for tent -->
+    <filter id="ds">
+      <feDropShadow dx="2" dy="5" stdDeviation="5" flood-color="#00000035"/>
+    </filter>
+  </defs>
+
+  <rect width="520" height="340" fill="white"/>
+
+  <g transform="translate(256,10)">
+
+    <!-- Sun glow aura -->
+    <circle cx="52" cy="74" r="58" fill="#FFB020" opacity="0.15"/>
+    <!-- Sun -->
+    <circle cx="52" cy="74" r="48" fill="url(#sunG)" filter="url(#glow)"/>
+    <!-- Sun specular highlight -->
+    <ellipse cx="36" cy="56" rx="14" ry="9" fill="white" opacity="0.25" transform="rotate(-25,36,56)"/>
+
+    <!-- Birds -->
+    <path d="M-80,28 C-75,19 -67,19 -62,28" stroke="#007888" stroke-width="2.8" fill="none" stroke-linecap="round"/>
+    <path d="M-58,15 C-53,6  -45,6  -40,15" stroke="#007888" stroke-width="2.8" fill="none" stroke-linecap="round"/>
+    <path d="M-36,5  C-31,-4 -23,-4 -18,5"  stroke="#007888" stroke-width="2.8" fill="none" stroke-linecap="round"/>
+
+    <!-- ===== TENT with curved sides (matching original) ===== -->
+    <g filter="url(#ds)">
+
+      <!-- Left face: curved inward on left edge (concave) -->
+      <!-- Original: left edge curves inward, not straight -->
+      <path d="M 2,18
+               C 0,40 -10,70 -20,100
+               C -30,118 -50,128 -82,134
+               L 2,134 Z"
+            fill="url(#tL)"/>
+
+      <!-- Right face: slight curve outward -->
+      <path d="M 2,18
+               C 4,40 14,70 24,100
+               C 36,118 58,128 84,134
+               L 2,134 Z"
+            fill="url(#tR)"/>
+
+      <!-- Center highlight strip -->
+      <path d="M 2,18 L 2,134" stroke="url(#tC)" stroke-width="6" stroke-linecap="round"/>
+
+      <!-- Inner fold lines right -->
+      <path d="M 2,18 C 8,55 20,95 34,134"  stroke="#B07010" stroke-width="1.3" fill="none" opacity="0.5"/>
+      <path d="M 2,18 C 12,60 30,100 58,134" stroke="#B07010" stroke-width="1.0" fill="none" opacity="0.35"/>
+
+      <!-- Inner fold lines left -->
+      <path d="M 2,18 C -4,55 -16,95 -30,134" stroke="#3A1800" stroke-width="1.3" fill="none" opacity="0.4"/>
+
+      <!-- Peak glow -->
+      <ellipse cx="2" cy="22" rx="6" ry="4" fill="white" opacity="0.3"/>
+
+      <!-- Left wing/flap: curved -->
+      <path d="M -82,134 C -95,128 -108,118 -110,112 C -100,112 -70,128 -50,134 Z"
+            fill="url(#fL)"/>
+      <!-- Right wing/flap: curved -->
+      <path d="M 84,134 C 97,128 110,118 112,112 C 102,112 72,128 52,134 Z"
+            fill="url(#fR)"/>
+
+      <!-- Wing highlight edges -->
+      <path d="M -110,112 C -100,112 -70,128 -50,134" stroke="#D09020" stroke-width="1.2" fill="none" opacity="0.6"/>
+      <path d="M  112,112 C  102,112  72,128  52,134" stroke="#F0C040" stroke-width="1.2" fill="none" opacity="0.6"/>
+    </g>
+
+    <!-- ===== WAVES: smooth sinusoidal ===== -->
+    <!-- Wave 1 -->
+    <path d="M -115,150
+             C -100,138 -85,138 -70,150
+             C -55,162 -40,162 -25,150
+             C -10,138  5,138  20,150
+             C  35,162  50,162  65,150
+             C  80,138  95,138 110,150
+             C 118,156 122,158 125,152"
+          stroke="url(#wv1)" stroke-width="7" fill="none"
+          stroke-linecap="round" stroke-linejoin="round"/>
+    <!-- Wave 2 -->
+    <path d="M -115,170
+             C -100,158 -85,158 -70,170
+             C -55,182 -40,182 -25,170
+             C -10,158  5,158  20,170
+             C  35,182  50,182  65,170
+             C  80,158  95,158 110,170
+             C 118,176 122,178 125,172"
+          stroke="url(#wv2)" stroke-width="6" fill="none"
+          stroke-linecap="round" stroke-linejoin="round" opacity="0.82"/>
+
+  </g>
+
+  <!-- EL KHEIMA -->
+  <text x="260" y="238"
+        font-family="'Arial Black','Franklin Gothic Heavy','Impact',sans-serif"
+        font-size="60" font-weight="900" fill="#007888"
+        text-anchor="middle" letter-spacing="4">EL KHEIMA</text>
+
+  <!-- Decorative lines -->
+  <line x1="65"  y1="257" x2="168" y2="257" stroke="#C88A00" stroke-width="1.8"/>
+  <line x1="352" y1="257" x2="455" y2="257" stroke="#C88A00" stroke-width="1.8"/>
+
+  <!-- BEACH RESORT -->
+  <text x="260" y="276"
+        font-family="'Arial','Helvetica',sans-serif"
+        font-size="19" font-weight="700" fill="#C88A00"
+        text-anchor="middle" letter-spacing="10">BEACH RESORT</text>
+
+</svg>

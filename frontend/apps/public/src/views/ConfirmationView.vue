@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // Booking confirmation page
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 </script>
 
 <template>
@@ -10,9 +12,9 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
         </svg>
       </div>
-      <h2 class="text-xl font-bold text-gray-900 mb-2">تم تأكيد الحجز!</h2>
-      <p class="text-gray-500 text-sm">سيتم التواصل معك قريباً لتأكيد التفاصيل</p>
-      <RouterLink to="/" class="mt-4 inline-block text-blue-700 font-medium text-sm">العودة للرئيسية</RouterLink>
+      <h2 class="font-heading text-xl font-bold text-brand-charcoal mb-2">{{ t('marketing.confirmation.title') }}</h2>
+      <p class="text-gray-500 text-sm font-body">{{ t('marketing.confirmation.body') }}</p>
+      <RouterLink to="/" class="mt-4 inline-block text-brand-ocean font-medium text-sm">{{ t('marketing.confirmation.backHome') }}</RouterLink>
     </div>
   </div>
 </template>
