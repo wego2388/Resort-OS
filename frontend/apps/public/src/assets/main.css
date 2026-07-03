@@ -4,7 +4,12 @@
 
 @layer base {
   * { box-sizing: border-box; }
-  body { font-family: 'Cairo', sans-serif; direction: rtl; }
+  /* لا تحدد direction هنا — كانت hardcoded rtl هنا بتغلب على body.dir اللي
+     بيتظبط ديناميكيًا في switchLocale() (packages/core/src/i18n)، يعني تبديل
+     اللغة لـ en/it كان بيغيّر الـ dir attribute فعليًا بس الـ layout البصري
+     فضل معكوس (RTL) زي ما هو دايمًا. الـ [dir] attribute نفسه كافي — المتصفح
+     بيطبّق direction تلقائيًا حسبه من الـ UA stylesheet. */
+  body { font-family: 'Cairo', sans-serif; }
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: #F9F7F4; }
   ::-webkit-scrollbar-thumb { background: #C9963C; border-radius: 3px; }

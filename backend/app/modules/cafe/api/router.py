@@ -14,6 +14,7 @@ from app.modules.cafe.schemas import (
     CafeItemCreate, CafeItemRead, CafeItemUpdate,
     CafeMenuItemExtraGroupCreate, CafeMenuItemExtraGroupRead,
     CafeOrderCreate, CafeOrderItemVoidRequest, CafeOrderRead, CafeOrderStatusUpdate,
+    CafePublicMenuCategoryRead, CafePublicMenuItemRead, CafePublicMenuResponse,
     CafeTableRead,
 )
 from app.modules.core.schemas import PaginatedResponse
@@ -172,3 +173,38 @@ def download_receipt(order_id: int, db: DbDep, _=Depends(get_current_active_user
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Public Endpoint — للموقع العام (بدون auth)
+# ══════════════════════════════════════════════════════════════════════
+# ⚠️ هذا الـ endpoint بدون authentication عمداً — نفس نمط restaurant/public/menu:
+#   GET /cafe/public/menu → قائمة الكافيه للزائر على الموقع العام (read-only)
+#
+# أمان: rate limited بالـ middleware (30 req/60s per IP، app/core/rate_limit.py)
+#        لا يوجد تعديل أو حذف من هنا — read فقط
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/cafe/public/menu",
+    response_model=CafePublicMenuResponse,
+    tags=["cafe-public"],
+    summary="قائمة الكافيه للزائر (الموقع العام) — بدون auth",
+)
+def get_public_menu(
+    db: DbDep,
+    branch_id: int = Query(..., description="رقم الفرع"),
+):
+    """
+    Public endpoint — لا يحتاج login.
+    يُستدعى من الموقع العام (apps/public) لعرض قائمة الكافيه قبل الحجز.
+    يُرجع categories + items في طلب واحد لتقليل round trips.
+    """
+    categories = crud.list_categories(db, branch_id)
+    items = crud.list_items(db, branch_id, available_only=True)
+
+    return CafePublicMenuResponse(
+        branch_id=branch_id,
+        categories=[CafePublicMenuCategoryRead.model_validate(c) for c in categories],
+        items=[CafePublicMenuItemRead.model_validate(i) for i in items],
+    )

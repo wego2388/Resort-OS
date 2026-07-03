@@ -21,7 +21,7 @@
 
 export interface MarketingMessages {
   brand: { name: string; nameNative: string; tagline: string }
-  nav: { home: string; rooms: string; book: string; contact: string; callUs: string }
+  nav: { home: string; rooms: string; dining: string; book: string; contact: string; callUs: string }
   hero: {
     eyebrow: string
     title: string
@@ -63,6 +63,15 @@ export interface MarketingMessages {
     maxGuests: string
     from: string
     bookThis: string
+  }
+  dining: {
+    title: string
+    subtitle: string
+    restaurant: { title: string; subtitle: string }
+    cafe: { title: string; subtitle: string }
+    loading: string
+    error: string
+    empty: string
   }
   cta: {
     title: string
@@ -120,7 +129,7 @@ const ar: MarketingMessages = {
     nameNative: 'منتجع الخيمة الشاطئي',
     tagline: 'ملاذك الخاص في انتظارك',
   },
-  nav: { home: 'الرئيسية', rooms: 'الغرف', book: 'احجز الآن', contact: 'تواصل معنا', callUs: 'اتصل بنا' },
+  nav: { home: 'الرئيسية', rooms: 'الغرف', dining: 'المطعم والكافيه', book: 'احجز الآن', contact: 'تواصل معنا', callUs: 'اتصل بنا' },
   hero: {
     eyebrow: 'خليج شرم الماية • شرم الشيخ',
     title: 'منتجع الخيمة الشاطئي',
@@ -158,6 +167,15 @@ const ar: MarketingMessages = {
     maxGuests: 'حتى {n} نزلاء',
     from: 'يبدأ من',
     bookThis: 'احجز هذه الغرفة',
+  },
+  dining: {
+    title: 'قائمة الطعام والمشروبات',
+    subtitle: 'تذوق أشهى الأطباق ومشروباتنا المميزة',
+    restaurant: { title: 'أطباقنا المميزة', subtitle: 'مطعمنا الراقي يقدم أشهى الأطباق المشوية والبحرية' },
+    cafe: { title: 'قائمة الكافيه', subtitle: 'بيتزا، باستا، ساندوتشات ومشروبات — على البحر مباشرة' },
+    loading: 'جاري تحميل القائمة...',
+    error: 'تعذر تحميل القائمة الآن، يرجى المحاولة لاحقاً',
+    empty: 'القائمة غير متاحة حالياً',
   },
   cta: {
     title: 'ابدأ تجربتك معنا اليوم',
@@ -215,7 +233,7 @@ const en: MarketingMessages = {
     nameNative: 'El Kheima Beach Resort',
     tagline: 'Your Private Retreat Awaits',
   },
-  nav: { home: 'Home', rooms: 'Rooms', book: 'Book Now', contact: 'Contact', callUs: 'Call Us' },
+  nav: { home: 'Home', rooms: 'Rooms', dining: 'Dining', book: 'Book Now', contact: 'Contact', callUs: 'Call Us' },
   hero: {
     eyebrow: 'Sharm El Maya Bay • Sharm El Sheikh',
     title: 'El Kheima Beach Resort',
@@ -253,6 +271,15 @@ const en: MarketingMessages = {
     maxGuests: 'Up to {n} guests',
     from: 'From',
     bookThis: 'Book This Room',
+  },
+  dining: {
+    title: 'Food & Drinks Menu',
+    subtitle: 'Taste our finest dishes and signature drinks',
+    restaurant: { title: 'Signature Dishes', subtitle: 'Our fine-dining restaurant serves the finest grilled and seafood dishes' },
+    cafe: { title: 'Café Menu', subtitle: 'Pizza, pasta, sandwiches and drinks — right on the beach' },
+    loading: 'Loading the menu...',
+    error: 'Could not load the menu right now, please try again later',
+    empty: 'Menu is currently unavailable',
   },
   cta: {
     title: 'Start Your Experience With Us Today',
@@ -310,7 +337,7 @@ const ru: MarketingMessages = {
     nameNative: 'Эль-Хейма Бич Резорт',
     tagline: 'Ваше личное убежище ждёт вас',
   },
-  nav: { home: 'Главная', rooms: 'Номера', book: 'Забронировать', contact: 'Контакты', callUs: 'Позвонить' },
+  nav: { home: 'Главная', rooms: 'Номера', dining: 'Питание', book: 'Забронировать', contact: 'Контакты', callUs: 'Позвонить' },
   hero: {
     eyebrow: 'Бухта Шарм-эль-Майя • Шарм-эль-Шейх',
     title: 'El Kheima Beach Resort',
@@ -348,6 +375,15 @@ const ru: MarketingMessages = {
     maxGuests: 'До {n} гостей',
     from: 'От',
     bookThis: 'Забронировать этот номер',
+  },
+  dining: {
+    title: 'Меню еды и напитков',
+    subtitle: 'Попробуйте наши лучшие блюда и фирменные напитки',
+    restaurant: { title: 'Фирменные блюда', subtitle: 'Наш изысканный ресторан предлагает лучшие блюда на гриле и морепродукты' },
+    cafe: { title: 'Меню кафе', subtitle: 'Пицца, паста, сэндвичи и напитки — прямо на пляже' },
+    loading: 'Загрузка меню...',
+    error: 'Не удалось загрузить меню, попробуйте позже',
+    empty: 'Меню временно недоступно',
   },
   cta: {
     title: 'Начните свой отдых с нами уже сегодня',
@@ -405,7 +441,7 @@ const it: MarketingMessages = {
     nameNative: 'El Kheima Beach Resort',
     tagline: 'Il tuo rifugio privato ti aspetta',
   },
-  nav: { home: 'Home', rooms: 'Camere', book: 'Prenota Ora', contact: 'Contatti', callUs: 'Chiamaci' },
+  nav: { home: 'Home', rooms: 'Camere', dining: 'Ristorazione', book: 'Prenota Ora', contact: 'Contatti', callUs: 'Chiamaci' },
   hero: {
     eyebrow: 'Baia di Sharm El Maya • Sharm El Sheikh',
     title: 'El Kheima Beach Resort',
@@ -443,6 +479,15 @@ const it: MarketingMessages = {
     maxGuests: 'Fino a {n} ospiti',
     from: 'A partire da',
     bookThis: 'Prenota Questa Camera',
+  },
+  dining: {
+    title: 'Menu Cibo e Bevande',
+    subtitle: 'Assapora i nostri piatti migliori e le bevande esclusive',
+    restaurant: { title: 'Piatti Signature', subtitle: 'Il nostro ristorante raffinato serve i migliori piatti alla griglia e di mare' },
+    cafe: { title: 'Menu del Café', subtitle: 'Pizza, pasta, panini e bevande — proprio sulla spiaggia' },
+    loading: 'Caricamento del menu...',
+    error: 'Impossibile caricare il menu al momento, riprova più tardi',
+    empty: 'Il menu non è al momento disponibile',
   },
   cta: {
     title: 'Inizia Oggi la Tua Esperienza Con Noi',

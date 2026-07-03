@@ -19,6 +19,7 @@ const { t, locale } = useI18n()
       <nav class="hidden md:flex items-center gap-6 font-semibold text-sm">
         <RouterLink to="/" class="hover:text-brand-sunset transition-colors">{{ t('marketing.nav.home') }}</RouterLink>
         <a href="#rooms" class="hover:text-brand-sunset transition-colors">{{ t('marketing.nav.rooms') }}</a>
+        <RouterLink to="/dining" class="hover:text-brand-sunset transition-colors">{{ t('marketing.nav.dining') }}</RouterLink>
         <a href="#contact" class="hover:text-brand-sunset transition-colors">{{ t('marketing.nav.contact') }}</a>
       </nav>
 

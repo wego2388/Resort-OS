@@ -39,6 +39,14 @@ def make_table_committed(db, branch):
     return table
 
 
+def make_category_committed(db, branch, name="Pizza", name_ar="بيتزا"):
+    from app.modules.cafe.models import CafeCategory
+    category = CafeCategory(branch_id=branch.id, name=name, name_ar=name_ar)
+    db.add(category)
+    db.commit()
+    return category
+
+
 class TestCafeOrderFlow:
     def test_create_order_via_http(self, client: TestClient, db, fake_redis, waiter_headers):
         branch = make_branch_committed(db)
@@ -469,3 +477,46 @@ class TestCafeInventoryDeduction:
 
         db.refresh(product)
         assert product.current_stock == Decimal("7.000")
+
+
+class TestCafePublicMenu:
+    """للموقع العام — بدون تسجيل دخول، نفس نمط restaurant/public/menu و pms/public/room-types."""
+
+    def test_no_auth_required(self, client: TestClient, db, fake_redis):
+        branch = make_branch_committed(db)
+        category = make_category_committed(db, branch)
+        item = make_item_committed(db, branch)
+        item.category_id = category.id
+        db.commit()
+
+        resp = client.get("/api/v1/cafe/public/menu", params={"branch_id": branch.id})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["branch_id"] == branch.id
+        assert len(body["categories"]) == 1
+        assert body["categories"][0]["name_ar"] == "بيتزا"
+        assert len(body["items"]) == 1
+        assert body["items"][0]["name"] == "كابتشينو"
+        assert Decimal(str(body["items"][0]["price"])) == Decimal("45.00")
+
+    def test_excludes_unavailable_items(self, client: TestClient, db, fake_redis):
+        from app.modules.cafe.models import CafeItem
+        branch = make_branch_committed(db)
+        available = make_item_committed(db, branch, available=True)
+        unavailable = CafeItem(branch_id=branch.id, name="عصير خارج الخدمة",
+                                price=Decimal("20.00"), is_available=False)
+        db.add(unavailable)
+        db.commit()
+
+        resp = client.get("/api/v1/cafe/public/menu", params={"branch_id": branch.id})
+        item_ids = [i["id"] for i in resp.json()["items"]]
+        assert available.id in item_ids
+        assert unavailable.id not in item_ids
+
+    def test_empty_branch_returns_empty_lists(self, client: TestClient, db, fake_redis):
+        branch = make_branch_committed(db)
+        resp = client.get("/api/v1/cafe/public/menu", params={"branch_id": branch.id})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["items"] == []
+        assert body["categories"] == []

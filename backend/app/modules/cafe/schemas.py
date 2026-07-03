@@ -144,3 +144,52 @@ class CafeOrderRead(BaseModel):
 class CafeOrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
     charge_to_room_id: Optional[int] = None
+
+
+# ── Public (Guest / Marketing site) Schemas — بدون auth ─────────────
+# نفس نمط restaurant.PublicMenu* — مقلّصة عمداً، الضيف يشوف بس اللي يحتاجه
+
+class CafePublicMenuExtraRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:             int
+    name:           str
+    name_ar:        Optional[str]
+    price_addition: Decimal
+
+
+class CafePublicMenuExtraGroupRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:         int
+    name:       str
+    name_ar:    Optional[str]
+    min_select: int
+    max_select: int
+    options:    list[CafePublicMenuExtraRead] = []
+
+
+class CafePublicMenuItemRead(BaseModel):
+    """للزائر عبر الموقع العام — بدون cost أو بيانات داخلية."""
+    model_config = ConfigDict(from_attributes=True)
+    id:                  int
+    name:                str
+    name_ar:             Optional[str]
+    price:               Decimal
+    is_available:        bool
+    preparation_minutes: int
+    image_url:           Optional[str]
+    category_id:         Optional[int]
+    extra_groups:        list[CafePublicMenuExtraGroupRead] = []
+
+
+class CafePublicMenuCategoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:      int
+    name:    str
+    name_ar: Optional[str]
+
+
+class CafePublicMenuResponse(BaseModel):
+    """الرد الكامل على GET /cafe/public/menu — categories + items في طلب واحد."""
+    branch_id:  int
+    categories: list[CafePublicMenuCategoryRead]
+    items:      list[CafePublicMenuItemRead]
