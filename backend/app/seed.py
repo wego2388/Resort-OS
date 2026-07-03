@@ -41,6 +41,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_leave_types(db)
     _seed_chart_of_accounts(db)
     _seed_room_types(db)
+    _seed_menus(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -263,6 +264,133 @@ def _seed_room_types(db: Session) -> None:
         db.add(RoomType(branch_id=branch.id, **rt))
     db.flush()
     print(f"  ✓ Room types seeded ({len(room_types)} types)")
+
+
+def _seed_menus(db: Session) -> None:
+    """قوائم مطعم وكافيه حقيقية — منقولة من المحتوى التسويقي الحقيقي للمنتجع
+    (/home/wego/projects/elkheima-beach-resort-marketing/02_products/
+    RESTAURANT_MENU.json + MENU_RESTAURANT_CAFE.csv) بدل قوائم فاضية تمامًا —
+    كانت 0 عنصر في كل من المطعم والكافيه قبل كده (لاحظه وكيل الـ QA أثناء محاولة
+    اختبار مسار طلب حقيقي في POS المطعم). الأسعار جنيه مصري."""
+    try:
+        from app.modules.restaurant.models import MenuCategory, MenuItem
+        from app.modules.cafe.models import CafeCategory, CafeItem
+        from app.modules.core.models import Branch
+    except ImportError:
+        return
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+
+    # ── مطعم (fine dining) ── من RESTAURANT_MENU.json → categories.restaurant
+    if not db.query(MenuItem).filter(MenuItem.branch_id == branch.id).first():
+        cat = db.query(MenuCategory).filter(MenuCategory.branch_id == branch.id).first()
+        if not cat:
+            cat = MenuCategory(branch_id=branch.id, name="Restaurant", name_ar="مطعم")
+            db.add(cat)
+            db.flush()
+
+        restaurant_items = [
+            # (name_en, name_ar, price, station)
+            ('Grilled Sea Bass', 'سمك قاروص مشوي', Decimal('85.0'), 'grill'),
+            ('Mixed Grill Platter', 'مشويات مشكلة', Decimal('120.0'), 'grill'),
+            ('Seafood Pasta', 'باستا بالمأكولات البحرية', Decimal('75.0'), 'hot'),
+            ('Arabic Mezze Set', 'سيت مقبلات عربية', Decimal('55.0'), 'cold'),
+        ]
+        for name, name_ar, price, station in restaurant_items:
+            db.add(MenuItem(branch_id=branch.id, category_id=cat.id, name=name, name_ar=name_ar,
+                             price=price, station=station))
+        db.flush()
+        print(f"  ✓ Restaurant menu seeded ({len(restaurant_items)} items)")
+
+    # ── كافيه ── من MENU_RESTAURANT_CAFE.csv (8 أقسام) + RESTAURANT_MENU.json → categories.cafe
+    if not db.query(CafeItem).filter(CafeItem.branch_id == branch.id).first():
+        cafe_categories = [
+            ('Pizza', 'بيتزا'),
+            ('Pasta', 'باستا'),
+            ('Salads', 'سلاطات'),
+            ('Desserts', 'حلويات'),
+            ('Sandwiches', 'ساندوتش'),
+            ('Hawawshi & Grill', 'حواوشي وجريل'),
+            ('Extras', 'إضافات'),
+            ('Breakfast & Brunch', 'فطار وبرانش'),
+            ('Café', 'كافيه'),
+        ]
+        cat_map: dict[str, int] = {}
+        for i, (name_en, name_ar) in enumerate(cafe_categories):
+            c = CafeCategory(branch_id=branch.id, name=name_en, name_ar=name_ar, sort_order=i)
+            db.add(c)
+            db.flush()
+            cat_map[name_ar] = c.id
+
+        cafe_items = [
+            # (category_ar, name_en, name_ar, price)
+            ('بيتزا', 'Margherita', 'مارجريتا', Decimal('220')),
+            ('بيتزا', 'Four Cheese Quattro Formaggi', 'كواترو فورماجي', Decimal('345')),
+            ('بيتزا', 'Four Seasons Quattro Stagioni', 'كواترو استاجوني', Decimal('345')),
+            ('بيتزا', 'Salami Salame', 'سلامي', Decimal('315')),
+            ('بيتزا', 'Chicken Pollo', 'تشيكن', Decimal('315')),
+            ('بيتزا', 'Sausage Salsiccia', 'سجق', Decimal('315')),
+            ('بيتزا', 'Naples Napoli', 'نابولي', Decimal('280')),
+            ('بيتزا', 'Tuna Tonno', 'تونة', Decimal('315')),
+            ('بيتزا', 'Shrimp Gamberetti', 'جمبري', Decimal('420')),
+            ('بيتزا', 'Fruits of the Sea Frutti del Mare', 'فروت دي ماري', Decimal('440')),
+            ('بيتزا', 'Pizza ElKeima', 'بيتزا الخيمة', Decimal('375')),
+            ('باستا', 'Arrabbiata', 'ارابياتا', Decimal('190')),
+            ('باستا', 'Quattro Formaggi Pasta', 'كواترو فورماجي', Decimal('250')),
+            ('باستا', 'Pasta Tuna', 'باستا تونة', Decimal('250')),
+            ('باستا', 'Chicken Pasta', 'تشيكن', Decimal('280')),
+            ('باستا', 'Pesto', 'بيستو', Decimal('250')),
+            ('باستا', 'Carbonara', 'كاربونارا', Decimal('280')),
+            ('باستا', 'Lasagna', 'لازانيا', Decimal('190')),
+            ('باستا', 'Aglio Olio', 'اليو اوليو', Decimal('250')),
+            ('باستا', 'Frutti del Mare Pasta', 'فروت دي ماري', Decimal('405')),
+            ('باستا', 'Shrimp Pasta', 'جمبري', Decimal('375')),
+            ('سلاطات', 'Tuna Salad', 'تونة سلاط', Decimal('250')),
+            ('سلاطات', 'Greece Salad', 'جريك سلاط', Decimal('190')),
+            ('سلاطات', 'Caesar Salad', 'سيزر سلاط', Decimal('250')),
+            ('سلاطات', 'Sea Food Salad', 'سيفود سلاط', Decimal('405')),
+            ('سلاطات', 'Shrimp Salad', 'جمبري سلاط', Decimal('440')),
+            ('سلاطات', 'French Fries', 'بوم فريت', Decimal('115')),
+            ('حلويات', 'Cheese Cake', 'شيز كيك', Decimal('140')),
+            ('حلويات', 'Om Ali', 'ام علي', Decimal('140')),
+            ('حلويات', 'Molten Cake', 'مولتن كيك', Decimal('155')),
+            ('ساندوتش', 'Zinger Sandwich', 'زينجر ساندوتش', Decimal('175')),
+            ('ساندوتش', 'Pane', 'بانيه', Decimal('145')),
+            ('ساندوتش', 'Burger', 'برجر', Decimal('145')),
+            ('ساندوتش', 'Mexico', 'ميكسيكان', Decimal('145')),
+            ('ساندوتش', 'Beef Fajita', 'فاهيتا لحم', Decimal('190')),
+            ('ساندوتش', 'Chicken Fajita', 'فاهيتا فراخ', Decimal('175')),
+            ('حواوشي وجريل', 'Classic Hawawshi', 'حواوشي كلاسيك', Decimal('95')),
+            ('حواوشي وجريل', 'Special Hawawshi', 'حواوشي سبيشال', Decimal('215')),
+            ('حواوشي وجريل', 'Al-Kheima Hawawshi', 'حواوشي الخيمة', Decimal('135')),
+            ('حواوشي وجريل', 'Sausage Sandwich', 'ساندوتش سجق', Decimal('85')),
+            ('حواوشي وجريل', 'Special Sausage', 'سجق سبيشال', Decimal('185')),
+            ('حواوشي وجريل', 'Liver Sandwich', 'ساندوتش كبدة', Decimal('75')),
+            ('إضافات', 'Rouabi Fries', 'روابي فريز', Decimal('110')),
+            ('إضافات', 'Romani Cheese', 'جبنة رومي', Decimal('75')),
+            ('إضافات', 'Plain Fries', 'فريز عادي', Decimal('85')),
+            ('فطار وبرانش', 'Classic Breakfast', 'فطار كلاسيك', Decimal('300')),
+            ('فطار وبرانش', 'Savory Deluxe Set', 'سيفوري ديلوكس', Decimal('400')),
+            ('كافيه', 'Cappuccino', 'كابتشينو', Decimal('18.0')),
+            ('كافيه', 'Fresh Orange Juice', 'عصير برتقال طازج', Decimal('22.0')),
+            ('كافيه', 'Chocolate Cake', 'كيك شوكولاتة', Decimal('35.0')),
+            ('كافيه', 'Arabic Coffee', 'قهوة عربية', Decimal('15.0')),
+            ('كافيه', 'Morning Bliss Package', 'باقة الصباح المنعشة', Decimal('85.0')),
+            ('كافيه', 'Sea Breeze Coffee', 'قهوة نسيم البحر', Decimal('45.0')),
+            ('كافيه', 'Sunset Signature Drink', 'مشروب الغروب المميز', Decimal('120.0')),
+            ('كافيه', 'Fresh Juice Bar', 'بار العصائر الطازجة', Decimal('50.0')),
+            ('كافيه', 'Ice Cream Delight', 'متعة الآيس كريم', Decimal('60.0')),
+            ('كافيه', 'Smoothie Bowl', 'سموذي بول صحي', Decimal('95.0')),
+            ('كافيه', 'Premium Hookah Lounge', 'شيشة فاخرة مع جلسة', Decimal('180.0')),
+            ('كافيه', 'VIP Shisha Experience', 'تجربة الشيشة VIP', Decimal('350.0')),
+            ('كافيه', "Couple's Chill Package", 'باقة الاسترخاء للأزواج', Decimal('400.0')),
+        ]
+        for cat_ar, name, name_ar, price in cafe_items:
+            db.add(CafeItem(branch_id=branch.id, category_id=cat_map[cat_ar], name=name, name_ar=name_ar, price=price))
+        db.flush()
+        print(f"  ✓ Cafe menu seeded ({len(cafe_items)} items across {len(cafe_categories)} categories)")
 
 
 def _seed_settings(db: Session) -> None:
