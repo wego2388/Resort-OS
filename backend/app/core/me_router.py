@@ -1,10 +1,9 @@
 """app/core/me_router.py
 
-GET /api/v1/auth/me — resort-os-specific addition, mounted alongside wego-core's
-shared `build_auth_router()` at the same prefix. wego-core's base User model has
-no project-specific fields, so this stays local rather than touching the shared
-auth router (which is installed across 5 other wego-core products, one of them
-live in production) for a single-project need.
+GET /api/v1/auth/me — mounted alongside app.core.kernel.auth.router's
+build_auth_router() at the same prefix. The kernel's base User model has no
+project-specific fields, so this stays a small separate router rather than
+growing the generic auth router with resort-os-only response fields.
 """
 from __future__ import annotations
 

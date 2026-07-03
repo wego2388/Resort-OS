@@ -28,7 +28,7 @@ def activity_reminders(self):
             try:
                 from app.modules.crm.models import Activity  # noqa: PLC0415
                 from app.modules.hr.models import Employee  # noqa: PLC0415
-                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
 
                 due_activities = (
                     db.query(Activity)
@@ -101,7 +101,7 @@ def overdue_activities_alert(self):
                             act.id, act.activity_type, act.customer_id,
                             act.due_date, act.assigned_to,
                         )
-                    from wego_core.whatsapp.service import notify_admin  # noqa: PLC0415
+                    from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
                     notify_admin(f"تنبيه CRM: فيه {len(overdue)} نشاط متأخر محتاج متابعة.")
 
             except ImportError:
@@ -127,7 +127,7 @@ def birthday_greetings(self):
         with SessionLocal() as db:
             try:
                 from app.modules.crm.models import Customer  # noqa: PLC0415
-                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
 
                 birthdays = (
                     db.query(Customer)

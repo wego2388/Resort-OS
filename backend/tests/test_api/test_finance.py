@@ -337,8 +337,8 @@ class TestAccounting:
 
     def test_close_period_writes_audit_log(self, db: Session, branch):
         from app.modules.core.crud import list_audit_logs
-        from wego_core.models.user import User
-        from wego_core.security import get_password_hash
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
         user = User(email=f"closer-{uuid.uuid4().hex[:6]}@test.local",
                     password_hash=get_password_hash("Test@12345"),
                     full_name="Closer", role="admin", is_active=True)

@@ -11,7 +11,7 @@ from decimal import Decimal
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from wego_core.models.mixins import TimestampMixin
+from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
 
 

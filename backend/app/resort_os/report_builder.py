@@ -1,7 +1,7 @@
 """Singleton ReportBuilder per resort-os."""
 from __future__ import annotations
 
-from wego_core.reports import ReportBuilder
+from app.core.kernel.reports import ReportBuilder
 
 builder = ReportBuilder(
     app_name="الخيمة بيتش ريزورت",

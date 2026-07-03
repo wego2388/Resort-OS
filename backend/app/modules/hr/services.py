@@ -64,7 +64,7 @@ def link_employee_to_user(db: Session, emp: Employee, user_id: int) -> Employee:
     """يربط Employee موجود بحساب User موجود — يسمح للموظف بالدخول على
     /hr/me/* الخاصة به. emp لازم يكون موجود فعلاً (يتحقق منه الـ router قبل
     النداء هنا، نفس نمط باقي الـ endpoints)."""
-    from wego_core.models.user import User  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
 
     user = db.query(User).filter(User.id == user_id).first()
     if not user:

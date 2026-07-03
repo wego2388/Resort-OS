@@ -2,34 +2,11 @@
 #
 # Resort OS (El Kheima Beach) — backend image
 # ─────────────────────────────────────────────────────────────────────────────
-# `wego_core` (the shared WegoSharm infra kernel — auth, DB, cache, Celery
-# factory, reports, health checks, ...) is NOT on PyPI and is NOT vendored
-# into this repo. On the dev machine it lives at /home/wego/projects/wego-core
-# and is installed editable (`-e /home/wego/projects/wego-core[...]` in
-# requirements.txt). That path will not exist on any VPS, so this Dockerfile
-# pulls the wego-core *source* in via a BuildKit named build context instead
-# of assuming a fixed host path.
-#
-# This means the build context for this image is NOT just `backend/` (or even
-# just `resort-os/`) — it needs a second, independent source tree: wego-core.
-# BuildKit's `--build-context NAME=PATH` (Docker Buildx >= 0.8 / Docker CLI
-# >= 23) lets you hand the Dockerfile a second, unrelated directory under a
-# name, without requiring it to be a subdirectory of the main build context.
-#
-# See ../DEPLOYMENT.md for the full explanation and exact commands. Short
-# version — from the parent directory containing both `resort-os/` and
-# `wego-core/` as siblings:
-#
-#   DOCKER_BUILDKIT=1 docker build \
-#     -f resort-os/backend/Dockerfile \
-#     --build-context wego-core=./wego-core \
-#     -t resort-os-backend:latest \
-#     resort-os/backend
-#
-# Or via `docker compose -f docker-compose.prod.yml build backend` — the
-# compose file wires the same named context up via `additional_contexts:`
-# (Compose Spec, supported Docker Compose v2.17+), so no manual `docker
-# build` invocation is needed in normal operation.
+# Self-contained: no external "shared kernel" package, no second build
+# context. `backend/` alone is the entire build context — just
+# `docker build -f backend/Dockerfile -t resort-os-backend:latest backend`
+# or `docker compose build backend`. All auth/security/notification/report
+# code lives in app/core/kernel/, owned directly by this repo.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: build wheels / install deps into a venv ──────────────────────────
@@ -47,22 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Pull in the wego-core source tree from the named build context (see header
-# comment above) at a fixed, predictable path — this is what
-# `-e /wego-core[reports,worker,monitoring]` below resolves against, and it's
-# also where the runtime stage expects to find it (editable installs are a
-# path reference, not a copy — the source must exist at the same path in the
-# final image too).
-COPY --from=wego-core . /wego-core
-
 WORKDIR /app
 COPY requirements.txt .
-
-# requirements.txt contains `-e /home/wego/projects/wego-core[reports,worker,monitoring]`.
-# That exact host path does not exist in this image — sed it to /wego-core
-# (the path we just COPY'd it to above) at build time. Nothing else in the
-# file changes.
-RUN sed -i 's#-e /home/wego/projects/wego-core#-e /wego-core#' requirements.txt
 
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -87,15 +50,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && useradd --create-home --shell /usr/sbin/nologin resortos
 
 COPY --from=builder /opt/venv /opt/venv
-# wego_core is installed editable — the venv only has a path reference
-# (an .egg-link / .pth pointing at /wego-core), so the source must be present
-# at that same path in this stage too, not just in the builder stage.
-COPY --from=wego-core . /wego-core
 
 WORKDIR /app
 COPY . /app
 
-RUN chown -R resortos:resortos /app /wego-core /opt/venv
+RUN chown -R resortos:resortos /app /opt/venv
 USER resortos
 
 EXPOSE 8005

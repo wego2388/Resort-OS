@@ -20,7 +20,7 @@ def check_low_stock(self):
         with SessionLocal() as db:
             try:
                 from app.modules.inventory.services import get_low_stock_products  # noqa: PLC0415
-                from wego_core.whatsapp.service import notify_admin  # noqa: PLC0415
+                from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
 
                 branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
                 for branch in branches:

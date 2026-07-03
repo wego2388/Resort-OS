@@ -48,3 +48,4 @@ Thumbs.db
 # start.sh/stop.sh/status.sh write PID + log files to /tmp/resort-os-*, which is
 # outside this repo entirely (never inside the working tree), so nothing to
 # ignore here for that — listed for documentation purposes only.
+backups/

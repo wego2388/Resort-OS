@@ -228,7 +228,7 @@ def b2b_checkin(
         db.flush()
         if contract_row.contact_phone:
             try:
-                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
                 send_whatsapp_message(
                     contract_row.contact_phone,
                     f"تنبيه: حصة {contract_row.hotel_name} اليومية في الخيمة بيتش أوشكت على الانتهاء (≤5 متبقي).",

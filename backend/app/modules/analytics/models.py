@@ -13,7 +13,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from wego_core.models.mixins import TimestampMixin
+from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
 
 

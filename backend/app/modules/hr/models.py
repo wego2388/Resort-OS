@@ -16,7 +16,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from wego_core.models.mixins import TimestampMixin
+from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
 from app.core.encryption import EncryptedString
 
@@ -37,7 +37,7 @@ class Employee(Base, TimestampMixin):
     status:        Mapped[str]         = mapped_column(String(20), default="active")  # active|on_leave|terminated
     phone:         Mapped[str | None]  = mapped_column(String(20), nullable=True)
     email:         Mapped[str | None]  = mapped_column(String(100), nullable=True)
-    # ربط اختياري بحساب تسجيل دخول (wego_core.models.user.User) — يسمح للموظف
+    # ربط اختياري بحساب تسجيل دخول (app.core.kernel.models.user.User) — يسمح للموظف
     # نفسه بمشاهدة حضوره/إجازاته/راتبه عبر /hr/me/*. NULL لموظفين موسميين/بدون
     # حساب دخول. unique — كل User مربوط بموظف واحد كحد أقصى.
     user_id:       Mapped[int | None]  = mapped_column(

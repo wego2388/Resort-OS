@@ -13,7 +13,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.database import get_db  # noqa: F401 — re-export; same callable wego_core's auth router uses
+from app.core.database import get_db  # noqa: F401 — re-export; same callable the kernel auth router uses
 
 
 DbDep = Annotated[Session, Depends(get_db)]
@@ -21,7 +21,7 @@ DbDep = Annotated[Session, Depends(get_db)]
 
 # ─────────────────────── Auth ────────────────────────────────────────
 
-# wego_core.models.user.User has no numeric `level` column — only `role`.
+# app.core.kernel.models.user.User has no numeric `level` column — only `role`.
 # Map roles to the numeric levels the rest of the app checks against.
 ROLE_LEVELS: dict[str, int] = {
     "super_admin": 100,
@@ -57,7 +57,7 @@ def revoke_user_tokens(user_id: int) -> None:
     """Call whenever a user's role/is_active changes — invalidates every
     token issued before this moment, forcing re-login on the new privileges."""
     import time  # noqa: PLC0415
-    from wego_core.cache.store import set_cache  # noqa: PLC0415
+    from app.core.kernel.cache import set_cache  # noqa: PLC0415
 
     set_cache(f"{REVOKED_CACHE_PREFIX}:{user_id}", time.time(), ttl=settings_refresh_ttl_seconds())
 
@@ -67,7 +67,7 @@ def settings_refresh_ttl_seconds() -> int:
 
 
 # ─────────────────────── Mandatory 2FA ─────────────────────────────────
-# Per 08-SECURITY.md: "2FA إلزامي لـ super_admin وfinance". wego_core's
+# Per 08-SECURITY.md: "2FA إلزامي لـ super_admin وfinance". The kernel's
 # login flow doesn't gate on two_factor_enabled, so it's enforced here —
 # every request from these roles is blocked until 2FA is turned on, except
 # the auth router's own endpoints (so the user can actually set it up).
@@ -78,9 +78,9 @@ MANDATORY_2FA_ROLES = {"super_admin", "accountant"}
 def get_current_user(request: Request, db: DbDep):
     """يُستخرج الـ user من JWT — يتحقق من التوقيع والـ token_blacklist والـ revocation."""
     from jose import JWTError  # noqa: PLC0415
-    from wego_core.cache.store import get_cache  # noqa: PLC0415
-    from wego_core.models.user import TokenBlacklist, User  # noqa: PLC0415
-    from wego_core.security import decode_token, hash_token  # noqa: PLC0415
+    from app.core.kernel.cache import get_cache  # noqa: PLC0415
+    from app.core.kernel.models.user import TokenBlacklist, User  # noqa: PLC0415
+    from app.core.kernel.security import decode_token, hash_token  # noqa: PLC0415
 
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer "):
@@ -224,7 +224,7 @@ def rate_limit_dep(prefix: str, max_requests: int, window_seconds: int, key_para
     الاستخدام:
         @router.post("/eta/invoices", dependencies=[Depends(rate_limit_dep("eta", 100, 60))])
     """
-    from wego_core.cache.store import rate_limit  # noqa: PLC0415
+    from app.core.kernel.cache import rate_limit  # noqa: PLC0415
 
     def _check(request: Request, user=Depends(get_current_active_user)) -> None:
         key_value = request.path_params.get(key_param) or user.id

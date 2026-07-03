@@ -5,10 +5,10 @@ Settings للمشروع — يرث WegoSettings ويضيف حقول Resort OS
 from functools import lru_cache
 from typing import Optional
 
-from wego_core.config import WegoSettings
+from app.core.kernel.config import CoreSettings
 
 
-class Settings(WegoSettings):
+class Settings(CoreSettings):
     # ── Resort Identity ───────────────────────────────────────────────
     RESORT_NAME: str = "Resort OS"
     DEFAULT_CURRENCY: str = "EGP"

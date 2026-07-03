@@ -378,7 +378,7 @@ class TestB2BQuotaStatus:
         db.commit()
 
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=4)  # remaining = 4 → warning
-        with patch("wego_core.whatsapp.service.send_whatsapp_message", return_value=True) as mock_send:
+        with patch("app.core.kernel.whatsapp.send_whatsapp_message", return_value=True) as mock_send:
             services.b2b_checkin(db, branch.id, req)
 
         mock_send.assert_called_once()

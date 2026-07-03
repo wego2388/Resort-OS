@@ -129,8 +129,8 @@ class TestEmployee:
 
     def test_salary_change_writes_audit_log(self, db, employee):
         from app.modules.core.crud import list_audit_logs
-        from wego_core.models.user import User
-        from wego_core.security import get_password_hash
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
         user = User(email=f"hrmgr-{uuid.uuid4().hex[:6]}@test.local",
                     password_hash=get_password_hash("Test@12345"),
                     full_name="HR Manager", role="admin", is_active=True)
@@ -275,8 +275,8 @@ class TestSelfServicePunch:
 
     @pytest.fixture
     def linked_user_id(self, db: Session, employee) -> int:
-        from wego_core.models.user import User
-        from wego_core.security import get_password_hash
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
         user = User(
             email=f"emp-{uuid.uuid4().hex[:6]}@test.local",
             password_hash=get_password_hash("Test@12345"),
@@ -342,8 +342,8 @@ class TestLeaderboard:
 
     def test_leaderboard_ranks_by_real_sales(self, db, branch, employee):
         from decimal import Decimal as D
-        from wego_core.models.user import User
-        from wego_core.security import get_password_hash
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
 
         top_user = User(email=f"top-{uuid.uuid4().hex[:6]}@test.local",
                          password_hash=get_password_hash("Test@12345"),

@@ -64,7 +64,7 @@ def send_due_reminders(self):
         with SessionLocal() as db:
             try:
                 from app.modules.leasing.models import LeaseContract, LeasePayment  # noqa: PLC0415
-                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
 
                 due_soon = (
                     db.query(LeasePayment)

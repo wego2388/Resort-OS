@@ -67,7 +67,7 @@ def notify_overdue_work_orders(self):
             try:
                 from app.modules.maintenance.models import WorkOrder  # noqa: PLC0415
                 from app.modules.hr.models import Employee  # noqa: PLC0415
-                from wego_core.whatsapp.service import notify_admin, send_whatsapp_message  # noqa: PLC0415
+                from app.core.kernel.whatsapp import notify_admin, send_whatsapp_message  # noqa: PLC0415
 
                 overdue = (
                     db.query(WorkOrder)

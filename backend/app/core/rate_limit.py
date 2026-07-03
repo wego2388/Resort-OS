@@ -17,7 +17,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from wego_core.cache.store import rate_limit
+from app.core.kernel.cache import rate_limit
 
 
 def _client_ip(request: Request) -> str:

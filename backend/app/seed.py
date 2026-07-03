@@ -81,9 +81,9 @@ def _seed_branch(db: Session) -> None:
 
 def _seed_super_admin(db: Session) -> None:
     """يُنشئ super_admin إذا لم يوجد — password من .env أو default."""
-    from wego_core.auth.repository import UserRepository
-    from wego_core.models.user import User
-    from wego_core.security import get_password_hash
+    from app.core.kernel.auth.repository import UserRepository
+    from app.core.kernel.models.user import User
+    from app.core.kernel.security import get_password_hash
 
     repo = UserRepository(User, db)
     if repo.get_by_field("email", "admin@resortos.local"):

@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
-from wego_core.models.mixins import TimestampMixin
+from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
 
 if TYPE_CHECKING:

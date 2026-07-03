@@ -96,7 +96,7 @@ ok "Migrations up to date"
 # ── Seed (first run only) ─────────────────────────────────────────────────────
 USER_COUNT=$(python3 -c "
 from app.core.database import SessionLocal
-from wego_core.models.user import User
+from app.core.kernel.models.user import User
 db = SessionLocal()
 print(db.query(User).count())
 db.close()

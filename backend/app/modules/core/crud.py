@@ -206,11 +206,11 @@ def mark_all_notifications_read(
 
 
 # ─────────────────────── Users ───────────────────────────────────────
-# User itself lives in wego_core.models.user — imported lazily to avoid a
+# User itself lives in app.core.kernel.models.user — imported lazily to avoid a
 # hard import-order dependency between core and the shared auth model.
 
 def list_users(db: Session, skip: int = 0, limit: int = 20):
-    from wego_core.models.user import User  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
     q = db.query(User).filter(User.deleted_at.is_(None))
     total = q.count()
     items = q.order_by(User.id).offset(skip).limit(limit).all()
@@ -218,7 +218,7 @@ def list_users(db: Session, skip: int = 0, limit: int = 20):
 
 
 def get_user(db: Session, user_id: int):
-    from wego_core.models.user import User  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
     return db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
 
 

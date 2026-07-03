@@ -40,7 +40,7 @@ def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
     عند 7 أيام موجود في timeshare_tasks.send_installment_reminders)."""
     try:
         from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment  # noqa: PLC0415
-        from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+        from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
         dues = (
             db.query(TimeshareInstallment)
             .filter(
@@ -67,7 +67,7 @@ def _check_leasing_dues(db, branch_id: int, remind_date: date) -> None:
     """تذكيرات دفعات الإيجار."""
     try:
         from app.modules.leasing.models import LeaseContract, LeasePayment  # noqa: PLC0415
-        from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+        from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
         dues = (
             db.query(LeasePayment)
             .filter(

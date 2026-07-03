@@ -95,7 +95,7 @@ def send_visit_reminders(self):
                     TimeshareContract.week_number.isnot(None),
                 ).all()
 
-                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
 
                 reminders_sent = 0
                 for c in contracts:
@@ -137,7 +137,7 @@ def send_installment_reminders(self):
                 from app.modules.timeshare.models import TimeshareInstallment  # noqa: PLC0415
 
                 from app.modules.timeshare.models import TimeshareContract  # noqa: PLC0415
-                from wego_core.whatsapp.service import send_whatsapp_message  # noqa: PLC0415
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
 
                 due_soon = (
                     db.query(TimeshareInstallment)

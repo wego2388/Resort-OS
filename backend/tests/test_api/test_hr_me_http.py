@@ -4,7 +4,7 @@ HTTP-level tests for HR self-service endpoints (/hr/me/*) and the
 Employee.user_id link that makes them possible.
 
 Context: Employee (HR module) previously had no way to point back to the
-wego_core User a staff member logs in with — so a logged-in waiter/cashier/
+User a staff member logs in with — so a logged-in waiter/cashier/
 whoever had no way to see their own attendance/leave/payslip data. Fixed by
 adding Employee.user_id (nullable, unique FK → users.id) plus:
   - PATCH /hr/employees/{id}/link-user   (manager+, links an existing Employee

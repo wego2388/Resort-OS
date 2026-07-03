@@ -1,40 +1,8 @@
 # Deployment Guide — El Kheima Beach (resort-os)
 
-Step-by-step instructions for standing this up on a fresh Ubuntu VPS. Read
-§1–§2 fully before starting — the wego-core dependency requires a specific
-directory layout on disk that's easy to get wrong on the first try.
-
-## 0. Why this isn't a normal single-repo deploy
-
-`resort-os`'s backend depends on `wego_core`, a shared internal Python
-package used by several sibling products (WegoDivers, WatersportsOS,
-RestaurantOS, etc.). It is **not published to PyPI** and is **not vendored
-into this repo** — it's installed as an editable local package
-(`-e /home/wego/projects/wego-core[reports,worker,monitoring]` in
-`backend/requirements.txt`). On a VPS, that exact path won't exist, so the
-Docker build needs `wego-core`'s source available at build time from
-somewhere else.
-
-> **⚠️ If you also run local dev on this same machine/checkout**:
-> `docker-compose.prod.yml` pins `name: resort-os-prod` at its top specifically
-> so its volumes/network never collide with `docker-compose.yml`'s (which
-> default to the `resort-os` project name — the checkout's directory name).
-> Without that pin, `docker compose -f docker-compose.prod.yml down -v` would
-> tear down and silently wipe the *dev* Postgres/Redis volumes too, since
-> Compose scopes volumes by project name and both files would otherwise
-> resolve to the same one. This is not a hypothetical — it happened once
-> while preparing this deployment setup, on a shared box running both dev and
-> a test of this prod file. On a real, dedicated VPS this scenario doesn't
-> arise (there's no dev stack to collide with), but the pin costs nothing and
-> stays as a permanent guard rail.
-
-The solution used here: **BuildKit named build contexts**
-(`docker build --build-context NAME=PATH`, or Compose's
-`build.additional_contexts:`). This lets `backend/Dockerfile` `COPY` in a
-second, independent source tree (wego-core) that lives *outside* the
-`resort-os` repo, without restructuring anything or vendoring code. The only
-requirement is that **`resort-os/` and `wego-core/` exist as sibling
-directories** on the VPS's disk (see §2).
+Step-by-step instructions for standing this up on a fresh Ubuntu VPS.
+`resort-os` is fully self-contained — one repo, one build context, no
+external shared-package dependency. `git clone` and go.
 
 ## 1. Install Docker + Docker Compose (Ubuntu 22.04/24.04)
 
@@ -57,34 +25,29 @@ sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plug
 # Run docker without sudo (log out/in afterwards for this to take effect)
 sudo usermod -aG docker "$USER"
 
-docker --version           # 24.x+ (ships BuildKit + named build contexts)
-docker compose version     # v2.17+ (needed for `additional_contexts:` in compose)
+docker --version
+docker compose version
 ```
 
-## 2. Clone `resort-os` AND `wego-core` as siblings
-
-This is the part that's easy to get wrong — both repos must sit next to each
-other, e.g. under `/opt`:
+## 2. Clone `resort-os`
 
 ```bash
 sudo mkdir -p /opt/wegosharm && sudo chown "$USER":"$USER" /opt/wegosharm
 cd /opt/wegosharm
-
-git clone <your-resort-os-remote-url>  resort-os
-git clone <your-wego-core-remote-url>  wego-core
-
-# Expected layout:
-#   /opt/wegosharm/
-#   ├── resort-os/
-#   │   ├── backend/Dockerfile        ← COPY --from=wego-core reaches ../wego-core
-#   │   ├── docker-compose.prod.yml   ← additional_contexts: wego-core: ../wego-core
-#   │   └── ...
-#   └── wego-core/
-#       ├── pyproject.toml
-#       └── wego_core/
+git clone <your-resort-os-remote-url> resort-os
+cd resort-os
 ```
 
-Everything from here on assumes you're inside `/opt/wegosharm/resort-os`.
+> **⚠️ If you also run local dev on this same machine/checkout**:
+> `docker-compose.prod.yml` pins `name: resort-os-prod` at its top specifically
+> so its volumes/network never collide with `docker-compose.yml`'s (which
+> default to the `resort-os` project name — the checkout's directory name).
+> Without that pin, `docker compose -f docker-compose.prod.yml down -v` would
+> tear down and silently wipe the *dev* Postgres/Redis volumes too, since
+> Compose scopes volumes by project name and both files would otherwise
+> resolve to the same one. On a real, dedicated VPS this scenario doesn't
+> arise (there's no dev stack to collide with), but the pin costs nothing and
+> stays as a permanent guard rail.
 
 ## 3. Create `backend/.env` with real production secrets
 
@@ -116,12 +79,18 @@ CELERY_BROKER_URL=redis://redis_cache:6379/1
 CELERY_RESULT_BACKEND=redis://redis_cache:6379/2
 CORS_ORIGINS=https://app.yourdomain.com,https://qr.yourdomain.com,https://yourdomain.com
 RESORT_NAME=El Kheima Beach
+
+# Optional but recommended for production — see §9 and §10
+SENTRY_DSN=https://xxxx@oXXXXXX.ingest.sentry.io/XXXXXXX
 ```
 
 Note the hostnames: inside `docker-compose.prod.yml`, Postgres and Redis are
 reached by their **service names** (`db_postgres`, `redis_cache`), not
 `localhost` — that only worked in local dev because those ports were
-published to the host.
+published to the host. They're still *also* published to `127.0.0.1` on the
+host in prod (see docker-compose.prod.yml) — that's deliberate, it's what
+lets `scripts/backup_db.sh` run directly on the host (§10) without going
+through `docker compose exec`.
 
 Also set a real `DB_PASSWORD` (used by both `docker-compose.prod.yml`'s
 `db_postgres` service and your `DATABASE_URL` above) — either export it in
@@ -136,30 +105,18 @@ docker compose -f docker-compose.prod.yml up -d --build
 
 This builds, in order as dependencies require:
 - `db_postgres`, `redis_cache` — same images as local dev
-- `backend` — via `backend/Dockerfile`, using the `wego-core` named build
-  context described in §0 (Compose resolves `additional_contexts:
-  wego-core: ../wego-core` automatically — no manual `docker build` needed)
+- `backend` — via `backend/Dockerfile` (self-contained, `backend/` is the
+  entire build context)
 - `celery_worker`, `celery_beat` — same image as `backend`, different command
 - `el_kheima`, `qr`, `public_site` — via `frontend/Dockerfile`, one build per
   app (`--build-arg APP_NAME=...`), each producing a small nginx image
   serving that app's static build
-- `nginx` — the public edge proxy (see §6)
+- `nginx` — the public edge proxy (see §7)
 
 Check everything came up healthy:
 
 ```bash
 docker compose -f docker-compose.prod.yml ps
-```
-
-If you ever need to build the backend image by hand outside Compose (e.g. to
-debug), the equivalent manual command from `/opt/wegosharm/resort-os` is:
-
-```bash
-DOCKER_BUILDKIT=1 docker build \
-  -f backend/Dockerfile \
-  --build-context wego-core=../wego-core \
-  -t resort-os-backend:latest \
-  backend
 ```
 
 ## 5. Run migrations and seed data
@@ -236,7 +193,7 @@ standard) and have it reload the `nginx` container after renewal:
 
 ```bash
 curl -s https://app.yourdomain.com/health
-# → {"status": "ok", "checks": {"db": {...}, "redis": {...}}, ...}
+# → {"status": "ok", "checks": {"database": {...}, "redis": {...}}, ...}
 
 docker compose -f docker-compose.prod.yml ps            # all healthy?
 docker compose -f docker-compose.prod.yml logs backend --tail 100
@@ -246,15 +203,85 @@ If `/health` doesn't respond: check `docker compose -f docker-compose.prod.yml
 logs backend`, confirm `alembic upgrade head` succeeded (step 5), and confirm
 `db_postgres`/`redis_cache` show `healthy` in `docker compose ps`.
 
+## 9. Error tracking (Sentry)
+
+Set `SENTRY_DSN` in `backend/.env` (get one free at sentry.io — a new
+project of type "FastAPI"/"Python") and restart the backend:
+
+```bash
+docker compose -f docker-compose.prod.yml restart backend celery_worker celery_beat
+docker compose -f docker-compose.prod.yml logs backend | grep Sentry
+# → [Sentry] initialized for 'Resort OS' env='production'
+```
+
+Without `SENTRY_DSN` set, the app runs fine — errors just aren't reported
+anywhere except the container logs (`docker compose logs backend`), which is
+fine for local dev but means real production errors go unnoticed until a
+user reports them. Setting this is cheap and worth doing before go-live.
+
+## 10. Database backups — set this up before real guest data exists
+
+`scripts/backup_db.sh` and `scripts/restore_db.sh` (repo root) run directly
+against Postgres on `127.0.0.1:5436` (published to the host by both
+docker-compose.yml and docker-compose.prod.yml — see the note in §3) using
+the same `DATABASE_URL` from `backend/.env` the app itself reads, so there's
+nothing extra to configure.
+
+**Manual test run** (do this once after first deploy to confirm it actually
+works on this server, not just in theory):
+
+```bash
+./scripts/backup_db.sh
+# → backups/resort_os_<timestamp>.dump
+
+# Prove it restores cleanly, into a throwaway DB (never overwrites anything real):
+./scripts/restore_db.sh latest resort_os_restore_test
+docker compose -f docker-compose.prod.yml exec db_postgres \
+  psql -U postgres -d resort_os_restore_test -c "SELECT count(*) FROM users;"
+# compare against the real DB's user count — should match exactly
+
+docker compose -f docker-compose.prod.yml exec db_postgres \
+  psql -U postgres -c "DROP DATABASE resort_os_restore_test;"   # clean up
+```
+
+**Real disaster recovery** (restoring over the actual `resort_os` database,
+e.g. after a server rebuild) uses the same script — it detects the target
+already has tables and requires you to type the database name back as
+confirmation before it touches anything:
+
+```bash
+./scripts/restore_db.sh backups/resort_os_20260703_030000.dump resort_os
+```
+
+**Schedule it** — a systemd timer is provided (daily at 03:00, deliberately
+clear of the app's own scheduled jobs in `app/celery_app.py`):
+
+```bash
+sudo cp deploy/systemd/resort-os-backup.service deploy/systemd/resort-os-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now resort-os-backup.timer
+systemctl list-timers resort-os-backup.timer   # confirm it's scheduled
+```
+
+Edit `WorkingDirectory=`/`User=` in `resort-os-backup.service` first if your
+checkout path or run user differs from `/opt/wegosharm/resort-os` / `resortos`.
+
+Retention defaults to 14 days (`BACKUP_RETENTION_DAYS` env var to change).
+Backups land in `backups/` at the repo root — gitignored, and **not** copied
+off the server by anything in this repo. For real disaster recovery (the
+server itself dying, not just the database), also sync `backups/` somewhere
+off-box — e.g. a nightly `rclone`/`rsync` to S3/Backblaze — that part is
+infrastructure-specific and left to you.
+
 ## Updating / redeploying
 
 ```bash
 cd /opt/wegosharm/resort-os && git pull
-cd /opt/wegosharm/wego-core && git pull   # if wego-core itself changed
-cd /opt/wegosharm/resort-os
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
 ```
 
 Migrations are deliberately a manual step (not baked into the container's
-start command) so a routine restart never silently re-runs them.
+start command) so a routine restart never silently re-runs them. Consider
+running `./scripts/backup_db.sh` manually right before a redeploy that
+includes a migration, as a point-in-time safety net beyond the nightly timer.

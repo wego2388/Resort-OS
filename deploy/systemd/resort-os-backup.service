@@ -1,0 +1,22 @@
+# deploy/systemd/resort-os-backup.service
+#
+# Runs scripts/backup_db.sh once. Triggered on a schedule by the paired
+# resort-os-backup.timer — not enabled directly.
+#
+# Install (adjust WorkingDirectory/User to match your server):
+#   sudo cp deploy/systemd/resort-os-backup.service deploy/systemd/resort-os-backup.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now resort-os-backup.timer
+#   systemctl list-timers resort-os-backup.timer   # confirm next run time
+#   journalctl -u resort-os-backup.service          # check logs after it fires
+
+[Unit]
+Description=Resort OS — PostgreSQL backup
+After=docker.service
+
+[Service]
+Type=oneshot
+User=resortos
+WorkingDirectory=/opt/wegosharm/resort-os
+ExecStart=/opt/wegosharm/resort-os/scripts/backup_db.sh
+Environment=BACKUP_RETENTION_DAYS=14

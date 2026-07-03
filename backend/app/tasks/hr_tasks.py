@@ -64,7 +64,7 @@ def payroll_reminder(self):
         today = date.today()
         with SessionLocal() as db:
             branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
-            from wego_core.whatsapp.service import notify_admin  # noqa: PLC0415
+            from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
             for branch in branches:
                 logger.info(
                     "Payroll reminder: branch=%s month=%s/%s",

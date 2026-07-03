@@ -10,14 +10,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from wego_core.auth.router import build_auth_router
-from wego_core.errors.handler import setup_error_handlers
-from wego_core.health.checker import build_health_router
-from wego_core.logging.setup import setup_logging
-from wego_core.middleware.security import SecurityHeadersMiddleware
-from wego_core.middleware.timing import RequestTimingMiddleware
-from wego_core.correlation import CorrelationMiddleware
-from wego_core.monitoring.sentry import setup_sentry
+from app.core.kernel.auth.router import build_auth_router
+from app.core.kernel.errors import setup_error_handlers
+from app.core.kernel.health import build_health_router
+from app.core.kernel.logging_setup import setup_logging
+from app.core.kernel.middleware import SecurityHeadersMiddleware, RequestTimingMiddleware
+from app.core.kernel.correlation import CorrelationMiddleware
+from app.core.kernel.sentry import setup_sentry
 
 from app.core.config import settings
 from app.core.rate_limit import RateLimitMiddleware
@@ -89,7 +88,7 @@ def create_app() -> FastAPI:
         pass  # graceful: health router is optional in tests
 
     try:
-        from wego_core.models.user import User as _User  # noqa: PLC0415
+        from app.core.kernel.models.user import User as _User  # noqa: PLC0415
         from app.core.deps import get_current_user  # noqa: PLC0415
         app.include_router(
             build_auth_router(_User, settings, get_current_user),

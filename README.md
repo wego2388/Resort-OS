@@ -17,10 +17,11 @@ the VPS, see [`DEPLOYMENT.md`](./DEPLOYMENT.md) for how to stand it up.
 - FastAPI (Python 3.11+), SQLAlchemy 2.0, Alembic migrations
 - PostgreSQL 16, Redis 7 (cache, rate limiting, Celery broker/result backend)
 - Celery (worker + beat) for background jobs and scheduled tasks (e.g. night audit)
-- Auth, payments, notifications, and the event bus come from `wego_core` — a
-  shared internal package (`/home/wego/projects/wego-core` in dev) used across
-  several sibling products. It is **not vendored** into this repo; see
-  `backend/Dockerfile` and `DEPLOYMENT.md` for how the build gets it.
+- Auth, security, DB session management, caching, error handling, health
+  checks, logging, Sentry, Celery, WhatsApp/email notifications, and PDF/Excel
+  report generation are all owned directly by this repo in
+  `backend/app/core/kernel/` — no external shared-package dependency, no
+  second build context, nothing else to clone.
 
 **Frontend** — pnpm monorepo (Vue 3 + Vite + Pinia + TailwindCSS), three apps:
 
@@ -41,8 +42,6 @@ Requirements: Python 3.11+, Node 20+, pnpm 10, Docker (for Postgres + Redis).
 # 1. Backend env + install
 cp backend/.env.example backend/.env      # fill in secrets — see DEPLOYMENT.md §3 for how to generate them
 cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-# requirements.txt installs wego_core as an editable local package from
-# /home/wego/projects/wego-core — this only works on this dev machine.
 
 # 2. Frontend deps
 cd ../frontend && pnpm install
@@ -94,9 +93,11 @@ so it can be unit-tested without a database.
 
 Shared infrastructure (JWT auth, password hashing, DB session, Redis cache,
 Celery app factory, PDF/Excel report building, error handlers, health checks,
-logging, Sentry) comes from the external `wego_core` package rather than being
-reimplemented per project — see `CLAUDE.md` §6 for the full list of what's used
-from it and `DEPLOYMENT.md` for how it's built into the Docker image.
+logging, Sentry, WhatsApp/email notifications) lives in
+`backend/app/core/kernel/` — see `CLAUDE.md` §6 for the full module map.
+
+Database backups: `scripts/backup_db.sh` / `scripts/restore_db.sh` (see
+`DEPLOYMENT.md` §10 for scheduling and disaster-recovery instructions).
 
 For the deeper engineering charter (auth chain, role levels, critical
 gotchas, security rules) see [`CLAUDE.md`](./CLAUDE.md).

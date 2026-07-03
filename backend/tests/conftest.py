@@ -75,7 +75,7 @@ TestingSessionLocal = sessionmaker(
 def create_all_tables() -> None:
     """ينشئ كل الجداول في SQLite in-memory."""
     from app.core.database import Base  # noqa: PLC0415
-    import wego_core.models.user           # noqa: F401, PLC0415 — users/refresh_tokens/token_blacklist
+    import app.core.kernel.models.user           # noqa: F401, PLC0415 — users/refresh_tokens/token_blacklist
     import app.modules.core.models         # noqa: F401, PLC0415
     import app.modules.finance.models      # noqa: F401, PLC0415
     import app.modules.hr.models           # noqa: F401, PLC0415
@@ -180,8 +180,8 @@ def _make_token(email: str) -> str:
 
 def _create_test_user(email: str, role: str, two_factor_enabled: bool = False):
     """ينشئ (أو يرجّع الموجود) صف User حقيقي — يُستخدم من fixtures الـ headers."""
-    from wego_core.models.user import User  # noqa: PLC0415
-    from wego_core.security import get_password_hash  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+    from app.core.kernel.security import get_password_hash  # noqa: PLC0415
 
     db = TestingSessionLocal()
     try:

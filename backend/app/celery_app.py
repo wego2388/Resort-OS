@@ -1,9 +1,9 @@
 """
 app/celery_app.py
-Celery worker — يستخدم wego-core make_celery مباشرة
+Celery worker — يستخدم app.core.kernel.worker.make_celery مباشرة
 """
 from celery.schedules import crontab
-from wego_core.worker.app import make_celery
+from app.core.kernel.worker import make_celery
 
 from app.core.config import settings
 

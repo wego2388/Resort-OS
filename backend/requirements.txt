@@ -15,6 +15,8 @@ pydantic-settings==2.6.1
 # ── Auth ──────────────────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt==5.0.0
+pyotp==2.10.0
 
 # ── Cache & Queue ─────────────────────────────────────────────────────────────
 redis==5.2.1
@@ -33,8 +35,15 @@ httpx==0.28.1
 python-dateutil==2.9.0
 openpyxl==3.1.5
 
-# ── wego-core (shared infra kernel — editable install, see /home/wego/projects/wego-core) ──
--e /home/wego/projects/wego-core[reports,worker,monitoring]
+# ── Notifications ─────────────────────────────────────────────────────────────
+twilio==9.10.9
+sendgrid==6.12.4
+
+# ── Reports (PDF + Excel) ───────────────────────────────────────────────────
+reportlab==5.0.0
+arabic-reshaper==3.0.1
+python-bidi==0.6.10
+qrcode[pil]==8.2
 
 # ── Dev / Testing ─────────────────────────────────────────────────────────────
 pytest==8.3.4

@@ -25,8 +25,7 @@
 #  from the same image (backend/Dockerfile), just with different commands.
 #
 #  Build with:  docker compose -f docker-compose.prod.yml up -d --build
-#  (requires wego-core checked out as a sibling of resort-os/ — see
-#  backend/Dockerfile's header comment + DEPLOYMENT.md for why.)
+#  Self-contained — backend/ alone is the build context, no sibling checkout needed.
 #
 #  ⚠️  Explicit `name:` below is load-bearing, not cosmetic. Compose scopes
 #  volumes/networks by *project name*, which defaults to the directory name
@@ -77,10 +76,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      # BuildKit named build context — see backend/Dockerfile header comment.
-      # Requires wego-core checked out one level up from resort-os/ (siblings).
-      additional_contexts:
-        wego-core: ../wego-core
     restart: unless-stopped
     env_file: ./backend/.env
     ports: ["127.0.0.1:8005:8005"]
@@ -100,8 +95,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      additional_contexts:
-        wego-core: ../wego-core
     restart: unless-stopped
     env_file: ./backend/.env
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
@@ -117,8 +110,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-      additional_contexts:
-        wego-core: ../wego-core
     restart: unless-stopped
     env_file: ./backend/.env
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
