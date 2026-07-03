@@ -204,3 +204,37 @@ class TestPMSValidation:
             headers=manager_headers,
         )
         assert resp.status_code == 422
+
+
+class TestPublicRoomTypes:
+    """للموقع العام — بدون تسجيل دخول، نفس نمط restaurant/public/menu."""
+
+    def test_no_auth_required(self, client: TestClient, db, fake_redis):
+        branch = make_branch_committed(db)
+        make_room_type_committed(db, branch)
+
+        resp = client.get("/api/v1/pms/public/room-types", params={"branch_id": branch.id})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["name"] == "Standard"
+        assert Decimal(str(body[0]["base_rate"])) == Decimal("500.00")
+
+    def test_excludes_inactive_room_types(self, client: TestClient, db, fake_redis, manager_headers):
+        from app.modules.pms.models import RoomType
+        branch = make_branch_committed(db)
+        make_room_type_committed(db, branch)
+        inactive = RoomType(branch_id=branch.id, name="Discontinued", base_rate=Decimal("300.00"), is_active=False)
+        db.add(inactive)
+        db.commit()
+
+        resp = client.get("/api/v1/pms/public/room-types", params={"branch_id": branch.id})
+        names = [rt["name"] for rt in resp.json()]
+        assert "Standard" in names
+        assert "Discontinued" not in names
+
+    def test_empty_branch_returns_empty_list(self, client: TestClient, db, fake_redis):
+        branch = make_branch_committed(db)
+        resp = client.get("/api/v1/pms/public/room-types", params={"branch_id": branch.id})
+        assert resp.status_code == 200
+        assert resp.json() == []

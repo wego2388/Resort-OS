@@ -33,6 +33,7 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("POST", "/api/v1/auth/register"): ("login",  5,  300),
     ("POST", "/api/v1/hub/contact"):   ("public", 30, 60),
     ("GET",  "/api/v1/hub/blog/posts"): ("public", 30, 60),
+    ("GET",  "/api/v1/pms/public/room-types"): ("public", 30, 60),
 }
 
 

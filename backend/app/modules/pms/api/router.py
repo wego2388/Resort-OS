@@ -36,6 +36,27 @@ def create_room_type(data: RoomTypeCreate, db: DbDep, _=Depends(get_admin_user))
     return RoomTypeRead.model_validate(obj)
 
 
+# ══════════════════════════════════════════════════════════════════════
+# Public Endpoint — للموقع العام (بدون auth)
+# ══════════════════════════════════════════════════════════════════════
+# ⚠️ عمداً بدون authentication — نفس نمط restaurant/public/menu:
+#   GET /pms/public/room-types → عرض أنواع الغرف للزوار (read-only)
+# أمان: rate limited بالـ middleware (30 req/60s per IP، app/core/rate_limit.py)
+#        لا يوجد تعديل أو حذف من هنا — read فقط، ومفيش حقول حساسة في RoomTypeRead
+#        (name/name_ar/base_rate/max_occupancy/amenities — كل ده أصلاً معروض
+#        للزوار على أي موقع حجوزات حقيقي).
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/pms/public/room-types",
+    response_model=list[RoomTypeRead],
+    tags=["pms-public"],
+    summary="أنواع الغرف للموقع العام — بدون auth",
+)
+def get_public_room_types(db: DbDep, branch_id: int = Query(...)):
+    return [RoomTypeRead.model_validate(rt) for rt in crud.list_room_types(db, branch_id, active_only=True)]
+
+
 # ── Rooms ─────────────────────────────────────────────────────────────
 
 @router.get("/pms/rooms", response_model=list[RoomRead])

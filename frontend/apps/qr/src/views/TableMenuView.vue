@@ -10,9 +10,12 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import axios from 'axios'
+import LanguageSelector from '../components/LanguageSelector.vue'
 
 const route = useRoute()
+const { locale } = useI18n()
 const tableId  = computed(() => route.params.tableId as string)
 const branchId = computed(() => parseInt(route.query.branch as string ?? '1'))
 
@@ -77,12 +80,26 @@ function itemInCart(itemId: number) {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
+// عرض الاسم حسب اللغة المختارة فعلياً (مش existence-based fallback) —
+// عربي لو اللغة الحالية عربي وموجود name_ar، وإلا الاسم الأساسي (name) لأي لغة تانية.
+function localizedName(entity: { name: string; name_ar: string | null }) {
+  return locale.value === 'ar' ? (entity.name_ar ?? entity.name) : entity.name
+}
+
 function itemDisplayName(item: MenuItem) {
-  return item.name_ar || item.name
+  return localizedName(item)
 }
 
 function categoryDisplayName(cat: Category) {
-  return cat.name_ar || cat.name
+  return localizedName(cat)
+}
+
+function extraGroupDisplayName(group: ExtraGroup) {
+  return localizedName(group)
+}
+
+function extraOptionDisplayName(opt: ExtraOption) {
+  return localizedName(opt)
 }
 
 // ── Data Loading ───────────────────────────────────────────────────────
@@ -237,19 +254,23 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
           <div class="text-xs text-gray-400">طاولة {{ tableId }}</div>
         </div>
 
-        <!-- Cart button -->
-        <button
-          v-if="!orderPlaced"
-          @click="showCart = true"
-          class="relative flex items-center gap-2 bg-blue-700 text-white px-4 py-2.5 rounded-xl font-bold text-sm active:scale-95 transition-transform"
-        >
-          <span>🛒</span>
-          <span v-if="cartCount > 0">{{ cartCount }}</span>
-          <span
-            v-if="cartCount > 0"
-            class="absolute -top-2 -left-2 w-5 h-5 bg-red-500 rounded-full text-[11px] flex items-center justify-center font-black"
-          >{{ cartCount }}</span>
-        </button>
+        <!-- Language + Cart -->
+        <div class="flex items-center gap-2">
+          <LanguageSelector />
+
+          <button
+            v-if="!orderPlaced"
+            @click="showCart = true"
+            class="relative flex items-center gap-2 bg-blue-700 text-white px-4 py-2.5 rounded-xl font-bold text-sm active:scale-95 transition-transform"
+          >
+            <span>🛒</span>
+            <span v-if="cartCount > 0">{{ cartCount }}</span>
+            <span
+              v-if="cartCount > 0"
+              class="absolute -top-2 -left-2 w-5 h-5 bg-red-500 rounded-full text-[11px] flex items-center justify-center font-black"
+            >{{ cartCount }}</span>
+          </button>
+        </div>
       </div>
     </div>
 
@@ -372,7 +393,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
           <div class="overflow-y-auto flex-1 px-5 py-4 space-y-5">
             <div v-for="group in extrasModal.item.extra_groups" :key="group.id">
               <div class="font-bold text-gray-800 mb-2 text-sm">
-                {{ group.name_ar || group.name }}
+                {{ extraGroupDisplayName(group) }}
                 <span class="text-xs text-gray-400 font-normal mr-1">
                   ({{ group.min_select === 0 ? 'اختياري' : 'مطلوب' }}{{ group.max_select > 1 ? ` — اختر حتى ${group.max_select}` : '' }})
                 </span>
@@ -386,7 +407,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
                       ? 'border-blue-600 bg-blue-50 text-blue-700 font-semibold'
                       : 'border-stone-200 text-gray-700']"
                 >
-                  <span>{{ opt.name_ar || opt.name }}</span>
+                  <span>{{ extraOptionDisplayName(opt) }}</span>
                   <span class="font-bold">
                     {{ opt.price_addition > 0 ? `+${Number(opt.price_addition).toLocaleString('ar-EG')} ج` : 'مجاناً' }}
                   </span>
@@ -449,9 +470,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
                     {{ Object.entries(ci.selectedExtras).flatMap(([gid, eids]) =>
                       eids.map(eid => {
                         const group = ci.item.extra_groups.find(g => g.id === parseInt(gid))
-                        return group?.options.find(o => o.id === eid)?.name_ar
-                          || group?.options.find(o => o.id === eid)?.name
-                          || ''
+                        const opt = group?.options.find(o => o.id === eid)
+                        return opt ? extraOptionDisplayName(opt) : ''
                       })
                     ).filter(Boolean).join('، ') }}
                   </div>
