@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import SiteHeader from '../components/SiteHeader.vue'
 import SiteFooter from '../components/SiteFooter.vue'
+import { PUBLIC_BRANCH_ID } from '../constants/resort'
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const router = useRouter()
 const loading = ref(false)
 const error = ref('')
@@ -16,14 +17,30 @@ const form = ref({
   room_type: '', special_requests: ''
 })
 
-// Values kept exactly as before (standard/sea_view/suite/chalet) — only the
-// display label is localized, so this stays purely a UI-copy change.
-const roomTypes = computed(() => [
-  { value: 'standard', label: t('marketing.booking.roomTypeStandard') },
-  { value: 'sea_view', label: t('marketing.booking.roomTypeSeaView') },
-  { value: 'suite', label: t('marketing.booking.roomTypeSuite') },
-  { value: 'chalet', label: t('marketing.booking.roomTypeChalet') },
-])
+// Real catalog from GET /pms/public/room-types — was previously a hardcoded
+// 4-value list (standard/sea_view/suite/chalet) that didn't match any of the
+// 5 real room types now seeded (Standard Single/Double, Deluxe Sea View,
+// Family Suite, Presidential Suite), so the booking message never named a
+// room that actually exists in the catalog.
+interface RoomTypeOption { id: number; name: string; name_ar: string | null }
+const roomTypesRaw = ref<RoomTypeOption[]>([])
+const roomTypes = computed(() =>
+  roomTypesRaw.value.map((r) => ({
+    value: String(r.id),
+    label: locale.value === 'ar' && r.name_ar ? r.name_ar : r.name,
+  })),
+)
+
+onMounted(async () => {
+  try {
+    const { data } = await axios.get<RoomTypeOption[]>('/api/v1/pms/public/room-types', {
+      params: { branch_id: PUBLIC_BRANCH_ID },
+    })
+    roomTypesRaw.value = data
+  } catch {
+    // silent — the room-type field is optional, form stays usable without it
+  }
+})
 
 async function submitInquiry() {
   if (!form.value.full_name || !form.value.phone || !form.value.check_in) {

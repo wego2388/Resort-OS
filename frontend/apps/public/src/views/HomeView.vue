@@ -34,7 +34,16 @@ function roomName(r: RoomType): string {
 }
 
 function roomAmenities(r: RoomType): string[] {
-  return r.amenities ? r.amenities.split(',').map(a => a.trim()).filter(Boolean) : []
+  // amenities مخزّن كـ JSON list في الباك إند (RoomType.amenities: Text, "JSON list")
+  // — لازم JSON.parse مش split(',') العادي، وإلا كل tag بيطلع فيه براكيت/quotes حرفية.
+  if (!r.amenities) return []
+  try {
+    const parsed = JSON.parse(r.amenities)
+    if (!Array.isArray(parsed)) return []
+    return parsed.map((a) => String(a).replace(/_/g, ' ')).filter(Boolean)
+  } catch {
+    return r.amenities.split(',').map((a) => a.trim()).filter(Boolean)
+  }
 }
 
 function formatRate(rate: string): string {
