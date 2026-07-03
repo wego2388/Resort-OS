@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
+const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers'>('overview')
 
@@ -30,15 +32,15 @@ async function loadCostCenters() {
     })
     ccLines.value = res.data.lines ?? []
     ccTotal.value = res.data.total_revenue ?? 0
-  } catch (e) { console.error(e) }
+  } catch { toast.error('تعذّر تحميل مراكز التكلفة — حاول تاني') }
   finally { loading.value = false }
 }
 
-const checkStatusConfig: Record<string, { label: string; color: string }> = {
-  received:  { label: 'مستلم',   color: 'bg-gray-100 text-gray-700' },
-  deposited: { label: 'مودع',    color: 'bg-blue-100 text-blue-700' },
-  cleared:   { label: 'محصل',    color: 'bg-green-100 text-green-700' },
-  bounced:   { label: 'مرتجع',   color: 'bg-red-100 text-red-700' },
+const checkStatusConfig: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
+  received:  { label: 'مستلم',   variant: 'neutral' },
+  deposited: { label: 'مودع',    variant: 'info' },
+  cleared:   { label: 'محصل',    variant: 'success' },
+  bounced:   { label: 'مرتجع',   variant: 'danger' },
 }
 
 async function loadTab(t: typeof tab.value) {
@@ -63,8 +65,15 @@ async function loadTab(t: typeof tab.value) {
     } else if (t === 'cost-centers') {
       await loadCostCenters()
     }
-  } catch (e) { console.error(e) }
-  finally { loading.value = false }
+  } catch {
+    const messages: Record<typeof tab.value, string> = {
+      overview: 'تعذّر تحميل قائمة الدخل — حاول تاني',
+      checks: 'تعذّر تحميل الشيكات — حاول تاني',
+      accounts: 'تعذّر تحميل الحسابات — حاول تاني',
+      'cost-centers': 'تعذّر تحميل مراكز التكلفة — حاول تاني',
+    }
+    toast.error(messages[t])
+  } finally { loading.value = false }
 }
 
 async function advanceCheck(check: Check) {
@@ -74,7 +83,7 @@ async function advanceCheck(check: Check) {
   try {
     await api.patch(`/api/v1/finance/checks/${check.id}/status`, { to_status: next })
     check.status = next
-  } catch (e) { console.error(e) }
+  } catch { toast.error('تعذّر تحديث حالة الشيك — حاول تاني') }
 }
 
 onMounted(() => loadTab('overview'))
@@ -93,36 +102,35 @@ onMounted(() => loadTab('overview'))
 
     <!-- Overview -->
     <div v-if="tab === 'overview'">
-      <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else-if="financeData" class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm text-center">
+        <AppCard padding="lg" class="text-center">
           <div class="text-sm text-gray-500 mb-2">إجمالي الإيرادات</div>
           <div class="text-3xl font-black text-green-600">{{ financeData.total_revenue.toLocaleString('ar-EG') }}</div>
           <div class="text-xs text-gray-400 mt-1">جنيه</div>
-        </div>
-        <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm text-center">
+        </AppCard>
+        <AppCard padding="lg" class="text-center">
           <div class="text-sm text-gray-500 mb-2">إجمالي المصروفات</div>
           <div class="text-3xl font-black text-red-500">{{ financeData.total_expense.toLocaleString('ar-EG') }}</div>
           <div class="text-xs text-gray-400 mt-1">جنيه</div>
-        </div>
-        <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm text-center">
+        </AppCard>
+        <AppCard padding="lg" class="text-center">
           <div class="text-sm text-gray-500 mb-2">صافي الربح</div>
           <div :class="['text-3xl font-black', financeData.net_income >= 0 ? 'text-blue-700' : 'text-red-500']">
             {{ financeData.net_income.toLocaleString('ar-EG') }}
           </div>
           <div class="text-xs text-gray-400 mt-1">جنيه</div>
-        </div>
+        </AppCard>
       </div>
-      <div v-else class="bg-white rounded-2xl border border-stone-200 p-8 text-center text-gray-400">
-        <div class="text-4xl mb-3">📊</div>
-        <p>لا تتوفر بيانات مالية حالياً</p>
-      </div>
+      <AppCard v-else padding="lg">
+        <EmptyState icon="📊" title="لا تتوفر بيانات مالية حالياً" />
+      </AppCard>
     </div>
 
     <!-- Checks -->
     <div v-if="tab === 'checks'">
-      <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
-      <div v-else class="bg-white rounded-2xl border border-stone-200 overflow-hidden shadow-sm">
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <AppCard v-else padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-stone-50">
@@ -142,32 +150,33 @@ onMounted(() => loadTab('overview'))
                 <td class="px-4 py-3 text-sm font-bold text-gray-900">{{ check.amount.toLocaleString('ar-EG') }} ج</td>
                 <td class="px-4 py-3 text-sm text-gray-600">{{ new Date(check.due_date).toLocaleDateString('ar-EG') }}</td>
                 <td class="px-4 py-3">
-                  <span :class="['px-2 py-1 rounded-full text-xs font-medium', checkStatusConfig[check.status]?.color ?? 'bg-gray-100 text-gray-600']">
+                  <AppBadge size="sm" :variant="checkStatusConfig[check.status]?.variant ?? 'neutral'">
                     {{ checkStatusConfig[check.status]?.label ?? check.status }}
-                  </span>
+                  </AppBadge>
                 </td>
                 <td class="px-4 py-3">
-                  <button v-if="check.status === 'received' || check.status === 'deposited'"
-                    @click="advanceCheck(check)"
-                    class="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700"
+                  <AppButton v-if="check.status === 'received' || check.status === 'deposited'"
+                    size="sm" @click="advanceCheck(check)"
                   >
                     {{ check.status === 'received' ? 'إيداع' : 'تحصيل' }}
-                  </button>
+                  </AppButton>
                 </td>
               </tr>
               <tr v-if="checks.length === 0">
-                <td colspan="6" class="px-4 py-12 text-center text-gray-400">لا توجد شيكات</td>
+                <td colspan="6" class="px-4 py-8">
+                  <EmptyState icon="🏦" title="لا توجد شيكات" />
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
-      </div>
+      </AppCard>
     </div>
 
     <!-- Accounts -->
     <div v-if="tab === 'accounts'">
-      <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
-      <div v-else class="bg-white rounded-2xl border border-stone-200 overflow-hidden shadow-sm">
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <AppCard v-else padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-stone-50">
@@ -188,12 +197,14 @@ onMounted(() => loadTab('overview'))
                 </td>
               </tr>
               <tr v-if="accounts.length === 0">
-                <td colspan="4" class="px-4 py-12 text-center text-gray-400">لا توجد حسابات</td>
+                <td colspan="4" class="px-4 py-8">
+                  <EmptyState icon="📒" title="لا توجد حسابات" />
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
-      </div>
+      </AppCard>
     </div>
 
     <!-- Cost Centers -->
@@ -207,14 +218,12 @@ onMounted(() => loadTab('overview'))
           <label class="block text-xs text-gray-400 mb-1">إلى تاريخ</label>
           <input v-model="ccDateTo" type="date" class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm" />
         </div>
-        <button @click="loadCostCenters" class="px-4 py-1.5 bg-blue-700 text-white rounded-lg text-sm font-bold">
-          تطبيق
-        </button>
+        <AppButton size="sm" @click="loadCostCenters">تطبيق</AppButton>
       </div>
 
-      <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <template v-else>
-        <div class="bg-white rounded-2xl border border-stone-200 overflow-hidden shadow-sm mb-4">
+        <AppCard padding="none" class="mb-4">
           <div class="overflow-x-auto">
             <table class="w-full">
               <thead class="bg-stone-50">
@@ -236,7 +245,9 @@ onMounted(() => loadTab('overview'))
                   </td>
                 </tr>
                 <tr v-if="ccLines.length === 0">
-                  <td colspan="3" class="px-4 py-12 text-center text-gray-400">لا توجد بيانات في هذه الفترة</td>
+                  <td colspan="3" class="px-4 py-8">
+                    <EmptyState icon="📈" title="لا توجد بيانات في هذه الفترة" />
+                  </td>
                 </tr>
               </tbody>
               <tfoot v-if="ccLines.length">
@@ -248,7 +259,7 @@ onMounted(() => loadTab('overview'))
               </tfoot>
             </table>
           </div>
-        </div>
+        </AppCard>
         <p class="text-[11px] text-gray-400">
           "دفتر اليومية" = محسوب من القيود المحاسبية الفعلية. "مباشر" = محسوب من جداول العمليات
           لأن الموديول ده لسه ميرحّلش لدفتر اليومية.

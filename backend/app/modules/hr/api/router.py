@@ -9,7 +9,7 @@ from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
-    get_manager_user,
+    get_manager_user, require_permission,
 )
 from app.modules.hr import crud, services
 from app.modules.hr.schemas import (
@@ -171,8 +171,9 @@ def get_payroll_run(run_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 
 @router.post("/hr/payroll-runs/{run_id}/approve",
-             response_model=PayrollRunRead)
-def approve_payroll_run(run_id: int, db: DbDep, user=Depends(get_admin_user)):
+             response_model=PayrollRunRead,
+             dependencies=[Depends(require_permission("hr.approve_payroll_run", "approve", min_role_level=80))])
+def approve_payroll_run(run_id: int, db: DbDep, user=Depends(get_current_active_user)):
     try:
         return services.approve_payroll_run(db, run_id, approved_by=user.id)
     except ValueError as exc:
@@ -308,9 +309,10 @@ def list_leave_requests(
 
 
 @router.patch("/hr/leave-requests/{request_id}/approve",
-              response_model=LeaveRequestRead)
+              response_model=LeaveRequestRead,
+              dependencies=[Depends(require_permission("hr.approve_leave", "approve", min_role_level=60))])
 def approve_leave_request(
-    request_id: int, body: LeaveApproveRequest, db: DbDep, _=Depends(get_manager_user)
+    request_id: int, body: LeaveApproveRequest, db: DbDep, _=Depends(get_current_active_user)
 ):
     try:
         req = services.approve_leave(db, request_id, body.approved_by)

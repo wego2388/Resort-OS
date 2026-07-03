@@ -113,6 +113,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { title: 'المخزون' } },
       { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { title: 'إدارة العملاء' } },
       { path: 'settings', name: 'admin-settings', component: () => import('../views/admin/SettingsView.vue'), meta: { requiredRole: 'admin', title: 'الإعدادات' } },
+      { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'), meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
     ],
   },
 

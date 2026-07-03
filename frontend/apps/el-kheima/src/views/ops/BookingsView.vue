@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
+const toast = useToast()
+const { confirm } = useConfirm()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Booking {
@@ -80,8 +83,10 @@ async function fetchBookings() {
       params: { branch_id: branchId, limit: 100 }
     })
     bookings.value = res.data.bookings ?? res.data.items ?? res.data
-  } catch(e) { console.error(e) }
-  finally { loading.value = false }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل الحجوزات')
+  } finally { loading.value = false }
 }
 
 async function fetchRooms() {
@@ -90,7 +95,10 @@ async function fetchRooms() {
       params: { branch_id: branchId, status: 'available' }
     })
     rooms.value = res.data.rooms ?? res.data.items ?? res.data
-  } catch(e) { console.error(e) }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل قائمة الغرف المتاحة')
+  }
 }
 
 async function createBooking() {
@@ -116,18 +124,25 @@ async function createBooking() {
 }
 
 async function checkOut(booking: Booking) {
-  if (!confirm(`تأكيد مغادرة ${booking.guest_name}؟`)) return
+  const ok = await confirm({ message: `تأكيد مغادرة ${booking.guest_name}؟`, danger: true })
+  if (!ok) return
   try {
     await api.patch(`/api/v1/pms/bookings/${booking.id}`, { status: 'checked_out' })
     booking.status = 'checked_out'
-  } catch(e) { console.error(e) }
+  } catch(e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل مغادرة الضيف')
+  }
 }
 
 async function checkIn(booking: Booking) {
   try {
     await api.patch(`/api/v1/pms/bookings/${booking.id}`, { status: 'checked_in' })
     booking.status = 'checked_in'
-  } catch(e) { console.error(e) }
+  } catch(e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل دخول الضيف')
+  }
 }
 
 function formatDate(d: string) {
@@ -178,8 +193,8 @@ onMounted(() => {
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="text-center py-16 text-gray-400">
-      <div class="text-3xl mb-2">⏳</div>
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+      <AppSpinner size="lg" />
       <p>جاري التحميل...</p>
     </div>
 
@@ -273,10 +288,7 @@ onMounted(() => {
         </div>
       </div>
 
-      <div v-if="filteredBookings.length === 0" class="text-center py-16 text-gray-400">
-        <div class="text-4xl mb-2">📋</div>
-        <p>لا توجد حجوزات</p>
-      </div>
+      <EmptyState v-if="filteredBookings.length === 0" icon="📋" title="لا توجد حجوزات" />
     </div>
 
     <!-- Create booking modal -->

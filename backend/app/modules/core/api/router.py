@@ -27,6 +27,8 @@ Endpoints:
   GET    /api/v1/permissions?user_id=
   POST   /api/v1/permissions
   DELETE /api/v1/permissions/{id}
+  GET    /api/v1/permissions/catalog
+  GET    /api/v1/permissions/me
 ═══════════════════════════════════════════════════════════════════════
 """
 from __future__ import annotations
@@ -43,13 +45,16 @@ from app.core.deps import (
     get_super_admin_user,
 )
 from app.modules.core import crud, services
+from app.modules.core.permission_catalog import PERMISSION_CATALOG
 from app.modules.core.schemas import (
     AuditLogRead,
     BranchCreate,
     BranchRead,
     BranchUpdate,
+    EffectivePermission,
     NotificationRead,
     PaginatedResponse,
+    PermissionCatalogEntryRead,
     SettingRead,
     SettingUpdate,
     UserPermissionGrantRequest,
@@ -385,6 +390,27 @@ def grant_user_permission(
     )
     perm = services.grant_permission(db, data.user_id, perm_data, granted_by=user.id)
     return UserPermissionRead.model_validate(perm)
+
+
+@router.get(
+    "/permissions/catalog",
+    response_model=list[PermissionCatalogEntryRead],
+)
+def get_permission_catalog(_user=Depends(get_manager_user)):
+    """كتالوج كل الصلاحيات التفصيلية القابلة للمنح/المنع — الفرونت إند
+    بيستخدمه لبناء شاشة إدارة الصلاحيات من غير ما يعرف الـ resource strings
+    مقدّمًا. مسجّل قبل /{permission_id} عمداً — نفس سبب restaurant.hold_order."""
+    return [PermissionCatalogEntryRead(**entry) for entry in PERMISSION_CATALOG]
+
+
+@router.get(
+    "/permissions/me",
+    response_model=list[EffectivePermission],
+)
+def get_my_effective_permissions(db: DbDep, user=Depends(get_current_active_user)):
+    """صلاحيات المستخدم الحالي الفعلية (role fallback + أي استثناء صريح) —
+    الفرونت إند بيستخدمها لإخفاء/إظهار أزرار العمليات الحسّاسة."""
+    return services.get_effective_permissions(db, user)
 
 
 @router.delete(

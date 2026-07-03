@@ -18,10 +18,12 @@ from sqlalchemy.orm import Session
 
 from app.modules.core import crud
 from app.modules.core.models import Branch, Notification, UserPermission
+from app.modules.core.permission_catalog import PERMISSION_CATALOG
 from app.modules.core.schemas import (
     AuditLogCreate,
     BranchCreate,
     BranchUpdate,
+    EffectivePermission,
     NotificationCreate,
     SettingRead,
     UserPermissionCreate,
@@ -233,6 +235,33 @@ def has_permission(
 
 def list_user_permissions(db: Session, user_id: int) -> list[UserPermission]:
     return crud.list_user_permissions(db, user_id)
+
+
+def get_effective_permissions(db: Session, user) -> list[EffectivePermission]:
+    """
+    يحسب كل صف من كتالوج الصلاحيات (PERMISSION_CATALOG) للمستخدم الحالي —
+    دمج role fallback (user_level >= min_role_level) مع أي استثناء صريح.
+    الفرونت إند بيستخدمها لإخفاء/إظهار أزرار من غير ما يكرر منطق role level.
+    """
+    from app.core.deps import user_level  # noqa: PLC0415
+
+    result: list[EffectivePermission] = []
+    for entry in PERMISSION_CATALOG:
+        role_fallback = user_level(user) >= entry["min_role_level"]
+        explicit = crud.find_explicit_permission(
+            db, user.id, entry["resource"], entry["action"],
+            getattr(user, "branch_id", None),
+        )
+        if explicit is not None:
+            allowed, source = explicit.allowed, "explicit"
+        else:
+            allowed, source = role_fallback, "role"
+        result.append(EffectivePermission(
+            resource=entry["resource"], action=entry["action"],
+            label_ar=entry["label_ar"], module=entry["module"],
+            allowed=allowed, source=source,
+        ))
+    return result
 
 
 def grant_permission(

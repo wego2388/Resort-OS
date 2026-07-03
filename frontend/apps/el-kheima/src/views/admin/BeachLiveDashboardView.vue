@@ -3,7 +3,9 @@
 // لما فندق يوصل لـ 5 أشخاص أو أقل متبقين في حصته اليومية.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppCard, AppBadge, AppButton, useToast } from '@resort-os/ui'
 
+const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface B2BStatus {
@@ -30,6 +32,11 @@ const loading = ref(true)
 const dash = ref<LiveDashboard | null>(null)
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
+// حالة الاتصال بالـ poll — نتّبع نفس نمط KitchenDisplayView/BarDisplayView
+// (نقطة ملوّنة + "متصل"/"منقطع") عشان المدير يعرف إن اللوحة فعلاً لايف مش
+// معلّقة على بيانات قديمة بصمت.
+const isConnected = ref(true)
+
 const eodLoading = ref(false)
 const eod = ref<EODReport | null>(null)
 const downloadingPdf = ref(false)
@@ -46,6 +53,7 @@ async function loadEod() {
     eod.value = r.data
   } catch (e) {
     console.error(e)
+    toast.error('فشل تحميل تقرير نهاية اليوم')
   } finally {
     eodLoading.value = false
   }
@@ -67,6 +75,7 @@ async function downloadEodPdf() {
     }
   } catch (e) {
     console.error(e)
+    toast.error('فشل تحميل ملف PDF')
   } finally {
     downloadingPdf.value = false
   }
@@ -83,8 +92,14 @@ async function load() {
   try {
     const r = await api.get('/api/v1/beach/live-dashboard', { params: { branch_id: branchId } })
     dash.value = r.data
+    if (!isConnected.value) toast.success('تم استعادة الاتصال باللوحة الحية')
+    isConnected.value = true
   } catch (e) {
     console.error(e)
+    // نطلّع toast مرة واحدة بس عند لحظة الانقطاع، مش كل 15 ثانية طول ما
+    // الاتصال مقطوع — النقطة الحمراء في الهيدر كفاية كمؤشر مستمر.
+    if (isConnected.value) toast.error('فشل تحديث اللوحة الحية — البيانات المعروضة قد تكون قديمة')
+    isConnected.value = false
   } finally {
     loading.value = false
   }
@@ -103,7 +118,15 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-xl font-black text-gray-900">🏖️ لوحة الشاطئ الحيّة</h1>
-        <p class="text-xs text-gray-400 mt-1">تتحدّث تلقائياً كل 15 ثانية</p>
+        <div class="flex items-center gap-3 mt-1">
+          <p class="text-xs text-gray-400">تتحدّث تلقائياً كل 15 ثانية</p>
+          <div class="flex items-center gap-1.5">
+            <div :class="['w-2 h-2 rounded-full', isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400']" />
+            <span :class="['text-xs font-semibold', isConnected ? 'text-green-600' : 'text-red-500']">
+              {{ isConnected ? 'متصل' : 'منقطع' }}
+            </span>
+          </div>
+        </div>
       </div>
       <button @click="load" class="px-4 py-2 rounded-xl bg-white border border-stone-200 text-sm font-bold text-gray-600 hover:bg-stone-50">
         🔄 تحديث
@@ -128,7 +151,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
         <!-- Capacity gauge -->
-        <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm flex flex-col items-center justify-center">
+        <AppCard padding="md" class="flex flex-col items-center justify-center">
           <p class="text-xs text-gray-400 font-bold uppercase tracking-wide mb-3">السعة الحالية</p>
           <div class="relative w-32 h-32">
             <svg class="w-32 h-32 -rotate-90" viewBox="0 0 100 100">
@@ -142,13 +165,13 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
               <span class="text-[10px] text-gray-400">{{ dash.capacity_used }}/{{ dash.capacity_max }}</span>
             </div>
           </div>
-          <p v-if="dash.surge_active" class="mt-3 text-[11px] font-bold text-amber-600 bg-amber-50 px-3 py-1 rounded-full">
+          <AppBadge v-if="dash.surge_active" variant="warning" size="sm" class="mt-3">
             ⚡ Surge مُفعّل ({{ dash.surge_pct }}%)
-          </p>
-        </div>
+          </AppBadge>
+        </AppCard>
 
         <!-- Towels -->
-        <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
+        <AppCard padding="md">
           <p class="text-xs text-gray-400 font-bold uppercase tracking-wide mb-3">الفوط</p>
           <p class="text-3xl font-black text-gray-900">{{ dash.towels_available }}</p>
           <p class="text-xs text-gray-400 mt-1">متاحة من إجمالي {{ dash.towels_available + dash.towels_used }}</p>
@@ -156,18 +179,18 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             <div class="h-full bg-sky-400"
                  :style="{ width: `${dash.towels_used + dash.towels_available > 0 ? (dash.towels_used / (dash.towels_used + dash.towels_available)) * 100 : 0}%` }" />
           </div>
-        </div>
+        </AppCard>
 
         <!-- B2B partners overview -->
-        <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
+        <AppCard padding="md">
           <p class="text-xs text-gray-400 font-bold uppercase tracking-wide mb-3">فنادق B2B نشطة</p>
           <p class="text-3xl font-black text-gray-900">{{ dash.b2b_contracts.length }}</p>
           <p class="text-xs text-gray-400 mt-1">{{ dash.quota_alerts.length }} في حالة تنبيه</p>
-        </div>
+        </AppCard>
       </div>
 
       <!-- B2B partners table -->
-      <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
+      <AppCard padding="md">
         <p class="font-black text-sm text-gray-900 mb-4">🏨 شركاء B2B — الحصة اليومية</p>
         <div v-if="!dash.b2b_contracts.length" class="text-center py-6 text-gray-300 text-xs">لا يوجد عقود B2B نشطة</div>
         <div v-else class="space-y-2">
@@ -192,16 +215,15 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             </div>
           </div>
         </div>
-      </div>
+      </AppCard>
 
       <!-- Daily EOD Report -->
-      <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm mt-5">
+      <AppCard padding="md" class="mt-5">
         <div class="flex items-center justify-between mb-4">
           <p class="font-black text-sm text-gray-900">📋 تقرير نهاية اليوم</p>
-          <button @click="downloadEodPdf" :disabled="downloadingPdf || !eod"
-                  class="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-bold disabled:opacity-50">
-            {{ downloadingPdf ? '...' : '🖨️ طباعة PDF' }}
-          </button>
+          <AppButton variant="primary" size="sm" :loading="downloadingPdf" :disabled="!eod" @click="downloadEodPdf">
+            🖨️ طباعة PDF
+          </AppButton>
         </div>
 
         <div v-if="eodLoading" class="text-center py-6 text-gray-300 text-xs">جاري التحميل...</div>
@@ -249,7 +271,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             </tbody>
           </table>
         </template>
-      </div>
+      </AppCard>
     </template>
   </div>
 </template>

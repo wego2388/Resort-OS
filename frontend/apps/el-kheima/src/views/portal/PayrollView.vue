@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
+
+const toast = useToast()
 
 
 interface Payslip {
@@ -29,8 +32,10 @@ async function fetchPayslips() {
   try {
     const res = await api.get('/api/v1/hr/me/payslips')
     payslips.value = res.data.items ?? []
-  } catch(e) { console.error(e) }
-  finally { loading.value = false }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل قسائم الراتب')
+  } finally { loading.value = false }
 }
 
 onMounted(fetchPayslips)
@@ -40,7 +45,10 @@ onMounted(fetchPayslips)
   <div dir="rtl" class="space-y-4">
     <h2 class="font-bold text-gray-900 text-lg">قسائم الراتب</h2>
 
-    <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
+    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 gap-3">
+      <AppSpinner size="lg" />
+      <p>جاري التحميل...</p>
+    </div>
 
     <div v-else class="space-y-3">
       <div v-for="slip in payslips" :key="slip.id"
@@ -99,9 +107,8 @@ onMounted(fetchPayslips)
         </div>
       </div>
 
-      <div v-if="payslips.length === 0" class="text-center py-12 text-gray-400 bg-white rounded-2xl border border-stone-200">
-        <div class="text-4xl mb-3">💰</div>
-        <p class="font-medium text-gray-600">لا توجد قسائم راتب</p>
+      <div v-if="payslips.length === 0" class="bg-white rounded-2xl border border-stone-200">
+        <EmptyState icon="💰" title="لا توجد قسائم راتب" />
       </div>
     </div>
   </div>

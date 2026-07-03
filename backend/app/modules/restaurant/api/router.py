@@ -9,7 +9,7 @@ from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep, get_cashier_user, get_current_active_user,
-    get_manager_user, get_waiter_user,
+    get_manager_user, get_waiter_user, require_permission,
 )
 from app.modules.restaurant import crud, services
 from app.modules.restaurant.schemas import (
@@ -237,9 +237,10 @@ async def update_order_status(order_id: int, data: OrderStatusUpdate,
 
 
 @router.patch("/restaurant/orders/{order_id}/items/{item_id}/void",
-              response_model=OrderRead)
+              response_model=OrderRead,
+              dependencies=[Depends(require_permission("restaurant.void_order_item", "execute", min_role_level=40))])
 def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest,
-                    db: DbDep, user=Depends(get_cashier_user)):
+                    db: DbDep, user=Depends(get_current_active_user)):
     """إلغاء صنف واحد بسبب إجباري — كاشير أو أعلى بس (مش الجرسون)، زي أي
     إجراء مالي تاني في النظام ده (نفس مستوى apply_discount)."""
     try:

@@ -1,6 +1,24 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { api } from '@resort-os/core'
+import { useToast } from '@resort-os/ui'
+
+const toast = useToast()
+
+// ── Offline queue ──────────────────────────────────────────────────────────────
+// NOTE: @resort-os/core's useOfflineQueue() posts hard-coded to
+// /api/v1/restaurant/orders(/sync) — reusing it here would silently send beach
+// sales into the restaurant module. This local queue mirrors the exact same
+// contract (queue while offline, FIFO retry on reconnect, server response is
+// the source of truth for stock/capacity) but targets /api/v1/beach/sell instead.
+interface PendingBeachSale { localId: string; payload: Record<string, unknown>; createdAt: string }
+
+/** true only for "never reached the server" failures — not 4xx/5xx responses */
+function isNetworkError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const axiosErr = err as { request?: unknown; response?: unknown }
+  return !!axiosErr.request && !axiosErr.response
+}
 
 interface BeachInventory {
   adult_capacity: number
@@ -21,6 +39,60 @@ const loading = ref(false)
 const submitting = ref(false)
 const successMsg = ref('')
 const errorMsg = ref('')
+
+const isOnline     = ref(navigator.onLine)
+const pendingCount = ref(0)
+
+const QUEUE_KEY = `resort-os-offline-beach-sales-${branchId}`
+
+function readQueue(): PendingBeachSale[] {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]') } catch { return [] }
+}
+function writeQueue(queue: PendingBeachSale[]) {
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
+  pendingCount.value = queue.length
+}
+function queueSale(payload: Record<string, unknown>) {
+  const queue = readQueue()
+  queue.push({ localId: crypto.randomUUID(), payload, createdAt: new Date().toISOString() })
+  writeQueue(queue)
+}
+
+let syncing = false
+async function syncPendingSales() {
+  if (!navigator.onLine || syncing) return
+  syncing = true
+  try {
+    let queue = readQueue()
+    let syncedAny = false
+    while (queue.length) {
+      const sale = queue[0]
+      try {
+        await api.post('/api/v1/beach/sell', sale.payload)
+        syncedAny = true
+      } catch (err) {
+        if (isNetworkError(err)) break // still offline — keep FIFO order, retry later
+        // server explicitly rejected it (e.g. capacity exceeded since queued) — drop so it doesn't block the queue forever
+        toast.error(`تعذّر تزامن عملية بيع شاطئ محفوظة (${new Date(sale.createdAt).toLocaleTimeString('ar-EG')}) — راجعها يدوياً`)
+      }
+      queue = queue.slice(1)
+      writeQueue(queue)
+    }
+    if (syncedAny) await fetchInventory() // refresh capacity/occupancy after any successful syncs
+  } finally {
+    syncing = false
+  }
+}
+
+function handleOnline() {
+  isOnline.value = true
+  syncPendingSales()
+}
+function handleOffline() {
+  isOnline.value = false
+}
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // Cart state
 const adultQty = ref(0)
@@ -98,13 +170,40 @@ async function completeSale() {
     if (childQty.value > 0)    entries.push({ type: 'child',    quantity: childQty.value,    unit_price: prices.value.child })
     if (residentQty.value > 0) entries.push({ type: 'resident', quantity: residentQty.value, unit_price: prices.value.resident })
 
-    const { data } = await api.post('/api/v1/beach/sell', {
+    const payload = {
       branch_id: branchId,
       entries,
       towels: towelQty.value,
       towel_price: prices.value.towel,
       payment_method: paymentMethod.value,
-    })
+    }
+
+    if (!navigator.onLine) {
+      queueSale(payload)
+      clearCart()
+      successMsg.value = '📥 البيع محفوظ — هيتزامن أول ما النت يرجع'
+      setTimeout(() => { successMsg.value = '' }, 4000)
+      await nextTick()
+      firstButtonRef.value?.focus()
+      return
+    }
+
+    let data: any
+    try {
+      const res = await api.post('/api/v1/beach/sell', payload)
+      data = res.data
+    } catch (err) {
+      if (isNetworkError(err)) {
+        queueSale(payload)
+        clearCart()
+        successMsg.value = '📥 البيع محفوظ — هيتزامن أول ما النت يرجع'
+        setTimeout(() => { successMsg.value = '' }, 4000)
+        await nextTick()
+        firstButtonRef.value?.focus()
+        return
+      }
+      throw err
+    }
 
     // Print ticket PDF
     const txId = data.transaction_id ?? data.id
@@ -147,15 +246,43 @@ let refreshInterval: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
   fetchInventory()
   refreshInterval = setInterval(fetchInventory, 30_000)
+
+  window.addEventListener('online', handleOnline)
+  window.addEventListener('offline', handleOffline)
+  pendingCount.value = readQueue().length
+  if (navigator.onLine) syncPendingSales()
+  // safety-net poll — covers cases where the 'online' event never fires
+  // reliably but connectivity is actually back
+  pollTimer = setInterval(() => {
+    if (navigator.onLine && pendingCount.value > 0) syncPendingSales()
+  }, 30_000)
 })
 
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval)
+  window.removeEventListener('online', handleOnline)
+  window.removeEventListener('offline', handleOffline)
+  if (pollTimer) clearInterval(pollTimer)
 })
 </script>
 
 <template>
   <div class="p-4 h-full" dir="rtl">
+    <!-- ── Offline banner — visible الطول، مش toast بيختفي ── -->
+    <div
+      v-if="!isOnline"
+      class="bg-amber-500 text-white text-xs font-bold px-4 py-1.5 rounded-lg mb-3 flex items-center justify-center gap-2"
+    >
+      <span>⚠️ وضع offline — المبيعات بتتحفظ محلياً وهتتزامن أول ما النت يرجع</span>
+      <span v-if="pendingCount > 0" class="bg-amber-700 px-2 py-0.5 rounded-full">{{ pendingCount }} في الانتظار</span>
+    </div>
+    <div
+      v-else-if="pendingCount > 0"
+      class="bg-blue-500 text-white text-xs font-bold px-4 py-1.5 rounded-lg mb-3 flex items-center justify-center gap-2"
+    >
+      <span>⏳ جاري تزامن {{ pendingCount }} عملية بيع محفوظة من فترة الانقطاع...</span>
+    </div>
+
     <!-- Loading splash -->
     <div v-if="loading && !inventory" class="flex items-center justify-center h-64">
       <div class="animate-spin w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full" />

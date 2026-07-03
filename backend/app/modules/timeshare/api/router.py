@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_current_active_user, get_manager_user
+from app.core.deps import DbDep, get_current_active_user, get_manager_user, require_permission
 from app.modules.timeshare import crud, services
 from app.modules.timeshare.schemas import (
     PayInstallmentRequest, InstallmentRead,
@@ -147,10 +147,11 @@ def get_stats(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Qu
     return services.get_stats(db, branch_id)
 
 
-@router.post("/timeshare/contracts/{contract_id}/cancel", response_model=TimeshareContractRead)
+@router.post("/timeshare/contracts/{contract_id}/cancel", response_model=TimeshareContractRead,
+             dependencies=[Depends(require_permission("timeshare.cancel_contract", "execute", min_role_level=60))])
 def cancel_contract(
     contract_id: int, data: TimeshareCancelRequest, db: DbDep,
-    _=Depends(get_manager_user),
+    _=Depends(get_current_active_user),
 ):
     try:
         return services.cancel_contract(db, contract_id, data.cancel_amount)

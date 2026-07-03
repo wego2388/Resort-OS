@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_cashier_user, get_current_active_user, get_manager_user, get_waiter_user
+from app.core.deps import DbDep, get_cashier_user, get_current_active_user, get_manager_user, get_waiter_user, require_permission
 from app.modules.cafe import crud, services
 from app.modules.cafe.schemas import (
     CafeCategoryCreate, CafeCategoryRead,
@@ -149,9 +149,10 @@ async def update_order_status(order_id: int, data: CafeOrderStatusUpdate, db: Db
 
 
 @router.patch("/cafe/orders/{order_id}/items/{item_id}/void",
-              response_model=CafeOrderRead)
+              response_model=CafeOrderRead,
+              dependencies=[Depends(require_permission("cafe.void_order_item", "execute", min_role_level=40))])
 def void_order_item(order_id: int, item_id: int, data: CafeOrderItemVoidRequest,
-                    db: DbDep, user=Depends(get_cashier_user)):
+                    db: DbDep, user=Depends(get_current_active_user)):
     """إلغاء صنف واحد بسبب إجباري — كاشير أو أعلى بس (مش الجرسون)، نفس
     مستوى restaurant.void_order_item."""
     try:

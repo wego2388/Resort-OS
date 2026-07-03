@@ -2,8 +2,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@resort-os/core'
-import { AppModal, AppBadge } from '@resort-os/ui'
+import { AppModal, AppBadge, EmptyState, useToast } from '@resort-os/ui'
 import OrderDetailModal from '../../components/OrderDetailModal.vue'
+
+const toast = useToast()
 
 interface Table { id: number; table_number: string; status: string; capacity: number; section: string | null }
 interface HeldOrder {
@@ -36,6 +38,7 @@ async function loadHeldOrders() {
     heldOrders.value = data.items ?? data
   } catch (e) {
     console.error('Failed to load held orders', e)
+    toast.error('تعذّر تحميل الطلبات المعلّقة')
   }
 }
 
@@ -87,6 +90,7 @@ async function loadTables() {
     tables.value = data.tables ?? data.items ?? data
   } catch (e) {
     console.error('Failed to load tables', e)
+    toast.error('تعذّر تحميل قائمة الطاولات')
   } finally {
     loading.value = false
   }
@@ -121,10 +125,7 @@ onMounted(() => {
       <div class="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
     </div>
 
-    <div v-else-if="tables.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400">
-      <div class="text-4xl mb-2">🪑</div>
-      <p class="text-sm">لا توجد طاولات مسجّلة لهذا الفرع</p>
-    </div>
+    <EmptyState v-else-if="tables.length === 0" icon="🪑" title="لا توجد طاولات مسجّلة لهذا الفرع" />
 
     <div v-else class="space-y-6">
       <div v-for="[sectionName, sectionTables] in sections" :key="sectionName">
@@ -150,10 +151,7 @@ onMounted(() => {
 
     <!-- ── Held orders list ── -->
     <AppModal :open="heldListOpen" title="الطلبات المعلّقة" size="sm" @close="heldListOpen = false">
-      <div v-if="heldOrders.length === 0" class="flex flex-col items-center justify-center py-10 text-gray-400">
-        <div class="text-3xl mb-2">⏸️</div>
-        <p class="text-sm">مفيش طلبات معلّقة دلوقتي</p>
-      </div>
+      <EmptyState v-if="heldOrders.length === 0" icon="⏸️" title="مفيش طلبات معلّقة دلوقتي" />
       <div v-else class="space-y-2">
         <button
           v-for="order in heldOrders"

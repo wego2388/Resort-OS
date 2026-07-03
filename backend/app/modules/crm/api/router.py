@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
     DbDep, get_current_active_user,
-    get_manager_user,
+    get_manager_user, require_permission,
 )
 from app.modules.crm import crud, services
 from app.modules.crm.schemas import (
@@ -77,8 +77,9 @@ def blacklist_customer(customer_id: int, req: BlacklistRequest, db: DbDep,
 
 
 @router.delete("/crm/customers/{customer_id}/blacklist",
-               response_model=CustomerRead)
-def unblacklist_customer(customer_id: int, db: DbDep, _=Depends(get_manager_user)):
+               response_model=CustomerRead,
+               dependencies=[Depends(require_permission("crm.unblacklist_customer", "execute", min_role_level=60))])
+def unblacklist_customer(customer_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.unblacklist_customer(db, customer_id)
     except ValueError as exc:

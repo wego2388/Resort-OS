@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, reactive } from 'vue'
 import { api } from '@resort-os/core'
+import { AppCard, AppBadge, AppButton, AppModal, useToast, useConfirm } from '@resort-os/ui'
 
+const toast = useToast()
+const { confirm } = useConfirm()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -88,7 +91,7 @@ const filteredClients = computed(() => {
 // ── Loaders ──────────────────────────────────────────────────────────────
 async function loadSummary() {
   try { const r = await api.get('/api/v1/timeshare/cs-summary', { params: { branch_id: branchId } }); summary.value = r.data }
-  catch (e) { console.error(e) }
+  catch (e) { console.error(e); toast.error('فشل تحميل ملخص التايم شير') }
 }
 
 async function loadCalendar() {
@@ -96,7 +99,7 @@ async function loadCalendar() {
   try {
     const r = await api.get('/api/v1/timeshare/calendar', { params: { branch_id: branchId, year: calYear.value } })
     calendar.value = r.data
-  } catch (e) { console.error(e) } finally { calLoading.value = false }
+  } catch (e) { console.error(e); toast.error('فشل تحميل الكالندر') } finally { calLoading.value = false }
 }
 
 async function loadClients() {
@@ -104,7 +107,7 @@ async function loadClients() {
   try {
     const r = await api.get('/api/v1/timeshare/contracts', { params: { branch_id: branchId, size: 100 } })
     allClients.value = r.data.items ?? []
-  } catch (e) { console.error(e) } finally { clientsLoading.value = false }
+  } catch (e) { console.error(e); toast.error('فشل تحميل بيانات العملاء') } finally { clientsLoading.value = false }
 }
 
 async function loadInstallments() {
@@ -117,7 +120,7 @@ async function loadInstallments() {
     const r = await api.get('/api/v1/timeshare/installments', { params })
     installments.value = r.data.installments ?? []
     installSummary.value = r.data.summary ?? { overdue_total: 0, pending_total: 0 }
-  } catch (e) { console.error(e) } finally { installLoading.value = false }
+  } catch (e) { console.error(e); toast.error('فشل تحميل الأقساط') } finally { installLoading.value = false }
 }
 
 async function refreshAll() {
@@ -151,8 +154,9 @@ async function submitPayment() {
       receipt_number: payModal.receipt_number || undefined,
     })
     payModal.open = false
+    toast.success('تم تسجيل الدفعة بنجاح')
     await Promise.all([loadSummary(), loadInstallments(), loadClients()])
-  } catch (e: any) { alert(e?.response?.data?.detail ?? 'فشل في تسجيل الدفعة') }
+  } catch (e: any) { toast.error(e?.response?.data?.detail ?? 'فشل في تسجيل الدفعة') }
   finally { payModal.saving = false }
 }
 
@@ -164,18 +168,24 @@ async function toggleStatus(c: Contract) {
   try {
     await api.patch(`/api/v1/timeshare/contracts/${c.id}`, { status: next })
     c.status = next
+    toast.success(next === 'active' ? 'تم تفعيل العقد' : 'تم تعليق العقد')
     await loadSummary()
-  } catch (e: any) { alert(e?.response?.data?.detail ?? 'خطأ في تغيير الحالة') }
+  } catch (e: any) { toast.error(e?.response?.data?.detail ?? 'خطأ في تغيير الحالة') }
   finally { statusSaving.value = null }
 }
 
 async function cancelContract(c: Contract) {
-  if (!confirm(`إلغاء عقد ${c.customer_name}؟`)) return
+  const ok = await confirm({
+    message: `إلغاء عقد ${c.customer_name}؟ لا يمكن التراجع عن هذا الإجراء.`,
+    danger: true, confirmText: 'نعم، ألغِ', cancelText: 'تراجع',
+  })
+  if (!ok) return
   try {
     await api.post(`/api/v1/timeshare/contracts/${c.id}/cancel`, { cancel_amount: 0 })
     c.status = 'cancelled'
+    toast.success('تم إلغاء العقد')
     await loadSummary()
-  } catch (e: any) { alert(e?.response?.data?.detail ?? 'خطأ في الإلغاء') }
+  } catch (e: any) { toast.error(e?.response?.data?.detail ?? 'خطأ في الإلغاء') }
 }
 
 // ── Excel Import ─────────────────────────────────────────────────────────
@@ -196,33 +206,29 @@ async function submitImport() {
     importModal.result = r.data
     await Promise.all([loadClients(), loadSummary()])
   } catch (e: any) {
-    importModal.result = { error: e?.response?.data?.detail ?? 'فشل الاستيراد' }
+    const msg = e?.response?.data?.detail ?? 'فشل الاستيراد'
+    importModal.result = { error: msg }
+    toast.error(msg)
   } finally { importModal.uploading = false }
 }
 
 // ── Badges ───────────────────────────────────────────────────────────────
+type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
+
 function roomTypeBadge(type: string) {
   const m: Record<string, string> = {
     '2R': 'bg-sky-100 text-sky-700', '4R': 'bg-amber-100 text-amber-700', '6R': 'bg-emerald-100 text-emerald-700',
   }
   return `text-[10px] px-1.5 py-0.5 rounded-full font-bold ${m[type] || 'bg-stone-100 text-stone-500'}`
 }
-function statusBadge(s: string) {
-  const m: Record<string, string> = {
-    active: 'bg-green-100 text-green-700', suspended: 'bg-yellow-100 text-yellow-700',
-    cancelled: 'bg-red-100 text-red-700', expired: 'bg-stone-200 text-stone-600',
-  }
-  return `text-[10px] px-1.5 py-0.5 rounded-full font-bold ${m[s] || 'bg-stone-100 text-stone-500'}`
+const contractStatusVariant: Record<string, BadgeVariant> = {
+  active: 'success', suspended: 'warning', cancelled: 'danger', expired: 'neutral',
 }
 function statusLabel(s: string) {
   return { active: '✅ نشط', suspended: '⏸️ موقوف', cancelled: '❌ ملغي', expired: '⌛ منتهي' }[s] || s
 }
-function payBadge(s: string) {
-  const m: Record<string, string> = {
-    paid: 'bg-green-100 text-green-700', pending: 'bg-yellow-100 text-yellow-700',
-    overdue: 'bg-red-100 text-red-700', partial: 'bg-blue-100 text-blue-700',
-  }
-  return `px-2 py-0.5 rounded-full text-[10px] font-bold ${m[s] || 'bg-stone-100 text-stone-500'}`
+const payStatusVariant: Record<string, BadgeVariant> = {
+  paid: 'success', pending: 'warning', overdue: 'danger', partial: 'info',
 }
 function payLabel(s: string) {
   return { paid: '✅ مدفوع', pending: '⏳ معلق', overdue: '🔴 متأخر', partial: '🔵 جزئي' }[s] || s
@@ -266,30 +272,30 @@ onMounted(refreshAll)
     <!-- ══ DASHBOARD ══ -->
     <div v-if="activeTab === 'dashboard'" class="space-y-5">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
+        <AppCard padding="md">
           <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">عقود نشطة</p>
           <p class="text-2xl font-black text-gray-900">{{ summary.active_contracts || 0 }}</p>
-        </div>
-        <div class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
+        </AppCard>
+        <AppCard padding="md">
           <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">نسبة التحصيل</p>
           <p :class="['text-2xl font-black', (summary.collection_rate_pct||0) >= 50 ? 'text-green-600' : 'text-amber-500']">
             {{ summary.collection_rate_pct || 0 }}%
           </p>
           <p class="text-[10px] text-gray-400 mt-1">{{ fmt(summary.total_collected) }} من {{ fmt(summary.total_value) }}</p>
-        </div>
-        <div class="bg-white rounded-2xl border border-red-200 p-4 shadow-sm">
+        </AppCard>
+        <AppCard padding="md">
           <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">متأخرات</p>
           <p class="text-2xl font-black text-red-500">{{ fmt(summary.total_overdue) }}</p>
           <p class="text-[10px] text-gray-400 mt-1">{{ summary.overdue_contracts_count || 0 }} عقد متأخر</p>
-        </div>
-        <div class="bg-white rounded-2xl border border-amber-200 p-4 shadow-sm">
+        </AppCard>
+        <AppCard padding="md">
           <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">مستحق هذا الشهر</p>
           <p class="text-2xl font-black text-amber-500">{{ fmt(summary.this_month_due) }}</p>
-        </div>
+        </AppCard>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
+        <AppCard padding="md">
           <div class="flex items-center justify-between mb-4">
             <p class="font-black text-sm text-gray-900">📅 زيارات قادمة — خلال 30 يوم</p>
             <span class="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 font-bold">{{ summary.upcoming_visits?.length || 0 }}</span>
@@ -312,9 +318,9 @@ onMounted(refreshAll)
               </div>
             </div>
           </div>
-        </div>
+        </AppCard>
 
-        <div class="bg-white rounded-2xl border border-red-100 p-5 shadow-sm">
+        <AppCard padding="md">
           <div class="flex items-center justify-between mb-4">
             <p class="font-black text-sm text-gray-900">🔴 عملاء متأخرون</p>
             <span class="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">{{ summary.overdue_clients?.length || 0 }}</span>
@@ -335,7 +341,7 @@ onMounted(refreshAll)
               </div>
             </div>
           </div>
-        </div>
+        </AppCard>
       </div>
     </div>
 
@@ -413,7 +419,7 @@ onMounted(refreshAll)
                 <span class="font-bold text-sm text-gray-900">{{ c.customer_name }}</span>
                 <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
                 <span v-if="c.rci_included" class="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold">RCI</span>
-                <span :class="statusBadge(c.status)">{{ statusLabel(c.status) }}</span>
+                <AppBadge size="sm" :variant="contractStatusVariant[c.status] ?? 'neutral'">{{ statusLabel(c.status) }}</AppBadge>
               </div>
               <div class="text-[10px] text-gray-400 mt-0.5 flex flex-wrap gap-3">
                 <span v-if="c.customer_phone">📞 {{ c.customer_phone }}</span>
@@ -457,7 +463,7 @@ onMounted(refreshAll)
                       <td class="py-1.5 pr-1 text-gray-300">{{ i + 1 }}</td>
                       <td class="py-1.5 text-gray-500">{{ formatDateAr(p.due_date) }}</td>
                       <td class="py-1.5 font-bold">{{ fmt(p.amount) }}</td>
-                      <td class="py-1.5"><span :class="payBadge(p.status)">{{ payLabel(p.status) }}</span></td>
+                      <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
                       <td class="py-1.5">
                         <button v-if="p.status !== 'paid'" @click="openPayModal({ ...p, customer_name: c.customer_name })"
                           class="px-2 py-0.5 rounded-lg bg-green-50 text-green-700 text-[9px] font-bold border border-green-200 hover:bg-green-100">دفع</button>
@@ -475,8 +481,7 @@ onMounted(refreshAll)
                 class="px-4 py-2 rounded-xl bg-yellow-50 text-yellow-700 text-xs font-bold border border-yellow-200 hover:bg-yellow-100 disabled:opacity-40">⏸️ تعليق</button>
               <button v-else-if="c.status === 'suspended'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
                 class="px-4 py-2 rounded-xl bg-green-50 text-green-700 text-xs font-bold border border-green-200 hover:bg-green-100 disabled:opacity-40">▶️ تفعيل</button>
-              <button v-if="c.status !== 'cancelled'" @click="cancelContract(c)"
-                class="px-4 py-2 rounded-xl bg-red-50 text-red-600 text-xs font-bold border border-red-200 hover:bg-red-100">🗑️ إلغاء</button>
+              <AppButton v-if="c.status !== 'cancelled'" variant="danger" size="sm" @click="cancelContract(c)">🗑️ إلغاء</AppButton>
             </div>
           </div>
         </div>
@@ -502,7 +507,7 @@ onMounted(refreshAll)
       <div v-if="installLoading" class="flex justify-center py-12">
         <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
       </div>
-      <div v-else class="bg-white rounded-2xl border border-stone-200 overflow-hidden shadow-sm">
+      <AppCard v-else padding="none">
         <div v-if="!installments.length" class="text-center py-10 text-gray-300 text-xs">لا توجد نتائج</div>
         <table v-else class="w-full text-xs">
           <thead class="bg-stone-50"><tr>
@@ -520,7 +525,7 @@ onMounted(refreshAll)
               </td>
               <td class="px-4 py-3"><span :class="p.status === 'overdue' ? 'text-red-500 font-bold' : 'text-gray-500'">{{ formatDateAr(p.due_date) }}</span></td>
               <td class="px-4 py-3 font-bold">{{ fmt(p.amount) }}</td>
-              <td class="px-4 py-3"><span :class="payBadge(p.status)">{{ payLabel(p.status) }}</span></td>
+              <td class="px-4 py-3"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
               <td class="px-4 py-3">
                 <button v-if="p.status !== 'paid'" @click="openPayModal(p)"
                   class="px-3 py-1 rounded-xl bg-green-50 text-green-700 text-[10px] font-bold border border-green-200 hover:bg-green-100">💰 دفع</button>
@@ -528,73 +533,65 @@ onMounted(refreshAll)
             </tr>
           </tbody>
         </table>
-      </div>
+      </AppCard>
     </div>
 
     <!-- ══ PAY MODAL ══ -->
-    <Teleport to="body">
-      <div v-if="payModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="payModal.open = false">
-        <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl" dir="rtl">
-          <h3 class="font-black text-sm text-gray-900 mb-1">💰 تسجيل دفعة</h3>
-          <p class="text-xs text-gray-400 mb-4">{{ payModal.customer_name }}</p>
-          <div class="space-y-3">
-            <div>
-              <label class="text-[10px] text-gray-400 block mb-1">المبلغ المدفوع</label>
-              <input v-model.number="payModal.amount" type="number" min="1" :placeholder="`المستحق: ${fmt(payModal.due_amount)}`"
-                class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-sm rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
-            </div>
-            <div>
-              <label class="text-[10px] text-gray-400 block mb-1">طريقة الدفع</label>
-              <select v-model="payModal.method" class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-xs rounded-xl px-4 py-2.5 outline-none">
-                <option value="cash">نقدي</option><option value="card">بطاقة</option>
-                <option value="bank_transfer">تحويل بنكي</option><option value="other">أخرى</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-[10px] text-gray-400 block mb-1">رقم الإيصال (اختياري)</label>
-              <input v-model="payModal.receipt_number" class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-xs rounded-xl px-4 py-2.5 outline-none" />
-            </div>
-          </div>
-          <div class="flex gap-3 mt-5">
-            <button @click="submitPayment" :disabled="payModal.saving || !payModal.amount"
-              class="flex-1 py-2.5 bg-green-600 text-white rounded-xl text-sm font-bold disabled:opacity-40 hover:bg-green-700">
-              {{ payModal.saving ? '⏳' : '✅ تأكيد الدفع' }}
-            </button>
-            <button @click="payModal.open = false" class="px-4 py-2.5 bg-stone-100 text-gray-500 rounded-xl text-sm font-bold hover:bg-stone-200">إلغاء</button>
-          </div>
+    <AppModal :open="payModal.open" title="💰 تسجيل دفعة" size="sm" @close="payModal.open = false">
+      <p class="text-xs text-gray-400 mb-4">{{ payModal.customer_name }}</p>
+      <div class="space-y-3">
+        <div>
+          <label class="text-[10px] text-gray-400 block mb-1">المبلغ المدفوع</label>
+          <input v-model.number="payModal.amount" type="number" min="1" :placeholder="`المستحق: ${fmt(payModal.due_amount)}`"
+            class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-sm rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
+        </div>
+        <div>
+          <label class="text-[10px] text-gray-400 block mb-1">طريقة الدفع</label>
+          <select v-model="payModal.method" class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-xs rounded-xl px-4 py-2.5 outline-none">
+            <option value="cash">نقدي</option><option value="card">بطاقة</option>
+            <option value="bank_transfer">تحويل بنكي</option><option value="other">أخرى</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-[10px] text-gray-400 block mb-1">رقم الإيصال (اختياري)</label>
+          <input v-model="payModal.receipt_number" class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-xs rounded-xl px-4 py-2.5 outline-none" />
         </div>
       </div>
-    </Teleport>
+      <template #footer>
+        <div class="flex gap-3">
+          <AppButton variant="primary" block :loading="payModal.saving" :disabled="!payModal.amount" @click="submitPayment">
+            ✅ تأكيد الدفع
+          </AppButton>
+          <AppButton variant="ghost" @click="payModal.open = false">إلغاء</AppButton>
+        </div>
+      </template>
+    </AppModal>
 
     <!-- ══ IMPORT MODAL ══ -->
-    <Teleport to="body">
-      <div v-if="importModal.open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @click.self="importModal.open = false">
-        <div class="bg-white rounded-2xl p-6 w-full max-w-md shadow-xl" dir="rtl">
-          <h3 class="font-black text-sm text-gray-900 mb-1">📥 استيراد عقود من Excel</h3>
-          <p class="text-xs text-gray-400 mb-4">
-            الصف الأول = أسماء الأعمدة (customer_name, room_type, total_value, down_payment, installments, start_date, first_installment_date إلزامية).
-          </p>
-          <input type="file" accept=".xlsx,.xls" @change="onFilePicked"
-            class="w-full text-xs text-gray-600 file:ml-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
-          <div v-if="importModal.result" class="mt-4 p-3 rounded-xl text-xs" :class="importModal.result.error ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'">
-            <div v-if="importModal.result.error">{{ importModal.result.error }}</div>
-            <div v-else>
-              ✅ تم استيراد {{ importModal.result.imported }} عقد
-              <span v-if="importModal.result.skipped"> · تخطي {{ importModal.result.skipped }} (مستورد سابقاً)</span>
-              <div v-if="importModal.result.errors?.length" class="mt-2 text-red-500">
-                <div v-for="(err, i) in importModal.result.errors" :key="i">{{ err }}</div>
-              </div>
-            </div>
-          </div>
-          <div class="flex gap-3 mt-5">
-            <button @click="submitImport" :disabled="!importModal.file || importModal.uploading"
-              class="flex-1 py-2.5 bg-primary-700 text-white rounded-xl text-sm font-bold disabled:opacity-40 hover:bg-primary-800">
-              {{ importModal.uploading ? '⏳ جاري الاستيراد...' : '📤 استيراد' }}
-            </button>
-            <button @click="importModal.open = false" class="px-4 py-2.5 bg-stone-100 text-gray-500 rounded-xl text-sm font-bold hover:bg-stone-200">إغلاق</button>
+    <AppModal :open="importModal.open" title="📥 استيراد عقود من Excel" @close="importModal.open = false">
+      <p class="text-xs text-gray-400 mb-4">
+        الصف الأول = أسماء الأعمدة (customer_name, room_type, total_value, down_payment, installments, start_date, first_installment_date إلزامية).
+      </p>
+      <input type="file" accept=".xlsx,.xls" @change="onFilePicked"
+        class="w-full text-xs text-gray-600 file:ml-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
+      <div v-if="importModal.result" class="mt-4 p-3 rounded-xl text-xs" :class="importModal.result.error ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'">
+        <div v-if="importModal.result.error">{{ importModal.result.error }}</div>
+        <div v-else>
+          ✅ تم استيراد {{ importModal.result.imported }} عقد
+          <span v-if="importModal.result.skipped"> · تخطي {{ importModal.result.skipped }} (مستورد سابقاً)</span>
+          <div v-if="importModal.result.errors?.length" class="mt-2 text-red-500">
+            <div v-for="(err, i) in importModal.result.errors" :key="i">{{ err }}</div>
           </div>
         </div>
       </div>
-    </Teleport>
+      <template #footer>
+        <div class="flex gap-3">
+          <AppButton variant="primary" block :loading="importModal.uploading" :disabled="!importModal.file" @click="submitImport">
+            📤 استيراد
+          </AppButton>
+          <AppButton variant="ghost" @click="importModal.open = false">إغلاق</AppButton>
+        </div>
+      </template>
+    </AppModal>
   </div>
 </template>

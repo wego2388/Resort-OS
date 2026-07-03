@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_current_active_user, get_manager_user
+from app.core.deps import DbDep, get_current_active_user, get_manager_user, require_permission
 from app.modules.inventory import crud, services
 from app.modules.inventory.schemas import (
     CategoryCreate, CategoryRead, ProductCreate, ProductRead, ProductUpdate,
@@ -259,8 +259,9 @@ def submit_stock_count(count_id: int, req: SubmitStockCountRequest, db: DbDep,
 
 
 @router.patch("/inventory/stock-counts/{count_id}/approve",
-              response_model=StockCountRead)
-def approve_stock_count(count_id: int, db: DbDep, user=Depends(get_manager_user)):
+              response_model=StockCountRead,
+              dependencies=[Depends(require_permission("inventory.approve_stock_count", "approve", min_role_level=60))])
+def approve_stock_count(count_id: int, db: DbDep, user=Depends(get_current_active_user)):
     try:
         return services.approve_stock_count(db, count_id, approved_by=user.id)
     except ValueError as exc:

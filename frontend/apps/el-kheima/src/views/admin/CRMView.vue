@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
+const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'leads' | 'customers' | 'campaigns'>('leads')
 
@@ -18,22 +20,21 @@ const leads = ref<Lead[]>([])
 const customers = ref<Customer[]>([])
 const loading = ref(false)
 
-const stageConfig: Record<string, { label: string; color: string }> = {
-  new:       { label: 'جديد',        color: 'bg-gray-100 text-gray-700' },
-  contacted: { label: 'تم التواصل', color: 'bg-blue-100 text-blue-700' },
-  qualified: { label: 'مؤهل',        color: 'bg-purple-100 text-purple-700' },
-  proposal:  { label: 'عرض',         color: 'bg-amber-100 text-amber-700' },
-  won:       { label: 'مُغلق ✓',     color: 'bg-green-100 text-green-700' },
-  lost:      { label: 'خسارة',       color: 'bg-red-100 text-red-700' },
+const stageConfig: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
+  new:       { label: 'جديد',        variant: 'neutral' },
+  contacted: { label: 'تم التواصل', variant: 'info' },
+  qualified: { label: 'مؤهل',        variant: 'info' },
+  proposal:  { label: 'عرض',         variant: 'warning' },
+  won:       { label: 'مُغلق ✓',     variant: 'success' },
+  lost:      { label: 'خسارة',       variant: 'danger' },
 }
 
 const interestLabels: Record<string, string> = {
   timeshare: 'تايم شير', leasing: 'إيجار', booking: 'حجز', membership: 'عضوية', other: 'أخرى'
 }
 
-const segmentColors: Record<string, string> = {
-  regular: 'bg-gray-100 text-gray-700', vip: 'bg-amber-100 text-amber-700',
-  corporate: 'bg-blue-100 text-blue-700', travel_agent: 'bg-purple-100 text-purple-700',
+const segmentVariants: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
+  regular: 'neutral', vip: 'warning', corporate: 'info', travel_agent: 'info',
 }
 
 async function loadLeads() {
@@ -41,7 +42,7 @@ async function loadLeads() {
   try {
     const res = await api.get('/api/v1/crm/leads', { params: { branch_id: branchId } })
     leads.value = res.data.leads ?? res.data.items ?? res.data
-  } catch(e) { console.error(e) }
+  } catch { toast.error('تعذّر تحميل العملاء المحتملين — حاول تاني') }
   finally { loading.value = false }
 }
 
@@ -50,7 +51,7 @@ async function loadCustomers() {
   try {
     const res = await api.get('/api/v1/crm/customers', { params: { branch_id: branchId } })
     customers.value = res.data.customers ?? res.data.items ?? res.data
-  } catch(e) { console.error(e) }
+  } catch { toast.error('تعذّر تحميل العملاء — حاول تاني') }
   finally { loading.value = false }
 }
 
@@ -67,7 +68,7 @@ async function advanceLead(lead: Lead) {
   try {
     await api.patch(`/api/v1/crm/leads/${lead.id}`, { stage: next })
     lead.stage = next
-  } catch(e) { console.error(e) }
+  } catch { toast.error('تعذّر تحديث حالة العميل المحتمل — حاول تاني') }
 }
 
 onMounted(loadLeads)
@@ -86,7 +87,7 @@ onMounted(loadLeads)
 
     <!-- Leads -->
     <div v-if="tab === 'leads'">
-      <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else class="space-y-3">
         <div v-for="lead in leads" :key="lead.id"
           class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm flex items-center justify-between">
@@ -101,25 +102,22 @@ onMounted(loadLeads)
             </div>
           </div>
           <div class="flex items-center gap-2">
-            <span :class="['px-2 py-1 rounded-full text-xs font-medium', stageConfig[lead.stage]?.color ?? 'bg-gray-100 text-gray-600']">
+            <AppBadge size="sm" :variant="stageConfig[lead.stage]?.variant ?? 'neutral'">
               {{ stageConfig[lead.stage]?.label ?? lead.stage }}
-            </span>
-            <button v-if="!['won','lost'].includes(lead.stage)" @click="advanceLead(lead)"
-              class="px-3 py-1 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700">
+            </AppBadge>
+            <AppButton v-if="!['won','lost'].includes(lead.stage)" size="sm" @click="advanceLead(lead)">
               تقدم ←
-            </button>
+            </AppButton>
           </div>
         </div>
-        <div v-if="leads.length === 0" class="text-center py-12 text-gray-400">
-          <div class="text-4xl mb-2">🤝</div><p>لا توجد عملاء محتملون</p>
-        </div>
+        <EmptyState v-if="leads.length === 0" icon="🤝" title="لا توجد عملاء محتملون" />
       </div>
     </div>
 
     <!-- Customers -->
     <div v-if="tab === 'customers'">
-      <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
-      <div v-else class="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <AppCard v-else padding="none">
         <table class="w-full">
           <thead class="bg-stone-50">
             <tr>
@@ -141,26 +139,30 @@ onMounted(loadLeads)
                 </div>
               </td>
               <td class="px-4 py-3">
-                <span :class="['px-2 py-0.5 rounded-full text-xs font-medium', segmentColors[c.segment] ?? 'bg-gray-100 text-gray-600']">
+                <AppBadge size="sm" :variant="segmentVariants[c.segment] ?? 'neutral'">
                   {{ c.segment === 'vip' ? 'VIP' : c.segment === 'corporate' ? 'شركة' : c.segment === 'travel_agent' ? 'وكيل سفر' : 'عادي' }}
-                </span>
+                </AppBadge>
               </td>
               <td class="px-4 py-3 text-sm text-gray-700 font-medium">{{ c.visits_count }}</td>
               <td class="px-4 py-3 text-sm font-bold text-blue-700">{{ Number(c.total_spent).toLocaleString('ar-EG') }} ج</td>
             </tr>
             <tr v-if="customers.length === 0">
-              <td colspan="4" class="px-4 py-12 text-center text-gray-400">لا توجد عملاء</td>
+              <td colspan="4" class="px-4 py-8">
+                <EmptyState icon="👥" title="لا توجد عملاء" />
+              </td>
             </tr>
           </tbody>
         </table>
-      </div>
+      </AppCard>
     </div>
 
-    <!-- Campaigns -->
-    <div v-if="tab === 'campaigns'" class="bg-white rounded-2xl border border-stone-200 p-8 text-center text-gray-400 shadow-sm">
-      <div class="text-4xl mb-3">📢</div>
-      <p class="font-medium text-gray-600 mb-1">الحملات التسويقية</p>
-      <p class="text-sm">سيتم تطوير إدارة الحملات قريباً</p>
+    <!-- Campaigns: لا يوجد endpoint/model مُعرَّض في الـ API لإدارة الحملات فعليًا
+         (جدول crm.campaigns موجود بالـ DB بس من غير schema/crud/router) — لسه ما
+         تحوّلش لميزة حقيقية، فالتاب ده stub متعمّد لحد ما الباك إند يضيفها. -->
+    <div v-if="tab === 'campaigns'">
+      <AppCard>
+        <EmptyState icon="📢" title="الحملات التسويقية" subtitle="سيتم تطوير إدارة الحملات قريباً" />
+      </AppCard>
     </div>
   </div>
 </template>

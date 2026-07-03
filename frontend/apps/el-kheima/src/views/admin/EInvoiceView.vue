@@ -1,9 +1,16 @@
 <script setup lang="ts">
 // الفاتورة الإلكترونية (ETA) — رفع فواتير لمصلحة الضرائب المصرية وتتبّع حالتها.
-// ملاحظة: ETA_ENABLED=false افتراضياً في .env — الشاشة دي بتشتغل وتعرض حالة
-// "غير مفعّل" بوضوح بدل ما تفشل بصمت، وتشتغل فوراً لو حد فعّل بيانات اعتماد حقيقية.
+// ملاحظة: ETA_ENABLED=false افتراضياً في .env. الباك إند مش بيتحقق من الإعداد ده
+// إلا وقت إرسال فاتورة فعلاً (POST /finance/eta/invoices) — لو كان متعطّل، بيرجّع
+// 400 برسالة واضحة فيها "ETA_ENABLED" (أو ETA_CLIENT_ID/ETA_TAXPAYER لو الاعتماد
+// ناقص). قائمة الفواتير (GET) مبتتحققش من الإعداد ده خالص فمفيش إشارة "غير مفعّل"
+// وقت فتح الشاشة — الإشارة الوحيدة الحقيقية بتظهر أول ما حد يحاول يبعت فاتورة.
+// notEnabledError بيتفعّل من رد الإرسال ده ويعرض بانر واضح فوق الصفحة.
 import { ref, reactive, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, EmptyState, useToast } from '@resort-os/ui'
+
+const toast = useToast()
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
@@ -20,12 +27,12 @@ const loading = ref(true)
 const statusFilter = ref('')
 const notEnabledError = ref('')
 
-const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  pending:   { label: 'قيد الانتظار', color: 'bg-gray-100 text-gray-700' },
-  submitted: { label: 'مُرسلة',        color: 'bg-blue-100 text-blue-700' },
-  valid:     { label: 'مقبولة ✓',      color: 'bg-green-100 text-green-700' },
-  invalid:   { label: 'مرفوضة',        color: 'bg-red-100 text-red-700' },
-  failed:    { label: 'فشل الإرسال',   color: 'bg-amber-100 text-amber-700' },
+const STATUS_CONFIG: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
+  pending:   { label: 'قيد الانتظار', variant: 'neutral' },
+  submitted: { label: 'مُرسلة',        variant: 'info' },
+  valid:     { label: 'مقبولة ✓',      variant: 'success' },
+  invalid:   { label: 'مرفوضة',        variant: 'danger' },
+  failed:    { label: 'فشل الإرسال',   variant: 'warning' },
 }
 
 // ── Submit modal ─────────────────────────────────────────────────────
@@ -54,13 +61,17 @@ async function loadInvoices() {
     })
     invoices.value = res.data.items ?? []
     total.value = res.data.total ?? 0
-    notEnabledError.value = ''
-  } catch (e) {
-    console.error(e)
+  } catch {
+    toast.error('تعذّر تحميل الفواتير الإلكترونية — حاول تاني')
   } finally {
     loading.value = false
   }
 }
+
+// الباك إند بيرجّع رسالة فيها اسم متغير البيئة الناقص لما ETA مش مهيأ —
+// ده الإشارة الوحيدة الحقيقية المتاحة من الـ API للتفريق بين "الإعداد غير
+// مفعّل" وأي خطأ 400 تاني (بيانات فاتورة ناقصة، إلخ).
+const ETA_CONFIG_MARKERS = ['ETA_ENABLED', 'ETA_CLIENT_ID', 'ETA_TAXPAYER']
 
 async function submitInvoice() {
   submitModal.saving = true
@@ -75,10 +86,17 @@ async function submitInvoice() {
         description: i.description, quantity: i.quantity, unit_price: i.unit_price,
       })),
     })
+    notEnabledError.value = ''
     submitModal.open = false
     await loadInvoices()
   } catch (e: any) {
-    submitModal.error = e?.response?.data?.detail ?? 'تعذّر إرسال الفاتورة'
+    const detail = e?.response?.data?.detail ?? 'تعذّر إرسال الفاتورة'
+    if (typeof detail === 'string' && ETA_CONFIG_MARKERS.some(marker => detail.includes(marker))) {
+      notEnabledError.value = detail
+      submitModal.open = false
+    } else {
+      submitModal.error = detail
+    }
   } finally {
     submitModal.saving = false
   }
@@ -94,9 +112,17 @@ onMounted(loadInvoices)
         <h1 class="text-xl font-black text-gray-900">🧾 الفاتورة الإلكترونية (ETA)</h1>
         <p class="text-xs text-gray-400 mt-1">رفع الفواتير لمصلحة الضرائب المصرية ومتابعة حالتها</p>
       </div>
-      <button @click="openSubmitModal" class="px-4 py-2 rounded-xl bg-primary text-white text-sm font-bold">
-        + فاتورة جديدة
-      </button>
+      <AppButton @click="openSubmitModal">+ فاتورة جديدة</AppButton>
+    </div>
+
+    <!-- بانر "غير مفعّل" — بيظهر لما الباك إند يرجّع إشارة حقيقية إن ETA مش مهيأ
+         (اتفعّل من submitInvoice، راجع الملاحظة أعلى الملف). -->
+    <div v-if="notEnabledError" class="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
+      <span class="text-lg leading-none">⚠️</span>
+      <div>
+        <p class="font-bold">الفاتورة الإلكترونية غير مفعّلة حاليًا</p>
+        <p class="text-xs text-amber-700 mt-0.5">{{ notEnabledError }}</p>
+      </div>
     </div>
 
     <div class="flex gap-2 mb-4">
@@ -107,8 +133,8 @@ onMounted(loadInvoices)
       </button>
     </div>
 
-    <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
-    <div v-else class="bg-white rounded-2xl border border-stone-200 overflow-hidden shadow-sm">
+    <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+    <AppCard v-else padding="none">
       <div class="overflow-x-auto">
         <table class="w-full">
           <thead class="bg-stone-50">
@@ -125,9 +151,9 @@ onMounted(loadInvoices)
               <td class="px-4 py-3 font-mono text-sm text-gray-900">{{ inv.internal_id }}</td>
               <td class="px-4 py-3 text-xs text-gray-500 font-mono">{{ inv.submission_uuid ?? '—' }}</td>
               <td class="px-4 py-3">
-                <span :class="['px-2 py-1 rounded-full text-xs font-medium', STATUS_CONFIG[inv.status]?.color ?? 'bg-gray-100 text-gray-600']">
+                <AppBadge size="sm" :variant="STATUS_CONFIG[inv.status]?.variant ?? 'neutral'">
                   {{ STATUS_CONFIG[inv.status]?.label ?? inv.status }}
-                </span>
+                </AppBadge>
               </td>
               <td class="px-4 py-3 text-xs text-gray-500">
                 {{ inv.submitted_at ? new Date(inv.submitted_at).toLocaleString('ar-EG') : '—' }}
@@ -137,57 +163,56 @@ onMounted(loadInvoices)
               </td>
             </tr>
             <tr v-if="invoices.length === 0">
-              <td colspan="5" class="px-4 py-12 text-center text-gray-400">لا توجد فواتير إلكترونية بعد</td>
+              <td colspan="5" class="px-4 py-8">
+                <EmptyState icon="🧾" title="لا توجد فواتير إلكترونية بعد" />
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
+    </AppCard>
 
     <!-- Submit Modal -->
-    <div v-if="submitModal.open" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div class="bg-white rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
-        <h3 class="font-black text-gray-900 mb-4">فاتورة إلكترونية جديدة</h3>
-
-        <div class="space-y-3">
-          <div>
-            <label class="block text-xs text-gray-400 mb-1">اسم العميل</label>
-            <input v-model="submitModal.receiver_name" type="text"
-                   class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm" />
-          </div>
-          <div>
-            <label class="block text-xs text-gray-400 mb-1">الرقم الضريبي (اختياري — فاضي = B2C)</label>
-            <input v-model="submitModal.receiver_rin" type="text"
-                   class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm" />
-          </div>
-          <div>
-            <label class="block text-xs text-gray-400 mb-1">رقم الفوليو (اختياري)</label>
-            <input v-model="submitModal.folio_id" type="number"
-                   class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm" />
-          </div>
-
-          <div>
-            <label class="block text-xs text-gray-400 mb-2">بنود الفاتورة</label>
-            <div v-for="(item, i) in submitModal.items" :key="i" class="flex gap-2 mb-2">
-              <input v-model="item.description" placeholder="الوصف" class="flex-1 border border-stone-200 rounded-lg px-2 py-1.5 text-xs" />
-              <input v-model.number="item.quantity" type="number" placeholder="كمية" class="w-16 border border-stone-200 rounded-lg px-2 py-1.5 text-xs" />
-              <input v-model.number="item.unit_price" type="number" placeholder="السعر" class="w-20 border border-stone-200 rounded-lg px-2 py-1.5 text-xs" />
-              <button @click="removeLine(i)" class="text-red-400 text-xs px-1">✕</button>
-            </div>
-            <button @click="addLine" class="text-xs text-primary font-bold">+ إضافة بند</button>
-          </div>
-
-          <p v-if="submitModal.error" class="text-red-600 text-xs bg-red-50 rounded-lg p-2">{{ submitModal.error }}</p>
-
-          <div class="flex gap-2 pt-2">
-            <button @click="submitModal.open = false" class="flex-1 py-2 rounded-xl border border-stone-200 text-sm font-bold text-gray-600">إلغاء</button>
-            <button @click="submitInvoice" :disabled="submitModal.saving"
-                    class="flex-1 py-2 rounded-xl bg-primary text-white text-sm font-bold disabled:opacity-50">
-              {{ submitModal.saving ? '...جاري الإرسال' : 'إرسال لمصلحة الضرائب' }}
-            </button>
-          </div>
+    <AppModal :open="submitModal.open" title="فاتورة إلكترونية جديدة" @close="submitModal.open = false">
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">اسم العميل</label>
+          <input v-model="submitModal.receiver_name" type="text"
+                 class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm" />
         </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">الرقم الضريبي (اختياري — فاضي = B2C)</label>
+          <input v-model="submitModal.receiver_rin" type="text"
+                 class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label class="block text-xs text-gray-400 mb-1">رقم الفوليو (اختياري)</label>
+          <input v-model="submitModal.folio_id" type="number"
+                 class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm" />
+        </div>
+
+        <div>
+          <label class="block text-xs text-gray-400 mb-2">بنود الفاتورة</label>
+          <div v-for="(item, i) in submitModal.items" :key="i" class="flex gap-2 mb-2">
+            <input v-model="item.description" placeholder="الوصف" class="flex-1 border border-stone-200 rounded-lg px-2 py-1.5 text-xs" />
+            <input v-model.number="item.quantity" type="number" placeholder="كمية" class="w-16 border border-stone-200 rounded-lg px-2 py-1.5 text-xs" />
+            <input v-model.number="item.unit_price" type="number" placeholder="السعر" class="w-20 border border-stone-200 rounded-lg px-2 py-1.5 text-xs" />
+            <button @click="removeLine(i)" class="text-red-400 text-xs px-1">✕</button>
+          </div>
+          <button @click="addLine" class="text-xs text-primary font-bold">+ إضافة بند</button>
+        </div>
+
+        <p v-if="submitModal.error" class="text-red-600 text-xs bg-red-50 rounded-lg p-2">{{ submitModal.error }}</p>
       </div>
-    </div>
+
+      <template #footer>
+        <div class="flex gap-2">
+          <AppButton variant="outline" block @click="submitModal.open = false">إلغاء</AppButton>
+          <AppButton block :loading="submitModal.saving" @click="submitInvoice">
+            {{ submitModal.saving ? 'جاري الإرسال...' : 'إرسال لمصلحة الضرائب' }}
+          </AppButton>
+        </div>
+      </template>
+    </AppModal>
   </div>
 </template>

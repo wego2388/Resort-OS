@@ -9,7 +9,7 @@ from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_manager_user,
+    get_current_active_user, get_manager_user, require_permission,
 )
 from app.modules.beach import crud, services
 from app.modules.beach.schemas import (
@@ -112,8 +112,9 @@ def download_ticket(tx_id: int, db: DbDep, _=Depends(get_cashier_user)):
 
 
 @router.post("/beach/transactions/{tx_id}/void",
+             dependencies=[Depends(require_permission("beach.void_transaction", "execute", min_role_level=60))],
              response_model=BeachTransactionRead)
-def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=Depends(get_manager_user)):
+def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=Depends(get_current_active_user)):
     try:
         return services.void_transaction(db, tx_id, voided_by=user.id, reason=data.reason)
     except ValueError as exc:

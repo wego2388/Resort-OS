@@ -86,10 +86,11 @@ def revenue_summary(
         from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
         rows = db.query(BeachTransaction).filter(
             BeachTransaction.branch_id == branch_id,
-            BeachTransaction.visit_date >= date_from,
-            BeachTransaction.visit_date <= date_to,
+            BeachTransaction.voided_at.is_(None),
+            BeachTransaction.tx_date >= date_from,
+            BeachTransaction.tx_date <= date_to,
         ).all()
-        return {"visits": len(rows), "total": sum(r.total_paid for r in rows)}
+        return {"visits": len(rows), "total": sum(r.total_amount + r.vat_amount for r in rows)}
 
     result["restaurant"] = _safe_query(_restaurant, db)
     result["cafe"]       = _safe_query(_cafe, db)
@@ -464,9 +465,9 @@ def full_dashboard(
             Booking.branch_id == bid, Booking.status == "checked_out",
             Booking.check_out >= dfrom, Booking.check_out <= dto,
         ).all())
-        beach_rev = sum(r.total_paid for r in d.query(BeachTransaction).filter(
-            BeachTransaction.branch_id == bid,
-            BeachTransaction.visit_date >= dfrom, BeachTransaction.visit_date <= dto,
+        beach_rev = sum(r.total_amount + r.vat_amount for r in d.query(BeachTransaction).filter(
+            BeachTransaction.branch_id == bid, BeachTransaction.voided_at.is_(None),
+            BeachTransaction.tx_date >= dfrom, BeachTransaction.tx_date <= dto,
         ).all())
         total = rest + cafe + pms_rev + beach_rev
         return {"restaurant": float(rest), "cafe": float(cafe),

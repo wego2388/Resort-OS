@@ -61,6 +61,7 @@ const allSections: NavSection[] = [
     label: 'الإعدادات',
     items: [
       { path: '/admin/settings', label: 'الإعدادات', icon: '⚙️', requiredRole: 'admin' },
+      { path: '/admin/permissions', label: 'الصلاحيات', icon: '🔐', requiredRole: 'super_admin' },
     ],
   },
   {

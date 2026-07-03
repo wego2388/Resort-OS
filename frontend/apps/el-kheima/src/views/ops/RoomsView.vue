@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
+const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Room {
@@ -41,8 +43,10 @@ async function fetchRooms() {
   try {
     const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId } })
     rooms.value = res.data.rooms ?? res.data.items ?? res.data
-  } catch(e) { console.error(e) }
-  finally { loading.value = false }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل خريطة الغرف')
+  } finally { loading.value = false }
 }
 
 let refreshInterval: ReturnType<typeof setInterval>
@@ -94,8 +98,8 @@ onUnmounted(() => clearInterval(refreshInterval))
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="text-center py-16 text-gray-400">
-      <div class="text-3xl mb-2">⏳</div>
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+      <AppSpinner size="lg" />
       <p>جاري التحميل...</p>
     </div>
 
@@ -121,10 +125,7 @@ onUnmounted(() => clearInterval(refreshInterval))
         </div>
       </div>
 
-      <div v-if="filteredRooms.length === 0" class="col-span-full text-center py-16 text-gray-400">
-        <div class="text-4xl mb-2">🛏️</div>
-        <p>لا توجد غرف</p>
-      </div>
+      <EmptyState v-if="filteredRooms.length === 0" class="col-span-full" icon="🛏️" title="لا توجد غرف" />
     </div>
 
     <!-- Room detail modal -->

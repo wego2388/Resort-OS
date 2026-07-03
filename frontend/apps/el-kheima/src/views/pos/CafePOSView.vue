@@ -1,9 +1,76 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '@resort-os/core'
+import { useToast } from '@resort-os/ui'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const authHeaders = computed(() => ({}))
+const toast = useToast()
+
+// ── Offline queue ──────────────────────────────────────────────────────────────
+// NOTE: @resort-os/core's useOfflineQueue() posts hard-coded to
+// /api/v1/restaurant/orders(/sync) — reusing it here would silently send cafe
+// orders into the restaurant module. This local queue mirrors the exact same
+// contract (queue while offline, FIFO retry on reconnect, server response is
+// the source of truth for stock) but targets /api/v1/cafe/orders instead.
+const isOnline     = ref(navigator.onLine)
+const pendingCount = ref(0)
+
+interface PendingCafeOrder { localId: string; payload: Record<string, unknown>; createdAt: string }
+
+const QUEUE_KEY = `resort-os-offline-cafe-orders-${branchId}`
+
+function readQueue(): PendingCafeOrder[] {
+  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]') } catch { return [] }
+}
+function writeQueue(queue: PendingCafeOrder[]) {
+  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
+  pendingCount.value = queue.length
+}
+function queueOrder(payload: Record<string, unknown>) {
+  const queue = readQueue()
+  queue.push({ localId: crypto.randomUUID(), payload, createdAt: new Date().toISOString() })
+  writeQueue(queue)
+}
+
+/** true only for "never reached the server" failures — not 4xx/5xx responses */
+function isNetworkError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const axiosErr = err as { request?: unknown; response?: unknown }
+  return !!axiosErr.request && !axiosErr.response
+}
+
+let syncing = false
+async function syncPendingOrders() {
+  if (!navigator.onLine || syncing) return
+  syncing = true
+  try {
+    let queue = readQueue()
+    while (queue.length) {
+      const order = queue[0]
+      try {
+        await api.post('/api/v1/cafe/orders', order.payload)
+      } catch (err) {
+        if (isNetworkError(err)) break // still offline — keep FIFO order, retry later
+        // server explicitly rejected it (stock/validation) — drop so it doesn't block the queue forever
+        toast.error(`تعذّر تزامن طلب كافيه محفوظ (${new Date(order.createdAt).toLocaleTimeString('ar-EG')}) — راجعه يدوياً`)
+      }
+      queue = queue.slice(1)
+      writeQueue(queue)
+    }
+  } finally {
+    syncing = false
+  }
+}
+
+function handleOnline() {
+  isOnline.value = true
+  syncPendingOrders()
+}
+function handleOffline() {
+  isOnline.value = false
+}
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Category { id: number; name: string; name_ar: string }
@@ -17,6 +84,7 @@ const selectedCategoryId = ref<number | null>(null)
 const cart               = ref<CartItem[]>([])
 const paymentMethod      = ref<'cash' | 'card' | 'wallet'>('cash')
 const loading            = ref(false)
+const loadError          = ref(false)
 const submitting         = ref(false)
 const successMsg         = ref('')
 const errorMsg           = ref('')
@@ -113,6 +181,7 @@ function saveNote() {
 // ── API ────────────────────────────────────────────────────────────────────────
 async function loadData() {
   loading.value = true
+  loadError.value = false
   try {
     const [catsRes, itemsRes] = await Promise.all([
       api.get('/api/v1/cafe/categories', {
@@ -131,6 +200,7 @@ async function loadData() {
     }
   } catch (e) {
     console.error('Failed to load cafe data', e)
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -152,8 +222,28 @@ async function submitOrder() {
       })),
     }
 
-    const { data } = await api.post('/api/v1/cafe/orders', payload, {
-      })
+    if (!navigator.onLine) {
+      queueOrder(payload)
+      clearOrder()
+      successMsg.value = '📥 الطلب محفوظ — هيتبعت أول ما النت يرجع'
+      setTimeout(() => { successMsg.value = '' }, 4000)
+      return
+    }
+
+    let data: any
+    try {
+      const res = await api.post('/api/v1/cafe/orders', payload)
+      data = res.data
+    } catch (err) {
+      if (isNetworkError(err)) {
+        queueOrder(payload)
+        clearOrder()
+        successMsg.value = '📥 الطلب محفوظ — هيتبعت أول ما النت يرجع'
+        setTimeout(() => { successMsg.value = '' }, 4000)
+        return
+      }
+      throw err
+    }
 
     const orderId = data.id ?? data.order_id
     if (orderId) {
@@ -179,11 +269,43 @@ async function submitOrder() {
   }
 }
 
-onMounted(loadData)
+onMounted(() => {
+  loadData()
+  window.addEventListener('online', handleOnline)
+  window.addEventListener('offline', handleOffline)
+  pendingCount.value = readQueue().length
+  if (navigator.onLine) syncPendingOrders()
+  // safety-net poll — covers cases where the 'online' event never fires
+  // reliably but connectivity is actually back
+  pollTimer = setInterval(() => {
+    if (navigator.onLine && pendingCount.value > 0) syncPendingOrders()
+  }, 30_000)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('online', handleOnline)
+  window.removeEventListener('offline', handleOffline)
+  if (pollTimer) clearInterval(pollTimer)
+})
 </script>
 
 <template>
   <div class="flex flex-col h-full" dir="rtl">
+
+    <!-- ── Offline banner — visible الطول، مش toast بيختفي ── -->
+    <div
+      v-if="!isOnline"
+      class="bg-amber-500 text-white text-xs font-bold px-4 py-1.5 flex items-center justify-center gap-2 flex-shrink-0"
+    >
+      <span>⚠️ وضع offline — الطلبات بتتحفظ محلياً وهتتبعت أول ما النت يرجع</span>
+      <span v-if="pendingCount > 0" class="bg-amber-700 px-2 py-0.5 rounded-full">{{ pendingCount }} في الانتظار</span>
+    </div>
+    <div
+      v-else-if="pendingCount > 0"
+      class="bg-blue-500 text-white text-xs font-bold px-4 py-1.5 flex items-center justify-center gap-2 flex-shrink-0"
+    >
+      <span>⏳ جاري إرسال {{ pendingCount }} طلب محفوظ من فترة الانقطاع...</span>
+    </div>
 
     <!-- ── Category tabs ── -->
     <div class="bg-white border-b border-stone-200 px-4 py-3 flex gap-2 flex-wrap items-center shadow-sm flex-shrink-0">
@@ -221,6 +343,15 @@ onMounted(loadData)
           <div class="animate-spin w-8 h-8 border-4 border-amber-600 border-t-transparent rounded-full" />
         </div>
 
+        <!-- No connection -->
+        <div v-else-if="loadError" class="flex flex-col items-center justify-center h-64 text-gray-500 gap-3">
+          <div class="text-5xl">⚠️</div>
+          <p class="font-medium">لا يمكن الاتصال بالسيرفر</p>
+          <button @click="loadData" class="px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700">
+            إعادة المحاولة
+          </button>
+        </div>
+
         <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
           <button
             v-for="item in filteredItems"
@@ -244,13 +375,13 @@ onMounted(loadData)
           </button>
         </div>
 
-        <div v-if="!loading && filteredItems.length === 0" class="flex flex-col items-center justify-center py-16 text-gray-400">
+        <div v-if="!loading && !loadError && filteredItems.length === 0" class="flex flex-col items-center justify-center py-16 text-gray-400">
           <div class="text-4xl mb-2">☕</div>
           <p class="text-sm">لا توجد أصناف في هذه الفئة</p>
         </div>
 
         <!-- Hint -->
-        <p v-if="!loading && filteredItems.length > 0" class="text-center text-xs text-gray-300 mt-4">
+        <p v-if="!loading && !loadError && filteredItems.length > 0" class="text-center text-xs text-gray-300 mt-4">
           اضغط مرة لإضافة واحدة · كليك يمين لتحديد الكمية
         </p>
       </div>

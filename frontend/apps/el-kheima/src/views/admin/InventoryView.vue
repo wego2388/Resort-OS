@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
+const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Product {
@@ -28,7 +30,7 @@ async function fetchProducts() {
   try {
     const res = await api.get('/api/v1/inventory/products', { params: { branch_id: branchId, limit: 200 } })
     products.value = res.data.products ?? res.data.items ?? res.data
-  } catch(e) { console.error(e) }
+  } catch { toast.error('تعذّر تحميل الأصناف — حاول تاني') }
   finally { loading.value = false }
 }
 
@@ -44,7 +46,7 @@ onMounted(fetchProducts)
           :class="['px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-colors', showLowStock ? 'border-red-500 bg-red-50 text-red-700' : 'border-stone-200 text-gray-600 hover:border-red-300']">
           ⚠️ منخفض ({{ lowStockCount() }})
         </button>
-        <button @click="fetchProducts" class="px-4 py-1.5 bg-amber-500 text-white rounded-xl text-sm font-medium hover:bg-amber-600">🔄</button>
+        <AppButton variant="secondary" size="sm" @click="fetchProducts">🔄</AppButton>
       </div>
     </div>
 
@@ -54,9 +56,9 @@ onMounted(fetchProducts)
         class="w-full max-w-sm border border-stone-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
     </div>
 
-    <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
+    <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
 
-    <div v-else class="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+    <AppCard v-else padding="none">
       <div class="overflow-x-auto">
         <table class="w-full">
           <thead class="bg-stone-50">
@@ -83,17 +85,19 @@ onMounted(fetchProducts)
               <td class="px-4 py-3 text-sm text-gray-500">{{ p.reorder_level }} {{ p.unit }}</td>
               <td class="px-4 py-3 text-sm text-gray-700">{{ (p.unit_cost ?? 0).toLocaleString('ar-EG') }} ج</td>
               <td class="px-4 py-3">
-                <span :class="['px-2 py-1 rounded-full text-xs font-medium', p.current_stock <= 0 ? 'bg-red-100 text-red-700' : p.current_stock <= p.reorder_level ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700']">
+                <AppBadge size="sm" :variant="p.current_stock <= 0 ? 'danger' : p.current_stock <= p.reorder_level ? 'warning' : 'success'">
                   {{ p.current_stock <= 0 ? 'نفد' : p.current_stock <= p.reorder_level ? 'منخفض' : 'متاح' }}
-                </span>
+                </AppBadge>
               </td>
             </tr>
             <tr v-if="filtered().length === 0">
-              <td colspan="7" class="px-4 py-12 text-center text-gray-400">لا توجد منتجات</td>
+              <td colspan="7" class="px-4 py-8">
+                <EmptyState icon="📦" title="لا توجد أصناف" subtitle="جرّب تغيير البحث أو أضف صنف جديد" />
+              </td>
             </tr>
           </tbody>
         </table>
       </div>
-    </div>
+    </AppCard>
   </div>
 </template>

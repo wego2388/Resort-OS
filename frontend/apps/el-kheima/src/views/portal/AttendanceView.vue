@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
+
+const toast = useToast()
 
 
 interface AttRecord {
@@ -40,8 +43,10 @@ async function fetchAttendance() {
     const res = await api.get('/api/v1/hr/me/attendance', { params: { size: 30 } })
     records.value = res.data.items ?? []
     todayRecord.value = records.value.find(r => r.record_date === today) ?? null
-  } catch(e) { console.error(e) }
-  finally { loading.value = false }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل سجل الحضور')
+  } finally { loading.value = false }
 }
 
 async function punch() {
@@ -56,8 +61,10 @@ async function punch() {
       todayRecord.value = data
     }
     await fetchAttendance()
-  } catch(e) { console.error(e) }
-  finally { punching.value = false }
+  } catch(e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الحضور، حاول مرة أخرى')
+  } finally { punching.value = false }
 }
 
 onMounted(fetchAttendance)
@@ -104,7 +111,10 @@ onMounted(fetchAttendance)
         <span class="font-bold text-gray-900">سجل آخر 30 يوم</span>
         <button @click="fetchAttendance" :class="['text-xs text-gray-400 hover:text-blue-600', loading ? 'animate-spin' : '']">↻</button>
       </div>
-      <div v-if="loading" class="p-8 text-center text-gray-400 text-sm">جاري التحميل...</div>
+      <div v-if="loading" class="p-8 flex flex-col items-center justify-center text-gray-400 text-sm gap-2">
+        <AppSpinner size="md" />
+        <span>جاري التحميل...</span>
+      </div>
       <div v-else class="divide-y divide-stone-100">
         <div v-for="rec in records" :key="rec.id" class="flex items-center justify-between px-5 py-3">
           <div>
@@ -122,10 +132,7 @@ onMounted(fetchAttendance)
             </span>
           </div>
         </div>
-        <div v-if="records.length === 0" class="px-5 py-12 text-center text-gray-400">
-          <div class="text-3xl mb-2">📅</div>
-          <p>لا توجد سجلات حضور</p>
-        </div>
+        <EmptyState v-if="records.length === 0" icon="📅" title="لا توجد سجلات حضور" />
       </div>
     </div>
   </div>

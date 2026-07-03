@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppSpinner, useToast } from '@resort-os/ui'
+
+const toast = useToast()
 
 
 interface Profile {
@@ -10,6 +13,7 @@ interface Profile {
 
 const profile = ref<Profile | null>(null)
 const loading = ref(false)
+const profileError = ref('')
 const pwForm = ref({ current_password: '', new_password: '', confirm_password: '' })
 const pwMsg = ref('')
 const pwError = ref('')
@@ -17,11 +21,15 @@ const pwLoading = ref(false)
 
 async function fetchProfile() {
   loading.value = true
+  profileError.value = ''
   try {
     const { data } = await api.get('/api/v1/hr/me/profile')
     profile.value = data
-  } catch(e) { console.error(e) }
-  finally { loading.value = false }
+  } catch(e: any) {
+    console.error(e)
+    profileError.value = e?.response?.data?.detail ?? 'تعذّر تحميل بيانات الملف الشخصي'
+    toast.error(profileError.value)
+  } finally { loading.value = false }
 }
 
 async function changePassword() {
@@ -55,7 +63,15 @@ onMounted(fetchProfile)
   <div dir="rtl" class="space-y-4">
     <h2 class="font-bold text-gray-900 text-lg">ملفي الشخصي</h2>
 
-    <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
+    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 gap-3">
+      <AppSpinner size="lg" />
+      <p>جاري التحميل...</p>
+    </div>
+
+    <div v-else-if="profileError && !profile" class="text-center py-12 text-red-500 bg-white rounded-2xl border border-stone-200">
+      <div class="text-4xl mb-3">⚠️</div>
+      <p class="font-medium">{{ profileError }}</p>
+    </div>
 
     <template v-else-if="profile">
       <!-- Profile card -->

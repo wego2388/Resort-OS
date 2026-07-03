@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_db, get_manager_user, rate_limit_dep,
+    get_current_active_user, get_db, get_manager_user, rate_limit_dep, require_permission,
 )
 from app.modules.finance import crud, services
 from app.modules.finance.schemas import (
@@ -349,13 +349,14 @@ def list_periods(
                              items=[AccountingPeriodRead.model_validate(p) for p in items])
 
 
-@router.post("/finance/periods/{year}/{month}/close", response_model=AccountingPeriodRead)
+@router.post("/finance/periods/{year}/{month}/close", response_model=AccountingPeriodRead,
+             dependencies=[Depends(require_permission("finance.close_period", "execute", min_role_level=60))])
 def close_period(
     year: int,
     month: int,
     data: ClosePeriodRequest,
     db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_current_active_user),
 ):
     try:
         period = services.close_accounting_period(

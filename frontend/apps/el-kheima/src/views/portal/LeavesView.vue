@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { api } from '@resort-os/core'
+import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
+const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Leave {
@@ -46,7 +48,10 @@ async function fetchLeaveTypes() {
     if (leaveTypes.value.length && form.value.leave_type_id === null) {
       form.value.leave_type_id = leaveTypes.value[0].id
     }
-  } catch(e) { console.error(e) }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل أنواع الإجازات')
+  }
 }
 
 async function fetchLeaves() {
@@ -54,8 +59,10 @@ async function fetchLeaves() {
   try {
     const res = await api.get('/api/v1/hr/me/leaves')
     leaves.value = res.data.items ?? []
-  } catch(e) { console.error(e) }
-  finally { loading.value = false }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل طلبات الإجازات')
+  } finally { loading.value = false }
 }
 
 async function requestLeave() {
@@ -95,7 +102,10 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
 
     <div v-if="successMsg" class="bg-green-100 text-green-700 px-4 py-3 rounded-xl text-sm font-medium">{{ successMsg }}</div>
 
-    <div v-if="loading" class="text-center py-12 text-gray-400">جاري التحميل...</div>
+    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 gap-3">
+      <AppSpinner size="lg" />
+      <p>جاري التحميل...</p>
+    </div>
     <div v-else class="space-y-3">
       <div v-for="leave in leaves" :key="leave.id"
         class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
@@ -116,10 +126,8 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
         </div>
       </div>
 
-      <div v-if="leaves.length === 0" class="text-center py-12 text-gray-400 bg-white rounded-2xl border border-stone-200">
-        <div class="text-4xl mb-3">🌴</div>
-        <p class="font-medium text-gray-600">لا توجد طلبات إجازات</p>
-        <p class="text-sm mt-1">اضغط "طلب إجازة" لتقديم طلب جديد</p>
+      <div v-if="leaves.length === 0" class="bg-white rounded-2xl border border-stone-200">
+        <EmptyState icon="🌴" title="لا توجد طلبات إجازات" subtitle='اضغط "طلب إجازة" لتقديم طلب جديد' />
       </div>
     </div>
 

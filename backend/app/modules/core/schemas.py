@@ -184,6 +184,26 @@ class UserPermissionGrantRequest(UserPermissionBase):
     user_id: int
 
 
+class PermissionCatalogEntryRead(BaseModel):
+    """صف واحد من كتالوج الصلاحيات — انظر app/modules/core/permission_catalog.py."""
+    resource:       str
+    action:         str
+    label_ar:       str
+    module:         str
+    min_role_level: int
+    endpoint:       str
+
+
+class EffectivePermission(BaseModel):
+    """صلاحية واحدة فعلية للمستخدم الحالي — دمج role fallback + أي استثناء صريح."""
+    resource:       str
+    action:         str
+    label_ar:       str
+    module:         str
+    allowed:        bool
+    source:         str  # "role" (سلوك افتراضي) أو "explicit" (فيه استثناء صريح)
+
+
 # ─────────────────────── Pagination ──────────────────────────────────
 
 class PaginatedResponse(BaseModel):

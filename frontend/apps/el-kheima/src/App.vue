@@ -5,10 +5,11 @@
 // @resort-os/ui LoginView (and any view) calls useToast() to surface errors;
 // none of the former 6 apps ever mounted it, so toast.error()/success() calls
 // were silently swallowed before this.
-import { ToastContainer } from '@resort-os/ui'
+import { ToastContainer, ConfirmDialogContainer } from '@resort-os/ui'
 </script>
 
 <template>
   <RouterView />
   <ToastContainer />
+  <ConfirmDialogContainer />
 </template>

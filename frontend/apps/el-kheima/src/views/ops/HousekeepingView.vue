@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
+const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface HKTask {
@@ -74,8 +76,10 @@ async function fetchTasks() {
       params: { branch_id: branchId }
     })
     tasks.value = res.data.tasks ?? res.data.items ?? res.data
-  } catch(e) { console.error(e) }
-  finally { loading.value = false }
+  } catch(e) {
+    console.error(e)
+    toast.error('تعذّر تحميل مهام التدبير المنزلي')
+  } finally { loading.value = false }
 }
 
 async function advanceStatus(task: HKTask) {
@@ -89,7 +93,10 @@ async function advanceStatus(task: HKTask) {
         tasks.value = tasks.value.filter(t => t.id !== task.id)
       }, 1500)
     }
-  } catch(e) { console.error(e) }
+  } catch(e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة الغرفة')
+  }
 }
 
 onMounted(fetchTasks)
@@ -138,8 +145,8 @@ onMounted(fetchTasks)
     </div>
 
     <!-- Loading state -->
-    <div v-if="loading" class="text-center py-16 text-gray-400">
-      <div class="text-3xl mb-2">⏳</div>
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+      <AppSpinner size="lg" />
       <p>جاري التحميل...</p>
     </div>
 
@@ -186,10 +193,7 @@ onMounted(fetchTasks)
         </div>
       </div>
 
-      <div v-if="filteredTasks.length === 0" class="text-center py-16 text-gray-400">
-        <div class="text-4xl mb-2">✨</div>
-        <p class="text-base">لا توجد مهام معلقة</p>
-      </div>
+      <EmptyState v-if="filteredTasks.length === 0" icon="✨" title="لا توجد مهام معلقة" />
     </div>
   </div>
 </template>

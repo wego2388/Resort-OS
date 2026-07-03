@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
-    get_manager_user,
+    get_manager_user, require_permission,
 )
 from app.modules.pms import crud, services
 from app.modules.pms.schemas import (
@@ -138,8 +138,9 @@ def checkout(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 
 @router.post("/pms/bookings/{booking_id}/cancel",
+             dependencies=[Depends(require_permission("pms.cancel_booking", "execute", min_role_level=60))],
              response_model=BookingRead)
-def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
+def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_current_active_user)):
     try:
         return services.cancel_booking(db, booking_id, cancelled_by=user.id)
     except ValueError as exc:
