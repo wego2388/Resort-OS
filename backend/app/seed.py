@@ -40,6 +40,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_settings(db)
     _seed_leave_types(db)
     _seed_chart_of_accounts(db)
+    _seed_room_types(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -224,6 +225,44 @@ def _seed_chart_of_accounts(db: Session) -> None:
     if added:
         db.flush()
         print(f"  ✓ Chart of accounts seeded ({added} accounts)")
+
+
+def _seed_room_types(db: Session) -> None:
+    """كتالوج غرف حقيقي — منقول من elkheima-beach-resort (النسخة القديمة من
+    نفس المنتجع، /home/wego/projects/elkheima-beach-resort/backend/app/seed_data.py،
+    كانت "production ready" فعليًا) بدل بيانات اختبار وهمية. الأسعار جنيه مصري
+    (لليلة الواحدة)، والـ occupancy اتحدد حسب فئة كل غرفة."""
+    try:
+        from app.modules.pms.models import RoomType
+        from app.modules.core.models import Branch
+    except ImportError:
+        return
+
+    branch = db.query(Branch).first()
+    if not branch or db.query(RoomType).filter(RoomType.branch_id == branch.id).first():
+        return
+
+    room_types = [
+        {"name": "Standard Single Room", "name_ar": "غرفة مفردة عادية",
+         "base_rate": Decimal("800.00"), "max_occupancy": 1,
+         "amenities": '["garden_view", "standard"]'},
+        {"name": "Standard Double Room", "name_ar": "غرفة مزدوجة عادية",
+         "base_rate": Decimal("1200.00"), "max_occupancy": 2,
+         "amenities": '["modern_amenities", "standard"]'},
+        {"name": "Deluxe Sea View Room", "name_ar": "غرفة ديلوكس بإطلالة بحرية",
+         "base_rate": Decimal("1800.00"), "max_occupancy": 2,
+         "amenities": '["sea_view", "balcony", "deluxe"]'},
+        {"name": "Family Suite", "name_ar": "جناح عائلي",
+         "base_rate": Decimal("2500.00"), "max_occupancy": 4,
+         "amenities": '["living_area", "family", "suite"]'},
+        {"name": "Presidential Suite", "name_ar": "الجناح الرئاسي",
+         "base_rate": Decimal("4000.00"), "max_occupancy": 4,
+         "amenities": '["private_terrace", "jacuzzi", "luxury"]'},
+    ]
+    for rt in room_types:
+        db.add(RoomType(branch_id=branch.id, **rt))
+    db.flush()
+    print(f"  ✓ Room types seeded ({len(room_types)} types)")
 
 
 def _seed_settings(db: Session) -> None:
