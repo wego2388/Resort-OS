@@ -26,9 +26,10 @@ async function submitInquiry() {
   loading.value = true; error.value = ''
   try {
     await axios.post('/api/v1/hub/contact', {
-      name: form.value.full_name, email: form.value.email,
-      phone: form.value.phone, message: `حجز فندق: ${form.value.check_in} → ${form.value.check_out} | ${form.value.adults} بالغ + ${form.value.children} أطفال | ${roomTypes.find(r => r.value === form.value.room_type)?.label ?? ''} | ${form.value.special_requests}`,
-      type: 'booking_inquiry',
+      full_name: form.value.full_name, email: form.value.email,
+      phone: form.value.phone, subject: 'استفسار حجز',
+      message: `حجز فندق: ${form.value.check_in} → ${form.value.check_out} | ${form.value.adults} بالغ + ${form.value.children} أطفال | ${roomTypes.find(r => r.value === form.value.room_type)?.label ?? ''} | ${form.value.special_requests}`,
+      source_page: 'booking_inquiry',
     })
     router.push('/confirmation')
   } catch(e: any) {

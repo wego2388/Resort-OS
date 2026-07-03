@@ -161,7 +161,15 @@ class SecureErrorMiddleware(BaseHTTPMiddleware):
         except APIError as exc:
             return exc.to_response()
         except SQLAlchemyError as exc:
-            logger.error(f"Unhandled DB error on {request.url.path}: {exc}", exc_info=True)
+            # ⚠️ لا تستخدم f-string هنا أبداً — رسائل SQLAlchemy بتتضمّن
+            # [parameters: {...}] كـ dict repr، وloguru بيعمل .format() على
+            # نص الرسالة النهائي. أي براكيت حرفية جوه exc بتخلي .format() يفشل
+            # بـ KeyError ويكسر الـ error handler نفسه (باج حقيقي كان بيمنع
+            # ظهور أي رسالة خطأ حقيقية لأي DB error فيه براكيت في نصه — يعني
+            # كل استجابة 500 كانت بتوصل للمستخدم فاضية بدل الرسالة المتوقعة).
+            # التمبلت هنا نص حرفي بمكانين {} بس، والقيم بتتمرر كـ args منفصلة
+            # فمفيش إعادة معالجة للبراكيت اللي جوه exc نفسه.
+            logger.opt(exception=True).error("Unhandled DB error on {}: {}", request.url.path, exc)
             return JSONResponse(
                 status_code=500,
                 content={"success": False, "error_code": "database_error",
@@ -169,8 +177,7 @@ class SecureErrorMiddleware(BaseHTTPMiddleware):
             )
         except Exception as exc:
             ref = f"ERR-{int(datetime.now().timestamp())}"
-            logger.critical(f"Unhandled exception [{ref}] on {request.url.path}: {exc}",
-                            exc_info=True)
+            logger.opt(exception=True).critical("Unhandled exception [{}] on {}: {}", ref, request.url.path, exc)
             return JSONResponse(
                 status_code=500,
                 content={"success": False, "error_code": "internal_error",
