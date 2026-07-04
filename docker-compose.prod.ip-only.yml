@@ -1,0 +1,20 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  IP-only deployment override — no domain/TLS yet.
+#
+#  Usage:  docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-only.yml up -d --build
+#
+#  Replaces the `nginx` edge service's port/config from the real
+#  domain+TLS setup (docker-compose.prod.yml + deploy/nginx/edge.conf) with
+#  a plain-HTTP, port-per-app variant (deploy/nginx/edge-ip-only.conf) —
+#  see that file for the port map. Drop this override (and just run
+#  `docker compose -f docker-compose.prod.yml up -d`) once a real domain is
+#  ready and DEPLOYMENT.md §7's certbot flow is done — nothing else changes.
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  nginx:
+    ports:
+      - "80:80"
+      - "8081:8081"
+      - "8082:8082"
+    volumes:
+      - ./deploy/nginx/edge-ip-only.conf:/etc/nginx/conf.d/default.conf:ro
