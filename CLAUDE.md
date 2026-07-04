@@ -447,21 +447,27 @@ inventory/api/router.py    51% → 82%
 
 ```bash
 # Backend
-./start.sh                        # كل حاجة
-./start.sh --no-frontend          # backend فقط
-./start.sh --apps="el-kheima qr"  # frontend محدد
+bash scripts/start.sh                        # كل حاجة
+bash scripts/start.sh --no-frontend           # backend فقط
+bash scripts/start.sh --apps="el-kheima qr"   # frontend محدد
+bash scripts/status.sh                        # حالة كل خدمة + كل حسابات الدخول التجريبية
+bash scripts/restart.sh                       # إيقاف ثم تشغيل
+bash scripts/logs.sh [api|celery|beat|frontend-<app>]   # لوج حي
+bash scripts/stop.sh [--docker]
 
-# Tests (لا تكمل أي task قبل ما 849 test تعدي)
+# Tests (لا تكمل أي task قبل ما كل التستات تعدي — الرقم الحالي بيتغيّر، شغّل بنفسك)
 cd backend && source .venv/bin/activate
-pytest tests/ -q
-pytest tests/ --cov=app --cov-report=term-missing -q
+pytest tests/ -v   # -q لوحدها بتخفي سطر النتيجة النهائي في البيئة دي — استخدم -v دايمًا
+pytest tests/ --cov=app --cov-report=term-missing -v
 
 # Database
 alembic upgrade head
-python -m app.seed
+python -m app.seed   # idempotent — بيضيف حسابات تجريبية لكل الأدوار لو مش موجودة
 ```
 
-**Login:** `admin@resortos.local` / `Admin@123456` (super_admin — 2FA required)
+**تسجيل الدخول:** `bash scripts/status.sh` بيعرض كل حسابات الدخول التجريبية (واحد لكل دور) —
+`admin@resortos.local` / `Admin@123456` (super_admin، 2FA إجباري) هو الحساب الأصلي، والباقي كلهم
+بكلمة سر `Demo@123456`.
 
 ---
 

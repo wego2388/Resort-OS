@@ -35,6 +35,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     print("🌱 Seeding data...")
     _seed_branch(db)
     _seed_super_admin(db)
+    _seed_demo_accounts(db)
     _seed_social_insurance(db)
     _seed_tax_brackets(db)
     _seed_settings(db)
@@ -99,6 +100,44 @@ def _seed_super_admin(db: Session) -> None:
         "is_active": True,
     })
     print("  ✓ Super admin created (admin@resortos.local / change password immediately!)")
+
+
+def _seed_demo_accounts(db: Session) -> None:
+    """حساب تجريبي واحد لكل دور (غير super_admin، مُنشأ في _seed_super_admin) —
+    عشان أي بيئة تطوير/عرض تقدر تسجّل دخول بأي دور فورًا من غير ما تحتاج
+    تنشئ مستخدمين يدويًا من شاشة الإدارة الأول. كلمة السر واحدة لكل الحسابات
+    دي (Demo@123456) — غيّرها فورًا لو البيئة دي هتتعرض لحد برّه الفريق."""
+    from app.core.kernel.auth.repository import UserRepository
+    from app.core.kernel.models.user import User
+    from app.core.kernel.security import get_password_hash
+
+    repo = UserRepository(User, db)
+    demo_password_hash = get_password_hash("Demo@123456")
+
+    accounts = [
+        ("branch_admin@resortos.local", "مدير إداري تجريبي", "admin"),
+        ("accountant@resortos.local",   "محاسب تجريبي",      "accountant"),
+        ("hr@resortos.local",           "موارد بشرية تجريبي", "hr_manager"),
+        ("manager@resortos.local",      "مدير تجريبي",        "manager"),
+        ("supervisor@resortos.local",   "مشرف تجريبي",        "supervisor"),
+        ("reception@resortos.local",    "استقبال تجريبي",     "receptionist"),
+        ("cashier@resortos.local",      "كاشير تجريبي",       "cashier"),
+        ("waiter@resortos.local",       "جرسون تجريبي",       "waiter"),
+        ("chef@resortos.local",         "شيف تجريبي",         "chef"),
+        ("kitchen@resortos.local",      "مطبخ تجريبي",        "kitchen"),
+        ("employee@resortos.local",     "موظف تجريبي",        "employee"),
+    ]
+    created = 0
+    for email, full_name, role in accounts:
+        if repo.get_by_field("email", email):
+            continue
+        repo.create({
+            "email": email, "password_hash": demo_password_hash,
+            "full_name": full_name, "role": role, "is_active": True,
+        })
+        created += 1
+    if created:
+        print(f"  ✓ Demo accounts seeded ({created} roles, password: Demo@123456)")
 
 
 def _seed_social_insurance(db: Session) -> None:

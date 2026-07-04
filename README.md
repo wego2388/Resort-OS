@@ -48,15 +48,15 @@ cd ../frontend && pnpm install
 
 # 3. Start everything (Postgres + Redis via Docker, backend, Celery worker+beat,
 #    and all 3 frontend apps)
-cd .. && ./start.sh
-# ./start.sh --no-frontend        backend only
-# ./start.sh --apps="el-kheima"   pick specific frontend apps
+cd .. && bash scripts/start.sh
+# bash scripts/start.sh --no-frontend        backend only
+# bash scripts/start.sh --apps="el-kheima"   pick specific frontend apps
 ```
 
 Default login: `admin@resortos.local` / `Admin@123456` (`super_admin` — 2FA required).
 
-Stop everything with `./stop.sh` (add `--docker` to also stop Postgres/Redis).
-Check what's running with `./status.sh`.
+Stop everything with `bash scripts/stop.sh` (add `--docker` to also stop Postgres/Redis).
+Check what's running with `bash scripts/status.sh`.
 
 ### Tests
 

@@ -376,10 +376,10 @@ restart)، اتشال بالكامل (2026-07-02) لأن المنتجع واحد
 ## 🔑 معلومات عملية للتشغيل
 
 ```bash
-./start.sh                    # تشغيل كل حاجة
-./start.sh --no-frontend      # الباك إند بس
-./status.sh                   # حالة كل خدمة
-./stop.sh                     # إيقاف
+bash scripts/start.sh             # تشغيل كل حاجة
+bash scripts/start.sh --no-frontend   # الباك إند بس
+bash scripts/status.sh            # حالة كل خدمة
+bash scripts/stop.sh              # إيقاف
 
 cd backend && source .venv/bin/activate
 pytest tests/ -q               # ~910 اختبار
