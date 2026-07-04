@@ -530,6 +530,13 @@ def close_accounting_period(
     month: int,
     closed_by: int,
 ) -> AccountingPeriod:
+    """يقفل فترة محاسبية — إجراء تدقيقي (audited) لازم يحصل مرة واحدة بس، زي
+    قفل الوردية بالظبط. لو الفترة مقفولة بالفعل بنرفض (بدل ما نسمح لأي حد
+    يعيد قفلها ويغيّر closed_by/closed_at بصمت فوق سجل التدقيق الأصلي)."""
+    existing = crud.get_period_status(db, branch_id, year, month)
+    if existing and existing.status in ("closed", "locked"):
+        raise ValueError(f"الفترة المحاسبية {year}-{month:02d} مقفولة بالفعل")
+
     period = crud.close_period(db, branch_id, year, month, closed_by)
 
     from app.modules.core.crud import create_audit_log  # noqa: PLC0415
@@ -555,9 +562,14 @@ async def submit_eta_invoice(db: Session, settings, data) -> ETAInvoice:
     if not settings.ETA_ENABLED:
         raise ValueError("ETA e-invoicing غير مفعّل — ETA_ENABLED=false في .env")
 
+    # ⚠️ internal_id فريد globally على مستوى الداتابيز كلها (ETAInvoice.internal_id
+    # unique=True بدون branch_id) — لأن ETA_TAXPAYER_RIN/ETA_TAXPAYER_NAME إعداد
+    # واحد للمنتجع كله (كيان ضريبي واحد)، مش لكل فرع. العدّاد هنا لازم يبقى
+    # عالمي (كل الفروع) مش مقصور على data.branch_id، وإلا فرعين مختلفين
+    # بيبعتوا أول فاتورة ETA في نفس اليوم كانوا هيتصادموا على نفس internal_id
+    # ويطيحوا بـ IntegrityError (باج حقيقي اتكشف بالتستات — راجع تاريخ الالتزام).
     today = date.today()
     count = db.query(ETAInvoice).filter(
-        ETAInvoice.branch_id == data.branch_id,
         ETAInvoice.internal_id.like(f"ETA-{today:%Y%m%d}-%"),
     ).count()
     internal_id = f"ETA-{today:%Y%m%d}-{count + 1:04d}"
@@ -721,7 +733,7 @@ def ensure_default_cost_centers(db: Session, branch_id: int) -> list[CostCenter]
 def _sum_folio_charges_in_egp(
     db: Session, branch_id: int, charge_type: str, date_from: date, date_to: date,
 ) -> Decimal:
-    """زي crud.sum_folio_charges_by_type بس بيحوّل كل حركة لـ EGP equivalent
+    """يجمع مصاريف الفوليو حسب النوع بس بيحوّل كل حركة لـ EGP equivalent
     بسعر الصرف في تاريخها قبل الجمع — لازم عشان فوليوهات مختلطة العملة
     (بعد إضافة Folio.currency) ما تدّيش مجموع غلط لو جُمعت كأرقام خام."""
     rows = crud.list_folio_charges_by_type_with_currency(db, branch_id, charge_type, date_from, date_to)

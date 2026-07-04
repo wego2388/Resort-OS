@@ -191,6 +191,31 @@ class TestDepreciationRunHTTP:
         assert body["journal_entry_id"] is None
 
 
+class TestDepreciationEntriesListHTTP:
+    def test_list_depreciation_entries_via_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        make_asset_committed(
+            db, branch, purchase_cost=Decimal("2400.00"), useful_life_years=1,
+            depreciation_start_date=date(2026, 1, 1),
+        )
+        run_resp = client.post(
+            "/api/v1/finance/depreciation/run",
+            json={"branch_id": branch.id, "year": 2026, "month": 1},
+            headers=manager_headers,
+        )
+        assert run_resp.status_code == 200, run_resp.text
+
+        list_resp = client.get(
+            "/api/v1/finance/depreciation/entries",
+            params={"branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        body = list_resp.json()
+        assert body["total"] == 1
+        assert Decimal(str(body["items"][0]["amount"])) == Decimal("200.00")
+
+
 class TestBankReconciliationHTTP:
     def test_create_bank_account_requires_manager_level(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
@@ -365,3 +390,125 @@ class TestBankReconciliationHTTP:
         )
         assert match_resp.status_code == 400
         assert "ملغاة" in match_resp.json()["detail"]
+
+    def test_import_statement_line_zero_amount_rejected_422(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/bank-accounts",
+            json={
+                "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب رئيسي",
+                "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
+            },
+            headers=manager_headers,
+        )
+        bank_account_id = create_resp.json()["id"]
+        resp = client.post(
+            f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines",
+            json={"lines": [{"line_date": "2026-06-01", "description": "Zero", "amount": "0"}]},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_list_bank_accounts_via_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/bank-accounts",
+            json={
+                "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب القائمة",
+                "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
+            },
+            headers=manager_headers,
+        )
+        bank_account_id = create_resp.json()["id"]
+
+        list_resp = client.get(
+            "/api/v1/finance/bank-accounts", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        assert any(a["id"] == bank_account_id for a in list_resp.json())
+
+    def test_create_duplicate_bank_account_number_400(self, client: TestClient, db, manager_headers):
+        """UniqueConstraint(branch_id, account_number) — نفس الرقم مرتين في نفس
+        الفرع لازم يترفض 400 (يمسكه الـ except Exception العام في create_bank_account)."""
+        branch = make_branch_committed(db)
+        payload = {
+            "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب مكرر",
+            "account_number": "DUP-0001",
+        }
+        first = client.post("/api/v1/finance/bank-accounts", json=payload, headers=manager_headers)
+        assert first.status_code == 201, first.text
+        second = client.post("/api/v1/finance/bank-accounts", json=payload, headers=manager_headers)
+        assert second.status_code == 400
+
+    def test_update_bank_account_via_http(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/bank-accounts",
+            json={
+                "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "قبل التحديث",
+                "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
+            },
+            headers=manager_headers,
+        )
+        bank_account_id = create_resp.json()["id"]
+
+        update_resp = client.patch(
+            f"/api/v1/finance/bank-accounts/{bank_account_id}",
+            json={"account_name": "بعد التحديث"},
+            headers=manager_headers,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+        assert update_resp.json()["account_name"] == "بعد التحديث"
+
+    def test_update_nonexistent_bank_account_404(self, client: TestClient, db, manager_headers):
+        resp = client.patch(
+            "/api/v1/finance/bank-accounts/999999", json={"bank_name": "X"}, headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_import_statement_lines_nonexistent_bank_account_404(self, client: TestClient, db, manager_headers):
+        resp = client.post(
+            "/api/v1/finance/bank-accounts/999999/statement-lines",
+            json={"lines": [{"line_date": "2026-06-01", "description": "X", "amount": "100.00"}]},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_auto_match_nonexistent_bank_account_404(self, client: TestClient, db, manager_headers):
+        resp = client.post(
+            "/api/v1/finance/bank-accounts/999999/statement-lines/auto-match", headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_unmatch_already_unmatched_line_400(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/bank-accounts",
+            json={
+                "branch_id": branch.id, "bank_name": "بنك مصر", "account_name": "حساب رئيسي",
+                "account_number": f"ACC-{uuid.uuid4().hex[:8]}",
+            },
+            headers=manager_headers,
+        )
+        bank_account_id = create_resp.json()["id"]
+        import_resp = client.post(
+            f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines",
+            json={"lines": [{"line_date": "2026-06-01", "description": "Transfer", "amount": "100.00"}]},
+            headers=manager_headers,
+        )
+        line_id = import_resp.json()[0]["id"]
+
+        resp = client.post(
+            f"/api/v1/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/unmatch",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "مش متطابق" in resp.json()["detail"]
+
+    def test_reconciliation_summary_nonexistent_bank_account_404(self, client: TestClient, db, manager_headers):
+        resp = client.get(
+            "/api/v1/finance/bank-accounts/999999/reconciliation-summary",
+            params={"as_of": "2026-06-30"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404

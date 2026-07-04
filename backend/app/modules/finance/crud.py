@@ -539,31 +539,12 @@ def create_cost_center(db: Session, data: CostCenterCreate) -> CostCenter:
     return obj
 
 
-def sum_folio_charges_by_type(
-    db: Session, branch_id: int, charge_type: str, date_from: date, date_to: date,
-) -> Decimal:
-    from sqlalchemy import func  # noqa: PLC0415
-
-    total = (
-        db.query(func.coalesce(func.sum(FolioCharge.amount), 0))
-        .join(Folio, Folio.id == FolioCharge.folio_id)
-        .filter(
-            Folio.branch_id == branch_id,
-            FolioCharge.charge_type == charge_type,
-            func.date(FolioCharge.posted_at) >= date_from,
-            func.date(FolioCharge.posted_at) <= date_to,
-        )
-        .scalar()
-    )
-    return total or Decimal("0")
-
-
 def list_folio_charges_by_type_with_currency(
     db: Session, branch_id: int, charge_type: str, date_from: date, date_to: date,
 ) -> list[tuple[Decimal, str, date]]:
-    """زي sum_folio_charges_by_type بس بيرجّع كل حركة لوحدها مع عملة الفوليو
-    وتاريخها (بدل الجمع في SQL) — عشان services يقدر يحوّل كل حركة لـ EGP
-    equivalent بسعر الصرف في تاريخها قبل الجمع، لو الفوليوهات مختلطة العملة."""
+    """يرجّع كل حركة فولیو لوحدها مع عملتها وتاريخها (بدل الجمع في SQL) — عشان
+    services يقدر يحوّل كل حركة لـ EGP equivalent بسعر الصرف في تاريخها قبل
+    الجمع، لو الفوليوهات مختلطة العملة."""
     from sqlalchemy import func  # noqa: PLC0415
 
     rows = (

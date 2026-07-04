@@ -60,6 +60,24 @@ class TestCheckManagement:
         assert updated.status == "cleared"
         assert updated.cleared_at == date.today()
 
+    def test_move_check_to_bounced(self, db):
+        from app.modules.finance.crud import create_check, move_check_status
+        branch = make_branch(db)
+        check = create_check(db, {
+            "branch_id": branch.id,
+            "check_number": "CHK-004",
+            "bank_name": "بنك الإسكندرية",
+            "amount": Decimal("4000.00"),
+            "due_date": date(2026, 10, 1),
+            "drawer_name": "عميل",
+            "status": "deposited",
+            "created_by": 1,
+            "received_at": date.today(),
+        })
+        updated = move_check_status(db, check, "bounced", moved_by=1, notes="رصيد غير كافٍ")
+        assert updated.status == "bounced"
+        assert updated.bounced_at == date.today()
+
     def test_list_checks_by_status(self, db):
         from app.modules.finance.crud import create_check, list_checks
         branch = make_branch(db)

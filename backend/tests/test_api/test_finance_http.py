@@ -777,6 +777,164 @@ class TestCheckHTTPFlow:
         assert resp.status_code == 422
 
 
+class TestHandoverNoteHTTP:
+    def test_handover_note_null_when_no_closed_shift_yet(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/finance/shifts/handover-note", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json() == {"handover_note": None}
+
+    def test_handover_note_returns_latest_closed_shift_note(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "0"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+        client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "0", "handover_note": "خد بالك من طلبية الصبح"},
+            headers=cashier_headers,
+        )
+        resp = client.get(
+            "/api/v1/finance/shifts/handover-note", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["handover_note"] == "خد بالك من طلبية الصبح"
+
+
+class TestAccountingPeriodDoubleCloseHTTP:
+    def test_closing_already_closed_period_returns_400(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        today = date.today()
+        first = client.post(
+            f"/api/v1/finance/periods/{today.year}/{today.month}/close",
+            json={"branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert first.status_code == 200, first.text
+
+        second = client.post(
+            f"/api/v1/finance/periods/{today.year}/{today.month}/close",
+            json={"branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert second.status_code == 400
+        assert "مقفولة بالفعل" in second.json()["detail"]
+
+
+class TestExchangeRateHTTPFlow:
+    def test_create_and_list_exchange_rate(self, client: TestClient, db, manager_headers):
+        resp = client.post(
+            "/api/v1/finance/exchange-rates",
+            json={"from_currency": "USD", "to_currency": "EGP", "rate": "48.75",
+                  "effective_date": "2026-06-01"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert Decimal(resp.json()["rate"]) == Decimal("48.75")
+
+        list_resp = client.get(
+            "/api/v1/finance/exchange-rates",
+            params={"from_currency": "USD", "to_currency": "EGP"},
+            headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert any(Decimal(r["rate"]) == Decimal("48.75") for r in list_resp.json()["items"])
+
+    def test_create_duplicate_exchange_rate_400(self, client: TestClient, db, manager_headers):
+        payload = {"from_currency": "EUR", "to_currency": "EGP", "rate": "55.00",
+                   "effective_date": "2026-06-02"}
+        first = client.post("/api/v1/finance/exchange-rates", json=payload, headers=manager_headers)
+        assert first.status_code == 201
+        second = client.post("/api/v1/finance/exchange-rates", json=payload, headers=manager_headers)
+        assert second.status_code == 400
+
+
+class TestETAInvoiceHTTPFlow:
+    """POST /finance/eta/invoices — الجزء الأكثر حساسية قانونيًا في الموديول
+    (تكامل مصلحة الضرائب المصرية). الشبكة الحقيقية مش متاحة هنا، فبنعمل mock
+    لـ ETAService.submit_invoice بس (بناء المستند وقواعد ETA_ENABLED/الإعداد
+    حقيقيين 100%، مفيش أي حاجة اتعملها mock غير استدعاء الشبكة نفسه)."""
+
+    @staticmethod
+    def _configure_eta(monkeypatch):
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "ETA_ENABLED", True)
+        monkeypatch.setattr(settings, "ETA_CLIENT_ID", "test-client")
+        monkeypatch.setattr(settings, "ETA_CLIENT_SECRET", "test-secret")
+        monkeypatch.setattr(settings, "ETA_TAXPAYER_RIN", "123456789")
+        monkeypatch.setattr(settings, "ETA_TAXPAYER_NAME", "El Kheima Beach")
+
+    def test_submit_disabled_returns_400(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/eta/invoices",
+            json={
+                "branch_id": branch.id, "receiver_name": "Guest",
+                "line_items": [{"description": "Room", "quantity": 1, "unit_price": 500.0}],
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "ETA_ENABLED" in resp.json()["detail"]
+
+    def test_submit_accepted_creates_submitted_invoice_and_is_gettable(
+        self, client: TestClient, db, manager_headers, monkeypatch,
+    ):
+        from app.modules.finance import eta_service
+        self._configure_eta(monkeypatch)
+
+        async def fake_submit_invoice(self, document):
+            return {"acceptedDocuments": [{"uuid": "uuid-http-1", "longId": "LONG-HTTP-1"}]}
+        monkeypatch.setattr(eta_service.ETAService, "submit_invoice", fake_submit_invoice)
+
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/eta/invoices",
+            json={
+                "branch_id": branch.id, "receiver_name": "Guest",
+                "line_items": [{"description": "Room", "quantity": 1, "unit_price": 500.0}],
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["status"] == "submitted"
+        assert body["submission_uuid"] == "uuid-http-1"
+
+        get_resp = client.get(f"/api/v1/finance/eta/invoices/{body['id']}", headers=manager_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["status"] == "submitted"
+
+        list_resp = client.get(
+            "/api/v1/finance/eta/invoices",
+            params={"branch_id": branch.id, "status": "submitted"},
+            headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert any(i["id"] == body["id"] for i in list_resp.json()["items"])
+
+    def test_get_nonexistent_eta_invoice_404(self, client: TestClient, db, manager_headers):
+        resp = client.get("/api/v1/finance/eta/invoices/999999", headers=manager_headers)
+        assert resp.status_code == 404
+
+    def test_submit_requires_manager_level(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/eta/invoices",
+            json={
+                "branch_id": branch.id, "receiver_name": "Guest",
+                "line_items": [{"description": "Room", "quantity": 1, "unit_price": 500.0}],
+            },
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestCostCenterHTTPFlow:
     def test_create_and_list_cost_centers(self, client: TestClient, db, manager_headers, super_admin_headers):
         branch = make_branch_committed(db)

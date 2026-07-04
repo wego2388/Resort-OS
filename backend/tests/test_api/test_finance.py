@@ -335,6 +335,44 @@ class TestAccounting:
         )
         assert result is None
 
+    def test_post_simple_revenue_journal_noop_when_converted_amount_rounds_to_zero(self, db: Session, branch):
+        """مبلغ صغير جداً بعملة أجنبية (0.001) بسعر صرف 1 => بعد التحويل
+        والتقريب لقرشين بيبقى 0.00 — لازم يرجّع None زي المبلغ الصفري تماماً،
+        مش يحاول يرحّل قيد بمبلغ صفر."""
+        from app.modules.finance.schemas import AccountCreate as AC, ExchangeRateCreate as ERC
+        crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        crud.create_account(db, AC(branch_id=branch.id, code="4200", name="Revenue", account_type="revenue"))
+        db.commit()
+        services.create_exchange_rate(
+            db, ERC(from_currency="XAF", to_currency="EGP", rate=Decimal("1.00"),
+                    effective_date=date.today()),
+            created_by=1,
+        )
+        result = services.post_simple_revenue_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", credit_account_code="4200",
+            amount=Decimal("0.001"), reference="X", description="X", source="x", source_id=None,
+            currency="XAF",
+        )
+        assert result is None
+
+    def test_post_simple_revenue_journal_swallows_exception_when_no_rate_registered(self, db: Session, branch):
+        """مفيش سعر صرف مسجّل خالص للعملة دي — get_rate بترفع ValueError، وبما
+        إن post_simple_revenue_journal مصمّمة عمداً تبتلع أي خطأ (راجع تعليقها)
+        عشان فشل الترحيل المحاسبي ميمنعش العملية التشغيلية الأصلية، لازم ترجّع
+        None برضه مش تطلّع الاستثناء للمستدعي."""
+        from app.modules.finance.schemas import AccountCreate as AC
+        crud.create_account(db, AC(branch_id=branch.id, code="1100", name="Cash", account_type="asset"))
+        crud.create_account(db, AC(branch_id=branch.id, code="4200", name="Revenue", account_type="revenue"))
+        db.commit()
+        result = services.post_simple_revenue_journal(
+            db, branch.id, date.today(),
+            debit_account_code="1100", credit_account_code="4200",
+            amount=Decimal("100"), reference="X", description="X", source="x", source_id=None,
+            currency="SAR",
+        )
+        assert result is None
+
     def test_close_period_writes_audit_log(self, db: Session, branch):
         from app.modules.core.crud import list_audit_logs
         from app.core.kernel.models.user import User
@@ -418,6 +456,164 @@ class TestAccounting:
         fetched = crud.get_period_status(db, branch.id, year, month)
         assert fetched is not None
         assert fetched.status == "closed"
+
+    def test_close_accounting_period_twice_rejected(self, db: Session, branch):
+        """close_accounting_period (services) لازم يمنع إعادة قفل فترة مقفولة
+        بالفعل — زي قفل الوردية بالظبط، عشان محدش يقدر يغيّر closed_by/closed_at
+        بصمت فوق سجل تدقيق فترة مقفولة أصلاً."""
+        services.close_accounting_period(db, branch.id, 2025, 6, closed_by=1)
+        with pytest.raises(ValueError, match="مقفولة بالفعل"):
+            services.close_accounting_period(db, branch.id, 2025, 6, closed_by=2)
+
+    def test_crud_close_period_is_a_generic_upsert(self, db: Session, branch):
+        """crud.close_period نفسه (طبقة DB الخام، بدون قاعدة العمل) لازم يفضل
+        upsert عام (ينشئ أو يحدّث) — قاعدة منع إعادة القفل موجودة في services
+        فوقه، مش هنا. بنتأكد الحقول بتتحدّث فعلاً لو الصف كان موجود بالفعل."""
+        first = crud.close_period(db, branch.id, 2025, 7, closed_by=1)
+        db.commit()
+        assert first.closed_by == 1
+
+        second = crud.close_period(db, branch.id, 2025, 7, closed_by=2)
+        db.commit()
+        assert second.id == first.id
+        assert second.closed_by == 2
+
+
+# ── CRUD-level filters (list_folios / list_shifts / list_journal_entries) ──
+
+class TestCrudFilters:
+
+    def test_list_folios_filters_by_status_and_date_range(self, db: Session, branch):
+        from app.modules.finance.schemas import FolioCreate as FC
+        open_folio = crud.create_folio(db, FC(
+            branch_id=branch.id, guest_name="Open Guest",
+            check_in=datetime(2026, 6, 10), check_out=datetime(2026, 6, 12),
+        ))
+        closed_folio = crud.create_folio(db, FC(
+            branch_id=branch.id, guest_name="Closed Guest",
+            check_in=datetime(2026, 6, 10), check_out=datetime(2026, 6, 12),
+        ))
+        crud.close_folio(db, closed_folio)
+        out_of_range = crud.create_folio(db, FC(
+            branch_id=branch.id, guest_name="Out of Range",
+            check_in=datetime(2026, 1, 1), check_out=datetime(2026, 1, 3),
+        ))
+        db.commit()
+
+        by_status, total = crud.list_folios(db, branch.id, status="closed")
+        assert total == 1
+        assert by_status[0].id == closed_folio.id
+
+        by_range, total_range = crud.list_folios(
+            db, branch.id, date_from=date(2026, 6, 1), date_to=date(2026, 6, 30),
+        )
+        ids_in_range = {f.id for f in by_range}
+        assert open_folio.id in ids_in_range
+        assert closed_folio.id in ids_in_range
+        assert out_of_range.id not in ids_in_range
+
+    def test_list_payments_excludes_voided(self, db: Session, branch, folio):
+        data1 = PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id, amount=Decimal("100"),
+            method="cash", posted_at=datetime.utcnow(),
+        )
+        p1 = services.add_payment(db, folio.id, data1)
+        data2 = PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id, amount=Decimal("50"),
+            method="cash", posted_at=datetime.utcnow(),
+        )
+        p2 = services.add_payment(db, folio.id, data2)
+        services.void_payment(db, p2.id, voided_by=1)
+
+        payments = crud.list_payments(db, folio.id)
+        assert {p.id for p in payments} == {p1.id}
+
+    def test_settle_all_charges_marks_existing_charges_settled(self, db: Session, folio):
+        services.post_charge(db, folio.id, FolioChargeCreate(
+            charge_type="room", description="غرفة", amount=Decimal("300"),
+            posted_at=datetime.utcnow(),
+        ))
+        db.refresh(folio)
+        assert all(not c.is_settled for c in folio.charges)
+
+        crud.settle_all_charges(db, folio)
+        db.commit()
+        db.refresh(folio)
+        assert all(c.is_settled for c in folio.charges)
+
+    def test_list_shifts_filters_by_cashier_and_status(self, db: Session, branch):
+        s1 = services.open_shift(db, cashier_id=60, opened_by=60,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")))
+        services.close_shift(db, s1.id, closed_by=60, data=CashierShiftClose(counted_cash=Decimal("0")))
+        services.open_shift(db, cashier_id=61, opened_by=61,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")))
+
+        by_cashier, total_cashier = crud.list_shifts(db, branch.id, cashier_id=60)
+        assert total_cashier == 1
+        assert by_cashier[0].cashier_id == 60
+
+        by_status, total_status = crud.list_shifts(db, branch.id, status="closed")
+        assert total_status == 1
+        assert by_status[0].id == s1.id
+
+    def test_list_journal_entries_filters_by_date_range(self, db: Session, branch, account, account2):
+        entry_in_range = JournalEntryCreate(
+            branch_id=branch.id, entry_date=date(2026, 6, 15),
+            reference="JE-IN-RANGE", description="in range",
+            lines=[
+                JournalLineCreate(account_id=account.id, debit=Decimal("10"), credit=Decimal("0")),
+                JournalLineCreate(account_id=account2.id, debit=Decimal("0"), credit=Decimal("10")),
+            ],
+        )
+        services.post_journal_entry(db, entry_in_range, user_id=1)
+        entry_out_of_range = JournalEntryCreate(
+            branch_id=branch.id, entry_date=date(2026, 1, 15),
+            reference="JE-OUT-OF-RANGE", description="out of range",
+            lines=[
+                JournalLineCreate(account_id=account.id, debit=Decimal("20"), credit=Decimal("0")),
+                JournalLineCreate(account_id=account2.id, debit=Decimal("0"), credit=Decimal("20")),
+            ],
+        )
+        services.post_journal_entry(db, entry_out_of_range, user_id=1)
+
+        items, total = crud.list_journal_entries(
+            db, branch.id, date_from=date(2026, 6, 1), date_to=date(2026, 6, 30),
+        )
+        assert total == 1
+        assert items[0].reference == "JE-IN-RANGE"
+
+    def test_list_depreciation_entries_filters_by_asset(self, db: Session, branch):
+        from app.modules.maintenance.models import Asset
+        asset1 = Asset(branch_id=branch.id, name="Asset 1", code=f"AST-{uuid.uuid4().hex[:6].upper()}",
+                        category="hvac", purchase_cost=Decimal("1200.00"), useful_life_years=1,
+                        depreciation_start_date=date(2026, 1, 1))
+        asset2 = Asset(branch_id=branch.id, name="Asset 2", code=f"AST-{uuid.uuid4().hex[:6].upper()}",
+                        category="hvac", purchase_cost=Decimal("2400.00"), useful_life_years=1,
+                        depreciation_start_date=date(2026, 1, 1))
+        db.add_all([asset1, asset2]); db.commit()
+        services.run_depreciation(db, branch.id, 2026, 1, user_id=1)
+
+        items, total = crud.list_depreciation_entries(db, branch.id, asset_id=asset1.id)
+        assert total == 1
+        assert items[0].asset_id == asset1.id
+
+    def test_list_bank_accounts_active_only_filter(self, db: Session, branch):
+        from app.modules.finance.schemas import BankAccountCreate, BankAccountUpdate
+        active = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="نشط",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}",
+        ))
+        inactive = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="غير نشط",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}",
+        ))
+        services.update_bank_account(db, inactive.id, BankAccountUpdate(is_active=False))
+
+        active_only = crud.list_bank_accounts(db, branch.id, active_only=True)
+        assert {a.id for a in active_only} == {active.id}
+
+        all_accounts = crud.list_bank_accounts(db, branch.id, active_only=False)
+        assert {a.id for a in all_accounts} == {active.id, inactive.id}
 
 
 # ── Cashier Shift / Safe (POS Day) + Shift End Report ──────────────────
@@ -586,6 +782,10 @@ class TestCashierShift:
     def test_shift_end_report_pdf_not_found_raises(self, db: Session):
         with pytest.raises(ValueError):
             services.generate_shift_end_report_pdf(db, 9999)
+
+    def test_close_nonexistent_shift_raises(self, db: Session):
+        with pytest.raises(ValueError, match="غير موجودة"):
+            services.close_shift(db, 9999, closed_by=1, data=CashierShiftClose(counted_cash=Decimal("0")))
 
 
 # ── Folio Reports (Statement + All-Invoices Export) ──────────────────
@@ -766,3 +966,456 @@ class TestETAInvoiceList:
         submitted, submitted_total = crud.list_eta_invoices(db, branch.id, status="submitted")
         assert submitted_total == 1
         assert submitted[0].internal_id == "ETA-A"
+
+    def test_get_eta_invoice_by_id(self, db: Session, branch):
+        inv = crud.create_eta_invoice(db, branch.id, None, "ETA-GET", "{}")
+        db.commit()
+        fetched = crud.get_eta_invoice(db, inv.id)
+        assert fetched is not None
+        assert fetched.internal_id == "ETA-GET"
+
+    def test_get_eta_invoice_missing_returns_none(self, db: Session):
+        assert crud.get_eta_invoice(db, 999999) is None
+
+
+# ── ETA E-Invoice submission (service-level, mocked ETAService) ─────────
+
+class TestSubmitETAInvoiceService:
+    """submit_eta_invoice() هو الجزء الأكثر حساسية من الناحية القانونية/الضريبية
+    في الموديول كله (تكامل مصلحة الضرائب المصرية) — الحالات الأربعة هنا (معطّل،
+    إعداد ناقص، رفض من ETA، فشل إرسال) لازم تتسجّل دايماً في eta_invoices
+    للتدقيق، مش تختفي بصمت."""
+
+    @staticmethod
+    def _eta_settings(**overrides):
+        from app.core.config import Settings
+        base = {
+            "ETA_ENABLED": True,
+            "ETA_CLIENT_ID": "test-client",
+            "ETA_CLIENT_SECRET": "test-secret",
+            "ETA_TAXPAYER_RIN": "123456789",
+            "ETA_TAXPAYER_NAME": "El Kheima Beach",
+            "VAT_PERCENTAGE": 14.0,
+        }
+        base.update(overrides)
+        return Settings(**base)
+
+    @staticmethod
+    def _submit_request(branch_id: int):
+        from app.modules.finance.schemas import ETAInvoiceLineItem, ETAInvoiceSubmitRequest
+        return ETAInvoiceSubmitRequest(
+            branch_id=branch_id, receiver_name="Guest",
+            line_items=[ETAInvoiceLineItem(description="Room", quantity=1, unit_price=500.0)],
+        )
+
+    async def test_disabled_raises_value_error(self, db: Session, branch):
+        from app.core.config import Settings
+        with pytest.raises(ValueError, match="ETA_ENABLED"):
+            await services.submit_eta_invoice(
+                db, Settings(ETA_ENABLED=False), self._submit_request(branch.id),
+            )
+
+    async def test_missing_taxpayer_config_raises_value_error(self, db: Session, branch):
+        settings = self._eta_settings(ETA_TAXPAYER_RIN=None, ETA_TAXPAYER_NAME=None)
+        with pytest.raises(ValueError):
+            await services.submit_eta_invoice(db, settings, self._submit_request(branch.id))
+        # لازم منسجّلش أي صف eta_invoices لو فشل بناء المستند أصلاً
+        items, total = crud.list_eta_invoices(db, branch.id)
+        assert total == 0
+
+    async def test_accepted_document_marks_submitted(self, db: Session, branch, monkeypatch):
+        from app.modules.finance import eta_service
+
+        async def fake_submit_invoice(self, document):
+            return {"acceptedDocuments": [{"uuid": "uuid-accept-1", "longId": "LONG-1"}]}
+        monkeypatch.setattr(eta_service.ETAService, "submit_invoice", fake_submit_invoice)
+
+        settings = self._eta_settings()
+        invoice = await services.submit_eta_invoice(db, settings, self._submit_request(branch.id))
+        assert invoice.status == "submitted"
+        assert invoice.submission_uuid == "uuid-accept-1"
+        assert invoice.long_id == "LONG-1"
+        assert invoice.internal_id.startswith("ETA-")
+
+        # ثاني فاتورة نفس اليوم — internal_id تسلسلي متزايد لا يتكرر
+        invoice2 = await services.submit_eta_invoice(db, settings, self._submit_request(branch.id))
+        assert invoice2.internal_id != invoice.internal_id
+
+    async def test_rejected_document_marks_invalid(self, db: Session, branch, monkeypatch):
+        from app.modules.finance import eta_service
+
+        async def fake_submit_invoice(self, document):
+            return {"rejectedDocuments": [{"error": {"code": "E001", "message": "invalid RIN"}}]}
+        monkeypatch.setattr(eta_service.ETAService, "submit_invoice", fake_submit_invoice)
+
+        settings = self._eta_settings()
+        invoice = await services.submit_eta_invoice(db, settings, self._submit_request(branch.id))
+        assert invoice.status == "invalid"
+        assert invoice.error_message is not None
+
+    async def test_submission_error_marks_failed(self, db: Session, branch, monkeypatch):
+        from app.modules.finance import eta_service
+
+        async def fake_submit_invoice(self, document):
+            raise eta_service.ETASubmissionError("ETA رفضت الإرسال: 500 internal error")
+        monkeypatch.setattr(eta_service.ETAService, "submit_invoice", fake_submit_invoice)
+
+        settings = self._eta_settings()
+        invoice = await services.submit_eta_invoice(db, settings, self._submit_request(branch.id))
+        assert invoice.status == "failed"
+        assert "500" in invoice.error_message
+
+
+# ── Exchange Rates (Multi-Currency) ──────────────────────────────────────
+
+class TestExchangeRates:
+
+    def test_folio_creation_rejects_unsupported_currency(self, db: Session, branch):
+        data = FolioCreate(
+            branch_id=branch.id, guest_name="Guest",
+            check_in=datetime.utcnow(), check_out=datetime.utcnow() + timedelta(days=1),
+            currency="GBP",  # مش من ضمن SUPPORTED_CURRENCIES الافتراضية (EGP,USD,EUR,SAR)
+        )
+        with pytest.raises(ValueError, match="غير مدعومة"):
+            services.create_folio(db, data)
+
+    def test_get_rate_same_currency_is_one(self, db: Session):
+        assert services.get_rate(db, "EGP", "EGP", date.today()) == Decimal("1")
+
+    def test_get_rate_no_rate_registered_raises(self, db: Session):
+        # سعر صرف زوج عملة غريب لا يوجد له default seed ولا سعر مسجّل
+        from app.modules.finance.schemas import ExchangeRateCreate as ERC
+        with pytest.raises(ValueError, match="لا يوجد سعر صرف"):
+            services.get_rate(db, "JPY", "KWD", date.today())
+
+    def test_get_rate_falls_back_to_inverse(self, db: Session):
+        """لو مفيش سعر EGP→USD مباشر بس فيه USD→EGP، لازم يستنتج المعكوس بدل
+        ما يرفع خطأ."""
+        from app.modules.finance.schemas import ExchangeRateCreate as ERC
+        services.create_exchange_rate(
+            db, ERC(from_currency="USD", to_currency="EGP", rate=Decimal("50.00"),
+                    effective_date=date(2026, 1, 1)),
+            created_by=1,
+        )
+        rate = services.get_rate(db, "EGP", "USD", date(2026, 1, 15))
+        assert rate == Decimal("1") / Decimal("50.00")
+
+    def test_convert_to_egp_same_currency_passthrough(self, db: Session):
+        assert services.convert_to_egp(db, Decimal("100.00"), "EGP", date.today()) == Decimal("100.00")
+
+    def test_create_exchange_rate_duplicate_date_rejected(self, db: Session):
+        from app.modules.finance.schemas import ExchangeRateCreate as ERC
+        data = ERC(from_currency="USD", to_currency="EGP", rate=Decimal("48.50"),
+                   effective_date=date(2026, 2, 1))
+        services.create_exchange_rate(db, data, created_by=1)
+        with pytest.raises(ValueError, match="يوجد سعر صرف مسجّل بالفعل"):
+            services.create_exchange_rate(db, data, created_by=1)
+
+    def test_create_exchange_rate_same_currency_rejected(self, db: Session):
+        from app.modules.finance.schemas import ExchangeRateCreate as ERC
+        data = ERC(from_currency="EGP", to_currency="EGP", rate=Decimal("1"),
+                   effective_date=date(2026, 3, 1))
+        with pytest.raises(ValueError, match="مختلفين"):
+            services.create_exchange_rate(db, data, created_by=1)
+
+    def test_list_exchange_rates_service_wrapper(self, db: Session):
+        from app.modules.finance.schemas import ExchangeRateCreate as ERC
+        services.create_exchange_rate(
+            db, ERC(from_currency="EUR", to_currency="EGP", rate=Decimal("55.00"),
+                    effective_date=date(2026, 4, 1)),
+            created_by=1,
+        )
+        items, total = services.list_exchange_rates(db, from_currency="EUR")
+        assert total >= 1
+        assert all(r.from_currency == "EUR" for r in items)
+
+
+# ── Shift-end report edge cases (negative delta, cash-count PDF) ────────
+
+class TestShiftEndReportEdgeCases:
+
+    def test_delta_vs_previous_negative_shows_down_arrow_in_pdf(self, db: Session, branch, folio):
+        shift1 = services.open_shift(
+            db, cashier_id=40, opened_by=40,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        services.add_payment(db, folio.id, PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id, amount=Decimal("900"),
+            method="cash", posted_at=datetime.utcnow(), cashier_id=40,
+        ))
+        services.close_shift(db, shift1.id, closed_by=40, data=CashierShiftClose(counted_cash=Decimal("900")))
+
+        shift2 = services.open_shift(
+            db, cashier_id=40, opened_by=40,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        services.add_payment(db, folio.id, PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id, amount=Decimal("300"),
+            method="cash", posted_at=datetime.utcnow(), cashier_id=40,
+        ))
+        report = services.build_shift_end_report(db, shift2.id)
+        assert report.delta_vs_previous == Decimal("-600")
+
+        # generate_shift_end_report_pdf يستخدم _fmt_delta الداخلية — نتأكد إنها
+        # لا ترفع استثناء مع دلتا سالبة (الفرع ▼) قبل ما تقفل الوردية.
+        services.close_shift(db, shift2.id, closed_by=40, data=CashierShiftClose(counted_cash=Decimal("300")))
+        pdf = services.generate_shift_end_report_pdf(db, shift2.id)
+        assert pdf.startswith(b"%PDF")
+
+    def test_cash_count_breakdown_appears_in_pdf_summary(self, db: Session, branch, folio):
+        from app.modules.finance.schemas import CashCountLine
+        shift = services.open_shift(
+            db, cashier_id=41, opened_by=41,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        services.close_shift(
+            db, shift.id, closed_by=41,
+            data=CashierShiftClose(cash_count=[
+                CashCountLine(denomination=Decimal("200"), quantity=2),
+                CashCountLine(denomination=Decimal("50"), quantity=1),
+            ]),
+        )
+        pdf = services.generate_shift_end_report_pdf(db, shift.id)
+        assert pdf.startswith(b"%PDF")
+
+
+# ── Income Statement / Balance Sheet — inactive accounts + equity ──────
+
+class TestFinancialReportsEdgeCases:
+
+    def test_income_statement_skips_accounts_with_no_activity(self, db: Session, branch, account, account2):
+        """حساب موجود في الفرع بس مالوش أي حركة في المدى المطلوب — لازم يتجاهل
+        (continue) مش يظهر بصفر في التقرير."""
+        report = services.get_income_statement(db, branch.id, date(2026, 1, 1), date(2026, 1, 31))
+        assert report.revenue_lines == []
+        assert report.expense_lines == []
+        assert report.total_revenue == Decimal("0")
+
+    def test_balance_sheet_includes_equity_account(self, db: Session, branch, account):
+        from app.modules.finance.schemas import AccountCreate as AC
+        equity_acc = crud.create_account(db, AC(
+            branch_id=branch.id, code="3100", name="Owner's Equity", account_type="equity",
+        ))
+        db.commit(); db.refresh(equity_acc)
+
+        entry_data = JournalEntryCreate(
+            branch_id=branch.id, entry_date=date.today(),
+            reference="JE-EQUITY", description="Capital injection",
+            lines=[
+                JournalLineCreate(account_id=account.id, debit=Decimal("5000"), credit=Decimal("0")),
+                JournalLineCreate(account_id=equity_acc.id, debit=Decimal("0"), credit=Decimal("5000")),
+            ],
+        )
+        services.post_journal_entry(db, entry_data, user_id=1)
+
+        report = services.get_balance_sheet(db, branch.id, date.today())
+        by_code = {l.account_code: l for l in report.equity_lines}
+        assert by_code["3100"].amount == Decimal("5000")
+        assert report.total_equity == Decimal("5000")
+        assert report.is_balanced is True
+
+    def test_balance_sheet_skips_accounts_with_no_activity(self, db: Session, branch, account, account2):
+        report = services.get_balance_sheet(db, branch.id, date(2026, 1, 1))
+        assert report.asset_lines == []
+        assert report.total_assets == Decimal("0")
+
+
+# ── Fixed-Asset Depreciation — edge branches ─────────────────────────────
+
+class TestDepreciationEdgeCases:
+
+    def test_asset_not_yet_started_is_skipped(self, db: Session, branch):
+        from app.modules.maintenance.models import Asset
+        asset = Asset(
+            branch_id=branch.id, name="Future Asset", code=f"AST-{uuid.uuid4().hex[:6].upper()}",
+            category="hvac", purchase_cost=Decimal("5000"), useful_life_years=5,
+            depreciation_start_date=date(2027, 1, 1),
+        )
+        db.add(asset); db.commit()
+
+        result = services.run_depreciation(db, branch.id, 2026, 6, user_id=1)
+        assert result.entries == []
+        assert any("بداية الإهلاك" in s for s in result.skipped_assets)
+
+    def test_asset_with_zero_depreciable_base_is_skipped(self, db: Session, branch):
+        """purchase_cost وuseful_life_years موجودين (فبيعدي فلتر crud) بس
+        salvage_value == purchase_cost => قيمة قابلة للإهلاك = صفر."""
+        from app.modules.maintenance.models import Asset
+        asset = Asset(
+            branch_id=branch.id, name="No Depreciable Value", code=f"AST-{uuid.uuid4().hex[:6].upper()}",
+            category="furniture", purchase_cost=Decimal("1000"), salvage_value=Decimal("1000"),
+            useful_life_years=5,
+        )
+        db.add(asset); db.commit()
+
+        result = services.run_depreciation(db, branch.id, 2026, 6, user_id=1)
+        assert result.entries == []
+        assert any("لا توجد قيمة قابلة للإهلاك" in s for s in result.skipped_assets)
+
+    def test_fully_depreciated_asset_is_skipped(self, db: Session, branch):
+        from app.modules.maintenance.models import Asset
+        asset = Asset(
+            branch_id=branch.id, name="Fully Depreciated", code=f"AST-{uuid.uuid4().hex[:6].upper()}",
+            category="furniture", purchase_cost=Decimal("1000"), salvage_value=Decimal("0"),
+            useful_life_years=1, accumulated_depreciation=Decimal("1000.00"),
+        )
+        db.add(asset); db.commit()
+
+        result = services.run_depreciation(db, branch.id, 2026, 6, user_id=1)
+        assert result.entries == []
+        assert any("مُهلَك بالكامل" in s for s in result.skipped_assets)
+
+    def test_depreciation_reuses_existing_gl_accounts_across_runs(self, db: Session, branch):
+        """أول دورة إهلاك بتنشئ حسابات المصروف/المجمّع تلقائيًا (5500/1590) —
+        دورة تانية لشهر مختلف لازم تستخدم نفس الحسابين، مش تنشئهم تاني (كان
+        هيكسر uq على الكود لو حصل)."""
+        from app.modules.maintenance.models import Asset
+        asset = Asset(
+            branch_id=branch.id, name="Multi-Month Asset", code=f"AST-{uuid.uuid4().hex[:6].upper()}",
+            category="hvac", purchase_cost=Decimal("2400.00"), useful_life_years=2,
+            depreciation_start_date=date(2026, 1, 1),
+        )
+        db.add(asset); db.commit()
+
+        first = services.run_depreciation(db, branch.id, 2026, 1, user_id=1)
+        assert first.journal_entry_id is not None
+        second = services.run_depreciation(db, branch.id, 2026, 2, user_id=1)
+        assert second.journal_entry_id is not None
+        assert second.journal_entry_id != first.journal_entry_id
+
+        expense_accounts = [a for a in crud.list_accounts(db, branch.id, active_only=False, limit=100)[0]
+                             if a.code == "5500"]
+        assert len(expense_accounts) == 1  # لم يتكرر إنشاء الحساب
+
+    def test_list_depreciation_entries_service_wrapper(self, db: Session, branch):
+        from app.modules.maintenance.models import Asset
+        asset = Asset(
+            branch_id=branch.id, name="Listed Asset", code=f"AST-{uuid.uuid4().hex[:6].upper()}",
+            category="hvac", purchase_cost=Decimal("1200.00"), useful_life_years=1,
+            depreciation_start_date=date(2026, 1, 1),
+        )
+        db.add(asset); db.commit()
+        services.run_depreciation(db, branch.id, 2026, 1, user_id=1)
+
+        items, total = services.list_depreciation_entries(db, branch.id, asset_id=None, page=1, size=10)
+        assert total == 1
+        assert items[0].asset_id == asset.id
+
+
+# ── Bank Reconciliation — service-level edge cases ──────────────────────
+
+class TestBankReconciliationServiceEdgeCases:
+
+    def test_get_bank_account_or_404_raises_for_missing(self, db: Session):
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.get_bank_account_or_404(db, 999999)
+
+    def test_update_bank_account_not_found_raises(self, db: Session):
+        from app.modules.finance.schemas import BankAccountUpdate
+        with pytest.raises(ValueError):
+            services.update_bank_account(db, 999999, BankAccountUpdate(bank_name="X"))
+
+    def test_update_bank_account_success(self, db: Session, branch):
+        from app.modules.finance.schemas import BankAccountCreate, BankAccountUpdate
+        account = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="حساب رئيسي",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}",
+        ))
+        updated = services.update_bank_account(db, account.id, BankAccountUpdate(bank_name="بنك القاهرة"))
+        assert updated.bank_name == "بنك القاهرة"
+
+    def test_auto_match_skips_negative_amount_lines(self, db: Session, branch, folio):
+        from app.modules.finance.schemas import (
+            BankAccountCreate, BankStatementImportRequest, BankStatementLineCreate,
+        )
+        account = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="حساب رئيسي",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}",
+        ))
+        services.import_bank_statement_lines(db, account.id, uploaded_by=1, data=BankStatementImportRequest(
+            lines=[BankStatementLineCreate(
+                line_date=date(2026, 6, 1), description="Bank fee", amount=Decimal("-25.00"),
+            )],
+        ))
+        matched = services.auto_match_bank_statement_lines(db, account.id, matched_by=1)
+        assert matched == 0
+        lines, _ = crud.list_bank_statement_lines(db, account.id)
+        assert lines[0].status == "unmatched"
+
+    def test_match_statement_line_missing_line_raises(self, db: Session, branch):
+        from app.modules.finance.schemas import BankAccountCreate
+        account = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="حساب رئيسي",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}",
+        ))
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.match_bank_statement_line(db, account.id, 999999, payment_id=1, matched_by=1)
+
+    def test_match_statement_line_missing_payment_raises(self, db: Session, branch):
+        from app.modules.finance.schemas import (
+            BankAccountCreate, BankStatementImportRequest, BankStatementLineCreate,
+        )
+        account = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="حساب رئيسي",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}",
+        ))
+        lines = services.import_bank_statement_lines(db, account.id, uploaded_by=1, data=BankStatementImportRequest(
+            lines=[BankStatementLineCreate(line_date=date(2026, 6, 1), description="X", amount=Decimal("100"))],
+        ))
+        with pytest.raises(ValueError, match="غير موجودة"):
+            services.match_bank_statement_line(db, account.id, lines[0].id, payment_id=999999, matched_by=1)
+
+    def test_unmatch_statement_line_missing_line_raises(self, db: Session, branch):
+        from app.modules.finance.schemas import BankAccountCreate
+        account = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="حساب رئيسي",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}",
+        ))
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.unmatch_bank_statement_line(db, account.id, 999999)
+
+    def test_unmatch_statement_line_not_matched_raises(self, db: Session, branch):
+        from app.modules.finance.schemas import (
+            BankAccountCreate, BankStatementImportRequest, BankStatementLineCreate,
+        )
+        account = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="حساب رئيسي",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}",
+        ))
+        lines = services.import_bank_statement_lines(db, account.id, uploaded_by=1, data=BankStatementImportRequest(
+            lines=[BankStatementLineCreate(line_date=date(2026, 6, 1), description="X", amount=Decimal("100"))],
+        ))
+        with pytest.raises(ValueError, match="مش متطابق"):
+            services.unmatch_bank_statement_line(db, account.id, lines[0].id)
+
+    def test_reconciliation_summary_uses_ledger_when_gl_account_linked(self, db: Session, branch, account):
+        """لو الحساب البنكي مربوط بحساب دفتر يومية (gl_account_id)، رصيد
+        الدفاتر لازم يتحسب من مجموع القيود على الحساب ده، مش من الدفعات
+        المطابقة فقط."""
+        from app.modules.finance.schemas import AccountCreate as AC, BankAccountCreate
+
+        revenue_acc = crud.create_account(db, AC(
+            branch_id=branch.id, code="4900", name="Misc Revenue", account_type="revenue",
+        ))
+        db.commit(); db.refresh(revenue_acc)
+
+        bank_account = services.create_bank_account(db, BankAccountCreate(
+            branch_id=branch.id, bank_name="بنك مصر", account_name="حساب رئيسي",
+            account_number=f"ACC-{uuid.uuid4().hex[:8]}", gl_account_id=account.id,
+        ))
+
+        entry_data = JournalEntryCreate(
+            branch_id=branch.id, entry_date=date(2026, 6, 5),
+            reference="JE-BANK-GL", description="Deposit via ledger",
+            lines=[
+                JournalLineCreate(account_id=account.id, debit=Decimal("2000.00"), credit=Decimal("0")),
+                JournalLineCreate(account_id=revenue_acc.id, debit=Decimal("0"), credit=Decimal("2000.00")),
+            ],
+        )
+        services.post_journal_entry(db, entry_data, user_id=1)
+
+        summary = services.get_bank_reconciliation_summary(db, bank_account.id, date(2026, 6, 30))
+        assert summary.book_balance == Decimal("2000.00")
+        assert summary.statement_balance == Decimal("0")
+        assert summary.difference == Decimal("-2000.00")
+        assert summary.is_reconciled is False
