@@ -194,6 +194,11 @@ class TestPayroll:
         with pytest.raises(ValueError, match="تأمينات"):
             services.calculate_employee_payroll(db, employee.id, 2026, 6)
 
+    def test_calculate_payroll_no_tax_brackets_raises(self, db, employee, si_config):
+        """SI موجود لكن TaxBracketConfig مفقود — يُلقي خطأ منفصل."""
+        with pytest.raises(ValueError, match="ضريبية"):
+            services.calculate_employee_payroll(db, employee.id, 2026, 6)
+
     def test_run_payroll_for_branch(self, db, branch, employee, si_config, tax_brackets):
         run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
         assert run.id is not None
@@ -218,6 +223,84 @@ class TestPayroll:
         services.approve_payroll_run(db, run.id, approved_by=1)
         with pytest.raises(ValueError, match="approved"):
             services.approve_payroll_run(db, run.id, approved_by=2)
+
+    def test_approve_payroll_run_not_found_raises(self, db):
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.approve_payroll_run(db, 999999, approved_by=1)
+
+    def test_approve_payroll_run_posts_balanced_journal_when_accounts_exist(
+        self, db, branch, employee, si_config, tax_brackets,
+    ):
+        """approve_payroll_run بيرحّل قيد محاسبي حقيقي لما دليل الحسابات
+        (accounts 5100/2100/2110/2120) يكون موجود — بدونه بيتجاهل القيد بصمت
+        (finance module اختياري من منظور HR).
+
+        Regression: قبل الإصلاح كان فيه حساب "5110" بيدبّت run.total_si (SI
+        الموظف) تحت مسمى "مصروف صاحب العمل" بدون أي قيد دائن مقابل — القيد
+        كان بيطلع دايماً غير متوازن (مدين ≠ دائن) لما الحساب ده يكون موجود.
+        اتشال، والتست ده بيتأكد إن القيد اللي بيترحّل فعلاً متوازن 100%."""
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
+
+        for code, acc_type in [
+            ("5100", "expense"),
+            ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        # موظف براتب أعلى — يضمن ضريبة دخل شهرية > 0، عشان نتأكد إن حساب
+        # "2100" (ضريبة دخل مستحقة) فعلاً بيتضاف كسطر دائن في القيد، مش بس
+        # 2110/2120.
+        services.create_employee(db, EmployeeCreate(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="موظف راتب مرتفع", position="مدير", basic_salary=Decimal("25000.00"),
+            hire_date=date(2020, 1, 1),
+        ))
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 10)
+        assert run.total_gross > Decimal("0")
+        assert run.total_tax > Decimal("0")
+
+        approved = services.approve_payroll_run(db, run.id, approved_by=1)
+        assert approved.status == "approved"
+
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll", JournalEntry.source_id == run.id)
+            .first()
+        )
+        assert entry is not None, "لازم يترحّل قيد رواتب حقيقي لما الحسابات موجودة"
+        lines = db.query(JournalLine).filter(JournalLine.entry_id == entry.id).all()
+        assert len(lines) == 4  # 5100 + 2100 + 2110 + 2120
+        total_debit  = sum(l.debit for l in lines)
+        total_credit = sum(l.credit for l in lines)
+        assert total_debit == total_credit, "القيد لازم يكون متوازن (مدين = دائن)"
+
+    def test_approve_payroll_run_skips_journal_when_no_lines_computed(
+        self, db, branch, si_config, tax_brackets,
+    ):
+        """فرع بدون أي موظف نشط — run.total_gross/total_tax/total_si/total_net
+        كلهم صفر رغم إن دليل الحسابات موجود، فمفيش أي سطر يتضاف للقيد
+        (lines فاضية) — لازم القيد يتجاهَل بهدوء، مش يترحّل قيد فاضي أو ينهار."""
+        from app.modules.finance.models import Account, JournalEntry
+
+        for code, acc_type in [
+            ("5100", "expense"),
+            ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 11)
+        assert run.total_gross == Decimal("0")
+
+        services.approve_payroll_run(db, run.id, approved_by=1)
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll", JournalEntry.source_id == run.id)
+            .first()
+        )
+        assert entry is None
 
 
 class TestAttendance:
@@ -390,6 +473,46 @@ class TestLeaderboard:
         )
         assert not any(e.user_id == 999 for e in board)
 
+    def test_leaderboard_includes_cafe_and_beach_sales(self, db, branch):
+        """لوحة الأداء لازم تجمع مبيعات الكافيه والشاطئ مش بس المطعم — الفروع
+        التلاتة بتتجمّع في _accumulate واحدة."""
+        from datetime import datetime as _dt
+        from app.modules.cafe.models import CafeOrder
+        from app.modules.beach.models import BeachTransaction
+
+        cafe_order = CafeOrder(
+            branch_id=branch.id, order_number=f"CAF-{uuid.uuid4().hex[:8]}",
+            status="paid", total=Decimal("120.00"), waiter_id=777,
+        )
+        # طلب كافيه بدون waiter_id — لازم يتجاهله _accumulate بهدوء (guard clause)
+        cafe_order_no_waiter = CafeOrder(
+            branch_id=branch.id, order_number=f"CAF-{uuid.uuid4().hex[:8]}",
+            status="paid", total=Decimal("999.00"), waiter_id=None,
+        )
+        db.add_all([cafe_order, cafe_order_no_waiter])
+
+        beach_tx = BeachTransaction(
+            branch_id=branch.id, tx_type="entry", quantity=1,
+            unit_price=Decimal("200.00"), total_amount=Decimal("200.00"),
+            vat_amount=Decimal("28.00"), tx_date=date.today(), cashier_id=888,
+        )
+        db.add(beach_tx)
+        db.commit()
+
+        today = date.today()
+        board = services.get_sales_leaderboard(
+            db, branch.id, today - timedelta(days=1), today + timedelta(days=1),
+        )
+
+        cafe_entry = next(e for e in board if e.user_id == 777)
+        assert cafe_entry.total_sales == Decimal("120.00")
+        assert cafe_entry.employee_name is None  # مفيش Employee مربوط
+
+        beach_entry = next(e for e in board if e.user_id == 888)
+        assert beach_entry.total_sales == Decimal("228.00")  # total_amount + vat_amount
+
+        assert not any(e.user_id is None for e in board)  # الـ guard منع None
+
 
 class TestLeaveBalance:
 
@@ -561,6 +684,27 @@ class TestLeaveManagement:
         with pytest.raises(ValueError, match="approved"):
             services.approve_leave(db, req.id, approved_by=2)
 
+    def test_approve_leave_not_found_raises(self, db):
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.approve_leave(db, 999999, approved_by=1)
+
+    def test_reject_leave_not_found_raises(self, db):
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.reject_leave(db, 999999, reason="أي سبب")
+
+    def test_reject_already_processed_request_raises(self, db, branch, employee, leave_type):
+        req = services.request_leave(
+            db,
+            employee_id=employee.id,
+            branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=date(2026, 12, 15),
+            end_date=date(2026, 12, 15),
+        )
+        services.reject_leave(db, req.id, reason="مرفوض أول مرة")
+        with pytest.raises(ValueError, match="rejected"):
+            services.reject_leave(db, req.id, reason="محاولة تانية")
+
 
 class TestPenalties:
 
@@ -718,3 +862,51 @@ class TestRota:
         db.refresh(a2)
         assert a1.employee_id == emp2.id
         assert a2.employee_id == employee.id
+
+
+class TestPayslipPdfWithDeductions:
+    """generate_payslip_pdf بيضيف سطرين إضافيين (جزاءات/إجازة بدون أجر) بس
+    لما القيمة فعلاً أكبر من صفر — الفروع دي كانت غير مغطاة، ومهمة لأن قسيمة
+    الراتب الحقيقية لازم تعرض سبب أي خصم غير قياسي للموظف."""
+
+    def test_payslip_pdf_includes_penalty_and_unpaid_leave_lines(self, db, branch, employee):
+        from app.modules.hr.models import PayrollRun, PayrollLine
+
+        run = PayrollRun(
+            branch_id=branch.id, period_year=2027, period_month=1, status="approved",
+            total_gross=Decimal("5000.00"), total_net=Decimal("4000.00"),
+            total_tax=Decimal("300.00"), total_si=Decimal("400.00"),
+        )
+        db.add(run)
+        db.flush()
+        line = PayrollLine(
+            payroll_run_id=run.id, employee_id=employee.id,
+            basic_salary=Decimal("5000.00"), gross_salary=Decimal("5000.00"),
+            net_salary=Decimal("4000.00"), employee_si=Decimal("400.00"),
+            employer_si=Decimal("600.00"), monthly_tax=Decimal("300.00"),
+            penalty_deduction=Decimal("150.00"), unpaid_leave_deduction=Decimal("200.00"),
+        )
+        db.add(line)
+        db.commit()
+
+        pdf_bytes = services.generate_payslip_pdf(db, run.id, employee.id)
+        assert isinstance(pdf_bytes, bytes)
+        assert len(pdf_bytes) > 500
+        assert pdf_bytes.startswith(b"%PDF")
+
+    def test_payslip_pdf_404_when_run_missing(self, db):
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.generate_payslip_pdf(db, 999999, 1)
+
+    def test_payslip_pdf_404_when_employee_not_in_run(self, db, branch, employee):
+        from app.modules.hr.models import PayrollRun
+
+        run = PayrollRun(
+            branch_id=branch.id, period_year=2027, period_month=2, status="approved",
+            total_gross=Decimal("0"), total_net=Decimal("0"),
+            total_tax=Decimal("0"), total_si=Decimal("0"),
+        )
+        db.add(run)
+        db.commit()
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.generate_payslip_pdf(db, run.id, employee.id)

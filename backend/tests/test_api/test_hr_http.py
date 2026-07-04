@@ -211,6 +211,37 @@ def make_shift_committed(db, branch, name="صباحي"):
     return s
 
 
+def ensure_payroll_config_committed(db):
+    """SocialInsuranceConfig/TaxBracketConfig مش scoped بفرع — global. Idempotent
+    (بيتحقق إذا موجود قبل ما يضيف) عشان يشتغل صح مهما كان ترتيب التستات في
+    الـ session-scoped DB (كل التستات هنا بتشارك نفس SQLite in-memory)."""
+    from app.modules.hr.models import SocialInsuranceConfig, TaxBracketConfig
+    if not db.query(SocialInsuranceConfig).filter(SocialInsuranceConfig.is_active.is_(True)).first():
+        db.add(SocialInsuranceConfig(
+            max_insurable_salary=Decimal("9400.00"), employee_rate=Decimal("0.1100"),
+            employer_rate=Decimal("0.1800"), personal_exemption_annual=Decimal("15000.00"),
+            max_penalty_days_monthly=5, effective_from=date(2024, 1, 1), is_active=True,
+        ))
+    if not db.query(TaxBracketConfig).filter(TaxBracketConfig.is_active.is_(True)).first():
+        db.add_all([
+            TaxBracketConfig(lower_bound=Decimal("0"), upper_bound=Decimal("15000"),
+                              rate=Decimal("0.0000"), effective_from=date(2024, 1, 1), is_active=True),
+            TaxBracketConfig(lower_bound=Decimal("15000"), upper_bound=Decimal("30000"),
+                              rate=Decimal("0.1000"), effective_from=date(2024, 1, 1), is_active=True),
+            TaxBracketConfig(lower_bound=Decimal("30000"), upper_bound=None,
+                              rate=Decimal("0.2250"), effective_from=date(2024, 1, 1), is_active=True),
+        ])
+    db.commit()
+
+
+def make_linked_user_headers(db, role: str = "waiter") -> tuple[int, dict[str, str]]:
+    from tests.conftest import _create_test_user, _make_token
+    email = f"hr-http-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, role)
+    headers = {"Authorization": f"Bearer {_make_token(email)}"}
+    return user_id, headers
+
+
 class TestHRPayrollApproval:
     """Regression coverage — POST /hr/payroll-runs/{id}/approve is a real
     financial action (posts a payroll journal entry) gated by
@@ -334,3 +365,452 @@ class TestHRRotaAndShiftSwap:
             f"/api/v1/hr/rota/swap-requests/{swap['id']}/approve", headers=manager_headers,
         )
         assert second_resp.status_code == 400
+
+    def test_approve_swap_request_404_when_missing(self, client: TestClient, db, manager_headers):
+        resp = client.patch(
+            "/api/v1/hr/rota/swap-requests/999999/approve", headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+
+class TestEmployeeCrudHttp:
+    """GET/POST/PATCH /hr/employees — إنشاء/عرض/تعديل حقيقي عبر HTTP، مش
+    service calls مباشرة (هذا موجود في test_hr.py). كانت كل هذه المسارات
+    بدون أي تغطية HTTP فعلياً رغم وجودها في الراوتر."""
+
+    def test_list_employees_returns_created_employee(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.get(
+            "/api/v1/hr/employees", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] == 1
+        assert body["items"][0]["id"] == emp.id
+        assert body["items"][0]["full_name"] == emp.full_name
+
+    def test_create_employee_success(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/hr/employees",
+            json={
+                "branch_id": branch.id, "employee_code": f"EMP-{uuid.uuid4().hex[:6].upper()}",
+                "full_name": "سارة محمود", "position": "Receptionist",
+                "basic_salary": "3500.00", "hire_date": str(date.today()),
+            },
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["full_name"] == "سارة محمود"
+        assert body["status"] == "active"
+        assert Decimal(str(body["basic_salary"])) == Decimal("3500.00")
+
+    def test_create_employee_duplicate_code_returns_400(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.post(
+            "/api/v1/hr/employees",
+            json={
+                "branch_id": branch.id, "employee_code": emp.employee_code,
+                "full_name": "نسخة مكررة", "position": "Waiter",
+                "basic_salary": "3000.00", "hire_date": str(date.today()),
+            },
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 400
+        assert "مستخدم مسبقاً" in resp.text
+
+    def test_get_employee_by_id_success(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.get(f"/api/v1/hr/employees/{emp.id}", headers=waiter_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["id"] == emp.id
+
+    def test_get_employee_404(self, client: TestClient, db, waiter_headers):
+        resp = client.get("/api/v1/hr/employees/999999", headers=waiter_headers)
+        assert resp.status_code == 404
+
+    def test_update_employee_success(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.patch(
+            f"/api/v1/hr/employees/{emp.id}",
+            json={"position": "Head Waiter", "basic_salary": "4500.00"},
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["position"] == "Head Waiter"
+        assert Decimal(str(body["basic_salary"])) == Decimal("4500.00")
+
+    def test_update_employee_404(self, client: TestClient, db, super_admin_headers):
+        resp = client.patch(
+            "/api/v1/hr/employees/999999",
+            json={"position": "Ghost"},
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 404
+
+
+class TestPayslipCalculationHttp:
+    """GET /hr/employees/{id}/payslip — حساب راتب فوري (مش من كشف محفوظ)."""
+
+    def test_get_payslip_success(self, client: TestClient, db, manager_headers):
+        ensure_payroll_config_committed(db)
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.get(
+            f"/api/v1/hr/employees/{emp.id}/payslip",
+            params={"period_year": 2026, "period_month": 6},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["employee_id"] == emp.id
+        assert Decimal(str(body["gross_salary"])) >= Decimal(str(body["basic_salary"]))
+        assert Decimal(str(body["net_salary"])) < Decimal(str(body["gross_salary"]))
+
+    def test_get_payslip_404_when_employee_missing(self, client: TestClient, db, manager_headers):
+        resp = client.get(
+            "/api/v1/hr/employees/999999/payslip",
+            params={"period_year": 2026, "period_month": 6},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400  # ValueError من calculate_employee_payroll يترجم 400
+
+
+class TestLeaderboardHttp:
+    def test_leaderboard_endpoint_returns_200(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        today = date.today()
+        resp = client.get(
+            "/api/v1/hr/leaderboard",
+            params={
+                "branch_id": branch.id,
+                "date_from": str(today - timedelta(days=1)),
+                "date_to": str(today + timedelta(days=1)),
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == []
+
+
+class TestPayrollRunHttp:
+    def test_create_payroll_run_duplicate_returns_400(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        make_employee_committed(db, branch)
+        today = date.today()
+        first = client.post(
+            "/api/v1/hr/payroll-runs",
+            json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
+            headers=super_admin_headers,
+        )
+        assert first.status_code == 201, first.text
+        second = client.post(
+            "/api/v1/hr/payroll-runs",
+            json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
+            headers=super_admin_headers,
+        )
+        assert second.status_code == 400
+        assert "موجود مسبقاً" in second.text
+
+    def test_get_payroll_run_success_and_lines(self, client: TestClient, db, super_admin_headers, manager_headers):
+        ensure_payroll_config_committed(db)
+        branch = make_branch_committed(db)
+        make_employee_committed(db, branch)
+        today = date.today()
+        run = client.post(
+            "/api/v1/hr/payroll-runs",
+            json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
+            headers=super_admin_headers,
+        ).json()
+
+        get_resp = client.get(f"/api/v1/hr/payroll-runs/{run['id']}", headers=manager_headers)
+        assert get_resp.status_code == 200, get_resp.text
+        assert get_resp.json()["id"] == run["id"]
+
+        lines_resp = client.get(f"/api/v1/hr/payroll-runs/{run['id']}/lines", headers=manager_headers)
+        assert lines_resp.status_code == 200, lines_resp.text
+        assert len(lines_resp.json()) == 1  # موظف واحد فقط في الفرع
+
+    def test_get_payroll_run_404(self, client: TestClient, db, manager_headers):
+        resp = client.get("/api/v1/hr/payroll-runs/999999", headers=manager_headers)
+        assert resp.status_code == 404
+
+    def test_approve_payroll_run_404_when_missing(self, client: TestClient, db, super_admin_headers):
+        resp = client.post("/api/v1/hr/payroll-runs/999999/approve", headers=super_admin_headers)
+        assert resp.status_code == 400  # ValueError "غير موجود" -> 400 (مش 404 — راجع الراوتر)
+
+
+class TestAttendanceHttp:
+    def test_record_and_list_attendance(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        create_resp = client.post(
+            "/api/v1/hr/attendance",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "record_date": str(date.today()), "status": "present",
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        list_resp = client.get(
+            "/api/v1/hr/attendance",
+            params={"employee_id": emp.id, "branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        assert list_resp.json()["total"] == 1
+
+
+class TestDepartmentHttp:
+    def test_create_and_list_departments(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/hr/departments",
+            json={"branch_id": branch.id, "name": "Kitchen", "name_ar": "مطبخ"},
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        list_resp = client.get(
+            "/api/v1/hr/departments", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        assert any(d["name"] == "Kitchen" for d in list_resp.json())
+
+
+class TestShiftHttp:
+    def test_create_and_list_shifts(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/hr/shifts",
+            json={
+                "branch_id": branch.id, "name": "Evening", "name_ar": "مسائي",
+                "start_time": "16:00", "end_time": "23:00", "duration_hours": "7.00",
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        list_resp = client.get(
+            "/api/v1/hr/shifts", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        assert any(s["name"] == "Evening" for s in list_resp.json())
+
+
+class TestLeaveTypeHttp:
+    def test_create_leave_type(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/hr/leave-types",
+            json={"branch_id": branch.id, "name": "Sick", "name_ar": "مرضية", "max_days_per_year": 15},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["name"] == "Sick"
+
+
+class TestLeaveRequestValidationAndRejectHttp:
+    def test_create_leave_request_invalid_dates_returns_400(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        employee = make_employee_committed(db, branch)
+        leave_type = make_leave_type_committed(db, branch)
+        resp = client.post(
+            "/api/v1/hr/leave-requests",
+            json={
+                "employee_id": employee.id, "branch_id": branch.id, "leave_type_id": leave_type.id,
+                "start_date": str(date.today() + timedelta(days=5)),
+                "end_date": str(date.today() + timedelta(days=1)),  # نهاية قبل البداية
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_approve_leave_request_already_processed_returns_400(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        employee = make_employee_committed(db, branch)
+        leave_type = make_leave_type_committed(db, branch)
+        req = client.post(
+            "/api/v1/hr/leave-requests",
+            json={
+                "employee_id": employee.id, "branch_id": branch.id, "leave_type_id": leave_type.id,
+                "start_date": str(date.today() + timedelta(days=1)),
+                "end_date": str(date.today() + timedelta(days=2)),
+            },
+            headers=manager_headers,
+        ).json()
+        client.patch(
+            f"/api/v1/hr/leave-requests/{req['id']}/approve", json={"approved_by": 1}, headers=manager_headers,
+        )
+        second = client.patch(
+            f"/api/v1/hr/leave-requests/{req['id']}/approve", json={"approved_by": 1}, headers=manager_headers,
+        )
+        assert second.status_code == 400
+
+    def test_reject_leave_request_via_dedicated_endpoint(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        employee = make_employee_committed(db, branch)
+        leave_type = make_leave_type_committed(db, branch)
+        req = client.post(
+            "/api/v1/hr/leave-requests",
+            json={
+                "employee_id": employee.id, "branch_id": branch.id, "leave_type_id": leave_type.id,
+                "start_date": str(date.today() + timedelta(days=1)),
+                "end_date": str(date.today() + timedelta(days=2)),
+            },
+            headers=manager_headers,
+        ).json()
+        resp = client.patch(
+            f"/api/v1/hr/leave-requests/{req['id']}/reject",
+            json={"reason": "لا يوجد بديل متاح"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "rejected"
+        assert resp.json()["rejection_reason"] == "لا يوجد بديل متاح"
+
+        # رفض طلب اتعالج فعلاً (rejected) تاني — لازم 400 مش 500
+        second = client.patch(
+            f"/api/v1/hr/leave-requests/{req['id']}/reject",
+            json={"reason": "محاولة تانية"},
+            headers=manager_headers,
+        )
+        assert second.status_code == 400
+
+    def test_leaves_alias_patch_404_underlying_value_error_returns_400(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """PATCH /hr/leaves/{id} على request_id غير موجود — الـ ValueError من
+        services.approve_leave/reject_leave لازم يترجم 400 (مش 500)."""
+        resp = client.patch(
+            "/api/v1/hr/leaves/999999", json={"status": "approved"}, headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestSelfServiceAttendanceHttp:
+    """POST /hr/me/attendance/punch-in|punch-out — نفس المنطق المُختبر عند
+    مستوى الـ service في test_hr.py، لكن هنا عبر الراوتر الحقيقي (auth chain
+    + response model + error translation)."""
+
+    def test_punch_in_then_punch_out_flow(self, client: TestClient, db):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        user_id, headers = make_linked_user_headers(db)
+        emp.user_id = user_id
+        db.commit()
+
+        in_resp = client.post("/api/v1/hr/me/attendance/punch-in", headers=headers)
+        assert in_resp.status_code == 201, in_resp.text
+        assert in_resp.json()["check_in"] is not None
+        assert in_resp.json()["check_out"] is None
+
+        out_resp = client.post("/api/v1/hr/me/attendance/punch-out", headers=headers)
+        assert out_resp.status_code == 200, out_resp.text
+        assert out_resp.json()["check_out"] is not None
+
+    def test_punch_in_twice_returns_400(self, client: TestClient, db):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        user_id, headers = make_linked_user_headers(db)
+        emp.user_id = user_id
+        db.commit()
+
+        client.post("/api/v1/hr/me/attendance/punch-in", headers=headers)
+        second = client.post("/api/v1/hr/me/attendance/punch-in", headers=headers)
+        assert second.status_code == 400
+
+    def test_punch_out_without_punch_in_returns_400(self, client: TestClient, db):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        user_id, headers = make_linked_user_headers(db)
+        emp.user_id = user_id
+        db.commit()
+
+        resp = client.post("/api/v1/hr/me/attendance/punch-out", headers=headers)
+        assert resp.status_code == 400
+
+
+class TestPenaltyHttp:
+    def test_create_and_list_penalties(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        create_resp = client.post(
+            "/api/v1/hr/penalties",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "penalty_date": str(date.today()), "penalty_days": 1,
+                "reason": "تأخير متكرر", "applied_by": 1,
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        list_resp = client.get(
+            "/api/v1/hr/penalties", params={"branch_id": branch.id, "employee_id": emp.id},
+            headers=manager_headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        assert len(list_resp.json()) == 1
+        assert list_resp.json()[0]["reason"] == "تأخير متكرر"
+
+
+class TestPayrollDownloadsHttp:
+    """GET /hr/payroll/{run_id}/payslip/{employee_id} و
+    GET /hr/payroll/{run_id}/excel — تحميلات PDF/Excel حقيقية، لازم نتأكد من
+    content-type وحجم بايتات غير تافه (مش استجابة فاضية)."""
+
+    def _make_approved_run(self, client, db, super_admin_headers):
+        ensure_payroll_config_committed(db)
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        today = date.today()
+        run = client.post(
+            "/api/v1/hr/payroll-runs",
+            json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
+            headers=super_admin_headers,
+        ).json()
+        return branch, emp, run
+
+    def test_download_payslip_pdf_success(self, client: TestClient, db, super_admin_headers, manager_headers):
+        _, emp, run = self._make_approved_run(client, db, super_admin_headers)
+        resp = client.get(
+            f"/api/v1/hr/payroll/{run['id']}/payslip/{emp.id}", headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == "application/pdf"
+        assert len(resp.content) > 500  # PDF حقيقي، مش استجابة فاضية
+
+    def test_download_payslip_pdf_404_run_missing(self, client: TestClient, db, manager_headers):
+        resp = client.get("/api/v1/hr/payroll/999999/payslip/1", headers=manager_headers)
+        assert resp.status_code == 404
+
+    def test_download_payslip_pdf_404_employee_not_in_run(
+        self, client: TestClient, db, super_admin_headers, manager_headers,
+    ):
+        _, _, run = self._make_approved_run(client, db, super_admin_headers)
+        resp = client.get(
+            f"/api/v1/hr/payroll/{run['id']}/payslip/999999", headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_download_payroll_excel_success(self, client: TestClient, db, super_admin_headers, manager_headers):
+        _, _, run = self._make_approved_run(client, db, super_admin_headers)
+        resp = client.get(f"/api/v1/hr/payroll/{run['id']}/excel", headers=manager_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert len(resp.content) > 500
+
+    def test_download_payroll_excel_404_run_missing(self, client: TestClient, db, manager_headers):
+        resp = client.get("/api/v1/hr/payroll/999999/excel", headers=manager_headers)
+        assert resp.status_code == 404

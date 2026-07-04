@@ -276,20 +276,19 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
     period_str = f"{run.period_year}-{run.period_month:02d}"
     lines: list[JournalLineCreate] = []
 
+    # ⚠️ حساب "5110" (مصروف تأمينات صاحب عمل) متعمّد الاستبعاد هنا: PayrollRun
+    # بيجمّع total_si من employee_si بس (راجع run_payroll_for_branch) — مفيش
+    # عمود total_employer_si على الـ run لتخزين نصيب الشركة الفعلي (بمعدّل
+    # employer_rate المختلف عن employee_rate). كان هنا كود قديم بيدبّت
+    # run.total_si (SI الموظف) تحت مسمى "مصروف صاحب العمل" بدون أي قيد دائن
+    # مقابل — ده كان بيكسر توازن القيد (مدين ≠ دائن) في أي مرة الحساب يكون
+    # موجود فعلاً. اتشال لحد ما يُضاف عمود total_employer_si حقيقي (migration).
     if "5100" in accs and run.total_gross:
         lines.append(JournalLineCreate(
             account_id=accs["5100"],
             debit=run.total_gross,
             credit=Decimal("0"),
             description=f"مصروف رواتب {period_str}",
-        ))
-    if "5110" in accs and run.total_si:
-        employer_si = run.total_si  # تقريب — SI الموظف تقريباً = employer_si × 0.587
-        lines.append(JournalLineCreate(
-            account_id=accs["5110"],
-            debit=employer_si,
-            credit=Decimal("0"),
-            description=f"مصروف تأمينات صاحب عمل {period_str}",
         ))
     if "2100" in accs and run.total_tax:
         lines.append(JournalLineCreate(
@@ -414,7 +413,7 @@ def generate_payslip_pdf(db: Session, run_id: int, employee_id: int) -> bytes:
         raise ValueError(f"الموظف {employee_id} غير موجود في هذا الكشف")
 
     emp = crud.get_employee(db, employee_id)
-    emp_name = emp.name if emp else f"موظف #{employee_id}"
+    emp_name = emp.full_name if emp else f"موظف #{employee_id}"
 
     period_str = f"{run.period_year}-{run.period_month:02d}"
     fields = [
@@ -451,10 +450,14 @@ def generate_payroll_excel(db: Session, run_id: int) -> bytes:
     lines = crud.list_lines_for_run(db, run_id)
     employees = {e.id: e for e in crud.list_employees(db, run.branch_id, limit=10000)[0]}
 
+    def _employee_label(employee_id: int) -> str:
+        emp = employees.get(employee_id)
+        return emp.full_name if emp else f"#{employee_id}"
+
     period_str = f"{run.period_year}-{run.period_month:02d}"
     rows = [
         [
-            employees.get(l.employee_id, type("E", (), {"name": f"#{l.employee_id}"})()).name,
+            _employee_label(l.employee_id),
             float(l.basic_salary),
             float(l.gross_salary),
             float(l.employee_si),
