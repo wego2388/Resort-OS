@@ -361,3 +361,146 @@ class TestBeachTicketPdf:
         media_box = [float(v) for v in match.group(1).split()]
         pdf_width = media_box[2] - media_box[0]
         assert pdf_width < 300, f"expected thermal-width PDF, got width={pdf_width}pt (A4 is ~595pt)"
+
+
+class TestBeachTransactionsListAndVoidHTTP:
+    """void_transaction's financial-reversal logic was already covered
+    extensively at the service layer (test_beach.py) -- but never through
+    the actual HTTP router endpoint itself (require_permission dependency,
+    HTTPException translation, response model validation). Same gap class
+    found repeatedly in this project: a service being correct doesn't prove
+    the router wiring to it is correct."""
+
+    def test_list_transactions_via_http(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+        sell_resp = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 2}, headers=cashier_headers,
+        )
+        assert sell_resp.status_code == 201, sell_resp.text
+
+        list_resp = client.get(
+            "/api/v1/beach/transactions", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert list_resp.status_code == 200
+        assert list_resp.json()["total"] >= 1
+
+    def test_download_ticket_404_for_nonexistent_transaction(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/beach/transactions/999999/ticket", headers=cashier_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_void_transaction_via_http_requires_manager_level(
+        self, client: TestClient, db, fake_redis, cashier_headers,
+    ):
+        """require_permission("beach.void_transaction", min_role_level=60) —
+        a plain cashier (level 40) must be rejected even though cashier can
+        sell/list."""
+        branch = make_branch_committed(db)
+        sell_resp = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 1}, headers=cashier_headers,
+        )
+        tx_id = sell_resp.json()["id"]
+
+        resp = client.post(
+            f"/api/v1/beach/transactions/{tx_id}/void",
+            json={"reason": "غلط في الإدخال"}, headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_void_transaction_via_http_succeeds_for_manager(
+        self, client: TestClient, db, fake_redis, cashier_headers, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        sell_resp = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 1}, headers=cashier_headers,
+        )
+        tx_id = sell_resp.json()["id"]
+
+        resp = client.post(
+            f"/api/v1/beach/transactions/{tx_id}/void",
+            json={"reason": "طلب الضيف الإلغاء"}, headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["voided_at"] is not None
+
+        # Double-void via the real HTTP endpoint must be rejected, not just
+        # at the service layer.
+        second = client.post(
+            f"/api/v1/beach/transactions/{tx_id}/void",
+            json={"reason": "تاني"}, headers=manager_headers,
+        )
+        assert second.status_code == 400
+
+
+class TestBeachReportsHTTP:
+    """daily_summary/eod-report/eod-report-pdf/live-dashboard had zero HTTP
+    coverage — only ever exercised indirectly, never asserted on directly."""
+
+    def test_daily_summary_reflects_real_sale(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers):
+        branch = make_branch_committed(db)
+        client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 3}, headers=cashier_headers,
+        )
+        resp = client.get(
+            "/api/v1/beach/summary",
+            params={"branch_id": branch.id, "tx_date": str(date.today())},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["total_entries"] >= 3
+
+    def test_eod_report_via_http(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers):
+        branch = make_branch_committed(db)
+        client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 1}, headers=cashier_headers,
+        )
+        resp = client.get(
+            "/api/v1/beach/eod-report", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_eod_report_pdf_via_http(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers):
+        branch = make_branch_committed(db)
+        client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 1}, headers=cashier_headers,
+        )
+        resp = client.get(
+            "/api/v1/beach/eod-report/pdf", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+
+    def test_live_dashboard_via_http(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/beach/live-dashboard", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "capacity_used" in body
+        assert "capacity_max" in body
+
+
+class TestBeachReservationsListHTTP:
+    def test_list_reservations_via_http(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+        client.post(
+            "/api/v1/beach/reservations",
+            json={"branch_id": branch.id, "guest_name": "ضيف اختبار القائمة",
+                  "reservation_date": str(date.today()), "guests_count": 2},
+            headers=cashier_headers,
+        )
+        resp = client.get(
+            "/api/v1/beach/reservations", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert resp.status_code == 200
+        names = [r["guest_name"] for r in resp.json()["items"]]
+        assert "ضيف اختبار القائمة" in names

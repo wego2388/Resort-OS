@@ -613,3 +613,118 @@ class TestRestaurantReceiptPdf:
         pdf_width = media_box[2] - media_box[0]
         # 80mm ≈ 226.77pt — لازم يبقى أضيق بكتير من A4 (595pt عرض)
         assert pdf_width < 300, f"expected thermal-width PDF, got width={pdf_width}pt (A4 is ~595pt)"
+
+
+class TestMenuItemCrudHTTP:
+    """create_menu_item/update_menu_item/delete_extra_group had zero HTTP
+    coverage -- only exercised indirectly through orders using an
+    already-existing item."""
+
+    def test_create_and_update_menu_item(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/restaurant/menu/items",
+            json={"branch_id": branch.id, "name": "Grilled Salmon", "name_ar": "سالمون مشوي",
+                  "price": "220.00", "station": "grill"},
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        item = create_resp.json()
+        assert item["station"] == "grill"
+
+        update_resp = client.patch(
+            f"/api/v1/restaurant/menu/items/{item['id']}",
+            json={"price": "250.00", "is_available": False},
+            headers=manager_headers,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+        updated = update_resp.json()
+        assert Decimal(str(updated["price"])) == Decimal("250.00")
+        assert updated["is_available"] is False
+
+    def test_create_menu_item_requires_manager(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/restaurant/menu/items",
+            json={"branch_id": branch.id, "name": "طبق تجريبي", "price": "50.00"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_delete_extra_group(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        group_resp = client.post(
+            f"/api/v1/restaurant/menu/items/{item.id}/extra-groups",
+            json={"name": "Sauce", "min_select": 0, "max_select": 1,
+                  "options": [{"name": "Ketchup", "price_addition": "0"}]},
+            headers=manager_headers,
+        )
+        assert group_resp.status_code == 201, group_resp.text
+        group_id = group_resp.json()["id"]
+
+        delete_resp = client.delete(
+            f"/api/v1/restaurant/menu/extra-groups/{group_id}", headers=manager_headers,
+        )
+        assert delete_resp.status_code == 204
+
+        # Deleting an already-deleted group must 404, not 500.
+        second_delete = client.delete(
+            f"/api/v1/restaurant/menu/extra-groups/{group_id}", headers=manager_headers,
+        )
+        assert second_delete.status_code == 404
+
+
+class TestKDSScreensHTTP:
+    def test_create_and_list_kds_screen(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/restaurant/kds-screens",
+            json={"branch_id": branch.id, "name": "شاشة الشواية", "module": "restaurant",
+                  "stations": ["grill", "hot"]},
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        list_resp = client.get(
+            "/api/v1/restaurant/kds-screens", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert any(s["name"] == "شاشة الشواية" for s in list_resp.json())
+
+    def test_create_kds_screen_requires_manager(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/restaurant/kds-screens",
+            json={"branch_id": branch.id, "name": "شاشة", "stations": ["hot"]},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+
+class TestListOrdersDateFilterHTTP:
+    def test_list_orders_filters_by_order_date(self, client: TestClient, db, waiter_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        from datetime import date, timedelta
+        today_resp = client.get(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id, "order_date": str(date.today())},
+            headers=cashier_headers,
+        )
+        assert today_resp.status_code == 200
+        assert any(o["id"] == order["id"] for o in today_resp.json()["items"])
+
+        yesterday_resp = client.get(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id, "order_date": str(date.today() - timedelta(days=1))},
+            headers=cashier_headers,
+        )
+        assert all(o["id"] != order["id"] for o in yesterday_resp.json()["items"])
