@@ -44,6 +44,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_room_types(db)
     _seed_rooms(db)
     _seed_timeshare_units(db)
+    _seed_timeshare_contracts(db)
     _seed_menus(db)
 
     db.commit()
@@ -377,6 +378,121 @@ def _seed_timeshare_units(db: Session) -> None:
             total += 1
     db.flush()
     print(f"  ✓ Timeshare units seeded ({total} units — logical default numbering, not verified real numbers)")
+
+
+def _seed_timeshare_contracts(db: Session) -> None:
+    """⚠️ عملاء وعقود تايم شير توضيحية (illustrative sample data) — مش سجلات
+    عملاء حقيقية للمنتجع. الغرض: تشغيل لوحات التايم شير (cs-summary / sales-
+    dashboard / calendar / upcoming-visits / stats / installments) ببيانات
+    متنوّعة واقعية بدل قواعد فاضية. الأسماء مصرية معقولة والأرقام بصيغة
+    الموبايل المصري — لكنها مُلفَّقة للعرض فقط.
+
+    Idempotent: لو فيه أي عقد بادئته 'TS-SEED-' للفرع → يتجاهَل (check-then-create)."""
+    from datetime import datetime, timedelta
+    from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment, TimeshareUnit
+    from app.modules.core.models import Branch
+    from app.resort_os.timeshare_engine import generate_installment_schedule
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+    if db.query(TimeshareContract).filter(
+        TimeshareContract.branch_id == branch.id,
+        TimeshareContract.contract_number.like("TS-SEED-%"),
+    ).first():
+        return
+
+    units: dict[str, list] = {}
+    for u in db.query(TimeshareUnit).filter(TimeshareUnit.branch_id == branch.id).all():
+        units.setdefault(u.unit_type, []).append(u)
+
+    today = date.today()
+    anchor = date(today.year, 1, 1)   # بداية السنة كمرساة ثابتة للأقساط
+
+    # كل عنصر: بيانات العقد + خطة السداد (paid / overdue / partial / بقية pending)
+    specs = [
+        # (name, phone, email, nationality, room, week, season, total, down, insts,
+        #  period, status, partner_company, partner_pct, batch, rci, assign_unit,
+        #  paid, overdue, partial)
+        ("أحمد جمال منصور", "01001234567", "ahmed.g@example.com", "مصري", "2R", 12, "high",
+         "180000", "40000", 12, 1, "active", "شركة النخبة العقارية", "25", 1, False, True, 12, 0, 0),
+        ("منى عبد الرحمن", "01112345678", "mona.a@example.com", "مصري", "2R", 28, "high",
+         "180000", "36000", 12, 1, "active", "شركة النخبة العقارية", "25", 1, True, True, 5, 2, 0),
+        ("خالد سمير فؤاد", "01223456789", None, "مصري", "4R", 33, "both",
+         "320000", "80000", 10, 1, "active", "دار الاستثمار السياحي", "30", 2, False, True, 3, 0, 1),
+        ("سلمى إبراهيم حسن", "01098765432", "salma.i@example.com", "مصري", "4R", None, "high",
+         "300000", "60000", 12, 1, "active", "دار الاستثمار السياحي", "30", 2, False, False, 0, 0, 0),
+        ("عمر ياسر الشناوي", "01155667788", None, "مصري", "2R", 40, "low",
+         "160000", "20000", 12, 1, "suspended", "شركة النخبة العقارية", "25", 1, True, True, 2, 3, 0),
+        ("هالة مصطفى كامل", "01266778899", "hala.m@example.com", "مصري", "6R", 45, "high",
+         "540000", "120000", 12, 1, "active", "المجموعة الدولية للمنتجعات", "20", 3, True, True, 8, 0, 0),
+        ("طارق نبيل عوض", "01033445566", None, "أردني", "6R", 20, "both",
+         "500000", "500000", 1, 1, "active", "المجموعة الدولية للمنتجعات", "20", 3, False, True, 0, 0, 0),
+        ("داليا فتحي زكي", "01144556677", "dalia.f@example.com", "مصري", "4R", 8, "high",
+         "310000", "62000", 10, 1, "cancelled", "دار الاستثمار السياحي", "30", 2, False, False, 1, 0, 0),
+    ]
+
+    created = 0
+    for i, s in enumerate(specs, start=1):
+        (name, phone, email, nat, room, week, season, total, down, insts, period,
+         status, partner, pct, batch, rci, assign_unit, paid_n, overdue_n, partial_n) = s
+
+        total_d, down_d = Decimal(total), Decimal(down)
+        unit_id = None
+        if assign_unit and units.get(room):
+            # وحدة مخصَّصة دائمًا للعقد (نفس الوحدة كل سنة) — لو متاح لنوع الغرفة
+            unit_id = units[room][(i - 1) % len(units[room])].id
+
+        contract = TimeshareContract(
+            branch_id=branch.id,
+            contract_number=f"TS-SEED-{i:04d}",
+            customer_name=name, customer_phone=phone, customer_email=email,
+            nationality=nat, room_type=room, unit_id=unit_id,
+            week_number=week, nights_per_year=7, season=season,
+            total_value=total_d, down_payment=down_d,
+            installments=insts, installment_period=period,
+            first_installment_date=anchor + timedelta(days=30),
+            start_date=anchor, partner_company=partner,
+            partner_share_pct=Decimal(pct), batch_number=batch, rci_included=rci,
+            maintenance_fee=Decimal("3500"), status=status,
+            cancelled_at=(today if status == "cancelled" else None),
+            cancel_amount=(Decimal("15000") if status == "cancelled" else Decimal("0")),
+            signed_by=None,
+        )
+        db.add(contract)
+        db.flush()
+
+        schedule = generate_installment_schedule(
+            total_value=total_d, down_payment=down_d,
+            installments=insts, installment_period=period,
+            first_installment_date=contract.first_installment_date,
+        )
+        for idx, item in enumerate(schedule):
+            inst = TimeshareInstallment(
+                contract_id=contract.id, installment_no=item.installment_no,
+                due_date=item.due_date, amount=item.amount,
+            )
+            # توزيع حالات واقعية: مدفوع كامل → متأخر → جزئي → بقية معلّقة
+            if idx < paid_n:
+                inst.status = "paid"
+                inst.paid_amount = item.amount
+                inst.paid_at = datetime.combine(item.due_date, datetime.min.time())
+                inst.payment_method = "cash"
+            elif idx < paid_n + overdue_n:
+                inst.status = "overdue"
+            elif idx < paid_n + overdue_n + partial_n:
+                inst.status = "partial"
+                inst.paid_amount = (item.amount / 2).quantize(Decimal("0.01"))
+                inst.payment_method = "bank_transfer"
+            db.add(inst)
+
+        # عقد موقوف بسبب متأخرات → حجزه مجمّد (نفس منطق الخدمة الحقيقي)
+        if status == "suspended" and overdue_n > 0:
+            contract.booking_frozen = True
+        created += 1
+
+    db.flush()
+    print(f"  ✓ Timeshare contracts seeded ({created} illustrative sample customers — not real records)")
 
 
 def _seed_menus(db: Session) -> None:

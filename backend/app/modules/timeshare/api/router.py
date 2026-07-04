@@ -136,8 +136,18 @@ def list_installments(
     limit: int = Query(200, ge=1, le=1000),
 ):
     result = services.list_installments(db, branch_id, status_filter, contract_id, month, search, limit)
+    installments = []
+    for i in result["installments"]:
+        read = InstallmentRead.model_validate(i)
+        # إثراء ببيانات العميل من العقد المُحمَّل مسبقاً (contains_eager، بدون N+1)
+        # عشان جدول الأقساط في الفرونت يعرض العميل ورقمه (متابعة المتأخرات)
+        if i.contract is not None:
+            read.customer_name = i.contract.customer_name
+            read.customer_phone = i.contract.customer_phone
+            read.room_type = i.contract.room_type
+        installments.append(read)
     return {
-        "installments": [InstallmentRead.model_validate(i) for i in result["installments"]],
+        "installments": installments,
         "total": result["total"],
         "summary": {k: float(v) for k, v in result["summary"].items()},
     }

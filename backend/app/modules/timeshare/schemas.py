@@ -70,6 +70,12 @@ class InstallmentRead(BaseModel):
     paid_at: Optional[datetime]; payment_method: Optional[str]
     receipt_number: Optional[str]; notes: Optional[str]
     created_at: datetime
+    # بيانات العميل للعرض في جدول الأقساط (لوحة متابعة المتأخرات) — تُملأ فقط في
+    # list_installments حيث الـ join على العقد متاح، وإلا None (مثلاً عند
+    # pay_installment اللي بيرجّع القسط لوحده بدون العقد).
+    customer_name:  Optional[str] = None
+    customer_phone: Optional[str] = None
+    room_type:      Optional[str] = None
 
 
 class TimeshareContractRead(BaseModel):

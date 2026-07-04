@@ -191,10 +191,14 @@ def list_all_installments(
     limit: int = 200,
 ) -> list[TimeshareInstallment]:
     from sqlalchemy import extract  # noqa: PLC0415
+    from sqlalchemy.orm import contains_eager  # noqa: PLC0415
 
     q = (
         db.query(TimeshareInstallment)
         .join(TimeshareContract, TimeshareContract.id == TimeshareInstallment.contract_id)
+        # contains_eager: نعيد استخدام الـ join الموجود لتحميل العقد بدون N+1
+        # (جدول الأقساط في الفرونت بيعرض اسم/هاتف/نوع غرفة العميل لكل قسط)
+        .options(contains_eager(TimeshareInstallment.contract))
         .filter(TimeshareContract.branch_id == branch_id)
     )
     if status:
