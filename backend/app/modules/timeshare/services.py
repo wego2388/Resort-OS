@@ -354,13 +354,32 @@ def cancel_contract(db: Session, contract_id: int, cancel_amount) -> TimeshareCo
 # ── Visits ───────────────────────────────────────────────────────────
 
 def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
+    """يخصّص وحدة تايم شير فعلية للزيارة (real allocation، مش مجرد سطر تاريخ
+    بلا أي حجز حقيقي) — مع منع تعارض حجز حقيقي (double-booking) على نفس
+    الوحدة، بنفس منطق date-overlap المستخدم في pms.crud.get_available_rooms."""
     contract = get_contract_or_404(db, data.contract_id)
     if data.check_out <= data.check_in:
         raise ValueError("check_out يجب أن يكون بعد check_in")
     if contract.booking_frozen:
         raise ValueError("الحجز مجمَّد لوجود أقساط متأخرة — سدِّد المتأخرات أولاً")
     nights = (data.check_out - data.check_in).days
-    visit = crud.create_visit(db, data, nights)
+
+    if contract.unit_id:
+        # وحدة مخصَّصة دائمًا للعقد — تحقق فقط من عدم وجود زيارة أخرى متقاطعة عليها
+        unit = crud.get_unit(db, contract.unit_id)
+        if not unit:
+            raise ValueError("الوحدة المخصَّصة لهذا العقد لم تعد موجودة")
+        if unit.status == "maintenance":
+            raise ValueError(f"الوحدة {unit.unit_number} تحت الصيانة حاليًا")
+        if crud.has_overlapping_visit(db, unit.id, data.check_in, data.check_out):
+            raise ValueError(f"الوحدة {unit.unit_number} محجوزة بالفعل في هذه الفترة")
+    else:
+        # عقد عائم — ابحث عن أي وحدة متاحة من نفس نوع الغرفة
+        unit = crud.find_available_unit(db, contract.branch_id, contract.room_type, data.check_in, data.check_out)
+        if not unit:
+            raise ValueError(f"لا توجد وحدة متاحة من نوع {contract.room_type} في الفترة المطلوبة")
+
+    visit = crud.create_visit(db, data, nights, unit_id=unit.id)
     db.commit()
     db.refresh(visit)
     return visit

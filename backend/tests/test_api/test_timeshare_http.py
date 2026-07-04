@@ -110,6 +110,101 @@ class TestTimesharePermissions:
         assert resp.status_code == 403
 
 
+class TestTimeshareVisitAndUnitsHttp:
+    """HTTP-level: تخصيص وحدة فعلية + منع تعارض حجز حقيقي عبر الـ API
+    الحقيقي (مش نداء مباشر على services)."""
+
+    def test_create_visit_allocates_real_unit(self, client: TestClient, db, fake_redis, manager_headers):
+        from app.modules.timeshare.models import TimeshareUnit
+        branch = make_branch_committed(db)
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+        db.add(unit); db.commit()
+
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+
+        resp = client.post(
+            "/api/v1/timeshare/visits",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "check_in": str(date.today() + timedelta(days=10)),
+                "check_out": str(date.today() + timedelta(days=17)),
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["unit_id"] == unit.id
+
+    def test_create_visit_without_available_unit_returns_400(self, client: TestClient, db, fake_redis, manager_headers):
+        """مفيش أي وحدة من نوع 2R في الفرع ده — لازم 400 وليس نجاح صامت."""
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+
+        resp = client.post(
+            "/api/v1/timeshare/visits",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "check_in": str(date.today() + timedelta(days=10)),
+                "check_out": str(date.today() + timedelta(days=17)),
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "وحدة متاحة" in resp.json()["detail"]
+
+    def test_double_booking_same_unit_rejected_via_http(self, client: TestClient, db, fake_redis, manager_headers):
+        """عقدين مختلفين على نفس الوحدة المخصَّصة دائمًا وفترة متقاطعة —
+        الزيارة الثانية لازم ترفض بـ 400 حقيقي عبر الـ API."""
+        from app.modules.timeshare.models import TimeshareUnit
+        branch = make_branch_committed(db)
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+        db.add(unit); db.commit()
+
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        client.patch(
+            f"/api/v1/timeshare/contracts/{contract['id']}",
+            json={"unit_id": unit.id}, headers=manager_headers,
+        )
+
+        check_in = date.today() + timedelta(days=10)
+        first = client.post(
+            "/api/v1/timeshare/visits",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "check_in": str(check_in), "check_out": str(check_in + timedelta(days=7)),
+            },
+            headers=manager_headers,
+        )
+        assert first.status_code == 201, first.text
+
+        second = client.post(
+            "/api/v1/timeshare/visits",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "check_in": str(check_in + timedelta(days=3)), "check_out": str(check_in + timedelta(days=10)),
+            },
+            headers=manager_headers,
+        )
+        assert second.status_code == 400
+        assert "محجوزة بالفعل" in second.json()["detail"]
+
+    def test_list_units_endpoint(self, client: TestClient, db, fake_redis, manager_headers):
+        from app.modules.timeshare.models import TimeshareUnit
+        branch = make_branch_committed(db)
+        db.add(TimeshareUnit(branch_id=branch.id, unit_number="B-201", unit_type="4R"))
+        db.commit()
+
+        resp = client.get(f"/api/v1/timeshare/units?branch_id={branch.id}", headers=manager_headers)
+        assert resp.status_code == 200
+        numbers = [u["unit_number"] for u in resp.json()]
+        assert "B-201" in numbers
+
+
 class TestTimeshareValidation:
     def test_create_contract_rejects_invalid_room_type(self, client: TestClient, db, fake_redis, manager_headers):
         branch = make_branch_committed(db)

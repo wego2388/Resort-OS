@@ -392,14 +392,23 @@ def list_reviews(
     _=Depends(get_manager_user),
     branch_id: int = Query(...),
     source: Optional[str] = Query(None),
+    booking_id: Optional[int] = Query(None),
+    timeshare_visit_id: Optional[int] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
     from app.modules.analytics.models import GuestReview  # noqa: PLC0415
-    q = db.query(GuestReview).filter(
-        GuestReview.branch_id == branch_id,
-        GuestReview.is_published.is_(True),
-    )
+    q = db.query(GuestReview).filter(GuestReview.branch_id == branch_id)
+    if booking_id or timeshare_visit_id:
+        # عرض تقييمات مرجع محدد (بروفايل عميل تايم شير مثلاً) — يشمل الغير
+        # منشورة كمان (الفريق الداخلي محتاج يشوف الصورة كاملة، مش بس المنشور
+        # للعامة). القائمة العامة (من غير فلتر) لسه بتفلتر is_published فقط.
+        if booking_id:
+            q = q.filter(GuestReview.booking_id == booking_id)
+        if timeshare_visit_id:
+            q = q.filter(GuestReview.timeshare_visit_id == timeshare_visit_id)
+    else:
+        q = q.filter(GuestReview.is_published.is_(True))
     if source:
         q = q.filter(GuestReview.source == source)
     total = q.count()
@@ -525,12 +534,18 @@ async def submit_guest_review(
     token: str = Query(..., description="survey JWT from checkout"),
     data: dict = Body(...),
 ):
-    """يستقبل تقييم الضيف بعد checkout — يتحقق من JWT أولاً."""
+    """يستقبل تقييم الضيف بعد checkout (حجز فندقي) أو بعد زيارة تايم شير —
+    يتحقق من JWT أولاً، ويحدِّد نوع المرجع (ref_type) من التوكن نفسه."""
     from app.modules.analytics.services import verify_survey_token, submit_review  # noqa: PLC0415
     payload = verify_survey_token(token)
-    booking_id = int(payload["sub"])
+    ref_id = int(payload["sub"])
     branch_id = payload["branch_id"]
-    review = submit_review(db, branch_id, booking_id, data)
+    ref_type = payload.get("ref_type", "booking")  # توكنات قديمة بدون ref_type = حجز فندقي دايمًا
+
+    if ref_type == "timeshare_visit":
+        review = submit_review(db, branch_id, booking_id=None, data=data, timeshare_visit_id=ref_id)
+    else:
+        review = submit_review(db, branch_id, booking_id=ref_id, data=data)
     return {"id": review.id, "overall_rating": review.overall_rating}
 
 
@@ -541,7 +556,22 @@ async def get_survey_token(
     branch_id: int = Query(...),
     current_user=Depends(get_current_active_user),
 ):
-    """يُولِّد survey token — يُستدعى من checkout screen."""
+    """يُولِّد survey token لحجز فندقي — يُستدعى من checkout screen."""
     from app.modules.analytics.services import create_survey_token  # noqa: PLC0415
-    token = create_survey_token(booking_id, branch_id)
+    token = create_survey_token(branch_id=branch_id, booking_id=booking_id)
+    return {"token": token, "expires_in_days": 7}
+
+
+@router.get("/analytics/reviews/survey-token/timeshare/{visit_id}")
+async def get_timeshare_survey_token(
+    visit_id: int,
+    db: DbDep,
+    branch_id: int = Query(...),
+    current_user=Depends(get_current_active_user),
+):
+    """يُولِّد survey token لزيارة تايم شير — نفس شكل استجابة الحجز الفندقي
+    بالظبط، endpoint موازٍ مش تعديل على القديم (الحجز الفندقي والتايم شير
+    مصدرين مختلفين تمامًا، مش نفس الجدول)."""
+    from app.modules.analytics.services import create_survey_token  # noqa: PLC0415
+    token = create_survey_token(branch_id=branch_id, timeshare_visit_id=visit_id)
     return {"token": token, "expires_in_days": 7}

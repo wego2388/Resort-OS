@@ -45,7 +45,8 @@ Thumbs.db
 *.swo
 
 # ── Misc local artifacts ───────────────────────────────────────────────────────
-# start.sh/stop.sh/status.sh write PID + log files to /tmp/resort-os-*, which is
-# outside this repo entirely (never inside the working tree), so nothing to
-# ignore here for that — listed for documentation purposes only.
+# scripts/start.sh|stop.sh|status.sh write real PID files + logs here (moved
+# off /tmp to a project-local, per-run location — 2026-07-04 scripts/ reorg).
+.pids/
+backend/logs/
 backups/

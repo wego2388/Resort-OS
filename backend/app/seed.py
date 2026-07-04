@@ -42,6 +42,8 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_leave_types(db)
     _seed_chart_of_accounts(db)
     _seed_room_types(db)
+    _seed_rooms(db)
+    _seed_timeshare_units(db)
     _seed_menus(db)
 
     db.commit()
@@ -306,6 +308,75 @@ def _seed_room_types(db: Session) -> None:
         db.add(RoomType(branch_id=branch.id, **rt))
     db.flush()
     print(f"  ✓ Room types seeded ({len(room_types)} types)")
+
+
+def _seed_rooms(db: Session) -> None:
+    """⚠️ ترقيم منطقي افتراضي مش أرقام غرف حقيقية موثّقة — لم يوجد أي مصدر
+    بيانات فعلي لعدد/ترقيم غرف المنتجع الحقيقي وقت كتابة هذا الكود (2026-07-04).
+    قبل هذا التعديل كان جدول rooms فاضي تمامًا (0 صف) رغم وجود 5 room_types
+    حقيقية — يعني حتى حجوزات الفندق العادية (مش بس التايم شير) كانت مستحيلة
+    تتربط بغرفة فعلية، وده كان بيمنع أي منع تعارض حجز حقيقي (double-booking)
+    على مستوى الغرفة. قرار صاحب المنتجع: ازرع ترقيم منطقي متسلسل دلوقتي
+    (مش نأجّله) — 101-110 مفردة، 201-220 مزدوجة، 301-315 ديلوكس بحري،
+    401-405 جناح عائلي، 501-502 جناح رئاسي (54 غرفة إجمالاً)."""
+    from app.modules.pms.models import Room, RoomType
+    from app.modules.core.models import Branch
+
+    branch = db.query(Branch).first()
+    if not branch or db.query(Room).filter(Room.branch_id == branch.id).first():
+        return
+
+    room_types = {
+        rt.name: rt for rt in db.query(RoomType).filter(RoomType.branch_id == branch.id).all()
+    }
+    # (اسم room_type، بادئة رقم الغرفة، رقم الطابق، عدد الغرف)
+    plan = [
+        ("Standard Single Room",   101, 1, 10),
+        ("Standard Double Room",   201, 2, 20),
+        ("Deluxe Sea View Room",   301, 3, 15),
+        ("Family Suite",           401, 4, 5),
+        ("Presidential Suite",     501, 5, 2),
+    ]
+
+    total = 0
+    for rt_name, start_number, floor, count in plan:
+        rt = room_types.get(rt_name)
+        if not rt:
+            continue
+        for i in range(count):
+            db.add(Room(
+                branch_id=branch.id, room_type_id=rt.id,
+                name=str(start_number + i), floor=floor,
+            ))
+            total += 1
+    db.flush()
+    print(f"  ✓ Rooms seeded ({total} rooms — logical default numbering, not verified real numbers)")
+
+
+def _seed_timeshare_units(db: Session) -> None:
+    """⚠️ نفس ملاحظة _seed_rooms — ترقيم منطقي افتراضي، مش أرقام وحدات
+    حقيقية موثّقة. وحدات التايم شير مبنى/مسكن منفصل فعليًا عن غرف الفندق
+    (قرار صاحب المنتجع 2026-07-04) — لذلك جدول منفصل (timeshare_units)
+    بترقيم مستقل (A-xxx بدل أرقام الغرف العادية)."""
+    from app.modules.timeshare.models import TimeshareUnit
+    from app.modules.core.models import Branch
+
+    branch = db.query(Branch).first()
+    if not branch or db.query(TimeshareUnit).filter(TimeshareUnit.branch_id == branch.id).first():
+        return
+
+    # (unit_type، بادئة الحرف، عدد الوحدات)
+    plan = [("2R", "A", 10), ("4R", "B", 8), ("6R", "C", 4)]
+
+    total = 0
+    for unit_type, prefix, count in plan:
+        for i in range(1, count + 1):
+            db.add(TimeshareUnit(
+                branch_id=branch.id, unit_number=f"{prefix}-{100 + i}", unit_type=unit_type,
+            ))
+            total += 1
+    db.flush()
+    print(f"  ✓ Timeshare units seeded ({total} units — logical default numbering, not verified real numbers)")
 
 
 def _seed_menus(db: Session) -> None:

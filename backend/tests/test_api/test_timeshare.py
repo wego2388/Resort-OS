@@ -26,6 +26,16 @@ def branch(db: Session):
 
 
 @pytest.fixture
+def unit(db: Session, branch):
+    """وحدة تايم شير حقيقية (2R) متاحة — لازمة عشان create_visit يقدر يخصّص
+    وحدة فعلية (allocation logic حقيقي، مش مجرد سطر تاريخ من غير حجز حقيقي)."""
+    from app.modules.timeshare.models import TimeshareUnit
+    u = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+    db.add(u); db.flush()
+    return u
+
+
+@pytest.fixture
 def contract(db: Session, branch):
     data = TimeshareContractCreate(
         branch_id=branch.id,
@@ -351,7 +361,7 @@ class TestCancelContract:
 
 class TestTimeshareVisit:
 
-    def test_create_visit_computes_nights(self, db: Session, branch, contract):
+    def test_create_visit_computes_nights(self, db: Session, branch, contract, unit):
         from app.modules.timeshare.schemas import TimeshareVisitCreate
         data = TimeshareVisitCreate(
             branch_id=branch.id, contract_id=contract.id,
@@ -384,7 +394,7 @@ class TestTimeshareVisit:
         with pytest.raises(ValueError, match="مجمَّد"):
             services.create_visit(db, data)
 
-    def test_update_visit_status(self, db: Session, branch, contract):
+    def test_update_visit_status(self, db: Session, branch, contract, unit):
         from app.modules.timeshare.schemas import TimeshareVisitCreate, TimeshareVisitUpdate
         data = TimeshareVisitCreate(
             branch_id=branch.id, contract_id=contract.id,
@@ -398,6 +408,97 @@ class TestTimeshareVisit:
         from app.modules.timeshare.schemas import TimeshareVisitUpdate
         with pytest.raises(ValueError):
             services.update_visit(db, 999999, TimeshareVisitUpdate(status="completed"))
+
+    # ── Real unit allocation / double-booking prevention ──────────────
+
+    def test_floating_contract_allocates_unit(self, db: Session, branch, contract, unit):
+        """عقد عائم (بدون unit_id ثابت) — لازم يتخصّص له وحدة فعلية حقيقية
+        من نفس room_type لحظة إنشاء الزيارة."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        assert contract.unit_id is None
+        data = TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        )
+        visit = services.create_visit(db, data)
+        assert visit.unit_id == unit.id
+
+    def test_no_available_unit_raises(self, db: Session, branch, contract):
+        """مفيش أي وحدة من نوع 2R في الفرع — لازم يرفض بوضوح (مش ينجح
+        بدون تخصيص حقيقي)."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        data = TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        )
+        with pytest.raises(ValueError, match="لا توجد وحدة متاحة"):
+            services.create_visit(db, data)
+
+    def test_floating_contract_picks_next_unit_when_first_taken(self, db: Session, branch, contract, unit):
+        """عقد عائم تاني — طالما أول وحدة اتحجزت في فترة متقاطعة، لازم
+        ياخد وحدة تانية متاحة، مش يفشل ومش يستخدم نفس الوحدة المحجوزة."""
+        from app.modules.timeshare.models import TimeshareUnit
+        from app.modules.timeshare.schemas import TimeshareContractCreate, TimeshareVisitCreate
+
+        unit2 = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="2R")
+        db.add(unit2); db.flush()
+
+        first_visit = services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        ))
+        assert first_visit.unit_id == unit.id
+
+        contract2 = services.create_contract(db, TimeshareContractCreate(
+            branch_id=branch.id, customer_name="عميل ثاني", room_type="2R",
+            total_value=Decimal("120000"), down_payment=Decimal("20000"),
+            installments=12, installment_period=1,
+            first_installment_date=date(2026, 8, 1),
+            partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),
+        ), signed_by=1)
+
+        second_visit = services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract2.id,
+            check_in=date(2026, 8, 3), check_out=date(2026, 8, 6),  # يتقاطع مع الأول
+        ))
+        assert second_visit.unit_id == unit2.id
+
+    def test_permanently_assigned_unit_rejects_overlap(self, db: Session, branch, contract, unit):
+        """عقد بوحدة مخصَّصة دائمًا (contract.unit_id) — زيارة تانية متقاطعة
+        على نفس الوحدة لازم تُرفض بوضوح (منع تعارض حجز حقيقي)."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+
+        contract.unit_id = unit.id
+        db.commit()
+
+        services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        ))
+
+        with pytest.raises(ValueError, match="محجوزة بالفعل"):
+            services.create_visit(db, TimeshareVisitCreate(
+                branch_id=branch.id, contract_id=contract.id,
+                check_in=date(2026, 8, 5), check_out=date(2026, 8, 10),  # يتقاطع
+            ))
+
+    def test_permanently_assigned_unit_non_overlapping_succeeds(self, db: Session, branch, contract, unit):
+        """نفس الوحدة المخصَّصة دائمًا — لكن فترة تانية غير متقاطعة لازم تنجح
+        عادي (مفيش تعارض حقيقي)."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+
+        contract.unit_id = unit.id
+        db.commit()
+
+        services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        ))
+        second = services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 10), check_out=date(2026, 8, 15),  # مش متقاطعة
+        ))
+        assert second.unit_id == unit.id
 
 
 class TestExcelImport:

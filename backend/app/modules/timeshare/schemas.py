@@ -15,6 +15,7 @@ class TimeshareContractCreate(BaseModel):
     customer_email:         Optional[str] = None
     customer_national_id:   Optional[str] = None
     room_type:              str = Field(..., pattern=r"^(2R|4R|6R)$")
+    unit_id:                Optional[int] = None  # وحدة مخصَّصة دائمًا — None=عائم
     week_number:            Optional[int] = Field(None, ge=1, le=52)
     nights_per_year:        int = Field(7, ge=1)
     season:                 str = Field("high", pattern=r"^(high|low|both)$")
@@ -53,6 +54,7 @@ class TimeshareContractCreate(BaseModel):
 class TimeshareContractUpdate(BaseModel):
     customer_phone:    Optional[str]  = None
     customer_email:    Optional[str]  = None
+    unit_id:           Optional[int]  = None
     week_number:       Optional[int]  = Field(None, ge=1, le=52)
     status:            Optional[str]  = Field(None, pattern=r"^(draft|active|suspended|cancelled|expired)$")
     booking_frozen:    Optional[bool] = None
@@ -75,7 +77,7 @@ class TimeshareContractRead(BaseModel):
     id: int; branch_id: int; contract_number: str
     customer_name: str; customer_phone: Optional[str]; customer_email: Optional[str]
     customer_national_id: Optional[str]
-    room_type: str; week_number: Optional[int]; nights_per_year: int; season: str
+    room_type: str; unit_id: Optional[int]; week_number: Optional[int]; nights_per_year: int; season: str
     total_value: Decimal; down_payment: Decimal; installments: int
     installment_period: int; first_installment_date: date
     partner_share_pct: Decimal; partner_company: Optional[str]
@@ -138,6 +140,14 @@ class TimeshareVisitUpdate(BaseModel):
 class TimeshareVisitRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; branch_id: int; contract_id: int; booking_id: Optional[int]
+    unit_id: Optional[int]
     check_in: date; check_out: date; nights: int; status: str
     notes: Optional[str]
+    created_at: datetime
+
+
+class TimeshareUnitRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; unit_number: str; unit_type: str
+    status: str; notes: Optional[str]
     created_at: datetime

@@ -7,6 +7,7 @@ const router = createRouter({
     { path: '/table/:tableId', component: () => import('../views/TableMenuView.vue') },
     { path: '/order/:orderId/confirm', component: () => import('../views/OrderConfirmView.vue') },
     { path: '/beach/checkin/:reservationId', component: () => import('../views/BeachCheckinView.vue') },
+    { path: '/survey/:token', component: () => import('../views/SurveyView.vue') },
     { path: '/:pathMatch(.*)*', redirect: '/' },
   ],
 })

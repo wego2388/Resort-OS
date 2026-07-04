@@ -294,6 +294,54 @@ class TestReviewsListEndpoint:
         assert body["total"] == 1
         assert body["items"][0]["guest_name"] == "ب"
 
+    def test_filters_by_timeshare_visit_id_includes_unpublished(self, client: TestClient, db, manager_headers):
+        """بروفايل عميل تايم شير محتاج يشوف كل تقييمات الزيارة (حتى الغير
+        منشورة، rating <= 2) — الفلترة العامة (من غير فلتر) لسه بتفلتر
+        is_published فقط، فده لازم يكون سلوك إضافي مش تغيير كاسر."""
+        from decimal import Decimal as _D
+        from app.modules.analytics.models import GuestReview
+        from app.modules.timeshare.models import TimeshareUnit
+        from app.modules.timeshare.schemas import TimeshareContractCreate, TimeshareVisitCreate
+        from app.modules.timeshare import services as ts_services
+
+        branch = make_branch_committed(db)
+        unit1 = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+        unit2 = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="2R")
+        db.add_all([unit1, unit2]); db.commit()
+
+        contract = ts_services.create_contract(db, TimeshareContractCreate(
+            branch_id=branch.id, customer_name="عميل تايم شير", room_type="2R",
+            total_value=_D("120000"), down_payment=_D("20000"),
+            installments=12, installment_period=1,
+            first_installment_date=date(2026, 8, 1),
+            partner_share_pct=_D("0"), start_date=date(2026, 7, 1),
+        ), signed_by=1)
+        visit1 = ts_services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        ))
+        visit2 = ts_services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 9, 1), check_out=date(2026, 9, 8),
+        ))
+
+        db.add_all([
+            GuestReview(branch_id=branch.id, guest_name="سيف", overall_rating=1, source="checkout_survey",
+                       is_published=False, reviewed_at=date(2026, 6, 1), timeshare_visit_id=visit1.id),
+            GuestReview(branch_id=branch.id, guest_name="آخر", overall_rating=5, source="direct",
+                       is_published=True, reviewed_at=date(2026, 6, 2), timeshare_visit_id=visit2.id),
+        ])
+        db.commit()
+
+        resp = client.get(
+            "/api/v1/analytics/reviews",
+            params={"branch_id": branch.id, "timeshare_visit_id": visit1.id},
+            headers=manager_headers,
+        )
+        body = resp.json()
+        assert body["total"] == 1
+        assert body["items"][0]["guest_name"] == "سيف"  # غير منشور لكن ظهر لأنه فلتر محدد
+
 
 class TestFullDashboard:
     def test_dashboard_aggregates_all_sections(self, client: TestClient, db, manager_headers):

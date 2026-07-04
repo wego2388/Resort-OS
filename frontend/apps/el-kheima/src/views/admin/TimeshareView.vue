@@ -27,6 +27,15 @@ interface Contract {
 }
 interface CalendarWeek { week: number; start_date: string; end_date: string; is_current: boolean; is_past: boolean; contracts: any[] }
 interface CalendarMonth { month: number; month_name: string; weeks: CalendarWeek[] }
+interface TimeshareUnit { id: number; unit_number: string; unit_type: string; status: string }
+interface Visit {
+  id: number; contract_id: number; unit_id: number | null
+  check_in: string; check_out: string; nights: number; status: string
+}
+interface GuestReview {
+  id: number; guest_name: string; overall_rating: number; comment: string | null
+  source: string; reviewed_at: string
+}
 
 // ── Tabs ───────────────────────────────────────────────────────────────────
 const TABS = [
@@ -53,6 +62,86 @@ const clientStatusFilter = ref('')
 const clientRoomFilter = ref('')
 const clientsLoading = ref(false)
 const expandedClient = ref<number | null>(null)
+
+// ── Units (لعرض رقم الوحدة الفعلي بدل unit_id خام في بروفايل العميل) ──────
+const units = ref<TimeshareUnit[]>([])
+const unitNumberById = computed<Record<number, string>>(() =>
+  Object.fromEntries(units.value.map(u => [u.id, u.unit_number])),
+)
+
+// ── Customer Profile (ملف عميل مجمّع — كل عقوده/زياراته/أقساطه/تقييماته) ──
+// العقود مفيهاش كيان "عميل" منفصل (customer_name/phone/email مباشرة على كل
+// صف عقد) — فبنجمّع حسب customer_phone (الأكثر ثباتاً ووجوداً) وإلا
+// customer_national_id، وإلا كل عقد بروفايله لوحده (مفيش حاجة تجمعه بحاجة تانية).
+function customerKey(c: Contract): string {
+  return c.customer_phone?.trim() || (c as any).customer_national_id?.trim() || `contract-${c.id}`
+}
+
+const profileModal = reactive({
+  open: false, loading: false,
+  contracts: [] as Contract[],
+  visits: [] as Visit[],
+  reviews: [] as GuestReview[],
+})
+
+const profileCustomerName = computed(() => profileModal.contracts[0]?.customer_name ?? '')
+const profileAllInstallments = computed(() =>
+  profileModal.contracts.flatMap(c => (c.installments_list ?? []).map(i => ({ ...i, contract_number: (c as any).contract_number }))),
+)
+const profileTotals = computed(() => {
+  const totals = { total_value: 0, collected: 0, overdue: 0, pending: 0 }
+  for (const c of profileModal.contracts) totals.total_value += Number(c.total_value) || 0
+  for (const i of profileAllInstallments.value) {
+    if (i.status === 'paid') totals.collected += Number(i.paid_amount) || 0
+    else if (i.status === 'overdue') totals.overdue += Number(i.amount) || 0
+    else if (i.status === 'pending') totals.pending += Number(i.amount) || 0
+  }
+  return totals
+})
+
+async function loadUnits() {
+  try {
+    const r = await api.get('/api/v1/timeshare/units', { params: { branch_id: branchId } })
+    units.value = r.data ?? []
+  } catch (e) { console.error(e) }
+}
+
+async function openProfile(c: Contract) {
+  const key = customerKey(c)
+  profileModal.contracts = allClients.value.filter(x => customerKey(x) === key)
+  profileModal.visits = []
+  profileModal.reviews = []
+  profileModal.open = true
+  profileModal.loading = true
+  try {
+    const visitLists = await Promise.all(
+      profileModal.contracts.map(ct =>
+        api.get('/api/v1/timeshare/visits', { params: { branch_id: branchId, contract_id: ct.id } })
+          .then(r => r.data as Visit[]).catch(() => [] as Visit[])),
+    )
+    profileModal.visits = visitLists.flat().sort((a, b) => b.check_in.localeCompare(a.check_in))
+
+    // التقييمات محتاجة صلاحية manager على الباك إند (GET /analytics/reviews) —
+    // لو المستخدم أقل من كده (مثلاً supervisor بيشوف شاشة التايم شير) بنتخطى
+    // القسم ده بهدوء بدل ما نطلب endpoint هيرجع 403.
+    if (auth.hasRole('manager') && profileModal.visits.length) {
+      const reviewLists = await Promise.all(
+        profileModal.visits.map(v =>
+          api.get('/api/v1/analytics/reviews', { params: { branch_id: branchId, timeshare_visit_id: v.id } })
+            .then(r => (r.data?.items ?? []) as GuestReview[]).catch(() => [] as GuestReview[])),
+      )
+      profileModal.reviews = reviewLists.flat()
+    }
+  } catch (e) { console.error(e); toast.error('فشل تحميل ملف العميل الشامل') }
+  finally { profileModal.loading = false }
+}
+
+const visitStatusVariant: Record<string, BadgeVariant> = {
+  scheduled: 'info', active: 'success', completed: 'neutral', cancelled: 'danger',
+}
+function visitStatusLabel(s: string) {
+  return { scheduled: '📅 مجدولة', active: '🏝️ جارية', completed: '✅ منتهية', cancelled: '❌ ملغاة' }[s] || s
+}
 
 // ── Installments ─────────────────────────────────────────────────────────
 const installments = ref<Installment[]>([])
@@ -126,7 +215,7 @@ async function loadInstallments() {
 
 async function refreshAll() {
   loading.value = true
-  await Promise.all([loadSummary(), loadCalendar(), loadClients(), loadInstallments()])
+  await Promise.all([loadSummary(), loadCalendar(), loadClients(), loadInstallments(), loadUnits()])
   loading.value = false
 }
 
@@ -431,6 +520,10 @@ onMounted(refreshAll)
             <div class="text-left flex-shrink-0 hidden sm:block">
               <div class="text-green-600 font-black text-sm">{{ fmt(c.total_value) }}</div>
             </div>
+            <button @click.stop="openProfile(c)"
+              class="flex-shrink-0 px-2.5 py-1.5 rounded-xl bg-primary-50 text-primary-700 text-[10px] font-bold border border-primary-200 hover:bg-primary-100">
+              👤 الملف الشامل
+            </button>
             <div class="text-gray-300 text-xs flex-shrink-0">{{ expandedClient === c.id ? '▲' : '▼' }}</div>
           </div>
 
@@ -592,6 +685,102 @@ onMounted(refreshAll)
           </AppButton>
           <AppButton variant="ghost" @click="importModal.open = false">إغلاق</AppButton>
         </div>
+      </template>
+    </AppModal>
+
+    <!-- ══ CUSTOMER PROFILE (أجمّع كل عقود/زيارات/أقساط/تقييمات نفس العميل) ══ -->
+    <AppModal :open="profileModal.open" :title="`👤 ملف العميل الشامل — ${profileCustomerName}`" size="lg" @close="profileModal.open = false">
+      <div v-if="profileModal.loading" class="flex justify-center py-12">
+        <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
+      </div>
+      <div v-else class="space-y-5 text-xs">
+        <!-- Totals -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="bg-stone-50 rounded-xl p-3">
+            <p class="text-[9px] text-gray-400 font-bold uppercase mb-1">عدد العقود</p>
+            <p class="font-black text-gray-900">{{ profileModal.contracts.length }}</p>
+          </div>
+          <div class="bg-green-50 rounded-xl p-3">
+            <p class="text-[9px] text-gray-400 font-bold uppercase mb-1">محصّل</p>
+            <p class="font-black text-green-600">{{ fmt(profileTotals.collected) }}</p>
+          </div>
+          <div class="bg-red-50 rounded-xl p-3">
+            <p class="text-[9px] text-gray-400 font-bold uppercase mb-1">متأخر</p>
+            <p class="font-black text-red-500">{{ fmt(profileTotals.overdue) }}</p>
+          </div>
+          <div class="bg-amber-50 rounded-xl p-3">
+            <p class="text-[9px] text-gray-400 font-bold uppercase mb-1">معلّق</p>
+            <p class="font-black text-amber-600">{{ fmt(profileTotals.pending) }}</p>
+          </div>
+        </div>
+
+        <!-- Contracts -->
+        <div>
+          <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">العقود ({{ profileModal.contracts.length }})</p>
+          <div class="space-y-1.5">
+            <div v-for="c in profileModal.contracts" :key="c.id" class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-stone-50 border border-stone-100">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-gray-900">{{ c.contract_number }}</span>
+                <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
+                <AppBadge size="sm" :variant="contractStatusVariant[c.status] ?? 'neutral'">{{ statusLabel(c.status) }}</AppBadge>
+              </div>
+              <span class="font-bold text-green-600">{{ fmt(c.total_value) }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Visits (وحدة فعلية مخصَّصة + تواريخ + حالة) -->
+        <div>
+          <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">الزيارات ({{ profileModal.visits.length }})</p>
+          <div v-if="!profileModal.visits.length" class="text-center py-4 text-gray-300">لا توجد زيارات مسجّلة</div>
+          <div v-else class="space-y-1.5">
+            <div v-for="v in profileModal.visits" :key="v.id" class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-sky-50 border border-sky-100">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-bold text-gray-900">🔑 {{ v.unit_id ? (unitNumberById[v.unit_id] ?? `وحدة #${v.unit_id}`) : '—' }}</span>
+                <span class="text-gray-400">{{ formatDateAr(v.check_in) }} → {{ formatDateAr(v.check_out) }}</span>
+              </div>
+              <AppBadge size="sm" :variant="visitStatusVariant[v.status] ?? 'neutral'">{{ visitStatusLabel(v.status) }}</AppBadge>
+            </div>
+          </div>
+        </div>
+
+        <!-- Installments across all contracts -->
+        <div>
+          <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">الأقساط ({{ profileAllInstallments.length }})</p>
+          <div v-if="!profileAllInstallments.length" class="text-center py-4 text-gray-300">لا توجد أقساط</div>
+          <table v-else class="w-full text-[10px]">
+            <thead><tr class="text-gray-400 border-b border-stone-100">
+              <th class="text-right py-1.5 pr-1">العقد</th><th class="text-right py-1.5">الاستحقاق</th>
+              <th class="text-right py-1.5">المبلغ</th><th class="text-right py-1.5">الحالة</th>
+            </tr></thead>
+            <tbody class="divide-y divide-stone-100">
+              <tr v-for="p in profileAllInstallments" :key="p.id">
+                <td class="py-1.5 pr-1 text-gray-400">{{ p.contract_number }}</td>
+                <td class="py-1.5 text-gray-500">{{ formatDateAr(p.due_date) }}</td>
+                <td class="py-1.5 font-bold">{{ fmt(p.amount) }}</td>
+                <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Reviews (manager فقط — GET /analytics/reviews محتاج صلاحية manager) -->
+        <div v-if="auth.hasRole('manager')">
+          <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">التقييمات ({{ profileModal.reviews.length }})</p>
+          <div v-if="!profileModal.reviews.length" class="text-center py-4 text-gray-300">لا توجد تقييمات مسجّلة</div>
+          <div v-else class="space-y-1.5">
+            <div v-for="r in profileModal.reviews" :key="r.id" class="p-2.5 rounded-xl bg-amber-50 border border-amber-100">
+              <div class="flex items-center justify-between mb-1">
+                <span class="font-bold text-amber-600">{{ '⭐'.repeat(r.overall_rating) }}</span>
+                <span class="text-gray-400 text-[9px]">{{ formatDateAr(r.reviewed_at) }}</span>
+              </div>
+              <p v-if="r.comment" class="text-gray-600">{{ r.comment }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <AppButton variant="ghost" block @click="profileModal.open = false">إغلاق</AppButton>
       </template>
     </AppModal>
   </div>

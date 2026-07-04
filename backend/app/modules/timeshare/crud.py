@@ -5,10 +5,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.timeshare.models import (
-    TimeshareContract, TimeshareInstallment, TimeshareVisit, TimeshareWaitlist,
+    TimeshareContract, TimeshareInstallment, TimeshareUnit, TimeshareVisit, TimeshareWaitlist,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate,
@@ -364,15 +365,79 @@ def list_waitlist(db: Session, branch_id: int) -> list[TimeshareWaitlist]:
 
 # ── Visits ────────────────────────────────────────────────────────────
 
-def create_visit(db: Session, data: TimeshareVisitCreate, nights: int) -> TimeshareVisit:
+def create_visit(db: Session, data: TimeshareVisitCreate, nights: int, unit_id: Optional[int] = None) -> TimeshareVisit:
     visit = TimeshareVisit(
         branch_id=data.branch_id, contract_id=data.contract_id,
-        booking_id=data.booking_id, check_in=data.check_in, check_out=data.check_out,
+        booking_id=data.booking_id, unit_id=unit_id, check_in=data.check_in, check_out=data.check_out,
         nights=nights, notes=data.notes,
     )
     db.add(visit)
     db.flush()
     return visit
+
+
+# ── Units — تخصيص وحدة فعلية عند إنشاء زيارة ─────────────────────────
+
+def get_unit(db: Session, unit_id: int) -> Optional[TimeshareUnit]:
+    return db.query(TimeshareUnit).filter(TimeshareUnit.id == unit_id).first()
+
+
+def list_units(
+    db: Session, branch_id: int,
+    unit_type: Optional[str] = None, status: Optional[str] = None,
+) -> list[TimeshareUnit]:
+    q = db.query(TimeshareUnit).filter(TimeshareUnit.branch_id == branch_id)
+    if unit_type:
+        q = q.filter(TimeshareUnit.unit_type == unit_type)
+    if status:
+        q = q.filter(TimeshareUnit.status == status)
+    return q.order_by(TimeshareUnit.unit_number).all()
+
+
+def has_overlapping_visit(
+    db: Session, unit_id: int, check_in: date, check_out: date,
+    exclude_visit_id: Optional[int] = None,
+) -> bool:
+    """هل فيه زيارة أخرى (scheduled/active) على نفس الوحدة بتتقاطع مع
+    الفترة المطلوبة؟ نفس منطق date-overlap subquery المستخدم في
+    pms.crud.get_available_rooms."""
+    q = db.query(TimeshareVisit).filter(
+        TimeshareVisit.unit_id == unit_id,
+        TimeshareVisit.status.in_(["scheduled", "active"]),
+        TimeshareVisit.check_in < check_out,
+        TimeshareVisit.check_out > check_in,
+    )
+    if exclude_visit_id:
+        q = q.filter(TimeshareVisit.id != exclude_visit_id)
+    return db.query(q.exists()).scalar()
+
+
+def find_available_unit(
+    db: Session, branch_id: int, unit_type: str, check_in: date, check_out: date,
+) -> Optional[TimeshareUnit]:
+    """يُرجع أول وحدة متاحة من نوع unit_type بدون أي زيارة متقاطعة مع
+    الفترة المطلوبة — لعقد عائم (بدون unit_id ثابت)."""
+    booked_unit_ids = (
+        db.query(TimeshareVisit.unit_id)
+        .filter(
+            TimeshareVisit.unit_id.isnot(None),
+            TimeshareVisit.status.in_(["scheduled", "active"]),
+            TimeshareVisit.check_in < check_out,
+            TimeshareVisit.check_out > check_in,
+        )
+        .subquery()
+    )
+    return (
+        db.query(TimeshareUnit)
+        .filter(
+            TimeshareUnit.branch_id == branch_id,
+            TimeshareUnit.unit_type == unit_type,
+            TimeshareUnit.status != "maintenance",
+            ~TimeshareUnit.id.in_(select(booked_unit_ids.c.unit_id)),
+        )
+        .order_by(TimeshareUnit.unit_number)
+        .first()
+    )
 
 
 def get_visit(db: Session, visit_id: int) -> Optional[TimeshareVisit]:

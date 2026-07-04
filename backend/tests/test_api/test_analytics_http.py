@@ -224,3 +224,49 @@ class TestGuestReviewInsights:
         assert resp.status_code == 200
         assert resp.json()["overall_avg"] is None
         assert resp.json()["category_breakdown"] == []
+
+    def test_timeshare_visit_survey_token_and_submit(self, client: TestClient, db, manager_headers):
+        """مسار مواز لـ survey-token/{booking_id} — لكن لزيارة تايم شير بدل
+        حجز فندقي (GET /analytics/reviews/survey-token/timeshare/{visit_id}).
+        نفس شكل الاستجابة بالظبط، ونفس POST /analytics/reviews/submit."""
+        from decimal import Decimal
+        from app.modules.timeshare.models import TimeshareUnit
+        from app.modules.timeshare.schemas import TimeshareContractCreate, TimeshareVisitCreate
+        from app.modules.timeshare import services as ts_services
+
+        branch = make_branch_committed(db)
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+        db.add(unit); db.commit()
+
+        contract = ts_services.create_contract(db, TimeshareContractCreate(
+            branch_id=branch.id, customer_name="عميل تايم شير", room_type="2R",
+            total_value=Decimal("120000"), down_payment=Decimal("20000"),
+            installments=12, installment_period=1,
+            first_installment_date=date(2026, 8, 1),
+            partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),
+        ), signed_by=1)
+        visit = ts_services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        ))
+
+        token_resp = client.get(
+            f"/api/v1/analytics/reviews/survey-token/timeshare/{visit.id}",
+            params={"branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert token_resp.status_code == 200, token_resp.text
+        assert "token" in token_resp.json() and "expires_in_days" in token_resp.json()
+        token = token_resp.json()["token"]
+
+        submit_resp = client.post(
+            "/api/v1/analytics/reviews/submit",
+            params={"token": token},
+            json={"guest_name": "عميل تايم شير", "overall_rating": 5, "comment": "ممتاز"},
+        )
+        assert submit_resp.status_code == 200, submit_resp.text
+
+        from app.modules.analytics.models import GuestReview
+        review = db.query(GuestReview).filter(GuestReview.id == submit_resp.json()["id"]).first()
+        assert review.booking_id is None
+        assert review.timeshare_visit_id == visit.id

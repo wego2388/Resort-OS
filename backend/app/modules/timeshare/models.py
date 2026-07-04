@@ -10,7 +10,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean, Date, DateTime, ForeignKey, Integer,
-    Numeric, String, Text,
+    Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -30,6 +30,9 @@ class TimeshareContract(Base, TimestampMixin):
     customer_email:        Mapped[str | None]    = mapped_column(String(150), nullable=True)
     customer_national_id:  Mapped[str | None]    = mapped_column(EncryptedString(255), nullable=True)
     room_type:             Mapped[str]           = mapped_column(String(10))   # 2R|4R|6R
+    unit_id:               Mapped[int | None]    = mapped_column(ForeignKey("timeshare_units.id", ondelete="SET NULL"), nullable=True)
+    # وحدة مخصَّصة بشكل دائم للعقد (نفس الوحدة كل سنة) — None=عائم (أي وحدة متاحة
+    # من نفس room_type وقت الحجز، بنفس منطق week_number: 1-52 ثابت مقابل None=عائم)
     week_number:           Mapped[int | None]    = mapped_column(Integer, nullable=True)  # 1-52 fixed, None=floating
     nights_per_year:       Mapped[int]           = mapped_column(Integer, default=7)
     season:                Mapped[str]           = mapped_column(String(10), default="high")  # high|low|both
@@ -81,6 +84,9 @@ class TimeshareContract(Base, TimestampMixin):
     waitlist: Mapped[list["TimeshareWaitlist"]] = relationship(
         "TimeshareWaitlist", back_populates="contract", lazy="select"
     )
+    unit: Mapped["TimeshareUnit | None"] = relationship(
+        "TimeshareUnit", foreign_keys=[unit_id], lazy="select",
+    )
 
 
 class TimeshareInstallment(Base, TimestampMixin):
@@ -113,6 +119,8 @@ class TimeshareVisit(Base, TimestampMixin):
     branch_id:       Mapped[int]            = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
     contract_id:     Mapped[int]            = mapped_column(ForeignKey("timeshare_contracts.id", ondelete="CASCADE"))
     booking_id:      Mapped[int | None]     = mapped_column(ForeignKey("bookings.id",  ondelete="SET NULL"), nullable=True)
+    unit_id:         Mapped[int | None]     = mapped_column(ForeignKey("timeshare_units.id", ondelete="SET NULL"), nullable=True)
+    # الوحدة الفعلية المخصَّصة لهذه الزيارة تحديدًا — لعقد عائم ممكن تختلف كل سنة
     check_in:        Mapped[date]           = mapped_column(Date)
     check_out:       Mapped[date]           = mapped_column(Date)
     nights:          Mapped[int]            = mapped_column(Integer)
@@ -121,6 +129,26 @@ class TimeshareVisit(Base, TimestampMixin):
     notes:           Mapped[str | None]     = mapped_column(Text, nullable=True)
 
     contract: Mapped["TimeshareContract"] = relationship("TimeshareContract")
+    unit: Mapped["TimeshareUnit | None"] = relationship("TimeshareUnit", foreign_keys=[unit_id], lazy="select")
+
+
+class TimeshareUnit(Base, TimestampMixin):
+    """وحدة تايم شير فعلية (شاليه/شقة) — منفصلة تمامًا عن غرف الفندق العادية
+    (pms.Room). قرار معماري متعمد (2026-07-04، بعد سؤال صاحب المنتجع مباشرة):
+    وحدات التايم شير مبنى/مسكن منفصل فعليًا عن غرف الفندق (Standard/Deluxe/
+    Family Suite/Presidential) — لا تُوحَّد مع room_types/rooms الفندق."""
+    __tablename__ = "timeshare_units"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "unit_number", name="uq_timeshare_unit_branch_number"),
+    )
+
+    id:           Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:    Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    unit_number:  Mapped[str]        = mapped_column(String(20))     # "A-101"
+    unit_type:    Mapped[str]        = mapped_column(String(10))     # 2R|4R|6R — يطابق TimeshareContract.room_type
+    status:       Mapped[str]        = mapped_column(String(20), default="available")
+    # available|occupied|maintenance
+    notes:        Mapped[str | None] = mapped_column(String(300), nullable=True)
 
 
 class TimeshareWaitlist(Base, TimestampMixin):

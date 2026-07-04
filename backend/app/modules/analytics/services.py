@@ -15,10 +15,20 @@ SURVEY_TOKEN_ALGORITHM = "HS256"
 SURVEY_TOKEN_TTL_DAYS = 7
 
 
-def create_survey_token(booking_id: int, branch_id: int) -> str:
-    """ينشئ JWT صالح 7 أيام للاستبيان — يُرسل لشاشة checkout فقط."""
+def create_survey_token(
+    branch_id: int, booking_id: int | None = None, timeshare_visit_id: int | None = None,
+) -> str:
+    """ينشئ JWT صالح 7 أيام للاستبيان — يُرسل لشاشة checkout (حجز فندقي) أو
+    لزيارة تايم شير على حدٍّ سواء (ref_type يميّز بينهما، sub يحمل الـ id
+    المناسب) — واحد بس لازم يتحدد، مش الاتنين ومش ولا واحد."""
+    if bool(booking_id) == bool(timeshare_visit_id):
+        raise ValueError("حدِّد إما booking_id أو timeshare_visit_id (واحد بالظبط)")
+
+    ref_type = "booking" if booking_id else "timeshare_visit"
+    ref_id = booking_id if booking_id else timeshare_visit_id
     payload = {
-        "sub": str(booking_id),
+        "sub": str(ref_id),
+        "ref_type": ref_type,
         "branch_id": branch_id,
         "purpose": "guest_survey",
         "exp": datetime.now(timezone.utc) + timedelta(days=SURVEY_TOKEN_TTL_DAYS),
@@ -38,8 +48,13 @@ def verify_survey_token(token: str) -> dict:
         raise HTTPException(status_code=400, detail="survey token expired or invalid")
 
 
-def submit_review(db, branch_id: int, booking_id: int | None, data: dict) -> "GuestReview":
-    """يُسجّل تقييم الضيف + ينشئ Activity(complaint) لو avg ≤ 2."""
+def submit_review(
+    db, branch_id: int, booking_id: int | None, data: dict,
+    timeshare_visit_id: int | None = None,
+) -> "GuestReview":
+    """يُسجّل تقييم الضيف + ينشئ Activity(complaint) لو avg ≤ 2. يُربط إما
+    بحجز فندقي (booking_id) أو بزيارة تايم شير (timeshare_visit_id) — الاثنين
+    اختياريان ومستقلان (مش نفس الجدول، وحدات التايم شير مبنى منفصل)."""
     from app.modules.analytics.models import GuestReview, ReviewCategory
 
     overall = data.get("overall_rating", 3)
@@ -53,6 +68,7 @@ def submit_review(db, branch_id: int, booking_id: int | None, data: dict) -> "Gu
         is_published=overall >= 3,  # تُنشر التقييمات ≥ 3 تلقائياً
         reviewed_at=date.today(),
         booking_id=booking_id,
+        timeshare_visit_id=timeshare_visit_id,
     )
     db.add(review)
     db.flush()
@@ -71,14 +87,16 @@ def submit_review(db, branch_id: int, booking_id: int | None, data: dict) -> "Gu
     # avg ≤ 2 → CRM Activity(complaint) تلقائي
     if overall <= 2:
         try:
-            _create_complaint_activity(db, branch_id, booking_id, overall)
+            _create_complaint_activity(db, branch_id, booking_id, timeshare_visit_id, overall)
         except Exception as exc:
             logger.error("Failed to create complaint activity: %s", exc)
 
     return review
 
 
-def _create_complaint_activity(db, branch_id: int, booking_id: int, rating: int) -> None:
+def _create_complaint_activity(
+    db, branch_id: int, booking_id: int | None, timeshare_visit_id: int | None, rating: int,
+) -> None:
     """ينشئ Activity(complaint) في CRM عند تقييم ≤ 2."""
     from app.modules.crm.models import Activity, Customer
 
@@ -96,11 +114,17 @@ def _create_complaint_activity(db, branch_id: int, booking_id: int, rating: int)
         db.add(customer)
         db.flush()
 
+    if booking_id:
+        ref_label = f"حجز #{booking_id}"
+    elif timeshare_visit_id:
+        ref_label = f"زيارة تايم شير #{timeshare_visit_id}"
+    else:
+        ref_label = "تقييم يدوي (بدون حجز أو زيارة)"
     db.add(Activity(
         branch_id=branch_id,
         customer_id=customer.id,
         activity_type="complaint",
-        title=f"تقييم سلبي من حجز #{booking_id} — التقييم: {rating}/5",
+        title=f"تقييم سلبي من {ref_label} — التقييم: {rating}/5",
         due_date=date.today(),
         status="pending",
         notes=f"تقييم الضيف {rating}/5 — يحتاج متابعة عاجلة",

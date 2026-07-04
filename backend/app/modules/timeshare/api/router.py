@@ -12,6 +12,7 @@ from app.modules.timeshare.schemas import (
     PayInstallmentRequest, InstallmentRead,
     TimeshareCancelRequest,
     TimeshareContractCreate, TimeshareContractRead, TimeshareContractUpdate,
+    TimeshareUnitRead,
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
     WaitlistCreate, WaitlistRead,
 )
@@ -186,6 +187,18 @@ def update_visit(visit_id: int, data: TimeshareVisitUpdate, db: DbDep, _=Depends
         return services.update_visit(db, visit_id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Units ────────────────────────────────────────────────────────────
+
+@router.get("/timeshare/units", response_model=list[TimeshareUnitRead])
+def list_units(
+    db: DbDep, _=Depends(get_current_active_user),
+    branch_id: int = Query(...),
+    unit_type: Optional[str] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+):
+    return [TimeshareUnitRead.model_validate(u) for u in crud.list_units(db, branch_id, unit_type, status_filter)]
 
 
 # ── Excel Import ─────────────────────────────────────────────────────

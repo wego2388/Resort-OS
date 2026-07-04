@@ -54,6 +54,9 @@ class GuestReview(Base, TimestampMixin):
     id:              Mapped[int]           = mapped_column(primary_key=True)
     branch_id:       Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
     booking_id:      Mapped[int | None]    = mapped_column(ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True)
+    # تقييم يُربط إما بحجز فندقي (PMS) أو بزيارة تايم شير — الاثنين مسموحين
+    # لكن ليسا نفس الجدول (وحدات التايم شير مبنى منفصل عن غرف الفندق، §timeshare).
+    timeshare_visit_id: Mapped[int | None] = mapped_column(ForeignKey("timeshare_visits.id", ondelete="SET NULL"), nullable=True)
     guest_name:      Mapped[str]           = mapped_column(String(200))
     overall_rating:  Mapped[int]           = mapped_column(Integer)        # 1-5
     comment:         Mapped[str | None]    = mapped_column(Text, nullable=True)
