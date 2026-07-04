@@ -270,6 +270,69 @@ class TestBeachB2BContracts:
         )
         assert resp.status_code == 403
 
+    def test_b2b_checkin_rejected_when_exceeding_daily_quota(
+        self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
+    ):
+        """Real business-rule coverage flagged by an independent review as
+        under-tested: B2B is external-hotel-contract revenue with a fixed
+        daily quota — overselling it means checking in guests the resort
+        never agreed/priced capacity for."""
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/beach/b2b-contracts",
+            json={
+                "branch_id": branch.id, "hotel_name": "Small Quota Hotel",
+                "daily_quota": 5, "entry_price": "150.00",
+                "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
+            },
+            headers=super_admin_headers,
+        ).json()
+
+        # Uses 4 of the 5-guest quota — should succeed.
+        first = client.post(
+            "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
+            json={"contract_id": contract["id"], "guests_count": 4},
+            headers=cashier_headers,
+        )
+        assert first.status_code == 201, first.text
+
+        # Only 1 guest of quota remains — asking for 2 must be rejected, not
+        # silently allowed past the contracted daily cap.
+        over_resp = client.post(
+            "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
+            json={"contract_id": contract["id"], "guests_count": 2},
+            headers=cashier_headers,
+        )
+        assert over_resp.status_code == 400
+        assert "الحصة" in over_resp.json()["detail"]
+
+        # Confirm quota status reflects only the successful check-in, not
+        # the rejected attempt.
+        status_resp = client.get(
+            "/api/v1/beach/b2b-contracts/status",
+            params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        entry = next(s for s in status_resp.json() if s["contract_id"] == contract["id"])
+        assert entry["checked_in_today"] == 4
+        assert entry["remaining_quota"] == 1
+
+    def test_list_b2b_contracts(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
+        branch = make_branch_committed(db)
+        client.post(
+            "/api/v1/beach/b2b-contracts",
+            json={
+                "branch_id": branch.id, "hotel_name": "Listed Hotel",
+                "daily_quota": 20, "entry_price": "100.00",
+                "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
+            },
+            headers=super_admin_headers,
+        )
+        resp = client.get(
+            "/api/v1/beach/b2b-contracts", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        assert any(c["hotel_name"] == "Listed Hotel" for c in resp.json())
+
 
 class TestBeachTicketPdf:
     """قبل الإصلاح: generate_ticket_pdf كانت بتستخدم receipt_pdf العادي (مقاس A4 كامل، رغم
