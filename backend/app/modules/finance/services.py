@@ -215,14 +215,20 @@ def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Opt
     return payment
 
 
-def void_payment(db: Session, payment_id: int, voided_by: int) -> Payment:
+def void_payment(db: Session, payment_id: int, voided_by: int, reason: str = "voided via API") -> Payment:
     payment = crud.get_payment(db, payment_id)
     if not payment:
         raise ValueError(f"الدفعة {payment_id} غير موجودة")
     folio = crud.get_folio(db, payment.folio_id)
     if folio and folio.status == "closed":
         raise ValueError("لا يمكن إلغاء دفعة من فوليو مغلق")
+    original_amount = payment.amount
     payment = crud.void_payment(db, payment, voided_by)
+    # سجل تدقيق إلزامي — أي تغيير فعلي في قيمة دفعة/فاتورة/حجز لازم يترك أثر
+    crud.create_revenue_audit_log(
+        db, branch_id=payment.branch_id, entity_type="payment", entity_id=payment.id,
+        old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
+    )
     db.commit()
     db.refresh(payment)
     return payment

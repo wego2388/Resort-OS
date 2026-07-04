@@ -11,7 +11,7 @@ from app.modules.finance.models import (
     Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
     CashierShift, CashierShiftCashCount, ConditionalDiscount,
     CostCenter, ETAInvoice, ExchangeRate, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
-    Check, CheckMovement,
+    Check, CheckMovement, RevenueAuditLog,
 )
 from app.modules.finance.schemas import (
     AccountCreate, BankAccountCreate, BankAccountUpdate, BankStatementLineCreate,
@@ -227,6 +227,43 @@ def void_payment(db: Session, payment: Payment, voided_by: int) -> Payment:
     payment.voided_by = voided_by
     db.flush()
     return payment
+
+
+# ── Revenue Audit Log ────────────────────────────────────────────────
+
+def create_revenue_audit_log(
+    db: Session,
+    branch_id: int,
+    entity_type: str,
+    entity_id: int,
+    old_value: Decimal,
+    new_value: Decimal,
+    reason: str,
+    changed_by: int,
+    approved_by: Optional[int] = None,
+) -> RevenueAuditLog:
+    log = RevenueAuditLog(
+        branch_id=branch_id, entity_type=entity_type, entity_id=entity_id,
+        old_value=old_value, new_value=new_value, reason=reason,
+        changed_by=changed_by, approved_by=approved_by,
+    )
+    db.add(log)
+    db.flush()
+    return log
+
+
+def list_revenue_audit_logs(
+    db: Session,
+    branch_id: int,
+    entity_type: Optional[str] = None,
+    entity_id: Optional[int] = None,
+) -> list[RevenueAuditLog]:
+    q = db.query(RevenueAuditLog).filter(RevenueAuditLog.branch_id == branch_id)
+    if entity_type:
+        q = q.filter(RevenueAuditLog.entity_type == entity_type)
+    if entity_id:
+        q = q.filter(RevenueAuditLog.entity_id == entity_id)
+    return q.order_by(RevenueAuditLog.created_at.desc()).all()
 
 
 # ── CashierShift (POS Day / Safe) ──────────────────────────────────────

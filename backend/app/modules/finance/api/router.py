@@ -29,7 +29,8 @@ from app.modules.finance.schemas import (
     FolioChargeCreate, FolioChargeRead,
     FolioCreate, FolioRead, IncomeStatementReport, JournalEntryCreate, JournalEntryRead,
     PaymentCreate, PaymentRead,
-    ShiftEndReport, TrialBalanceReport,
+    RevenueAuditLogRead,
+    ShiftEndReport, TrialBalanceReport, VoidPaymentRequest,
 )
 from app.modules.core.schemas import PaginatedResponse
 
@@ -94,6 +95,16 @@ def settle_folio(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
 def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depends(get_cashier_user)):
     try:
         return services.add_payment(db, folio_id, data, cashier_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/finance/payments/{payment_id}/void", response_model=PaymentRead,
+             dependencies=[Depends(require_permission("finance.void_payment", "execute", min_role_level=60))])
+def void_payment(payment_id: int, data: VoidPaymentRequest, db: DbDep,
+                 user=Depends(get_manager_user)):
+    try:
+        return services.void_payment(db, payment_id, voided_by=user.id, reason=data.reason)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -336,6 +347,23 @@ def get_journal_entry(entry_id: int, db: DbDep, _=Depends(get_manager_user)):
     if not entry:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Journal entry {entry_id} not found")
     return JournalEntryRead.model_validate(entry)
+
+
+# ── Revenue Audit Log ────────────────────────────────────────────────
+# سجل تدقيق للتغييرات الفعلية في سعر/قيمة (زي إلغاء دفعة) — للعرض فقط،
+# بيتسجّل تلقائيًا من الـ services (services.void_payment مثلًا)، مش عن طريق
+# create endpoint مباشر للمستخدم.
+
+@router.get("/finance/revenue-audit-logs", response_model=list[RevenueAuditLogRead])
+def list_revenue_audit_logs(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    entity_type: Optional[str] = Query(None, pattern=r"^(booking|folio|invoice|payment)$"),
+    entity_id: Optional[int] = Query(None),
+):
+    items = crud.list_revenue_audit_logs(db, branch_id, entity_type, entity_id)
+    return [RevenueAuditLogRead.model_validate(l) for l in items]
 
 
 # ── Accounting Periods ────────────────────────────────────────────────

@@ -133,6 +133,14 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "min_role_level": 60,
         "endpoint": "DELETE /crm/customers/{customer_id}/blacklist",
     },
+    {
+        "resource": "finance.void_payment",
+        "action": "execute",
+        "label_ar": "إلغاء دفعة",
+        "module": "finance",
+        "min_role_level": 60,
+        "endpoint": "POST /finance/payments/{payment_id}/void",
+    },
 ]
 
 

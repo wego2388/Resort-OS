@@ -390,6 +390,98 @@ class TestFolioHTTPFlow:
         assert resp.status_code == 400
 
 
+class TestVoidPaymentAndRevenueAuditLogHTTP:
+    """Regression coverage — services.void_payment/crud.void_payment existed
+    in full but had zero router endpoint (payments could never be voided via
+    the API). RevenueAuditLog had the same bug at the model level (no
+    schema/crud/router at all) — now populated automatically by void_payment
+    and exposed read-only via GET /finance/revenue-audit-logs."""
+
+    def _make_folio_with_payment(self, client, branch, cashier_headers, amount="570.00"):
+        folio_resp = client.post(
+            "/api/v1/finance/folios",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف",
+                "check_in": datetime.utcnow().isoformat(),
+                "check_out": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        folio_id = folio_resp.json()["id"]
+        pay_resp = client.post(
+            f"/api/v1/finance/folios/{folio_id}/payments",
+            json={
+                "folio_id": folio_id, "branch_id": branch.id, "amount": amount,
+                "method": "cash", "posted_at": datetime.utcnow().isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        return folio_id, pay_resp.json()
+
+    def test_void_payment_writes_revenue_audit_log(self, client: TestClient, db, cashier_headers, manager_headers):
+        branch = make_branch_committed(db)
+        _, payment = self._make_folio_with_payment(client, branch, cashier_headers)
+
+        void_resp = client.post(
+            f"/api/v1/finance/payments/{payment['id']}/void",
+            json={"reason": "الضيف دفع بالخطأ مرتين"},
+            headers=manager_headers,
+        )
+        assert void_resp.status_code == 200, void_resp.text
+        voided = void_resp.json()
+        assert voided["voided_at"] is not None
+
+        logs_resp = client.get(
+            "/api/v1/finance/revenue-audit-logs",
+            params={"branch_id": branch.id, "entity_type": "payment", "entity_id": payment["id"]},
+            headers=manager_headers,
+        )
+        assert logs_resp.status_code == 200, logs_resp.text
+        logs = logs_resp.json()
+        assert len(logs) == 1
+        assert logs[0]["entity_type"] == "payment"
+        assert logs[0]["old_value"] == "570.00"
+        assert logs[0]["new_value"] == "0.00"
+        assert logs[0]["reason"] == "الضيف دفع بالخطأ مرتين"
+
+    def test_void_payment_rejects_short_reason(self, client: TestClient, db, cashier_headers, manager_headers):
+        branch = make_branch_committed(db)
+        _, payment = self._make_folio_with_payment(client, branch, cashier_headers)
+
+        resp = client.post(
+            f"/api/v1/finance/payments/{payment['id']}/void",
+            json={"reason": "x"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_void_nonexistent_payment_400(self, client: TestClient, db, manager_headers):
+        resp = client.post(
+            "/api/v1/finance/payments/999999/void",
+            json={"reason": "دفعة غير موجودة"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_void_payment_requires_manager(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        _, payment = self._make_folio_with_payment(client, branch, cashier_headers)
+
+        resp = client.post(
+            f"/api/v1/finance/payments/{payment['id']}/void",
+            json={"reason": "محاولة كاشير"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_revenue_audit_logs_requires_manager(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/finance/revenue-audit-logs", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestCashierShiftHTTPFlow:
     def test_full_shift_lifecycle(self, client: TestClient, db, cashier_headers):
         branch = make_branch_committed(db)

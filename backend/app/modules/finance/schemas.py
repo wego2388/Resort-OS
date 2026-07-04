@@ -107,6 +107,10 @@ class PaymentCreate(BaseModel):
     cashier_id: Optional[int] = None
 
 
+class VoidPaymentRequest(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
 class PaymentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:        int
@@ -622,3 +626,23 @@ class BalanceSheetReport(BaseModel):
     total_liabilities_and_equity: Decimal
     is_balanced:                  bool
     reporting_currency:           str = "EGP"
+
+
+# ── Revenue Audit Log ───────────────────────────────────────────────────
+# RevenueAuditLog كان موجود بالكامل في models.py من غير أي schema/crud/router
+# — نفس فئة الباج الموثّقة مرارًا. سجل تدقيق إلزامي بيتسجّل تلقائيًا (مش
+# create endpoint للمستخدم) عند أي تغيير فعلي في سعر/قيمة — أول استخدام
+# حقيقي: إلغاء دفعة (POST /finance/payments/{id}/void).
+
+class RevenueAuditLogRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:          int
+    branch_id:   int
+    entity_type: str
+    entity_id:   int
+    old_value:   Decimal
+    new_value:   Decimal
+    reason:      str
+    changed_by:  int
+    approved_by: Optional[int]
+    created_at:  datetime
