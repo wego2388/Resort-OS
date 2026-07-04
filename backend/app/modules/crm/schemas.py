@@ -257,3 +257,34 @@ class ActivityRead(BaseModel):
     notes:         Optional[str]
     created_at:    datetime
     updated_at:    datetime
+
+
+# ── Call Notes ──────────────────────────────────────────────────────────
+# CallNote كان موجود بالكامل في models.py من غير أي schema/crud/router —
+# نفس فئة الباج الموثّقة مرارًا في CLAUDE.md § 11.6 (Lead/Campaign/
+# TenantCashLog كانوا نفس الحالة بالظبط).
+
+class CallNoteCreate(BaseModel):
+    branch_id:    int
+    lead_id:      int
+    direction:    str = Field("outbound", pattern=r"^(inbound|outbound)$")
+    duration_min: Optional[int] = Field(None, ge=0)
+    summary:      str = Field(..., min_length=3, max_length=1000)
+    outcome:      str = Field("no_decision", pattern=r"^(interested|not_interested|callback|no_decision|appointment_set)$")
+    callback_at:  Optional[datetime] = None
+    called_at:    Optional[datetime] = None
+
+
+class CallNoteRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:           int
+    branch_id:    int
+    lead_id:      int
+    direction:    str
+    duration_min: Optional[int]
+    summary:      str
+    outcome:      str
+    callback_at:  Optional[datetime]
+    called_by:    int
+    called_at:    datetime
+    created_at:   datetime

@@ -227,3 +227,83 @@ class TestCRMCampaigns:
             headers=waiter_headers,
         )
         assert resp.status_code == 403
+
+
+class TestCallNotes:
+    """Regression coverage — same bug class as TestCRMLeadsFlow/TestCRMCampaigns
+    above: the CallNote model already existed in full, but zero schema/crud/
+    route was ever wired, so the feature was completely dead (404 always)."""
+
+    def _make_lead(self, client, branch, headers):
+        return client.post(
+            "/api/v1/crm/leads",
+            json={"branch_id": branch.id, "full_name": "عميل محتمل", "interest": "timeshare"},
+            headers=headers,
+        ).json()
+
+    def test_create_and_list_call_notes(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        lead = self._make_lead(client, branch, manager_headers)
+
+        create_resp = client.post(
+            f"/api/v1/crm/leads/{lead['id']}/call-notes",
+            json={
+                "branch_id": branch.id, "lead_id": lead["id"],
+                "direction": "outbound", "duration_min": 6,
+                "summary": "اتكلمنا عن أسعار التايم شير", "outcome": "interested",
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        note = create_resp.json()
+        assert note["outcome"] == "interested"
+        assert note["lead_id"] == lead["id"]
+
+        list_resp = client.get(
+            f"/api/v1/crm/leads/{lead['id']}/call-notes", headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        ids = [n["id"] for n in list_resp.json()]
+        assert note["id"] in ids
+
+    def test_create_call_note_rejects_unknown_lead(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/crm/leads/999999/call-notes",
+            json={
+                "branch_id": branch.id, "lead_id": 999999,
+                "summary": "ملاحظة على عميل غير موجود",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_list_call_notes_rejects_unknown_lead(self, client: TestClient, db, fake_redis, manager_headers):
+        resp = client.get("/api/v1/crm/leads/999999/call-notes", headers=manager_headers)
+        assert resp.status_code == 404
+
+    def test_create_call_note_rejects_mismatched_lead_id(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        lead = self._make_lead(client, branch, manager_headers)
+        other_lead = self._make_lead(client, branch, manager_headers)
+
+        resp = client.post(
+            f"/api/v1/crm/leads/{lead['id']}/call-notes",
+            json={"branch_id": branch.id, "lead_id": other_lead["id"], "summary": "غير متطابق"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_create_call_note_rejects_invalid_outcome(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        lead = self._make_lead(client, branch, manager_headers)
+
+        resp = client.post(
+            f"/api/v1/crm/leads/{lead['id']}/call-notes",
+            json={
+                "branch_id": branch.id, "lead_id": lead["id"],
+                "summary": "نتيجة غير معروفة", "outcome": "will_call_back_never",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 422

@@ -7,9 +7,10 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.crm.models import Activity, Campaign, Customer, CustomerInteraction, Opportunity, Lead, GuestProfile
+from app.modules.crm.models import Activity, CallNote, Campaign, Customer, CustomerInteraction, Opportunity, Lead, GuestProfile
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityUpdate,
+    CallNoteCreate,
     CampaignCreate, CampaignUpdate,
     CustomerCreate, CustomerUpdate,
     InteractionCreate,
@@ -264,6 +265,27 @@ def update_lead(db: Session, lead: Lead, data: dict) -> Lead:
     for k, v in data.items():
         setattr(lead, k, v)
     db.commit(); db.refresh(lead); return lead
+
+
+# ── Call Notes ──────────────────────────────────────────────────────────
+
+def create_call_note(db: Session, data: CallNoteCreate, called_by: int) -> CallNote:
+    obj = CallNote(
+        branch_id=data.branch_id, lead_id=data.lead_id, direction=data.direction,
+        duration_min=data.duration_min, summary=data.summary, outcome=data.outcome,
+        callback_at=data.callback_at, called_by=called_by,
+        called_at=data.called_at or datetime.utcnow(),
+    )
+    db.add(obj); db.commit(); db.refresh(obj); return obj
+
+
+def list_call_notes_for_lead(db: Session, lead_id: int) -> list[CallNote]:
+    return (
+        db.query(CallNote)
+        .filter(CallNote.lead_id == lead_id)
+        .order_by(CallNote.called_at.desc())
+        .all()
+    )
 
 
 # ── GuestProfile ──────────────────────────────────────────────────────

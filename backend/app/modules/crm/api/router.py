@@ -14,6 +14,7 @@ from app.modules.crm import crud, services
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityRead, ActivityUpdate,
     BlacklistRequest,
+    CallNoteCreate, CallNoteRead,
     CampaignCreate, CampaignRead, CampaignUpdate,
     CustomerCreate, CustomerRead, CustomerUpdate,
     InteractionCreate, InteractionRead,
@@ -173,6 +174,28 @@ def update_lead_stage(lead_id: int, data: LeadStageUpdate, db: DbDep,
         return LeadRead.model_validate(services.update_lead_stage(db, lead_id, data))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Call Notes ────────────────────────────────────────────────────────
+# نفس فئة الباج: CallNote model كان موجود بالكامل، بس مفيش schema/crud/
+# router خالص — 404 دايمًا على أي محاولة استخدام حقيقية.
+
+@router.get("/crm/leads/{lead_id}/call-notes", response_model=list[CallNoteRead])
+def list_call_notes(lead_id: int, db: DbDep, _=Depends(get_current_active_user)):
+    if not crud.get_lead(db, lead_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العميل المحتمل {lead_id} غير موجود")
+    return [CallNoteRead.model_validate(n) for n in crud.list_call_notes_for_lead(db, lead_id)]
+
+
+@router.post("/crm/leads/{lead_id}/call-notes", response_model=CallNoteRead,
+             status_code=status.HTTP_201_CREATED)
+def create_call_note(lead_id: int, data: CallNoteCreate, db: DbDep,
+                     user=Depends(get_current_active_user)):
+    if not crud.get_lead(db, lead_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العميل المحتمل {lead_id} غير موجود")
+    if data.lead_id != lead_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "lead_id غير مطابق للمسار")
+    return CallNoteRead.model_validate(crud.create_call_note(db, data, called_by=user.id))
 
 
 # ── Interactions ──────────────────────────────────────────────────────
