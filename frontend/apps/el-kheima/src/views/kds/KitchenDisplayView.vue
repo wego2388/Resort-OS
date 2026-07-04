@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api, useResortWebSocket } from '@resort-os/core'
+import { useToast } from '@resort-os/ui'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const toast = useToast()
 
 // محطات المطبخ — كل حاجة ما عدا البار (البار له شاشته الخاصة، BarDisplayView)
 const KITCHEN_STATIONS = 'hot,grill,cold,dessert'
@@ -90,8 +92,9 @@ async function advanceStatus(ticket: Ticket) {
     if (next === 'done') {
       setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticket.id) }, 2000)
     }
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
+    // بدون toast الطباخ كان بيدوس "جاهز" ومايحصلش حاجة — من غير أي تفسير
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة التذكرة — حاول تاني')
   }
 }
 

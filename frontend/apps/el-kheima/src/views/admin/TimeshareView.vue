@@ -103,7 +103,7 @@ async function loadUnits() {
   try {
     const r = await api.get('/api/v1/timeshare/units', { params: { branch_id: branchId } })
     units.value = r.data ?? []
-  } catch (e) { console.error(e) }
+  } catch { toast.error('فشل تحميل وحدات التايم شير') }
 }
 
 async function openProfile(c: Contract) {

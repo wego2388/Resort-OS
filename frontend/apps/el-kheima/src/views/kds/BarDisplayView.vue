@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api, useResortWebSocket } from '@resort-os/core'
+import { useToast } from '@resort-os/ui'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const toast = useToast()
 
 type TicketStatus = 'pending' | 'in_progress' | 'done'
 interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null }
@@ -91,8 +93,8 @@ async function advanceStatus(ticket: BarTicket) {
     if (next === 'done') {
       setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticket.id) }, 1800)
     }
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة التذكرة — حاول تاني')
   }
 }
 

@@ -29,6 +29,7 @@ interface Dashboard {
 }
 
 const loading = ref(true)
+const loadError = ref(false)
 const dash = ref<Dashboard | null>(null)
 
 const PIPELINE_STAGES = [
@@ -48,11 +49,13 @@ const formatDateAr = (d?: string | null) => {
 
 async function load() {
   loading.value = true
+  loadError.value = false
   try {
     const r = await api.get('/api/v1/timeshare/sales-dashboard', { params: { branch_id: branchId } })
     dash.value = r.data
-  } catch (e) {
-    console.error(e)
+  } catch {
+    // من غير حالة خطأ ظاهرة كانت الصفحة بتفضل فاضية تمامًا لو التحميل فشل
+    loadError.value = true
   } finally {
     loading.value = false
   }
@@ -80,6 +83,11 @@ onMounted(load)
 
     <div v-if="loading" class="flex justify-center py-20">
       <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
+    </div>
+
+    <div v-else-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between">
+      <span>⚠️ تعذّر تحميل لوحة المبيعات — تأكد من اتصالك وحاول تاني</span>
+      <button @click="load" class="font-semibold underline hover:no-underline">إعادة المحاولة</button>
     </div>
 
     <template v-else-if="dash">

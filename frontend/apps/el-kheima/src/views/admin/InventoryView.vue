@@ -6,24 +6,43 @@ import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast } from '
 const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
+// أسماء الحقول لازم تطابق ProductRead في الباك إند بالظبط:
+// cost_price / reorder_point / category_id — قبل كده كانت الشاشة بتقرأ
+// unit_cost / reorder_level / category (أسماء مش موجودة أصلاً)، يعني كشف
+// المخزون المنخفض كان بيقارن بـ undefined فمكانش بيشتغل خالص، وعمود الفئة
+// والتكلفة كانوا فاضيين دايمًا.
 interface Product {
   id: number; name: string; sku: string; unit: string
-  current_stock: number; reorder_level: number; category: string; unit_cost: number | null
+  current_stock: number; reorder_point: number; category_id: number | null; cost_price: number | null
 }
 
 const products = ref<Product[]>([])
+const categoryNames = ref<Record<number, string>>({})
 const loading = ref(false)
 const search = ref('')
 const showLowStock = ref(false)
 
+const categoryLabel = (p: Product) =>
+  p.category_id != null ? (categoryNames.value[p.category_id] ?? '—') : '—'
+
 const filtered = () => {
   let list = products.value
-  if (showLowStock.value) list = list.filter(p => p.current_stock <= p.reorder_level)
+  if (showLowStock.value) list = list.filter(p => p.current_stock <= p.reorder_point)
   if (search.value) list = list.filter(p => p.name.includes(search.value) || p.sku.includes(search.value))
   return list
 }
 
-const lowStockCount = () => products.value.filter(p => p.current_stock <= p.reorder_level).length
+const lowStockCount = () => products.value.filter(p => p.current_stock <= p.reorder_point).length
+
+async function fetchCategories() {
+  try {
+    const res = await api.get('/api/v1/inventory/categories', { params: { branch_id: branchId } })
+    const list: { id: number; name: string; name_ar: string | null }[] = res.data ?? []
+    categoryNames.value = Object.fromEntries(list.map(c => [c.id, c.name_ar || c.name]))
+  } catch {
+    // غير حرج: أسماء الفئات مجرد عرض، بترجع لـ — لو فشلت
+  }
+}
 
 async function fetchProducts() {
   loading.value = true
@@ -34,7 +53,7 @@ async function fetchProducts() {
   finally { loading.value = false }
 }
 
-onMounted(fetchProducts)
+onMounted(() => { fetchCategories(); fetchProducts() })
 </script>
 
 <template>
@@ -76,23 +95,23 @@ onMounted(fetchProducts)
             <tr v-for="p in filtered()" :key="p.id" class="border-t border-stone-100 hover:bg-stone-50">
               <td class="px-4 py-3 font-medium text-gray-900 text-sm">{{ p.name }}</td>
               <td class="px-4 py-3 font-mono text-xs text-gray-500">{{ p.sku }}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">{{ p.category }}</td>
+              <td class="px-4 py-3 text-sm text-gray-600">{{ categoryLabel(p) }}</td>
               <td class="px-4 py-3">
-                <span :class="['text-sm font-bold', p.current_stock <= p.reorder_level ? 'text-red-600' : 'text-gray-900']">
+                <span :class="['text-sm font-bold', p.current_stock <= p.reorder_point ? 'text-red-600' : 'text-gray-900']">
                   {{ p.current_stock }} {{ p.unit }}
                 </span>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-500">{{ p.reorder_level }} {{ p.unit }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ (p.unit_cost ?? 0).toLocaleString('ar-EG') }} ج</td>
+              <td class="px-4 py-3 text-sm text-gray-500">{{ p.reorder_point }} {{ p.unit }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700">{{ (p.cost_price ?? 0).toLocaleString('ar-EG') }} ج</td>
               <td class="px-4 py-3">
-                <AppBadge size="sm" :variant="p.current_stock <= 0 ? 'danger' : p.current_stock <= p.reorder_level ? 'warning' : 'success'">
-                  {{ p.current_stock <= 0 ? 'نفد' : p.current_stock <= p.reorder_level ? 'منخفض' : 'متاح' }}
+                <AppBadge size="sm" :variant="p.current_stock <= 0 ? 'danger' : p.current_stock <= p.reorder_point ? 'warning' : 'success'">
+                  {{ p.current_stock <= 0 ? 'نفد' : p.current_stock <= p.reorder_point ? 'منخفض' : 'متاح' }}
                 </AppBadge>
               </td>
             </tr>
             <tr v-if="filtered().length === 0">
               <td colspan="7" class="px-4 py-8">
-                <EmptyState icon="📦" title="لا توجد أصناف" subtitle="جرّب تغيير البحث أو أضف صنف جديد" />
+                <EmptyState icon="📦" title="لا توجد أصناف" subtitle="جرّب تغيير كلمة البحث أو إلغاء فلتر المخزون المنخفض" />
               </td>
             </tr>
           </tbody>

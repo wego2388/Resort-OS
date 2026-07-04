@@ -3,11 +3,13 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
+import { useToast } from '@resort-os/ui'
 import ExtrasSelectionModal from '../../components/ExtrasSelectionModal.vue'
 
 const props = defineProps<{ tableId?: string }>()
 
 const router = useRouter()
+const toast = useToast()
 const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue } = useOfflineQueue()
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
@@ -109,8 +111,9 @@ async function loadData() {
       const tables: Table[] = tablesRes.data.tables ?? tablesRes.data.items ?? tablesRes.data
       table.value = tables.find(t => t.id === tableId.value) ?? null
     }
-  } catch (e) {
-    console.error('Failed to load menu', e)
+  } catch {
+    // من غير إشعار الجرسون كان بيشوف قائمة فاضية من غير أي تفسير
+    toast.error('تعذّر تحميل قائمة الطعام — تأكد من الاتصال وحاول تاني')
   } finally {
     loading.value = false
   }

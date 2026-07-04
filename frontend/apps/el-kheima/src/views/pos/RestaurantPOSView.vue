@@ -2,11 +2,12 @@
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
 import { useOfflineQueue, usePrintDocument } from '@resort-os/core/composables'
-import { AppModal, AppBadge, EmptyState } from '@resort-os/ui'
+import { AppModal, AppBadge, EmptyState, useToast } from '@resort-os/ui'
 import OrderDetailModal from '../../components/OrderDetailModal.vue'
 
 const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue, lastPartialRejection } = useOfflineQueue()
 const { printBlob } = usePrintDocument()
+const toast = useToast()
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
@@ -58,8 +59,8 @@ async function loadActiveOrders() {
     })
     const items: ActiveOrder[] = data.items ?? data
     activeOrders.value = items.filter(o => ACTIVE_STATUSES.has(o.status))
-  } catch (e) {
-    console.error('Failed to load active orders', e)
+  } catch {
+    toast.error('تعذّر تحميل الطلبات الجارية — حاول تاني')
   } finally {
     activeOrdersLoading.value = false
   }
@@ -174,8 +175,9 @@ async function loadData() {
     if (categories.value.length) {
       selectedCategoryId.value = categories.value[0].id
     }
-  } catch (e) {
-    console.error('Failed to load restaurant data', e)
+  } catch {
+    // من غير إشعار كان الكاشير بيشوف قائمة أصناف فاضية من غير أي تفسير
+    toast.error('تعذّر تحميل بيانات المطعم — تأكد من الاتصال وحاول تاني')
   } finally {
     loading.value = false
   }
