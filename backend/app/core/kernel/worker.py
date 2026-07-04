@@ -28,9 +28,22 @@ def make_celery(settings=None, *, app_name: Optional[str] = None):
         getattr(settings, "REDIS_URL", None)
         or os.getenv("REDIS_URL", "redis://localhost:6379/0")
     )
+    # Honor dedicated Celery broker/result URLs when configured (documented in
+    # .env.example + DEPLOYMENT.md as separate Redis logical DBs), else fall
+    # back to REDIS_URL so nothing breaks when they're unset.
+    broker_url = (
+        getattr(settings, "CELERY_BROKER_URL", None)
+        or os.getenv("CELERY_BROKER_URL")
+        or redis_url
+    )
+    result_backend = (
+        getattr(settings, "CELERY_RESULT_BACKEND", None)
+        or os.getenv("CELERY_RESULT_BACKEND")
+        or redis_url
+    )
     name = app_name or getattr(settings, "APP_NAME", None) or "resort_os"
 
-    app = Celery(name, broker=redis_url, backend=redis_url)
+    app = Celery(name, broker=broker_url, backend=result_backend)
 
     app.config_from_object({
         "task_serializer": "json",

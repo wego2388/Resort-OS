@@ -160,7 +160,7 @@ the same path the `certbot_certs` named volume backs:
 sudo apt-get install -y certbot
 
 # Find where the certbot_certs volume actually lives on disk:
-docker volume inspect resort-os_certbot_certs --format '{{ .Mountpoint }}'
+docker volume inspect resort-os-prod_certbot_certs --format '{{ .Mountpoint }}'
 # then either:
 #   (a) symlink /etc/letsencrypt on the host to that mountpoint, or
 #   (b) stop nginx, run certbot standalone, copy certs into that mountpoint, restart nginx

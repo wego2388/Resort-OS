@@ -6,6 +6,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_date_to_utc_range
 from app.modules.restaurant.models import (
     DiningTable, KDSScreen, KitchenTicket, MenuCategory, MenuItem, MenuItemExtra,
     MenuItemExtraGroup, Order, OrderItem, OrderItemExtra,
@@ -137,8 +139,9 @@ def list_orders(
     if status:
         q = q.filter(Order.status == status)
     if order_date:
-        start = datetime.combine(order_date, datetime.min.time())
-        end   = datetime.combine(order_date, datetime.max.time())
+        # created_at مخزّن UTC — لازم نحوّل "اليوم" بتوقيت المنتجع (settings.TIMEZONE)
+        # لمدى UTC، وإلا فلترة "اليوم" بتفشل لمدة ~3 ساعات كل يوم (فرق UTC+3 القاهرة).
+        start, end = local_date_to_utc_range(order_date, settings.TIMEZONE)
         q = q.filter(Order.created_at.between(start, end))
     total = q.count()
     items = q.order_by(Order.created_at.desc()).offset(skip).limit(limit).all()
