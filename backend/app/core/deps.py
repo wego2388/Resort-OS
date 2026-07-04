@@ -170,12 +170,14 @@ def get_waiter_user(user=Depends(get_current_active_user)):
 # النظام الحالي (role level فقط). راجع app/modules/core/services.py::has_permission
 # و app/modules/core/models.py::UserPermission للتفاصيل الكاملة.
 #
-# الاستخدام (defense-in-depth — بيتضاف جنب role dependency الموجودة، مش بدلها):
+# الاستخدام (defense-in-depth — بيتضاف جنب role dependency الموجودة، مش بدلها)
+# — مطبَّق فعليًا على POST /finance/payments/{payment_id}/void
+# (app/modules/finance/api/router.py):
 #     @router.post(
-#         "/finance/payments/{id}/void",
-#         dependencies=[Depends(require_permission("finance.void_payment", "execute"))],
+#         "/finance/payments/{payment_id}/void",
+#         dependencies=[Depends(require_permission("finance.void_payment", "execute", min_role_level=60))],
 #     )
-#     def void_payment(..., user=Depends(get_cashier_user), ...):
+#     def void_payment(..., user=Depends(get_manager_user), ...):
 #         ...
 #
 # min_role_level بيمثّل "الحد المعتاد" لهذا الـ resource.action تحديداً
