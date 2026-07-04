@@ -200,3 +200,64 @@ class TestCafeRevenueJournalPosting:
         from app.modules.finance import crud as finance_crud
         _, total = finance_crud.list_journal_entries(db, branch.id, source="cafe")
         assert total == 0
+
+
+class TestCafeRefundFolioEdgeCases:
+    """services._reduce_folio_charge_for_refund — الفرعين اللي مش مغطيين عبر
+    HTTP: (أ) الطلب مربوط بـ folio_id بس مفيش FolioCharge فعلي مطابق (مثلاً
+    فشلت الشحنة الأولى بصمت)، و(ب) الفوليو مقفول (status='closed') فمينفعش
+    نلمس شحناته بعد قفله. الحالتين دول مش سهل الوصول ليهم عن طريق الـ HTTP
+    endpoints العادية فبنبني الحالة يدويًا هنا على مستوى service."""
+
+    def test_refund_when_folio_charge_missing_does_not_crash(self, db):
+        from datetime import datetime as _dt
+        from app.modules.finance.models import Folio
+
+        branch = make_branch(db)
+        item = make_cafe_item(db, branch)
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "paid")
+
+        # نربط الطلب بفوليو حقيقي يدويًا من غير ما ننشئ FolioCharge مطابق —
+        # بيحاكي حالة نشر الشحنة الأولى اللي فشلت بصمت (except Exception: pass).
+        folio = Folio(branch_id=branch.id, guest_name="ضيف اختبار مرتجع",
+                       check_in=_dt.utcnow(), check_out=_dt.utcnow(), status="open")
+        db.add(folio); db.commit()
+        order.folio_id = folio.id
+        db.commit()
+
+        refunded = services.refund_order_item(db, order.id, order.items[0].id, "اختبار", refunded_by=1)
+        assert refunded.status == "refunded"
+        db.refresh(folio)
+        assert folio.total == Decimal("0")  # مفيش شحنة أصلاً فمفيش أي تغيير
+
+    def test_refund_skips_closed_folio(self, db):
+        from datetime import datetime as _dt
+        from app.modules.finance import crud as finance_crud
+        from app.modules.finance.models import Folio
+        from app.modules.finance.schemas import FolioChargeCreate
+
+        branch = make_branch(db)
+        item = make_cafe_item(db, branch)
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "paid")
+
+        folio = Folio(branch_id=branch.id, guest_name="ضيف اختبار مرتجع ٢",
+                       check_in=_dt.utcnow(), check_out=_dt.utcnow(), status="open")
+        db.add(folio); db.commit()
+        finance_crud.add_charge(db, folio.id, FolioChargeCreate(
+            charge_type="cafe", description="طلب كافيه", amount=order.subtotal,
+            vat_amount=order.vat_amount, posted_at=_dt.utcnow(), ref_order_id=order.id,
+        ))
+        db.commit()
+        finance_crud.recalculate_folio_total(db, folio)
+        order.folio_id = folio.id
+        folio.status = "closed"  # الفوليو اتقفل بعد الشحنة، قبل ما الضيف يعمل مرتجع
+        db.commit()
+        total_before = folio.total
+        assert total_before > Decimal("0")
+
+        refunded = services.refund_order_item(db, order.id, order.items[0].id, "اختبار", refunded_by=1)
+        assert refunded.status == "refunded"
+        db.refresh(folio)
+        assert folio.total == total_before  # مقفول، فما اتلمسش رغم المرتجع
