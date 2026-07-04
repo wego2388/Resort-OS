@@ -26,10 +26,6 @@ class Settings(CoreSettings):
     # ── API ───────────────────────────────────────────────────────────
     API_PREFIX: str = "/api/v1"
 
-    # ── Auth extras ───────────────────────────────────────────────────
-    ACCOUNT_LOCKOUT_ATTEMPTS: int = 5
-    ACCOUNT_LOCKOUT_MINUTES: int = 15
-
     # ── Survey Token (مفتاح منفصل لعزل الأمان) ───────────────────────
     SURVEY_TOKEN_SECRET: str = ""
 
