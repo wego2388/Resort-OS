@@ -13,6 +13,7 @@ _create_test_user / super_admin_headers docstring for the same gotcha.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 from fastapi.testclient import TestClient
@@ -136,6 +137,56 @@ class TestRestaurantOrderHTTP:
         branch_arg, payload_arg = mock_broadcast.call_args[0]
         assert branch_arg == str(branch.id)
         assert payload_arg["type"] == "tickets_updated"
+
+    def test_kds_websocket_client_actually_receives_broadcast_message(
+        self, client: TestClient, db, waiter_headers,
+    ):
+        """The test above only proves `broadcast()` gets *called* with the
+        right args (mocked) — it never proves a real connected WS client
+        actually receives anything, which is the actual point of the whole
+        feature (a real KDS screen open on a real connection). This connects
+        a genuine WebSocket client through TestClient and confirms the exact
+        JSON message arrives after a real ticket status change over HTTP."""
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+
+        order_resp = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        )
+        order_id = order_resp.json()["id"]
+
+        with client.websocket_connect(f"/api/v1/restaurant/ws/kds/{branch.id}") as ws:
+            in_kitchen_resp = client.patch(
+                f"/api/v1/restaurant/orders/{order_id}/status",
+                json={"status": "in_kitchen"}, headers=waiter_headers,
+            )
+            assert in_kitchen_resp.status_code == 200, in_kitchen_resp.text
+
+            message = ws.receive_json()
+            assert message["type"] == "tickets_updated"
+            assert message["order_id"] == order_id
+
+            # Advance the real KDS ticket created by the in_kitchen transition
+            # and confirm the *second*, differently-shaped broadcast (from
+            # update_ticket_status, keyed by ticket_id not order_id) also
+            # reaches the same live connection.
+            tickets_resp = client.get(
+                "/api/v1/restaurant/kitchen/tickets",
+                params={"branch_id": branch.id}, headers=waiter_headers,
+            )
+            ticket_id = tickets_resp.json()[0]["id"]
+            status_resp = client.patch(
+                f"/api/v1/restaurant/kitchen/tickets/{ticket_id}/status",
+                json={"status": "in_progress"}, headers=waiter_headers,
+            )
+            assert status_resp.status_code == 200, status_resp.text
+
+            second_message = ws.receive_json()
+            assert second_message["type"] == "tickets_updated"
+            assert second_message["ticket_id"] == ticket_id
 
     def test_create_order_rejects_unavailable_item(self, client: TestClient, db, waiter_headers):
         from app.modules.restaurant.models import MenuItem
@@ -307,6 +358,61 @@ class TestHeldOrders:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "open"
+
+
+class TestApplyDiscount:
+    """POST /restaurant/orders/{id}/discount — zero test coverage before this
+    (flagged by an independent review). Applies the best-matching active
+    ConditionalDiscount rule from the finance module automatically; not a
+    manual discount amount entered by the cashier."""
+
+    def test_percentage_discount_applied_from_active_rule(
+        self, client: TestClient, db, waiter_headers, cashier_headers,
+    ):
+        from app.modules.finance.models import ConditionalDiscount
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)  # 80.00 EGP
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("10"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 2}]},
+            headers=waiter_headers,
+        ).json()
+        assert Decimal(str(order["discount_amount"])) == Decimal("0.00")
+
+        resp = client.post(
+            f"/api/v1/restaurant/orders/{order['id']}/discount", headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        updated = resp.json()
+        # subtotal = 160.00 (2 x 80.00), 10% off -> 16.00 saved
+        assert Decimal(str(updated["discount_amount"])) == Decimal("16.00")
+
+    def test_discount_rejected_on_paid_order(self, client: TestClient, db, waiter_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        client.patch(f"/api/v1/restaurant/orders/{order['id']}/status",
+                     json={"status": "in_kitchen"}, headers=waiter_headers)
+        client.patch(f"/api/v1/restaurant/orders/{order['id']}/status",
+                     json={"status": "paid"}, headers=cashier_headers)
+
+        resp = client.post(f"/api/v1/restaurant/orders/{order['id']}/discount", headers=cashier_headers)
+        assert resp.status_code == 400
 
 
 class TestOrderPaymentPermission:
