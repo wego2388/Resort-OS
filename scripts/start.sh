@@ -49,9 +49,19 @@ echo "${GOLD}${BOLD}╚═══════════════════
 echo
 
 # ── Guard: already running? ───────────────────────────────────────────────────
+# ⚠️ لازم نتحقق من البورت الفعلي (fuser) مش بس ملف الـ PID — باج حقيقي كان
+# هنا: لو حد شغّل uvicorn يدويًا برّه النظام ده (أو وكيل/جلسة تانية) وما
+# اتسجّلش في .pids/، الفحص القديم (PID file بس) كان بيفشل يلاحظه، فـ
+# start.sh كان بيحاول يشغّل نسخة جديدة تتصادم على نفس البورت وتطيح بـ
+# "Address already in use" — لكن health check كان لسه بينجح (بيضرب على
+# النسخة القديمة الشغالة فعلًا)، فالسكريبت كان بيبلّغ "نجح" رغم إن النسخة
+# اللي هو فعلاً شغّلها ماتت فورًا. اتصلح بفحص البورت مباشرة.
 if [[ -f "$PID_DIR/backend.pid" ]] && kill -0 "$(cat "$PID_DIR/backend.pid")" 2>/dev/null; then
   warn "Backend already running (PID $(cat "$PID_DIR/backend.pid")) — run scripts/stop.sh first, or scripts/restart.sh"
   exit 1
+fi
+if fuser 8005/tcp >/dev/null 2>&1; then
+  die "Port 8005 already in use by an untracked process (not started via this script) — find it with: lsof -i :8005  — then kill it or run: fuser -k 8005/tcp"
 fi
 
 # ── Pre-flight guards ──────────────────────────────────────────────────────────
@@ -106,10 +116,25 @@ fi
 # ── Start Backend ─────────────────────────────────────────────────────────────
 info "Starting backend (port 8005)..."
 cd "$BACKEND"
+: > "$LOG_DIR/api.log"   # truncate — avoids reading a stale bind-error from a previous run below
 nohup python -m uvicorn app.main:app --reload --port 8005 --host 127.0.0.1 \
   > "$LOG_DIR/api.log" 2>&1 &
-echo $! > "$PID_DIR/backend.pid"
-ok "Backend started (PID $(cat "$PID_DIR/backend.pid"))"
+BACKEND_PID=$!
+echo "$BACKEND_PID" > "$PID_DIR/backend.pid"
+
+# Real bind-failure detection — a dead PID a few hundred ms later means
+# uvicorn exited immediately (almost always "Address already in use").
+# Don't just trust `echo $!` + a later health-check ever having found
+# *something* on the port; verify *this* process is the one actually
+# serving it.
+sleep 0.5
+if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+  rm -f "$PID_DIR/backend.pid"
+  echo "  ${RED}✗${RESET} Backend process died immediately — real error from $LOG_DIR/api.log:"
+  tail -5 "$LOG_DIR/api.log" | sed 's/^/    /'
+  exit 1
+fi
+ok "Backend started (PID $BACKEND_PID)"
 
 # ── Start Celery worker + beat ────────────────────────────────────────────────
 if $START_WORKER; then
