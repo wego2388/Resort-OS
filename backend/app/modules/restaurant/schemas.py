@@ -151,6 +151,9 @@ class OrderItemRead(BaseModel):
     voided_reason: Optional[str] = None
     voided_by:     Optional[int] = None
     voided_at:     Optional[datetime] = None
+    # ملحوظة: نفس الحقول دي (voided_reason/voided_by/voided_at) بتتسجّل كمان
+    # لمرتجع بعد الدفع (status="refunded") — راجع services.refund_order_item،
+    # نفس شكل "مين/ليه/إمتى" صالح للحالتين، مفيش داعي لحقول مكرّرة.
 
 
 class OrderRead(BaseModel):
@@ -166,6 +169,7 @@ class OrderRead(BaseModel):
     service_charge:           Decimal
     discount_amount:          Decimal
     total:                    Decimal
+    refunded_amount:          Decimal
     guests_count:             int
     notes:                    Optional[str]
     waiter_id:                Optional[int]

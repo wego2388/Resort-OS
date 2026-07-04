@@ -213,6 +213,9 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "2150", "name": "تأمينات مستأجرين",            "account_type": "liability"},
         {"code": "4500", "name": "إيرادات إيجارات تجارية",      "account_type": "revenue"},
         {"code": "5300", "name": "مصروفات مرافق (كهرباء/مياه/غاز)", "account_type": "expense"},
+        {"code": "1110", "name": "حساب بنكي",                     "account_type": "asset"},
+        {"code": "5500", "name": "مصروف إهلاك الأصول الثابتة",     "account_type": "expense"},
+        {"code": "1590", "name": "مجمّع إهلاك الأصول الثابتة",     "account_type": "asset"},
     ]
 
     existing_codes = {

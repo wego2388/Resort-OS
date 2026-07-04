@@ -269,3 +269,32 @@ class TestBeachB2BContracts:
             headers=manager_headers,
         )
         assert resp.status_code == 403
+
+
+class TestBeachTicketPdf:
+    """قبل الإصلاح: generate_ticket_pdf كانت بتستخدم receipt_pdf العادي (مقاس A4 كامل، رغم
+    إن الـ docstring كان بيدّعي إنها thermal) — مش المناسب لطابعة رول حراري 80mm الحقيقية
+    المستخدمة في شبابيك دخول الشاطئ. اتصلحت لاستخدام receipt_pdf_thermal فعليًا."""
+
+    def test_ticket_pdf_is_thermal_sized_not_a4(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+
+        sell_resp = client.post(
+            "/api/v1/beach/sell",
+            params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 2},
+            headers=cashier_headers,
+        )
+        assert sell_resp.status_code == 201, sell_resp.text
+        tx = sell_resp.json()
+
+        resp = client.get(f"/api/v1/beach/transactions/{tx['id']}/ticket", headers=cashier_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == "application/pdf"
+
+        import re
+        match = re.search(rb"/MediaBox\s*\[([^\]]+)\]", resp.content)
+        assert match is not None
+        media_box = [float(v) for v in match.group(1).split()]
+        pdf_width = media_box[2] - media_box[0]
+        assert pdf_width < 300, f"expected thermal-width PDF, got width={pdf_width}pt (A4 is ~595pt)"

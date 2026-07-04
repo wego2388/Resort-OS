@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { api } from '@resort-os/core'
+import { usePrintDocument } from '@resort-os/core/composables'
 import { useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { printBlob } = usePrintDocument()
 
 // ── Offline queue ──────────────────────────────────────────────────────────────
 // NOTE: @resort-os/core's useOfflineQueue() posts hard-coded to
@@ -202,13 +204,9 @@ async function sellOne(item: BeachSaleLineItem) {
 async function printTicket(txId: number) {
   try {
     const ticketRes = await api.get(`/api/v1/beach/transactions/${txId}/ticket`, { responseType: 'blob' })
-    const url = URL.createObjectURL(ticketRes.data)
-    const w = window.open(url, '_blank')
-    if (!w) {
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `ticket-${txId}.pdf`
-      a.click()
+    const outcome = printBlob(ticketRes.data, `ticket-${txId}.pdf`)
+    if (outcome.downloadedInstead) {
+      toast.error('التذكرة اتحمّلت كملف (المتصفح منع نافذة الطباعة) — افتحها واطبعها يدويًا')
     }
   } catch {
     // ticket printing is optional — don't block success

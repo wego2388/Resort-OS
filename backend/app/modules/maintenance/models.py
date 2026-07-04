@@ -35,6 +35,20 @@ class Asset(Base, TimestampMixin):
     # operational|under_maintenance|out_of_service|disposed
     notes:           Mapped[str | None]   = mapped_column(Text, nullable=True)
 
+    # ── Fixed-asset depreciation (straight-line — راجع finance/services.py::run_depreciation) ──
+    # كل الحقول دي اختيارية عمدًا: أصل مش محتاج إهلاك (زي عقار مؤجَّر) أو لسه
+    # مالياً مش متسجّل بيفضل purchase_cost=None وما يدخلش في أي عملية إهلاك.
+    purchase_cost:            Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    salvage_value:             Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # القيمة المتبقية المتوقعة آخر العمر الإنتاجي — بتتخصم من التكلفة قبل حساب الإهلاك الشهري
+    useful_life_years:        Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    depreciation_method:      Mapped[str]            = mapped_column(String(20), default="straight_line")
+    depreciation_start_date:  Mapped[date | None]     = mapped_column(Date, nullable=True)
+    accumulated_depreciation: Mapped[Decimal]         = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # قيمة مجمّعة (cached) بتتحدّث مع كل AssetDepreciationEntry جديد (finance module)
+    # — بديل أسرع من SUM() على كل قراءة، الرقم الرسمي دايمًا مطابق لمجموع سطور
+    # asset_depreciation_entries الخاصة بنفس الأصل.
+
     work_orders:           Mapped[list["WorkOrder"]]          = relationship("WorkOrder",          back_populates="asset",    lazy="select")
     preventive_schedules:  Mapped[list["PreventiveSchedule"]] = relationship("PreventiveSchedule", back_populates="asset",    lazy="select")
 

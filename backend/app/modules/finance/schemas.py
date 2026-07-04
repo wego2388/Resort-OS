@@ -488,6 +488,127 @@ class BalanceSheetLine(BaseModel):
     amount:       Decimal
 
 
+# ── Fixed-Asset Depreciation ───────────────────────────────────────────
+
+class DepreciationRunRequest(BaseModel):
+    branch_id: int
+    year:      int = Field(..., ge=2000, le=2100)
+    month:     int = Field(..., ge=1, le=12)
+
+
+class AssetDepreciationEntryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                int
+    asset_id:          int
+    branch_id:         int
+    year:              int
+    month:             int
+    amount:            Decimal
+    accumulated_after: Decimal
+    journal_entry_id:  Optional[int]
+    posted_by:         int
+    created_at:        datetime
+
+
+class DepreciationRunResult(BaseModel):
+    branch_id:        int
+    year:             int
+    month:            int
+    entries:          list[AssetDepreciationEntryRead]
+    total_amount:     Decimal
+    journal_entry_id: Optional[int]
+    skipped_assets:   list[str] = Field(default_factory=list)
+    # أكواد الأصول اللي اتخطّتها الدورة دي (بالفعل مُهلَكة بالكامل، أو الشهر
+    # ده اتترحّل قبل كده، أو تاريخ بداية الإهلاك لسه ماجاش)
+
+
+# ── Bank Reconciliation ────────────────────────────────────────────────
+
+class BankAccountCreate(BaseModel):
+    branch_id:       int
+    bank_name:       str = Field(..., max_length=150)
+    account_name:    str = Field(..., max_length=200)
+    account_number:  str = Field(..., max_length=50)
+    currency:        str = Field("EGP", pattern=r"^[A-Z]{3}$")
+    gl_account_id:   Optional[int] = None
+    opening_balance: Decimal = Field(Decimal("0"))
+
+
+class BankAccountUpdate(BaseModel):
+    bank_name:       Optional[str]     = Field(None, max_length=150)
+    account_name:    Optional[str]     = Field(None, max_length=200)
+    gl_account_id:   Optional[int]     = None
+    opening_balance: Optional[Decimal] = None
+    is_active:       Optional[bool]    = None
+
+
+class BankAccountRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:              int
+    branch_id:       int
+    bank_name:       str
+    account_name:    str
+    account_number:  str
+    currency:        str
+    gl_account_id:   Optional[int]
+    opening_balance: Decimal
+    is_active:       bool
+    created_at:      datetime
+    updated_at:      datetime
+
+
+class BankStatementLineCreate(BaseModel):
+    line_date:           date
+    description:         str = Field(..., max_length=300)
+    amount:              Decimal = Field(..., description="موجب=إيداع، سالب=سحب/عمولة")
+    external_reference:  Optional[str] = Field(None, max_length=100)
+
+    @model_validator(mode="after")
+    def _amount_not_zero(self) -> "BankStatementLineCreate":
+        if self.amount == 0:
+            raise ValueError("قيمة سطر كشف الحساب لا يمكن أن تكون صفراً")
+        return self
+
+
+class BankStatementImportRequest(BaseModel):
+    lines: list[BankStatementLineCreate] = Field(..., min_length=1, max_length=1000)
+
+
+class BankStatementLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                  int
+    bank_account_id:     int
+    branch_id:           int
+    line_date:           date
+    description:         str
+    amount:              Decimal
+    external_reference:  Optional[str]
+    status:              str
+    matched_payment_id:  Optional[int]
+    matched_at:          Optional[datetime]
+    matched_by:          Optional[int]
+    created_at:          datetime
+
+
+class BankStatementMatchRequest(BaseModel):
+    payment_id: int
+
+
+class BankReconciliationSummary(BaseModel):
+    bank_account_id:    int
+    as_of:              date
+    opening_balance:    Decimal
+    book_balance:       Decimal
+    # opening_balance + مجموع الدفعات المطابقة (matched) حتى as_of
+    statement_balance:  Decimal
+    # opening_balance + مجموع كل سطور كشف الحساب حتى as_of (matched + unmatched غير المتجاهلة)
+    difference:         Decimal
+    is_reconciled:      bool
+    unmatched_statement_lines: int
+    unmatched_payments_count:  int
+    unmatched_payments_total:  Decimal
+
+
 class BalanceSheetReport(BaseModel):
     branch_id:                    int
     as_of:                        date

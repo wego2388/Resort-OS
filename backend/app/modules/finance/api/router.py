@@ -16,10 +16,14 @@ from app.core.deps import (
 from app.modules.finance import crud, services
 from app.modules.finance.schemas import (
     AccountCreate, AccountRead,
-    AccountingPeriodRead, BalanceSheetReport, CashierShiftClose, CashierShiftOpen,
+    AccountingPeriodRead, AssetDepreciationEntryRead, BalanceSheetReport,
+    BankAccountCreate, BankAccountRead, BankAccountUpdate, BankReconciliationSummary,
+    BankStatementImportRequest, BankStatementLineRead, BankStatementMatchRequest,
+    CashierShiftClose, CashierShiftOpen,
     CashierShiftRead, CheckCreate, CheckMoveStatus, CheckRead, ClosePeriodRequest,
     ConditionalDiscountCreate, ConditionalDiscountRead, ConditionalDiscountUpdate,
     CostCenterCreate, CostCenterRead, CostCenterReport,
+    DepreciationRunRequest, DepreciationRunResult,
     DiscountCalculateRequest, ETAInvoiceRead, ETAInvoiceSubmitRequest,
     ExchangeRateCreate, ExchangeRateRead,
     FolioChargeCreate, FolioChargeRead,
@@ -537,3 +541,143 @@ def get_eta_invoice(invoice_id: int, db: DbDep, _user=Depends(get_manager_user))
     if not invoice:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الفاتورة {invoice_id} غير موجودة")
     return ETAInvoiceRead.model_validate(invoice)
+
+
+# ── Fixed-Asset Depreciation ─────────────────────────────────────────
+
+@router.post("/finance/depreciation/run", response_model=DepreciationRunResult)
+def run_depreciation(data: DepreciationRunRequest, db: DbDep, user=Depends(get_manager_user)):
+    """يشغّل دورة إهلاك خطي شهرية لكل الأصول المؤهّلة في الفرع — آمن لإعادة
+    التشغيل (أي أصل اتّرحّل له نفس الشهر قبل كده بيتخطّى تلقائيًا)."""
+    try:
+        return services.run_depreciation(db, data.branch_id, data.year, data.month, user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/finance/depreciation/entries", response_model=PaginatedResponse)
+def list_depreciation_entries(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    asset_id: Optional[int] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    items, total = services.list_depreciation_entries(db, branch_id, asset_id, page, size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[AssetDepreciationEntryRead.model_validate(e) for e in items])
+
+
+# ── Bank Accounts ──────────────────────────────────────────────────────
+
+@router.post("/finance/bank-accounts", response_model=BankAccountRead,
+             status_code=status.HTTP_201_CREATED)
+def create_bank_account(data: BankAccountCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        return services.create_bank_account(db, data)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/finance/bank-accounts", response_model=list[BankAccountRead])
+def list_bank_accounts(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    active_only: bool = Query(True),
+):
+    return [BankAccountRead.model_validate(a) for a in crud.list_bank_accounts(db, branch_id, active_only)]
+
+
+@router.patch("/finance/bank-accounts/{bank_account_id}", response_model=BankAccountRead)
+def update_bank_account(bank_account_id: int, data: BankAccountUpdate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        return services.update_bank_account(db, bank_account_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Bank Statement Lines / Reconciliation ───────────────────────────────
+
+@router.post(
+    "/finance/bank-accounts/{bank_account_id}/statement-lines",
+    response_model=list[BankStatementLineRead],
+    status_code=status.HTTP_201_CREATED,
+)
+def import_bank_statement_lines(
+    bank_account_id: int, data: BankStatementImportRequest, db: DbDep, user=Depends(get_manager_user),
+):
+    """استيراد سطور كشف حساب بنكي (يدوي/من ملف اتحوّل JSON على الفرونت
+    إند) — كل سطر بيدخل الحالة unmatched لحد ما يتطابق (أوتوماتيك أو يدوي)."""
+    try:
+        return [
+            BankStatementLineRead.model_validate(l)
+            for l in services.import_bank_statement_lines(db, bank_account_id, user.id, data)
+        ]
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.get(
+    "/finance/bank-accounts/{bank_account_id}/statement-lines",
+    response_model=PaginatedResponse,
+)
+def list_bank_statement_lines(
+    bank_account_id: int, db: DbDep, _=Depends(get_manager_user),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
+):
+    items, total = crud.list_bank_statement_lines(
+        db, bank_account_id, status_filter, skip=(page - 1) * size, limit=size,
+    )
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[BankStatementLineRead.model_validate(l) for l in items])
+
+
+@router.post("/finance/bank-accounts/{bank_account_id}/statement-lines/auto-match")
+def auto_match_bank_statement_lines(bank_account_id: int, db: DbDep, user=Depends(get_manager_user)):
+    """مطابقة أوتوماتيكية محافظة — بس لو مرشح دفعة واحد بالظبط لكل سطر،
+    غير كده بيسيبه للمطابقة اليدوية. يرجّع عدد السطور اللي اتطابقت."""
+    try:
+        matched = services.auto_match_bank_statement_lines(db, bank_account_id, user.id)
+        return {"matched_count": matched}
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post(
+    "/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/match",
+    response_model=BankStatementLineRead,
+)
+def match_bank_statement_line(
+    bank_account_id: int, line_id: int, data: BankStatementMatchRequest, db: DbDep,
+    user=Depends(get_manager_user),
+):
+    try:
+        return services.match_bank_statement_line(db, bank_account_id, line_id, data.payment_id, user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post(
+    "/finance/bank-accounts/{bank_account_id}/statement-lines/{line_id}/unmatch",
+    response_model=BankStatementLineRead,
+)
+def unmatch_bank_statement_line(bank_account_id: int, line_id: int, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        return services.unmatch_bank_statement_line(db, bank_account_id, line_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get(
+    "/finance/bank-accounts/{bank_account_id}/reconciliation-summary",
+    response_model=BankReconciliationSummary,
+)
+def get_bank_reconciliation_summary(
+    bank_account_id: int, db: DbDep, _=Depends(get_manager_user),
+    as_of: date = Query(...),
+):
+    try:
+        return services.get_bank_reconciliation_summary(db, bank_account_id, as_of)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))

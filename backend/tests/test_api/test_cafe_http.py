@@ -537,3 +537,32 @@ class TestCafePublicMenu:
         body = resp.json()
         assert body["items"] == []
         assert body["categories"] == []
+
+
+class TestCafeReceiptPdf:
+    """قبل الإصلاح: generate_receipt_pdf كانت بتستخدم receipt_pdf العادي (مقاس A4 كامل)،
+    مش المناسب لطابعة رول حراري 80mm الحقيقية. اتصلحت لاستخدام receipt_pdf_thermal."""
+
+    def test_receipt_pdf_is_thermal_sized_not_a4(self, client: TestClient, db, fake_redis, waiter_headers):
+        branch = make_branch_committed(db)
+        item = make_item_committed(db, branch)
+
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={
+                "branch_id": branch.id, "order_type": "takeaway",
+                "items": [{"item_id": item.id, "quantity": 2}],
+            },
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.get(f"/api/v1/cafe/orders/{order['id']}/receipt", headers=waiter_headers)
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == "application/pdf"
+
+        import re
+        match = re.search(rb"/MediaBox\s*\[([^\]]+)\]", resp.content)
+        assert match is not None
+        media_box = [float(v) for v in match.group(1).split()]
+        pdf_width = media_box[2] - media_box[0]
+        assert pdf_width < 300, f"expected thermal-width PDF, got width={pdf_width}pt (A4 is ~595pt)"

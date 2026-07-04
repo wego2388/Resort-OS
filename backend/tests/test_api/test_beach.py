@@ -766,3 +766,84 @@ class TestBeachRevenueJournalPosting:
 
         _, total = finance_crud.list_journal_entries(db, branch.id, source="beach")
         assert total == 1  # بس من towel_rent، مش من towel_return
+
+
+class TestBeachVoidReversesFinancials:
+    """⚠️ باج محاسبي حقيقي كان هنا (اتصلح 2026-07-04): void_transaction كانت
+    بتعكس المخزون بس — الإيراد المسجّل في دفتر اليومية (كاش فوري) أو الشحنة
+    على فاتورة الغرفة (Charge to Room) كانت تفضل زي ما هي حتى بعد الإلغاء،
+    يعني مبالغة دائمة في الإيرادات/فاتورة الضيف لأي عملية اتلغت."""
+
+    def test_void_cash_sale_posts_reversal_journal_entry(self, db):
+        from app.modules.finance import crud as finance_crud
+        branch = make_branch(db)
+        cash, revenue = make_finance_accounts(db, branch)
+
+        tx = services.sell_ticket(db, branch.id, BeachSellRequest(tx_type="entry", quantity=2))
+        expected_amount = tx.total_amount + tx.vat_amount
+
+        services.void_transaction(db, tx.id, voided_by=1, reason="اختبار عكس القيد")
+
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="beach_void")
+        assert total == 1
+        entry = entries[0]
+        assert entry.source_id == tx.id
+        total_debit = sum(l.debit for l in entry.lines)
+        total_credit = sum(l.credit for l in entry.lines)
+        assert total_debit == total_credit == expected_amount
+
+        db.refresh(cash)
+        db.refresh(revenue)
+        cash_line = next(l for l in entry.lines if l.account_id == cash.id)
+        revenue_line = next(l for l in entry.lines if l.account_id == revenue.id)
+        assert cash_line.credit == expected_amount  # عكس البيع: دلوقتي دائن مش مدين
+        assert revenue_line.debit == expected_amount  # عكس البيع: دلوقتي مدين مش دائن
+
+    def test_void_room_charged_ticket_removes_folio_charge(self, db):
+        from app.modules.finance import crud as finance_crud
+        from app.modules.finance.models import Folio
+        from app.modules.pms.models import Room, Booking
+        from datetime import datetime, timedelta
+
+        branch = make_branch(db)
+        folio = Folio(
+            branch_id=branch.id, guest_name="نزيل شاطئ", status="open",
+            check_in=datetime.utcnow(), check_out=datetime.utcnow() + timedelta(days=2),
+        )
+        db.add(folio)
+        db.commit()
+
+        tx = services.sell_ticket(
+            db, branch.id, BeachSellRequest(tx_type="entry", quantity=1, folio_id=folio.id),
+        )
+        charge = finance_crud.get_charge_by_ref_beach_tx(db, tx.id)
+        assert charge is not None
+        db.refresh(folio)
+        assert folio.total == tx.total_amount + tx.vat_amount
+
+        services.void_transaction(db, tx.id, voided_by=1, reason="اختبار إلغاء شحنة الغرفة")
+
+        assert finance_crud.get_charge_by_ref_beach_tx(db, tx.id) is None
+        db.refresh(folio)
+        assert folio.total == Decimal("0")
+
+    def test_void_rejected_on_closed_folio(self, db):
+        from app.modules.finance.models import Folio
+        from datetime import datetime, timedelta
+
+        branch = make_branch(db)
+        folio = Folio(
+            branch_id=branch.id, guest_name="نزيل شاطئ", status="open",
+            check_in=datetime.utcnow(), check_out=datetime.utcnow() + timedelta(days=2),
+        )
+        db.add(folio)
+        db.commit()
+
+        tx = services.sell_ticket(
+            db, branch.id, BeachSellRequest(tx_type="entry", quantity=1, folio_id=folio.id),
+        )
+        folio.status = "closed"
+        db.commit()
+
+        with pytest.raises(ValueError, match="مقفولة"):
+            services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")

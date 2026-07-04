@@ -70,6 +70,22 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "endpoint": "POST /beach/transactions/{tx_id}/void",
     },
     {
+        "resource": "restaurant.refund_order_item",
+        "action": "execute",
+        "label_ar": "مرتجع صنف بعد الدفع (مطعم)",
+        "module": "restaurant",
+        "min_role_level": 60,
+        "endpoint": "PATCH /restaurant/orders/{order_id}/items/{item_id}/refund",
+    },
+    {
+        "resource": "cafe.refund_order_item",
+        "action": "execute",
+        "label_ar": "مرتجع صنف بعد الدفع (كافيه)",
+        "module": "cafe",
+        "min_role_level": 60,
+        "endpoint": "PATCH /cafe/orders/{order_id}/items/{item_id}/refund",
+    },
+    {
         "resource": "hr.approve_payroll_run",
         "action": "approve",
         "label_ar": "اعتماد صرف الرواتب",

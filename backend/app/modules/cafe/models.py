@@ -113,6 +113,8 @@ class CafeOrder(Base, TimestampMixin):
     service_charge: Mapped[Decimal]    = mapped_column(Numeric(10, 2), default=Decimal("0"))
     discount_amount:Mapped[Decimal]    = mapped_column(Numeric(10, 2), default=Decimal("0"))
     total:          Mapped[Decimal]    = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    refunded_amount:Mapped[Decimal]    = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    # إجمالي المرتجع (مرتجع بعد الدفع، صنف بصنف — راجع services.refund_order_item)
     notes:          Mapped[str | None] = mapped_column(String(500), nullable=True)
     waiter_id:      Mapped[int | None] = mapped_column(Integer, nullable=True)
     folio_id:       Mapped[int | None] = mapped_column(Integer, nullable=True)

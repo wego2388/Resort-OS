@@ -3,7 +3,8 @@ app/modules/finance/models.py
 Finance Module — always_on
 Tables: folios, folio_charges, payments, conditional_discounts,
         accounts, journal_entries, journal_lines, accounting_periods,
-        eta_invoices
+        eta_invoices, asset_depreciation_entries, bank_accounts,
+        bank_statement_lines
 """
 from __future__ import annotations
 
@@ -284,6 +285,79 @@ class RevenueAuditLog(Base, TimestampMixin):
     reason:       Mapped[str]         = mapped_column(String(500))
     changed_by:   Mapped[int]         = mapped_column(Integer)
     approved_by:  Mapped[int | None]  = mapped_column(Integer, nullable=True)
+
+
+# ── Fixed-Asset Depreciation (straight-line MVP) ───────────────────────
+
+class AssetDepreciationEntry(Base, TimestampMixin):
+    """سطر إهلاك شهري واحد لأصل واحد — مصدر الحقيقة للتاريخ الكامل، بينما
+    Asset.accumulated_depreciation (maintenance module) نسخة مجمّعة (cache)
+    بتتحدّث مع كل سطر جديد. UniqueConstraint يمنع تشغيل نفس الشهر مرتين
+    لنفس الأصل (إعادة تشغيل run_depreciation آمنة/idempotent)."""
+    __tablename__ = "asset_depreciation_entries"
+    __table_args__ = (
+        UniqueConstraint("asset_id", "year", "month", name="uq_depreciation_asset_period"),
+    )
+
+    id:                Mapped[int]           = mapped_column(primary_key=True)
+    asset_id:          Mapped[int]           = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"), index=True)
+    branch_id:         Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    year:              Mapped[int]           = mapped_column(Integer)
+    month:             Mapped[int]           = mapped_column(Integer)
+    amount:            Mapped[Decimal]       = mapped_column(Numeric(12, 2))
+    accumulated_after: Mapped[Decimal]       = mapped_column(Numeric(12, 2))
+    journal_entry_id:  Mapped[int | None]    = mapped_column(ForeignKey("journal_entries.id", ondelete="SET NULL"), nullable=True)
+    posted_by:         Mapped[int]           = mapped_column(Integer)
+
+
+# ── Bank Reconciliation ─────────────────────────────────────────────────
+
+class BankAccount(Base, TimestampMixin):
+    """حساب بنكي حقيقي للمنتجع — نقطة الربط بين كشف حساب البنك والدفاتر."""
+    __tablename__ = "bank_accounts"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "account_number", name="uq_bank_account_branch_number"),
+    )
+
+    id:              Mapped[int]           = mapped_column(primary_key=True)
+    branch_id:       Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    bank_name:       Mapped[str]           = mapped_column(String(150))
+    account_name:    Mapped[str]           = mapped_column(String(200))
+    account_number:  Mapped[str]           = mapped_column(String(50))
+    currency:        Mapped[str]           = mapped_column(String(3), default="EGP")
+    gl_account_id:   Mapped[int | None]    = mapped_column(ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
+    # حساب دفتر اليومية المقابل (asset type، عادة "البنك") — اختياري، لو
+    # موجود بيسمح بمقارنة رصيد الدفاتر برصيد كشف الحساب في تقرير المطابقة.
+    opening_balance: Mapped[Decimal]       = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    is_active:       Mapped[bool]          = mapped_column(Boolean, default=True)
+
+    statement_lines: Mapped[list["BankStatementLine"]] = relationship(
+        "BankStatementLine", back_populates="bank_account", lazy="select",
+    )
+
+
+class BankStatementLine(Base, TimestampMixin):
+    """سطر واحد من كشف حساب البنك — مستورد يدوياً (لصق/إدخال القيم)، بعدين
+    بيتطابق (auto أو manual) مع دفعة (Payment) حقيقية مسجّلة في النظام."""
+    __tablename__ = "bank_statement_lines"
+
+    id:                     Mapped[int]           = mapped_column(primary_key=True)
+    bank_account_id:        Mapped[int]           = mapped_column(ForeignKey("bank_accounts.id", ondelete="CASCADE"), index=True)
+    branch_id:              Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    line_date:               Mapped[date]          = mapped_column(Date, index=True)
+    description:            Mapped[str]           = mapped_column(String(300))
+    amount:                 Mapped[Decimal]       = mapped_column(Numeric(12, 2))
+    # موجب = إيداع (deposit)، سالب = سحب/عمولة بنكية (withdrawal)
+    external_reference:     Mapped[str | None]    = mapped_column(String(100), nullable=True)
+    status:                 Mapped[str]           = mapped_column(String(20), default="unmatched", index=True)
+    # unmatched | matched | ignored
+    matched_payment_id:     Mapped[int | None]    = mapped_column(ForeignKey("payments.id", ondelete="SET NULL"), nullable=True)
+    matched_at:             Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    matched_by:             Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    uploaded_by:            Mapped[int]           = mapped_column(Integer)
+
+    bank_account: Mapped["BankAccount"] = relationship("BankAccount", back_populates="statement_lines")
+    matched_payment: Mapped["Payment"]  = relationship("Payment")
 
 
 class ETAInvoice(Base, TimestampMixin):

@@ -227,6 +227,17 @@ def void_order_item(db: Session, item: OrderItem, reason: str, voided_by: int) -
     return item
 
 
+def refund_order_item(db: Session, item: OrderItem, reason: str, refunded_by: int) -> OrderItem:
+    """مرتجع بعد الدفع — نفس حقول void_order_item بالظبط (مين/ليه/إمتى)، بس
+    status='refunded' بدل 'cancelled' عشان يتفرّق تقريريًا عن إلغاء قبل الدفع."""
+    item.status = "refunded"
+    item.voided_reason = reason
+    item.voided_by = refunded_by
+    item.voided_at = datetime.utcnow()
+    db.flush()
+    return item
+
+
 # ── KitchenTicket ─────────────────────────────────────────────────────
 
 def create_kitchen_ticket(

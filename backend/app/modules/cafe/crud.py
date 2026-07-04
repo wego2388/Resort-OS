@@ -176,3 +176,13 @@ def void_order_item(db: Session, item: CafeOrderItem, reason: str, voided_by: in
     item.voided_at = datetime.utcnow()
     db.flush()
     return item
+
+
+def refund_order_item(db: Session, item: CafeOrderItem, reason: str, refunded_by: int) -> CafeOrderItem:
+    """مرتجع بعد الدفع — نفس حقول void_order_item، بس status='refunded'."""
+    item.status = "refunded"
+    item.voided_reason = reason
+    item.voided_by = refunded_by
+    item.voided_at = datetime.utcnow()
+    db.flush()
+    return item

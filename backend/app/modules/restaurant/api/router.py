@@ -255,6 +255,21 @@ def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+@router.patch("/restaurant/orders/{order_id}/items/{item_id}/refund",
+              response_model=OrderRead,
+              dependencies=[Depends(require_permission("restaurant.refund_order_item", "execute", min_role_level=60))])
+def refund_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest,
+                      db: DbDep, user=Depends(get_current_active_user)):
+    """مرتجع بعد الدفع — مستوى مدير (60) مش كاشير (40)، لأنها عكس مالي لأوردر
+    اتقفل بالفعل (أعلى خطورة من void_order_item العادي قبل الدفع). زي
+    void_order_item بالظبط: require_permission هو الحاكم الوحيد على الـ role
+    (مش role dependency صلب جنب بعض — راجع §11 من CLAUDE.md لباج مشابه)."""
+    try:
+        return services.refund_order_item(db, order_id, item_id, data.reason, refunded_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 @router.get("/restaurant/orders/{order_id}/receipt")
 def download_receipt(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:

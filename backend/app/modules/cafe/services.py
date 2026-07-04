@@ -120,23 +120,23 @@ def create_order(
 
 
 def generate_receipt_pdf(db: Session, order_id: int) -> bytes:
-    """يُولّد PDF إيصال طلب كافيه."""
+    """يُولّد PDF إيصال طلب كافيه (مقاس رول حراري 80mm — نفس مقاس طابعات الكاشير الحقيقية)."""
     from app.resort_os.report_builder import builder  # noqa: PLC0415
 
     order = _get_order_or_404(db, order_id)
-    items_text = "\n".join(
-        f"{item.name} × {item.quantity}  ({item.unit_price:,.2f} EGP)"
-        for item in order.items
-    )
     fields = [
         ("رقم الطلب",    order.order_number),
         ("نوع الطلب",    order.order_type),
-        ("الأصناف",      items_text),
+    ]
+    # سطر منفصل لكل صنف — أوضح على رول حراري ضيّق من نص واحد مجمّع
+    for item in order.items:
+        fields.append((f"{item.quantity}× {item.name}", f"{item.unit_price:,.2f} EGP"))
+    fields += [
         ("المجموع قبل الضريبة", f"{order.subtotal:,.2f} EGP"),
         ("ضريبة (VAT)",  f"{order.vat_amount:,.2f} EGP"),
         ("رسوم الخدمة",  f"{order.service_charge:,.2f} EGP"),
     ]
-    return builder.receipt_pdf(
+    return builder.receipt_pdf_thermal(
         reference=order.order_number,
         title="إيصال الكافيه",
         fields=fields,
@@ -192,7 +192,7 @@ def update_order_status(
     # نشر charge على folio الغرفة عند الدفع
     if new_status == "paid" and order.folio_id:
         try:
-            from app.modules.finance.crud import add_charge  # noqa: PLC0415
+            from app.modules.finance import crud as finance_crud  # noqa: PLC0415
             from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
             charge_data = FolioChargeCreate(
                 charge_type="cafe",
@@ -202,7 +202,17 @@ def update_order_status(
                 posted_at=datetime.utcnow(),
                 ref_order_id=order.id,
             )
-            add_charge(db, order.folio_id, charge_data)
+            finance_crud.add_charge(db, order.folio_id, charge_data)
+            # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-04): add_charge لوحدها بتضيف
+            # صف FolioCharge بس — Folio.total (العمود المخزّن اللي GET
+            # /finance/folios بيرجّعه مباشرة) كان بيفضل زي ما هو، من غير أي
+            # تحديث. checkout نفسه كان آمن (folio_engine.FolioSummary بتحسب
+            # المجموع من folio.charges لحظيًا مش من العمود ده)، لكن أي شاشة/تقرير
+            # بيعرض Folio.total مباشرة كان بيوريه رقم قديم ناقص كل شحنات
+            # Charge-to-Room من الكافيه.
+            folio = finance_crud.get_folio(db, order.folio_id)
+            if folio:
+                finance_crud.recalculate_folio_total(db, folio)
         except Exception:
             pass  # ميمنعش إتمام الدفع لو فشل نشر الـ charge على الفوليو
 
@@ -304,3 +314,80 @@ def void_order_item(db: Session, order_id: int, item_id: int, reason: str, voide
     db.commit()
     db.refresh(order)
     return order
+
+
+def refund_order_item(db: Session, order_id: int, item_id: int, reason: str, refunded_by: int) -> CafeOrder:
+    """مرتجع بعد الدفع — نفس منطق restaurant.refund_order_item بالضبط. الطلب
+    المدفوع بالفعل بيفضل subtotal/vat/service/total الأصليين زي ما هم (سجل
+    تاريخي)، وrefunded_amount تراكمي بيتسجّل بدل كده + الأثر المالي بيتعكس فعليًا."""
+    order = _get_order_or_404(db, order_id)
+    if order.status != "paid":
+        raise ValueError(f"المرتجع بعد الدفع متاح بس للطلبات المدفوعة — الطلب ده حالته '{order.status}'")
+
+    item = crud.get_order_item(db, order_id, item_id)
+    if not item:
+        raise ValueError(f"الصنف {item_id} غير موجود في هذا الطلب")
+    if item.status in ("cancelled", "refunded"):
+        raise ValueError("الصنف ده ملغي/مرتجع بالفعل")
+
+    extras_total = sum((e.price_addition for e in item.extras), Decimal("0"))
+    item_gross = (item.unit_price + extras_total) * item.quantity
+    share_ratio = (item_gross / order.subtotal) if order.subtotal > 0 else Decimal("0")
+    refund_vat = (order.vat_amount * share_ratio).quantize(Decimal("0.01"))
+    refund_svc = (order.service_charge * share_ratio).quantize(Decimal("0.01"))
+    refund_amount = item_gross + refund_vat + refund_svc
+
+    crud.refund_order_item(db, item, reason, refunded_by)
+    order.refunded_amount = (order.refunded_amount or Decimal("0")) + refund_amount
+
+    active_items = [i for i in order.items if i.status not in ("cancelled", "refunded")]
+    if not active_items:
+        order.status = "refunded"
+
+    if order.folio_id:
+        _reduce_folio_charge_for_refund(db, order, refund_amount)
+    else:
+        _post_order_refund_reversal_journal(db, order, refund_amount)
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def _reduce_folio_charge_for_refund(db: Session, order: CafeOrder, refund_amount: Decimal) -> None:
+    """يقلّل شحنة الفوليو (Charge to Room) المرتبطة بالطلب ده بمقدار المرتجع
+    ويعيد حساب Folio.total — راجع restaurant.services للنسخة المرجعية."""
+    try:
+        from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+        from app.modules.finance.models import FolioCharge  # noqa: PLC0415
+
+        charge = db.query(FolioCharge).filter_by(ref_order_id=order.id).first()
+        if not charge:
+            return
+        folio = finance_crud.get_folio(db, order.folio_id)
+        if not folio or folio.status == "closed":
+            return
+        gross_before = charge.amount + charge.vat_amount
+        new_gross = max(Decimal("0"), gross_before - refund_amount)
+        ratio = (new_gross / gross_before) if gross_before > 0 else Decimal("0")
+        charge.amount = (charge.amount * ratio).quantize(Decimal("0.01"))
+        charge.vat_amount = (charge.vat_amount * ratio).quantize(Decimal("0.01"))
+        db.flush()
+        finance_crud.recalculate_folio_total(db, folio)
+    except Exception:
+        pass
+
+
+def _post_order_refund_reversal_journal(db: Session, order: CafeOrder, refund_amount: Decimal) -> None:
+    """عكس _post_order_revenue_journal — Dr. Cafe Revenue (4400) / Cr. Cash (1100)."""
+    from datetime import date as _date  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, order.branch_id, _date.today(),
+        debit_account_code="4400", credit_account_code="1100",
+        amount=refund_amount,
+        reference=f"ORD-REFUND-{order.order_number}",
+        description=f"مرتجع بعد الدفع — {order.order_number}",
+        source="cafe_refund", source_id=order.id,
+    )

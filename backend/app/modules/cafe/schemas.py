@@ -135,6 +135,7 @@ class CafeOrderRead(BaseModel):
     id: int; branch_id: int; table_id: Optional[int]; order_number: str
     status: str; order_type: str; subtotal: Decimal; vat_amount: Decimal
     service_charge: Decimal; discount_amount: Decimal; total: Decimal
+    refunded_amount: Decimal = Decimal("0")
     notes: Optional[str]; waiter_id: Optional[int]
     customer_id: Optional[int] = None
     items: list[CafeOrderItemRead] = []

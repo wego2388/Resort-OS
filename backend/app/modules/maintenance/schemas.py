@@ -20,6 +20,11 @@ class AssetCreate(BaseModel):
     purchase_date:  Optional[date] = None
     warranty_until: Optional[date] = None
     notes:          Optional[str] = None
+    # ── depreciation basis (اختياري — بدونها الأصل مش مؤهّل للإهلاك الشهري) ──
+    purchase_cost:           Optional[Decimal] = Field(None, gt=0)
+    salvage_value:           Decimal           = Field(Decimal("0"), ge=0)
+    useful_life_years:       Optional[int]     = Field(None, gt=0, le=100)
+    depreciation_start_date: Optional[date]    = None
 
 
 class AssetUpdate(BaseModel):
@@ -30,6 +35,10 @@ class AssetUpdate(BaseModel):
     warranty_until: Optional[date] = None
     status:         Optional[str]  = Field(None, pattern=r"^(operational|under_maintenance|out_of_service|disposed)$")
     notes:          Optional[str]  = None
+    purchase_cost:           Optional[Decimal] = Field(None, gt=0)
+    salvage_value:           Optional[Decimal] = Field(None, ge=0)
+    useful_life_years:       Optional[int]     = Field(None, gt=0, le=100)
+    depreciation_start_date: Optional[date]    = None
 
 
 class AssetRead(BaseModel):
@@ -45,6 +54,12 @@ class AssetRead(BaseModel):
     warranty_until: Optional[date]
     status:         str
     notes:          Optional[str]
+    purchase_cost:            Optional[Decimal]
+    salvage_value:            Decimal
+    useful_life_years:        Optional[int]
+    depreciation_method:      str
+    depreciation_start_date:  Optional[date]
+    accumulated_depreciation: Decimal
     created_at:     datetime
     updated_at:     datetime
 

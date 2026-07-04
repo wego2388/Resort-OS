@@ -8,12 +8,14 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.modules.finance.models import (
-    Account, AccountingPeriod, CashierShift, CashierShiftCashCount, ConditionalDiscount,
+    Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
+    CashierShift, CashierShiftCashCount, ConditionalDiscount,
     CostCenter, ETAInvoice, ExchangeRate, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
     Check, CheckMovement,
 )
 from app.modules.finance.schemas import (
-    AccountCreate, ConditionalDiscountCreate, ConditionalDiscountUpdate,
+    AccountCreate, BankAccountCreate, BankAccountUpdate, BankStatementLineCreate,
+    ConditionalDiscountCreate, ConditionalDiscountUpdate,
     CostCenterCreate, ExchangeRateCreate, FolioCreate, FolioChargeCreate,
     JournalEntryCreate, PaymentCreate,
 )
@@ -166,6 +168,18 @@ def add_charge(db: Session, folio_id: int, data: FolioChargeCreate) -> FolioChar
     db.add(charge)
     db.flush()
     return charge
+
+
+def get_charge_by_ref_beach_tx(db: Session, beach_tx_id: int) -> Optional[FolioCharge]:
+    """يجيب شحنة الفوليو المرتبطة بعملية شاطئ معيّنة (Charge to Room) — يُستخدم
+    عند إلغاء (void) عملية شاطئ محمّلة على غرفة، عشان الإلغاء يشيل الشحنة من
+    فاتورة الضيف كمان مش بس يعكس المخزون."""
+    return db.query(FolioCharge).filter(FolioCharge.ref_beach_tx_id == beach_tx_id).first()
+
+
+def delete_charge(db: Session, charge: FolioCharge) -> None:
+    db.delete(charge)
+    db.flush()
 
 
 def settle_all_charges(db: Session, folio: Folio) -> None:
@@ -738,3 +752,239 @@ def list_exchange_rates(
         .all()
     )
     return items, total
+
+
+# ── Fixed-Asset Depreciation ────────────────────────────────────────────
+
+def get_depreciable_assets(db: Session, branch_id: int):
+    """يرجّع كل الأصول (maintenance module) المؤهّلة لدورة إهلاك — عندها
+    purchase_cost وuseful_life_years ومش متبّعة (disposed)."""
+    from app.modules.maintenance.models import Asset  # noqa: PLC0415
+    return (
+        db.query(Asset)
+        .filter(
+            Asset.branch_id == branch_id,
+            Asset.purchase_cost.isnot(None),
+            Asset.useful_life_years.isnot(None),
+            Asset.status != "disposed",
+        )
+        .order_by(Asset.code)
+        .all()
+    )
+
+
+def get_depreciation_entry_for_period(
+    db: Session, asset_id: int, year: int, month: int,
+) -> Optional[AssetDepreciationEntry]:
+    return (
+        db.query(AssetDepreciationEntry)
+        .filter(
+            AssetDepreciationEntry.asset_id == asset_id,
+            AssetDepreciationEntry.year == year,
+            AssetDepreciationEntry.month == month,
+        )
+        .first()
+    )
+
+
+def create_depreciation_entry(
+    db: Session,
+    *,
+    asset_id: int,
+    branch_id: int,
+    year: int,
+    month: int,
+    amount: Decimal,
+    accumulated_after: Decimal,
+    posted_by: int,
+    journal_entry_id: Optional[int] = None,
+) -> AssetDepreciationEntry:
+    entry = AssetDepreciationEntry(
+        asset_id=asset_id, branch_id=branch_id, year=year, month=month,
+        amount=amount, accumulated_after=accumulated_after,
+        posted_by=posted_by, journal_entry_id=journal_entry_id,
+    )
+    db.add(entry)
+    db.flush()
+    return entry
+
+
+def list_depreciation_entries(
+    db: Session,
+    branch_id: int,
+    asset_id: Optional[int] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[AssetDepreciationEntry], int]:
+    q = db.query(AssetDepreciationEntry).filter(AssetDepreciationEntry.branch_id == branch_id)
+    if asset_id is not None:
+        q = q.filter(AssetDepreciationEntry.asset_id == asset_id)
+    total = q.count()
+    items = (
+        q.order_by(AssetDepreciationEntry.year.desc(), AssetDepreciationEntry.month.desc())
+        .offset(skip).limit(limit).all()
+    )
+    return items, total
+
+
+# ── Bank Reconciliation ──────────────────────────────────────────────
+
+def create_bank_account(db: Session, data: BankAccountCreate) -> BankAccount:
+    account = BankAccount(**data.model_dump())
+    db.add(account)
+    db.flush()
+    return account
+
+
+def get_bank_account(db: Session, bank_account_id: int) -> Optional[BankAccount]:
+    return db.query(BankAccount).filter(BankAccount.id == bank_account_id).first()
+
+
+def list_bank_accounts(
+    db: Session, branch_id: int, active_only: bool = True,
+) -> list[BankAccount]:
+    q = db.query(BankAccount).filter(BankAccount.branch_id == branch_id)
+    if active_only:
+        q = q.filter(BankAccount.is_active.is_(True))
+    return q.order_by(BankAccount.bank_name).all()
+
+
+def update_bank_account(db: Session, account: BankAccount, data: BankAccountUpdate) -> BankAccount:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(account, field, value)
+    db.flush()
+    return account
+
+
+def create_bank_statement_lines(
+    db: Session, bank_account_id: int, branch_id: int, uploaded_by: int,
+    lines: list[BankStatementLineCreate],
+) -> list[BankStatementLine]:
+    objs = [
+        BankStatementLine(
+            bank_account_id=bank_account_id, branch_id=branch_id, uploaded_by=uploaded_by,
+            **line.model_dump(),
+        )
+        for line in lines
+    ]
+    db.add_all(objs)
+    db.flush()
+    return objs
+
+
+def get_bank_statement_line(db: Session, line_id: int) -> Optional[BankStatementLine]:
+    return db.query(BankStatementLine).filter(BankStatementLine.id == line_id).first()
+
+
+def list_bank_statement_lines(
+    db: Session,
+    bank_account_id: int,
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 100,
+) -> tuple[list[BankStatementLine], int]:
+    q = db.query(BankStatementLine).filter(BankStatementLine.bank_account_id == bank_account_id)
+    if status:
+        q = q.filter(BankStatementLine.status == status)
+    total = q.count()
+    items = q.order_by(BankStatementLine.line_date.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def find_matching_payment_candidates(
+    db: Session, branch_id: int, amount: Decimal, target_date, window_days: int = 3,
+) -> list[Payment]:
+    """دفعات غير مربوطة بأي سطر كشف حساب حتى الآن، بنفس المبلغ (± قرش) وفي
+    نطاق تاريخ قريب — أساس المطابقة الأوتوماتيكية."""
+    from datetime import timedelta  # noqa: PLC0415
+    already_matched = db.query(BankStatementLine.matched_payment_id).filter(
+        BankStatementLine.matched_payment_id.isnot(None),
+    )
+    return (
+        db.query(Payment)
+        .filter(
+            Payment.branch_id == branch_id,
+            Payment.voided_at.is_(None),
+            Payment.amount == amount,
+            Payment.posted_at >= target_date - timedelta(days=window_days),
+            Payment.posted_at <= target_date + timedelta(days=window_days),
+            Payment.id.notin_(already_matched),
+        )
+        .all()
+    )
+
+
+def match_statement_line(
+    db: Session, line: BankStatementLine, payment_id: int, matched_by: int,
+) -> BankStatementLine:
+    line.matched_payment_id = payment_id
+    line.status = "matched"
+    line.matched_at = datetime.utcnow()
+    line.matched_by = matched_by
+    db.flush()
+    return line
+
+
+def unmatch_statement_line(db: Session, line: BankStatementLine) -> BankStatementLine:
+    line.matched_payment_id = None
+    line.status = "unmatched"
+    line.matched_at = None
+    line.matched_by = None
+    db.flush()
+    return line
+
+
+def sum_matched_payments(db: Session, bank_account_id: int, as_of) -> Decimal:
+    from sqlalchemy import func  # noqa: PLC0415
+    total = (
+        db.query(func.coalesce(func.sum(Payment.amount), Decimal("0")))
+        .join(BankStatementLine, BankStatementLine.matched_payment_id == Payment.id)
+        .filter(
+            BankStatementLine.bank_account_id == bank_account_id,
+            BankStatementLine.line_date <= as_of,
+        )
+        .scalar()
+    )
+    return Decimal(total or 0)
+
+
+def sum_statement_lines(db: Session, bank_account_id: int, as_of, exclude_ignored: bool = True) -> Decimal:
+    from sqlalchemy import func  # noqa: PLC0415
+    q = db.query(func.coalesce(func.sum(BankStatementLine.amount), Decimal("0"))).filter(
+        BankStatementLine.bank_account_id == bank_account_id,
+        BankStatementLine.line_date <= as_of,
+    )
+    if exclude_ignored:
+        q = q.filter(BankStatementLine.status != "ignored")
+    return Decimal(q.scalar() or 0)
+
+
+def count_unmatched_statement_lines(db: Session, bank_account_id: int) -> int:
+    return (
+        db.query(BankStatementLine)
+        .filter(BankStatementLine.bank_account_id == bank_account_id, BankStatementLine.status == "unmatched")
+        .count()
+    )
+
+
+def unmatched_payments_summary(db: Session, branch_id: int, as_of) -> tuple[int, Decimal]:
+    """دفعات حقيقية مسجّلة في النظام لسه ملهاش سطر كشف حساب مطابق — مؤشر
+    محتمل على تأخير بنكي أو دفعة لم تصل فعلياً للحساب البنكي بعد."""
+    from sqlalchemy import func  # noqa: PLC0415
+    already_matched = db.query(BankStatementLine.matched_payment_id).filter(
+        BankStatementLine.matched_payment_id.isnot(None),
+    )
+    q = db.query(Payment).filter(
+        Payment.branch_id == branch_id,
+        Payment.voided_at.is_(None),
+        Payment.posted_at <= as_of,
+        Payment.id.notin_(already_matched),
+    )
+    count = q.count()
+    total = db.query(func.coalesce(func.sum(Payment.amount), Decimal("0"))).filter(
+        Payment.branch_id == branch_id,
+        Payment.voided_at.is_(None),
+        Payment.posted_at <= as_of,
+        Payment.id.notin_(already_matched),
+    ).scalar()
+    return count, Decimal(total or 0)

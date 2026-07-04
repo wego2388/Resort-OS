@@ -474,3 +474,36 @@ class TestTableOccupancy:
         found = next(t for t in resp.json() if t["id"] == table.id)
         assert found["status"] == "available"
         assert found["occupied_at"] is None
+
+
+class TestRestaurantReceiptPdf:
+    """قبل الإصلاح: generate_receipt_pdf كانت بتستخدم receipt_pdf العادي (مقاس A4 كامل)،
+    مش المناسب لطابعة رول حراري 80mm الحقيقية المستخدمة في أي كاشير مطعم. اتصلحت لاستخدام
+    receipt_pdf_thermal — نتحقق هنا إن الـ MediaBox فعلاً بعرض 80mm (~226.77pt) مش A4 (~595pt)."""
+
+    def test_receipt_pdf_is_thermal_sized_not_a4(self, client: TestClient, db, waiter_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 2}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.get(
+            f"/api/v1/restaurant/orders/{order['id']}/receipt",
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == "application/pdf"
+
+        import re
+        match = re.search(rb"/MediaBox\s*\[([^\]]+)\]", resp.content)
+        assert match is not None
+        media_box = [float(v) for v in match.group(1).split()]
+        pdf_width = media_box[2] - media_box[0]
+        # 80mm ≈ 226.77pt — لازم يبقى أضيق بكتير من A4 (595pt عرض)
+        assert pdf_width < 300, f"expected thermal-width PDF, got width={pdf_width}pt (A4 is ~595pt)"

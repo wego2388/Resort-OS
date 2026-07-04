@@ -522,6 +522,13 @@ class TestChargeToRoom:
         matching = next(c for c in charges if c.ref_order_id == order.id)
         assert matching.amount == order.subtotal
 
+        # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-04): folio.total (العمود
+        # المخزّن اللي GET /finance/folios بيرجّعه مباشرة) كان بيفضل صفر —
+        # add_charge لوحدها كانت بتضيف صف الشحنة بس من غير ما تعيد حساب
+        # الإجمالي المخزّن على الفوليو نفسه.
+        db.refresh(folio)
+        assert folio.total == matching.amount + matching.vat_amount
+
         # مفيش قيد كاش فوري اتسجل لأوردر اتحمّل على الغرفة
         entries, total = finance_crud.list_journal_entries(db, branch.id, source="restaurant")
         assert total == 0

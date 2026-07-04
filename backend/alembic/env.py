@@ -15,6 +15,11 @@ from app.core.config import settings
 from app.core.database import Base
 
 # ── Import ALL models so Alembic can detect them ─────────────────────────────
+# ⚠️ app.core.kernel.models.user لازم يتحمّل هنا كمان — من غيره أي FK بيشاور
+# على "users" (audit_logs.user_id وغيره) بيفشل بـ NoReferencedTableError وقت
+# --autogenerate (sorted_tables بيحاول يرتّب كل الجداول طوبولوجياً، مش بس
+# اللي اتغيّرت). كان ده بايق كامل قدرة autogenerate من الاشتغال أصلاً.
+import app.core.kernel.models.user    # noqa: F401
 import app.modules.core.models        # noqa: F401
 import app.modules.finance.models     # noqa: F401
 import app.modules.hr.models          # noqa: F401

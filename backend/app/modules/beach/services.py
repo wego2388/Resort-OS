@@ -151,9 +151,9 @@ def sell_ticket(
     # تسوية الفوليو كله عند خروج الضيف (نفس منطق restaurant/cafe)
     if tx.folio_id:
         try:
-            from app.modules.finance.crud import add_charge  # noqa: PLC0415
+            from app.modules.finance import crud as finance_crud  # noqa: PLC0415
             from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
-            add_charge(db, tx.folio_id, FolioChargeCreate(
+            finance_crud.add_charge(db, tx.folio_id, FolioChargeCreate(
                 charge_type="beach",
                 description=f"شاطئ — {tx.tx_type} × {tx.quantity}",
                 amount=tx.total_amount,
@@ -161,6 +161,11 @@ def sell_ticket(
                 posted_at=datetime.combine(tx.tx_date, datetime.min.time()),
                 ref_beach_tx_id=tx.id,
             ))
+            # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-04): نفس باج restaurant/cafe —
+            # add_charge لوحدها بتضيف الصف بس مبتحدّثش Folio.total المخزّن.
+            folio = finance_crud.get_folio(db, tx.folio_id)
+            if folio:
+                finance_crud.recalculate_folio_total(db, folio)
         except Exception:
             pass  # ميمنعش إتمام البيع لو فشل نشر الـ charge على الفوليو
     else:
@@ -283,6 +288,12 @@ def b2b_checkin(
 
 
 def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> BeachTransaction:
+    """⚠️ باج محاسبي حقيقي كان هنا (اتصلح 2026-07-04): كان بيعكس المخزون بس —
+    مايلمسش أي أثر مالي خالص. عملية كاش فوري كانت فضلة إيراد مسجّل في دفتر
+    اليومية للأبد حتى بعد الإلغاء (مبالغة دائمة في الإيرادات)، وعملية محمّلة
+    على غرفة (Charge to Room) كانت فضلة شحنة على فاتورة الضيف حتى لو الشاطئ
+    نفسه ألغاها (الضيف كان هيتحاسب على حاجة اتلغت). دلوقتي الإلغاء بيعكس
+    الأثر المالي فعليًا حسب نوع العملية وقت البيع."""
     tx = crud.get_transaction(db, tx_id)
     if not tx:
         raise ValueError(f"العملية {tx_id} غير موجودة")
@@ -294,10 +305,42 @@ def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> Be
     cap_delta, towel_delta = calculate_inventory_delta(tx.tx_type, tx.quantity)
     crud.apply_inventory_delta(db, inv_row, -cap_delta, -towel_delta)
 
+    # عكس الأثر المالي — نفس التفرّع اللي حصل وقت sell_ticket بالظبط
+    if tx.folio_id:
+        from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+
+        folio = finance_crud.get_folio(db, tx.folio_id)
+        if folio and folio.status == "closed":
+            raise ValueError(
+                "لا يمكن إلغاء عملية شاطئ على فاتورة مقفولة بالفعل — راجع الحسابات يدويًا"
+            )
+        charge = finance_crud.get_charge_by_ref_beach_tx(db, tx.id)
+        if charge:
+            finance_crud.delete_charge(db, charge)
+            if folio:
+                finance_crud.recalculate_folio_total(db, folio)
+    else:
+        _post_beach_revenue_reversal_journal(db, tx)
+
     tx = crud.void_transaction(db, tx, voided_by, reason)
     db.commit()
     db.refresh(tx)
     return tx
+
+
+def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") -> None:
+    """عكس _post_beach_revenue_journal بالظبط — Dr. Beach Revenue (4300) /
+    Cr. Cash (1100) — بيلغي أثر قيد البيع الأصلي في الدفاتر."""
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, tx.branch_id, date.today(),
+        debit_account_code="4300", credit_account_code="1100",
+        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        reference=f"BCH-VOID-{tx.id:06d}",
+        description=f"إلغاء عملية شاطئ — {tx.tx_type}",
+        source="beach_void", source_id=tx.id,
+    )
 
 
 TX_TYPE_LABELS: dict[str, str] = {
@@ -311,7 +354,7 @@ TX_TYPE_LABELS: dict[str, str] = {
 
 
 def generate_ticket_pdf(db: Session, tx_id: int) -> bytes:
-    """يُولّد PDF تذكرة دخول الشاطئ (thermal 80mm → يُحسب بـ A4 landscape صغير)."""
+    """يُولّد PDF تذكرة دخول الشاطئ (مقاس رول حراري 80mm — نفس مقاس طابعات الكاشير الحقيقية)."""
     from app.resort_os.report_builder import builder  # noqa: PLC0415
 
     tx = crud.get_transaction(db, tx_id)
@@ -329,7 +372,7 @@ def generate_ticket_pdf(db: Session, tx_id: int) -> bytes:
     if tx.surge_applied:
         fields.append(("Surge", "مطبّق"))
 
-    return builder.receipt_pdf(
+    return builder.receipt_pdf_thermal(
         reference=f"BCH-{tx.id:06d}",
         title="تذكرة دخول الشاطئ",
         fields=fields,

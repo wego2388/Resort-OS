@@ -169,6 +169,18 @@ def void_order_item(order_id: int, item_id: int, data: CafeOrderItemVoidRequest,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+@router.patch("/cafe/orders/{order_id}/items/{item_id}/refund",
+              response_model=CafeOrderRead,
+              dependencies=[Depends(require_permission("cafe.refund_order_item", "execute", min_role_level=60))])
+def refund_order_item(order_id: int, item_id: int, data: CafeOrderItemVoidRequest,
+                      db: DbDep, user=Depends(get_current_active_user)):
+    """مرتجع بعد الدفع — مستوى مدير (60)، نفس مستوى restaurant.refund_order_item."""
+    try:
+        return services.refund_order_item(db, order_id, item_id, data.reason, refunded_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 @router.get("/cafe/orders/{order_id}/receipt")
 def download_receipt(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:

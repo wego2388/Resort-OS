@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '@resort-os/core'
+import { usePrintDocument } from '@resort-os/core/composables'
 import { useToast } from '@resort-os/ui'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const toast = useToast()
+const { printBlob } = usePrintDocument()
 
 // ── Offline queue ──────────────────────────────────────────────────────────────
 // NOTE: @resort-os/core's useOfflineQueue() posts hard-coded to
@@ -274,10 +276,12 @@ async function submitOrder() {
         const receiptRes = await api.get(`/api/v1/cafe/orders/${orderId}/receipt`, {
           responseType: 'blob',
         })
-        const url = URL.createObjectURL(receiptRes.data)
-        window.open(url, '_blank')
+        const outcome = printBlob(receiptRes.data, `receipt-${orderId}.pdf`)
+        if (outcome.downloadedInstead) {
+          toast.error('الإيصال اتحمّل كملف (المتصفح منع نافذة الطباعة) — افتحه واطبعه يدويًا')
+        }
       } catch {
-        // receipt optional
+        // receipt optional — never block the order itself
       }
     }
 

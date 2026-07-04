@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
-import { useOfflineQueue } from '@resort-os/core/composables'
+import { useOfflineQueue, usePrintDocument } from '@resort-os/core/composables'
 import { AppModal, AppBadge, EmptyState } from '@resort-os/ui'
 import OrderDetailModal from '../../components/OrderDetailModal.vue'
 
 const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue, lastPartialRejection } = useOfflineQueue()
+const { printBlob } = usePrintDocument()
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
@@ -224,10 +225,13 @@ async function submitOrder() {
         const receiptRes = await api.get(`/api/v1/restaurant/orders/${orderId}/receipt`, {
           responseType: 'blob',
         })
-        const url = URL.createObjectURL(receiptRes.data)
-        window.open(url, '_blank')
+        const outcome = printBlob(receiptRes.data, `receipt-${orderId}.pdf`)
+        if (outcome.downloadedInstead) {
+          errorMsg.value = 'الإيصال اتحمّل كملف (المتصفح منع نافذة الطباعة) — افتحه واطبعه يدويًا'
+          setTimeout(() => { errorMsg.value = '' }, 5000)
+        }
       } catch {
-        // receipt optional
+        // receipt optional — never block the order itself
       }
     }
 
