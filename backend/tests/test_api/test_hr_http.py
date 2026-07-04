@@ -200,3 +200,137 @@ class TestHRValidation:
             f"/api/v1/hr/leaves/{req['id']}", json={"status": "maybe_later"}, headers=manager_headers,
         )
         assert resp.status_code == 422
+
+
+def make_shift_committed(db, branch, name="صباحي"):
+    from app.modules.hr.models import Shift
+    s = Shift(branch_id=branch.id, name=name, name_ar=name,
+               start_time="08:00", end_time="16:00", duration_hours=Decimal("8.00"))
+    db.add(s)
+    db.commit()
+    return s
+
+
+class TestHRPayrollApproval:
+    """Regression coverage — POST /hr/payroll-runs/{id}/approve is a real
+    financial action (posts a payroll journal entry) gated by
+    require_permission("hr.approve_payroll_run", min_role_level=80), stricter
+    than the manager-level (60) get used for most of this router."""
+
+    def test_admin_approves_draft_payroll_run_and_journal_posts(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        branch = make_branch_committed(db)
+        make_employee_committed(db, branch)
+
+        today = date.today()
+        create_resp = client.post(
+            "/api/v1/hr/payroll-runs",
+            json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
+            headers=super_admin_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        run = create_resp.json()
+        assert run["status"] == "draft"
+
+        approve_resp = client.post(
+            f"/api/v1/hr/payroll-runs/{run['id']}/approve", headers=super_admin_headers,
+        )
+        assert approve_resp.status_code == 200, approve_resp.text
+        assert approve_resp.json()["status"] == "approved"
+
+        # Approving twice must fail — same run can't be approved from a
+        # non-"draft" state.
+        second_resp = client.post(
+            f"/api/v1/hr/payroll-runs/{run['id']}/approve", headers=super_admin_headers,
+        )
+        assert second_resp.status_code == 400
+
+    def test_manager_cannot_approve_payroll_run(self, client: TestClient, db, manager_headers, super_admin_headers):
+        branch = make_branch_committed(db)
+        make_employee_committed(db, branch)
+        today = date.today()
+        run = client.post(
+            "/api/v1/hr/payroll-runs",
+            json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
+            headers=super_admin_headers,
+        ).json()
+
+        resp = client.post(f"/api/v1/hr/payroll-runs/{run['id']}/approve", headers=manager_headers)
+        assert resp.status_code == 403
+
+
+class TestHRRotaAndShiftSwap:
+    """Regression coverage for the rota/shift-swap endpoints flagged by an
+    independent coverage review as under-tested despite real scheduling
+    impact (creates real assignments, real approval state transitions)."""
+
+    def test_create_rota_assignment_and_fetch_week(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        employee = make_employee_committed(db, branch)
+        shift = make_shift_committed(db, branch)
+        week_start = date.today()
+        week_end = week_start + timedelta(days=6)
+
+        create_resp = client.post(
+            "/api/v1/hr/rota/assignments",
+            json={
+                "branch_id": branch.id, "employee_id": employee.id, "shift_id": shift.id,
+                "assigned_date": str(week_start),
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        rota_resp = client.get(
+            "/api/v1/hr/rota",
+            params={"branch_id": branch.id, "week_start": str(week_start), "week_end": str(week_end)},
+            headers=manager_headers,
+        )
+        assert rota_resp.status_code == 200
+        assert any(a["employee_id"] == employee.id for a in rota_resp.json())
+
+    def test_shift_swap_request_and_approval_flow(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        requester = make_employee_committed(db, branch)
+        target = make_employee_committed(db, branch)
+        shift = make_shift_committed(db, branch)
+        d1, d2 = date.today(), date.today() + timedelta(days=1)
+
+        a1 = client.post(
+            "/api/v1/hr/rota/assignments",
+            json={"branch_id": branch.id, "employee_id": requester.id, "shift_id": shift.id,
+                  "assigned_date": str(d1)},
+            headers=manager_headers,
+        ).json()
+        a2 = client.post(
+            "/api/v1/hr/rota/assignments",
+            json={"branch_id": branch.id, "employee_id": target.id, "shift_id": shift.id,
+                  "assigned_date": str(d2)},
+            headers=manager_headers,
+        ).json()
+
+        swap_resp = client.post(
+            "/api/v1/hr/rota/swap-requests",
+            json={
+                "branch_id": branch.id, "requester_id": requester.id, "target_employee_id": target.id,
+                "from_assignment_id": a1["id"], "to_assignment_id": a2["id"],
+                "reason": "ظرف عائلي",
+            },
+            headers=manager_headers,
+        )
+        assert swap_resp.status_code == 201, swap_resp.text
+        swap = swap_resp.json()
+        assert swap["status"] == "pending"
+
+        approve_resp = client.patch(
+            f"/api/v1/hr/rota/swap-requests/{swap['id']}/approve", headers=manager_headers,
+        )
+        assert approve_resp.status_code == 200, approve_resp.text
+        assert approve_resp.json()["status"] == "approved"
+
+        # Approving an already-approved swap must be rejected.
+        second_resp = client.patch(
+            f"/api/v1/hr/rota/swap-requests/{swap['id']}/approve", headers=manager_headers,
+        )
+        assert second_resp.status_code == 400
