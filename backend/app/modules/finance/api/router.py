@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -285,11 +286,25 @@ def list_accounts(
     _=Depends(get_manager_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
+    as_of: Optional[date] = Query(None, description="تاريخ حساب الرصيد — افتراضيًا اليوم"),
     page: int = Query(1, ge=1),
     size: int = Query(200, ge=1, le=500),
 ):
     items, total = crud.list_accounts(db, branch_id, active_only,
                                       skip=(page - 1) * size, limit=size)
+    # رصيد كل حساب من دفتر اليومية حتى as_of — نفس منطق trial balance
+    # (مدين صافي للأصول/المصروفات، دائن صافي للخصوم/حقوق الملكية/الإيرادات).
+    # كان الحقل ده مفقود بالكامل من الـ response (AccountRead ملوش balance
+    # خالص)، والفرونت إند (FinanceView.vue) كان بيقرأ acc.balance المش موجود
+    # أصلاً — تاب "الحسابات" كان بيطيح فعليًا (undefined.toLocaleString()).
+    sums = crud.sum_journal_lines_by_account(db, branch_id, None, as_of or date.today())
+    credit_normal_types = {"liability", "equity", "revenue"}
+    for acc in items:
+        debit_sum, credit_sum = sums.get(acc.id, (Decimal("0"), Decimal("0")))
+        acc.balance = (
+            (credit_sum - debit_sum) if acc.account_type in credit_normal_types
+            else (debit_sum - credit_sum)
+        )
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[AccountRead.model_validate(a) for a in items])
 

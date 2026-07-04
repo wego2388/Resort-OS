@@ -691,6 +691,36 @@ class TestAccountHTTPFlow:
         second = client.post("/api/v1/finance/accounts", json=payload, headers=manager_headers)
         assert second.status_code == 400
 
+    def test_list_accounts_includes_computed_balance(self, client: TestClient, db, manager_headers):
+        """Regression: AccountRead كان بالكامل من غير حقل balance — الفرونت
+        إند (FinanceView.vue، تاب "الحسابات") كان بيقرأ acc.balance من غير ما
+        الـ API يرجّعه أصلاً، يعني undefined.toLocaleString() كانت هتطيح
+        الشاشة فعليًا. بعد ترحيل قيد (Dr. Cash 100 / Cr. Revenue 100)،
+        الحساب المديني (asset) لازم يرجع برصيد موجب، والدائني (revenue) برصيد
+        موجب كمان (نفس اتجاهه الطبيعي — دائن للإيرادات)."""
+        branch = make_branch_committed(db)
+        cash = make_account_committed(db, branch, "1100-BAL", "Cash", "asset")
+        revenue = make_account_committed(db, branch, "4100-BAL", "Revenue", "revenue")
+        client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch.id, "entry_date": str(date.today()),
+                "reference": "JE-BAL-TEST", "description": "balance regression",
+                "lines": [
+                    {"account_id": cash.id, "debit": "100.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "100.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        resp = client.get(
+            "/api/v1/finance/accounts", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        items = {a["code"]: a for a in resp.json()["items"]}
+        assert Decimal(str(items["1100-BAL"]["balance"])) == Decimal("100.00")
+        assert Decimal(str(items["4100-BAL"]["balance"])) == Decimal("100.00")
+
 
 class TestJournalEntryHTTPFlow:
     def test_post_unbalanced_entry_400(self, client: TestClient, db, manager_headers):

@@ -238,6 +238,12 @@ class AccountRead(AccountCreate):
     id:         int
     created_at: datetime
     updated_at: datetime
+    # رصيد الحساب (موجب = طبيعي حسب نوعه: مدين صافي للأصول/المصروفات، دائن
+    # صافي للخصوم/حقوق الملكية/الإيرادات) — يُحسب في الراوتر وقت الاستعلام
+    # (مش عمود مخزّن)، لأن الفرونت إند (FinanceView.vue tab "الحسابات") كان
+    # بيقرا acc.balance من غير ما الـ API يرجّعه أصلاً (باج حقيقي: undefined
+    # في كل صف، .toLocaleString() كانت هتطيح الشاشة).
+    balance:    Decimal = Decimal("0")
 
 
 class JournalLineCreate(BaseModel):
