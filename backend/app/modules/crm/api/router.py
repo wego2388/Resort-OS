@@ -14,6 +14,7 @@ from app.modules.crm import crud, services
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityRead, ActivityUpdate,
     BlacklistRequest,
+    CampaignCreate, CampaignRead, CampaignUpdate,
     CustomerCreate, CustomerRead, CustomerUpdate,
     InteractionCreate, InteractionRead,
     LeadCreate, LeadRead, LeadStageUpdate,
@@ -82,6 +83,56 @@ def blacklist_customer(customer_id: int, req: BlacklistRequest, db: DbDep,
 def unblacklist_customer(customer_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.unblacklist_customer(db, customer_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Campaigns ─────────────────────────────────────────────────────────
+# نفس فئة الباج الموثّقة في § 11.6ish — Campaign model + crud + services
+# كانوا موجودين بالكامل، بس مفيش router endpoint خالص، فمفيش حد يقدر
+# يستخدم الميزة فعليًا (404 دايمًا على أي محاولة نداء).
+
+@router.get("/crm/campaigns", response_model=PaginatedResponse)
+def list_campaigns(
+    db: DbDep,
+    _=Depends(get_current_active_user),
+    branch_id: int = Query(...),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    campaign_type: Optional[str] = Query(None),
+    start_from: Optional[date] = Query(None),
+    start_to: Optional[date] = Query(None),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    items, total = crud.list_campaigns(db, branch_id, status_filter, campaign_type,
+                                       start_from, start_to,
+                                       skip=(page - 1) * size, limit=size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[CampaignRead.model_validate(c) for c in items])
+
+
+@router.post("/crm/campaigns", response_model=CampaignRead,
+             status_code=status.HTTP_201_CREATED)
+def create_campaign(data: CampaignCreate, db: DbDep, user=Depends(get_manager_user)):
+    try:
+        return services.create_campaign(db, data, created_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/crm/campaigns/{campaign_id}", response_model=CampaignRead)
+def get_campaign(campaign_id: int, db: DbDep, _=Depends(get_current_active_user)):
+    campaign = crud.get_campaign(db, campaign_id)
+    if not campaign:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الحملة غير موجودة")
+    return campaign
+
+
+@router.patch("/crm/campaigns/{campaign_id}", response_model=CampaignRead)
+def update_campaign(campaign_id: int, data: CampaignUpdate, db: DbDep,
+                     _=Depends(get_manager_user)):
+    try:
+        return services.update_campaign(db, campaign_id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

@@ -143,3 +143,87 @@ class TestCRMValidation:
             f"/api/v1/crm/leads/{lead['id']}", json={"stage": "negotiation"}, headers=manager_headers,
         )
         assert resp.status_code == 422
+
+
+class TestCRMCampaigns:
+    """Regression coverage — same bug class as TestCRMLeadsFlow above: the
+    Campaign model + crud + services already existed in full, but zero route
+    was ever wired in api/router.py, so the feature was completely dead."""
+
+    def test_create_list_update_campaign(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+
+        create_resp = client.post(
+            "/api/v1/crm/campaigns",
+            json={
+                "branch_id": branch.id, "name": "حملة الصيف",
+                "campaign_type": "social_media",
+                "start_date": "2026-07-01", "end_date": "2026-08-31",
+                "budget": "5000.00",
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        campaign = create_resp.json()
+        assert campaign["status"] == "planned"
+        assert campaign["revenue_attributed"] == "0.00"
+
+        list_resp = client.get(
+            "/api/v1/crm/campaigns", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        ids = [c["id"] for c in list_resp.json()["items"]]
+        assert campaign["id"] in ids
+
+        get_resp = client.get(f"/api/v1/crm/campaigns/{campaign['id']}", headers=manager_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["name"] == "حملة الصيف"
+
+        update_resp = client.patch(
+            f"/api/v1/crm/campaigns/{campaign['id']}",
+            json={"status": "active", "leads_generated": 12, "revenue_attributed": "3200.50"},
+            headers=manager_headers,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+        updated = update_resp.json()
+        assert updated["status"] == "active"
+        assert updated["leads_generated"] == 12
+        assert updated["revenue_attributed"] == "3200.50"
+
+    def test_create_campaign_rejects_end_before_start(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/crm/campaigns",
+            json={
+                "branch_id": branch.id, "name": "حملة خاطئة",
+                "campaign_type": "email",
+                "start_date": "2026-08-31", "end_date": "2026-07-01",
+                "budget": "1000",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_create_campaign_rejects_invalid_type(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/crm/campaigns",
+            json={
+                "branch_id": branch.id, "name": "حملة", "campaign_type": "carrier_pigeon",
+                "start_date": "2026-07-01", "end_date": "2026-08-01", "budget": "100",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_waiter_cannot_create_campaign(self, client: TestClient, db, fake_redis, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/crm/campaigns",
+            json={
+                "branch_id": branch.id, "name": "حملة", "campaign_type": "email",
+                "start_date": "2026-07-01", "end_date": "2026-08-01", "budget": "100",
+            },
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403

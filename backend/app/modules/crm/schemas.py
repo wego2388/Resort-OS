@@ -178,6 +178,48 @@ class LeadRead(BaseModel):
     updated_at:     datetime
 
 
+# ── Campaign ──────────────────────────────────────────────────────────
+
+class CampaignCreate(BaseModel):
+    branch_id:     int
+    name:          str = Field(..., max_length=200)
+    campaign_type: str = Field(..., pattern=r"^(social_media|email|sms|event|referral|other)$")
+    start_date:    date
+    end_date:      date
+    budget:        Decimal = Field(Decimal("0"), ge=0)
+    notes:         Optional[str] = None
+
+
+class CampaignUpdate(BaseModel):
+    name:               Optional[str]     = Field(None, max_length=200)
+    campaign_type:      Optional[str]     = Field(None, pattern=r"^(social_media|email|sms|event|referral|other)$")
+    start_date:         Optional[date]    = None
+    end_date:           Optional[date]    = None
+    budget:             Optional[Decimal] = Field(None, ge=0)
+    revenue_attributed: Optional[Decimal] = Field(None, ge=0)
+    leads_generated:    Optional[int]     = Field(None, ge=0)
+    status:             Optional[str]     = Field(None, pattern=r"^(planned|active|completed|cancelled)$")
+    notes:              Optional[str]     = None
+
+
+class CampaignRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                 int
+    branch_id:          int
+    name:               str
+    campaign_type:      str
+    start_date:         date
+    end_date:           date
+    budget:             Decimal
+    revenue_attributed: Decimal
+    leads_generated:    int
+    status:             str
+    notes:              Optional[str]
+    created_by:         int
+    created_at:         datetime
+    updated_at:         datetime
+
+
 # ── Activity ──────────────────────────────────────────────────────────
 
 class ActivityCreate(BaseModel):

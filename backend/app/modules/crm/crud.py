@@ -7,9 +7,10 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.crm.models import Activity, Customer, CustomerInteraction, Opportunity, Lead, GuestProfile
+from app.modules.crm.models import Activity, Campaign, Customer, CustomerInteraction, Opportunity, Lead, GuestProfile
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityUpdate,
+    CampaignCreate, CampaignUpdate,
     CustomerCreate, CustomerUpdate,
     InteractionCreate,
     OpportunityCreate, OpportunityUpdate,
@@ -198,6 +199,50 @@ def update_activity(db: Session, activity: Activity, data: ActivityUpdate) -> Ac
         activity.done_at = datetime.utcnow()
     db.flush()
     return activity
+
+
+# ── Campaign ──────────────────────────────────────────────────────────
+
+def get_campaign(db: Session, campaign_id: int) -> Optional[Campaign]:
+    return db.query(Campaign).filter(Campaign.id == campaign_id).first()
+
+
+def list_campaigns(
+    db: Session,
+    branch_id: int,
+    status: Optional[str] = None,
+    campaign_type: Optional[str] = None,
+    start_from: Optional[date] = None,
+    start_to: Optional[date] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[Campaign], int]:
+    q = db.query(Campaign).filter(Campaign.branch_id == branch_id)
+    if status:
+        q = q.filter(Campaign.status == status)
+    if campaign_type:
+        q = q.filter(Campaign.campaign_type == campaign_type)
+    if start_from:
+        q = q.filter(Campaign.start_date >= start_from)
+    if start_to:
+        q = q.filter(Campaign.start_date <= start_to)
+    total = q.count()
+    items = q.order_by(Campaign.start_date.desc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_campaign(db: Session, data: CampaignCreate, created_by: int) -> Campaign:
+    obj = Campaign(**data.model_dump(), created_by=created_by)
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def update_campaign(db: Session, campaign: Campaign, data: CampaignUpdate) -> Campaign:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(campaign, field, value)
+    db.flush()
+    return campaign
 
 
 # ── Lead ──────────────────────────────────────────────────────────────

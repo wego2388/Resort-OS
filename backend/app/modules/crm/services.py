@@ -6,10 +6,11 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from app.modules.crm import crud
-from app.modules.crm.models import Activity, Customer, CustomerInteraction, Lead, Opportunity
+from app.modules.crm.models import Activity, Campaign, Customer, CustomerInteraction, Lead, Opportunity
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityUpdate,
     BlacklistRequest,
+    CampaignCreate, CampaignUpdate,
     CustomerCreate, CustomerUpdate,
     InteractionCreate,
     LeadCreate, LeadStageUpdate,
@@ -136,6 +137,49 @@ def update_activity(db: Session, activity_id: int, data: ActivityUpdate) -> Acti
     if activity.status in ("done", "cancelled"):
         raise ValueError("لا يمكن تعديل نشاط منتهٍ أو ملغى")
     obj = crud.update_activity(db, activity, data)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+# ── Campaign ──────────────────────────────────────────────────────────
+# ملاحظة تصميم: leads_generated و revenue_attributed بيتحدّثوا يدويًا من
+# مسؤول التسويق (عبر PATCH) — مش auto-attribution آلي مربوط بـ Lead/Booking.
+# سبب القرار: مفيش FK فعلي بين Campaign وLead/Booking في الـ schema الحالي
+# (Lead.source مربوط بـ LeadSource مش Campaign)، فربط تلقائي حقيقي هيحتاج
+# migration جديدة (عمود campaign_id على Lead + أي جدول orders/bookings تاني)
+# ده تغيير schema أكبر من نطاق الطلب الحالي. التحديث اليدوي ده هو نفس الأسلوب
+# المُستخدم فعليًا في فنادق حقيقية صغيرة/متوسطة (مدير التسويق بيراجع الحملة
+# أسبوعيًا ويحدّث الأرقام من تقارير الحجز/المبيعات) — MVP واقعي وكافي الآن.
+# لو ظهرت حاجة تشغيلية حقيقية لاحقًا لربط تلقائي، الأساس (schema + service)
+# جاهز يستوعب حقل campaign_id على Lead من غير أي تعديل هنا.
+
+def get_campaign_or_404(db: Session, campaign_id: int) -> Campaign:
+    c = crud.get_campaign(db, campaign_id)
+    if not c:
+        raise ValueError(f"الحملة {campaign_id} غير موجودة")
+    return c
+
+
+def _validate_date_range(start_date, end_date) -> None:
+    if end_date < start_date:
+        raise ValueError("تاريخ نهاية الحملة يجب أن يكون بعد أو يساوي تاريخ البداية")
+
+
+def create_campaign(db: Session, data: CampaignCreate, created_by: int) -> Campaign:
+    _validate_date_range(data.start_date, data.end_date)
+    obj = crud.create_campaign(db, data, created_by)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def update_campaign(db: Session, campaign_id: int, data: CampaignUpdate) -> Campaign:
+    campaign = get_campaign_or_404(db, campaign_id)
+    new_start = data.start_date if data.start_date is not None else campaign.start_date
+    new_end = data.end_date if data.end_date is not None else campaign.end_date
+    _validate_date_range(new_start, new_end)
+    obj = crud.update_campaign(db, campaign, data)
     db.commit()
     db.refresh(obj)
     return obj
