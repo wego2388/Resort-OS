@@ -56,6 +56,7 @@ const allSections: NavSection[] = [
       { path: '/admin/inventory', label: 'المخزون', icon: '📦', requiredRole: 'manager' },
       { path: '/admin/crm', label: 'إدارة العملاء', icon: '🤝', requiredRole: 'manager' },
       { path: '/admin/maintenance', label: 'الصيانة', icon: '🔧', requiredRole: 'supervisor' },
+      { path: '/admin/leasing', label: 'الإيجارات', icon: '🏢', requiredRole: 'supervisor' },
     ],
   },
   {
