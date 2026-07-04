@@ -10,13 +10,14 @@ from sqlalchemy.orm import Session, joinedload
 from app.modules.hr.models import (
     AttendanceRecord, Department, Employee, EmployeeAllowance,
     EmployeePenalty, LeaveBalance, LeaveRequest, LeaveType,
-    PayrollLine, PayrollRun, RotaAssignment, ShiftSwapRequest, Shift,
+    PayrollLine, PayrollRun, RotaAssignment, RotaTemplate, ShiftSwapRequest, Shift,
     SocialInsuranceConfig, TaxBracketConfig,
 )
 from app.modules.hr.schemas import (
     AttendanceRecordCreate, DepartmentCreate, EmployeeCreate, EmployeeUpdate,
     EmployeePenaltyCreate, LeaveTypeCreate,
-    PayrollRunCreate, RotaAssignmentCreate, ShiftCreate, ShiftSwapRequestCreate,
+    PayrollRunCreate, RotaAssignmentCreate, RotaTemplateCreate, RotaTemplateUpdate,
+    ShiftCreate, ShiftSwapRequestCreate,
 )
 
 
@@ -393,6 +394,40 @@ def list_penalties(
             EmployeePenalty.penalty_date <= last_day,
         )
     return q.order_by(EmployeePenalty.penalty_date.desc()).all()
+
+
+# ── RotaTemplate ──────────────────────────────────────────────────────
+
+def create_rota_template(db: Session, data: RotaTemplateCreate) -> RotaTemplate:
+    template = RotaTemplate(**data.model_dump())
+    db.add(template)
+    db.flush()
+    return template
+
+
+def get_rota_template(db: Session, template_id: int) -> Optional[RotaTemplate]:
+    return db.query(RotaTemplate).filter(RotaTemplate.id == template_id).first()
+
+
+def list_rota_templates(
+    db: Session,
+    branch_id: int,
+    department_id: Optional[int] = None,
+    is_active: Optional[bool] = None,
+) -> list[RotaTemplate]:
+    q = db.query(RotaTemplate).filter(RotaTemplate.branch_id == branch_id)
+    if department_id:
+        q = q.filter(RotaTemplate.department_id == department_id)
+    if is_active is not None:
+        q = q.filter(RotaTemplate.is_active.is_(is_active))
+    return q.order_by(RotaTemplate.name).all()
+
+
+def update_rota_template(db: Session, template: RotaTemplate, data: RotaTemplateUpdate) -> RotaTemplate:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(template, field, value)
+    db.flush()
+    return template
 
 
 # ── RotaAssignment ────────────────────────────────────────────────────

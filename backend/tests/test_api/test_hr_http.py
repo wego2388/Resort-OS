@@ -606,6 +606,83 @@ class TestShiftHttp:
         assert any(s["name"] == "Evening" for s in list_resp.json())
 
 
+class TestRotaTemplateHttp:
+    """Regression coverage — RotaTemplate model existed in full but had zero
+    schema/crud/router, same bug class as Lead/Campaign/CallNote."""
+
+    def _make_department(self, client, branch, headers):
+        return client.post(
+            "/api/v1/hr/departments",
+            json={"branch_id": branch.id, "name": "Front Office", "name_ar": "الاستقبال"},
+            headers=headers,
+        ).json()
+
+    def test_create_list_get_and_update_rota_template(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        dept = self._make_department(client, branch, manager_headers)
+
+        create_resp = client.post(
+            "/api/v1/hr/rota/templates",
+            json={
+                "branch_id": branch.id, "department_id": dept["id"],
+                "name": "جدول الصيف", "week_pattern": {"mon": {"morning": 3}, "tue": {"evening": 2}},
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        template = create_resp.json()
+        assert template["is_active"] is True
+        assert template["week_pattern"]["mon"]["morning"] == 3
+
+        list_resp = client.get(
+            "/api/v1/hr/rota/templates", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        ids = [t["id"] for t in list_resp.json()]
+        assert template["id"] in ids
+
+        filtered_resp = client.get(
+            "/api/v1/hr/rota/templates",
+            params={"branch_id": branch.id, "department_id": dept["id"], "is_active": True},
+            headers=manager_headers,
+        )
+        assert filtered_resp.status_code == 200
+        assert template["id"] in [t["id"] for t in filtered_resp.json()]
+
+        get_resp = client.get(f"/api/v1/hr/rota/templates/{template['id']}", headers=manager_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["name"] == "جدول الصيف"
+
+        update_resp = client.patch(
+            f"/api/v1/hr/rota/templates/{template['id']}",
+            json={"week_pattern": {"wed": {"morning": 4}}, "is_active": False},
+            headers=manager_headers,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+        updated = update_resp.json()
+        assert updated["is_active"] is False
+        assert updated["week_pattern"] == {"wed": {"morning": 4}}
+
+    def test_get_unknown_rota_template_404(self, client: TestClient, db, manager_headers):
+        resp = client.get("/api/v1/hr/rota/templates/999999", headers=manager_headers)
+        assert resp.status_code == 404
+
+    def test_update_unknown_rota_template_404(self, client: TestClient, db, manager_headers):
+        resp = client.patch(
+            "/api/v1/hr/rota/templates/999999", json={"is_active": False}, headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_waiter_cannot_create_rota_template(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/hr/rota/templates",
+            json={"branch_id": branch.id, "department_id": 1, "name": "x", "week_pattern": {}},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestLeaveTypeHttp:
     def test_create_leave_type(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)

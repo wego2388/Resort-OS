@@ -26,6 +26,7 @@ from app.modules.hr.schemas import (
     PayrollLineRead,
     PayrollResultRead, PayrollRunCreate, PayrollRunRead,
     RotaAssignmentCreate, RotaAssignmentRead,
+    RotaTemplateCreate, RotaTemplateRead, RotaTemplateUpdate,
     ShiftCreate, ShiftRead,
     ShiftSwapRequestCreate, ShiftSwapRequestRead,
 )
@@ -496,6 +497,50 @@ def list_penalties(
 ):
     items = crud.list_penalties(db, branch_id, employee_id, month)
     return [EmployeePenaltyRead.model_validate(p) for p in items]
+
+
+# ── Rota Templates ────────────────────────────────────────────────────
+# RotaTemplate كان موجود بالكامل في models.py من غير أي schema/crud/router —
+# نفس فئة الباج (Lead/Campaign/TenantCashLog/CallNote).
+
+@router.get("/hr/rota/templates", response_model=list[RotaTemplateRead])
+def list_rota_templates(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    department_id: Optional[int] = Query(None),
+    is_active: Optional[bool] = Query(None),
+):
+    items = crud.list_rota_templates(db, branch_id, department_id, is_active)
+    return [RotaTemplateRead.model_validate(t) for t in items]
+
+
+@router.post("/hr/rota/templates", response_model=RotaTemplateRead,
+             status_code=status.HTTP_201_CREATED)
+def create_rota_template(data: RotaTemplateCreate, db: DbDep, _=Depends(get_manager_user)):
+    template = crud.create_rota_template(db, data)
+    db.commit()
+    db.refresh(template)
+    return RotaTemplateRead.model_validate(template)
+
+
+@router.get("/hr/rota/templates/{template_id}", response_model=RotaTemplateRead)
+def get_rota_template(template_id: int, db: DbDep, _=Depends(get_manager_user)):
+    template = crud.get_rota_template(db, template_id)
+    if not template:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"قالب الجدول {template_id} غير موجود")
+    return RotaTemplateRead.model_validate(template)
+
+
+@router.patch("/hr/rota/templates/{template_id}", response_model=RotaTemplateRead)
+def update_rota_template(template_id: int, data: RotaTemplateUpdate, db: DbDep,
+                         _=Depends(get_manager_user)):
+    template = crud.get_rota_template(db, template_id)
+    if not template:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"قالب الجدول {template_id} غير موجود")
+    template = crud.update_rota_template(db, template, data)
+    db.commit()
+    db.refresh(template)
+    return RotaTemplateRead.model_validate(template)
 
 
 # ── Rota ──────────────────────────────────────────────────────────────

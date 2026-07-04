@@ -294,6 +294,36 @@ class EmployeePenaltyRead(BaseModel):
     created_at:      datetime
 
 
+# ── RotaTemplate ──────────────────────────────────────────────────────
+# RotaTemplate كان موجود بالكامل في models.py من غير أي schema/crud/router —
+# نفس فئة الباج الموثّقة مرارًا (Lead/Campaign/TenantCashLog/CallNote).
+
+class RotaTemplateCreate(BaseModel):
+    branch_id:     int
+    department_id: int
+    name:          str = Field(..., max_length=100)
+    week_pattern:  dict = Field(..., description='e.g. {"mon": {"morning": 3}, "tue": {"evening": 2}}')
+    is_active:     bool = True
+
+
+class RotaTemplateUpdate(BaseModel):
+    name:          Optional[str]  = Field(None, max_length=100)
+    week_pattern:  Optional[dict] = None
+    is_active:     Optional[bool] = None
+
+
+class RotaTemplateRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:            int
+    branch_id:     int
+    department_id: int
+    name:          str
+    week_pattern:  dict
+    is_active:     bool
+    created_at:    datetime
+    updated_at:    datetime
+
+
 # ── RotaAssignment ────────────────────────────────────────────────────
 
 class RotaAssignmentCreate(BaseModel):
