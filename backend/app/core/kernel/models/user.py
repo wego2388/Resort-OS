@@ -13,6 +13,7 @@ from sqlalchemy import Column, Integer, String, Boolean, TIMESTAMP, Numeric, For
 from sqlalchemy.sql import func
 
 from app.core.kernel.database import Base
+from app.core.encryption import EncryptedString
 
 
 class UserRole(str, enum.Enum):
@@ -49,9 +50,12 @@ class UserMixin:
     failed_login_attempts = Column(Integer, server_default="0")
     account_locked_until = Column(TIMESTAMP, nullable=True)
 
-    # 2FA
+    # 2FA — the TOTP shared secret is PII-grade: whoever reads it can mint
+    # valid codes forever, so it's encrypted at rest (Fernet). Legacy plaintext
+    # rows still decode: EncryptedString falls back to the raw value on
+    # InvalidToken, so this is transparent with no migration/backfill required.
     two_factor_enabled = Column(Boolean, default=False)
-    two_factor_secret = Column(String(255), nullable=True)
+    two_factor_secret = Column(EncryptedString(255), nullable=True)
 
     # Profile
     email_verified = Column(Boolean, default=False)

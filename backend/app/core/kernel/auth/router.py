@@ -15,7 +15,7 @@ Endpoints:
     POST /password-reset/confirm   → updates password
 """
 
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Depends, Body, Form
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import Callable, Optional
@@ -45,9 +45,10 @@ def build_auth_router(
     @router.post("/login")
     def login(
         form_data: OAuth2PasswordRequestForm = Depends(),
+        otp_code: Optional[str] = Form(None),
         auth: AuthService = Depends(get_auth_service),
     ):
-        result = auth.login(form_data.username, form_data.password)
+        result = auth.login(form_data.username, form_data.password, otp_code=otp_code)
         user = result.pop("_user", None)
         if user:
             result["refresh_token"] = auth.create_refresh_token(user.id)

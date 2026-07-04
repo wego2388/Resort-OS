@@ -68,6 +68,9 @@ def _settings(**overrides) -> Settings:
         "ETA_TAXPAYER_RIN": "123456789",
         "ETA_TAXPAYER_NAME": "Test Resort",
         "VAT_PERCENTAGE": 14.0,
+        # strong key so ENVIRONMENT="production" cases pass the SECRET_KEY
+        # validator (this test exercises ETA URL selection, not key policy)
+        "SECRET_KEY": "Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz",
     }
     base.update(overrides)
     return Settings(**base)

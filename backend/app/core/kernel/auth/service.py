@@ -22,6 +22,19 @@ from app.core.kernel.security import (
 from app.core.kernel.auth.repository import UserRepository
 
 
+# A real bcrypt hash computed once at import. When an email doesn't exist we
+# still run verify_password against this so the failure path takes the same
+# ~300ms as a wrong-password path — otherwise the timing gap (email-not-found
+# returns in <1ms vs bcrypt-compare ~300ms) leaks which emails are registered.
+_DUMMY_PASSWORD_HASH = get_password_hash("timing-equalizer-not-a-real-password")
+
+# Single generic message for every bad-credentials outcome (unknown email OR
+# wrong password) — distinct messages are a user-enumeration oracle just like
+# the timing gap. Lockout/inactive keep their own messages on purpose: those
+# are post-authentication states a legitimate user needs to see.
+_GENERIC_AUTH_ERROR = "Incorrect email or password"
+
+
 class BaseService:
     def __init__(self, db: Session):
         self.db = db
@@ -63,13 +76,16 @@ class AuthService(BaseService):
 
     # ── Login (with lockout) ──────────────────────────────────────────────
 
-    def login(self, email: str, password: str) -> dict:
+    def login(self, email: str, password: str, otp_code: Optional[str] = None) -> dict:
         max_attempts = getattr(self.settings, "MAX_LOGIN_ATTEMPTS", 5)
         lockout_minutes = getattr(self.settings, "LOCKOUT_MINUTES", 30)
 
         user = self.repo.get_by_email(email)
         if not user:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Incorrect email or password")
+            # Equalize timing with the wrong-password path (bcrypt ~300ms) and
+            # return the exact same message — no user-enumeration oracle.
+            verify_password(password, _DUMMY_PASSWORD_HASH)
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _GENERIC_AUTH_ERROR)
 
         if user.account_locked_until:
             locked_until = user.account_locked_until
@@ -99,11 +115,27 @@ class AuthService(BaseService):
                     f"Account locked after {max_attempts} failed attempts. Try again in {lockout_minutes} minutes.",
                 )
             self.db.commit()
-            remaining_attempts = max_attempts - attempts
-            raise HTTPException(
-                status.HTTP_401_UNAUTHORIZED,
-                f"Incorrect password. {remaining_attempts} attempt(s) remaining.",
-            )
+            # No "N attempts remaining" — that both confirms the email exists and
+            # hands the attacker the lockout threshold. Same message as unknown email.
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, _GENERIC_AUTH_ERROR)
+
+        # ── Second factor (TOTP) ──────────────────────────────────────────
+        # Password alone is not enough for a 2FA-enabled account: verify the
+        # TOTP code here so 2FA is a real login-time second factor, not just an
+        # enrollment flag. Gated by LOGIN_2FA_ENFORCED so it can be switched on
+        # in lockstep with the frontend collecting the code (default off keeps
+        # the current password-only client working).
+        if getattr(self.settings, "LOGIN_2FA_ENFORCED", False) and user.two_factor_enabled:
+            if not otp_code:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    {"code": "2FA_CODE_REQUIRED", "message": "التحقق بخطوتين مطلوب — أدخل الرمز"},
+                )
+            if not pyotp.TOTP(user.two_factor_secret).verify(otp_code, valid_window=1):
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    {"code": "2FA_CODE_INVALID", "message": "رمز التحقق بخطوتين غير صحيح"},
+                )
 
         if user.failed_login_attempts:
             user.failed_login_attempts = 0
@@ -137,7 +169,18 @@ class AuthService(BaseService):
             raise HTTPException(403, "Only super_admin can change roles")
         if "password" in data and data["password"]:
             data["password_hash"] = get_password_hash(data.pop("password"))
-        return self.repo.update(user_id, data)
+        # Any role/is_active change must invalidate already-issued tokens, or a
+        # demoted/deactivated user keeps their old privileges until token expiry
+        # (charter §8). Same rule services.update_user_role() follows.
+        privilege_change = (
+            ("role" in data and data["role"] != user.role)
+            or ("is_active" in data and data["is_active"] != user.is_active)
+        )
+        updated = self.repo.update(user_id, data)
+        if privilege_change:
+            from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+            revoke_user_tokens(user_id)
+        return updated
 
     # ── Refresh tokens ────────────────────────────────────────────────────
 

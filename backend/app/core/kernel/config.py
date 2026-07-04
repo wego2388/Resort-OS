@@ -64,4 +64,10 @@ class CoreSettings(BaseSettings):
     MAX_LOGIN_ATTEMPTS: int = 5
     LOCKOUT_MINUTES: int = 30
 
+    # ── Login-time 2FA ─────────────────────────────────────────────────────
+    # When True, a 2FA-enabled account must submit a valid TOTP code at /login
+    # (otp_code) — making 2FA a real second factor, not just an enrollment flag.
+    # Enable in lockstep with the frontend collecting the code at login.
+    LOGIN_2FA_ENFORCED: bool = False
+
     model_config = {"extra": "allow", "env_file": ".env"}
