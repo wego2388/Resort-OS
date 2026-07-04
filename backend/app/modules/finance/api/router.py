@@ -415,13 +415,19 @@ def close_period(
 
 
 # ── Checks ────────────────────────────────────────────────────────────
+# شيكات بنكية (أدوات مالية حقيقية مستلمة من عملاء/موردين) — كانت الثلاثة
+# endpoints دي على get_current_active_user (أي موظف مسجّل دخول، حتى مستوى
+# waiter/kitchen=20/30) بينما باقي كل endpoint مالي حساس في نفس الملف
+# (folios/accounts/journal-entries/periods) على get_cashier_user (40+) أو
+# get_manager_user (60+) — باج صلاحيات حقيقي: أي موظف كان يقدر يسجّل شيك
+# جديد أو ينقله received→deposited→cleared/bounced (قرار محاسبي/بنكي).
 
 @router.get("/finance/checks", response_model=list[CheckRead])
 def list_checks_endpoint(
     branch_id: int = Query(...),
     status: str | None = Query(None),
     db: Session = Depends(get_db),
-    _=Depends(get_current_active_user),
+    _=Depends(get_cashier_user),
 ):
     checks = crud.list_checks(db, branch_id, status)
     return [CheckRead.model_validate(c) for c in checks]
@@ -431,7 +437,7 @@ def list_checks_endpoint(
 def create_check_endpoint(
     data: CheckCreate,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_cashier_user),
 ):
     payload = data.model_dump()
     payload["created_by"] = current_user.id
@@ -443,7 +449,7 @@ def move_check_status_endpoint(
     check_id: int,
     body: CheckMoveStatus,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_active_user),
+    current_user=Depends(get_manager_user),
 ):
     check_obj = crud.get_check(db, check_id)
     if not check_obj:

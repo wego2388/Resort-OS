@@ -881,6 +881,50 @@ class TestCheckHTTPFlow:
         )
         assert resp.status_code == 422
 
+    def test_waiter_cannot_create_or_move_checks_403(self, client: TestClient, db, waiter_headers):
+        """Regression: الشيكات كانت على get_current_active_user (أي موظف
+        مسجّل دخول) بدل get_cashier_user/get_manager_user زي باقي المالية —
+        جرسون (level 30) كان يقدر يسجّل شيك جديد أو ينقل حالته."""
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/checks",
+            json={
+                "branch_id": branch.id, "check_number": "CHK-WAITER", "bank_name": "بنك مصر",
+                "amount": "500.00", "due_date": str(date.today() + timedelta(days=30)),
+                "drawer_name": "test", "received_at": str(date.today()),
+            },
+            headers=waiter_headers,
+        )
+        assert create_resp.status_code == 403
+
+        list_resp = client.get(
+            "/api/v1/finance/checks", params={"branch_id": branch.id}, headers=waiter_headers,
+        )
+        assert list_resp.status_code == 403
+
+    def test_cashier_can_create_but_not_move_check_status(self, client: TestClient, db, cashier_headers):
+        """كاشير (level 40) يقدر يسجّل شيك مستلم (عملية يومية عادية)، لكن نقل
+        حالته (إيداع/تحصيل/ارتجاع — قرار محاسبي/بنكي) لسه محتاج manager+."""
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/checks",
+            json={
+                "branch_id": branch.id, "check_number": "CHK-CASHIER", "bank_name": "بنك مصر",
+                "amount": "700.00", "due_date": str(date.today() + timedelta(days=30)),
+                "drawer_name": "test", "received_at": str(date.today()),
+            },
+            headers=cashier_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        check_id = create_resp.json()["id"]
+
+        move_resp = client.patch(
+            f"/api/v1/finance/checks/{check_id}/status",
+            json={"to_status": "deposited"},
+            headers=cashier_headers,
+        )
+        assert move_resp.status_code == 403
+
     def test_create_check_rejects_zero_amount_422(self, client: TestClient, db, manager_headers):
         """Regression: قبل ما تتضاف CheckCreate schema، الـ endpoint كان
         بياخد dict خام من غير أي validation — مبلغ صفري أو تاريخ فاسد كان
