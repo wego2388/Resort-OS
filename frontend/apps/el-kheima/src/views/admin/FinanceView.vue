@@ -11,7 +11,7 @@ interface Check { id: number; check_number: string; amount: number; drawer_name:
 interface Account { id: number; code: string; name: string; account_type: string; balance: number }
 interface CostCenterLine { code: string; name: string; revenue: number; source: 'ledger' | 'direct' }
 interface DepreciationEntry { id: number; asset_id: number; year: number; month: number; amount: number; accumulated_after: number }
-interface Asset { id: number; code: string; name: string; name_ar?: string | null }
+interface Asset { id: number; code: string; name: string }
 interface BankAccount {
   id: number; bank_name: string; account_name: string; account_number: string
   currency: string; opening_balance: number; is_active: boolean
@@ -48,7 +48,7 @@ async function loadDepreciation() {
     ])
     depreciationEntries.value = entriesRes.data.items ?? []
     const map: Record<number, string> = {}
-    for (const a of (assetsRes.data.items ?? []) as Asset[]) map[a.id] = a.name_ar || a.name
+    for (const a of (assetsRes.data.items ?? []) as Asset[]) map[a.id] = a.name
     assetsById.value = map
   } catch { toast.error('تعذّر تحميل بيانات الإهلاك — حاول تاني') }
   finally { loading.value = false }
