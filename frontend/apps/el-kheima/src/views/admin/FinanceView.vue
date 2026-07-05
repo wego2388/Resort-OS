@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from '@resort-os/core'
-import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
+import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
+const { confirm } = useConfirm()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'depreciation' | 'bank-reconciliation'>('overview')
 
@@ -226,6 +227,26 @@ async function advanceCheck(check: Check) {
   } catch { toast.error('تعذّر تحديث حالة الشيك — حاول تاني') }
 }
 
+// كانت الشاشة بتعرض بس مسار "إيداع → تحصيل" — مفيش أي زرار لتسجيل شيك
+// مرتجع (bounced) رغم إن الحالة والـ endpoint موجودين بالكامل في الباك إند
+// (راجع CHECK_STATUS_TRANSITIONS في finance/services.py). في الواقع نسبة لا
+// يُستهان بها من الشيكات بترتد فعليًا (رصيد غير كافٍ) — فجوة UI صغيرة على
+// ميزة موجودة، مش ميزة جديدة.
+async function markCheckBounced(check: Check) {
+  const ok = await confirm({
+    message: `تأكيد ارتداد الشيك رقم "${check.check_number}" (${check.amount.toLocaleString('ar-EG')} ج)؟ لا يمكن التراجع عن هذا الإجراء.`,
+    danger: true, confirmText: 'نعم، الشيك مرتجع', cancelText: 'تراجع',
+  })
+  if (!ok) return
+  try {
+    await api.patch(`/api/v1/finance/checks/${check.id}/status`, {
+      to_status: 'bounced', notes: 'رصيد غير كافٍ — سُجّل من شاشة الحسابات',
+    })
+    check.status = 'bounced'
+    toast.success('تم تسجيل الشيك كمرتجع')
+  } catch { toast.error('تعذّر تحديث حالة الشيك — حاول تاني') }
+}
+
 onMounted(() => loadTab('overview'))
 </script>
 
@@ -295,11 +316,14 @@ onMounted(() => loadTab('overview'))
                   </AppBadge>
                 </td>
                 <td class="px-4 py-3">
-                  <AppButton v-if="check.status === 'received' || check.status === 'deposited'"
-                    size="sm" @click="advanceCheck(check)"
-                  >
-                    {{ check.status === 'received' ? 'إيداع' : 'تحصيل' }}
-                  </AppButton>
+                  <div v-if="check.status === 'received' || check.status === 'deposited'" class="flex gap-2">
+                    <AppButton size="sm" @click="advanceCheck(check)">
+                      {{ check.status === 'received' ? 'إيداع' : 'تحصيل' }}
+                    </AppButton>
+                    <AppButton size="sm" variant="danger" @click="markCheckBounced(check)">
+                      مرتجع
+                    </AppButton>
+                  </div>
                 </td>
               </tr>
               <tr v-if="checks.length === 0">
