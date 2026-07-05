@@ -186,6 +186,23 @@ class TestLeasingPenaltyTiers:
         payment = next(p for p in contract["payments"] if p["id"] == payment_id)
         assert Decimal(str(payment["penalty"])) == (Decimal(str(payment["amount"])) * Decimal("0.10")).quantize(Decimal("0.01"))
 
+    def test_5pct_penalty_exactly_30_days_overdue(self, client: TestClient, db, fake_redis, manager_headers):
+        """يوم 30 بالظبط لازم يفضل في شريحة الـ 5% ("8-30 يوم") مش يقفز
+        للـ 10% ("أكثر من 30 يوم") — باج off-by-one حقيقي كان هنا:
+        services.calculate_penalty كانت نسخة محلية بحدود >=30 بدل >30،
+        بتدي 10% غلط ليوم الـ30 بالظبط، غير متطابقة مع نفس القاعدة في
+        resort_os.timeshare_engine.calculate_lease_penalty (المصدر المستخدم
+        فعليًا في app.tasks.leasing_tasks.mark_overdue). اتصلح بتوحيد
+        المصدر لنسخة الـ engine بس."""
+        branch = make_branch_committed(db)
+        contract_id, payment_id = self._make_overdue_payment(db, branch, manager_headers, client, days_overdue=30)
+
+        client.post(f"/api/v1/leasing/contracts/{contract_id}/apply-penalties", headers=manager_headers)
+
+        contract = client.get(f"/api/v1/leasing/contracts/{contract_id}", headers=manager_headers).json()
+        payment = next(p for p in contract["payments"] if p["id"] == payment_id)
+        assert Decimal(str(payment["penalty"])) == (Decimal(str(payment["amount"])) * Decimal("0.05")).quantize(Decimal("0.01"))
+
 
 class TestLeasingAccountingIntegration:
     """Task B audit: leasing posted zero journal entries despite the spec's exact

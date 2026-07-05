@@ -11,15 +11,11 @@ from app.modules.leasing.models import LeaseContract, LeasePayment, TenantCashLo
 from app.modules.leasing.schemas import (
     LeaseContractCreate, LeaseContractUpdate, PayLeaseRequest, TenantCashLogCreate,
 )
-from app.resort_os.timeshare_engine import generate_lease_monthly_schedule
+from app.resort_os.timeshare_engine import calculate_lease_penalty, generate_lease_monthly_schedule
 
 # عقوبة تأخر الإيجار (resort-os-docs/12-TIMESHARE-COMPLETE.md § "عقوبة تأخر
 # الإيجار"): 5% للتأخير 8-30 يوم، 10% لأكثر من 30 يوم. القيم القديمة هنا
 # (3/15 يوم) كانت غير مطابقة للسبيك — اتصححت 2026-07-01 بعد مراجعة Task B.
-PENALTY_TIER1_DAYS = 8
-PENALTY_TIER1_RATE = Decimal("0.05")
-PENALTY_TIER2_DAYS = 30
-PENALTY_TIER2_RATE = Decimal("0.10")
 
 
 def get_contract_or_404(db: Session, contract_id: int) -> LeaseContract:
@@ -132,17 +128,20 @@ def update_contract(db: Session, contract_id: int, data: LeaseContractUpdate) ->
 
 
 def calculate_penalty(payment: LeasePayment, as_of: date | None = None) -> Decimal:
-    """يحسب الغرامة بناءً على أيام التأخير: 5% بعد 8 أيام، 10% بعد 30 يوماً
-    (مطابق لـ resort-os-docs/12-TIMESHARE-COMPLETE.md)."""
+    """يحسب الغرامة بناءً على أيام التأخير: 5% للتأخير 8-30 يوم، 10% لأكثر
+    من 30 يوم (مطابق لـ resort-os-docs/12-TIMESHARE-COMPLETE.md).
+
+    ⚠️ باج تكرار منطق حقيقي كان هنا: نسخة محلية من نفس الحساب كانت بتستخدم
+    حدود >= (>=8 و>=30) بدل > (>7 و>30) المستخدمة في resort_os.timeshare_engine
+    .calculate_lease_penalty — يعني دفعة متأخرة 30 يوم بالظبط كانت بتاخد غرامة
+    10% غلط بدل 5% (التأخير المفروض "8-30 يوم" شامل يوم الـ30 نفسه حسب توثيق
+    السبيك، والـ 10% مفروض تبدأ من يوم 31). اتصلح بالاعتماد على نسخة الـ engine
+    الوحيدة (نفس اللي بينادي عليها app.tasks.leasing_tasks.mark_overdue أصلاً)
+    بدل تكرار نفس القاعدة مرتين بقيم مختلفة."""
     today = as_of or date.today()
     if payment.status == "paid" or payment.due_date >= today:
         return Decimal("0")
-    overdue_days = (today - payment.due_date).days
-    if overdue_days >= PENALTY_TIER2_DAYS:
-        return (payment.amount * PENALTY_TIER2_RATE).quantize(Decimal("0.01"))
-    if overdue_days >= PENALTY_TIER1_DAYS:
-        return (payment.amount * PENALTY_TIER1_RATE).quantize(Decimal("0.01"))
-    return Decimal("0")
+    return calculate_lease_penalty(payment.amount, payment.due_date, today)
 
 
 def apply_penalties(db: Session, contract_id: int) -> list[LeasePayment]:
