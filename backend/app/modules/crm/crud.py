@@ -317,3 +317,19 @@ def update_guest_profile_on_checkout(db: Session, branch_id: int, phone: str, sp
     if profile.total_visits > 0:
         profile.avg_spend = (total / profile.total_visits).quantize(Decimal("0.01"))
     db.commit()
+
+
+def get_guest_profile_by_phone(db: Session, branch_id: int, phone: str) -> Optional[GuestProfile]:
+    return db.query(GuestProfile).filter(
+        GuestProfile.branch_id == branch_id,
+        GuestProfile.phone == phone,
+    ).first()
+
+
+def list_guest_profiles(
+    db: Session, branch_id: int, vip_only: bool = False, limit: int = 100,
+) -> list[GuestProfile]:
+    q = db.query(GuestProfile).filter(GuestProfile.branch_id == branch_id)
+    if vip_only:
+        q = q.filter(GuestProfile.vip_flag.is_(True))
+    return q.order_by(GuestProfile.last_stay.desc().nullslast()).limit(limit).all()

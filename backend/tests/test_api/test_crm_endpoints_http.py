@@ -31,6 +31,44 @@ def create_customer(client: TestClient, branch_id: int, headers: dict, **overrid
     return resp.json()
 
 
+class TestGuestProfileEndpoints:
+    """GuestProfile كان model + crud كاملين بدون أي schema/router — نفس فئة
+    باج 'الموديل موجود، الـ API صفر'. اتوصل بـ pms.services.checkout_booking
+    (تكامل حقيقي مُختبَر في test_pms_http.py) + endpoints قراءة هنا."""
+
+    def test_list_and_get_by_phone_empty(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.get("/api/v1/crm/guest-profiles", params={"branch_id": branch.id}, headers=waiter_headers)
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+        missing = client.get(
+            "/api/v1/crm/guest-profiles/by-phone/01000000000",
+            params={"branch_id": branch.id}, headers=waiter_headers,
+        )
+        assert missing.status_code == 404
+
+    def test_get_by_phone_returns_seeded_profile(self, client: TestClient, db, waiter_headers):
+        from app.modules.crm.models import GuestProfile
+        from decimal import Decimal
+        branch = make_branch_committed(db)
+        profile = GuestProfile(
+            branch_id=branch.id, full_name="ضيف دائم", phone="01011112222",
+            total_visits=3, avg_spend=Decimal("450.00"), vip_flag=True,
+        )
+        db.add(profile)
+        db.commit()
+
+        resp = client.get(
+            "/api/v1/crm/guest-profiles/by-phone/01011112222",
+            params={"branch_id": branch.id}, headers=waiter_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total_visits"] == 3
+        assert body["vip_flag"] is True
+
+
 class TestCustomersEndpoints:
     def test_create_list_get_and_update(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)

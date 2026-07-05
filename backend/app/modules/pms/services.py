@@ -158,6 +158,21 @@ def checkout_booking(db: Session, booking_id: int) -> Booking:
         from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
         record_customer_visit(db, booking.customer_id, booking.total_rate, booking.check_out)
 
+    # ⚠️ باج "الموديل موجود، الـ API صفر" حقيقي كان هنا: GuestProfile
+    # (ملف ضيف مجمّع بالهاتف عبر كل الإقامات) كان عنده crud كامل موصوف بالتعليق
+    # "يُحدَّث عند كل checkout" — بس checkout_booking (هنا بالظبط) عمرها ما
+    # كانت بتنادي عليه، يعني الجدول كان فاضي 100% من أول ما اتعمل الموديل.
+    if booking.guest_phone:
+        from app.modules.crm.crud import (  # noqa: PLC0415
+            get_or_create_guest_profile, update_guest_profile_on_checkout,
+        )
+        get_or_create_guest_profile(db, booking.branch_id, booking.guest_phone, {
+            "full_name":   booking.guest_name,
+            "email":       booking.guest_email,
+            "national_id": booking.guest_national_id,
+        })
+        update_guest_profile_on_checkout(db, booking.branch_id, booking.guest_phone, booking.total_rate or Decimal("0"))
+
     db.commit()
     db.refresh(booking)
     return booking

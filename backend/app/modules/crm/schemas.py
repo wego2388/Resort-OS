@@ -288,3 +288,28 @@ class CallNoteRead(BaseModel):
     called_by:    int
     called_at:    datetime
     created_at:   datetime
+
+
+# ── Guest Profile ─────────────────────────────────────────────────────
+# GuestProfile كان model + crud كاملين (get_or_create_guest_profile،
+# update_guest_profile_on_checkout — التعليق نفسه بيقول "يُحدَّث عند كل
+# checkout") من غير أي caller حقيقي (مفيش أي موديول تاني بينادي عليهم)،
+# ولا schema، ولا router — نفس فئة باج CallNote/RotaTemplate/RevenueAuditLog.
+
+class GuestProfileRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:           int
+    branch_id:    int
+    full_name:    str
+    phone:        str
+    email:        Optional[str]
+    national_id:  Optional[str]
+    nationality:  Optional[str]
+    birthday:     Optional[date]
+    total_visits: int
+    avg_spend:    Decimal
+    vip_flag:     bool
+    last_stay:    Optional[date]
+    preferences:  Optional[str]
+    notes:        Optional[str]
+    created_at:   datetime

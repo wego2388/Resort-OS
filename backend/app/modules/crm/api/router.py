@@ -17,6 +17,7 @@ from app.modules.crm.schemas import (
     CallNoteCreate, CallNoteRead,
     CampaignCreate, CampaignRead, CampaignUpdate,
     CustomerCreate, CustomerRead, CustomerUpdate,
+    GuestProfileRead,
     InteractionCreate, InteractionRead,
     LeadCreate, LeadRead, LeadStageUpdate,
     OpportunityCreate, OpportunityRead, OpportunityUpdate,
@@ -196,6 +197,32 @@ def create_call_note(lead_id: int, data: CallNoteCreate, db: DbDep,
     if data.lead_id != lead_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "lead_id غير مطابق للمسار")
     return CallNoteRead.model_validate(crud.create_call_note(db, data, called_by=user.id))
+
+
+# ── Guest Profiles ────────────────────────────────────────────────────
+# GuestProfile كان model + crud كاملين (get_or_create_guest_profile/
+# update_guest_profile_on_checkout — دي كانت بتتوصف "تتحدّث عند كل checkout"
+# بس مفيش أي موديول بينادي عليها فعليًا) من غير أي schema/router — نفس
+# فئة الباج الموثّقة فوق. اتوصلت بـ pms.services.checkout_booking (راجع
+# app/modules/pms/services.py) + endpoints قراءة هنا.
+
+@router.get("/crm/guest-profiles", response_model=list[GuestProfileRead])
+def list_guest_profiles(
+    db: DbDep, _=Depends(get_current_active_user),
+    branch_id: int = Query(...),
+    vip_only: bool = Query(False),
+):
+    return [GuestProfileRead.model_validate(p) for p in crud.list_guest_profiles(db, branch_id, vip_only)]
+
+
+@router.get("/crm/guest-profiles/by-phone/{phone}", response_model=GuestProfileRead)
+def get_guest_profile_by_phone(phone: str, db: DbDep,
+                               _=Depends(get_current_active_user),
+                               branch_id: int = Query(...)):
+    profile = crud.get_guest_profile_by_phone(db, branch_id, phone)
+    if not profile:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "لا يوجد ملف ضيف بهذا الرقم")
+    return GuestProfileRead.model_validate(profile)
 
 
 # ── Interactions ──────────────────────────────────────────────────────

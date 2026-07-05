@@ -107,6 +107,39 @@ class TestBookingLifecycleHTTP:
         found = next(r for r in rooms_resp.json() if r["id"] == room.id)
         assert found["status"] == "available"
 
+    def test_checkout_creates_and_updates_guest_profile(self, client: TestClient, db, fake_redis, manager_headers):
+        """⚠️ باج حقيقي: crm.GuestProfile كان عنده crud كامل
+        (get_or_create_guest_profile/update_guest_profile_on_checkout) موصوف
+        بالتعليق 'يُحدَّث عند كل checkout' — بس checkout_booking عمرها ما
+        كانت بتنادي عليه، فالجدول كان فاضي دايمًا. اتصلح بربط الاتنين."""
+        branch = make_branch_committed(db)
+        room_type = make_room_type_committed(db, branch)
+        room = make_room_committed(db, branch, room_type, "301")
+
+        create_resp = client.post(
+            "/api/v1/pms/bookings",
+            json={
+                "branch_id": branch.id, "guest_name": "سارة أحمد",
+                "guest_phone": "01099998888",
+                "check_in": str(date.today()), "check_out": str(date.today() + timedelta(days=2)),
+                "room_ids": [room.id],
+            },
+            headers=manager_headers,
+        )
+        booking = create_resp.json()
+        client.post(f"/api/v1/pms/bookings/{booking['id']}/checkin", headers=manager_headers)
+        client.post(f"/api/v1/pms/bookings/{booking['id']}/checkout", headers=manager_headers)
+
+        profile_resp = client.get(
+            "/api/v1/crm/guest-profiles/by-phone/01099998888",
+            params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert profile_resp.status_code == 200, profile_resp.text
+        profile = profile_resp.json()
+        assert profile["full_name"] == "سارة أحمد"
+        assert profile["total_visits"] == 1
+        assert Decimal(str(profile["avg_spend"])) == Decimal(str(booking["total_rate"]))
+
     def test_double_checkin_conflict_returns_409(self, client: TestClient, db, fake_redis, manager_headers):
         branch = make_branch_committed(db)
         room_type = make_room_type_committed(db, branch)
