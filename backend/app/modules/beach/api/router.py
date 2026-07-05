@@ -74,6 +74,8 @@ def sell_ticket(
         data = data.model_copy(update={"cashier_id": user.id})
     try:
         return services.sell_ticket(db, branch_id, data)
+    except services.BeachConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -89,6 +91,8 @@ def b2b_checkin(
         data = data.model_copy(update={"cashier_id": user.id})
     try:
         return services.b2b_checkin(db, branch_id, data)
+    except services.BeachConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -278,5 +282,7 @@ def get_reservation_public(reservation_id: int, db: DbDep):
 def checkin_reservation(reservation_id: int, db: DbDep, user=Depends(get_cashier_user)):
     try:
         return services.check_in_reservation(db, reservation_id, cashier_id=user.id)
+    except services.BeachConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))

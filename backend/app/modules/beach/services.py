@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -22,6 +23,31 @@ from app.resort_os.beach_engine import (
     validate_b2b_checkin,
     validate_entry,
 )
+
+
+class BeachConcurrencyError(Exception):
+    """عملية بيع/تشيك-إن تانية ماسكة صف سعة الشاطئ لنفس الفرع/اليوم دلوقتي —
+    409، مش 400 (زي pms.services.BookingConflictError بالظبط)."""
+
+
+def _lock_inventory_or_raise(db: Session, inv_row: BeachInventory) -> BeachInventory:
+    """يقفل صف BeachInventory (SELECT FOR UPDATE NOWAIT) قبل أي تحقق/تعديل
+    على السعة — بيمنع سباق كلاسيكي بين قراءة capacity_used والـ UPDATE لو
+    عمليتين بيع حصلوا في نفس اللحظة بالظبط (زي double-booking للغرف، بس هنا
+    للسعة اليومية للشاطئ). ⚠️ باج حقيقي كان هنا: كل عمليات البيع/التشيك-إن
+    كانت بتقرا وتعدّل capacity_used/towels_used من غير أي قفل صف خالص — عكس
+    غرف الفندق (pms.crud.lock_room_for_booking) اللي القفل ده متطبّق فيها من
+    زمان. تحت حمل متزامن حقيقي (كذا كاشير/تابلت شاطئ بيبيعوا في نفس الثانية
+    وقت السعة قريبة من الحد)، العملية الثانية كانت ممكن تعدّي validate_entry
+    بقيمة قديمة وتتسبب في تجاوز السعة الفعلية (oversell)."""
+    try:
+        locked = crud.lock_inventory_for_update(db, inv_row.id)
+    except OperationalError as exc:
+        db.rollback()
+        raise BeachConcurrencyError(
+            "سعة الشاطئ مشغولة الآن بعملية بيع أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    return locked or inv_row
 
 
 def _get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
@@ -94,8 +120,9 @@ def sell_ticket(
         if not folio_id:
             raise ValueError(f"مفيش ضيف مسجّل دخول في الغرفة {data.room_id} حاليًا")
 
-    # جلب/إنشاء inventory
+    # جلب/إنشاء inventory + قفل الصف طول الـ transaction (راجع _lock_inventory_or_raise)
     inv_row = crud.get_or_create_inventory(db, branch_id, tx_date)
+    inv_row = _lock_inventory_or_raise(db, inv_row)
     inv_state = BeachInventoryState(
         towels_available=inv_row.towels_available,
         towels_used=inv_row.towels_used,
@@ -220,8 +247,9 @@ def b2b_checkin(
     if not validation.valid:
         raise ValueError(validation.error)
 
-    # التحقق من inventory
+    # التحقق من inventory — نفس قفل الصف المستخدم في sell_ticket
     inv_row = crud.get_or_create_inventory(db, branch_id, tx_date)
+    inv_row = _lock_inventory_or_raise(db, inv_row)
     inv_state = BeachInventoryState(
         towels_available=inv_row.towels_available,
         towels_used=inv_row.towels_used,

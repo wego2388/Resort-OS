@@ -43,6 +43,20 @@ def get_or_create_inventory(
     return row
 
 
+def lock_inventory_for_update(db: Session, inventory_id: int) -> Optional[BeachInventory]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف الـ inventory اليومي طوال الـ
+    transaction عشان يمنع تجاوز السعة/الفوط (double-sell) لو عمليتين بيع/
+    تشيك-إن حصلوا في نفس اللحظة بالظبط على نفس الفرع/اليوم. نفس نمط
+    pms.crud.lock_room_for_booking بالضبط (Postgres فقط — على SQLite بيتجاهله
+    الـ driver من غير error، زي أي مكان تاني في المشروع بيستخدم with_for_update)."""
+    return (
+        db.query(BeachInventory)
+        .filter(BeachInventory.id == inventory_id)
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def set_surge_manual(
     db: Session,
     branch_id: int,

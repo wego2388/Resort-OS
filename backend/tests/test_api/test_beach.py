@@ -201,6 +201,27 @@ class TestSellTicket:
         with pytest.raises(ValueError, match="فوط"):
             services.sell_ticket(db, branch.id, req, tx_date=today)
 
+    def test_concurrent_sale_raises_concurrency_error(self, db, monkeypatch):
+        """باج حقيقي كان هنا: sell_ticket كان بيقرا/يعدّل capacity_used من غير
+        أي قفل صف (عكس pms.crud.lock_room_for_booking للغرف) — تحت حمل متزامن
+        حقيقي (كذا كاشير بيبيعوا في نفس اللحظة والسعة قريبة من الحد)، عمليتين
+        كانوا ممكن يعدّوا validate_entry بنفس القيمة القديمة ويتسبب تجاوز
+        فعلي للسعة. اتصلح بقفل صف BeachInventory (SELECT FOR UPDATE NOWAIT)
+        قبل أي تحقق/تعديل — هنا بنحاكي عملية تانية ماسكة الصف بمحاكاة
+        OperationalError من الـ lock نفسه."""
+        from sqlalchemy.exc import OperationalError
+
+        branch = make_branch(db)
+
+        def _raise_locked(*_args, **_kwargs):
+            raise OperationalError("SELECT ... FOR UPDATE NOWAIT", {}, Exception("could not obtain lock"))
+
+        monkeypatch.setattr(crud, "lock_inventory_for_update", _raise_locked)
+
+        req = BeachSellRequest(tx_type="entry", quantity=1)
+        with pytest.raises(services.BeachConcurrencyError, match="مشغولة"):
+            services.sell_ticket(db, branch.id, req)
+
 
 class TestVoidTransaction:
 
