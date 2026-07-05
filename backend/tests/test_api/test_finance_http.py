@@ -942,6 +942,71 @@ class TestCheckHTTPFlow:
         )
         assert resp.status_code == 422
 
+    def test_check_status_cannot_skip_deposited_to_cleared_directly(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """Regression: move_check_status عمرها ما كانت بتتحقق من الانتقال
+        نفسه — أي حالة من الأربعة (received/deposited/cleared/bounced) كانت
+        مقبولة بغض النظر عن الحالة الحالية. مدير تحت ضغط كان يقدر "يصفّي"
+        شيك لسه received من غير ما يمر بمرحلة الإيداع، أو (أخطر) يرجّع شيك
+        cleared/bounced لحالة سابقة من غير أي أثر تدقيقي حقيقي غير سطر
+        CheckMovement. اتصلح بـ CHECK_STATUS_TRANSITIONS في services.py."""
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/checks",
+            json={
+                "branch_id": branch.id, "check_number": "CHK-SKIP", "bank_name": "بنك مصر",
+                "amount": "900.00", "due_date": str(date.today() + timedelta(days=30)),
+                "drawer_name": "test", "received_at": str(date.today()),
+            },
+            headers=manager_headers,
+        )
+        check_id = create_resp.json()["id"]
+
+        # received → cleared مباشرة (تخطي deposited) لازم يترفض
+        resp = client.patch(
+            f"/api/v1/finance/checks/{check_id}/status",
+            json={"to_status": "cleared"}, headers=manager_headers,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "received" in resp.json()["detail"]
+
+    def test_check_status_cannot_move_out_of_terminal_state(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """شيك اترجع (bounced) أو اتحصّل (cleared) في حالة نهائية — مفيش رجوع
+        منها عبر نفس الـ endpoint (يحتاج تصحيح/سجل جديد لا مجرد status flip)."""
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/checks",
+            json={
+                "branch_id": branch.id, "check_number": "CHK-TERM", "bank_name": "بنك مصر",
+                "amount": "900.00", "due_date": str(date.today() + timedelta(days=30)),
+                "drawer_name": "test", "received_at": str(date.today()),
+            },
+            headers=manager_headers,
+        )
+        check_id = create_resp.json()["id"]
+
+        resp = client.patch(
+            f"/api/v1/finance/checks/{check_id}/status",
+            json={"to_status": "deposited"}, headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        resp = client.patch(
+            f"/api/v1/finance/checks/{check_id}/status",
+            json={"to_status": "bounced"}, headers=manager_headers,
+        )
+        assert resp.status_code == 200
+
+        # bounced حالة نهائية — لا يمكن نقلها لـ cleared أو أي حاجة تانية
+        resp = client.patch(
+            f"/api/v1/finance/checks/{check_id}/status",
+            json={"to_status": "cleared"}, headers=manager_headers,
+        )
+        assert resp.status_code == 400, resp.text
+        assert "نهائية" in resp.json()["detail"]
+
 
 class TestHandoverNoteHTTP:
     def test_handover_note_null_when_no_closed_shift_yet(self, client: TestClient, db, cashier_headers):

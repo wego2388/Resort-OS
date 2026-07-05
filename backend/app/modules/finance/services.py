@@ -254,14 +254,48 @@ def create_check(db: Session, data: CheckCreate, created_by: int) -> Check:
     return check
 
 
+class CheckStatusTransitionError(Exception):
+    """انتقال حالة شيك غير منطقي (مثلاً تصفية شيك مرتجع مباشرة، أو التراجع عن
+    شيك مُحصَّل). لا ترث من ValueError عمدًا عشان الـ router يقدر يميّزها عن
+    "الشيك غير موجود" ويرجّع 400 (طلب خاطئ) مش 404."""
+
+
+# خريطة الانتقالات المسموحة فعليًا لدورة حياة شيك بنكي حقيقي — كانت مفقودة
+# بالكامل قبل كده (باج حقيقي اتكشف أثناء اختبار قبول حقيقي): move_check_status
+# كانت بتقبل أي to_status من الأربعة المسموحين في الـ schema بغض النظر عن
+# الحالة الحالية، يعني مدير (حتى بحسن نية تحت ضغط) كان يقدر يرجّع شيك
+# "cleared" لـ "received"، أو يصفّي (cleared) شيك "bounced" مباشرة من غير ما
+# يعدي بمرحلة إعادة إيداع حقيقية — كله كان بينفّذ من غير أي رفض.
+CHECK_STATUS_TRANSITIONS: dict[str, set[str]] = {
+    "received":  {"deposited", "bounced"},
+    "deposited": {"cleared", "bounced"},
+    "cleared":   set(),  # حالة نهائية — شيك اتحصّل فعليًا، ملوش رجوع
+    "bounced":   set(),  # حالة نهائية — شيك ارتد؛ أي متابعة (إعادة إيداع) شيك/سجل جديد
+}
+
+
 def move_check_status(
     db: Session, check_id: int, to_status: str, moved_by: int, notes: Optional[str] = None,
 ) -> Check:
     """ينقل حالة شيك (received → deposited → cleared/bounced) ويسجّل الحركة
-    في CheckMovement."""
+    في CheckMovement. يرفض أي انتقال مش موجود في CHECK_STATUS_TRANSITIONS —
+    راجع الملاحظة فوق."""
     check_obj = crud.get_check(db, check_id)
     if not check_obj:
         raise ValueError(f"الشيك {check_id} غير موجود")
+
+    allowed = CHECK_STATUS_TRANSITIONS.get(check_obj.status, set())
+    if to_status not in allowed:
+        if check_obj.status == to_status:
+            reason = "الشيك بالفعل في هذه الحالة"
+        elif not allowed:
+            reason = f"'{check_obj.status}' حالة نهائية — لا يمكن تغييرها"
+        else:
+            reason = f"المسموح فقط: {', '.join(sorted(allowed))}"
+        raise CheckStatusTransitionError(
+            f"لا يمكن نقل الشيك من '{check_obj.status}' إلى '{to_status}' — {reason}"
+        )
+
     updated = crud.move_check_status(db, check_obj, to_status, moved_by, notes)
     db.commit()
     db.refresh(updated)

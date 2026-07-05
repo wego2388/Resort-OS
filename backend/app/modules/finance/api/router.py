@@ -460,6 +460,8 @@ def move_check_status_endpoint(
 ):
     try:
         updated = services.move_check_status(db, check_id, body.to_status, current_user.id, body.notes)
+    except services.CheckStatusTransitionError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return CheckRead.model_validate(updated)
