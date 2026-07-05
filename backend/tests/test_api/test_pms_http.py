@@ -206,6 +206,70 @@ class TestPMSValidation:
         assert resp.status_code == 422
 
 
+class TestRatePlans:
+    """RatePlan كان عنده model + crud كاملين بدون أي schema/route متوصّل —
+    نفس فئة باج 'الموديل موجود، الـ API صفر' (CallNote/RotaTemplate/
+    RevenueAuditLog)."""
+
+    def test_create_and_list_rate_plan(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
+        branch = make_branch_committed(db)
+        room_type = make_room_type_committed(db, branch)
+
+        create_resp = client.post(
+            "/api/v1/pms/rate-plans",
+            json={
+                "branch_id": branch.id, "room_type_id": room_type.id,
+                "name": "High Season", "name_ar": "الموسم المرتفع",
+                "rate_multiplier": "1.5000",
+                "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=90)),
+                "min_nights": 3,
+            },
+            headers=super_admin_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        plan = create_resp.json()
+        assert plan["name"] == "High Season"
+        assert Decimal(str(plan["rate_multiplier"])) == Decimal("1.5000")
+
+        list_resp = client.get(
+            "/api/v1/pms/rate-plans", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert len(list_resp.json()) == 1
+
+        get_resp = client.get(f"/api/v1/pms/rate-plans/{plan['id']}", headers=manager_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["id"] == plan["id"]
+
+    def test_create_rate_plan_requires_admin(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/pms/rate-plans",
+            json={
+                "branch_id": branch.id, "name": "Low Season",
+                "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_create_rate_plan_rejects_invalid_date_range(self, client: TestClient, db, fake_redis, super_admin_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/pms/rate-plans",
+            json={
+                "branch_id": branch.id, "name": "Bad Range",
+                "valid_from": str(date.today()), "valid_until": str(date.today() - timedelta(days=1)),
+            },
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_get_rate_plan_404(self, client: TestClient, db, fake_redis, manager_headers):
+        resp = client.get("/api/v1/pms/rate-plans/999999", headers=manager_headers)
+        assert resp.status_code == 404
+
+
 class TestPublicRoomTypes:
     """للموقع العام — بدون تسجيل دخول، نفس نمط restaurant/public/menu."""
 

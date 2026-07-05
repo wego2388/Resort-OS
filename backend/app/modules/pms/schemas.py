@@ -116,6 +116,26 @@ class HousekeepingTaskStatusUpdate(BaseModel):
     notes:  Optional[str] = None
 
 
+class RatePlanCreate(BaseModel):
+    branch_id:            int
+    room_type_id:         Optional[int] = None
+    name:                 str = Field(..., max_length=100)
+    name_ar:              Optional[str] = None
+    base_rate_override:   Optional[Decimal] = Field(None, gt=0)
+    rate_multiplier:      Decimal = Field(Decimal("1.0000"), gt=0)
+    valid_from:           date
+    valid_until:          date
+    seasonal_adjustments: Optional[str] = None
+    min_nights:           int = Field(1, ge=1)
+    is_active:            bool = True
+
+
+class RatePlanRead(RatePlanCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    created_at: datetime
+
+
 class NightAuditLogRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:              int

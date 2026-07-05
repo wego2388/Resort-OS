@@ -12,7 +12,7 @@ from app.modules.pms.models import (
     Booking, BookingRoom, HousekeepingTask, NightAuditLog, RatePlan, Room, RoomType,
 )
 from app.modules.pms.schemas import (
-    BookingCreate, RoomCreate, RoomTypeCreate,
+    BookingCreate, RatePlanCreate, RoomCreate, RoomTypeCreate,
 )
 
 
@@ -357,8 +357,8 @@ def get_housekeeping_task(db: Session, task_id: int) -> Optional[HousekeepingTas
 
 # ── RatePlan ──────────────────────────────────────────────────────────
 
-def create_rate_plan(db: Session, data: dict) -> RatePlan:
-    plan = RatePlan(**data)
+def create_rate_plan(db: Session, data: RatePlanCreate) -> RatePlan:
+    plan = RatePlan(**data.model_dump())
     db.add(plan)
     db.flush()
     return plan

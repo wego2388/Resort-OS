@@ -13,7 +13,7 @@ from app.core.deps import (
 from app.modules.pms import crud, services
 from app.modules.pms.schemas import (
     BookingCreate, BookingRead, HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
-    NightAuditLogRead, RoomCreate, RoomRead,
+    NightAuditLogRead, RatePlanCreate, RatePlanRead, RoomCreate, RoomRead,
     RoomStatusUpdate, RoomTypeCreate, RoomTypeRead,
 )
 from app.modules.core.schemas import PaginatedResponse
@@ -196,6 +196,43 @@ def update_housekeeping_task_status(
         return HousekeepingTaskRead.model_validate(task)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Rate Plans ────────────────────────────────────────────────────────
+# ⚠️ باج "الموديل موجود، الـ API صفر" حقيقي كان هنا: RatePlan (موسمية —
+# high-season override/multiplier) كان عنده model + crud كاملين من زمان
+# (create_rate_plan/list_rate_plans/get_rate_plan) بدون أي schema ولا أي
+# route متوصّل — يعني مستحيل تعمل خطة أسعار موسمية عن طريق الـ API خالص،
+# نفس فئة باج CallNote/RotaTemplate/RevenueAuditLog اللي اتصلحت قبل كده.
+
+@router.get("/pms/rate-plans", response_model=list[RatePlanRead])
+def list_rate_plans(
+    db: DbDep,
+    _=Depends(get_current_active_user),
+    branch_id:    int           = Query(...),
+    room_type_id: Optional[int] = Query(None),
+    active_only:  bool          = Query(True),
+):
+    return [RatePlanRead.model_validate(p)
+            for p in crud.list_rate_plans(db, branch_id, active_only, room_type_id)]
+
+
+@router.get("/pms/rate-plans/{plan_id}", response_model=RatePlanRead)
+def get_rate_plan(plan_id: int, db: DbDep, _=Depends(get_current_active_user)):
+    plan = crud.get_rate_plan(db, plan_id)
+    if not plan:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "خطة الأسعار غير موجودة")
+    return RatePlanRead.model_validate(plan)
+
+
+@router.post("/pms/rate-plans", response_model=RatePlanRead,
+             status_code=status.HTTP_201_CREATED)
+def create_rate_plan(data: RatePlanCreate, db: DbDep, _=Depends(get_admin_user)):
+    if data.valid_until <= data.valid_from:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "valid_until يجب أن يكون بعد valid_from")
+    obj = crud.create_rate_plan(db, data)
+    db.commit(); db.refresh(obj)
+    return RatePlanRead.model_validate(obj)
 
 
 # ── Night Audit ───────────────────────────────────────────────────────
