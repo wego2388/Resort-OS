@@ -13,9 +13,11 @@ from app.core.deps import (
 )
 from app.modules.hr import crud, services
 from app.modules.hr.schemas import (
+    AllowanceRead,
     AttendanceRecordCreate, AttendanceRecordRead,
     DepartmentCreate, DepartmentRead,
     EmployeeCreate, EmployeeRead, EmployeeUpdate,
+    EmployeeAllowanceCreate, EmployeeAllowanceUpdate,
     EmployeeLinkUserRequest,
     EmployeePenaltyCreate, EmployeePenaltyRead,
     LeaderboardEntry,
@@ -25,6 +27,7 @@ from app.modules.hr.schemas import (
     MyLeaveRequestCreate, MyPayslipRead, MyProfileRead,
     PayrollLineRead,
     PayrollResultRead, PayrollRunCreate, PayrollRunRead,
+    PenaltyTypeCreate, PenaltyTypeRead,
     RotaAssignmentCreate, RotaAssignmentRead,
     RotaTemplateCreate, RotaTemplateRead, RotaTemplateUpdate,
     ShiftCreate, ShiftRead,
@@ -110,6 +113,48 @@ def get_payslip(
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Employee Allowances ───────────────────────────────────────────────
+# EmployeeAllowance model كان موجود بالكامل (وبيدخل فعليًا في حساب الراتب —
+# راجع services.calculate_employee_payroll) من غير أي طريقة لإضافته عن طريق
+# الـ API — نفس فئة الباج (Lead/Campaign/TenantCashLog/CallNote/RotaTemplate).
+
+@router.get("/hr/employees/{employee_id}/allowances", response_model=list[AllowanceRead])
+def list_employee_allowances(
+    employee_id: int, db: DbDep, _=Depends(get_manager_user),
+    active_only: bool = Query(True),
+):
+    return [AllowanceRead.model_validate(a)
+            for a in crud.list_allowances_for_employee(db, employee_id, active_only)]
+
+
+@router.post("/hr/employees/{employee_id}/allowances", response_model=AllowanceRead,
+             status_code=status.HTTP_201_CREATED)
+def create_employee_allowance(
+    employee_id: int, data: EmployeeAllowanceCreate, db: DbDep, _=Depends(get_admin_user),
+):
+    if data.employee_id != employee_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "employee_id في الجسم لازم يطابق الـ path")
+    if not crud.get_employee(db, employee_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
+    allowance = crud.create_allowance(db, data)
+    db.commit()
+    db.refresh(allowance)
+    return AllowanceRead.model_validate(allowance)
+
+
+@router.patch("/hr/allowances/{allowance_id}", response_model=AllowanceRead)
+def update_employee_allowance(
+    allowance_id: int, data: EmployeeAllowanceUpdate, db: DbDep, _=Depends(get_admin_user),
+):
+    allowance = crud.get_allowance(db, allowance_id)
+    if not allowance:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"البدل {allowance_id} غير موجود")
+    allowance = crud.update_allowance(db, allowance, data)
+    db.commit()
+    db.refresh(allowance)
+    return AllowanceRead.model_validate(allowance)
 
 
 # ── Leaderboard ───────────────────────────────────────────────────────
@@ -475,6 +520,31 @@ def get_my_payslips(
         for line in lines
     ]
     return PaginatedResponse(total=total, page=page, size=size, items=items)
+
+
+# ── Penalty Types ─────────────────────────────────────────────────────
+# PenaltyTypeCreate/Read schemas كانوا موجودين بالكامل من غير أي crud/router —
+# EmployeePenalty.penalty_type_id اختياري فعلاً، فالنظام كان يشتغل من غيره،
+# لكن مفيش طريقة لتعريف أنواع جزاءات موحّدة (تأخير/غياب/مخالفة زي...) بدل ما
+# كل مدير يكتب سبب حر كل مرة — نفس فئة الباج الموثّقة مرارًا في هذا المشروع.
+
+@router.post("/hr/penalty-types", response_model=PenaltyTypeRead,
+             status_code=status.HTTP_201_CREATED)
+def create_penalty_type(data: PenaltyTypeCreate, db: DbDep, _=Depends(get_manager_user)):
+    penalty_type = crud.create_penalty_type(db, data)
+    db.commit()
+    db.refresh(penalty_type)
+    return PenaltyTypeRead.model_validate(penalty_type)
+
+
+@router.get("/hr/penalty-types", response_model=list[PenaltyTypeRead])
+def list_penalty_types(
+    db: DbDep, _=Depends(get_current_active_user),
+    branch_id: int = Query(...),
+):
+    # بيانات مرجعية فقط (اسم/عدد أيام الجزاء) — أي مستخدم مسجّل دخول يقدر
+    # يشوفها (نفس منطق GET /hr/leave-types)، الإنشاء بس محصور بـ manager+.
+    return [PenaltyTypeRead.model_validate(t) for t in crud.list_penalty_types(db, branch_id)]
 
 
 # ── Penalties ─────────────────────────────────────────────────────────

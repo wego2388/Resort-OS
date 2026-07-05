@@ -46,6 +46,30 @@ class EmployeeLinkUserRequest(BaseModel):
     user_id: int
 
 
+# ── EmployeeAllowance ─────────────────────────────────────────────────
+# كان الموديل (models.EmployeeAllowance) + crud.list_allowances_for_employee
+# (للقراءة الداخلية وقت حساب الراتب) موجودين بالكامل، بس مفيش أي طريقة
+# لإضافة بدل لموظف (سكن/انتقالات/بدل معيشة...) عن طريق الـ API — نفس فئة
+# الباج (Lead/Campaign/TenantCashLog/CallNote/RotaTemplate) لكن هنا الأثر
+# أخطر: بدلات الموظف بتدخل مباشرة في حساب الراتب الفعلي (calculate_payroll)،
+# فغيابها يعني الطريقة الوحيدة لإضافة بدل كانت INSERT مباشر في الداتابيز.
+
+class EmployeeAllowanceCreate(BaseModel):
+    employee_id:    int
+    name:           str = Field(..., max_length=100)
+    amount:         Decimal = Field(..., gt=0)
+    is_taxable:     bool = True
+    is_pensionable: bool = False
+
+
+class EmployeeAllowanceUpdate(BaseModel):
+    name:           Optional[str]     = Field(None, max_length=100)
+    amount:         Optional[Decimal] = Field(None, gt=0)
+    is_taxable:     Optional[bool]    = None
+    is_pensionable: Optional[bool]    = None
+    is_active:      Optional[bool]    = None
+
+
 class AllowanceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:             int

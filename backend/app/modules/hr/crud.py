@@ -9,13 +9,14 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.modules.hr.models import (
     AttendanceRecord, Department, Employee, EmployeeAllowance,
-    EmployeePenalty, LeaveBalance, LeaveRequest, LeaveType,
+    EmployeePenalty, LeaveBalance, LeaveRequest, LeaveType, PenaltyType,
     PayrollLine, PayrollRun, RotaAssignment, RotaTemplate, ShiftSwapRequest, Shift,
     SocialInsuranceConfig, TaxBracketConfig,
 )
 from app.modules.hr.schemas import (
     AttendanceRecordCreate, DepartmentCreate, EmployeeCreate, EmployeeUpdate,
-    EmployeePenaltyCreate, LeaveTypeCreate,
+    EmployeeAllowanceCreate, EmployeeAllowanceUpdate,
+    EmployeePenaltyCreate, LeaveTypeCreate, PenaltyTypeCreate,
     PayrollRunCreate, RotaAssignmentCreate, RotaTemplateCreate, RotaTemplateUpdate,
     ShiftCreate, ShiftSwapRequestCreate,
 )
@@ -91,6 +92,44 @@ def list_allowances_for_employee(
     if active_only:
         q = q.filter(EmployeeAllowance.is_active.is_(True))
     return q.all()
+
+
+def create_allowance(db: Session, data: EmployeeAllowanceCreate) -> EmployeeAllowance:
+    allowance = EmployeeAllowance(**data.model_dump())
+    db.add(allowance)
+    db.flush()
+    return allowance
+
+
+def get_allowance(db: Session, allowance_id: int) -> Optional[EmployeeAllowance]:
+    return db.query(EmployeeAllowance).filter(EmployeeAllowance.id == allowance_id).first()
+
+
+def update_allowance(
+    db: Session, allowance: EmployeeAllowance, data: EmployeeAllowanceUpdate
+) -> EmployeeAllowance:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(allowance, field, value)
+    db.flush()
+    return allowance
+
+
+# ── PenaltyType ───────────────────────────────────────────────────────
+
+def create_penalty_type(db: Session, data: PenaltyTypeCreate) -> PenaltyType:
+    penalty_type = PenaltyType(**data.model_dump())
+    db.add(penalty_type)
+    db.flush()
+    return penalty_type
+
+
+def list_penalty_types(db: Session, branch_id: int) -> list[PenaltyType]:
+    return (
+        db.query(PenaltyType)
+        .filter(PenaltyType.branch_id == branch_id)
+        .order_by(PenaltyType.name)
+        .all()
+    )
 
 
 # ── PayrollRun ────────────────────────────────────────────────────────

@@ -840,6 +840,126 @@ class TestPenaltyHttp:
         assert list_resp.json()[0]["reason"] == "تأخير متكرر"
 
 
+class TestEmployeeAllowanceHttp:
+    """Regression: EmployeeAllowance model + crud.list_allowances_for_employee
+    كانا موجودين بالكامل (وبيدخلوا فعليًا في حساب الراتب — services.
+    calculate_employee_payroll) من غير أي طريقة لإضافة بدل عن طريق الـ API.
+    نفس فئة الباج (Lead/Campaign/TenantCashLog/CallNote/RotaTemplate)."""
+
+    def test_create_list_and_update_allowance(self, client: TestClient, db, super_admin_headers, manager_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+
+        create_resp = client.post(
+            f"/api/v1/hr/employees/{emp.id}/allowances",
+            json={"employee_id": emp.id, "name": "بدل سكن", "amount": "500.00",
+                  "is_taxable": True, "is_pensionable": False},
+            headers=super_admin_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        allowance_id = create_resp.json()["id"]
+        assert create_resp.json()["is_active"] is True
+
+        list_resp = client.get(
+            f"/api/v1/hr/employees/{emp.id}/allowances", headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert len(list_resp.json()) == 1
+        assert list_resp.json()[0]["name"] == "بدل سكن"
+
+        update_resp = client.patch(
+            f"/api/v1/hr/allowances/{allowance_id}",
+            json={"amount": "600.00", "is_active": False},
+            headers=super_admin_headers,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+        assert update_resp.json()["is_active"] is False
+        assert Decimal(str(update_resp.json()["amount"])) == Decimal("600.00")
+
+        # active_only=True (default) لازم يستبعد البدل بعد التعطيل
+        list_active_resp = client.get(
+            f"/api/v1/hr/employees/{emp.id}/allowances", headers=manager_headers,
+        )
+        assert list_active_resp.json() == []
+
+    def test_create_allowance_employee_id_mismatch_400(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.post(
+            f"/api/v1/hr/employees/{emp.id}/allowances",
+            json={"employee_id": emp.id + 999, "name": "بدل", "amount": "100.00"},
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_create_allowance_requires_admin(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.post(
+            f"/api/v1/hr/employees/{emp.id}/allowances",
+            json={"employee_id": emp.id, "name": "بدل", "amount": "100.00"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_allowance_feeds_into_payroll_calculation(
+        self, client: TestClient, db, super_admin_headers, manager_headers,
+    ):
+        """بدل حقيقي مضاف عن طريق الـ endpoint الجديد لازم يظهر فعليًا في
+        gross_salary وقت حساب الراتب — مش بس يتخزن."""
+        ensure_payroll_config_committed(db)
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        client.post(
+            f"/api/v1/hr/employees/{emp.id}/allowances",
+            json={"employee_id": emp.id, "name": "بدل انتقالات", "amount": "300.00",
+                  "is_taxable": True, "is_pensionable": False},
+            headers=super_admin_headers,
+        )
+        today = date.today()
+        resp = client.get(
+            f"/api/v1/hr/employees/{emp.id}/payslip",
+            params={"period_year": today.year, "period_month": today.month},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert Decimal(str(body["taxable_allowances"])) == Decimal("300.00")
+        assert Decimal(str(body["gross_salary"])) == emp.basic_salary + Decimal("300.00")
+
+
+class TestPenaltyTypeHttp:
+    """Regression: PenaltyTypeCreate/Read schemas كانا موجودين من غير أي
+    crud/router — نفس فئة الباج الموثّقة مرارًا في هذا المشروع."""
+
+    def test_create_and_list_penalty_types(self, client: TestClient, db, manager_headers, waiter_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/hr/penalty-types",
+            json={"branch_id": branch.id, "name": "تأخير", "name_ar": "تأخير", "penalty_days": 1},
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        # أي مستخدم مسجّل دخول يقدر يشوف القائمة (بيانات مرجعية للاختيار عند
+        # تسجيل جزاء لموظف)، مش بس manager+.
+        list_resp = client.get(
+            "/api/v1/hr/penalty-types", params={"branch_id": branch.id}, headers=waiter_headers,
+        )
+        assert list_resp.status_code == 200, list_resp.text
+        assert len(list_resp.json()) == 1
+        assert list_resp.json()[0]["name_ar"] == "تأخير"
+
+    def test_create_penalty_type_requires_manager(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/hr/penalty-types",
+            json={"branch_id": branch.id, "name": "غياب", "penalty_days": 2},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestPayrollDownloadsHttp:
     """GET /hr/payroll/{run_id}/payslip/{employee_id} و
     GET /hr/payroll/{run_id}/excel — تحميلات PDF/Excel حقيقية، لازم نتأكد من
