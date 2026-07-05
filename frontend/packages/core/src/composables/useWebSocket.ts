@@ -6,10 +6,20 @@ export function useResortWebSocket(url: string) {
   let ws: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   let reconnectDelay = 1000
+  // ⚠️ باج حقيقي كان هنا: onUnmounted كان بيعمل ws.close() بس من غير أي flag
+  // — ws.onclose بيتنفّذ (async) حتى بعد close() المقصود، وكان بيجدول
+  // reconnect تاني زي أي انقطاع حقيقي. يعني كل مرة الكاشير/الشيف يسيب شاشة
+  // الـ KDS (يتنقّل لصفحة تانية)، اتصال WebSocket "زومبي" كان فضل يحاول
+  // يعيد الاتصال للأبد من غير ما حد يقدر يوقفه (مفيش reference للـ component
+  // عشان يلغيه)، ويعمل اتصال جديد فعلي كل مرة الشاشة تتفتح تاني من غير ما
+  // القديم يتنضّف. اتصلح بـ flag `intentionalClose` بيمنع الـ reconnect لو
+  // الإغلاق كان مقصود (unmount).
+  let intentionalClose = false
   const handlers = ref<((data: unknown) => void)[]>([])
 
   function connect() {
     if (ws?.readyState === WebSocket.OPEN) return
+    intentionalClose = false
     ws = new WebSocket(url)
     status.value = 'connecting'
 
@@ -30,6 +40,7 @@ export function useResortWebSocket(url: string) {
     ws.onclose = () => {
       isConnected.value = false
       status.value = 'disconnected'
+      if (intentionalClose) return
       reconnectTimer = setTimeout(() => {
         reconnectDelay = Math.min(reconnectDelay * 2, 30_000)
         connect()
@@ -50,6 +61,7 @@ export function useResortWebSocket(url: string) {
   }
 
   onUnmounted(() => {
+    intentionalClose = true
     if (reconnectTimer) clearTimeout(reconnectTimer)
     ws?.close()
   })
