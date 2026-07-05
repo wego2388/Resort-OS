@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api } from '@resort-os/core'
-import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
+import { api, parseApiTimestamp, useAuthStore } from '@resort-os/core'
+import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, AppInput, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const auth = useAuthStore()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves'>('employees')
 
@@ -26,6 +27,12 @@ interface AttendanceRecord {
   hours_worked: number | null
 }
 
+interface Allowance {
+  id: number; employee_id: number; name: string; amount: number
+  is_taxable: boolean; is_pensionable: boolean; is_active: boolean
+}
+interface PenaltyType { id: number; name: string; name_ar?: string | null; penalty_days: number }
+
 const employees = ref<Employee[]>([])
 const payrollRuns = ref<PayrollRun[]>([])
 const leaveRequests = ref<LeaveRequest[]>([])
@@ -34,9 +41,15 @@ const attendanceRecords = ref<AttendanceRecord[]>([])
 const loading = ref(false)
 const attendanceLoading = ref(false)
 
+// toISOString() بترجّع تاريخ UTC مش التاريخ المحلي (توقيت القاهرة) — بالقرب
+// من منتصف الليل المحلي كانت بترجع يوم مختلف عن اليوم الحقيقي. نفس فئة باج
+// AttendanceView.vue (راجع localDateStr هناك).
+function localDateStr(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 const today = new Date()
-const attendanceDateFrom = ref(new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10))
-const attendanceDateTo = ref(today.toISOString().slice(0, 10))
+const attendanceDateFrom = ref(localDateStr(new Date(today.getFullYear(), today.getMonth(), 1)))
+const attendanceDateTo = ref(localDateStr(today))
 
 const employeeNameById = computed(() => {
   const m: Record<number, string> = {}
@@ -113,6 +126,102 @@ async function fetchAttendance() {
   } finally { attendanceLoading.value = false }
 }
 
+// ── Allowances / Penalties — نموذج بسيط لـ endpoints اليوم دي (كانت
+// EmployeeAllowance/PenaltyType موجودين بالكامل في الباك إند من غير أي شاشة
+// تستخدمهم — نفس فئة الباج الموثّقة في CLAUDE.md). فورم صغير جوه مودال بدل
+// شاشة منفصلة كاملة، لأن العملية نفسها بسيطة (إضافة سطر واحد لموظف واحد).
+const allowanceModalEmployee = ref<Employee | null>(null)
+const employeeAllowances = ref<Allowance[]>([])
+const allowancesLoading = ref(false)
+const allowanceForm = ref({ name: '', amount: 0, is_taxable: true, is_pensionable: false })
+const savingAllowance = ref(false)
+
+const penaltyModalEmployee = ref<Employee | null>(null)
+const penaltyTypes = ref<PenaltyType[]>([])
+const penaltyForm = ref({ penalty_type_id: null as number | null, penalty_days: 1, reason: '' })
+const savingPenalty = ref(false)
+
+async function openAllowanceModal(emp: Employee) {
+  allowanceModalEmployee.value = emp
+  allowanceForm.value = { name: '', amount: 0, is_taxable: true, is_pensionable: false }
+  allowancesLoading.value = true
+  try {
+    const res = await api.get(`/api/v1/hr/employees/${emp.id}/allowances`, { params: { active_only: true } })
+    employeeAllowances.value = res.data ?? []
+  } catch (e) {
+    console.error(e)
+    toast.error('فشل تحميل بدلات الموظف')
+  } finally { allowancesLoading.value = false }
+}
+
+async function submitAllowance() {
+  if (!allowanceModalEmployee.value) return
+  // AppInput لا يطبّق مودفاير .number تلقائيًا (component مبني بـ defineProps
+  // عادي مش defineModel) — القيمة اللي بترجع ممكن تكون string، فلازم تحويل
+  // صريح هنا قبل أي مقارنة رقمية أو إرسال للباك إند.
+  const amount = Number(allowanceForm.value.amount)
+  if (!allowanceForm.value.name.trim() || !(amount > 0)) {
+    toast.error('اسم البدل والمبلغ (أكبر من صفر) مطلوبان')
+    return
+  }
+  savingAllowance.value = true
+  try {
+    const empId = allowanceModalEmployee.value.id
+    const { data } = await api.post(`/api/v1/hr/employees/${empId}/allowances`, {
+      employee_id: empId, ...allowanceForm.value, amount,
+    })
+    employeeAllowances.value = [...employeeAllowances.value, data]
+    allowanceForm.value = { name: '', amount: 0, is_taxable: true, is_pensionable: false }
+    toast.success('تمت إضافة البدل — سيدخل في حساب الراتب القادم')
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل حفظ البدل')
+  } finally { savingAllowance.value = false }
+}
+
+async function openPenaltyModal(emp: Employee) {
+  penaltyModalEmployee.value = emp
+  penaltyForm.value = { penalty_type_id: null, penalty_days: 1, reason: '' }
+  try {
+    const res = await api.get('/api/v1/hr/penalty-types', { params: { branch_id: branchId } })
+    penaltyTypes.value = res.data ?? []
+  } catch (e) {
+    console.error(e)
+    toast.error('فشل تحميل أنواع الجزاءات')
+  }
+}
+
+function onPenaltyTypeChange() {
+  const t = penaltyTypes.value.find(pt => pt.id === penaltyForm.value.penalty_type_id)
+  if (t) penaltyForm.value.penalty_days = t.penalty_days
+}
+
+async function submitPenalty() {
+  if (!penaltyModalEmployee.value) return
+  const penaltyDays = Number(penaltyForm.value.penalty_days)
+  if (!penaltyForm.value.reason.trim() || !(penaltyDays > 0)) {
+    toast.error('السبب وعدد الأيام (أكبر من صفر) مطلوبان')
+    return
+  }
+  savingPenalty.value = true
+  try {
+    const empId = penaltyModalEmployee.value.id
+    await api.post('/api/v1/hr/penalties', {
+      employee_id: empId, branch_id: branchId,
+      penalty_type_id: penaltyForm.value.penalty_type_id,
+      penalty_date: localDateStr(new Date()),
+      penalty_days: penaltyDays,
+      reason: penaltyForm.value.reason,
+      applied_by: auth.user?.id,
+    })
+    toast.success('تم تسجيل الجزاء')
+    penaltyModalEmployee.value = null
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل حفظ الجزاء')
+  } finally { savingPenalty.value = false }
+}
+
 async function loadTab(t: typeof tab.value) {
   tab.value = t
   if (t === 'employees') await fetchEmployees()
@@ -164,7 +273,10 @@ function formatDate(d?: string | null) {
 }
 function formatTime(d?: string | null) {
   if (!d) return '—'
-  try { return new Date(d).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) } catch { return d }
+  // check_in/check_out من الباك إند naive UTC (بدون "Z") — لازم parseApiTimestamp
+  // مش new Date() الخام، وإلا وقت الحضور المعروض للمدير يبقى مزاح بفرق توقيت
+  // القاهرة عن UTC (نفس فئة باج الـ KDS الموثّقة في @resort-os/core/utils/dates).
+  try { return parseApiTimestamp(d).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) } catch { return d }
 }
 function monthLabel(year: number, month: number) {
   try { return new Date(year, month - 1, 1).toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' }) }
@@ -207,6 +319,7 @@ onMounted(fetchEmployees)
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">القسم</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الراتب</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">إجراءات</th>
               </tr>
             </thead>
             <tbody>
@@ -228,15 +341,66 @@ onMounted(fetchEmployees)
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="statusVariant[emp.status] ?? 'neutral'">{{ statusLabel(emp.status) }}</AppBadge>
                 </td>
+                <td class="px-4 py-3">
+                  <div class="flex items-center gap-2">
+                    <button @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800">+ بدل</button>
+                    <button @click="openPenaltyModal(emp)" class="text-xs font-semibold text-red-600 hover:text-red-800">+ جزاء</button>
+                  </div>
+                </td>
               </tr>
               <tr v-if="employees.length === 0">
-                <td colspan="5" class="px-4 py-12 text-center text-gray-400">لا يوجد موظفون</td>
+                <td colspan="6" class="px-4 py-12 text-center text-gray-400">لا يوجد موظفون</td>
               </tr>
             </tbody>
           </table>
         </div>
       </AppCard>
     </div>
+
+    <!-- Allowance Modal -->
+    <AppModal :open="!!allowanceModalEmployee" :title="`بدلات — ${allowanceModalEmployee?.full_name ?? ''}`"
+      @close="allowanceModalEmployee = null">
+      <div class="space-y-4">
+        <div v-if="allowancesLoading" class="text-center py-4 text-sm text-gray-400">جاري التحميل...</div>
+        <div v-else-if="employeeAllowances.length" class="space-y-2">
+          <div v-for="a in employeeAllowances" :key="a.id" class="flex items-center justify-between text-sm bg-stone-50 rounded-lg px-3 py-2">
+            <span class="font-medium text-gray-800">{{ a.name }}</span>
+            <span class="text-gray-600">{{ a.amount.toLocaleString('ar-EG') }} ج{{ a.is_taxable ? '' : ' (غير خاضع للضريبة)' }}</span>
+          </div>
+        </div>
+        <EmptyState v-else icon="💵" title="لا يوجد بدلات مسجّلة" />
+
+        <div class="border-t border-stone-100 pt-4 space-y-3">
+          <div class="text-xs font-semibold text-gray-500 uppercase">إضافة بدل جديد</div>
+          <AppInput v-model="allowanceForm.name" placeholder="اسم البدل (بدل سكن، انتقالات...)" />
+          <AppInput v-model.number="allowanceForm.amount" type="number" placeholder="المبلغ (جنيه)" />
+          <div class="flex items-center gap-4 text-sm text-gray-700">
+            <label class="flex items-center gap-1.5"><input type="checkbox" v-model="allowanceForm.is_taxable" /> خاضع للضريبة</label>
+            <label class="flex items-center gap-1.5"><input type="checkbox" v-model="allowanceForm.is_pensionable" /> خاضع للتأمينات</label>
+          </div>
+          <AppButton :disabled="savingAllowance" @click="submitAllowance" variant="primary" size="sm">
+            {{ savingAllowance ? 'جاري الحفظ...' : 'إضافة البدل' }}
+          </AppButton>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- Penalty Modal -->
+    <AppModal :open="!!penaltyModalEmployee" :title="`تسجيل جزاء — ${penaltyModalEmployee?.full_name ?? ''}`"
+      @close="penaltyModalEmployee = null">
+      <div class="space-y-3">
+        <select v-model="penaltyForm.penalty_type_id" @change="onPenaltyTypeChange"
+          class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500">
+          <option :value="null">نوع الجزاء (اختياري)</option>
+          <option v-for="pt in penaltyTypes" :key="pt.id" :value="pt.id">{{ pt.name_ar || pt.name }} ({{ pt.penalty_days }} يوم)</option>
+        </select>
+        <AppInput v-model.number="penaltyForm.penalty_days" type="number" placeholder="عدد أيام الجزاء" />
+        <AppInput v-model="penaltyForm.reason" placeholder="السبب" />
+        <AppButton :disabled="savingPenalty" @click="submitPenalty" variant="danger" size="sm">
+          {{ savingPenalty ? 'جاري الحفظ...' : 'تسجيل الجزاء' }}
+        </AppButton>
+      </div>
+    </AppModal>
 
     <!-- Payroll Tab -->
     <div v-if="tab === 'payroll'">
