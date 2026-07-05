@@ -9,12 +9,21 @@ const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 interface HKTask {
   id: number
   room_id: number
-  room_number?: string
   task_type: string
   status: string
   priority: string
   assigned_to?: string
   created_at: string
+}
+
+// HousekeepingTaskRead (app/modules/pms/schemas.py) مفيهوش room_number —
+// كانت الشاشة بتعرض رقم الغرفة الداخلي (room_id) بدل اسمها الحقيقي (زي
+// "101") لأي مهمة. اتصلح بجلب أسماء الغرف مرة واحدة وعرضها هنا (عرض بيانات
+// بس، مفيش منطق عمل)، نفس الأسلوب المستخدم في RoomsView.vue/BookingsView.vue.
+const roomNameById = ref<Record<number, string>>({})
+
+function roomLabel(task: HKTask): string {
+  return roomNameById.value[task.room_id] ?? `#${task.room_id}`
 }
 
 const tasks = ref<HKTask[]>([])
@@ -69,6 +78,16 @@ const statusCounts = computed(() =>
   )
 )
 
+async function fetchRoomNames() {
+  try {
+    const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId } })
+    const list: { id: number; name: string }[] = res.data.items ?? res.data
+    roomNameById.value = Object.fromEntries(list.map((r) => [r.id, r.name]))
+  } catch (e) {
+    console.error(e)
+  }
+}
+
 async function fetchTasks() {
   loading.value = true
   try {
@@ -99,7 +118,10 @@ async function advanceStatus(task: HKTask) {
   }
 }
 
-onMounted(fetchTasks)
+onMounted(() => {
+  fetchRoomNames()
+  fetchTasks()
+})
 </script>
 
 <template>
@@ -163,7 +185,7 @@ onMounted(fetchTasks)
         <div class="flex-1 min-w-0 ml-4">
           <div class="flex items-center gap-2 mb-1 flex-wrap">
             <span class="font-bold text-gray-900 text-base">
-              أوضة {{ task.room_number ?? task.room_id }}
+              أوضة {{ roomLabel(task) }}
             </span>
             <span class="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-600 font-medium">
               {{ taskTypeLabel[task.task_type] ?? task.task_type }}

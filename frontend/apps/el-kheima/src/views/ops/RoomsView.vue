@@ -1,4 +1,13 @@
 <script setup lang="ts">
+// ⚠️ باج حقيقي كان هنا (لُقط أثناء اختبار حي للـ PMS): الشاشة كانت بتقرا
+// أسماء حقول (`room_number`, `room_type` كنص، `current_booking`) مش موجودة
+// خالص في RoomRead الحقيقي (app/modules/pms/schemas.py) — الحقول الحقيقية
+// `name` و`room_type_id` (رقم، محتاج جدول أنواع الغرف عشان يتحول لاسم)، ومفيش
+// `current_booking` في الـ response أصلاً. يعني "خريطة الغرف" (أهم شاشة
+// للاستقبال) كانت بتعرض رقم غرفة فاضي ونوع غرفة فاضي لكل غرفة، ومفيش تفاصيل
+// حجز حالي أبدًا حتى للغرف المشغولة — نفس فئة الباج اللي اتصلح قبل كده في
+// BookingsView.vue (شوف تعليقه فوق). اتصلح بجلب أنواع الغرف + الحجوزات
+// النشطة (checked_in) وتجميعها هنا للعرض فقط (مفيش منطق عمل، عرض بيانات بس).
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '@resort-os/core'
 import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
@@ -8,24 +17,43 @@ const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Room {
   id: number
-  room_number: string
+  name: string
   floor: number
-  status: 'available' | 'occupied' | 'checkout_pending' | 'maintenance' | 'dirty'
-  room_type: string
-  current_booking?: { guest_name: string; check_out: string }
+  status: 'available' | 'occupied' | 'reserved' | 'checkout_pending' | 'maintenance'
+  room_type_id: number
+}
+
+interface RoomTypeOption {
+  id: number
+  name: string
+}
+
+interface CurrentBookingInfo {
+  guest_name: string
+  check_out: string
 }
 
 const rooms = ref<Room[]>([])
+const roomTypesById = ref<Record<number, RoomTypeOption>>({})
+const currentBookingByRoomId = ref<Record<number, CurrentBookingInfo>>({})
 const loading = ref(false)
 const selectedRoom = ref<Room | null>(null)
 const filterStatus = ref<string | null>(null)
 
+function roomTypeName(room: Room): string {
+  return roomTypesById.value[room.room_type_id]?.name ?? '—'
+}
+
+// القيم دي لازم تطابق Room.status الحقيقي بالظبط (app/modules/pms/models.py):
+// available|occupied|reserved|maintenance|checkout_pending. كانت هنا "dirty"
+// غلط بدل "reserved" — "dirty" أصلاً حالة HousekeepingTask مش Room، فكانت
+// غرف الحجز المؤكد (لسه ما دخلش الضيف) بتتصنّف "غير معروفة" في العدّاد.
 const statusConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
   available:        { label: 'فارغة',              color: 'text-green-700',  bg: 'bg-green-50',  border: 'border-green-400' },
+  reserved:         { label: 'محجوزة',              color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-400' },
   occupied:         { label: 'مشغولة',              color: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-400' },
   checkout_pending: { label: 'في انتظار التنظيف',  color: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-400' },
   maintenance:      { label: 'صيانة',               color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-400' },
-  dirty:            { label: 'تنظيف',               color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-400' },
 }
 
 const filteredRooms = computed(() =>
@@ -38,11 +66,44 @@ const counts = computed(() =>
   )
 )
 
+async function fetchRoomTypes() {
+  try {
+    const res = await api.get('/api/v1/pms/room-types', { params: { branch_id: branchId } })
+    const list: RoomTypeOption[] = res.data.items ?? res.data
+    roomTypesById.value = Object.fromEntries(list.map((rt) => [rt.id, rt]))
+  } catch (e) {
+    console.error(e)
+  }
+}
+
+// الحجوزات النشطة (checked_in) بس — عشان "الحجز الحالي" في تفاصيل الغرفة.
+// عرض بيانات فقط (مفيش قرار عمل هنا)، مطابق لنفس الأسلوب المستخدم في
+// BookingsView.vue (allRoomsById) لتجميع بيانات من endpoint تاني للعرض.
+async function fetchCurrentBookings() {
+  try {
+    const res = await api.get('/api/v1/pms/bookings', {
+      params: { branch_id: branchId, status: 'checked_in', page: 1, size: 100 },
+    })
+    const items: { rooms?: { room_id: number }[]; guest_name: string; check_out: string }[] =
+      res.data.items ?? res.data
+    const map: Record<number, CurrentBookingInfo> = {}
+    for (const booking of items) {
+      for (const br of booking.rooms ?? []) {
+        map[br.room_id] = { guest_name: booking.guest_name, check_out: booking.check_out }
+      }
+    }
+    currentBookingByRoomId.value = map
+  } catch (e) {
+    console.error(e)
+  }
+}
+
 async function fetchRooms() {
   loading.value = true
   try {
     const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId } })
     rooms.value = res.data.rooms ?? res.data.items ?? res.data
+    await fetchCurrentBookings()
   } catch(e) {
     console.error(e)
     toast.error('تعذّر تحميل خريطة الغرف')
@@ -52,6 +113,7 @@ async function fetchRooms() {
 let refreshInterval: ReturnType<typeof setInterval>
 
 onMounted(() => {
+  fetchRoomTypes()
   fetchRooms()
   refreshInterval = setInterval(fetchRooms, 60_000)
 })
@@ -115,13 +177,13 @@ onUnmounted(() => clearInterval(refreshInterval))
         ]"
         @click="selectedRoom = room"
       >
-        <div class="font-black text-lg text-gray-900">{{ room.room_number }}</div>
-        <div class="text-xs text-gray-500 truncate">{{ room.room_type }}</div>
+        <div class="font-black text-lg text-gray-900">{{ room.name }}</div>
+        <div class="text-xs text-gray-500 truncate">{{ roomTypeName(room) }}</div>
         <div :class="['text-xs font-semibold mt-1', statusConfig[room.status]?.color]">
-          {{ statusConfig[room.status]?.label }}
+          {{ statusConfig[room.status]?.label ?? room.status }}
         </div>
-        <div v-if="room.current_booking" class="text-xs text-gray-500 mt-1 truncate">
-          {{ room.current_booking.guest_name }}
+        <div v-if="currentBookingByRoomId[room.id]" class="text-xs text-gray-500 mt-1 truncate">
+          {{ currentBookingByRoomId[room.id].guest_name }}
         </div>
       </div>
 
@@ -137,7 +199,7 @@ onUnmounted(() => clearInterval(refreshInterval))
       >
         <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" dir="rtl">
           <div class="flex items-center justify-between mb-5">
-            <h2 class="text-xl font-black text-gray-900">أوضة {{ selectedRoom.room_number }}</h2>
+            <h2 class="text-xl font-black text-gray-900">أوضة {{ selectedRoom.name }}</h2>
             <button
               @click="selectedRoom = null"
               class="text-gray-400 hover:text-gray-700 text-2xl leading-none"
@@ -147,7 +209,7 @@ onUnmounted(() => clearInterval(refreshInterval))
           <div class="space-y-3 text-sm">
             <div class="flex justify-between border-b border-stone-100 pb-2">
               <span class="text-gray-500">النوع</span>
-              <span class="font-medium text-gray-900">{{ selectedRoom.room_type }}</span>
+              <span class="font-medium text-gray-900">{{ roomTypeName(selectedRoom) }}</span>
             </div>
             <div class="flex justify-between border-b border-stone-100 pb-2">
               <span class="text-gray-500">الدور</span>
@@ -156,16 +218,16 @@ onUnmounted(() => clearInterval(refreshInterval))
             <div class="flex justify-between border-b border-stone-100 pb-2">
               <span class="text-gray-500">الحالة</span>
               <span :class="['font-bold', statusConfig[selectedRoom.status]?.color]">
-                {{ statusConfig[selectedRoom.status]?.label }}
+                {{ statusConfig[selectedRoom.status]?.label ?? selectedRoom.status }}
               </span>
             </div>
-            <div v-if="selectedRoom.current_booking" class="pt-1">
+            <div v-if="currentBookingByRoomId[selectedRoom.id]" class="pt-1">
               <p class="text-xs text-gray-400 font-semibold uppercase tracking-wide mb-2">الحجز الحالي</p>
               <div class="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                <div class="font-bold text-gray-900 mb-1">{{ selectedRoom.current_booking.guest_name }}</div>
+                <div class="font-bold text-gray-900 mb-1">{{ currentBookingByRoomId[selectedRoom.id].guest_name }}</div>
                 <div class="text-gray-500 text-xs">
                   مغادرة:
-                  {{ new Date(selectedRoom.current_booking.check_out).toLocaleDateString('ar-EG') }}
+                  {{ new Date(currentBookingByRoomId[selectedRoom.id].check_out).toLocaleDateString('ar-EG') }}
                 </div>
               </div>
             </div>
