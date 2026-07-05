@@ -172,3 +172,21 @@ class TestUsersEndpoints:
     def test_get_missing_user_404(self, client: TestClient, super_admin_headers):
         resp = client.get("/api/v1/users/999999999", headers=super_admin_headers)
         assert resp.status_code == 404
+
+    def test_update_role_rejects_unknown_role(self, client: TestClient, super_admin_headers):
+        """باج حقيقي كان هنا: UserRoleUpdate.role كان مجرد str حر (max_length=30
+        بس) من غير أي تحقق إنه واحد من ROLE_LEVELS المعروفة — غلطة إملائية
+        بسيطة زي "manger" كانت بتتقبل بصمت (200) وتقفل المستخدم فعليًا من كل
+        endpoint (ROLE_LEVELS.get(..., 0) = مستوى صفر). اتصلح بـ validator
+        يرفضه 422 قبل ما يوصل للـ service خالص."""
+        from tests.conftest import _create_test_user
+        user_id = _create_test_user(f"core-badrole-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+
+        resp = client.patch(
+            f"/api/v1/users/{user_id}/role", json={"role": "manger"}, headers=super_admin_headers,
+        )
+        assert resp.status_code == 422
+
+        # الدور الأصلي فضل زي ما هو من غير أي تغيير
+        get_resp = client.get(f"/api/v1/users/{user_id}", headers=super_admin_headers)
+        assert get_resp.json()["role"] == "waiter"

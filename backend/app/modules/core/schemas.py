@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ─────────────────────── Branch ──────────────────────────────────────
@@ -151,6 +151,24 @@ class UserRoleUpdate(BaseModel):
     """super_admin فقط — تغيير role و/أو is_active لمستخدم."""
     role:      Optional[str] = Field(None, max_length=30)
     is_active: Optional[bool] = None
+
+    @field_validator("role")
+    @classmethod
+    def _role_must_be_known(cls, v: Optional[str]) -> Optional[str]:
+        """⚠️ باج حقيقي كان هنا: مفيش أي تحقق إن الـ role المُرسل موجود فعلاً
+        في ROLE_LEVELS — أي غلطة إملائية بسيطة (مثلاً "manger" بدل "manager")
+        كانت بتتقبل بصمت (200 OK)، والمستخدم يتقفل فعليًا من كل حاجة (
+        ROLE_LEVELS.get(user.role, 0) بترجع مستوى 0 لأي endpoint) من غير أي
+        رسالة خطأ توضح السبب. اتصلح بتحقق عند استقبال الطلب مباشرة (422) بدل
+        قبوله بصمت."""
+        if v is not None:
+            from app.core.deps import ROLE_LEVELS  # noqa: PLC0415 — تجنب دورة استيراد
+
+            if v not in ROLE_LEVELS:
+                raise ValueError(
+                    f"role غير معروف: '{v}' — لازم يكون واحد من: {', '.join(sorted(ROLE_LEVELS))}"
+                )
+        return v
 
 
 # ─────────────────────── UserPermission ──────────────────────────────
