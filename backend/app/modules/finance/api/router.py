@@ -7,6 +7,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -317,8 +318,16 @@ def create_account(data: AccountCreate, db: DbDep, _=Depends(get_manager_user)):
         db.commit()
         db.refresh(account)
         return AccountRead.model_validate(account)
-    except Exception as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except IntegrityError:
+        # ⚠️ باج حقيقي كان هنا: كان بيمسك أي Exception ويرجّع str(exc) الخام —
+        # ده بيعرض تفاصيل داخلية (اسم الجدول/القيد) للعميل، ممنوع صراحةً في
+        # CLAUDE.md §8. الحالة الوحيدة المتوقعة هنا فعليًا هي تكرار
+        # (branch_id, code) — UniqueConstraint("uq_accounts_branch_code").
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "رمز الحساب ده مستخدم بالفعل في هذا الفرع",
+        )
 
 
 # ── Journal Entries ───────────────────────────────────────────────────
@@ -624,8 +633,15 @@ def list_depreciation_entries(
 def create_bank_account(data: BankAccountCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         return services.create_bank_account(db, data)
-    except Exception as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except IntegrityError:
+        # ⚠️ نفس باج create_account فوق: كان بيمسك أي Exception ويرجّع
+        # str(exc) الخام للعميل. الحالة الوحيدة المتوقعة فعليًا هي تكرار
+        # (branch_id, account_number) — UniqueConstraint("uq_bank_account_branch_number").
+        db.rollback()
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "رقم الحساب البنكي ده مستخدم بالفعل في هذا الفرع",
+        )
 
 
 @router.get("/finance/bank-accounts", response_model=list[BankAccountRead])
