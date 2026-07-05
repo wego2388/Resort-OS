@@ -386,6 +386,21 @@ def get_unit(db: Session, unit_id: int) -> Optional[TimeshareUnit]:
     return db.query(TimeshareUnit).filter(TimeshareUnit.id == unit_id).first()
 
 
+def lock_unit_for_visit(db: Session, unit_id: int) -> Optional[TimeshareUnit]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف الوحدة طوال الـ transaction عشان
+    يمنع تعارض حجز حقيقي (double-booking) لو حصلت محاولتين متزامنتين لتخصيص
+    نفس الوحدة لنفس الفترة. نفس منطق pms.crud.lock_room_for_booking بالظبط —
+    كان ناقص هنا رغم إن create_visit بيعمل تحقق تعارض (has_overlapping_visit)
+    زي get_available_rooms بالظبط، بس من غير أي قفل صف يمنع الـ race condition
+    بين التحقق والـ INSERT."""
+    return (
+        db.query(TimeshareUnit)
+        .filter(TimeshareUnit.id == unit_id)
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def list_units(
     db: Session, branch_id: int,
     unit_type: Optional[str] = None, status: Optional[str] = None,

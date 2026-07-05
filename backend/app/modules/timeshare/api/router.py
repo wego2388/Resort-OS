@@ -187,6 +187,8 @@ def list_visits(
 def create_visit(data: TimeshareVisitCreate, db: DbDep, _=Depends(get_current_active_user)):
     try:
         return services.create_visit(db, data)
+    except services.VisitConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

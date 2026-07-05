@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Optional
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.modules.timeshare import crud
@@ -14,6 +15,10 @@ from app.modules.timeshare.schemas import (
 from app.resort_os.timeshare_engine import (
     generate_installment_schedule,
 )
+
+
+class VisitConflictError(Exception):
+    """وحدة تايم شير مقفولة فعلاً أو ماسكاها transaction تانية الآن — 409، مش 400."""
 
 
 def get_contract_or_404(db: Session, contract_id: int) -> TimeshareContract:
@@ -356,7 +361,16 @@ def cancel_contract(db: Session, contract_id: int, cancel_amount) -> TimeshareCo
 def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
     """يخصّص وحدة تايم شير فعلية للزيارة (real allocation، مش مجرد سطر تاريخ
     بلا أي حجز حقيقي) — مع منع تعارض حجز حقيقي (double-booking) على نفس
-    الوحدة، بنفس منطق date-overlap المستخدم في pms.crud.get_available_rooms."""
+    الوحدة، بنفس منطق date-overlap المستخدم في pms.crud.get_available_rooms.
+
+    ⚠️ باج تزامن حقيقي كان هنا: التحقق من التعارض (has_overlapping_visit/
+    find_available_unit) وعملية الـ INSERT ما كانوش محميين بأي SELECT FOR
+    UPDATE NOWAIT — يعني لو حصلت محاولتين حقيقيتين متزامنتين لتخصيص نفس
+    الوحدة لنفس الفترة (نفس race condition اللي pms.services.create_booking
+    بيمنعها بالظبط بقفل صف الغرفة)، الاتنين كانوا ممكن يعدّوا التحقق قبل ما
+    أي واحدة تعمل commit ويتم تخصيص نفس الوحدة مرتين فعليًا. اتصلح بقفل صف
+    الوحدة (with_for_update(nowait=True)) قبل إعادة التحقق من التعارض،
+    بنفس نمط lock_room_for_booking بالظبط."""
     contract = get_contract_or_404(db, data.contract_id)
     if data.check_out <= data.check_in:
         raise ValueError("check_out يجب أن يكون بعد check_in")
@@ -365,19 +379,29 @@ def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
     nights = (data.check_out - data.check_in).days
 
     if contract.unit_id:
-        # وحدة مخصَّصة دائمًا للعقد — تحقق فقط من عدم وجود زيارة أخرى متقاطعة عليها
-        unit = crud.get_unit(db, contract.unit_id)
-        if not unit:
-            raise ValueError("الوحدة المخصَّصة لهذا العقد لم تعد موجودة")
-        if unit.status == "maintenance":
-            raise ValueError(f"الوحدة {unit.unit_number} تحت الصيانة حاليًا")
-        if crud.has_overlapping_visit(db, unit.id, data.check_in, data.check_out):
-            raise ValueError(f"الوحدة {unit.unit_number} محجوزة بالفعل في هذه الفترة")
+        candidate_id = contract.unit_id
     else:
-        # عقد عائم — ابحث عن أي وحدة متاحة من نفس نوع الغرفة
-        unit = crud.find_available_unit(db, contract.branch_id, contract.room_type, data.check_in, data.check_out)
-        if not unit:
+        # عقد عائم — ابحث عن أي وحدة متاحة من نفس نوع الغرفة (قبل القفل، مجرد
+        # ترشيح أولي) ثم اقفلها وأعد التحقق تحت الحماية فعليًا تحت.
+        found = crud.find_available_unit(db, contract.branch_id, contract.room_type, data.check_in, data.check_out)
+        if not found:
             raise ValueError(f"لا توجد وحدة متاحة من نوع {contract.room_type} في الفترة المطلوبة")
+        candidate_id = found.id
+
+    try:
+        unit = crud.lock_unit_for_visit(db, candidate_id)
+    except OperationalError:
+        db.rollback()
+        raise VisitConflictError(f"الوحدة {candidate_id} مقفولة الآن من عملية حجز أخرى — حاول مرة أخرى")
+
+    if not unit:
+        raise ValueError("الوحدة المخصَّصة لهذا العقد لم تعد موجودة")
+    if unit.status == "maintenance":
+        raise ValueError(f"الوحدة {unit.unit_number} تحت الصيانة حاليًا")
+    # إعادة التحقق من التعارض بعد القفل — مفيش حد تاني يقدر يخصص نفس الوحدة
+    # لنفس الفترة لحد ما الـ transaction دي تخلص (commit/rollback)
+    if crud.has_overlapping_visit(db, unit.id, data.check_in, data.check_out):
+        raise ValueError(f"الوحدة {unit.unit_number} محجوزة بالفعل في هذه الفترة")
 
     visit = crud.create_visit(db, data, nights, unit_id=unit.id)
     db.commit()
