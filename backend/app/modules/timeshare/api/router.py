@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_current_active_user, get_manager_user, require_permission
+from app.core.deps import DbDep, get_cashier_user, get_current_active_user, get_manager_user, require_permission
 from app.modules.timeshare import crud, services
 from app.modules.timeshare.schemas import (
     PayInstallmentRequest, InstallmentRead,
@@ -63,7 +63,11 @@ def update_contract(contract_id: int, data: TimeshareContractUpdate, db: DbDep,
 
 @router.post("/timeshare/installments/{inst_id}/pay", response_model=InstallmentRead)
 def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
-                    _=Depends(get_current_active_user)):
+                    # ⚠️ نفس باج الصلاحيات المكتشف في leasing.pay_payment: كان
+                    # get_current_active_user (أي دور) بدل get_cashier_user زي
+                    # finance.add_payment — أي حساب عميل/ضيف كان يقدر نظريًا
+                    # يسجّل تحصيل قسط تايم شير لأي عقد.
+                    _=Depends(get_cashier_user)):
     try:
         return services.pay_installment(db, inst_id, req)
     except ValueError as exc:

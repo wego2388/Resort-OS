@@ -107,6 +107,25 @@ class TestLeasingPermissions:
         )
         assert resp.status_code == 403
 
+    def test_pay_payment_requires_cashier_not_just_active_user(
+        self, client: TestClient, db, fake_redis, manager_headers, waiter_headers,
+    ):
+        """باج صلاحيات حقيقي كان هنا: /leasing/payments/{id}/pay كان مفتوح
+        لأي مستخدم نشط (get_current_active_user، حتى level 0) بدل
+        get_cashier_user زي finance.add_payment المكافئة بالظبط. نادل
+        (level 30) لازم يترفض دلوقتي."""
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+        resp = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": "100.00"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
 
 class TestLeasingValidation:
     def test_create_contract_rejects_end_before_start(self, client: TestClient, db, fake_redis, manager_headers):

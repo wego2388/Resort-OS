@@ -109,6 +109,26 @@ class TestTimesharePermissions:
         )
         assert resp.status_code == 403
 
+    def test_pay_installment_requires_cashier_not_just_active_user(
+        self, client: TestClient, db, fake_redis, manager_headers, waiter_headers,
+    ):
+        """باج صلاحيات حقيقي كان هنا: /timeshare/installments/{id}/pay كان
+        مفتوح لأي مستخدم نشط (get_current_active_user، حتى level 0) بدل
+        get_cashier_user زي finance.add_payment المكافئة بالظبط. نادل
+        (level 30) لازم يترفض دلوقتي."""
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        inst_id = contract["installments_list"][0]["id"]
+
+        resp = client.post(
+            f"/api/v1/timeshare/installments/{inst_id}/pay",
+            json={"paid_amount": "100.00", "payment_method": "cash"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
 
 class TestTimeshareVisitAndUnitsHttp:
     """HTTP-level: تخصيص وحدة فعلية + منع تعارض حجز حقيقي عبر الـ API

@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
-from app.core.deps import DbDep, get_current_active_user, get_manager_user
+from app.core.deps import DbDep, get_cashier_user, get_current_active_user, get_manager_user
 from app.modules.leasing import crud, services
 from app.modules.leasing.schemas import (
     LeaseContractCreate, LeaseContractRead, LeaseContractUpdate,
@@ -59,7 +59,12 @@ def update_contract(contract_id: int, data: LeaseContractUpdate, db: DbDep,
 
 @router.post("/leasing/payments/{payment_id}/pay", response_model=LeasePaymentRead)
 def pay_payment(payment_id: int, req: PayLeaseRequest, db: DbDep,
-                _=Depends(get_current_active_user)):
+                # ⚠️ باج صلاحيات حقيقي كان هنا: get_current_active_user (أي دور،
+                # حتى level 0 — customer/guest) بدل get_cashier_user زي
+                # finance.add_payment (العملية المكافئة بالظبط — تسجيل دفعة
+                # فعلية) — أي حساب عميل/ضيف كان يقدر نظريًا يسجّل دفعة إيجار
+                # لأي عقد برقم إيصال ومبلغ مُلفَّق.
+                _=Depends(get_cashier_user)):
     try:
         return services.pay_payment(db, payment_id, req)
     except ValueError as exc:
