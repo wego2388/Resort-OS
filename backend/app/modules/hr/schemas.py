@@ -81,6 +81,42 @@ class AllowanceRead(BaseModel):
     is_active:      bool
 
 
+# ── SocialInsuranceConfig / TaxBracketConfig (admin) ───────────────────
+# الموديلان (models.SocialInsuranceConfig/TaxBracketConfig) موجودين بالكامل
+# ومقروئين فعليًا داخل حساب الراتب (hr_engine عبر crud.get_active_si_config/
+# get_active_tax_brackets)، بس مفيش أي schema/router خالص لإضافة نسخة جديدة
+# لما القانون يتغيّر (زي تحديث شرائح الضريبة أو نسب التأمينات سنويًا) — كانت
+# الطريقة الوحيدة INSERT مباشر في الداتابيز (زي seed.py). دلوقتي فيه endpoint
+# admin-only لإضافة نسخة جديدة (effective_from) من غير أي DB access مباشر.
+
+class SocialInsuranceConfigCreate(BaseModel):
+    max_insurable_salary:      Decimal = Field(..., gt=0)
+    employee_rate:             Decimal = Field(..., gt=0, le=1)
+    employer_rate:             Decimal = Field(..., gt=0, le=1)
+    personal_exemption_annual: Decimal = Field(..., ge=0)
+    max_penalty_days_monthly:  int     = Field(5, ge=0, le=31)
+    effective_from:            date
+    is_active:                 bool    = True
+
+
+class SocialInsuranceConfigRead(SocialInsuranceConfigCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
+class TaxBracketConfigCreate(BaseModel):
+    lower_bound:    Decimal = Field(..., ge=0)
+    upper_bound:    Optional[Decimal] = Field(None, gt=0)
+    rate:           Decimal = Field(..., ge=0, le=1)
+    effective_from: date
+    is_active:      bool = True
+
+
+class TaxBracketConfigRead(TaxBracketConfigCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+
+
 class PayrollCalculateRequest(BaseModel):
     employee_id:        int
     period_year:        int = Field(..., ge=2020, le=2099)

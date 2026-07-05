@@ -32,6 +32,8 @@ from app.modules.hr.schemas import (
     RotaTemplateCreate, RotaTemplateRead, RotaTemplateUpdate,
     ShiftCreate, ShiftRead,
     ShiftSwapRequestCreate, ShiftSwapRequestRead,
+    SocialInsuranceConfigCreate, SocialInsuranceConfigRead,
+    TaxBracketConfigCreate, TaxBracketConfigRead,
 )
 from app.modules.core.schemas import PaginatedResponse
 
@@ -520,6 +522,44 @@ def get_my_payslips(
         for line in lines
     ]
     return PaginatedResponse(total=total, page=page, size=size, items=items)
+
+
+# ── Payroll Config (Social Insurance / Tax Brackets) ───────────────────
+# الموديلان (SocialInsuranceConfig/TaxBracketConfig) موجودين ومقروئين فعليًا
+# جوه حساب الراتب (hr_engine)، بس مفيش أي schema/router لإضافة نسخة جديدة
+# لما القانون يتغيّر — كانت الطريقة الوحيدة INSERT مباشر في الداتابيز
+# (زي seed.py). admin-only لأنه بيأثر على حساب راتب كل الموظفين.
+
+@router.post("/hr/config/social-insurance", response_model=SocialInsuranceConfigRead,
+             status_code=status.HTTP_201_CREATED)
+def create_social_insurance_config(
+    data: SocialInsuranceConfigCreate, db: DbDep, _=Depends(get_admin_user),
+):
+    obj = crud.create_si_config(db, data)
+    db.commit()
+    db.refresh(obj)
+    return SocialInsuranceConfigRead.model_validate(obj)
+
+
+@router.get("/hr/config/social-insurance", response_model=list[SocialInsuranceConfigRead])
+def list_social_insurance_configs(db: DbDep, _=Depends(get_admin_user)):
+    return [SocialInsuranceConfigRead.model_validate(c) for c in crud.list_si_configs(db)]
+
+
+@router.post("/hr/config/tax-brackets", response_model=TaxBracketConfigRead,
+             status_code=status.HTTP_201_CREATED)
+def create_tax_bracket_config(
+    data: TaxBracketConfigCreate, db: DbDep, _=Depends(get_admin_user),
+):
+    obj = crud.create_tax_bracket(db, data)
+    db.commit()
+    db.refresh(obj)
+    return TaxBracketConfigRead.model_validate(obj)
+
+
+@router.get("/hr/config/tax-brackets", response_model=list[TaxBracketConfigRead])
+def list_tax_bracket_configs(db: DbDep, _=Depends(get_admin_user)):
+    return [TaxBracketConfigRead.model_validate(c) for c in crud.list_tax_brackets(db)]
 
 
 # ── Penalty Types ─────────────────────────────────────────────────────

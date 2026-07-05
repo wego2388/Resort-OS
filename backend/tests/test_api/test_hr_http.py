@@ -960,6 +960,56 @@ class TestPenaltyTypeHttp:
         assert resp.status_code == 403
 
 
+class TestPayrollConfigHttp:
+    """Regression: SocialInsuranceConfig/TaxBracketConfig models were fully
+    read (hr_engine, via crud.get_active_si_config/get_active_tax_brackets)
+    but had zero schema/router — the only way to add a new version when the
+    law changes (e.g. annual tax bracket update) was a direct DB insert (like
+    seed.py does). admin-only since it affects every employee's payroll."""
+
+    def test_create_and_list_social_insurance_config(self, client: TestClient, db, super_admin_headers, manager_headers):
+        resp = client.post(
+            "/api/v1/hr/config/social-insurance",
+            json={
+                "max_insurable_salary": "12000.00", "employee_rate": "0.11",
+                "employer_rate": "0.1875", "personal_exemption_annual": "20000.00",
+                "effective_from": "2027-01-01",
+            },
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["max_insurable_salary"] == "12000.00"
+
+        list_resp = client.get("/api/v1/hr/config/social-insurance", headers=super_admin_headers)
+        assert list_resp.status_code == 200
+        assert any(c["effective_from"] == "2027-01-01" for c in list_resp.json())
+
+        # manager (level 60) لا يكفي — الإعداد ده admin-only (80+)
+        forbidden = client.post(
+            "/api/v1/hr/config/social-insurance",
+            json={
+                "max_insurable_salary": "12000.00", "employee_rate": "0.11",
+                "employer_rate": "0.1875", "personal_exemption_annual": "20000.00",
+                "effective_from": "2028-01-01",
+            },
+            headers=manager_headers,
+        )
+        assert forbidden.status_code == 403
+
+    def test_create_and_list_tax_bracket_config(self, client: TestClient, db, super_admin_headers):
+        resp = client.post(
+            "/api/v1/hr/config/tax-brackets",
+            json={"lower_bound": "0", "upper_bound": "40000", "rate": "0", "effective_from": "2027-01-01"},
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["rate"] == "0.0000" or float(resp.json()["rate"]) == 0.0
+
+        list_resp = client.get("/api/v1/hr/config/tax-brackets", headers=super_admin_headers)
+        assert list_resp.status_code == 200
+        assert any(b["effective_from"] == "2027-01-01" for b in list_resp.json())
+
+
 class TestPayrollDownloadsHttp:
     """GET /hr/payroll/{run_id}/payslip/{employee_id} و
     GET /hr/payroll/{run_id}/excel — تحميلات PDF/Excel حقيقية، لازم نتأكد من

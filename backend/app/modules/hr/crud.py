@@ -19,6 +19,7 @@ from app.modules.hr.schemas import (
     EmployeePenaltyCreate, LeaveTypeCreate, PenaltyTypeCreate,
     PayrollRunCreate, RotaAssignmentCreate, RotaTemplateCreate, RotaTemplateUpdate,
     ShiftCreate, ShiftSwapRequestCreate,
+    SocialInsuranceConfigCreate, TaxBracketConfigCreate,
 )
 
 
@@ -83,6 +84,28 @@ def get_active_tax_brackets(db: Session) -> list[TaxBracketConfig]:
         .order_by(TaxBracketConfig.lower_bound)
         .all()
     )
+
+
+def create_si_config(db: Session, data: SocialInsuranceConfigCreate) -> SocialInsuranceConfig:
+    obj = SocialInsuranceConfig(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def list_si_configs(db: Session) -> list[SocialInsuranceConfig]:
+    return db.query(SocialInsuranceConfig).order_by(SocialInsuranceConfig.effective_from.desc()).all()
+
+
+def create_tax_bracket(db: Session, data: TaxBracketConfigCreate) -> TaxBracketConfig:
+    obj = TaxBracketConfig(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def list_tax_brackets(db: Session) -> list[TaxBracketConfig]:
+    return db.query(TaxBracketConfig).order_by(TaxBracketConfig.effective_from.desc(), TaxBracketConfig.lower_bound).all()
 
 
 def list_allowances_for_employee(
