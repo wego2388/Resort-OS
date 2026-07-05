@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { api, useResortWebSocket } from '@resort-os/core'
+import { api, useResortWebSocket, parseApiTimestamp } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
@@ -38,7 +38,7 @@ const filteredTickets = computed(() =>
 )
 
 function minutesElapsed(createdAt: string) {
-  return Math.floor((now.value.getTime() - new Date(createdAt).getTime()) / 60000)
+  return Math.floor((now.value.getTime() - parseApiTimestamp(createdAt).getTime()) / 60000)
 }
 
 function ticketAge(createdAt: string) {
@@ -215,7 +215,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
           <!-- Timestamp + Action -->
           <div class="space-y-2">
             <div class="text-xs text-slate-400 text-center">
-              {{ new Date(ticket.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) }}
+              {{ parseApiTimestamp(ticket.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) }}
             </div>
             <button
               v-if="ticket.status === 'pending'"
