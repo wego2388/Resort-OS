@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
-    get_manager_user,
+    get_employee_user, get_manager_user,
 )
 from app.modules.maintenance import crud, services
 from app.modules.maintenance.schemas import (
@@ -113,7 +113,7 @@ def get_work_order(order_id: int, db: DbDep, _=Depends(get_current_active_user))
 
 
 @router.patch("/maintenance/work-orders/{order_id}", response_model=WorkOrderRead)
-def update_work_order(order_id: int, data: WorkOrderUpdate, db: DbDep, _=Depends(get_current_active_user)):
+def update_work_order(order_id: int, data: WorkOrderUpdate, db: DbDep, _=Depends(get_employee_user)):
     try:
         return services.update_work_order(db, order_id, data)
     except ValueError as exc:
@@ -132,7 +132,7 @@ def complete_work_order(order_id: int, db: DbDep, _=Depends(get_manager_user)):
 @router.post("/maintenance/work-orders/{order_id}/parts",
              response_model=WorkOrderRead,
              status_code=status.HTTP_201_CREATED)
-def add_part(order_id: int, data: WorkOrderPartCreate, db: DbDep, _=Depends(get_current_active_user)):
+def add_part(order_id: int, data: WorkOrderPartCreate, db: DbDep, _=Depends(get_employee_user)):
     try:
         return services.add_part_to_wo(db, order_id, data)
     except ValueError as exc:

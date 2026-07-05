@@ -163,6 +163,15 @@ def get_waiter_user(user=Depends(get_current_active_user)):
     return user
 
 
+def get_employee_user(user=Depends(get_current_active_user)):
+    """أي موظف حقيقي (level >= 20) — يستثني customer/guest (level 0).
+    للـ endpoints الداخلية التشغيلية (زي تعديل أمر صيانة) اللي المفروض
+    تبقى مقفولة على الموظفين، مش أي حساب مسجّل من الموقع العام."""
+    if user_level(user) < 20:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية موظف")
+    return user
+
+
 # ─────────────────────── Permission Matrix (fine-grained) ─────────────
 # طبقة إضافية فوق ROLE_LEVELS — "screen/action permission" زي
 # UsersScreenAccessDetails في نظام Trucker القديم، بس هنا additive مش

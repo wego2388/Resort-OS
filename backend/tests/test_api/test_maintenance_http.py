@@ -120,6 +120,38 @@ class TestWorkOrdersEndpoints:
         resp = client.get("/api/v1/maintenance/work-orders/999999999", headers=waiter_headers)
         assert resp.status_code == 404
 
+    def test_update_and_add_part_reject_customer_role(self, client: TestClient, db, waiter_headers):
+        """Regression: PATCH .../work-orders/{id} and POST .../parts used to
+        accept *any* authenticated user (get_current_active_user, level 0) —
+        including a self-registered "customer" account — with no ownership
+        check, letting them reassign/reprioritize/cost real maintenance work
+        orders. Both now require get_employee_user (level >= 20)."""
+        from tests.conftest import _create_test_user, _make_token
+        branch = make_branch_committed(db)
+        wo = client.post(
+            "/api/v1/maintenance/work-orders",
+            json={"branch_id": branch.id, "title": "تسريب مياه"},
+            headers=waiter_headers,
+        ).json()
+
+        email = f"maint-customer-{uuid.uuid4().hex[:6]}@test.local"
+        _create_test_user(email, "customer")
+        customer_headers = {"Authorization": f"Bearer {_make_token(email)}"}
+
+        update_resp = client.patch(
+            f"/api/v1/maintenance/work-orders/{wo['id']}",
+            json={"status": "in_progress"},
+            headers=customer_headers,
+        )
+        assert update_resp.status_code == 403
+
+        part_resp = client.post(
+            f"/api/v1/maintenance/work-orders/{wo['id']}/parts",
+            json={"part_name": "مضخة", "quantity": 1, "unit_cost": 500},
+            headers=customer_headers,
+        )
+        assert part_resp.status_code == 403
+
     def test_complete_requires_manager(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
         wo = client.post(
