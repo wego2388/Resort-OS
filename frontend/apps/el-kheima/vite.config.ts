@@ -95,7 +95,14 @@ export default defineConfig({
       // /api/v1/... زي أي endpoint تاني، مش تحت /ws منفصل. الإعداد القديم
       // (/ws بروكسي لمسار مختلف تمامًا عن مسار الـ backend الحقيقي) كان
       // معناه إن أي اتصال WebSocket من الفرونت إند مستحيل يوصل للباك إند خالص.
-      '/api': { target: 'http://localhost:8005', changeOrigin: true, ws: true },
+      // VITE_API_PROXY_TARGET لو محتاج تشغّل نسخة باك إند تانية على بورت
+      // مختلف (بيئة اختبار منفصلة عن السيرفر الرئيسي، بدون ما تلمس القيمة
+      // الافتراضية اللي باقي المطورين/الجلسات معتمدين عليها).
+      '/api': {
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:8005',
+        changeOrigin: true,
+        ws: true,
+      },
     },
   },
 })
