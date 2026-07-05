@@ -10,6 +10,7 @@ backend/.venv/
 *.pyd
 **/*.egg-info/
 backend/.pytest_cache/
+backend/.ruff_cache/
 backend/htmlcov/
 backend/.coverage
 backend/.coverage.*

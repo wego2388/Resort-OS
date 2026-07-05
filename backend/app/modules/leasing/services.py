@@ -146,7 +146,7 @@ def calculate_penalty(payment: LeasePayment, as_of: date | None = None) -> Decim
 
 def apply_penalties(db: Session, contract_id: int) -> list[LeasePayment]:
     """يحدّث غرامات التأخير لجميع الدفعات المتأخرة."""
-    contract = get_contract_or_404(db, contract_id)
+    get_contract_or_404(db, contract_id)  # يتحقق من وجود العقد (يرمي 404)
     payments = crud.list_payments(db, contract_id)
     updated = []
     for p in payments:

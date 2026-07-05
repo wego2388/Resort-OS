@@ -98,6 +98,16 @@ services:
     restart: unless-stopped
     env_file: ./backend/.env
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+    # Overrides the backend image's inherited HEALTHCHECK (curl :8005/health) —
+    # a worker never opens that port (it runs `celery worker`, not uvicorn), so
+    # without this override the container always shows "unhealthy" regardless
+    # of whether the worker is actually fine. `inspect ping` is the real check.
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A app.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
     depends_on:
       db_postgres:
         condition: service_healthy
@@ -113,6 +123,17 @@ services:
     restart: unless-stopped
     env_file: ./backend/.env
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
+    # Same inherited-HEALTHCHECK problem as celery_worker above, but beat has
+    # no equivalent to `inspect ping` (it's a scheduler, not a worker) — the
+    # simplest correct check is that the process is actually running. No
+    # `ps`/`pgrep` in this slim image, so grep /proc/*/cmdline directly
+    # (both `grep` and `/proc` are always available).
+    healthcheck:
+      test: ["CMD-SHELL", "grep -l beat /proc/[0-9]*/cmdline >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 5
     depends_on:
       db_postgres:
         condition: service_healthy

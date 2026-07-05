@@ -203,6 +203,22 @@ class TestRegistrationPrivilegeEscalation:
             finally:
                 db.close()
 
+    def test_register_response_never_leaks_password_hash_or_2fa_secret(self, client, setup_db):
+        """Regression — /register had no response_model, so FastAPI serialized
+        the raw ORM User object returned by AuthService.register(), leaking
+        password_hash (and two_factor_secret) in the JSON response of this
+        public, unauthenticated endpoint."""
+        email = f"reg-leak-{uuid.uuid4().hex}@test.local"
+        res = client.post(
+            "/api/v1/auth/register",
+            json={"email": email, "password": "Strong@12345", "full_name": "X"},
+        )
+        if res.status_code == 200:
+            body = res.json()
+            assert "password_hash" not in body
+            assert "two_factor_secret" not in body
+            assert body["email"] == email
+
 
 # ── 7: weak SECRET_KEY rejected in production ──────────────────────────────
 

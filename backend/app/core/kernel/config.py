@@ -58,7 +58,9 @@ class CoreSettings(BaseSettings):
     SENTRY_TRACES_SAMPLE_RATE: float = 0.1
 
     # ── Celery ───────────────────────────────────────────────────────────────
+    # Both optional — when unset, make_celery() falls back to REDIS_URL.
     CELERY_BROKER_URL: Optional[str] = None
+    CELERY_RESULT_BACKEND: Optional[str] = None
 
     # ── Auth lockout ───────────────────────────────────────────────────────
     MAX_LOGIN_ATTEMPTS: int = 5

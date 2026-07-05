@@ -40,7 +40,12 @@ def revenue_summary(
     date_from: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
     date_to: date = Query(default_factory=date.today),
 ):
-    from datetime import datetime  # noqa: PLC0415
+    from app.core.config import settings  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_date_to_utc_range  # noqa: PLC0415
+    # created_at (restaurant/cafe) مخزّن UTC — لازم نحوّل مدى التاريخ المحلي
+    # (settings.TIMEZONE) لـ UTC، وإلا الفلترة بتفشل لمدة ~3 ساعات كل يوم.
+    range_start, _ = local_date_to_utc_range(date_from, settings.TIMEZONE)
+    _, range_end = local_date_to_utc_range(date_to, settings.TIMEZONE)
     result: dict = {
         "period": {"from": str(date_from), "to": str(date_to)},
         "branch_id": branch_id,
@@ -57,8 +62,8 @@ def revenue_summary(
         rows = db.query(Order).filter(
             Order.branch_id == branch_id,
             Order.status == "paid",
-            Order.created_at >= datetime.combine(date_from, datetime.min.time()),
-            Order.created_at <= datetime.combine(date_to, datetime.max.time()),
+            Order.created_at >= range_start,
+            Order.created_at <= range_end,
         ).all()
         return {"orders": len(rows), "total": sum(o.total for o in rows)}
 
@@ -67,8 +72,8 @@ def revenue_summary(
         rows = db.query(CafeOrder).filter(
             CafeOrder.branch_id == branch_id,
             CafeOrder.status == "paid",
-            CafeOrder.created_at >= datetime.combine(date_from, datetime.min.time()),
-            CafeOrder.created_at <= datetime.combine(date_to, datetime.max.time()),
+            CafeOrder.created_at >= range_start,
+            CafeOrder.created_at <= range_end,
         ).all()
         return {"orders": len(rows), "total": sum(o.total for o in rows)}
 

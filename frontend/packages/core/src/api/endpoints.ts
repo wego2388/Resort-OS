@@ -81,7 +81,5 @@ export const ENDPOINTS = {
     // `dailyStats` below is the real "today's numbers" endpoint and is what the
     // dashboard actually uses now.
     dailyStats: '/api/v1/analytics/daily-stats',
-    kpisWs: (branchId: number) => `ws://localhost:8005/ws/analytics/kpis/${branchId}`,
-    kdsWs: (token: string) => `ws://localhost:8005/ws/kds/${token}`,
   },
 }

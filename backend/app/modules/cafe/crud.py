@@ -7,6 +7,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_date_to_utc_range
 from app.modules.cafe.models import (
     CafeCategory, CafeItem, CafeMenuItemExtra, CafeMenuItemExtraGroup,
     CafeOrder, CafeOrderItem, CafeOrderItemExtra, CafeTable,
@@ -113,10 +115,10 @@ def list_orders(
     if status:
         q = q.filter(CafeOrder.status == status)
     if order_date:
-        q = q.filter(CafeOrder.created_at.between(
-            datetime.combine(order_date, datetime.min.time()),
-            datetime.combine(order_date, datetime.max.time()),
-        ))
+        # created_at مخزّن UTC — لازم نحوّل "اليوم" بتوقيت المنتجع (settings.TIMEZONE)
+        # لمدى UTC، وإلا فلترة "اليوم" بتفشل لمدة ~3 ساعات كل يوم (فرق UTC+3 القاهرة).
+        start, end = local_date_to_utc_range(order_date, settings.TIMEZONE)
+        q = q.filter(CafeOrder.created_at.between(start, end))
     total = q.count()
     return q.order_by(CafeOrder.created_at.desc()).offset(skip).limit(limit).all(), total
 
