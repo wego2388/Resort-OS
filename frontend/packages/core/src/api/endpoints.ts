@@ -81,5 +81,11 @@ export const ENDPOINTS = {
     // `dailyStats` below is the real "today's numbers" endpoint and is what the
     // dashboard actually uses now.
     dailyStats: '/api/v1/analytics/daily-stats',
+    // DailyStats is a nightly-computed snapshot (Celery beat, crontab hour=1,
+    // always computes *yesterday*) — there is structurally no row for *today*
+    // until 1am tomorrow. `revenue` computes restaurant/cafe/pms/beach totals
+    // live from the source tables for any date range, so the dashboard falls
+    // back to it for same-day figures instead of always showing 0.
+    revenue: '/api/v1/analytics/revenue',
   },
 }

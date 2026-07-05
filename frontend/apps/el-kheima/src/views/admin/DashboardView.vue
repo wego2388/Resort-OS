@@ -37,27 +37,50 @@ async function fetchDailyStats(stat_date: string) {
   }
 }
 
+// ⚠️ باج حقيقي (اتصلح 2026-07-05، اتلقى أثناء اختبار حي): "إيراد اليوم" كان
+// دايمًا صفر خلال ساعات الشغل الفعلية — DailyStats بتتولّد مرة واحدة بس كل
+// يوم الساعة 1 صباحًا (وقتها بتحسب "أمس" مش "النهاردة")، يعني الصف بتاع
+// النهاردة عمره ما بيكون موجود قبل الساعة 1 بليل بكرة. النتيجة: مدير بيفتح
+// اللوحة ظهرًا يشوف "إيراد اليوم = 0" رغم مبيعات حقيقية شغالة قدامه. الحل:
+// لو مفيش صف DailyStats للنهاردة، نستخدم /analytics/revenue (بيحسب لحظيًا
+// من جداول المطعم/الكافيه/الشاطئ/الفندق نفسها، مش من لقطة مخزّنة).
+async function fetchLiveRevenueToday() {
+  const today = isoDate(new Date())
+  const { data } = await api.get(ENDPOINTS.analytics.revenue, {
+    params: { branch_id: branchId, date_from: today, date_to: today },
+  })
+  return {
+    total_revenue: Number(data?.total ?? 0),
+    beach_visitors: Number(data?.beach?.visits ?? 0),
+  }
+}
+
 async function fetchDashboard() {
   loading.value = true
   loadError.value = false
   try {
     const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1)
 
-    const [todayRes, yesterdayRes, bookingsRes, hkRes] = await Promise.allSettled([
+    const [todayRes, yesterdayRes, bookingsRes, hkRes, liveRevenueRes] = await Promise.allSettled([
       fetchDailyStats(isoDate(new Date())),
       fetchDailyStats(isoDate(yesterday)),
       api.get(ENDPOINTS.pms.bookings, { params: { branch_id: branchId, status: 'checked_in', page: 1, size: 1 } }),
       api.get(ENDPOINTS.pms.housekeeping, { params: { branch_id: branchId, status: 'pending' } }),
+      fetchLiveRevenueToday(),
     ])
 
     const todayStats = todayRes.status === 'fulfilled' ? todayRes.value : null
     const yesterdayStats = yesterdayRes.status === 'fulfilled' ? yesterdayRes.value : null
+    const liveRevenue = liveRevenueRes.status === 'fulfilled' ? liveRevenueRes.value : null
 
     data.value = {
-      today_revenue: todayStats?.total_revenue ?? 0,
+      // todayStats (nightly snapshot) wins once it exists (it also carries
+      // occupancy_pct, which the live fallback below can't compute); until
+      // then, fall back to the live query so "today" isn't just always 0.
+      today_revenue: todayStats?.total_revenue ?? liveRevenue?.total_revenue ?? 0,
       yesterday_revenue: yesterdayStats?.total_revenue ?? 0,
       occupancy_rate: todayStats?.occupancy_pct ?? 0,
-      beach_sold_today: todayStats?.beach_visitors ?? 0,
+      beach_sold_today: todayStats?.beach_visitors ?? liveRevenue?.beach_visitors ?? 0,
       active_bookings: bookingsRes.status === 'fulfilled' ? (bookingsRes.value.data.total ?? 0) : 0,
       pending_hk_tasks: hkRes.status === 'fulfilled' ? (hkRes.value.data?.length ?? 0) : 0,
     }
