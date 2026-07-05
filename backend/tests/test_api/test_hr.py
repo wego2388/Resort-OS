@@ -276,6 +276,63 @@ class TestPayroll:
         total_credit = sum(l.credit for l in lines)
         assert total_debit == total_credit, "القيد لازم يكون متوازن (مدين = دائن)"
 
+    def test_new_tax_bracket_version_does_not_corrupt_current_period(
+        self, db, employee, si_config, tax_brackets,
+    ):
+        """⚠️ باج حقيقي وخطير: get_active_tax_brackets كانت بترجع *كل* الصفوف
+        is_active=True مع بعض بغض النظر عن effective_from — يعني إضافة نسخة
+        شرائح جديدة (لما القانون يتغيّر، بالظبط الاستخدام اللي endpoint
+        POST /hr/config/tax-brackets اتعمل عشانه) كانت بتكسر حساب الضريبة
+        لكل الفترات فورًا (حتى الفترات الماضية والحاضرة)، مش بس المستقبلية،
+        لأن شرائح النسختين كانت بتتجمّع في قايمة واحدة بمعدلات متضاربة."""
+        from app.modules.hr.models import TaxBracketConfig
+
+        before = services.calculate_employee_payroll(db, employee.id, 2026, 6)
+
+        # نسخة "قانون جديد" مستقبلية — 0% لحد 20000 بدل الشرائح الحالية
+        db.add(TaxBracketConfig(
+            lower_bound=Decimal("0"), upper_bound=Decimal("20000"),
+            rate=Decimal("0.0000"), effective_from=date(2027, 1, 1), is_active=True,
+        ))
+        db.add(TaxBracketConfig(
+            lower_bound=Decimal("20000"), upper_bound=None,
+            rate=Decimal("0.0500"), effective_from=date(2027, 1, 1), is_active=True,
+        ))
+        db.commit()
+
+        after_current_period = services.calculate_employee_payroll(db, employee.id, 2026, 6)
+        assert after_current_period.monthly_tax == before.monthly_tax, (
+            "إضافة شرائح ضريبية مستقبلية لازم متأثرش حساب فترة حالية/ماضية"
+        )
+
+        future_period = services.calculate_employee_payroll(db, employee.id, 2027, 3)
+        assert future_period.monthly_tax != before.monthly_tax, (
+            "فترة مستقبلية (بعد effective_from) لازم تستخدم الشرائح الجديدة فعلاً"
+        )
+
+    def test_new_si_config_version_does_not_corrupt_current_period(
+        self, db, employee, si_config, tax_brackets,
+    ):
+        """نفس فئة الباج فوق لكن لـ SocialInsuranceConfig — get_active_si_config
+        كانت بترجع أحدث effective_from بس (من غير مقارنة بفترة الطلب)، يعني
+        نسخة مستقبلية كانت بتُستخدم فورًا حتى لحساب فترة حالية/ماضية."""
+        from app.modules.hr.models import SocialInsuranceConfig
+
+        before = services.calculate_employee_payroll(db, employee.id, 2026, 6)
+
+        db.add(SocialInsuranceConfig(
+            max_insurable_salary=Decimal("30000.00"), employee_rate=Decimal("0.1100"),
+            employer_rate=Decimal("0.1875"), personal_exemption_annual=Decimal("15000.00"),
+            max_penalty_days_monthly=5, effective_from=date(2027, 1, 1), is_active=True,
+        ))
+        db.commit()
+
+        after_current_period = services.calculate_employee_payroll(db, employee.id, 2026, 6)
+        assert after_current_period.insurable_salary == before.insurable_salary
+
+        future_period = services.calculate_employee_payroll(db, employee.id, 2027, 3)
+        assert future_period.insurable_salary == employee.basic_salary  # الحد الأقصى الجديد أعلى من الراتب
+
     def test_approve_payroll_run_skips_journal_when_no_lines_computed(
         self, db, branch, si_config, tax_brackets,
     ):

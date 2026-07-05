@@ -68,19 +68,40 @@ def update_employee(db: Session, emp: Employee, data: EmployeeUpdate) -> Employe
 
 # ── Config ────────────────────────────────────────────────────────────
 
-def get_active_si_config(db: Session) -> Optional[SocialInsuranceConfig]:
-    return (
-        db.query(SocialInsuranceConfig)
-        .filter(SocialInsuranceConfig.is_active.is_(True))
-        .order_by(SocialInsuranceConfig.effective_from.desc())
-        .first()
-    )
+def get_active_si_config(db: Session, as_of: Optional[date] = None) -> Optional[SocialInsuranceConfig]:
+    """⚠️ باج حقيقي كان هنا: من غير `as_of`، الدالة كانت بترجع أحدث صف
+    is_active=True بس — يعني لو أضفت نسخة جديدة effective_from مستقبلي (زي
+    endpoint POST /hr/config/social-insurance اليوم بالظبط، اللي اتعمل عشان
+    "لما القانون يتغيّر")، أي كشف رواتب لأي فترة (حتى فترات ماضية) كان
+    هيستخدم النسخة الجديدة فورًا بدل ما يستنى effective_from بتاعها. دلوقتي
+    لازم `effective_from <= as_of` (تاريخ أول يوم في فترة الرواتب المطلوبة)."""
+    q = db.query(SocialInsuranceConfig).filter(SocialInsuranceConfig.is_active.is_(True))
+    if as_of is not None:
+        q = q.filter(SocialInsuranceConfig.effective_from <= as_of)
+    return q.order_by(SocialInsuranceConfig.effective_from.desc()).first()
 
 
-def get_active_tax_brackets(db: Session) -> list[TaxBracketConfig]:
+def get_active_tax_brackets(db: Session, as_of: Optional[date] = None) -> list[TaxBracketConfig]:
+    """⚠️ باج حقيقي أخطر من اللي فوق: كانت الدالة بترجع *كل* الصفوف
+    is_active=True مع بعض بغض النظر عن effective_from بتاعها — يعني لو فيه
+    نسخة قديمة (2024) ونسخة جديدة (تحديث تشريعي مستقبلي) اتضافت من غير ما
+    حد يـ deactivate القديمة يدويًا (مفيش أي تحقق أو تحذير يمنع كده)، شرائح
+    النسختين كانت بتتحسب مع بعض في نفس حساب annual_tax — نطاقات متداخلة
+    بمعدلات متضاربة، يعني ضريبة كل موظف تتكسر فورًا من لحظة إضافة أي تحديث،
+    مش بس الفترات المستقبلية. الحل: اختار "نسخة" واحدة بس (نفس effective_from)
+    — أحدث effective_from <= as_of، مش كل الصفوف النشطة من كل النسخ سوا."""
+    q = db.query(TaxBracketConfig).filter(TaxBracketConfig.is_active.is_(True))
+    if as_of is not None:
+        q = q.filter(TaxBracketConfig.effective_from <= as_of)
+    latest = q.order_by(TaxBracketConfig.effective_from.desc()).first()
+    if not latest:
+        return []
     return (
         db.query(TaxBracketConfig)
-        .filter(TaxBracketConfig.is_active.is_(True))
+        .filter(
+            TaxBracketConfig.is_active.is_(True),
+            TaxBracketConfig.effective_from == latest.effective_from,
+        )
         .order_by(TaxBracketConfig.lower_bound)
         .all()
     )

@@ -137,13 +137,19 @@ def calculate_employee_payroll(
 ) -> PayrollResultRead:
     emp = get_employee_or_404(db, employee_id)
 
-    si_orm = crud.get_active_si_config(db)
-    if not si_orm:
-        raise ValueError("لا يوجد إعداد تأمينات اجتماعية نشط — أضف SocialInsuranceConfig في DB")
+    # ⚠️ لازم as_of = أول يوم في فترة الرواتب المطلوبة، مش "دلوقتي" — راجع
+    # تعليق crud.get_active_si_config/get_active_tax_brackets: من غيره أي
+    # تحديث تشريعي (SocialInsuranceConfig/TaxBracketConfig جديد) كان بيكسر
+    # حساب كل الفترات (الماضية والحاضرة) فورًا، مش بس الفترات المستقبلية.
+    period_start = date(period_year, period_month, 1)
 
-    brackets_orm = crud.get_active_tax_brackets(db)
+    si_orm = crud.get_active_si_config(db, as_of=period_start)
+    if not si_orm:
+        raise ValueError("لا يوجد إعداد تأمينات اجتماعية نشط لهذه الفترة — أضف SocialInsuranceConfig في DB")
+
+    brackets_orm = crud.get_active_tax_brackets(db, as_of=period_start)
     if not brackets_orm:
-        raise ValueError("لا توجد شرائح ضريبية نشطة — أضف TaxBracketConfig في DB")
+        raise ValueError("لا توجد شرائح ضريبية نشطة لهذه الفترة — أضف TaxBracketConfig في DB")
 
     si_config = SIConfig(
         max_insurable_salary=si_orm.max_insurable_salary,
