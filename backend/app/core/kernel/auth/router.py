@@ -15,13 +15,38 @@ Endpoints:
     POST /password-reset/confirm   → updates password
 """
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Body, Form
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 from typing import Callable, Optional
 
 from app.core.kernel.auth.service import AuthService
 from app.core.kernel.database import get_db
+
+
+class _PublicUserOut(BaseModel):
+    """Safe subset of the User columns for /register's response.
+
+    Without an explicit response_model, FastAPI's jsonable_encoder falls back
+    to vars(obj) for a plain ORM instance — that serializes *every* mapped
+    column, including `password_hash` (bcrypt hash) and `two_factor_secret`.
+    Confirmed live: POST /register was returning password_hash in plaintext
+    JSON. This whitelist is the fix — only ever add fields here that are
+    genuinely safe to hand back to the caller who just registered.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    full_name: str
+    phone: Optional[str] = None
+    role: str
+    is_active: bool
+    created_at: Optional[datetime] = None
 
 
 def build_auth_router(
@@ -54,7 +79,7 @@ def build_auth_router(
             result["refresh_token"] = auth.create_refresh_token(user.id)
         return result
 
-    @router.post("/register")
+    @router.post("/register", response_model=_PublicUserOut)
     def register(
         payload: dict = Body(...),
         auth: AuthService = Depends(get_auth_service),
