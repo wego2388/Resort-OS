@@ -46,6 +46,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_timeshare_units(db)
     _seed_timeshare_contracts(db)
     _seed_menus(db)
+    _seed_dining_tables(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -76,9 +77,9 @@ def _seed_branch(db: Session) -> None:
     if db.query(Branch).first():
         return
     db.add(Branch(
-        name="WegoSharm Resort",
-        name_ar="منتجع ويغو شرم",
-        code="WSR-001",
+        name="El Kheima Beach Resort",
+        name_ar="منتجع الخيمة بيتش",
+        code="EKB-001",
         timezone=settings.TIMEZONE,
     ))
     db.flush()
@@ -493,6 +494,48 @@ def _seed_timeshare_contracts(db: Session) -> None:
 
     db.flush()
     print(f"  ✓ Timeshare contracts seeded ({created} illustrative sample customers — not real records)")
+
+
+def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
+    """⚠️ نفس ملاحظة _seed_rooms — ترقيم منطقي افتراضي مش أرقام طاولات حقيقية
+    موثّقة. قبل هذا التعديل كان جدول dining_tables (مطعم) و cafe_tables (كافيه)
+    فاضيين تمامًا (0 صف) — يعني شاشة "الطاولات" بتاعة الجرسون كانت بتعرض
+    "لا توجد طاولات مسجّلة لهذا الفرع" دايمًا، فمفيش أي طريقة حقيقية لعمل أوردر
+    dine_in مربوط بطاولة فعلية (اتكشف أثناء اختبار حي لمسار الجرسون الكامل —
+    نفس فئة باج rooms الفاضية اللي اتصلحت قبل كده). ازرع ترقيم منطقي متسلسل
+    دلوقتي: 12 طاولة مطعم (1-10 لـ4 أفراد، 11-12 لـ8 أفراد لمجموعات كبيرة)
+    + 8 طاولات كافيه (1-8 لـ2 فرد).
+
+    `branch_id` اختياري — للتستات بس (عشان تحدد فرع بعينه بدل الاعتماد على
+    'أول فرع في الداتابيز' اللي مش مضمون يكون معزول في session-scoped test DB
+    فيها فروع تانية من تستات HTTP بتعمل commit حقيقي). الاستخدام الحقيقي من
+    seed_all() مبيبعتش الحجة دي خالص — بيعتمد على أول فرع زي باقي دوال الـ seed."""
+    from app.modules.restaurant.models import DiningTable
+    from app.modules.cafe.models import CafeTable
+    from app.modules.core.models import Branch
+
+    branch = db.query(Branch).filter(Branch.id == branch_id).first() if branch_id else db.query(Branch).first()
+    if not branch:
+        return
+
+    if not db.query(DiningTable).filter(DiningTable.branch_id == branch.id).first():
+        total = 0
+        for i in range(1, 11):
+            db.add(DiningTable(branch_id=branch.id, table_number=str(i), capacity=4))
+            total += 1
+        for i in range(11, 13):
+            db.add(DiningTable(branch_id=branch.id, table_number=str(i), capacity=8))
+            total += 1
+        db.flush()
+        print(f"  ✓ Restaurant tables seeded ({total} tables — logical default numbering, not verified real numbers)")
+
+    if not db.query(CafeTable).filter(CafeTable.branch_id == branch.id).first():
+        total = 0
+        for i in range(1, 9):
+            db.add(CafeTable(branch_id=branch.id, table_number=str(i), capacity=2))
+            total += 1
+        db.flush()
+        print(f"  ✓ Cafe tables seeded ({total} tables — logical default numbering, not verified real numbers)")
 
 
 def _seed_menus(db: Session) -> None:

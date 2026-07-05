@@ -110,7 +110,7 @@ async function handleLogin() {
             {{ loading ? 'جاري الدخول...' : 'دخول' }}
           </button>
         </form>
-        <p class="text-center text-xs text-gray-400 mt-6">Blue Bay El Kheima — Resort OS v1.0</p>
+        <p class="text-center text-xs text-gray-400 mt-6">El Kheima Beach — Resort OS v1.0</p>
       </div>
     </div>
   </div>
