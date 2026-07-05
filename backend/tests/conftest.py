@@ -106,13 +106,34 @@ def get_test_db() -> Generator[Session, None, None]:
 
 
 # ─── Fake Redis ───────────────────────────────────────────────────────
+#
+# ⚠️ باج عزل حقيقي كان هنا: REDIS_URL فوق بيتعمله setdefault على
+# redis://localhost:6381/0 — الـ Redis الحقيقي بتاع الديف، مش وهمي. لكن
+# app.core.kernel.cache._redis بيتصل بـ redis.from_url(REDIS_URL) وقت
+# الـ import (مرة واحدة بس)، وده مش نفس الـ FakeRedis instance اللي فيكستشر
+# fake_redis التحت ده كانت بتنشئه — يعني كل تست بيستخدم الـ cache الحقيقية
+# (rate_limit/get_cache/set_cache/token revocation) كان فعليًا بيقرا ويكتب
+# على الـ Redis الحقيقي، وحالته بتفضل موجودة بين تشغيلة وتانية (وممكن
+# تتصادم مع سيرفر ديف شغال فعليًا على نفس البورت). الحل: نعمل monkey-patch
+# لـ redis.from_url نفسها *قبل* أول import لـ app.core.kernel.cache في أي
+# مكان (السطور دي بتتنفذ أول ما conftest.py يتحمّل، قبل أي test/fixture)،
+# فبيرجع نفس الـ fakeredis client اللي fake_redis fixture بترجعه — فـ
+# الاتنين (كود التطبيق + التستات اللي بتستخدم فيكستشر fake_redis مباشرة)
+# بيشتغلوا على نفس الـ backing store الوهمي، مش حاجتين منفصلتين.
+import redis as _redis_module  # noqa: E402
+
+_shared_fake_redis_server = fakeredis.FakeServer()
+_shared_fake_redis_client = fakeredis.FakeRedis(
+    server=_shared_fake_redis_server, decode_responses=True
+)
+_redis_module.from_url = lambda *_args, **_kwargs: _shared_fake_redis_client
+
 
 @pytest.fixture(scope="session")
 def fake_redis():
-    """fakeredis server — لا يحتاج Redis حقيقي."""
-    server = fakeredis.FakeServer()
-    client = fakeredis.FakeRedis(server=server)
-    return client
+    """نفس الـ fakeredis client اللي app.core.kernel.cache._redis بيتحقن
+    بيه فعليًا (راجع المونكي-باتش فوق) — مش instance وهمي منفصل."""
+    return _shared_fake_redis_client
 
 
 # ─── DB Fixture ───────────────────────────────────────────────────────
