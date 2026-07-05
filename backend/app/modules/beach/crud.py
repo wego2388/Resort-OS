@@ -251,6 +251,20 @@ def get_or_create_contract_day(
     return row
 
 
+def lock_contract_day_for_update(db: Session, row_id: int) -> Optional[B2BContractDay]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف B2BContractDay طوال الـ
+    transaction عشان يمنع تجاوز حصة B2B اليومية (double check-in) لو عمليتين
+    تشيك-إن حصلوا في نفس اللحظة بالظبط لنفس العقد/اليوم. نفس نمط
+    lock_inventory_for_update فوق و pms.crud.lock_room_for_booking بالضبط
+    (Postgres فقط — على SQLite بيتجاهله الـ driver من غير error)."""
+    return (
+        db.query(B2BContractDay)
+        .filter(B2BContractDay.id == row_id)
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def increment_b2b_checkins(
     db: Session, contract_id: int, day: date, count: int, amount: Decimal
 ) -> B2BContractDay:

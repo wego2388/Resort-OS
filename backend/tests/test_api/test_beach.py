@@ -383,6 +383,29 @@ class TestB2BCheckin:
         tx = services.b2b_checkin(db, branch.id, req)
         assert tx.total_amount == Decimal("400")
 
+    def test_concurrent_checkin_raises_concurrency_error(self, db, monkeypatch):
+        """باج حقيقي كان هنا: b2b_checkin كان بيقرا/يعدّل
+        B2BContractDay.checked_in_count من غير أي قفل صف — تحت حمل متزامن
+        حقيقي (كذا كاشير بيسجّلوا دخول لنفس العقد في نفس اللحظة والحصة قريبة
+        من الحد)، عمليتين كانوا ممكن يعدّوا validate_b2b_checkin بنفس القيمة
+        القديمة ويتسبب تجاوز فعلي لحصة الفندق الشريك اليومية. اتصلح بقفل صف
+        B2BContractDay (SELECT FOR UPDATE NOWAIT) قبل أي تحقق/تعديل — هنا
+        بنحاكي عملية تانية ماسكة الصف بمحاكاة OperationalError من القفل نفسه
+        (نفس أسلوب test_concurrent_sale_raises_concurrency_error فوق)."""
+        from sqlalchemy.exc import OperationalError
+
+        branch = make_branch(db)
+        contract = make_contract(db, branch)
+
+        def _raise_locked(*_args, **_kwargs):
+            raise OperationalError("SELECT ... FOR UPDATE NOWAIT", {}, Exception("could not obtain lock"))
+
+        monkeypatch.setattr(crud, "lock_contract_day_for_update", _raise_locked)
+
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=1)
+        with pytest.raises(services.BeachConcurrencyError, match="مشغولة"):
+            services.b2b_checkin(db, branch.id, req)
+
 
 class TestB2BQuotaStatus:
     """حالة حصة B2B اليوم — للوحة الحيّة (quota_warning ≤5 متبقين)."""

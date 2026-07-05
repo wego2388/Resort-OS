@@ -50,6 +50,22 @@ def _lock_inventory_or_raise(db: Session, inv_row: BeachInventory) -> BeachInven
     return locked or inv_row
 
 
+def _lock_contract_day_or_raise(db: Session, day_row: "B2BContractDay") -> "B2BContractDay":
+    """يقفل صف B2BContractDay (SELECT FOR UPDATE NOWAIT) قبل قراءة/تعديل
+    checked_in_count — نفس فئة الباج بتاعة _lock_inventory_or_raise فوق: لو
+    عمليتين تشيك-إن B2B حصلوا في نفس اللحظة بالظبط لنفس العقد/اليوم، كل واحدة
+    كانت بتقرا checked_in_today قديم وتعدّي validate_b2b_checkin حتى لو مجموع
+    الاتنين هيتخطى الحصة اليومية فعليًا (oversell على حصة الفندق الشريك)."""
+    try:
+        locked = crud.lock_contract_day_for_update(db, day_row.id)
+    except OperationalError as exc:
+        db.rollback()
+        raise BeachConcurrencyError(
+            "حصة B2B مشغولة الآن بعملية تشيك-إن أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    return locked or day_row
+
+
 def _get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
     """يجلب الأسعار من Settings في DB (adult/child/resident + towel).
 
@@ -233,6 +249,7 @@ def b2b_checkin(
         raise ValueError(f"العقد {data.contract_id} غير موجود")
 
     contract_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
+    contract_day = _lock_contract_day_or_raise(db, contract_day)
     contract_state = B2BContractState(
         contract_id=contract_row.id,
         hotel_name=contract_row.hotel_name,
