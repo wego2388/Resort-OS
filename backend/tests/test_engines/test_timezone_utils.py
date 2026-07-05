@@ -1,16 +1,23 @@
 """
 tests/test_engines/test_timezone_utils.py
 اختبارات app/resort_os/timezone_utils.py — كانت 0% تغطية بالكامل رغم استخدامها
-فعليًا في restaurant/cafe (فلترة "طلبات اليوم"). أضيفت هنا كأثر جانبي لإضافة
-business_today() (نفس فئة باج توقيت تذاكر المطبخ — استُخدم في التايم شير
-لحساب "اليوم" في لوحة CS، تحديد الأقساط المتأخرة، وتذكيرات الواتساب).
+فعليًا في restaurant/cafe/analytics (فلترة "طلبات اليوم"، local_date_to_utc_range).
+
+business_today() أضيفت في التايم شير (حساب "اليوم" للوحة CS، تحديد الأقساط
+المتأخرة، وتذكيرات الواتساب) — نفس فئة باج توقيت تذاكر المطبخ (KDS).
+
+local_today() أضيفت بعد باج حقيقي حي (2026-07-05): HR attendance (punch-in/
+punch-out) كان بيستخدم date.today() مباشرة، اللي بيثق في توقيت نظام تشغيل
+السيرفر مش توقيت المنتجع (Africa/Cairo) الصريح — سيرفر UTC هيسجّل حضور
+موظف بعد منتصف الليل بتوقيت القاهرة على تاريخ اليوم اللي فات.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+from app.resort_os import timezone_utils as tzu
 from app.resort_os.timezone_utils import business_today, local_date_to_utc_range
 
 
@@ -45,3 +52,48 @@ class TestLocalDateToUtcRange:
         start, end = local_date_to_utc_range(date(2026, 7, 5), "Africa/Cairo")
         assert start.tzinfo is None
         assert end.tzinfo is None
+
+    def test_cairo_midday_maps_to_expected_utc_window(self):
+        start, end = tzu.local_date_to_utc_range(date(2026, 7, 5), "Africa/Cairo")
+        # Africa/Cairo = UTC+3 في الصيف (EEST) — منتصف ليل القاهرة = 21:00 UTC اليوم السابق
+        assert start == datetime(2026, 7, 4, 21, 0, 0)
+        assert end.date() == date(2026, 7, 5)
+        assert start < end
+
+
+class TestLocalToday:
+
+    def test_local_today_matches_tz_aware_now(self):
+        """تحقق أساسي: النتيجة تطابق التاريخ الفعلي بتوقيت المنطقة المطلوبة."""
+        expected = datetime.now(ZoneInfo("Africa/Cairo")).date()
+        assert tzu.local_today("Africa/Cairo") == expected
+
+    def test_local_today_uses_cairo_calendar_day_not_utc(self, monkeypatch):
+        """⚠️ السيناريو الحقيقي اللي كشف الباج: الساعة 23:30 UTC يوم 2026-07-05
+        هي بالظبط 02:30 بتوقيت القاهرة (UTC+3 صيفًا) يوم 2026-07-06 — يوم
+        تقويمي جديد فعلاً بتوقيت المنتجع. local_today لازم يرجّع 2026-07-06
+        (اليوم القاهري الصحيح)، مش 2026-07-05 (لو اعتمدنا على UTC/توقيت سيرفر
+        غير مضبوط على Africa/Cairo)."""
+        fixed_utc = datetime(2026, 7, 5, 23, 30, tzinfo=timezone.utc)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_utc.astimezone(tz) if tz else fixed_utc
+
+        monkeypatch.setattr(tzu, "datetime", FixedDateTime)
+        assert tzu.local_today("Africa/Cairo") == date(2026, 7, 6)
+
+    def test_local_today_just_before_cairo_midnight_stays_previous_day(self, monkeypatch):
+        """تحقق من الاتجاه العكسي: لحظة قبل منتصف ليل القاهرة بشوية لازم تفضل
+        نفس اليوم القديم، مش تقفز لليوم الجديد قبل وقتها."""
+        # 2026-07-05 20:59 UTC = 2026-07-05 23:59 Africa/Cairo — لسه نفس اليوم
+        fixed_utc = datetime(2026, 7, 5, 20, 59, tzinfo=timezone.utc)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_utc.astimezone(tz) if tz else fixed_utc
+
+        monkeypatch.setattr(tzu, "datetime", FixedDateTime)
+        assert tzu.local_today("Africa/Cairo") == date(2026, 7, 5)

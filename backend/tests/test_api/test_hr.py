@@ -371,9 +371,16 @@ class TestSelfServicePunch:
         return user.id
 
     def test_punch_in_creates_today_record(self, db, linked_user_id):
+        """record_date لازم يتحسب بتوقيت المنتجع (settings.TIMEZONE، راجع
+        app.resort_os.timezone_utils.local_today) مش date.today() الخام —
+        الاتنين بيتطابقوا بالصدفة بس لو نظام تشغيل السيرفر نفسه مضبوط على
+        Africa/Cairo، وده مش مضمون في أي بيئة إنتاج/CI حقيقية (غالبًا UTC)."""
+        from app.core.config import settings
+        from app.resort_os.timezone_utils import local_today
+
         record = services.punch_in(db, linked_user_id)
         assert record.check_in is not None
-        assert record.record_date == date.today()
+        assert record.record_date == local_today(settings.TIMEZONE)
 
     def test_cannot_punch_in_twice(self, db, linked_user_id):
         services.punch_in(db, linked_user_id)

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, parseApiTimestamp } from '@resort-os/core'
 import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
@@ -15,7 +15,19 @@ const records = ref<AttRecord[]>([])
 const todayRecord = ref<AttRecord | null>(null)
 const loading = ref(false)
 const punching = ref(false)
-const today = new Date().toISOString().split('T')[0]
+// ⚠️ توقيت حقيقي اتكشف حي (2026-07-05): `new Date().toISOString()` بترجّع
+// التاريخ بتوقيت UTC، مش بتوقيت المتصفح المحلي (توقيت القاهرة للموظف على
+// أرض الواقع). في نافذة منتصف الليل المحلي لحد ما UTC توصل لنفس اليوم
+// (~2-3 ساعات، فرق القاهرة عن UTC)، `today` هنا كان بيرجع "امبارح" بينما
+// السجل اللي الباك إند رجّعه فعلاً بتاريخ "النهاردة" الحقيقي — يعني كارت
+// "تسجيل الحضور النهاردة" كان بيفضل فاضي رغم إن الموظف سجّل حضوره فعلاً.
+// الحل: احسب تاريخ اليوم من مكوّنات التاريخ المحلية (getFullYear/Month/Date)
+// مش من toISOString().
+function localDateStr(d: Date): string {
+  const y = d.getFullYear(), m = d.getMonth() + 1, day = d.getDate()
+  return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+const today = localDateStr(new Date())
 const currentTime = ref(new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
 
 let clockInterval: ReturnType<typeof setInterval>
@@ -34,7 +46,10 @@ const statusConfig: Record<string, { label: string; color: string }> = {
 
 function fmtTime(iso?: string) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+  // check_in/check_out تيجي من الباك إند بدون "Z" (naive UTC) — نفس فئة باج
+  // الـ KDS الموثّقة في parseApiTimestamp، لازم نفس المعالجة هنا وإلا وقت
+  // الحضور المعروض يبقى مزاح بفرق توقيت القاهرة عن UTC (~2-3 ساعات).
+  return parseApiTimestamp(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
 }
 
 async function fetchAttendance() {

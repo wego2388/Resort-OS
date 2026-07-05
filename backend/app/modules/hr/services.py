@@ -8,6 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.hr import crud
 from app.modules.hr.models import AttendanceRecord, Employee, LeaveRequest, PayrollRun
 from app.modules.hr.schemas import (
@@ -21,6 +22,7 @@ from app.resort_os.hr_engine import (
     TaxBracket,
     calculate_payroll,
 )
+from app.resort_os.timezone_utils import local_today
 
 
 def get_employee_or_404(db: Session, employee_id: int) -> Employee:
@@ -93,7 +95,11 @@ def get_my_employee_or_404(db: Session, user_id: int) -> Employee:
 
 def punch_in(db: Session, user_id: int) -> AttendanceRecord:
     emp = get_my_employee_or_404(db, user_id)
-    today = date.today()
+    # local_today (مش date.today()) — راجع تعليق timezone_utils.local_today:
+    # date.today() بيثق في توقيت نظام تشغيل السيرفر، اللي غالبًا UTC على أي
+    # VPS/سحابة حقيقية، مش Africa/Cairo. موظف يسجّل حضور بعد نص الليل بتوقيت
+    # القاهرة كان ممكن يتسجّل على تاريخ اليوم اللي فات.
+    today = local_today(settings.TIMEZONE)
     existing = crud.get_attendance_for_date(db, emp.id, today)
     if existing and existing.check_in:
         raise ValueError("تم تسجيل الحضور بالفعل النهاردة")
@@ -108,7 +114,7 @@ def punch_in(db: Session, user_id: int) -> AttendanceRecord:
 
 def punch_out(db: Session, user_id: int) -> AttendanceRecord:
     emp = get_my_employee_or_404(db, user_id)
-    today = date.today()
+    today = local_today(settings.TIMEZONE)
     existing = crud.get_attendance_for_date(db, emp.id, today)
     if not existing or not existing.check_in:
         raise ValueError("لازم تسجّل الحضور الأول قبل تسجيل الانصراف")
