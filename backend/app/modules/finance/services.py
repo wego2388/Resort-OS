@@ -220,6 +220,14 @@ def void_payment(db: Session, payment_id: int, voided_by: int, reason: str = "vo
     payment = crud.get_payment(db, payment_id)
     if not payment:
         raise ValueError(f"الدفعة {payment_id} غير موجودة")
+    # ⚠️ باج حقيقي كان هنا (اتصلح): مفيش أي تحقق من voided_at قبل كده — نفس
+    # الدفعة كانت تتلغي مرتين (أو أكتر) من غير أي رفض، كل مرة بتكتب سطر
+    # RevenueAuditLog جديد كأنها عملية إلغاء تانية حقيقية (500 → 0 تاني)
+    # وبتدهس voided_at/voided_by الأصليين بقيمة/مستخدم جديد — يعني سجل مين
+    # ألغى الدفعة فعليًا وإمتى كان بيتمسح بصمت، ومراجع الحسابات كان هيشوف
+    # سطرين تدقيق لعملية إلغاء واحدة فعلية.
+    if payment.voided_at is not None:
+        raise ValueError(f"الدفعة {payment_id} ملغاة بالفعل")
     folio = crud.get_folio(db, payment.folio_id)
     if folio and folio.status == "closed":
         raise ValueError("لا يمكن إلغاء دفعة من فوليو مغلق")

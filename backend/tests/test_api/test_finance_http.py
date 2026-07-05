@@ -444,6 +444,37 @@ class TestVoidPaymentAndRevenueAuditLogHTTP:
         assert logs[0]["new_value"] == "0.00"
         assert logs[0]["reason"] == "الضيف دفع بالخطأ مرتين"
 
+    def test_cannot_void_already_voided_payment(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        """Regression: void_payment ما كانتش بتتحقق من voided_at قبل كده —
+        نفس الدفعة كانت تتلغي أكتر من مرة، كل مرة بتكتب سطر RevenueAuditLog
+        جديد (كأن 570 جنيه اتلغت تاني من الصفر) وبتدهس voided_at/voided_by
+        الأصليين — يعني مراجع الحسابات يفقد مين ألغى الدفعة فعليًا وإمتى."""
+        branch = make_branch_committed(db)
+        _, payment = self._make_folio_with_payment(client, branch, cashier_headers)
+
+        first = client.post(
+            f"/api/v1/finance/payments/{payment['id']}/void",
+            json={"reason": "إلغاء أول مرة"}, headers=manager_headers,
+        )
+        assert first.status_code == 200, first.text
+
+        second = client.post(
+            f"/api/v1/finance/payments/{payment['id']}/void",
+            json={"reason": "محاولة إلغاء تانية"}, headers=manager_headers,
+        )
+        assert second.status_code == 400, second.text
+        assert "ملغاة بالفعل" in second.json()["detail"]
+
+        logs_resp = client.get(
+            "/api/v1/finance/revenue-audit-logs",
+            params={"branch_id": branch.id, "entity_type": "payment", "entity_id": payment["id"]},
+            headers=manager_headers,
+        )
+        # سطر تدقيق واحد بس — مش اتنين لعملية إلغاء واحدة فعلية
+        assert len(logs_resp.json()) == 1
+
     def test_void_payment_rejects_short_reason(self, client: TestClient, db, cashier_headers, manager_headers):
         branch = make_branch_committed(db)
         _, payment = self._make_folio_with_payment(client, branch, cashier_headers)
