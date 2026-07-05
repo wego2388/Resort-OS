@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{vue,ts}'],
+  // ⚠️ نفس باج el-kheima's tailwind.config.js — content مكنش شامل
+  // '../../packages/ui/src'، يعني Tailwind classes مستخدمة بس جوه مكوّنات
+  // @resort-os/ui المشتركة (ToastContainer مثلاً) كانت بتتشال بصمت من الـ CSS.
+  content: ['./index.html', './src/**/*.{vue,ts}', '../../packages/ui/src/**/*.{vue,ts}'],
   theme: {
     extend: {
       colors: {
