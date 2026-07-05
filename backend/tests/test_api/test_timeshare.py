@@ -176,6 +176,69 @@ class TestPayInstallment:
         db.refresh(contract)
         assert not contract.booking_frozen
 
+    def test_overpayment_raises(self, db, contract):
+        """باج حقيقي حقيقي: كان بيتقبل أي مبلغ من غير أي حد أقصى — كاشير يدخل
+        50,000 غلط على قسط قيمته 10,000 كان بيتسجّل بصمت، بدون أي رفض أو تنبيه."""
+        inst = contract.installments_list[0]
+        req = PayInstallmentRequest(
+            paid_amount=inst.amount + Decimal("40000"), payment_method="cash",
+        )
+        with pytest.raises(ValueError, match="أكبر من المتبقي"):
+            services.pay_installment(db, inst.id, req)
+        db.refresh(inst)
+        assert inst.status == "pending"
+        assert inst.paid_amount == Decimal("0")
+
+    def test_overpayment_on_partial_balance_raises(self, db, contract):
+        """نفس الفحص بس بعد سداد جزئي — الحد الأقصى المسموح هو المتبقي فعليًا
+        (amount - paid_amount)، مش amount الأصلي بالكامل."""
+        inst = contract.installments_list[0]
+        half = inst.amount / 2
+        services.pay_installment(
+            db, inst.id, PayInstallmentRequest(paid_amount=half, payment_method="cash"),
+        )
+        with pytest.raises(ValueError, match="أكبر من المتبقي"):
+            services.pay_installment(
+                db, inst.id,
+                PayInstallmentRequest(paid_amount=half + Decimal("1"), payment_method="cash"),
+            )
+
+    def test_cannot_pay_installment_on_cancelled_contract(self, db, contract):
+        """باج حقيقي: عقد اتلغى بالكامل، بس القسط المرتبط بيه فضل قابل
+        للتحصيل عن طريق الـ API — كأن الإلغاء عمره ما حصل ماليًا."""
+        services.cancel_contract(db, contract.id, Decimal("0"))
+        inst = contract.installments_list[0]
+        req = PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash")
+        with pytest.raises(ValueError, match="ملغي"):
+            services.pay_installment(db, inst.id, req)
+
+    def test_cannot_pay_installment_on_expired_contract(self, db, contract):
+        services.update_contract(db, contract.id, TimeshareContractUpdate(status="expired"))
+        inst = contract.installments_list[0]
+        req = PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash")
+        with pytest.raises(ValueError, match="منتهي"):
+            services.pay_installment(db, inst.id, req)
+
+    def test_pay_installment_posts_journal_entry(self, db, branch, contract):
+        """باج حقيقي حرج (Finance First §5.2 — بيذكر أقساط التايم شير بالاسم):
+        تحصيل قسط عمره ما كان بيرحّل أي قيد يومية خالص — بعكس الدفعة الأولى،
+        يعني معظم إيراد عقد التايم شير (كل الأقساط بعد الأولى) كان غايبًا
+        تمامًا عن الدفاتر المحاسبية."""
+        from app.modules.finance import crud as finance_crud
+        make_finance_accounts(db, branch)  # اتضافوا بعد توقيع العقد فعليًا —
+        # فمفيش قيد للدفعة الأولى (كان اتبلع بصمت وقتها لعدم وجود الحسابات)
+
+        inst = contract.installments_list[0]
+        services.pay_installment(
+            db, inst.id, PayInstallmentRequest(paid_amount=inst.amount, payment_method="cash"),
+        )
+
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
+        assert total == 1
+        entry = entries[0]
+        assert entry.reference.startswith("TS-INST-")
+        assert sum(l.debit for l in entry.lines) == sum(l.credit for l in entry.lines) == inst.amount
+
 
 class TestWaitlist:
 
@@ -393,6 +456,54 @@ class TestTimeshareVisit:
         )
         with pytest.raises(ValueError, match="مجمَّد"):
             services.create_visit(db, data)
+
+    def test_cannot_create_visit_for_cancelled_contract(self, db: Session, branch, contract, unit):
+        """باج حقيقي: عقد اتلغى بالكامل، بس كان لسه ممكن تخصّص وحدة فعلية
+        لزيارة عليه — وحدة من مخزون المنتجع بتتحجز لعقد مالياً ملغي."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        services.cancel_contract(db, contract.id, Decimal("0"))
+        data = TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 5),
+        )
+        with pytest.raises(ValueError, match="ملغي"):
+            services.create_visit(db, data)
+
+    def test_cannot_create_visit_for_expired_contract(self, db: Session, branch, contract, unit):
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        services.update_contract(db, contract.id, TimeshareContractUpdate(status="expired"))
+        data = TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 5),
+        )
+        with pytest.raises(ValueError, match="منتهي"):
+            services.create_visit(db, data)
+
+    def test_cannot_create_visit_after_contract_end_date(self, db: Session, branch, contract, unit):
+        """باج حقيقي: عميل عقده انتهت مدته كان لسه يقدر ياخد وحدة فعلية من
+        مخزون المنتجع — صفر تحقق من contract.end_date قبل التخصيص."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        contract.end_date = date(2026, 7, 31)
+        db.commit()
+        data = TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 5),
+        )
+        with pytest.raises(ValueError, match="نهاية مدة العقد"):
+            services.create_visit(db, data)
+
+    def test_visit_within_contract_end_date_still_succeeds(self, db: Session, branch, contract, unit):
+        """اختبار سلبي مكمّل: زيارة داخل مدة العقد (قبل end_date) لازم تفضل
+        تنجح عادي — التحقق الجديد ميمنعش الاستخدام الطبيعي."""
+        from app.modules.timeshare.schemas import TimeshareVisitCreate
+        contract.end_date = date(2026, 12, 31)
+        db.commit()
+        data = TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        )
+        visit = services.create_visit(db, data)
+        assert visit.status == "scheduled"
 
     def test_update_visit_status(self, db: Session, branch, contract, unit):
         from app.modules.timeshare.schemas import TimeshareVisitCreate, TimeshareVisitUpdate

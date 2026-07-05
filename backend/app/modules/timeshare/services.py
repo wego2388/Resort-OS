@@ -59,12 +59,13 @@ def create_contract(db: Session, data: TimeshareContractCreate, signed_by: int) 
 
 def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract") -> None:
     """Dr. Cash (1100) / Cr. Deferred Revenue (2300) عند إنشاء العقد."""
-    from datetime import date as _date  # noqa: PLC0415
     from decimal import Decimal as _D  # noqa: PLC0415
+    from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
     post_simple_revenue_journal(
-        db, contract.branch_id, _date.today(),
+        db, contract.branch_id, business_today(settings.TIMEZONE),
         debit_account_code="1100", credit_account_code="2300",
         amount=contract.down_payment or _D("0"),
         reference=f"TS-DP-{contract.contract_number}",
@@ -83,16 +84,45 @@ def update_contract(db: Session, contract_id: int, data: TimeshareContractUpdate
 
 
 def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> TimeshareInstallment:
+    """⚠️ 3 باجات حقيقية اتصلحوا هنا (اتكشفوا أثناء اختبار حي كمدير خدمة عملاء
+    تايم شير):
+    1. مفيش أي تحقق من حالة العقد — كان ممكن تسجّل تحصيل قسط على عقد **ملغي**
+       أو **منتهي** فعليًا (العقد اتلغى بس القسط المرتبط بيه فضل قابل للتحصيل).
+    2. مفيش أي حد أقصى على المبلغ — إدخال 50,000 على قسط قيمته 10,000 كان
+       بيتقبل بصمت (paid_amount بيبقى أكبر من amount، والحالة بتبقى "paid" من
+       غير أي تنبيه أو تسجيل فرق) — باج مالي حقيقي، مش نظري.
+    3. **الأهم**: تحصيل قسط عمره ما كان بيرحّل أي قيد يومية خالص — بعكس الدفعة
+       الأولى (_post_deferred_revenue_journal بتترحّل عند إنشاء العقد فقط).
+       يعني كل تحصيلات الأقساط (اللي هي معظم إيراد التايم شير على مدار سنين
+       العقد) كانت غايبة تمامًا عن الدفاتر المحاسبية — مخالفة مباشرة لـ
+       "Finance First" (§5.2 في CLAUDE.md بيذكر أقساط التايم شير بالاسم صراحةً).
+    """
     inst = crud.get_installment(db, inst_id)
     if not inst:
         raise ValueError(f"القسط {inst_id} غير موجود")
     if inst.status == "paid":
         raise ValueError("القسط مدفوع بالكامل مسبقاً")
+
+    contract = crud.get_contract(db, inst.contract_id)
+    if not contract:
+        raise ValueError(f"العقد المرتبط بالقسط {inst_id} غير موجود")
+    if contract.status == "cancelled":
+        raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل أقساط عليه")
+    if contract.status == "expired":
+        raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل أقساط عليه")
+
+    remaining = inst.amount - inst.paid_amount
+    if req.paid_amount > remaining:
+        raise ValueError(
+            f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على هذا "
+            f"القسط ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
+        )
+
     obj = crud.pay_installment(db, inst, req)
+    _post_installment_payment_journal(db, contract, req.paid_amount, inst)
 
     # إلغاء تجميد الحجز إن كانت كل الأقساط المتأخرة سُدِّدت
-    contract = crud.get_contract(db, inst.contract_id)
-    if contract and contract.booking_frozen:
+    if contract.booking_frozen:
         overdue_count = sum(
             1 for i in contract.installments_list
             if i.status in ("overdue", "partial") and i.id != inst_id
@@ -103,6 +133,27 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
     db.commit()
     db.refresh(obj)
     return obj
+
+
+def _post_installment_payment_journal(
+    db: "Session", contract: "TimeshareContract", paid_amount, inst: "TimeshareInstallment",
+) -> None:
+    """Dr. Cash (1100) / Cr. Deferred Revenue (2300) عند تحصيل أي قسط — نفس
+    منطق _post_deferred_revenue_journal بالظبط بس لكل تحصيل قسط، مش الدفعة
+    الأولى بس."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, contract.branch_id, business_today(settings.TIMEZONE),
+        debit_account_code="1100", credit_account_code="2300",
+        amount=paid_amount,
+        reference=f"TS-INST-{contract.contract_number}-{inst.installment_no}",
+        description=f"تحصيل قسط رقم {inst.installment_no} — {contract.contract_number}",
+        source="timeshare", source_id=contract.id,
+        created_by=0,
+    )
 
 
 def add_to_waitlist(db: Session, data: WaitlistCreate) -> object:
@@ -146,12 +197,16 @@ def generate_contract_pdf(db: Session, contract_id: int) -> bytes:
 # ── CS Dashboard ─────────────────────────────────────────────────────
 
 def get_cs_summary(db: Session, branch_id: int) -> dict:
-    """ملخص شامل لخدمة عملاء التايم شير — زيارات قادمة + متأخرات + نسبة تحصيل."""
-    from datetime import date as _date  # noqa: PLC0415
+    """ملخص شامل لخدمة عملاء التايم شير — زيارات قادمة + متأخرات + نسبة تحصيل.
 
+    ⚠️ "اليوم" هنا بيتحسب بتوقيت المنتجع (business_today) مش توقيت السيرفر
+    المحلي — نفس فئة باج تذاكر المطبخ (KDS)، هنا بيأثّر على "الأيام المتبقية
+    لزيارة قادمة" و"متأخرات" المعروضة لموظف خدمة العملاء."""
+    from app.core.config import settings  # noqa: PLC0415
     from app.resort_os.timeshare_engine import ContractSummary, build_cs_summary, find_next_visit  # noqa: PLC0415
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
-    today = _date.today()
+    today = business_today(settings.TIMEZONE)
     rows = crud.list_active_contracts_with_aggregates(db, branch_id)
 
     summaries: list[ContractSummary] = []
@@ -222,9 +277,11 @@ def get_calendar(db: Session, branch_id: int, year: Optional[int] = None) -> dic
     """تقويم 52 أسبوع ISO — كل أسبوع وعقوده."""
     from datetime import date as _date, timedelta as _timedelta  # noqa: PLC0415
 
+    from app.core.config import settings  # noqa: PLC0415
     from app.resort_os.timeshare_engine import calculate_visit_window  # noqa: PLC0415
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
-    today = _date.today()
+    today = business_today(settings.TIMEZONE)
     year = year or today.year
     contracts = crud.list_contracts_with_week(db, branch_id)
 
@@ -269,11 +326,11 @@ def get_calendar(db: Session, branch_id: int, year: Optional[int] = None) -> dic
 
 
 def get_upcoming_visits(db: Session, branch_id: int, days: int = 30) -> list[dict]:
-    from datetime import date as _date  # noqa: PLC0415
-
+    from app.core.config import settings  # noqa: PLC0415
     from app.resort_os.timeshare_engine import find_next_visit  # noqa: PLC0415
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
-    today = _date.today()
+    today = business_today(settings.TIMEZONE)
     contracts = crud.list_contracts_with_week(db, branch_id)
     result = []
     for c in contracts:
@@ -370,10 +427,25 @@ def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
     بيمنعها بالظبط بقفل صف الغرفة)، الاتنين كانوا ممكن يعدّوا التحقق قبل ما
     أي واحدة تعمل commit ويتم تخصيص نفس الوحدة مرتين فعليًا. اتصلح بقفل صف
     الوحدة (with_for_update(nowait=True)) قبل إعادة التحقق من التعارض،
-    بنفس نمط lock_room_for_booking بالظبط."""
+    بنفس نمط lock_room_for_booking بالظبط.
+
+    ⚠️ باجان حقيقيان تانيان اتكشفوا واتصلحوا هنا (اختبار حي كمدير خدمة عملاء
+    تايم شير): كان ممكن تخصيص وحدة فعلية لزيارة على عقد **ملغي بالفعل** (صفر
+    تحقق من contract.status)، وكان ممكن كمان تحجز زيارة بتاريخ بعد
+    contract.end_date (انتهاء مدة العقد) بدون أي رفض — يعني عميل عقده انتهى
+    كان لسه يقدر ياخد وحدة فعلية من مخزون المنتجع."""
     contract = get_contract_or_404(db, data.contract_id)
     if data.check_out <= data.check_in:
         raise ValueError("check_out يجب أن يكون بعد check_in")
+    if contract.status == "cancelled":
+        raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن حجز زيارة عليه")
+    if contract.status == "expired":
+        raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن حجز زيارة عليه")
+    if contract.end_date and data.check_in > contract.end_date:
+        raise ValueError(
+            f"تاريخ الزيارة بعد نهاية مدة العقد {contract.contract_number} "
+            f"({contract.end_date.isoformat()}) — العقد منتهي لهذه الفترة"
+        )
     if contract.booking_frozen:
         raise ValueError("الحجز مجمَّد لوجود أقساط متأخرة — سدِّد المتأخرات أولاً")
     nights = (data.check_out - data.check_in).days
