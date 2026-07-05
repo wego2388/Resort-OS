@@ -116,7 +116,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { title: 'التحليلات' } },
       { path: 'hr', name: 'admin-hr', component: () => import('../views/admin/HRView.vue'), meta: { title: 'الموارد البشرية' } },
       { path: 'finance', name: 'admin-finance', component: () => import('../views/admin/FinanceView.vue'), meta: { title: 'المالية' } },
-      { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { requiredRole: 'supervisor', title: 'التايم شير' } },
+      // ⚠️ requiredRole كان 'supervisor' (level 50) — أعلى من الصلاحية اللي
+      // الباك إند بيمنحها فعليًا لتسجيل تحصيل قسط (get_cashier_user، level 40،
+      // اتصلحت اليوم من get_current_active_user). يعني الكاشير المفروض يقدر
+      // يحصّل الأقساط كان أصلاً ميقدرش يوصل للشاشة دي خالص — بيتحول تلقائيًا
+      // لصفحته الرئيسية لو حاول يدخل /admin/timeshare مباشرة. باقي إجراءات
+      // المدير (إلغاء عقد، تعليق، استيراد Excel) محمية أصلاً بـ
+      // auth.hasRole('manager') داخل الشاشة نفسها، فتخفيض البوابة هنا آمن.
+      { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { requiredRole: 'cashier', title: 'التايم شير' } },
       { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { title: 'لوحة المبيعات' } },
       { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { title: 'لوحة الشاطئ الحيّة' } },
       { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { title: 'الفاتورة الإلكترونية' } },

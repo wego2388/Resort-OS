@@ -50,7 +50,10 @@ const allSections: NavSection[] = [
       { path: '/admin/hr', label: 'الموارد البشرية', icon: '👥', requiredRole: 'manager' },
       { path: '/admin/finance', label: 'المالية', icon: '💰', requiredRole: 'manager' },
       { path: '/admin/e-invoice', label: 'الفاتورة الإلكترونية', icon: '🧾', requiredRole: 'manager' },
-      { path: '/admin/timeshare', label: 'التايم شير', icon: '🏨', requiredRole: 'supervisor' },
+      // ⚠️ requiredRole كان 'supervisor' — أعلى من صلاحية تسجيل تحصيل قسط
+      // الفعلية بالباك إند (cashier). رابط الشاشة كان غايب تمامًا عن قائمة
+      // الكاشير رغم إنه مسموحله يحصّل الأقساط فعليًا (راجع router/index.ts).
+      { path: '/admin/timeshare', label: 'التايم شير', icon: '🏨', requiredRole: 'cashier' },
       { path: '/admin/sales', label: 'لوحة المبيعات', icon: '📞', requiredRole: 'manager' },
       { path: '/admin/beach-live', label: 'لوحة الشاطئ الحيّة', icon: '🏖️', requiredRole: 'manager' },
       { path: '/admin/inventory', label: 'المخزون', icon: '📦', requiredRole: 'manager' },
