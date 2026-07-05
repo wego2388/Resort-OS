@@ -10,14 +10,15 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.modules.finance import crud
 from app.modules.finance.models import (
-    AccountingPeriod, BankAccount, BankStatementLine, CashierShift, CostCenter, ETAInvoice,
+    AccountingPeriod, BankAccount, BankStatementLine, CashierShift, Check, CostCenter, ETAInvoice,
     ExchangeRate, Folio, FolioCharge, JournalEntry, Payment,
 )
 from app.modules.finance.schemas import (
     AssetDepreciationEntryRead,
     BalanceSheetLine, BalanceSheetReport,
     BankAccountCreate, BankAccountUpdate, BankReconciliationSummary, BankStatementImportRequest,
-    CashCountLineRead, CashierShiftClose, CashierShiftOpen, ConditionalDiscountCreate, CostCenterCreate,
+    CashCountLineRead, CashierShiftClose, CashierShiftOpen, CheckCreate, ConditionalDiscountCreate,
+    CostCenterCreate,
     CostCenterReport, CostCenterReportLine, DepreciationRunResult, ExchangeRateCreate, FolioChargeCreate,
     FolioCreate,
     IncomeStatementLine, IncomeStatementReport,
@@ -232,6 +233,39 @@ def void_payment(db: Session, payment_id: int, voided_by: int, reason: str = "vo
     db.commit()
     db.refresh(payment)
     return payment
+
+
+# ── Checks ────────────────────────────────────────────────────────────
+# ⚠️ باج معماري حقيقي كان هنا: الـ router كان بينادي crud.create_check/
+# move_check_status مباشرة (بما فيه db.commit() جوه crud نفسها) من غير أي
+# services.py function خالص — كسر Architecture rule (§4/§7: router لا يكلّم
+# crud مباشرة، والـ commit بتاع الـ business transaction مسؤولية services
+# مش crud). اتصلح بنفس نمط void_payment فوق بالظبط: crud بقت DB عمليات خالص
+# (flush بس، من غير commit)، والـ commit/refresh + "الشيك غير موجود"
+# (ValueError → 404 في الـ router) بقوا هنا.
+
+def create_check(db: Session, data: CheckCreate, created_by: int) -> Check:
+    """يسجّل شيك بنكي جديد (وارد من عميل/مورد)."""
+    payload = data.model_dump()
+    payload["created_by"] = created_by
+    check = crud.create_check(db, payload)
+    db.commit()
+    db.refresh(check)
+    return check
+
+
+def move_check_status(
+    db: Session, check_id: int, to_status: str, moved_by: int, notes: Optional[str] = None,
+) -> Check:
+    """ينقل حالة شيك (received → deposited → cleared/bounced) ويسجّل الحركة
+    في CheckMovement."""
+    check_obj = crud.get_check(db, check_id)
+    if not check_obj:
+        raise ValueError(f"الشيك {check_id} غير موجود")
+    updated = crud.move_check_status(db, check_obj, to_status, moved_by, notes)
+    db.commit()
+    db.refresh(updated)
+    return updated
 
 
 # ── Cashier Shift / Safe (POS Day) ──────────────────────────────────────

@@ -448,9 +448,7 @@ def create_check_endpoint(
     db: Session = Depends(get_db),
     current_user=Depends(get_cashier_user),
 ):
-    payload = data.model_dump()
-    payload["created_by"] = current_user.id
-    check = crud.create_check(db, payload)
+    check = services.create_check(db, data, created_by=current_user.id)
     return CheckRead.model_validate(check)
 
 @router.patch("/finance/checks/{check_id}/status", response_model=CheckRead)
@@ -460,10 +458,10 @@ def move_check_status_endpoint(
     db: Session = Depends(get_db),
     current_user=Depends(get_manager_user),
 ):
-    check_obj = crud.get_check(db, check_id)
-    if not check_obj:
-        raise HTTPException(404, "Check not found")
-    updated = crud.move_check_status(db, check_obj, body.to_status, current_user.id, body.notes)
+    try:
+        updated = services.move_check_status(db, check_id, body.to_status, current_user.id, body.notes)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     return CheckRead.model_validate(updated)
 
 

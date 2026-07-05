@@ -526,7 +526,9 @@ def list_periods(
 
 def create_check(db: Session, data: dict) -> Check:
     obj = Check(**data)
-    db.add(obj); db.commit(); db.refresh(obj); return obj
+    db.add(obj)
+    db.flush()
+    return obj
 
 def list_checks(db: Session, branch_id: int, status: str | None = None) -> list[Check]:
     q = db.query(Check).filter(Check.branch_id == branch_id)
@@ -556,7 +558,7 @@ def move_check_status(db: Session, check_obj: Check, to_status: str, moved_by: i
         from datetime import date as _date
         check_obj.bounced_at = _date.today()
     db.add(movement)
-    db.commit(); db.refresh(check_obj)
+    db.flush()
     return check_obj
 
 
