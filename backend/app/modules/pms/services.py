@@ -10,7 +10,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.modules.pms import crud
-from app.modules.pms.models import Booking, NightAuditLog
+from app.modules.pms.models import Booking, NightAuditLog, RatePlan, RoomType
 from app.modules.pms.schemas import BookingCreate
 
 
@@ -25,12 +25,53 @@ def get_booking_or_404(db: Session, booking_id: int) -> Booking:
     return b
 
 
+def _resolve_rate_plan(db: Session, data: BookingCreate, nights: int) -> Optional["RatePlan"]:
+    """يتحقق من صلاحية خطة الأسعار المطلوبة (لو اتبعتت) قبل أي قفل غرف —
+    مفيش داعي نقفل حاجة لو الخطة نفسها مش سارية. باج "الموديل موجود، الـ
+    API صفر" حقيقي كان هنا: RatePlan كان عنده model + crud + router كامل
+    (اتوصّل اليوم) بس create_booking عمرها ما كانت بتستخدمه — كل حجز كان
+    بيتسعّر بـ room_type.base_rate الخام دايمًا، يعني مستحيل فعليًا تطبّق
+    سعر موسم عالي/عرض خاص من غير ما تغيّر base_rate نفسه يدويًا لكل الغرف."""
+    if not data.rate_plan_id:
+        return None
+
+    plan = crud.get_rate_plan(db, data.rate_plan_id)
+    if not plan:
+        raise ValueError(f"خطة الأسعار {data.rate_plan_id} غير موجودة")
+    if plan.branch_id != data.branch_id:
+        raise ValueError("خطة الأسعار لا تنتمي لهذا الفرع")
+    if not plan.is_active:
+        raise ValueError(f"خطة الأسعار '{plan.name}' غير مفعّلة")
+    if data.check_in < plan.valid_from or data.check_out > plan.valid_until:
+        raise ValueError(
+            f"خطة الأسعار '{plan.name}' سارية فقط من {plan.valid_from} إلى {plan.valid_until}"
+        )
+    if nights < plan.min_nights:
+        raise ValueError(f"خطة الأسعار '{plan.name}' تتطلب حجز {plan.min_nights} ليالٍ على الأقل")
+    return plan
+
+
+def _room_rate_for(room_type: "RoomType | None", plan: "RatePlan | None", room_type_id: int) -> Decimal:
+    """السعر اليومي الفعلي لغرفة معيّنة: سعر الخطة (override أو multiplier)
+    لو الخطة سارية وعامة (room_type_id=None) أو مطابقة لنوع الغرفة دي بالظبط،
+    وإلا السعر الأساسي الخام لنوع الغرفة."""
+    base = room_type.base_rate if room_type else Decimal("0")
+    if plan and (plan.room_type_id is None or plan.room_type_id == room_type_id):
+        if plan.base_rate_override is not None:
+            return plan.base_rate_override
+        return (base * plan.rate_multiplier).quantize(Decimal("0.01"))
+    return base
+
+
 def create_booking(db: Session, data: BookingCreate) -> Booking:
     # التحقق من التواريخ
     if data.check_out <= data.check_in:
         raise ValueError("check_out يجب أن يكون بعد check_in")
 
     nights = (data.check_out - data.check_in).days
+
+    # تحقق من خطة الأسعار (لو اتبعتت) قبل أي قفل غرف
+    rate_plan = _resolve_rate_plan(db, data, nights)
 
     # ترتيب ثابت لقفل الغرف — يمنع deadlock بين حجزين متزامنين بنفس الغرف
     # بترتيب مختلف
@@ -53,7 +94,7 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
 
     # التحقق من الغرف والتوفر — بعد القفل، فمفيش حد تاني يقدر يحجز نفس
     # الغرفة لحد ما الـ transaction دي تخلص (commit/rollback)
-    room_rates: list[tuple[int, Decimal, int]] = []
+    room_rates: list[tuple[int, Decimal, int, Optional[int]]] = []
     for room_id in ordered_room_ids:
         room = locked_rooms[room_id]
         if room.branch_id != data.branch_id:
@@ -64,14 +105,15 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
             raise BookingConflictError(f"الغرفة {room.name} غير متاحة في هذه الفترة")
 
         room_type = crud.get_room_type(db, room.room_type_id)
-        daily_rate = room_type.base_rate if room_type else Decimal("0")
-        room_rates.append((room_id, daily_rate, nights))
+        applies = rate_plan and (rate_plan.room_type_id is None or rate_plan.room_type_id == room.room_type_id)
+        daily_rate = _room_rate_for(room_type, rate_plan, room.room_type_id)
+        room_rates.append((room_id, daily_rate, nights, rate_plan.id if applies else None))
 
     booking_number = crud.generate_booking_number(db, data.branch_id)
     booking = crud.create_booking(db, booking_number, data, room_rates)
 
     # تحديث حالة الغرف → reserved
-    for room_id, _, _ in room_rates:
+    for room_id, _, _, _ in room_rates:
         room = crud.get_room(db, room_id)
         if room:
             crud.update_room_status(db, room, "reserved")

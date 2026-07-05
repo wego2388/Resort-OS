@@ -204,6 +204,11 @@ def update_housekeeping_task_status(
 # (create_rate_plan/list_rate_plans/get_rate_plan) بدون أي schema ولا أي
 # route متوصّل — يعني مستحيل تعمل خطة أسعار موسمية عن طريق الـ API خالص،
 # نفس فئة باج CallNote/RotaTemplate/RevenueAuditLog اللي اتصلحت قبل كده.
+# ⚠️ متابعة حقيقية للباج ده (نفس اليوم): توصيل الـ API لوحده ماكانش كافي —
+# create_booking (POST /pms/bookings) كانت لسه بتسعّر كل غرفة بـ
+# room_type.base_rate الخام دايمًا، من غير أي طريقة تدّي الخطة فرصة تتطبّق.
+# BookingCreate.rate_plan_id + services._resolve_rate_plan/_room_rate_for
+# هما اللي بيوصّلوا الخطة فعليًا للسعر النهائي دلوقتي.
 
 @router.get("/pms/rate-plans", response_model=list[RatePlanRead])
 def list_rate_plans(

@@ -58,15 +58,20 @@ class BookingCreate(BaseModel):
     room_ids:          list[int] = Field(..., min_length=1)
     notes:             Optional[str] = None
     customer_id:       Optional[int] = None
+    # خطة أسعار موسمية اختيارية — لو اتبعتت، services.create_booking بتتحقق
+    # إنها سارية للفترة/الفرع المطلوبين وتطبّق سعرها بدل base_rate الخام
+    # (على الغرف اللي نوعها متوافق مع room_type_id بتاع الخطة، لو محدد).
+    rate_plan_id:      Optional[int] = None
 
 
 class BookingRoomRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id:         int
-    room_id:    int
-    daily_rate: Decimal
-    nights:     int
-    total:      Decimal
+    id:           int
+    room_id:      int
+    daily_rate:   Decimal
+    nights:       int
+    total:        Decimal
+    rate_plan_id: Optional[int] = None
 
 
 class BookingRead(BaseModel):

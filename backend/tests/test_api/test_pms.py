@@ -11,7 +11,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy.orm import Session
 
-from app.modules.pms.schemas import BookingCreate
+from app.modules.pms.schemas import BookingCreate, RatePlanCreate
 from app.modules.pms import services, crud
 
 
@@ -319,6 +319,129 @@ class TestCheckinCheckout:
         services.checkout_booking(db, booking.id)
         with pytest.raises(ValueError):
             services.cancel_booking(db, booking.id, cancelled_by=1)
+
+
+class TestRatePlanBookingIntegration:
+    """باج "الموديل موجود، الـ API صفر" (RatePlan) اتصلح جزئيًا بربط
+    GET/POST /pms/rate-plans — بس create_booking عمرها ما كانت بتستخدم أي
+    خطة فعليًا، السعر كان دايمًا room_type.base_rate الخام. التستات دي
+    بتتأكد إن تمرير rate_plan_id فعلاً بيغيّر السعر النهائي، مش بس إنه
+    مقبول شكليًا."""
+
+    def test_rate_multiplier_applies_to_daily_rate(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)  # base_rate = 500.00
+        room = make_room(db, branch, rt)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="موسم عالي",
+            rate_multiplier=Decimal("1.5000"),
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=365),
+        ))
+        db.commit()
+        ci = date.today() + timedelta(days=10)
+        booking = services.create_booking(db, BookingCreate(
+            branch_id=branch.id, guest_name="ضيف موسم عالي",
+            check_in=ci, check_out=ci + timedelta(days=2),
+            room_ids=[room.id], rate_plan_id=plan.id,
+        ))
+        assert booking.rooms[0].daily_rate == Decimal("750.00")  # 500 * 1.5
+        assert booking.rooms[0].rate_plan_id == plan.id
+        assert booking.total_rate == Decimal("1500.00")  # 750 * 2 nights
+
+    def test_base_rate_override_wins_over_multiplier(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)  # base_rate = 500.00
+        room = make_room(db, branch, rt)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="سعر ثابت",
+            base_rate_override=Decimal("999.00"), rate_multiplier=Decimal("2.0000"),
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=365),
+        ))
+        db.commit()
+        ci = date.today() + timedelta(days=11)
+        booking = services.create_booking(db, BookingCreate(
+            branch_id=branch.id, guest_name="ضيف",
+            check_in=ci, check_out=ci + timedelta(days=1),
+            room_ids=[room.id], rate_plan_id=plan.id,
+        ))
+        assert booking.rooms[0].daily_rate == Decimal("999.00")
+
+    def test_rate_plan_scoped_to_other_room_type_does_not_apply(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)          # base_rate = 500.00
+        other_rt = make_room_type(db, branch)
+        other_rt.base_rate = Decimal("500.00")
+        room = make_room(db, branch, rt)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=other_rt.id, name="خطة لنوع تاني",
+            rate_multiplier=Decimal("3.0000"),
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=365),
+        ))
+        db.commit()
+        ci = date.today() + timedelta(days=12)
+        booking = services.create_booking(db, BookingCreate(
+            branch_id=branch.id, guest_name="ضيف",
+            check_in=ci, check_out=ci + timedelta(days=1),
+            room_ids=[room.id], rate_plan_id=plan.id,
+        ))
+        # الخطة مخصصة لنوع غرفة مختلف — السعر الأساسي الخام هو اللي لازم يتطبّق
+        assert booking.rooms[0].daily_rate == Decimal("500.00")
+        assert booking.rooms[0].rate_plan_id is None
+
+    def test_rate_plan_outside_validity_window_rejected(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="عرض محدود",
+            rate_multiplier=Decimal("0.8000"),
+            valid_from=date.today() + timedelta(days=100),
+            valid_until=date.today() + timedelta(days=110),
+        ))
+        db.commit()
+        ci = date.today() + timedelta(days=13)  # خارج نطاق سريان الخطة
+        with pytest.raises(ValueError, match="سارية"):
+            services.create_booking(db, BookingCreate(
+                branch_id=branch.id, guest_name="ضيف",
+                check_in=ci, check_out=ci + timedelta(days=1),
+                room_ids=[room.id], rate_plan_id=plan.id,
+            ))
+
+    def test_rate_plan_min_nights_enforced(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="حد أدنى 3 ليالٍ",
+            rate_multiplier=Decimal("0.9000"), min_nights=3,
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=365),
+        ))
+        db.commit()
+        ci = date.today() + timedelta(days=14)
+        with pytest.raises(ValueError, match="3 ليالٍ"):
+            services.create_booking(db, BookingCreate(
+                branch_id=branch.id, guest_name="ضيف",
+                check_in=ci, check_out=ci + timedelta(days=1),  # ليلة واحدة بس
+                room_ids=[room.id], rate_plan_id=plan.id,
+            ))
+
+    def test_inactive_rate_plan_rejected(self, db):
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="خطة موقوفة",
+            rate_multiplier=Decimal("1.2000"), is_active=False,
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=365),
+        ))
+        db.commit()
+        ci = date.today() + timedelta(days=15)
+        with pytest.raises(ValueError, match="غير مفعّلة"):
+            services.create_booking(db, BookingCreate(
+                branch_id=branch.id, guest_name="ضيف",
+                check_in=ci, check_out=ci + timedelta(days=1),
+                room_ids=[room.id], rate_plan_id=plan.id,
+            ))
 
 
 class TestNightAudit:

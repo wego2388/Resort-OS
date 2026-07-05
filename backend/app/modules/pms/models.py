@@ -92,6 +92,11 @@ class BookingRoom(Base, TimestampMixin):
     daily_rate:   Mapped[Decimal] = mapped_column(Numeric(10, 2))
     nights:       Mapped[int]     = mapped_column(Integer)
     total:        Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    # خطة الأسعار الموسمية اللي اتطبّقت فعليًا على السعر ده (لو موجودة) —
+    # nullable لأن أغلب الحجوزات بتستخدم السعر الأساسي من غير خطة.
+    rate_plan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("rate_plans.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
 
     booking: Mapped["Booking"] = relationship("Booking", back_populates="rooms")
 

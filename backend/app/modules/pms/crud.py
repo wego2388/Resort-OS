@@ -178,9 +178,10 @@ def create_booking(
     db: Session,
     booking_number: str,
     data: BookingCreate,
-    room_rates: list[tuple[int, Decimal, int]],  # (room_id, daily_rate, nights)
+    room_rates: list[tuple[int, Decimal, int, Optional[int]]],
+    # (room_id, daily_rate, nights, rate_plan_id لو اتطبّقت خطة على الغرفة دي)
 ) -> Booking:
-    total_rate = sum(r * n for _, r, n in room_rates)
+    total_rate = sum(r * n for _, r, n, _ in room_rates)
     booking = Booking(
         branch_id=data.branch_id,
         booking_number=booking_number,
@@ -200,13 +201,14 @@ def create_booking(
     db.add(booking)
     db.flush()
 
-    for room_id, daily_rate, nights in room_rates:
+    for room_id, daily_rate, nights, rate_plan_id in room_rates:
         db.add(BookingRoom(
             booking_id=booking.id,
             room_id=room_id,
             daily_rate=daily_rate,
             nights=nights,
             total=(daily_rate * nights),
+            rate_plan_id=rate_plan_id,
         ))
     db.flush()
     return booking
