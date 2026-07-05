@@ -35,6 +35,7 @@ interface OrderDetail {
   subtotal: number | string
   vat_amount: number | string
   service_charge: number | string
+  discount_amount: number | string
   total: number | string
   items: OrderItem[]
 }
@@ -61,6 +62,33 @@ const canCompletePayment = computed(() => auth.hasRole('cashier'))
 const payingMethod = ref<'cash' | 'card' | 'room'>('cash')
 const roomIdInput = ref('')
 const payError = ref('')
+
+// ── Apply discount (كاشير بس — POST /restaurant/orders/{id}/discount كان
+// موجود ومغطّى بالتست من غير أي زرار في الواجهة يستخدمه. بيطبّق أفضل قاعدة
+// خصم نشطة (ConditionalDiscount في finance) تلقائيًا على الطلب — مش مبلغ
+// حر بيكتبه الكاشير، فمفيش أي input هنا، زرار واحد بس.) ──
+const canApplyDiscount = computed(() => auth.hasRole('cashier'))
+const applyingDiscount = ref(false)
+const discountError = ref('')
+
+async function applyDiscount() {
+  if (!order.value) return
+  discountError.value = ''
+  applyingDiscount.value = true
+  try {
+    const { data } = await api.post(`/api/v1/restaurant/orders/${order.value.id}/discount`, {})
+    order.value = data
+    successMsg.value = Number(data.discount_amount) > 0
+      ? `تم تطبيق خصم ${data.discount_amount} ج ✓`
+      : 'مفيش قاعدة خصم سارية تنطبق على الطلب ده حاليًا'
+    emit('changed')
+    setTimeout(() => { successMsg.value = '' }, 3000)
+  } catch (e: any) {
+    discountError.value = e?.response?.data?.detail ?? 'فشل تطبيق الخصم'
+  } finally {
+    applyingDiscount.value = false
+  }
+}
 
 const statusLabels: Record<string, string> = {
   held: 'معلّق', open: 'مفتوح', in_kitchen: 'في المطبخ',
@@ -289,7 +317,21 @@ function lineTotal(item: OrderItem): number {
           <div class="flex justify-between text-gray-500"><span>المجموع الفرعي</span><span>{{ order.subtotal }} ج</span></div>
           <div class="flex justify-between text-gray-500"><span>ضريبة</span><span>{{ order.vat_amount }} ج</span></div>
           <div class="flex justify-between text-gray-500"><span>خدمة</span><span>{{ order.service_charge }} ج</span></div>
+          <div v-if="Number(order.discount_amount) > 0" class="flex justify-between text-green-600 font-medium">
+            <span>خصم</span><span>−{{ order.discount_amount }} ج</span>
+          </div>
           <div class="flex justify-between font-bold text-gray-900 text-base"><span>الإجمالي</span><span>{{ order.total }} ج</span></div>
+        </div>
+
+        <!-- ── تطبيق خصم (كاشير+ بس) — قبل قفل الحساب، أي حالة غير مدفوعة/ملغاة ── -->
+        <div
+          v-if="canApplyDiscount && !['paid', 'cancelled'].includes(order.status)"
+          class="border-t border-stone-200 pt-3"
+        >
+          <AppButton variant="secondary" block :loading="applyingDiscount" @click="applyDiscount">
+            🏷️ تطبيق خصم
+          </AppButton>
+          <p v-if="discountError" class="text-xs text-red-600 mt-1.5">{{ discountError }}</p>
         </div>
 
         <!-- ── إتمام الدفع (كاشير+ بس) — متاح من أي حالة غير نهائية، مش
