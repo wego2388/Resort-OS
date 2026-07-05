@@ -52,18 +52,28 @@ export const useAuthStore = defineStore('auth', () => {
     () => !!user.value && MANDATORY_2FA_ROLES.has(role.value) && !user.value.two_factor_enabled,
   )
 
-  async function login(username: string, password: string) {
+  // otpCode: only relevant once the backend has LOGIN_2FA_ENFORCED=true — a
+  // 2FA-enabled account then gets a 401 `2FA_CODE_REQUIRED`/`2FA_CODE_INVALID`
+  // from POST /login until the current TOTP code is submitted alongside the
+  // password (see LoginView.vue). Harmless to always send the param: the
+  // backend only reads it when LOGIN_2FA_ENFORCED is on and the account has
+  // 2FA enabled, so this is a no-op for every other account/config.
+  async function login(username: string, password: string, otpCode?: string) {
     isLoading.value = true
-    const form = new URLSearchParams()
-    form.append('username', username)
-    form.append('password', password)
-    const res = await api.post(ENDPOINTS.auth.login, form, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    })
-    token.value = res.data.access_token
-    localStorage.setItem('access_token', token.value!)
-    await fetchUser()
-    isLoading.value = false
+    try {
+      const form = new URLSearchParams()
+      form.append('username', username)
+      form.append('password', password)
+      if (otpCode) form.append('otp_code', otpCode)
+      const res = await api.post(ENDPOINTS.auth.login, form, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      })
+      token.value = res.data.access_token
+      localStorage.setItem('access_token', token.value!)
+      await fetchUser()
+    } finally {
+      isLoading.value = false
+    }
   }
 
   async function fetchUser() {

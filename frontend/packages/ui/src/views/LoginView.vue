@@ -11,14 +11,35 @@ const username = ref('')
 const password = ref('')
 const loading = ref(false)
 
+// LOGIN_2FA_ENFORCED (backend, off by default): once on, a 2FA-enabled
+// account's POST /login returns 401 `2FA_CODE_REQUIRED` until the current
+// TOTP code is submitted alongside the password — same code the account
+// already set up in TwoFactorSetupView.vue. `needsOtp` switches the form to
+// collect it; every other account/config never sees this branch at all.
+const needsOtp = ref(false)
+const otpCode = ref('')
+
 async function handleLogin() {
   if (!username.value || !password.value) return
+  if (needsOtp.value && otpCode.value.trim().length !== 6) {
+    toast.error('أدخل الكود المكوّن من 6 أرقام من تطبيق المصادقة')
+    return
+  }
   loading.value = true
   try {
-    await auth.login(username.value, password.value)
+    await auth.login(username.value, password.value, otpCode.value.trim() || undefined)
     router.push('/')
-  } catch {
-    toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+  } catch (e: any) {
+    const code = e?.response?.data?.detail?.code
+    if (code === '2FA_CODE_REQUIRED') {
+      needsOtp.value = true
+      if (!otpCode.value) toast.error('التحقق بخطوتين مطلوب — أدخل الرمز من تطبيق المصادقة')
+    } else if (code === '2FA_CODE_INVALID') {
+      needsOtp.value = true
+      toast.error('رمز التحقق بخطوتين غير صحيح')
+    } else {
+      toast.error('اسم المستخدم أو كلمة المرور غير صحيحة')
+    }
   } finally {
     loading.value = false
   }
@@ -62,6 +83,20 @@ async function handleLogin() {
               autocomplete="current-password"
               class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
             />
+          </div>
+          <div v-if="needsOtp">
+            <label class="block text-sm font-medium text-gray-700 mb-1">كود التحقق بخطوتين</label>
+            <input
+              v-model="otpCode"
+              type="text"
+              inputmode="numeric"
+              maxlength="6"
+              placeholder="000000"
+              autocomplete="one-time-code"
+              autofocus
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900"
+            />
+            <p class="text-xs text-gray-400 mt-1">أدخل الكود من تطبيق المصادقة (Google Authenticator أو Authy)</p>
           </div>
           <button
             type="submit"
