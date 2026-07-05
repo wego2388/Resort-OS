@@ -45,6 +45,14 @@ interface RoomOption {
   status: string
 }
 
+interface RatePlanOption {
+  id: number
+  name: string
+  room_type_id: number | null
+  rate_multiplier: string
+  base_rate_override: string | null
+}
+
 // ─── Data ────────────────────────────────────────────────────────────────────
 const bookings  = ref<Booking[]>([])
 const rooms     = ref<RoomOption[]>([])
@@ -79,20 +87,48 @@ const statusCounts = computed(() =>
 const showCreateModal = ref(false)
 const createError     = ref('')
 const roomsLoading    = ref(false)
+const ratePlans       = ref<RatePlanOption[]>([])
 const form = ref({
-  guest_name:  '',
-  guest_phone: '',
-  room_id:     null as number | null,
-  check_in:    '',
-  check_out:   '',
-  notes:       '',
+  guest_name:   '',
+  guest_phone:  '',
+  room_id:      null as number | null,
+  check_in:     '',
+  check_out:    '',
+  notes:        '',
+  rate_plan_id: null as number | null,
 })
 
+// خطط الأسعار الفعّالة اللي تنطبق فعليًا على نوع الغرفة المختارة — إما خطة
+// عامة (room_type_id = null، لكل الفرع) أو خطة مخصصة لنفس نوع الغرفة دي
+// بالظبط. باقي الخطط (مخصصة لنوع تاني) بتتخفي عشان الاستقبال ميختارش خطة
+// هتتجاهل بصمت وقت الحساب (services._room_rate_for بتطبّقها بس لو نوع الغرفة
+// مطابق، غير كده بترجع للسعر الأساسي الخام).
+const applicableRatePlans = computed(() => {
+  const room = rooms.value.find((r) => r.id === form.value.room_id)
+  if (!room) return []
+  return ratePlans.value.filter((p) => p.room_type_id === null || p.room_type_id === room.room_type_id)
+})
+
+async function fetchRatePlans() {
+  try {
+    const res = await api.get('/api/v1/pms/rate-plans', {
+      params: { branch_id: branchId, active_only: true },
+    })
+    ratePlans.value = res.data.items ?? res.data
+  } catch (e) {
+    console.error(e)
+  }
+}
+
 function openCreateModal() {
-  form.value = { guest_name: '', guest_phone: '', room_id: null, check_in: '', check_out: '', notes: '' }
+  form.value = {
+    guest_name: '', guest_phone: '', room_id: null,
+    check_in: '', check_out: '', notes: '', rate_plan_id: null,
+  }
   createError.value = ''
   rooms.value = []
   showCreateModal.value = true
+  fetchRatePlans()
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
@@ -146,6 +182,7 @@ async function fetchAvailableRooms() {
     // الغرفة المختارة سابقًا ممكن تبقى مش متاحة بعد تغيير التواريخ
     if (form.value.room_id && !rooms.value.some((r) => r.id === form.value.room_id)) {
       form.value.room_id = null
+      form.value.rate_plan_id = null
     }
   } catch(e) {
     console.error(e)
@@ -157,6 +194,13 @@ async function fetchAvailableRooms() {
 
 watch(() => [form.value.check_in, form.value.check_out], fetchAvailableRooms)
 
+// خطة الأسعار المختارة ممكن تبقى مش منطبقة بعد تغيير الغرفة (نوع مختلف)
+watch(() => form.value.room_id, () => {
+  if (form.value.rate_plan_id && !applicableRatePlans.value.some((p) => p.id === form.value.rate_plan_id)) {
+    form.value.rate_plan_id = null
+  }
+})
+
 async function createBooking() {
   if (!form.value.guest_name.trim()) { createError.value = 'اسم الضيف مطلوب'; return }
   if (!form.value.check_in)           { createError.value = 'تاريخ الوصول مطلوب'; return }
@@ -167,13 +211,14 @@ async function createBooking() {
   createError.value = ''
   try {
     await api.post('/api/v1/pms/bookings', {
-      guest_name:  form.value.guest_name,
-      guest_phone: form.value.guest_phone || undefined,
-      check_in:    form.value.check_in,
-      check_out:   form.value.check_out,
-      notes:       form.value.notes || undefined,
-      room_ids:    [form.value.room_id],
-      branch_id:   branchId,
+      guest_name:   form.value.guest_name,
+      guest_phone:  form.value.guest_phone || undefined,
+      check_in:     form.value.check_in,
+      check_out:    form.value.check_out,
+      notes:        form.value.notes || undefined,
+      room_ids:     [form.value.room_id],
+      branch_id:    branchId,
+      rate_plan_id: form.value.rate_plan_id || undefined,
     })
     showCreateModal.value = false
     await Promise.all([fetchBookings(), fetchAllRooms()])
@@ -436,6 +481,24 @@ onMounted(() => {
               <p v-if="!form.check_in || !form.check_out" class="text-xs text-gray-400 mt-1">اختر تاريخ الوصول والمغادرة أولاً لعرض الغرف المتاحة</p>
               <p v-else-if="roomsLoading" class="text-xs text-gray-400 mt-1">جاري تحميل الغرف المتاحة...</p>
               <p v-else-if="rooms.length === 0" class="text-xs text-amber-600 mt-1">لا توجد غرف متاحة في هذه الفترة</p>
+            </div>
+
+            <!-- Rate plan — optional, only plans that actually apply to the
+                 chosen room's type show up (see applicableRatePlans above) -->
+            <div v-if="form.room_id">
+              <label class="block text-sm font-semibold text-gray-700 mb-1">خطة الأسعار (اختياري)</label>
+              <select
+                v-model="form.rate_plan_id"
+                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+              >
+                <option :value="null">السعر الأساسي (بدون خطة)</option>
+                <option
+                  v-for="plan in applicableRatePlans"
+                  :key="plan.id"
+                  :value="plan.id"
+                >{{ plan.name }}</option>
+              </select>
+              <p v-if="applicableRatePlans.length === 0" class="text-xs text-gray-400 mt-1">لا توجد خطط أسعار سارية لنوع هذه الغرفة</p>
             </div>
 
             <!-- Notes -->
