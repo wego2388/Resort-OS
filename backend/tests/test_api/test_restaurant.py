@@ -5,6 +5,7 @@ Integration tests for restaurant module.
 from __future__ import annotations
 
 import uuid
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -434,7 +435,7 @@ class TestKDS:
         assert tickets[0].station == "hot"
 
     def test_update_ticket_status(self, db):
-        """Aggiorna status ticket da pending a done."""
+        """يحدّث حالة التذكرة من pending إلى done."""
         from app.modules.restaurant.models import KitchenTicket
         branch = make_branch(db)
         item = make_menu_item(db, branch)
@@ -539,3 +540,75 @@ class TestChargeToRoom:
         order = make_order(db, branch, item)
         with pytest.raises(ValueError, match="مفيش ضيف مسجّل دخول"):
             services.update_order_status(db, order.id, "paid", charge_to_room_id=99999)
+
+
+class TestVoidItemDiscountRecompute:
+    """باج حقيقي (اتصلح 2026-07-05، اتلقى أثناء اختبار حي لسير عمل الكاشير):
+    لو خصم اتطبّق على الطلب الأول وبعدين اتلغى صنف، discount_amount كان
+    بيفضل نفس المبلغ الثابت القديم (محسوب على subtotal الأكبر) بدل ما يتحسب
+    تاني على subtotal الجديد الأصغر — يعني نسبة الخصم الفعلية بعد الإلغاء
+    كانت بتكبر عن اللي القاعدة سمحت بيه (تسريب إيراد بسيط)، وأي شرط أهلية
+    (زي total_amount>=500) كان ممكن يفضل متحقق بالغلط."""
+
+    def _make_order_with_percentage_discount(self, db, branch, item):
+        from app.modules.finance.models import ConditionalDiscount
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("10"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+        )
+        db.add(rule)
+        db.commit()
+
+        order = make_order_items(db, branch, [item, item])  # 2 قطع من نفس الصنف، كل واحدة سطر منفصل
+        return services.apply_order_discount(db, order.id)
+
+    def test_discount_recomputed_on_new_lower_subtotal_after_void(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)  # 55.00 EGP لكل قطعة (make_menu_item default)
+        order = self._make_order_with_percentage_discount(db, branch, item)
+
+        # قبل الإلغاء: subtotal = 55*2*2(quantity لكل سطر) — نتأكد إن الخصم 10% فعليًا
+        expected_discount_before = (order.subtotal * Decimal("10") / Decimal("100")).quantize(Decimal("0.01"))
+        assert order.discount_amount == expected_discount_before
+        assert order.applied_discount_rule_id is not None
+
+        # نلغي أول صنف في الطلب — الـ subtotal المفروض يصغر
+        first_item_id = order.items[0].id
+        updated = services.void_order_item(db, order.id, first_item_id, "غلط في الطلب", voided_by=1)
+
+        # الخصم لازم يتحسب تاني على الـ subtotal الجديد الأصغر — مش يفضل
+        # الرقم القديم زي ما هو
+        expected_discount_after = (updated.subtotal * Decimal("10") / Decimal("100")).quantize(Decimal("0.01"))
+        assert updated.discount_amount == expected_discount_after
+        assert updated.discount_amount < expected_discount_before
+        assert updated.total == max(
+            Decimal("0"),
+            updated.subtotal + updated.vat_amount + updated.service_charge - updated.discount_amount,
+        )
+
+    def test_discount_zeroed_when_no_longer_eligible_after_void(self, db):
+        from app.modules.finance.models import ConditionalDiscount
+
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)  # 55.00 EGP
+
+        # قاعدة بتتطلب subtotal >= 100 — منطبقة على طلب فيه صنفين (110) بس
+        # مش هتفضل منطبقة بعد إلغاء واحد (55 < 100)
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="total_amount", condition_value=">=100",
+            discount_type="percentage", discount_value=Decimal("10"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+        )
+        db.add(rule)
+        db.commit()
+
+        order = make_order_items(db, branch, [item, item])
+        order = services.apply_order_discount(db, order.id)
+        assert order.discount_amount > 0
+
+        updated = services.void_order_item(db, order.id, order.items[0].id, "غلط", voided_by=1)
+
+        assert updated.discount_amount == Decimal("0")
+        assert updated.applied_discount_rule_id is None

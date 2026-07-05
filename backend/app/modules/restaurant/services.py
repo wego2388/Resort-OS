@@ -376,16 +376,71 @@ def void_order_item(db: Session, order_id: int, item_id: int, reason: str, voide
     svc_pct    = Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
-    total      = max(Decimal("0"), subtotal + vat_amount + svc_charge - order.discount_amount)
 
-    order.subtotal       = subtotal
-    order.vat_amount     = vat_amount
-    order.service_charge = svc_charge
-    order.total          = total
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-05): لو الكاشير طبّق خصم الأول (%)
+    # وبعدين ألغى صنف، discount_amount كان بيفضل نفس المبلغ الثابت القديم —
+    # محسوب على subtotal الأكبر قبل الإلغاء. النتيجة: نسبة الخصم الفعلية على
+    # الـ subtotal الجديد الأصغر بتزيد عن اللي القاعدة (ConditionalDiscount)
+    # سمحت بيه فعليًا (تسريب إيراد بسيط)، وممكن كمان الطلب يفضل "مؤهل" لخصم
+    # كان شرطه (مثلاً total_amount>=500) بقى مش متحقق خالص بعد الإلغاء.
+    # الحل: أعد تقييم نفس الـ rule (لو موجودة) على الـ subtotal الجديد بدل ما
+    # نسيب الرقم القديم زي ما هو.
+    discount_amount = order.discount_amount
+    applied_rule_id = order.applied_discount_rule_id
+    if applied_rule_id:
+        discount_amount, applied_rule_id = _recompute_discount_for_rule(
+            db, applied_rule_id, subtotal, order.created_at,
+        )
+
+    total = max(Decimal("0"), subtotal + vat_amount + svc_charge - discount_amount)
+
+    order.subtotal                 = subtotal
+    order.vat_amount               = vat_amount
+    order.service_charge           = svc_charge
+    order.discount_amount          = discount_amount
+    order.applied_discount_rule_id = applied_rule_id
+    order.total                    = total
 
     db.commit()
     db.refresh(order)
     return order
+
+
+def _recompute_discount_for_rule(
+    db: Session, rule_id: int, new_subtotal: Decimal, order_date,
+) -> tuple[Decimal, Optional[int]]:
+    """يعيد حساب خصم قاعدة معيّنة (اللي كانت متطبّقة على الطلب) على subtotal
+    جديد أصغر (بعد إلغاء صنف) — يستخدم نفس محرك الخصم بتاع apply_order_discount
+    بدل ما يسيب discount_amount قديم غير متسق. لو القاعدة اتشالت/بقت غير نشطة/
+    مبقتش مؤهلة على الـ subtotal الجديد، الخصم بيتصفّر بدل ما يفضل رقم غلط."""
+    try:
+        from app.modules.finance.models import ConditionalDiscount  # noqa: PLC0415
+    except ImportError:
+        return Decimal("0"), None
+
+    rule_orm = db.query(ConditionalDiscount).filter(ConditionalDiscount.id == rule_id).first()
+    if not rule_orm or not rule_orm.is_active:
+        return Decimal("0"), None
+
+    rule = DiscountRule(
+        id=rule_orm.id,
+        condition_type=rule_orm.condition_type,
+        condition_value=rule_orm.condition_value,
+        discount_type=rule_orm.discount_type,
+        discount_value=rule_orm.discount_value,
+        max_uses=rule_orm.max_uses,
+        valid_from=rule_orm.valid_from,
+        valid_until=rule_orm.valid_until,
+        priority=rule_orm.priority,
+        uses_count=rule_orm.uses_count,
+    )
+    ctx = OrderContext(
+        total_amount=new_subtotal,
+        item_count=0,
+        order_date=order_date.date() if order_date else date.today(),
+    )
+    result = calculate_discount(new_subtotal, [rule], ctx)
+    return result.amount_saved, result.rule_id
 
 
 def refund_order_item(db: Session, order_id: int, item_id: int, reason: str, refunded_by: int) -> Order:
