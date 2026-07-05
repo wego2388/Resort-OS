@@ -60,3 +60,32 @@ class TestBuildStats:
         ).first()
         assert row.total_revenue == Decimal("0")
         assert row.beach_visitors == 0
+
+    def test_restaurant_covers_reflects_real_guest_counts(self, db):
+        """باج حقيقي (اتصلح 2026-07-05): كان بيقرأ Order.covers (حقل مش
+        موجود — الاسم الصح guests_count) فـ restaurant_covers كان صفر ثابت
+        دايمًا بغض النظر عن عدد الضيوف الحقيقي في الطلبات المدفوعة. تست ده
+        بيتأكد إن الرقم بيتحسب صح من guests_count الفعلي."""
+        from app.modules.analytics.models import DailyStats
+        from tests.test_api.test_pms import make_branch
+        from tests.test_api.test_restaurant import make_menu_item, make_order
+        from app.modules.restaurant import services
+
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+
+        order1 = make_order(db, branch, item)  # guests_count=2 (helper default)
+        order2 = make_order(db, branch, item)  # guests_count=2
+        services.update_order_status(db, order1.id, "in_kitchen")
+        services.update_order_status(db, order1.id, "paid")
+        services.update_order_status(db, order2.id, "in_kitchen")
+        services.update_order_status(db, order2.id, "paid")
+
+        stat_date = date.today()
+        _build_stats(db, branch.id, stat_date)
+
+        row = db.query(DailyStats).filter(
+            DailyStats.branch_id == branch.id,
+            DailyStats.stat_date == stat_date,
+        ).first()
+        assert row.restaurant_covers == 4  # 2 + 2, not 0

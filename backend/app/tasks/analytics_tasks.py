@@ -108,7 +108,11 @@ def _build_stats(db, branch_id: int, stat_date: date) -> None:
             Order.created_at >= day_start,
             Order.created_at <= day_end,
         ).all()
-        restaurant_covers  = sum(o.covers for o in orders if hasattr(o, "covers") and o.covers)
+        # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-05): كان بيقرأ Order.covers —
+        # حقل مش موجود خالص في الموديل (الاسم الصح guests_count)، فـ
+        # hasattr كان بيرجع False دايمًا وrestaurant_covers كان صفر ثابت
+        # في كل DailyStats اتولّدت من أول ما الكود ده اتكتب.
+        restaurant_covers  = sum(o.guests_count for o in orders if o.guests_count)
         restaurant_revenue = sum((o.total for o in orders), Decimal("0"))
     except Exception:
         pass
