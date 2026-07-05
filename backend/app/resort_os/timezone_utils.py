@@ -13,6 +13,17 @@ from datetime import date, datetime, time, timezone
 from zoneinfo import ZoneInfo
 
 
+def business_today(tz_name: str) -> date:
+    """تاريخ "النهاردة" بتوقيت المنتجع (tz_name)، مش توقيت نظام تشغيل السيرفر.
+
+    `date.today()` العادية بترجع تاريخ اليوم بتوقيت السيرفر المحلي — لو السيرفر
+    شغّال بتوقيت مختلف عن توقيت المنتجع (Africa/Cairo)، بيبقى فيه نافذة كل يوم
+    (بمقدار فرق التوقيتين، عادةً 2-3 ساعات) بيرجع فيها تاريخ غلط بيوم كامل. نفس
+    فئة الباج اللي ظهرت في تذاكر المطبخ (KDS) — هنا بتأثّر على "الأيام المتبقية
+    للزيارة القادمة"، تحديد القسط "المتأخر"، وتوقيت تذكيرات الواتساب."""
+    return datetime.now(ZoneInfo(tz_name)).date()
+
+
 def local_date_to_utc_range(local_date: date, tz_name: str) -> tuple[datetime, datetime]:
     """يرجّع (بداية، نهاية) اليوم المحلي بتوقيت tz_name، محوّلين لـ UTC naive —
     نفس تمثيل created_at المخزّن بالداتابيز.

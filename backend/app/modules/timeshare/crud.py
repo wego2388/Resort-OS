@@ -15,10 +15,15 @@ from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate,
     PayInstallmentRequest, TimeshareVisitCreate, TimeshareVisitUpdate, WaitlistCreate,
 )
+from app.core.config import settings
+from app.resort_os.timezone_utils import business_today
 
 
 def _next_contract_number(db: Session) -> str:
-    today = datetime.utcnow().strftime("%Y%m%d")
+    # ⚠️ كان بيستخدم datetime.utcnow() — لو السيرفر مش UTC+0 بتوقيت المنتجع
+    # (Africa/Cairo)، عقد يتوقّع في أول/آخر الليل كان ممكن ياخد تاريخ يوم غلط
+    # في رقمه (نفس فئة باج توقيت تذاكر المطبخ). بقى بتوقيت المنتجع الفعلي.
+    today = business_today(settings.TIMEZONE).strftime("%Y%m%d")
     count = db.query(TimeshareContract).filter(
         TimeshareContract.contract_number.like(f"TS-{today}-%")
     ).count()
@@ -330,10 +335,8 @@ def overall_collection(db: Session, branch_id: int) -> dict:
 
 
 def cancel_contract(db: Session, contract: TimeshareContract, cancel_amount: Decimal) -> TimeshareContract:
-    from datetime import date as _date  # noqa: PLC0415
-
     contract.status = "cancelled"
-    contract.cancelled_at = _date.today()
+    contract.cancelled_at = business_today(settings.TIMEZONE)
     contract.cancel_amount = cancel_amount
     db.flush()
     return contract

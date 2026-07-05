@@ -1,10 +1,18 @@
-"""app/tasks/timeshare_tasks.py — Timeshare overdue + visit reminders"""
+"""app/tasks/timeshare_tasks.py — Timeshare overdue + visit reminders
+
+⚠️ كل الـ 3 tasks هنا كانت بتستخدم date.today() (توقيت السيرفر المحلي) بدل
+توقيت المنتجع (Africa/Cairo) — نفس فئة باج توقيت تذاكر المطبخ (KDS). لو
+السيرفر شغّال بتوقيت مختلف (مثلاً UTC)، فيه نافذة كل يوم (~2-3 ساعات) كان
+ممكن يعتبر فيها قسط مستحق "النهاردة" لسه مش متأخر، أو يبعت تذكير زيارة بيوم
+غلط. بقى بيستخدم business_today(settings.TIMEZONE)."""
 from __future__ import annotations
 
 import logging
 from datetime import date
 
 from app.celery_app import celery_app
+from app.core.config import settings
+from app.resort_os.timezone_utils import business_today
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +24,7 @@ def mark_overdue(self):
     """
     try:
         from app.core.database import SessionLocal  # noqa: PLC0415
-        today = date.today()
+        today = business_today(settings.TIMEZONE)
 
         with SessionLocal() as db:
             try:
@@ -81,7 +89,7 @@ def send_visit_reminders(self):
     """
     try:
         from app.core.database import SessionLocal  # noqa: PLC0415
-        today = date.today()
+        today = business_today(settings.TIMEZONE)
 
         with SessionLocal() as db:
             try:
@@ -129,7 +137,7 @@ def send_installment_reminders(self):
     try:
         from app.core.database import SessionLocal  # noqa: PLC0415
         from datetime import timedelta              # noqa: PLC0415
-        today = date.today()
+        today = business_today(settings.TIMEZONE)
         remind_date = today + timedelta(days=7)
 
         with SessionLocal() as db:
