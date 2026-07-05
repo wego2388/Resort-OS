@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 from decimal import Decimal
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
@@ -40,6 +40,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_tax_brackets(db)
     _seed_settings(db)
     _seed_leave_types(db)
+    _seed_employees(db)
     _seed_chart_of_accounts(db)
     _seed_room_types(db)
     _seed_rooms(db)
@@ -224,6 +225,115 @@ def _seed_leave_types(db: Session) -> None:
         db.add(LeaveType(branch_id=branch.id, **lt))
     db.flush()
     print(f"  ✓ Leave types seeded ({len(leave_types)} types)")
+
+
+def _seed_employees(db: Session) -> None:
+    """⚠️ جدول employees كان فاضيًا تمامًا (0 صف) رغم إن كل منطق الرواتب/
+    الحضور/الإجازات مبني وشغال بالكامل — يعني موديول الموارد البشرية بالكامل
+    كان بيفتح فاضي أول مرة: مفيش موظف واحد للـ HR manager يشوفه، وأخطر من كده
+    حسابات /hr/me/* التجريبية (employee@resortos.local, manager@resortos.local,
+    hr@resortos.local) مكنش ليها أي Employee مرتبط (Employee.user_id) — يعني
+    تسجيل حضور/طلب إجازة/قسيمة راتب self-service كان بيرجّع 404 "لا يوجد ملف
+    موظف مرتبط بحسابك" فورًا لأي حد يجرّب الحساب التجريبي، من أول يوم.
+    اتكشف أثناء اختبار حي لمسار HR الكامل (نفس فئة باج rooms/dining_tables
+    الفاضية اللي اتصلحت قبل كده). ازرع فريق واقعي صغير (7 موظفين، أقسام
+    مختلفة) + بدلات/أنواع جزاءات/رصيد إجازات/سجل حضور/طلب إجازة معلّق
+    عشان الشاشة تفتح بحالة واقعية مش فاضية."""
+    from datetime import timedelta
+    from app.core.kernel.auth.repository import UserRepository
+    from app.core.kernel.models.user import User
+    from app.modules.core.models import Branch
+    from app.modules.hr.models import (
+        AttendanceRecord, Employee, EmployeeAllowance, LeaveBalance,
+        LeaveRequest, LeaveType, PenaltyType,
+    )
+
+    branch = db.query(Branch).first()
+    if not branch or db.query(Employee).filter(Employee.branch_id == branch.id).first():
+        return
+
+    repo = UserRepository(User, db)
+
+    def _user_id(email: str) -> int | None:
+        u = repo.get_by_field("email", email)
+        return u.id if u else None
+
+    today = date.today()
+    # (employee_code, full_name, position, department, basic_salary, hire_date, birth_date, linked_user_email)
+    roster = [
+        ("EMP-001", "أحمد فتحي السيد",    "جرسون",              "المطعم",     Decimal("3800.00"), today - timedelta(days=730),  date(1996, 3, 12), "employee@resortos.local"),
+        ("EMP-002", "منى صلاح الدين",     "مديرة عمليات",        "الإدارة",    Decimal("14000.00"), today - timedelta(days=1460), date(1988, 7, 21), "manager@resortos.local"),
+        ("EMP-003", "كريم عبد الوهاب",    "مسؤول موارد بشرية",   "الموارد البشرية", Decimal("9500.00"), today - timedelta(days=1095), date(1991, 11, 3), "hr@resortos.local"),
+        ("EMP-004", "ياسمين ماهر",        "موظفة استقبال",       "الاستقبال",  Decimal("5200.00"), today - timedelta(days=400),  date(1998, 1, 30), None),
+        ("EMP-005", "سامح جلال",          "شيف",                "المطبخ",     Decimal("11000.00"), today - timedelta(days=2200), date(1985, 5, 9), None),
+        ("EMP-006", "هدى عزت",            "عاملة تدبير منزلي",   "التدبير المنزلي", Decimal("3400.00"), today - timedelta(days=180), date(2000, 9, 17), None),
+        ("EMP-007", "مينا رفعت",          "منقذ شاطئ",           "الشاطئ",     Decimal("4200.00"), today - timedelta(days=545), date(1994, 2, 25), None),
+    ]
+
+    employees: dict[str, Employee] = {}
+    for code, name, position, dept, salary, hire, birth, linked_email in roster:
+        emp = Employee(
+            branch_id=branch.id, employee_code=code, full_name=name,
+            position=position, department=dept, basic_salary=salary,
+            hire_date=hire, birth_date=birth, status="active",
+            user_id=_user_id(linked_email) if linked_email else None,
+        )
+        db.add(emp)
+        db.flush()
+        employees[code] = emp
+
+    # ── رصيد إجازات السنة الحالية — 21 يوم سنوي قانوني لكل موظف ──────────
+    for emp in employees.values():
+        db.add(LeaveBalance(
+            employee_id=emp.id, year=today.year,
+            annual_entitled=21, annual_taken=0, sick_taken=0,
+        ))
+
+    # ── بدلات حقيقية (EmployeeAllowance) — عشان endpoint النهارده مش فاضي ─
+    db.add(EmployeeAllowance(
+        employee_id=employees["EMP-001"].id, name="بدل انتقال",
+        amount=Decimal("300.00"), is_taxable=True, is_pensionable=False,
+    ))
+    db.add(EmployeeAllowance(
+        employee_id=employees["EMP-002"].id, name="بدل سكن",
+        amount=Decimal("2000.00"), is_taxable=True, is_pensionable=True,
+    ))
+    db.add(EmployeeAllowance(
+        employee_id=employees["EMP-005"].id, name="بدل وجبات",
+        amount=Decimal("500.00"), is_taxable=False, is_pensionable=False,
+    ))
+
+    # ── أنواع جزاءات شائعة (PenaltyType) ─────────────────────────────────
+    db.add(PenaltyType(branch_id=branch.id, name="Late arrival", name_ar="تأخر عن الحضور", penalty_days=1))
+    db.add(PenaltyType(branch_id=branch.id, name="Unauthorized absence", name_ar="غياب بدون إذن", penalty_days=3))
+
+    # ── سجل حضور آخر 5 أيام لموظفَين مرتبطين بحساب دخول ──────────────────
+    for emp in (employees["EMP-001"], employees["EMP-002"]):
+        for days_ago in range(1, 6):
+            rec_date = today - timedelta(days=days_ago)
+            check_in = datetime.combine(rec_date, datetime.min.time()) + timedelta(hours=9)
+            check_out = check_in + timedelta(hours=8)
+            db.add(AttendanceRecord(
+                employee_id=emp.id, branch_id=branch.id, record_date=rec_date,
+                check_in=check_in, check_out=check_out, status="present",
+            ))
+
+    # ── طلب إجازة معلّق واحد — عشان قائمة اعتماد الإجازات متبقاش فاضية ────
+    annual_leave = db.query(LeaveType).filter(
+        LeaveType.branch_id == branch.id, LeaveType.name == "إجازة سنوية",
+    ).first()
+    if annual_leave:
+        start = today + timedelta(days=10)
+        end = today + timedelta(days=12)
+        db.add(LeaveRequest(
+            employee_id=employees["EMP-001"].id, branch_id=branch.id,
+            leave_type_id=annual_leave.id, start_date=start, end_date=end,
+            days_requested=(end - start).days + 1, reason="سفر عائلي",
+            status="pending",
+        ))
+
+    db.flush()
+    print(f"  ✓ Employees seeded ({len(employees)}, linked to 3 demo login accounts)")
 
 
 def _seed_chart_of_accounts(db: Session) -> None:
