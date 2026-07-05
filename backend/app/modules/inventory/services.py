@@ -5,6 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.modules.inventory import crud
@@ -17,6 +18,11 @@ from app.modules.inventory.schemas import (
     StockMovementCreate, WarehouseCreate,
     PurchaseRequestCreate, StockCountCreate,
 )
+
+
+class InventoryConcurrencyError(Exception):
+    """عملية مخزون تانية ماسكة صف الصنف دلوقتي (SELECT FOR UPDATE NOWAIT فشل) —
+    409، مش 400 (زي beach.services.BeachConcurrencyError بالظبط)."""
 
 
 def create_warehouse(db: Session, data: WarehouseCreate):
@@ -119,7 +125,13 @@ def record_movement(
             f"الكمية المطلوبة ({abs(data.quantity)}) أكبر من الرصيد الحالي ({product.current_stock})"
         )
     mov = crud.create_movement(db, data, moved_by)
-    crud.adjust_stock(db, product, data.quantity)
+    try:
+        crud.adjust_stock(db, product, data.quantity)
+    except OperationalError as exc:
+        db.rollback()
+        raise InventoryConcurrencyError(
+            f"الصنف {product.id} مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
+        ) from exc
     db.commit(); db.refresh(mov)
     return mov
 
@@ -217,7 +229,13 @@ def receive_purchase_order(
     po = get_po_or_404(db, po_id)
     if po.status in ("received", "cancelled"):
         raise ValueError(f"أمر الشراء في حالة '{po.status}' ولا يمكن استلامه")
-    po = crud.receive_purchase_order(db, po, req.items, req.warehouse_id, req.received_at, received_by)
+    try:
+        po = crud.receive_purchase_order(db, po, req.items, req.warehouse_id, req.received_at, received_by)
+    except OperationalError as exc:
+        db.rollback()
+        raise InventoryConcurrencyError(
+            "أحد الأصناف في أمر الشراء ده مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
+        ) from exc
     db.commit(); db.refresh(po)
     return po
 
@@ -440,11 +458,22 @@ def approve_stock_count(db: Session, count_id: int, approved_by: int) -> StockCo
 
     warehouse_id = sc.warehouse_id
 
-    for line in sc.lines:
+    # ترتيب الأصناف بـ product_id تصاعدي قبل القفل/التعديل — نفس نمط
+    # crud.receive_purchase_order (اتساق ترتيب الأقفال عبر عمليات متزامنة،
+    # مش ضروري لمنع deadlock حقيقي مع NOWAIT بس ممارسة سليمة).
+    lines_sorted = sorted(sc.lines, key=lambda ln: ln.product_id)
+
+    for line in lines_sorted:
         if line.variance == Decimal("0"):
             continue
 
-        product = db.query(Product).filter(Product.id == line.product_id).first()
+        try:
+            product = crud.lock_product_for_update(db, line.product_id)
+        except OperationalError as exc:
+            db.rollback()
+            raise InventoryConcurrencyError(
+                f"الصنف {line.product_id} مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
+            ) from exc
         if not product:
             continue
 

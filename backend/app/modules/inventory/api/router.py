@@ -123,6 +123,8 @@ def list_movements(
 def record_movement(data: StockMovementCreate, db: DbDep, user=Depends(get_manager_user)):
     try:
         return services.record_movement(db, data, moved_by=user.id)
+    except services.InventoryConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -160,6 +162,8 @@ def receive_purchase_order(po_id: int, req: ReceiveItemsRequest, db: DbDep,
                            user=Depends(get_manager_user)):
     try:
         return services.receive_purchase_order(db, po_id, req, received_by=user.id)
+    except services.InventoryConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -264,5 +268,7 @@ def submit_stock_count(count_id: int, req: SubmitStockCountRequest, db: DbDep,
 def approve_stock_count(count_id: int, db: DbDep, user=Depends(get_current_active_user)):
     try:
         return services.approve_stock_count(db, count_id, approved_by=user.id)
+    except services.InventoryConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))

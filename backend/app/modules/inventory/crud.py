@@ -105,8 +105,27 @@ def update_product(db: Session, product: Product, data: ProductUpdate) -> Produc
     return product
 
 
+def lock_product_for_update(db: Session, product_id: int) -> Optional[Product]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف المنتج طوال الـ transaction عشان
+    يمنع سباق كلاسيكي (lost update) على current_stock لو عمليتين خصم/إضافة
+    مخزون حصلوا في نفس اللحظة بالظبط على نفس الصنف (استهلاك مطعم/كافيه،
+    استلام أمر شراء، اعتماد جرد مخزون — كل واحدة فيهم بتلمس current_stock).
+    نفس نمط beach.crud.lock_inventory_for_update و pms.crud.lock_room_for_booking
+    بالضبط (Postgres فقط — على SQLite بيتجاهله الـ driver من غير error)."""
+    return (
+        db.query(Product)
+        .filter(Product.id == product_id)
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def adjust_stock(db: Session, product: Product, delta: Decimal) -> Product:
-    """يُحدّث current_stock بالفرق — موجب=إضافة، سالب=خصم."""
+    """يُحدّث current_stock بالفرق — موجب=إضافة، سالب=خصم. يقفل صف المنتج أولاً
+    (راجع lock_product_for_update) عشان يمنع oversell/lost-update لو خصمين
+    متزامنين حصلوا على نفس الصنف بالظبط."""
+    locked = lock_product_for_update(db, product.id)
+    product = locked or product
     product.current_stock = max(Decimal("0"), product.current_stock + delta)
     db.flush()
     return product
@@ -202,8 +221,16 @@ def receive_purchase_order(
     received_at,
     received_by: int,
 ) -> PurchaseOrder:
-    """يُسجّل استلام البضاعة ويُحدّث المخزون."""
-    all_received = True
+    """يُسجّل استلام البضاعة ويُحدّث المخزون.
+
+    ⚠️ يقفل صف كل Product (SELECT FOR UPDATE NOWAIT، راجع lock_product_for_update)
+    قبل تعديل current_stock/cost_price — نفس فئة سباق beach/pms على current_stock
+    لو استلامين متزامنين لمسوا نفس الصنف. الأصناف بتتلف بترتيب product_id
+    تصاعدي (مش ترتيب العناصر في الـ request) عشان أي استلامين متزامنين فيهم
+    نفس مجموعة الأصناف ياخدوا القفل بنفس الترتيب دايمًا — مايهمش هنا مع
+    NOWAIT (بيرفض فورًا مش بيستنى، فمفيش deadlock حقيقي ممكن يحصل)، بس بيقلل
+    تضارب الأقفال غير الضروري ونفس الممارسة المتبعة."""
+    resolved: list[tuple[PurchaseOrderItem, Decimal]] = []
     for item_data in received_items:
         item = db.query(PurchaseOrderItem).filter(
             PurchaseOrderItem.id == item_data["item_id"],
@@ -211,7 +238,12 @@ def receive_purchase_order(
         ).first()
         if not item:
             continue
-        qty = Decimal(str(item_data["received_qty"]))
+        resolved.append((item, Decimal(str(item_data["received_qty"]))))
+
+    resolved.sort(key=lambda pair: pair[0].product_id)
+
+    all_received = True
+    for item, qty in resolved:
         item.received_qty += qty
 
         # حركة مخزون
@@ -229,8 +261,10 @@ def receive_purchase_order(
         )
         db.add(mov)
 
-        # تحديث المخزون + متوسط التكلفة المتحرك
-        product = db.query(Product).filter(Product.id == item.product_id).first()
+        # تحديث المخزون + متوسط التكلفة المتحرك — بعد قفل الصف
+        product = lock_product_for_update(db, item.product_id)
+        if not product:
+            product = db.query(Product).filter(Product.id == item.product_id).first()
         if product:
             old_stock = product.current_stock
             old_cost  = product.cost_price or Decimal("0")

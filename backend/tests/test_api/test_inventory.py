@@ -146,6 +146,32 @@ class TestStockMovement:
         low = services.get_low_stock_products(db, branch.id)
         assert any(p.id == product.id for p in low)
 
+    def test_concurrent_movement_raises_concurrency_error(self, db, branch, product, warehouse, monkeypatch):
+        """باج حقيقي كان هنا: adjust_stock كان بيقرا/يعدّل current_stock من
+        غير أي قفل صف (عكس beach.crud.lock_inventory_for_update و
+        pms.crud.lock_room_for_booking) — بينادى عليها من 3+ أماكن (مطعم/
+        كافيه عبر consume_stock، استلام أمر شراء، اعتماد جرد مخزون)، يعني
+        تحت حمل متزامن حقيقي (كاشير مطعم وكافيه بيستهلكوا نفس الصنف في نفس
+        اللحظة) كانت ممكن تحصل lost update فعلي على current_stock. اتصلح
+        بقفل صف Product (SELECT FOR UPDATE NOWAIT) قبل أي تعديل — هنا بنحاكي
+        عملية تانية ماسكة الصف بمحاكاة OperationalError من القفل نفسه (نفس
+        أسلوب test_concurrent_sale_raises_concurrency_error في test_beach.py)."""
+        from sqlalchemy.exc import OperationalError
+
+        def _raise_locked(*_args, **_kwargs):
+            raise OperationalError("SELECT ... FOR UPDATE NOWAIT", {}, Exception("could not obtain lock"))
+
+        monkeypatch.setattr(crud, "lock_product_for_update", _raise_locked)
+
+        data = StockMovementCreate(
+            branch_id=branch.id, product_id=product.id,
+            warehouse_id=warehouse.id, movement_type="purchase_in",
+            quantity=Decimal("10"), unit_cost=Decimal("20"),
+            moved_at=datetime.utcnow(),
+        )
+        with pytest.raises(services.InventoryConcurrencyError, match="مشغول"):
+            services.record_movement(db, data, moved_by=1)
+
 
 class TestPurchaseOrder:
 
