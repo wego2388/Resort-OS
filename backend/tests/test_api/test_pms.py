@@ -51,6 +51,18 @@ def make_room(db, branch, room_type):
     return r
 
 
+def make_finance_accounts(db, branch):
+    """يزرع 1100 (نقدية) و4100 (إيرادات الغرف) — الحسابين اللي
+    pms.services._post_checkout_journal بيدوّر عليهم بالكود عند ترحيل قيد
+    إيراد الغرف وقت الخروج."""
+    from app.modules.finance.models import Account
+    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+    revenue = Account(branch_id=branch.id, code="4100", name="Room Revenue", account_type="revenue")
+    db.add_all([cash, revenue])
+    db.commit()
+    return cash, revenue
+
+
 def make_booking(db, branch, room):
     # كل booking يستخدم check_in مختلف لضمان عدم تعارض الغرفة
     unique_offset = hash(uuid.uuid4().int) % 30 + 1
@@ -327,3 +339,64 @@ class TestNightAudit:
         services.run_night_audit(db, branch.id, audit_date)
         with pytest.raises(ValueError, match="مكتمل مسبقاً"):
             services.run_night_audit(db, branch.id, audit_date)
+
+
+class TestTimezoneBugFixes:
+    """باج توقيت حقيقي (نفس فئة KDS "urgent"/dashboard "إيراد اليوم"): أي
+    منطق كان بيحسب "اليوم" بـ date.today()/datetime.utcnow() الخام (تاريخ
+    السيرفر UTC) بدل تاريخ المنتجع الفعلي (Africa/Cairo) — اتصلح باستخدام
+    app.resort_os.timezone_utils.local_today، والتستات دي بتتأكد إن الاستدعاء
+    فعلاً بيمر من الدالة المشتركة دي مش من date.today() القديم."""
+
+    def test_generate_booking_number_uses_resort_local_date(self, db, monkeypatch):
+        import app.resort_os.timezone_utils as tzutils
+        forced_date = date(2026, 12, 25)
+        monkeypatch.setattr(tzutils, "local_today", lambda tz_name: forced_date)
+
+        branch = make_branch(db)
+        number = crud.generate_booking_number(db, branch.id)
+        assert number.startswith("BKG-20261225-")
+
+    def test_checkout_journal_uses_resort_local_date_not_server_utc(self, db, monkeypatch):
+        """لو السيرفر (UTC) لسه فاتح على تاريخ الأمس بينما توقيت القاهرة
+        بالفعل دخل يوم جديد، قيد إيراد الغرف عند الخروج لازم يتسجّل بتاريخ
+        القاهرة (اليوم الجديد) مش بتاريخ الـ UTC القديم."""
+        import app.resort_os.timezone_utils as tzutils
+        from app.modules.finance.models import JournalEntry
+
+        forced_date = date(2026, 12, 26)  # "اليوم" بتوقيت القاهرة
+        monkeypatch.setattr(tzutils, "local_today", lambda tz_name: forced_date)
+
+        branch = make_branch(db)
+        make_finance_accounts(db, branch)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        services.checkin_booking(db, booking.id)
+        services.checkout_booking(db, booking.id)
+
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "pms", JournalEntry.source_id == booking.id)
+            .first()
+        )
+        assert entry is not None
+        assert entry.entry_date == forced_date
+
+    def test_local_today_returns_cairo_date_when_server_utc_is_still_yesterday(self, monkeypatch):
+        """اختبار مباشر للدالة المشتركة نفسها: 2026-07-05 23:30 UTC = فعليًا
+        2026-07-06 02:30 بتوقيت القاهرة (UTC+3) — يوم جديد بالفعل بتوقيت
+        المنتجع رغم إن تاريخ UTC الخام لسه اليوم اللي فات."""
+        import app.resort_os.timezone_utils as tzutils
+        from datetime import datetime as real_datetime, timezone as dt_timezone
+
+        fixed_utc = real_datetime(2026, 7, 5, 23, 30, tzinfo=dt_timezone.utc)
+
+        class FakeDateTime(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_utc if tz is None else fixed_utc.astimezone(tz)
+
+        monkeypatch.setattr(tzutils, "datetime", FakeDateTime)
+
+        assert tzutils.local_today("Africa/Cairo") == date(2026, 7, 6)

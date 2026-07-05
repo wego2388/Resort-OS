@@ -158,7 +158,13 @@ def list_bookings(
 
 
 def generate_booking_number(db: Session, branch_id: int) -> str:
-    today = datetime.utcnow().strftime("%Y%m%d")
+    # تاريخ اليوم بتوقيت المنتجع (مش UTC السيرفر) — نفس فئة باج التوقيت المشروح
+    # في app.resort_os.timezone_utils، حتى لو هنا الأثر مجرد رقم حجز مربك
+    # (تاريخ في الرقم مختلف عن تاريخ ساعة الاستقبال) وليس خطأ محاسبي.
+    from app.core.config import settings  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    today = local_today(settings.TIMEZONE).strftime("%Y%m%d")
     prefix = f"BKG-{today}-"
     count = (
         db.query(Booking)

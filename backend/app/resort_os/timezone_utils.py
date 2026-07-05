@@ -38,3 +38,21 @@ def local_date_to_utc_range(local_date: date, tz_name: str) -> tuple[datetime, d
     start_utc = start_local.astimezone(timezone.utc).replace(tzinfo=None)
     end_utc = end_local.astimezone(timezone.utc).replace(tzinfo=None)
     return start_utc, end_utc
+
+
+def local_now(tz_name: str) -> datetime:
+    """اللحظة الحالية بتوقيت المنتجع (tz_name) — بديل عن datetime.utcnow()/
+    datetime.now() اللي بترجع توقيت السيرفر (UTC غالبًا في الإنتاج). استخدمها
+    أي مكان بيحتاج يعرف الساعة المحلية الحقيقية (مثال: مقارنة "وصل الساعة كام
+    بتوقيت القاهرة" قبل ما نعتبر حجز no-show)."""
+    return datetime.now(ZoneInfo(tz_name))
+
+
+def local_today(tz_name: str) -> date:
+    """تاريخ اليوم بتوقيت المنتجع (tz_name) — بديل عن date.today() اللي بترجع
+    تاريخ السيرفر (UTC غالبًا في الإنتاج). نفس فئة الباج الموصوف فوق: أي منطق
+    بيحدد "التاريخ الحالي" لعملية محاسبية/تشغيلية (Night Audit، قيد إيراد
+    الغرف عند الخروج، كشف الحجوزات no-show) باستخدام date.today() الخام كان
+    ممكن يحسب اليوم الغلط لمدة ~2-3 ساعات حوالين منتصف ليل القاهرة، لحد ما
+    توقيت UTC نفسه يلحق يعدي لليوم التالي."""
+    return local_now(tz_name).date()

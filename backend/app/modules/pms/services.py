@@ -179,13 +179,21 @@ def checkout_booking(db: Session, booking_id: int) -> Booking:
 
 
 def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
-    """Dr. Cash (1100) / Cr. Room Revenue (4100)."""
-    from datetime import date as _date  # noqa: PLC0415
+    """Dr. Cash (1100) / Cr. Room Revenue (4100).
+
+    ⚠️ باج توقيت حقيقي كان هنا: كانت بتستخدم date.today() (تاريخ السيرفر،
+    UTC غالبًا في الإنتاج) كتاريخ قيد الإيراد بدل تاريخ اليوم بتوقيت المنتجع
+    (Africa/Cairo). أي تسجيل مغادرة بين منتصف ليل القاهرة ولحد ما UTC نفسه
+    يعدي لليوم التالي (فرق UTC+3 القاهرة) كان بيسجّل الإيراد بتاريخ الأمس في
+    دفتر اليومية — يوم محاسبي غلط لعملية حقيقية. اتصلح باستخدام نفس الدالة
+    المشتركة المستخدمة في المطعم/الكافيه (app.resort_os.timezone_utils)."""
     from decimal import Decimal as _D  # noqa: PLC0415
+    from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
 
     post_simple_revenue_journal(
-        db, booking.branch_id, _date.today(),
+        db, booking.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="1100", credit_account_code="4100",
         amount=booking.total_rate or _D("0"),
         reference=f"CHK-{booking.booking_number}",
