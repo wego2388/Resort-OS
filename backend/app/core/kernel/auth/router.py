@@ -15,9 +15,30 @@ Endpoints:
     POST /password-reset/confirm   → updates password
 """
 
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Body, Form
 from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
+
+
+class RegisterResponse(BaseModel):
+    """رد آمن لـ /register — بدون password_hash/two_factor_secret. بدون
+    response_model كان FastAPI بيسلسل الـ ORM object الخام اللي `register()`
+    بيرجّعه مباشرة، يعني أي حد (endpoint عام بدون تسجيل دخول) بيشوف الـ hash
+    وسر الـ 2FA في رد التسجيل. self-contained هنا (بدون import من
+    app.modules) لأن app/core/kernel/ بنية تحتية عامة قابلة لإعادة الاستخدام،
+    مش خاصة بـ resort-os."""
+    model_config = ConfigDict(from_attributes=True)
+    id:        int
+    email:     str
+    full_name: str
+    phone:     Optional[str]
+    role:      str
+    is_active: bool
+    created_at: datetime
 from typing import Callable, Optional
 
 from app.core.kernel.auth.service import AuthService
@@ -54,7 +75,7 @@ def build_auth_router(
             result["refresh_token"] = auth.create_refresh_token(user.id)
         return result
 
-    @router.post("/register")
+    @router.post("/register", response_model=RegisterResponse)
     def register(
         payload: dict = Body(...),
         auth: AuthService = Depends(get_auth_service),
