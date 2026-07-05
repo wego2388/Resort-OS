@@ -360,10 +360,17 @@ def list_leave_requests(
               response_model=LeaveRequestRead,
               dependencies=[Depends(require_permission("hr.approve_leave", "approve", min_role_level=60))])
 def approve_leave_request(
-    request_id: int, body: LeaveApproveRequest, db: DbDep, _=Depends(get_current_active_user)
+    request_id: int, body: LeaveApproveRequest, db: DbDep, user=Depends(get_current_active_user)
 ):
+    # ⚠️ body.approved_by متجاهَل عمدًا — كان بيثق في قيمة من الـ client مباشرة
+    # (أي حد بصلاحية manager+ يقدر يبعت approved_by = أي user_id، حتى لو مش
+    # هو اللي عامل الطلب فعليًا)، وده كمان كان بيلغي أي معنى لفحص
+    # "منع الاعتماد الذاتي" في services.approve_leave لأنه بيعتمد على approved_by.
+    # approved_by الحقيقي دايمًا هو المستخدم المصادَق عليه (user.id)، زي alias
+    # /hr/leaves/{id} تحت واللي كان صحيح من الأول. الحقل باقٍ في الـ schema
+    # بس لتوافق شكل الـ request مع أي عميل قديم بيبعته.
     try:
-        req = services.approve_leave(db, request_id, body.approved_by)
+        req = services.approve_leave(db, request_id, user.id)
         return LeaveRequestRead.model_validate(req)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))

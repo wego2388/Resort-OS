@@ -362,6 +362,15 @@ def request_leave(
             f"سلد الإجازات غير كافٍ — المتاح: {balance.annual_entitled - balance.annual_taken} يوم"
         )
 
+    # تحقق من عدم تداخل المدى مع طلب إجازة تاني (معلّق أو معتمد) لنفس الموظف —
+    # من غيره ممكن يبقى عند الموظف إجازتين معتمدتين لنفس اليوم في نفس الوقت.
+    overlap = crud.get_overlapping_leave(db, employee_id, start_date, end_date)
+    if overlap:
+        raise ValueError(
+            f"يوجد طلب إجازة آخر ({overlap.start_date} → {overlap.end_date}, "
+            f"حالة: {overlap.status}) يتداخل مع المدى المطلوب"
+        )
+
     req = crud.create_leave_request(
         db, employee_id, branch_id, leave_type_id, start_date, end_date, days, reason
     )
@@ -392,6 +401,14 @@ def approve_leave(
         raise ValueError("طلب الإجازة غير موجود")
     if req.status != "pending":
         raise ValueError(f"الطلب في حالة '{req.status}' — لا يمكن اعتماده")
+
+    # ⚠️ لا سماح بالاعتماد الذاتي: لو الموظف صاحب الطلب مرتبط بنفس حساب
+    # الدخول اللي بيحاول يعتمد (approved_by = Employee.user_id)، ارفض. كان
+    # مفيش أي تحقق هنا خالص — مدير مرتبط بموظف نفسه كان يقدر يعتمد إجازته
+    # الخاصة عن طريق /hr/leaves/{id} أو /hr/leave-requests/{id}/approve.
+    emp = get_employee_or_404(db, req.employee_id)
+    if emp.user_id is not None and emp.user_id == approved_by:
+        raise ValueError("لا يمكن للموظف اعتماد طلب إجازته الخاص — يلزم اعتماد مدير آخر")
 
     approved = crud.approve_leave_request(db, req, approved_by)
 

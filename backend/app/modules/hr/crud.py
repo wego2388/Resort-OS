@@ -392,6 +392,24 @@ def get_leave_request(db: Session, request_id: int) -> Optional[LeaveRequest]:
     return db.query(LeaveRequest).filter(LeaveRequest.id == request_id).first()
 
 
+def get_overlapping_leave(
+    db: Session, employee_id: int, start_date: date, end_date: date,
+) -> Optional[LeaveRequest]:
+    """يدوّر على أي طلب إجازة (معلّق أو معتمد — مش مرفوض) لنفس الموظف بيتقاطع
+    مع المدى المطلوب. تقاطع مدَيين: existing.start <= new.end AND existing.end
+    >= new.start (المعادلة القياسية لتقاطع فترتين)."""
+    return (
+        db.query(LeaveRequest)
+        .filter(
+            LeaveRequest.employee_id == employee_id,
+            LeaveRequest.status.in_(("pending", "approved")),
+            LeaveRequest.start_date <= end_date,
+            LeaveRequest.end_date >= start_date,
+        )
+        .first()
+    )
+
+
 def list_leave_requests(
     db: Session,
     branch_id: int,

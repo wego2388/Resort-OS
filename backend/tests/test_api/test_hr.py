@@ -712,6 +712,87 @@ class TestLeaveManagement:
         with pytest.raises(ValueError, match="rejected"):
             services.reject_leave(db, req.id, reason="محاولة تانية")
 
+    def test_request_leave_end_before_start_raises(self, db, branch, employee, leave_type):
+        """تاريخ نهاية قبل البداية — لازم يترفض برسالة واضحة."""
+        with pytest.raises(ValueError, match="نهاية"):
+            services.request_leave(
+                db, employee_id=employee.id, branch_id=branch.id,
+                leave_type_id=leave_type.id,
+                start_date=date(2026, 8, 10), end_date=date(2026, 8, 5),
+            )
+
+    def test_request_leave_overlapping_pending_raises(self, db, branch, employee, leave_type):
+        """طلب إجازة يتداخل مع طلب معلّق سابق لنفس الموظف لازم يترفض — بدون
+        كده الموظف كان يقدر يبقى عنده أكتر من طلب معتمد لنفس اليوم."""
+        services.request_leave(
+            db, employee_id=employee.id, branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=date(2026, 8, 1), end_date=date(2026, 8, 5),
+        )
+        with pytest.raises(ValueError, match="يتداخل"):
+            services.request_leave(
+                db, employee_id=employee.id, branch_id=branch.id,
+                leave_type_id=leave_type.id,
+                start_date=date(2026, 8, 3), end_date=date(2026, 8, 7),
+            )
+
+    def test_request_leave_non_overlapping_succeeds(self, db, branch, employee, leave_type):
+        """طلبين متتاليين من غير تداخل فعلي (يوم بعد ما ينتهي التاني) لازم
+        يعدّوا عادي — الفحص لازم يكون تقاطع حقيقي مش أي طلبين لنفس الموظف."""
+        services.request_leave(
+            db, employee_id=employee.id, branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=date(2026, 8, 1), end_date=date(2026, 8, 5),
+        )
+        second = services.request_leave(
+            db, employee_id=employee.id, branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=date(2026, 8, 6), end_date=date(2026, 8, 8),
+        )
+        assert second.id is not None
+
+    def test_cannot_self_approve_own_leave(self, db, branch, leave_type):
+        """⚠️ باج حقيقي: approve_leave ما كانش بيتحقق خالص من إن approved_by
+        هو نفسه صاحب الطلب — موظف مرتبط بحساب مدير كان يقدر يعتمد إجازته
+        الخاصة. الموظف لازم يبقى مربوط بـ user_id عشان الفحص يتفعّل."""
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
+        from app.modules.hr.models import Employee
+
+        requester_user = User(
+            email=f"self-approve-{uuid.uuid4().hex[:6]}@test.local",
+            password_hash=get_password_hash("Test@12345"),
+            full_name="مدير نفسه (حساب)", role="manager", is_active=True,
+        )
+        other_manager_user = User(
+            email=f"other-manager-{uuid.uuid4().hex[:6]}@test.local",
+            password_hash=get_password_hash("Test@12345"),
+            full_name="مدير تاني", role="manager", is_active=True,
+        )
+        db.add_all([requester_user, other_manager_user])
+        db.flush()
+
+        emp = Employee(
+            branch_id=branch.id, employee_code=f"EMP-SELF-{uuid.uuid4().hex[:6].upper()}",
+            full_name="مدير نفسه", position="مدير", basic_salary=Decimal("9000.00"),
+            hire_date=date(2022, 1, 1), user_id=requester_user.id,
+        )
+        db.add(emp)
+        db.commit()
+        db.refresh(emp)
+
+        req = services.request_leave(
+            db, employee_id=emp.id, branch_id=branch.id,
+            leave_type_id=leave_type.id,
+            start_date=date(2026, 8, 20), end_date=date(2026, 8, 22),
+        )
+        with pytest.raises(ValueError, match="اعتماد طلب إجازته الخاص"):
+            services.approve_leave(db, req.id, approved_by=requester_user.id)
+
+        # مدير مختلف (user_id تاني) يقدر يعتمدها عادي
+        approved = services.approve_leave(db, req.id, approved_by=other_manager_user.id)
+        assert approved.status == "approved"
+
 
 class TestPenalties:
 
