@@ -232,6 +232,67 @@ class TestRestaurantRefundAfterPayment:
         db.refresh(folio)
         assert folio.total == Decimal("0.00")
 
+    def test_refund_does_not_touch_a_different_folio_charge_with_same_ref_order_id(
+        self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers,
+    ):
+        """Regression: _reduce_folio_charge_for_refund كانت بتفلتر بـ
+        ref_order_id بس — ده رقم PK جدول Order (المطعم)، ومش فريد عبر
+        الموديولات (نفس الرقم ممكن يتكرر كـ ref_order_id على FolioCharge
+        تانية جوه فوليو ضيف مختلف تمامًا، كافيه مثلًا). من غير فلترة
+        charge_type + folio_id، مرتجع صنف من طلب مطعم كان (نظريًا) ممكن
+        يقلّل شحنة فوليو ضيف تاني خالص لو الأرقام اتصادفت."""
+        branch = make_branch_committed(db)
+        room, folio = make_room_and_folio(db, branch)
+        item = make_menu_item_committed(db, branch)
+
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        # فوليو/شحنة "كافيه" تانية تمامًا بنفس ref_order_id بالظبط عمدًا،
+        # ومتعمولة قبل شحنة المطعم الحقيقية (PK أصغر) — عشان لو الفلترة
+        # القديمة (ref_order_id بس، من غير charge_type/folio_id) رجعت،
+        # الـ .first() كان هيرجّع الـ decoy دي غلط بدل شحنة المطعم الصح.
+        from app.modules.finance import crud as finance_crud
+        from app.modules.finance.schemas import FolioCreate, FolioChargeCreate
+        from datetime import datetime, timedelta as _td
+        decoy_folio = finance_crud.create_folio(db, FolioCreate(
+            branch_id=branch.id, guest_name="ضيف تاني", check_in=datetime.utcnow(),
+            check_out=datetime.utcnow() + _td(days=1),
+        ))
+        db.commit()
+        decoy_charge = finance_crud.add_charge(db, decoy_folio.id, FolioChargeCreate(
+            charge_type="cafe", description="كابتشينو decoy",
+            amount=Decimal("50.00"), vat_amount=Decimal("7.00"), service_charge=Decimal("6.00"),
+            posted_at=datetime.utcnow(), ref_order_id=order["id"],  # نفس ref_order_id عمدًا
+        ))
+        finance_crud.recalculate_folio_total(db, decoy_folio)
+        db.commit()
+        decoy_total_before = decoy_folio.total
+        assert decoy_total_before == Decimal("63.00")
+
+        paid = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "paid", "charge_to_room_id": room.id},
+            headers=cashier_headers,
+        ).json()
+        item_id = paid["items"][0]["id"]
+
+        client.patch(
+            f"/api/v1/restaurant/orders/{paid['id']}/items/{item_id}/refund",
+            json={"reason": "الأكل رجع"}, headers=manager_headers,
+        )
+
+        db.refresh(folio)
+        assert folio.total == Decimal("0.00")  # فوليو المطعم اترجع صح
+
+        db.refresh(decoy_folio)
+        db.refresh(decoy_charge)
+        assert decoy_folio.total == decoy_total_before  # فوليو الضيف التاني متلمسش خالص
+
 
 class TestCafeRefundAfterPayment:
     def test_refund_marks_item_refunded(self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers, manager_headers):

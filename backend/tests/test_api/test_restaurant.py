@@ -527,8 +527,12 @@ class TestChargeToRoom:
         # المخزّن اللي GET /finance/folios بيرجّعه مباشرة) كان بيفضل صفر —
         # add_charge لوحدها كانت بتضيف صف الشحنة بس من غير ما تعيد حساب
         # الإجمالي المخزّن على الفوليو نفسه.
+        # ⚠️ باج تاني اتصلح كمان: matching.service_charge كان دايمًا صفر
+        # (order.service_charge كان بيضيع قبل ما يوصل للفوليو خالص) — بقى
+        # جزء أساسي من إجمالي الفوليو زي المفروض.
         db.refresh(folio)
-        assert folio.total == matching.amount + matching.vat_amount
+        assert matching.service_charge == order.service_charge
+        assert folio.total == matching.amount + matching.vat_amount + matching.service_charge
 
         # مفيش قيد كاش فوري اتسجل لأوردر اتحمّل على الغرفة
         entries, total = finance_crud.list_journal_entries(db, branch.id, source="restaurant")

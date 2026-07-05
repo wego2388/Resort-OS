@@ -1233,7 +1233,13 @@ class TestCafeChargeToRoom:
         # ⚠️ باج حقيقي اتصلح في هذا الجلسة (services.py:213-215): add_charge لوحدها
         # كانت بتضيف FolioCharge بس من غير ما تحدّث Folio.total المخزّن — أي شاشة
         # بتعرض العمود ده مباشرة كانت بتوريه صفر رغم وجود شحنات فعلية.
-        expected_total = Decimal(str(body["subtotal"])) + Decimal(str(body["vat_amount"]))
+        # ⚠️ باج تاني اتصلح كمان: service_charge (12% من الطلب) كان بيضيع تمامًا
+        # قبل ما يوصل للفوليو — الرقم المتوقع هنا بقى يشمله زي الواقع الفعلي.
+        expected_total = (
+            Decimal(str(body["subtotal"]))
+            + Decimal(str(body["vat_amount"]))
+            + Decimal(str(body["service_charge"]))
+        )
         assert folio.total == expected_total
         assert folio.total > Decimal("0.00")
 

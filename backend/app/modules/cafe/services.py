@@ -199,6 +199,9 @@ def update_order_status(
                 description=f"طلب {order.order_number}",
                 amount=order.subtotal,
                 vat_amount=order.vat_amount,
+                # ⚠️ باج حقيقي كان هنا (اتصلح) — نفس باج restaurant.services:
+                # service_charge كان بيضيع خالص لما الطلب يتحمّل على الغرفة.
+                service_charge=order.service_charge,
                 posted_at=datetime.utcnow(),
                 ref_order_id=order.id,
             )
@@ -361,17 +364,29 @@ def _reduce_folio_charge_for_refund(db: Session, order: CafeOrder, refund_amount
         from app.modules.finance import crud as finance_crud  # noqa: PLC0415
         from app.modules.finance.models import FolioCharge  # noqa: PLC0415
 
-        charge = db.query(FolioCharge).filter_by(ref_order_id=order.id).first()
+        # ⚠️ باج حقيقي تاني كان هنا (اتصلح) — نفس باج restaurant.services: الفلترة
+        # كانت بس بـ ref_order_id، رقم مش فريد عبر الموديولات (نفس الرقم ممكن
+        # يتكرر في Order بتاع المطعم لطلب في فوليو ضيف تاني تمامًا). charge_type
+        # + folio_id بيضمنوا إننا بنعدّل شحنة الكافيه الصح بس.
+        charge = (
+            db.query(FolioCharge)
+            .filter_by(ref_order_id=order.id, folio_id=order.folio_id, charge_type="cafe")
+            .first()
+        )
         if not charge:
             return
         folio = finance_crud.get_folio(db, order.folio_id)
         if not folio or folio.status == "closed":
             return
-        gross_before = charge.amount + charge.vat_amount
+        # ⚠️ باج حقيقي كان هنا (اتصلح) — نفس باج restaurant.services: gross_before
+        # والـ ratio كانوا بيتجاهلوا service_charge، فمرتجع كامل كان يسيب
+        # charge.service_charge زي ما هو للأبد بدل ما يترجع مع باقي المبلغ.
+        gross_before = charge.amount + charge.vat_amount + charge.service_charge
         new_gross = max(Decimal("0"), gross_before - refund_amount)
         ratio = (new_gross / gross_before) if gross_before > 0 else Decimal("0")
         charge.amount = (charge.amount * ratio).quantize(Decimal("0.01"))
         charge.vat_amount = (charge.vat_amount * ratio).quantize(Decimal("0.01"))
+        charge.service_charge = (charge.service_charge * ratio).quantize(Decimal("0.01"))
         db.flush()
         finance_crud.recalculate_folio_total(db, folio)
     except Exception:

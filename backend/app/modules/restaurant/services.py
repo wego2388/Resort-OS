@@ -269,6 +269,11 @@ def update_order_status(
                 description=f"طلب {order.order_number}",
                 amount=order.subtotal,
                 vat_amount=order.vat_amount,
+                # ⚠️ باج حقيقي كان هنا (اتصلح): service_charge (12% من الطلب)
+                # كان بيضيع تمامًا هنا — الطلب نفسه بيحسبه صح (order.total)، بس
+                # مكانش بيوصل للفوليو خالص، يعني فاتورة الضيف عند الـ checkout
+                # كانت ناقصة قيمة الخدمة لكل طلب اتحمّل على الغرفة.
+                service_charge=order.service_charge,
                 posted_at=datetime.utcnow(),
                 ref_order_id=order.id,
             )
@@ -494,17 +499,33 @@ def _reduce_folio_charge_for_refund(db: Session, order: Order, refund_amount: De
         from app.modules.finance import crud as finance_crud  # noqa: PLC0415
         from app.modules.finance.models import FolioCharge  # noqa: PLC0415
 
-        charge = db.query(FolioCharge).filter_by(ref_order_id=order.id).first()
+        # ⚠️ باج حقيقي تاني كان هنا (اتصلح): الفلترة كانت بس بـ ref_order_id،
+        # وده رقم PK جدول Order (المطعم) — لكن نفس العمود ده بيتخزّن فيه كمان
+        # ref_order_id بتاع CafeOrder على FolioCharge تانية (charge_type="cafe")
+        # ممكن يكون بنفس الرقم فعليًا لأوردر تاني تمامًا في فوليو ضيف مختلف.
+        # من غير charge_type="restaurant" + folio_id في الفلتر، مرتجع صنف من
+        # المطعم كان ممكن (نظريًا) يقلّل شحنة كافيه/فوليو ضيف تاني بالغلط لو
+        # الأرقام اتصادفت.
+        charge = (
+            db.query(FolioCharge)
+            .filter_by(ref_order_id=order.id, folio_id=order.folio_id, charge_type="restaurant")
+            .first()
+        )
         if not charge:
             return
         folio = finance_crud.get_folio(db, order.folio_id)
         if not folio or folio.status == "closed":
             return
-        gross_before = charge.amount + charge.vat_amount
+        # ⚠️ باج حقيقي كان هنا (اتصلح): gross_before/الـ ratio كانوا بيتجاهلوا
+        # service_charge خالص — مرتجع كامل على طلب اتحمّل على الغرفة كان بيصفّر
+        # amount/vat_amount بس ويسيب charge.service_charge زي ما هو للأبد، يعني
+        # الضيف يفضل محمّل عليه قيمة خدمة لصنف اترجع فعليًا.
+        gross_before = charge.amount + charge.vat_amount + charge.service_charge
         new_gross = max(Decimal("0"), gross_before - refund_amount)
         ratio = (new_gross / gross_before) if gross_before > 0 else Decimal("0")
         charge.amount = (charge.amount * ratio).quantize(Decimal("0.01"))
         charge.vat_amount = (charge.vat_amount * ratio).quantize(Decimal("0.01"))
+        charge.service_charge = (charge.service_charge * ratio).quantize(Decimal("0.01"))
         db.flush()
         finance_crud.recalculate_folio_total(db, folio)
     except Exception:

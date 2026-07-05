@@ -67,6 +67,11 @@ class FolioCharge(Base, TimestampMixin):
     description:      Mapped[str]           = mapped_column(String(300))
     amount:           Mapped[Decimal]       = mapped_column(Numeric(10, 2))
     vat_amount:       Mapped[Decimal]       = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    # ⚠️ باج حقيقي كان هنا (اتصلح): restaurant/cafe كانوا بيبنوا FolioCharge
+    # لطلب "الدفع على حساب الغرفة" من subtotal+vat بس — service_charge
+    # (12% من الطلب، محسوب وموجود فعليًا على الـ Order) كان بيضيع تمامًا،
+    # يعني فاتورة الضيف عند الـ checkout كانت أقل من المفروض بقيمة الخدمة.
+    service_charge:   Mapped[Decimal]       = mapped_column(Numeric(10, 2), server_default="0", default=Decimal("0"))
     posted_at:        Mapped[datetime]      = mapped_column(DateTime)
     is_settled:       Mapped[bool]          = mapped_column(Boolean, default=False)
     ref_order_id:     Mapped[int | None]    = mapped_column(Integer, nullable=True)

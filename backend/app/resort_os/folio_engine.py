@@ -40,6 +40,7 @@ class FolioChargeItem:
     ref_order_id: Optional[int] = None
     ref_beach_tx_id: Optional[int] = None
     is_settled: bool = False
+    service_charge: Decimal = Decimal("0")
 
 
 @dataclass
@@ -60,13 +61,17 @@ class FolioSummary:
         return sum(c.vat_amount for c in self.charges)
 
     @property
+    def total_service_charge(self) -> Decimal:
+        return sum(c.service_charge for c in self.charges)
+
+    @property
     def total_with_vat(self) -> Decimal:
-        return self.total_amount + self.total_vat
+        return self.total_amount + self.total_vat + self.total_service_charge
 
     @property
     def unsettled_amount(self) -> Decimal:
         return sum(
-            c.amount + c.vat_amount
+            c.amount + c.vat_amount + c.service_charge
             for c in self.charges
             if not c.is_settled
         )

@@ -63,6 +63,7 @@ class FolioChargeRead(BaseModel):
     description:     str
     amount:          Decimal
     vat_amount:      Decimal
+    service_charge:  Decimal
     posted_at:       datetime
     is_settled:      bool
     ref_order_id:    Optional[int]
@@ -90,6 +91,7 @@ class FolioChargeCreate(BaseModel):
     description:     str = Field(..., max_length=300)
     amount:          Decimal = Field(..., gt=0)
     vat_amount:      Decimal = Field(Decimal("0"), ge=0)
+    service_charge:  Decimal = Field(Decimal("0"), ge=0)
     posted_at:       datetime
     ref_order_id:    Optional[int] = None
     ref_beach_tx_id: Optional[int] = None

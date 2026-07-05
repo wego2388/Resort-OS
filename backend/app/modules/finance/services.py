@@ -58,6 +58,7 @@ def _to_folio_summary(folio: Folio) -> FolioSummary:
                 description=c.description,
                 amount=c.amount,
                 vat_amount=c.vat_amount,
+                service_charge=c.service_charge or Decimal("0"),
                 posted_at=c.posted_at,
                 ref_order_id=c.ref_order_id,
                 ref_beach_tx_id=c.ref_beach_tx_id,
@@ -120,7 +121,8 @@ def generate_folio_statement_pdf(db: Session, folio_id: int) -> bytes:
     movements: list[tuple[datetime, str, str, Decimal, Decimal]] = []
     # (date, description, type, debit, credit)
     for c in folio.charges:
-        movements.append((c.posted_at, c.description, "charge", c.amount + c.vat_amount, Decimal("0")))
+        charge_total = c.amount + c.vat_amount + (c.service_charge or Decimal("0"))
+        movements.append((c.posted_at, c.description, "charge", charge_total, Decimal("0")))
     for p in folio.payments:
         if p.voided_at is not None:
             continue

@@ -191,7 +191,10 @@ def settle_all_charges(db: Session, folio: Folio) -> None:
 def recalculate_folio_total(db: Session, folio: Folio) -> Folio:
     db.expire(folio, ["charges"])
     folio.total = sum(
-        (c.amount + (c.vat_amount or Decimal("0")) for c in folio.charges),
+        (
+            c.amount + (c.vat_amount or Decimal("0")) + (c.service_charge or Decimal("0"))
+            for c in folio.charges
+        ),
         Decimal("0"),
     )
     db.flush()
