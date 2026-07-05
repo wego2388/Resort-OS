@@ -19,7 +19,7 @@ from app.modules.crm.schemas import (
     CustomerCreate, CustomerRead, CustomerUpdate,
     GuestProfileRead,
     InteractionCreate, InteractionRead,
-    LeadCreate, LeadRead, LeadStageUpdate,
+    LeadCreate, LeadRead, LeadSourceCreate, LeadSourceRead, LeadStageUpdate,
     OpportunityCreate, OpportunityRead, OpportunityUpdate,
 )
 from app.modules.core.schemas import PaginatedResponse
@@ -137,6 +137,26 @@ def update_campaign(campaign_id: int, data: CampaignUpdate, db: DbDep,
         return services.update_campaign(db, campaign_id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Lead Sources ──────────────────────────────────────────────────────
+# نفس فئة الباج: LeadSource model وعمود Lead.source_id اللي بيشاور عليه
+# كانوا موجودين بالكامل من زمان، بس صفر schema/crud/router — مفيش أي طريقة
+# تسجّل بيها مصدر عميل محتمل جديد عن طريق الـ API.
+
+@router.get("/crm/lead-sources", response_model=list[LeadSourceRead])
+def list_lead_sources(
+    db: DbDep, _=Depends(get_current_active_user),
+    branch_id: int = Query(...),
+    active_only: bool = Query(True),
+):
+    return [LeadSourceRead.model_validate(s) for s in crud.list_lead_sources(db, branch_id, active_only)]
+
+
+@router.post("/crm/lead-sources", response_model=LeadSourceRead,
+             status_code=status.HTTP_201_CREATED)
+def create_lead_source(data: LeadSourceCreate, db: DbDep, _=Depends(get_manager_user)):
+    return LeadSourceRead.model_validate(crud.create_lead_source(db, data.model_dump()))
 
 
 # ── Leads ─────────────────────────────────────────────────────────────

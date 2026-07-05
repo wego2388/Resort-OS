@@ -131,6 +131,26 @@ class OpportunityRead(BaseModel):
     updated_at:     datetime
 
 
+# ── LeadSource ────────────────────────────────────────────────────────
+# ⚠️ باج حقيقي كان هنا (نفس فئة CallNote/RotaTemplate/RevenueAuditLog
+# المذكورة في CLAUDE.md § 11): الموديل (LeadSource) وعمود Lead.source_id
+# اللي بيشاور عليه كانوا موجودين بالكامل من زمان، بس صفر schema/crud/router
+# — يعني مفيش أي طريقة تسجّل بيها مصدر عميل محتمل جديد (website/referral/
+# social_media/...) عن طريق الـ API، فالحقل كان inert فعليًا من الطرفين.
+
+class LeadSourceCreate(BaseModel):
+    branch_id: int
+    name:      str = Field(..., max_length=100)
+
+
+class LeadSourceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:        int
+    branch_id: int
+    name:      str
+    is_active: bool
+
+
 # ── Lead ──────────────────────────────────────────────────────────────
 # frontend/apps/admin/src/views/CRMView.vue بينادي GET /crm/leads و
 # PATCH /crm/leads/{id} — الـ model (Lead) والـ crud functions

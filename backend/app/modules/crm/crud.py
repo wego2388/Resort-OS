@@ -7,7 +7,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.modules.crm.models import Activity, CallNote, Campaign, Customer, CustomerInteraction, Opportunity, Lead, GuestProfile
+from app.modules.crm.models import Activity, CallNote, Campaign, Customer, CustomerInteraction, Opportunity, Lead, LeadSource, GuestProfile
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityUpdate,
     CallNoteCreate,
@@ -244,6 +244,20 @@ def update_campaign(db: Session, campaign: Campaign, data: CampaignUpdate) -> Ca
         setattr(campaign, field, value)
     db.flush()
     return campaign
+
+
+# ── LeadSource ──────────────────────────────────────────────────────────
+
+def create_lead_source(db: Session, data: dict) -> LeadSource:
+    obj = LeadSource(**data)
+    db.add(obj); db.commit(); db.refresh(obj); return obj
+
+
+def list_lead_sources(db: Session, branch_id: int, active_only: bool = True) -> list[LeadSource]:
+    q = db.query(LeadSource).filter(LeadSource.branch_id == branch_id)
+    if active_only:
+        q = q.filter(LeadSource.is_active.is_(True))
+    return q.order_by(LeadSource.name).all()
 
 
 # ── Lead ──────────────────────────────────────────────────────────────

@@ -307,3 +307,58 @@ class TestCallNotes:
             headers=manager_headers,
         )
         assert resp.status_code == 422
+
+
+class TestLeadSources:
+    """Regression coverage — same bug class as TestCallNotes above: the
+    LeadSource model and Lead.source_id FK already existed in full, but zero
+    schema/crud/route was ever wired, so there was no way to register a lead
+    source (website/referral/social_media/...) via the API at all —
+    Lead.source_id was inert from both ends."""
+
+    def test_create_and_list_lead_sources(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+
+        create_resp = client.post(
+            "/api/v1/crm/lead-sources",
+            json={"branch_id": branch.id, "name": "فيسبوك"},
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        source = create_resp.json()
+        assert source["name"] == "فيسبوك"
+        assert source["is_active"] is True
+
+        list_resp = client.get(
+            "/api/v1/crm/lead-sources", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        ids = [s["id"] for s in list_resp.json()]
+        assert source["id"] in ids
+
+    def test_create_lead_source_requires_manager(self, client: TestClient, db, fake_redis, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/crm/lead-sources",
+            json={"branch_id": branch.id, "name": "إعلان"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_lead_can_be_linked_to_a_real_source(self, client: TestClient, db, fake_redis, manager_headers):
+        """يتأكد إن Lead.source_id مش inert فعليًا — مصدر حقيقي اتسجّل عن طريق
+        الـ API نفسه ينفع يترّبط بعميل محتمل جديد ويرجع صح في القراءة."""
+        branch = make_branch_committed(db)
+        source = client.post(
+            "/api/v1/crm/lead-sources",
+            json={"branch_id": branch.id, "name": "معرض سياحي"},
+            headers=manager_headers,
+        ).json()
+
+        lead_resp = client.post(
+            "/api/v1/crm/leads",
+            json={"branch_id": branch.id, "full_name": "عميل من المعرض", "source_id": source["id"]},
+            headers=manager_headers,
+        )
+        assert lead_resp.status_code == 201, lead_resp.text
+        assert lead_resp.json()["source_id"] == source["id"]
