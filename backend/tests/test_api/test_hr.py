@@ -206,6 +206,35 @@ class TestPayroll:
         assert run.total_gross > Decimal("0")
         assert run.total_net > Decimal("0")
 
+    def test_run_payroll_applies_registered_penalties_automatically(
+        self, db, branch, employee, si_config, tax_brackets,
+    ):
+        """⚠️ باج حقيقي: run_payroll_for_branch كان بينادي
+        calculate_employee_payroll من غير ما يبعت penalty_days خالص — يعني أي
+        EmployeePenalty متسجّلة فعليًا (عن طريق POST /hr/penalties) كانت
+        بتتجاهَل تمامًا وقت تشغيل كشف الرواتب الحقيقي، وتشتغل بس لو الأدمن
+        كتب الرقم يدويًا في preview endpoint. دلوقتي لازم كشف الرواتب يجمع
+        جزاءات الشهر المسجّلة فعليًا ويطبّقها تلقائيًا."""
+        from app.modules.hr.schemas import EmployeePenaltyCreate
+
+        baseline = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        baseline_line = crud.list_lines_for_run(db, baseline.id)[0]
+        assert baseline_line.penalty_deduction == Decimal("0")
+
+        crud.create_penalty(db, EmployeePenaltyCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            penalty_date=date(2026, 7, 10), penalty_days=2,
+            reason="تأخر", applied_by=1,
+        ))
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 7)
+        line = crud.list_lines_for_run(db, run.id)[0]
+        assert line.penalty_deduction > Decimal("0")
+        expected = (employee.basic_salary / Decimal("30") * Decimal("2")).quantize(Decimal("0.01"))
+        assert line.penalty_deduction == expected
+        assert line.net_salary < baseline_line.net_salary
+
     def test_duplicate_payroll_run_raises(self, db, branch, employee, si_config, tax_brackets):
         services.run_payroll_for_branch(db, branch.id, 2026, 7)
         with pytest.raises(ValueError, match="موجود مسبقاً"):

@@ -212,9 +212,21 @@ def run_payroll_for_branch(
     total_tax   = Decimal("0")
     total_si    = Decimal("0")
 
+    period_str = f"{period_year}-{period_month:02d}"
+
     for emp in employees:
+        # ⚠️ باج حقيقي: EmployeePenalty (POST /hr/penalties) كان بيتسجّل في
+        # الداتابيز فعلاً، لكن run_payroll_for_branch كان بينادي
+        # calculate_employee_payroll من غير ما يبعتله penalty_days خالص —
+        # يعني قيمتها الافتراضية صفر دايمًا، فأي جزاء مسجّل لموظف كان بيُتجاهَل
+        # تمامًا وقت تشغيل كشف الرواتب الفعلي (كان بيشتغل بس لو الأدمن كتب
+        # الرقم يدويًا في GET /hr/employees/{id}/payslip?penalty_days=). دلوقتي
+        # بنجمع جزاءات الشهر الفعلية المسجّلة للموظف ونبعتها فعليًا للحساب.
+        penalties = crud.list_penalties(db, branch_id, employee_id=emp.id, month=period_str)
+        penalty_days = sum(p.penalty_days for p in penalties)
+
         try:
-            result = calculate_employee_payroll(db, emp.id, period_year, period_month)
+            result = calculate_employee_payroll(db, emp.id, period_year, period_month, penalty_days=penalty_days)
         except ValueError:
             continue  # تجاهل الموظفين الذين لا تتوفر لهم بيانات
 
