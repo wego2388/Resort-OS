@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 from app.celery_app import celery_app
 
@@ -13,10 +12,16 @@ logger = logging.getLogger(__name__)
 def mark_overdue(self):
     """
     كل يوم 2:30 صباحاً — يُحدّث دفعات الإيجار المتأخرة ويُحسب الغرامة.
+
+    ⚠️ باج توقيت حقيقي (نفس الفئة الموثّقة في resort_os/timezone_utils.py):
+    `date.today()` بترجع تاريخ السيرفر (UTC غالبًا في الإنتاج) مش تاريخ
+    المنتجع (Africa/Cairo) — تحديدًا هنا بيأثّر على شريحة الغرامة (8/30 يوم).
     """
     try:
-        from app.core.database import SessionLocal  # noqa: PLC0415
-        today = date.today()
+        from app.core.config import settings                       # noqa: PLC0415
+        from app.core.database import SessionLocal                  # noqa: PLC0415
+        from app.resort_os.timezone_utils import local_today         # noqa: PLC0415
+        today = local_today(settings.TIMEZONE)
 
         with SessionLocal() as db:
             try:
@@ -57,9 +62,11 @@ def send_due_reminders(self):
     كل يوم 9 صباحاً — تذكير دفعات الإيجار المستحقة خلال 7 أيام.
     """
     try:
-        from app.core.database import SessionLocal  # noqa: PLC0415
-        from datetime import timedelta              # noqa: PLC0415
-        remind_date = date.today() + timedelta(days=7)
+        from app.core.config import settings                # noqa: PLC0415
+        from app.core.database import SessionLocal            # noqa: PLC0415
+        from app.resort_os.timezone_utils import local_today   # noqa: PLC0415
+        from datetime import timedelta                          # noqa: PLC0415
+        remind_date = local_today(settings.TIMEZONE) + timedelta(days=7)
 
         with SessionLocal() as db:
             try:

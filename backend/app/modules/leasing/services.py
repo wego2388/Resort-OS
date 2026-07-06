@@ -6,12 +6,21 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.leasing import crud
 from app.modules.leasing.models import LeaseContract, LeasePayment, TenantCashLog
 from app.modules.leasing.schemas import (
     LeaseContractCreate, LeaseContractUpdate, PayLeaseRequest, TenantCashLogCreate,
 )
 from app.resort_os.timeshare_engine import calculate_lease_penalty, generate_lease_monthly_schedule
+from app.resort_os.timezone_utils import local_today
+# ⚠️ باج توقيت من نفس الفئة الموثّقة في timezone_utils.py (KDS/PMS/HR): كل
+# استخدامات date.today()/_date.today() هنا كانت بترجع تاريخ السيرفر (UTC غالبًا
+# في الإنتاج) مش تاريخ المنتجع الفعلي (Africa/Cairo) — قرب منتصف ليل القاهرة
+# (UTC+3) كان ممكن يحسب "أيام التأخير" بتاريخ غلط بيوم كامل، وهو بالظبط
+# الحساب اللي بيحدد شريحة الغرامة (5%/10%) عند حدود الـ8/30 يوم. اتصلح
+# بالاعتماد على local_today(settings.TIMEZONE) زي باقي الموديولات
+# (pms/timeshare/hr) بدل تكرار نفس الباج تاني هنا.
 
 # عقوبة تأخر الإيجار (resort-os-docs/12-TIMESHARE-COMPLETE.md § "عقوبة تأخر
 # الإيجار"): 5% للتأخير 8-30 يوم، 10% لأكثر من 30 يوم. القيم القديمة هنا
@@ -54,11 +63,10 @@ def create_contract(db: Session, data: LeaseContractCreate, signed_by: int) -> L
 
 def _post_deposit_journal(db: "Session", contract: "LeaseContract") -> None:
     """Dr. الصندوق (1100) / Cr. تأمينات مستأجرين (2150) عند إنشاء عقد بتأمين."""
-    from datetime import date as _date  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
     post_simple_revenue_journal(
-        db, contract.branch_id, _date.today(),
+        db, contract.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="1100", credit_account_code="2150",
         amount=contract.security_deposit or Decimal("0"),
         reference=f"LC-DEP-{contract.contract_number}",
@@ -79,7 +87,6 @@ def _post_rent_collection_journal(db: "Session", source_obj, contract: "LeaseCon
     try:
         from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
         from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
-        from datetime import date as _date  # noqa: PLC0415
 
         if collected_amount <= 0:
             return
@@ -90,10 +97,11 @@ def _post_rent_collection_journal(db: "Session", source_obj, contract: "LeaseCon
         if not cash_acc or not tenant_ar or not revenue_acc:
             return
 
+        entry_date = local_today(settings.TIMEZONE)
         ref = f"LSE-{source_obj.id:06d}"
         create_journal_entry(db, JournalEntryCreate(
             branch_id=contract.branch_id,
-            entry_date=_date.today(),
+            entry_date=entry_date,
             reference=ref,
             description=f"تحصيل إيجار — {contract.contract_number} ({contract.tenant_name})",
             source="leasing",
@@ -105,7 +113,7 @@ def _post_rent_collection_journal(db: "Session", source_obj, contract: "LeaseCon
         ), contract.signed_by or 0)
         create_journal_entry(db, JournalEntryCreate(
             branch_id=contract.branch_id,
-            entry_date=_date.today(),
+            entry_date=entry_date,
             reference=ref,
             description=f"إثبات إيراد إيجار — {contract.contract_number}",
             source="leasing",
@@ -137,8 +145,14 @@ def calculate_penalty(payment: LeasePayment, as_of: date | None = None) -> Decim
     10% غلط بدل 5% (التأخير المفروض "8-30 يوم" شامل يوم الـ30 نفسه حسب توثيق
     السبيك، والـ 10% مفروض تبدأ من يوم 31). اتصلح بالاعتماد على نسخة الـ engine
     الوحيدة (نفس اللي بينادي عليها app.tasks.leasing_tasks.mark_overdue أصلاً)
-    بدل تكرار نفس القاعدة مرتين بقيم مختلفة."""
-    today = as_of or date.today()
+    بدل تكرار نفس القاعدة مرتين بقيم مختلفة.
+
+    ⚠️ باج توقيت حقيقي تاني كان هنا (نفس الفئة الموثّقة في
+    resort_os/timezone_utils.py — KDS/PMS/HR): `date.today()` بترجع تاريخ
+    السيرفر، مش تاريخ المنتجع (Africa/Cairo). اتصلح بـ local_today() —
+    مهم هنا تحديدًا لأن ده بالظبط الحساب اللي بيحدد حدود شريحة الغرامة
+    (8/30 يوم)."""
+    today = as_of or local_today(settings.TIMEZONE)
     if payment.status == "paid" or payment.due_date >= today:
         return Decimal("0")
     return calculate_lease_penalty(payment.amount, payment.due_date, today)

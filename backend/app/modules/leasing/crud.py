@@ -6,14 +6,20 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.leasing.models import LeaseContract, LeasePayment, TenantCashLog
 from app.modules.leasing.schemas import (
     LeaseContractCreate, LeaseContractUpdate, PayLeaseRequest, TenantCashLogCreate,
 )
+from app.resort_os.timezone_utils import local_today
 
 
 def _next_contract_number(db: Session) -> str:
-    today = datetime.utcnow().strftime("%Y%m%d")
+    """رقم العقد بيحمل تاريخ اليوم (LC-YYYYMMDD-NNNN) — لازم يكون تاريخ المنتجع
+    (Africa/Cairo) مش تاريخ السيرفر (UTC غالبًا في الإنتاج)، وإلا عقد اتعمل
+    الساعة 00:30 بتوقيت القاهرة كان هياخد رقم بتاريخ اليوم اللي فات (نفس فئة
+    الباج الموثّقة في resort_os/timezone_utils.py)."""
+    today = local_today(settings.TIMEZONE).strftime("%Y%m%d")
     count = db.query(LeaseContract).filter(
         LeaseContract.contract_number.like(f"LC-{today}-%")
     ).count()
