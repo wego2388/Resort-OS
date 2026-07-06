@@ -19,11 +19,17 @@ def generate_daily_stats(self, branch_id: int | None = None, stat_date_str: str 
     try:
         from app.core.database import SessionLocal          # noqa: PLC0415
         from app.modules.core.models import Branch         # noqa: PLC0415
+        from app.core.config import settings                # noqa: PLC0415
+        from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
+        # "أمس" لازم يتحسب بتوقيت المنتجع (Cairo) مش بتوقيت نظام تشغيل
+        # السيرفر — لو السيرفر شغّال UTC (شائع في Docker/VPS)، date.today()
+        # كانت بترجع يوم غلط في نافذة الفرق بين التوقيتين (راجع
+        # timezone_utils.py وباجات مشابهة اتصلحت في PMS/HR/Timeshare).
         stat_date = (
             date.fromisoformat(stat_date_str)
             if stat_date_str
-            else date.today() - timedelta(days=1)
+            else business_today(settings.TIMEZONE) - timedelta(days=1)
         )
 
         with SessionLocal() as db:
@@ -47,9 +53,18 @@ def generate_daily_stats(self, branch_id: int | None = None, stat_date_str: str 
 def _build_stats(db, branch_id: int, stat_date: date) -> None:
     from app.modules.analytics.models import DailyStats  # noqa: PLC0415
     from datetime import datetime as _dt                  # noqa: PLC0415
+    from app.core.config import settings                   # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_date_to_utc_range  # noqa: PLC0415
 
-    day_start = _dt.combine(stat_date, _dt.min.time())
-    day_end   = _dt.combine(stat_date, _dt.max.time())
+    # ⚠️ باج حقيقي (اتصلح هنا): day_start/day_end كانوا بيتبنوا مباشرة من
+    # stat_date كأنه يوم UTC (datetime.combine ساذج)، لكن Order.created_at/
+    # CafeOrder.created_at متخزّنين UTC فعليًا (Postgres func.now()، DB
+    # timezone=UTC) بينما stat_date تاريخ محلي (Africa/Cairo). النتيجة: أي
+    # طلب اتعمل بين منتصف ليل القاهرة والساعة 3 فجرًا كان بيتحسب على اليوم
+    # الغلط (يوم أمس بدل النهاردة) في كل *DailyStats* اتولّدت من أول ما الكود
+    # ده اتكتب — نفس فئة الباج اللي اتصلحت في /analytics/revenue، لكن هنا في
+    # الـ Celery job نفسه فضلت من غير ما حد يصلحها.
+    day_start, day_end = local_date_to_utc_range(stat_date, settings.TIMEZONE)
 
     # PMS
     room_revenue    = Decimal("0")
@@ -84,16 +99,25 @@ def _build_stats(db, branch_id: int, stat_date: date) -> None:
     )
 
     # Beach
+    # ⚠️ باج حقيقي (اتصلح هنا): كان بيقرأ BeachTransaction.visit_date/
+    # t.total_paid — حقلين مش موجودين خالص في الموديل الحقيقي (الأسماء الصح
+    # tx_date و total_amount+vat_amount، راجع app/modules/beach/models.py).
+    # الاستعلام كان بيرمي AttributeError عند بناء الـ filter نفسه، وده كان
+    # بيتبلع بصمت بـ except Exception أدناه — يعني beach_visitors/
+    # beach_revenue في DailyStats كانوا صفر ثابت لكل فرع كل يوم من أول ما
+    # الكود ده اتكتب، بغض النظر عن أي مبيعات شاطئ حقيقية. اتصلح، ومستبعد منه
+    # كمان العمليات الملغاة (voided_at) زي باقي أماكن حساب إيراد الشاطئ.
     beach_visitors = 0
     beach_revenue  = Decimal("0")
     try:
         from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
         txs = db.query(BeachTransaction).filter(
             BeachTransaction.branch_id == branch_id,
-            BeachTransaction.visit_date == stat_date,
+            BeachTransaction.tx_date == stat_date,
+            BeachTransaction.voided_at.is_(None),
         ).all()
         beach_visitors = len(txs)
-        beach_revenue  = sum((t.total_paid for t in txs), Decimal("0"))
+        beach_revenue  = sum((t.total_amount + t.vat_amount for t in txs), Decimal("0"))
     except Exception:
         pass
 

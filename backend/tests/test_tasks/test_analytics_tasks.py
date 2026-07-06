@@ -61,6 +61,93 @@ class TestBuildStats:
         assert row.total_revenue == Decimal("0")
         assert row.beach_visitors == 0
 
+    def test_beach_revenue_and_visitors_reflect_real_transactions(self, db):
+        """باج حقيقي (اتصلح): _build_stats كان بيقرا BeachTransaction.visit_date
+        و t.total_paid — حقلين مش موجودين خالص في الموديل الحقيقي (الأسماء
+        الصح tx_date و total_amount+vat_amount). الاستعلام كان بيرمي
+        AttributeError عند بناء الـ filter، وده كان بيتبلع بصمت بـ
+        except Exception، يعني beach_visitors/beach_revenue في كل DailyStats
+        كانوا صفر ثابت من أول يوم — بغض النظر عن أي مبيعات شاطئ حقيقية. تست
+        ده بيتأكد إن الرقم بيتحسب صح من معاملة شاطئ حقيقية مدفوعة (مستبعد
+        منها العملية الملغاة)."""
+        from app.modules.analytics.models import DailyStats
+        from app.modules.beach import services as beach_services
+        from app.modules.beach.schemas import BeachSellRequest
+        from tests.test_api.test_pms import make_branch
+
+        branch = make_branch(db)
+        stat_date = date.today()
+
+        tx1 = beach_services.sell_ticket(
+            db, branch.id,
+            BeachSellRequest(tx_type="entry", quantity=1),
+            tx_date=stat_date,
+        )
+        tx2 = beach_services.sell_ticket(
+            db, branch.id,
+            BeachSellRequest(tx_type="entry", quantity=1),
+            tx_date=stat_date,
+        )
+        # معاملة ملغاة — لازم تُستبعد من الإيراد والعدد (زي أي مكان تاني بيحسب
+        # إيراد الشاطئ في النظام)
+        voided = beach_services.sell_ticket(
+            db, branch.id,
+            BeachSellRequest(tx_type="entry", quantity=1),
+            tx_date=stat_date,
+        )
+        beach_services.void_transaction(db, voided.id, voided_by=1, reason="اختبار")
+
+        expected_revenue = (tx1.total_amount + tx1.vat_amount) + (tx2.total_amount + tx2.vat_amount)
+
+        _build_stats(db, branch.id, stat_date)
+
+        row = db.query(DailyStats).filter(
+            DailyStats.branch_id == branch.id,
+            DailyStats.stat_date == stat_date,
+        ).first()
+        assert row.beach_visitors == 2  # مش 0، ومش 3 (الملغاة مستبعدة)
+        assert row.beach_revenue == expected_revenue
+
+    def test_restaurant_revenue_captures_early_morning_cairo_order(self, db):
+        """باج حقيقي (اتصلح): day_start/day_end كانوا بيتبنوا بـ
+        datetime.combine ساذج من stat_date مباشرة (كأنه يوم UTC)، لكن
+        Order.created_at متخزّن UTC فعليًا بينما stat_date تاريخ محلي
+        (Africa/Cairo، +3). النتيجة: طلب اتعمل الساعة 00:30 بتوقيت القاهرة
+        (created_at UTC = 21:30 اليوم اللي فات) كان بيقع بره حدود يوم
+        DailyStats الصح (لأن الحدود الساذجة كانت بتبدأ من منتصف ليل UTC، مش
+        منتصف ليل القاهرة) — يعني إيراد الصبح الباكر كان بيضيع من إحصائية
+        اليوم الصح. تست ده بيبني الطلب بتوقيت 00:30 القاهرة صراحة (بدل ما
+        يعتمد على وقت تشغيل التست الفعلي) عشان يثبت الحدود بقت صح دايمًا."""
+        from datetime import datetime, timedelta as _td
+        from zoneinfo import ZoneInfo
+        from app.modules.analytics.models import DailyStats
+        from tests.test_api.test_pms import make_branch
+        from tests.test_api.test_restaurant import make_menu_item, make_order
+        from app.modules.restaurant import services
+
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "in_kitchen")
+        services.update_order_status(db, order.id, "paid")
+
+        # الطلب "فعليًا" اتعمل الساعة 00:30 بتوقيت القاهرة يوم stat_date —
+        # بمعنى created_at (UTC) لازم يبقى 21:30 يوم stat_date - 1
+        stat_date = date.today()
+        cairo_early_morning = datetime.combine(stat_date, datetime.min.time(), tzinfo=ZoneInfo("Africa/Cairo")) + _td(minutes=30)
+        db.query(type(order)).filter(type(order).id == order.id).update({
+            "created_at": cairo_early_morning.astimezone(ZoneInfo("UTC")).replace(tzinfo=None),
+        })
+        db.commit()
+
+        _build_stats(db, branch.id, stat_date)
+
+        row = db.query(DailyStats).filter(
+            DailyStats.branch_id == branch.id,
+            DailyStats.stat_date == stat_date,
+        ).first()
+        assert row.restaurant_revenue == order.total  # مش 0 — الطلب لازم يتحسب في يومه الصح بتوقيت القاهرة
+
     def test_restaurant_covers_reflects_real_guest_counts(self, db):
         """باج حقيقي (اتصلح 2026-07-05): كان بيقرأ Order.covers (حقل مش
         موجود — الاسم الصح guests_count) فـ restaurant_covers كان صفر ثابت
