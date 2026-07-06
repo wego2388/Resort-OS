@@ -1,18 +1,26 @@
 <script setup lang="ts">
 // AnalyticsView — لوحة التحليلات الشاملة
 //
-// يقرأ من 4 endpoints حقيقية في analytics/api/router.py (كلها read-only، get_manager_user):
-//   GET /api/v1/analytics/dashboard   ← إيرادات 30 يوم + HR + صيانة + CRM + مخزون + تقييمات
-//   GET /api/v1/analytics/occupancy   ← نسبة إشغال PMS للشهر الحالي
-//   GET /api/v1/analytics/daily-stats ← لقطة اليوم (DailyStats model، ممكن تكون فاضية)
-//   GET /api/v1/analytics/reviews     ← أحدث تقييمات الضيوف
+// يقرأ من endpoints حقيقية في analytics/api/router.py (كلها read-only، get_manager_user):
+//   GET /api/v1/analytics/dashboard        ← إيرادات 30 يوم + HR + صيانة + CRM + مخزون + تقييمات
+//   GET /api/v1/analytics/occupancy        ← نسبة إشغال PMS للشهر الحالي
+//   GET /api/v1/analytics/daily-stats      ← لقطة اليوم (DailyStats model، ممكن تكون فاضية)
+//   GET /api/v1/analytics/reviews          ← أحدث تقييمات الضيوف
+//   GET /api/v1/analytics/reviews/insights ← GSS score + تفصيل حسب الفئة (نظافة/خدمة/طعام...)
+//   GET/POST /api/v1/analytics/utilities   ← قراءات عدادات المرافق (كهرباء/مياه/غاز/ديزل)
+//   GET /api/v1/analytics/energy           ← تكلفة كيلوواط/نزيل شهريًا
+//
+// آخر 3 endpoints (insights/utilities/energy) كانت موجودة بالكامل في الباك
+// إند (schema/crud/router + تستات) من غير أي واجهة تستخدمها خالص — نفس فئة
+// "الموديل موجود، الواجهة صفر" الموثّقة في CLAUDE.md. اتضافوا هنا كقسمين
+// صغيرين (مش شاشة منفصلة) عشان يكتمل الموديول من غير ميزة كبيرة جديدة.
 //
 // كل الأقسام تُجمّع من modules تانية (restaurant/cafe/pms/beach/hr/...) عبر
 // _safe_query في الباك إند — لو module مش مبني، القيمة بترجع null، فكل قسم
 // هنا لازم يتعامل مع احتمال null بشكل صريح (مش يفترض وجود بيانات).
-import { ref, onMounted } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { api } from '@resort-os/core'
-import { AppCard, AppBadge, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
+import { AppCard, AppBadge, AppButton, AppInput, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
@@ -66,12 +74,49 @@ interface ReviewsResponse {
   avg_rating: number
   items:      ReviewItem[]
 }
+interface CategoryInsight { category: string; avg_rating: number; count: number }
+interface ReviewInsightsResponse {
+  overall_avg:       number | null
+  gss_score:         number | null
+  review_count:      number
+  category_breakdown: CategoryInsight[]
+}
+interface UtilityReading {
+  id: number; reading_date: string; utility_type: string
+  reading_value: string; unit: string; unit_cost: string; total_cost: string
+}
+interface EnergyKpi {
+  period: string
+  by_type: Record<string, number>
+  total_cost: number
+  guest_nights: number
+  electricity_cost_per_guest_night: number | null
+}
 
 const loading    = ref(true)
 const dashboard  = ref<DashboardResponse | null>(null)
 const occupancy  = ref<OccupancyResponse | null>(null)
 const dailyStats = ref<DailyStatsResponse | null>(null)
 const reviews    = ref<ReviewsResponse | null>(null)
+const reviewInsights = ref<ReviewInsightsResponse | null>(null)
+const utilityReadings = ref<UtilityReading[]>([])
+const energyKpi = ref<EnergyKpi | null>(null)
+const savingUtility = ref(false)
+
+const categoryLabels: Record<string, string> = {
+  cleanliness: 'النظافة', service: 'الخدمة', value: 'القيمة مقابل السعر',
+  beach: 'الشاطئ', food: 'الطعام', location: 'الموقع',
+}
+const utilityTypeLabels: Record<string, string> = {
+  electricity: 'كهرباء', water: 'مياه', gas: 'غاز', diesel: 'ديزل',
+}
+const currentPeriod = new Date().toISOString().slice(0, 7)  // YYYY-MM
+const utilityForm = reactive({
+  utility_type:  'electricity',
+  reading_date:  new Date().toISOString().slice(0, 10),
+  reading_value: '',
+  unit_cost:     '',
+})
 
 async function loadDashboard() {
   try {
@@ -113,9 +158,66 @@ async function loadReviews() {
   }
 }
 
+async function loadReviewInsights() {
+  try {
+    const res = await api.get('/api/v1/analytics/reviews/insights', { params: { branch_id: branchId } })
+    reviewInsights.value = res.data
+  } catch {
+    toast.error('تعذّر تحميل تفصيل التقييمات حسب الفئة')
+    reviewInsights.value = null
+  }
+}
+
+async function loadUtilities() {
+  try {
+    const res = await api.get('/api/v1/analytics/utilities', { params: { branch_id: branchId } })
+    utilityReadings.value = res.data
+  } catch {
+    toast.error('تعذّر تحميل قراءات المرافق')
+    utilityReadings.value = []
+  }
+}
+
+async function loadEnergy() {
+  try {
+    const res = await api.get('/api/v1/analytics/energy', { params: { branch_id: branchId, period: currentPeriod } })
+    energyKpi.value = res.data
+  } catch {
+    energyKpi.value = null
+  }
+}
+
+async function submitUtilityReading() {
+  if (!utilityForm.reading_value || Number(utilityForm.reading_value) <= 0) {
+    toast.error('اكتب قيمة استهلاك أكبر من صفر')
+    return
+  }
+  savingUtility.value = true
+  try {
+    await api.post('/api/v1/analytics/utilities', {
+      branch_id: branchId,
+      reading_date: utilityForm.reading_date,
+      utility_type: utilityForm.utility_type,
+      reading_value: utilityForm.reading_value,
+      unit_cost: utilityForm.unit_cost || '0',
+    })
+    toast.success('اتسجّلت قراءة المرفق')
+    utilityForm.reading_value = ''
+    utilityForm.unit_cost = ''
+    await Promise.all([loadUtilities(), loadEnergy()])
+  } catch {
+    toast.error('تعذّر تسجيل القراءة — تأكد من البيانات وحاول تاني')
+  } finally {
+    savingUtility.value = false
+  }
+}
+
 async function loadAll() {
   loading.value = true
-  await Promise.all([loadDashboard(), loadOccupancy(), loadDailyStats(), loadReviews()])
+  await Promise.all([
+    loadDashboard(), loadOccupancy(), loadDailyStats(), loadReviews(),
+    loadReviewInsights(), loadUtilities(), loadEnergy(),
+  ])
   loading.value = false
 }
 
@@ -311,6 +413,73 @@ onMounted(loadAll)
                 <td class="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{{ r.comment ?? '—' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-500">{{ reviewSourceLabels[r.source] ?? r.source }}</td>
                 <td class="px-4 py-3 text-sm text-gray-500">{{ new Date(r.reviewed_at).toLocaleDateString('ar-EG') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </AppCard>
+
+      <!-- تفصيل التقييمات حسب الفئة (GSS) -->
+      <AppCard title="تفصيل تقييمات الضيوف حسب الفئة">
+        <div v-if="reviewInsights && reviewInsights.gss_score != null" class="flex items-center gap-2 mb-4">
+          <AppBadge variant="info">GSS {{ reviewInsights.gss_score.toFixed(2) }} / 5</AppBadge>
+          <span class="text-xs text-gray-400">من {{ reviewInsights.review_count }} تقييم منشور</span>
+        </div>
+        <EmptyState v-if="!reviewInsights || reviewInsights.category_breakdown.length === 0" icon="📋" title="لا توجد تقييمات مفصّلة حسب الفئة بعد" />
+        <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-4">
+          <div v-for="c in reviewInsights.category_breakdown" :key="c.category" class="text-center">
+            <div class="text-xs text-gray-400 mb-1">{{ categoryLabels[c.category] ?? c.category }}</div>
+            <div class="text-lg font-black text-gray-800">{{ c.avg_rating.toFixed(2) }} / 5</div>
+            <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+              <div class="bg-blue-600 h-1.5 rounded-full" :style="{ width: (c.avg_rating / 5 * 100) + '%' }" />
+            </div>
+            <div class="text-xs text-gray-400 mt-1">{{ c.count }} تقييم</div>
+          </div>
+        </div>
+      </AppCard>
+
+      <!-- عدادات المرافق -->
+      <AppCard title="عدادات المرافق (كهرباء / مياه / غاز / ديزل)">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 items-end mb-5">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm font-medium text-gray-700">النوع</label>
+            <select v-model="utilityForm.utility_type" class="w-full px-3 py-2 rounded-lg border border-stone-200 bg-white text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="electricity">كهرباء</option>
+              <option value="water">مياه</option>
+              <option value="gas">غاز</option>
+              <option value="diesel">ديزل</option>
+            </select>
+          </div>
+          <AppInput label="التاريخ" type="date" v-model="utilityForm.reading_date" />
+          <AppInput label="الاستهلاك" type="number" placeholder="مثال: 1500" v-model="utilityForm.reading_value" />
+          <AppInput label="تكلفة الوحدة (جنيه)" type="number" placeholder="مثال: 2.5" v-model="utilityForm.unit_cost" />
+          <AppButton variant="primary" :loading="savingUtility" @click="submitUtilityReading">تسجيل القراءة</AppButton>
+        </div>
+
+        <div v-if="energyKpi" class="flex flex-wrap items-center gap-2 mb-4">
+          <AppBadge variant="info">إجمالي تكلفة المرافق هذا الشهر: {{ money(energyKpi.total_cost) }} جنيه</AppBadge>
+          <AppBadge v-if="energyKpi.electricity_cost_per_guest_night != null" variant="warning">
+            {{ energyKpi.electricity_cost_per_guest_night.toFixed(2) }} جنيه / ليلة إشغال (كهرباء)
+          </AppBadge>
+        </div>
+
+        <EmptyState v-if="utilityReadings.length === 0" icon="🔌" title="لا توجد قراءات مسجّلة بعد" />
+        <div v-else class="overflow-x-auto">
+          <table class="w-full">
+            <thead class="bg-stone-50">
+              <tr>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">التاريخ</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">النوع</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الاستهلاك</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">التكلفة الإجمالية</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in utilityReadings.slice(0, 10)" :key="r.id" class="border-t border-stone-100 hover:bg-stone-50">
+                <td class="px-4 py-3 text-sm text-gray-500">{{ new Date(r.reading_date).toLocaleDateString('ar-EG') }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ utilityTypeLabels[r.utility_type] ?? r.utility_type }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ r.reading_value }} {{ r.unit }}</td>
+                <td class="px-4 py-3 text-sm font-bold text-gray-900">{{ money(Number(r.total_cost)) }}</td>
               </tr>
             </tbody>
           </table>
