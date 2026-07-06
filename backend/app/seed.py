@@ -47,6 +47,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_timeshare_units(db)
     _seed_timeshare_contracts(db)
     _seed_lease_contracts(db)
+    _seed_maintenance(db)
     _seed_menus(db)
     _seed_dining_tables(db)
     _seed_crm(db)
@@ -238,7 +239,7 @@ def _seed_employees(db: Session) -> None:
     تسجيل حضور/طلب إجازة/قسيمة راتب self-service كان بيرجّع 404 "لا يوجد ملف
     موظف مرتبط بحسابك" فورًا لأي حد يجرّب الحساب التجريبي، من أول يوم.
     اتكشف أثناء اختبار حي لمسار HR الكامل (نفس فئة باج rooms/dining_tables
-    الفاضية اللي اتصلحت قبل كده). ازرع فريق واقعي صغير (7 موظفين، أقسام
+    الفاضية اللي اتصلحت قبل كده). ازرع فريق واقعي صغير (8 موظفين، أقسام
     مختلفة) + بدلات/أنواع جزاءات/رصيد إجازات/سجل حضور/طلب إجازة معلّق
     عشان الشاشة تفتح بحالة واقعية مش فاضية."""
     from datetime import timedelta
@@ -270,6 +271,7 @@ def _seed_employees(db: Session) -> None:
         ("EMP-005", "سامح جلال",          "شيف",                "المطبخ",     Decimal("11000.00"), today - timedelta(days=2200), date(1985, 5, 9), None),
         ("EMP-006", "هدى عزت",            "عاملة تدبير منزلي",   "التدبير المنزلي", Decimal("3400.00"), today - timedelta(days=180), date(2000, 9, 17), None),
         ("EMP-007", "مينا رفعت",          "منقذ شاطئ",           "الشاطئ",     Decimal("4200.00"), today - timedelta(days=545), date(1994, 2, 25), None),
+        ("EMP-008", "عماد شحاتة",         "فني صيانة",           "الصيانة",    Decimal("4800.00"), today - timedelta(days=900), date(1990, 4, 18), None),
     ]
 
     employees: dict[str, Employee] = {}
@@ -709,6 +711,113 @@ def _seed_lease_contracts(db: Session) -> None:
 
     db.flush()
     print(f"  ✓ Lease contracts seeded ({len(created_contracts)} illustrative sample tenants — not real records)")
+
+
+def _seed_maintenance(db: Session) -> None:
+    """⚠️ موديول الصيانة كان بيفتح فاضي تمامًا (0 أصل، 0 أمر صيانة، 0 جدول
+    وقائي) رغم إن الفرونت إند والباك إند كاملين وشغالين — نفس فئة باج
+    rooms/dining_tables الفاضية اللي اتصلحت قبل كده، اتكشف أثناء تجربة حية
+    كمدير صيانة حقيقي (مفيش حتى فني صيانة واحد بين الـ 7 موظفين المزروعين،
+    فاتضاف EMP-008 في _seed_employees فوق). ازرع 6 أصول واقعية عبر كل
+    الفئات، فني صيانة واحد مربوط بجدول وقائي، و3 أوامر صيانة في 3 حالات
+    مختلفة (مفتوح غير مُكلَّف، قيد التنفيذ بقطعة مضافة، مكتمل بقطع+عمالة)
+    عشان الشاشة تفتح بحالة واقعية تعكس دورة حياة العمل الحقيقية، مش فاضية."""
+    from datetime import timedelta
+    from app.modules.core.models import Branch
+    from app.modules.hr.models import Employee
+    from app.modules.maintenance.models import (
+        Asset, PreventiveSchedule, WorkOrder, WorkOrderPart,
+    )
+
+    branch = db.query(Branch).first()
+    if not branch or db.query(Asset).filter(Asset.branch_id == branch.id).first():
+        return
+
+    technician = db.query(Employee).filter(
+        Employee.branch_id == branch.id, Employee.employee_code == "EMP-008",
+    ).first()
+    today = date.today()
+
+    # ── الأصول — عبر كل الفئات الستة (hvac|electrical|plumbing|furniture|vehicle|other) ──
+    asset_defs = [
+        ("مكيف اللوبي الرئيسي",           "AST-001", "hvac",       "اللوبي الرئيسي"),
+        ("مضخة حمام السباحة الرئيسية",    "AST-002", "plumbing",   "غرفة المكينة — حمام السباحة"),
+        ("مولد الكهرباء الاحتياطي",       "AST-003", "electrical", "غرفة المولدات"),
+        ("ثلاجة المطبخ الكبيرة (Walk-in)", "AST-004", "other",      "المطبخ الرئيسي"),
+        ("عربة نقل النزلاء",              "AST-005", "vehicle",    "الجراج"),
+        ("جلسات الشاطئ الخشبية",          "AST-006", "furniture",  "الشاطئ"),
+    ]
+    assets: dict[str, Asset] = {}
+    for name, code, category, location in asset_defs:
+        a = Asset(branch_id=branch.id, name=name, code=code, category=category,
+                   location=location, status="operational")
+        db.add(a)
+        db.flush()
+        assets[code] = a
+
+    # ── جدول صيانة وقائية — مكيف اللوبي كل 90 يوم، مستحق خلال 3 أسابيع ──
+    if technician:
+        db.add(PreventiveSchedule(
+            branch_id=branch.id, asset_id=assets["AST-001"].id,
+            title="فحص وتنظيف فلاتر مكيف اللوبي", frequency_days=90,
+            last_done=today - timedelta(days=69), next_due=today + timedelta(days=21),
+            assigned_to=technician.id,
+            checklist='["فحص الفلتر", "تنظيف الكويل", "قياس ضغط الفريون"]',
+        ))
+
+    # ── أوامر الصيانة — 3 حالات واقعية مختلفة من دورة الحياة ──
+    wo_open = WorkOrder(
+        branch_id=branch.id, asset_id=assets["AST-002"].id,
+        order_number=f"WO-{today.strftime('%Y%m%d')}-0001",
+        title="مضخة حمام السباحة تصدر صوت غريب وتسرب مياه",
+        description="لاحظ منقذ الشاطئ تسريب بسيط من وصلة المضخة الرئيسية صباح اليوم.",
+        order_type="corrective", priority="high", status="open",
+        reported_by=None, scheduled_date=today + timedelta(days=1),
+    )
+    db.add(wo_open)
+
+    wo_in_progress = WorkOrder(
+        branch_id=branch.id, asset_id=assets["AST-001"].id,
+        order_number=f"WO-{today.strftime('%Y%m%d')}-0002",
+        title="تسريب مياه خفيف من مكيف اللوبي",
+        description="قطرات مياه على الأرضية أسفل الوحدة الداخلية.",
+        order_type="corrective", priority="medium", status="in_progress",
+        assigned_to=technician.id if technician else None, reported_by=None,
+        scheduled_date=today, labour_hours=Decimal("1.5"),
+    )
+    db.add(wo_in_progress)
+    db.flush()
+    db.add(WorkOrderPart(
+        work_order_id=wo_in_progress.id, part_name="فلتر هواء مكيف",
+        part_number="FLT-AC-12", quantity=Decimal("2"), unit_cost=Decimal("45.00"),
+        total_cost=Decimal("90.00"),
+    ))
+    wo_in_progress.parts_cost = Decimal("90.00")
+
+    wo_completed = WorkOrder(
+        branch_id=branch.id, asset_id=assets["AST-003"].id,
+        order_number=f"WO-{today.strftime('%Y%m%d')}-0003",
+        title="استبدال بطارية تشغيل المولد الاحتياطي",
+        description="المولد فشل يبدأ تلقائيًا أثناء الاختبار الأسبوعي — بطارية التشغيل فارغة.",
+        order_type="corrective", priority="critical", status="completed",
+        assigned_to=technician.id if technician else None, reported_by=None,
+        scheduled_date=today - timedelta(days=3),
+        completed_at=datetime.combine(today - timedelta(days=2), datetime.min.time()) + timedelta(hours=14),
+        labour_hours=Decimal("2.0"), labour_cost=Decimal("300.00"),
+    )
+    db.add(wo_completed)
+    db.flush()
+    db.add(WorkOrderPart(
+        work_order_id=wo_completed.id, part_name="بطارية تشغيل 12 فولت",
+        part_number="BAT-GEN-12V", quantity=Decimal("1"), unit_cost=Decimal("1200.00"),
+        total_cost=Decimal("1200.00"),
+    ))
+    wo_completed.parts_cost = Decimal("1200.00")
+
+    db.flush()
+    print(f"  ✓ Maintenance seeded ({len(assets)} assets, "
+          f"{'1' if technician else '0'} preventive schedule, 3 work orders — "
+          f"open/in-progress/completed)")
 
 
 def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
