@@ -4,7 +4,7 @@ tests/test_engines/test_beach_engine.py
 بدون DB، بدون fixtures — pure functions فقط
 """
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -17,8 +17,10 @@ from app.resort_os.beach_engine import (
     calculate_b2b_price,
     calculate_inventory_delta,
     calculate_tx_price,
+    is_contract_overdue,
     validate_b2b_checkin,
     validate_entry,
+    would_exceed_credit_limit,
 )
 
 
@@ -384,3 +386,48 @@ class TestCalculateInventoryDelta:
         cap_delta, towel_delta = calculate_inventory_delta("unknown_type")
         assert cap_delta == 0
         assert towel_delta == 0
+
+
+class TestCreditLimit:
+    """B2B partner-hotel credit control — راجع ملحوظة B2BContract في
+    app/modules/beach/models.py: عقود B2B علاقة ائتمانية متكررة، مش كاش
+    فوري، وده أول ضبط ائتماني حقيقي في المشروع كله (finance/crm/beach)."""
+
+    def test_no_limit_never_exceeded(self):
+        assert would_exceed_credit_limit(Decimal("100000"), Decimal("500"), None) is False
+
+    def test_within_limit_ok(self):
+        assert would_exceed_credit_limit(Decimal("1000"), Decimal("500"), Decimal("2000")) is False
+
+    def test_exactly_at_limit_ok(self):
+        """الحد نفسه مسموح — الرفض بس لو *تخطّاه* فعليًا (> مش >=)."""
+        assert would_exceed_credit_limit(Decimal("1500"), Decimal("500"), Decimal("2000")) is False
+
+    def test_over_limit_rejected(self):
+        assert would_exceed_credit_limit(Decimal("1800"), Decimal("500"), Decimal("2000")) is True
+
+    def test_already_over_limit_before_new_charge(self):
+        assert would_exceed_credit_limit(Decimal("2500"), Decimal("1"), Decimal("2000")) is True
+
+
+class TestContractOverdue:
+    """راجع ملحوظة B2BContract: مهلة سداد net-N — العقد متأخر لو أقدم يوم
+    فيه رصيد غير مسوّى أقدم من المهلة."""
+
+    def test_no_unsettled_day_never_overdue(self):
+        assert is_contract_overdue(None, date(2026, 7, 6), 30) is False
+
+    def test_within_terms_not_overdue(self):
+        today = date(2026, 7, 6)
+        oldest = today - timedelta(days=29)
+        assert is_contract_overdue(oldest, today, 30) is False
+
+    def test_exactly_at_terms_not_overdue(self):
+        today = date(2026, 7, 6)
+        oldest = today - timedelta(days=30)
+        assert is_contract_overdue(oldest, today, 30) is False
+
+    def test_past_terms_overdue(self):
+        today = date(2026, 7, 6)
+        oldest = today - timedelta(days=31)
+        assert is_contract_overdue(oldest, today, 30) is True

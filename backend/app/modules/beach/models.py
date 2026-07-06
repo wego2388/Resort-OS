@@ -64,7 +64,13 @@ class BeachTransaction(Base, TimestampMixin):
 
 
 class B2BContract(Base, TimestampMixin):
-    """عقد فندق B2B."""
+    """عقد فندق B2B — علاقة ائتمانية متكررة: الفندق الشريك بيبعت ضيوفه للشاطئ
+    على مدار الشهر وبيتحاسب (يتسوّى) دوريًا، مش كاش فوري لحظة الدخول (راجع
+    _post_beach_revenue_journal في services.py — القيد المحاسبي الحالي
+    بيسجّل الإيراد كأنه كاش فوري حتى لعقود B2B، فجوة معمارية معروفة، خارج
+    نطاق هذا التعديل). الحقول التالية (credit_limit/payment_terms_days/
+    last_settled_at/is_overdue/notified_overdue) بتضيف ضبط ائتماني حقيقي:
+    حد أقصى للرصيد المستحق + تتبّع تأخر السداد، بدل ما ده يفضل بلا حدود."""
     __tablename__ = "b2b_contracts"
 
     id:             Mapped[int]        = mapped_column(primary_key=True)
@@ -79,6 +85,21 @@ class B2BContract(Base, TimestampMixin):
     valid_until:    Mapped[date]       = mapped_column(Date)
     is_active:      Mapped[bool]       = mapped_column(Boolean, default=True)
     notes:          Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ── ائتمان/تحصيل (credit & dunning) ─────────────────────────────────
+    # nullable: مش كل فندق شريك محتاج حد ائتمان — الافتراضي بلا حد (زي
+    # الوضع الحالي فعليًا)، ويتفعّل بس لما مدير الإيرادات يحدده صراحةً.
+    credit_limit:        Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    # مهلة السداد بالأيام (نمط net-30) — بيُستخدم لتحديد "الرصيد المتأخر":
+    # أول يوم فيه رصيد غير مسوّى أقدم من المهلة دي من النهاردة.
+    payment_terms_days:  Mapped[int]            = mapped_column(Integer, default=30)
+    # آخر تاريخ اتسوّى فيه رصيد العقد بالكامل (تحصيل الفاتورة الدورية من
+    # الفندق) — None يعني لسه مفيش تسوية خالص من بداية العقد.
+    last_settled_at:     Mapped[date | None]    = mapped_column(Date, nullable=True)
+    is_overdue:          Mapped[bool]           = mapped_column(Boolean, default=False)
+    # يمنع تكرار إشعار واتساب التأخر كل يوم — بيترجع False تلقائيًا عند
+    # التسوية (raise settle_b2b_contract) عشان لو اتأخر تاني يتبعت تنبيه جديد.
+    notified_overdue:    Mapped[bool]           = mapped_column(Boolean, default=False)
 
     days: Mapped[list["B2BContractDay"]] = relationship("B2BContractDay", back_populates="contract", lazy="select")
 

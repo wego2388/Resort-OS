@@ -14,10 +14,11 @@ from app.core.deps import (
 )
 from app.modules.beach import crud, services
 from app.modules.beach.schemas import (
-    B2BCheckinRequest, B2BContractCreate, B2BContractRead,
-    BeachDailySummary, BeachInventoryRead, BeachReservationCreate,
-    BeachReservationPublic, BeachReservationRead, BeachSellRequest,
-    BeachSurgeSet, BeachTransactionRead, VoidTransactionRequest,
+    B2BCheckinRequest, B2BContractCreate, B2BContractRead, B2BContractUpdate,
+    B2BSettleRequest, BeachDailySummary, BeachInventoryRead,
+    BeachReservationCreate, BeachReservationPublic, BeachReservationRead,
+    BeachSellRequest, BeachSurgeSet, BeachTransactionRead,
+    VoidTransactionRequest,
 )
 from app.modules.core.schemas import PaginatedResponse
 from app.resort_os.timezone_utils import local_today
@@ -233,6 +234,7 @@ def get_live_dashboard(
     db.commit()
     b2b_status = services.get_b2b_quota_status(db, branch_id)
     alerts = [s for s in b2b_status if s["quota_warning"]]
+    overdue_alerts = [s for s in b2b_status if s["is_overdue"]]
     return {
         "capacity_used":   inv.capacity_used,
         "capacity_max":    inv.capacity_max,
@@ -244,6 +246,7 @@ def get_live_dashboard(
         "surge_pct":         float(inv.surge_pct),
         "b2b_contracts":     b2b_status,
         "quota_alerts":      alerts,
+        "overdue_alerts":    overdue_alerts,
     }
 
 
@@ -253,6 +256,39 @@ def create_contract(data: B2BContractCreate, db: DbDep, _=Depends(get_admin_user
     obj = crud.create_b2b_contract(db, data)
     db.commit(); db.refresh(obj)
     return B2BContractRead.model_validate(obj)
+
+
+@router.patch("/beach/b2b-contracts/{contract_id}", response_model=B2BContractRead)
+def update_contract_credit(
+    contract_id: int, data: B2BContractUpdate, db: DbDep, _=Depends(get_admin_user),
+):
+    """تعديل إعدادات ائتمان عقد B2B (حد الائتمان/مهلة السداد) — راجع شاشة
+    إدارة عقود B2B في الفرونت إند."""
+    obj = crud.get_b2b_contract(db, contract_id)
+    if not obj:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العقد {contract_id} غير موجود")
+    fields = data.model_dump(exclude_unset=True)
+    obj = crud.update_b2b_contract_credit(
+        db, obj,
+        credit_limit=fields.get("credit_limit"),
+        payment_terms_days=fields.get("payment_terms_days"),
+        credit_limit_set="credit_limit" in fields,
+    )
+    db.commit(); db.refresh(obj)
+    return B2BContractRead.model_validate(obj)
+
+
+@router.post("/beach/b2b-contracts/{contract_id}/settle", response_model=B2BContractRead)
+def settle_contract(
+    contract_id: int, data: B2BSettleRequest, db: DbDep, _=Depends(get_manager_user),
+):
+    """يسجّل إن رصيد الفندق الشريك اتحصّل (تسوية دورية) — بيصفّر الرصيد
+    المستحق فعليًا وبيلغي علم التأخر."""
+    try:
+        obj = services.settle_b2b_contract(db, contract_id, data.settled_through)
+        return B2BContractRead.model_validate(obj)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 # ── Reservations ──────────────────────────────────────────────────────

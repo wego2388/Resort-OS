@@ -99,13 +99,31 @@ class B2BContractCreate(BaseModel):
     valid_until:   date
     is_active:     bool = True
     notes:         Optional[str] = None
+    # ائتمان — nullable: مش كل فندق شريك محتاج حد (راجع تعليق B2BContract في models.py)
+    credit_limit:       Optional[Decimal] = Field(None, ge=0)
+    payment_terms_days: int               = Field(30, ge=1, le=365)
 
 
 class B2BContractRead(B2BContractCreate):
     model_config = ConfigDict(from_attributes=True)
-    id:         int
-    created_at: datetime
-    updated_at: datetime
+    id:              int
+    last_settled_at: Optional[date] = None
+    is_overdue:      bool = False
+    created_at:      datetime
+    updated_at:      datetime
+
+
+class B2BContractUpdate(BaseModel):
+    """تعديل جزئي — حاليًا لشاشة إدارة الائتمان (حد الائتمان/مهلة السداد)
+    فقط، مش لكل حقول العقد (تجنّبًا لتغيير بيانات تشغيلية حساسة زي الأسعار/
+    الحصة اليومية من غير مسار مخصص لها)."""
+    credit_limit:       Optional[Decimal] = Field(None, ge=0)
+    payment_terms_days: Optional[int]     = Field(None, ge=1, le=365)
+
+
+class B2BSettleRequest(BaseModel):
+    """تسجيل تسوية (تحصيل) رصيد الفندق الشريك حتى تاريخ معيّن."""
+    settled_through: Optional[date] = None
 
 
 class B2BCheckinRequest(BaseModel):

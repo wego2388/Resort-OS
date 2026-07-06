@@ -20,8 +20,10 @@ from app.resort_os.beach_engine import (
     calculate_b2b_price,
     calculate_inventory_delta,
     calculate_tx_price,
+    is_contract_overdue,
     validate_b2b_checkin,
     validate_entry,
+    would_exceed_credit_limit,
 )
 
 
@@ -303,6 +305,27 @@ def b2b_checkin(
     total = calculate_b2b_price(contract_state, data.guests_count, data.with_towel)
     vat   = _vat(total)
 
+    # تحقق من حد الائتمان — قبل أي تعديل فعلي على inventory/checked_in_count
+    # عشان لو اتخطى الحد، محدش يتأثر ولا يتحتاج عكس. راجع تعليق B2BContract
+    # في models.py: حد ائتمان صريح (مش None) معناه مدير الإيرادات قرر عمدًا
+    # إن الفندق ده يستاهل حد أقصى للرصيد المستحق — تخطيه لازم يترفض بوضوح
+    # (زي استنفاد الحصة اليومية بالظبط)، مش يتحول لمجرد تحذير صامت ممكن حد
+    # يتجاهله تحت ضغط الشغل (نفس فئة الأخطاء الصامتة اللي اتصلحت في موديولات
+    # تانية قبل كده في هذا المشروع). المقارنة على أساس `total` (قبل الضريبة)
+    # مش `total + vat` — عشان تفضل متسقة مع B2BContractDay.total_amount نفسه
+    # (نفس العمود اللي بيتجمع منه outstanding_balance وبيُعرض كـ "إيراد B2B"
+    # في اللوحة الحيّة أصلاً)، مش رقم تاني بمعنى مختلف شوية.
+    if contract_row.credit_limit is not None:
+        outstanding = crud.get_b2b_outstanding_balance(db, data.contract_id, contract_row.last_settled_at)
+        if would_exceed_credit_limit(outstanding, total, contract_row.credit_limit):
+            raise ValueError(
+                f"تخطّى حد الائتمان لعقد {contract_row.hotel_name} — "
+                f"الرصيد المستحق حاليًا {outstanding:,.2f} ج.م + هذه العملية "
+                f"{total:,.2f} ج.م هيتعدّى الحد المسموح "
+                f"{contract_row.credit_limit:,.2f} ج.م. سوّي الحساب مع الفندق "
+                f"أو ارفع حد الائتمان من شاشة إدارة عقود B2B قبل المتابعة."
+            )
+
     cap_delta, towel_delta = calculate_inventory_delta(tx_type, data.guests_count)
     crud.apply_inventory_delta(db, inv_row, cap_delta, towel_delta)
 
@@ -380,6 +403,12 @@ def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> Be
                 finance_crud.recalculate_folio_total(db, folio)
     else:
         _post_beach_revenue_reversal_journal(db, tx)
+
+    # عكس رصيد B2B المستحق لو العملية كانت تشيك-إن فندق شريك — راجع تعليق
+    # crud.decrement_b2b_checkins: باج حقيقي كان هنا قبل إضافة حد الائتمان
+    # (الإلغاء كان بيعكس كل حاجة إلا رصيد الفندق نفسه).
+    if tx.b2b_contract_id:
+        crud.decrement_b2b_checkins(db, tx.b2b_contract_id, tx.tx_date, tx.quantity, tx.total_amount)
 
     tx = crud.void_transaction(db, tx, voided_by, reason)
     db.commit()
@@ -560,14 +589,17 @@ def generate_eod_report_pdf(db: Session, branch_id: int, report_date: Optional[d
 
 
 def get_b2b_quota_status(db: Session, branch_id: int, day: Optional[date] = None) -> list[dict]:
-    """حالة حصص كل فنادق B2B النشطة اليوم — بيوصل quota_warning (≤5 أشخاص متبقين)
-    من beach_engine.B2BContractState اللي كان موجود بس مش متوصّل لأي endpoint."""
+    """حالة حصص/ائتمان كل فنادق B2B النشطة اليوم — بيوصل quota_warning
+    (≤5 أشخاص متبقين) من beach_engine.B2BContractState + حالة الائتمان
+    (outstanding_balance/credit_limit/is_overdue) لنفس اللوحة الحيّة، بنفس
+    نمط عرض العقود المنتهية (is_valid_today) اللي اتضاف قبل كده."""
     day = day or _business_today()
     rows = crud.list_b2b_contracts_with_today_usage(db, branch_id, day)
 
     result = []
     for contract, checked_in_today in rows:
         state = _contract_state(contract, checked_in_today)
+        outstanding = crud.get_b2b_outstanding_balance(db, contract.id, contract.last_settled_at)
         result.append({
             "contract_id":        state.contract_id,
             "hotel_name":         state.hotel_name,
@@ -577,8 +609,70 @@ def get_b2b_quota_status(db: Session, branch_id: int, day: Optional[date] = None
             "is_quota_exhausted": state.is_quota_exhausted,
             "quota_warning":      state.quota_warning,
             "is_valid_today":     state.is_valid_on(day),
+            "credit_limit":       contract.credit_limit,
+            "outstanding_balance": outstanding,
+            "credit_exceeded":    (
+                contract.credit_limit is not None and outstanding > contract.credit_limit
+            ),
+            "is_overdue":         contract.is_overdue,
+            "payment_terms_days": contract.payment_terms_days,
         })
     return result
+
+
+def settle_b2b_contract(
+    db: Session, contract_id: int, settled_through: Optional[date] = None,
+) -> "B2BContract":
+    """يسجّل تسوية (تحصيل) رصيد الفندق الشريك — يُستدعى لما الفندق يدفع
+    فاتورته الدورية. بيصفّر الرصيد المستحق فعليًا لحد تاريخ التسوية وبيلغي
+    علم التأخر."""
+    contract = crud.get_b2b_contract(db, contract_id)
+    if not contract:
+        raise ValueError(f"العقد {contract_id} غير موجود")
+    settled_through = settled_through or _business_today()
+    if contract.last_settled_at and settled_through < contract.last_settled_at:
+        raise ValueError("تاريخ التسوية لا يمكن أن يكون قبل آخر تسوية مسجّلة")
+    contract = crud.settle_b2b_contract(db, contract, settled_through)
+    db.commit()
+    db.refresh(contract)
+    return contract
+
+
+def mark_b2b_contracts_overdue(db: Session, today: Optional[date] = None) -> int:
+    """يفحص كل عقود B2B النشطة ويُحدّث is_overdue حسب مهلة السداد
+    (payment_terms_days) لكل عقد — الجزء القابل للاختبار من مهمة Celery
+    الدورية (نفس نمط timeshare_tasks._mark_overdue: دالة service خالصة بتاخد
+    db + today وتُرجع عدد العقود المتأثرة، والـ task نفسه بس wrapper حول
+    SessionLocal + استدعاء الدالة دي). بيرسل تنبيه واتساب مرة واحدة بس لكل
+    دخول في حالة التأخر (notified_overdue) — نفس نمط quota_warning في
+    b2b_checkin، عشان مبعتش رسالة كل يوم للفندق طول ما لسه متأخر."""
+    today = today or _business_today()
+    contracts = crud.list_active_b2b_contracts_for_overdue_check(db)
+    changed = 0
+    for contract in contracts:
+        oldest_unsettled = crud.get_b2b_oldest_unsettled_day(db, contract.id, contract.last_settled_at)
+        overdue_now = is_contract_overdue(oldest_unsettled, today, contract.payment_terms_days)
+        if overdue_now != contract.is_overdue:
+            contract.is_overdue = overdue_now
+            changed += 1
+        if not overdue_now:
+            contract.notified_overdue = False
+            continue
+        if not contract.notified_overdue:
+            contract.notified_overdue = True
+            if contract.contact_phone:
+                try:
+                    from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+                    outstanding = crud.get_b2b_outstanding_balance(db, contract.id, contract.last_settled_at)
+                    send_whatsapp_message(
+                        contract.contact_phone,
+                        f"تنبيه: رصيد {contract.hotel_name} المستحق للخيمة بيتش "
+                        f"({outstanding:,.2f} ج.م) تخطّى مهلة السداد "
+                        f"({contract.payment_terms_days} يوم) — برجاء التسوية.",
+                    )
+                except Exception:
+                    pass  # ميمنعش تحديث حالة التأخر لو فشل إرسال التنبيه
+    return changed
 
 
 def check_in_reservation(

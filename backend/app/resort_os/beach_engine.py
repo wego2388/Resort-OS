@@ -193,6 +193,34 @@ def calculate_b2b_price(
     return total
 
 
+# ── Credit limit & dunning (B2B فقط — راجع تعليق B2BContract في models.py) ────
+
+def would_exceed_credit_limit(
+    outstanding_balance: Decimal,
+    new_charge: Decimal,
+    credit_limit: Optional[Decimal],
+) -> bool:
+    """True لو إضافة ``new_charge`` للرصيد الحالي هتتخطى حد الائتمان.
+    ``credit_limit=None`` يعني مفيش حد مضبوط لهذا الفندق — دايمًا False
+    (نفس سلوك daily_quota لو contract مفيهوش حد بمعنى "مسموح دايمًا")."""
+    if credit_limit is None:
+        return False
+    return (outstanding_balance + new_charge) > credit_limit
+
+
+def is_contract_overdue(
+    oldest_unsettled_day: Optional[date],
+    today: date,
+    payment_terms_days: int,
+) -> bool:
+    """العقد متأخر السداد لو أقدم يوم فيه رصيد غير مسوّى أقدم من مهلة السداد
+    (net-N) من النهاردة. ``oldest_unsettled_day=None`` يعني مفيش رصيد غير
+    مسوّى خالص (كل حاجة اتسوّت أو العقد لسه ما استخدمش) → مش متأخر."""
+    if oldest_unsettled_day is None:
+        return False
+    return (today - oldest_unsettled_day).days > payment_terms_days
+
+
 # ── Inventory deltas ──────────────────────────────────────────────────────────
 
 def calculate_inventory_delta(

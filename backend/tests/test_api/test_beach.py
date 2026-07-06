@@ -34,6 +34,7 @@ def make_branch(db):
 def make_contract(
     db, branch, quota=10, entry_price=Decimal("80"), towel_price=Decimal("30"),
     valid_from=None, valid_until=None, is_active=True,
+    credit_limit=None, payment_terms_days=30,
 ):
     today = date.today()
     data = B2BContractCreate(
@@ -45,6 +46,8 @@ def make_contract(
         valid_from=valid_from or (today - timedelta(days=1)),
         valid_until=valid_until or (today + timedelta(days=30)),
         is_active=is_active,
+        credit_limit=credit_limit,
+        payment_terms_days=payment_terms_days,
     )
     obj = crud.create_b2b_contract(db, data)
     db.commit()
@@ -334,6 +337,27 @@ class TestVoidTransaction:
         voided = services.void_transaction(db, tx.id, voided_by=1, reason="غلط في الكمية")
         assert voided.voided_reason == "غلط في الكمية"
 
+    def test_void_b2b_checkin_reverses_outstanding_balance(self, db):
+        """⚠️ باج حقيقي كان هنا قبل إضافة حد الائتمان: إلغاء عملية تشيك-إن
+        B2B كان بيعكس الـ inventory والقيد المحاسبي، بس مايلمسش
+        B2BContractDay.checked_in_count/total_amount خالص — يعني الرصيد
+        المستحق على الفندق (المستخدم دلوقتي في حساب حد الائتمان والتأخر)
+        كان هيفضل متضخّم للأبد حتى بعد الإلغاء الفعلي."""
+        branch = make_branch(db)
+        contract = make_contract(db, branch, entry_price=Decimal("100"))
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=4)
+        tx = services.b2b_checkin(db, branch.id, req)
+
+        balance_after_checkin = crud.get_b2b_outstanding_balance(db, contract.id)
+        assert balance_after_checkin == Decimal("400")
+
+        services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
+
+        balance_after_void = crud.get_b2b_outstanding_balance(db, contract.id)
+        assert balance_after_void == Decimal("0")
+        day = crud.get_or_create_contract_day(db, contract.id, date.today())
+        assert day.checked_in_count == 0
+
 
 class TestShiftAttachment:
 
@@ -590,6 +614,138 @@ class TestB2BQuotaStatus:
         db.flush()
         status = services.get_b2b_quota_status(db, branch.id)
         assert status == []
+
+
+class TestB2BCredit:
+    """حد ائتمان + تأخر سداد عقود B2B — أول ضبط ائتماني حقيقي في المشروع
+    (راجع ملحوظة B2BContract في models.py). B2BContract هو أول/الوحيد علاقة
+    ائتمانية متكررة حقيقية في resort-os اليوم — الفوليوهات بتتسوّى فورًا
+    عند الخروج، وCRM.total_spent مجرد إحصائية تاريخية مش رصيد مستحق."""
+
+    def test_checkin_within_limit_succeeds(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("1000"))
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=5)  # 500 ج.م
+        tx = services.b2b_checkin(db, branch.id, req)
+        assert tx.id is not None
+
+    def test_checkin_exceeding_limit_rejected(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("300"))
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=5)  # 500 ج.م > 300 حد
+        with pytest.raises(ValueError, match="حد الائتمان"):
+            services.b2b_checkin(db, branch.id, req)
+
+        # العملية المرفوضة ميستهلكش أي سعة/حصة فعليًا — لا شيء اتغيّر.
+        day = crud.get_or_create_contract_day(db, contract.id, date.today())
+        assert day.checked_in_count == 0
+
+    def test_no_credit_limit_means_unrestricted(self, db):
+        """credit_limit=None (الافتراضي) — مفيش أي تحقق ائتماني خالص، زي
+        سلوك النظام قبل هذه الإضافة تمامًا."""
+        branch = make_branch(db)
+        contract = make_contract(db, branch, entry_price=Decimal("1000"), quota=100)
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=50)
+        tx = services.b2b_checkin(db, branch.id, req)
+        assert tx.id is not None
+
+    def test_second_checkin_accumulates_toward_limit(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("450"), quota=100)
+        services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=4))  # 400
+
+        with pytest.raises(ValueError, match="حد الائتمان"):
+            services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=1))  # +100 = 500 > 450
+
+    def test_settle_resets_outstanding_balance(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("300"))
+        services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=2))  # 200
+
+        settled = services.settle_b2b_contract(db, contract.id, date.today())
+        assert settled.last_settled_at == date.today()
+        assert crud.get_b2b_outstanding_balance(db, contract.id, settled.last_settled_at) == Decimal("0")
+
+        # بعد التسوية، فيه مساحة ائتمان تانية.
+        tx = services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=2))
+        assert tx.id is not None
+
+    def test_settle_nonexistent_contract_raises(self, db):
+        with pytest.raises(ValueError):
+            services.settle_b2b_contract(db, 9999)
+
+    def test_mark_overdue_flags_old_unsettled_balance(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, payment_terms_days=30)
+        old_day = date.today() - timedelta(days=45)
+        crud.increment_b2b_checkins(db, contract.id, old_day, 3, Decimal("300"))
+        db.commit()
+
+        changed = services.mark_b2b_contracts_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+        assert changed == 1
+        assert contract.is_overdue is True
+
+    def test_mark_overdue_ignores_recent_balance(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, payment_terms_days=30)
+        recent_day = date.today() - timedelta(days=5)
+        crud.increment_b2b_checkins(db, contract.id, recent_day, 3, Decimal("300"))
+        db.commit()
+
+        services.mark_b2b_contracts_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+        assert contract.is_overdue is False
+
+    def test_mark_overdue_clears_flag_after_settlement(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, payment_terms_days=30)
+        old_day = date.today() - timedelta(days=45)
+        crud.increment_b2b_checkins(db, contract.id, old_day, 3, Decimal("300"))
+        db.commit()
+        services.mark_b2b_contracts_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+        assert contract.is_overdue is True
+
+        services.settle_b2b_contract(db, contract.id, date.today())
+        services.mark_b2b_contracts_overdue(db, date.today())
+        db.commit()
+        db.refresh(contract)
+        assert contract.is_overdue is False
+
+    def test_mark_overdue_sends_whatsapp_once(self, db):
+        from unittest.mock import patch
+        branch = make_branch(db)
+        contract = make_contract(db, branch, payment_terms_days=30)
+        contract.contact_phone = "01099999999"
+        db.commit()
+        old_day = date.today() - timedelta(days=45)
+        crud.increment_b2b_checkins(db, contract.id, old_day, 3, Decimal("300"))
+        db.commit()
+
+        with patch("app.core.kernel.whatsapp.send_whatsapp_message", return_value=True) as mock_send:
+            services.mark_b2b_contracts_overdue(db, date.today())
+            db.commit()
+            # تشغيل تاني لنفس اليوم — العقد لسه متأخر، بس محدش يتبعتله رسالة تانية.
+            services.mark_b2b_contracts_overdue(db, date.today())
+            db.commit()
+
+        mock_send.assert_called_once()
+
+    def test_quota_status_includes_credit_and_overdue_fields(self, db):
+        branch = make_branch(db)
+        contract = make_contract(db, branch, entry_price=Decimal("100"), credit_limit=Decimal("150"))
+        services.b2b_checkin(db, branch.id, B2BCheckinRequest(contract_id=contract.id, guests_count=1))
+
+        status = services.get_b2b_quota_status(db, branch.id)
+        entry = status[0]
+        assert entry["credit_limit"] == Decimal("150")
+        assert entry["outstanding_balance"] == Decimal("100")
+        assert entry["credit_exceeded"] is False
+        assert entry["is_overdue"] is False
 
 
 class TestBeachReservation:

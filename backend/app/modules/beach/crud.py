@@ -236,6 +236,23 @@ def create_b2b_contract(db: Session, data: B2BContractCreate) -> B2BContract:
     return obj
 
 
+def update_b2b_contract_credit(
+    db: Session, contract: B2BContract,
+    credit_limit: Optional[Decimal] = None, payment_terms_days: Optional[int] = None,
+    credit_limit_set: bool = False,
+) -> B2BContract:
+    """تعديل إعدادات الائتمان فقط (حد الائتمان/مهلة السداد) — مش كل حقول
+    العقد، عشان الأسعار/الحصة اليومية تفضل ليها مسار تعديل منفصل لو
+    احتجناه لاحقًا. ``credit_limit_set`` يميّز "المستخدم بعت credit_limit=None
+    صراحةً (إلغاء الحد)" عن "المستخدم ما بعتش الحقل خالص"."""
+    if credit_limit_set:
+        contract.credit_limit = credit_limit
+    if payment_terms_days is not None:
+        contract.payment_terms_days = payment_terms_days
+    db.flush()
+    return contract
+
+
 def list_b2b_contracts_with_today_usage(
     db: Session, branch_id: int, day: date,
 ) -> list[tuple[B2BContract, int]]:
@@ -297,6 +314,76 @@ def increment_b2b_checkins(
     row.total_amount += amount
     db.flush()
     return row
+
+
+def decrement_b2b_checkins(
+    db: Session, contract_id: int, day: date, count: int, amount: Decimal
+) -> Optional[B2BContractDay]:
+    """يعكس increment_b2b_checkins — بيُستدعى عند إلغاء عملية تشيك-إن B2B
+    (services.void_transaction). ⚠️ باج حقيقي كان هنا قبل التعديل الحالي:
+    إلغاء عملية شاطئ B2B كان بيعكس الـ inventory والقيد المحاسبي، بس مايلمسش
+    B2BContractDay.checked_in_count/total_amount خالص — يعني الرصيد المستحق
+    على الفندق الشريك (المستخدم دلوقتي في حساب حد الائتمان والتأخر) كان
+    هيفضل متضخّم للأبد حتى بعد الإلغاء الفعلي."""
+    row = (
+        db.query(B2BContractDay)
+        .filter(B2BContractDay.contract_id == contract_id, B2BContractDay.day == day)
+        .first()
+    )
+    if not row:
+        return None
+    row.checked_in_count = max(0, row.checked_in_count - count)
+    row.total_amount = max(Decimal("0"), row.total_amount - amount)
+    db.flush()
+    return row
+
+
+# ── B2B credit / dunning ──────────────────────────────────────────────
+
+def get_b2b_outstanding_balance(
+    db: Session, contract_id: int, since: Optional[date] = None
+) -> Decimal:
+    """مجموع B2BContractDay.total_amount لكل الأيام بعد آخر تسوية
+    (``since`` = contract.last_settled_at) — الرصيد المستحق الحالي على
+    الفندق الشريك. ``since=None`` يعني لسه مفيش تسوية من بداية العقد، فكل
+    الأيام المسجّلة تدخل في الحساب."""
+    q = db.query(B2BContractDay).filter(B2BContractDay.contract_id == contract_id)
+    if since:
+        q = q.filter(B2BContractDay.day > since)
+    return sum((row.total_amount for row in q.all()), Decimal("0"))
+
+
+def get_b2b_oldest_unsettled_day(
+    db: Session, contract_id: int, since: Optional[date] = None
+) -> Optional[date]:
+    """أقدم يوم فيه رصيد غير مسوّى (total_amount > 0) بعد آخر تسوية — يُستخدم
+    لحساب هل العقد تخطّى مهلة السداد (payment_terms_days) ولا لأ."""
+    q = (
+        db.query(B2BContractDay)
+        .filter(B2BContractDay.contract_id == contract_id, B2BContractDay.total_amount > 0)
+    )
+    if since:
+        q = q.filter(B2BContractDay.day > since)
+    row = q.order_by(B2BContractDay.day.asc()).first()
+    return row.day if row else None
+
+
+def settle_b2b_contract(db: Session, contract: B2BContract, settled_through: date) -> B2BContract:
+    """يسجّل إن رصيد العقد اتسوّى (اتحصّل) بالكامل لحد تاريخ ``settled_through``
+    — بيصفّر الرصيد المستحق فعليًا (كل الأيام لحد كده هتتجاهل في الحسابات
+    الجاية) وبيلغي أي علم تأخر سابق."""
+    contract.last_settled_at = settled_through
+    contract.is_overdue = False
+    contract.notified_overdue = False
+    db.flush()
+    return contract
+
+
+def list_active_b2b_contracts_for_overdue_check(db: Session) -> list[B2BContract]:
+    """كل عقود B2B النشطة عبر كل الفروع — يُستخدم في مهمة Celery الدورية
+    (نفس نمط timeshare_tasks._mark_overdue اللي بيمشي على كل العقود
+    النشطة من غير فلترة فرع، لأنها مهمة خلفية شاملة مش endpoint لفرع معين)."""
+    return db.query(B2BContract).filter(B2BContract.is_active.is_(True)).all()
 
 
 # ── BeachReservation ──────────────────────────────────────────────────
