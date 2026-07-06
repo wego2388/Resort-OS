@@ -14,12 +14,22 @@ import json
 from fastapi import APIRouter, Body, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.deps import DbDep, get_current_active_user, get_manager_user
 from app.core.database import SessionLocal
 from app.modules.analytics import services
 from app.modules.analytics.schemas import UtilityReadingCreate, UtilityReadingRead
+from app.resort_os.timezone_utils import business_today, local_date_to_utc_range
 
 router = APIRouter(tags=["analytics"])
+
+
+def _today() -> date:
+    """"النهاردة" بتوقيت المنتجع (settings.TIMEZONE)، مش توقيت نظام تشغيل
+    السيرفر — راجع app/resort_os/timezone_utils.py. أي endpoint هنا محتاج
+    قيمة افتراضية لـ "اليوم" (تقرير، لقطة، WebSocket) لازم يستخدم الدالة دي
+    مش date.today() مباشرة."""
+    return business_today(settings.TIMEZONE)
 
 
 def _safe_query(func, *args, **kwargs):
@@ -37,11 +47,9 @@ def revenue_summary(
     db: DbDep,
     _=Depends(get_manager_user),
     branch_id: int = Query(...),
-    date_from: date = Query(default_factory=lambda: date.today() - timedelta(days=30)),
-    date_to: date = Query(default_factory=date.today),
+    date_from: date = Query(default_factory=lambda: _today() - timedelta(days=30)),
+    date_to: date = Query(default_factory=_today),
 ):
-    from app.core.config import settings  # noqa: PLC0415
-    from app.resort_os.timezone_utils import local_date_to_utc_range  # noqa: PLC0415
     # created_at (restaurant/cafe) مخزّن UTC — لازم نحوّل مدى التاريخ المحلي
     # (settings.TIMEZONE) لـ UTC، وإلا الفلترة بتفشل لمدة ~3 ساعات كل يوم.
     range_start, _ = local_date_to_utc_range(date_from, settings.TIMEZONE)
@@ -122,7 +130,7 @@ def occupancy_summary(
     month: Optional[int] = Query(None),
     year:  Optional[int] = Query(None),
 ):
-    today = date.today()
+    today = _today()
     target_month = month or today.month
     target_year  = year or today.year
 
@@ -269,7 +277,7 @@ def get_daily_stats(
     db: DbDep,
     _=Depends(get_manager_user),
     branch_id: int = Query(...),
-    stat_date: date = Query(default_factory=date.today),
+    stat_date: date = Query(default_factory=_today),
 ):
     from app.modules.analytics.models import DailyStats  # noqa: PLC0415
     row = db.query(DailyStats).filter(
@@ -328,7 +336,8 @@ def energy_kpis(
 def _compute_live_kpis(branch_id: int) -> dict:
     """يحسب KPIs آنية — تُستدعى من WebSocket loop."""
     with SessionLocal() as db:
-        result: dict = {"branch_id": branch_id, "as_of": str(date.today())}
+        today = _today()
+        result: dict = {"branch_id": branch_id, "as_of": str(today)}
 
         try:
             from app.modules.pms.models import Room  # noqa: PLC0415
@@ -347,9 +356,15 @@ def _compute_live_kpis(branch_id: int) -> dict:
 
         try:
             from app.modules.beach.models import BeachInventory  # noqa: PLC0415
+            # ⚠️ باج حقيقي (اتصلح هنا): كان بيقرأ BeachInventory.inv_date —
+            # عمود مش موجود خالص في الموديل الحقيقي (الاسم الصح
+            # inventory_date). كان بيرمي AttributeError عند بناء الـ filter،
+            # وده كان بيتبلع بصمت بـ except Exception تحت — يعني قسم الشاطئ
+            # في WebSocket الـ KPIs الحية كان بيرجع null دايمًا لكل فرع، بغض
+            # النظر عن أي نشاط شاطئ حقيقي (تذاكر مباعة، فوط مستخدمة...).
             inv = db.query(BeachInventory).filter(
                 BeachInventory.branch_id == branch_id,
-                BeachInventory.inv_date == date.today(),
+                BeachInventory.inventory_date == today,
             ).first()
             result["beach"] = {
                 "capacity_used":  int(inv.capacity_used)    if inv else 0,
@@ -453,27 +468,35 @@ def full_dashboard(
     branch_id: int = Query(...),
 ):
     """لوحة القيادة الشاملة — كل المؤشرات في طلب واحد."""
-    today = date.today()
+    today = _today()
     date_from_30 = today - timedelta(days=30)
 
     def _rev():
         return _safe_query(lambda d: _build_revenue(d, branch_id, date_from_30, today), db)
 
     def _build_revenue(d, bid, dfrom, dto):
-        from datetime import datetime as _dt  # noqa: PLC0415
         from app.modules.restaurant.models import Order  # noqa: PLC0415
         from app.modules.cafe.models import CafeOrder    # noqa: PLC0415
         from app.modules.pms.models import Booking       # noqa: PLC0415
         from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
+        # ⚠️ باج حقيقي (اتصلح هنا): كان بيقارن created_at (UTC فعليًا) بحدود
+        # يوم مبنية بـ datetime.combine ساذج من تاريخ محلي (Africa/Cairo) —
+        # نفس الباج اللي اتصلح في /analytics/revenue جنبه بالظبط، لكن هنا في
+        # لوحة القيادة الرئيسية (اللي AnalyticsView.vue بيعرضها كـ"إجمالي
+        # الإيرادات 30 يوم") فضل من غير ما يتصلح. النتيجة: إيرادات المطعم/
+        # الكافيه في نافذة ~3 ساعات كل يوم (منتصف ليل القاهرة → 3 فجرًا) كانت
+        # بتتحسب على اليوم الغلط.
+        range_start, _ = local_date_to_utc_range(dfrom, settings.TIMEZONE)
+        _, range_end = local_date_to_utc_range(dto, settings.TIMEZONE)
         rest = sum(o.total for o in d.query(Order).filter(
             Order.branch_id == bid, Order.status == "paid",
-            Order.created_at >= _dt.combine(dfrom, _dt.min.time()),
-            Order.created_at <= _dt.combine(dto,   _dt.max.time()),
+            Order.created_at >= range_start,
+            Order.created_at <= range_end,
         ).all())
         cafe = sum(o.total for o in d.query(CafeOrder).filter(
             CafeOrder.branch_id == bid, CafeOrder.status == "paid",
-            CafeOrder.created_at >= _dt.combine(dfrom, _dt.min.time()),
-            CafeOrder.created_at <= _dt.combine(dto,   _dt.max.time()),
+            CafeOrder.created_at >= range_start,
+            CafeOrder.created_at <= range_end,
         ).all())
         pms_rev = sum(b.total_rate for b in d.query(Booking).filter(
             Booking.branch_id == bid, Booking.status == "checked_out",
