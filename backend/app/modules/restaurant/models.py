@@ -2,7 +2,7 @@
 app/modules/restaurant/models.py
 Restaurant Module
 Tables: menu_categories, menu_items, menu_item_extra_groups, menu_item_extras,
-        dining_tables, orders, order_items, order_item_extras
+        menu_item_recipe_lines, dining_tables, orders, order_items, order_item_extras
 """
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, JSON,
-    Numeric, String,
+    Numeric, String, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -55,6 +55,10 @@ class MenuItem(Base, TimestampMixin):
         "MenuItemExtraGroup", back_populates="menu_item", lazy="select",
         cascade="all, delete-orphan", order_by="MenuItemExtraGroup.sort_order",
     )
+    recipe_lines: Mapped[list["MenuItemRecipeLine"]] = relationship(
+        "MenuItemRecipeLine", back_populates="menu_item", lazy="selectin",
+        cascade="all, delete-orphan",
+    )
 
 
 class MenuItemExtraGroup(Base, TimestampMixin):
@@ -89,6 +93,29 @@ class MenuItemExtra(Base, TimestampMixin):
     sort_order:      Mapped[int]     = mapped_column(Integer, default=0)
 
     group: Mapped["MenuItemExtraGroup"] = relationship("MenuItemExtraGroup", back_populates="options")
+
+
+class MenuItemRecipeLine(Base, TimestampMixin):
+    """سطر وصفة (Recipe/BOM) — كمية من صنف مخزني (inventory.Product) بتتستهلك
+    لكل وحدة مباعة من الصنف ده. مثال: 'برجر لحم' = 0.150 كجم لحم مفروم + رغيف
+    واحد + 0.030 كجم جبنة. الكمية بوحدة الصنف المخزني نفسها (Product.unit) —
+    مفيش تحويل وحدات، لو الصنف مخزّن بالكيلو فالكمية هنا بالكيلو.
+
+    مختلف عن linked_product_id (ربط 1:1 قديم، لسه شغال كـ fallback لو الصنف
+    مفهوش وصفة حقيقية — راجع services._deduct_inventory_for_order)."""
+    __tablename__ = "menu_item_recipe_lines"
+    __table_args__ = (
+        UniqueConstraint("menu_item_id", "product_id", name="uq_menu_item_recipe_product"),
+    )
+
+    id:                Mapped[int]     = mapped_column(primary_key=True)
+    menu_item_id:      Mapped[int]     = mapped_column(ForeignKey("menu_items.id", ondelete="CASCADE"))
+    product_id:        Mapped[int]     = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
+    quantity_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    notes:             Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    menu_item: Mapped["MenuItem"] = relationship("MenuItem", back_populates="recipe_lines")
+    product:   Mapped["Product"]  = relationship("Product", lazy="joined")
 
 
 class DiningTable(Base, TimestampMixin):
