@@ -8,7 +8,7 @@ const { isOpen, options, handleConfirm, handleCancel } = useConfirm()
 </script>
 
 <template>
-  <AppModal :open="isOpen" :title="options.title ?? 'تأكيد'" size="sm" @close="handleCancel">
+  <AppModal :open="isOpen" :title="options.title ?? 'تأكيد'" size="sm" z-index="z-[60]" @close="handleCancel">
     <p class="text-gray-700 text-sm leading-relaxed">{{ options.message }}</p>
     <template #footer>
       <div class="flex items-center justify-end gap-2">
