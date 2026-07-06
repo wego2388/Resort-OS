@@ -1,10 +1,9 @@
 """app/modules/maintenance/services.py — Business logic"""
 from __future__ import annotations
 
-from datetime import date
-
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.maintenance import crud
 from app.modules.maintenance.models import Asset, PreventiveSchedule, WorkOrder
 from app.modules.maintenance.schemas import (
@@ -12,6 +11,7 @@ from app.modules.maintenance.schemas import (
     WorkOrderCreate, WorkOrderUpdate, WorkOrderPartCreate,
     PreventiveScheduleCreate, PreventiveScheduleUpdate,
 )
+from app.resort_os.timezone_utils import local_today
 
 
 def _validate_assigned_to(db: Session, employee_id: int | None) -> None:
@@ -128,10 +128,15 @@ def complete_work_order(db: Session, order_id: int) -> WorkOrder:
                 asset.status = "operational"
     # لو الأمر ده وقائي وجاي من جدول دوري، لازم نقدّم next_due — وإلا
     # generate_preventive_work_orders هيفضل يعمل أمر جديد لنفس الجدول كل يوم للأبد
+    # ⚠️ local_today (مش date.today() الخام) — نفس فئة الباج المتكررة في
+    # HR/PMS/KDS: date.today() بيثق في توقيت نظام تشغيل السيرفر (UTC غالبًا)
+    # مش توقيت المنتجع (Africa/Cairo)، فإكمال أمر وقائي قرب منتصف الليل
+    # بتوقيت القاهرة كان ممكن يسجّل last_done بتاريخ *أمس* ويزوّد next_due
+    # بنفس الغلط.
     if wo.order_type == "preventive" and wo.schedule_id:
         schedule = crud.get_schedule(db, wo.schedule_id)
         if schedule:
-            crud.mark_schedule_done(db, schedule, done_date=date.today())
+            crud.mark_schedule_done(db, schedule, done_date=local_today(settings.TIMEZONE))
     db.commit()
     db.refresh(wo)
     return wo
@@ -181,7 +186,7 @@ def generate_preventive_work_orders(db: Session, branch_id: int) -> int:
     يُستدعى من Celery task — ينشئ أوامر صيانة للجداول المستحقة اليوم.
     يُرجع عدد الأوامر المُنشأة.
     """
-    today = date.today()
+    today = local_today(settings.TIMEZONE)
     due_schedules, _ = crud.list_schedules(
         db, branch_id, active_only=True, due_before=today, limit=500
     )

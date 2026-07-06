@@ -63,8 +63,15 @@ _WO_COUNTER_KEY = "wo_counter"
 
 
 def _next_order_number(db: Session) -> str:
-    from datetime import datetime  # noqa: PLC0415
-    today = datetime.utcnow().strftime("%Y%m%d")
+    # ⚠️ باج توقيت من نفس الفئة اللي اتصلحت في HR/PMS/KDS: كانت بتستخدم
+    # datetime.utcnow() (توقيت السيرفر، UTC غالبًا في الإنتاج) بدل توقيت
+    # المنتجع الفعلي (Africa/Cairo) — أمر صيانة اتبلّغ عنه الساعة 00:30
+    # بتوقيت القاهرة كان بياخد رقم بتاريخ *أمس* (لسه 21:30 UTC)، يعني رقم
+    # الأمر يفضّل يدل على يوم غلط للمدير اللي بيراجع أوامر "النهاردة".
+    from app.core.config import settings  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    today = local_today(settings.TIMEZONE).strftime("%Y%m%d")
     count = db.query(WorkOrder).filter(
         WorkOrder.order_number.like(f"WO-{today}-%")
     ).count()
