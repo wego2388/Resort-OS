@@ -270,3 +270,56 @@ class TestGuestReviewInsights:
         review = db.query(GuestReview).filter(GuestReview.id == submit_resp.json()["id"]).first()
         assert review.booking_id is None
         assert review.timeshare_visit_id == visit.id
+
+    def test_send_timeshare_survey_queues_whatsapp(self, client: TestClient, db, manager_headers):
+        """POST .../survey-token/timeshare/{visit_id}/send — قبل ده، مفيش أي
+        طريقة حقيقية توصّل التوكن للضيف (GET .../survey-token/timeshare بس
+        كان بيولّد التوكن من غير إرسال). Celery task_always_eager في التستات
+        (conftest.py) يخلي .delay() يشتغل مباشرة، فبس بنتأكد من الاستجابة —
+        الإرسال الفعلي (send_whatsapp_message) بيرجع True في dev بدون
+        Twilio credentials (راجع core/kernel/whatsapp.py)."""
+        from decimal import Decimal
+        from app.modules.timeshare.models import TimeshareUnit
+        from app.modules.timeshare.schemas import TimeshareContractCreate, TimeshareVisitCreate
+        from app.modules.timeshare import services as ts_services
+
+        branch = make_branch_committed(db)
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="2R")
+        db.add(unit); db.commit()
+
+        contract = ts_services.create_contract(db, TimeshareContractCreate(
+            branch_id=branch.id, customer_name="عميل تايم شير", room_type="2R",
+            customer_phone="+201001234567",
+            total_value=Decimal("120000"), down_payment=Decimal("20000"),
+            installments=12, installment_period=1,
+            first_installment_date=date(2026, 8, 1),
+            partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),
+        ), signed_by=1)
+        visit = ts_services.create_visit(db, TimeshareVisitCreate(
+            branch_id=branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        ))
+
+        resp = client.post(
+            f"/api/v1/analytics/reviews/survey-token/timeshare/{visit.id}/send",
+            params={"branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["queued"] is True
+
+    def test_send_timeshare_survey_requires_auth(self, client: TestClient, db):
+        resp = client.post(
+            "/api/v1/analytics/reviews/survey-token/timeshare/999/send",
+            params={"branch_id": 1},
+        )
+        assert resp.status_code == 401
+
+    def test_send_timeshare_survey_nonexistent_visit_404(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/analytics/reviews/survey-token/timeshare/999999/send",
+            params={"branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404

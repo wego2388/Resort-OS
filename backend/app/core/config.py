@@ -29,6 +29,10 @@ class Settings(CoreSettings):
     # ── Survey Token (مفتاح منفصل لعزل الأمان) ───────────────────────
     SURVEY_TOKEN_SECRET: str = ""
 
+    # ── Public guest site (لبناء روابط /order, /survey, /beach/checkin
+    # المُرسَلة فعليًا للضيف عبر واتساب — بدون / في الآخر) ─────────────
+    PUBLIC_SITE_URL: str = ""
+
     # ── Field Encryption (national_id, passport) ──────────────────────
     FIELD_ENCRYPTION_KEY: Optional[str] = None
 

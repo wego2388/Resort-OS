@@ -174,3 +174,45 @@ def send_installment_reminders(self):
 
     except Exception as exc:
         logger.error("send_installment_reminders failed: %s", exc)
+
+
+@celery_app.task(name="app.tasks.timeshare_tasks.send_visit_survey", bind=True, max_retries=3)
+def send_visit_survey(self, visit_id: int, branch_id: int):
+    """
+    يُستدعى عند الطلب (مش scheduled) من POST
+    /analytics/reviews/survey-token/timeshare/{visit_id}/send — بيولّد
+    survey token حقيقي (create_survey_token) ويبعته لصاحب التايم شير عبر
+    واتساب. قبل الـ endpoint/task ده، الـ token كان بيتولّد فقط عن طريق
+    GET .../survey-token/timeshare/{visit_id} من غير أي طريقة حقيقية توصّله
+    للضيف — يعني الاستبيان كان عمليًا غير قابل للاستخدام رغم إن الباك إند
+    والفرونت إند (SurveyView.vue) كانوا شغالين بالكامل.
+    """
+    try:
+        from app.core.database import SessionLocal  # noqa: PLC0415
+
+        with SessionLocal() as db:
+            from app.modules.timeshare.models import TimeshareVisit  # noqa: PLC0415
+            from app.modules.analytics.services import create_survey_token  # noqa: PLC0415
+            from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+
+            visit = db.query(TimeshareVisit).filter(TimeshareVisit.id == visit_id).first()
+            if not visit:
+                logger.warning("send_visit_survey: visit %s not found", visit_id)
+                return
+            contract = visit.contract
+            if not contract or not contract.customer_phone:
+                logger.info("send_visit_survey: visit %s has no customer phone — skipped", visit_id)
+                return
+
+            token = create_survey_token(branch_id=branch_id, timeshare_visit_id=visit_id)
+            base_url = settings.PUBLIC_SITE_URL.rstrip("/") if settings.PUBLIC_SITE_URL else ""
+            link = f"{base_url}/survey/{token}" if base_url else token
+            send_whatsapp_message(
+                contract.customer_phone,
+                f"أهلاً {contract.customer_name} 🏝️ — نتمنى إنك استمتعت بزيارتك للخيمة. "
+                f"شاركنا رأيك في أقل من دقيقة: {link}",
+            )
+            logger.info("send_visit_survey: sent to visit=%s contract=%s", visit_id, contract.id)
+
+    except Exception as exc:
+        logger.error("send_visit_survey failed: %s", exc)
