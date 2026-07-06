@@ -220,14 +220,31 @@ def update_lead_stage(db: Session, lead_id: int, data: LeadStageUpdate) -> Lead:
     if lead.stage in ("won", "lost"):
         raise ValueError(f"الـ lead في حالة نهائية '{lead.stage}' ولا يمكن تعديله")
 
+    # ⚠️ باج حقيقي كان هنا: Lead.lost_reason كان اختياريًا فعليًا (على عكس
+    # Opportunity.update_opportunity اللي بيرفض "lost" من غير سبب) — يعني
+    # مدير الـ CRM كان يقدر يقفل عميل محتمل بحالة "خسارة" من غير أي تفسير،
+    # فتقرير "ليه بنخسر عملاء محتملين" كان ممكن يطلع فاضي تمامًا لمعظم السجلات.
+    if data.stage == "lost" and not data.lost_reason:
+        raise ValueError("يجب تحديد سبب الخسارة")
+
     update_data: dict = {"stage": data.stage}
     if data.stage == "won":
         update_data["won_at"] = _dt.utcnow()
     elif data.stage == "lost":
         update_data["lost_at"] = _dt.utcnow()
-        if data.lost_reason:
-            update_data["lost_reason"] = data.lost_reason
+        update_data["lost_reason"] = data.lost_reason
 
+    return crud.update_lead(db, lead, update_data)
+
+
+def update_lead_details(db: Session, lead_id: int, data) -> Lead:
+    """يعدّل بيانات الـ lead الأساسية (مش الـ stage — ده من update_lead_stage).
+    ممنوع تعديل lead في حالة نهائية (won/lost)، زي نفس القاعدة المطبّقة على
+    الـ stage وعلى Opportunity/Activity."""
+    lead = get_lead_or_404(db, lead_id)
+    if lead.stage in ("won", "lost"):
+        raise ValueError(f"الـ lead في حالة نهائية '{lead.stage}' ولا يمكن تعديله")
+    update_data = data.model_dump(exclude_unset=True)
     return crud.update_lead(db, lead, update_data)
 
 

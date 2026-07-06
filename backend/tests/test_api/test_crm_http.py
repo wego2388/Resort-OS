@@ -103,6 +103,24 @@ class TestCRMLeadsFlow:
         assert lost_resp.json()["lost_reason"] == "اختار منتجع آخر"
         assert lost_resp.json()["lost_at"] is not None
 
+    def test_lead_lost_requires_reason(self, client: TestClient, db, fake_redis, manager_headers):
+        """⚠️ باج حقيقي كان هنا: كان ممكن تقفل lead بحالة 'lost' من غير أي
+        سبب — على عكس Opportunity.update_opportunity اللي بيرفض 'lost' من
+        غير lost_reason من زمان. النتيجة: تقرير 'ليه بنخسر عملاء محتملين'
+        كان ممكن يطلع فاضي لمعظم السجلات. اتصلح بنفس قاعدة Opportunity."""
+        branch = make_branch_committed(db)
+        lead = client.post(
+            "/api/v1/crm/leads",
+            json={"branch_id": branch.id, "full_name": "بدون سبب خسارة"},
+            headers=manager_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/crm/leads/{lead['id']}", json={"stage": "lost"}, headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "سبب" in resp.json()["detail"]
+
 
 class TestCRMPermissions:
     def test_blacklist_customer_requires_manager(self, client: TestClient, db, fake_redis):
