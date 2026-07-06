@@ -23,13 +23,14 @@ the VPS, see [`DEPLOYMENT.md`](./DEPLOYMENT.md) for how to stand it up.
   `backend/app/core/kernel/` — no external shared-package dependency, no
   second build context, nothing else to clone.
 
-**Frontend** — pnpm monorepo (Vue 3 + Vite + Pinia + TailwindCSS), three apps:
+**Frontend** — pnpm monorepo (Vue 3 + Vite + Pinia + TailwindCSS), two apps:
 
 | App | Path | Audience | Dev port |
 |---|---|---|---|
 | `el-kheima` | `frontend/apps/el-kheima` | Staff (POS, KDS, back office, waiter, employee self-service portal) — one app, role-gated routing | 3001 |
-| `qr` | `frontend/apps/qr` | Guests scanning a table/beach QR code (menu + ordering, unauthenticated) | 3005 |
-| `public` | `frontend/apps/public` | Guest-facing booking/marketing site (unauthenticated) | 3007 |
+| `public` | `frontend/apps/public` | Guest-facing booking/marketing site + QR ordering (scan a table/sunbed QR to order from the restaurant or cafe menu), beach check-in, and post-stay survey — all unauthenticated | 3007 |
+
+(The old standalone `qr` app was merged into `public` on 2026-07-06 — both were unauthenticated guest-facing apps with no reason to be separate deployments.)
 
 Shared code lives in `frontend/packages/`: `@resort-os/core` (API client, Pinia
 stores, composables) and `@resort-os/ui` (shared Vue components, e.g. `LoginView`).

@@ -77,7 +77,7 @@ DATABASE_URL=postgresql+psycopg://postgres:<DB_PASSWORD>@db_postgres:5432/resort
 REDIS_URL=redis://redis_cache:6379/0
 CELERY_BROKER_URL=redis://redis_cache:6379/1
 CELERY_RESULT_BACKEND=redis://redis_cache:6379/2
-CORS_ORIGINS=https://app.yourdomain.com,https://qr.yourdomain.com,https://yourdomain.com
+CORS_ORIGINS=https://app.yourdomain.com,https://yourdomain.com
 RESORT_NAME=El Kheima Beach
 
 # Optional but recommended for production — see §9 and §10
@@ -108,7 +108,7 @@ This builds, in order as dependencies require:
 - `backend` — via `backend/Dockerfile` (self-contained, `backend/` is the
   entire build context)
 - `celery_worker`, `celery_beat` — same image as `backend`, different command
-- `el_kheima`, `qr`, `public_site` — via `frontend/Dockerfile`, one build per
+- `el_kheima`, `public_site` — via `frontend/Dockerfile`, one build per
   app (`--build-arg APP_NAME=...`), each producing a small nginx image
   serving that app's static build
 - `nginx` — the public edge proxy (see §7)
@@ -135,16 +135,14 @@ Immediately change the seeded admin password (`admin@resortos.local` /
 
 ## 6. DNS
 
-This deployment routes by **subdomain**, not path, because none of the three
+This deployment routes by **subdomain**, not path, because neither of the two
 frontend apps have a configured base path (see the routing-decision comment
-at the top of `docker-compose.prod.yml`). Point three DNS A records at your
-VPS's IP:
+at the top of `docker-compose.prod.yml`). Point DNS A records at your VPS's IP:
 
 | Hostname | App |
 |---|---|
 | `app.yourdomain.com` | `el-kheima` (staff) |
-| `qr.yourdomain.com` | `qr` (guest QR ordering) |
-| `yourdomain.com` + `www.yourdomain.com` | `public` (guest booking site) |
+| `yourdomain.com` + `www.yourdomain.com` | `public` (guest booking site + QR ordering/beach-checkin/survey) |
 
 ## 7. TLS with certbot
 
@@ -169,7 +167,7 @@ docker volume inspect resort-os-prod_certbot_certs --format '{{ .Mountpoint }}'
 # mode (it binds port 80 itself), then restart:
 docker compose -f docker-compose.prod.yml stop nginx
 sudo certbot certonly --standalone \
-  -d app.yourdomain.com -d qr.yourdomain.com -d yourdomain.com -d www.yourdomain.com
+  -d app.yourdomain.com -d yourdomain.com -d www.yourdomain.com
 # certbot writes to /etc/letsencrypt on the host by default — bind-mount that
 # instead of a named volume if you go this route (edit docker-compose.prod.yml:
 # change `certbot_certs:/etc/letsencrypt:ro` to `/etc/letsencrypt:/etc/letsencrypt:ro`)
@@ -177,7 +175,7 @@ docker compose -f docker-compose.prod.yml start nginx
 ```
 
 Before any of this, edit **`deploy/nginx/edge.conf`** and replace every
-`yourdomain.com` placeholder with your real domain (three server blocks +
+`yourdomain.com` placeholder with your real domain (two server blocks +
 the shared HTTP→HTTPS redirect block).
 
 Set up renewal (`certbot renew` twice daily via cron/systemd timer is

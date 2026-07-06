@@ -4,7 +4,6 @@
   "version": "1.0.0",
   "scripts": {
     "dev:el-kheima": "pnpm --filter el-kheima dev",
-    "dev:qr": "pnpm --filter qr dev",
     "dev:public": "pnpm --filter public dev",
     "build:all": "pnpm -r build",
     "type-check:all": "pnpm -r type-check"

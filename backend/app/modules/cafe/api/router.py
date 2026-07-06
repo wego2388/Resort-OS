@@ -14,9 +14,10 @@ from app.core.deps import (
 from app.modules.cafe import crud, services
 from app.modules.cafe.schemas import (
     CafeCategoryCreate, CafeCategoryRead,
+    CafeGuestOrderCreate, CafeGuestOrderRead,
     CafeItemCreate, CafeItemRead, CafeItemUpdate,
     CafeMenuItemExtraGroupCreate, CafeMenuItemExtraGroupRead,
-    CafeOrderCreate, CafeOrderItemVoidRequest, CafeOrderRead, CafeOrderStatusUpdate,
+    CafeOrderCreate, CafeOrderItemCreate, CafeOrderItemVoidRequest, CafeOrderRead, CafeOrderStatusUpdate,
     CafePublicMenuCategoryRead, CafePublicMenuItemRead, CafePublicMenuResponse,
     CafeTableRead,
 )
@@ -226,4 +227,86 @@ def get_public_menu(
         branch_id=branch_id,
         categories=[CafePublicMenuCategoryRead.model_validate(c) for c in categories],
         items=[CafePublicMenuItemRead.model_validate(i) for i in items],
+    )
+
+
+# ⚠️ الاثنين تحت دول بدون authentication عمداً — نفس نمط
+#   restaurant/public/orders بالضبط (كان ناقص هنا، وده اللي كان بيمنع
+#   الضيف من الطلب فعليًا من قائمة الكافيه عبر QR — القراءة (public/menu)
+#   كانت موجودة من غير أي طريقة تقديم طلب حقيقية):
+#   POST /cafe/public/orders → طلب جديد من الضيف (طاولة كافيه أو شمسية)
+#   GET  /cafe/public/orders/{id} → حالة الطلب للضيف (polling)
+#
+# أمان: rate limited بالـ middleware (30 req/60s per IP)
+#        order_type ثابت "dine_in" — لا تعديل/حذف من هنا، create + read فقط
+
+@router.post(
+    "/cafe/public/orders",
+    response_model=CafeGuestOrderRead,
+    status_code=status.HTTP_201_CREATED,
+    tags=["cafe-public"],
+    summary="تقديم طلب من الضيف (QR) — بدون auth",
+)
+def create_guest_order(data: CafeGuestOrderCreate, db: DbDep):
+    """
+    Public endpoint — لا يحتاج login.
+    الضيف يطلب من قائمة الكافيه عبر QR الطاولة/الشمسية.
+    - order_type مقيّد: dine_in فقط
+    - waiter_id = None (الـ waiter module يتولى)
+    """
+    try:
+        order = services.create_order(
+            db,
+            data=CafeOrderCreate(
+                branch_id=data.branch_id,
+                table_id=data.table_id,
+                order_type="dine_in",
+                notes=data.notes,
+                items=[CafeOrderItemCreate(**i.model_dump()) for i in data.items],
+            ),
+            waiter_id=None,
+        )
+        return CafeGuestOrderRead(
+            order_id=order.id,
+            order_number=order.order_number,
+            status=order.status,
+            total=order.total,
+            items_count=sum(i.quantity for i in order.items),
+            message="تم استلام طلبك! سيصل إليك قريباً ☕",
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get(
+    "/cafe/public/orders/{order_id}",
+    response_model=CafeGuestOrderRead,
+    tags=["cafe-public"],
+    summary="حالة الطلب للضيف (QR) — بدون auth",
+)
+def get_guest_order_status(order_id: int, db: DbDep):
+    """
+    Public endpoint — لا يحتاج login.
+    الضيف يتابع حالة طلبه بعد التقديم (polling كل 10 ثواني).
+    لا يُظهر بيانات مالية داخلية — status فقط.
+    """
+    order = crud.get_order(db, order_id)
+    if not order:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الطلب غير موجود")
+
+    status_messages = {
+        "held":       "طلبك قيد المراجعة",
+        "open":       "طلبك قيد التحضير",
+        "in_kitchen": "جاري تحضير طلبك 👨‍🍳",
+        "served":     "تم تقديم طلبك 🎉",
+        "paid":       "تم الدفع — شكراً لزيارتك ✨",
+        "cancelled":  "تم إلغاء الطلب",
+    }
+    return CafeGuestOrderRead(
+        order_id=order.id,
+        order_number=order.order_number,
+        status=order.status,
+        total=order.total,
+        items_count=sum(i.quantity for i in order.items),
+        message=status_messages.get(order.status, ""),
     )

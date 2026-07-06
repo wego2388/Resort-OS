@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Resort OS — Start Dev Environment
-#  Usage: bash scripts/start.sh [--no-frontend] [--no-worker] [--apps="el-kheima qr public"]
+#  Usage: bash scripts/start.sh [--no-frontend] [--no-worker] [--apps="el-kheima public"]
 # =============================================================================
 set -euo pipefail
 
@@ -20,9 +20,11 @@ START_FRONTEND=true
 START_WORKER=true
 # 2026-07-01: pos/kds/ops/admin/waiter/portal merged into a single `el-kheima`
 # app (frontend/apps/el-kheima, port 3001) — one login, one build, client-side
-# role/module gating in the router instead of 6 separate SPAs. `qr` and
-# `public` stay separate (unauthenticated, different audience/security model).
-APPS="el-kheima qr public"
+# role/module gating in the router instead of 6 separate SPAs. `public` stays
+# separate (unauthenticated, different audience/security model) — it also
+# absorbed the old `qr` app (2026-07-06): both were unauthenticated
+# guest-facing apps, no reason to ship/deploy them as two separate SPAs.
+APPS="el-kheima public"
 for arg in "$@"; do
   case "$arg" in
     --no-frontend) START_FRONTEND=false ;;
@@ -39,7 +41,7 @@ info() { echo "  ${CYAN}→${RESET} $*"; }
 warn() { echo "  ${YELLOW}⚠${RESET}  $*"; }
 die()  { echo "  ${RED}✗${RESET} $*"; exit 1; }
 
-declare -A APP_PORTS=( [el-kheima]=3001 [qr]=3005 [public]=3007 )
+declare -A APP_PORTS=( [el-kheima]=3001 [public]=3007 )
 
 echo
 echo "${GOLD}${BOLD}╔══════════════════════════════════════════════════════╗${RESET}"

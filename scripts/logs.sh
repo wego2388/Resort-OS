@@ -50,7 +50,7 @@ case "$MODE" in
     ;;
   all|*)
     print_header
-    for f in api celery celery_beat frontend-el-kheima frontend-qr frontend-public; do
+    for f in api celery celery_beat frontend-el-kheima frontend-public; do
       touch "$LOG_DIR/$f.log"
     done
     if command -v multitail >/dev/null 2>&1; then
@@ -59,20 +59,18 @@ case "$MODE" in
         --label "[CELERY]      " "$LOG_DIR/celery.log" \
         --label "[BEAT]        " "$LOG_DIR/celery_beat.log" \
         --label "[EL-KHEIMA]   " "$LOG_DIR/frontend-el-kheima.log" \
-        --label "[QR]          " "$LOG_DIR/frontend-qr.log" \
         --label "[PUBLIC]      " "$LOG_DIR/frontend-public.log"
     else
       echo "  ${DIM}Tip: install multitail for a nicer interleaved view${RESET}"
       echo
       tail -f \
         "$LOG_DIR/api.log" "$LOG_DIR/celery.log" "$LOG_DIR/celery_beat.log" \
-        "$LOG_DIR/frontend-el-kheima.log" "$LOG_DIR/frontend-qr.log" "$LOG_DIR/frontend-public.log" \
+        "$LOG_DIR/frontend-el-kheima.log" "$LOG_DIR/frontend-public.log" \
       | awk '
           /==> .*api\.log/ { src = "\033[32m[API       ]\033[0m"; next }
           /==> .*celery\.log/ { src = "\033[33m[CELERY    ]\033[0m"; next }
           /==> .*celery_beat\.log/ { src = "\033[35m[BEAT      ]\033[0m"; next }
           /==> .*frontend-el-kheima\.log/ { src = "\033[36m[EL-KHEIMA ]\033[0m"; next }
-          /==> .*frontend-qr\.log/ { src = "\033[34m[QR        ]\033[0m"; next }
           /==> .*frontend-public\.log/ { src = "\033[37m[PUBLIC    ]\033[0m"; next }
           { if (src == "") src = "\033[37m[??????????]\033[0m"; printf "%s %s\n", src, $0 }
         '

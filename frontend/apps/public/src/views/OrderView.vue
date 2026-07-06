@@ -1,23 +1,39 @@
 <script setup lang="ts">
 /**
- * TableMenuView — قائمة الطعام للضيف عبر QR
+ * OrderView — قائمة الطعام/الكافيه للضيف عبر QR (طاولة أو شمسية).
  *
- * يستخدم: GET /api/v1/restaurant/public/menu  (بدون auth ✅)
- *         POST /api/v1/restaurant/public/orders (بدون auth ✅)
- *         GET  /api/v1/restaurant/public/orders/:id (polling حالة الطلب)
+ * دمج frontend/apps/qr → apps/public (2026-07-06): كان فيه تطبيق مستقل
+ * بالكامل (apps/qr، بورت 3005) لسكانر الـ QR بس، رغم إنه زي apps/public
+ * تمامًا ضيف بدون تسجيل دخول — الدمج قلل تطبيق كامل (build/deploy/nginx)
+ * من غير أي فايدة معمارية حقيقية (لسه مفيش أكواد QR مطبوعة فعليًا وقت الدمج).
  *
- * QR URL: https://resort.local/table/5?branch=1
+ * الـ outlet (مطعم/كافيه) والرقم (طاولة أو شمسية) بييجوا من الـ QR نفسه:
+ *   /order/restaurant/5   → قائمة المطعم، طاولة 5
+ *   /order/cafe/12        → قائمة الكافيه، طاولة/شمسية 12
+ * الشمسيات مُمثَّلة بنفس صفوف cafe_tables برقم مميز (زي "شمسية 12") —
+ * مفيش موديل "sunbed" منفصل، راجع CLAUDE.md §13.
+ *
+ * يستخدم (بدون auth):
+ *   GET  /api/v1/{outlet}/public/menu
+ *   POST /api/v1/{outlet}/public/orders
+ *   GET  /api/v1/{outlet}/public/orders/:id  (polling حالة الطلب)
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import LanguageSelector from '../components/LanguageSelector.vue'
+import { PUBLIC_BRANCH_ID } from '../constants/resort'
 
 const route = useRoute()
 const { locale } = useI18n()
+
+const outlet   = computed(() => (route.params.outlet === 'cafe' ? 'cafe' : 'restaurant') as 'restaurant' | 'cafe')
 const tableId  = computed(() => route.params.tableId as string)
-const branchId = computed(() => parseInt(route.query.branch as string ?? '1'))
+const branchId = computed(() => parseInt((route.query.branch as string) ?? '') || PUBLIC_BRANCH_ID)
+const apiBase  = computed(() => `/api/v1/${outlet.value}/public`)
+
+const outletLabel = computed(() => (outlet.value === 'cafe' ? 'الكافيه' : 'المطعم'))
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface ExtraOption  { id: number; name: string; name_ar: string | null; price_addition: number }
@@ -106,8 +122,10 @@ function extraOptionDisplayName(opt: ExtraOption) {
 async function fetchMenu() {
   loading.value = true
   loadError.value = ''
+  cart.value = []
+  orderPlaced.value = false
   try {
-    const { data } = await axios.get('/api/v1/restaurant/public/menu', {
+    const { data } = await axios.get(`${apiBase.value}/menu`, {
       params: { branch_id: branchId.value, table_id: tableId.value || undefined },
     })
     categories.value  = data.categories ?? []
@@ -123,11 +141,9 @@ async function fetchMenu() {
 // ── Cart ───────────────────────────────────────────────────────────────
 function openItem(item: MenuItem) {
   if (item.extra_groups.length > 0) {
-    // افتح modal الـ extras
     extrasModal.value = { open: true, item }
     tempExtras.value  = {}
     tempNotes.value   = itemInCart(item.id)?.notes ?? ''
-    // حمّل الاختيارات الحالية لو الـ item موجود في الـ cart
     const existing = itemInCart(item.id)
     if (existing) tempExtras.value = { ...existing.selectedExtras }
   } else {
@@ -182,19 +198,22 @@ async function placeOrder() {
   placing.value = true
   placeError.value = ''
   try {
-    const payload = {
-      branch_id:    branchId.value,
-      table_id:     tableId.value ? parseInt(tableId.value) : null,
-      guests_count: 1,
-      items: cart.value.map(c => ({
-        menu_item_id: c.item.id,
-        quantity:     c.qty,
-        notes:        c.notes || undefined,
-        extra_ids: Object.values(c.selectedExtras).flat(),
-      })),
-    }
+    const items = cart.value.map(c => ({
+      // المطعم بيسميها menu_item_id، الكافيه بيسميها item_id — نفس الفكرة
+      [outlet.value === 'cafe' ? 'item_id' : 'menu_item_id']: c.item.id,
+      quantity: c.qty,
+      notes:    c.notes || undefined,
+      extra_ids: Object.values(c.selectedExtras).flat(),
+    }))
 
-    const { data } = await axios.post('/api/v1/restaurant/public/orders', payload)
+    const payload: Record<string, unknown> = {
+      branch_id: branchId.value,
+      table_id:  tableId.value ? parseInt(tableId.value) : null,
+      items,
+    }
+    if (outlet.value === 'restaurant') payload.guests_count = 1
+
+    const { data } = await axios.post(`${apiBase.value}/orders`, payload)
 
     orderId.value     = data.order_id
     orderNumber.value = data.order_number
@@ -204,7 +223,6 @@ async function placeOrder() {
     showCart.value    = false
     cart.value        = []
 
-    // ابدأ polling لمتابعة الحالة كل 10 ثواني
     pollTimer = setInterval(pollOrderStatus, 10_000)
 
   } catch (e: any) {
@@ -217,7 +235,7 @@ async function placeOrder() {
 async function pollOrderStatus() {
   if (!orderId.value) return
   try {
-    const { data } = await axios.get(`/api/v1/restaurant/public/orders/${orderId.value}`)
+    const { data } = await axios.get(`${apiBase.value}/orders/${orderId.value}`)
     orderStatus.value  = data.status
     orderMessage.value = data.message
     if (data.status === 'served' || data.status === 'paid' || data.status === 'cancelled') {
@@ -228,6 +246,7 @@ async function pollOrderStatus() {
 
 // ── Status UI ──────────────────────────────────────────────────────────
 const STATUS_UI: Record<string, { icon: string; color: string }> = {
+  held:       { icon: '📋', color: 'text-amber-600' },
   open:       { icon: '📋', color: 'text-amber-600' },
   in_kitchen: { icon: '👨‍🍳', color: 'text-blue-600' },
   served:     { icon: '🎉', color: 'text-green-600' },
@@ -250,11 +269,10 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
     <div class="sticky top-0 z-30 bg-white border-b border-stone-200 px-4 py-3 shadow-sm">
       <div class="flex items-center justify-between">
         <div>
-          <div class="font-black text-gray-900 text-lg">قائمة الطعام</div>
-          <div class="text-xs text-gray-400">طاولة {{ tableId }}</div>
+          <div class="font-black text-gray-900 text-lg">قائمة {{ outletLabel }}</div>
+          <div class="text-xs text-gray-400">رقم {{ tableId }}</div>
         </div>
 
-        <!-- Language + Cart -->
         <div class="flex items-center gap-2">
           <LanguageSelector />
 
@@ -337,12 +355,10 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             v-for="item in filteredItems" :key="item.id"
             class="bg-white rounded-2xl border border-stone-200 p-4 flex gap-3 shadow-sm active:scale-[0.99] transition-transform"
           >
-            <!-- Icon placeholder -->
             <div class="w-14 h-14 bg-stone-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">
-              🍽️
+              {{ outlet === 'cafe' ? '☕' : '🍽️' }}
             </div>
 
-            <!-- Info -->
             <div class="flex-1 min-w-0">
               <div class="font-bold text-gray-900 text-sm">{{ itemDisplayName(item) }}</div>
               <div v-if="item.extra_groups.length" class="text-xs text-blue-500 mt-0.5">
@@ -353,7 +369,6 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
               </div>
             </div>
 
-            <!-- Add / qty control -->
             <div class="flex flex-col items-center justify-center gap-1 flex-shrink-0">
               <template v-if="itemInCart(item.id)">
                 <button @click="adjustQty(item.id, -1)" class="w-8 h-8 bg-stone-100 rounded-full font-black flex items-center justify-center text-lg">−</button>
@@ -368,9 +383,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             </div>
           </div>
 
-          <!-- Empty state -->
           <div v-if="filteredItems.length === 0" class="text-center py-16 text-gray-400">
-            <div class="text-4xl mb-2">🍽️</div>
+            <div class="text-4xl mb-2">{{ outlet === 'cafe' ? '☕' : '🍽️' }}</div>
             <p class="text-sm">لا توجد أصناف في هذه الفئة</p>
           </div>
         </div>
@@ -415,7 +429,6 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
               </div>
             </div>
 
-            <!-- Notes -->
             <div>
               <label class="block font-bold text-gray-800 mb-1.5 text-sm">ملاحظات خاصة</label>
               <textarea
@@ -462,7 +475,6 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
               <div class="flex items-start justify-between mb-2 gap-2">
                 <div class="flex-1">
                   <div class="font-semibold text-sm text-gray-900">{{ itemDisplayName(ci.item) }}</div>
-                  <!-- Extras summary -->
                   <div
                     v-if="Object.values(ci.selectedExtras).flat().length > 0"
                     class="text-xs text-blue-500 mt-0.5"
@@ -509,7 +521,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
               :disabled="placing || cart.length === 0"
               class="w-full py-4 bg-blue-700 text-white rounded-2xl font-black text-lg disabled:opacity-50 active:scale-[0.98] transition-transform"
             >
-              {{ placing ? '⏳ جاري الإرسال...' : '🍳 إرسال الطلب للمطبخ' }}
+              {{ placing ? '⏳ جاري الإرسال...' : `🍳 إرسال الطلب إلى ${outletLabel}` }}
             </button>
           </div>
         </div>

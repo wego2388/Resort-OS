@@ -51,7 +51,6 @@ pid_status "Celery beat" "celery_beat.pid"
 echo
 echo "  ── Frontend apps ──"
 pid_status "el-kheima" "frontend-el-kheima.pid" "http://127.0.0.1:3001"
-pid_status "qr" "frontend-qr.pid" "http://127.0.0.1:3005"
 pid_status "public" "frontend-public.pid" "http://127.0.0.1:3007"
 
 echo
