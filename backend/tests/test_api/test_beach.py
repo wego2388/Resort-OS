@@ -225,6 +225,66 @@ class TestSellTicket:
         with pytest.raises(services.BeachConcurrencyError, match="مشغولة"):
             services.sell_ticket(db, branch.id, req)
 
+    def test_lock_refreshes_stale_in_memory_capacity_not_just_db_lock(self, db):
+        """باج حقيقي حي كان هنا (اتكشف بتجربة فعلية على Postgres حقيقي بعمليتين
+        متزامنتين — مش النوع اللي تستات monkeypatch فوق بتغطيه، لأن تستات
+        الوحدة شغالة على SQLite واللي أصلاً بيتجاهل with_for_update):
+        sell_ticket بيعمل قراءة أولى غير مقفولة (get_or_create_inventory) قبل
+        القفل، فالصف بيتسجّل في identity map الخاصة بالـ Session بقيمته
+        وقتها. لما القفل نفسه يتاخد بعد كده (lock_inventory_for_update)،
+        SQLAlchemy من غير .populate_existing() مكانش بيحدّث الـ object
+        الموجود بالفعل في identity map من نتيجة استعلام القفل الجديد — فلو
+        Session تانية كانت خلصت وعدّلت الصف فعليًا في اللحظة بين القراءتين،
+        الكود بيكمل بقيمة capacity_used **قديمة** رغم إن القفل نفسه اتاخد
+        بنجاح. النتيجة الفعلية اللي لوحظت لايف: عمليتا بيع ناجحتين (201/201،
+        تذكرتين حقيقيتين) بس capacity_used اتزاد مرة واحدة بس (lost update) —
+        سعة الشاطئ المسجّلة تفضل أقل من العدد الحقيقي اللي دخل فعلاً.
+
+        هنا بنحاكي نفس السيناريو بالظبط بجلستين حقيقيتين منفصلتين (نفس الـ
+        StaticPool engine المشترك في conftest، فالاتنين بيشوفوا نفس الصفوف
+        المُلتزَمة فعليًا زي عمليتين حقيقيتين على Postgres)، من غير الحاجة
+        لقفل صف حقيقي متزامن (SQLite بيتجاهله على أي حال) — المهم هنا إثبات
+        إن القراءة بعد القفل بترجّع القيمة الحالية الصحيحة، مش القديمة."""
+        from tests.conftest import TestingSessionLocal
+
+        branch = make_branch(db)
+        dbA = TestingSessionLocal()
+        dbB = TestingSessionLocal()
+        try:
+            today = date.today()
+            inv_seed = crud.get_or_create_inventory(dbA, branch.id, today, capacity_max=200)
+            inv_seed.capacity_used = 195
+            dbA.commit()
+
+            # جلسة A وجلسة B الاتنين بيعملوا القراءة الأولى الغير مقفولة —
+            # نفس ترتيب sell_ticket بالظبط — الاتنين بيشوفوا 195 دلوقتي.
+            invA = crud.get_or_create_inventory(dbA, branch.id, today)
+            invB = crud.get_or_create_inventory(dbB, branch.id, today)
+            assert invA.capacity_used == 195
+            assert invB.capacity_used == 195
+
+            # A تقفل، تبيع 3، تعتمد (commit) — القيمة الحقيقية في الداتابيز
+            # بقت 198 دلوقتي.
+            lockedA = crud.lock_inventory_for_update(dbA, invA.id)
+            crud.apply_inventory_delta(dbA, lockedA, -3, 0)
+            dbA.commit()
+
+            # B تقفل بعد كده — لازم تشوف القيمة الحقيقية الجديدة (198)، مش
+            # القيمة القديمة المخزّنة في identity map بتاعتها (195) — وإلا
+            # حساب apply_inventory_delta التالي هيبني على أساس غلط ويمسح
+            # أثر بيع A (lost update).
+            lockedB = crud.lock_inventory_for_update(dbB, invB.id)
+            assert lockedB.capacity_used == 198, (
+                "lock_inventory_for_update رجّع قيمة capacity_used قديمة من "
+                "identity map الجلسة (195) بدل القيمة الحقيقية المُعتمدة "
+                "حديثاً (198) — القفل نفسه اتاخد بنجاح بس بيانات validate_entry "
+                "التالية هتكون غلط، وده بالظبط الباج اللي كان بيسبب lost update."
+            )
+        finally:
+            dbB.rollback()
+            dbA.close()
+            dbB.close()
+
 
 class TestVoidTransaction:
 
@@ -437,6 +497,41 @@ class TestB2BCheckin:
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=1)
         with pytest.raises(services.BeachConcurrencyError, match="مشغولة"):
             services.b2b_checkin(db, branch.id, req)
+
+    def test_contract_day_lock_refreshes_stale_checked_in_count(self, db):
+        """نفس فئة باج lock_inventory_for_update (شوف
+        test_lock_refreshes_stale_in_memory_capacity_not_just_db_lock فوق) —
+        هنا بنفس السيناريو لكن على B2BContractDay.checked_in_count: جلستين
+        منفصلتين بيعملوا القراءة الأولى الغير مقفولة، جلسة A تقفل وتزوّد
+        العدد وتعتمد، جلسة B لازم تشوف العدد الجديد لما تقفل هي كمان — مش
+        العدد القديم من identity map بتاعتها."""
+        from tests.conftest import TestingSessionLocal
+
+        branch = make_branch(db)
+        contract = make_contract(db, branch, quota=10)
+        today = date.today()
+        dbA = TestingSessionLocal()
+        dbB = TestingSessionLocal()
+        try:
+            dayA = crud.get_or_create_contract_day(dbA, contract.id, today)
+            dayB = crud.get_or_create_contract_day(dbB, contract.id, today)
+            assert dayA.checked_in_count == 0
+            assert dayB.checked_in_count == 0
+
+            lockedA = crud.lock_contract_day_for_update(dbA, dayA.id)
+            crud.increment_b2b_checkins(dbA, contract.id, today, 4, Decimal("320"))
+            dbA.commit()
+
+            lockedB = crud.lock_contract_day_for_update(dbB, dayB.id)
+            assert lockedB.checked_in_count == 4, (
+                "lock_contract_day_for_update رجّع checked_in_count قديم (0) "
+                "بدل القيمة الحقيقية المُعتمدة حديثاً (4) — نفس باج identity "
+                "map staleness."
+            )
+        finally:
+            dbB.rollback()
+            dbA.close()
+            dbB.close()
 
 
 class TestB2BQuotaStatus:

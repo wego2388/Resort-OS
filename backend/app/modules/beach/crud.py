@@ -47,11 +47,28 @@ def lock_inventory_for_update(db: Session, inventory_id: int) -> Optional[BeachI
     """SELECT ... FOR UPDATE NOWAIT — يقفل صف الـ inventory اليومي طوال الـ
     transaction عشان يمنع تجاوز السعة/الفوط (double-sell) لو عمليتين بيع/
     تشيك-إن حصلوا في نفس اللحظة بالظبط على نفس الفرع/اليوم. نفس نمط
-    pms.crud.lock_room_for_booking بالضبط (Postgres فقط — على SQLite بيتجاهله
-    الـ driver من غير error، زي أي مكان تاني في المشروع بيستخدم with_for_update)."""
+    pms.crud.lock_room_for_booking (Postgres فقط — على SQLite بيتجاهله الـ
+    driver من غير error).
+
+    ⚠️ باج حقيقي كان هنا (اتكشف بتجربة حية حقيقية على Postgres فعلي بعمليتين
+    متزامنتين — مش تست، لأن تستات الوحدة شغالة على SQLite واللي بيتجاهل
+    with_for_update أصلاً): `sell_ticket`/`b2b_checkin` بيعملوا قراءة أولى
+    غير مقفولة (`get_or_create_inventory`) قبل القفل، فالصف بيتسجّل في
+    identity map الخاصة بالـ Session بالقيم القديمة. لما القفل نفسه يتاخد
+    بعد كده (`with_for_update`)، SQLAlchemy مكنش بيحدّث قيم الـ object
+    الموجود بالفعل في الـ identity map من نتيجة الاستعلام الجديدة — فالكود
+    كان بيكمل بقيمة capacity_used/checked_in_count **قديمة** حتى لو معاملة
+    تانية (session تانية) كانت خلصت وعدّلت الصف فعليًا في نفس اللحظة قبل
+    القفل ده. النتيجة الفعلية اللي لوحظت: عمليتا بيع ناجحتين (201 لكل واحدة،
+    تذكرتين حقيقيتين اتسجّلوا) بس `capacity_used` اتزاد مرة واحدة بس — يعني
+    lost update حقيقي (سعة الشاطئ بتفضل أقل من العدد الحقيقي اللي دخل فعلاً،
+    ممكن يوصل لتجاوز السعة الفعلية من غير ما النظام يلاحظ). الحل:
+    `.populate_existing()` يجبر SQLAlchemy يحدّث الـ object من نتيجة
+    الـ SELECT FOR UPDATE نفسها، مش يسيبه على القيمة القديمة المخزّنة."""
     return (
         db.query(BeachInventory)
         .filter(BeachInventory.id == inventory_id)
+        .populate_existing()
         .with_for_update(nowait=True)
         .first()
     )
@@ -255,11 +272,18 @@ def lock_contract_day_for_update(db: Session, row_id: int) -> Optional[B2BContra
     """SELECT ... FOR UPDATE NOWAIT — يقفل صف B2BContractDay طوال الـ
     transaction عشان يمنع تجاوز حصة B2B اليومية (double check-in) لو عمليتين
     تشيك-إن حصلوا في نفس اللحظة بالظبط لنفس العقد/اليوم. نفس نمط
-    lock_inventory_for_update فوق و pms.crud.lock_room_for_booking بالضبط
-    (Postgres فقط — على SQLite بيتجاهله الـ driver من غير error)."""
+    lock_inventory_for_update فوق و pms.crud.lock_room_for_booking (Postgres
+    فقط — على SQLite بيتجاهله الـ driver من غير error).
+
+    `.populate_existing()` هنا لنفس سبب lock_inventory_for_update بالظبط —
+    `get_or_create_contract_day` بيعمل قراءة أولى غير مقفولة قبل القفل، ومن
+    غيرها كان ممكن يفضل checked_in_count قديم في identity map الـ Session
+    حتى بعد القفل الناجح، لو معاملة تشيك-إن تانية خلصت وعدّلت الصف فعليًا
+    قبل القفل ده مباشرة."""
     return (
         db.query(B2BContractDay)
         .filter(B2BContractDay.id == row_id)
+        .populate_existing()
         .with_for_update(nowait=True)
         .first()
     )
