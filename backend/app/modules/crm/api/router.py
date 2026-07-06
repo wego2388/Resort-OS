@@ -19,7 +19,7 @@ from app.modules.crm.schemas import (
     CustomerCreate, CustomerRead, CustomerUpdate,
     GuestProfileRead,
     InteractionCreate, InteractionRead,
-    LeadCreate, LeadRead, LeadSourceCreate, LeadSourceRead, LeadStageUpdate,
+    LeadCreate, LeadRead, LeadSourceCreate, LeadSourceRead, LeadStageUpdate, LeadUpdate,
     OpportunityCreate, OpportunityRead, OpportunityUpdate,
 )
 from app.modules.core.schemas import PaginatedResponse
@@ -196,6 +196,17 @@ def update_lead_stage(lead_id: int, data: LeadStageUpdate, db: DbDep,
                       _=Depends(get_current_active_user)):
     try:
         return LeadRead.model_validate(services.update_lead_stage(db, lead_id, data))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.patch("/crm/leads/{lead_id}/details", response_model=LeadRead)
+def update_lead_details(lead_id: int, data: LeadUpdate, db: DbDep,
+                        _=Depends(get_current_active_user)):
+    """يعدّل بيانات الـ lead الأساسية (الاسم/الهاتف/المصدر/الاهتمام...) —
+    منفصل عمدًا عن تعديل الـ stage فوق (endpoint مختلف بمسؤولية مختلفة)."""
+    try:
+        return LeadRead.model_validate(services.update_lead_details(db, lead_id, data))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

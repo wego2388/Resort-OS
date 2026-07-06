@@ -176,6 +176,23 @@ class LeadStageUpdate(BaseModel):
     lost_reason: Optional[str] = Field(None, max_length=300)
 
 
+# ⚠️ باج/فجوة حقيقية كانت هنا: مفيش أي endpoint يعدّل بيانات الـ lead
+# الأساسية (الاسم/الهاتف/الإيميل/المصدر/الاهتمام) بعد الإنشاء — الـ endpoint
+# الوحيد المتاح (PATCH /crm/leads/{id}) كان بيغيّر الـ stage بس. يعني لو
+# موظف الاستقبال سجّل مصدر غلط أو غلطة في رقم الهاتف، مفيش طريقة تصلحها
+# غير الدخول على الداتابيز مباشرة.
+class LeadUpdate(BaseModel):
+    full_name:      Optional[str] = Field(None, max_length=200)
+    phone:          Optional[str] = Field(None, max_length=20)
+    email:          Optional[str] = Field(None, max_length=150)
+    nationality:    Optional[str] = Field(None, max_length=50)
+    source_id:      Optional[int] = None
+    interest:       Optional[str] = Field(None, pattern=r"^(timeshare|leasing|booking|membership|other)$")
+    expected_value: Optional[Decimal] = Field(None, ge=0)
+    assigned_to:    Optional[int] = None
+    notes:          Optional[str] = None
+
+
 class LeadRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:             int

@@ -122,6 +122,118 @@ class TestCRMLeadsFlow:
         assert "سبب" in resp.json()["detail"]
 
 
+class TestLeadDetailsUpdate:
+    """⚠️ فجوة حقيقية كانت هنا: الـ endpoint الوحيد لتعديل lead
+    (PATCH /crm/leads/{id}) كان بيغيّر الـ stage بس — مفيش أي طريقة تصلح
+    بيها بيانات أساسية غلط (مصدر خاطئ، رقم هاتف غلط) بعد الإنشاء غير
+    الدخول على الداتابيز مباشرة. اتضاف PATCH /crm/leads/{id}/details."""
+
+    def test_reassign_lead_source_and_fix_phone(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        source_a = client.post(
+            "/api/v1/crm/lead-sources", json={"branch_id": branch.id, "name": "مصدر أ"},
+            headers=manager_headers,
+        ).json()
+        source_b = client.post(
+            "/api/v1/crm/lead-sources", json={"branch_id": branch.id, "name": "مصدر ب"},
+            headers=manager_headers,
+        ).json()
+        lead = client.post(
+            "/api/v1/crm/leads",
+            json={"branch_id": branch.id, "full_name": "عميل قابل للتعديل",
+                  "source_id": source_a["id"], "phone": "01000000000"},
+            headers=manager_headers,
+        ).json()
+        assert lead["source_id"] == source_a["id"]
+
+        resp = client.patch(
+            f"/api/v1/crm/leads/{lead['id']}/details",
+            json={"source_id": source_b["id"], "phone": "01011112222"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        updated = resp.json()
+        assert updated["source_id"] == source_b["id"]
+        assert updated["phone"] == "01011112222"
+        assert updated["stage"] == "new"  # التعديل ما بيغيّرش الـ stage
+
+    def test_cannot_edit_details_of_closed_lead(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        lead = client.post(
+            "/api/v1/crm/leads",
+            json={"branch_id": branch.id, "full_name": "عميل مغلق"},
+            headers=manager_headers,
+        ).json()
+        client.patch(
+            f"/api/v1/crm/leads/{lead['id']}",
+            json={"stage": "lost", "lost_reason": "غير مهتم"},
+            headers=manager_headers,
+        )
+
+        resp = client.patch(
+            f"/api/v1/crm/leads/{lead['id']}/details",
+            json={"phone": "01099998888"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestCustomerDuplicates:
+    """⚠️ باج حقيقي كان هنا: مفيش أي تحقق من تكرار رقم الهاتف/الإيميل عند
+    إنشاء عميل CRM — الاستقبال يقدر يسجّل نفس العميل مرتين بالغلط فيتقسم
+    total_spent/visits_count على سجلين بدل ما يتراكموا صح."""
+
+    def test_rejects_duplicate_phone_same_branch(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        first = client.post(
+            "/api/v1/crm/customers",
+            json={"branch_id": branch.id, "full_name": "عميل أول", "phone": "01055554444"},
+            headers=manager_headers,
+        )
+        assert first.status_code == 201
+
+        second = client.post(
+            "/api/v1/crm/customers",
+            json={"branch_id": branch.id, "full_name": "عميل مكرر", "phone": "01055554444"},
+            headers=manager_headers,
+        )
+        assert second.status_code == 400
+        assert "عميل أول" in second.json()["detail"]
+
+    def test_rejects_duplicate_email_same_branch(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        first = client.post(
+            "/api/v1/crm/customers",
+            json={"branch_id": branch.id, "full_name": "عميل بريد", "email": "dup@example.com"},
+            headers=manager_headers,
+        )
+        assert first.status_code == 201
+
+        second = client.post(
+            "/api/v1/crm/customers",
+            json={"branch_id": branch.id, "full_name": "عميل بريد مكرر", "email": "dup@example.com"},
+            headers=manager_headers,
+        )
+        assert second.status_code == 400
+
+    def test_allows_customers_without_phone_or_email(self, client: TestClient, db, fake_redis, manager_headers):
+        """عميلين من غير هاتف/إيميل (walk-in) — الاتنين لازم يتسمحوا (مفيش
+        تعارض لأن مفيش قيمة أصلًا للمقارنة عليها)."""
+        branch = make_branch_committed(db)
+        first = client.post(
+            "/api/v1/crm/customers",
+            json={"branch_id": branch.id, "full_name": "زائر ١"},
+            headers=manager_headers,
+        )
+        second = client.post(
+            "/api/v1/crm/customers",
+            json={"branch_id": branch.id, "full_name": "زائر ٢"},
+            headers=manager_headers,
+        )
+        assert first.status_code == 201
+        assert second.status_code == 201
+
+
 class TestCRMPermissions:
     def test_blacklist_customer_requires_manager(self, client: TestClient, db, fake_redis):
         """Any authenticated user (waiter) must not be able to blacklist a
