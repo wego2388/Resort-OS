@@ -261,3 +261,116 @@ class TestCafeRefundFolioEdgeCases:
         assert refunded.status == "refunded"
         db.refresh(folio)
         assert folio.total == total_before  # مقفول، فما اتلمسش رغم المرتجع
+
+
+def make_product(db, branch, name="عجينة بيتزا", unit="kg", cost_price=Decimal("40"),
+                  initial_stock=Decimal("20")):
+    """نفس test_restaurant.make_product بالظبط — راجعه للتفاصيل."""
+    from app.modules.inventory.schemas import ProductCreate, StockMovementCreate, WarehouseCreate
+    from app.modules.inventory import services as inventory_services
+    from datetime import datetime as _dt
+
+    warehouse = inventory_services.create_warehouse(
+        db, WarehouseCreate(branch_id=branch.id, name="مخزن الكافيه", code=f"WH-{uuid.uuid4().hex[:6].upper()}"),
+    )
+    product = inventory_services.create_product(
+        db, ProductCreate(
+            branch_id=branch.id, warehouse_id=warehouse.id,
+            name=name, sku=f"SKU-{uuid.uuid4().hex[:6].upper()}", unit=unit,
+            cost_price=cost_price,
+        ),
+    )
+    if initial_stock > 0:
+        inventory_services.record_movement(
+            db, StockMovementCreate(
+                branch_id=branch.id, product_id=product.id, warehouse_id=warehouse.id,
+                movement_type="purchase_in", quantity=initial_stock, unit_cost=cost_price,
+                moved_at=_dt.utcnow(),
+            ), moved_by=1,
+        )
+    db.refresh(product)
+    return product
+
+
+class TestCafeItemRecipe:
+    """وصفة/BOM حقيقية لصنف كافيه — نفس نمط
+    test_restaurant.TestMenuItemRecipe بالظبط، عبر cafe.services."""
+
+    def test_add_recipe_line_creates_line(self, db):
+        branch = make_branch(db)
+        item = make_cafe_item(db, branch)
+        dough = make_product(db, branch, name="عجينة بيتزا", unit="kg", cost_price=Decimal("40"))
+
+        from app.modules.cafe.schemas import CafeItemRecipeLineCreate
+        line = services.add_recipe_line(
+            db, item.id, CafeItemRecipeLineCreate(product_id=dough.id, quantity_per_unit=Decimal("0.300")),
+        )
+        assert line.id is not None
+        db.refresh(item)
+        assert len(item.recipe_lines) == 1
+
+    def test_add_recipe_line_rejects_duplicate_product(self, db):
+        branch = make_branch(db)
+        item = make_cafe_item(db, branch)
+        dough = make_product(db, branch)
+
+        from app.modules.cafe.schemas import CafeItemRecipeLineCreate
+        services.add_recipe_line(db, item.id, CafeItemRecipeLineCreate(product_id=dough.id, quantity_per_unit=Decimal("0.1")))
+        with pytest.raises(ValueError, match="مضاف بالفعل"):
+            services.add_recipe_line(db, item.id, CafeItemRecipeLineCreate(product_id=dough.id, quantity_per_unit=Decimal("0.2")))
+
+    def test_compute_cost_from_recipe(self, db):
+        branch = make_branch(db)
+        item = make_cafe_item(db, branch)
+        dough = make_product(db, branch, name="عجينة بيتزا", unit="kg", cost_price=Decimal("40"))
+        mozzarella = make_product(db, branch, name="موتزاريلا", unit="kg", cost_price=Decimal("250"))
+
+        from app.modules.cafe.schemas import CafeItemRecipeLineCreate
+        services.add_recipe_line(db, item.id, CafeItemRecipeLineCreate(product_id=dough.id, quantity_per_unit=Decimal("0.300")))
+        services.add_recipe_line(db, item.id, CafeItemRecipeLineCreate(product_id=mozzarella.id, quantity_per_unit=Decimal("0.150")))
+
+        db.refresh(item)
+        # 0.300 * 40 + 0.150 * 250 = 12 + 37.5 = 49.5
+        assert services.compute_cafe_item_cost(item) == Decimal("49.50")
+
+    def test_compute_cost_falls_back_to_manual_cost_without_recipe(self, db):
+        branch = make_branch(db)
+        from app.modules.cafe.models import CafeItem
+        item = CafeItem(branch_id=branch.id, name="كابتشينو", price=Decimal("18.00"), cost=Decimal("5.00"))
+        db.add(item)
+        db.commit()
+        assert services.compute_cafe_item_cost(item) == Decimal("5.00")
+
+    def test_paying_order_deducts_all_recipe_ingredients(self, db):
+        branch = make_branch(db)
+        item = make_cafe_item(db, branch)  # make_order هنا quantity=1
+        dough = make_product(db, branch, name="عجينة بيتزا", unit="kg", cost_price=Decimal("40"), initial_stock=Decimal("5"))
+        mozzarella = make_product(db, branch, name="موتزاريلا", unit="kg", cost_price=Decimal("250"), initial_stock=Decimal("2"))
+
+        from app.modules.cafe.schemas import CafeItemRecipeLineCreate
+        services.add_recipe_line(db, item.id, CafeItemRecipeLineCreate(product_id=dough.id, quantity_per_unit=Decimal("0.300")))
+        services.add_recipe_line(db, item.id, CafeItemRecipeLineCreate(product_id=mozzarella.id, quantity_per_unit=Decimal("0.150")))
+        db.refresh(item)
+
+        order = make_order(db, branch, item)
+        services.update_order_status(db, order.id, "paid")
+
+        db.refresh(dough); db.refresh(mozzarella)
+        assert dough.current_stock == Decimal("5") - Decimal("0.300")
+        assert mozzarella.current_stock == Decimal("2") - Decimal("0.150")
+
+    def test_recipe_deduction_allows_negative_stock(self, db):
+        branch = make_branch(db)
+        item = make_cafe_item(db, branch)
+        dough = make_product(db, branch, name="عجينة بيتزا", unit="kg", cost_price=Decimal("40"), initial_stock=Decimal("0.1"))
+
+        from app.modules.cafe.schemas import CafeItemRecipeLineCreate
+        services.add_recipe_line(db, item.id, CafeItemRecipeLineCreate(product_id=dough.id, quantity_per_unit=Decimal("0.300")))
+        db.refresh(item)
+
+        order = make_order(db, branch, item)
+        paid = services.update_order_status(db, order.id, "paid")
+        assert paid.status == "paid"
+
+        db.refresh(dough)
+        assert dough.current_stock == Decimal("0.1") - Decimal("0.300")
