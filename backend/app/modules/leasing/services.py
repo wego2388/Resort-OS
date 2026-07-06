@@ -164,12 +164,33 @@ def apply_penalties(db: Session, contract_id: int) -> list[LeasePayment]:
 
 
 def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePayment:
+    """⚠️ نفس فئة الباجين اللي اتصلحوا قبل كده في `timeshare.services.pay_installment`
+    (الموديول الشقيق)، اتكشفوا هنا كمان أثناء اختبار حي كمدير إيجارات — الكود كان
+    منسوخ جزئيًا من غير الإصلاحين:
+    1. مفيش أي تحقق من حالة العقد — كان ممكن تسجّل تحصيل إيجار على عقد **مفسوخ**
+       أو **منتهي** فعليًا.
+    2. مفيش أي حد أقصى على المبلغ — إدخال 50,000 على دفعة قيمتها 5,000 كان
+       بيتقبل بصمت (paid_amount بيبقى أكبر من amount+penalty، والحالة بتبقى
+       "paid" من غير أي تنبيه أو تسجيل فرق) — باج مالي حقيقي، مش نظري.
+    """
     payment = crud.get_payment(db, payment_id)
     if not payment:
         raise ValueError(f"الدفعة {payment_id} غير موجودة")
     if payment.status == "paid":
         raise ValueError("الدفعة مسددة بالكامل مسبقاً")
     contract = get_contract_or_404(db, payment.contract_id)
+    if contract.status == "terminated":
+        raise ValueError(f"العقد {contract.contract_number} مفسوخ — لا يمكن تحصيل دفعات عليه")
+    if contract.status == "expired":
+        raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل دفعات عليه")
+
+    remaining = payment.amount + payment.penalty - payment.paid_amount
+    if req.paid_amount > remaining:
+        raise ValueError(
+            f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على هذه "
+            f"الدفعة ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
+        )
+
     obj = crud.pay_payment(db, payment, req)
     _post_rent_collection_journal(db, obj, contract, req.paid_amount)
     db.commit()

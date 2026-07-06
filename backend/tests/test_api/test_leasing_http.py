@@ -223,6 +223,117 @@ class TestLeasingPenaltyTiers:
         assert Decimal(str(payment["penalty"])) == (Decimal(str(payment["amount"])) * Decimal("0.05")).quantize(Decimal("0.01"))
 
 
+class TestLeasingPaymentSafety:
+    """Live acceptance-testing session (leasing manager role-play, 2026-07-06)
+    found this module had the exact same two bugs `timeshare.services.pay_installment`
+    already had fixed: no cap on overpayment, and no contract-status guard before
+    accepting a payment. Both were silently accepted before this fix."""
+
+    def test_pay_payment_rejects_amount_over_remaining(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+
+        resp = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": "999999.00", "payment_method": "cash"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "أكبر من المتبقي" in resp.json()["detail"]
+
+    def test_pay_payment_rejected_on_terminated_contract(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+
+        patch_resp = client.patch(
+            f"/api/v1/leasing/contracts/{contract['id']}", json={"status": "terminated"}, headers=manager_headers,
+        )
+        assert patch_resp.status_code == 200, patch_resp.text
+
+        resp = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": "100.00", "payment_method": "cash"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "مفسوخ" in resp.json()["detail"]
+
+    def test_pay_payment_rejected_on_expired_contract(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+
+        client.patch(
+            f"/api/v1/leasing/contracts/{contract['id']}", json={"status": "expired"}, headers=manager_headers,
+        )
+        resp = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": "100.00", "payment_method": "cash"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "منتهي" in resp.json()["detail"]
+
+    def test_partial_then_exact_remaining_still_succeeds(self, client: TestClient, db, fake_redis, manager_headers):
+        """The overpayment cap must not break the normal partial-payment flow."""
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+        amount = Decimal(str(contract["payments"][0]["amount"]))
+
+        first = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": "1000.00", "payment_method": "cash"},
+            headers=manager_headers,
+        )
+        assert first.status_code == 200, first.text
+        assert first.json()["status"] == "partial"
+
+        remaining = amount - Decimal("1000.00")
+        second = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": str(remaining), "payment_method": "cash"},
+            headers=manager_headers,
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["status"] == "paid"
+
+    def test_contract_payments_stay_ordered_by_due_date_after_update(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        """باج ترتيب حقيقي: `LeaseContract.payments` من غير order_by كانت بترجع
+        بترتيب فعلي في الداتابيز (مش تاريخ الاستحقاق) — بعد أي UPDATE
+        (زي apply-penalties) كان الترتيب بيتغيّر (Postgres MVCC row versions)،
+        يعني جدول الدفعات في شاشة الإيجارات كان ممكن يعرض تواريخ غير مرتبة."""
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        contract_id = contract["id"]
+
+        # يخلي دفعة قديمة متأخرة عشان apply-penalties يعمل UPDATE فعلي عليها
+        from app.modules.leasing.models import LeasePayment
+        first_payment = db.query(LeasePayment).filter(LeasePayment.id == contract["payments"][0]["id"]).first()
+        first_payment.due_date = date.today() - timedelta(days=40)
+        db.commit()
+
+        client.post(f"/api/v1/leasing/contracts/{contract_id}/apply-penalties", headers=manager_headers)
+
+        refreshed = client.get(f"/api/v1/leasing/contracts/{contract_id}", headers=manager_headers).json()
+        due_dates = [p["due_date"] for p in refreshed["payments"]]
+        assert due_dates == sorted(due_dates)
+
+
 class TestLeasingAccountingIntegration:
     """Task B audit: leasing posted zero journal entries despite the spec's exact
     worked examples (deposit + rent collection). Verifies the new
