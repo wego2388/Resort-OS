@@ -2,8 +2,8 @@
 #
 # Resort OS (El Kheima Beach) — frontend app image
 # ─────────────────────────────────────────────────────────────────────────────
-# One shared, parameterized Dockerfile builds all three frontend apps
-# (el-kheima / qr / public) rather than three near-identical copies — they're
+# One shared, parameterized Dockerfile builds both frontend apps
+# (el-kheima / public) rather than two near-identical copies — they're
 # all part of the same pnpm workspace and share `packages/core` +
 # `packages/ui`, so the build needs the *whole* `frontend/` directory as
 # context regardless of which single app is being built (pnpm needs to see
@@ -14,12 +14,10 @@
 #
 #   docker build -f frontend/Dockerfile --build-arg APP_NAME=el-kheima \
 #     -t resort-os-el-kheima:latest frontend
-#   docker build -f frontend/Dockerfile --build-arg APP_NAME=qr \
-#     -t resort-os-qr:latest frontend
 #   docker build -f frontend/Dockerfile --build-arg APP_NAME=public \
 #     -t resort-os-public:latest frontend
 #
-# docker-compose.prod.yml builds all three from this one file with different
+# docker-compose.prod.yml builds both from this one file with different
 # `build.args.APP_NAME` values — see that file + DEPLOYMENT.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -44,7 +42,7 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 
 ARG APP_NAME
-RUN test -n "$APP_NAME" || (echo "APP_NAME build-arg is required (el-kheima|qr|public)" && exit 1)
+RUN test -n "$APP_NAME" || (echo "APP_NAME build-arg is required (el-kheima|public)" && exit 1)
 
 RUN pnpm --filter "${APP_NAME}" build
 

@@ -11,7 +11,7 @@ from typing import Optional
 import asyncio
 import json
 
-from fastapi import APIRouter, Body, Depends, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -603,3 +603,31 @@ async def get_timeshare_survey_token(
     from app.modules.analytics.services import create_survey_token  # noqa: PLC0415
     token = create_survey_token(branch_id=branch_id, timeshare_visit_id=visit_id)
     return {"token": token, "expires_in_days": 7}
+
+
+@router.post(
+    "/analytics/reviews/survey-token/timeshare/{visit_id}/send",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def send_timeshare_survey(
+    visit_id: int,
+    db: DbDep,
+    branch_id: int = Query(...),
+    current_user=Depends(get_current_active_user),
+):
+    """يبعت لينك الاستبيان لصاحب زيارة تايم شير فعليًا عبر واتساب (Celery،
+    مش synchronous — نفس نمط باقي إشعارات واتساب في المشروع).
+
+    قبل الـ endpoint ده، get_timeshare_survey_token فوق كان بيولّد الـ token
+    بس من غير أي طريقة حقيقية توصّله للضيف — يعني الاستبيان (رغم إن الباك
+    إند والفرونت إند شغالين بالكامل) كان عمليًا غير قابل للاستخدام."""
+    from app.modules.timeshare.models import TimeshareVisit  # noqa: PLC0415
+    visit = db.query(TimeshareVisit).filter(
+        TimeshareVisit.id == visit_id, TimeshareVisit.branch_id == branch_id,
+    ).first()
+    if not visit:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الزيارة غير موجودة")
+
+    from app.tasks.timeshare_tasks import send_visit_survey  # noqa: PLC0415
+    send_visit_survey.delay(visit_id, branch_id)
+    return {"queued": True}

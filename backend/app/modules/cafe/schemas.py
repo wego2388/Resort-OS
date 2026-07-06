@@ -194,3 +194,33 @@ class CafePublicMenuResponse(BaseModel):
     branch_id:  int
     categories: list[CafePublicMenuCategoryRead]
     items:      list[CafePublicMenuItemRead]
+
+
+# ── Public (Guest QR) Order Schemas — بدون auth ──────────────────────
+# نفس نمط restaurant.GuestOrder* بالضبط — الضيف يطلب من طاولة كافيه أو
+# شمسية (نفس آلية الترقيم؛ الشمسيات مُمثَّلة كصفوف CafeTable برقم مميز،
+# مفيش موديل منفصل — راجع CLAUDE.md §13).
+
+class CafeGuestOrderItemCreate(BaseModel):
+    item_id:  int
+    quantity: int = Field(1, ge=1)
+    notes:    Optional[str] = Field(None, max_length=200)
+    extra_ids: list[int] = Field(default_factory=list)
+
+
+class CafeGuestOrderCreate(BaseModel):
+    """الطلب من الضيف عبر QR (طاولة كافيه أو شمسية)."""
+    branch_id: int
+    table_id:  Optional[int] = None
+    notes:     Optional[str] = Field(None, max_length=300)
+    items:     list[CafeGuestOrderItemCreate] = Field(..., min_length=1)
+
+
+class CafeGuestOrderRead(BaseModel):
+    """ما يشوفه الضيف بعد تقديم الطلب — بدون بيانات مالية داخلية."""
+    order_id:     int
+    order_number: str
+    status:       str
+    total:        Decimal
+    items_count:  int
+    message:      str

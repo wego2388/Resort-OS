@@ -143,6 +143,33 @@ function visitStatusLabel(s: string) {
   return { scheduled: '📅 مجدولة', active: '🏝️ جارية', completed: '✅ منتهية', cancelled: '❌ ملغاة' }[s] || s
 }
 
+// إرسال استبيان الرضا (واتساب) لصاحب زيارة منتهية — الـ endpoint موجود
+// (POST /analytics/reviews/survey-token/timeshare/{id}/send) لكن كان بدون
+// أي زر في المشروع كله يستدعيه، يعني الاستبيان كان عمليًا غير قابل
+// للاستخدام رغم إن الباك إند والفرونت إند (SurveyView.vue) شغالين بالكامل.
+const sendingSurveyId = ref<number | null>(null)
+const sentSurveyIds = ref<Set<number>>(new Set())
+
+async function sendSurvey(v: Visit) {
+  const ok = await confirm({
+    message: 'إرسال رابط استبيان رضا لصاحب هذه الزيارة عبر واتساب؟',
+    confirmText: 'نعم، أرسل', cancelText: 'تراجع',
+  })
+  if (!ok) return
+  sendingSurveyId.value = v.id
+  try {
+    await api.post(`/api/v1/analytics/reviews/survey-token/timeshare/${v.id}/send`, null, {
+      params: { branch_id: branchId },
+    })
+    sentSurveyIds.value.add(v.id)
+    toast.success('تم إرسال استبيان الرضا')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر إرسال الاستبيان')
+  } finally {
+    sendingSurveyId.value = null
+  }
+}
+
 // ── Installments ─────────────────────────────────────────────────────────
 const installments = ref<Installment[]>([])
 const installSummary = ref({ overdue_total: 0, pending_total: 0 })
@@ -739,7 +766,15 @@ onMounted(refreshAll)
                 <span class="font-bold text-gray-900">🔑 {{ v.unit_id ? (unitNumberById[v.unit_id] ?? `وحدة #${v.unit_id}`) : '—' }}</span>
                 <span class="text-gray-400">{{ formatDateAr(v.check_in) }} → {{ formatDateAr(v.check_out) }}</span>
               </div>
-              <AppBadge size="sm" :variant="visitStatusVariant[v.status] ?? 'neutral'">{{ visitStatusLabel(v.status) }}</AppBadge>
+              <div class="flex items-center gap-2">
+                <AppButton
+                  v-if="auth.hasRole('manager') && v.status === 'completed' && !sentSurveyIds.has(v.id)"
+                  size="sm" variant="ghost" :loading="sendingSurveyId === v.id"
+                  @click="sendSurvey(v)"
+                >📨 استبيان الرضا</AppButton>
+                <span v-else-if="sentSurveyIds.has(v.id)" class="text-[10px] text-green-600 font-bold">✓ تم الإرسال</span>
+                <AppBadge size="sm" :variant="visitStatusVariant[v.status] ?? 'neutral'">{{ visitStatusLabel(v.status) }}</AppBadge>
+              </div>
             </div>
           </div>
         </div>

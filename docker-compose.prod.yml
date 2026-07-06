@@ -8,14 +8,17 @@
 #  Routing decision (documented here + in DEPLOYMENT.md): SUBDOMAIN-based,
 #  not path-based. Each frontend app assumes it's served from `/` (no vite
 #  `base` config, no router base path), so giving each app its own subdomain
-#  needs zero frontend code changes. Path-based routing (e.g. /app, /qr)
-#  would require adding a `base` to each app's vite.config.ts and a matching
+#  needs zero frontend code changes. Path-based routing (e.g. /app) would
+#  require adding a `base` to each app's vite.config.ts and a matching
 #  router base — out of scope here (frontend/app source isn't touched by this
 #  deployment work).
 #
 #    app.<domain>    → el-kheima  (staff back office / POS / KDS / portal)
-#    qr.<domain>     → qr          (guest QR ordering, unauthenticated)
-#    <domain> (apex) → public      (guest booking / marketing site)
+#    <domain> (apex) → public      (guest booking/marketing site + QR guest
+#                                    ordering/beach-checkin/survey — apps/qr
+#                                    was merged into apps/public 2026-07-06,
+#                                    both were unauthenticated guest-facing
+#                                    apps with no reason to be separate)
 #
 #  `nginx` is the single public-facing edge: it terminates TLS and reverse-
 #  proxies each subdomain to the matching frontend container. Each frontend
@@ -154,17 +157,6 @@ services:
       backend:
         condition: service_healthy
 
-  qr:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        APP_NAME: qr
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
-
   public_site:
     build:
       context: ./frontend
@@ -189,7 +181,6 @@ services:
       - certbot_certs:/etc/letsencrypt:ro
     depends_on:
       - el_kheima
-      - qr
       - public_site
       - backend
 
