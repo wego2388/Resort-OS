@@ -395,10 +395,22 @@ def lock_unit_for_visit(db: Session, unit_id: int) -> Optional[TimeshareUnit]:
     نفس الوحدة لنفس الفترة. نفس منطق pms.crud.lock_room_for_booking بالظبط —
     كان ناقص هنا رغم إن create_visit بيعمل تحقق تعارض (has_overlapping_visit)
     زي get_available_rooms بالظبط، بس من غير أي قفل صف يمنع الـ race condition
-    بين التحقق والـ INSERT."""
+    بين التحقق والـ INSERT.
+
+    ⚠️ `.populate_existing()` لازم هنا: للعقود العائمة (`contract.unit_id`
+    فاضي)، `services.create_visit` بيعمل قراءة أولى غير مقفولة بـ
+    `find_available_unit` قبل القفل ده على نفس الوحدة — نفس فئة الباج اللي
+    اتكشفت فعليًا في beach.crud (identity map الـ Session بيفضل على القيمة
+    القديمة من غير `.populate_existing()`، حتى بعد قفل ناجح). هنا التأثير
+    أضيق من beach (ضمان منع الحجز المزدوج نفسه سليم لأن `has_overlapping_visit`
+    استعلام حي من الداتابيز، مش بيعتمد على أي attribute من الـ unit object) —
+    لكن `unit.status == "maintenance"` بعد القفل مباشرة كان ممكن يقرا حالة
+    قديمة (قبل ما transaction تانية تحط الوحدة تحت الصيانة فعليًا وتعمل
+    commit)، فيسمح بحجز زيارة على وحدة تحت الصيانة فعليًا."""
     return (
         db.query(TimeshareUnit)
         .filter(TimeshareUnit.id == unit_id)
+        .populate_existing()
         .with_for_update(nowait=True)
         .first()
     )
