@@ -51,6 +51,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_menus(db)
     _seed_dining_tables(db)
     _seed_crm(db)
+    _seed_b2b_contracts(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -860,6 +861,65 @@ def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
             total += 1
         db.flush()
         print(f"  ✓ Cafe tables seeded ({total} tables — logical default numbering, not verified real numbers)")
+
+
+def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
+    """⚠️ باج حقيقي كان هنا (اتكشف بتجربة حية لموديول الشاطئ): جدول
+    b2b_contracts كان فاضي تمامًا (0 صف) من أول ما الموديول اتعمل — يعني
+    شاشة "عقود B2B" في الإدارة كانت بتعرض قائمة فاضية دايمًا، ومفيش أي طريقة
+    لتجربة مسار "تسجيل دخول ضيف فندق شريك" (B2B check-in) من غير ما حد
+    يدخل بيانات عقد يدويًا الأول — نفس فئة فجوة الـ seed اللي اتكشفت قبل
+    كده في HR (صفر موظفين) وPMS (صفر غرف).
+
+    عقود توضيحية (illustrative sample data) — أسماء فنادق شرم الشيخ منطقية
+    بس **مش شراكات حقيقية موثّقة**، الغرض بس تشغيل شاشة B2B/اللوحة الحيّة
+    وتسجيل دخول B2B فعلي بأول تشغيل بدل قائمة فاضية:
+    - فندق بحصة صحية عادية (لعرض الحالة الطبيعية).
+    - فندق قريب من استنفاد الحصة (لعرض تنبيه quota_warning في اللوحة الحيّة
+      من أول تشغيل، من غير ما حد يحتاج يبيع 45 تذكرة الأول عشان يشوفه).
+    - فندق بحصة كبيرة غير مستخدمة (لعرض حالة فارغة طبيعية).
+
+    Idempotent: لو فيه أي عقد للفرع أصلاً → يتجاهَل تمامًا (مايكررش)."""
+    from app.modules.beach.models import B2BContract, B2BContractDay
+    from app.modules.core.models import Branch
+
+    branch = db.query(Branch).filter(Branch.id == branch_id).first() if branch_id else db.query(Branch).first()
+    if not branch:
+        return
+    if db.query(B2BContract).filter(B2BContract.branch_id == branch.id).first():
+        return
+
+    today = date.today()
+    specs = [
+        # (hotel_name, hotel_name_ar, phone, daily_quota, entry_price, towel_price, checked_in_today)
+        ("Sunrise Grand Sharm",   "صنرايز جراند شرم",   "+201001112233", 40, Decimal("120"), Decimal("30"), 6),
+        ("Palm Oasis Resort",    "بالم أوازيس ريزورت", "+201002223344", 15, Decimal("100"), Decimal("25"), 12),
+        ("Coral Bay Hotel",      "كورال باي هوتيل",    "+201003334455", 60, Decimal("150"), Decimal("40"), 0),
+    ]
+
+    created = 0
+    for hotel_en, hotel_ar, phone, quota, entry_price, towel_price, checked_in in specs:
+        contract = B2BContract(
+            branch_id=branch.id,
+            hotel_name=hotel_en, hotel_name_ar=hotel_ar, contact_phone=phone,
+            daily_quota=quota, entry_price=entry_price, towel_price=towel_price,
+            valid_from=today.replace(day=1),
+            valid_until=date(today.year, 12, 31),
+            is_active=True,
+            notes="عقد توضيحي (illustrative) — لتشغيل شاشة B2B وتجربة تسجيل الدخول، مش شراكة حقيقية موثّقة.",
+        )
+        db.add(contract)
+        db.flush()
+        if checked_in:
+            db.add(B2BContractDay(
+                contract_id=contract.id, day=today,
+                checked_in_count=checked_in,
+                total_amount=entry_price * checked_in,
+            ))
+        created += 1
+
+    db.flush()
+    print(f"  ✓ B2B contracts seeded ({created} illustrative sample partner hotels — not real partnerships)")
 
 
 def _seed_menus(db: Session) -> None:
