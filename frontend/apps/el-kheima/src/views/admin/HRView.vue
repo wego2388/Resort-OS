@@ -32,6 +32,12 @@ interface Allowance {
   is_taxable: boolean; is_pensionable: boolean; is_active: boolean
 }
 interface PenaltyType { id: number; name: string; name_ar?: string | null; penalty_days: number }
+interface AttendancePolicy {
+  late_grace_minutes: number | string; early_leave_grace_minutes: number | string
+  standard_shift_start: string; standard_shift_end: string
+  overtime_rate_multiplier: number | string; late_penalty_rate_multiplier: number | string
+  is_active: boolean
+}
 
 const employees = ref<Employee[]>([])
 const payrollRuns = ref<PayrollRun[]>([])
@@ -50,6 +56,50 @@ function localDateStr(d: Date): string {
 const today = new Date()
 const attendanceDateFrom = ref(localDateStr(new Date(today.getFullYear(), today.getMonth(), 1)))
 const attendanceDateTo = ref(localDateStr(today))
+
+// سياسة الحضور — سماحية تأخير/انصراف مبكر، الوردية الافتراضية، نسب أوفرتايم/
+// خصم تأخير — بتغذّي الحساب التلقائي في تشغيل الرواتب (backend: hr_engine.
+// compute_attendance_minutes). مفيش سياسة محفوظة بعد = صفر تلقائي، مش عطل.
+const DEFAULT_POLICY: AttendancePolicy = {
+  late_grace_minutes: 10, early_leave_grace_minutes: 10,
+  standard_shift_start: '09:00', standard_shift_end: '17:00',
+  overtime_rate_multiplier: '1.50', late_penalty_rate_multiplier: '1.00',
+  is_active: true,
+}
+const attendancePolicy = ref<AttendancePolicy>({ ...DEFAULT_POLICY })
+const policyConfigured = ref(false)
+const policyLoading = ref(false)
+const policySaving = ref(false)
+
+async function fetchAttendancePolicy() {
+  policyLoading.value = true
+  try {
+    const res = await api.get('/api/v1/hr/attendance-policy', { params: { branch_id: branchId } })
+    attendancePolicy.value = res.data
+    policyConfigured.value = true
+  } catch (e: any) {
+    if (e?.response?.status === 404) {
+      attendancePolicy.value = { ...DEFAULT_POLICY }
+      policyConfigured.value = false
+    } else {
+      console.error(e)
+      toast.error('فشل تحميل سياسة الحضور')
+    }
+  } finally { policyLoading.value = false }
+}
+
+async function saveAttendancePolicy() {
+  policySaving.value = true
+  try {
+    const res = await api.put('/api/v1/hr/attendance-policy', attendancePolicy.value, { params: { branch_id: branchId } })
+    attendancePolicy.value = res.data
+    policyConfigured.value = true
+    toast.success('تم حفظ سياسة الحضور')
+  } catch (e) {
+    console.error(e)
+    toast.error('فشل حفظ سياسة الحضور')
+  } finally { policySaving.value = false }
+}
 
 const employeeNameById = computed(() => {
   const m: Record<number, string> = {}
@@ -124,6 +174,7 @@ async function fetchAttendance() {
     console.error(e)
     toast.error('فشل تحميل سجلات الحضور')
   } finally { attendanceLoading.value = false }
+  await fetchAttendancePolicy()
 }
 
 // ── Allowances / Penalties — نموذج بسيط لـ endpoints اليوم دي (كانت
@@ -466,6 +517,33 @@ onMounted(fetchEmployees)
         <input v-model="attendanceDateTo" @change="fetchAttendance" type="date"
           class="bg-white border border-stone-200 text-gray-700 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
       </div>
+
+      <!-- سياسة الحضور — سماحية التأخير/الانصراف المبكر ونسب الأوفرتايم/الخصم
+           التلقائي المستخدمة في تشغيل الرواتب -->
+      <AppCard title="سياسة الحضور والانصراف" padding="md">
+        <div v-if="policyLoading" class="flex items-center gap-3 py-4">
+          <AppSpinner size="sm" />
+          <span class="text-sm text-gray-400">جاري التحميل...</span>
+        </div>
+        <div v-else class="space-y-4">
+          <p v-if="!policyConfigured" class="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+            لا توجد سياسة محفوظة لهذا الفرع بعد — القيم دي افتراضية، احفظها عشان تُفعَّل فعليًا في حساب الرواتب.
+          </p>
+          <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <AppInput label="سماح تأخير (دقيقة)" type="number" v-model="attendancePolicy.late_grace_minutes" />
+            <AppInput label="سماح انصراف مبكر (دقيقة)" type="number" v-model="attendancePolicy.early_leave_grace_minutes" />
+            <AppInput label="بداية الوردية الافتراضية" type="time" v-model="attendancePolicy.standard_shift_start" />
+            <AppInput label="نهاية الوردية الافتراضية" type="time" v-model="attendancePolicy.standard_shift_end" />
+            <AppInput label="نسبة أجر الأوفرتايم (×)" type="number" v-model="attendancePolicy.overtime_rate_multiplier" />
+            <AppInput label="نسبة خصم دقيقة التأخير (×)" type="number" v-model="attendancePolicy.late_penalty_rate_multiplier" />
+          </div>
+          <div class="flex justify-end">
+            <AppButton size="sm" variant="primary" :disabled="policySaving" @click="saveAttendancePolicy">
+              {{ policySaving ? 'جاري الحفظ...' : 'حفظ السياسة' }}
+            </AppButton>
+          </div>
+        </div>
+      </AppCard>
 
       <div v-if="attendanceLoading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
