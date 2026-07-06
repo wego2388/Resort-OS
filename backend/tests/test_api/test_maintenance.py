@@ -22,6 +22,22 @@ def branch(db: Session):
 
 
 @pytest.fixture
+def employee(db: Session, branch):
+    """موظف حقيقي — لاختبار تكليف أوامر/جداول الصيانة لموظف موجود فعلاً."""
+    import uuid
+    from datetime import date
+    from app.modules.hr.models import Employee
+    emp = Employee(
+        branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name="فني صيانة اختباري", position="فني صيانة", department="الصيانة",
+        basic_salary=5000, hire_date=date.today(), status="active",
+    )
+    db.add(emp)
+    db.flush()
+    return emp
+
+
+@pytest.fixture
 def asset(db: Session, branch):
     import uuid
     data = AssetCreate(
@@ -102,6 +118,63 @@ class TestWorkOrder:
         services.complete_work_order(db, wo.id)
         with pytest.raises(ValueError, match="مكتمل"):
             services.complete_work_order(db, wo.id)
+
+
+class TestAssignedToValidation:
+    """⚠️ باج حقيقي كان هنا: WorkOrder.assigned_to عمود Integer عادي من غير
+    أي FK (بعكس PreventiveSchedule.assigned_to اللي عليه FK حقيقي) — تعيين
+    أمر صيانة لموظف رقمه غير موجود كان ينجح بهدوء (200) من غير أي تحذير.
+    وفي المقابل، PreventiveSchedule كان بيطيح IntegrityError خام (500) بدل
+    رسالة واضحة. services._validate_assigned_to وحّدت السلوك: ValueError
+    (→ 400 في الراوتر) في الحالتين، ونجاح طبيعي لو الموظف حقيقي."""
+
+    def test_create_work_order_rejects_nonexistent_employee(self, db, branch, asset):
+        data = WorkOrderCreate(
+            branch_id=branch.id, asset_id=asset.id, title="تسريب مياه",
+            assigned_to=999999,
+        )
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.create_work_order(db, data, reported_by=1)
+
+    def test_create_work_order_accepts_real_employee(self, db, branch, asset, employee):
+        data = WorkOrderCreate(
+            branch_id=branch.id, asset_id=asset.id, title="تسريب مياه",
+            assigned_to=employee.id,
+        )
+        wo = services.create_work_order(db, data, reported_by=1)
+        assert wo.assigned_to == employee.id
+
+    def test_update_work_order_rejects_nonexistent_employee(self, db, branch, asset):
+        from app.modules.maintenance.schemas import WorkOrderUpdate
+        wo = services.create_work_order(
+            db, WorkOrderCreate(branch_id=branch.id, asset_id=asset.id, title="عطل"), reported_by=1,
+        )
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.update_work_order(db, wo.id, WorkOrderUpdate(assigned_to=999999))
+
+    def test_create_schedule_rejects_nonexistent_employee_cleanly(self, db, branch, asset):
+        """قبل الإصلاح، ده كان بيطيح IntegrityError خام (500) لأن الـ FK بيتحقق
+        على مستوى الداتابيز بس من غير تحقق قبله في service layer."""
+        from app.modules.maintenance.schemas import PreventiveScheduleCreate
+        from datetime import date, timedelta
+        data = PreventiveScheduleCreate(
+            branch_id=branch.id, asset_id=asset.id, title="صيانة دورية",
+            frequency_days=30, next_due=date.today() + timedelta(days=30),
+            assigned_to=999999,
+        )
+        with pytest.raises(ValueError, match="غير موجود"):
+            services.create_schedule(db, data)
+
+    def test_create_schedule_accepts_real_employee(self, db, branch, asset, employee):
+        from app.modules.maintenance.schemas import PreventiveScheduleCreate
+        from datetime import date, timedelta
+        data = PreventiveScheduleCreate(
+            branch_id=branch.id, asset_id=asset.id, title="صيانة دورية",
+            frequency_days=30, next_due=date.today() + timedelta(days=30),
+            assigned_to=employee.id,
+        )
+        schedule = services.create_schedule(db, data)
+        assert schedule.assigned_to == employee.id
 
 
 class TestPreventiveSchedule:

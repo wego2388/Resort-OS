@@ -173,6 +173,24 @@ class TestWorkOrdersEndpoints:
         assert resp.status_code == 200
         assert resp.json()["status"] == "completed"
 
+    def test_assign_to_nonexistent_employee_rejected_cleanly(self, client: TestClient, db, waiter_headers):
+        """Regression: assigned_to had zero validation against the employees
+        table — assigning a work order to a made-up employee id used to
+        return 200 OK with no warning at all. Now a clean 400."""
+        branch = make_branch_committed(db)
+        wo = client.post(
+            "/api/v1/maintenance/work-orders",
+            json={"branch_id": branch.id, "title": "عطل كهربائي"},
+            headers=waiter_headers,
+        ).json()
+        resp = client.patch(
+            f"/api/v1/maintenance/work-orders/{wo['id']}",
+            json={"assigned_to": 999999},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+        assert "غير موجود" in resp.json()["detail"]
+
     def test_add_part_increases_cost(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
         wo = client.post(
@@ -215,6 +233,25 @@ class TestPreventiveSchedulesEndpoints:
         )
         assert update_resp.status_code == 200
         assert update_resp.json()["frequency_days"] == 60
+
+    def test_create_with_nonexistent_employee_rejected_cleanly(self, client: TestClient, db, manager_headers):
+        """Regression: PreventiveSchedule.assigned_to has a real DB-level FK to
+        employees, but nothing validated it beforehand — assigning a schedule
+        to a made-up employee id used to bubble up as a raw 500
+        ("Database operation failed") instead of a clear 400."""
+        branch = make_branch_committed(db)
+        asset = create_asset(client, branch.id, manager_headers)
+        resp = client.post(
+            "/api/v1/maintenance/preventive-schedules",
+            json={
+                "branch_id": branch.id, "asset_id": asset["id"], "title": "صيانة دورية",
+                "frequency_days": 30, "next_due": str(date.today() + timedelta(days=30)),
+                "assigned_to": 999999,
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "غير موجود" in resp.json()["detail"]
 
     def test_create_by_waiter_rejected(self, client: TestClient, db, manager_headers, waiter_headers):
         branch = make_branch_committed(db)

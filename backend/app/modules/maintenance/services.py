@@ -14,6 +14,25 @@ from app.modules.maintenance.schemas import (
 )
 
 
+def _validate_assigned_to(db: Session, employee_id: int | None) -> None:
+    """لو تم تحديد موظف مكلّف، لازم يكون موجود فعليًا في جدول employees.
+
+    ⚠️ باج حقيقي كان هنا: WorkOrder.assigned_to عمود Integer عادي من غير أي
+    FK (على عكس PreventiveSchedule.assigned_to اللي عليه FK حقيقي) — فتعيين
+    أمر صيانة لموظف رقمه غير موجود كان بينجح بهدوء (200) من غير أي تحذير،
+    والأمر يفضل "معلّق" فعليًا لأن محدّش هيشوفه في قائمة مهامه. وعلى الجانب
+    التاني، PreventiveSchedule.assigned_to عليه FK فعلاً بس من غير أي تحقق
+    قبله في الـ service layer — نفس الغلطة كانت بتطلع 500 خام
+    ("Database operation failed") بدل رسالة واضحة. التحقق ده بيوحّد السلوك:
+    رسالة عربية واضحة (400) في الحالتين، مش نجاح وهمي ولا كراش."""
+    if employee_id is None:
+        return
+    from app.modules.hr import crud as hr_crud  # noqa: PLC0415 — تجنّب استيراد دائري
+
+    if not hr_crud.get_employee(db, employee_id):
+        raise ValueError(f"الموظف رقم {employee_id} غير موجود — لا يمكن التكليف له")
+
+
 # ── Asset ─────────────────────────────────────────────────────────────
 
 def get_asset_or_404(db: Session, asset_id: int) -> Asset:
@@ -68,6 +87,7 @@ def get_wo_or_404(db: Session, order_id: int) -> WorkOrder:
 def create_work_order(db: Session, data: WorkOrderCreate, reported_by: int) -> WorkOrder:
     if data.asset_id:
         get_asset_or_404(db, data.asset_id)
+    _validate_assigned_to(db, data.assigned_to)
     wo = crud.create_work_order(db, data, reported_by)
     # تحديث حالة الأصل إلى under_maintenance إذا كانت critical
     if data.asset_id and data.priority == "critical":
@@ -83,6 +103,8 @@ def update_work_order(db: Session, order_id: int, data: WorkOrderUpdate) -> Work
     wo = get_wo_or_404(db, order_id)
     if wo.status in ("completed", "cancelled"):
         raise ValueError("لا يمكن تعديل أمر صيانة مكتمل أو ملغى")
+    if data.assigned_to is not None:
+        _validate_assigned_to(db, data.assigned_to)
     obj = crud.update_work_order(db, wo, data)
     db.commit()
     db.refresh(obj)
@@ -137,6 +159,7 @@ def get_schedule_or_404(db: Session, schedule_id: int) -> PreventiveSchedule:
 
 def create_schedule(db: Session, data: PreventiveScheduleCreate) -> PreventiveSchedule:
     get_asset_or_404(db, data.asset_id)
+    _validate_assigned_to(db, data.assigned_to)
     obj = crud.create_schedule(db, data)
     db.commit()
     db.refresh(obj)
@@ -145,6 +168,8 @@ def create_schedule(db: Session, data: PreventiveScheduleCreate) -> PreventiveSc
 
 def update_schedule(db: Session, schedule_id: int, data: PreventiveScheduleUpdate) -> PreventiveSchedule:
     schedule = get_schedule_or_404(db, schedule_id)
+    if data.assigned_to is not None:
+        _validate_assigned_to(db, data.assigned_to)
     obj = crud.update_schedule(db, schedule, data)
     db.commit()
     db.refresh(obj)
