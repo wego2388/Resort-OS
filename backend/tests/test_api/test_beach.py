@@ -1018,3 +1018,59 @@ class TestBeachVoidReversesFinancials:
 
         with pytest.raises(ValueError, match="مقفولة"):
             services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
+
+
+class TestTimezoneBugFixes:
+    """باج توقيت حقيقي: نفس فئة الباج اللي اتكشفت واتصلحت قبل كده في
+    HR/PMS/Timeshare (سجل حضور/تسوية ليلية/قيد إيراد كان بيتسجّل بتاريخ
+    UTC السيرفر بدل تاريخ القاهرة). الشاطئ كان الموديول الوحيد الباقي لسه
+    بيستخدم date.today() الخام في كل حدود اليوم (إعادة ضبط السعة اليومية،
+    تصفير حصة B2B، تقرير نهاية اليوم) — لو السيرفر شغّال UTC، أي عملية بين
+    منتصف ليل القاهرة والساعة 3 صباحًا كانت بتتسجّل على يوم غلط (اليوم اللي
+    فات بدل النهاردة فعليًا)."""
+
+    def test_sell_ticket_uses_resort_local_date_not_server_utc(self, db, monkeypatch):
+        """لو UTC السيرفر لسه فاتح على تاريخ الأمس بس توقيت القاهرة دخل يوم
+        جديد، تذكرة البيع لازم تتسجّل على inventory_date بتاريخ القاهرة
+        (اليوم الجديد) — مش على صف الأمس اللي كان ممكن يكون قريب من الامتلاء."""
+        import app.resort_os.timezone_utils as tzutils
+
+        forced_date = date(2026, 7, 6)  # "اليوم" بتوقيت القاهرة
+        monkeypatch.setattr(tzutils, "local_today", lambda tz_name: forced_date)
+
+        branch = make_branch(db)
+        tx = services.sell_ticket(db, branch.id, BeachSellRequest(tx_type="entry", quantity=1))
+        assert tx.tx_date == forced_date
+
+        inv = crud.get_or_create_inventory(db, branch.id, forced_date)
+        assert inv.capacity_used == 1
+
+    def test_b2b_checkin_uses_resort_local_date_for_quota_day(self, db, monkeypatch):
+        """حصة الفندق اليومية لازم تتصفّر/تتحسب على يوم القاهرة، مش يوم
+        UTC السيرفر — وإلا تسجيل دخول الساعة 1 صباحًا بتوقيت القاهرة كان
+        هيتحسب لسه على حصة "أمس" اللي ممكن تكون خلصت بالفعل."""
+        import app.resort_os.timezone_utils as tzutils
+
+        forced_date = date(2026, 7, 6)
+        monkeypatch.setattr(tzutils, "local_today", lambda tz_name: forced_date)
+
+        branch = make_branch(db)
+        contract = make_contract(db, branch, quota=5)
+        req = B2BCheckinRequest(contract_id=contract.id, guests_count=3)
+        services.b2b_checkin(db, branch.id, req)
+
+        day = crud.get_or_create_contract_day(db, contract.id, forced_date)
+        assert day.checked_in_count == 3
+
+    def test_eod_report_uses_resort_local_date_by_default(self, db, monkeypatch):
+        import app.resort_os.timezone_utils as tzutils
+
+        forced_date = date(2026, 7, 6)
+        monkeypatch.setattr(tzutils, "local_today", lambda tz_name: forced_date)
+
+        branch = make_branch(db)
+        services.sell_ticket(db, branch.id, BeachSellRequest(tx_type="entry", quantity=2))
+
+        report = services.get_eod_report(db, branch.id)
+        assert report["date"] == forced_date
+        assert report["total_entries"] == 2

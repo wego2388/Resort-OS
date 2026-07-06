@@ -25,6 +25,20 @@ from app.resort_os.beach_engine import (
 )
 
 
+def _business_today() -> date:
+    """تاريخ "النهاردة" بتوقيت المنتجع (settings.TIMEZONE)، مش توقيت نظام
+    تشغيل السيرفر — راجع app.resort_os.timezone_utils.local_today للتفاصيل
+    (نفس فئة الباج اللي اتكشفت واتصلحت قبل كده في HR/PMS/Timeshare: حدود
+    اليوم — إعادة ضبط سعة الشاطئ، تصفير حصة B2B، تقرير نهاية اليوم — كانت
+    بتتزاح بفرق التوقيت UTC↔Africa/Cairo لحد 3 ساعات كل يوم). Import محلي
+    (مش أعلى الملف) عشان التستات تقدر تعمل monkeypatch على
+    `app.resort_os.timezone_utils.local_today` مباشرة، زي نفس الباترن
+    المستخدم في pms.services بالظبط."""
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    return local_today(settings.TIMEZONE)
+
+
 class BeachConcurrencyError(Exception):
     """عملية بيع/تشيك-إن تانية ماسكة صف سعة الشاطئ لنفس الفرع/اليوم دلوقتي —
     409، مش 400 (زي pms.services.BookingConflictError بالظبط)."""
@@ -127,7 +141,7 @@ def sell_ticket(
     data: BeachSellRequest,
     tx_date: Optional[date] = None,
 ) -> BeachTransaction:
-    tx_date = tx_date or date.today()
+    tx_date = tx_date or _business_today()
 
     folio_id = data.folio_id
     if not folio_id and data.room_id:
@@ -258,7 +272,7 @@ def b2b_checkin(
     data: B2BCheckinRequest,
     tx_date: Optional[date] = None,
 ) -> BeachTransaction:
-    tx_date = tx_date or date.today()
+    tx_date = tx_date or _business_today()
 
     contract_row = crud.get_b2b_contract(db, data.contract_id)
     if not contract_row:
@@ -379,7 +393,7 @@ def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") ->
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
     post_simple_revenue_journal(
-        db, tx.branch_id, date.today(),
+        db, tx.branch_id, _business_today(),
         debit_account_code="4300", credit_account_code="1100",
         amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
         reference=f"BCH-VOID-{tx.id:06d}",
@@ -428,7 +442,7 @@ def generate_ticket_pdf(db: Session, tx_id: int) -> bytes:
 
 
 def set_surge(db: Session, branch_id: int, surge_pct: Decimal, inv_date: Optional[date] = None) -> BeachInventory:
-    inv_date = inv_date or date.today()
+    inv_date = inv_date or _business_today()
     if surge_pct < 0 or surge_pct > 200:
         raise ValueError("surge_pct يجب أن يكون بين 0 و 200")
     row = crud.set_surge_manual(db, branch_id, inv_date, surge_pct)
@@ -456,7 +470,7 @@ def _pct_change(current: Decimal, previous: Decimal) -> Optional[float]:
 def get_eod_report(db: Session, branch_id: int, report_date: Optional[date] = None) -> dict:
     """تقرير نهاية اليوم — إجمالي الدخول حسب النوع، إيرادات الفوط، ومقارنة
     بالأمس والأسبوع الماضي (نفس اليوم)."""
-    report_date = report_date or date.today()
+    report_date = report_date or _business_today()
     yesterday = report_date - timedelta(days=1)
     last_week = report_date - timedelta(days=7)
 
@@ -548,7 +562,7 @@ def generate_eod_report_pdf(db: Session, branch_id: int, report_date: Optional[d
 def get_b2b_quota_status(db: Session, branch_id: int, day: Optional[date] = None) -> list[dict]:
     """حالة حصص كل فنادق B2B النشطة اليوم — بيوصل quota_warning (≤5 أشخاص متبقين)
     من beach_engine.B2BContractState اللي كان موجود بس مش متوصّل لأي endpoint."""
-    day = day or date.today()
+    day = day or _business_today()
     rows = crud.list_b2b_contracts_with_today_usage(db, branch_id, day)
 
     result = []

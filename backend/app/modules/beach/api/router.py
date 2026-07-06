@@ -7,6 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
+from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
     get_current_active_user, get_manager_user, require_permission,
@@ -19,8 +20,23 @@ from app.modules.beach.schemas import (
     BeachSurgeSet, BeachTransactionRead, VoidTransactionRequest,
 )
 from app.modules.core.schemas import PaginatedResponse
+from app.resort_os.timezone_utils import local_today
 
 router = APIRouter(tags=["beach"])
+
+
+def _business_today() -> date:
+    """تاريخ "النهاردة" بتوقيت المنتجع (settings.TIMEZONE) — مش توقيت
+    السيرفر. ⚠️ باج حقيقي كان هنا: كل حدود اليوم في الشاطئ (إعادة ضبط
+    السعة اليومية، تصفير حصة B2B، تقرير نهاية اليوم) كانت بتتحسب بـ
+    `date.today()` العادية (توقيت نظام تشغيل السيرفر، UTC غالبًا في
+    الإنتاج) بدل توقيت القاهرة — يعني في أي وقت بين منتصف الليل بتوقيت
+    القاهرة والساعة 3 صباحًا (فرق UTC+3)، أي عملية بيع/تشيك-إن كانت
+    بتتسجّل على `inventory_date`/`day` اليوم اللي فات بدل النهاردة فعليًا:
+    سعة اليوم الجديد ما كانتش اتصفرت، وحصة الفندق القديمة كانت لسه سارية.
+    نفس فئة الباج اللي اتكشفت قبل كده في HR/PMS/Timeshare — beach كان
+    الموديول الوحيد الباقي من غير الإصلاح ده."""
+    return local_today(settings.TIMEZONE)
 
 
 # ── Inventory ─────────────────────────────────────────────────────────
@@ -30,7 +46,7 @@ def get_inventory(
     db: DbDep,
     _=Depends(get_current_active_user),
     branch_id: int  = Query(...),
-    inv_date:  date = Query(default_factory=date.today),
+    inv_date:  date = Query(default_factory=_business_today),
 ):
     row = crud.get_or_create_inventory(db, branch_id, inv_date)
     db.commit()
@@ -140,7 +156,7 @@ def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=D
 def daily_summary(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int  = Query(...),
-    tx_date:   date = Query(default_factory=date.today),
+    tx_date:   date = Query(default_factory=_business_today),
 ):
     inv = crud.get_or_create_inventory(db, branch_id, tx_date)
     summary = crud.get_daily_summary(db, branch_id, tx_date)
@@ -178,7 +194,7 @@ def download_eod_report_pdf(
     branch_id: int = Query(...), report_date: Optional[date] = Query(None),
 ):
     pdf = services.generate_eod_report_pdf(db, branch_id, report_date)
-    fname = f"beach-eod-{report_date or date.today()}.pdf"
+    fname = f"beach-eod-{report_date or _business_today()}.pdf"
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -213,7 +229,7 @@ def get_live_dashboard(
     branch_id: int = Query(...),
 ):
     """السعة الحالية + حصص فنادق B2B + تنبيهات — للوحة حيّة (polling كل شوية)."""
-    inv = crud.get_or_create_inventory(db, branch_id, date.today())
+    inv = crud.get_or_create_inventory(db, branch_id, _business_today())
     db.commit()
     b2b_status = services.get_b2b_quota_status(db, branch_id)
     alerts = [s for s in b2b_status if s["quota_warning"]]
