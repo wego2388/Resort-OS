@@ -46,6 +46,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_rooms(db)
     _seed_timeshare_units(db)
     _seed_timeshare_contracts(db)
+    _seed_lease_contracts(db)
     _seed_menus(db)
     _seed_dining_tables(db)
     _seed_crm(db)
@@ -605,6 +606,109 @@ def _seed_timeshare_contracts(db: Session) -> None:
 
     db.flush()
     print(f"  ✓ Timeshare contracts seeded ({created} illustrative sample customers — not real records)")
+
+
+def _seed_lease_contracts(db: Session) -> None:
+    """⚠️ جدول lease_contracts كان فاضيًا تمامًا (0 صف) رغم إن موديول الإيجارات
+    عنده باك إند كامل (9 endpoints: عقود، جدول دفعات، غرامات تأخير، سجل كاش
+    مستأجرين، إيصال PDF) وفرونت إند كامل (LeasingView.vue) — يعني الشاشة كانت
+    هتفتح فاضية 100% أول مرة، بالظبط نفس فئة الباج الموثّقة في rooms/dining_tables
+    الفاضية (اتكشف أثناء اختبار حي كمدير إيجارات، 2026-07-06).
+
+    عملاء وعقود تجريبية توضيحية (illustrative sample data) — مش سجلات حقيقية
+    للمنتجع، بأسماء كشوك/محلات تجارية واقعية (تأجير معدات غطس، مظلات شاطئ،
+    بازار هدايا) بدل قواعد فاضية. الجدول بيُبنى مباشرة بالـ ORM + الـ pure
+    engine (`generate_lease_monthly_schedule`/`calculate_lease_penalty`) — مش
+    عن طريق `services.create_contract` — عشان منولّدش قيود محاسبية حقيقية على
+    الدفاتر لعملاء مُلفَّقين (نفس القرار المتبع في `_seed_timeshare_contracts`).
+
+    Idempotent: لو فيه أي عقد بادئته 'LC-SEED-' للفرع → يتجاهَل (check-then-create)."""
+    from datetime import timedelta
+    from app.modules.leasing.models import LeaseContract, LeasePayment, TenantCashLog
+    from app.modules.core.models import Branch
+    from app.resort_os.timeshare_engine import calculate_lease_penalty, generate_lease_monthly_schedule
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+    if db.query(LeaseContract).filter(
+        LeaseContract.branch_id == branch.id,
+        LeaseContract.contract_number.like("LC-SEED-%"),
+    ).first():
+        return
+
+    today = date.today()
+
+    # كل عنصر: بيانات العقد + عدد الدفعات المدفوعة/المتأخرة (الباقي pending)
+    specs = [
+        dict(suffix="0001", tenant="كابتن سيف - كشك تأجير معدات الغطس", phone="01011122233",
+             unit="كشك رقم 5 - أمام الرصيف البحري",
+             start=today - timedelta(days=240), end=today + timedelta(days=490),
+             base_rent=Decimal("4500.00"), increase_rate=Decimal("0"), deposit=Decimal("8000.00"),
+             status="active", paid_n=6, overdue_n=2),
+        dict(suffix="0002", tenant="شركة نور للمظلات والشماسي", phone="01122334455",
+             unit="امتداد الشاطئ الشمالي - قطاع B",
+             start=today - timedelta(days=420), end=today + timedelta(days=310),
+             base_rent=Decimal("6000.00"), increase_rate=Decimal("5.0"), deposit=Decimal("12000.00"),
+             status="active", paid_n=10, overdue_n=3),
+        dict(suffix="0003", tenant="بازار الخيمة للهدايا والتذكارات", phone="01288997766",
+             unit="محل رقم 2 - الممر التجاري",
+             start=today - timedelta(days=760), end=today - timedelta(days=30),
+             base_rent=Decimal("3200.00"), increase_rate=Decimal("5.0"), deposit=Decimal("5000.00"),
+             status="expired", paid_n=None, overdue_n=0),   # paid_n=None → كل الجدول (عقد منتهي مسدد بالكامل)
+    ]
+
+    created_contracts: list[LeaseContract] = []
+    for s in specs:
+        contract = LeaseContract(
+            branch_id=branch.id, contract_number=f"LC-SEED-{s['suffix']}",
+            tenant_name=s["tenant"], tenant_phone=s["phone"], unit_description=s["unit"],
+            start_date=s["start"], end_date=s["end"],
+            base_rent=s["base_rent"], increase_rate=s["increase_rate"],
+            billing_day=1, grace_months=0, payment_period="monthly",
+            security_deposit=s["deposit"], status=s["status"],
+            notes="بيانات تجريبية للعرض فقط — مش عقد إيجار حقيقي",
+        )
+        db.add(contract)
+        db.flush()
+
+        schedule = generate_lease_monthly_schedule(
+            base_rent=s["base_rent"], increase_rate=float(s["increase_rate"]),
+            start_date=s["start"], end_date=s["end"],
+        )
+        paid_n = s["paid_n"] if s["paid_n"] is not None else len(schedule)
+        for idx, item in enumerate(schedule):
+            p = LeasePayment(
+                contract_id=contract.id, due_date=item["due_date"],
+                amount=item["amount"], year_n=item["year_n"],
+            )
+            if idx < paid_n:
+                p.status = "paid"
+                p.paid_amount = item["amount"]
+                p.paid_at = datetime.combine(item["due_date"], datetime.min.time())
+                p.payment_method = "cash"
+                p.receipt_number = f"LP-SEED-{contract.id}-{idx + 1:03d}"
+            elif idx < paid_n + s["overdue_n"] and item["due_date"] < today:
+                p.status = "overdue"
+                p.penalty = calculate_lease_penalty(item["amount"], item["due_date"], today)
+            db.add(p)
+        created_contracts.append(contract)
+
+    # سجل كاش تجريبي — تسوية حصة إيراد لكشك الغطس + ملاحظة صيانة لكشك المظلات
+    if len(created_contracts) >= 2:
+        db.add(TenantCashLog(
+            branch_id=branch.id, contract_id=created_contracts[0].id, amount=Decimal("1200.00"),
+            activity_type="revenue_share", payment_method="cash", reference="RS-SEED-01",
+            notes="تسوية حصة إيراد تأجير معدات شهرية",
+        ))
+        db.add(TenantCashLog(
+            branch_id=branch.id, contract_id=created_contracts[1].id, amount=Decimal("450.00"),
+            activity_type="maintenance", payment_method="cash", reference="MNT-SEED-01",
+            notes="إصلاح عمود مظلة تالف",
+        ))
+
+    db.flush()
+    print(f"  ✓ Lease contracts seeded ({len(created_contracts)} illustrative sample tenants — not real records)")
 
 
 def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
