@@ -31,7 +31,10 @@ def make_branch(db):
     return b
 
 
-def make_contract(db, branch, quota=10, entry_price=Decimal("80"), towel_price=Decimal("30")):
+def make_contract(
+    db, branch, quota=10, entry_price=Decimal("80"), towel_price=Decimal("30"),
+    valid_from=None, valid_until=None, is_active=True,
+):
     today = date.today()
     data = B2BContractCreate(
         branch_id=branch.id,
@@ -39,9 +42,9 @@ def make_contract(db, branch, quota=10, entry_price=Decimal("80"), towel_price=D
         daily_quota=quota,
         entry_price=entry_price,
         towel_price=towel_price,
-        valid_from=today - timedelta(days=1),
-        valid_until=today + timedelta(days=30),
-        is_active=True,
+        valid_from=valid_from or (today - timedelta(days=1)),
+        valid_until=valid_until or (today + timedelta(days=30)),
+        is_active=is_active,
     )
     obj = crud.create_b2b_contract(db, data)
     db.commit()
@@ -374,6 +377,35 @@ class TestB2BCheckin:
         branch = make_branch(db)
         req = B2BCheckinRequest(contract_id=9999, guests_count=1)
         with pytest.raises(ValueError):
+            services.b2b_checkin(db, branch.id, req)
+
+    def test_b2b_expired_contract_blocks_checkin(self, db):
+        """باج حقيقي كان هنا: عقد فندق منتهي (valid_until فات من شهور) بس
+        لسه is_active=True في الداتابيز (محدش قفله يدويًا) كان يعدّي تسجيل
+        الدخول عادي — يستهلك سعة/فوط حقيقية ويتحاسب الفندق عليه رغم إن العقد
+        انتهى. اتصلح بالتحقق من نافذة الصلاحية (valid_from/valid_until) في
+        beach_engine.validate_b2b_checkin."""
+        branch = make_branch(db)
+        today = date.today()
+        expired = make_contract(
+            db, branch,
+            valid_from=today - timedelta(days=400),
+            valid_until=today - timedelta(days=30),
+        )
+        req = B2BCheckinRequest(contract_id=expired.id, guests_count=1)
+        with pytest.raises(ValueError, match="غير سارٍ"):
+            services.b2b_checkin(db, branch.id, req)
+
+    def test_b2b_not_yet_started_contract_blocks_checkin(self, db):
+        branch = make_branch(db)
+        today = date.today()
+        future = make_contract(
+            db, branch,
+            valid_from=today + timedelta(days=10),
+            valid_until=today + timedelta(days=100),
+        )
+        req = B2BCheckinRequest(contract_id=future.id, guests_count=1)
+        with pytest.raises(ValueError, match="غير سارٍ"):
             services.b2b_checkin(db, branch.id, req)
 
     def test_b2b_price_calculation(self, db):

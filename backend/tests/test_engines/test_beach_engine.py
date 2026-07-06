@@ -4,6 +4,7 @@ tests/test_engines/test_beach_engine.py
 بدون DB، بدون fixtures — pure functions فقط
 """
 
+from datetime import date
 from decimal import Decimal
 
 import pytest
@@ -45,6 +46,8 @@ def _b2b(
     entry_price: Decimal = Decimal("150"),
     towel_price: Decimal = Decimal("50"),
     is_active: bool = True,
+    valid_from: date = date(2000, 1, 1),
+    valid_until: date = date(2099, 12, 31),
 ) -> B2BContractState:
     return B2BContractState(
         contract_id=contract_id,
@@ -54,6 +57,8 @@ def _b2b(
         entry_price=entry_price,
         towel_price=towel_price,
         is_active=is_active,
+        valid_from=valid_from,
+        valid_until=valid_until,
     )
 
 
@@ -239,6 +244,42 @@ class TestValidateB2bCheckin:
             _b2b(daily_quota=50, checked_in_today=40), guests_count=10
         )
         assert result.valid is True
+
+    def test_expired_contract_blocked(self):
+        """باج حقيقي كان هنا: عقد فندق منتهي (valid_until فات) بس لسه
+        is_active=True كان يعدّي تسجيل الدخول عادي — دلوقتي بيترفض حتى لو
+        is_active=True."""
+        expired = _b2b(
+            valid_from=date(2025, 1, 1), valid_until=date(2025, 12, 31),
+        )
+        result = validate_b2b_checkin(expired, guests_count=1, check_date=date(2026, 7, 6))
+        assert result.valid is False
+        assert "غير سارٍ" in result.error
+
+    def test_not_yet_started_contract_blocked(self):
+        """عقد لسه ماوصلش تاريخ valid_from — نفس المنطق بالظبط."""
+        future = _b2b(
+            valid_from=date(2027, 1, 1), valid_until=date(2027, 12, 31),
+        )
+        result = validate_b2b_checkin(future, guests_count=1, check_date=date(2026, 7, 6))
+        assert result.valid is False
+        assert "غير سارٍ" in result.error
+
+    def test_contract_valid_on_boundary_dates(self):
+        """أول وآخر يوم في نافذة الصلاحية لازم يعدّوا (inclusive boundaries)."""
+        contract = _b2b(valid_from=date(2026, 1, 1), valid_until=date(2026, 12, 31))
+        assert validate_b2b_checkin(contract, 1, check_date=date(2026, 1, 1)).valid is True
+        assert validate_b2b_checkin(contract, 1, check_date=date(2026, 12, 31)).valid is True
+        assert validate_b2b_checkin(contract, 1, check_date=date(2027, 1, 1)).valid is False
+
+    def test_inactive_takes_priority_over_date_message(self):
+        """لو العقد غير نشط ومنتهي مع بعض، رسالة 'غير نشط' هي اللي تظهر أولاً."""
+        result = validate_b2b_checkin(
+            _b2b(is_active=False, valid_from=date(2025, 1, 1), valid_until=date(2025, 12, 31)),
+            guests_count=1, check_date=date(2026, 7, 6),
+        )
+        assert result.valid is False
+        assert "غير نشط" in result.error
 
 
 # ─── calculate_tx_price ───────────────────────────────────────────────

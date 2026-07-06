@@ -5,7 +5,9 @@ No database, no HTTP framework, no external services.
 يُعزل منطق الشاطئ (capacity, towel, surge, B2B) بعيداً عن الـ service layer.
 """
 from dataclasses import dataclass
+from datetime import date
 from decimal import Decimal, ROUND_HALF_UP
+from typing import Optional
 
 
 # ── TX types (المصدر الوحيد للحقيقة) ─────────────────────────────────────────
@@ -58,6 +60,12 @@ class B2BContractState:
     entry_price: Decimal
     towel_price: Decimal
     is_active: bool
+    valid_from: date
+    valid_until: date
+
+    def is_valid_on(self, check_date: date) -> bool:
+        """True لو ``check_date`` داخل [valid_from, valid_until] العقد."""
+        return self.valid_from <= check_date <= self.valid_until
 
     @property
     def remaining_quota(self) -> int:
@@ -114,10 +122,25 @@ def validate_entry(
 def validate_b2b_checkin(
     contract: B2BContractState,
     guests_count: int,
+    check_date: Optional[date] = None,
 ) -> BeachValidationResult:
-    """تحقق من حصة الفندق قبل تسجيل دخول B2B."""
+    """تحقق من حصة الفندق قبل تسجيل دخول B2B.
+
+    ⚠️ باج حقيقي كان هنا: التحقق كان بيقتصر على `is_active` بس — عقد فندق
+    منتهي فعليًا (valid_until فات معاده من شهور) بس لسه `is_active=True` في
+    الداتابيز (محدش رجع يقفله يدويًا) كان يعدّي تسجيل الدخول عادي وبيستهلك
+    سعة/فوط حقيقية ويتحاسب الفندق عليه، رغم إن العقد انتهى فعليًا. دلوقتي
+    بيتحقق كمان من نافذة الصلاحية (valid_from/valid_until) بالنسبة لتاريخ
+    العملية نفسه (مش دايمًا النهاردة، عشان check-in بتاريخ سابق يتحقق صح)."""
+    check_date = check_date or date.today()
     if not contract.is_active:
         return BeachValidationResult(False, "عقد الفندق غير نشط")
+    if not contract.is_valid_on(check_date):
+        return BeachValidationResult(
+            False,
+            f"عقد {contract.hotel_name} غير سارٍ في هذا التاريخ "
+            f"(سارٍ من {contract.valid_from} إلى {contract.valid_until})"
+        )
     if contract.is_quota_exhausted:
         return BeachValidationResult(
             False,

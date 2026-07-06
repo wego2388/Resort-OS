@@ -236,6 +236,22 @@ def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
     )
 
 
+def _contract_state(contract_row: "B2BContract", checked_in_today: int) -> B2BContractState:
+    """يبني B2BContractState من صف B2BContract — نقطة واحدة عشان أي حقل
+    جديد (زي valid_from/valid_until) يتضاف مرة واحدة بس، مش يتكرر في 3 أماكن."""
+    return B2BContractState(
+        contract_id=contract_row.id,
+        hotel_name=contract_row.hotel_name,
+        daily_quota=contract_row.daily_quota,
+        checked_in_today=checked_in_today,
+        entry_price=contract_row.entry_price,
+        towel_price=contract_row.towel_price,
+        is_active=contract_row.is_active,
+        valid_from=contract_row.valid_from,
+        valid_until=contract_row.valid_until,
+    )
+
+
 def b2b_checkin(
     db: Session,
     branch_id: int,
@@ -250,17 +266,9 @@ def b2b_checkin(
 
     contract_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
     contract_day = _lock_contract_day_or_raise(db, contract_day)
-    contract_state = B2BContractState(
-        contract_id=contract_row.id,
-        hotel_name=contract_row.hotel_name,
-        daily_quota=contract_row.daily_quota,
-        checked_in_today=contract_day.checked_in_count,
-        entry_price=contract_row.entry_price,
-        towel_price=contract_row.towel_price,
-        is_active=contract_row.is_active,
-    )
+    contract_state = _contract_state(contract_row, contract_day.checked_in_count)
 
-    validation = validate_b2b_checkin(contract_state, data.guests_count)
+    validation = validate_b2b_checkin(contract_state, data.guests_count, tx_date)
     if not validation.valid:
         raise ValueError(validation.error)
 
@@ -290,15 +298,7 @@ def b2b_checkin(
     # (increment_b2b_checkins فوق)، وإلا التحذير كان هيتأخر تسجيل دخول واحد
     # كامل عن اللحظة الفعلية اللي الحصة توصل فيها للحد (باج توقيت حقيقي).
     updated_day = crud.get_or_create_contract_day(db, data.contract_id, tx_date)
-    updated_state = B2BContractState(
-        contract_id=contract_row.id,
-        hotel_name=contract_row.hotel_name,
-        daily_quota=contract_row.daily_quota,
-        checked_in_today=updated_day.checked_in_count,
-        entry_price=contract_row.entry_price,
-        towel_price=contract_row.towel_price,
-        is_active=contract_row.is_active,
-    )
+    updated_state = _contract_state(contract_row, updated_day.checked_in_count)
     if updated_state.quota_warning and not updated_day.notified_quota_warning:
         updated_day.notified_quota_warning = True
         db.flush()
@@ -553,15 +553,7 @@ def get_b2b_quota_status(db: Session, branch_id: int, day: Optional[date] = None
 
     result = []
     for contract, checked_in_today in rows:
-        state = B2BContractState(
-            contract_id=contract.id,
-            hotel_name=contract.hotel_name,
-            daily_quota=contract.daily_quota,
-            checked_in_today=checked_in_today,
-            entry_price=contract.entry_price,
-            towel_price=contract.towel_price,
-            is_active=contract.is_active,
-        )
+        state = _contract_state(contract, checked_in_today)
         result.append({
             "contract_id":        state.contract_id,
             "hotel_name":         state.hotel_name,
@@ -570,6 +562,7 @@ def get_b2b_quota_status(db: Session, branch_id: int, day: Optional[date] = None
             "remaining_quota":    state.remaining_quota,
             "is_quota_exhausted": state.is_quota_exhausted,
             "quota_warning":      state.quota_warning,
+            "is_valid_today":     state.is_valid_on(day),
         })
     return result
 
