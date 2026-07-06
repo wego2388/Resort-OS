@@ -10,10 +10,11 @@ from app.core.config import settings
 from app.resort_os.timezone_utils import local_date_to_utc_range
 from app.modules.restaurant.models import (
     DiningTable, KDSScreen, KitchenTicket, MenuCategory, MenuItem, MenuItemExtra,
-    MenuItemExtraGroup, Order, OrderItem, OrderItemExtra,
+    MenuItemExtraGroup, MenuItemRecipeLine, Order, OrderItem, OrderItemExtra,
 )
 from app.modules.restaurant.schemas import (
-    MenuCategoryCreate, MenuItemCreate, MenuItemExtraGroupCreate, MenuItemUpdate,
+    MenuCategoryCreate, MenuItemCreate, MenuItemExtraGroupCreate,
+    MenuItemRecipeLineCreate, MenuItemRecipeLineUpdate, MenuItemUpdate,
 )
 
 
@@ -91,6 +92,35 @@ def delete_extra_group(db: Session, group_id: int) -> bool:
     if not group:
         return False
     db.delete(group)
+    db.flush()
+    return True
+
+
+# ── Recipe / BOM ──────────────────────────────────────────────────────
+
+def get_recipe_line(db: Session, line_id: int) -> Optional[MenuItemRecipeLine]:
+    return db.query(MenuItemRecipeLine).filter(MenuItemRecipeLine.id == line_id).first()
+
+
+def create_recipe_line(db: Session, menu_item_id: int, data: MenuItemRecipeLineCreate) -> MenuItemRecipeLine:
+    line = MenuItemRecipeLine(menu_item_id=menu_item_id, **data.model_dump())
+    db.add(line)
+    db.flush()
+    return line
+
+
+def update_recipe_line(db: Session, line: MenuItemRecipeLine, data: MenuItemRecipeLineUpdate) -> MenuItemRecipeLine:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(line, field, value)
+    db.flush()
+    return line
+
+
+def delete_recipe_line(db: Session, line_id: int) -> bool:
+    line = get_recipe_line(db, line_id)
+    if not line:
+        return False
+    db.delete(line)
     db.flush()
     return True
 

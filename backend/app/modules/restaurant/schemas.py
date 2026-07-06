@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MenuCategoryCreate(BaseModel):
@@ -86,12 +86,63 @@ class MenuItemExtraGroupRead(BaseModel):
     options:      list[MenuItemExtraRead] = []
 
 
+# ─────────────────────── Recipe / BOM ──────────────────────────────────
+# وصفة الصنف — كمية من inventory.Product بتتستهلك لكل وحدة مباعة. راجع
+# app.modules.restaurant.models.MenuItemRecipeLine للتفاصيل الكاملة.
+
+class MenuItemRecipeLineCreate(BaseModel):
+    product_id:        int
+    quantity_per_unit: Decimal = Field(..., gt=0)
+    notes:             Optional[str] = Field(None, max_length=200)
+
+
+class MenuItemRecipeLineUpdate(BaseModel):
+    quantity_per_unit: Optional[Decimal] = Field(None, gt=0)
+    notes:             Optional[str]     = Field(None, max_length=200)
+
+
+class MenuItemRecipeLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                int
+    menu_item_id:      int
+    product_id:        int
+    product_name:      str
+    product_unit:      str
+    quantity_per_unit: Decimal
+    unit_cost:         Decimal   # snapshot لحظي من Product.cost_price الحالي
+    line_cost:         Decimal   # quantity_per_unit × unit_cost
+    notes:             Optional[str]
+
+
 class MenuItemRead(MenuItemCreate):
     model_config = ConfigDict(from_attributes=True)
     id:           int
     created_at:   datetime
     updated_at:   datetime
     extra_groups: list[MenuItemExtraGroupRead] = []
+    recipe_lines: list[MenuItemRecipeLineRead] = []
+    # تكلفة محسوبة من الوصفة (مجموع quantity_per_unit × تكلفة المنتج الحالية
+    # لكل سطر) لو فيه وصفة حقيقية، وإلا fallback لحقل cost اليدوي — الفورمولا
+    # نفسها في services.compute_menu_item_cost (business logic، مش هنا).
+    computed_cost: Decimal = Decimal("0")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_recipe_fields(cls, obj):
+        """recipe_lines/computed_cost مش أعمدة حقيقية على MenuItem (ORM) —
+        بيتحسبوا هنا من الـ relationship + سعر المنتج الحالي قبل الـ
+        validation العادي، عشان MenuItemRead.model_validate(item) يفضل
+        شغال زي ما هو من كل نقط الاستدعاء الموجودة من غير أي تعديل عليهم."""
+        if isinstance(obj, (dict, cls)):
+            return obj
+        from app.modules.restaurant import services as _services  # noqa: PLC0415 — تجنّب circular import مع services.py
+
+        data = {name: getattr(obj, name, None) for name in cls.model_fields
+                if name not in ("recipe_lines", "computed_cost", "extra_groups")}
+        data["extra_groups"] = getattr(obj, "extra_groups", [])
+        data["recipe_lines"] = [_services.build_recipe_line_read(line) for line in getattr(obj, "recipe_lines", [])]
+        data["computed_cost"] = _services.compute_menu_item_cost(obj)
+        return data
 
 
 class DiningTableRead(BaseModel):
