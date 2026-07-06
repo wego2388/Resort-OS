@@ -120,13 +120,20 @@ def lock_product_for_update(db: Session, product_id: int) -> Optional[Product]:
     )
 
 
-def adjust_stock(db: Session, product: Product, delta: Decimal) -> Product:
+def adjust_stock(db: Session, product: Product, delta: Decimal, allow_negative: bool = False) -> Product:
     """يُحدّث current_stock بالفرق — موجب=إضافة، سالب=خصم. يقفل صف المنتج أولاً
     (راجع lock_product_for_update) عشان يمنع oversell/lost-update لو خصمين
-    متزامنين حصلوا على نفس الصنف بالظبط."""
+    متزامنين حصلوا على نفس الصنف بالظبط.
+
+    allow_negative=False (الافتراضي): الرصيد بيتقفل عند صفر (مينزلش تحته) —
+    سلوك كل النداءات القديمة. allow_negative=True (استهلاك وصفات مطعم/كافيه
+    بس — راجع services.record_movement): مسموح يبقى سالب فعليًا، عشان الخصم
+    يعكس الاستهلاك الحقيقي بدل ما يتقطع عند صفر ويسيب الرصيد المسجّل أعلى من
+    الواقع."""
     locked = lock_product_for_update(db, product.id)
     product = locked or product
-    product.current_stock = max(Decimal("0"), product.current_stock + delta)
+    new_stock = product.current_stock + delta
+    product.current_stock = new_stock if allow_negative else max(Decimal("0"), new_stock)
     db.flush()
     return product
 

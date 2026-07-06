@@ -1,6 +1,7 @@
 """app/modules/inventory/services.py"""
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -18,6 +19,8 @@ from app.modules.inventory.schemas import (
     StockMovementCreate, WarehouseCreate,
     PurchaseRequestCreate, StockCountCreate,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class InventoryConcurrencyError(Exception):
@@ -117,16 +120,36 @@ def record_movement(
     db: Session,
     data: StockMovementCreate,
     moved_by: int,
+    allow_negative: bool = False,
 ):
-    """يُسجّل حركة مخزون ويُحدّث الرصيد."""
+    """يُسجّل حركة مخزون ويُحدّث الرصيد.
+
+    allow_negative=False (الافتراضي، وسلوك كل نداءات هذه الدالة القديمة قبل
+    وصفات المطعم/الكافيه): لو الخصم هيرجّع الرصيد سالب، بيرفض الحركة بالكامل
+    (ValueError → 400) — مناسب للحركات اليدوية (جرد، تحويل، شراء) اللي لازم
+    تعكس رصيد حقيقي دايمًا.
+
+    allow_negative=True (يُستخدم من استهلاك وصفات المطعم/الكافيه بس —
+    consume_stock عبر _deduct_inventory_for_order): بيسمح بالرصيد يبقى
+    سالب مع تسجيل تحذير، بدل ما يرفض الخصم بصمت أو يمنع إتمام البيع. غرفة
+    طعام حقيقية، مش مخزن — إيقاف بيع صنف بسبب فرق جرد بسيط في مكوّن واحد
+    أسوأ تشغيليًا من رصيد سالب مؤقت لحد ما يتصحّح بالجرد التالي."""
     product = get_product_or_404(db, data.product_id)
-    if data.quantity < 0 and abs(data.quantity) > product.current_stock:
+    would_go_negative = data.quantity < 0 and abs(data.quantity) > product.current_stock
+    if would_go_negative and not allow_negative:
         raise ValueError(
             f"الكمية المطلوبة ({abs(data.quantity)}) أكبر من الرصيد الحالي ({product.current_stock})"
         )
+    if would_go_negative and allow_negative:
+        logger.warning(
+            "مخزون سالب: الصنف #%s (%s) — الرصيد %s هيبقى %s بعد خصم %s (reference=%s/%s)",
+            product.id, product.name, product.current_stock,
+            product.current_stock + data.quantity, abs(data.quantity),
+            data.reference_type, data.reference_id,
+        )
     mov = crud.create_movement(db, data, moved_by)
     try:
-        crud.adjust_stock(db, product, data.quantity)
+        crud.adjust_stock(db, product, data.quantity, allow_negative=allow_negative)
     except OperationalError as exc:
         db.rollback()
         raise InventoryConcurrencyError(
@@ -145,8 +168,10 @@ def consume_stock(
     reference_type: Optional[str] = None,
     reference_id: Optional[int] = None,
     moved_by: int = 0,
+    allow_negative: bool = False,
 ):
-    """اختصار لخصم من المخزون — يُستدعى من Restaurant/Cafe."""
+    """اختصار لخصم من المخزون — يُستدعى من Restaurant/Cafe (ربط 1:1 قديم أو
+    استهلاك وصفة). راجع توثيق allow_negative في record_movement."""
     product = get_product_or_404(db, product_id)
     avg_cost = product.cost_price or Decimal("0")
 
@@ -161,7 +186,7 @@ def consume_stock(
         reference_id=reference_id,
         moved_at=datetime.utcnow(),
     )
-    mov = record_movement(db, data, moved_by)
+    mov = record_movement(db, data, moved_by, allow_negative=allow_negative)
 
     # COGS Journal Entry
     cogs_amount = avg_cost * abs(quantity)
