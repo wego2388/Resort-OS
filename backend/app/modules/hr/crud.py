@@ -8,13 +8,14 @@ from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 
 from app.modules.hr.models import (
-    AttendanceRecord, Department, Employee, EmployeeAllowance,
+    AttendancePolicy, AttendanceRecord, Department, Employee, EmployeeAllowance,
     EmployeePenalty, LeaveBalance, LeaveRequest, LeaveType, PenaltyType,
     PayrollLine, PayrollRun, RotaAssignment, RotaTemplate, ShiftSwapRequest, Shift,
     SocialInsuranceConfig, TaxBracketConfig,
 )
 from app.modules.hr.schemas import (
-    AttendanceRecordCreate, DepartmentCreate, EmployeeCreate, EmployeeUpdate,
+    AttendancePolicyUpsert, AttendanceRecordCreate, DepartmentCreate,
+    EmployeeCreate, EmployeeUpdate,
     EmployeeAllowanceCreate, EmployeeAllowanceUpdate,
     EmployeePenaltyCreate, LeaveTypeCreate, PenaltyTypeCreate,
     PayrollRunCreate, RotaAssignmentCreate, RotaTemplateCreate, RotaTemplateUpdate,
@@ -295,6 +296,66 @@ def list_attendance(
     total = q.count()
     items = q.order_by(AttendanceRecord.record_date.desc()).offset(skip).limit(limit).all()
     return items, total
+
+
+def list_attendance_for_payroll_period(
+    db: Session, employee_id: int, date_from: date, date_to: date,
+) -> list[AttendanceRecord]:
+    """كل سجلات حضور موظف خلال مدى تاريخ (شهر رواتب عادةً) — بدون pagination
+    عمدًا (استخدام داخلي لحساب الرواتب، مش list endpoint عام؛ مدى شهر واحد
+    أقصاه ~31 سجل فمفيش خطر إرجاع آلاف الصفوف بالغلط)."""
+    return (
+        db.query(AttendanceRecord)
+        .filter(
+            AttendanceRecord.employee_id == employee_id,
+            AttendanceRecord.record_date >= date_from,
+            AttendanceRecord.record_date <= date_to,
+        )
+        .order_by(AttendanceRecord.record_date)
+        .all()
+    )
+
+
+def map_rota_shifts_for_period(
+    db: Session, employee_id: int, date_from: date, date_to: date,
+) -> dict[date, tuple[str, str]]:
+    """يرجّع {assigned_date: (shift.start_time, shift.end_time)} لموظف خلال
+    مدى تاريخ — استعلام واحد (join) بدل استعلام لكل يوم داخل حلقة (N+1)."""
+    rows = (
+        db.query(RotaAssignment.assigned_date, Shift.start_time, Shift.end_time)
+        .join(Shift, RotaAssignment.shift_id == Shift.id)
+        .filter(
+            RotaAssignment.employee_id == employee_id,
+            RotaAssignment.assigned_date >= date_from,
+            RotaAssignment.assigned_date <= date_to,
+        )
+        .all()
+    )
+    return {assigned_date: (start, end) for assigned_date, start, end in rows}
+
+
+# ── AttendancePolicy ──────────────────────────────────────────────────
+
+def get_attendance_policy(db: Session, branch_id: int) -> Optional[AttendancePolicy]:
+    return (
+        db.query(AttendancePolicy)
+        .filter(AttendancePolicy.branch_id == branch_id, AttendancePolicy.is_active.is_(True))
+        .first()
+    )
+
+
+def upsert_attendance_policy(
+    db: Session, branch_id: int, data: AttendancePolicyUpsert,
+) -> AttendancePolicy:
+    row = db.query(AttendancePolicy).filter(AttendancePolicy.branch_id == branch_id).first()
+    if row:
+        for field, value in data.model_dump().items():
+            setattr(row, field, value)
+    else:
+        row = AttendancePolicy(branch_id=branch_id, **data.model_dump())
+        db.add(row)
+    db.flush()
+    return row
 
 
 # ── LeaveBalance ──────────────────────────────────────────────────────

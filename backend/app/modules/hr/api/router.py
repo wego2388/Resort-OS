@@ -14,6 +14,7 @@ from app.core.deps import (
 from app.modules.hr import crud, services
 from app.modules.hr.schemas import (
     AllowanceRead,
+    AttendancePolicyRead, AttendancePolicyUpsert,
     AttendanceRecordCreate, AttendanceRecordRead,
     DepartmentCreate, DepartmentRead,
     EmployeeCreate, EmployeeRead, EmployeeUpdate,
@@ -106,12 +107,14 @@ def get_payslip(
     penalty_days: int = Query(0, ge=0),
     unpaid_leave_days: int = Query(0, ge=0),
     overtime_amount: float = Query(0.0, ge=0),
+    late_penalty_amount: float = Query(0.0, ge=0),
 ):
     from decimal import Decimal  # noqa: PLC0415
     try:
         return services.calculate_employee_payroll(
             db, employee_id, period_year, period_month,
             penalty_days, unpaid_leave_days, Decimal(str(overtime_amount)),
+            Decimal(str(late_penalty_amount)),
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
@@ -297,6 +300,30 @@ def create_shift(data: ShiftCreate, db: DbDep, _=Depends(get_manager_user)):
     db.commit()
     db.refresh(shift)
     return ShiftRead.model_validate(shift)
+
+
+# ── Attendance Policy ─────────────────────────────────────────────────
+# سياسة الحضور اللي بتغذّي حساب دقايق التأخير/الأوفرتايم التلقائي (راجع
+# services._compute_auto_attendance_adjustments) — قابلة للتعديل من الإدارة،
+# مش hardcoded في الكود.
+
+@router.get("/hr/attendance-policy", response_model=AttendancePolicyRead)
+def get_attendance_policy(db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...)):
+    policy = crud.get_attendance_policy(db, branch_id)
+    if not policy:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                             "لا توجد سياسة حضور مضبوطة لهذا الفرع بعد — استخدم PUT لإنشاء واحدة")
+    return AttendancePolicyRead.model_validate(policy)
+
+
+@router.put("/hr/attendance-policy", response_model=AttendancePolicyRead)
+def upsert_attendance_policy(
+    data: AttendancePolicyUpsert, db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...),
+):
+    policy = crud.upsert_attendance_policy(db, branch_id, data)
+    db.commit()
+    db.refresh(policy)
+    return AttendancePolicyRead.model_validate(policy)
 
 
 # ── Leave Types ───────────────────────────────────────────────────────
@@ -524,7 +551,9 @@ def get_my_payslips(
             status=line.run.status,
             basic_salary=line.basic_salary, gross_salary=line.gross_salary, net_salary=line.net_salary,
             employee_si=line.employee_si, monthly_tax=line.monthly_tax,
-            penalty_deduction=line.penalty_deduction, unpaid_leave_deduction=line.unpaid_leave_deduction,
+            penalty_deduction=line.penalty_deduction,
+            late_penalty_deduction=line.late_penalty_deduction,
+            unpaid_leave_deduction=line.unpaid_leave_deduction,
         )
         for line in lines
     ]
