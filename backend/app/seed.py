@@ -42,8 +42,10 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_leave_types(db)
     _seed_employees(db)
     _seed_chart_of_accounts(db)
+    _seed_payroll(db)
     _seed_room_types(db)
     _seed_rooms(db)
+    _seed_bookings(db)
     _seed_timeshare_units(db)
     _seed_timeshare_contracts(db)
     _seed_lease_contracts(db)
@@ -52,6 +54,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_dining_tables(db)
     _seed_crm(db)
     _seed_b2b_contracts(db)
+    _seed_beach_reservations(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -240,9 +243,17 @@ def _seed_employees(db: Session) -> None:
     تسجيل حضور/طلب إجازة/قسيمة راتب self-service كان بيرجّع 404 "لا يوجد ملف
     موظف مرتبط بحسابك" فورًا لأي حد يجرّب الحساب التجريبي، من أول يوم.
     اتكشف أثناء اختبار حي لمسار HR الكامل (نفس فئة باج rooms/dining_tables
-    الفاضية اللي اتصلحت قبل كده). ازرع فريق واقعي صغير (8 موظفين، أقسام
-    مختلفة) + بدلات/أنواع جزاءات/رصيد إجازات/سجل حضور/طلب إجازة معلّق
-    عشان الشاشة تفتح بحالة واقعية مش فاضية."""
+    الفاضية اللي اتصلحت قبل كده). ازرع فريق واقعي (13 موظف، أقسام مختلفة) +
+    بدلات/أنواع جزاءات/رصيد إجازات/سجل حضور/طلب إجازة معلّق عشان الشاشة تفتح
+    بحالة واقعية مش فاضية.
+
+    تحديث 2026-07-06 (جولة اختبار حي عبر كل الـ 11 حساب تجريبي): من الـ 8
+    موظفين الأصليين كان 3 بس مربوطين بحساب دخول (employee@/manager@/hr@) —
+    يعني 7 من 8 أدوار تجريبية تانية (accountant/supervisor/reception/cashier/
+    waiter/chef/kitchen) كانت بتاخد 404 فورية على كل شاشات HR self-service
+    رغم إن الحساب نفسه شغال 100%. ضفنا 5 موظفين جداد (EMP-009..013) لتغطية
+    الأدوار الناقصة، ووصّلنا EMP-004/EMP-005 الموجودين أصلاً (نفس الوظيفة
+    الحقيقية) بحساباتهم (reception@/chef@) بدل ما نسيبهم من غير حساب."""
     from datetime import timedelta
     from app.core.kernel.auth.repository import UserRepository
     from app.core.kernel.models.user import User
@@ -268,11 +279,16 @@ def _seed_employees(db: Session) -> None:
         ("EMP-001", "أحمد فتحي السيد",    "جرسون",              "المطعم",     Decimal("3800.00"), today - timedelta(days=730),  date(1996, 3, 12), "employee@resortos.local"),
         ("EMP-002", "منى صلاح الدين",     "مديرة عمليات",        "الإدارة",    Decimal("14000.00"), today - timedelta(days=1460), date(1988, 7, 21), "manager@resortos.local"),
         ("EMP-003", "كريم عبد الوهاب",    "مسؤول موارد بشرية",   "الموارد البشرية", Decimal("9500.00"), today - timedelta(days=1095), date(1991, 11, 3), "hr@resortos.local"),
-        ("EMP-004", "ياسمين ماهر",        "موظفة استقبال",       "الاستقبال",  Decimal("5200.00"), today - timedelta(days=400),  date(1998, 1, 30), None),
-        ("EMP-005", "سامح جلال",          "شيف",                "المطبخ",     Decimal("11000.00"), today - timedelta(days=2200), date(1985, 5, 9), None),
+        ("EMP-004", "ياسمين ماهر",        "موظفة استقبال",       "الاستقبال",  Decimal("5200.00"), today - timedelta(days=400),  date(1998, 1, 30), "reception@resortos.local"),
+        ("EMP-005", "سامح جلال",          "شيف",                "المطبخ",     Decimal("11000.00"), today - timedelta(days=2200), date(1985, 5, 9), "chef@resortos.local"),
         ("EMP-006", "هدى عزت",            "عاملة تدبير منزلي",   "التدبير المنزلي", Decimal("3400.00"), today - timedelta(days=180), date(2000, 9, 17), None),
         ("EMP-007", "مينا رفعت",          "منقذ شاطئ",           "الشاطئ",     Decimal("4200.00"), today - timedelta(days=545), date(1994, 2, 25), None),
         ("EMP-008", "عماد شحاتة",         "فني صيانة",           "الصيانة",    Decimal("4800.00"), today - timedelta(days=900), date(1990, 4, 18), None),
+        ("EMP-009", "نيفين طارق",         "محاسبة",             "الحسابات",   Decimal("8500.00"), today - timedelta(days=620), date(1993, 6, 14), "accountant@resortos.local"),
+        ("EMP-010", "عمرو حلمي",          "مشرف عمليات",         "الإدارة",    Decimal("7200.00"), today - timedelta(days=860), date(1990, 10, 2), "supervisor@resortos.local"),
+        ("EMP-011", "دينا عادل",          "كاشير",               "المطعم",     Decimal("4100.00"), today - timedelta(days=310), date(1997, 8, 19), "cashier@resortos.local"),
+        ("EMP-012", "خالد سمير",          "جرسون",               "المطعم",     Decimal("3900.00"), today - timedelta(days=200), date(1999, 4, 5), "waiter@resortos.local"),
+        ("EMP-013", "أميرة فوزي",         "مساعدة شيف",          "المطبخ",     Decimal("4400.00"), today - timedelta(days=150), date(1998, 12, 22), "kitchen@resortos.local"),
     ]
 
     employees: dict[str, Employee] = {}
@@ -312,8 +328,12 @@ def _seed_employees(db: Session) -> None:
     db.add(PenaltyType(branch_id=branch.id, name="Late arrival", name_ar="تأخر عن الحضور", penalty_days=1))
     db.add(PenaltyType(branch_id=branch.id, name="Unauthorized absence", name_ar="غياب بدون إذن", penalty_days=3))
 
-    # ── سجل حضور آخر 5 أيام لموظفَين مرتبطين بحساب دخول ──────────────────
-    for emp in (employees["EMP-001"], employees["EMP-002"]):
+    # ── سجل حضور آخر 5 أيام لكل موظف مرتبط بحساب دخول تجريبي (مش بس اتنين) ─
+    # عشان تبويب الحضور في /hr/me/attendance يبقى واقعي لأي دور تجرّبه، مش
+    # بس اللي كانوا مربوطين وقت أول seed.
+    for emp in employees.values():
+        if emp.user_id is None:
+            continue
         for days_ago in range(1, 6):
             rec_date = today - timedelta(days=days_ago)
             check_in = datetime.combine(rec_date, datetime.min.time()) + timedelta(hours=9)
@@ -338,7 +358,45 @@ def _seed_employees(db: Session) -> None:
         ))
 
     db.flush()
-    print(f"  ✓ Employees seeded ({len(employees)}, linked to 3 demo login accounts)")
+    linked = sum(1 for emp in employees.values() if emp.user_id is not None)
+    print(f"  ✓ Employees seeded ({len(employees)}, linked to {linked} demo login accounts)")
+
+
+def _seed_payroll(db: Session) -> None:
+    """⚠️ مفيش أي PayrollRun كان متزروع خالص — يعني `GET /hr/me/payslips`
+    (self-service) و`GET /hr/payroll/runs` (شاشة HR الإدارية) كانوا بيفتحوا
+    فاضيين تمامًا لكل حساب، حتى بعد ما _seed_employees اتحدّثت تربط كل
+    الأدوار بموظف حقيقي. اتكشف في نفس جولة الاختبار الحي 2026-07-06.
+
+    الحل: شغّل كشف رواتب حقيقي فعليًا (`run_payroll_for_branch` — نفس محرك
+    الرواتب المصري الحقيقي: تأمينات + ضرائب + جزاءات، مش أرقام موضوعة
+    يدويًا) لشهر الشهر الماضي، واعتمده (`approve_payroll_run`) عشان يبقى
+    فيه قسيمة راتب حقيقية معتمدة يشوفها أي موظف مرتبط بحساب دخول."""
+    from dateutil.relativedelta import relativedelta
+
+    from app.core.kernel.auth.repository import UserRepository
+    from app.core.kernel.models.user import User
+    from app.modules.core.models import Branch
+    from app.modules.hr.models import PayrollRun
+    from app.modules.hr.services import approve_payroll_run, run_payroll_for_branch
+    from app.resort_os.timezone_utils import business_today
+
+    branch = db.query(Branch).first()
+    if not branch or db.query(PayrollRun).filter(PayrollRun.branch_id == branch.id).first():
+        return
+
+    approver = UserRepository(User, db).get_by_field("email", "admin@resortos.local")
+    if not approver:
+        return  # لسه مفيش super admin — من المفروض مستحيل بعد _seed_super_admin
+
+    period = business_today(settings.TIMEZONE).replace(day=1) - relativedelta(months=1)
+    try:
+        run = run_payroll_for_branch(db, branch.id, period.year, period.month)
+        approve_payroll_run(db, run.id, approved_by=approver.id)
+    except ValueError as exc:
+        print(f"  ⚠ Payroll seed skipped: {exc}")
+        return
+    print(f"  ✓ Payroll run seeded ({period.year}-{period.month:02d}, {len(run.lines)} payslip lines, approved)")
 
 
 def _seed_chart_of_accounts(db: Session) -> None:
@@ -470,6 +528,75 @@ def _seed_rooms(db: Session) -> None:
     print(f"  ✓ Rooms seeded ({total} rooms — logical default numbering, not verified real numbers)")
 
 
+def _seed_bookings(db: Session) -> None:
+    """⚠️ جدول bookings كان فاضيًا تمامًا (0 صف) رغم إن 52 غرفة متزروعة —
+    يعني شاشة الاستقبال الأساسية اليومية (`/ops/bookings`) كانت هتفتح فاضية
+    100% لأي حد يجرّب حساب reception@/supervisor@ التجريبي، من غير أي حجز
+    واحد يسجّل عليه دخول أو يشوف تفاصيله. اتكشف في جولة اختبار حي كاستقبال
+    2026-07-06 (نفس فئة باج rooms/dining_tables الفاضية الموثّقة قبل كده).
+
+    3 حجوزات توضيحية عبر 3 حالات واقعية مختلفة — عشان استقبال يقدر يجرّب
+    فعليًا: (1) confirmed قادم النهاردة → زر "تسجيل دخول" حقيقي، (2)
+    checked_in فعلاً (نزيل مقيم دلوقتي) → "الدفع على حساب الغرفة"/فوليو
+    شغال، (3) checked_out (تاريخ مغادرة). الحجزين الأولين بيتعملوا عن طريق
+    `services.create_booking`/`checkin_booking` الحقيقيين (منهمش بيرحّلوا أي
+    قيد محاسبي) — لكن الحجز التالت اتعمل مباشرة بالـ ORM (مش
+    `services.checkout_booking`) عشان منولّدش قيد إيراد حقيقي في الدفاتر
+    لضيف مُلفَّق، نفس القرار المتبع بالظبط في _seed_timeshare_contracts/
+    _seed_lease_contracts."""
+    from datetime import timedelta
+
+    from app.modules.core.models import Branch
+    from app.modules.pms.models import Booking, BookingRoom, Room
+    from app.modules.pms.schemas import BookingCreate
+    from app.modules.pms.services import checkin_booking, create_booking
+
+    branch = db.query(Branch).first()
+    if not branch or db.query(Booking).filter(Booking.branch_id == branch.id).first():
+        return
+
+    rooms = db.query(Room).filter(Room.branch_id == branch.id).order_by(Room.id).all()
+    if len(rooms) < 3:
+        return
+    today = date.today()
+
+    # (1) قادم النهاردة — لسه confirmed، جاهز لاختبار "تسجيل دخول" حي.
+    create_booking(db, BookingCreate(
+        branch_id=branch.id, guest_name="محمود عادل ربيع", guest_phone="01012345678",
+        guest_email="mahmoud.adel@example.com", check_in=today, check_out=today + timedelta(days=3),
+        adults=2, children=0, source="direct", room_ids=[rooms[0].id],
+    ))
+
+    # (2) نزيل مقيم فعلاً دلوقتي (checked_in) — لاختبار الدفع على حساب الغرفة.
+    b2 = create_booking(db, BookingCreate(
+        branch_id=branch.id, guest_name="ريم حسام الدين", guest_phone="01123456789",
+        guest_email="reem.hossam@example.com", check_in=today - timedelta(days=1),
+        check_out=today + timedelta(days=2), adults=1, children=1, source="online",
+        room_ids=[rooms[1].id],
+    ))
+    checkin_booking(db, b2.id)
+
+    # (3) غادر بالفعل (checked_out) — ORM مباشرة (مش services.checkout_booking)
+    # عشان منسجّلش قيد إيراد حقيقي في الدفاتر لضيف مُلفَّق.
+    nights3 = 2
+    b3 = Booking(
+        branch_id=branch.id, booking_number=f"BKG-SEED-{today.strftime('%Y%m%d')}-0003",
+        guest_name="طارق منير فهمي", guest_phone="01234567890", guest_email=None,
+        check_in=today - timedelta(days=4), check_out=today - timedelta(days=2),
+        adults=2, children=0, status="checked_out", source="phone",
+        total_rate=rooms[2].room_type.base_rate * nights3 if rooms[2].room_type else Decimal("0"),
+    )
+    db.add(b3)
+    db.flush()
+    db.add(BookingRoom(
+        booking_id=b3.id, room_id=rooms[2].id,
+        daily_rate=(b3.total_rate / nights3) if nights3 else Decimal("0"),
+        nights=nights3, total=b3.total_rate,
+    ))
+    db.flush()
+    print("  ✓ Bookings seeded (3 illustrative: confirmed / checked_in / checked_out)")
+
+
 def _seed_timeshare_units(db: Session) -> None:
     """⚠️ نفس ملاحظة _seed_rooms — ترقيم منطقي افتراضي، مش أرقام وحدات
     حقيقية موثّقة. وحدات التايم شير مبنى/مسكن منفصل فعليًا عن غرف الفندق
@@ -549,6 +676,7 @@ def _seed_timeshare_contracts(db: Session) -> None:
     ]
 
     created = 0
+    contracts_by_seq: dict[int, TimeshareContract] = {}
     for i, s in enumerate(specs, start=1):
         (name, phone, email, nat, room, week, season, total, down, insts, period,
          status, partner, pct, batch, rci, assign_unit, paid_n, overdue_n, partial_n) = s
@@ -606,9 +734,58 @@ def _seed_timeshare_contracts(db: Session) -> None:
         if status == "suspended" and overdue_n > 0:
             contract.booking_frozen = True
         created += 1
+        contracts_by_seq[i] = contract
 
     db.flush()
     print(f"  ✓ Timeshare contracts seeded ({created} illustrative sample customers — not real records)")
+
+    # ── زيارات فعلية (TimeshareVisit) — 3 عقود توضيحية (نفس تقليد "3 أمثلة
+    # مش مثال واحد" المتّبع في بقية الـ seed) ────────────────────────────
+    # ⚠️ جدول timeshare_visits كان فاضيًا تمامًا حتى لو عندك عقود/عملاء —
+    # يعني تبويب "الزيارات" في بروفايل أي عميل كان دايمًا بيرجّع "لا توجد
+    # زيارات مسجّلة"، وأخطر من كده: زر "📨 استبيان الرضا" الجديد
+    # (TimeshareView.vue) شرطه `v.status === 'completed'` — يعني الزر ده
+    # كان عمليًا مستحيل يظهر لأي حد يجرّب الشاشة حتى بمدير عنده الصلاحية،
+    # من غير زيارة واحدة completed حقيقية في الداتابيز. اتكشف في جولة
+    # الاختبار الحي 2026-07-06 وقت تجربة الزر الجديد فعليًا كمدير.
+    _seed_timeshare_visits(db, branch.id, contracts_by_seq, today)
+
+
+def _seed_timeshare_visits(
+    db: Session, branch_id: int, contracts_by_seq: dict[int, "TimeshareContract"], today: date,
+) -> None:
+    """3 زيارات توضيحية عبر 3 عقود مختلفة: زيارة *منتهية* (completed) —
+    عشان زر "استبيان الرضا" يبقى له حالة حقيقية يظهر فيها فعليًا — + زيارة
+    نشطة (active، الضيف في المنتجع دلوقتي) + زيارة مجدولة (scheduled،
+    قادمة). Idempotent عن طريق فحص وجود أي زيارة لأول عقد seed أصلاً."""
+    from datetime import timedelta
+
+    from app.modules.timeshare.models import TimeshareVisit
+
+    first_contract = contracts_by_seq.get(1)
+    if not first_contract:
+        return
+    if db.query(TimeshareVisit).filter(TimeshareVisit.contract_id == first_contract.id).first():
+        return
+
+    plans = [
+        (1, "completed", today - timedelta(days=45), 7),
+        (2, "active",    today - timedelta(days=2),  7),
+        (3, "scheduled", today + timedelta(days=20),  7),
+    ]
+    created = 0
+    for seq, status, check_in, nights in plans:
+        contract = contracts_by_seq.get(seq)
+        if not contract:
+            continue
+        db.add(TimeshareVisit(
+            branch_id=branch_id, contract_id=contract.id, unit_id=contract.unit_id,
+            check_in=check_in, check_out=check_in + timedelta(days=nights),
+            nights=nights, status=status,
+        ))
+        created += 1
+    db.flush()
+    print(f"  ✓ Timeshare visits seeded ({created} illustrative visits — incl. 1 completed, for survey button testing)")
 
 
 def _seed_lease_contracts(db: Session) -> None:
@@ -861,6 +1038,37 @@ def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
             total += 1
         db.flush()
         print(f"  ✓ Cafe tables seeded ({total} tables — logical default numbering, not verified real numbers)")
+
+
+def _seed_beach_reservations(db: Session, branch_id: int | None = None) -> None:
+    """⚠️ جدول beach_reservations كان فاضيًا تمامًا (0 صف) — يعني شاشة
+    الضيف بتاعة "تسجيل دخول الشاطئ عبر QR" (`public` app's BeachCheckinView،
+    مدموجة من apps/qr القديم 2026-07-06) مستحيل تتفتح فعليًا بأي ID حقيقي،
+    من غير أي حجز واحد يتفحص عليه QR. اتكشف أثناء جولة اختبار حي شاملة
+    2026-07-06. حجزين توضيحيين (pending) بتاريخ النهاردة — عن طريق
+    `services.create_reservation` الحقيقي (بيحسب `total_amount` تقديري من
+    إعدادات تسعير الشاطئ الفعلية، من غير ما يرحّل أي قيد محاسبي — الترحيل
+    الحقيقي بيحصل بس وقت check_in_reservation، لما موظف حقيقي يأكّد الدخول)."""
+    from app.modules.beach.models import BeachReservation
+    from app.modules.beach.schemas import BeachReservationCreate
+    from app.modules.beach.services import create_reservation
+    from app.modules.core.models import Branch
+
+    branch = db.query(Branch).filter(Branch.id == branch_id).first() if branch_id else db.query(Branch).first()
+    if not branch or db.query(BeachReservation).filter(BeachReservation.branch_id == branch.id).first():
+        return
+
+    today = date.today()
+    specs = [
+        ("سارة يوسف عبد الله", "01055667788", 4, True),
+        ("وليد أحمد ثابت",     "01166778899", 2, False),
+    ]
+    for name, phone, guests, towel in specs:
+        create_reservation(db, BeachReservationCreate(
+            branch_id=branch.id, guest_name=name, guest_phone=phone,
+            reservation_date=today, guests_count=guests, with_towel=towel,
+        ))
+    print(f"  ✓ Beach reservations seeded ({len(specs)} illustrative, pending QR check-in)")
 
 
 def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
