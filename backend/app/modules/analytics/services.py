@@ -8,6 +8,7 @@ from decimal import Decimal
 from jose import jwt
 
 from app.core.config import settings
+from app.resort_os.timezone_utils import business_today
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ def submit_review(
         comment=data.get("comment"),
         source="checkout_survey",
         is_published=overall >= 3,  # تُنشر التقييمات ≥ 3 تلقائياً
-        reviewed_at=date.today(),
+        reviewed_at=business_today(settings.TIMEZONE),
         booking_id=booking_id,
         timeshare_visit_id=timeshare_visit_id,
     )
@@ -125,7 +126,7 @@ def _create_complaint_activity(
         customer_id=customer.id,
         activity_type="complaint",
         title=f"تقييم سلبي من {ref_label} — التقييم: {rating}/5",
-        due_date=date.today(),
+        due_date=business_today(settings.TIMEZONE),
         status="pending",
         notes=f"تقييم الضيف {rating}/5 — يحتاج متابعة عاجلة",
     ))
