@@ -44,7 +44,14 @@ class LeaseContract(Base, TimestampMixin):
     notes:            Mapped[str | None]    = mapped_column(Text, nullable=True)
 
     payments: Mapped[list["LeasePayment"]] = relationship(
-        "LeasePayment", back_populates="contract", lazy="select"
+        "LeasePayment", back_populates="contract", lazy="select",
+        order_by="LeasePayment.due_date",
+        # بدون order_by هنا كانت الدفعات بترجع بترتيب غير مضمون (ترتيب فعلي في
+        # الداتابيز مش بالضرورة تاريخ الاستحقاق) — بعد أي UPDATE (زي apply-penalties)
+        # كان الترتيب بيتغيّر فعليًا (Postgres MVCC)، يعني شاشة الإيجارات كانت ممكن
+        # تعرض جدول الدفعات بترتيب تواريخ عشوائي مربك لمدير الإيجارات. `crud.list_payments`
+        # كان عنده `order_by(due_date)` بالفعل، بس الـ relationship المستخدم في
+        # `LeaseContractRead.payments` (المسار الفعلي اللي بيستخدمه الفرونت إند) لأ.
     )
 
 
