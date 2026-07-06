@@ -49,7 +49,10 @@ def list_customers(
 @router.post("/crm/customers", response_model=CustomerRead,
              status_code=status.HTTP_201_CREATED)
 def create_customer(data: CustomerCreate, db: DbDep, _=Depends(get_current_active_user)):
-    return services.create_customer(db, data)
+    try:
+        return services.create_customer(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 @router.get("/crm/customers/{customer_id}", response_model=CustomerRead)

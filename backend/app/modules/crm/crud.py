@@ -24,6 +24,18 @@ def get_customer(db: Session, customer_id: int) -> Optional[Customer]:
     return db.query(Customer).filter(Customer.id == customer_id).first()
 
 
+def get_customer_by_phone(db: Session, branch_id: int, phone: str) -> Optional[Customer]:
+    return db.query(Customer).filter(
+        Customer.branch_id == branch_id, Customer.phone == phone,
+    ).first()
+
+
+def get_customer_by_email(db: Session, branch_id: int, email: str) -> Optional[Customer]:
+    return db.query(Customer).filter(
+        Customer.branch_id == branch_id, Customer.email == email,
+    ).first()
+
+
 def list_customers(
     db: Session,
     branch_id: int,

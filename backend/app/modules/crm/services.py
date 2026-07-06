@@ -28,6 +28,19 @@ def get_customer_or_404(db: Session, customer_id: int) -> Customer:
 
 
 def create_customer(db: Session, data: CustomerCreate) -> Customer:
+    """⚠️ باج حقيقي كان هنا: مفيش أي تحقق من تكرار رقم الهاتف/الإيميل —
+    الاستقبال يقدر يسجّل نفس العميل مرتين بالغلط، فيتقسم total_spent/
+    visits_count على سجلين منفصلين بدل ما يتراكموا على عميل واحد (بالظبط
+    نفس المشكلة اللي GuestProfile اتصمم من الأول عشان يتفاداها بـ
+    UniqueConstraint(branch_id, phone))."""
+    if data.phone:
+        dup = crud.get_customer_by_phone(db, data.branch_id, data.phone)
+        if dup:
+            raise ValueError(f"يوجد عميل مسجّل بنفس رقم الهاتف بالفعل: {dup.full_name} (#{dup.id})")
+    if data.email:
+        dup = crud.get_customer_by_email(db, data.branch_id, data.email)
+        if dup:
+            raise ValueError(f"يوجد عميل مسجّل بنفس البريد الإلكتروني بالفعل: {dup.full_name} (#{dup.id})")
     obj = crud.create_customer(db, data)
     db.commit()
     db.refresh(obj)
