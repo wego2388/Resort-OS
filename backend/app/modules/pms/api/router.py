@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
-    DbDep, get_admin_user, get_current_active_user,
+    DbDep, get_admin_user, get_cashier_user, get_current_active_user,
     get_manager_user, require_permission,
 )
 from app.modules.pms import crud, services
@@ -123,7 +123,16 @@ def list_bookings(
 
 @router.post("/pms/bookings", response_model=BookingRead,
              status_code=status.HTTP_201_CREATED)
-def create_booking(data: BookingCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_booking(data: BookingCreate, db: DbDep, _=Depends(get_cashier_user)):
+    # ⚠️ باج صلاحيات حقيقي اتكشف حي (2026-07-06، اختبار استقبال كامل):
+    # إنشاء حجز/تسجيل دخول/تسجيل خروج كانوا الثلاثة محتاجين get_manager_user
+    # (level 60+) — يعني موظف الاستقبال (receptionist، level 40) اللي شغلته
+    # الأساسي بالظبط هو الثلاث عمليات دي، كان عمليًا يشوف زرار "تسجيل دخول"
+    # في الشاشة ويضغط عليه فيرجّعله 403 كل مرة، من غير أي طريقة حقيقية
+    # يسجّل بيها نزيل. نفس فئة الباج الموثّقة في §18/CLAUDE.md لتحصيل قسط
+    # التايم شير (كانت محتاجة get_manager_user برضه رغم إن الكاشير level 40
+    # المفروض يقدر يحصّل) — هنا get_cashier_user (level 40+) هو الحد الأدنى
+    # الصحيح فعليًا لعمليات الاستقبال اليومية.
     try:
         return services.create_booking(db, data)
     except services.BookingConflictError as exc:
@@ -142,7 +151,7 @@ def get_booking(booking_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 @router.post("/pms/bookings/{booking_id}/checkin",
              response_model=BookingRead)
-def checkin(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
+def checkin(booking_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         return services.checkin_booking(db, booking_id)
     except ValueError as exc:
@@ -151,7 +160,7 @@ def checkin(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 @router.post("/pms/bookings/{booking_id}/checkout",
              response_model=BookingRead)
-def checkout(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
+def checkout(booking_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         return services.checkout_booking(db, booking_id)
     except ValueError as exc:
