@@ -48,6 +48,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_timeshare_contracts(db)
     _seed_menus(db)
     _seed_dining_tables(db)
+    _seed_crm(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -808,6 +809,171 @@ def _seed_settings(db: Session) -> None:
 
     db.flush()
     print("  ✓ Default settings seeded")
+
+
+def _seed_crm(db: Session) -> None:
+    """⚠️ باج حقيقي كان هنا: موديول CRM كامل (leads/lead_sources/call_notes/
+    campaigns/customers/opportunities/activities) كان بيرجع فاضي 100% في أي
+    تثبيت جديد — مفيش أي seed خالص، رغم إن الـ API لكل الجداول دي اشتغل
+    فعليًا (LeadSource/CallNote/GuestProfile اتوصلوا حديثًا). يعني أول ما مدير
+    CRM يفتح الشاشة، هيلاقيها فاضية تمامًا من غير أي تفسير — نفس فئة باج HR
+    (499fe5c) قبل كده بالظبط.
+
+    بيانات توضيحية (illustrative) واقعية — مش سجلات عملاء حقيقية.
+    Idempotent: لو فيه أي LeadSource للفرع بالفعل → يتجاهَل بالكامل."""
+    from datetime import datetime, timedelta
+    from app.modules.core.models import Branch
+    from app.core.kernel.models.user import User
+    from app.modules.crm.models import (
+        Activity, CallNote, Campaign, Customer, LeadSource, Lead, Opportunity,
+    )
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+    if db.query(LeadSource).filter(LeadSource.branch_id == branch.id).first():
+        return
+
+    manager = db.query(User).filter(User.email == "manager@resortos.local").first()
+    handler_id = manager.id if manager else db.query(User).first().id
+
+    today = date.today()
+
+    # ── Lead Sources ──────────────────────────────────────────────────────
+    source_specs = [
+        ("الموقع الإلكتروني", True),
+        ("إحالة عميل", True),
+        ("سوشيال ميديا", True),
+        ("زيارة مباشرة", True),
+        ("معرض سياحي", True),
+        ("إعلان قديم (متوقف)", False),
+    ]
+    sources: dict[str, LeadSource] = {}
+    for name, active in source_specs:
+        src = LeadSource(branch_id=branch.id, name=name, is_active=active)
+        db.add(src)
+        db.flush()
+        sources[name] = src
+
+    # ── Customers ─────────────────────────────────────────────────────────
+    customer_specs = [
+        # (name, phone, email, nationality, segment, source, total_spent, visits, last_visit_days_ago)
+        ("محمود عادل حلمي", "01011122233", "mahmoud.a@example.com", "مصري", "vip", "referral", "45200", 9, 5),
+        ("Sarah Whitfield", "01122233344", "sarah.w@example.com", "بريطاني", "regular", "online", "3800", 2, 40),
+        ("شركة النور للسياحة", "01233344455", "info@alnoor-travel.example", "مصري", "travel_agent", "corporate", "128500", 14, 12),
+        ("ياسمين طارق سعد", "01344455566", "yasmin.t@example.com", "مصري", "corporate", "walk_in", "9600", 4, 20),
+        ("Ahmed Reception Walk-in", None, None, "مصري", "regular", "walk_in", "0", 0, None),
+        ("كريم فتحي البدوي", "01455566677", "karim.f@example.com", "مصري", "regular", "social_media", "2100", 1, 90),
+    ]
+    customers: dict[str, Customer] = {}
+    for name, phone, email, nat, segment, source, spent, visits, days_ago in customer_specs:
+        cust = Customer(
+            branch_id=branch.id, full_name=name, phone=phone, email=email,
+            nationality=nat, segment=segment, source=source,
+            total_spent=Decimal(spent), visits_count=visits,
+            last_visit=(today - timedelta(days=days_ago)) if days_ago is not None else None,
+        )
+        db.add(cust)
+        db.flush()
+        customers[name] = cust
+
+    # عميل واحد على القائمة السوداء — لاختبار سيناريو الحظر الحقيقي
+    blacklisted = Customer(
+        branch_id=branch.id, full_name="عصام رجب فهمي", phone="01566677788",
+        nationality="مصري", segment="regular", source="walk_in",
+        total_spent=Decimal("1200"), visits_count=3,
+        last_visit=today - timedelta(days=200),
+        blacklisted=True, blacklist_reason="شيك بدون رصيد + سلوك عدواني تجاه الموظفين",
+    )
+    db.add(blacklisted)
+    db.flush()
+
+    # ── Leads (pipeline كامل: new → contacted → qualified → proposal → won/lost) ──
+    lead_specs = [
+        # (name, phone, email, nat, source_name_or_None, interest, stage, expected_value)
+        ("عمر شريف نبيل", "01611122233", "omar.s@example.com", "مصري", "الموقع الإلكتروني", "timeshare", "new", "180000"),
+        ("Isabella Conti", "01622233344", "isabella.c@example.com", "إيطالي", None, "booking", "new", "25000"),
+        ("منال حسني عبده", "01633344455", "manal.h@example.com", "مصري", "سوشيال ميديا", "membership", "contacted", "15000"),
+        ("طارق مجدي سيد", "01644455566", "tarek.m@example.com", "مصري", "إحالة عميل", "timeshare", "qualified", "220000"),
+        ("Fatima Al-Rashid", "01655566677", "fatima.r@example.com", "إماراتي", "معرض سياحي", "leasing", "proposal", "95000"),
+        ("رانيا كمال شوقي", "01666677788", "rania.k@example.com", "مصري", "زيارة مباشرة", "timeshare", "won", "310000"),
+        ("حسام الدين فوزي", "01677788899", "hossam.f@example.com", "مصري", "الموقع الإلكتروني", "membership", "lost", "12000"),
+    ]
+    leads: dict[str, Lead] = {}
+    for name, phone, email, nat, source_name, interest, stage, value in lead_specs:
+        lead = Lead(
+            branch_id=branch.id, full_name=name, phone=phone, email=email,
+            nationality=nat,
+            source_id=sources[source_name].id if source_name else None,
+            interest=interest, stage=stage, assigned_to=handler_id,
+            expected_value=Decimal(value),
+            won_at=datetime.utcnow() - timedelta(days=3) if stage == "won" else None,
+            lost_at=datetime.utcnow() - timedelta(days=7) if stage == "lost" else None,
+            lost_reason="الميزانية غير متاحة حاليًا" if stage == "lost" else None,
+        )
+        db.add(lead)
+        db.flush()
+        leads[name] = lead
+
+    # ── Call Notes — على أكتر من lead لعرض سجل مكالمات حقيقي ────────────────
+    call_note_specs = [
+        ("عمر شريف نبيل", "outbound", 8, "اتصال أول تعريفي بعرض التايم شير، مهتم بمعرفة التفاصيل", "interested", 2),
+        ("طارق مجدي سيد", "outbound", 15, "شرح تفصيلي للعقد والأقساط، طلب وقت للتفكير", "callback", 1),
+        ("طارق مجدي سيد", "inbound", 5, "اتصل يسأل عن حالة العرض المُرسل بالإيميل", "no_decision", 0),
+        ("حسام الدين فوزي", "outbound", 6, "أبلغ إنه غير مهتم حاليًا بسبب الميزانية", "not_interested", 8),
+    ]
+    for lead_name, direction, duration, summary, outcome, days_ago in call_note_specs:
+        db.add(CallNote(
+            branch_id=branch.id, lead_id=leads[lead_name].id, direction=direction,
+            duration_min=duration, summary=summary, outcome=outcome,
+            called_by=handler_id,
+            called_at=datetime.utcnow() - timedelta(days=days_ago),
+        ))
+
+    # ── Campaigns ─────────────────────────────────────────────────────────
+    campaign_specs = [
+        ("عروض الصيف 2026", "social_media", -60, -10, "50000", "72000", 18, "completed"),
+        ("حملة التايم شير الخريفية", "email", -10, 20, "20000", "8500", 6, "active"),
+        ("معرض السياحة القادم", "event", 15, 20, "35000", "0", 0, "planned"),
+    ]
+    for name, ctype, start_off, end_off, budget, revenue, leads_gen, status in campaign_specs:
+        db.add(Campaign(
+            branch_id=branch.id, name=name, campaign_type=ctype,
+            start_date=today + timedelta(days=start_off),
+            end_date=today + timedelta(days=end_off),
+            budget=Decimal(budget), revenue_attributed=Decimal(revenue),
+            leads_generated=leads_gen, status=status, created_by=handler_id,
+        ))
+
+    # ── Opportunities ─────────────────────────────────────────────────────
+    db.add(Opportunity(
+        branch_id=branch.id, customer_id=customers["محمود عادل حلمي"].id,
+        title="تجديد عضوية VIP + وحدة تايم شير إضافية", product_type="timeshare",
+        stage="negotiation", expected_value=Decimal("250000"), probability=60,
+        assigned_to=handler_id, expected_close=today + timedelta(days=25),
+    ))
+    db.add(Opportunity(
+        branch_id=branch.id, customer_id=customers["شركة النور للسياحة"].id,
+        title="عقد إيجار مجموعات سياحية سنوي", product_type="leasing",
+        stage="proposal", expected_value=Decimal("180000"), probability=40,
+        assigned_to=handler_id, expected_close=today + timedelta(days=45),
+    ))
+
+    # ── Activities — بعضها متأخر عمدًا لاختبار get_overdue_activities ───────
+    db.add(Activity(
+        branch_id=branch.id, customer_id=customers["محمود عادل حلمي"].id,
+        activity_type="follow_up", title="متابعة تليفونية لتجديد العضوية",
+        due_date=today - timedelta(days=2), assigned_to=handler_id, status="pending",
+    ))
+    db.add(Activity(
+        branch_id=branch.id, customer_id=customers["ياسمين طارق سعد"].id,
+        activity_type="meeting", title="اجتماع لعرض باقة الشركات",
+        due_date=today + timedelta(days=5), assigned_to=handler_id, status="pending",
+    ))
+
+    db.flush()
+    print(f"  ✓ CRM seeded ({len(sources)} lead sources, {len(customers) + 1} customers, "
+          f"{len(leads)} leads, {len(call_note_specs)} call notes, {len(campaign_specs)} campaigns)")
 
 
 # ── CLI Entry Point ───────────────────────────────────────────────────────────
