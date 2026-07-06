@@ -10,11 +10,12 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_date_to_utc_range
 from app.modules.cafe.models import (
-    CafeCategory, CafeItem, CafeMenuItemExtra, CafeMenuItemExtraGroup,
+    CafeCategory, CafeItem, CafeItemRecipeLine, CafeMenuItemExtra, CafeMenuItemExtraGroup,
     CafeOrder, CafeOrderItem, CafeOrderItemExtra, CafeTable,
 )
 from app.modules.cafe.schemas import (
-    CafeCategoryCreate, CafeItemCreate, CafeItemUpdate, CafeMenuItemExtraGroupCreate,
+    CafeCategoryCreate, CafeItemCreate, CafeItemRecipeLineCreate, CafeItemRecipeLineUpdate,
+    CafeItemUpdate, CafeMenuItemExtraGroupCreate,
 )
 
 
@@ -78,6 +79,35 @@ def delete_extra_group(db: Session, group_id: int) -> bool:
     if not group:
         return False
     db.delete(group)
+    db.flush()
+    return True
+
+
+# ── Recipe / BOM ──────────────────────────────────────────────────────
+
+def get_recipe_line(db: Session, line_id: int) -> Optional[CafeItemRecipeLine]:
+    return db.query(CafeItemRecipeLine).filter(CafeItemRecipeLine.id == line_id).first()
+
+
+def create_recipe_line(db: Session, cafe_item_id: int, data: CafeItemRecipeLineCreate) -> CafeItemRecipeLine:
+    line = CafeItemRecipeLine(cafe_item_id=cafe_item_id, **data.model_dump())
+    db.add(line)
+    db.flush()
+    return line
+
+
+def update_recipe_line(db: Session, line: CafeItemRecipeLine, data: CafeItemRecipeLineUpdate) -> CafeItemRecipeLine:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(line, field, value)
+    db.flush()
+    return line
+
+
+def delete_recipe_line(db: Session, line_id: int) -> bool:
+    line = get_recipe_line(db, line_id)
+    if not line:
+        return False
+    db.delete(line)
     db.flush()
     return True
 

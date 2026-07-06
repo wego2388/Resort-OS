@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CafeCategoryCreate(BaseModel):
@@ -80,10 +80,55 @@ class CafeItemUpdate(BaseModel):
     linked_product_id:   Optional[int]     = None
 
 
+# ─────────────────────── Recipe / BOM ───────────────────────────────────
+# نفس نمط restaurant.MenuItemRecipeLine* بالضبط — راجع
+# app.modules.cafe.models.CafeItemRecipeLine.
+
+class CafeItemRecipeLineCreate(BaseModel):
+    product_id:        int
+    quantity_per_unit: Decimal = Field(..., gt=0)
+    notes:             Optional[str] = Field(None, max_length=200)
+
+
+class CafeItemRecipeLineUpdate(BaseModel):
+    quantity_per_unit: Optional[Decimal] = Field(None, gt=0)
+    notes:             Optional[str]     = Field(None, max_length=200)
+
+
+class CafeItemRecipeLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                int
+    cafe_item_id:      int
+    product_id:        int
+    product_name:      str
+    product_unit:      str
+    quantity_per_unit: Decimal
+    unit_cost:         Decimal
+    line_cost:         Decimal
+    notes:             Optional[str]
+
+
 class CafeItemRead(CafeItemCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int; created_at: datetime; updated_at: datetime
     extra_groups: list[CafeMenuItemExtraGroupRead] = []
+    recipe_lines: list[CafeItemRecipeLineRead] = []
+    computed_cost: Decimal = Decimal("0")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_recipe_fields(cls, obj):
+        """نفس منطق restaurant.MenuItemRead._inject_recipe_fields بالضبط."""
+        if isinstance(obj, (dict, cls)):
+            return obj
+        from app.modules.cafe import services as _services  # noqa: PLC0415 — تجنّب circular import
+
+        data = {name: getattr(obj, name, None) for name in cls.model_fields
+                if name not in ("recipe_lines", "computed_cost", "extra_groups")}
+        data["extra_groups"] = getattr(obj, "extra_groups", [])
+        data["recipe_lines"] = [_services.build_recipe_line_read(line) for line in getattr(obj, "recipe_lines", [])]
+        data["computed_cost"] = _services.compute_cafe_item_cost(obj)
+        return data
 
 
 class CafeTableRead(BaseModel):

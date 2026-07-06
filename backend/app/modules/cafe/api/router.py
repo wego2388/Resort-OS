@@ -16,6 +16,7 @@ from app.modules.cafe.schemas import (
     CafeCategoryCreate, CafeCategoryRead,
     CafeGuestOrderCreate, CafeGuestOrderRead,
     CafeItemCreate, CafeItemRead, CafeItemUpdate,
+    CafeItemRecipeLineCreate, CafeItemRecipeLineRead, CafeItemRecipeLineUpdate,
     CafeMenuItemExtraGroupCreate, CafeMenuItemExtraGroupRead,
     CafeOrderCreate, CafeOrderItemCreate, CafeOrderItemVoidRequest, CafeOrderRead, CafeOrderStatusUpdate,
     CafePublicMenuCategoryRead, CafePublicMenuItemRead, CafePublicMenuResponse,
@@ -83,6 +84,37 @@ def delete_extra_group(group_id: int, db: DbDep, _=Depends(get_manager_user)):
     if not crud.delete_extra_group(db, group_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المجموعة غير موجودة")
     db.commit()
+
+
+# ── Recipe / BOM ──────────────────────────────────────────────────────
+# نفس نمط restaurant.router بالضبط — راجع التعليقات هناك.
+
+@router.post("/cafe/items/{item_id}/recipe-lines",
+             response_model=CafeItemRecipeLineRead,
+             status_code=status.HTTP_201_CREATED)
+def add_recipe_line(item_id: int, data: CafeItemRecipeLineCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        line = services.add_recipe_line(db, item_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return CafeItemRecipeLineRead.model_validate(services.build_recipe_line_read(line))
+
+
+@router.patch("/cafe/recipe-lines/{line_id}", response_model=CafeItemRecipeLineRead)
+def update_recipe_line(line_id: int, data: CafeItemRecipeLineUpdate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        line = services.update_recipe_line(db, line_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return CafeItemRecipeLineRead.model_validate(services.build_recipe_line_read(line))
+
+
+@router.delete("/cafe/recipe-lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        services.remove_recipe_line(db, line_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 @router.get("/cafe/tables", response_model=list[CafeTableRead])
