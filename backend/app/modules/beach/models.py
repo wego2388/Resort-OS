@@ -2,7 +2,7 @@
 app/modules/beach/models.py
 Beach Module
 Tables: beach_inventory, beach_transactions, b2b_contracts, b2b_contract_days,
-        beach_reservations
+        beach_reservations, beach_locations
 """
 from __future__ import annotations
 
@@ -61,6 +61,12 @@ class BeachTransaction(Base, TimestampMixin):
     voided_reason:   Mapped[str | None]      = mapped_column(String(200), nullable=True)
     shift_id:        Mapped[int | None]      = mapped_column(ForeignKey("cashier_shifts.id", ondelete="SET NULL"), nullable=True, index=True)
     customer_id:     Mapped[int | None]      = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
+    # الموقع الفعلي (شمسية/برجولة) اللي العملية دي اتباعت عشانه — nullable
+    # لأن مش كل بيع مرتبط بموقع فعلي (تذاكر دخول عادية من POS من غير خريطة
+    # حية، تسجيل دخول B2B، مرتجع فوطة عام...). راجع BeachLocation تحت —
+    # تسجيل الدخول لموقع فعلي بيعمل BeachTransaction حقيقي (مش تتبع منفصل)
+    # ويربطها هنا للتاريخ، حتى بعد ما الموقع نفسه يتفضّى (checkout).
+    location_id:     Mapped[int | None]      = mapped_column(ForeignKey("beach_locations.id", ondelete="SET NULL"), nullable=True, index=True)
 
 
 class B2BContract(Base, TimestampMixin):
@@ -137,3 +143,66 @@ class BeachReservation(Base, TimestampMixin):
     total_amount:   Mapped[Decimal]      = mapped_column(Numeric(10, 2), default=Decimal("0"))
     tx_id:          Mapped[int | None]   = mapped_column(ForeignKey("beach_transactions.id", ondelete="SET NULL"), nullable=True)
     notes:          Mapped[str | None]   = mapped_column(String(300), nullable=True)
+
+
+class BeachLocation(Base, TimestampMixin):
+    """خريطة الشاطئ الحية — موقع فعلي واحد (شمسية/برجولة/كابانا...) يشوفه
+    الموظفين على شاشة واحدة طول اليوم (زي DiningTable للمطعم، بس مع حالة
+    ضيف فعلية بدل مجرد status).
+
+    العلاقة بـ BeachTransaction/BeachReservation (قرار معماري متعمد):
+    - تسجيل دخول ضيف لموقع = عملية بيع حقيقية عبر services.checkin_location
+      (بيستدعي نفس services.sell_ticket الداخلي، مفيش تتبع مواز غير مرتبط
+      بأي أثر مالي) — current_transaction_id بيأشّر على الـ BeachTransaction
+      الحقيقي الناتج، وBeachTransaction.location_id بيأشّر بالعكس (يفضل
+      موجود حتى بعد checkout يصفّر current_transaction_id، عشان تاريخ/تقارير
+      "مين قعد على الموقع ده وإمتى" يفضل قابل للاسترجاع).
+    - مختلف عن BeachReservation (حجز مسبق باسم/تليفون قبل الوصول، ممكن يتحول
+      لعملية بيع لاحقًا بـ check_in_reservation) — BeachLocation هو الحالة
+      *الفعلية اللحظية* لمكان مادي على الرمل، مش حجز مستقبلي. حجز مؤكد ممكن
+      (لاحقًا، خارج نطاق هذا التعديل) يتربط بموقع فعلي وقت وصول الضيف، بس
+      دلوقتي الاتنين مسارين مستقلين تمامًا.
+
+    الإشغال هنا حالة *فورية* (موقع واحد لضيف واحد دلوقتي) — مختلف عن
+    BeachInventory.capacity_used اللي بيتراكم لليوم كله (تذاكر مباعة النهاردة)
+    ومبيرجعش لما الموقع يتفضّى (checkout مبيلمسش capacity_used خالص، نفس
+    سلوك النظام المرجعي — الشاطئ عنده "تذكرة دخول يومية" مش "حجز وقتي لمقعد").
+    """
+    __tablename__ = "beach_locations"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "location_type", "number",
+                         name="uq_beach_location_branch_type_number"),
+    )
+
+    id:                     Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:              Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    location_type:          Mapped[str]        = mapped_column(String(20))
+    # umbrella|pergola|sunbed|cabana — قائمة مفتوحة، مش enum محكم (المدير
+    # بيقرر أسماء أنواع المواقع الفعلية في المنتجع بتاعه).
+    number:                 Mapped[str]        = mapped_column(String(10))
+    # "1", "12", "VIP-1" — نص مش رقم، لأن بعض المنتجعات بترقّم بحروف/بادئات.
+    grid_row:               Mapped[int]        = mapped_column(Integer, default=1)
+    grid_col:               Mapped[int]        = mapped_column(Integer, default=1)
+    status:                 Mapped[str]        = mapped_column(String(20), default="available", index=True)
+    # available|occupied|out_of_service
+    # use_alter=True: beach_locations وbeach_transactions بيرجعوا لبعض (دورة
+    # FK حقيقية — location.current_transaction_id ↔ transaction.location_id).
+    # من غيره SQLAlchemy مش عارف يرتّب drop_all/create_all (Base.metadata) —
+    # اتكشف فعليًا (SAWarning + OperationalError عند teardown التستات).
+    # الميجريشن نفسها (alembic) بتنشئ الجدولين بترتيب صريح فمش محتاجة هذا
+    # الحل، بس create_all المستخدم في seed.py/conftest.py محتاجه.
+    current_transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("beach_transactions.id", ondelete="SET NULL", use_alter=True,
+                   name="fk_beach_locations_current_transaction_id"),
+        nullable=True,
+    )
+    guest_name:             Mapped[str | None] = mapped_column(String(200), nullable=True)
+    guest_phone:            Mapped[str | None] = mapped_column(String(20), nullable=True)
+    guests_count:           Mapped[int]        = mapped_column(Integer, default=0)
+    towels_given:           Mapped[int]        = mapped_column(Integer, default=0)
+    checked_in_at:          Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    checked_in_by:          Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # user id اللي عمل التشيك-إن — int خام زي BeachTransaction.cashier_id
+    # (مفيش FK لـ users هنا في باقي الموديول أصلاً)، مش EncryptedString لأن
+    # ده مش PII حساس (اسم ضيف بيقعد على شمسية يوم واحد، زي BeachReservation
+    # الموجود بالفعل بنفس النمط بالظبط — مش رقم قومي/جواز سفر).
