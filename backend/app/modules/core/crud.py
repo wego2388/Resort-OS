@@ -10,6 +10,7 @@ CRUD خالص للـ Core Module — لا HTTPException، لا business logic
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -17,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.modules.core.models import (
     AuditLog,
     Branch,
+    GuestAlert,
     Notification,
     Setting,
     UserPermission,
@@ -25,6 +27,7 @@ from app.modules.core.schemas import (
     AuditLogCreate,
     BranchCreate,
     BranchUpdate,
+    GuestAlertCreate,
     NotificationCreate,
     UserPermissionCreate,
 )
@@ -366,3 +369,47 @@ def list_audit_logs(
         .all()
     )
     return items, total
+
+
+# ─────────────────────── GuestAlert ──────────────────────────────────
+
+def create_guest_alert(db: Session, data: GuestAlertCreate) -> GuestAlert:
+    alert = GuestAlert(**data.model_dump(), status="open")
+    db.add(alert)
+    db.flush()
+    return alert
+
+
+def get_guest_alert(db: Session, alert_id: int) -> Optional[GuestAlert]:
+    return db.query(GuestAlert).filter(GuestAlert.id == alert_id).first()
+
+
+def list_active_alerts(
+    db: Session,
+    branch_id: int,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[GuestAlert], int]:
+    """التنبيهات اللي لسه محتاجة رد فعل (مش resolved) — أقدم واحد الأول
+    (FIFO) عشان طاقم الخدمة يرد على الأقدم أولاً، مش يغرق في أحدث تنبيه."""
+    q = db.query(GuestAlert).filter(
+        GuestAlert.branch_id == branch_id,
+        GuestAlert.status != "resolved",
+    )
+    total = q.count()
+    items = q.order_by(GuestAlert.created_at.asc()).offset(skip).limit(limit).all()
+    return items, total
+
+
+def update_alert_status(
+    db: Session,
+    alert: GuestAlert,
+    new_status: str,
+    resolved_by: Optional[int] = None,
+) -> GuestAlert:
+    alert.status = new_status
+    if new_status == "resolved":
+        alert.resolved_by = resolved_by
+        alert.resolved_at = datetime.utcnow()
+    db.flush()
+    return alert

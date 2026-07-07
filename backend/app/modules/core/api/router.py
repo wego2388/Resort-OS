@@ -29,13 +29,21 @@ Endpoints:
   DELETE /api/v1/permissions/{id}
   GET    /api/v1/permissions/catalog
   GET    /api/v1/permissions/me
+
+  POST   /api/v1/public/alerts             (بدون auth — الضيف)
+  GET    /api/v1/alerts                    (طاقم الخدمة)
+  PATCH  /api/v1/alerts/{id}/status        (طاقم الخدمة)
+  WS     /api/v1/ws/alerts/{branch_id}     (بث لحظي لطاقم الخدمة)
 ═══════════════════════════════════════════════════════════════════════
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import (
+    APIRouter, Depends, HTTPException, Query, Request, WebSocket,
+    WebSocketDisconnect, status,
+)
 
 from app.core.deps import (
     DbDep,
@@ -43,6 +51,7 @@ from app.core.deps import (
     get_current_active_user,
     get_manager_user,
     get_super_admin_user,
+    get_waiter_user,
 )
 from app.modules.core import crud, services
 from app.modules.core.permission_catalog import PERMISSION_CATALOG
@@ -52,6 +61,10 @@ from app.modules.core.schemas import (
     BranchRead,
     BranchUpdate,
     EffectivePermission,
+    GuestAlertAck,
+    GuestAlertCreate,
+    GuestAlertRead,
+    GuestAlertStatusUpdate,
     NotificationRead,
     PaginatedResponse,
     PermissionCatalogEntryRead,
@@ -64,6 +77,47 @@ from app.modules.core.schemas import (
 )
 
 router = APIRouter(tags=["core"])
+
+
+# ── WebSocket Guest-Alerts Manager ─────────────────────────────────────
+# نفس نمط restaurant_manager (app/modules/restaurant/api/router.py) —
+# بث بسيط بالفرع، من غير أي بروتوكول ثنائي الاتجاه حقيقي.
+
+class AlertConnectionManager:
+    def __init__(self):
+        self.active: dict[str, list[WebSocket]] = {}  # branch_id → قائمة اتصالات WS
+
+    async def connect(self, ws: WebSocket, branch_id: str):
+        await ws.accept()
+        self.active.setdefault(branch_id, []).append(ws)
+
+    def disconnect(self, ws: WebSocket, branch_id: str):
+        connections = self.active.get(branch_id, [])
+        if ws in connections:
+            connections.remove(ws)
+
+    async def broadcast(self, branch_id: str, data: dict):
+        for ws in list(self.active.get(branch_id, [])):
+            try:
+                await ws.send_json(data)
+            except Exception:
+                pass
+
+
+alerts_manager = AlertConnectionManager()
+
+
+@router.websocket("/ws/alerts/{branch_id}")
+async def guest_alerts_websocket(ws: WebSocket, branch_id: int):
+    """اتصال WebSocket لطاقم الخدمة (نادل/كاشير) — بث تنبيهات الضيوف الجديدة
+    وتحديثات حالتها لحظيًا. بيرد بـ pong كـ heartbeat فقط، زي restaurant KDS."""
+    await alerts_manager.connect(ws, str(branch_id))
+    try:
+        while True:
+            await ws.receive_text()
+            await ws.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        alerts_manager.disconnect(ws, str(branch_id))
 
 
 
@@ -426,3 +480,92 @@ def revoke_user_permission(
         services.revoke_permission(db, permission_id, revoked_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Guest Alerts — قناة تنبيه يبدأها الضيف بدون تسجيل دخول
+# ══════════════════════════════════════════════════════════════════════
+# ⚠️ POST /public/alerts بدون authentication عمداً — نفس نمط
+#    /restaurant/public/orders بالظبط:
+#      - rate limited بالـ middleware (app.core.rate_limit، "public" bucket)
+#      - لا يوجد تعديل أو حذف من الـ public endpoint — إنشاء فقط
+#      - status دايمًا "open" عند الإنشاء (الضيف مش بيحدده)
+#
+# GET /alerts و PATCH /alerts/{id}/status لطاقم الخدمة (نادل فأعلى — نفس
+# مستوى list_held_orders في restaurant، دي حركة تشغيل يومية مش مالية).
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/public/alerts",
+    response_model=GuestAlertAck,
+    status_code=status.HTTP_201_CREATED,
+    tags=["core-public"],
+    summary="تنبيه من الضيف (نادِ الجرسون / هات الفاتورة) — بدون auth",
+)
+async def create_guest_alert(data: GuestAlertCreate, db: DbDep):
+    """
+    Public endpoint — لا يحتاج login.
+    الضيف بيبعت تنبيه من شاشة الطلب (طاولة مطعم/كافيه، أو أي سياق تاني
+    مستقبلاً) — بيتبث فورًا لأي شاشة طاقم خدمة متصلة على نفس الفرع.
+    """
+    try:
+        alert = services.create_guest_alert(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    await alerts_manager.broadcast(str(alert.branch_id), {
+        "type": "new_alert",
+        "alert": GuestAlertRead.model_validate(alert).model_dump(mode="json"),
+    })
+
+    return GuestAlertAck(
+        alert_id=alert.id,
+        status=alert.status,
+        message="تم إرسال طلبك — سيصل إليك أحد أفراد الطاقم فورًا 🙌"
+        if alert.alert_type != "request_bill"
+        else "تم طلب الفاتورة — سيتم إحضارها فورًا 🧾",
+    )
+
+
+@router.get(
+    "/alerts",
+    response_model=PaginatedResponse,
+)
+def list_guest_alerts(
+    db: DbDep,
+    _user=Depends(get_waiter_user),
+    branch_id: int = Query(...),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    """التنبيهات اللي لسه محتاجة رد فعل (open أو acknowledged) — طاقم الخدمة
+    بيتابعها لحظيًا عبر WebSocket، الـ endpoint ده fallback/تحميل أولي."""
+    skip = (page - 1) * size
+    items, total = crud.list_active_alerts(db, branch_id, skip=skip, limit=size)
+    return PaginatedResponse(
+        total=total, page=page, size=size,
+        items=[GuestAlertRead.model_validate(a) for a in items],
+    )
+
+
+@router.patch(
+    "/alerts/{alert_id}/status",
+    response_model=GuestAlertRead,
+)
+async def update_guest_alert_status(
+    alert_id: int,
+    data: GuestAlertStatusUpdate,
+    db: DbDep,
+    user=Depends(get_waiter_user),
+):
+    """طاقم الخدمة يأكد استلامه (acknowledged) أو يقفله بعد التنفيذ (resolved)."""
+    try:
+        alert = services.update_alert_status(db, alert_id, data.status, resolved_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    await alerts_manager.broadcast(str(alert.branch_id), {
+        "type": "alert_status_changed",
+        "alert": GuestAlertRead.model_validate(alert).model_dump(mode="json"),
+    })
+    return GuestAlertRead.model_validate(alert)
