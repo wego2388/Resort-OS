@@ -1236,14 +1236,25 @@ class TestTimezoneBugFixes:
     def test_b2b_checkin_uses_resort_local_date_for_quota_day(self, db, monkeypatch):
         """حصة الفندق اليومية لازم تتصفّر/تتحسب على يوم القاهرة، مش يوم
         UTC السيرفر — وإلا تسجيل دخول الساعة 1 صباحًا بتوقيت القاهرة كان
-        هيتحسب لسه على حصة "أمس" اللي ممكن تكون خلصت بالفعل."""
+        هيتحسب لسه على حصة "أمس" اللي ممكن تكون خلصت بالفعل.
+
+        ⚠️ باج حقيقي في التست ده نفسه اتكشف 2026-07-08 (منتصف الجلسة دي
+        بالظبط): forced_date كان تاريخ حرفي ثابت (2026-07-06)، وmake_contract
+        الافتراضي بيحسب valid_from من date.today() *الحقيقي* وقت تشغيل
+        التست — يعني التست كان بيعدّي بالصدفة بس لما التاريخ الحقيقي يقع
+        قبل 2026-07-07، وبيفشل تلقائيًا أي يوم بعد كده. الحل: valid_from
+        صريح مبني على forced_date نفسه، مش تاريخ حرفي منفصل عن أي مرجع."""
         import app.resort_os.timezone_utils as tzutils
 
         forced_date = date(2026, 7, 6)
         monkeypatch.setattr(tzutils, "local_today", lambda tz_name: forced_date)
 
         branch = make_branch(db)
-        contract = make_contract(db, branch, quota=5)
+        contract = make_contract(
+            db, branch, quota=5,
+            valid_from=forced_date - timedelta(days=1),
+            valid_until=forced_date + timedelta(days=30),
+        )
         req = B2BCheckinRequest(contract_id=contract.id, guests_count=3)
         services.b2b_checkin(db, branch.id, req)
 

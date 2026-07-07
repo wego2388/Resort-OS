@@ -154,16 +154,17 @@ class TestBuildStats:
         دايمًا بغض النظر عن عدد الضيوف الحقيقي في الطلبات المدفوعة. تست ده
         بيتأكد إن الرقم بيتحسب صح من guests_count الفعلي.
 
-        ⚠️ استخدم datetime.utcnow().date() مش date.today(): Order.created_at
-        بيتخزن بتوقيت UTC ساذج، و_build_stats بيبني حدود اليوم مباشرة من
-        stat_date على إنه يوم UTC. date.today() بيرجع تاريخ التوقيت المحلي
-        لنظام التشغيل (هنا Africa/Cairo، +3) — قرب منتصف الليل بتوقيت
-        القاهرة، اليوم المحلي بيبقى مختلف عن يوم الـ UTC فعليًا، فالطلب
-        اللي اتعمل دلوقتي (created_at بتوقيت UTC) يقع بره حدود اليوم اللي
-        الاختبار بيسأل عنه (اليوم المحلي). ده باج في الاختبار نفسه، مش في
-        الكود المُختبَر — اتكشف فعليًا لما الوقت عدّى منتصف الليل بتوقيت
-        القاهرة أثناء تشغيل هذه الجلسة."""
+        ⚠️ باج تاني في التست ده نفسه اتكشف 2026-07-08: كان بيستخدم
+        datetime.utcnow().date() لـ stat_date، بس _build_stats الحالية
+        بتبني حدود اليوم بـ local_date_to_utc_range(stat_date, TIMEZONE) —
+        يعني بتتعامل مع stat_date على إنه يوم محلي (القاهرة)، مش يوم UTC.
+        تمرير تاريخ UTC هنا كان بيعمل إزاحة 3 ساعات غلط قرب منتصف الليل
+        بتوقيت القاهرة (~21:00-24:00 UTC) — بالظبط الوقت اللي الباج اتكشف
+        فيه فعليًا وقت تشغيل الجلسة دي. الحل: local_today(TIMEZONE)، نفس
+        التحويل اللي _build_stats بتتوقعه فعليًا (راجع §13 CLAUDE.md)."""
         from app.modules.analytics.models import DailyStats
+        from app.core.config import settings
+        from app.resort_os.timezone_utils import local_today
         from tests.test_api.test_pms import make_branch
         from tests.test_api.test_restaurant import make_menu_item, make_order
         from app.modules.restaurant import services
@@ -178,7 +179,7 @@ class TestBuildStats:
         services.update_order_status(db, order2.id, "in_kitchen")
         services.update_order_status(db, order2.id, "paid")
 
-        stat_date = datetime.utcnow().date()
+        stat_date = local_today(settings.TIMEZONE)
         _build_stats(db, branch.id, stat_date)
 
         row = db.query(DailyStats).filter(
