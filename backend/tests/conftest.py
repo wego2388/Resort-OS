@@ -136,6 +136,23 @@ def fake_redis():
     return _shared_fake_redis_client
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limit_state():
+    """⚠️ باج عزل حقيقي كان هنا (اتصلح 2026-07-07، اتكشف لما restaurant/cafe
+    public/orders بقوا rate-limited): الـ fake_redis اللي بيغذّي rate_limit()
+    فوق session-scoped — بيفضل نفس الـ instance طول الـ test session كلها،
+    ومفيش أي تنظيف بينهم. كل التستات بتستخدم نفس TestClient (نفس "IP" فعليًا
+    من منظور rate_limit، مهما كان عدد fixtures/تستات مختلفة)، يعني أي
+    endpoint اتضاف له rate limit جديد بيتراكم عليه request count من كل
+    التستات اللي عدّت قبله في نفس الـ session — لما العدد يعدّي الحد
+    (30/60s مثلاً)، تستات شرعية تمامًا بعد كده كانت بترجع 429 بدل النتيجة
+    المتوقعة. بيمسح مفاتيح rl:* قبل كل تست عشان كل تست يبدأ بحد ائتمان
+    نظيف، بغض النظر عن أي endpoint اتضاف له limit جديد مستقبلاً."""
+    for key in _shared_fake_redis_client.keys("rl:*"):
+        _shared_fake_redis_client.delete(key)
+    yield
+
+
 # ─── DB Fixture ───────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session", autouse=True)

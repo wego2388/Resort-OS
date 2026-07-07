@@ -256,3 +256,13 @@ class TestRateLimitWiring:
         assert ("POST", "/api/v1/auth/register") in _LIMITED_ROUTES
         prefix, max_req, window = _LIMITED_ROUTES[("POST", "/api/v1/auth/login")]
         assert prefix == "login" and max_req == 5 and window == 300
+
+    def test_guest_ordering_endpoints_are_rate_limited(self):
+        """باج حقيقي اتصلح (2026-07-07): طلب/قائمة المطعم والكافيه كانت
+        موثّقة في تعليقات restaurant/cafe كـ "rate limited بالـ middleware"
+        بس عمرها ما كانت مسجّلة في _LIMITED_ROUTES فعليًا — يعني إسبام طلبات
+        ضيف وهمية عبر QR كان ممكن يحصل بدون أي حد أقصى خالص."""
+        from app.core.rate_limit import _LIMITED_ROUTES
+        assert ("GET", "/api/v1/restaurant/public/menu") in _LIMITED_ROUTES
+        assert ("POST", "/api/v1/restaurant/public/orders") in _LIMITED_ROUTES
+        assert ("POST", "/api/v1/cafe/public/orders") in _LIMITED_ROUTES

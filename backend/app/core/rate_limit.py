@@ -28,6 +28,16 @@ def _client_ip(request: Request) -> str:
 
 
 # (method, path) → (bucket_prefix, max_requests, window_seconds)
+#
+# ⚠️ باج حقيقي اتصلح (2026-07-07، اتكشف أثناء بناء guest alerts): المطابقة
+# هنا exact string match على request.url.path — يعني أي endpoint فيه path
+# parameter (زي .../orders/{order_id} أو .../reservations/{id}/public) مش
+# ممكن يتحدد هنا خالص مهما ضفنا؛ محتاج تحديث تصميم الـ middleware نفسه
+# (regex/prefix matching) لو عايزين نحميهم — خارج نطاق هذا الإصلاح البسيط.
+# اللي اتصلح دلوقتي: 3 endpoints بدون path parameters كانت موثّقة في
+# تعليقات الكود على إنها "rate limited بالـ middleware" بس عمرها ما كانت
+# مسجّلة هنا فعليًا — يعني طلب/قائمة المطعم والكافيه كانت غير محمية تمامًا
+# من الإسبام (لا حد أقصى للطلبات من نفس الـ IP خالص).
 _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("POST", "/api/v1/auth/login"):    ("login",  5,  300),
     ("POST", "/api/v1/auth/register"): ("login",  5,  300),
@@ -35,6 +45,9 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("GET",  "/api/v1/hub/blog/posts"): ("public", 30, 60),
     ("GET",  "/api/v1/pms/public/room-types"): ("public", 30, 60),
     ("GET",  "/api/v1/cafe/public/menu"): ("public", 30, 60),
+    ("GET",  "/api/v1/restaurant/public/menu"): ("public", 30, 60),
+    ("POST", "/api/v1/restaurant/public/orders"): ("public", 30, 60),
+    ("POST", "/api/v1/cafe/public/orders"): ("public", 30, 60),
 }
 
 
