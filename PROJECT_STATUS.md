@@ -260,6 +260,49 @@ route جديد في نفس المنطقة، اتحل تلقائيًا (git auto-
 
 ---
 
+## 💸 Happy Hour + نطاق (outlet/category/item) + كومبو ثابت السعر لمحرك الخصم — 2026-07-07
+
+`app/resort_os/discount_engine.py` كان عنده بس شروط على مستوى الطلب كله (إجمالي/عدد أصناف/يوم/فئة
+عميل) وخصم واحد يتطبق على الإجمالي بالكامل — مفيش وقت (Happy Hour)، مفيش تقييد بمطعم/كافيه معيّن أو
+فئة/صنف بعينه، مفيش "اشتري كذا واحصل على كذا بسعر ثابت". اتوسّع الـ engine (pure Python لسه، بدون DB)
+بـ 3 إضافات حقيقية مربوطة فعليًا بالمطعم والكافيه (مش نظرية):
+
+1. **`condition_type="time_of_day"`** — `condition_value` بصيغة `"HH:MM-HH:MM"` (مدى عابر لمنتصف
+   الليل مدعوم، مثال `"22:00-02:00"`)، `OrderContext.order_time` جديد. **باج توقيت حقيقي اتصلح أثناء
+   الربط**: `restaurant.services.apply_order_discount`/`_recompute_discount_for_rule` كانوا بياخدوا
+   `order.created_at.date()` مباشرة (UTC naive) بدل تحويله لتاريخ/وقت القاهرة المحلي — نفس فئة الباج
+   الموثّقة في §13 CLAUDE.md، اتكشفت هنا تحديدًا لأن Happy Hour مستحيل يتفحص صح من غيرها. اتصلح
+   بـ `_order_local_date_and_time()` (يستخدم `utc_naive_to_local_date`/`utc_naive_to_local_time`
+   الجديدة في `timezone_utils.py`). تستين HTTP حقيقيين بيثبتوا التصحيح: نفس لحظة UTC بترجع نتيجة
+   مختلفة تمامًا حسب صح التحويل ولا لأ (`TestHappyHourTimezone` في `test_restaurant_http.py`).
+2. **نطاق (`scope_type: order|outlet|category|item` + `scope_outlet` + `scope_id`)** — خصم ممكن دلوقتي
+   يتقيّد بمطعم/كافيه بس ("10% كافيه بس")، أو فئة معيّنة ("20% حلويات")، أو صنف واحد بعينه — وفي
+   الحالتين الأخيرتين الخصم بيتحسب على قيمة السطور المطابقة بس مش الإجمالي كله. `OrderContext` بقى
+   عنده `outlet` + `line_items: list[OrderLineItem]` (item_id/category_id/quantity/unit_price).
+3. **كومبو ثابت السعر** — `condition_type="combo_items"` (`"item_id:qty,item_id:qty"`) +
+   `discount_type="combo_fixed_price"` (القيمة = السعر النهائي الثابت للحزمة، مش خصم يُطرح). لازم
+   يترافق مع `scope_type="outlet"` (يُرفض 422 غيره) — عشان `item_id` نفسه ممكن يتصادف بين
+   `menu_items.id` (مطعم) و`cafe_items.id` (كافيه).
+
+**الكافيه اتضم فعليًا لأول مرة** — كان عنده عمود `discount_amount` من غير أي كود بيكتب فيه خالص (مفيش
+`apply_order_discount`، مفيش endpoint)، يعني نطاق "outlet" كان هيفضل نظري بدون تكامل حقيقي من غير كده.
+اتضاف `CafeOrder.applied_discount_rule_id` (migration)، `POST /cafe/orders/{id}/discount` (نفس نمط
+المطعم بالظبط)، وrecompute بعد void (كان مفقود تمامًا زي restaurant قبل 2026-07-05).
+
+**Migration**: `d3f6a8c1b4e9` (down_revision `c4a7f0e2b619`) — `conditional_discounts.scope_type/
+scope_outlet/scope_id` + `cafe_orders.applied_discount_rule_id`. اتأكد بـ `alembic upgrade --sql`
+(dry-run) بس — DB المشترك بتاع الـ Docker container ده بيستخدمه أكتر من worktree متوازي في نفس الوقت،
+فمتطبقش عليه فعليًا من غير تنسيق. لازم `alembic upgrade head` حقيقي قبل أي deploy.
+
+**فجوة معروفة**: مفيش شاشة فرونت إند لإدارة `ConditionalDiscount` خالص (اتأكد بالبحث — `OrderDetailModal.vue`
+بس بيعرض `discount_amount` كقراءة فقط). الـ API الجديد (scope/time_of_day/combo) شغال بالكامل عبر
+`POST/GET/PATCH/DELETE /finance/discounts` لكن من غير UI لحد دلوقتي — لسه محتاج شاشة إدارة من الصفر.
+
+**التحقق**: `pytest tests/ -v` → **1459 اختبار، كلهم عدّوا** (1426 → 1459). لم يتغيّر أي test قديم —
+كل التوسعة إضافات جديدة فوق سلوك قديم محفوظ بالكامل (scope الافتراضي `"order"` = زي القديم بالظبط).
+
+---
+
 ## 🏗️ إزاي المشروع مبني (من غير تعقيد)
 
 المشروع نظامين شغالين مع بعض:
