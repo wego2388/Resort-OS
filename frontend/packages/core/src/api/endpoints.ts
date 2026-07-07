@@ -31,6 +31,14 @@ export const ENDPOINTS = {
     liveDashboard: '/api/v1/beach/live-dashboard',
     eodReport: '/api/v1/beach/eod-report',
     eodReportPdf: '/api/v1/beach/eod-report/pdf',
+    // خريطة الشاطئ الحية (شمسية/برجولة فعلية) — راجع
+    // backend/app/modules/beach/models.py::BeachLocation
+    locations: '/api/v1/beach/locations',
+    locationsBulk: '/api/v1/beach/locations/bulk',
+    locationsReduce: '/api/v1/beach/locations/reduce',
+    locationUpdate: (id: number) => `/api/v1/beach/locations/${id}`,
+    locationCheckin: (id: number) => `/api/v1/beach/locations/${id}/checkin`,
+    locationCheckout: (id: number) => `/api/v1/beach/locations/${id}/checkout`,
   },
   restaurant: {
     tables: '/api/v1/restaurant/tables',

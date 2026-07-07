@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.beach.models import (
     B2BContract, B2BContractDay,
-    BeachInventory, BeachReservation, BeachTransaction,
+    BeachInventory, BeachLocation, BeachReservation, BeachTransaction,
 )
 from app.modules.beach.schemas import (
     B2BContractCreate, BeachReservationCreate,
@@ -425,3 +425,92 @@ def update_reservation_status(
         res.tx_id = tx_id
     db.flush()
     return res
+
+
+# ── BeachLocation (live map) ───────────────────────────────────────────
+
+def get_location(db: Session, location_id: int) -> Optional[BeachLocation]:
+    return db.query(BeachLocation).filter(BeachLocation.id == location_id).first()
+
+
+def list_locations(
+    db: Session, branch_id: int, location_type: Optional[str] = None
+) -> list[BeachLocation]:
+    q = db.query(BeachLocation).filter(BeachLocation.branch_id == branch_id)
+    if location_type:
+        q = q.filter(BeachLocation.location_type == location_type)
+    return q.order_by(BeachLocation.location_type, BeachLocation.grid_row, BeachLocation.grid_col).all()
+
+
+def get_max_location_number(db: Session, branch_id: int, location_type: str) -> int:
+    """أعلى رقم موجود فعليًا لنوع مواقع معيّن — الأرقام مخزّنة كنص (بعض
+    المنتجعات بترقّم بحروف/بادئات زي "VIP-1")، فبنلقط الأرقام الصحيحة الخالصة
+    بس ونتجاهل أي رقم غير قياسي عند حساب "التالي تلقائيًا"."""
+    numbers = (
+        db.query(BeachLocation.number)
+        .filter(BeachLocation.branch_id == branch_id, BeachLocation.location_type == location_type)
+        .all()
+    )
+    numeric = [int(n) for (n,) in numbers if n.isdigit()]
+    return max(numeric) if numeric else 0
+
+
+def bulk_create_locations(
+    db: Session, branch_id: int, location_type: str, count: int, start_number: int,
+    per_row: int = 10,
+) -> list[BeachLocation]:
+    created: list[BeachLocation] = []
+    for i in range(count):
+        n = start_number + i
+        loc = BeachLocation(
+            branch_id=branch_id, location_type=location_type, number=str(n),
+            grid_row=(n - 1) // per_row + 1, grid_col=(n - 1) % per_row + 1,
+            status="available",
+        )
+        db.add(loc)
+        created.append(loc)
+    db.flush()
+    return created
+
+
+def get_removable_locations(
+    db: Session, branch_id: int, location_type: str, count: int
+) -> list[BeachLocation]:
+    """آخر N مواقع *متاحة* من نوع معيّن (الأحدث أولاً) — مواقع مشغولة
+    (status != available) مش مرشّحة للحذف خالص."""
+    return (
+        db.query(BeachLocation)
+        .filter(
+            BeachLocation.branch_id == branch_id,
+            BeachLocation.location_type == location_type,
+            BeachLocation.status == "available",
+        )
+        .order_by(BeachLocation.id.desc())
+        .limit(count)
+        .all()
+    )
+
+
+def delete_locations(db: Session, locations: list[BeachLocation]) -> None:
+    for loc in locations:
+        db.delete(loc)
+    db.flush()
+
+
+def lock_location_for_update(db: Session, location_id: int) -> Optional[BeachLocation]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف الموقع نفسه طوال الـ transaction
+    عشان يمنع double check-in (كاشيرين مختلفين بيسجّلوا دخول نفس الموقع في
+    نفس اللحظة بالظبط). نفس نمط lock_inventory_for_update/lock_room_for_booking
+    بالظبط — Postgres فقط، SQLite بيتجاهله من غير error.
+
+    `.populate_existing()` لنفس سبب lock_inventory_for_update: من غيرها
+    SQLAlchemy مش هيحدّث الـ object الموجود بالفعل في identity map الجلسة
+    من نتيجة القفل — يعني لو معاملة تانية خلصت وغيّرت status الموقع فعليًا
+    قبل القفل ده بلحظة، الكود كان هيكمل بقيمة status قديمة (lost update)."""
+    return (
+        db.query(BeachLocation)
+        .filter(BeachLocation.id == location_id)
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )

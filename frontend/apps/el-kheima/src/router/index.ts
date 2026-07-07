@@ -75,6 +75,7 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', redirect: '/pos/beach' },
       { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue') },
+      { path: 'beach-map', name: 'pos-beach-map', component: () => import('../views/pos/BeachMapView.vue') },
       { path: 'restaurant', name: 'pos-restaurant', component: () => import('../views/pos/RestaurantPOSView.vue') },
       { path: 'cafe', name: 'pos-cafe', component: () => import('../views/pos/CafePOSView.vue') },
     ],

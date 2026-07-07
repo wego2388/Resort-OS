@@ -59,6 +59,10 @@ class BeachSellRequest(BaseModel):
     b2b_contract_id: Optional[int] = None
     customer_id:     Optional[int] = None
     notes:           Optional[str] = None
+    # الموقع الفعلي (خريطة الشاطئ الحية) اللي العملية دي متسجّلة عشانه —
+    # None لبيع تذاكر عادي من POS من غير خريطة. services.checkin_location
+    # بيضبط الحقل ده داخليًا وقت بناء الطلب.
+    location_id:     Optional[int] = None
 
 
 class BeachTransactionRead(BaseModel):
@@ -80,6 +84,7 @@ class BeachTransactionRead(BaseModel):
     voided_at:       Optional[datetime]
     voided_reason:   Optional[str] = None
     shift_id:        Optional[int] = None
+    location_id:     Optional[int] = None
     created_at:      datetime
 
 
@@ -180,3 +185,61 @@ class BeachDailySummary(BaseModel):
     capacity_pct:     int
     surge_active:     bool
     towels_rented:    int
+
+
+# ── Beach Locations (live map) ──────────────────────────────────────────
+
+class BeachLocationRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                     int
+    branch_id:              int
+    location_type:          str
+    number:                 str
+    grid_row:               int
+    grid_col:               int
+    status:                 str
+    current_transaction_id: Optional[int] = None
+    guest_name:             Optional[str] = None
+    guest_phone:            Optional[str] = None
+    guests_count:           int
+    towels_given:           int
+    checked_in_at:          Optional[datetime] = None
+    checked_in_by:          Optional[int] = None
+    created_at:             datetime
+    updated_at:             datetime
+
+
+class BeachLocationBulkCreate(BaseModel):
+    """إضافة مواقع جديدة بالجملة لنوع معيّن — منسّقة تلقائيًا في grid
+    (10 أعمدة لكل صف)، مرقّمة تسلسليًا بعد أعلى رقم موجود لنفس النوع."""
+    branch_id:     int
+    location_type: str = Field(..., min_length=2, max_length=20, pattern=r"^[a-z_]+$")
+    count:         int = Field(..., ge=1, le=200)
+
+
+class BeachLocationBulkRemove(BaseModel):
+    """حذف آخر N مواقع *متاحة* من نوع معيّن — بيرفض لو أي موقع مطلوب حذفه
+    مشغول حاليًا (حماية من حذف موقع فيه ضيف قاعد عليه فعليًا)."""
+    branch_id:     int
+    location_type: str = Field(..., min_length=2, max_length=20)
+    count:         int = Field(..., ge=1, le=200)
+
+
+class BeachLocationUpdate(BaseModel):
+    """تعديل مدير: تعطيل/تفعيل موقع (صيانة) أو تغيير مكانه في الـ grid.
+    مفيش تعديل لـ location_type/number هنا — لو المدير غلط في النوع/الرقم،
+    الأسهل حذف وإعادة إضافة (نفس فلسفة B2BContractUpdate: مسار محدود
+    ومقصود، مش تعديل حر لكل حقل)."""
+    status:   Optional[str] = Field(None, pattern=r"^(available|out_of_service)$")
+    grid_row: Optional[int] = Field(None, ge=1)
+    grid_col: Optional[int] = Field(None, ge=1)
+
+
+class BeachLocationCheckinRequest(BaseModel):
+    """تسجيل دخول ضيف لموقع فعلي — بيعمل عملية بيع حقيقية عبر
+    services.sell_ticket (entry أو entry_towel)، مش مجرد تعليم "مشغول"."""
+    guest_name:   Optional[str] = Field(None, max_length=200)
+    guest_phone:  Optional[str] = Field(None, max_length=20)
+    guests_count: int  = Field(1, ge=1)
+    with_towel:   bool = False
+    cashier_id:   Optional[int] = None

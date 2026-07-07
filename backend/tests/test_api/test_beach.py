@@ -14,6 +14,7 @@ from app.modules.beach import crud, services
 from app.modules.beach.schemas import (
     B2BCheckinRequest,
     B2BContractCreate,
+    BeachLocationCheckinRequest,
     BeachReservationCreate,
     BeachSellRequest,
 )
@@ -1261,3 +1262,179 @@ class TestTimezoneBugFixes:
         report = services.get_eod_report(db, branch.id)
         assert report["date"] == forced_date
         assert report["total_entries"] == 2
+
+
+class TestBeachLocations:
+    """خريطة الشاطئ الحية — BeachLocation. تسجيل دخول لموقع فعلي لازم يكون
+    عملية بيع حقيقية (services.sell_ticket الداخلي)، مش مجرد تعليم status."""
+
+    def test_bulk_add_locations_sequential_numbering(self, db):
+        branch = make_branch(db)
+        created = services.bulk_add_locations(db, branch.id, "umbrella", 5)
+        assert [loc.number for loc in created] == ["1", "2", "3", "4", "5"]
+        assert all(loc.status == "available" for loc in created)
+
+        more = services.bulk_add_locations(db, branch.id, "umbrella", 3)
+        assert [loc.number for loc in more] == ["6", "7", "8"]
+
+    def test_bulk_remove_rejects_when_not_enough_available(self, db):
+        branch = make_branch(db)
+        locs = services.bulk_add_locations(db, branch.id, "pergola", 3)
+        services.checkin_location(
+            db, branch.id, locs[0].id,
+            BeachLocationCheckinRequest(guest_name="ضيف", guests_count=1),
+        )
+        with pytest.raises(ValueError, match="متاح"):
+            services.bulk_remove_locations(db, branch.id, "pergola", 3)
+
+    def test_checkin_creates_real_transaction_and_occupies_location(self, db):
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+
+        updated = services.checkin_location(
+            db, branch.id, loc.id,
+            BeachLocationCheckinRequest(
+                guest_name="أحمد سامي", guest_phone="01011122233",
+                guests_count=2, with_towel=True,
+            ),
+            cashier_id=7,
+        )
+
+        assert updated.status == "occupied"
+        assert updated.guest_name == "أحمد سامي"
+        assert updated.guests_count == 2
+        assert updated.towels_given == 2
+        assert updated.current_transaction_id is not None
+
+        tx = crud.get_transaction(db, updated.current_transaction_id)
+        assert tx is not None
+        assert tx.tx_type == "entry_towel"
+        assert tx.quantity == 2
+        assert tx.location_id == loc.id
+        assert tx.total_amount > 0
+
+        # الإشغال اليومي المجمّع اتأثر زي أي تذكرة عادية
+        inv = crud.get_or_create_inventory(db, branch.id, date.today())
+        assert inv.capacity_used == 2
+
+    def test_checkin_occupied_location_rejected(self, db):
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        services.checkin_location(
+            db, branch.id, loc.id, BeachLocationCheckinRequest(guests_count=1),
+        )
+        with pytest.raises(services.BeachConcurrencyError, match="مشغول"):
+            services.checkin_location(
+                db, branch.id, loc.id, BeachLocationCheckinRequest(guests_count=1),
+            )
+
+    def test_checkin_out_of_service_location_rejected(self, db):
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        services.update_location(db, loc.id, status="out_of_service")
+        with pytest.raises(ValueError, match="خارج الخدمة"):
+            services.checkin_location(
+                db, branch.id, loc.id, BeachLocationCheckinRequest(guests_count=1),
+            )
+
+    def test_checkout_frees_location_and_returns_towels_without_touching_capacity(self, db):
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        services.checkin_location(
+            db, branch.id, loc.id,
+            BeachLocationCheckinRequest(guest_name="سلمى", guests_count=1, with_towel=True),
+        )
+        inv_before = crud.get_or_create_inventory(db, branch.id, date.today())
+        towels_before = inv_before.towels_available
+        capacity_before = inv_before.capacity_used
+
+        freed = services.checkout_location(db, branch.id, loc.id)
+
+        assert freed.status == "available"
+        assert freed.guest_name is None
+        assert freed.current_transaction_id is None
+        assert freed.towels_given == 0
+
+        inv_after = crud.get_or_create_inventory(db, branch.id, date.today())
+        assert inv_after.towels_available == towels_before + 1  # الفوطة رجعت
+        assert inv_after.capacity_used == capacity_before        # الإشغال اليومي متأثرش
+
+    def test_checkout_not_occupied_rejected(self, db):
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        with pytest.raises(ValueError, match="مش مشغول"):
+            services.checkout_location(db, branch.id, loc.id)
+
+    def test_update_location_rejects_disabling_occupied_spot(self, db):
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        services.checkin_location(
+            db, branch.id, loc.id, BeachLocationCheckinRequest(guests_count=1),
+        )
+        with pytest.raises(ValueError, match="مشغول"):
+            services.update_location(db, loc.id, status="out_of_service")
+
+    def test_concurrent_checkin_raises_concurrency_error_on_lock_busy(self, db, monkeypatch):
+        """باج حقيقي كان ممكن يحصل هنا لولا القفل: لو كاشيرين مختلفين ضغطوا
+        تشيك-إن على نفس الموقع في نفس اللحظة، من غير SELECT FOR UPDATE
+        NOWAIT الاتنين كانوا ممكن يعدّوا فحص status=='available' بنفس القيمة
+        القديمة، ويتسبب double check-in فعلي (تذكرتين حقيقيتين على نفس
+        الشمسية). هنا بنحاكي عملية تانية ماسكة القفل دلوقتي بمحاكاة
+        OperationalError من الـ lock نفسه (نفس أسلوب test_concurrent_sale_
+        raises_concurrency_error فوق)."""
+        from sqlalchemy.exc import OperationalError
+
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+
+        def _raise_locked(*_args, **_kwargs):
+            raise OperationalError("SELECT ... FOR UPDATE NOWAIT", {}, Exception("could not obtain lock"))
+
+        monkeypatch.setattr(crud, "lock_location_for_update", _raise_locked)
+
+        with pytest.raises(services.BeachConcurrencyError, match="مشغول"):
+            services.checkin_location(
+                db, branch.id, loc.id, BeachLocationCheckinRequest(guests_count=1),
+            )
+
+    def test_lock_refreshes_stale_in_memory_status_not_just_db_lock(self, db):
+        """نفس فئة test_lock_refreshes_stale_in_memory_capacity_not_just_db_lock
+        فوق، بس على BeachLocation.status بدل BeachInventory.capacity_used —
+        بيثبت إن lock_location_for_update بيرجّع الحالة الحقيقية المُعتمدة
+        حديثًا (من جلسة تانية)، مش القيمة القديمة المخزّنة في identity map
+        الجلسة الحالية. لولا .populate_existing() هنا، جلسة B كانت ممكن تشوف
+        الموقع لسه 'available' بعد ما جلسة A خلصت شغلها فعليًا وعمِلت commit،
+        وتتسبب في double check-in حقيقي رغم إن القفل نفسه اتاخد بنجاح."""
+        from tests.conftest import TestingSessionLocal
+
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        location_id = loc.id
+
+        dbA = TestingSessionLocal()
+        dbB = TestingSessionLocal()
+        try:
+            locA = crud.get_location(dbA, location_id)
+            locB = crud.get_location(dbB, location_id)
+            assert locA.status == "available"
+            assert locB.status == "available"
+
+            # جلسة A تقفل، تسجّل دخول ضيف، تعتمد (commit) — الحالة الحقيقية
+            # في الداتابيز بقت 'occupied' دلوقتي.
+            lockedA = crud.lock_location_for_update(dbA, location_id)
+            lockedA.status = "occupied"
+            dbA.commit()
+
+            # جلسة B تقفل بعد كده — لازم تشوف 'occupied' الحقيقية، مش
+            # 'available' المخزّنة في identity map بتاعتها.
+            lockedB = crud.lock_location_for_update(dbB, location_id)
+            assert lockedB.status == "occupied", (
+                "lock_location_for_update رجّع حالة قديمة من identity map "
+                "الجلسة ('available') بدل الحالة الحقيقية المُعتمدة حديثًا "
+                "('occupied') — القفل نفسه اتاخد بنجاح بس التحقق التالي هيكون "
+                "غلط، وده بالظبط الباج اللي كان بيسمح بـ double check-in."
+            )
+        finally:
+            dbB.rollback()
+            dbA.close()
+            dbB.close()
