@@ -20,6 +20,8 @@ from app.modules.cafe.schemas import (
     CafeGuestOrderCreate, CafeGuestOrderRead,
     CafeItemCreate, CafeItemRead, CafeItemUpdate,
     CafeItemRecipeLineCreate, CafeItemRecipeLineRead, CafeItemRecipeLineUpdate,
+    CafeItemVariantCreate, CafeItemVariantRead, CafeItemVariantRecipeLineCreate,
+    CafeItemVariantRecipeLineRead, CafeItemVariantRecipeLineUpdate, CafeItemVariantUpdate,
     CafeMenuItemExtraGroupCreate, CafeMenuItemExtraGroupRead,
     CafeOrderCreate, CafeOrderItemCreate, CafeOrderItemVoidRequest, CafeOrderRead, CafeOrderStatusUpdate,
     CafePublicMenuCategoryRead, CafePublicMenuItemRead, CafePublicMenuResponse,
@@ -118,6 +120,65 @@ def update_recipe_line(line_id: int, data: CafeItemRecipeLineUpdate, db: DbDep, 
 def delete_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         services.remove_recipe_line(db, line_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Variants (حجم/نوع حقيقي) ─────────────────────────────────────────
+# نفس نمط restaurant.router بالضبط — راجع التعليقات هناك.
+
+@router.post("/cafe/items/{item_id}/variants",
+             response_model=CafeItemVariantRead,
+             status_code=status.HTTP_201_CREATED)
+def add_variant(item_id: int, data: CafeItemVariantCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        variant = services.add_variant(db, item_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return CafeItemVariantRead.model_validate(services.build_variant_read(variant))
+
+
+@router.patch("/cafe/variants/{variant_id}", response_model=CafeItemVariantRead)
+def update_variant(variant_id: int, data: CafeItemVariantUpdate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        variant = services.update_variant(db, variant_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return CafeItemVariantRead.model_validate(services.build_variant_read(variant))
+
+
+@router.delete("/cafe/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_variant(variant_id: int, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        services.remove_variant(db, variant_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post("/cafe/variants/{variant_id}/recipe-lines",
+             response_model=CafeItemVariantRecipeLineRead,
+             status_code=status.HTTP_201_CREATED)
+def add_variant_recipe_line(variant_id: int, data: CafeItemVariantRecipeLineCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        line = services.add_variant_recipe_line(db, variant_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return CafeItemVariantRecipeLineRead.model_validate(services.build_variant_recipe_line_read(line))
+
+
+@router.patch("/cafe/variant-recipe-lines/{line_id}", response_model=CafeItemVariantRecipeLineRead)
+def update_variant_recipe_line(line_id: int, data: CafeItemVariantRecipeLineUpdate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        line = services.update_variant_recipe_line(db, line_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return CafeItemVariantRecipeLineRead.model_validate(services.build_variant_recipe_line_read(line))
+
+
+@router.delete("/cafe/variant-recipe-lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_variant_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        services.remove_variant_recipe_line(db, line_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 

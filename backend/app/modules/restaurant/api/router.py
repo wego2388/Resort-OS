@@ -20,6 +20,8 @@ from app.modules.restaurant.schemas import (
     MenuCategoryCreate, MenuCategoryRead,
     MenuItemCreate, MenuItemExtraGroupCreate, MenuItemExtraGroupRead, MenuItemRead, MenuItemUpdate,
     MenuItemRecipeLineCreate, MenuItemRecipeLineRead, MenuItemRecipeLineUpdate,
+    MenuItemVariantCreate, MenuItemVariantRead, MenuItemVariantRecipeLineCreate,
+    MenuItemVariantRecipeLineRead, MenuItemVariantRecipeLineUpdate, MenuItemVariantUpdate,
     OrderCreate, OrderItemCreate, OrderItemRead, OrderItemVoidRequest, OrderRead, OrderStatusUpdate,
     OrderSyncRequest, OrderSyncResponse,
     # Reporting / Food Cost
@@ -176,6 +178,66 @@ def update_recipe_line(line_id: int, data: MenuItemRecipeLineUpdate, db: DbDep, 
 def delete_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         services.remove_recipe_line(db, line_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Variants (حجم/نوع حقيقي) ─────────────────────────────────────────
+# نفس مستوى صلاحية الوصفة/الصنف (get_manager_user) — راجع
+# app.modules.restaurant.models.MenuItemVariant للتبرير الكامل.
+
+@router.post("/restaurant/menu/items/{item_id}/variants",
+             response_model=MenuItemVariantRead,
+             status_code=status.HTTP_201_CREATED)
+def add_variant(item_id: int, data: MenuItemVariantCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        variant = services.add_variant(db, item_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return MenuItemVariantRead.model_validate(services.build_variant_read(variant))
+
+
+@router.patch("/restaurant/menu/variants/{variant_id}", response_model=MenuItemVariantRead)
+def update_variant(variant_id: int, data: MenuItemVariantUpdate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        variant = services.update_variant(db, variant_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return MenuItemVariantRead.model_validate(services.build_variant_read(variant))
+
+
+@router.delete("/restaurant/menu/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_variant(variant_id: int, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        services.remove_variant(db, variant_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post("/restaurant/menu/variants/{variant_id}/recipe-lines",
+             response_model=MenuItemVariantRecipeLineRead,
+             status_code=status.HTTP_201_CREATED)
+def add_variant_recipe_line(variant_id: int, data: MenuItemVariantRecipeLineCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        line = services.add_variant_recipe_line(db, variant_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return MenuItemVariantRecipeLineRead.model_validate(services.build_variant_recipe_line_read(line))
+
+
+@router.patch("/restaurant/menu/variant-recipe-lines/{line_id}", response_model=MenuItemVariantRecipeLineRead)
+def update_variant_recipe_line(line_id: int, data: MenuItemVariantRecipeLineUpdate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        line = services.update_variant_recipe_line(db, line_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return MenuItemVariantRecipeLineRead.model_validate(services.build_variant_recipe_line_read(line))
+
+
+@router.delete("/restaurant/menu/variant-recipe-lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_variant_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        services.remove_variant_recipe_line(db, line_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 

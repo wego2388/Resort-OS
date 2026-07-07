@@ -2,7 +2,8 @@
 app/modules/restaurant/models.py
 Restaurant Module
 Tables: menu_categories, menu_items, menu_item_extra_groups, menu_item_extras,
-        menu_item_recipe_lines, dining_tables, orders, order_items, order_item_extras
+        menu_item_recipe_lines, menu_item_variants, menu_item_variant_recipe_lines,
+        dining_tables, orders, order_items, order_item_extras
 """
 from __future__ import annotations
 
@@ -58,6 +59,10 @@ class MenuItem(Base, TimestampMixin):
     recipe_lines: Mapped[list["MenuItemRecipeLine"]] = relationship(
         "MenuItemRecipeLine", back_populates="menu_item", lazy="selectin",
         cascade="all, delete-orphan",
+    )
+    variants: Mapped[list["MenuItemVariant"]] = relationship(
+        "MenuItemVariant", back_populates="menu_item", lazy="selectin",
+        cascade="all, delete-orphan", order_by="MenuItemVariant.sort_order",
     )
 
 
@@ -118,6 +123,69 @@ class MenuItemRecipeLine(Base, TimestampMixin):
     product:   Mapped["Product"]  = relationship("Product", lazy="joined")
 
 
+class MenuItemVariant(Base, TimestampMixin):
+    """متغيّر حقيقي لصنف — نفس الصنف بحجم/نوع مختلف له سعر ووصفة مختلفين
+    تمامًا، مش إضافة سعر ثابت فوق وصفة واحدة زي MenuItemExtra. مثال:
+    'كابتشينو' بحجم 'صغير' (120 مل حليب) مقابل 'كبير' (200 مل حليب) — سعر
+    مختلف *و* استهلاك مخزون مختلف فعليًا، مش رسم إضافي بس.
+
+    مختلف جوهريًا عن MenuItemExtra: الإضافة بتُضاف فوق صنف أساسي واحد
+    بوصفة ثابتة (مثال: 'شوت إضافي +5ج' على قهوة عادية)، أما المتغيّر فبيحل
+    محل الصنف الأساسي بالكامل (سعر ووصفة MenuItem الأصل بيتجاهلوا تمامًا
+    لما يتم اختيار متغيّر — راجع services._resolve_variant). صنف بدون
+    متغيّرات يفضل شغال بسلوكه الحالي 100% (price/recipe_lines بتاعت
+    MenuItem نفسه) — المتغيّرات إضافة اختيارية بحتة، مش استبدال قسري.
+
+    لو الصنف عنده متغيّرات متاحة، الطلب لازم يحدد variant_id إجباريًا —
+    مفيش سعر افتراضي غامض لما فيه أكتر من حجم حقيقي للصنف."""
+    __tablename__ = "menu_item_variants"
+    __table_args__ = (
+        UniqueConstraint("menu_item_id", "name", name="uq_menu_item_variant_name"),
+    )
+
+    id:           Mapped[int]        = mapped_column(primary_key=True)
+    menu_item_id: Mapped[int]        = mapped_column(ForeignKey("menu_items.id", ondelete="CASCADE"))
+    name:         Mapped[str]        = mapped_column(String(100))
+    name_ar:      Mapped[str | None] = mapped_column(String(100), nullable=True)
+    price:        Mapped[Decimal]    = mapped_column(Numeric(10, 2))
+    # سعر مطلق (مش delta فوق MenuItem.price) — بيحل محل سعر الصنف الأساسي
+    # بالكامل لما يتم اختياره، زي 'كابتشينو كبير = 35ج' مش '+10ج فوق صغير'.
+    # أوضح للكاشير على شاشة POS وأسهل في التسعير من فرق مبني على سعر أساسي
+    # ممكن يتغيّر لوحده.
+    is_available: Mapped[bool]       = mapped_column(Boolean, default=True)
+    sort_order:   Mapped[int]        = mapped_column(Integer, default=0)
+
+    menu_item: Mapped["MenuItem"] = relationship("MenuItem", back_populates="variants")
+    recipe_lines: Mapped[list["MenuItemVariantRecipeLine"]] = relationship(
+        "MenuItemVariantRecipeLine", back_populates="variant", lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class MenuItemVariantRecipeLine(Base, TimestampMixin):
+    """سطر وصفة خاص بمتغيّر واحد — نفس شكل MenuItemRecipeLine بالضبط (كمية
+    من inventory.Product بوحدته نفسها) بس مربوط بـ MenuItemVariant مش
+    MenuItem مباشرة. جدول منفصل عمدًا (مش عمود variant_id nullable على
+    MenuItemRecipeLine نفسه) — عشان العلاقة menu_item.recipe_lines
+    (المستخدمة في compute_menu_item_cost/_deduct_inventory_for_order/
+    get_food_cost_report، كل ده اتبنى واتأكد منه قبل المتغيّرات) تفضل تعني
+    بالظبط نفس الحاجة اللي كانت تعنيها من قبل: وصفة الصنف الأساسي، من غير
+    أي فلترة إضافية لازم تتضاف في كل نقطة استخدام موجودة."""
+    __tablename__ = "menu_item_variant_recipe_lines"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "product_id", name="uq_menu_item_variant_recipe_product"),
+    )
+
+    id:                Mapped[int]     = mapped_column(primary_key=True)
+    variant_id:        Mapped[int]     = mapped_column(ForeignKey("menu_item_variants.id", ondelete="CASCADE"))
+    product_id:        Mapped[int]     = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
+    quantity_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    notes:             Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    variant: Mapped["MenuItemVariant"] = relationship("MenuItemVariant", back_populates="recipe_lines")
+    product: Mapped["Product"]         = relationship("Product", lazy="joined")
+
+
 class DiningTable(Base, TimestampMixin):
     __tablename__ = "dining_tables"
 
@@ -169,6 +237,11 @@ class OrderItem(Base, TimestampMixin):
     id:           Mapped[int]        = mapped_column(primary_key=True)
     order_id:     Mapped[int]        = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
     menu_item_id: Mapped[int]        = mapped_column(ForeignKey("menu_items.id", ondelete="RESTRICT"))
+    variant_id:   Mapped[int | None] = mapped_column(ForeignKey("menu_item_variants.id", ondelete="SET NULL"), nullable=True)
+    # المتغيّر المختار وقت الطلب (لو الصنف عنده متغيّرات) — name/unit_price
+    # فوق دول بالفعل snapshot يعكس اسم/سعر المتغيّر وقت الطلب، فده مرجع
+    # هيكلي بس (للتقارير/خصم المخزون)، مش مصدر السعر. NULL لو الصنف اتباع
+    # بدون متغيّر (أو المتغيّر اتحذف بعدين — السجل التاريخي (name) بيفضل صحيح).
     name:         Mapped[str]        = mapped_column(String(200))          # snapshot
     unit_price:   Mapped[Decimal]    = mapped_column(Numeric(10, 2))       # snapshot
     quantity:     Mapped[int]        = mapped_column(Integer, default=1)

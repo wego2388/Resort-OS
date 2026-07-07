@@ -10,12 +10,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_date_to_utc_range
 from app.modules.cafe.models import (
-    CafeCategory, CafeItem, CafeItemRecipeLine, CafeMenuItemExtra, CafeMenuItemExtraGroup,
-    CafeOrder, CafeOrderItem, CafeOrderItemExtra, CafeTable,
+    CafeCategory, CafeItem, CafeItemRecipeLine, CafeItemVariant, CafeItemVariantRecipeLine,
+    CafeMenuItemExtra, CafeMenuItemExtraGroup, CafeOrder, CafeOrderItem, CafeOrderItemExtra, CafeTable,
 )
 from app.modules.cafe.schemas import (
     CafeCategoryCreate, CafeItemCreate, CafeItemRecipeLineCreate, CafeItemRecipeLineUpdate,
-    CafeItemUpdate, CafeMenuItemExtraGroupCreate,
+    CafeItemUpdate, CafeItemVariantCreate, CafeItemVariantRecipeLineCreate,
+    CafeItemVariantRecipeLineUpdate, CafeItemVariantUpdate, CafeMenuItemExtraGroupCreate,
 )
 
 
@@ -105,6 +106,62 @@ def update_recipe_line(db: Session, line: CafeItemRecipeLine, data: CafeItemReci
 
 def delete_recipe_line(db: Session, line_id: int) -> bool:
     line = get_recipe_line(db, line_id)
+    if not line:
+        return False
+    db.delete(line)
+    db.flush()
+    return True
+
+
+# ── Variants ──────────────────────────────────────────────────────────
+
+def get_variant(db: Session, variant_id: int) -> Optional[CafeItemVariant]:
+    return db.query(CafeItemVariant).filter(CafeItemVariant.id == variant_id).first()
+
+
+def create_variant(db: Session, cafe_item_id: int, data: CafeItemVariantCreate) -> CafeItemVariant:
+    variant = CafeItemVariant(cafe_item_id=cafe_item_id, **data.model_dump())
+    db.add(variant)
+    db.flush()
+    return variant
+
+
+def update_variant(db: Session, variant: CafeItemVariant, data: CafeItemVariantUpdate) -> CafeItemVariant:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(variant, field, value)
+    db.flush()
+    return variant
+
+
+def delete_variant(db: Session, variant_id: int) -> bool:
+    variant = get_variant(db, variant_id)
+    if not variant:
+        return False
+    db.delete(variant)
+    db.flush()
+    return True
+
+
+def get_variant_recipe_line(db: Session, line_id: int) -> Optional[CafeItemVariantRecipeLine]:
+    return db.query(CafeItemVariantRecipeLine).filter(CafeItemVariantRecipeLine.id == line_id).first()
+
+
+def create_variant_recipe_line(db: Session, variant_id: int, data: CafeItemVariantRecipeLineCreate) -> CafeItemVariantRecipeLine:
+    line = CafeItemVariantRecipeLine(variant_id=variant_id, **data.model_dump())
+    db.add(line)
+    db.flush()
+    return line
+
+
+def update_variant_recipe_line(db: Session, line: CafeItemVariantRecipeLine, data: CafeItemVariantRecipeLineUpdate) -> CafeItemVariantRecipeLine:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(line, field, value)
+    db.flush()
+    return line
+
+
+def delete_variant_recipe_line(db: Session, line_id: int) -> bool:
+    line = get_variant_recipe_line(db, line_id)
     if not line:
         return False
     db.delete(line)
@@ -229,12 +286,13 @@ def list_items_for_food_cost(db: Session, branch_id: int) -> list[CafeItem]:
 
 def get_paid_order_items_for_food_cost(
     db: Session, branch_id: int, range_start: datetime, range_end: datetime,
-) -> list[tuple[int, Decimal, int, datetime]]:
+) -> list[tuple[int, Optional[int], Decimal, int, datetime]]:
     """راجع restaurant.crud.get_paid_order_items_for_food_cost للتفاصيل
     الكاملة — نفس المنطق بالضبط: أصناف ملغاة مُستبعدة، أصناف/طلبات مرتجعة
-    (status='refunded') مُتضمّنة عمدًا لأن الاستهلاك حصل فعليًا وقت التحضير."""
+    (status='refunded') مُتضمّنة عمدًا لأن الاستهلاك حصل فعليًا وقت التحضير.
+    variant_id مُضمّن عشان صنف عنده متغيّرات يتجمّع لكل متغيّر على حدة."""
     rows = (
-        db.query(CafeOrderItem.item_id, CafeOrderItem.unit_price, CafeOrderItem.quantity, CafeOrder.created_at)
+        db.query(CafeOrderItem.item_id, CafeOrderItem.variant_id, CafeOrderItem.unit_price, CafeOrderItem.quantity, CafeOrder.created_at)
         .join(CafeOrder, CafeOrderItem.order_id == CafeOrder.id)
         .filter(
             CafeOrder.branch_id == branch_id,
