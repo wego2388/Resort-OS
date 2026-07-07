@@ -643,3 +643,116 @@ class TestBeachReservationsListHTTP:
         assert resp.status_code == 200
         names = [r["guest_name"] for r in resp.json()["items"]]
         assert "ضيف اختبار القائمة" in names
+
+
+class TestBeachLocationsHTTP:
+    """خريطة الشاطئ الحية — عبر TestClient حقيقي (routing + permission
+    dependencies + Pydantic validation)، مش نداء services مباشر."""
+
+    def test_bulk_add_requires_manager(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/beach/locations/bulk",
+            json={"branch_id": branch.id, "location_type": "umbrella", "count": 5},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_bulk_add_then_list_then_checkin_checkout_flow(
+        self, client: TestClient, db, fake_redis, manager_headers, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+
+        add_resp = client.post(
+            "/api/v1/beach/locations/bulk",
+            json={"branch_id": branch.id, "location_type": "umbrella", "count": 4},
+            headers=manager_headers,
+        )
+        assert add_resp.status_code == 201, add_resp.text
+        created = add_resp.json()
+        assert [loc["number"] for loc in created] == ["1", "2", "3", "4"]
+        assert all(loc["status"] == "available" for loc in created)
+
+        list_resp = client.get(
+            "/api/v1/beach/locations", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert list_resp.status_code == 200
+        assert len(list_resp.json()) == 4
+
+        loc_id = created[0]["id"]
+        checkin_resp = client.post(
+            f"/api/v1/beach/locations/{loc_id}/checkin",
+            params={"branch_id": branch.id},
+            json={"guest_name": "هدى كمال", "guests_count": 2, "with_towel": True},
+            headers=cashier_headers,
+        )
+        assert checkin_resp.status_code == 201, checkin_resp.text
+        occupied = checkin_resp.json()
+        assert occupied["status"] == "occupied"
+        assert occupied["guest_name"] == "هدى كمال"
+        assert occupied["current_transaction_id"] is not None
+
+        # موقع مشغول لا يمكن تسجيل دخول عليه تاني — 409
+        second_checkin = client.post(
+            f"/api/v1/beach/locations/{loc_id}/checkin",
+            params={"branch_id": branch.id},
+            json={"guests_count": 1},
+            headers=cashier_headers,
+        )
+        assert second_checkin.status_code == 409
+
+        checkout_resp = client.post(
+            f"/api/v1/beach/locations/{loc_id}/checkout",
+            params={"branch_id": branch.id},
+            headers=cashier_headers,
+        )
+        assert checkout_resp.status_code == 200, checkout_resp.text
+        freed = checkout_resp.json()
+        assert freed["status"] == "available"
+        assert freed["guest_name"] is None
+
+    def test_reduce_rejects_when_locations_occupied(
+        self, client: TestClient, db, fake_redis, manager_headers, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+        add_resp = client.post(
+            "/api/v1/beach/locations/bulk",
+            json={"branch_id": branch.id, "location_type": "pergola", "count": 2},
+            headers=manager_headers,
+        )
+        loc_id = add_resp.json()[0]["id"]
+        client.post(
+            f"/api/v1/beach/locations/{loc_id}/checkin",
+            params={"branch_id": branch.id}, json={"guests_count": 1}, headers=cashier_headers,
+        )
+
+        reduce_resp = client.post(
+            "/api/v1/beach/locations/reduce",
+            json={"branch_id": branch.id, "location_type": "pergola", "count": 2},
+            headers=manager_headers,
+        )
+        assert reduce_resp.status_code == 409
+
+    def test_update_location_requires_manager(self, client: TestClient, db, fake_redis, manager_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        add_resp = client.post(
+            "/api/v1/beach/locations/bulk",
+            json={"branch_id": branch.id, "location_type": "cabana", "count": 1},
+            headers=manager_headers,
+        )
+        loc_id = add_resp.json()[0]["id"]
+
+        forbidden = client.patch(
+            f"/api/v1/beach/locations/{loc_id}",
+            params={"branch_id": branch.id}, json={"status": "out_of_service"},
+            headers=cashier_headers,
+        )
+        assert forbidden.status_code == 403
+
+        allowed = client.patch(
+            f"/api/v1/beach/locations/{loc_id}",
+            params={"branch_id": branch.id}, json={"status": "out_of_service"},
+            headers=manager_headers,
+        )
+        assert allowed.status_code == 200
+        assert allowed.json()["status"] == "out_of_service"
