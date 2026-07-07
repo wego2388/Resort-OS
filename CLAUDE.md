@@ -309,7 +309,7 @@ resort-os/
 │   │   ├── celery_app.py
 │   │   └── seed.py                ← Idempotent
 │   │
-│   ├── tests/                     ← 1353 tests (آخر رقم مؤكد — بيتغيّر، شغّل بنفسك)
+│   ├── tests/                     ← 1370 tests (آخر رقم مؤكد — بيتغيّر، شغّل بنفسك)
 │   ├── alembic/
 │   └── requirements.txt           ← كل الاعتماديات pinned، مفيش أي editable local path
 │
