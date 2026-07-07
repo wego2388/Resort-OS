@@ -231,12 +231,14 @@ class TestOrderStatus:
 
 
 def make_finance_accounts(db, branch):
-    """يزرع 1100 (نقدية) و4200 (إيرادات المطعم) — الحسابين اللي
-    restaurant.services بيدوّر عليهم بالكود عند ترحيل قيد الإيراد."""
+    """يزرع 1100 (نقدية) و4200 (إيرادات المطعم) و1150 (ذمم الفوليو) —
+    الحسابات اللي restaurant.services بيدوّر عليها بالكود عند ترحيل قيد
+    الإيراد (كاش فوري أو محمّل على فوليو غرفة)."""
     from app.modules.finance.models import Account
     cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
     revenue = Account(branch_id=branch.id, code="4200", name="Restaurant Revenue", account_type="revenue")
-    db.add_all([cash, revenue])
+    guest_ledger = Account(branch_id=branch.id, code="1150", name="ذمم الفوليو", account_type="asset")
+    db.add_all([cash, revenue, guest_ledger])
     db.commit()
     return cash, revenue
 
@@ -669,6 +671,7 @@ class TestChargeToRoom:
         from app.modules.finance import crud as finance_crud
 
         branch = make_branch(db)
+        make_finance_accounts(db, branch)
         booking, room = self._make_checked_in_booking(db, branch)
         item = make_menu_item(db, branch)
         order = make_order(db, branch, item)
@@ -693,9 +696,23 @@ class TestChargeToRoom:
         assert matching.service_charge == order.service_charge
         assert folio.total == matching.amount + matching.vat_amount + matching.service_charge
 
-        # مفيش قيد كاش فوري اتسجل لأوردر اتحمّل على الغرفة
+        # مفيش قيد كاش فوري اتسجل لأوردر اتحمّل على الغرفة — الإيراد اتسجّل
+        # فورًا بدل كده على ذمم الفوليو (باج حقيقي اتصلح 2026-07-07: قبل
+        # كده مكانش بيترحّل أي قيد خالص للحالة دي، راجع CLAUDE.md §18)
         entries, total = finance_crud.list_journal_entries(db, branch.id, source="restaurant")
         assert total == 0
+
+        folio_entries, folio_total = finance_crud.list_journal_entries(
+            db, branch.id, source="restaurant_folio_charge",
+        )
+        assert folio_total == 1
+        lines = folio_entries[0].lines
+        debit_line = next(l for l in lines if l.debit > 0)
+        credit_line = next(l for l in lines if l.credit > 0)
+        assert finance_crud.get_account_by_code(db, branch.id, "1150").id == debit_line.account_id
+        assert finance_crud.get_account_by_code(db, branch.id, "4200").id == credit_line.account_id
+        assert debit_line.debit == order.total
+        assert credit_line.credit == order.total
 
     def test_charge_to_room_fails_for_empty_room(self, db):
         branch = make_branch(db)

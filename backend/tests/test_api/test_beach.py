@@ -1004,12 +1004,14 @@ class TestEODReport:
 
 
 def make_finance_accounts(db, branch):
-    """يزرع 1100 (نقدية) و4300 (إيرادات الشاطئ) — الحسابين اللي beach.services
-    بيدوّر عليهم بالكود عند ترحيل قيد الإيراد."""
+    """يزرع 1100 (نقدية) و4300 (إيرادات الشاطئ) و1150 (ذمم الفوليو) —
+    الحسابات اللي beach.services بيدوّر عليها بالكود عند ترحيل قيد الإيراد
+    (كاش فوري أو محمّل على فوليو غرفة)."""
     from app.modules.finance.models import Account
     cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
     revenue = Account(branch_id=branch.id, code="4300", name="Beach Revenue", account_type="revenue")
-    db.add_all([cash, revenue])
+    guest_ledger = Account(branch_id=branch.id, code="1150", name="ذمم الفوليو", account_type="asset")
+    db.add_all([cash, revenue, guest_ledger])
     db.commit()
     return cash, revenue
 
@@ -1133,6 +1135,7 @@ class TestBeachVoidReversesFinancials:
         from datetime import datetime, timedelta
 
         branch = make_branch(db)
+        make_finance_accounts(db, branch)
         folio = Folio(
             branch_id=branch.id, guest_name="نزيل شاطئ", status="open",
             check_in=datetime.utcnow(), check_out=datetime.utcnow() + timedelta(days=2),
@@ -1148,11 +1151,39 @@ class TestBeachVoidReversesFinancials:
         db.refresh(folio)
         assert folio.total == tx.total_amount + tx.vat_amount
 
+        # ⚠️ باج حقيقي اتصلح 2026-07-07 (CLAUDE.md §18): بيع شاطئ محمّل على
+        # غرفة كان بيضيف FolioCharge بس من غير أي قيد يومية — إيراد الشاطئ
+        # الحقيقي كان غايب عن دفتر الأستاذ. دلوقتي بيترحّل Dr ذمم الفوليو
+        # (1150)/Cr إيراد الشاطئ (4300) فورًا.
+        expected_amount = tx.total_amount + tx.vat_amount
+        charge_entries, charge_total = finance_crud.list_journal_entries(
+            db, branch.id, source="beach_folio_charge",
+        )
+        assert charge_total == 1
+        charge_lines = charge_entries[0].lines
+        charge_debit = next(l for l in charge_lines if l.debit > 0)
+        charge_credit = next(l for l in charge_lines if l.credit > 0)
+        assert finance_crud.get_account_by_code(db, branch.id, "1150").id == charge_debit.account_id
+        assert finance_crud.get_account_by_code(db, branch.id, "4300").id == charge_credit.account_id
+        assert charge_debit.debit == expected_amount
+
         services.void_transaction(db, tx.id, voided_by=1, reason="اختبار إلغاء شحنة الغرفة")
 
         assert finance_crud.get_charge_by_ref_beach_tx(db, tx.id) is None
         db.refresh(folio)
         assert folio.total == Decimal("0")
+
+        # الإلغاء لازم يعكس قيد الإيراد الأصلي بالكامل كمان
+        void_entries, void_total = finance_crud.list_journal_entries(
+            db, branch.id, source="beach_folio_void",
+        )
+        assert void_total == 1
+        void_lines = void_entries[0].lines
+        void_debit = next(l for l in void_lines if l.debit > 0)
+        void_credit = next(l for l in void_lines if l.credit > 0)
+        assert finance_crud.get_account_by_code(db, branch.id, "4300").id == void_debit.account_id
+        assert finance_crud.get_account_by_code(db, branch.id, "1150").id == void_credit.account_id
+        assert void_debit.debit == expected_amount
 
     def test_void_rejected_on_closed_folio(self, db):
         from app.modules.finance.models import Folio

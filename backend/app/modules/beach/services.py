@@ -205,9 +205,15 @@ def sell_ticket(
         "shift_id":        shift_id,
     })
 
-    # قيد الإيراد بس لو مفيش folio (كاش فوري) — لو محمّل على غرفة، بننشر
-    # charge على الفوليو بدل ما نسجّل إيراد فوري، والإيراد بيتسجّل وقت
-    # تسوية الفوليو كله عند خروج الضيف (نفس منطق restaurant/cafe)
+    # قيد الإيراد يترحّل فورًا في الحالتين — بس لحساب مختلف حسب طريقة الدفع:
+    # كاش فوري → Dr Cash؛ محمّل على غرفة → Dr ذمم الفوليو (والكاش الحقيقي
+    # بيتسجّل لاحقًا وقت تسوية الفوليو، راجع finance.services.add_payment).
+    #
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-07، فجوة معمارية موثّقة في
+    # CLAUDE.md §18): التعليق القديم هنا كان بيدّعي إن "الإيراد بيتسجّل وقت
+    # تسوية الفوليو" — لكن التسوية (add_payment) عمرها ما كانت بترحّل أي
+    # قيد خالص، يعني إيراد الشاطئ الحقيقي من كل عملية بيع محمّلة على غرفة
+    # كان غايب تمامًا عن دفتر الأستاذ، نفس فئة الباج بالظبط في restaurant/cafe.
     if tx.folio_id:
         try:
             from app.modules.finance import crud as finance_crud  # noqa: PLC0415
@@ -225,6 +231,7 @@ def sell_ticket(
             folio = finance_crud.get_folio(db, tx.folio_id)
             if folio:
                 finance_crud.recalculate_folio_total(db, folio)
+            _post_beach_folio_charge_journal(db, tx)
         except Exception:
             pass  # ميمنعش إتمام البيع لو فشل نشر الـ charge على الفوليو
     else:
@@ -239,7 +246,7 @@ def sell_ticket(
 
 
 def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
-    """Dr. Cash (1100) / Cr. Beach Revenue (4300)."""
+    """Dr. Cash (1100) / Cr. Beach Revenue (4300) — دفع كاش فوري."""
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
     post_simple_revenue_journal(
@@ -249,6 +256,22 @@ def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
         reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
         description=f"إيرادات شاطئ — {tx.tx_type}",
         source="beach", source_id=tx.id,
+    )
+
+
+def _post_beach_folio_charge_journal(db: Session, tx: "BeachTransaction") -> None:
+    """Dr. ذمم الفوليو (1150) / Cr. إيراد الشاطئ (4300) — عملية محمّلة على
+    فوليو غرفة. راجع restaurant.services._post_order_folio_charge_journal
+    للتفاصيل الكاملة — نفس المنطق بالظبط."""
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, tx.branch_id, tx.tx_date,
+        debit_account_code="1150", credit_account_code="4300",
+        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
+        description=f"إيرادات شاطئ (محمّل على الغرفة) — {tx.tx_type}",
+        source="beach_folio_charge", source_id=tx.id,
     )
 
 
@@ -401,6 +424,10 @@ def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> Be
             finance_crud.delete_charge(db, charge)
             if folio:
                 finance_crud.recalculate_folio_total(db, folio)
+            # عكس قيد _post_beach_folio_charge_journal الأصلي — الشحنة اتلغت
+            # بالكامل يبقى الإيراد ده لازم يترد بالكامل، مش نسبي زي مرتجع
+            # صنف جزئي (الشاطئ مفيهوش مفهوم "مرتجع صنف" — إلغاء العملية كلها).
+            _post_beach_folio_charge_reversal_journal(db, tx)
     else:
         _post_beach_revenue_reversal_journal(db, tx)
 
@@ -428,6 +455,21 @@ def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") ->
         reference=f"BCH-VOID-{tx.id:06d}",
         description=f"إلغاء عملية شاطئ — {tx.tx_type}",
         source="beach_void", source_id=tx.id,
+    )
+
+
+def _post_beach_folio_charge_reversal_journal(db: Session, tx: "BeachTransaction") -> None:
+    """عكس _post_beach_folio_charge_journal — Dr. إيراد الشاطئ (4300) /
+    Cr. ذمم الفوليو (1150)."""
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, tx.branch_id, _business_today(),
+        debit_account_code="4300", credit_account_code="1150",
+        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        reference=f"BCH-VOID-{tx.id:06d}",
+        description=f"إلغاء عملية شاطئ (محمّل على الغرفة) — {tx.tx_type}",
+        source="beach_folio_void", source_id=tx.id,
     )
 
 
