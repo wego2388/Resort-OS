@@ -1,7 +1,8 @@
 """app/modules/restaurant/services.py — Business logic"""
 from __future__ import annotations
 
-from datetime import date, datetime
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -11,9 +12,12 @@ from app.core.config import settings
 from app.modules.restaurant import crud
 from app.modules.restaurant.models import KitchenTicket, MenuItem, MenuItemRecipeLine, Order
 from app.modules.restaurant.schemas import (
+    FoodCostReportLine, FoodCostReportResponse, CogsTrendPoint, GrossMarginSummary,
     MenuItemRecipeLineCreate, MenuItemRecipeLineUpdate, OrderCreate,
 )
 from app.resort_os.discount_engine import DiscountRule, OrderContext, calculate_discount
+from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT, compute_food_cost_result, exceeds_threshold
+from app.resort_os.timezone_utils import local_date_to_utc_range, utc_naive_to_local_date
 
 
 def _get_order_or_404(db: Session, order_id: int) -> Order:
@@ -803,3 +807,129 @@ def apply_order_discount(db: Session, order_id: int) -> Order:
     db.commit()
     db.refresh(order)
     return order
+
+
+# ─────────────────────── Reporting / Food Cost ────────────────────────
+# تقرير تكلفة الطعام (Food Cost / COGS) — راجع app.resort_os.food_cost_engine
+# للفورمولا نفسها؛ هنا بس تجميع بيانات الوصفة (recipe_lines) والمبيعات
+# الفعلية (طلبات مدفوعة) من الداتابيز قبل ما تتغذى للـ engine.
+
+def get_food_cost_report(
+    db: Session,
+    branch_id: int,
+    date_from: date,
+    date_to: date,
+    threshold_pct: Decimal = DEFAULT_FOOD_COST_THRESHOLD_PCT,
+) -> FoodCostReportResponse:
+    """تقرير كامل لكل أصناف المطعم في الفرع: التكلفة النظرية (وصفة × كمية
+    مباعة فعليًا) مقابل الإيراد الفعلي، لكل صنف ولكل يوم (trend) وملخص
+    إجمالي — استعلامان بس (كل الأصناف + كل المبيعات المدفوعة في المدى)،
+    وباقي التجميع (لكل صنف/لكل يوم) في الذاكرة، مفيش N+1."""
+    range_start, _ = local_date_to_utc_range(date_from, settings.TIMEZONE)
+    _, range_end = local_date_to_utc_range(date_to, settings.TIMEZONE)
+
+    items = crud.list_menu_items_for_food_cost(db, branch_id)
+    sales_rows = crud.get_paid_order_items_for_food_cost(db, branch_id, range_start, range_end)
+
+    qty_by_item: dict[int, int] = defaultdict(int)
+    revenue_by_item: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    # لكل يوم محلي: {menu_item_id: (كمية, إيراد)} — أساس الـ trend اليومي.
+    by_day: dict[date, dict[int, list]] = defaultdict(lambda: defaultdict(lambda: [0, Decimal("0")]))
+
+    for menu_item_id, unit_price, quantity, created_at in sales_rows:
+        line_revenue = unit_price * quantity
+        qty_by_item[menu_item_id] += quantity
+        revenue_by_item[menu_item_id] += line_revenue
+        local_day = utc_naive_to_local_date(created_at, settings.TIMEZONE)
+        day_entry = by_day[local_day][menu_item_id]
+        day_entry[0] += quantity
+        day_entry[1] += line_revenue
+
+    lines: list[FoodCostReportLine] = []
+    unit_cost_by_item: dict[int, Decimal] = {}
+    recipe_item_ids: set[int] = set()
+    total_revenue = Decimal("0")
+    total_theoretical_cost = Decimal("0")
+    items_missing_recipe = 0
+    items_missing_recipe_revenue = Decimal("0")
+
+    for item in items:
+        has_recipe = bool(item.recipe_lines)
+        recipe_lines = [
+            ((line.product.cost_price if line.product else None) or Decimal("0"), line.quantity_per_unit)
+            for line in item.recipe_lines
+        ]
+        quantity_sold = qty_by_item.get(item.id, 0)
+        revenue = revenue_by_item.get(item.id, Decimal("0"))
+        result = compute_food_cost_result(recipe_lines, quantity_sold, revenue)
+        unit_cost_by_item[item.id] = result.theoretical_unit_cost
+        if has_recipe:
+            recipe_item_ids.add(item.id)
+
+        if quantity_sold > 0:
+            if has_recipe:
+                total_revenue += revenue
+                total_theoretical_cost += result.theoretical_total_cost
+            else:
+                # مفيش وصفة → التكلفة "غير معروفة" مش صفر — مُستبعدة من
+                # الإجمالي المالي (وباقي trend) عشان ما تضخّمش هامش الربح
+                # بالغلط، ومعدودة هنا صراحةً عشان تظهر في الملخص كفجوة
+                # بيانات لازم تتقفل.
+                items_missing_recipe += 1
+                items_missing_recipe_revenue += revenue
+
+        lines.append(FoodCostReportLine(
+            menu_item_id=item.id,
+            menu_item_name=item.name,
+            has_recipe=has_recipe,
+            quantity_sold=quantity_sold,
+            revenue=revenue,
+            theoretical_unit_cost=result.theoretical_unit_cost,
+            theoretical_total_cost=result.theoretical_total_cost,
+            food_cost_pct=result.food_cost_pct if has_recipe else None,
+            gross_margin_amount=result.gross_margin_amount,
+            gross_margin_pct=result.gross_margin_pct if has_recipe else None,
+            exceeds_threshold=has_recipe and exceeds_threshold(result.food_cost_pct, threshold_pct),
+        ))
+
+    # trend: نفس استبعاد "مفيش وصفة" بتاع الملخص — وإلا نسبة تكلفة الطعام
+    # اليومية هتبقى مخفّضة بالغلط بإيراد أصناف تكلفتها غير معروفة أصلاً.
+    trend: list[CogsTrendPoint] = []
+    current = date_from
+    while current <= date_to:
+        day_revenue = Decimal("0")
+        day_cost = Decimal("0")
+        for menu_item_id, (qty, item_revenue) in by_day.get(current, {}).items():
+            if menu_item_id in recipe_item_ids:
+                day_revenue += item_revenue
+                day_cost += unit_cost_by_item.get(menu_item_id, Decimal("0")) * qty
+        day_cost = day_cost.quantize(Decimal("0.01"))
+        trend.append(CogsTrendPoint(
+            date=current,
+            revenue=day_revenue,
+            theoretical_cost=day_cost,
+            food_cost_pct=(day_cost / day_revenue * 100).quantize(Decimal("0.01")) if day_revenue > 0 else None,
+        ))
+        current += timedelta(days=1)
+
+    summary_pct = (total_theoretical_cost / total_revenue * 100).quantize(Decimal("0.01")) if total_revenue > 0 else None
+    summary_margin_pct = (
+        ((total_revenue - total_theoretical_cost) / total_revenue * 100).quantize(Decimal("0.01"))
+        if total_revenue > 0 else None
+    )
+    summary = GrossMarginSummary(
+        branch_id=branch_id,
+        date_from=date_from,
+        date_to=date_to,
+        threshold_pct=threshold_pct,
+        total_revenue=total_revenue,
+        total_theoretical_cost=total_theoretical_cost,
+        food_cost_pct=summary_pct,
+        gross_margin_amount=(total_revenue - total_theoretical_cost).quantize(Decimal("0.01")),
+        gross_margin_pct=summary_margin_pct,
+        items_missing_recipe=items_missing_recipe,
+        items_missing_recipe_revenue=items_missing_recipe_revenue,
+    )
+
+    alerts = [line for line in lines if line.exceeds_threshold]
+    return FoodCostReportResponse(lines=lines, alerts=alerts, trend=trend, summary=summary)

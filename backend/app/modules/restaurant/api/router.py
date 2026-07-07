@@ -1,12 +1,14 @@
 """app/modules/restaurant/api/router.py"""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import Response
 
+from app.core.config import settings
 from app.core.deps import (
     DbDep, get_cashier_user, get_current_active_user,
     get_manager_user, get_waiter_user, require_permission, user_level,
@@ -20,11 +22,15 @@ from app.modules.restaurant.schemas import (
     MenuItemRecipeLineCreate, MenuItemRecipeLineRead, MenuItemRecipeLineUpdate,
     OrderCreate, OrderItemCreate, OrderItemRead, OrderItemVoidRequest, OrderRead, OrderStatusUpdate,
     OrderSyncRequest, OrderSyncResponse,
+    # Reporting / Food Cost
+    FoodCostReportResponse,
     # Public (Guest QR) schemas
     GuestOrderCreate, GuestOrderRead, PublicMenuResponse,
     PublicMenuCategoryRead, PublicMenuItemRead,
 )
 from app.modules.core.schemas import PaginatedResponse
+from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
+from app.resort_os.timezone_utils import business_today
 
 router = APIRouter(tags=["restaurant"])
 
@@ -172,6 +178,28 @@ def delete_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
         services.remove_recipe_line(db, line_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Reporting / Food Cost ─────────────────────────────────────────────
+# مستوى مدير (get_manager_user) — نفس مستوى تعديل الوصفة نفسها (§ Recipe/BOM
+# أعلاه)، لأن التقرير ده بيكشف تكلفة/هامش ربح حقيقي، مش عملية تشغيلية يومية.
+
+@router.get("/restaurant/reports/food-cost", response_model=FoodCostReportResponse)
+def get_food_cost_report(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: date = Query(default_factory=lambda: business_today(settings.TIMEZONE) - timedelta(days=30)),
+    date_to: date = Query(default_factory=lambda: business_today(settings.TIMEZONE)),
+    threshold_pct: Decimal = Query(DEFAULT_FOOD_COST_THRESHOLD_PCT, gt=0, le=100),
+):
+    """تقرير تكلفة الطعام (Food Cost / COGS): تكلفة نظرية (وصفة × كمية
+    مباعة فعليًا) مقابل الإيراد الفعلي، لكل صنف + اتجاه يومي + ملخص الفرع.
+    ``alerts`` جزء من نفس الرد (الأصناف اللي تخطّت threshold_pct) — مش
+    endpoint منفصل، لأنها اشتقاق من نفس بيانات ``lines`` بدون استعلام إضافي."""
+    if date_from > date_to:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "date_from لازم يكون قبل أو يساوي date_to")
+    return services.get_food_cost_report(db, branch_id, date_from, date_to, threshold_pct)
 
 
 # ── Tables ────────────────────────────────────────────────────────────

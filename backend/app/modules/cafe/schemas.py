@@ -1,7 +1,7 @@
 """app/modules/cafe/schemas.py — Pydantic v2 (نفس نمط restaurant)"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -269,3 +269,48 @@ class CafeGuestOrderRead(BaseModel):
     total:        Decimal
     items_count:  int
     message:      str
+
+
+# ─────────────────────── Reporting / Food Cost ────────────────────────
+# نفس نمط restaurant.schemas بالضبط — راجع التعليقات هناك للتفاصيل الكاملة.
+
+class CafeFoodCostReportLine(BaseModel):
+    cafe_item_id:            int
+    cafe_item_name:          str
+    has_recipe:              bool
+    quantity_sold:           int
+    revenue:                 Decimal
+    theoretical_unit_cost:   Decimal
+    theoretical_total_cost:  Decimal
+    food_cost_pct:           Optional[Decimal] = None
+    gross_margin_amount:     Decimal
+    gross_margin_pct:        Optional[Decimal] = None
+    exceeds_threshold:       bool
+
+
+class CafeCogsTrendPoint(BaseModel):
+    date:             date
+    revenue:          Decimal
+    theoretical_cost: Decimal
+    food_cost_pct:    Optional[Decimal] = None
+
+
+class CafeGrossMarginSummary(BaseModel):
+    branch_id:                    int
+    date_from:                    date
+    date_to:                      date
+    threshold_pct:                Decimal
+    total_revenue:                Decimal
+    total_theoretical_cost:       Decimal
+    food_cost_pct:                Optional[Decimal] = None
+    gross_margin_amount:          Decimal
+    gross_margin_pct:             Optional[Decimal] = None
+    items_missing_recipe:         int
+    items_missing_recipe_revenue: Decimal
+
+
+class CafeFoodCostReportResponse(BaseModel):
+    lines:   list[CafeFoodCostReportLine]
+    alerts:  list[CafeFoodCostReportLine]
+    trend:   list[CafeCogsTrendPoint]
+    summary: CafeGrossMarginSummary

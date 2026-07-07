@@ -1,7 +1,8 @@
 """app/modules/cafe/services.py — نفس منطق restaurant مع جداول cafe"""
 from __future__ import annotations
 
-from datetime import datetime
+from collections import defaultdict
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -11,8 +12,11 @@ from app.core.config import settings
 from app.modules.cafe import crud
 from app.modules.cafe.models import CafeItem, CafeItemRecipeLine, CafeOrder
 from app.modules.cafe.schemas import (
+    CafeCogsTrendPoint, CafeFoodCostReportLine, CafeFoodCostReportResponse, CafeGrossMarginSummary,
     CafeItemRecipeLineCreate, CafeItemRecipeLineUpdate, CafeOrderCreate,
 )
+from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT, compute_food_cost_result, exceeds_threshold
+from app.resort_os.timezone_utils import local_date_to_utc_range, utc_naive_to_local_date
 
 
 def _get_order_or_404(db: Session, order_id: int) -> CafeOrder:
@@ -536,3 +540,118 @@ def _post_order_refund_reversal_journal(db: Session, order: CafeOrder, refund_am
         description=f"مرتجع بعد الدفع — {order.order_number}",
         source="cafe_refund", source_id=order.id,
     )
+
+
+# ─────────────────────── Reporting / Food Cost ────────────────────────
+# نفس منطق restaurant.services.get_food_cost_report بالضبط — راجع التعليقات
+# هناك للتفاصيل الكاملة (استبعاد الأصناف الملغاة بس مش المرتجعة، استبعاد
+# إيراد/تكلفة الأصناف الناقصة الوصفة من الإجمالي والـ trend، إلخ).
+
+def get_food_cost_report(
+    db: Session,
+    branch_id: int,
+    date_from: date,
+    date_to: date,
+    threshold_pct: Decimal = DEFAULT_FOOD_COST_THRESHOLD_PCT,
+) -> CafeFoodCostReportResponse:
+    range_start, _ = local_date_to_utc_range(date_from, settings.TIMEZONE)
+    _, range_end = local_date_to_utc_range(date_to, settings.TIMEZONE)
+
+    items = crud.list_items_for_food_cost(db, branch_id)
+    sales_rows = crud.get_paid_order_items_for_food_cost(db, branch_id, range_start, range_end)
+
+    qty_by_item: dict[int, int] = defaultdict(int)
+    revenue_by_item: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    by_day: dict[date, dict[int, list]] = defaultdict(lambda: defaultdict(lambda: [0, Decimal("0")]))
+
+    for cafe_item_id, unit_price, quantity, created_at in sales_rows:
+        line_revenue = unit_price * quantity
+        qty_by_item[cafe_item_id] += quantity
+        revenue_by_item[cafe_item_id] += line_revenue
+        local_day = utc_naive_to_local_date(created_at, settings.TIMEZONE)
+        day_entry = by_day[local_day][cafe_item_id]
+        day_entry[0] += quantity
+        day_entry[1] += line_revenue
+
+    lines: list[CafeFoodCostReportLine] = []
+    unit_cost_by_item: dict[int, Decimal] = {}
+    recipe_item_ids: set[int] = set()
+    total_revenue = Decimal("0")
+    total_theoretical_cost = Decimal("0")
+    items_missing_recipe = 0
+    items_missing_recipe_revenue = Decimal("0")
+
+    for item in items:
+        has_recipe = bool(item.recipe_lines)
+        recipe_lines = [
+            ((line.product.cost_price if line.product else None) or Decimal("0"), line.quantity_per_unit)
+            for line in item.recipe_lines
+        ]
+        quantity_sold = qty_by_item.get(item.id, 0)
+        revenue = revenue_by_item.get(item.id, Decimal("0"))
+        result = compute_food_cost_result(recipe_lines, quantity_sold, revenue)
+        unit_cost_by_item[item.id] = result.theoretical_unit_cost
+        if has_recipe:
+            recipe_item_ids.add(item.id)
+
+        if quantity_sold > 0:
+            if has_recipe:
+                total_revenue += revenue
+                total_theoretical_cost += result.theoretical_total_cost
+            else:
+                items_missing_recipe += 1
+                items_missing_recipe_revenue += revenue
+
+        lines.append(CafeFoodCostReportLine(
+            cafe_item_id=item.id,
+            cafe_item_name=item.name,
+            has_recipe=has_recipe,
+            quantity_sold=quantity_sold,
+            revenue=revenue,
+            theoretical_unit_cost=result.theoretical_unit_cost,
+            theoretical_total_cost=result.theoretical_total_cost,
+            food_cost_pct=result.food_cost_pct if has_recipe else None,
+            gross_margin_amount=result.gross_margin_amount,
+            gross_margin_pct=result.gross_margin_pct if has_recipe else None,
+            exceeds_threshold=has_recipe and exceeds_threshold(result.food_cost_pct, threshold_pct),
+        ))
+
+    trend: list[CafeCogsTrendPoint] = []
+    current = date_from
+    while current <= date_to:
+        day_revenue = Decimal("0")
+        day_cost = Decimal("0")
+        for cafe_item_id, (qty, item_revenue) in by_day.get(current, {}).items():
+            if cafe_item_id in recipe_item_ids:
+                day_revenue += item_revenue
+                day_cost += unit_cost_by_item.get(cafe_item_id, Decimal("0")) * qty
+        day_cost = day_cost.quantize(Decimal("0.01"))
+        trend.append(CafeCogsTrendPoint(
+            date=current,
+            revenue=day_revenue,
+            theoretical_cost=day_cost,
+            food_cost_pct=(day_cost / day_revenue * 100).quantize(Decimal("0.01")) if day_revenue > 0 else None,
+        ))
+        current += timedelta(days=1)
+
+    summary_pct = (total_theoretical_cost / total_revenue * 100).quantize(Decimal("0.01")) if total_revenue > 0 else None
+    summary_margin_pct = (
+        ((total_revenue - total_theoretical_cost) / total_revenue * 100).quantize(Decimal("0.01"))
+        if total_revenue > 0 else None
+    )
+    summary = CafeGrossMarginSummary(
+        branch_id=branch_id,
+        date_from=date_from,
+        date_to=date_to,
+        threshold_pct=threshold_pct,
+        total_revenue=total_revenue,
+        total_theoretical_cost=total_theoretical_cost,
+        food_cost_pct=summary_pct,
+        gross_margin_amount=(total_revenue - total_theoretical_cost).quantize(Decimal("0.01")),
+        gross_margin_pct=summary_margin_pct,
+        items_missing_recipe=items_missing_recipe,
+        items_missing_recipe_revenue=items_missing_recipe_revenue,
+    )
+
+    alerts = [line for line in lines if line.exceeds_threshold]
+    return CafeFoodCostReportResponse(lines=lines, alerts=alerts, trend=trend, summary=summary)

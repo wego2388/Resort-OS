@@ -218,3 +218,31 @@ def refund_order_item(db: Session, item: CafeOrderItem, reason: str, refunded_by
     item.voided_at = datetime.utcnow()
     db.flush()
     return item
+
+
+# ── Reporting / Food Cost ─────────────────────────────────────────────
+# نفس منطق restaurant.crud بالضبط — راجع التعليقات هناك للتفاصيل الكاملة.
+
+def list_items_for_food_cost(db: Session, branch_id: int) -> list[CafeItem]:
+    return db.query(CafeItem).filter(CafeItem.branch_id == branch_id).order_by(CafeItem.name).all()
+
+
+def get_paid_order_items_for_food_cost(
+    db: Session, branch_id: int, range_start: datetime, range_end: datetime,
+) -> list[tuple[int, Decimal, int, datetime]]:
+    """راجع restaurant.crud.get_paid_order_items_for_food_cost للتفاصيل
+    الكاملة — نفس المنطق بالضبط: أصناف ملغاة مُستبعدة، أصناف/طلبات مرتجعة
+    (status='refunded') مُتضمّنة عمدًا لأن الاستهلاك حصل فعليًا وقت التحضير."""
+    rows = (
+        db.query(CafeOrderItem.item_id, CafeOrderItem.unit_price, CafeOrderItem.quantity, CafeOrder.created_at)
+        .join(CafeOrder, CafeOrderItem.order_id == CafeOrder.id)
+        .filter(
+            CafeOrder.branch_id == branch_id,
+            CafeOrder.status.in_(("paid", "refunded")),
+            CafeOrder.created_at >= range_start,
+            CafeOrder.created_at <= range_end,
+            CafeOrderItem.status != "cancelled",
+        )
+        .all()
+    )
+    return [tuple(row) for row in rows]

@@ -1,7 +1,7 @@
 """app/modules/restaurant/schemas.py — Pydantic v2"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -376,3 +376,61 @@ class GuestOrderRead(BaseModel):
     total:        Decimal
     items_count:  int
     message:      str
+
+
+# ─────────────────────── Reporting / Food Cost ────────────────────────
+# راجع app.resort_os.food_cost_engine للفورمولا الأصلية — هنا بس شكل الرد.
+
+class FoodCostReportLine(BaseModel):
+    """صف واحد لكل صنف قائمة — تكلفة نظرية (وصفة × كمية مباعة فعليًا) مقابل
+    الإيراد الفعلي في المدى المطلوب."""
+    menu_item_id:           int
+    menu_item_name:         str
+    has_recipe:             bool
+    # False يعني الصنف مفيهوش وصفة (BOM) مسجّلة — التكلفة/النسبة هنا صفر
+    # افتراضيًا، مش لأن التكلفة الحقيقية صفر، لازم الواجهة تُظهر تنبيه مختلف
+    # ("وصفة ناقصة") مش "تكلفة ممتازة 0%".
+    quantity_sold:          int
+    revenue:                Decimal
+    theoretical_unit_cost:  Decimal
+    theoretical_total_cost: Decimal
+    food_cost_pct:          Optional[Decimal] = None
+    gross_margin_amount:    Decimal
+    gross_margin_pct:       Optional[Decimal] = None
+    exceeds_threshold:      bool
+
+
+class CogsTrendPoint(BaseModel):
+    """نقطة واحدة في اتجاه تكلفة الطعام اليومي عبر المدى الزمني المطلوب."""
+    date:            date
+    revenue:         Decimal
+    theoretical_cost: Decimal
+    food_cost_pct:   Optional[Decimal] = None
+
+
+class GrossMarginSummary(BaseModel):
+    """ملخص الفرع بالكامل للمدى الزمني — محسوب فقط من الأصناف اللي ليها
+    وصفة حقيقية (has_recipe=True)؛ الأصناف الناقصة الوصفة مُستبعدة من
+    الإجمالي المالي (مش معتبرة تكلفتها صفر) لكن معدودة صراحةً تحت
+    ``items_missing_recipe`` عشان المدير يعرف حجم الفجوة في تغطية البيانات."""
+    branch_id:                int
+    date_from:                date
+    date_to:                  date
+    threshold_pct:            Decimal
+    total_revenue:            Decimal
+    total_theoretical_cost:   Decimal
+    food_cost_pct:            Optional[Decimal] = None
+    gross_margin_amount:      Decimal
+    gross_margin_pct:         Optional[Decimal] = None
+    items_missing_recipe:        int
+    items_missing_recipe_revenue: Decimal
+
+
+class FoodCostReportResponse(BaseModel):
+    """الرد الكامل لـ GET /reports/food-cost — الاستعلام الأساسي واحد
+    (كل الطلبات المدفوعة في المدى)، وباقي الأشكال (lines/alerts/trend/
+    summary) كلها اشتقاقات في الذاكرة منه، مش استعلامات منفصلة."""
+    lines:   list[FoodCostReportLine]
+    alerts:  list[FoodCostReportLine]
+    trend:   list[CogsTrendPoint]
+    summary: GrossMarginSummary
