@@ -362,13 +362,24 @@ def update_order_status(
         except Exception:
             pass  # ميمنعش إتمام الدفع لو فشل نشر الـ charge على الفوليو
 
-    # قيد إيراد المطعم — بس لو الطلب اتقفل بكاش فوري (مفيش folio_id). لو
-    # الطلب اتحمّل على فوليو غرفة (Charge to Room)، الإيراد ده بيتسجّل لاحقًا
-    # لما الضيف يسدّد الفوليو كله وقت الخروج — مش دلوقتي، وإلا كان الإيراد
-    # هيتسجّل مرتين (مرة هنا كـ cash، ومرة تانية جوه الفوليو).
+    # قيد إيراد المطعم — بيترحّل فورًا في الحالتين، بس لحساب مختلف حسب طريقة
+    # الدفع:
+    #   - كاش/كارت فوري: Dr Cash(1100) / Cr إيراد المطعم(4200).
+    #   - محمّل على فوليو غرفة (Charge to Room): Dr ذمم الفوليو(1150) /
+    #     Cr إيراد المطعم(4200) — الإيراد بيتسجّل دلوقتي (وقت تقديم الخدمة
+    #     فعليًا)، والكاش الحقيقي بيتسجّل لاحقًا لما الضيف يسدّد الفوليو
+    #     (finance.services.add_payment، Dr Cash/Cr ذمم الفوليو).
+    #
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-07، فجوة معمارية موثّقة في
+    # CLAUDE.md §18): الحالة التانية (محمّل على فوليو) كانت من غير أي قيد
+    # محاسبي خالص — إيراد المطعم الحقيقي من كل الطلبات اللي بتتحمّل على
+    # الغرفة (نسبة كبيرة من مبيعات المطعم في منتجع فيه نزلاء) كان غايب تمامًا
+    # عن دفتر الأستاذ، رغم إنه بيظهر صح في فاتورة الضيف المطبوعة.
     if new_status == "paid":
         _deduct_inventory_for_order(db, order)
-        if not order.folio_id:
+        if order.folio_id:
+            _post_order_folio_charge_journal(db, order)
+        else:
             _post_order_revenue_journal(db, order)
         if order.customer_id:
             from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
@@ -437,17 +448,37 @@ def _deduct_inventory_for_order(db: Session, order: Order) -> None:
 
 
 def _post_order_revenue_journal(db: Session, order: "Order") -> None:
-    """Dr. Cash (1100) / Cr. Restaurant Revenue (4200)."""
-    from datetime import date as _date  # noqa: PLC0415
+    """Dr. Cash (1100) / Cr. Restaurant Revenue (4200) — دفع كاش/كارت فوري."""
+    from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
 
     post_simple_revenue_journal(
-        db, order.branch_id, _date.today(),
+        db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="1100", credit_account_code="4200",
         amount=order.total or Decimal("0"),
         reference=f"ORD-{order.order_number}",
         description=f"إيرادات مطعم — {order.order_number}",
         source="restaurant", source_id=order.id,
+    )
+
+
+def _post_order_folio_charge_journal(db: Session, order: "Order") -> None:
+    """Dr. ذمم الفوليو (1150) / Cr. إيراد المطعم (4200) — طلب محمّل على فوليو
+    غرفة (Charge to Room). الإيراد بيتسجّل دلوقتي (وقت الخدمة)، والكاش
+    الحقيقي بيتسجّل لاحقًا وقت تسوية الفوليو (راجع finance.services.add_payment).
+    نظير _post_order_revenue_journal فوق، بس لحساب ذمم بدل الكاش المباشر."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, order.branch_id, local_today(settings.TIMEZONE),
+        debit_account_code="1150", credit_account_code="4200",
+        amount=order.total or Decimal("0"),
+        reference=f"ORD-{order.order_number}",
+        description=f"إيرادات مطعم (محمّل على الغرفة) — {order.order_number}",
+        source="restaurant_folio_charge", source_id=order.id,
     )
 
 
@@ -625,17 +656,40 @@ def _reduce_folio_charge_for_refund(db: Session, order: Order, refund_amount: De
         charge.service_charge = (charge.service_charge * ratio).quantize(Decimal("0.01"))
         db.flush()
         finance_crud.recalculate_folio_total(db, folio)
+        # عكس نصيب المرتجع من قيد _post_order_folio_charge_journal الأصلي —
+        # لازم يترحّل من غير ما يوقف باقي المرتجع لو فشل، نفس فلسفة الدالة دي.
+        _post_order_folio_refund_reversal_journal(db, order, refund_amount)
     except Exception:
         pass
+
+
+def _post_order_folio_refund_reversal_journal(db: Session, order: Order, refund_amount: Decimal) -> None:
+    """عكس _post_order_folio_charge_journal — Dr. إيراد المطعم (4200) /
+    Cr. ذمم الفوليو (1150) — بيلغي نصيب الصنف المرتجع من قيد الإيراد
+    الأصلي المرحّل وقت تحميل الطلب على الغرفة."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, order.branch_id, local_today(settings.TIMEZONE),
+        debit_account_code="4200", credit_account_code="1150",
+        amount=refund_amount,
+        reference=f"ORD-REFUND-{order.order_number}",
+        description=f"مرتجع بعد الدفع (محمّل على الغرفة) — {order.order_number}",
+        source="restaurant_folio_refund", source_id=order.id,
+    )
 
 
 def _post_order_refund_reversal_journal(db: Session, order: Order, refund_amount: Decimal) -> None:
     """عكس _post_order_revenue_journal — Dr. Restaurant Revenue (4200) /
     Cr. Cash (1100) — بيلغي نصيب الصنف المرتجع من قيد الإيراد الأصلي."""
+    from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
 
     post_simple_revenue_journal(
-        db, order.branch_id, date.today(),
+        db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="4200", credit_account_code="1100",
         amount=refund_amount,
         reference=f"ORD-REFUND-{order.order_number}",

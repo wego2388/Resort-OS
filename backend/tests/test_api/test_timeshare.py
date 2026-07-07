@@ -315,14 +315,17 @@ class TestSalesDashboard:
 
 
 def make_finance_accounts(db, branch):
-    """يزرع 1100 (نقدية) و2300 (إيرادات مؤجّلة تايم شير) — الحسابين اللي
-    timeshare.services._post_deferred_revenue_journal بيدوّر عليهم بالكود."""
+    """يزرع 1100 (نقدية) و4600 (إيرادات عقود التايم شير) — الحسابين اللي
+    timeshare.services._post_deferred_revenue_journal/_post_installment_payment_journal
+    بيدوّروا عليهم بالكود. ⚠️ 2026-07-07: بقى 4600 (revenue) بدل 2300 (كان
+    liability — إيراد تايم شير عمره ما كان بيتحرّر لإيراد فعلي، راجع تعليق
+    _post_deferred_revenue_journal)."""
     from app.modules.finance.models import Account
     cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
-    deferred = Account(branch_id=branch.id, code="2300", name="Deferred Revenue", account_type="liability")
-    db.add_all([cash, deferred])
+    revenue = Account(branch_id=branch.id, code="4600", name="Timeshare Revenue", account_type="revenue")
+    db.add_all([cash, revenue])
     db.commit()
-    return cash, deferred
+    return cash, revenue
 
 
 class TestContractNotFound:
@@ -343,7 +346,7 @@ class TestDeferredRevenueJournalPosting:
 
     def test_create_contract_posts_balanced_journal_entry(self, db: Session, branch):
         from app.modules.finance import crud as finance_crud
-        cash, deferred = make_finance_accounts(db, branch)
+        cash, revenue = make_finance_accounts(db, branch)
 
         data = TimeshareContractCreate(
             branch_id=branch.id, customer_name="سامي عادل", room_type="2R",
@@ -362,11 +365,11 @@ class TestDeferredRevenueJournalPosting:
         total_credit = sum(l.credit for l in entry.lines)
         assert total_debit == total_credit == Decimal("15000.00")
 
-        db.refresh(cash); db.refresh(deferred)
+        db.refresh(cash); db.refresh(revenue)
         cash_line = next(l for l in entry.lines if l.account_id == cash.id)
-        deferred_line = next(l for l in entry.lines if l.account_id == deferred.id)
+        revenue_line = next(l for l in entry.lines if l.account_id == revenue.id)
         assert cash_line.debit == Decimal("15000.00")
-        assert deferred_line.credit == Decimal("15000.00")
+        assert revenue_line.credit == Decimal("15000.00")
 
     def test_zero_down_payment_does_not_post_journal(self, db: Session, branch):
         """دفعة أولى صفرية (down_payment=0) مفيهاش مبلغ حقيقي يترحّل."""
@@ -386,7 +389,7 @@ class TestDeferredRevenueJournalPosting:
         assert total == 0
 
     def test_missing_accounts_does_not_block_contract_creation(self, db: Session, branch):
-        """لو 1100/2300 مش موجودين، إنشاء العقد لازم ينجح عادي — نفس فلسفة
+        """لو 1100/4600 مش موجودين، إنشاء العقد لازم ينجح عادي — نفس فلسفة
         pms._post_checkout_journal (الفشل المحاسبي ميوقفش العملية الأساسية)."""
         from app.modules.finance import crud as finance_crud
 

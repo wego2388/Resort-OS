@@ -286,11 +286,15 @@ def update_order_status(
         except Exception:
             pass  # ميمنعش إتمام الدفع لو فشل نشر الـ charge على الفوليو
 
-    # قيد إيراد الكافيه (لو مفيش folio — راجع نفس الملاحظة في restaurant.services)
-    # + خصم المخزون + تحديث إحصائيات العميل عند الدفع
+    # قيد إيراد الكافيه — فورًا في الحالتين (كاش أو محمّل على فوليو غرفة)، بس
+    # لحساب مختلف حسب طريقة الدفع (راجع نفس الملاحظة والباج المُصلَح في
+    # restaurant.services._post_order_folio_charge_journal) + خصم المخزون +
+    # تحديث إحصائيات العميل عند الدفع
     if new_status == "paid":
         _deduct_inventory_for_order(db, order)
-        if not order.folio_id:
+        if order.folio_id:
+            _post_order_folio_charge_journal(db, order)
+        else:
             _post_order_revenue_journal(db, order)
         if order.customer_id:
             from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
@@ -354,17 +358,36 @@ def _deduct_inventory_for_order(db: Session, order: CafeOrder) -> None:
 
 
 def _post_order_revenue_journal(db: Session, order: "CafeOrder") -> None:
-    """Dr. Cash (1100) / Cr. Cafe Revenue (4400)."""
-    from datetime import date as _date  # noqa: PLC0415
+    """Dr. Cash (1100) / Cr. Cafe Revenue (4400) — دفع كاش/كارت فوري."""
+    from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
 
     post_simple_revenue_journal(
-        db, order.branch_id, _date.today(),
+        db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="1100", credit_account_code="4400",
         amount=order.total or Decimal("0"),
         reference=f"ORD-{order.order_number}",
         description=f"إيرادات كافيه — {order.order_number}",
         source="cafe", source_id=order.id,
+    )
+
+
+def _post_order_folio_charge_journal(db: Session, order: "CafeOrder") -> None:
+    """Dr. ذمم الفوليو (1150) / Cr. إيراد الكافيه (4400) — طلب محمّل على
+    فوليو غرفة. راجع restaurant.services._post_order_folio_charge_journal
+    للتفاصيل الكاملة — نفس المنطق بالظبط."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, order.branch_id, local_today(settings.TIMEZONE),
+        debit_account_code="1150", credit_account_code="4400",
+        amount=order.total or Decimal("0"),
+        reference=f"ORD-{order.order_number}",
+        description=f"إيرادات كافيه (محمّل على الغرفة) — {order.order_number}",
+        source="cafe_folio_charge", source_id=order.id,
     )
 
 
@@ -477,17 +500,36 @@ def _reduce_folio_charge_for_refund(db: Session, order: CafeOrder, refund_amount
         charge.service_charge = (charge.service_charge * ratio).quantize(Decimal("0.01"))
         db.flush()
         finance_crud.recalculate_folio_total(db, folio)
+        _post_order_folio_refund_reversal_journal(db, order, refund_amount)
     except Exception:
         pass
 
 
-def _post_order_refund_reversal_journal(db: Session, order: CafeOrder, refund_amount: Decimal) -> None:
-    """عكس _post_order_revenue_journal — Dr. Cafe Revenue (4400) / Cr. Cash (1100)."""
-    from datetime import date as _date  # noqa: PLC0415
+def _post_order_folio_refund_reversal_journal(db: Session, order: CafeOrder, refund_amount: Decimal) -> None:
+    """عكس _post_order_folio_charge_journal — Dr. إيراد الكافيه (4400) /
+    Cr. ذمم الفوليو (1150)."""
+    from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
 
     post_simple_revenue_journal(
-        db, order.branch_id, _date.today(),
+        db, order.branch_id, local_today(settings.TIMEZONE),
+        debit_account_code="4400", credit_account_code="1150",
+        amount=refund_amount,
+        reference=f"ORD-REFUND-{order.order_number}",
+        description=f"مرتجع بعد الدفع (محمّل على الغرفة) — {order.order_number}",
+        source="cafe_folio_refund", source_id=order.id,
+    )
+
+
+def _post_order_refund_reversal_journal(db: Session, order: CafeOrder, refund_amount: Decimal) -> None:
+    """عكس _post_order_revenue_journal — Dr. Cafe Revenue (4400) / Cr. Cash (1100)."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="4400", credit_account_code="1100",
         amount=refund_amount,
         reference=f"ORD-REFUND-{order.order_number}",

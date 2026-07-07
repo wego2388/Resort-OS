@@ -58,7 +58,16 @@ def create_contract(db: Session, data: TimeshareContractCreate, signed_by: int) 
 
 
 def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract") -> None:
-    """Dr. Cash (1100) / Cr. Deferred Revenue (2300) عند إنشاء العقد."""
+    """Dr. Cash (1100) / Cr. إيرادات عقود التايم شير (4600) عند إنشاء العقد.
+
+    ⚠️ باج محاسبي حقيقي كان هنا (اتصلح 2026-07-07، قرار Mohamed): كان بيرحّل
+    لحساب 2300 ("إيرادات مؤجَّلة") وهو حساب liability مش revenue — يعني كل
+    دفعة أولى ولا قسط تايم شير من أول ما اتعمل الموديول كان بيتراكم في حساب
+    التزامات للأبد، بدون أي خطوة "تحرير" لاحقة تنقله لإيراد فعلي، فمكانش
+    بيظهر في قائمة الدخل خالص. القرار: تسجيل إيراد فوري وقت كل دفعة (نفس
+    فلسفة حجز الغرف)، لحساب Revenue مخصص منفصل عن إيراد حجوزات الغرف
+    (4100) — الحساب 2300 القديم فضل موجود في الشجرة للسجلات التاريخية بس،
+    مش بيتستخدم في أي قيد جديد بعد كده."""
     from decimal import Decimal as _D  # noqa: PLC0415
     from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
@@ -66,7 +75,7 @@ def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract")
 
     post_simple_revenue_journal(
         db, contract.branch_id, business_today(settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code="2300",
+        debit_account_code="1100", credit_account_code="4600",
         amount=contract.down_payment or _D("0"),
         reference=f"TS-DP-{contract.contract_number}",
         description=f"دفعة أولى تايم شير — {contract.contract_number}",
@@ -138,16 +147,16 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
 def _post_installment_payment_journal(
     db: "Session", contract: "TimeshareContract", paid_amount, inst: "TimeshareInstallment",
 ) -> None:
-    """Dr. Cash (1100) / Cr. Deferred Revenue (2300) عند تحصيل أي قسط — نفس
-    منطق _post_deferred_revenue_journal بالظبط بس لكل تحصيل قسط، مش الدفعة
-    الأولى بس."""
+    """Dr. Cash (1100) / Cr. إيرادات عقود التايم شير (4600) عند تحصيل أي
+    قسط — نفس منطق _post_deferred_revenue_journal بالظبط بس لكل تحصيل قسط،
+    مش الدفعة الأولى بس (راجع تعليق تلك الدالة لتفاصيل باج حساب 2300)."""
     from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
     from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
 
     post_simple_revenue_journal(
         db, contract.branch_id, business_today(settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code="2300",
+        debit_account_code="1100", credit_account_code="4600",
         amount=paid_amount,
         reference=f"TS-INST-{contract.contract_number}-{inst.installment_no}",
         description=f"تحصيل قسط رقم {inst.installment_no} — {contract.contract_number}",

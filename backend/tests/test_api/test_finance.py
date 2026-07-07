@@ -149,6 +149,70 @@ class TestPayment:
             services.void_payment(db, 9999, voided_by=1)
 
 
+class TestPaymentSettlementJournalPosting:
+    """⚠️ باج محاسبي حقيقي اتصلح (2026-07-07، فجوة معمارية موثّقة في
+    CLAUDE.md §18): add_payment (تحصيل فوليو — Charge to Room settled عند
+    الخروج) عمرها ما كانت بترحّل أي قيد محاسبي خالص. الكاش المحصّل فعليًا من
+    الضيف كان غير مرئي تمامًا في دفتر الأستاذ. دلوقتي بترحّل Dr Cash(1100)/
+    Cr ذمم الفوليو(1150)، وvoid_payment بيعكسها."""
+
+    def _make_finance_accounts(self, db, branch):
+        from app.modules.finance.models import Account
+        cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+        guest_ledger = Account(branch_id=branch.id, code="1150", name="ذمم الفوليو", account_type="asset")
+        db.add_all([cash, guest_ledger])
+        db.commit()
+        return cash, guest_ledger
+
+    def test_add_payment_posts_settlement_journal(self, db, branch, folio):
+        cash, guest_ledger = self._make_finance_accounts(db, branch)
+        data = PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id,
+            amount=Decimal("300.00"), method="cash", posted_at=datetime.utcnow(),
+        )
+        payment = services.add_payment(db, folio.id, data)
+
+        entries, total = crud.list_journal_entries(db, branch.id, source="folio_payment")
+        assert total == 1
+        entry = entries[0]
+        assert entry.source_id == payment.id
+        db.refresh(cash); db.refresh(guest_ledger)
+        cash_line = next(l for l in entry.lines if l.account_id == cash.id)
+        guest_ledger_line = next(l for l in entry.lines if l.account_id == guest_ledger.id)
+        assert cash_line.debit == Decimal("300.00")
+        assert guest_ledger_line.credit == Decimal("300.00")
+
+    def test_void_payment_reverses_settlement_journal(self, db, branch, folio):
+        cash, guest_ledger = self._make_finance_accounts(db, branch)
+        data = PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id,
+            amount=Decimal("150.00"), method="cash", posted_at=datetime.utcnow(),
+        )
+        payment = services.add_payment(db, folio.id, data)
+        services.void_payment(db, payment.id, voided_by=1)
+
+        entries, total = crud.list_journal_entries(db, branch.id, source="folio_payment_void")
+        assert total == 1
+        entry = entries[0]
+        db.refresh(cash); db.refresh(guest_ledger)
+        cash_line = next(l for l in entry.lines if l.account_id == cash.id)
+        guest_ledger_line = next(l for l in entry.lines if l.account_id == guest_ledger.id)
+        assert cash_line.credit == Decimal("150.00")   # عكس التحصيل: دائن مش مدين
+        assert guest_ledger_line.debit == Decimal("150.00")  # عكس التحصيل: مدين مش دائن
+
+    def test_missing_accounts_does_not_block_payment(self, db, branch, folio):
+        """لو 1100/1150 مش موجودين، تسجيل الدفعة لازم ينجح عادي — نفس فلسفة
+        باقي القيود في المشروع (فشل الترحيل المحاسبي ميوقفش العملية الأساسية)."""
+        data = PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id,
+            amount=Decimal("100.00"), method="cash", posted_at=datetime.utcnow(),
+        )
+        payment = services.add_payment(db, folio.id, data)
+        assert payment.id is not None
+        _, total = crud.list_journal_entries(db, branch.id, source="folio_payment")
+        assert total == 0
+
+
 class TestDiscount:
 
     def test_create_discount(self, db, discount):

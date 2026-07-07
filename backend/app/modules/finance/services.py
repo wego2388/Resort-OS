@@ -202,6 +202,15 @@ def generate_folios_report_excel(
 
 
 def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Optional[int] = None) -> Payment:
+    """⚠️ باج حقيقي اتصلح هنا (2026-07-07، فجوة معمارية موثّقة في CLAUDE.md
+    §18): تحصيل دفعة فوليو (Charge to Room settled at checkout) عمره ما كان
+    بيرحّل أي قيد محاسبي خالص — الكاش المحصّل فعليًا من الضيف كان غير مرئي
+    تمامًا في دفتر الأستاذ. السبب الأصلي: مطعم/كافيه/شاطئ بيتجاهلوا ترحيل
+    الإيراد وقت البيع لو الطلب محمّل على فوليو (عشان الإيراد يتسجّل "لاحقًا
+    وقت التسوية" حسب التعليق القديم) — لكن التسوية نفسها (هنا) عمرها ما
+    كانت بترحّل حاجة. الحل: Dr Cash(1100)/Cr ذمم الفوليو(1150) هنا — نظير
+    Dr ذمم الفوليو(1150)/Cr إيراد الموديول اللي بيترحّل وقت إنشاء الشحنة
+    نفسها (راجع restaurant/cafe/beach services._post_*_folio_charge_journal)."""
     folio = get_folio_or_404(db, folio_id)
     if cashier_id and not data.cashier_id:
         data = data.model_copy(update={"cashier_id": cashier_id})
@@ -213,6 +222,15 @@ def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Opt
     # عملة الدفعة موروثة من الفوليو دايماً — مش قابلة للتحديد من العميل، عشان
     # نضمن ما يحصلش mismatch بين عملة الفوليو وعملة دفعاته.
     payment = crud.create_payment(db, data, shift_id=shift_id, currency=folio.currency)
+    post_simple_revenue_journal(
+        db, data.branch_id, data.posted_at.date(),
+        debit_account_code="1100", credit_account_code="1150",
+        amount=data.amount,
+        reference=f"PAY-{payment.id}",
+        description=f"تحصيل دفعة فوليو #{folio_id}",
+        source="folio_payment", source_id=payment.id,
+        currency=folio.currency,
+    )
     db.commit()
     db.refresh(payment)
     return payment
@@ -239,6 +257,18 @@ def void_payment(db: Session, payment_id: int, voided_by: int, reason: str = "vo
     crud.create_revenue_audit_log(
         db, branch_id=payment.branch_id, entity_type="payment", entity_id=payment.id,
         old_value=original_amount, new_value=Decimal("0.00"), reason=reason, changed_by=voided_by,
+    )
+    # عكس قيد التحصيل اللي add_payment رحّله (Dr Cash/Cr ذمم الفوليو) — الدفعة
+    # اتلغت يبقى الكاش ده ما اتحصّلش فعليًا، والذمة ترجع زي ما كانت.
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+    post_simple_revenue_journal(
+        db, payment.branch_id, business_today(settings.TIMEZONE),
+        debit_account_code="1150", credit_account_code="1100",
+        amount=original_amount,
+        reference=f"PAY-VOID-{payment.id}",
+        description=f"إلغاء دفعة فوليو #{payment.folio_id}",
+        source="folio_payment_void", source_id=payment.id,
+        currency=payment.currency,
     )
     db.commit()
     db.refresh(payment)

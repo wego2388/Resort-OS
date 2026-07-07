@@ -74,6 +74,17 @@ def make_room_and_folio_committed(db, branch):
     return room, folio
 
 
+def make_finance_accounts_committed(db, branch):
+    """يزرع 1100 (نقدية)، 4400 (إيرادات الكافيه)، 1150 (ذمم الفوليو) —
+    نفس نمط test_restaurant.make_finance_accounts."""
+    from app.modules.finance.models import Account
+    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
+    revenue = Account(branch_id=branch.id, code="4400", name="Cafe Revenue", account_type="revenue")
+    guest_ledger = Account(branch_id=branch.id, code="1150", name="ذمم الفوليو", account_type="asset")
+    db.add_all([cash, revenue, guest_ledger])
+    db.commit()
+
+
 class TestCafeOrderFlow:
     def test_create_order_via_http(self, client: TestClient, db, fake_redis, waiter_headers):
         branch = make_branch_committed(db)
@@ -1251,7 +1262,10 @@ class TestCafeRefundReducesFolioCharge:
     def test_refund_after_charge_to_room_reduces_folio_total_to_zero(
         self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers, manager_headers,
     ):
+        from app.modules.finance import crud as finance_crud
+
         branch = make_branch_committed(db)
+        make_finance_accounts_committed(db, branch)
         item = make_item_committed(db, branch)
         room, folio = make_room_and_folio_committed(db, branch)
 
@@ -1271,6 +1285,21 @@ class TestCafeRefundReducesFolioCharge:
         db.refresh(folio)
         assert folio.total > Decimal("0.00")
 
+        # ⚠️ باج حقيقي اتصلح 2026-07-07 (CLAUDE.md §18): الطلب المحمّل على
+        # الغرفة كان بيضيف FolioCharge بس من غير أي قيد يومية — إيراد الكافيه
+        # الحقيقي من مبيعات الغرفة كان غايب تمامًا عن دفتر الأستاذ. دلوقتي
+        # بيترحّل Dr ذمم الفوليو(1150)/Cr إيراد الكافيه(4400) فورًا.
+        charge_entries, charge_total = finance_crud.list_journal_entries(
+            db, branch.id, source="cafe_folio_charge",
+        )
+        assert charge_total == 1
+        charge_lines = charge_entries[0].lines
+        debit_line = next(l for l in charge_lines if l.debit > 0)
+        credit_line = next(l for l in charge_lines if l.credit > 0)
+        assert finance_crud.get_account_by_code(db, branch.id, "1150").id == debit_line.account_id
+        assert finance_crud.get_account_by_code(db, branch.id, "4400").id == credit_line.account_id
+        assert debit_line.debit == Decimal(str(paid["total"]))
+
         resp = client.patch(
             f"/api/v1/cafe/orders/{paid['id']}/items/{item_id}/refund",
             json={"reason": "مرتجع بعد تحميل الغرفة"},
@@ -1280,6 +1309,19 @@ class TestCafeRefundReducesFolioCharge:
 
         db.refresh(folio)
         assert folio.total == Decimal("0.00")
+
+        # المرتجع الكامل لازم يعكس قيد الإيراد الأصلي بالكامل كمان (Dr إيراد
+        # الكافيه/Cr ذمم الفوليو) — مش بس يقلّل شحنة الفوليو.
+        refund_entries, refund_total = finance_crud.list_journal_entries(
+            db, branch.id, source="cafe_folio_refund",
+        )
+        assert refund_total == 1
+        refund_lines = refund_entries[0].lines
+        refund_debit = next(l for l in refund_lines if l.debit > 0)
+        refund_credit = next(l for l in refund_lines if l.credit > 0)
+        assert finance_crud.get_account_by_code(db, branch.id, "4400").id == refund_debit.account_id
+        assert finance_crud.get_account_by_code(db, branch.id, "1150").id == refund_credit.account_id
+        assert refund_debit.debit == debit_line.debit  # مرتجع كامل = نفس مبلغ القيد الأصلي
 
 
 def make_product_committed(client: TestClient, branch_id: int, manager_headers, cost_price="40.00"):
