@@ -337,7 +337,10 @@ def get_upcoming_visits(db: Session, branch_id: int, days: int = 30) -> list[dic
         if c.status != "active":
             continue
         visit = find_next_visit(c.week_number, c.nights_per_year, today)
-        if visit and 0 <= visit.days_until <= days:
+        # مفيش حد أدنى صفر على days_until — زيارة جارية دلوقتي (بدأت قبل
+        # النهاردة، لسه ما خلصتش) لازم تفضل ظاهرة برضه، راجع تعليق
+        # timeshare_engine.find_next_visit/get_upcoming_visits.
+        if visit and visit.days_until <= days:
             result.append({
                 "id": c.id, "contract_number": c.contract_number,
                 "customer_name": c.customer_name, "customer_phone": c.customer_phone,
