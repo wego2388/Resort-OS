@@ -49,6 +49,16 @@ def utc_naive_to_local_date(utc_naive: datetime, tz_name: str) -> date:
     return utc_naive.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name)).date()
 
 
+def utc_naive_to_local_time(utc_naive: datetime, tz_name: str) -> time:
+    """نفس تحويل ``utc_naive_to_local_date`` لكن بيرجّع وقت اليوم (time-of-day)
+    المحلي بدل التاريخ — مُستخدم لتقييم شروط زمنية داخل اليوم (مثال: خصم
+    الـ Happy Hour بين 14:00-17:00 بتوقيت القاهرة) على timestamp UTC naive
+    مخزّن بالداتابيز (created_at الطلب). بدون التحويل ده، مقارنة الوقت مباشرة
+    (created_at.time()) بتقع في نفس فئة الباج الموثّقة فوق — نافذة يومية بمقدار
+    فرق التوقيت بيتقاس فيها الوقت الغلط."""
+    return utc_naive.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name)).time()
+
+
 def local_now(tz_name: str) -> datetime:
     """اللحظة الحالية بتوقيت المنتجع (tz_name) — بديل عن datetime.utcnow()/
     datetime.now() اللي بترجع توقيت السيرفر (UTC غالبًا في الإنتاج). استخدمها
