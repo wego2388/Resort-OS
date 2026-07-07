@@ -38,6 +38,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_demo_accounts(db)
     _seed_social_insurance(db)
     _seed_tax_brackets(db)
+    _seed_attendance_policy(db)
     _seed_settings(db)
     _seed_leave_types(db)
     _seed_employees(db)
@@ -205,6 +206,34 @@ def _seed_tax_brackets(db: Session) -> None:
         ))
     db.flush()
     print("  ✓ Tax brackets seeded (2024)")
+
+
+def _seed_attendance_policy(db: Session) -> None:
+    """سياسة حضور افتراضية معقولة للفرع الأساسي — عشان تشغيل الرواتب يحسب
+    تأخير/أوفرتايم حقيقي من أول تشغيل بدل ما يفضل صفر لكل الموظفين لحد ما
+    حد يدخل يضبط السياسة يدويًا من شاشة الإدارة."""
+    try:
+        from app.modules.hr.models import AttendancePolicy
+        from app.modules.core.models import Branch
+    except ImportError:
+        return
+
+    branch = db.query(Branch).first()
+    if not branch or db.query(AttendancePolicy).filter(AttendancePolicy.branch_id == branch.id).first():
+        return
+
+    db.add(AttendancePolicy(
+        branch_id=branch.id,
+        late_grace_minutes=10,
+        early_leave_grace_minutes=10,
+        standard_shift_start="09:00",
+        standard_shift_end="17:00",
+        overtime_rate_multiplier=Decimal("1.50"),
+        late_penalty_rate_multiplier=Decimal("1.00"),
+        is_active=True,
+    ))
+    db.flush()
+    print("  ✓ Attendance policy seeded (default: 10min grace, 09:00-17:00, 1.5x OT)")
 
 
 def _seed_leave_types(db: Session) -> None:

@@ -117,15 +117,6 @@ class TaxBracketConfigRead(TaxBracketConfigCreate):
     id: int
 
 
-class PayrollCalculateRequest(BaseModel):
-    employee_id:        int
-    period_year:        int = Field(..., ge=2020, le=2099)
-    period_month:       int = Field(..., ge=1, le=12)
-    penalty_days:       int = Field(0, ge=0)
-    unpaid_leave_days:  int = Field(0, ge=0)
-    overtime_amount:    Decimal = Field(Decimal("0"), ge=0)
-
-
 class PayrollResultRead(BaseModel):
     employee_id:              int
     period:                   str
@@ -141,6 +132,7 @@ class PayrollResultRead(BaseModel):
     annual_tax:               Decimal
     monthly_tax:              Decimal
     penalty_deduction:        Decimal
+    late_penalty_deduction:   Decimal
     unpaid_leave_deduction:   Decimal
     net_salary:               Decimal
     journal_entry:            dict
@@ -164,6 +156,7 @@ class PayrollLineRead(BaseModel):
     employer_si:            Decimal
     monthly_tax:            Decimal
     penalty_deduction:      Decimal
+    late_penalty_deduction: Decimal
     unpaid_leave_deduction: Decimal
 
 
@@ -253,6 +246,30 @@ class ShiftRead(ShiftCreate):
     model_config = ConfigDict(from_attributes=True)
     id:         int
     created_at: datetime
+
+
+# ── AttendancePolicy ──────────────────────────────────────────────────
+# سياسة الحضور/الانصراف لكل فرع — تغذّي app.resort_os.hr_engine.compute_
+# attendance_minutes لتحويل بصمات AttendanceRecord الخام لدقايق تأخير/
+# أوفرتايم/انصراف مبكر تلقائيًا قبل تشغيل الرواتب (راجع services.
+# run_payroll_for_branch).
+
+class AttendancePolicyUpsert(BaseModel):
+    late_grace_minutes:           int = Field(10, ge=0, le=120)
+    early_leave_grace_minutes:    int = Field(10, ge=0, le=120)
+    standard_shift_start:         str = Field("09:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    standard_shift_end:           str = Field("17:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    overtime_rate_multiplier:     Decimal = Field(Decimal("1.50"), ge=0)
+    late_penalty_rate_multiplier: Decimal = Field(Decimal("1.00"), ge=0)
+    is_active:                    bool = True
+
+
+class AttendancePolicyRead(AttendancePolicyUpsert):
+    model_config = ConfigDict(from_attributes=True)
+    id:         int
+    branch_id:  int
+    created_at: datetime
+    updated_at: datetime
 
 
 # ── LeaveType ─────────────────────────────────────────────────────────
@@ -477,6 +494,7 @@ class MyPayslipRead(BaseModel):
     employee_si:            Decimal
     monthly_tax:            Decimal
     penalty_deduction:      Decimal
+    late_penalty_deduction: Decimal
     unpaid_leave_deduction: Decimal
 
 

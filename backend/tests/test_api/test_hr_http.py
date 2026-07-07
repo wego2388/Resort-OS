@@ -1061,3 +1061,57 @@ class TestPayrollDownloadsHttp:
     def test_download_payroll_excel_404_run_missing(self, client: TestClient, db, manager_headers):
         resp = client.get("/api/v1/hr/payroll/999999/excel", headers=manager_headers)
         assert resp.status_code == 404
+
+
+class TestAttendancePolicyEndpoints:
+    """GET/PUT /hr/attendance-policy — إعدادات الحضور القابلة للتحكم من
+    الإدارة (سماحية تأخير/انصراف مبكر، وردية افتراضية، نسب أوفرتايم/خصم)،
+    اللي بتغذّي الحساب التلقائي في run_payroll_for_branch."""
+
+    def test_get_404_when_not_configured(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.get("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, headers=manager_headers)
+        assert resp.status_code == 404
+
+    def test_put_creates_then_get_returns_it(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        body = {
+            "late_grace_minutes": 15,
+            "early_leave_grace_minutes": 5,
+            "standard_shift_start": "08:00",
+            "standard_shift_end": "16:00",
+            "overtime_rate_multiplier": "2.00",
+            "late_penalty_rate_multiplier": "1.25",
+            "is_active": True,
+        }
+        put_resp = client.put(
+            "/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=manager_headers,
+        )
+        assert put_resp.status_code == 200, put_resp.text
+        data = put_resp.json()
+        assert data["late_grace_minutes"] == 15
+        assert data["standard_shift_start"] == "08:00"
+        assert Decimal(str(data["overtime_rate_multiplier"])) == Decimal("2.00")
+
+        get_resp = client.get("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, headers=manager_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["late_grace_minutes"] == 15
+
+    def test_put_is_idempotent_upsert_not_duplicate(self, client: TestClient, db, manager_headers):
+        """نداء PUT مرتين لنفس الفرع لازم يحدّث نفس الصف، مش ينشئ صف تاني."""
+        from app.modules.hr.models import AttendancePolicy
+
+        branch = make_branch_committed(db)
+        body = {"late_grace_minutes": 10, "standard_shift_start": "09:00", "standard_shift_end": "17:00"}
+        client.put("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=manager_headers)
+        body["late_grace_minutes"] = 20
+        client.put("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, json=body, headers=manager_headers)
+
+        rows = db.query(AttendancePolicy).filter(AttendancePolicy.branch_id == branch.id).all()
+        assert len(rows) == 1
+        assert rows[0].late_grace_minutes == 20
+
+    def test_get_requires_manager_role(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.get("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, headers=waiter_headers)
+        assert resp.status_code == 403

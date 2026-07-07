@@ -1,6 +1,7 @@
 """app/modules/hr/services.py — Business logic"""
 from __future__ import annotations
 
+import calendar
 import json
 from datetime import date, datetime
 from decimal import Decimal
@@ -10,17 +11,22 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.hr import crud
-from app.modules.hr.models import AttendanceRecord, Employee, LeaveRequest, PayrollRun
+from app.modules.hr.models import AttendancePolicy, AttendanceRecord, Employee, LeaveRequest, PayrollRun
 from app.modules.hr.schemas import (
     AttendanceRecordCreate, EmployeeCreate, EmployeeUpdate,
     PayrollResultRead, PayrollRunCreate,
 )
 from app.resort_os.hr_engine import (
     Allowance as AllowanceDC,
+    AttendancePolicyConfig,
+    AttendancePunch,
     EmployeePayrollInput,
     SocialInsuranceConfig as SIConfig,
     TaxBracket,
+    attendance_minutes_to_amount,
     calculate_payroll,
+    compute_attendance_minutes,
+    standard_shift_hours,
 )
 from app.resort_os.timezone_utils import local_today
 
@@ -134,6 +140,7 @@ def calculate_employee_payroll(
     penalty_days: int = 0,
     unpaid_leave_days: int = 0,
     overtime_amount: Decimal = Decimal("0"),
+    late_penalty_amount: Decimal = Decimal("0"),
 ) -> PayrollResultRead:
     emp = get_employee_or_404(db, employee_id)
 
@@ -180,6 +187,7 @@ def calculate_employee_payroll(
         allowances=allowances,
         overtime_amount=overtime_amount,
         penalty_days=penalty_days,
+        late_penalty_amount=late_penalty_amount,
         unpaid_leave_days=unpaid_leave_days,
         hire_date=emp.hire_date,
         birth_date=emp.birth_date or emp.hire_date,
@@ -188,6 +196,59 @@ def calculate_employee_payroll(
 
     result = calculate_payroll(emp_input, si_config, tax_brackets, si_orm.max_penalty_days_monthly)
     return PayrollResultRead(**result.__dict__)
+
+
+def _compute_auto_attendance_adjustments(
+    db: Session, emp: Employee, period_year: int, period_month: int,
+    policy_orm: Optional[AttendancePolicy],
+) -> tuple[Decimal, Decimal]:
+    """يرجّع (overtime_amount, late_penalty_amount) محسوبة تلقائيًا من بصمات
+    AttendanceRecord الفعلية للموظف خلال الفترة + سياسة حضور الفرع (policy_orm
+    — تُجلب مرة واحدة في run_payroll_for_branch قبل الحلقة، مش لكل موظف، عشان
+    مفيش داعي لاستعلام مطابق N مرة لنفس الفرع). دي "إضافة" فوق الحساب اليدوي/
+    التأديبي الموجود أصلاً (EmployeePenalty)، مش شرط لتشغيل الرواتب — مفيش
+    سياسة نشطة أو مفيش بصمات فعلية = (0, 0) بالظبط، ويفضل الراتب يتحسب عادي."""
+    if not policy_orm:
+        return Decimal("0"), Decimal("0")
+
+    first_day = date(period_year, period_month, 1)
+    last_day = date(period_year, period_month, calendar.monthrange(period_year, period_month)[1])
+
+    records = crud.list_attendance_for_payroll_period(db, emp.id, first_day, last_day)
+    if not records:
+        return Decimal("0"), Decimal("0")
+
+    shift_by_date = crud.map_rota_shifts_for_period(db, emp.id, first_day, last_day)
+
+    punches = [
+        AttendancePunch(
+            record_date=r.record_date,
+            check_in=r.check_in,
+            check_out=r.check_out,
+            shift_start=shift_by_date.get(r.record_date, (None, None))[0],
+            shift_end=shift_by_date.get(r.record_date, (None, None))[1],
+        )
+        for r in records
+    ]
+
+    policy = AttendancePolicyConfig(
+        late_grace_minutes=policy_orm.late_grace_minutes,
+        early_leave_grace_minutes=policy_orm.early_leave_grace_minutes,
+        standard_shift_start=policy_orm.standard_shift_start,
+        standard_shift_end=policy_orm.standard_shift_end,
+        overtime_rate_multiplier=policy_orm.overtime_rate_multiplier,
+        late_penalty_rate_multiplier=policy_orm.late_penalty_rate_multiplier,
+    )
+    minutes_result = compute_attendance_minutes(punches, policy, tz_name=settings.TIMEZONE)
+    shift_hours = standard_shift_hours(policy.standard_shift_start, policy.standard_shift_end)
+
+    overtime_amount = attendance_minutes_to_amount(
+        minutes_result.overtime_minutes, emp.basic_salary, shift_hours, policy.overtime_rate_multiplier,
+    )
+    late_penalty_amount = attendance_minutes_to_amount(
+        minutes_result.late_minutes, emp.basic_salary, shift_hours, policy.late_penalty_rate_multiplier,
+    )
+    return overtime_amount, late_penalty_amount
 
 
 def run_payroll_for_branch(
@@ -206,6 +267,7 @@ def run_payroll_for_branch(
     )
 
     employees, _ = crud.list_employees(db, branch_id, status="active", limit=1000)
+    policy_orm = crud.get_attendance_policy(db, branch_id)  # مرة واحدة للفرع، مش لكل موظف
 
     total_gross = Decimal("0")
     total_net   = Decimal("0")
@@ -225,8 +287,20 @@ def run_payroll_for_branch(
         penalties = crud.list_penalties(db, branch_id, employee_id=emp.id, month=period_str)
         penalty_days = sum(p.penalty_days for p in penalties)
 
+        # حساب تلقائي جديد: overtime_amount/late_penalty_amount من بصمات
+        # الحضور الفعلية + سياسة الفرع (لو موجودة) — يتخصم/يتضاف فوق الجزاءات
+        # اليدوية فوق، مش بدلاً منها (راجع _compute_auto_attendance_adjustments).
+        overtime_amount, late_penalty_amount = _compute_auto_attendance_adjustments(
+            db, emp, period_year, period_month, policy_orm,
+        )
+
         try:
-            result = calculate_employee_payroll(db, emp.id, period_year, period_month, penalty_days=penalty_days)
+            result = calculate_employee_payroll(
+                db, emp.id, period_year, period_month,
+                penalty_days=penalty_days,
+                overtime_amount=overtime_amount,
+                late_penalty_amount=late_penalty_amount,
+            )
         except ValueError:
             continue  # تجاهل الموظفين الذين لا تتوفر لهم بيانات
 
@@ -239,6 +313,7 @@ def run_payroll_for_branch(
             "employer_si":            result.employer_si,
             "monthly_tax":            result.monthly_tax,
             "penalty_deduction":      result.penalty_deduction,
+            "late_penalty_deduction": result.late_penalty_deduction,
             "unpaid_leave_deduction": result.unpaid_leave_deduction,
             "journal_entry":          json.dumps(result.journal_entry, ensure_ascii=False),
         })
@@ -467,6 +542,8 @@ def generate_payslip_pdf(db: Session, run_id: int, employee_id: int) -> bytes:
     ]
     if line.penalty_deduction and line.penalty_deduction > 0:
         fields.append(("جزاءات", f"{line.penalty_deduction:,.2f} EGP"))
+    if line.late_penalty_deduction and line.late_penalty_deduction > 0:
+        fields.append(("خصم تأخير", f"{line.late_penalty_deduction:,.2f} EGP"))
     if line.unpaid_leave_deduction and line.unpaid_leave_deduction > 0:
         fields.append(("إجازة بدون أجر", f"{line.unpaid_leave_deduction:,.2f} EGP"))
 
@@ -504,6 +581,7 @@ def generate_payroll_excel(db: Session, run_id: int) -> bytes:
             float(l.employee_si),
             float(l.monthly_tax),
             float(l.penalty_deduction or 0),
+            float(l.late_penalty_deduction or 0),
             float(l.net_salary),
         ]
         for l in lines
@@ -512,9 +590,9 @@ def generate_payroll_excel(db: Session, run_id: int) -> bytes:
     return builder.excel(
         sheets=[{
             "name": f"رواتب {period_str}",
-            "headers": ["الموظف", "الأساسي", "الإجمالي", "تأمينات", "ضريبة", "جزاءات", "الصافي"],
+            "headers": ["الموظف", "الأساسي", "الإجمالي", "تأمينات", "ضريبة", "جزاءات", "خصم تأخير", "الصافي"],
             "rows": rows,
-            "col_types": ["text", "currency", "currency", "currency", "currency", "currency", "currency"],
+            "col_types": ["text", "currency", "currency", "currency", "currency", "currency", "currency", "currency"],
             "summary": {
                 "إجمالي الصافي": float(run.total_net or 0),
                 "إجمالي الضريبة": float(run.total_tax or 0),

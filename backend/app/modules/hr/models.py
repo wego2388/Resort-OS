@@ -119,6 +119,7 @@ class PayrollLine(Base, TimestampMixin):
     employer_si:           Mapped[Decimal] = mapped_column(Numeric(10, 2))
     monthly_tax:           Mapped[Decimal] = mapped_column(Numeric(10, 2))
     penalty_deduction:     Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    late_penalty_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # خصم تأخير محسوب تلقائيًا من الحضور — منفصل عن penalty_deduction (جزاءات تأديبية يدوية بالأيام)
     unpaid_leave_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     journal_entry:         Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON
 
@@ -139,6 +140,32 @@ class AttendanceRecord(Base, TimestampMixin):
     check_out:   Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status:      Mapped[str]            = mapped_column(String(20), default="present")  # present|absent|late|leave|holiday
     notes:       Mapped[str | None]     = mapped_column(String(300), nullable=True)
+
+
+class AttendancePolicy(Base, TimestampMixin):
+    """سياسة الحضور/الانصراف لكل فرع — تتحكم في تحويل بصمات الحضور الخام
+    (AttendanceRecord.check_in/check_out) لدقايق تأخير/أوفرتايم/انصراف مبكر
+    تلقائيًا قبل ما تتحول لمبالغ مالية تدخل حساب الراتب (راجع
+    app.resort_os.hr_engine.compute_attendance_minutes). فرع واحد = سياسة واحدة
+    (unique على branch_id) — مفيش سياسة نشطة = مفيش حساب تلقائي، الراتب لسه
+    بيشتغل عادي بالمدخلات اليدوية زي ما كان قبل كده (إضافة، مش استبدال)."""
+    __tablename__ = "attendance_policies"
+
+    id:        Mapped[int] = mapped_column(primary_key=True)
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), unique=True)
+
+    late_grace_minutes:        Mapped[int] = mapped_column(Integer, default=10)
+    early_leave_grace_minutes: Mapped[int] = mapped_column(Integer, default=10)
+
+    # الوردية الافتراضية (fallback) لموظف بدون RotaAssignment صريح لليوم —
+    # لو فيه RotaAssignment→Shift مضبوط لليوم ده، بياخد الأولوية دايمًا على القيم دي.
+    standard_shift_start: Mapped[str] = mapped_column(String(5), default="09:00")   # "HH:MM"
+    standard_shift_end:   Mapped[str] = mapped_column(String(5), default="17:00")   # "HH:MM"
+
+    overtime_rate_multiplier:     Mapped[Decimal] = mapped_column(Numeric(4, 2), default=Decimal("1.50"))
+    late_penalty_rate_multiplier: Mapped[Decimal] = mapped_column(Numeric(4, 2), default=Decimal("1.00"))
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class LeaveBalance(Base, TimestampMixin):

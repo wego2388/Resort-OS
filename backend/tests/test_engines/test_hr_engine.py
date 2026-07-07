@@ -4,21 +4,28 @@ tests/test_engines/test_hr_engine.py
 بدون DB، بدون fixtures — pure functions فقط
 """
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.resort_os.hr_engine import (
     Allowance,
+    AttendanceMinutesResult,
+    AttendancePolicyConfig,
+    AttendancePunch,
     EmployeePayrollInput,
     SocialInsuranceConfig,
     TaxBracket,
     annual_leave_entitlement,
+    attendance_minutes_to_amount,
     calculate_annual_tax,
     calculate_gratuity,
     calculate_payroll,
     calculate_penalty_deduction,
+    compute_attendance_minutes,
+    standard_shift_hours,
 )
 
 
@@ -54,6 +61,7 @@ def _basic_employee(
     overtime: Decimal = Decimal("0"),
     penalty_days: int = 0,
     unpaid_leave_days: int = 0,
+    late_penalty_amount: Decimal = Decimal("0"),
 ) -> EmployeePayrollInput:
     return EmployeePayrollInput(
         employee_id=1,
@@ -61,11 +69,23 @@ def _basic_employee(
         allowances=allowances or [],
         overtime_amount=overtime,
         penalty_days=penalty_days,
+        late_penalty_amount=late_penalty_amount,
         unpaid_leave_days=unpaid_leave_days,
         hire_date=date(2020, 1, 1),
         birth_date=date(1990, 6, 15),
         period_month=date(2026, 6, 1),
     )
+
+
+CAIRO = ZoneInfo("Africa/Cairo")
+
+
+def _cairo_local_to_utc_naive(d: date, hour: int, minute: int) -> datetime:
+    """نفس تحويل hr_engine._local_wall_time_to_utc_naive بالظبط — بيستخدم
+    ZoneInfo الفعلي بدل ما يفترض إزاحة ثابتة (UTC+3)، عشان التست يفضل صحيح
+    حتى لو مصر غيّرت قاعدة التوقيت الصيفي مستقبلاً."""
+    local_dt = datetime(d.year, d.month, d.day, hour, minute, tzinfo=CAIRO)
+    return local_dt.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 # ─── calculate_annual_tax ─────────────────────────────────────────────
@@ -350,3 +370,222 @@ class TestCalculatePayroll:
         )
         result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
         assert result.gross_salary == Decimal("6500")  # 5000 + 1000 + 500 (لا transport)
+
+    def test_late_penalty_deduction_applied_and_separate_from_manual_penalty(self):
+        """late_penalty_amount (تلقائي من الحضور) وpenalty_days (يدوي/تأديبي)
+        بيتخصموا مع بعض، مش أحدهما بدل التاني — تحقق التعايش بينهم صراحةً."""
+        emp = _basic_employee(
+            basic_salary=Decimal("6000"),
+            penalty_days=1,                              # يدوي: 200.00
+            late_penalty_amount=Decimal("37.50"),         # تلقائي من الحضور
+        )
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+
+        assert result.penalty_deduction == Decimal("200.00")
+        assert result.late_penalty_deduction == Decimal("37.50")
+
+        # الصافي بدون أي منهم أكبر من الصافي بيهم مجتمعين
+        base = calculate_payroll(_basic_employee(basic_salary=Decimal("6000")), _si_config(), _tax_brackets(), 5)
+        assert result.net_salary == base.net_salary - Decimal("200.00") - Decimal("37.50")
+
+    def test_late_penalty_deduction_defaults_to_zero(self):
+        emp = _basic_employee(basic_salary=Decimal("5000"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        assert result.late_penalty_deduction == Decimal("0.00")
+
+
+# ─── standard_shift_hours ──────────────────────────────────────────────
+
+class TestStandardShiftHours:
+
+    def test_regular_day_shift(self):
+        assert standard_shift_hours("09:00", "17:00") == Decimal("8.00")
+
+    def test_overnight_shift_crosses_midnight(self):
+        """22:00 → 06:00 = 8 ساعات رغم عبورها منتصف الليل"""
+        assert standard_shift_hours("22:00", "06:00") == Decimal("8.00")
+
+    def test_short_shift(self):
+        assert standard_shift_hours("09:00", "13:00") == Decimal("4.00")
+
+
+# ─── compute_attendance_minutes ─────────────────────────────────────────
+
+def _policy(**overrides) -> AttendancePolicyConfig:
+    defaults = dict(
+        late_grace_minutes=10,
+        early_leave_grace_minutes=10,
+        standard_shift_start="09:00",
+        standard_shift_end="17:00",
+        overtime_rate_multiplier=Decimal("1.50"),
+        late_penalty_rate_multiplier=Decimal("1.00"),
+    )
+    defaults.update(overrides)
+    return AttendancePolicyConfig(**defaults)
+
+
+class TestComputeAttendanceMinutes:
+    """شفت أمثلة الحدود الحرجة دي بالضبط — مطلوبة صراحةً في المواصفة: 9 دقايق
+    تأخير مع سماح 10 = صفر (مش خصم جزئي)، 1 دقيقة فوق السماح = تُحسب كاملة."""
+
+    def test_nine_minutes_late_under_ten_minute_grace_is_zero(self):
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 9, 9),   # 9 دقايق تأخير
+            check_out=_cairo_local_to_utc_naive(d, 17, 0),
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.late_minutes == 0
+
+    def test_exactly_at_grace_boundary_is_forgiven(self):
+        """التأخير = مدة السماح بالظبط (10 دقايق) → صفر، مش على الحافة"""
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 9, 10),
+            check_out=_cairo_local_to_utc_naive(d, 17, 0),
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.late_minutes == 0
+
+    def test_one_minute_over_grace_counts_full_lateness(self):
+        """11 دقيقة تأخير مع سماح 10 → 11 دقيقة كاملة تُحسب (مش دقيقة واحدة
+        بس فوق الحد) — ده القرار التصميمي الموثّق في docstring الدالة."""
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 9, 11),
+            check_out=_cairo_local_to_utc_naive(d, 17, 0),
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.late_minutes == 11
+
+    def test_early_leave_over_grace_counted(self):
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 9, 0),
+            check_out=_cairo_local_to_utc_naive(d, 16, 45),  # 15 دقيقة قبل النهاية
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.early_leave_minutes == 15
+
+    def test_early_leave_under_grace_is_zero(self):
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 9, 0),
+            check_out=_cairo_local_to_utc_naive(d, 16, 55),  # 5 دقايق بس قبل النهاية
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.early_leave_minutes == 0
+
+    def test_overtime_no_grace_any_minute_over_counts(self):
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 9, 0),
+            check_out=_cairo_local_to_utc_naive(d, 18, 30),  # 90 دقيقة أوفرتايم
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.overtime_minutes == 90
+
+    def test_on_time_and_on_schedule_all_zero(self):
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 9, 0),
+            check_out=_cairo_local_to_utc_naive(d, 17, 0),
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result == AttendanceMinutesResult(0, 0, 0, 1)
+
+    def test_missing_punch_is_skipped_not_error(self):
+        """يوم غياب (مفيش check_in ولا check_out) — يتجاهل بهدوء، مش خطأ"""
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(record_date=d, check_in=None, check_out=None)
+        result = compute_attendance_minutes([punch], _policy())
+        assert result == AttendanceMinutesResult(0, 0, 0, 0)
+
+    def test_check_in_only_still_computes_lateness(self):
+        """موظف لسه في الوردية (مفيش check_out لسه) — التأخير لازم يتحسب برضه"""
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 9, 20),  # 20 دقيقة تأخير
+            check_out=None,
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.late_minutes == 20
+        assert result.overtime_minutes == 0
+
+    def test_per_day_shift_overrides_policy_default(self):
+        """RotaAssignment→Shift الخاص باليوم بياخد الأولوية على fallback
+        السياسة — وردية 12:00-20:00 بدل الافتراضي 09:00-17:00"""
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 12, 5),   # 5 دقايق تأخير عن 12:00 (تحت السماح)
+            check_out=_cairo_local_to_utc_naive(d, 20, 0),
+            shift_start="12:00",
+            shift_end="20:00",
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.late_minutes == 0  # لو استُخدم 09:00 غلط كان هيبقى "متأخر" بساعات
+
+    def test_overnight_shift_late_and_overtime(self):
+        """وردية ليلية 22:00 → 06:00 — دخول متأخر 15 دقيقة + خروج متأخر (أوفرتايم)"""
+        d = date(2026, 6, 1)
+        punch = AttendancePunch(
+            record_date=d,
+            check_in=_cairo_local_to_utc_naive(d, 22, 15),
+            check_out=_cairo_local_to_utc_naive(d + timedelta(days=1), 6, 30),
+            shift_start="22:00",
+            shift_end="06:00",
+        )
+        result = compute_attendance_minutes([punch], _policy())
+        assert result.late_minutes == 15
+        assert result.overtime_minutes == 30
+
+    def test_aggregates_across_multiple_days(self):
+        d1, d2 = date(2026, 6, 1), date(2026, 6, 2)
+        punches = [
+            AttendancePunch(record_date=d1, check_in=_cairo_local_to_utc_naive(d1, 9, 20), check_out=_cairo_local_to_utc_naive(d1, 17, 0)),
+            AttendancePunch(record_date=d2, check_in=_cairo_local_to_utc_naive(d2, 9, 30), check_out=_cairo_local_to_utc_naive(d2, 17, 0)),
+        ]
+        result = compute_attendance_minutes(punches, _policy())
+        assert result.late_minutes == 50  # 20 + 30
+        assert result.days_with_data == 2
+
+
+# ─── attendance_minutes_to_amount ────────────────────────────────────────
+
+class TestAttendanceMinutesToAmount:
+
+    def test_worked_example_ninety_minutes_overtime(self):
+        """مثال محسوب يدويًا: راتب أساسي 6000، وردية 8 ساعات → معدل يومي
+        200، معدل ساعة 25. 90 دقيقة (1.5 ساعة) أوفرتايم × 1.5x = 56.25"""
+        amount = attendance_minutes_to_amount(
+            minutes=90, basic_salary=Decimal("6000"),
+            shift_hours=Decimal("8"), rate_multiplier=Decimal("1.5"),
+        )
+        assert amount == Decimal("56.25")
+
+    def test_worked_example_late_penalty(self):
+        """نفس الراتب، 11 دقيقة تأخير × نسبة خصم 1.0x:
+        (11/60) × 25 × 1.0 = 4.583... → 4.58"""
+        amount = attendance_minutes_to_amount(
+            minutes=11, basic_salary=Decimal("6000"),
+            shift_hours=Decimal("8"), rate_multiplier=Decimal("1.0"),
+        )
+        assert amount == Decimal("4.58")
+
+    def test_zero_minutes_zero_amount(self):
+        assert attendance_minutes_to_amount(0, Decimal("6000"), Decimal("8"), Decimal("1.5")) == Decimal("0.00")
+
+    def test_negative_minutes_treated_as_zero(self):
+        assert attendance_minutes_to_amount(-5, Decimal("6000"), Decimal("8"), Decimal("1.5")) == Decimal("0.00")
+
+    def test_zero_shift_hours_returns_zero_not_division_error(self):
+        assert attendance_minutes_to_amount(60, Decimal("6000"), Decimal("0"), Decimal("1.5")) == Decimal("0.00")

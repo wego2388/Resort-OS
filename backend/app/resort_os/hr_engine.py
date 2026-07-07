@@ -16,8 +16,9 @@ Pure Domain: لا FastAPI، لا SQLAlchemy، لا app imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
+from zoneinfo import ZoneInfo
 
 
 # ─────────────────── Config DTOs (من DB) ─────────────────────────────
@@ -60,7 +61,8 @@ class EmployeePayrollInput:
     basic_salary: Decimal
     allowances: list[Allowance] = field(default_factory=list)
     overtime_amount: Decimal = Decimal("0")
-    penalty_days: int = 0           # أيام الجزاءات
+    penalty_days: int = 0           # أيام الجزاءات التأديبية اليدوية (مادة 69 — EmployeePenalty)
+    late_penalty_amount: Decimal = Decimal("0")   # خصم تأخير محسوب تلقائيًا من الحضور — منفصل عن penalty_days
     unpaid_leave_days: int = 0      # أيام الإجازة بدون أجر
     hire_date: date = field(default_factory=date.today)
     birth_date: date = field(default_factory=date.today)
@@ -92,6 +94,7 @@ class PayrollResult:
 
     # الخصومات
     penalty_deduction: Decimal
+    late_penalty_deduction: Decimal     # خصم تأخير تلقائي من الحضور (منفصل عن penalty_deduction اليدوي)
     unpaid_leave_deduction: Decimal
 
     # الصافي
@@ -209,6 +212,152 @@ def calculate_gratuity(
     return full_gratuity
 
 
+# ─────────────────── Attendance → Payroll Conversion ──────────────────
+#
+# يحوّل بصمات حضور خام (check_in/check_out فعليين) لدقايق تأخير/أوفرتايم/
+# انصراف مبكر، ثم لمبلغ مالي يغذّي calculate_payroll فوق. النظام قبل كده
+# كان محتاج موظف بشري يحسب overtime_amount/penalty_days يدويًا لكل موظف
+# لكل شهر — الكود ده هو الـ pipeline الناقص اللي بيربط AttendanceRecord
+# (بصمات خام) بمحرك الرواتب تلقائيًا.
+
+@dataclass
+class AttendancePolicyConfig:
+    """يمثّل جدول attendance_policies في DB — سياسة حضور فرع واحد."""
+    late_grace_minutes: int              # دقايق سماح قبل ما التأخير "يُحسب"
+    early_leave_grace_minutes: int        # دقايق سماح قبل ما الانصراف المبكر "يُحسب"
+    standard_shift_start: str             # "HH:MM" — fallback لو مفيش RotaAssignment لليوم
+    standard_shift_end: str               # "HH:MM"
+    overtime_rate_multiplier: Decimal     # نسبة أجر الساعة الإضافية (مثلاً 1.5×)
+    late_penalty_rate_multiplier: Decimal # نسبة خصم دقيقة التأخير (مثلاً 1.0×)
+
+
+@dataclass
+class AttendancePunch:
+    """بصمة حضور يوم واحد لموظف — check_in/check_out فعليين (UTC naive، نفس
+    تمثيل عمود AttendanceRecord بالداتابيز) + الوردية المتوقعة لليوم ده لو
+    فيه RotaAssignment→Shift مضبوط (وإلا None فيستخدم fallback السياسة)."""
+    record_date: date
+    check_in: datetime | None = None
+    check_out: datetime | None = None
+    shift_start: str | None = None   # "HH:MM" من Shift.start_time الخاص باليوم ده لو موجود
+    shift_end: str | None = None     # "HH:MM"
+
+
+@dataclass
+class AttendanceMinutesResult:
+    """إجمالي دقايق التأخير/الأوفرتايم/الانصراف المبكر لموظف خلال فترة (شهر
+    الرواتب عادةً) — بعد تطبيق سماحية السياسة. days_with_data للتشخيص فقط
+    (كام يوم كان فيه بصمة فعلية اتحسبت، مش مستخدم في أي حساب مالي)."""
+    late_minutes: int = 0
+    early_leave_minutes: int = 0
+    overtime_minutes: int = 0
+    days_with_data: int = 0
+
+
+def _parse_hhmm(value: str) -> time:
+    hour, minute = value.split(":")
+    return time(int(hour), int(minute))
+
+
+def _local_wall_time_to_utc_naive(local_date: date, local_time: time, tz_name: str) -> datetime:
+    """يحوّل تاريخ+وقت محلي (توقيت الفرع، مثلاً بداية وردية "08:00" بتوقيت
+    القاهرة) لـ UTC naive — نفس تمثيل check_in/check_out المخزّنين بالداتابيز.
+
+    ملحوظة: نفس أسلوب app.resort_os.timezone_utils.local_date_to_utc_range
+    بالظبط (نقطة زمنية واحدة بدل مدى يوم كامل) — مش استيراد منه مباشرةً عشان
+    الملف ده (hr_engine) متعمّد يفضل بدون أي import من app.* غير stdlib (راجع
+    تعليق أعلى الملف)، فالتحويل بسيط بما يكفي إنه يتكرر هنا بأمان.
+    """
+    tz = ZoneInfo(tz_name)
+    local_dt = datetime.combine(local_date, local_time, tzinfo=tz)
+    return local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def standard_shift_hours(shift_start: str, shift_end: str) -> Decimal:
+    """يحسب طول الوردية بالساعات من "HH:MM"→"HH:MM"، مع التعامل مع الورديات
+    الليلية العابرة لمنتصف الليل (مثلاً 22:00 → 06:00 = 8 ساعات)."""
+    start = _parse_hhmm(shift_start)
+    end = _parse_hhmm(shift_end)
+    start_minutes = start.hour * 60 + start.minute
+    end_minutes = end.hour * 60 + end.minute
+    if end_minutes <= start_minutes:
+        end_minutes += 24 * 60
+    return (Decimal(end_minutes - start_minutes) / Decimal("60")).quantize(Decimal("0.01"))
+
+
+def compute_attendance_minutes(
+    punches: list[AttendancePunch],
+    policy: AttendancePolicyConfig,
+    tz_name: str = "Africa/Cairo",
+) -> AttendanceMinutesResult:
+    """يحسب إجمالي دقايق التأخير/الأوفرتايم/الانصراف المبكر لموظف عبر مجموعة
+    بصمات (عادةً كل أيام شهر رواتب واحد)، بتطبيق سماحية السياسة (grace).
+
+    قاعدة السماحية (grace) — **حد فاصل، مش خصم جزئي**: لو التأخير الفعلي ≤
+    مدة السماح، صفر دقايق محسوبة تمامًا (مفيش "خصم جزئي" حتى لو قريب من
+    الحد). لو تجاوز التأخير مدة السماح ولو بدقيقة واحدة، **كل** دقايق التأخير
+    الفعلية تُحسب (مش بس الزيادة عن حد السماح) — ده نفس منطق أنظمة الحضور
+    الشائعة في السوق المصري (نافذة تسامح، وبعدها التأخير كله بيتحاسب عليه).
+    مثال: سماح 10 دقايق → تأخير 9 دقايق = صفر، تأخير 11 دقيقة = 11 دقيقة كاملة
+    محسوبة (مش دقيقة واحدة بس).
+
+    الأوفرتايم مفيهوش سماحية — أي دقيقة بعد نهاية الوردية المتوقعة تُحسب.
+    """
+    result = AttendanceMinutesResult()
+
+    for punch in punches:
+        if punch.check_in is None and punch.check_out is None:
+            continue  # مفيش بصمة فعلية (غياب/إجازة/عطلة) — لا يوجد ما يُحسب
+
+        start_str = punch.shift_start or policy.standard_shift_start
+        end_str = punch.shift_end or policy.standard_shift_end
+
+        expected_start = _local_wall_time_to_utc_naive(punch.record_date, _parse_hhmm(start_str), tz_name)
+        expected_end = _local_wall_time_to_utc_naive(punch.record_date, _parse_hhmm(end_str), tz_name)
+        if expected_end <= expected_start:
+            expected_end += timedelta(days=1)  # وردية ليلية عابرة لمنتصف الليل
+
+        result.days_with_data += 1
+
+        if punch.check_in is not None:
+            late_minutes = int((punch.check_in - expected_start).total_seconds() // 60)
+            if late_minutes > policy.late_grace_minutes:
+                result.late_minutes += late_minutes
+
+        if punch.check_out is not None:
+            early_minutes = int((expected_end - punch.check_out).total_seconds() // 60)
+            if early_minutes > policy.early_leave_grace_minutes:
+                result.early_leave_minutes += early_minutes
+
+            overtime_minutes = int((punch.check_out - expected_end).total_seconds() // 60)
+            if overtime_minutes > 0:
+                result.overtime_minutes += overtime_minutes
+
+    return result
+
+
+def attendance_minutes_to_amount(
+    minutes: int,
+    basic_salary: Decimal,
+    shift_hours: Decimal,
+    rate_multiplier: Decimal,
+) -> Decimal:
+    """يحوّل عدد دقايق (تأخير أو أوفرتايم) لمبلغ مالي.
+
+    hourly_rate = (basic_salary ÷ 30) ÷ shift_hours   — نفس اصطلاح daily_rate
+    (basic_salary/30) المستخدم فعلاً في باقي الملف ده (calculate_penalty_deduction
+    وخصم الإجازة بدون أجر)، مقسوم على طول الوردية القياسية للفرع.
+
+    amount = (minutes ÷ 60) × hourly_rate × rate_multiplier
+    """
+    if minutes <= 0 or shift_hours <= 0:
+        return Decimal("0.00")
+    daily_rate = basic_salary / Decimal("30")
+    hourly_rate = daily_rate / shift_hours
+    amount = (Decimal(minutes) / Decimal("60")) * hourly_rate * rate_multiplier
+    return amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
 def calculate_payroll(
     emp: EmployeePayrollInput,
     si_config: SocialInsuranceConfig,
@@ -269,6 +418,15 @@ def calculate_payroll(
         emp.basic_salary, emp.penalty_days, max_penalty_days
     )
 
+    # ─── خصم التأخير التلقائي ─────────────────────────────────────────
+    # محسوب مسبقًا (من دقايق التأخير الفعلية × نسبة الخصم — راجع
+    # attendance_minutes_to_amount) — منفصل تمامًا عن penalty_deduction فوق
+    # (جزاءات تأديبية يدوية بالأيام، مادة 69 قانون العمل). الاتنين بيتحسموا
+    # مع بعض، مش أحدهما بدل الآخر.
+    late_penalty_deduction = emp.late_penalty_amount.quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
     # ─── إجازة بدون أجر ───────────────────────────────────────────────
     daily_rate = emp.basic_salary / Decimal("30")
     unpaid_leave_deduction = (daily_rate * Decimal(emp.unpaid_leave_days)).quantize(
@@ -282,6 +440,7 @@ def calculate_payroll(
         - employee_si
         - monthly_tax
         - penalty_deduction
+        - late_penalty_deduction
         - unpaid_leave_deduction
     ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -316,6 +475,7 @@ def calculate_payroll(
         annual_tax=annual_tax,
         monthly_tax=monthly_tax,
         penalty_deduction=penalty_deduction,
+        late_penalty_deduction=late_penalty_deduction,
         unpaid_leave_deduction=unpaid_leave_deduction,
         net_salary=net,
         journal_entry=journal_entry,

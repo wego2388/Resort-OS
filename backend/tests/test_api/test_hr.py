@@ -5,8 +5,9 @@ Integration tests for HR module.
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.orm import Session
@@ -436,6 +437,151 @@ class TestAttendance:
         )
         record = crud.upsert_attendance(db, data)
         assert record.status == "absent"
+
+
+def _cairo_to_utc_naive(d: date, hour: int, minute: int) -> datetime:
+    """تحويل تاريخ+وقت بتوقيت القاهرة لـ UTC naive — نفس تمثيل check_in/
+    check_out المخزّن فعليًا بالداتابيز. مطابق تمامًا لـ hr_engine.
+    _local_wall_time_to_utc_naive الداخلية، مكرّر هنا عمدًا (تست مستقل)."""
+    tz = ZoneInfo("Africa/Cairo")
+    local_dt = datetime(d.year, d.month, d.day, hour, minute, tzinfo=tz)
+    return local_dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+class TestAttendancePolicyAndAutoPayroll:
+    """المسار الكامل: بصمات حضور خام (AttendanceRecord) + سياسة حضور
+    (AttendancePolicy) → دقايق تأخير/أوفرتايم محسوبة تلقائيًا → مبلغ مالي
+    حقيقي يدخل run_payroll_for_branch، بالتعايش الكامل مع الجزاءات اليدوية
+    الموجودة أصلاً (EmployeePenalty)."""
+
+    @pytest.fixture
+    def policy(self, db: Session, branch):
+        from app.modules.hr.models import AttendancePolicy
+        p = AttendancePolicy(
+            branch_id=branch.id,
+            late_grace_minutes=10,
+            early_leave_grace_minutes=10,
+            standard_shift_start="09:00",
+            standard_shift_end="17:00",
+            overtime_rate_multiplier=Decimal("1.50"),
+            late_penalty_rate_multiplier=Decimal("1.00"),
+            is_active=True,
+        )
+        db.add(p)
+        db.commit()
+        db.refresh(p)
+        return p
+
+    def test_run_payroll_computes_late_and_overtime_from_real_attendance(
+        self, db, branch, employee, si_config, tax_brackets, policy,
+    ):
+        """موظف براتب أساسي 6000: يوم متأخر 20 دقيقة (فوق سماح 10) + يوم
+        بأوفرتايم 90 دقيقة. معدل يومي = 200، معدل ساعة = 25 (وردية 8 ساعات).
+        overtime = (90/60)×25×1.5 = 56.25. late_penalty = (20/60)×25×1.0 = 8.33.
+        """
+        employee.basic_salary = Decimal("6000.00")
+        db.commit()
+
+        crud.upsert_attendance(db, AttendanceRecordCreate(
+            employee_id=employee.id, branch_id=branch.id, record_date=date(2026, 6, 5),
+            check_in=_cairo_to_utc_naive(date(2026, 6, 5), 9, 20),
+            check_out=_cairo_to_utc_naive(date(2026, 6, 5), 17, 0),
+            status="late",
+        ))
+        crud.upsert_attendance(db, AttendanceRecordCreate(
+            employee_id=employee.id, branch_id=branch.id, record_date=date(2026, 6, 6),
+            check_in=_cairo_to_utc_naive(date(2026, 6, 6), 9, 0),
+            check_out=_cairo_to_utc_naive(date(2026, 6, 6), 18, 30),
+            status="present",
+        ))
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        lines = crud.list_lines_for_run(db, run.id)
+        line = next(l for l in lines if l.employee_id == employee.id)
+
+        assert line.gross_salary - line.basic_salary == Decimal("56.25")  # overtime داخل الإجمالي
+        assert line.late_penalty_deduction == Decimal("8.33")
+
+    def test_manual_penalty_coexists_with_automatic_late_deduction(
+        self, db, branch, employee, si_config, tax_brackets, policy,
+    ):
+        """جزاء تأديبي يدوي (EmployeePenalty، يوم واحد) + تأخير تلقائي من
+        الحضور (فوق السماح) — لازم الاتنين يتخصموا مع بعض، مش أحدهما بدل
+        التاني. run_payroll_for_branch قبل الإصلاح كان بيتجاهل EmployeePenalty
+        بالكامل (دايمًا penalty_days=0)."""
+        employee.basic_salary = Decimal("6000.00")
+        db.commit()
+
+        crud.create_penalty(db, EmployeePenaltyCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            penalty_date=date(2026, 7, 10), penalty_days=1,
+            reason="تأخر متكرر", applied_by=1,
+        ))
+        crud.upsert_attendance(db, AttendanceRecordCreate(
+            employee_id=employee.id, branch_id=branch.id, record_date=date(2026, 7, 5),
+            check_in=_cairo_to_utc_naive(date(2026, 7, 5), 9, 20),  # 20 دقيقة تأخير
+            check_out=_cairo_to_utc_naive(date(2026, 7, 5), 17, 0),
+            status="late",
+        ))
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 7)
+        lines = crud.list_lines_for_run(db, run.id)
+        line = next(l for l in lines if l.employee_id == employee.id)
+
+        assert line.penalty_deduction == Decimal("200.00")       # يدوي: يوم واحد × 6000/30
+        assert line.late_penalty_deduction == Decimal("8.33")    # تلقائي: 20 دقيقة تأخير
+
+    def test_no_policy_means_zero_automatic_adjustments(
+        self, db, branch, employee, si_config, tax_brackets,
+    ):
+        """بدون AttendancePolicy للفرع (fixture مش مستخدَم هنا) — الحساب
+        التلقائي يرجع صفر بالظبط، ومفيش أي انهيار أو تغيير سلوك عن قبل الميزة."""
+        crud.upsert_attendance(db, AttendanceRecordCreate(
+            employee_id=employee.id, branch_id=branch.id, record_date=date(2026, 8, 5),
+            check_in=_cairo_to_utc_naive(date(2026, 8, 5), 9, 20),
+            check_out=_cairo_to_utc_naive(date(2026, 8, 5), 18, 30),
+            status="late",
+        ))
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 8)
+        lines = crud.list_lines_for_run(db, run.id)
+        line = next(l for l in lines if l.employee_id == employee.id)
+
+        assert line.late_penalty_deduction == Decimal("0.00")
+        assert line.gross_salary == line.basic_salary  # مفيش أوفرتايم اتضاف
+
+    def test_rota_assignment_shift_overrides_policy_default_in_payroll(
+        self, db, branch, employee, si_config, tax_brackets, policy,
+    ):
+        """موظف ليه RotaAssignment→Shift مضبوط بوردية مختلفة عن fallback
+        السياسة (12:00-20:00 بدل 09:00-17:00) — لازم الحساب التلقائي
+        يستخدم وردية الموظف الفعلية، مش fallback الفرع العام."""
+        shift = crud.create_shift(db, ShiftCreate(
+            branch_id=branch.id, name="Afternoon", start_time="12:00", end_time="20:00",
+            duration_hours=Decimal("8"),
+        ))
+        crud.create_rota_assignment(db, RotaAssignmentCreate(
+            branch_id=branch.id, employee_id=employee.id, shift_id=shift.id,
+            assigned_date=date(2026, 9, 5),
+        ))
+        # دخول 12:05 (5 دقايق تأخير عن 12:00 — تحت سماح 10 دقايق) — لو النظام
+        # غلط استخدم fallback 09:00 كان هيحسبها تأخير ساعات، مش صفر.
+        crud.upsert_attendance(db, AttendanceRecordCreate(
+            employee_id=employee.id, branch_id=branch.id, record_date=date(2026, 9, 5),
+            check_in=_cairo_to_utc_naive(date(2026, 9, 5), 12, 5),
+            check_out=_cairo_to_utc_naive(date(2026, 9, 5), 20, 0),
+            status="present",
+        ))
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 9)
+        lines = crud.list_lines_for_run(db, run.id)
+        line = next(l for l in lines if l.employee_id == employee.id)
+
+        assert line.late_penalty_deduction == Decimal("0.00")
 
 
 class TestSelfServicePunch:
