@@ -397,6 +397,81 @@ class TestApplyDiscount:
         # subtotal = 160.00 (2 x 80.00), 10% off -> 16.00 saved
         assert Decimal(str(updated["discount_amount"])) == Decimal("16.00")
 
+    def test_outlet_scoped_cafe_only_rule_does_not_apply_to_restaurant_order(
+        self, client: TestClient, db, waiter_headers, cashier_headers,
+    ):
+        """rule نطاقها outlet='cafe' — لازم متأثرش على طلب مطعم خالص، حتى لو
+        شروطها التانية (total_amount) متحققة."""
+        from app.modules.finance.models import ConditionalDiscount
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("50"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+            scope_type="outlet", scope_outlet="cafe",
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.post(f"/api/v1/restaurant/orders/{order['id']}/discount", headers=cashier_headers)
+        assert resp.status_code == 200, resp.text
+        assert Decimal(str(resp.json()["discount_amount"])) == Decimal("0.00")
+
+    def test_category_scoped_rule_discounts_only_that_categorys_lines(
+        self, client: TestClient, db, waiter_headers, cashier_headers,
+    ):
+        """خصم 20% على فئة معيّنة بس (مثال: حلويات) — لازم يتقص على قيمة
+        سطور الفئة دي بس، مش على إجمالي الطلب اللي فيه صنف من فئة تانية كمان."""
+        from app.modules.finance.models import ConditionalDiscount
+        from app.modules.restaurant.models import MenuCategory, MenuItem
+
+        branch = make_branch_committed(db)
+        dessert_category = MenuCategory(branch_id=branch.id, name="Desserts", name_ar="حلويات")
+        db.add(dessert_category)
+        db.commit()
+
+        dessert_item = MenuItem(
+            branch_id=branch.id, name="تيراميسو", price=Decimal("100.00"),
+            is_available=True, category_id=dessert_category.id,
+        )
+        main_item = make_menu_item_committed(db, branch)  # 80.00، بدون فئة
+        db.add(dessert_item)
+        db.commit()
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("20"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+            scope_type="category", scope_outlet="restaurant", scope_id=dessert_category.id,
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [
+                      {"menu_item_id": dessert_item.id, "quantity": 1},
+                      {"menu_item_id": main_item.id, "quantity": 1},
+                  ]},
+            headers=waiter_headers,
+        ).json()
+        assert Decimal(str(order["subtotal"])) == Decimal("180.00")
+
+        resp = client.post(f"/api/v1/restaurant/orders/{order['id']}/discount", headers=cashier_headers)
+        assert resp.status_code == 200, resp.text
+        # 20% من الـ 100.00 (الحلويات) بس، مش من الـ 180.00 كله
+        assert Decimal(str(resp.json()["discount_amount"])) == Decimal("20.00")
+
     def test_discount_rejected_on_paid_order(self, client: TestClient, db, waiter_headers, cashier_headers):
         branch = make_branch_committed(db)
         item = make_menu_item_committed(db, branch)
@@ -413,6 +488,91 @@ class TestApplyDiscount:
 
         resp = client.post(f"/api/v1/restaurant/orders/{order['id']}/discount", headers=cashier_headers)
         assert resp.status_code == 400
+
+
+class TestHappyHourTimezone:
+    """condition_type='time_of_day' لازم يتقيّم بتوقيت المنتجع المحلي
+    (Africa/Cairo)، مش بتوقيت UTC الخام المخزّن في order.created_at — نفس
+    فئة الباج الموثّقة في §13 CLAUDE.md واللي اتكشفت بشكل مستقل في 6
+    موديولات تانية (KDS، PMS، تايم-شير، HR، إيجارات، شاطئ). لو
+    apply_order_discount قارن ctx.order_time بـ created_at.time() مباشرة
+    (بدون تحويل)، التستين دول هيفشلوا — مش نظريين، بيحاكوا لحظة UTC حقيقية
+    فرقها عن توقيت القاهرة (UTC+3 صيفًا) بيقلب نتيجة الشرط بالكامل."""
+
+    def _set_order_created_at(self, db, order_id: int, utc_naive) -> None:
+        from app.modules.restaurant.models import Order
+        order = db.query(Order).filter(Order.id == order_id).first()
+        order.created_at = utc_naive
+        db.commit()
+
+    def test_applies_when_cairo_local_time_is_inside_window(
+        self, client: TestClient, db, waiter_headers, cashier_headers,
+    ):
+        from datetime import datetime
+        from app.modules.finance.models import ConditionalDiscount
+
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)  # 80.00 EGP
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="time_of_day", condition_value="14:00-17:00",
+            discount_type="percentage", discount_value=Decimal("10"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        # 2026-07-06 12:30 UTC = 15:30 Africa/Cairo (UTC+3 صيفًا) — جوه نافذة
+        # 14:00-17:00 بتوقيت القاهرة، لكن *خارج*ها لو اتقارنت كـ UTC خام.
+        self._set_order_created_at(db, order["id"], datetime(2026, 7, 6, 12, 30))
+
+        resp = client.post(
+            f"/api/v1/restaurant/orders/{order['id']}/discount", headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert Decimal(str(resp.json()["discount_amount"])) == Decimal("8.00")  # 10% من 80.00
+
+    def test_does_not_apply_when_only_utc_time_is_inside_window(
+        self, client: TestClient, db, waiter_headers, cashier_headers,
+    ):
+        from datetime import datetime
+        from app.modules.finance.models import ConditionalDiscount
+
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="time_of_day", condition_value="22:00-23:59",
+            discount_type="percentage", discount_value=Decimal("10"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        # 2026-07-06 22:30 UTC = 01:30 Africa/Cairo *اليوم التالي* — جوه نافذة
+        # 22:00-23:59 لو اتقورنت كـ UTC خام (باج)، لكن فعليًا خارجها تمامًا
+        # بتوقيت القاهرة الصحيح.
+        self._set_order_created_at(db, order["id"], datetime(2026, 7, 6, 22, 30))
+
+        resp = client.post(
+            f"/api/v1/restaurant/orders/{order['id']}/discount", headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert Decimal(str(resp.json()["discount_amount"])) == Decimal("0.00")
 
 
 class TestOrderPaymentPermission:

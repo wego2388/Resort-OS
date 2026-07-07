@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -15,9 +15,12 @@ from app.modules.restaurant.schemas import (
     FoodCostReportLine, FoodCostReportResponse, CogsTrendPoint, GrossMarginSummary,
     MenuItemRecipeLineCreate, MenuItemRecipeLineUpdate, OrderCreate,
 )
-from app.resort_os.discount_engine import DiscountRule, OrderContext, calculate_discount
+from app.resort_os.discount_engine import DiscountRule, OrderContext, OrderLineItem, calculate_discount
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT, compute_food_cost_result, exceeds_threshold
-from app.resort_os.timezone_utils import local_date_to_utc_range, utc_naive_to_local_date
+from app.resort_os.timezone_utils import (
+    local_date_to_utc_range, local_now,
+    utc_naive_to_local_date, utc_naive_to_local_time,
+)
 
 
 def _get_order_or_404(db: Session, order_id: int) -> Order:
@@ -526,7 +529,7 @@ def void_order_item(db: Session, order_id: int, item_id: int, reason: str, voide
     applied_rule_id = order.applied_discount_rule_id
     if applied_rule_id:
         discount_amount, applied_rule_id = _recompute_discount_for_rule(
-            db, applied_rule_id, subtotal, order.created_at,
+            db, applied_rule_id, subtotal, order,
         )
 
     total = max(Decimal("0"), subtotal + vat_amount + svc_charge - discount_amount)
@@ -543,15 +546,59 @@ def void_order_item(db: Session, order_id: int, item_id: int, reason: str, voide
     return order
 
 
+def _order_local_date_and_time(order: Order) -> tuple[date, time]:
+    """تاريخ ووقت الطلب بتوقيت المنتجع (Africa/Cairo) — مش order.created_at
+    .date()/.time() مباشرة. created_at مخزّن UTC naive (server_default=func.now())،
+    فقراءته مباشرة بتقع في نفس فئة باج التوقيت الموثّقة في §13 CLAUDE.md: طلب
+    اتعمل الساعة 00:30 بتوقيت القاهرة لسه 'إمبارح' بتوقيت UTC، وبرضه ممكن يقع
+    خارج نافذة خصم Happy Hour وقته الحقيقي بتوقيت القاهرة. لو created_at غير
+    موجود لأي سبب (نظريًا مستحيل لطلب محفوظ بالفعل) fallback للحظة المحلية
+    الحالية بدل ما ينهار."""
+    if not order.created_at:
+        now_local = local_now(settings.TIMEZONE)
+        return now_local.date(), now_local.time()
+    return (
+        utc_naive_to_local_date(order.created_at, settings.TIMEZONE),
+        utc_naive_to_local_time(order.created_at, settings.TIMEZONE),
+    )
+
+
+def _build_discount_line_items(db: Session, order: Order) -> list[OrderLineItem]:
+    """يبني سطور الطلب لمحرك الخصم (مع category_id لكل صنف) — استعلام واحد
+    لكل الأصناف المميزة في الطلب (مش N+1 لكل سطر). الأصناف الملغاة مستبعدة —
+    خصم outlet/category/item/combo بيتقيّم على اللي فعليًا هيتدفع، زي subtotal
+    بالظبط."""
+    active_items = [i for i in order.items if i.status != "cancelled"]
+    menu_item_ids = {i.menu_item_id for i in active_items}
+    category_by_menu_item: dict[int, int | None] = {}
+    if menu_item_ids:
+        category_by_menu_item = dict(
+            db.query(MenuItem.id, MenuItem.category_id)
+            .filter(MenuItem.id.in_(menu_item_ids))
+            .all()
+        )
+    return [
+        OrderLineItem(
+            item_id=i.menu_item_id,
+            quantity=i.quantity,
+            unit_price=i.unit_price,
+            category_id=category_by_menu_item.get(i.menu_item_id),
+        )
+        for i in active_items
+    ]
+
+
 def _recompute_discount_for_rule(
-    db: Session, rule_id: int, new_subtotal: Decimal, order_date,
+    db: Session, rule_id: int, new_subtotal: Decimal, order: Order,
 ) -> tuple[Decimal, Optional[int]]:
     """يعيد حساب خصم قاعدة معيّنة (اللي كانت متطبّقة على الطلب) على subtotal
     جديد أصغر (بعد إلغاء صنف) — يستخدم نفس محرك الخصم بتاع apply_order_discount
     بدل ما يسيب discount_amount قديم غير متسق. لو القاعدة اتشالت/بقت غير نشطة/
-    مبقتش مؤهلة على الـ subtotal الجديد، الخصم بيتصفّر بدل ما يفضل رقم غلط."""
+    مبقتش مؤهلة على الـ subtotal الجديد (أو نطاقها/وقتها مش منطبق بعد الإلغاء)،
+    الخصم بيتصفّر بدل ما يفضل رقم غلط."""
     try:
         from app.modules.finance.models import ConditionalDiscount  # noqa: PLC0415
+        from app.modules.finance.services import discount_rule_from_orm  # noqa: PLC0415
     except ImportError:
         return Decimal("0"), None
 
@@ -559,24 +606,16 @@ def _recompute_discount_for_rule(
     if not rule_orm or not rule_orm.is_active:
         return Decimal("0"), None
 
-    rule = DiscountRule(
-        id=rule_orm.id,
-        condition_type=rule_orm.condition_type,
-        condition_value=rule_orm.condition_value,
-        discount_type=rule_orm.discount_type,
-        discount_value=rule_orm.discount_value,
-        max_uses=rule_orm.max_uses,
-        valid_from=rule_orm.valid_from,
-        valid_until=rule_orm.valid_until,
-        priority=rule_orm.priority,
-        uses_count=rule_orm.uses_count,
-    )
+    order_date, order_time = _order_local_date_and_time(order)
     ctx = OrderContext(
         total_amount=new_subtotal,
         item_count=0,
-        order_date=order_date.date() if order_date else date.today(),
+        order_date=order_date,
+        order_time=order_time,
+        outlet="restaurant",
+        line_items=_build_discount_line_items(db, order),
     )
-    result = calculate_discount(new_subtotal, [rule], ctx)
+    result = calculate_discount(new_subtotal, [discount_rule_from_orm(rule_orm)], ctx)
     return result.amount_saved, result.rule_id
 
 
@@ -756,6 +795,7 @@ def apply_order_discount(db: Session, order_id: int) -> Order:
     rules: list[DiscountRule] = []
     try:
         from app.modules.finance.models import ConditionalDiscount  # noqa: PLC0415
+        from app.modules.finance.services import discount_rule_from_orm  # noqa: PLC0415
         rules_orm = (
             db.query(ConditionalDiscount)
             .filter(
@@ -764,29 +804,19 @@ def apply_order_discount(db: Session, order_id: int) -> Order:
             )
             .all()
         )
-        rules = [
-            DiscountRule(
-                id=r.id,
-                condition_type=r.condition_type,
-                condition_value=r.condition_value,
-                discount_type=r.discount_type,
-                discount_value=r.discount_value,
-                max_uses=r.max_uses,
-                valid_from=r.valid_from,
-                valid_until=r.valid_until,
-                priority=r.priority,
-                uses_count=r.uses_count,
-            )
-            for r in rules_orm
-        ]
+        rules = [discount_rule_from_orm(r) for r in rules_orm]
     except ImportError:
         pass
 
     total_items = sum(item.quantity for item in order.items)
+    order_date, order_time = _order_local_date_and_time(order)
     ctx = OrderContext(
         total_amount=order.subtotal,
         item_count=total_items,
-        order_date=order.created_at.date() if order.created_at else date.today(),
+        order_date=order_date,
+        order_time=order_time,
+        outlet="restaurant",
+        line_items=_build_discount_line_items(db, order),
     )
 
     result = calculate_discount(order.subtotal, rules, ctx)
