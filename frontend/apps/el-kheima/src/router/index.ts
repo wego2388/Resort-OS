@@ -130,6 +130,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { title: 'الفاتورة الإلكترونية' } },
       { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { title: 'المخزون' } },
       { path: 'recipes', name: 'admin-recipes', component: () => import('../views/admin/RecipesView.vue'), meta: { title: 'وصفات الأصناف' } },
+      { path: 'food-cost', name: 'admin-food-cost', component: () => import('../views/admin/FoodCostReportView.vue'), meta: { title: 'تكلفة الطعام' } },
       { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { title: 'إدارة العملاء' } },
       { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRole: 'supervisor', title: 'الصيانة' } },
       { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRole: 'supervisor', title: 'الإيجارات' } },

@@ -58,6 +58,7 @@ const allSections: NavSection[] = [
       { path: '/admin/beach-live', label: 'لوحة الشاطئ الحيّة', icon: '🏖️', requiredRole: 'manager' },
       { path: '/admin/inventory', label: 'المخزون', icon: '📦', requiredRole: 'manager' },
       { path: '/admin/recipes', label: 'وصفات الأصناف', icon: '🧾', requiredRole: 'manager' },
+      { path: '/admin/food-cost', label: 'تكلفة الطعام', icon: '📉', requiredRole: 'manager' },
       { path: '/admin/crm', label: 'إدارة العملاء', icon: '🤝', requiredRole: 'manager' },
       { path: '/admin/maintenance', label: 'الصيانة', icon: '🔧', requiredRole: 'supervisor' },
       { path: '/admin/leasing', label: 'الإيجارات', icon: '🏢', requiredRole: 'supervisor' },

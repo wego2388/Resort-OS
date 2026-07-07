@@ -351,3 +351,47 @@ def update_order_discount(
     order.applied_discount_rule_id = rule_id
     db.flush()
     return order
+
+
+# ── Reporting / Food Cost ─────────────────────────────────────────────
+
+def list_menu_items_for_food_cost(db: Session, branch_id: int) -> list[MenuItem]:
+    """كل أصناف الفرع (بما فيها غير المتاحة حاليًا — ممكن تكون بيعت في المدى
+    المطلوب قبل ما تتقفل) مع الوصفة محمّلة (recipe_lines lazy='selectin' على
+    الموديل نفسه، فده استعلام إضافي واحد مجمّع، مش N+1 لكل صنف)."""
+    return db.query(MenuItem).filter(MenuItem.branch_id == branch_id).order_by(MenuItem.name).all()
+
+
+def get_paid_order_items_for_food_cost(
+    db: Session, branch_id: int, range_start: datetime, range_end: datetime,
+) -> list[tuple[int, "Decimal", int, datetime]]:
+    """(menu_item_id, unit_price, quantity, order.created_at) لكل صنف ضمن
+    طلب مدفوع فعليًا في المدى الزمني ده — استعلام واحد، بيتجمّع في Python
+    بعد كده (لكل صنف ولكل يوم) بدل ما نكرر الاستعلام لكل صنف أو لكل يوم.
+
+    الأصناف الملغاة (status='cancelled') مُستبعدة. الأصناف المرتجعة بعد
+    الدفع (status='refunded') **مُتضمّنة عمدًا** — المكوّنات اتصرفت فعليًا من
+    المخزون وقت التحضير/التقديم بغض النظر عن مرتجع مالي حصل بعد كده، فتكلفة
+    الطعام النظرية (اللي بتتقاس مقابل الاستهلاك الفعلي) لازم تعكس ده. الإيراد
+    المُتقاس هنا بالمقابل هو إيراد الصنف الأساسي فقط (unit_price × quantity)
+    من غير الإضافات (extras) — الوصفة بتغطي مكوّنات الصنف الأساسي بس، فتضمين
+    إيراد إضافة بلا تكلفة مقابلة هيشوّه نسبة تكلفة الطعام لأسفل بدون داعي.
+
+    نفس المنطق على مستوى الطلب نفسه: Order.status='refunded' مش بس 'paid' —
+    لما كل أصناف طلب مدفوع تترجع (refund_order_item)، الطلب نفسه بيتحول
+    لـ 'refunded' (راجع services.refund_order_item). لو فلترنا 'paid' بس هنا،
+    طلب اترجع بالكامل هيختفي تمامًا من التقرير رغم إن مكوّناته اتصرفت فعليًا
+    وقت التحضير — نفس السبب اللي خلّانا نضمّن الصنف المرتجع نفسه فوق."""
+    rows = (
+        db.query(OrderItem.menu_item_id, OrderItem.unit_price, OrderItem.quantity, Order.created_at)
+        .join(Order, OrderItem.order_id == Order.id)
+        .filter(
+            Order.branch_id == branch_id,
+            Order.status.in_(("paid", "refunded")),
+            Order.created_at >= range_start,
+            Order.created_at <= range_end,
+            OrderItem.status != "cancelled",
+        )
+        .all()
+    )
+    return [tuple(row) for row in rows]

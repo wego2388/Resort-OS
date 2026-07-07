@@ -1,12 +1,14 @@
 """app/modules/cafe/api/router.py"""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
 
+from app.core.config import settings
 from app.core.deps import (
     DbDep, get_cashier_user, get_current_active_user, get_manager_user,
     get_waiter_user, require_permission, user_level,
@@ -14,6 +16,7 @@ from app.core.deps import (
 from app.modules.cafe import crud, services
 from app.modules.cafe.schemas import (
     CafeCategoryCreate, CafeCategoryRead,
+    CafeFoodCostReportResponse,
     CafeGuestOrderCreate, CafeGuestOrderRead,
     CafeItemCreate, CafeItemRead, CafeItemUpdate,
     CafeItemRecipeLineCreate, CafeItemRecipeLineRead, CafeItemRecipeLineUpdate,
@@ -23,6 +26,8 @@ from app.modules.cafe.schemas import (
     CafeTableRead,
 )
 from app.modules.core.schemas import PaginatedResponse
+from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
+from app.resort_os.timezone_utils import business_today
 
 router = APIRouter(tags=["cafe"])
 
@@ -115,6 +120,23 @@ def delete_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
         services.remove_recipe_line(db, line_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# ── Reporting / Food Cost ─────────────────────────────────────────────
+# نفس منطق restaurant.api.router.get_food_cost_report بالضبط.
+
+@router.get("/cafe/reports/food-cost", response_model=CafeFoodCostReportResponse)
+def get_food_cost_report(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: date = Query(default_factory=lambda: business_today(settings.TIMEZONE) - timedelta(days=30)),
+    date_to: date = Query(default_factory=lambda: business_today(settings.TIMEZONE)),
+    threshold_pct: Decimal = Query(DEFAULT_FOOD_COST_THRESHOLD_PCT, gt=0, le=100),
+):
+    if date_from > date_to:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "date_from لازم يكون قبل أو يساوي date_to")
+    return services.get_food_cost_report(db, branch_id, date_from, date_to, threshold_pct)
 
 
 @router.get("/cafe/tables", response_model=list[CafeTableRead])
