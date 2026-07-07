@@ -2,15 +2,16 @@
 app/modules/core/models.py
 ═══════════════════════════════════════════════════════════════════════
 Core Module Models
-جداول: users, roles, branches, settings, audit_logs, notifications
+جداول: users, roles, branches, settings, audit_logs, notifications, guest_alerts
 ═══════════════════════════════════════════════════════════════════════
 """
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.kernel.models.mixins import TimestampMixin
@@ -121,3 +122,36 @@ class UserPermission(Base, TimestampMixin):
         ForeignKey("branches.id"), nullable=True, index=True
     )
     granted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+
+
+# ────────────────────────── GuestAlert ───────────────────────────────
+# قناة تنبيه يبدأها الضيف نفسه بدون تسجيل دخول ("نادِ الجرسون"، "هات
+# الفاتورة"...) — عامّة عمداً عبر كل الموديولات (مطعم/كافيه/شاطئ/غرفة)
+# بدل ما تتكرر داخل كل موديول لوحده. مفيش FK حقيقي على context_id عمداً:
+# السياق ممكن يكون صف من dining_tables أو cafe_tables أو غرفة PMS أو موقع
+# شاطئ — جدول واحد بيغطي كل الحالات دي من غير ما يتقيّد بجدول واحد بعينه،
+# وده قرار معماري متعمد مش نسيان. context_type بيفرّق بين "restaurant_table"
+# و"cafe_table" (مش "table" عام) لأن dining_tables.id وcafe_tables.id
+# جداول منفصلة تمامًا — رقم واحد (context_id=5) ممكن يكون طاولة مطعم أو
+# طاولة كافيه في نفس الوقت، فلازم context_type يحسم الغموض ده.
+
+class GuestAlert(Base, TimestampMixin):
+    __tablename__ = "guest_alerts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # list_active_alerts() بيفلتر بالـ branch_id + status دايمًا — index مركّب
+    # يمنع full table scan مع تراكم التنبيهات القديمة المتحلّة بمرور الوقت.
+    branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    context_type: Mapped[str] = mapped_column(String(30))
+    # restaurant_table | cafe_table | beach_location | room | other
+    context_id: Mapped[int] = mapped_column(Integer)
+    # ⚠️ عمداً مش ForeignKey — راجع التعليق فوق الكلاس. لا تضيف قيد هنا.
+    alert_type: Mapped[str] = mapped_column(String(30))
+    # call_waiter | request_bill | other
+    message: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="open", index=True)
+    # open | acknowledged | resolved
+    resolved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # user.id اللي قفل التنبيه — بدون FK زي order_items.voided_by (نفس السبب:
+    # مرجع تدقيقي بسيط، مش علاقة يحتاج SQLAlchemy يحمّلها)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

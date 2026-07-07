@@ -222,6 +222,50 @@ class EffectivePermission(BaseModel):
     source:         str  # "role" (سلوك افتراضي) أو "explicit" (فيه استثناء صريح)
 
 
+# ─────────────────────── GuestAlert ──────────────────────────────────
+# راجع app/modules/core/models.py::GuestAlert للشرح الكامل عن ليه context
+# generic (مفيش FK) وليه context_type بيفرّق بين restaurant_table/cafe_table.
+
+_CONTEXT_TYPE_PATTERN = r"^(restaurant_table|cafe_table|beach_location|room|other)$"
+_ALERT_TYPE_PATTERN = r"^(call_waiter|request_bill|other)$"
+
+
+class GuestAlertCreate(BaseModel):
+    """للاستخدام من POST /public/alerts — الضيف بيبعتها بدون auth."""
+    branch_id:    int
+    context_type: str = Field(..., pattern=_CONTEXT_TYPE_PATTERN)
+    context_id:   int
+    alert_type:   str = Field(..., pattern=_ALERT_TYPE_PATTERN)
+    message:      Optional[str] = Field(None, max_length=300)
+
+
+class GuestAlertRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id:           int
+    branch_id:    int
+    context_type: str
+    context_id:   int
+    alert_type:   str
+    message:      Optional[str]
+    status:       str
+    resolved_by:  Optional[int]
+    resolved_at:  Optional[datetime]
+    created_at:   datetime
+
+
+class GuestAlertAck(BaseModel):
+    """رد التأكيد للضيف بعد إرسال التنبيه — رسالة ودّية زي GuestOrderRead."""
+    alert_id: int
+    status:   str
+    message:  str
+
+
+class GuestAlertStatusUpdate(BaseModel):
+    """طاقم الخدمة بس — الضيف مش بيقدر يحدد status عند الإنشاء (دايمًا open)."""
+    status: str = Field(..., pattern=r"^(acknowledged|resolved)$")
+
+
 # ─────────────────────── Pagination ──────────────────────────────────
 
 class PaginatedResponse(BaseModel):

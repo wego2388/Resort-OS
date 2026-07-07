@@ -11,6 +11,10 @@ export const ENDPOINTS = {
   core: {
     branches: '/api/v1/branches',
     notifications: '/api/v1/notifications',
+    // Guest alerts (نادِ الجرسون / هات الفاتورة) — راجع
+    // backend/app/modules/core/models.py::GuestAlert
+    alerts: '/api/v1/alerts',
+    alertStatus: (alertId: number) => `/api/v1/alerts/${alertId}/status`,
   },
   beach: {
     inventory: '/api/v1/beach/inventory',

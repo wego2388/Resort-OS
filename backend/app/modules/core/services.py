@@ -17,13 +17,14 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.modules.core import crud
-from app.modules.core.models import Branch, Notification, UserPermission
+from app.modules.core.models import Branch, GuestAlert, Notification, UserPermission
 from app.modules.core.permission_catalog import PERMISSION_CATALOG
 from app.modules.core.schemas import (
     AuditLogCreate,
     BranchCreate,
     BranchUpdate,
     EffectivePermission,
+    GuestAlertCreate,
     NotificationCreate,
     SettingRead,
     UserPermissionCreate,
@@ -358,3 +359,36 @@ def mark_all_read(
     count = crud.mark_all_notifications_read(db, user_id, branch_id)
     db.commit()
     return count
+
+
+# ─────────────────────── GuestAlert ──────────────────────────────────
+# راجع app/modules/core/models.py::GuestAlert — قناة تنبيه يبدأها الضيف
+# بدون auth (نادِ الجرسون/هات الفاتورة)، وطاقم الخدمة بيتابعها لحظيًا عبر
+# WebSocket (app/modules/core/api/router.py::alerts_manager).
+
+def create_guest_alert(db: Session, data: GuestAlertCreate) -> GuestAlert:
+    if not crud.get_branch(db, data.branch_id):
+        raise ValueError(f"الفرع {data.branch_id} غير موجود")
+
+    alert = crud.create_guest_alert(db, data)
+    db.commit()
+    db.refresh(alert)
+    return alert
+
+
+def update_alert_status(
+    db: Session,
+    alert_id: int,
+    new_status: str,
+    resolved_by: int,
+) -> GuestAlert:
+    alert = crud.get_guest_alert(db, alert_id)
+    if not alert:
+        raise ValueError(f"التنبيه {alert_id} غير موجود")
+    if alert.status == "resolved":
+        raise ValueError("التنبيه مُتعامَل معه بالفعل")
+
+    alert = crud.update_alert_status(db, alert, new_status, resolved_by=resolved_by)
+    db.commit()
+    db.refresh(alert)
+    return alert

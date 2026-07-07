@@ -9,6 +9,7 @@ import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
 import ShiftPanel from '../components/ShiftPanel.vue'
+import GuestAlertsBell from '../components/GuestAlertsBell.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -68,6 +69,10 @@ function logout() {
                راجع components/ShiftPanel.vue للسبب الكامل: الباك إند كان
                عنده دورة وردية كاملة من غير أي واجهة تستخدمها. -->
           <ShiftPanel v-if="!isWaiter && auth.hasRole('cashier')" />
+
+          <!-- تنبيهات الضيوف (نادِ الجرسون / هات الفاتورة) — ظاهرة لأي حد
+               بيشتغل على الأرض (نادل أو كاشير)، مش بس النادل. -->
+          <GuestAlertsBell />
 
           <!-- Connectivity dot (offline order queue) -->
           <div class="flex items-center gap-1.5" :title="isOnline ? 'متصل' : 'غير متصل'">

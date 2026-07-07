@@ -35,6 +35,9 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("GET",  "/api/v1/hub/blog/posts"): ("public", 30, 60),
     ("GET",  "/api/v1/pms/public/room-types"): ("public", 30, 60),
     ("GET",  "/api/v1/cafe/public/menu"): ("public", 30, 60),
+    # Guest alerts (نادِ الجرسون / هات الفاتورة) — أضيق شوية من التصفح العادي
+    # (20 مش 30) لأنه فعل تنبيه فوري لطاقم الخدمة، مش قراءة قائمة.
+    ("POST", "/api/v1/public/alerts"): ("public", 20, 60),
 }
 
 
