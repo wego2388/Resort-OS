@@ -4,7 +4,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import Response
 
 from app.core.config import settings
@@ -16,6 +19,8 @@ from app.modules.beach import crud, services
 from app.modules.beach.schemas import (
     B2BCheckinRequest, B2BContractCreate, B2BContractRead, B2BContractUpdate,
     B2BSettleRequest, BeachDailySummary, BeachInventoryRead,
+    BeachLocationBulkCreate, BeachLocationBulkRemove, BeachLocationCheckinRequest,
+    BeachLocationRead, BeachLocationUpdate,
     BeachReservationCreate, BeachReservationPublic, BeachReservationRead,
     BeachSellRequest, BeachSurgeSet, BeachTransactionRead,
     VoidTransactionRequest,
@@ -24,6 +29,51 @@ from app.modules.core.schemas import PaginatedResponse
 from app.resort_os.timezone_utils import local_today
 
 router = APIRouter(tags=["beach"])
+
+
+# ── WebSocket Live Map Manager ──────────────────────────────────────────
+# نفس نمط restaurant_manager (restaurant/api/router.py) وalerts_manager
+# (core/api/router.py) بالظبط — بث بسيط بالفرع، من غير أي بروتوكول ثنائي
+# الاتجاه حقيقي ولا auth على مستوى الـ socket نفسه (فجوة معروفة عبر
+# المشروع كله، مش خاصة بالقناة دي — راجع نفس التعليق في core/api/router.py).
+
+class BeachMapConnectionManager:
+    def __init__(self):
+        self.active: dict[str, list[WebSocket]] = {}  # branch_id → قائمة اتصالات WS
+
+    async def connect(self, ws: WebSocket, branch_id: str):
+        await ws.accept()
+        self.active.setdefault(branch_id, []).append(ws)
+
+    def disconnect(self, ws: WebSocket, branch_id: str):
+        connections = self.active.get(branch_id, [])
+        if ws in connections:
+            connections.remove(ws)
+
+    async def broadcast(self, branch_id: str, data: dict):
+        for ws in list(self.active.get(branch_id, [])):
+            try:
+                await ws.send_json(data)
+            except Exception:
+                pass
+
+
+beach_map_manager = BeachMapConnectionManager()
+
+
+@router.websocket("/beach/ws/map/{branch_id}")
+async def beach_map_websocket(ws: WebSocket, branch_id: int):
+    """اتصال WebSocket لطاقم الشاطئ — بث تحديثات الخريطة الحية (تشيك-إن/
+    تشيك-أوت/إضافة أو حذف مواقع/تغيير حالة) لحظيًا لكل الكاشيرين/المشرفين
+    الفاتحين الشاشة في نفس الوقت. بيرد بـ pong كـ heartbeat فقط، زي KDS
+    وتنبيهات الضيوف."""
+    await beach_map_manager.connect(ws, str(branch_id))
+    try:
+        while True:
+            await ws.receive_text()
+            await ws.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        beach_map_manager.disconnect(ws, str(branch_id))
 
 
 def _business_today() -> date:
@@ -338,3 +388,87 @@ def checkin_reservation(reservation_id: int, db: DbDep, user=Depends(get_cashier
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Beach Locations (live map) ────────────────────────────────────────
+# شاشة "خريطة الشاطئ الحية" (/pos/beach-map) — يشوفها الكاشير/المشرف طول
+# اليوم، مقابلة لـ TablesView.vue بتاعة المطعم بس لمواقع الشاطئ الفعلية
+# (شمسية/برجولة...) مع حالة ضيف حقيقية بدل مجرد "مشغولة/فاضية".
+
+@router.get("/beach/locations", response_model=list[BeachLocationRead])
+def list_locations(
+    db: DbDep, _=Depends(get_cashier_user),
+    branch_id: int = Query(...), location_type: Optional[str] = Query(None),
+):
+    return [BeachLocationRead.model_validate(loc)
+            for loc in services.list_locations(db, branch_id, location_type)]
+
+
+@router.post("/beach/locations/bulk", response_model=list[BeachLocationRead],
+             status_code=status.HTTP_201_CREATED)
+async def bulk_add_locations(data: BeachLocationBulkCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        created = services.bulk_add_locations(db, data.branch_id, data.location_type, data.count)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await beach_map_manager.broadcast(str(data.branch_id), {"type": "locations_changed"})
+    return [BeachLocationRead.model_validate(loc) for loc in created]
+
+
+@router.post("/beach/locations/reduce", response_model=list[BeachLocationRead])
+async def reduce_locations(data: BeachLocationBulkRemove, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        removed = services.bulk_remove_locations(db, data.branch_id, data.location_type, data.count)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    await beach_map_manager.broadcast(str(data.branch_id), {"type": "locations_changed"})
+    return [BeachLocationRead.model_validate(loc) for loc in removed]
+
+
+@router.patch("/beach/locations/{location_id}", response_model=BeachLocationRead)
+async def update_location(
+    location_id: int, data: BeachLocationUpdate, db: DbDep,
+    _=Depends(get_manager_user), branch_id: int = Query(...),
+):
+    try:
+        loc = services.update_location(
+            db, location_id,
+            status=data.status, grid_row=data.grid_row, grid_col=data.grid_col,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await beach_map_manager.broadcast(str(branch_id), {"type": "map_update", "location": BeachLocationRead.model_validate(loc).model_dump(mode="json")})
+    return loc
+
+
+@router.post("/beach/locations/{location_id}/checkin", response_model=BeachLocationRead,
+             status_code=status.HTTP_201_CREATED)
+async def checkin_location(
+    location_id: int, data: BeachLocationCheckinRequest, db: DbDep,
+    user=Depends(get_cashier_user), branch_id: int = Query(...),
+):
+    if not data.cashier_id:
+        data = data.model_copy(update={"cashier_id": user.id})
+    try:
+        loc = services.checkin_location(db, branch_id, location_id, data, cashier_id=data.cashier_id)
+    except services.BeachConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await beach_map_manager.broadcast(str(branch_id), {"type": "map_update", "location": BeachLocationRead.model_validate(loc).model_dump(mode="json")})
+    return loc
+
+
+@router.post("/beach/locations/{location_id}/checkout", response_model=BeachLocationRead)
+async def checkout_location(
+    location_id: int, db: DbDep,
+    user=Depends(get_cashier_user), branch_id: int = Query(...),
+):
+    try:
+        loc = services.checkout_location(db, branch_id, location_id, cashier_id=user.id)
+    except services.BeachConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await beach_map_manager.broadcast(str(branch_id), {"type": "map_update", "location": BeachLocationRead.model_validate(loc).model_dump(mode="json")})
+    return loc
