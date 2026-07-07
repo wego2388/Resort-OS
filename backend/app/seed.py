@@ -57,6 +57,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_crm(db)
     _seed_b2b_contracts(db)
     _seed_beach_reservations(db)
+    _seed_beach_locations(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -1101,6 +1102,51 @@ def _seed_beach_reservations(db: Session, branch_id: int | None = None) -> None:
             reservation_date=today, guests_count=guests, with_towel=towel,
         ))
     print(f"  ✓ Beach reservations seeded ({len(specs)} illustrative, pending QR check-in)")
+
+
+def _seed_beach_locations(db: Session, branch_id: int | None = None) -> None:
+    """⚠️ جدول beach_locations كان غير موجود خالص قبل الخريطة الحية — يعني
+    شاشة "خريطة الشاطئ" (/pos/beach-map) كانت هتفتح فاضية تمامًا بأول تشغيل،
+    نفس فئة فجوة الـ seed اللي اتكشفت قبل كده في rooms/dining_tables/b2b
+    (نموذج البيانات موجود، الصفوف صفر). بيزرع 12 شمسية + 6 برجولة (ترقيم
+    منطقي تسلسلي، نفس أسلوب _seed_dining_tables — مش أرقام حقيقية موثّقة)
+    عبر services.bulk_add_locations الحقيقية، وبعدين يسجّل دخول ضيفين
+    توضيحيين فعليًا (services.checkin_location — عملية بيع حقيقية بقيد
+    محاسبي، مش صفوف مُدرَجة مباشرة) عشان الخريطة تبان "شغالة" من التشغيلة
+    الأولى بدل ما تكون كل المواقع فاضية على طول."""
+    from app.modules.beach.models import BeachLocation
+    from app.modules.beach.schemas import BeachLocationCheckinRequest
+    from app.modules.beach.services import bulk_add_locations, checkin_location
+    from app.core.kernel.models.user import User
+    from app.modules.core.models import Branch
+
+    branch = db.query(Branch).filter(Branch.id == branch_id).first() if branch_id else db.query(Branch).first()
+    if not branch or db.query(BeachLocation).filter(BeachLocation.branch_id == branch.id).first():
+        return
+
+    umbrellas = bulk_add_locations(db, branch.id, "umbrella", 12)
+    pergolas  = bulk_add_locations(db, branch.id, "pergola", 6)
+
+    cashier = db.query(User).filter(User.email == "cashier@resortos.local").first()
+    cashier_id = cashier.id if cashier else None
+
+    demo_checkins = [
+        (umbrellas[0], "منى إبراهيم السيد", "01012345678", 2, True),
+        (umbrellas[3], "كريم عبد الرحمن",    "01298765432", 1, False),
+    ]
+    for loc, name, phone, guests, towel in demo_checkins:
+        checkin_location(
+            db, branch.id, loc.id,
+            BeachLocationCheckinRequest(
+                guest_name=name, guest_phone=phone, guests_count=guests, with_towel=towel,
+            ),
+            cashier_id=cashier_id,
+        )
+
+    print(
+        f"  ✓ Beach locations seeded ({len(umbrellas)} umbrellas + {len(pergolas)} pergolas, "
+        f"{len(demo_checkins)} illustrative live check-ins)"
+    )
 
 
 def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
