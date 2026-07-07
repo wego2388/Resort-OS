@@ -17,6 +17,13 @@
  *   GET  /api/v1/{outlet}/public/menu
  *   POST /api/v1/{outlet}/public/orders
  *   GET  /api/v1/{outlet}/public/orders/:id  (polling حالة الطلب)
+ *   POST /api/v1/public/alerts               (نادِ الجرسون / هات الفاتورة)
+ *
+ * تنبيهات الضيف (guest alerts): قناة منفصلة تمامًا عن الطلبات نفسها —
+ * الضيف يقدر "ينادي" طاقم الخدمة مباشرة من غير ما يحتاج يطلب صنف أصلاً.
+ * context_type بيفرّق بين طاولة مطعم/كافيه (نفس الفكرة اللي بتفرّق menu_item_id
+ * عن item_id فوق في placeOrder) لأن الـ backend مفيهوش FK حقيقي على
+ * context_id — راجع app/modules/core/models.py::GuestAlert للتفاصيل.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
@@ -244,6 +251,34 @@ async function pollOrderStatus() {
   } catch {}
 }
 
+// ── Guest Alerts (نادِ الجرسون / هات الفاتورة) ──────────────────────────
+const sendingAlert  = ref<'call_waiter' | 'request_bill' | null>(null)
+const alertBanner   = ref('')
+const alertBannerErr = ref(false)
+let   alertBannerTimer: ReturnType<typeof setTimeout> | null = null
+
+async function sendGuestAlert(alertType: 'call_waiter' | 'request_bill') {
+  if (!tableId.value || sendingAlert.value) return
+  sendingAlert.value = alertType
+  try {
+    const { data } = await axios.post('/api/v1/public/alerts', {
+      branch_id: branchId.value,
+      context_type: outlet.value === 'cafe' ? 'cafe_table' : 'restaurant_table',
+      context_id: parseInt(tableId.value),
+      alert_type: alertType,
+    })
+    alertBannerErr.value = false
+    alertBanner.value = data.message
+  } catch (e: any) {
+    alertBannerErr.value = true
+    alertBanner.value = e?.response?.data?.detail ?? 'تعذّر إرسال الطلب، حاول مجدداً'
+  } finally {
+    sendingAlert.value = null
+    if (alertBannerTimer) clearTimeout(alertBannerTimer)
+    alertBannerTimer = setTimeout(() => { alertBanner.value = '' }, 6000)
+  }
+}
+
 // ── Status UI ──────────────────────────────────────────────────────────
 const STATUS_UI: Record<string, { icon: string; color: string }> = {
   held:       { icon: '📋', color: 'text-amber-600' },
@@ -259,7 +294,10 @@ function statusUI(s: string) {
 }
 
 onMounted(fetchMenu)
-onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+  if (alertBannerTimer) clearTimeout(alertBannerTimer)
+})
 </script>
 
 <template>
@@ -524,6 +562,38 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
               {{ placing ? '⏳ جاري الإرسال...' : `🍳 إرسال الطلب إلى ${outletLabel}` }}
             </button>
           </div>
+        </div>
+      </div>
+    </Teleport>
+
+    <!-- ══ Guest Alerts — نادِ الجرسون / هات الفاتورة ═══════════════════ -->
+    <!-- ثابتة أسفل الشاشة، ظاهرة دايمًا لو فيه رقم طاولة حقيقي (مش takeaway) —
+         الضيف يقدر ينادي الطاقم في أي وقت، مش بس وقت تصفح القائمة. -->
+    <Teleport to="body">
+      <div v-if="tableId" class="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-stone-200 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]" dir="rtl">
+        <div
+          v-if="alertBanner"
+          :class="['mb-2 text-center text-sm font-bold rounded-xl py-2 px-3',
+            alertBannerErr ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700']"
+        >{{ alertBanner }}</div>
+
+        <div class="flex gap-2">
+          <button
+            @click="sendGuestAlert('call_waiter')"
+            :disabled="sendingAlert !== null"
+            class="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:scale-[0.98] transition-transform"
+          >
+            <span>🧑‍🍳</span>
+            <span>{{ sendingAlert === 'call_waiter' ? 'جارِ الإرسال...' : 'نادِ الجرسون' }}</span>
+          </button>
+          <button
+            @click="sendGuestAlert('request_bill')"
+            :disabled="sendingAlert !== null"
+            class="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:scale-[0.98] transition-transform"
+          >
+            <span>🧾</span>
+            <span>{{ sendingAlert === 'request_bill' ? 'جارِ الإرسال...' : 'هات الفاتورة' }}</span>
+          </button>
         </div>
       </div>
     </Teleport>
