@@ -658,6 +658,102 @@ class TestDiscountHTTPFlow:
         )
         assert resp.status_code == 404
 
+    def _discount_payload(self, branch_id: int, **overrides) -> dict:
+        payload = {
+            "branch_id": branch_id, "condition_type": "total_amount", "condition_value": ">=100",
+            "discount_type": "percentage", "discount_value": "10",
+            "valid_from": str(date.today() - timedelta(days=1)),
+            "valid_until": str(date.today() + timedelta(days=30)),
+        }
+        payload.update(overrides)
+        return payload
+
+    def test_create_discount_with_outlet_scope(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/discounts",
+            json=self._discount_payload(branch.id, scope_type="outlet", scope_outlet="cafe"),
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["scope_type"] == "outlet"
+        assert body["scope_outlet"] == "cafe"
+        assert body["scope_id"] is None
+
+    def test_create_discount_time_of_day_valid_format(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/discounts",
+            json=self._discount_payload(
+                branch.id, condition_type="time_of_day", condition_value="14:00-17:00",
+            ),
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_create_discount_time_of_day_invalid_format_400(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/discounts",
+            json=self._discount_payload(
+                branch.id, condition_type="time_of_day", condition_value="not-a-range",
+            ),
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_create_discount_combo_items_requires_outlet_scope_400(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        """combo_items لازم يترافق مع scope_type='outlet' — راجع
+        ConditionalDiscountCreate._validate_combo_scope."""
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/discounts",
+            json=self._discount_payload(
+                branch.id, condition_type="combo_items", condition_value="1:1,2:1",
+                discount_type="combo_fixed_price",
+                # scope_type الافتراضي "order" — لازم يترفض
+            ),
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_create_discount_combo_items_with_outlet_scope_succeeds(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/discounts",
+            json=self._discount_payload(
+                branch.id, condition_type="combo_items", condition_value="1:1,2:1",
+                discount_type="combo_fixed_price", discount_value="40",
+                scope_type="outlet", scope_outlet="cafe",
+            ),
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_create_discount_item_scope_requires_scope_id_400(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/discounts",
+            json=self._discount_payload(branch.id, scope_type="item", scope_outlet="cafe"),  # scope_id ناقص
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_create_discount_order_scope_rejects_scope_outlet_400(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/finance/discounts",
+            # scope_type الافتراضي "order" لا يقبل scope_outlet
+            json=self._discount_payload(branch.id, scope_outlet="cafe"),
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 422
+
     def test_create_discount_requires_admin(self, client: TestClient, db, manager_headers):
         """manager (60) لا يكفي — create_discount محتاج admin (80)."""
         branch = make_branch_committed(db)
