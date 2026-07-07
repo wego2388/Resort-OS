@@ -182,6 +182,7 @@ class CafeOrderRead(BaseModel):
     service_charge: Decimal; discount_amount: Decimal; total: Decimal
     refunded_amount: Decimal = Decimal("0")
     notes: Optional[str]; waiter_id: Optional[int]
+    applied_discount_rule_id: Optional[int] = None
     customer_id: Optional[int] = None
     items: list[CafeOrderItemRead] = []
     created_at: datetime; updated_at: datetime

@@ -142,6 +142,11 @@ class CafeOrder(Base, TimestampMixin):
     notes:          Mapped[str | None] = mapped_column(String(500), nullable=True)
     waiter_id:      Mapped[int | None] = mapped_column(Integer, nullable=True)
     folio_id:       Mapped[int | None] = mapped_column(Integer, nullable=True)
+    applied_discount_rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # الـ ConditionalDiscount (finance module) اللي اتطبّق فعليًا — نفس عمود
+    # restaurant.Order.applied_discount_rule_id بالظبط، مطلوب عشان
+    # services.void_order_item يقدر يعيد تقييم نفس القاعدة على subtotal أصغر
+    # بعد إلغاء صنف (بدل ما يسيب discount_amount قديم غير متسق).
     customer_id:    Mapped[int | None] = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
 
     table: Mapped["CafeTable"] = relationship("CafeTable", lazy="select")

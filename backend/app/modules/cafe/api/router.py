@@ -236,6 +236,16 @@ def refund_order_item(order_id: int, item_id: int, data: CafeOrderItemVoidReques
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+@router.post("/cafe/orders/{order_id}/discount", response_model=CafeOrderRead)
+def apply_discount(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
+    """يطبّق أفضل ConditionalDiscount منطبقة (finance module) على الطلب —
+    نفس مستوى وشكل restaurant.apply_discount بالظبط."""
+    try:
+        return services.apply_order_discount(db, order_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 @router.get("/cafe/orders/{order_id}/receipt")
 def download_receipt(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:
