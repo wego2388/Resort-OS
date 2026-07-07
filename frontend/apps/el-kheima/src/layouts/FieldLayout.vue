@@ -32,6 +32,7 @@ const isWaiter = computed(() => route.path.startsWith('/waiter'))
 
 const allNavItems = [
   { path: '/pos/beach', label: 'الشاطئ', icon: '🏖️' },
+  { path: '/pos/beach-map', label: 'خريطة الشاطئ', icon: '🗺️' },
   { path: '/pos/restaurant', label: 'المطعم', icon: '🍽️' },
   { path: '/pos/cafe', label: 'الكافيه', icon: '☕' },
   { path: '/waiter/tables', label: 'الطاولات', icon: '🧑‍🍳' },
