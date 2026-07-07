@@ -181,6 +181,19 @@ class TestFindNextVisit:
     def test_none_for_invalid_week(self):
         assert find_next_visit(0, 7) is None
 
+    def test_ongoing_visit_still_returned_not_skipped_to_next_year(self):
+        """باج حقيقي (اتصلح 2026-07-07): الشرط كان visit_start >= today —
+        زيارة جارية دلوقتي (بدأت أمس، لسه في نص الإقامة) كانت بتختفي فجأة
+        من "الزيارات القادمة" وتقفز الدالة لحساب زيارة السنة الجاية بدل ما
+        تفضل ظاهرة لحد ما تخلص فعليًا. أسبوع 28 / 2026 = بداية 6 يوليو،
+        7 ليالي = نهاية 12 يوليو — يوم بعد البداية لازم يفضل يرجّع نفس
+        زيارة 2026، مش يقفز لـ 2027."""
+        today = date(2026, 7, 7)  # يوم واحد بعد بداية الزيارة (6 يوليو)
+        window = find_next_visit(28, 7, today=today)
+        assert window is not None
+        assert window.year == 2026
+        assert window.days_until == -1  # بدأت أمس، لسه ما خلصتش (تنتهي 12 يوليو)
+
 
 class TestGetUpcomingVisits:
 
@@ -216,6 +229,17 @@ class TestGetUpcomingVisits:
         results = get_upcoming_visits([c1, c2], within_days=30, today=today)
         if len(results) > 1:
             assert results[0][1].days_until <= results[1][1].days_until
+
+    def test_includes_contract_with_visit_currently_in_progress(self):
+        """باج حقيقي (اتصلح 2026-07-07): عقد زيارته جارية دلوقتي (بدأت أمس)
+        كان بيتشال من النتيجة بسبب الحد الأدنى صفر على days_until، رغم إن
+        الزيارة لسه مستمرة فعليًا — راجع تعليق find_next_visit/
+        get_upcoming_visits لتفاصيل الباج."""
+        today = date(2026, 7, 7)  # يوم واحد بعد بداية زيارة أسبوع 28 (6 يوليو)
+        contract = self._make_contract(28)
+        results = get_upcoming_visits([contract], within_days=30, today=today)
+        assert len(results) == 1
+        assert results[0][1].days_until == -1
 
 
 # ── Overdue & penalties ───────────────────────────────────────────────

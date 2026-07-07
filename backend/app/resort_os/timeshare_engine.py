@@ -245,11 +245,20 @@ def find_next_visit(
     nights_per_year: int,
     today: Optional[date] = None,
 ) -> Optional[VisitWindow]:
-    """الزيارة القادمة — هذه السنة أو السنة القادمة."""
+    """الزيارة القادمة — هذه السنة أو السنة القادمة.
+
+    ⚠️ باج حقيقي اتكشف (2026-07-07، فشل تست حقيقي لأن اليوم وقع بالصدفة في
+    نفس أسبوع 28 اللي التستات بتستخدمه): الشرط كان ``visit_start >= today``
+    — أي عقد أسبوعه الحالي بدأ بالفعل (حتى لو الزيارة لسه شغالة ومستمرة، زي
+    نص أسبوع إقامة 7 ليالي) كان بيتجاهَل تمامًا من هنا وتقفز الدالة لحساب
+    زيارة السنة الجاية بدل السنة دي — يعني أي زيارة "جارية دلوقتي" كانت
+    تختفي فجأة من "الزيارات القادمة" لحد ما تخلص وتيجي زيارة السنة الجاية،
+    بدل ما تفضل ظاهرة طول مدتها. الصح: النافذة لسه "قادمة/حالية" طالما لسه
+    ما خلصتش (``visit_end >= today``)، مش بس لسه ما بدأتش."""
     today = today or date.today()
     for year in (today.year, today.year + 1):
         w = calculate_visit_window(week_number, nights_per_year, year, today)
-        if w and w.visit_start >= today:
+        if w and w.visit_end >= today:
             return w
     return None
 
@@ -260,7 +269,10 @@ def get_upcoming_visits(
     today: Optional[date] = None,
 ) -> list[tuple[TimeshareContractData, VisitWindow]]:
     """
-    يُرجع العقود التي لها زيارة خلال N يوم — مرتّبة من الأقرب.
+    يُرجع العقود التي لها زيارة خلال N يوم — مرتّبة من الأقرب. بيشمل زيارة
+    جارية دلوقتي (بدأت قبل النهاردة بس لسه ما خلصتش — ``days_until`` بيبقى
+    سالب في الحالة دي، راجع تعليق find_next_visit) — ده أهم من "قادمة" فعليًا
+    لمتابعة CS Dashboard، مش أقل أهمية، فمفيش حد أدنى صفر على ``days_until``.
     يُستخدم في CS Dashboard.
     """
     today = today or date.today()
@@ -269,7 +281,7 @@ def get_upcoming_visits(
         if not c.week_number or c.status != "active":
             continue
         w = find_next_visit(c.week_number, c.nights_per_year, today)
-        if w and 0 <= w.days_until <= within_days:
+        if w and w.days_until <= within_days:
             results.append((c, w))
     return sorted(results, key=lambda x: x[1].days_until)
 
