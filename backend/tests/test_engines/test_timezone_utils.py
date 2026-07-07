@@ -18,7 +18,7 @@ from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from app.resort_os import timezone_utils as tzu
-from app.resort_os.timezone_utils import business_today, local_date_to_utc_range
+from app.resort_os.timezone_utils import business_today, local_date_to_utc_range, utc_naive_to_local_date
 
 
 class TestBusinessToday:
@@ -59,6 +59,25 @@ class TestLocalDateToUtcRange:
         assert start == datetime(2026, 7, 4, 21, 0, 0)
         assert end.date() == date(2026, 7, 5)
         assert start < end
+
+
+class TestUtcNaiveToLocalDate:
+
+    def test_round_trips_with_local_date_to_utc_range(self):
+        """تحويل يوم محلي → UTC ثم رجوع لنفس اليوم المحلي لازم يطابق تمامًا،
+        لأي نقطة داخل مدى اليوم (بداية، منتصف، نهاية)."""
+        start, end = local_date_to_utc_range(date(2026, 7, 5), "Africa/Cairo")
+        assert utc_naive_to_local_date(start, "Africa/Cairo") == date(2026, 7, 5)
+        assert utc_naive_to_local_date(end, "Africa/Cairo") == date(2026, 7, 5)
+
+    def test_utc_evening_maps_to_next_cairo_day(self):
+        # 21:30 UTC = 00:30 بتوقيت القاهرة (UTC+3) اليوم التالي
+        utc_dt = datetime(2026, 7, 5, 21, 30)
+        assert utc_naive_to_local_date(utc_dt, "Africa/Cairo") == date(2026, 7, 6)
+
+    def test_utc_morning_stays_same_cairo_day(self):
+        utc_dt = datetime(2026, 7, 5, 10, 0)
+        assert utc_naive_to_local_date(utc_dt, "Africa/Cairo") == date(2026, 7, 5)
 
 
 class TestLocalToday:

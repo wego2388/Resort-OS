@@ -40,6 +40,15 @@ def local_date_to_utc_range(local_date: date, tz_name: str) -> tuple[datetime, d
     return start_utc, end_utc
 
 
+def utc_naive_to_local_date(utc_naive: datetime, tz_name: str) -> date:
+    """عكس ``local_date_to_utc_range`` — بياخد timestamp UTC naive (زي
+    ``created_at`` المخزّن في الداتابيز) ويرجّع تاريخ اليوم المحلي (tz_name)
+    اللي وقعت فيه اللحظة دي فعليًا. مُستخدم لتجميع تقارير يومية (trend) من
+    صفوف مسحوبة بمدى UTC واحد — بدون ما نحتاج query منفصل لكل يوم (كان
+    الحل الأول المقترح، بس ده N+1 حقيقي لو المدى الزمني طويل)."""
+    return utc_naive.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name)).date()
+
+
 def local_now(tz_name: str) -> datetime:
     """اللحظة الحالية بتوقيت المنتجع (tz_name) — بديل عن datetime.utcnow()/
     datetime.now() اللي بترجع توقيت السيرفر (UTC غالبًا في الإنتاج). استخدمها
