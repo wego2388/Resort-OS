@@ -1,8 +1,14 @@
 """attendance_policy_and_late_penalty
 
 Revision ID: a4d7c2e8f910
-Revises: b2d7f931a4e1
+Revises: c1f4a8e02b7d
 Create Date: 2026-07-06 00:00:00.000000
+
+⚠️ down_revision اتحدّث من b2d7f931a4e1 لـ c1f4a8e02b7d أثناء دمج الفروع
+(2026-07-07) — الهجرة دي اتعملت بالتوازي في worktree منفصل على نفس الأب
+(b2d7f931a4e1) زي هجرتين تانيين (B2B credit-limit + وصفة/BOM المطعم/الكافيه)،
+فلما اتدمجوا التلاتة مع بعض ظهر أكتر من alembic head. أُعيدت هذه الهجرة في
+آخر السلسلة (بعد الاتنين التانيين) لإرجاع تسلسل خطي واحد.
 
 يضيف:
 - جدول attendance_policies (سياسة حضور لكل فرع: سماحية تأخير/انصراف مبكر،
@@ -21,7 +27,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'a4d7c2e8f910'
-down_revision: Union[str, None] = 'b2d7f931a4e1'
+down_revision: Union[str, None] = 'c1f4a8e02b7d'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
