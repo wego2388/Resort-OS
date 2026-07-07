@@ -563,6 +563,72 @@ class TestCashierShiftHTTPFlow:
         )
         assert reclose_resp.status_code == 400
 
+    def test_blind_cash_count_never_reveals_expected_cash_before_close(
+        self, client: TestClient, db, cashier_headers,
+    ):
+        """عدّ الكاش لازم يكون 'أعمى' (blind count): الكاشير يعدّ الدرج فعليًا
+        ويبعت رقمه *قبل* ما يشوف أي رقم متوقع من النظام — وإلا هيعدّ لحد ما
+        يوصل للرقم المتوقع بدل ما يبلّغ عن عجز حقيقي. راجع best practice في
+        Foodics/Square. الباك إند هنا بيحسب expected_cash بس وقت القفل نفسه
+        (services.close_shift، سطر ~488) — قبل كده العمود فاضل NULL. الاختبار
+        ده بيتأكد من السلوك ده فعليًا عبر HTTP، مش بس بيفترضه."""
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "500.00"},
+            headers=cashier_headers,
+        )
+        assert open_resp.status_code == 201, open_resp.text
+        shift_id = open_resp.json()["id"]
+
+        # فولية ودفعة كاش حقيقية أثناء الوردية — عشان expected_cash يبقى رقم
+        # حقيقي غير صفري (500 افتتاح + 300 كاش = 800)، مش حالة تافهة.
+        folio_resp = client.post(
+            "/api/v1/finance/folios",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف عدّ أعمى",
+                "check_in": datetime.utcnow().isoformat(),
+                "check_out": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert folio_resp.status_code == 201, folio_resp.text
+        folio_id = folio_resp.json()["id"]
+        pay_resp = client.post(
+            f"/api/v1/finance/folios/{folio_id}/payments",
+            json={
+                "folio_id": folio_id, "branch_id": branch.id, "amount": "300.00",
+                "method": "cash", "posted_at": datetime.utcnow().isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert pay_resp.status_code == 201, pay_resp.text
+
+        # الكاشير بيشوف حالة ورديته (زي أي شاشة POS) — لازم مايشوفش أي رقم
+        # متوقع هنا، وإلا هيقدر يعدّل عدّه ليطابقه بدل ما يبلّغ عن عجز حقيقي.
+        current_resp = client.get(
+            "/api/v1/finance/shifts/current", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert current_resp.status_code == 200
+        assert current_resp.json()["expected_cash"] is None
+        assert current_resp.json()["variance"] is None
+
+        # حتى لو عميل (frontend مخترق أو buggy) بعت expected_cash في جسم
+        # طلب القفل نفسه، لازم يتجاهله السيرفر تمامًا ويحسب قيمته الحقيقية
+        # بنفسه من الدفعات الفعلية — الرقم المتوقع لازم يفضل server-authoritative.
+        close_resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "750.00", "expected_cash": "750.00"},
+            headers=cashier_headers,
+        )
+        assert close_resp.status_code == 200, close_resp.text
+        body = close_resp.json()
+        # الرقم المتوقع الحقيقي (800) لازم يظهر في الرد بعد القفل — مش الرقم
+        # اللي حاول العميل يفرضه (750) — ده دليل إن الحساب سيرفر-سايد فعليًا.
+        assert body["expected_cash"] == "800.00"
+        assert body["counted_cash"] == "750.00"
+        assert body["variance"] == "-50.00"
+
     def test_get_current_shift_404_when_none_open(self, client: TestClient, db, cashier_headers):
         branch = make_branch_committed(db)
         resp = client.get(
