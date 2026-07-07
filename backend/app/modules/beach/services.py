@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.beach import crud
-from app.modules.beach.models import BeachInventory, BeachTransaction
+from app.modules.beach.models import BeachInventory, BeachLocation, BeachTransaction
 from app.modules.beach.schemas import (
-    B2BCheckinRequest, BeachReservationCreate, BeachSellRequest,
+    B2BCheckinRequest, BeachLocationCheckinRequest, BeachReservationCreate,
+    BeachSellRequest,
 )
 from app.resort_os.beach_engine import (
     B2BContractState,
@@ -42,8 +43,10 @@ def _business_today() -> date:
 
 
 class BeachConcurrencyError(Exception):
-    """عملية بيع/تشيك-إن تانية ماسكة صف سعة الشاطئ لنفس الفرع/اليوم دلوقتي —
-    409، مش 400 (زي pms.services.BookingConflictError بالظبط)."""
+    """عملية بيع/تشيك-إن تانية ماسكة صف سعة الشاطئ لنفس الفرع/اليوم دلوقتي، أو
+    موقع فعلي (BeachLocation) مشغول بالفعل/بيتسجّل دخوله دلوقتي — 409، مش 400
+    (زي pms.services.BookingConflictError بالظبط: بيغطّي الحالتين "القفل نفسه
+    مشغول" و"الحالة التجارية بتاعت المصدر متعارضة" تحت نفس الاستثناء/الكود)."""
 
 
 def _lock_inventory_or_raise(db: Session, inv_row: BeachInventory) -> BeachInventory:
@@ -80,6 +83,21 @@ def _lock_contract_day_or_raise(db: Session, day_row: "B2BContractDay") -> "B2BC
             "حصة B2B مشغولة الآن بعملية تشيك-إن أخرى — حاول تاني خلال لحظات"
         ) from exc
     return locked or day_row
+
+
+def _lock_location_or_raise(db: Session, location: BeachLocation) -> BeachLocation:
+    """يقفل صف BeachLocation (SELECT FOR UPDATE NOWAIT) قبل أي تحقق/تعديل على
+    حالته — بيمنع سباق double check-in كلاسيكي لو كاشيرين مختلفين ضغطوا
+    "تشيك-إن" على نفس الموقع الفعلي في نفس اللحظة بالظبط. نفس فئة
+    _lock_inventory_or_raise/_lock_contract_day_or_raise بالظبط."""
+    try:
+        locked = crud.lock_location_for_update(db, location.id)
+    except OperationalError as exc:
+        db.rollback()
+        raise BeachConcurrencyError(
+            "الموقع مشغول الآن بعملية تشيك-إن أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    return locked or location
 
 
 def _get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
@@ -143,6 +161,25 @@ def sell_ticket(
     data: BeachSellRequest,
     tx_date: Optional[date] = None,
 ) -> BeachTransaction:
+    tx = _sell_ticket_no_commit(db, branch_id, data, tx_date)
+    db.commit()
+    db.refresh(tx)
+    return tx
+
+
+def _sell_ticket_no_commit(
+    db: Session,
+    branch_id: int,
+    data: BeachSellRequest,
+    tx_date: Optional[date] = None,
+) -> BeachTransaction:
+    """جسم sell_ticket الفعلي، من غير commit/refresh نهائي — مفصولة عشان
+    checkin_location (تحت) تقدر تدمجها في transaction واحدة أطول (قفل موقع +
+    بيع تذكرة + تحديث حالة الموقع) بدل ما تنادي sell_ticket العامة اللي
+    بتعمل commit لوحدها وتُنهي الـ transaction بدري — لو حصل كده، قفل صف
+    الموقع (SELECT FOR UPDATE) هيتفك بمجرد الـ commit ده قبل ما نتأكد إن
+    تحديث حالة الموقع اتسجّل، وبيرجع نفس فئة سباق lost-update اللي القفل
+    أصلاً اتحط عشان يمنعها."""
     tx_date = tx_date or _business_today()
 
     folio_id = data.folio_id
@@ -203,6 +240,7 @@ def sell_ticket(
         "customer_id":     data.customer_id,
         "notes":           data.notes,
         "shift_id":        shift_id,
+        "location_id":     data.location_id,
     })
 
     # قيد الإيراد يترحّل فورًا في الحالتين — بس لحساب مختلف حسب طريقة الدفع:
@@ -240,8 +278,6 @@ def sell_ticket(
         from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
         record_customer_visit(db, tx.customer_id, tx.total_amount + tx.vat_amount, tx.tx_date)
 
-    db.commit()
-    db.refresh(tx)
     return tx
 
 
@@ -757,3 +793,166 @@ def create_reservation(db: Session, data: BeachReservationCreate) -> "BeachReser
     db.commit()
     db.refresh(res)
     return res
+
+
+# ── Beach Locations (live map) ──────────────────────────────────────────
+
+def list_locations(db: Session, branch_id: int, location_type: Optional[str] = None) -> list[BeachLocation]:
+    return crud.list_locations(db, branch_id, location_type)
+
+
+def bulk_add_locations(
+    db: Session, branch_id: int, location_type: str, count: int,
+) -> list[BeachLocation]:
+    """يضيف ``count`` موقع جديد من نوع ``location_type`` — مرقّمين تلقائيًا
+    بعد أعلى رقم موجود فعليًا (منسّق مع أي مواقع سابقة اتحذفت، مبيعيدش
+    استخدام رقم اتحذف عشان ميتلخبطش مع تاريخ beach_transactions.location_id
+    القديم)."""
+    if not location_type.strip():
+        raise ValueError("نوع الموقع مطلوب")
+    start = crud.get_max_location_number(db, branch_id, location_type) + 1
+    created = crud.bulk_create_locations(db, branch_id, location_type, count, start)
+    db.commit()
+    for loc in created:
+        db.refresh(loc)
+    return created
+
+
+def bulk_remove_locations(
+    db: Session, branch_id: int, location_type: str, count: int,
+) -> list[BeachLocation]:
+    """يحذف آخر ``count`` موقع *متاح* من نوع معيّن. لو أقل من ``count`` موقع
+    متاح فعليًا (الباقي مشغول)، بيرفض العملية بالكامل بدل حذف جزئي غير متوقع
+    — المدير لازم يشوف رسالة واضحة "X بس متاح" ويقرر بنفسه، مش نحذف عدد أقل
+    بصمت من غير ما حد يلاحظ."""
+    available = crud.get_removable_locations(db, branch_id, location_type, count)
+    if len(available) < count:
+        raise ValueError(
+            f"مفيش إلا {len(available)} موقع متاح من نوع '{location_type}' — "
+            f"مطلوب حذف {count}. المواقع المشغولة لازم تتفضّى (checkout) الأول."
+        )
+    crud.delete_locations(db, available)
+    db.commit()
+    return available
+
+
+def update_location(
+    db: Session, location_id: int,
+    status: Optional[str] = None, grid_row: Optional[int] = None, grid_col: Optional[int] = None,
+) -> BeachLocation:
+    """تعديل مدير: تعطيل/تفعيل موقع (صيانة) أو نقل مكانه في الـ grid. رفض
+    صريح لو حاول يحوّل موقع *مشغول* لـ out_of_service من غير ما الضيف
+    يعمل checkout الأول — نفس فلسفة delete_location في الكود المرجعي، بس
+    هنا "تعطيل" مش "حذف"."""
+    loc = crud.get_location(db, location_id)
+    if not loc:
+        raise ValueError(f"الموقع {location_id} غير موجود")
+    if status is not None:
+        if status == "out_of_service" and loc.status == "occupied":
+            raise ValueError(f"الموقع {loc.number} مشغول حاليًا — لازم checkout الأول قبل تعطيله")
+        loc.status = status
+    if grid_row is not None:
+        loc.grid_row = grid_row
+    if grid_col is not None:
+        loc.grid_col = grid_col
+    db.commit()
+    db.refresh(loc)
+    return loc
+
+
+def checkin_location(
+    db: Session, branch_id: int, location_id: int,
+    data: BeachLocationCheckinRequest, cashier_id: Optional[int] = None,
+    tx_date: Optional[date] = None,
+) -> BeachLocation:
+    """تسجيل دخول ضيف لموقع فعلي — بيقفل صف الموقع أولًا (SELECT FOR UPDATE
+    NOWAIT، راجع _lock_location_or_raise) عشان يمنع double check-in، وبعدين
+    بيبيع تذكرة دخول حقيقية عبر _sell_ticket_no_commit (نفس منطق sell_ticket
+    العام بالظبط — تسعير/VAT/قيد محاسبي/CRM/Charge-to-Room، من غير أي تكرار
+    كود) **من غير ما ده يعمل commit بينهم** — قفل الموقع، بيع التذكرة،
+    وتحديث حالة الموقع كلهم بيتعمدوا (commit) مرة واحدة بس في الآخر، عشان
+    القفل يفضل ماسك طول العملية كلها ولا يتفك بدري (لو استخدمنا sell_ticket
+    العامة هنا، الـ commit بتاعها كان هيفك قفل الموقع قبل ما نحدّث حالته،
+    وده بالظبط نوع سباق double-checkin اللي القفل ده متحط أصلاً عشان يمنعه)."""
+    loc = crud.get_location(db, location_id)
+    if not loc:
+        raise ValueError(f"الموقع {location_id} غير موجود")
+    if loc.branch_id != branch_id:
+        raise ValueError(f"الموقع {location_id} لا ينتمي لهذا الفرع")
+
+    loc = _lock_location_or_raise(db, loc)
+
+    if loc.status == "out_of_service":
+        raise ValueError(f"الموقع {loc.number} خارج الخدمة حاليًا")
+    if loc.status == "occupied":
+        raise BeachConcurrencyError(f"الموقع {loc.number} مشغول بالفعل")
+
+    tx_type = "entry_towel" if data.with_towel else "entry"
+    guest_label = f" — {data.guest_name}" if data.guest_name else ""
+    sell_data = BeachSellRequest(
+        tx_type=tx_type, quantity=data.guests_count, cashier_id=cashier_id,
+        location_id=loc.id,
+        notes=f"تشيك-إن موقع {loc.location_type} {loc.number}{guest_label}",
+    )
+    tx = _sell_ticket_no_commit(db, branch_id, sell_data, tx_date)
+
+    loc.status = "occupied"
+    loc.current_transaction_id = tx.id
+    loc.guest_name = data.guest_name
+    loc.guest_phone = data.guest_phone
+    loc.guests_count = data.guests_count
+    loc.towels_given = data.guests_count if data.with_towel else 0
+    loc.checked_in_at = datetime.utcnow()
+    loc.checked_in_by = cashier_id
+
+    db.commit()
+    db.refresh(loc)
+    return loc
+
+
+def checkout_location(
+    db: Session, branch_id: int, location_id: int, cashier_id: Optional[int] = None,
+    tx_date: Optional[date] = None,
+) -> BeachLocation:
+    """يفضّي موقع فعلي بعد ما الضيف يمشي — بيرجّع الفوط لمخزون اليوم (لو كان
+    فيه) عبر تذكرة "towel_return" حقيقية (نفس تدفّق sell_ticket القياسي، مش
+    تعديل مباشر على BeachInventory)، وبيصفّر بيانات الضيف على الموقع.
+
+    ⚠️ قرار متعمد: checkout **مبيلمسش BeachInventory.capacity_used خالص** —
+    الشاطئ هنا شغال بمنطق "تذكرة دخول يومية" (زي أي تذكرة تانية اتباعت من
+    POS)، مش "حجز وقتي لمقعد بيتحرر لما الضيف يمشي". يعني لو موقع اتفضّى
+    الساعة 2 الضهر، الشخص ده لسه محسوب ضمن "دخول اليوم" فعليًا — ده هو نفس
+    سلوك النظام المرجعي (elkheima-beach-resort's map_checkout) ومتسق مع
+    التصميم الحالي لـ BeachInventory في الموديول ده (راجع تعليق BeachLocation
+    في models.py للتفاصيل الكاملة)."""
+    loc = crud.get_location(db, location_id)
+    if not loc:
+        raise ValueError(f"الموقع {location_id} غير موجود")
+    if loc.branch_id != branch_id:
+        raise ValueError(f"الموقع {location_id} لا ينتمي لهذا الفرع")
+
+    loc = _lock_location_or_raise(db, loc)
+
+    if loc.status != "occupied":
+        raise ValueError(f"الموقع {loc.number} مش مشغول حاليًا")
+
+    if loc.towels_given > 0:
+        return_data = BeachSellRequest(
+            tx_type="towel_return", quantity=loc.towels_given, cashier_id=cashier_id,
+            location_id=loc.id,
+            notes=f"استرجاع فوط — checkout موقع {loc.location_type} {loc.number}",
+        )
+        _sell_ticket_no_commit(db, branch_id, return_data, tx_date)
+
+    loc.status = "available"
+    loc.current_transaction_id = None
+    loc.guest_name = None
+    loc.guest_phone = None
+    loc.guests_count = 0
+    loc.towels_given = 0
+    loc.checked_in_at = None
+    loc.checked_in_by = None
+
+    db.commit()
+    db.refresh(loc)
+    return loc
