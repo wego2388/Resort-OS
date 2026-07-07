@@ -220,6 +220,23 @@ def refund_order_item(db: Session, item: CafeOrderItem, reason: str, refunded_by
     return item
 
 
+def update_order_discount(
+    db: Session,
+    order: CafeOrder,
+    discount_amount: Decimal,
+    rule_id: Optional[int],
+) -> CafeOrder:
+    """نفس restaurant.crud.update_order_discount بالظبط."""
+    order.discount_amount = discount_amount
+    order.total = max(
+        Decimal("0"),
+        order.subtotal + order.vat_amount + order.service_charge - discount_amount,
+    )
+    order.applied_discount_rule_id = rule_id
+    db.flush()
+    return order
+
+
 # ── Reporting / Food Cost ─────────────────────────────────────────────
 # نفس منطق restaurant.crud بالضبط — راجع التعليقات هناك للتفاصيل الكاملة.
 

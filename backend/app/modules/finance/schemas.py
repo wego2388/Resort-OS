@@ -1,24 +1,70 @@
 """app/modules/finance/schemas.py — Pydantic v2"""
 from __future__ import annotations
 
-from datetime import date, datetime
+import re
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+_TIME_RANGE_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$")
+_COMBO_ITEMS_RE = re.compile(r"^\d+:[1-9]\d*(,\d+:[1-9]\d*)*$")
+
+
 class ConditionalDiscountCreate(BaseModel):
     branch_id:       int
-    condition_type:  str = Field(..., pattern=r"^(total_amount|item_count|day_of_week|customer_group)$")
+    condition_type:  str = Field(
+        ..., pattern=r"^(total_amount|item_count|day_of_week|customer_group|time_of_day|combo_items)$",
+    )
     condition_value: str = Field(..., max_length=100)
-    discount_type:   str = Field(..., pattern=r"^(percentage|fixed_amount|free_item)$")
+    discount_type:   str = Field(..., pattern=r"^(percentage|fixed_amount|free_item|combo_fixed_price)$")
     discount_value:  Decimal = Field(..., ge=0)
     max_uses:        int = -1
     valid_from:      date
     valid_until:     date
     priority:        int = 1
     is_active:       bool = True
+    # نطاق التطبيق — راجع app.modules.finance.models.ConditionalDiscount
+    # وapp.resort_os.discount_engine.DiscountRule للتفاصيل الكاملة.
+    scope_type:      str = Field("order", pattern=r"^(order|outlet|category|item)$")
+    scope_outlet:    Optional[str] = Field(None, pattern=r"^(restaurant|cafe|beach)$")
+    scope_id:        Optional[int] = None
+
+    @model_validator(mode="after")
+    def _validate_condition_value_format(self) -> "ConditionalDiscountCreate":
+        value = self.condition_value.strip()
+        if self.condition_type == "time_of_day" and not _TIME_RANGE_RE.match(value):
+            raise ValueError(
+                "condition_value لـ time_of_day لازم يكون بصيغة 'HH:MM-HH:MM' مثال '14:00-17:00'"
+            )
+        if self.condition_type == "combo_items" and not _COMBO_ITEMS_RE.match(value):
+            raise ValueError(
+                "condition_value لـ combo_items لازم يكون بصيغة 'item_id:qty,item_id:qty' مثال '12:1,15:2'"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> "ConditionalDiscountCreate":
+        if self.scope_type == "order":
+            if self.scope_outlet is not None or self.scope_id is not None:
+                raise ValueError("scope_type='order' لا يقبل scope_outlet/scope_id")
+        elif self.scope_type == "outlet":
+            if self.scope_outlet is None:
+                raise ValueError("scope_type='outlet' يتطلب scope_outlet")
+            if self.scope_id is not None:
+                raise ValueError("scope_type='outlet' لا يقبل scope_id")
+        else:  # category | item
+            if self.scope_outlet is None or self.scope_id is None:
+                raise ValueError(f"scope_type='{self.scope_type}' يتطلب scope_outlet و scope_id معًا")
+        if self.condition_type == "combo_items" and self.scope_type != "outlet":
+            raise ValueError(
+                "condition_type='combo_items' لازم يترافق مع scope_type='outlet' — "
+                "قائمة أصناف الـ combo نفسها جاية من condition_value، وscope_outlet "
+                "هنا بس بيحدد أي جدول أصناف (منع تلبيس بين menu_items.id وcafe_items.id)"
+            )
+        return self
 
 
 class ConditionalDiscountUpdate(BaseModel):
@@ -221,6 +267,12 @@ class DiscountCalculateRequest(BaseModel):
     item_count:     int = Field(1, ge=1)
     customer_group: str = "default"
     order_date:     Optional[date] = None
+    order_time:     Optional[time] = None
+    # ملحوظة: preview بمستوى الطلب كله بس (بدون سطور) — عمدًا مفيهوش outlet/
+    # line_items، فقواعد scope_type="outlet"/"category"/"item" أو
+    # condition_type="combo_items" مش هتتحقق أبدًا هنا (نفس سلوك أي rule
+    # نطاقها مش منطبق). استخدم POST /restaurant|cafe/orders/{id}/discount
+    # الحقيقي لمعاينة/تطبيق خصومات بنطاق محدد على طلب فعلي.
 
 
 # ── Double-Entry Accounting Schemas ───────────────────────────────────

@@ -1362,6 +1362,154 @@ class TestCafeRefundReducesFolioCharge:
         assert refund_debit.debit == debit_line.debit  # مرتجع كامل = نفس مبلغ القيد الأصلي
 
 
+class TestCafeApplyDiscount:
+    """POST /cafe/orders/{id}/discount — الكافيه ما كانش عنده أي طريقة حقيقية
+    يطبّق بيها ConditionalDiscount قبل كده خالص (discount_amount كان عمود
+    ميتاته ملوش أي كود بيكتب فيه — راجع services.apply_order_discount
+    الجديد). زي restaurant.TestApplyDiscount بالظبط + تستات نطاق outlet
+    وcombo الجديدة."""
+
+    def test_percentage_discount_applied_from_active_rule(
+        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers,
+    ):
+        from app.modules.finance.models import ConditionalDiscount
+        branch = make_branch_committed(db)
+        item = make_item_committed(db, branch)  # 45.00 EGP
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("10"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={"branch_id": branch.id, "order_type": "takeaway",
+                  "items": [{"item_id": item.id, "quantity": 2}]},
+            headers=waiter_headers,
+        ).json()
+        assert Decimal(str(order["discount_amount"])) == Decimal("0.00")
+
+        resp = client.post(f"/api/v1/cafe/orders/{order['id']}/discount", headers=cashier_headers)
+        assert resp.status_code == 200, resp.text
+        # subtotal = 90.00 (2 x 45.00)، 10% خصم -> 9.00
+        assert Decimal(str(resp.json()["discount_amount"])) == Decimal("9.00")
+        assert resp.json()["applied_discount_rule_id"] == rule.id
+
+    def test_outlet_scoped_restaurant_only_rule_does_not_apply_to_cafe_order(
+        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers,
+    ):
+        """rule نطاقها outlet='restaurant' — لازم متأثرش على طلب كافيه خالص،
+        نفس ما لازم rule نطاقها cafe متأثرش على طلب مطعم (مُتحقق منه في
+        test_restaurant_http.py)."""
+        from app.modules.finance.models import ConditionalDiscount
+        branch = make_branch_committed(db)
+        item = make_item_committed(db, branch)
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("50"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+            scope_type="outlet", scope_outlet="restaurant",
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={"branch_id": branch.id, "order_type": "takeaway",
+                  "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.post(f"/api/v1/cafe/orders/{order['id']}/discount", headers=cashier_headers)
+        assert resp.status_code == 200, resp.text
+        assert Decimal(str(resp.json()["discount_amount"])) == Decimal("0.00")
+
+    def test_combo_fixed_price_applied_end_to_end(
+        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers,
+    ):
+        """كابتشينو (45.00) + صنف تاني (30.00) = 75.00 عادةً، الـ combo بـ
+        60.00 ثابت — نفس تست الـ engine بس end-to-end عبر HTTP فعلي."""
+        from app.modules.cafe.models import CafeItem
+        from app.modules.finance.models import ConditionalDiscount
+
+        branch = make_branch_committed(db)
+        item1 = make_item_committed(db, branch)  # 45.00
+        item2 = CafeItem(branch_id=branch.id, name="كرواسون", price=Decimal("30.00"), is_available=True)
+        db.add(item2)
+        db.commit()
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="combo_items",
+            condition_value=f"{item1.id}:1,{item2.id}:1",
+            discount_type="combo_fixed_price", discount_value=Decimal("60"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+            scope_type="outlet", scope_outlet="cafe",
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={"branch_id": branch.id, "order_type": "takeaway",
+                  "items": [{"item_id": item1.id, "quantity": 1}, {"item_id": item2.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        assert Decimal(str(order["subtotal"])) == Decimal("75.00")
+
+        resp = client.post(f"/api/v1/cafe/orders/{order['id']}/discount", headers=cashier_headers)
+        assert resp.status_code == 200, resp.text
+        assert Decimal(str(resp.json()["discount_amount"])) == Decimal("15.00")  # 75 - 60
+        assert Decimal(str(resp.json()["total"])) > Decimal("0")
+
+    def test_discount_recomputed_on_new_lower_subtotal_after_void(
+        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers,
+    ):
+        """نفس test_restaurant.py::TestVoidItemDiscountRecompute بس للكافيه —
+        الكافيه ما كانش عنده applied_discount_rule_id خالص قبل كده، يعني
+        الـ recompute ده مستحيل عمليًا قبل التكامل الجديد."""
+        from app.modules.finance.models import ConditionalDiscount
+        branch = make_branch_committed(db)
+        item = make_item_committed(db, branch)  # 45.00
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id, condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("10"),
+            valid_from=date(2020, 1, 1), valid_until=date(2099, 12, 31),
+        )
+        db.add(rule)
+        db.commit()
+
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={"branch_id": branch.id, "order_type": "takeaway",
+                  # سطرين منفصلين لنفس الصنف (مش سطر واحد quantity=2) — عشان
+                  # إلغاء سطر واحد بس يصغّر الـ subtotal بدل ما يصفّره بالكامل
+                  "items": [{"item_id": item.id, "quantity": 1}, {"item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        discounted = client.post(
+            f"/api/v1/cafe/orders/{order['id']}/discount", headers=cashier_headers,
+        ).json()
+        assert Decimal(str(discounted["discount_amount"])) == Decimal("9.00")  # 10% من 90
+        item_id = discounted["items"][0]["id"]
+
+        resp = client.patch(
+            f"/api/v1/cafe/orders/{discounted['id']}/items/{item_id}/void",
+            json={"reason": "طلب زيادة بالغلط"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        updated = resp.json()
+        # subtotal بعد الإلغاء = 45.00، الخصم لازم يُعاد حسابه على الـ 45.00 دي
+        # مش يفضل 9.00 القديم (نفس نسبة 10% بس مبلغ أصغر)
+        assert Decimal(str(updated["subtotal"])) == Decimal("45.00")
+        assert Decimal(str(updated["discount_amount"])) == Decimal("4.50")
+
+
 def make_product_committed(client: TestClient, branch_id: int, manager_headers, cost_price="40.00"):
     """نفس test_restaurant_http.make_product_committed بالظبط."""
     wh = client.post(

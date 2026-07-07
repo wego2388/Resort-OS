@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -16,8 +16,12 @@ from app.modules.cafe.schemas import (
     CafeCogsTrendPoint, CafeFoodCostReportLine, CafeFoodCostReportResponse, CafeGrossMarginSummary,
     CafeItemRecipeLineCreate, CafeItemRecipeLineUpdate, CafeOrderCreate,
 )
+from app.resort_os.discount_engine import DiscountRule, OrderContext, OrderLineItem, calculate_discount
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT, compute_food_cost_result, exceeds_threshold
-from app.resort_os.timezone_utils import local_date_to_utc_range, utc_naive_to_local_date
+from app.resort_os.timezone_utils import (
+    local_date_to_utc_range, local_now,
+    utc_naive_to_local_date, utc_naive_to_local_time,
+)
 
 
 def _get_order_or_404(db: Session, order_id: int) -> CafeOrder:
@@ -189,6 +193,130 @@ def create_order(
     db.commit()
     db.refresh(order)
     return order
+
+
+# ── Discount ──────────────────────────────────────────────────────────
+# نفس منطق restaurant.services (apply_order_discount/_recompute_discount_for_rule)
+# بالظبط — راجع التعليقات هناك للتفاصيل الكاملة. الكافيه ما كانش عنده أي طريقة
+# حقيقية يطبّق بيها ConditionalDiscount خالص قبل كده (discount_amount كان
+# عمود ميتاته ملوش أي كود بيكتب فيه) — يعني نطاق "outlet" الجديد في الـ
+# discount engine (مثال: "10% خصم كافيه بس") كان هيفضل نظري بدون تكامل حقيقي.
+
+def _order_local_date_and_time(order: CafeOrder) -> tuple[date, time]:
+    """راجع restaurant.services._order_local_date_and_time للتفاصيل الكاملة —
+    نفس المنطق بالظبط (created_at UTC naive → تاريخ/وقت بتوقيت القاهرة)."""
+    if not order.created_at:
+        now_local = local_now(settings.TIMEZONE)
+        return now_local.date(), now_local.time()
+    return (
+        utc_naive_to_local_date(order.created_at, settings.TIMEZONE),
+        utc_naive_to_local_time(order.created_at, settings.TIMEZONE),
+    )
+
+
+def _build_discount_line_items(db: Session, order: CafeOrder) -> list[OrderLineItem]:
+    """راجع restaurant.services._build_discount_line_items — نفس المنطق
+    بالظبط (استعلام واحد لكل الأصناف المميزة، بدون N+1)."""
+    active_items = [i for i in order.items if i.status != "cancelled"]
+    item_ids = {i.item_id for i in active_items}
+    category_by_item: dict[int, int | None] = {}
+    if item_ids:
+        category_by_item = dict(
+            db.query(CafeItem.id, CafeItem.category_id)
+            .filter(CafeItem.id.in_(item_ids))
+            .all()
+        )
+    return [
+        OrderLineItem(
+            item_id=i.item_id,
+            quantity=i.quantity,
+            unit_price=i.unit_price,
+            category_id=category_by_item.get(i.item_id),
+        )
+        for i in active_items
+    ]
+
+
+def apply_order_discount(db: Session, order_id: int) -> CafeOrder:
+    """نفس restaurant.services.apply_order_discount بالظبط، بـ outlet="cafe"
+    عشان قواعد scope_type="outlet" تفرّق فعليًا بين مطعم وكافيه."""
+    order = _get_order_or_404(db, order_id)
+
+    if order.status in ("paid", "cancelled"):
+        raise ValueError("لا يمكن تطبيق خصم على طلب مغلق")
+
+    rules: list[DiscountRule] = []
+    try:
+        from app.modules.finance.models import ConditionalDiscount  # noqa: PLC0415
+        from app.modules.finance.services import discount_rule_from_orm  # noqa: PLC0415
+        rules_orm = (
+            db.query(ConditionalDiscount)
+            .filter(
+                ConditionalDiscount.branch_id == order.branch_id,
+                ConditionalDiscount.is_active.is_(True),
+            )
+            .all()
+        )
+        rules = [discount_rule_from_orm(r) for r in rules_orm]
+    except ImportError:
+        pass
+
+    total_items = sum(item.quantity for item in order.items)
+    order_date, order_time = _order_local_date_and_time(order)
+    ctx = OrderContext(
+        total_amount=order.subtotal,
+        item_count=total_items,
+        order_date=order_date,
+        order_time=order_time,
+        outlet="cafe",
+        line_items=_build_discount_line_items(db, order),
+    )
+
+    result = calculate_discount(order.subtotal, rules, ctx)
+    order = crud.update_order_discount(
+        db, order,
+        discount_amount=result.amount_saved,
+        rule_id=result.rule_id,
+    )
+
+    if result.applied and result.rule_id:
+        try:
+            from app.modules.finance.crud import increment_discount_uses  # noqa: PLC0415
+            increment_discount_uses(db, result.rule_id)
+        except ImportError:
+            pass
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def _recompute_discount_for_rule(
+    db: Session, rule_id: int, new_subtotal: Decimal, order: CafeOrder,
+) -> tuple[Decimal, Optional[int]]:
+    """راجع restaurant.services._recompute_discount_for_rule — نفس المنطق
+    بالظبط، بيتنادى من void_order_item بعد إلغاء صنف."""
+    try:
+        from app.modules.finance.models import ConditionalDiscount  # noqa: PLC0415
+        from app.modules.finance.services import discount_rule_from_orm  # noqa: PLC0415
+    except ImportError:
+        return Decimal("0"), None
+
+    rule_orm = db.query(ConditionalDiscount).filter(ConditionalDiscount.id == rule_id).first()
+    if not rule_orm or not rule_orm.is_active:
+        return Decimal("0"), None
+
+    order_date, order_time = _order_local_date_and_time(order)
+    ctx = OrderContext(
+        total_amount=new_subtotal,
+        item_count=0,
+        order_date=order_date,
+        order_time=order_time,
+        outlet="cafe",
+        line_items=_build_discount_line_items(db, order),
+    )
+    result = calculate_discount(new_subtotal, [discount_rule_from_orm(rule_orm)], ctx)
+    return result.amount_saved, result.rule_id
 
 
 def generate_receipt_pdf(db: Session, order_id: int) -> bytes:
@@ -440,12 +568,26 @@ def void_order_item(
     svc_pct    = Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
-    total      = max(Decimal("0"), subtotal + vat_amount + svc_charge - order.discount_amount)
 
-    order.subtotal       = subtotal
-    order.vat_amount     = vat_amount
-    order.service_charge = svc_charge
-    order.total          = total
+    # راجع restaurant.services.void_order_item لتفاصيل الباج الأصلي اللي ده
+    # بيصلحه: خصم % محسوب على subtotal أكبر قبل الإلغاء لازم يتصلح على
+    # subtotal الجديد الأصغر، وإلا نسبة الخصم الفعلية تزيد عن اللي القاعدة سمحت
+    # بيه (أو الطلب يفضل "مؤهل" لخصم مبقاش شرطه متحقق أصلاً).
+    discount_amount = order.discount_amount
+    applied_rule_id = order.applied_discount_rule_id
+    if applied_rule_id:
+        discount_amount, applied_rule_id = _recompute_discount_for_rule(
+            db, applied_rule_id, subtotal, order,
+        )
+
+    total = max(Decimal("0"), subtotal + vat_amount + svc_charge - discount_amount)
+
+    order.subtotal                 = subtotal
+    order.vat_amount               = vat_amount
+    order.service_charge           = svc_charge
+    order.discount_amount          = discount_amount
+    order.applied_discount_rule_id = applied_rule_id
+    order.total                    = total
 
     db.commit()
     db.refresh(order)

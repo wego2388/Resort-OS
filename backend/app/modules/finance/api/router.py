@@ -266,7 +266,7 @@ def calculate_discount_endpoint(
 ):
     result = services.calculate_order_discount(
         db, data.branch_id, data.order_total,
-        data.item_count, data.customer_group, data.order_date,
+        data.item_count, data.customer_group, data.order_date, data.order_time,
     )
     return {
         "applied":        result.applied,

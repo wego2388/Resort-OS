@@ -36,6 +36,14 @@ class ConditionalDiscount(Base, TimestampMixin):
     valid_until:     Mapped[date]    = mapped_column(Date)
     priority:        Mapped[int]     = mapped_column(Integer, default=1)
     is_active:       Mapped[bool]    = mapped_column(Boolean, default=True)
+    # نطاق التطبيق — "order" (افتراضي، زي القديم بالظبط) يعني الخصم على إجمالي
+    # الطلب كله أي outlet. "outlet" يقصر الخصم على مطعم/كافيه/شاطئ بعينه.
+    # "category"/"item" يقصر الخصم على سطور الطلب المطابقة بس (مش الإجمالي
+    # كله) — راجع docstring DiscountRule في app.resort_os.discount_engine
+    # للتفاصيل الكاملة + صيغة condition_value الجديدة (time_of_day/combo_items).
+    scope_type:      Mapped[str]         = mapped_column(String(20), default="order")
+    scope_outlet:    Mapped[str | None]  = mapped_column(String(20), nullable=True)
+    scope_id:        Mapped[int | None]  = mapped_column(Integer, nullable=True)
 
 
 class Folio(Base, TimestampMixin):
