@@ -14,8 +14,12 @@ const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Table    { id: number; table_number: string; status: string; capacity: number }
 interface Category { id: number; name: string; name_ar: string }
-interface MenuItem { id: number; name: string; name_ar: string; price: number; is_available: boolean; category_id: number; description_ar?: string }
-interface CartItem { menu_item_id: number; name: string; name_ar: string; price: number; quantity: number; notes: string }
+interface Variant  { id: number; name: string; name_ar: string | null; price: number; is_available: boolean }
+interface MenuItem { id: number; name: string; name_ar: string; price: number; is_available: boolean; category_id: number; description_ar?: string; variants?: Variant[] }
+interface CartItem {
+  menu_item_id: number; variant_id: number | null; variant_label: string | null
+  name: string; name_ar: string; price: number; quantity: number; notes: string
+}
 
 // ── State ──────────────────────────────────────────────────────────────────────
 const tables            = ref<Table[]>([])
@@ -35,8 +39,9 @@ const submitting        = ref(false)
 const successMsg        = ref('')
 const errorMsg          = ref('')
 
-// Note editor modal
-const editingNoteId  = ref<number | null>(null)
+// Note editor modal — مفتاح مركّب (راجع cartKey) عشان يميّز بين سطرين
+// لنفس الصنف بمتغيّرات مختلفة
+const editingNoteId  = ref<string | null>(null)
 const tempNote       = ref('')
 
 // ── Active orders (الطلبات الجارية) — نقطة الدخول الوحيدة للكاشير عشان
@@ -97,12 +102,32 @@ const filteredItems = computed(() =>
 const total    = computed(() => cart.value.reduce((s, i) => s + i.price * i.quantity, 0))
 const hasItems = computed(() => cart.value.length > 0)
 
+// ── متغيّرات (حجم/نوع) — لو الصنف عنده متغيّرات متاحة، لازم يتحدد واحد
+// منهم إجباريًا وقت الطلب (الباك إند بيرفض غير كده)، فبدل الإضافة المباشرة
+// للسلة بنفتح مودال اختيار صغير. صنف بدون متغيّرات سلوكه زي ما كان بالظبط. ──
+const variantPickerItem = ref<MenuItem | null>(null)
+
+// مفتاح تعريف سطر السلة — menu_item_id لوحده مش كافي لما يبقى فيه أكتر من
+// سطر لنفس الصنف بمتغيّرات مختلفة (كابتشينو صغير + كابتشينو كبير في نفس
+// الأوردر)، فكل عمليات المطابقة (إضافة/حذف/تعديل كمية/ملاحظة) لازم تستخدم
+// الـ key المركّب ده بدل menu_item_id بمفرده.
+function cartKey(menuItemId: number, variantId: number | null): string {
+  return variantId != null ? `${menuItemId}:${variantId}` : `${menuItemId}`
+}
+
 // ── Cart actions ───────────────────────────────────────────────────────────────
 function addToCart(item: MenuItem) {
-  const existing = cart.value.find(c => c.menu_item_id === item.id)
+  const availableVariants = (item.variants ?? []).filter(v => v.is_available)
+  if (availableVariants.length > 0) {
+    variantPickerItem.value = item
+    return
+  }
+  const existing = cart.value.find(c => cartKey(c.menu_item_id, c.variant_id) === cartKey(item.id, null))
   if (existing) { existing.quantity++; return }
   cart.value.push({
     menu_item_id: item.id,
+    variant_id:   null,
+    variant_label: null,
     name:         item.name,
     name_ar:      item.name_ar,
     price:        item.price,
@@ -111,15 +136,34 @@ function addToCart(item: MenuItem) {
   })
 }
 
-function removeFromCart(itemId: number) {
-  cart.value = cart.value.filter(c => c.menu_item_id !== itemId)
+function addToCartWithVariant(item: MenuItem, variant: Variant) {
+  variantPickerItem.value = null
+  const key = cartKey(item.id, variant.id)
+  const existing = cart.value.find(c => cartKey(c.menu_item_id, c.variant_id) === key)
+  if (existing) { existing.quantity++; return }
+  cart.value.push({
+    menu_item_id: item.id,
+    variant_id:   variant.id,
+    variant_label: variant.name_ar || variant.name,
+    name:         item.name,
+    name_ar:      item.name_ar,
+    price:        variant.price,
+    quantity:     1,
+    notes:        '',
+  })
 }
 
-function adjustQty(itemId: number, delta: number) {
-  const item = cart.value.find(c => c.menu_item_id === itemId)
+function removeFromCart(menuItemId: number, variantId: number | null) {
+  const key = cartKey(menuItemId, variantId)
+  cart.value = cart.value.filter(c => cartKey(c.menu_item_id, c.variant_id) !== key)
+}
+
+function adjustQty(menuItemId: number, variantId: number | null, delta: number) {
+  const key = cartKey(menuItemId, variantId)
+  const item = cart.value.find(c => cartKey(c.menu_item_id, c.variant_id) === key)
   if (!item) return
   item.quantity = Math.max(0, item.quantity + delta)
-  if (item.quantity === 0) removeFromCart(itemId)
+  if (item.quantity === 0) removeFromCart(menuItemId, variantId)
 }
 
 function clearOrder() {
@@ -128,13 +172,13 @@ function clearOrder() {
 }
 
 // ── Note editor ────────────────────────────────────────────────────────────────
-function openNoteEditor(itemId: number, currentNote: string) {
-  editingNoteId.value = itemId
+function openNoteEditor(menuItemId: number, variantId: number | null, currentNote: string) {
+  editingNoteId.value = cartKey(menuItemId, variantId)
   tempNote.value = currentNote
 }
 
 function saveNote() {
-  const item = cart.value.find(c => c.menu_item_id === editingNoteId.value)
+  const item = cart.value.find(c => cartKey(c.menu_item_id, c.variant_id) === editingNoteId.value)
   if (item) item.notes = tempNote.value
   editingNoteId.value = null
 }
@@ -193,6 +237,7 @@ async function submitOrder() {
       guests_count: covers.value,
       items: cart.value.map(i => ({
         menu_item_id: i.menu_item_id,
+        variant_id:   i.variant_id ?? undefined,
         quantity:     i.quantity,
         notes:        i.notes || undefined,
       })),
@@ -374,7 +419,10 @@ onMounted(() => {
             <div class="font-semibold text-gray-900 text-sm leading-tight mb-2">
               {{ item.name_ar || item.name }}
             </div>
-            <div class="text-lg font-black text-blue-700">
+            <div v-if="(item.variants ?? []).filter(v => v.is_available).length > 0" class="text-sm font-bold text-blue-700">
+              من {{ Math.min(...item.variants!.filter(v => v.is_available).map(v => v.price)) }}<span class="text-xs font-normal text-gray-400 mr-0.5">ج · اختر الحجم</span>
+            </div>
+            <div v-else class="text-lg font-black text-blue-700">
               {{ item.price }}<span class="text-xs font-normal text-gray-400 mr-0.5">ج</span>
             </div>
           </button>
@@ -409,16 +457,17 @@ onMounted(() => {
 
           <div
             v-for="item in cart"
-            :key="item.menu_item_id"
+            :key="cartKey(item.menu_item_id, item.variant_id)"
             class="bg-stone-50 rounded-lg p-3 border border-stone-200"
           >
             <!-- Item name + remove -->
             <div class="flex items-start justify-between mb-2 gap-1">
               <span class="text-sm font-semibold text-gray-900 leading-tight flex-1">
                 {{ item.name_ar || item.name }}
+                <span v-if="item.variant_label" class="text-xs font-normal text-blue-600">— {{ item.variant_label }}</span>
               </span>
               <button
-                @click="removeFromCart(item.menu_item_id)"
+                @click="removeFromCart(item.menu_item_id, item.variant_id)"
                 class="text-red-400 hover:text-red-600 text-lg leading-none flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-red-50 transition-colors"
               >×</button>
             </div>
@@ -427,12 +476,12 @@ onMounted(() => {
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-1.5">
                 <button
-                  @click="adjustQty(item.menu_item_id, -1)"
+                  @click="adjustQty(item.menu_item_id, item.variant_id, -1)"
                   class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 text-sm font-bold transition-colors leading-none"
                 >−</button>
                 <span class="text-sm font-bold w-5 text-center">{{ item.quantity }}</span>
                 <button
-                  @click="adjustQty(item.menu_item_id, 1)"
+                  @click="adjustQty(item.menu_item_id, item.variant_id, 1)"
                   class="w-6 h-6 rounded bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-bold transition-colors leading-none"
                 >+</button>
               </div>
@@ -441,7 +490,7 @@ onMounted(() => {
 
             <!-- Notes -->
             <button
-              @click="openNoteEditor(item.menu_item_id, item.notes)"
+              @click="openNoteEditor(item.menu_item_id, item.variant_id, item.notes)"
               class="mt-2 text-xs text-gray-400 hover:text-blue-600 transition-colors text-right w-full truncate"
             >
               {{ item.notes ? `📝 ${item.notes}` : '+ إضافة ملاحظة' }}
@@ -536,6 +585,27 @@ onMounted(() => {
         </div>
       </div>
     </Transition>
+
+    <!-- ── اختيار الحجم/النوع (Variant) — لصنف عنده متغيّرات متاحة، لازم
+         يتحدد واحد قبل الإضافة للسلة (الباك إند بيرفض غير كده). ── -->
+    <AppModal
+      :open="variantPickerItem !== null"
+      :title="`اختر الحجم/النوع — ${variantPickerItem?.name_ar || variantPickerItem?.name || ''}`"
+      size="sm"
+      @close="variantPickerItem = null"
+    >
+      <div v-if="variantPickerItem" class="space-y-2">
+        <button
+          v-for="variant in variantPickerItem.variants!.filter(v => v.is_available)"
+          :key="variant.id"
+          @click="addToCartWithVariant(variantPickerItem!, variant)"
+          class="w-full flex items-center justify-between gap-2 p-3 rounded-xl border-2 border-stone-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all text-right"
+        >
+          <span class="font-semibold text-gray-900 text-sm">{{ variant.name_ar || variant.name }}</span>
+          <span class="font-black text-blue-700">{{ variant.price }} ج</span>
+        </button>
+      </div>
+    </AppModal>
 
     <!-- ── Active orders list ── -->
     <AppModal :open="activeOrdersOpen" title="الطلبات الجارية" size="sm" @close="activeOrdersOpen = false">
