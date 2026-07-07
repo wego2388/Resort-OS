@@ -155,6 +155,10 @@ class CafeOrderCreate(BaseModel):
 
 class CafeOrderItemVoidRequest(BaseModel):
     reason: str = Field(..., min_length=3, max_length=200)
+    # موافقة مدير بالـ PIN — راجع restaurant.schemas.OrderItemVoidRequest
+    # لنفس التعليق بالتفصيل (نفس النمط بالظبط في الموديولين).
+    approver_user_id: Optional[int] = None
+    approver_pin:      Optional[str] = Field(None, pattern=r"^\d{4,6}$")
 
 
 class CafeOrderItemExtraRead(BaseModel):

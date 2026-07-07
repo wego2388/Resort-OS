@@ -130,6 +130,7 @@ class AuditLogCreate(BaseModel):
     new_data:    Optional[str] = None   # JSON string
     ip_address:  Optional[str] = Field(None, max_length=45)
     user_agent:  Optional[str] = Field(None, max_length=500)
+    approved_by: Optional[int] = None  # راجع PinCredential — موافقة PIN لإجراء حسّاس
 
 
 # ─────────────────────── Users ───────────────────────────────────────
@@ -264,6 +265,31 @@ class GuestAlertAck(BaseModel):
 class GuestAlertStatusUpdate(BaseModel):
     """طاقم الخدمة بس — الضيف مش بيقدر يحدد status عند الإنشاء (دايمًا open)."""
     status: str = Field(..., pattern=r"^(acknowledged|resolved)$")
+
+
+# ─────────────────────── PIN Credentials ──────────────────────────────
+
+class PinSetRequest(BaseModel):
+    """ضبط/تجديد PIN — 4 لـ 6 أرقام بس (زي أي POS حقيقي)."""
+    pin: str = Field(..., pattern=r"^\d{4,6}$", description="4-6 أرقام")
+
+
+class PinCredentialRead(BaseModel):
+    """حالة الـ PIN بس — أبدًا مش الـ hash أو الرقم نفسه."""
+    model_config = ConfigDict(from_attributes=True)
+    user_id:         int
+    has_pin:         bool = True
+    failed_attempts: int
+    is_locked:       bool
+
+
+class ApproverOption(BaseModel):
+    """خيار في قائمة "اختر المدير" وقت موافقة PIN — بيانات دنيا، مفيش
+    email/PII خالص (مش endpoint إدارة مستخدمين)."""
+    model_config = ConfigDict(from_attributes=True)
+    id:        int
+    full_name: str
+    role:      str
 
 
 # ─────────────────────── Pagination ──────────────────────────────────

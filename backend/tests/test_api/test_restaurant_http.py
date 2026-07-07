@@ -476,6 +476,20 @@ class TestOrderPaymentPermission:
         assert resp.json()["status"] == "in_kitchen"
 
 
+def _set_pin(db, email: str, pin: str) -> int:
+    """يضبط PIN حقيقي لمستخدم اختباري عبر core.services (نفس المسار اللي
+    endpoint الحقيقي بينادي عليه) — يرجّع user.id عشان يُستخدم كـ
+    approver_user_id في تست void/refund. لازم commit صريح (نفس الملاحظة في
+    أعلى الملف — الـ TestClient بيستخدم session مختلفة)."""
+    from app.core.kernel.models.user import User
+    from app.modules.core import services as core_services
+
+    user = db.query(User).filter(User.email == email).first()
+    core_services.set_pin(db, user.id, pin, created_by=user.id)
+    db.commit()
+    return user.id
+
+
 class TestVoidOrderItem:
     def test_void_requires_cashier_level(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
@@ -495,7 +509,71 @@ class TestVoidOrderItem:
         )
         assert resp.status_code == 403
 
-    def test_void_recomputes_order_total(self, client: TestClient, db, cashier_headers, waiter_headers):
+    def test_void_by_manager_needs_no_pin_approval(self, client: TestClient, db, manager_headers, waiter_headers):
+        """مدير (level 60) مؤهّل بنفسه — مفيش داعي لموافقة PIN من حد تاني
+        (راجع core.services.resolve_pin_approval)."""
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 2}]},
+            headers=waiter_headers,
+        ).json()
+        order_item_id = order["items"][0]["id"]
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            json={"reason": "العميل غيّر رأيه"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"][0]["status"] == "cancelled"
+
+    def test_void_by_cashier_without_pin_is_rejected(self, client: TestClient, db, cashier_headers, waiter_headers):
+        """⚠️ باج أمني حقيقي اتصلح (2026-07-07): كاشير (level 40) كان يقدر
+        يلغي صنف من غير أي إشراف — دلوقتي محتاج موافقة PIN من مدير+."""
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        order_item_id = order["items"][0]["id"]
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            json={"reason": "طلب خطأ"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+        assert "PIN" in resp.json()["detail"] or "موافقة" in resp.json()["detail"]
+
+    def test_void_by_cashier_with_wrong_manager_pin_is_rejected(
+        self, client: TestClient, db, cashier_headers, manager_headers, waiter_headers,
+    ):
+        manager_id = _set_pin(db, "manager@test.local", "1234")
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        order_item_id = order["items"][0]["id"]
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            json={"reason": "طلب خطأ", "approver_user_id": manager_id, "approver_pin": "9999"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_void_recomputes_order_total(self, client: TestClient, db, cashier_headers, manager_headers, waiter_headers):
+        manager_id = _set_pin(db, "manager@test.local", "1234")
         branch = make_branch_committed(db)
         item = make_menu_item_committed(db, branch)
         order = client.post(
@@ -509,7 +587,7 @@ class TestVoidOrderItem:
 
         resp = client.patch(
             f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
-            json={"reason": "العميل غيّر رأيه"},
+            json={"reason": "العميل غيّر رأيه", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=cashier_headers,
         )
         assert resp.status_code == 200, resp.text
@@ -519,7 +597,45 @@ class TestVoidOrderItem:
         assert body["items"][0]["voided_reason"] == "العميل غيّر رأيه"
         assert body["items"][0]["voided_by"] is not None
 
-    def test_double_void_rejected(self, client: TestClient, db, cashier_headers, waiter_headers):
+    def test_void_with_pin_approval_writes_dual_attribution_audit_log(
+        self, client: TestClient, db, cashier_headers, manager_headers, waiter_headers,
+    ):
+        """الإجراء بيتسجل باسم الاثنين: مين نفّذ (voided_by/user_id) ومين
+        وافق (approved_by) — راجع core.models.AuditLog.approved_by."""
+        from app.core.kernel.models.user import User
+        from app.modules.core.models import AuditLog
+
+        manager_id = _set_pin(db, "manager@test.local", "1234")
+        cashier = db.query(User).filter(User.email == "cashier@test.local").first()
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        order_item_id = order["items"][0]["id"]
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            json={"reason": "بموافقة المدير", "approver_user_id": manager_id, "approver_pin": "1234"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        log = (
+            db.query(AuditLog)
+            .filter(AuditLog.action == "void_order_item", AuditLog.entity_id == order_item_id)
+            .order_by(AuditLog.id.desc())
+            .first()
+        )
+        assert log is not None
+        assert log.user_id == cashier.id
+        assert log.approved_by == manager_id
+
+    def test_double_void_rejected(self, client: TestClient, db, cashier_headers, manager_headers, waiter_headers):
+        manager_id = _set_pin(db, "manager@test.local", "1234")
         branch = make_branch_committed(db)
         item = make_menu_item_committed(db, branch)
         order = client.post(
@@ -532,12 +648,12 @@ class TestVoidOrderItem:
 
         client.patch(
             f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
-            json={"reason": "الأول"},
+            json={"reason": "الأول", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=cashier_headers,
         )
         resp = client.patch(
             f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
-            json={"reason": "التاني"},
+            json={"reason": "التاني", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=cashier_headers,
         )
         assert resp.status_code == 400

@@ -31,6 +31,17 @@ def make_item_committed(db, branch, available=True):
     return item
 
 
+def _set_pin(db, email: str, pin: str) -> int:
+    """راجع test_restaurant_http.py::_set_pin — نفس المنطق بالظبط."""
+    from app.core.kernel.models.user import User
+    from app.modules.core import services as core_services
+
+    user = db.query(User).filter(User.email == email).first()
+    core_services.set_pin(db, user.id, pin, created_by=user.id)
+    db.commit()
+    return user.id
+
+
 def make_table_committed(db, branch):
     from app.modules.cafe.models import CafeTable
     table = CafeTable(branch_id=branch.id, table_number=f"C-{uuid.uuid4().hex[:6].upper()}",
@@ -281,7 +292,28 @@ class TestCafeVoidOrderItem:
         )
         assert resp.status_code == 403
 
-    def test_void_recomputes_order_total(self, client: TestClient, db, fake_redis, cashier_headers, waiter_headers):
+    def test_void_by_cashier_without_pin_is_rejected(self, client: TestClient, db, fake_redis, cashier_headers, waiter_headers):
+        """⚠️ باج أمني حقيقي اتصلح (2026-07-07): كاشير كان يقدر يلغي صنف
+        من غير أي إشراف — نفس إصلاح restaurant.void_order_item بالظبط."""
+        branch = make_branch_committed(db)
+        item = make_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={"branch_id": branch.id, "order_type": "takeaway",
+                  "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        order_item_id = order["items"][0]["id"]
+
+        resp = client.patch(
+            f"/api/v1/cafe/orders/{order['id']}/items/{order_item_id}/void",
+            json={"reason": "طلب خطأ"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_void_recomputes_order_total(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers, waiter_headers):
+        manager_id = _set_pin(db, "manager@test.local", "1234")
         branch = make_branch_committed(db)
         item = make_item_committed(db, branch)
         order = client.post(
@@ -295,7 +327,7 @@ class TestCafeVoidOrderItem:
 
         resp = client.patch(
             f"/api/v1/cafe/orders/{order['id']}/items/{order_item_id}/void",
-            json={"reason": "العميل غيّر رأيه"},
+            json={"reason": "العميل غيّر رأيه", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=cashier_headers,
         )
         assert resp.status_code == 200, resp.text
@@ -305,7 +337,8 @@ class TestCafeVoidOrderItem:
         assert body["items"][0]["voided_reason"] == "العميل غيّر رأيه"
         assert body["items"][0]["voided_by"] is not None
 
-    def test_double_void_rejected(self, client: TestClient, db, fake_redis, cashier_headers, waiter_headers):
+    def test_double_void_rejected(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers, waiter_headers):
+        manager_id = _set_pin(db, "manager@test.local", "1234")
         branch = make_branch_committed(db)
         item = make_item_committed(db, branch)
         order = client.post(
@@ -318,12 +351,12 @@ class TestCafeVoidOrderItem:
 
         client.patch(
             f"/api/v1/cafe/orders/{order['id']}/items/{order_item_id}/void",
-            json={"reason": "الأول"},
+            json={"reason": "الأول", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=cashier_headers,
         )
         resp = client.patch(
             f"/api/v1/cafe/orders/{order['id']}/items/{order_item_id}/void",
-            json={"reason": "التاني"},
+            json={"reason": "التاني", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=cashier_headers,
         )
         assert resp.status_code == 400
@@ -934,7 +967,7 @@ class TestCafeInventoryDeductionEdgeCases:
     ورصيد غير كافٍ بيفشل بصمت من غير ما يمنع الدفع."""
 
     def test_cancelled_item_skipped_active_item_still_deducted(
-        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers,
+        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers, manager_headers,
     ):
         from datetime import datetime as _dt
         from app.modules.inventory.models import Product, Warehouse
@@ -971,11 +1004,15 @@ class TestCafeInventoryDeductionEdgeCases:
         ).json()
         order_item_a_id = next(i["id"] for i in order["items"] if i["item_id"] == item_a.id)
 
-        # نلغي صنف A قبل الدفع — لازم يتخطّى خصم المخزون بتاعه، وB يتخصم عادي
-        client.patch(
+        # نلغي صنف A قبل الدفع — لازم يتخطّى خصم المخزون بتاعه، وB يتخصم عادي.
+        # عن طريق مدير (بدل كاشير) عشان نتجنّب متطلب موافقة PIN اللي مش
+        # موضوع التست ده أصلاً — راجع TestVoidOrderItem/TestCafeVoidOrderItem
+        # للتست المخصص لسلوك موافقة الـ PIN نفسه.
+        void_resp = client.patch(
             f"/api/v1/cafe/orders/{order['id']}/items/{order_item_a_id}/void",
-            json={"reason": "العميل عدل رأيه"}, headers=cashier_headers,
+            json={"reason": "العميل عدل رأيه"}, headers=manager_headers,
         )
+        assert void_resp.status_code == 200, void_resp.text
 
         resp = client.patch(f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "paid"}, headers=cashier_headers)
         assert resp.status_code == 200, resp.text
@@ -1079,6 +1116,7 @@ class TestCafeVoidRefundEdgeCases:
     def test_void_recomputes_total_keeping_remaining_item_extras(
         self, client: TestClient, db, fake_redis, manager_headers, waiter_headers, cashier_headers,
     ):
+        manager_id = _set_pin(db, "manager@test.local", "1234")
         branch = make_branch_committed(db)
         item_plain = make_item_committed(db, branch)
         item_with_extra = make_item_committed(db, branch)
@@ -1106,7 +1144,7 @@ class TestCafeVoidRefundEdgeCases:
 
         resp = client.patch(
             f"/api/v1/cafe/orders/{order['id']}/items/{plain_order_item_id}/void",
-            json={"reason": "الغاء صنف"},
+            json={"reason": "الغاء صنف", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=cashier_headers,
         )
         assert resp.status_code == 200, resp.text

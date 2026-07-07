@@ -178,6 +178,11 @@ class OrderCreate(BaseModel):
 
 class OrderItemVoidRequest(BaseModel):
     reason: str = Field(..., min_length=3, max_length=200)
+    # موافقة مدير بالـ PIN — مطلوبة بس لو المنفّذ (الكاشير/النادل) أقل من
+    # مستوى مدير (راجع core.services.resolve_pin_approval). لو المنفّذ نفسه
+    # مدير+، الحقلين دول بيتجاهلوا تمامًا (مفيش داعي لموافقته على نفسه).
+    approver_user_id: Optional[int] = None
+    approver_pin:      Optional[str] = Field(None, pattern=r"^\d{4,6}$")
 
 
 class OrderItemExtraRead(BaseModel):

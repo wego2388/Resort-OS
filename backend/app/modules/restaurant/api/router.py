@@ -309,9 +309,15 @@ async def update_order_status(order_id: int, data: OrderStatusUpdate,
 def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest,
                     db: DbDep, user=Depends(get_current_active_user)):
     """إلغاء صنف واحد بسبب إجباري — كاشير أو أعلى بس (مش الجرسون)، زي أي
-    إجراء مالي تاني في النظام ده (نفس مستوى apply_discount)."""
+    إجراء مالي تاني في النظام ده (نفس مستوى apply_discount). لو المنفّذ أقل
+    من مدير، لازم موافقة PIN من مدير (data.approver_user_id/approver_pin)
+    — راجع core.services.resolve_pin_approval."""
     try:
-        return services.void_order_item(db, order_id, item_id, data.reason, voided_by=user.id)
+        return services.void_order_item(
+            db, order_id, item_id, data.reason, voided_by=user.id,
+            acting_user_level=user_level(user),
+            approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

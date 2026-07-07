@@ -1,6 +1,7 @@
 """app/modules/cafe/services.py — نفس منطق restaurant مع جداول cafe"""
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -395,10 +396,15 @@ def _post_order_folio_charge_journal(db: Session, order: "CafeOrder") -> None:
     )
 
 
-def void_order_item(db: Session, order_id: int, item_id: int, reason: str, voided_by: int) -> CafeOrder:
+def void_order_item(
+    db: Session, order_id: int, item_id: int, reason: str, voided_by: int,
+    acting_user_level: int = 100, approver_user_id: Optional[int] = None,
+    approver_pin: Optional[str] = None,
+) -> CafeOrder:
     """إلغاء صنف واحد من الطلب مع سبب إجباري + توثيق مين لغاه — نفس منطق
     restaurant.void_order_item بالضبط، بيعيد حساب subtotal/vat/service/total
-    من الأصناف الفعّالة بس."""
+    من الأصناف الفعّالة بس. راجع restaurant.services.void_order_item لتفاصيل
+    ``acting_user_level``/موافقة الـ PIN — نفس المنطق بالظبط."""
     order = _get_order_or_404(db, order_id)
     if order.status in ("paid", "cancelled"):
         raise ValueError(f"لا يمكن إلغاء صنف من طلب '{order.status}' — استخدم مرتجع بعد الدفع")
@@ -409,7 +415,19 @@ def void_order_item(db: Session, order_id: int, item_id: int, reason: str, voide
     if item.status == "cancelled":
         raise ValueError("الصنف ده ملغي بالفعل")
 
+    from app.modules.core import crud as core_crud, services as core_services  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+    approved_by = core_services.resolve_pin_approval(
+        db, acting_user_level, approver_user_id, approver_pin, min_approver_level=60,
+    )
+
     crud.void_order_item(db, item, reason, voided_by)
+    core_crud.create_audit_log(db, AuditLogCreate(
+        user_id=voided_by, approved_by=approved_by, branch_id=order.branch_id,
+        action="void_order_item", entity_type="cafe_order_item", entity_id=item.id,
+        new_data=json.dumps({"reason": reason}),
+    ))
 
     subtotal = Decimal("0")
     for i in order.items:

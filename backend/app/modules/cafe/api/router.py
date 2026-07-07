@@ -217,9 +217,14 @@ async def update_order_status(order_id: int, data: CafeOrderStatusUpdate, db: Db
 def void_order_item(order_id: int, item_id: int, data: CafeOrderItemVoidRequest,
                     db: DbDep, user=Depends(get_current_active_user)):
     """إلغاء صنف واحد بسبب إجباري — كاشير أو أعلى بس (مش الجرسون)، نفس
-    مستوى restaurant.void_order_item."""
+    مستوى restaurant.void_order_item — بما فيه موافقة PIN لو المنفّذ أقل
+    من مدير."""
     try:
-        return services.void_order_item(db, order_id, item_id, data.reason, voided_by=user.id)
+        return services.void_order_item(
+            db, order_id, item_id, data.reason, voided_by=user.id,
+            acting_user_level=user_level(user),
+            approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

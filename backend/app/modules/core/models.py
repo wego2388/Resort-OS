@@ -89,6 +89,11 @@ class AuditLog(Base, TimestampMixin):
     new_data: Mapped[str | None] = mapped_column(Text)  # JSON
     ip_address: Mapped[str | None] = mapped_column(String(45))
     user_agent: Mapped[str | None] = mapped_column(String(500))
+    # مين وافق عبر PIN (لو الإجراء كان محتاج موافقة مدير — راجع PinCredential
+    # تحت) — منفصل عن user_id (اللي نفّذ الإجراء فعليًا، عادة كاشير/نادل).
+    # NULL يعني الإجراء ما احتاجش موافقة PIN أصلاً (المنفّذ نفسه كان عنده
+    # صلاحية كافية، أو الإجراء مش من النوع الحسّاس ده خالص).
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True, index=True)
 
 
 # ────────────────────────── UserPermission ───────────────────────────
@@ -155,3 +160,29 @@ class GuestAlert(Base, TimestampMixin):
     # user.id اللي قفل التنبيه — بدون FK زي order_items.voided_by (نفس السبب:
     # مرجع تدقيقي بسيط، مش علاقة يحتاج SQLAlchemy يحمّلها)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ────────────────────────── PinCredential ─────────────────────────────
+# رقم PIN تشغيلي (4-6 أرقام) — منفصل تمامًا عن كلمة سر الحساب (email+password
+# +2FA). الاستخدام: (أ) موافقة مدير سريعة على إجراء حسّاس (إلغاء صنف، مرتجع)
+# لما المنفّذ الفعلي (كاشير/نادل) أقل من مستوى الموافقة المطلوب — راجع
+# core.services.resolve_pin_approval. (ب) لاحقًا: تبديل هوية المشغّل على
+# جهاز كاشير واحد بدون login/logout كامل لكل شخص (خارج نطاق هذا التعديل).
+#
+# قرار معماري متعمد: PIN **مش نظام مصادقة مواز** للـ JWT الموجود — أي إجراء
+# لازم يبدأ من مستخدم مسجّل دخوله فعليًا بالـ JWT العادي (device/terminal
+# session)، والـ PIN بعد كده بيتحقق من هوية شخص تاني (المدير المعتمِد) جوه
+# نفس الطلب. مفيش أي endpoint بيرجع JWT من مجرد PIN صحيح.
+class PinCredential(Base, TimestampMixin):
+    __tablename__ = "pin_credentials"
+
+    id:              Mapped[int]            = mapped_column(primary_key=True)
+    user_id:         Mapped[int]            = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True,
+    )
+    pin_hash:        Mapped[str]            = mapped_column(String(255))  # bcrypt
+    failed_attempts: Mapped[int]            = mapped_column(Integer, default=0)
+    locked_until:    Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # user.id اللي ضبط/جدّد الـ PIN ده — للتدقيق (المدير اللي أنشأه، أو
+    # الموظف نفسه لو غيّره بنفسه من إعداداته)
+    created_by:      Mapped[int]            = mapped_column(Integer)

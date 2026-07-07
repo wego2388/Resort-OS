@@ -20,6 +20,7 @@ from app.modules.core.models import (
     Branch,
     GuestAlert,
     Notification,
+    PinCredential,
     Setting,
     UserPermission,
 )
@@ -225,6 +226,19 @@ def get_user(db: Session, user_id: int):
     return db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
 
 
+def list_users_by_roles(db: Session, roles: list[str]):
+    """يجيب مستخدمين نشطين من أدوار معيّنة — مُستخدم لقائمة "المعتمِدين
+    المؤهّلين" (PIN approval picker)، مش endpoint إدارة مستخدمين كامل، فمفيش
+    داعي لصلاحية super_admin زي list_users."""
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+    return (
+        db.query(User)
+        .filter(User.role.in_(roles), User.is_active.is_(True), User.deleted_at.is_(None))
+        .order_by(User.full_name)
+        .all()
+    )
+
+
 # ─────────────────────── UserPermission ──────────────────────────────
 
 def get_user_permission(
@@ -413,3 +427,44 @@ def update_alert_status(
         alert.resolved_at = datetime.utcnow()
     db.flush()
     return alert
+
+
+# ─────────────────────── PinCredential ────────────────────────────────
+
+def get_pin_credential(db: Session, user_id: int) -> Optional[PinCredential]:
+    return db.query(PinCredential).filter(PinCredential.user_id == user_id).first()
+
+
+def upsert_pin_credential(
+    db: Session, user_id: int, pin_hash: str, created_by: int,
+) -> PinCredential:
+    """ضبط PIN جديد أو استبدال القديم بالكامل — بيصفّر أي قفل/محاولات فاشلة
+    سابقة (PIN جديد يستاهل بداية نظيفة)."""
+    cred = get_pin_credential(db, user_id)
+    if cred:
+        cred.pin_hash = pin_hash
+        cred.created_by = created_by
+        cred.failed_attempts = 0
+        cred.locked_until = None
+    else:
+        cred = PinCredential(
+            user_id=user_id, pin_hash=pin_hash, created_by=created_by,
+        )
+        db.add(cred)
+    db.flush()
+    return cred
+
+
+def record_pin_failure(db: Session, cred: PinCredential, locked_until: Optional[datetime]) -> PinCredential:
+    cred.failed_attempts += 1
+    if locked_until is not None:
+        cred.locked_until = locked_until
+    db.flush()
+    return cred
+
+
+def reset_pin_failures(db: Session, cred: PinCredential) -> PinCredential:
+    cred.failed_attempts = 0
+    cred.locked_until = None
+    db.flush()
+    return cred

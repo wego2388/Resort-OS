@@ -33,6 +33,18 @@ def _menu_item_committed(db, branch):
     return item
 
 
+def _set_manager_pin(db, pin: str) -> int:
+    """راجع test_restaurant_http.py::_set_pin لنفس المنطق — بيستخدم حساب
+    manager@test.local (بيتعمل عبر fixture manager_headers)."""
+    from app.core.kernel.models.user import User
+    from app.modules.core import services as core_services
+
+    user = db.query(User).filter(User.email == "manager@test.local").first()
+    core_services.set_pin(db, user.id, pin, created_by=user.id)
+    db.commit()
+    return user.id
+
+
 def _create_order(client: TestClient, branch_id: int, item_id: int, headers: dict) -> dict:
     resp = client.post(
         "/api/v1/restaurant/orders", params={"branch_id": branch_id},
@@ -87,11 +99,19 @@ class TestExplicitOverrideEndToEnd:
     """يثبت إن الاستثناء الصريح (UserPermission) فعليًا بيغيّر سلوك endpoint حقيقي
     مربوط بيه require_permission — مش مجرد جدول في الداتابيز من غير أي أثر."""
 
-    def test_grant_lets_waiter_void_despite_role(self, client: TestClient, db, super_admin_headers):
+    def test_grant_lets_waiter_void_despite_role(self, client: TestClient, db, super_admin_headers, manager_headers):
+        """⚠️ ملحوظة مهمة (2026-07-07): منح استثناء صريح (UserPermission) بيغيّر
+        "مين مسموح له يحاول العملية" (require_permission gate) — ده مفهوم
+        منفصل تمامًا عن موافقة PIN (core.services.resolve_pin_approval)، اللي
+        بتتحقق من "فيه مدير حاضر وموافق فعليًا على العملية دي بالذات دلوقتي".
+        استثناء صريح من super_admin لواتر واحد مش بديل عن إشراف مدير لحظي —
+        لو حصل العكس (استثناء يلغي احتياج PIN كمان) كان هيبقى ثغرة: أي واتر
+        معاه استثناء واحد قديم يقدر يلغي أي حاجة للأبد من غير أي إشراف فعلي."""
         from tests.conftest import _create_test_user, _make_token
         email = f"perm-waiter-{uuid.uuid4().hex[:6]}@test.local"
         waiter_id = _create_test_user(email, "waiter")
         custom_headers = {"Authorization": f"Bearer {_make_token(email)}"}
+        manager_id = _set_manager_pin(db, "1234")
 
         branch = _branch_committed(db)
         item = _menu_item_committed(db, branch)
@@ -114,10 +134,18 @@ class TestExplicitOverrideEndToEnd:
         )
         assert grant.status_code == 201, grant.text
 
-        # نفس الواتر بنفس التوكن، بعد المنح، ينجح — الـ role نفسه ماتغيرش خالص
+        # بعد المنح: مسموح له يحاول (role gate اتخطّى)، بس لسه محتاج موافقة
+        # PIN من مدير حقيقي (waiter مش مدير، حتى مع الاستثناء)
+        resp_no_pin = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            json={"reason": "بدون موافقة PIN"}, headers=custom_headers,
+        )
+        assert resp_no_pin.status_code == 400
+
         resp2 = client.patch(
             f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
-            json={"reason": "تجربة بعد المنح"}, headers=custom_headers,
+            json={"reason": "تجربة بعد المنح", "approver_user_id": manager_id, "approver_pin": "1234"},
+            headers=custom_headers,
         )
         assert resp2.status_code == 200, resp2.text
         assert resp2.json()["items"][0]["status"] == "cancelled"
@@ -148,11 +176,12 @@ class TestExplicitOverrideEndToEnd:
         )
         assert resp.status_code == 403
 
-    def test_revoke_restores_role_fallback(self, client: TestClient, db, super_admin_headers):
+    def test_revoke_restores_role_fallback(self, client: TestClient, db, super_admin_headers, manager_headers):
         from tests.conftest import _create_test_user, _make_token
         email = f"perm-revoke-{uuid.uuid4().hex[:6]}@test.local"
         waiter_id = _create_test_user(email, "waiter")
         custom_headers = {"Authorization": f"Bearer {_make_token(email)}"}
+        manager_id = _set_manager_pin(db, "1234")
 
         branch = _branch_committed(db)
         item = _menu_item_committed(db, branch)
@@ -167,10 +196,12 @@ class TestExplicitOverrideEndToEnd:
             headers=super_admin_headers,
         ).json()
 
-        # الاستثناء شغال فعلاً
+        # الاستثناء شغال فعلاً — بس لسه محتاج موافقة PIN (راجع تعليق
+        # test_grant_lets_waiter_void_despite_role للتفصيل الكامل)
         assert client.patch(
             f"/api/v1/restaurant/orders/{order1['id']}/items/{order1_item_id}/void",
-            json={"reason": "أول مرة"}, headers=custom_headers,
+            json={"reason": "أول مرة", "approver_user_id": manager_id, "approver_pin": "1234"},
+            headers=custom_headers,
         ).status_code == 200
 
         # يلغي الاستثناء

@@ -48,6 +48,7 @@ from fastapi import (
 from app.core.deps import (
     DbDep,
     get_admin_user,
+    get_cashier_user,
     get_current_active_user,
     get_manager_user,
     get_super_admin_user,
@@ -56,6 +57,7 @@ from app.core.deps import (
 from app.modules.core import crud, services
 from app.modules.core.permission_catalog import PERMISSION_CATALOG
 from app.modules.core.schemas import (
+    ApproverOption,
     AuditLogRead,
     BranchCreate,
     BranchRead,
@@ -68,6 +70,8 @@ from app.modules.core.schemas import (
     NotificationRead,
     PaginatedResponse,
     PermissionCatalogEntryRead,
+    PinCredentialRead,
+    PinSetRequest,
     SettingRead,
     SettingUpdate,
     UserPermissionGrantRequest,
@@ -569,3 +573,60 @@ async def update_guest_alert_status(
         "alert": GuestAlertRead.model_validate(alert).model_dump(mode="json"),
     })
     return GuestAlertRead.model_validate(alert)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# PIN Credentials — موافقة مدير سريعة على إجراء حسّاس (راجع
+# core.services.resolve_pin_approval، PinCredential في models.py)
+# ══════════════════════════════════════════════════════════════════════
+
+def _pin_status_response(user_id: int, cred) -> PinCredentialRead:
+    from datetime import datetime
+
+    if cred is None:
+        return PinCredentialRead(user_id=user_id, has_pin=False, failed_attempts=0, is_locked=False)
+    is_locked = bool(cred.locked_until and cred.locked_until > datetime.utcnow())
+    return PinCredentialRead(
+        user_id=user_id, has_pin=True,
+        failed_attempts=cred.failed_attempts, is_locked=is_locked,
+    )
+
+
+@router.get("/pins/me", response_model=PinCredentialRead)
+def get_my_pin_status(db: DbDep, user=Depends(get_waiter_user)):
+    """حالة الـ PIN بتاعي (موجود؟ مقفول مؤقتًا؟) — أبدًا مش الرقم نفسه."""
+    return _pin_status_response(user.id, services.get_pin_status(db, user.id))
+
+
+@router.get("/pins/approvers", response_model=list[ApproverOption])
+def list_pin_approvers(db: DbDep, _user=Depends(get_cashier_user), min_level: int = Query(60, ge=0, le=100)):
+    """قائمة "اختر المدير" لشاشة موافقة PIN — كاشير+ يقدر يشوفها (محتاجها
+    فعليًا وقت إلغاء صنف)، بس البيانات المُرجعة دنيا (اسم/دور بس، مفيش
+    email) عشان مينفعش نستخدمها كـ endpoint إدارة مستخدمين بديل."""
+    return [
+        ApproverOption.model_validate(u)
+        for u in services.list_eligible_approvers(db, min_level)
+    ]
+
+
+@router.post("/pins/me", response_model=PinCredentialRead, status_code=status.HTTP_201_CREATED)
+def set_my_pin(data: PinSetRequest, db: DbDep, user=Depends(get_waiter_user)):
+    """أي موظف تشغيلي (نادل فأعلى) يقدر يضبط PIN بنفسه — للموافقات اللي
+    هو نفسه مؤهّل ليها (مدير+) أو لاستخدام مستقبلي (تبديل مشغّل، Phase 2)."""
+    cred = services.set_pin(db, user.id, data.pin, created_by=user.id)
+    return _pin_status_response(user.id, cred)
+
+
+@router.get("/pins/{user_id}", response_model=PinCredentialRead)
+def get_user_pin_status(user_id: int, db: DbDep, _user=Depends(get_manager_user)):
+    """مدير بيشوف حالة PIN موظف تاني (موجود/مقفول) — للتأكد قبل تعيين
+    مهمة أو لتشخيص لو موظف بيشتكي إن الـ PIN بتاعه بيترفض دايمًا."""
+    return _pin_status_response(user_id, services.get_pin_status(db, user_id))
+
+
+@router.post("/pins/{user_id}", response_model=PinCredentialRead, status_code=status.HTTP_201_CREATED)
+def set_user_pin(user_id: int, data: PinSetRequest, db: DbDep, user=Depends(get_manager_user)):
+    """مدير يضبط/يجدّد PIN موظف تاني — أونبوردنج كاشير جديد، أو استعادة
+    بعد نسيان/قفل. created_by بيسجّل مين المدير اللي عمل كده."""
+    cred = services.set_pin(db, user_id, data.pin, created_by=user.id)
+    return _pin_status_response(user_id, cred)

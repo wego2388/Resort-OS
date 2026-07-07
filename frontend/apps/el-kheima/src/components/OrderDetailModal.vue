@@ -11,7 +11,7 @@
 //    held order chains both PATCH calls before the kitchen actually sees it.
 import { ref, computed, watch } from 'vue'
 import { AppModal, AppButton, AppBadge } from '@resort-os/ui'
-import { api, useAuthStore } from '@resort-os/core'
+import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
 
 interface OrderItemExtra { id: number; extra_id: number | null; extra_name: string; price_addition: number | string }
 interface OrderItem {
@@ -45,6 +45,9 @@ const emit = defineEmits<{ close: []; changed: [] }>()
 
 const auth = useAuthStore()
 const canVoid = computed(() => auth.hasRole('cashier'))
+// مدير+ مؤهّل بنفسه (راجع core.services.resolve_pin_approval) — كاشير/نادل
+// (canVoid=true بس manager=false) لازم موافقة PIN من مدير حاضر فعليًا.
+const needsPinApproval = computed(() => !auth.hasRole('manager'))
 
 const order = ref<OrderDetail | null>(null)
 const loading = ref(false)
@@ -55,6 +58,9 @@ const successMsg = ref('')
 const voidingItemId = ref<number | null>(null)
 const voidReason = ref('')
 const voidError = ref('')
+const approvers = ref<{ id: number; full_name: string; role: string }[]>([])
+const approverUserId = ref<number | null>(null)
+const approverPin = ref('')
 
 // ── Complete payment (الكاشير بس — نفس مستوى void، إتمام الدفع فعل مالي
 // فعلي بيقفل الطاولة/ينشر charge على الفوليو/يرحّل قيد إيراد سيرفر-سايد) ──
@@ -114,15 +120,28 @@ async function loadOrder() {
 
 watch(() => props.orderId, loadOrder, { immediate: true })
 
-function openVoidPrompt(itemId: number) {
+async function openVoidPrompt(itemId: number) {
   voidingItemId.value = itemId
   voidReason.value = ''
   voidError.value = ''
+  approverUserId.value = null
+  approverPin.value = ''
+  if (needsPinApproval.value && approvers.value.length === 0) {
+    try {
+      const { data } = await api.get(ENDPOINTS.core.pinApprovers)
+      approvers.value = data
+    } catch {
+      // فشل تحميل قائمة المديرين — الحقل هيفضل فاضي، المستخدم هياخد رسالة
+      // 400 واضحة من الباك إند لو حاول يأكد من غير موافقة
+    }
+  }
 }
 function cancelVoidPrompt() {
   voidingItemId.value = null
   voidReason.value = ''
   voidError.value = ''
+  approverUserId.value = null
+  approverPin.value = ''
 }
 
 async function confirmVoid() {
@@ -132,11 +151,20 @@ async function confirmVoid() {
     voidError.value = 'السبب لازم يكون 3 حروف على الأقل'
     return
   }
+  if (needsPinApproval.value && (!approverUserId.value || !approverPin.value)) {
+    voidError.value = 'اختر المدير وأدخل رقم الـ PIN بتاعه'
+    return
+  }
   busy.value = true
   try {
     const { data } = await api.patch(
       `/api/v1/restaurant/orders/${order.value.id}/items/${voidingItemId.value}/void`,
-      { reason },
+      {
+        reason,
+        ...(needsPinApproval.value
+          ? { approver_user_id: approverUserId.value, approver_pin: approverPin.value }
+          : {}),
+      },
       {},
     )
     order.value = data
@@ -304,6 +332,23 @@ function lineTotal(item: OrderItem): number {
                 class="w-full border border-stone-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
                 autofocus
               />
+              <!-- كاشير/نادل (مش مدير+) — لازم موافقة PIN من مدير حاضر فعليًا
+                   قبل ما الإلغاء يتقبل (راجع core.services.resolve_pin_approval) -->
+              <div v-if="needsPinApproval" class="space-y-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
+                <p class="text-xs font-semibold text-amber-800">محتاج موافقة مدير</p>
+                <select v-model="approverUserId" class="w-full border border-stone-300 rounded-lg p-1.5 text-xs">
+                  <option :value="null" disabled>اختر المدير...</option>
+                  <option v-for="a in approvers" :key="a.id" :value="a.id">{{ a.full_name }}</option>
+                </select>
+                <input
+                  v-model="approverPin"
+                  type="password"
+                  inputmode="numeric"
+                  maxlength="6"
+                  placeholder="PIN المدير"
+                  class="w-full border border-stone-300 rounded-lg p-1.5 text-xs tracking-widest"
+                />
+              </div>
               <p v-if="voidError" class="text-xs text-red-600">{{ voidError }}</p>
               <div class="flex gap-2">
                 <button @click="cancelVoidPrompt" class="flex-1 py-1.5 text-xs font-semibold text-gray-600 border border-stone-200 rounded-lg">إلغاء</button>
