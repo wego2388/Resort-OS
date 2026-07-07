@@ -51,6 +51,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_lease_contracts(db)
     _seed_maintenance(db)
     _seed_menus(db)
+    _seed_inventory_recipes(db)
     _seed_dining_tables(db)
     _seed_crm(db)
     _seed_b2b_contracts(db)
@@ -1278,6 +1279,87 @@ def _seed_menus(db: Session) -> None:
             db.add(CafeItem(branch_id=branch.id, category_id=cat_map[cat_ar], name=name, name_ar=name_ar, price=price))
         db.flush()
         print(f"  ✓ Cafe menu seeded ({len(cafe_items)} items across {len(cafe_categories)} categories)")
+
+
+def _seed_inventory_recipes(db: Session) -> None:
+    """مخزون + وصفات (Recipe/BOM) توضيحية — كان المخزون فاضي بالكامل (مفيش
+    warehouse ولا Product واحد مزروع) رغم إن المطعم/الكافيه بيقدروا يربطوا
+    أصنافهم بمنتجات مخزنية (linked_product_id) من زمان. 3 وصفات حقيقية
+    (نفس تعليمات "3 أمثلة توضيحية، مش مثال واحد" المتّبعة في باقي الملف ده)
+    بتربط أصناف كافيه موجودة فعلاً (_seed_menus) بمكوّناتها الحقيقية — عشان
+    دفع طلب حقيقي في POS الكافيه يخصم المخزون فعليًا (راجع
+    cafe.services._deduct_inventory_for_order / compute_cafe_item_cost)."""
+    try:
+        from app.modules.inventory.models import Product, StockMovement, Warehouse
+        from app.modules.cafe.models import CafeItem, CafeItemRecipeLine
+        from app.modules.core.models import Branch
+    except ImportError:
+        return
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+    if db.query(Warehouse).filter(Warehouse.branch_id == branch.id).first():
+        return
+
+    warehouse = Warehouse(branch_id=branch.id, name="Main Kitchen Store",
+                           name_ar="مخزن المطبخ الرئيسي", code="WH-KITCHEN")
+    db.add(warehouse)
+    db.flush()
+
+    # (name_en, name_ar, unit, cost_price, initial_stock)
+    ingredients = [
+        ('Ground Beef',       'لحم مفروم',      'kg',    Decimal('180'), Decimal('20')),
+        ('Burger Bun',        'خبز برجر',       'piece', Decimal('3'),   Decimal('100')),
+        ('Cheddar Cheese',    'جبنة شيدر',      'kg',    Decimal('220'), Decimal('10')),
+        ('Pizza Dough',       'عجينة بيتزا',    'kg',    Decimal('40'),  Decimal('15')),
+        ('Mozzarella Cheese', 'جبنة موتزاريلا', 'kg',    Decimal('250'), Decimal('10')),
+        ('Tomato Sauce',      'صلصة طماطم',     'kg',    Decimal('35'),  Decimal('10')),
+        ('Hawawshi Bread',    'خبز حواوشي',     'piece', Decimal('4'),   Decimal('80')),
+    ]
+    products: dict[str, Product] = {}
+    for name_en, name_ar, unit, cost, stock in ingredients:
+        product = Product(
+            branch_id=branch.id, warehouse_id=warehouse.id, name=name_en, name_ar=name_ar,
+            sku=f"ING-{name_en.upper().replace(' ', '-')}", unit=unit, cost_price=cost,
+            current_stock=stock, min_stock=Decimal('2'), reorder_point=Decimal('5'),
+        )
+        db.add(product)
+        db.flush()
+        products[name_ar] = product
+        db.add(StockMovement(
+            branch_id=branch.id, product_id=product.id, warehouse_id=warehouse.id,
+            movement_type='purchase_in', quantity=stock, unit_cost=cost,
+            reference_type='seed', moved_at=datetime.utcnow(),
+        ))
+    db.flush()
+
+    def _link_recipe(cafe_item_name_ar: str, lines: list[tuple[str, Decimal]]) -> None:
+        item = db.query(CafeItem).filter(
+            CafeItem.branch_id == branch.id, CafeItem.name_ar == cafe_item_name_ar,
+        ).first()
+        if not item:
+            return
+        for product_name_ar, qty in lines:
+            product = products.get(product_name_ar)
+            if product:
+                db.add(CafeItemRecipeLine(cafe_item_id=item.id, product_id=product.id, quantity_per_unit=qty))
+
+    # 1) برجر = 150 جم لحم مفروم + رغيف + 30 جم جبنة شيدر
+    _link_recipe('برجر', [
+        ('لحم مفروم', Decimal('0.150')), ('خبز برجر', Decimal('1')), ('جبنة شيدر', Decimal('0.030')),
+    ])
+    # 2) مارجريتا = 300 جم عجينة + 150 جم موتزاريلا + 100 جم صلصة طماطم
+    _link_recipe('مارجريتا', [
+        ('عجينة بيتزا', Decimal('0.300')), ('جبنة موتزاريلا', Decimal('0.150')), ('صلصة طماطم', Decimal('0.100')),
+    ])
+    # 3) حواوشي كلاسيك = 120 جم لحم مفروم + رغيف حواوشي
+    _link_recipe('حواوشي كلاسيك', [
+        ('لحم مفروم', Decimal('0.120')), ('خبز حواوشي', Decimal('1')),
+    ])
+
+    db.flush()
+    print(f"  ✓ Inventory seeded ({len(ingredients)} ingredients) + 3 illustrative recipes (برجر/مارجريتا/حواوشي)")
 
 
 def _seed_settings(db: Session) -> None:

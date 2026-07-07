@@ -17,6 +17,7 @@ from app.modules.restaurant.schemas import (
     KitchenTicketRead, TicketStatusUpdate,
     MenuCategoryCreate, MenuCategoryRead,
     MenuItemCreate, MenuItemExtraGroupCreate, MenuItemExtraGroupRead, MenuItemRead, MenuItemUpdate,
+    MenuItemRecipeLineCreate, MenuItemRecipeLineRead, MenuItemRecipeLineUpdate,
     OrderCreate, OrderItemCreate, OrderItemRead, OrderItemVoidRequest, OrderRead, OrderStatusUpdate,
     OrderSyncRequest, OrderSyncResponse,
     # Public (Guest QR) schemas
@@ -139,6 +140,38 @@ def delete_extra_group(group_id: int, db: DbDep, _=Depends(get_manager_user)):
     if not crud.delete_extra_group(db, group_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المجموعة غير موجودة")
     db.commit()
+
+
+# ── Recipe / BOM ──────────────────────────────────────────────────────
+# نفس مستوى صلاحية تعديل الصنف نفسه (get_manager_user) — الوصفة جزء من
+# تعريف الصنف، مش عملية تشغيلية يومية.
+
+@router.post("/restaurant/menu/items/{item_id}/recipe-lines",
+             response_model=MenuItemRecipeLineRead,
+             status_code=status.HTTP_201_CREATED)
+def add_recipe_line(item_id: int, data: MenuItemRecipeLineCreate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        line = services.add_recipe_line(db, item_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return MenuItemRecipeLineRead.model_validate(services.build_recipe_line_read(line))
+
+
+@router.patch("/restaurant/menu/recipe-lines/{line_id}", response_model=MenuItemRecipeLineRead)
+def update_recipe_line(line_id: int, data: MenuItemRecipeLineUpdate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        line = services.update_recipe_line(db, line_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return MenuItemRecipeLineRead.model_validate(services.build_recipe_line_read(line))
+
+
+@router.delete("/restaurant/menu/recipe-lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        services.remove_recipe_line(db, line_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 # ── Tables ────────────────────────────────────────────────────────────

@@ -1280,3 +1280,68 @@ class TestCafeRefundReducesFolioCharge:
 
         db.refresh(folio)
         assert folio.total == Decimal("0.00")
+
+
+def make_product_committed(client: TestClient, branch_id: int, manager_headers, cost_price="40.00"):
+    """نفس test_restaurant_http.make_product_committed بالظبط."""
+    wh = client.post(
+        "/api/v1/inventory/warehouses",
+        json={"branch_id": branch_id, "name": "مخزن اختبار", "code": f"WH-{uuid.uuid4().hex[:6].upper()}"},
+        headers=manager_headers,
+    ).json()
+    product = client.post(
+        "/api/v1/inventory/products",
+        json={"branch_id": branch_id, "warehouse_id": wh["id"], "name": "عجينة بيتزا",
+              "sku": f"SKU-{uuid.uuid4().hex[:6].upper()}", "unit": "kg", "cost_price": cost_price},
+        headers=manager_headers,
+    ).json()
+    return product
+
+
+class TestCafeItemRecipeHTTP:
+    """POST/PATCH/DELETE .../recipe-lines لصنف كافيه — نفس نمط
+    test_restaurant_http.TestMenuItemRecipeHTTP بالظبط."""
+
+    def test_add_update_delete_recipe_line(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        item = make_item_committed(db, branch)
+        product = make_product_committed(client, branch.id, manager_headers)
+
+        add_resp = client.post(
+            f"/api/v1/cafe/items/{item.id}/recipe-lines",
+            json={"product_id": product["id"], "quantity_per_unit": "0.300"},
+            headers=manager_headers,
+        )
+        assert add_resp.status_code == 201, add_resp.text
+        line = add_resp.json()
+        assert Decimal(str(line["line_cost"])) == Decimal("12.00")  # 0.300 * 40
+
+        get_resp = client.get(
+            "/api/v1/cafe/items", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        fetched = next(i for i in get_resp.json() if i["id"] == item.id)
+        assert Decimal(str(fetched["computed_cost"])) == Decimal("12.00")
+
+        update_resp = client.patch(
+            f"/api/v1/cafe/recipe-lines/{line['id']}",
+            json={"quantity_per_unit": "0.500"},
+            headers=manager_headers,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+
+        delete_resp = client.delete(f"/api/v1/cafe/recipe-lines/{line['id']}", headers=manager_headers)
+        assert delete_resp.status_code == 204
+        second_delete = client.delete(f"/api/v1/cafe/recipe-lines/{line['id']}", headers=manager_headers)
+        assert second_delete.status_code == 404
+
+    def test_add_recipe_line_requires_manager(self, client: TestClient, db, manager_headers, waiter_headers):
+        branch = make_branch_committed(db)
+        item = make_item_committed(db, branch)
+        product = make_product_committed(client, branch.id, manager_headers)
+
+        resp = client.post(
+            f"/api/v1/cafe/items/{item.id}/recipe-lines",
+            json={"product_id": product["id"], "quantity_per_unit": "0.1"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403

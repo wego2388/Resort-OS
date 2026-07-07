@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.restaurant import crud
-from app.modules.restaurant.models import KitchenTicket, MenuItem, Order
-from app.modules.restaurant.schemas import OrderCreate
+from app.modules.restaurant.models import KitchenTicket, MenuItem, MenuItemRecipeLine, Order
+from app.modules.restaurant.schemas import (
+    MenuItemRecipeLineCreate, MenuItemRecipeLineUpdate, OrderCreate,
+)
 from app.resort_os.discount_engine import DiscountRule, OrderContext, calculate_discount
 
 
@@ -55,6 +57,76 @@ def _resolve_extras(db: Session, menu_item, extra_ids: list[int]) -> tuple[list[
             price_addition += opt.price_addition
 
     return extras_data, price_addition
+
+
+# ─────────────────────── Recipe / BOM ──────────────────────────────────
+
+def compute_menu_item_cost(item: MenuItem) -> Decimal:
+    """تكلفة الصنف الحقيقية — لو فيه وصفة (BOM)، التكلفة = مجموع (كمية كل
+    مكوّن × تكلفة المنتج المخزني الحالية). لو مفيش وصفة، fallback لحقل
+    cost اليدوي (أو صفر لو ده كمان مش موجود). أي صنف قديم بدون وصفة يفضل
+    شغال بنفس سلوكه الحالي بالظبط — الوصفة إضافة اختيارية مش استبدال قسري."""
+    if item.recipe_lines:
+        total = Decimal("0")
+        for line in item.recipe_lines:
+            unit_cost = (line.product.cost_price if line.product else None) or Decimal("0")
+            total += line.quantity_per_unit * unit_cost
+        return total.quantize(Decimal("0.01"))
+    return item.cost if item.cost is not None else Decimal("0")
+
+
+def build_recipe_line_read(line: MenuItemRecipeLine) -> dict:
+    """يبني dict متوافق مع MenuItemRecipeLineRead من سطر وصفة ORM — بيضمّن
+    snapshot لحظي لاسم/وحدة/تكلفة المنتج المخزني الحالية (مش مخزّنة على
+    السطر نفسه، بتتقرأ من inventory.Product وقت الطلب)."""
+    unit_cost = (line.product.cost_price if line.product else None) or Decimal("0")
+    return {
+        "id": line.id,
+        "menu_item_id": line.menu_item_id,
+        "product_id": line.product_id,
+        "product_name": line.product.name if line.product else "",
+        "product_unit": line.product.unit if line.product else "",
+        "quantity_per_unit": line.quantity_per_unit,
+        "unit_cost": unit_cost,
+        "line_cost": (line.quantity_per_unit * unit_cost).quantize(Decimal("0.01")),
+        "notes": line.notes,
+    }
+
+
+def add_recipe_line(db: Session, menu_item_id: int, data: MenuItemRecipeLineCreate) -> MenuItemRecipeLine:
+    from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
+
+    item = crud.get_menu_item(db, menu_item_id)
+    if not item:
+        raise ValueError(f"الصنف {menu_item_id} غير موجود")
+    product = inventory_crud.get_product(db, data.product_id)
+    if not product:
+        raise ValueError(f"المنتج {data.product_id} غير موجود في المخزون")
+    if product.branch_id != item.branch_id:
+        raise ValueError("المنتج المخزني لازم يكون من نفس فرع الصنف")
+    if any(line.product_id == data.product_id for line in item.recipe_lines):
+        raise ValueError(f"المنتج '{product.name}' مضاف بالفعل لوصفة هذا الصنف")
+
+    line = crud.create_recipe_line(db, menu_item_id, data)
+    db.commit()
+    db.refresh(line)
+    return line
+
+
+def update_recipe_line(db: Session, line_id: int, data: MenuItemRecipeLineUpdate) -> MenuItemRecipeLine:
+    line = crud.get_recipe_line(db, line_id)
+    if not line:
+        raise ValueError(f"سطر الوصفة {line_id} غير موجود")
+    line = crud.update_recipe_line(db, line, data)
+    db.commit()
+    db.refresh(line)
+    return line
+
+
+def remove_recipe_line(db: Session, line_id: int) -> None:
+    if not crud.delete_recipe_line(db, line_id):
+        raise ValueError(f"سطر الوصفة {line_id} غير موجود")
+    db.commit()
 
 
 def create_order(
@@ -308,9 +380,15 @@ def update_order_status(
 
 
 def _deduct_inventory_for_order(db: Session, order: Order) -> None:
-    """يخصم المخزون لكل صنف في الطلب مربوط بمنتج مخزني (MenuItem.linked_product_id).
-    معظم الأصناف مفهاش ربط — بيتم تجاوزها بصمت. فشل خصم صنف واحد (رصيد غير كافٍ
-    مثلاً) ميوقفش باقي الأصناف ولا يوقف إتمام الدفع — نفس فلسفة
+    """يخصم المخزون لكل صنف في الطلب. أولوية الخصم:
+      1) وصفة حقيقية (MenuItem.recipe_lines) — كل مكوّن يتخصم بكميته ×
+         quantity المطلوبة، مسموح بمخزون سالب مع تحذير (نفضّل عدم إيقاف
+         عملية بيع طعام حقيقية بسبب فرق جرد، على إيقافها أو تجاهلها بصمت).
+      2) مفيش وصفة بس فيه ربط قديم 1:1 (MenuItem.linked_product_id) — نفس
+         السلوك القديم بالظبط (بيرفض الخصم بصمت لو الرصيد مش كافي، مفيش
+         مخزون سالب هنا — سلوك مؤكد باختبارات موجودة، مش هدف هذا التغيير).
+      3) مفيش أي ربط — بيتم تجاوز الصنف بصمت (معظم الأصناف كده).
+    فشل خصم صنف واحد ميوقفش باقي الأصناف ولا يوقف إتمام الدفع — نفس فلسفة
     _post_order_revenue_journal أعلاه."""
     from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
     from app.modules.inventory import services as inventory_services  # noqa: PLC0415
@@ -320,7 +398,26 @@ def _deduct_inventory_for_order(db: Session, order: Order) -> None:
             continue
         try:
             menu_item = crud.get_menu_item(db, item.menu_item_id)
-            if not menu_item or not menu_item.linked_product_id:
+            if not menu_item:
+                continue
+            if menu_item.recipe_lines:
+                for line in menu_item.recipe_lines:
+                    product = inventory_crud.get_product(db, line.product_id)
+                    if not product or not product.warehouse_id:
+                        continue
+                    inventory_services.consume_stock(
+                        db,
+                        branch_id=order.branch_id,
+                        product_id=product.id,
+                        warehouse_id=product.warehouse_id,
+                        quantity=line.quantity_per_unit * item.quantity,
+                        reference_type="restaurant_order",
+                        reference_id=order.id,
+                        moved_by=0,
+                        allow_negative=True,
+                    )
+                continue
+            if not menu_item.linked_product_id:
                 continue
             product = inventory_crud.get_product(db, menu_item.linked_product_id)
             if not product or not product.warehouse_id:

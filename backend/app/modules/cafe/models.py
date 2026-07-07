@@ -1,14 +1,15 @@
 """
 app/modules/cafe/models.py
 Cafe Module — يشارك نفس منطق الـ restaurant لكن جداول منفصلة
-Tables: cafe_categories, cafe_items, cafe_tables, cafe_orders, cafe_order_items
+Tables: cafe_categories, cafe_items, cafe_item_recipe_lines, cafe_tables,
+        cafe_orders, cafe_order_items
 """
 from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.kernel.models.mixins import TimestampMixin
@@ -50,6 +51,10 @@ class CafeItem(Base, TimestampMixin):
         "CafeMenuItemExtraGroup", back_populates="cafe_item", lazy="select",
         cascade="all, delete-orphan", order_by="CafeMenuItemExtraGroup.sort_order",
     )
+    recipe_lines: Mapped[list["CafeItemRecipeLine"]] = relationship(
+        "CafeItemRecipeLine", back_populates="cafe_item", lazy="selectin",
+        cascade="all, delete-orphan",
+    )
 
 
 class CafeMenuItemExtraGroup(Base, TimestampMixin):
@@ -85,6 +90,25 @@ class CafeMenuItemExtra(Base, TimestampMixin):
     sort_order:      Mapped[int]     = mapped_column(Integer, default=0)
 
     group: Mapped["CafeMenuItemExtraGroup"] = relationship("CafeMenuItemExtraGroup", back_populates="options")
+
+
+class CafeItemRecipeLine(Base, TimestampMixin):
+    """سطر وصفة (Recipe/BOM) لصنف كافيه — نفس نمط
+    restaurant.MenuItemRecipeLine بالظبط، بس مربوطة بـ cafe_items. الكمية
+    بوحدة الصنف المخزني نفسها (Product.unit) — مفيش تحويل وحدات."""
+    __tablename__ = "cafe_item_recipe_lines"
+    __table_args__ = (
+        UniqueConstraint("cafe_item_id", "product_id", name="uq_cafe_item_recipe_product"),
+    )
+
+    id:                Mapped[int]     = mapped_column(primary_key=True)
+    cafe_item_id:      Mapped[int]     = mapped_column(ForeignKey("cafe_items.id", ondelete="CASCADE"))
+    product_id:        Mapped[int]     = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
+    quantity_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    notes:             Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    cafe_item: Mapped["CafeItem"] = relationship("CafeItem", back_populates="recipe_lines")
+    product:   Mapped["Product"]  = relationship("Product", lazy="joined")
 
 
 class CafeTable(Base, TimestampMixin):

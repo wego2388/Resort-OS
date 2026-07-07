@@ -9,8 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.cafe import crud
-from app.modules.cafe.models import CafeOrder
-from app.modules.cafe.schemas import CafeOrderCreate
+from app.modules.cafe.models import CafeItem, CafeItemRecipeLine, CafeOrder
+from app.modules.cafe.schemas import (
+    CafeItemRecipeLineCreate, CafeItemRecipeLineUpdate, CafeOrderCreate,
+)
 
 
 def _get_order_or_404(db: Session, order_id: int) -> CafeOrder:
@@ -55,6 +57,71 @@ def _resolve_extras(db: Session, cafe_item, extra_ids: list[int]) -> tuple[list[
             price_addition += opt.price_addition
 
     return extras_data, price_addition
+
+
+# ─────────────────────── Recipe / BOM ──────────────────────────────────
+# نفس منطق restaurant.services (compute_menu_item_cost/build_recipe_line_read/
+# add_recipe_line/...) بالضبط — راجع التعليقات هناك للتفاصيل الكاملة.
+
+def compute_cafe_item_cost(item: CafeItem) -> Decimal:
+    if item.recipe_lines:
+        total = Decimal("0")
+        for line in item.recipe_lines:
+            unit_cost = (line.product.cost_price if line.product else None) or Decimal("0")
+            total += line.quantity_per_unit * unit_cost
+        return total.quantize(Decimal("0.01"))
+    return item.cost if item.cost is not None else Decimal("0")
+
+
+def build_recipe_line_read(line: CafeItemRecipeLine) -> dict:
+    unit_cost = (line.product.cost_price if line.product else None) or Decimal("0")
+    return {
+        "id": line.id,
+        "cafe_item_id": line.cafe_item_id,
+        "product_id": line.product_id,
+        "product_name": line.product.name if line.product else "",
+        "product_unit": line.product.unit if line.product else "",
+        "quantity_per_unit": line.quantity_per_unit,
+        "unit_cost": unit_cost,
+        "line_cost": (line.quantity_per_unit * unit_cost).quantize(Decimal("0.01")),
+        "notes": line.notes,
+    }
+
+
+def add_recipe_line(db: Session, cafe_item_id: int, data: CafeItemRecipeLineCreate) -> CafeItemRecipeLine:
+    from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
+
+    item = crud.get_item(db, cafe_item_id)
+    if not item:
+        raise ValueError(f"الصنف {cafe_item_id} غير موجود")
+    product = inventory_crud.get_product(db, data.product_id)
+    if not product:
+        raise ValueError(f"المنتج {data.product_id} غير موجود في المخزون")
+    if product.branch_id != item.branch_id:
+        raise ValueError("المنتج المخزني لازم يكون من نفس فرع الصنف")
+    if any(line.product_id == data.product_id for line in item.recipe_lines):
+        raise ValueError(f"المنتج '{product.name}' مضاف بالفعل لوصفة هذا الصنف")
+
+    line = crud.create_recipe_line(db, cafe_item_id, data)
+    db.commit()
+    db.refresh(line)
+    return line
+
+
+def update_recipe_line(db: Session, line_id: int, data: CafeItemRecipeLineUpdate) -> CafeItemRecipeLine:
+    line = crud.get_recipe_line(db, line_id)
+    if not line:
+        raise ValueError(f"سطر الوصفة {line_id} غير موجود")
+    line = crud.update_recipe_line(db, line, data)
+    db.commit()
+    db.refresh(line)
+    return line
+
+
+def remove_recipe_line(db: Session, line_id: int) -> None:
+    if not crud.delete_recipe_line(db, line_id):
+        raise ValueError(f"سطر الوصفة {line_id} غير موجود")
+    db.commit()
 
 
 def create_order(
@@ -235,9 +302,11 @@ def update_order_status(
 
 
 def _deduct_inventory_for_order(db: Session, order: CafeOrder) -> None:
-    """يخصم المخزون لكل صنف في الطلب مربوط بمنتج مخزني (CafeItem.linked_product_id).
-    نفس فلسفة restaurant._deduct_inventory_for_order — فشل صنف واحد ميوقفش
-    باقي الأصناف ولا يوقف إتمام الدفع."""
+    """يخصم المخزون لكل صنف في الطلب — نفس أولوية
+    restaurant._deduct_inventory_for_order بالظبط: وصفة حقيقية (recipe_lines)
+    أولاً (بمخزون سالب مسموح + تحذير)، وإلا fallback لربط 1:1 القديم
+    (linked_product_id، بدون مخزون سالب — سلوك مؤكد باختبارات موجودة). فشل
+    صنف واحد ميوقفش باقي الأصناف ولا يوقف إتمام الدفع."""
     from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
     from app.modules.inventory import services as inventory_services  # noqa: PLC0415
 
@@ -246,7 +315,26 @@ def _deduct_inventory_for_order(db: Session, order: CafeOrder) -> None:
             continue
         try:
             item = crud.get_item(db, order_item.item_id)
-            if not item or not item.linked_product_id:
+            if not item:
+                continue
+            if item.recipe_lines:
+                for line in item.recipe_lines:
+                    product = inventory_crud.get_product(db, line.product_id)
+                    if not product or not product.warehouse_id:
+                        continue
+                    inventory_services.consume_stock(
+                        db,
+                        branch_id=order.branch_id,
+                        product_id=product.id,
+                        warehouse_id=product.warehouse_id,
+                        quantity=line.quantity_per_unit * order_item.quantity,
+                        reference_type="cafe_order",
+                        reference_id=order.id,
+                        moved_by=0,
+                        allow_negative=True,
+                    )
+                continue
+            if not item.linked_product_id:
                 continue
             product = inventory_crud.get_product(db, item.linked_product_id)
             if not product or not product.warehouse_id:

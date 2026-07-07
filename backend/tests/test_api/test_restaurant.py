@@ -386,6 +386,165 @@ class TestRestaurantInventoryDeduction:
         assert product.current_stock == Decimal("50.000")  # الصنف الملغى ميتخصمش
 
 
+def make_product(db, branch, name="لحم مفروم", unit="kg", cost_price=Decimal("180"),
+                  initial_stock=Decimal("20")):
+    """يزرع warehouse + product بمخزون ابتدائي حقيقي (StockMovement) — بدون
+    ربطه بأي صنف قائمة (استخدمه مع add_recipe_line بدل linked_product_id)."""
+    from app.modules.inventory.schemas import ProductCreate, StockMovementCreate, WarehouseCreate
+    from app.modules.inventory import services as inventory_services
+    from datetime import datetime as _dt
+
+    warehouse = inventory_services.create_warehouse(
+        db, WarehouseCreate(branch_id=branch.id, name="مخزن المطبخ", code=f"WH-{uuid.uuid4().hex[:6].upper()}"),
+    )
+    product = inventory_services.create_product(
+        db, ProductCreate(
+            branch_id=branch.id, warehouse_id=warehouse.id,
+            name=name, sku=f"SKU-{uuid.uuid4().hex[:6].upper()}", unit=unit,
+            cost_price=cost_price,
+        ),
+    )
+    if initial_stock > 0:
+        inventory_services.record_movement(
+            db, StockMovementCreate(
+                branch_id=branch.id, product_id=product.id, warehouse_id=warehouse.id,
+                movement_type="purchase_in", quantity=initial_stock, unit_cost=cost_price,
+                moved_at=_dt.utcnow(),
+            ), moved_by=1,
+        )
+    db.refresh(product)
+    return product
+
+
+class TestMenuItemRecipe:
+    """وصفة/BOM حقيقية — MenuItem كان معاه بس cost يدوي + ربط 1:1 اختياري
+    (linked_product_id)، مفيش أي طريقة تعبّر إن صنف واحد بيستهلك أكتر من
+    مكوّن مخزني بكميات مختلفة. الوصفة دي إضافة اختيارية — أي صنف قديم بدون
+    وصفة يفضل شغال بنفس سلوكه بالظبط (fallback لـ linked_product_id ثم
+    manual cost — راجع compute_menu_item_cost)."""
+
+    def test_add_recipe_line_creates_line(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        beef = make_product(db, branch, name="لحم مفروم", unit="kg", cost_price=Decimal("180"))
+
+        from app.modules.restaurant.schemas import MenuItemRecipeLineCreate
+        line = services.add_recipe_line(
+            db, item.id, MenuItemRecipeLineCreate(product_id=beef.id, quantity_per_unit=Decimal("0.150")),
+        )
+        assert line.id is not None
+        assert line.quantity_per_unit == Decimal("0.150")
+
+        db.refresh(item)
+        assert len(item.recipe_lines) == 1
+
+    def test_add_recipe_line_rejects_duplicate_product(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        beef = make_product(db, branch)
+
+        from app.modules.restaurant.schemas import MenuItemRecipeLineCreate
+        services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=beef.id, quantity_per_unit=Decimal("0.1")))
+        with pytest.raises(ValueError, match="مضاف بالفعل"):
+            services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=beef.id, quantity_per_unit=Decimal("0.2")))
+
+    def test_add_recipe_line_rejects_cross_branch_product(self, db):
+        branch = make_branch(db)
+        other_branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        beef = make_product(db, other_branch)
+
+        from app.modules.restaurant.schemas import MenuItemRecipeLineCreate
+        with pytest.raises(ValueError, match="نفس فرع"):
+            services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=beef.id, quantity_per_unit=Decimal("0.1")))
+
+    def test_update_and_remove_recipe_line(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        beef = make_product(db, branch)
+
+        from app.modules.restaurant.schemas import MenuItemRecipeLineCreate, MenuItemRecipeLineUpdate
+        line = services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=beef.id, quantity_per_unit=Decimal("0.1")))
+
+        updated = services.update_recipe_line(db, line.id, MenuItemRecipeLineUpdate(quantity_per_unit=Decimal("0.25")))
+        assert updated.quantity_per_unit == Decimal("0.25")
+
+        services.remove_recipe_line(db, line.id)
+        db.refresh(item)
+        assert len(item.recipe_lines) == 0
+
+    def test_compute_cost_from_recipe(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        beef = make_product(db, branch, name="لحم مفروم", unit="kg", cost_price=Decimal("180"))
+        bun = make_product(db, branch, name="خبز برجر", unit="piece", cost_price=Decimal("3"))
+
+        from app.modules.restaurant.schemas import MenuItemRecipeLineCreate
+        services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=beef.id, quantity_per_unit=Decimal("0.150")))
+        services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=bun.id, quantity_per_unit=Decimal("1")))
+
+        db.refresh(item)
+        # 0.150 * 180 + 1 * 3 = 27 + 3 = 30
+        assert services.compute_menu_item_cost(item) == Decimal("30.00")
+
+    def test_compute_cost_falls_back_to_manual_cost_without_recipe(self, db):
+        branch = make_branch(db)
+        from app.modules.restaurant.models import MenuItem
+        item = MenuItem(branch_id=branch.id, name="عصير مانجو", price=Decimal("40.00"),
+                        cost=Decimal("12.50"), is_available=True)
+        db.add(item)
+        db.commit()
+        assert services.compute_menu_item_cost(item) == Decimal("12.50")
+
+    def test_compute_cost_zero_without_recipe_or_manual_cost(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)  # cost=None بالافتراضي
+        assert services.compute_menu_item_cost(item) == Decimal("0")
+
+    def test_paying_order_deducts_all_recipe_ingredients(self, db):
+        """صنف بوصفة حقيقية (مكوّنين) — دفع الطلب لازم يخصم الاتنين بالكمية
+        الصحيحة (quantity_per_unit × الكمية المطلوبة في الطلب)."""
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)  # نفس make_order (quantity=2)
+        beef = make_product(db, branch, name="لحم مفروم", unit="kg", cost_price=Decimal("180"), initial_stock=Decimal("10"))
+        bun = make_product(db, branch, name="خبز برجر", unit="piece", cost_price=Decimal("3"), initial_stock=Decimal("50"))
+
+        from app.modules.restaurant.schemas import MenuItemRecipeLineCreate
+        services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=beef.id, quantity_per_unit=Decimal("0.150")))
+        services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=bun.id, quantity_per_unit=Decimal("1")))
+        db.refresh(item)
+
+        order = make_order(db, branch, item)  # quantity=2
+        services.update_order_status(db, order.id, "paid")
+
+        db.refresh(beef); db.refresh(bun)
+        assert beef.current_stock == Decimal("10") - Decimal("0.150") * 2
+        assert bun.current_stock == Decimal("50") - 2
+
+    def test_recipe_deduction_allows_negative_stock_with_warning(self, db, caplog):
+        """رصيد غير كافٍ لمكوّن وصفة — لازم الخصم يتم فعليًا (رصيد سالب) بدل
+        ما يترفض بصمت زي ربط linked_product_id القديم. تفضيل عملي: صالة طعام
+        حقيقية، إيقاف بيع صنف بسبب فرق جرد في مكوّن واحد أسوأ من رصيد سالب
+        مؤقت لحد ما يتصحّح بالجرد."""
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        beef = make_product(db, branch, name="لحم مفروم", unit="kg", cost_price=Decimal("180"), initial_stock=Decimal("0.1"))
+
+        from app.modules.restaurant.schemas import MenuItemRecipeLineCreate
+        services.add_recipe_line(db, item.id, MenuItemRecipeLineCreate(product_id=beef.id, quantity_per_unit=Decimal("0.150")))
+        db.refresh(item)
+
+        order = make_order(db, branch, item)  # quantity=2 → يحتاج 0.300 كجم، الرصيد 0.1 بس
+        import logging
+        with caplog.at_level(logging.WARNING):
+            paid = services.update_order_status(db, order.id, "paid")
+        assert paid.status == "paid"
+
+        db.refresh(beef)
+        assert beef.current_stock == Decimal("0.1") - Decimal("0.150") * 2  # سالب فعليًا
+        assert any("مخزون سالب" in r.message for r in caplog.records)
+
+
 class TestKDS:
 
     def test_order_in_kitchen_creates_ticket(self, db):
