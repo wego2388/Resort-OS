@@ -334,6 +334,145 @@ class TestBeachB2BContracts:
         assert any(c["hotel_name"] == "Listed Hotel" for c in resp.json())
 
 
+class TestB2BCredit:
+    """حد ائتمان + تسوية + تأخر سداد عبر الـ API الحقيقي (permissions،
+    validation، الرد الفعلي) — راجع services/beach_engine للاختبارات
+    الأدق على منطق العمل نفسه."""
+
+    def _create_contract(self, client, branch, headers, **overrides):
+        payload = {
+            "branch_id": branch.id, "hotel_name": "Credit Test Hotel",
+            "daily_quota": 50, "entry_price": "100.00",
+            "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
+        }
+        payload.update(overrides)
+        resp = client.post("/api/v1/beach/b2b-contracts", json=payload, headers=headers)
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_b2b_checkin_rejected_when_exceeding_credit_limit(
+        self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+        contract = self._create_contract(client, branch, super_admin_headers, credit_limit="300.00")
+
+        over_resp = client.post(
+            "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
+            json={"contract_id": contract["id"], "guests_count": 5},  # 500 ج.م > 300 حد
+            headers=cashier_headers,
+        )
+        assert over_resp.status_code == 400
+        assert "حد الائتمان" in over_resp.json()["detail"]
+
+    def test_b2b_checkin_within_credit_limit_succeeds(
+        self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+        contract = self._create_contract(client, branch, super_admin_headers, credit_limit="1000.00")
+
+        resp = client.post(
+            "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
+            json={"contract_id": contract["id"], "guests_count": 3},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_update_contract_credit_requires_admin(
+        self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        contract = self._create_contract(client, branch, super_admin_headers)
+
+        resp = client.patch(
+            f"/api/v1/beach/b2b-contracts/{contract['id']}",
+            json={"credit_limit": "2000.00"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_update_contract_credit_via_http(
+        self, client: TestClient, db, fake_redis, super_admin_headers,
+    ):
+        branch = make_branch_committed(db)
+        contract = self._create_contract(client, branch, super_admin_headers)
+
+        resp = client.patch(
+            f"/api/v1/beach/b2b-contracts/{contract['id']}",
+            json={"credit_limit": "2500.00", "payment_terms_days": 15},
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert Decimal(str(body["credit_limit"])) == Decimal("2500.00")
+        assert body["payment_terms_days"] == 15
+
+    def test_update_contract_credit_can_clear_limit(
+        self, client: TestClient, db, fake_redis, super_admin_headers,
+    ):
+        """بعت credit_limit=None صراحةً لازم يمسح الحد (مش يتجاهله) — نفس
+        الفرق بين "الحقل اتبعت بقيمة None" و"الحقل ما اتبعتش خالص"."""
+        branch = make_branch_committed(db)
+        contract = self._create_contract(client, branch, super_admin_headers, credit_limit="1000.00")
+
+        resp = client.patch(
+            f"/api/v1/beach/b2b-contracts/{contract['id']}",
+            json={"credit_limit": None},
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["credit_limit"] is None
+
+    def test_settle_contract_requires_manager(
+        self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+        contract = self._create_contract(client, branch, super_admin_headers)
+
+        resp = client.post(
+            f"/api/v1/beach/b2b-contracts/{contract['id']}/settle", json={},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_settle_contract_via_http_resets_balance(
+        self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        contract = self._create_contract(client, branch, super_admin_headers, credit_limit="300.00")
+        client.post(
+            "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
+            json={"contract_id": contract["id"], "guests_count": 2},  # 200 ج.م
+            headers=cashier_headers,
+        )
+
+        settle_resp = client.post(
+            f"/api/v1/beach/b2b-contracts/{contract['id']}/settle", json={},
+            headers=manager_headers,
+        )
+        assert settle_resp.status_code == 200, settle_resp.text
+        assert settle_resp.json()["last_settled_at"] == str(date.today())
+
+        # بعد التسوية، الرصيد اتصفّر فعليًا — عملية جديدة لحد الحد الكامل تعدي تاني.
+        second = client.post(
+            "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
+            json={"contract_id": contract["id"], "guests_count": 2},
+            headers=cashier_headers,
+        )
+        assert second.status_code == 201, second.text
+
+    def test_live_dashboard_includes_overdue_alerts_key(
+        self, client: TestClient, db, fake_redis, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/beach/live-dashboard", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "overdue_alerts" in body
+        assert body["overdue_alerts"] == []
+
+
 class TestBeachTicketPdf:
     """قبل الإصلاح: generate_ticket_pdf كانت بتستخدم receipt_pdf العادي (مقاس A4 كامل، رغم
     إن الـ docstring كان بيدّعي إنها thermal) — مش المناسب لطابعة رول حراري 80mm الحقيقية

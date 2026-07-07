@@ -1082,12 +1082,18 @@ def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
     عقود توضيحية (illustrative sample data) — أسماء فنادق شرم الشيخ منطقية
     بس **مش شراكات حقيقية موثّقة**، الغرض بس تشغيل شاشة B2B/اللوحة الحيّة
     وتسجيل دخول B2B فعلي بأول تشغيل بدل قائمة فاضية:
-    - فندق بحصة صحية عادية (لعرض الحالة الطبيعية).
-    - فندق قريب من استنفاد الحصة (لعرض تنبيه quota_warning في اللوحة الحيّة
-      من أول تشغيل، من غير ما حد يحتاج يبيع 45 تذكرة الأول عشان يشوفه).
-    - فندق بحصة كبيرة غير مستخدمة (لعرض حالة فارغة طبيعية).
+    - فندق بحصة صحية عادية + حد ائتمان مريح (لعرض الحالة الطبيعية).
+    - فندق قريب من استنفاد الحصة اليومية + حد ائتمان ضيّق **متخطّى بالفعل**
+      ورصيد قديم متأخر عن مهلة السداد (لعرض تنبيهي quota_warning وis_overdue
+      سوا — نفس السيناريو الواقعي: فندق بطيء في التحصيل غالبًا هو نفسه اللي
+      بيستهلك حصته بسرعة) — من غير ما حد يحتاج يعمل تشيك-إن حقيقي الأول
+      عشان يشوف الميزة شغالة.
+    - فندق بحصة كبيرة غير مستخدمة وبدون حد ائتمان خالص (لعرض إن الحد
+      اختياري فعليًا — مش كل شريك محتاجه).
 
     Idempotent: لو فيه أي عقد للفرع أصلاً → يتجاهَل تمامًا (مايكررش)."""
+    from datetime import timedelta
+
     from app.modules.beach.models import B2BContract, B2BContractDay
     from app.modules.core.models import Branch
 
@@ -1099,14 +1105,18 @@ def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
 
     today = date.today()
     specs = [
-        # (hotel_name, hotel_name_ar, phone, daily_quota, entry_price, towel_price, checked_in_today)
-        ("Sunrise Grand Sharm",   "صنرايز جراند شرم",   "+201001112233", 40, Decimal("120"), Decimal("30"), 6),
-        ("Palm Oasis Resort",    "بالم أوازيس ريزورت", "+201002223344", 15, Decimal("100"), Decimal("25"), 12),
-        ("Coral Bay Hotel",      "كورال باي هوتيل",    "+201003334455", 60, Decimal("150"), Decimal("40"), 0),
+        # (hotel_name, hotel_name_ar, phone, daily_quota, entry_price, towel_price,
+        #  checked_in_today, credit_limit, is_overdue_demo)
+        ("Sunrise Grand Sharm",   "صنرايز جراند شرم",   "+201001112233", 40, Decimal("120"), Decimal("30"),
+         6,  Decimal("5000"), False),
+        ("Palm Oasis Resort",    "بالم أوازيس ريزورت", "+201002223344", 15, Decimal("100"), Decimal("25"),
+         12, Decimal("2000"), True),
+        ("Coral Bay Hotel",      "كورال باي هوتيل",    "+201003334455", 60, Decimal("150"), Decimal("40"),
+         0,  None,            False),
     ]
 
     created = 0
-    for hotel_en, hotel_ar, phone, quota, entry_price, towel_price, checked_in in specs:
+    for hotel_en, hotel_ar, phone, quota, entry_price, towel_price, checked_in, credit_limit, overdue_demo in specs:
         contract = B2BContract(
             branch_id=branch.id,
             hotel_name=hotel_en, hotel_name_ar=hotel_ar, contact_phone=phone,
@@ -1114,6 +1124,9 @@ def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
             valid_from=today.replace(day=1),
             valid_until=date(today.year, 12, 31),
             is_active=True,
+            credit_limit=credit_limit,
+            payment_terms_days=30,
+            is_overdue=overdue_demo,
             notes="عقد توضيحي (illustrative) — لتشغيل شاشة B2B وتجربة تسجيل الدخول، مش شراكة حقيقية موثّقة.",
         )
         db.add(contract)
@@ -1123,6 +1136,16 @@ def _seed_b2b_contracts(db: Session, branch_id: int | None = None) -> None:
                 contract_id=contract.id, day=today,
                 checked_in_count=checked_in,
                 total_amount=entry_price * checked_in,
+            ))
+        if overdue_demo:
+            # رصيد قديم (45 يوم) لسه مش متسوّى — أقدم من مهلة السداد
+            # (30 يوم)، فهو اللي فعليًا بيخلي is_overdue=True صحيح حسابيًا
+            # (مش بس علم مضبوط يدويًا) لو الـ Celery task اتشغّل، وبيخلي
+            # outstanding_balance يتخطى credit_limit من أول تشغيل.
+            old_day = today - timedelta(days=45)
+            db.add(B2BContractDay(
+                contract_id=contract.id, day=old_day,
+                checked_in_count=20, total_amount=Decimal("2500"),
             ))
         created += 1
 
