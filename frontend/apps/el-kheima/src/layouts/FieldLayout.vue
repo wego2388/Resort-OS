@@ -8,6 +8,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
+import ShiftPanel from '../components/ShiftPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -63,6 +64,11 @@ function logout() {
         </div>
 
         <div class="flex items-center gap-4">
+          <!-- Cashier shift open/close + cash count — POS section only.
+               راجع components/ShiftPanel.vue للسبب الكامل: الباك إند كان
+               عنده دورة وردية كاملة من غير أي واجهة تستخدمها. -->
+          <ShiftPanel v-if="!isWaiter && auth.hasRole('cashier')" />
+
           <!-- Connectivity dot (offline order queue) -->
           <div class="flex items-center gap-1.5" :title="isOnline ? 'متصل' : 'غير متصل'">
             <span class="w-2 h-2 rounded-full" :class="isOnline ? 'bg-green-500' : 'bg-amber-500 animate-pulse'" />

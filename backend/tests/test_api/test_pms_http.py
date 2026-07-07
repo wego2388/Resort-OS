@@ -191,8 +191,14 @@ class TestPMSPermissions:
         )
         assert resp.status_code == 403
 
-    def test_create_booking_requires_manager(self, client: TestClient, db, fake_redis, cashier_headers):
-        """cashier (40) must not create bookings — manager (60) required."""
+    def test_create_booking_allows_cashier_level(self, client: TestClient, db, fake_redis, cashier_headers):
+        """⚠️ باج صلاحيات حقيقي اتكشف حي (2026-07-06، اختبار استقبال كامل):
+        إنشاء حجز/تسجيل دخول/تسجيل خروج كانوا محتاجين get_manager_user
+        (level 60) — يعني موظف استقبال حقيقي (receptionist، level 40، نفس
+        level الكاشير) كان يشوف زرار "تسجيل دخول" في شاشته ويضغط عليه
+        فيرجّعله 403 كل مرة، من غير أي طريقة حقيقية يسجّل بيها نزيل. الحد
+        الأدنى الصحيح فعليًا هو get_cashier_user (level 40+) — نفس التصحيح
+        اللي اتعمل قبل كده لتحصيل قسط التايم شير (راجع §18/CLAUDE.md)."""
         branch = make_branch_committed(db)
         room_type = make_room_type_committed(db, branch)
         room = make_room_committed(db, branch, room_type)
@@ -205,7 +211,50 @@ class TestPMSPermissions:
             },
             headers=cashier_headers,
         )
+        assert resp.status_code == 201
+
+    def test_create_booking_requires_at_least_cashier_level(self, client: TestClient, db, fake_redis, waiter_headers):
+        """waiter (30) — below the cashier/receptionist level (40) — must
+        still not create bookings."""
+        branch = make_branch_committed(db)
+        room_type = make_room_type_committed(db, branch)
+        room = make_room_committed(db, branch, room_type)
+        resp = client.post(
+            "/api/v1/pms/bookings",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف",
+                "check_in": str(date.today()), "check_out": str(date.today() + timedelta(days=1)),
+                "room_ids": [room.id],
+            },
+            headers=waiter_headers,
+        )
         assert resp.status_code == 403
+
+    def test_checkin_allows_cashier_level_denies_waiter(
+        self, client: TestClient, db, fake_redis, manager_headers, cashier_headers, waiter_headers,
+    ):
+        """Same permission fix as test_create_booking_allows_cashier_level,
+        applied to /checkin — receptionist-level staff must be able to check
+        a guest in; waiter-level (30) must not."""
+        branch = make_branch_committed(db)
+        room_type = make_room_type_committed(db, branch)
+        room = make_room_committed(db, branch, room_type)
+        booking = client.post(
+            "/api/v1/pms/bookings",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف",
+                "check_in": str(date.today()), "check_out": str(date.today() + timedelta(days=1)),
+                "room_ids": [room.id],
+            },
+            headers=manager_headers,
+        ).json()
+
+        denied = client.post(f"/api/v1/pms/bookings/{booking['id']}/checkin", headers=waiter_headers)
+        assert denied.status_code == 403
+
+        allowed = client.post(f"/api/v1/pms/bookings/{booking['id']}/checkin", headers=cashier_headers)
+        assert allowed.status_code == 200, allowed.text
+        assert allowed.json()["status"] == "checked_in"
 
 
 class TestPMSValidation:
