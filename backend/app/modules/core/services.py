@@ -137,6 +137,49 @@ def resolve_pin_approval(
     return approver_user_id
 
 
+# سقف الأدوار المسموح لها تتبدّل عبر PIN — موظفي الشغل الميداني بس
+# (نادل حتى مدير). أدوار إدارية/مالية حساسة (accountant/hr_manager/admin/
+# super_admin) مستبعدة عمدًا: PIN تشغيلي (4-6 أرقام) أضعف بكتير من
+# email+password+2FA الإلزامي على الأدوار دي (§11 CLAUDE.md)، فسماح PIN
+# switch عليها كان هيبقى تحايل حقيقي على الـ 2FA الإلزامي.
+PIN_SWITCH_MAX_ROLE_LEVEL = 60
+
+
+def pin_switch_login(db: Session, target_user_id: int, pin: str) -> dict:
+    """تبديل هوية المشغّل على جهاز كاشير واحد بدون logout/login كامل — نفس
+    الـ JWT infra الموجودة بالظبط (create_access_token)، مش نظام مصادقة
+    مواز. **لازم caller يكون مسجّل دخوله فعليًا بالفعل** (الـ router بيحطّه
+    خلف get_waiter_user) — الـ endpoint ده مش نقطة دخول أولى للنظام، بس
+    وسيلة أسرع لتحديد "مين قاعد على الكاشير دلوقتي" جوه terminal session
+    شغالة بالفعل. معرفة PIN الشخص هي إثبات هويته لهذا الغرض بالظبط، زي أي
+    نظام POS حقيقي (Foodics/Square/Toast)."""
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.deps import user_level  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+    from app.core.kernel.security import create_access_token  # noqa: PLC0415
+    from datetime import timedelta  # noqa: PLC0415
+
+    target = db.query(User).filter(User.id == target_user_id).first()
+    if not target:
+        raise ValueError("المستخدم غير موجود")
+    if not target.is_active:
+        raise ValueError("الحساب غير نشط")
+    if user_level(target) > PIN_SWITCH_MAX_ROLE_LEVEL:
+        raise ValueError("الحساب ده محتاج تسجيل دخول كامل (إيميل/كلمة سر) — مش عبر PIN")
+
+    if not verify_pin(db, target_user_id, pin):
+        raise ValueError("رقم PIN غلط أو الحساب مقفول مؤقتًا بعد محاولات فاشلة")
+
+    settings = get_settings()
+    token = create_access_token(
+        data={"sub": target.email},
+        secret_key=settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    return {"access_token": token, "token_type": "bearer", "user": target}
+
+
 # ─────────────────────── Branch ──────────────────────────────────────
 
 def get_branch_or_404(db: Session, branch_id: int) -> Branch:

@@ -283,6 +283,18 @@ class PinCredentialRead(BaseModel):
     is_locked:       bool
 
 
+class PinSwitchRequest(BaseModel):
+    """تبديل هوية المشغّل — راجع core.services.pin_switch_login."""
+    user_id: int
+    pin:     str = Field(..., pattern=r"^\d{4,6}$")
+
+
+class PinSwitchResponse(BaseModel):
+    access_token: str
+    token_type:   str = "bearer"
+    user:         UserRead
+
+
 class ApproverOption(BaseModel):
     """خيار في قائمة "اختر المدير" وقت موافقة PIN — بيانات دنيا، مفيش
     email/PII خالص (مش endpoint إدارة مستخدمين)."""

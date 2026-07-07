@@ -262,6 +262,73 @@ class TestPinCredentials:
         resp = client.get("/api/v1/pins/approvers", headers=waiter_headers)
         assert resp.status_code == 403
 
+    def test_pin_switch_issues_real_token_for_target_user(self, client: TestClient, db, waiter_headers, cashier_headers):
+        """موظف تاني (كاشير) بيبدّل على نفس الـ terminal session (واتر مسجّل
+        دخوله) — التوكن الجديد لازم يمثّل الكاشير فعليًا، مش الواتر."""
+        from app.core.kernel.models.user import User
+        from app.modules.core import services as core_services
+
+        cashier = db.query(User).filter(User.email == "cashier@test.local").first()
+        core_services.set_pin(db, cashier.id, "2468", created_by=cashier.id)
+        db.commit()
+
+        resp = client.post(
+            "/api/v1/pins/switch", json={"user_id": cashier.id, "pin": "2468"}, headers=waiter_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["user"]["id"] == cashier.id
+        assert body["user"]["role"] == "cashier"
+
+        # التوكن الجديد فعلاً شغال (يقدر يعمل عملية بمستوى كاشير)
+        new_headers = {"Authorization": f"Bearer {body['access_token']}"}
+        me_resp = client.get("/api/v1/auth/me", headers=new_headers)
+        assert me_resp.status_code == 200
+        assert me_resp.json()["email"] == "cashier@test.local"
+
+    def test_pin_switch_wrong_pin_rejected(self, client: TestClient, db, waiter_headers, cashier_headers):
+        from app.core.kernel.models.user import User
+        from app.modules.core import services as core_services
+
+        cashier = db.query(User).filter(User.email == "cashier@test.local").first()
+        core_services.set_pin(db, cashier.id, "2468", created_by=cashier.id)
+        db.commit()
+
+        resp = client.post(
+            "/api/v1/pins/switch", json={"user_id": cashier.id, "pin": "0000"}, headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_pin_switch_rejects_admin_tier_targets(self, client: TestClient, db, waiter_headers, super_admin_headers):
+        """⚠️ حماية حقيقية: PIN switch ممنوع على أدوار محتاجة 2FA إجباري
+        (super_admin/accountant/admin/hr_manager) — راجع
+        core.services.PIN_SWITCH_MAX_ROLE_LEVEL. لو سمحنا بيه، PIN بـ4 أرقام
+        كان هيبقى تحايل حقيقي على الـ 2FA الإلزامي."""
+        from app.core.kernel.models.user import User
+        from app.modules.core import services as core_services
+
+        admin = db.query(User).filter(User.email == "super_admin@test.local").first()
+        core_services.set_pin(db, admin.id, "1357", created_by=admin.id)
+        db.commit()
+
+        resp = client.post(
+            "/api/v1/pins/switch", json={"user_id": admin.id, "pin": "1357"}, headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_pin_switch_requires_existing_terminal_session(self, client: TestClient, db, cashier_headers):
+        """مفيش أي حد بدون توكن خالص يقدر يستخدم الـ endpoint ده — لازم
+        session شغالة بالفعل (get_waiter_user)."""
+        from app.core.kernel.models.user import User
+        from app.modules.core import services as core_services
+
+        cashier = db.query(User).filter(User.email == "cashier@test.local").first()
+        core_services.set_pin(db, cashier.id, "2468", created_by=cashier.id)
+        db.commit()
+
+        resp = client.post("/api/v1/pins/switch", json={"user_id": cashier.id, "pin": "2468"})
+        assert resp.status_code == 401
+
     def test_verify_pin_wrong_value_fails_correct_succeeds(self, db, waiter_headers):
         """اختبار مباشر على core.services.verify_pin (مش HTTP — مفيش endpoint
         عام للتحقق المباشر، بيتحقق داخليًا بس عبر resolve_pin_approval)."""

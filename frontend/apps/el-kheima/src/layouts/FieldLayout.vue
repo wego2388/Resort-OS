@@ -10,11 +10,14 @@ import { useAuthStore } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
 import ShiftPanel from '../components/ShiftPanel.vue'
 import GuestAlertsBell from '../components/GuestAlertsBell.vue'
+import OperatorSwitchModal from '../components/OperatorSwitchModal.vue'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 const { isOnline, pendingCount } = useOfflineQueue()
+
+const showOperatorSwitch = ref(false)
 
 const branchName = computed(() => `فرع ${auth.branchId}`)
 
@@ -87,10 +90,14 @@ function logout() {
             {{ currentTime }}
           </div>
 
-          <div class="hidden sm:flex flex-col items-end">
+          <button
+            @click="showOperatorSwitch = true"
+            class="hidden sm:flex flex-col items-end hover:bg-gray-50 rounded-lg px-1.5 py-0.5 transition-colors"
+            title="تبديل المشغّل"
+          >
             <span class="text-sm font-medium text-gray-700">{{ auth.user?.full_name }}</span>
-            <span class="text-xs text-gray-400">{{ auth.role }}</span>
-          </div>
+            <span class="text-xs text-blue-600">{{ auth.role }} · تبديل ↔</span>
+          </button>
 
           <button
             @click="logout"
@@ -98,6 +105,8 @@ function logout() {
           >خروج</button>
         </div>
       </div>
+
+      <OperatorSwitchModal v-if="showOperatorSwitch" @close="showOperatorSwitch = false" />
 
       <nav v-if="navItems.length" class="flex border-t border-resort-border overflow-x-auto">
         <RouterLink

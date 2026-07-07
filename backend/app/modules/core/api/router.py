@@ -72,6 +72,8 @@ from app.modules.core.schemas import (
     PermissionCatalogEntryRead,
     PinCredentialRead,
     PinSetRequest,
+    PinSwitchRequest,
+    PinSwitchResponse,
     SettingRead,
     SettingUpdate,
     UserPermissionGrantRequest,
@@ -615,6 +617,29 @@ def set_my_pin(data: PinSetRequest, db: DbDep, user=Depends(get_waiter_user)):
     هو نفسه مؤهّل ليها (مدير+) أو لاستخدام مستقبلي (تبديل مشغّل، Phase 2)."""
     cred = services.set_pin(db, user.id, data.pin, created_by=user.id)
     return _pin_status_response(user.id, cred)
+
+
+@router.post("/pins/switch", response_model=PinSwitchResponse)
+def pin_switch(data: PinSwitchRequest, db: DbDep, _user=Depends(get_waiter_user)):
+    """تبديل هوية المشغّل على جهاز كاشير واحد — راجع
+    core.services.pin_switch_login للتفاصيل الكاملة. الحد الأدنى
+    ``get_waiter_user`` هنا معناه "فيه terminal session شغالة بالفعل"،
+    مش صلاحية حقيقية على العملية نفسها (أي حد يعرف PIN شخص تاني بيتحول
+    لهويته، زي أي POS حقيقي).
+
+    ⚠️ لازم يتسجّل *قبل* `/pins/{user_id}` تحت — Starlette بيطابق المسارات
+    بترتيب التسجيل، ومسار `{user_id}` بيقبل "switch" كـ path segment عادي
+    (باج routing حقيقي اتكشف واتصلح هنا: أي طلب لـ /pins/switch كان بيوصل
+    فعليًا لـ get_user_pin_status/set_user_pin بدل الـ endpoint ده، برسالة
+    403 "يتطلب صلاحية مدير" مضلّلة بدل السلوك الصحيح)."""
+    try:
+        result = services.pin_switch_login(db, data.user_id, data.pin)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return PinSwitchResponse(
+        access_token=result["access_token"], token_type=result["token_type"],
+        user=UserRead.model_validate(result["user"]),
+    )
 
 
 @router.get("/pins/{user_id}", response_model=PinCredentialRead)

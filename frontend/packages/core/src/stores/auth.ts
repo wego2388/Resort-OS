@@ -82,11 +82,27 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = res.data
   }
 
+  // تبديل هوية المشغّل على جهاز كاشير واحد (نفس الـ terminal session) —
+  // راجع core.services.pin_switch_login. مش login جديد فعليًا (نفس الجهاز،
+  // نفس الشاشة)، بس التوكن بيتغيّر فعليًا عشان كل عملية بعد كده تتسجل باسم
+  // المشغّل الحقيقي (cashier_id/voided_by/...) مش أي حد سجّل دخول الأول مرة.
+  async function pinSwitch(targetUserId: number, pin: string) {
+    isLoading.value = true
+    try {
+      const res = await api.post(ENDPOINTS.core.pinSwitch, { user_id: targetUserId, pin })
+      token.value = res.data.access_token
+      localStorage.setItem('access_token', token.value!)
+      user.value = res.data.user
+    } finally {
+      isLoading.value = false
+    }
+  }
+
   function logout() {
     user.value = null
     token.value = null
     localStorage.removeItem('access_token')
   }
 
-  return { user, token, isAuthenticated, role, branchId, isLoading, login, logout, fetchUser, hasRole, needsTwoFactorSetup }
+  return { user, token, isAuthenticated, role, branchId, isLoading, login, logout, fetchUser, hasRole, needsTwoFactorSetup, pinSwitch }
 })

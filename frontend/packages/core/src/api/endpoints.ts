@@ -17,6 +17,7 @@ export const ENDPOINTS = {
     alertStatus: (alertId: number) => `/api/v1/alerts/${alertId}/status`,
     // PIN تشغيلي — راجع backend/app/modules/core/models.py::PinCredential
     pinApprovers: '/api/v1/pins/approvers',
+    pinSwitch: '/api/v1/pins/switch',
   },
   beach: {
     inventory: '/api/v1/beach/inventory',
