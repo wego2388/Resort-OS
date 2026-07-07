@@ -1,8 +1,14 @@
 """restaurant/cafe: add recipe/BOM lines (menu_item_recipe_lines, cafe_item_recipe_lines)
 
 Revision ID: c1f4a8e02b7d
-Revises: b2d7f931a4e1
+Revises: 7a434d2a9bca
 Create Date: 2026-07-06 10:00:00.000000
+
+⚠️ down_revision اتحدّث من b2d7f931a4e1 لـ 7a434d2a9bca أثناء دمج الفروع
+(2026-07-07) — الهجرتين اتعملوا بالتوازي في worktrees منفصلة على نفس الأب
+(b2d7f931a4e1)، فلما اتدمجوا مع بعض ظهر alembic heads اتنين. أُعيد ترتيبهم
+تسلسليًا هنا (B2B credit-limit اتعمل قبل، فبيسبق هجرة الوصفة/BOM) — نفس
+الأسلوب المتّبع فعلاً قبل كده في هذا المشروع لتعارض مشابه بين PMS/Finance.
 
 باج حقيقي اتكشف بمقارنة مع نظام POS مطعم/كافيه حقيقي قديم: MenuItem/CafeItem
 كان معاهم بس cost يدوي + ربط اختياري 1:1 بصنف مخزني واحد (linked_product_id)
@@ -22,7 +28,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision: str = 'c1f4a8e02b7d'
-down_revision: Union[str, None] = 'b2d7f931a4e1'
+down_revision: Union[str, None] = '7a434d2a9bca'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
