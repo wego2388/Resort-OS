@@ -67,6 +67,7 @@ class CafeItemCreate(BaseModel):
     is_available:        bool = True
     preparation_minutes: int = 5
     image_url:           Optional[str] = None
+    station:             str = Field("bar", pattern=r"^(hot|grill|cold|bar|dessert)$")
     linked_product_id:   Optional[int] = None
 
 
@@ -77,6 +78,7 @@ class CafeItemUpdate(BaseModel):
     is_available:        Optional[bool]    = None
     preparation_minutes: Optional[int]     = None
     category_id:         Optional[int]     = None
+    station:             Optional[str]     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert)$")
     linked_product_id:   Optional[int]     = None
 
 

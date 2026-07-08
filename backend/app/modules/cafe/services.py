@@ -500,26 +500,41 @@ def update_order_status(
 
     order = crud.update_order_status(db, order, new_status)
 
-    # إرسال ticket للمطبخ عند تحويل الطلب لـ in_kitchen
+    # إرسال ticket لكل محطة (bar/hot/grill/...) عند تحويل الطلب لـ in_kitchen —
+    # نفس منطق restaurant.services.update_order_status بالظبط (راجع تعليقه
+    # هناك). ⚠️ قبل كده كان station="bar" ثابت في الكود لكل تذاكر الكافيه —
+    # باج حقيقي اتصلح (2026-07-08، راجع CafeItem.station وCLAUDE.md §13 بند ⓭):
+    # لو الكافيه ضاف صنف مطبخ حقيقي (مش مجرد مشروب) مستقبلاً، كان هيتوجّه
+    # لشاشة البار غلط بدل المطبخ.
     if new_status == "in_kitchen":
         from app.modules.restaurant.crud import create_kitchen_ticket  # noqa: PLC0415
-        items_snapshot = [
-            {
+
+        active_items = [item for item in order.items if item.status != "cancelled"]
+        item_ids = {item.item_id for item in active_items}
+        station_by_item = {
+            ci.id: ci.station
+            for ci in db.query(CafeItem).filter(CafeItem.id.in_(item_ids)).all()
+        } if item_ids else {}
+
+        items_by_station: dict[str, list[dict]] = {}
+        for item in active_items:
+            station = station_by_item.get(item.item_id, "bar")
+            items_by_station.setdefault(station, []).append({
                 "order_item_id": item.id,
                 "name":          item.name,
                 "quantity":      item.quantity,
                 "notes":         item.notes,
-            }
-            for item in order.items
-        ]
-        create_kitchen_ticket(
-            db,
-            order_id=order.id,
-            branch_id=order.branch_id,
-            station="bar",
-            items_snapshot=items_snapshot,
-            module="cafe",
-        )
+            })
+
+        for station, items_snapshot in items_by_station.items():
+            create_kitchen_ticket(
+                db,
+                order_id=order.id,
+                branch_id=order.branch_id,
+                station=station,
+                items_snapshot=items_snapshot,
+                module="cafe",
+            )
 
     # إعادة الطاولة للحالة available عند الدفع أو الإلغاء
     if new_status in ("paid", "cancelled") and order.table_id:

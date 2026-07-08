@@ -1575,3 +1575,76 @@ class TestCafeItemRecipeHTTP:
             headers=waiter_headers,
         )
         assert resp.status_code == 403
+
+
+class TestCafeKitchenTicketStationRouting:
+    """⚠️ باج حقيقي اتصلح (2026-07-08): CafeItem ماكانش عنده عمود station
+    خالص، فكل تذكرة كافيه كانت بتتوجّه لمحطة "bar" ثابتة في الكود مهما كان
+    الصنف نفسه — يعني أي صنف كافيه محتاج مطبخ حقيقي (مش مجرد مشروب) عمره ما
+    كان يوصل لشاشة kds/kitchen. راجع CafeItem.station + CLAUDE.md §13 بند ⓭."""
+
+    def test_order_with_items_from_two_stations_creates_two_tickets(
+        self, client: TestClient, db, fake_redis, waiter_headers,
+    ):
+        from app.modules.cafe.models import CafeItem
+        from app.modules.restaurant.models import KitchenTicket
+
+        branch = make_branch_committed(db)
+        coffee = make_item_committed(db, branch)  # station default = "bar" (عمود CafeItem.station الجديد)
+        hot_item = CafeItem(branch_id=branch.id, name="توست جبنة", price=Decimal("60.00"),
+                             is_available=True, station="hot")
+        db.add(hot_item)
+        db.commit()
+        db.refresh(hot_item)
+
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={"branch_id": branch.id, "order_type": "takeaway",
+                  "items": [{"item_id": coffee.id, "quantity": 1}, {"item_id": hot_item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "in_kitchen"}, headers=waiter_headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+        tickets = db.query(KitchenTicket).filter(
+            KitchenTicket.module == "cafe", KitchenTicket.order_id == order["id"],
+        ).all()
+        stations = {t.station for t in tickets}
+        assert stations == {"bar", "hot"}, "الصنف الساخن لازم يتوجّه لمحطة مختلفة عن القهوة، مش كله bar"
+
+        hot_ticket = next(t for t in tickets if t.station == "hot")
+        assert [i["name"] for i in hot_ticket.items_snapshot] == ["توست جبنة"]
+        bar_ticket = next(t for t in tickets if t.station == "bar")
+        assert [i["name"] for i in bar_ticket.items_snapshot] == [coffee.name]
+
+    def test_kds_kitchen_screen_now_sees_real_cafe_food(self, client: TestClient, db, fake_redis, waiter_headers):
+        """قبل الإصلاح: kds/kitchen بيفلتر بـ module=restaurant بس — أي صنف
+        كافيه (حتى لو station=hot) عمره ما كان يظهر هنا لأن التذكرة نفسها
+        كانت متسجّلة بـ module=cafe, station=bar ثابت. دلوقتي التذكرة بتتسجل
+        بالمحطة الصح، فلو شاشة المطبخ فلترت بـ module=cafe+station=hot (نفس
+        فلسفة kds/bar الحالية اللي بتجمع من الموديولين) هتلاقي الصنف فعليًا."""
+        from app.modules.cafe.models import CafeItem
+        from app.modules.restaurant.models import KitchenTicket
+
+        branch = make_branch_committed(db)
+        pizza_like = CafeItem(branch_id=branch.id, name="بيتزا اختبار", price=Decimal("150.00"),
+                               is_available=True, station="hot")
+        db.add(pizza_like)
+        db.commit()
+        db.refresh(pizza_like)
+
+        order = client.post(
+            "/api/v1/cafe/orders",
+            json={"branch_id": branch.id, "order_type": "takeaway",
+                  "items": [{"item_id": pizza_like.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        client.patch(f"/api/v1/cafe/orders/{order['id']}/status", json={"status": "in_kitchen"}, headers=waiter_headers)
+
+        ticket = db.query(KitchenTicket).filter(
+            KitchenTicket.module == "cafe", KitchenTicket.order_id == order["id"],
+        ).first()
+        assert ticket.station == "hot"

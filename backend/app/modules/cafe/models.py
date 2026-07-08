@@ -42,6 +42,12 @@ class CafeItem(Base, TimestampMixin):
     is_available:        Mapped[bool]        = mapped_column(Boolean, default=True)
     preparation_minutes: Mapped[int]         = mapped_column(Integer, default=5)
     image_url:           Mapped[str | None]  = mapped_column(String(500), nullable=True)
+    station:             Mapped[str]         = mapped_column(String(50), default="bar")
+    # hot|grill|cold|bar|dessert — لتوجيه الـ KDS تلقائياً، نفس MenuItem.station
+    # بالظبط. ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-08): الكافيه ماكانش عنده
+    # العمود ده خالص، فكل تذكرة كافيه كانت بتتوجّه لمحطة "bar" ثابتة في الكود
+    # (cafe.services.update_order_status) — يعني أي صنف كافيه محتاج مطبخ حقيقي
+    # عمره ما كان يوصل لشاشة kds/kitchen خالص. راجع CLAUDE.md §13 بند ⓭.
     linked_product_id:   Mapped[int | None]  = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     # ربط اختياري بصنف مخزني (inventory.Product) — زي MenuItem.linked_product_id
     # عند restaurant. لو موجود، دفع الطلب بيخصم المخزون تلقائياً.
