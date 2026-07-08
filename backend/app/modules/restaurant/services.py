@@ -11,10 +11,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.restaurant import crud
-from app.modules.restaurant.models import KitchenTicket, MenuItem, MenuItemRecipeLine, Order
+from app.modules.restaurant.models import (
+    KitchenTicket, MenuItem, MenuItemRecipeLine, MenuItemVariant,
+    MenuItemVariantRecipeLine, Order,
+)
 from app.modules.restaurant.schemas import (
     FoodCostReportLine, FoodCostReportResponse, CogsTrendPoint, GrossMarginSummary,
     MenuItemRecipeLineCreate, MenuItemRecipeLineUpdate, OrderCreate,
+    MenuItemVariantCreate, MenuItemVariantRecipeLineCreate,
+    MenuItemVariantRecipeLineUpdate, MenuItemVariantUpdate,
 )
 from app.resort_os.discount_engine import DiscountRule, OrderContext, OrderLineItem, calculate_discount
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT, compute_food_cost_result, exceeds_threshold
@@ -65,6 +70,38 @@ def _resolve_extras(db: Session, menu_item, extra_ids: list[int]) -> tuple[list[
             price_addition += opt.price_addition
 
     return extras_data, price_addition
+
+
+def _resolve_variant(db: Session, menu_item: MenuItem, variant_id: Optional[int]) -> Optional[MenuItemVariant]:
+    """يتحقق من اختيار المتغيّر وقت الطلب. لو الصنف عنده متغيّرات متاحة، لازم
+    يتحدد واحد منهم إجباريًا (زي اختيار 'الحجم' الإجباري في أي كافيه
+    حقيقي) — مفيش سعر/وصفة افتراضية غامضة لما فيه أكتر من حجم حقيقي للصنف.
+    لو الصنف مفهوش متغيّرات خالص، السلوك زي ما هو 100% (سعر ووصفة الصنف
+    الأساسي) — المتغيّرات إضافة اختيارية بحتة."""
+    available_variants = [v for v in menu_item.variants if v.is_available]
+    if not available_variants:
+        if variant_id is not None:
+            raise ValueError(f"الصنف '{menu_item.name}' مفهوش متغيّرات — لا يمكن تحديد variant_id")
+        return None
+    if variant_id is None:
+        raise ValueError(f"لازم تختار حجم/نوع لـ '{menu_item.name}'")
+    variant = next((v for v in available_variants if v.id == variant_id), None)
+    if not variant:
+        raise ValueError(f"المتغيّر {variant_id} غير موجود أو غير متاح لهذا الصنف")
+    return variant
+
+
+def _effective_recipe(menu_item: MenuItem, variant: Optional[MenuItemVariant]) -> list:
+    """الوصفة الفعلية المستخدمة لخصم المخزون/حساب تكلفة الطعام لصنف تم
+    بيعه — وصفة المتغيّر (لو موجودة) أولاً، وإلا وصفة الصنف الأساسي
+    كـ fallback (بما في ذلك حالة اختيار متغيّر مفهوش وصفة خاصة بيه لسه —
+    نفس فلسفة fallback الموجودة أصلاً بين recipe_lines و linked_product_id
+    في _deduct_inventory_for_order). مستخدمة من خصم المخزون وتقرير تكلفة
+    الطعام معًا، عشان الاتنين يتفقوا على "إيه الوصفة اللي فعليًا بتحكم
+    استهلاك المخزون" بدل ما يختلفوا."""
+    if variant is not None and variant.recipe_lines:
+        return variant.recipe_lines
+    return menu_item.recipe_lines
 
 
 # ─────────────────────── Recipe / BOM ──────────────────────────────────
@@ -137,6 +174,120 @@ def remove_recipe_line(db: Session, line_id: int) -> None:
     db.commit()
 
 
+# ─────────────────────── Variants (حجم/نوع حقيقي) ──────────────────────
+# راجع app.modules.restaurant.models.MenuItemVariant للتبرير الكامل —
+# سعر ووصفة مستقلين تمامًا عن الصنف الأساسي، مختلف عن MenuItemExtra.
+
+def compute_variant_cost(variant: MenuItemVariant) -> Decimal:
+    """نفس منطق compute_menu_item_cost بالظبط، لكن مفيش fallback لحقل
+    'cost' يدوي — المتغيّرات مالهاش حقل تكلفة يدوية خاص بيها (لو عايز
+    تكلفة يدوية لمتغيّر، استخدم وصفة بسطر واحد بدل كده). وصفة فاضية =
+    تكلفة صفر صراحةً، مش 'غير معروفة'."""
+    total = Decimal("0")
+    for line in variant.recipe_lines:
+        unit_cost = (line.product.cost_price if line.product else None) or Decimal("0")
+        total += line.quantity_per_unit * unit_cost
+    return total.quantize(Decimal("0.01"))
+
+
+def build_variant_recipe_line_read(line: MenuItemVariantRecipeLine) -> dict:
+    """نفس منطق build_recipe_line_read بالظبط، لسطر وصفة متغيّر."""
+    unit_cost = (line.product.cost_price if line.product else None) or Decimal("0")
+    return {
+        "id": line.id,
+        "variant_id": line.variant_id,
+        "product_id": line.product_id,
+        "product_name": line.product.name if line.product else "",
+        "product_unit": line.product.unit if line.product else "",
+        "quantity_per_unit": line.quantity_per_unit,
+        "unit_cost": unit_cost,
+        "line_cost": (line.quantity_per_unit * unit_cost).quantize(Decimal("0.01")),
+        "notes": line.notes,
+    }
+
+
+def build_variant_read(variant: MenuItemVariant) -> dict:
+    """يبني dict متوافق مع MenuItemVariantRead — نفس أسلوب
+    build_recipe_line_read (مش before-validator على الموديل نفسه)."""
+    return {
+        "id": variant.id,
+        "menu_item_id": variant.menu_item_id,
+        "name": variant.name,
+        "name_ar": variant.name_ar,
+        "price": variant.price,
+        "is_available": variant.is_available,
+        "sort_order": variant.sort_order,
+        "recipe_lines": [build_variant_recipe_line_read(line) for line in variant.recipe_lines],
+        "computed_cost": compute_variant_cost(variant),
+    }
+
+
+def add_variant(db: Session, menu_item_id: int, data: MenuItemVariantCreate) -> MenuItemVariant:
+    item = crud.get_menu_item(db, menu_item_id)
+    if not item:
+        raise ValueError(f"الصنف {menu_item_id} غير موجود")
+    if any(v.name == data.name for v in item.variants):
+        raise ValueError(f"يوجد بالفعل متغيّر بالاسم '{data.name}' لهذا الصنف")
+
+    variant = crud.create_variant(db, menu_item_id, data)
+    db.commit()
+    db.refresh(variant)
+    return variant
+
+
+def update_variant(db: Session, variant_id: int, data: MenuItemVariantUpdate) -> MenuItemVariant:
+    variant = crud.get_variant(db, variant_id)
+    if not variant:
+        raise ValueError(f"المتغيّر {variant_id} غير موجود")
+    variant = crud.update_variant(db, variant, data)
+    db.commit()
+    db.refresh(variant)
+    return variant
+
+
+def remove_variant(db: Session, variant_id: int) -> None:
+    if not crud.delete_variant(db, variant_id):
+        raise ValueError(f"المتغيّر {variant_id} غير موجود")
+    db.commit()
+
+
+def add_variant_recipe_line(db: Session, variant_id: int, data: MenuItemVariantRecipeLineCreate) -> MenuItemVariantRecipeLine:
+    from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
+
+    variant = crud.get_variant(db, variant_id)
+    if not variant:
+        raise ValueError(f"المتغيّر {variant_id} غير موجود")
+    product = inventory_crud.get_product(db, data.product_id)
+    if not product:
+        raise ValueError(f"المنتج {data.product_id} غير موجود في المخزون")
+    item = crud.get_menu_item(db, variant.menu_item_id)
+    if item and product.branch_id != item.branch_id:
+        raise ValueError("المنتج المخزني لازم يكون من نفس فرع الصنف")
+    if any(line.product_id == data.product_id for line in variant.recipe_lines):
+        raise ValueError(f"المنتج '{product.name}' مضاف بالفعل لوصفة هذا المتغيّر")
+
+    line = crud.create_variant_recipe_line(db, variant_id, data)
+    db.commit()
+    db.refresh(line)
+    return line
+
+
+def update_variant_recipe_line(db: Session, line_id: int, data: MenuItemVariantRecipeLineUpdate) -> MenuItemVariantRecipeLine:
+    line = crud.get_variant_recipe_line(db, line_id)
+    if not line:
+        raise ValueError(f"سطر الوصفة {line_id} غير موجود")
+    line = crud.update_variant_recipe_line(db, line, data)
+    db.commit()
+    db.refresh(line)
+    return line
+
+
+def remove_variant_recipe_line(db: Session, line_id: int) -> None:
+    if not crud.delete_variant_recipe_line(db, line_id):
+        raise ValueError(f"سطر الوصفة {line_id} غير موجود")
+    db.commit()
+
+
 def create_order(
     db: Session,
     branch_id: int,
@@ -163,14 +314,21 @@ def create_order(
         if not menu_item.is_available:
             raise ValueError(f"الصنف '{menu_item.name}' غير متاح حالياً")
 
+        variant = _resolve_variant(db, menu_item, item_req.variant_id)
+        # سعر ووصفة المتغيّر (لو موجود) بيحلّوا محل سعر ووصفة الصنف الأساسي
+        # بالكامل — مش رسم إضافي فوقه (راجع models.MenuItemVariant).
+        base_price = variant.price if variant else menu_item.price
+        item_name = f"{menu_item.name} - {variant.name}" if variant else menu_item.name
+
         extras_data, extra_price_per_unit = _resolve_extras(db, menu_item, item_req.extra_ids)
 
-        line_total = (menu_item.price + extra_price_per_unit) * item_req.quantity
+        line_total = (base_price + extra_price_per_unit) * item_req.quantity
         subtotal += line_total
         items_data.append({
             "menu_item_id": item_req.menu_item_id,
-            "name":         menu_item.name,
-            "unit_price":   menu_item.price,
+            "variant_id":   variant.id if variant else None,
+            "name":         item_name,
+            "unit_price":   base_price,
             "quantity":     item_req.quantity,
             "notes":        item_req.notes,
             "extras":       extras_data,
@@ -419,8 +577,10 @@ def _deduct_inventory_for_order(db: Session, order: Order) -> None:
             menu_item = crud.get_menu_item(db, item.menu_item_id)
             if not menu_item:
                 continue
-            if menu_item.recipe_lines:
-                for line in menu_item.recipe_lines:
+            variant = crud.get_variant(db, item.variant_id) if item.variant_id else None
+            recipe_lines = _effective_recipe(menu_item, variant)
+            if recipe_lines:
+                for line in recipe_lines:
                     product = inventory_crud.get_product(db, line.product_id)
                     if not product or not product.warehouse_id:
                         continue
@@ -877,85 +1037,109 @@ def get_food_cost_report(
     """تقرير كامل لكل أصناف المطعم في الفرع: التكلفة النظرية (وصفة × كمية
     مباعة فعليًا) مقابل الإيراد الفعلي، لكل صنف ولكل يوم (trend) وملخص
     إجمالي — استعلامان بس (كل الأصناف + كل المبيعات المدفوعة في المدى)،
-    وباقي التجميع (لكل صنف/لكل يوم) في الذاكرة، مفيش N+1."""
+    وباقي التجميع (لكل صنف/لكل يوم) في الذاكرة، مفيش N+1.
+
+    المفتاح الأساسي للتجميع (menu_item_id, variant_id) مش menu_item_id
+    لوحده: صنف عنده متغيّرات (راجع models.MenuItemVariant) بيبقى مطلوب
+    اختيار واحد منهم إجباريًا وقت الطلب (_resolve_variant)، وسعر/وصفة كل
+    متغيّر مستقلين تمامًا عن بعض (مثال: كابتشينو صغير 25ج/120مل حليب مقابل
+    كبير 35ج/200مل حليب). تجميعهم في صف واحد للصنف الأساسي هيدّي "تكلفة
+    نظرية للوحدة" مضلّلة (متوسط وهمي بين حجمين مختلفين تمامًا)، فبدل كده كل
+    متغيّر متاح بياخد صف مستقل بسعره ووصفته الحقيقيين. صنف بدون متغيّرات
+    (الأغلبية — المطاعم مش الكافيهات غالبًا) سلوكه زي ما كان بالظبط قبل
+    المتغيّرات: صف واحد، variant_id=None."""
     range_start, _ = local_date_to_utc_range(date_from, settings.TIMEZONE)
     _, range_end = local_date_to_utc_range(date_to, settings.TIMEZONE)
 
     items = crud.list_menu_items_for_food_cost(db, branch_id)
     sales_rows = crud.get_paid_order_items_for_food_cost(db, branch_id, range_start, range_end)
 
-    qty_by_item: dict[int, int] = defaultdict(int)
-    revenue_by_item: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
-    # لكل يوم محلي: {menu_item_id: (كمية, إيراد)} — أساس الـ trend اليومي.
-    by_day: dict[date, dict[int, list]] = defaultdict(lambda: defaultdict(lambda: [0, Decimal("0")]))
+    ReportKey = tuple[int, Optional[int]]  # (menu_item_id, variant_id)
+    qty_by_key: dict[ReportKey, int] = defaultdict(int)
+    revenue_by_key: dict[ReportKey, Decimal] = defaultdict(lambda: Decimal("0"))
+    # لكل يوم محلي: {(menu_item_id, variant_id): (كمية, إيراد)} — أساس الـ trend اليومي.
+    by_day: dict[date, dict[ReportKey, list]] = defaultdict(lambda: defaultdict(lambda: [0, Decimal("0")]))
 
-    for menu_item_id, unit_price, quantity, created_at in sales_rows:
+    for menu_item_id, variant_id, unit_price, quantity, created_at in sales_rows:
+        key = (menu_item_id, variant_id)
         line_revenue = unit_price * quantity
-        qty_by_item[menu_item_id] += quantity
-        revenue_by_item[menu_item_id] += line_revenue
+        qty_by_key[key] += quantity
+        revenue_by_key[key] += line_revenue
         local_day = utc_naive_to_local_date(created_at, settings.TIMEZONE)
-        day_entry = by_day[local_day][menu_item_id]
+        day_entry = by_day[local_day][key]
         day_entry[0] += quantity
         day_entry[1] += line_revenue
 
     lines: list[FoodCostReportLine] = []
-    unit_cost_by_item: dict[int, Decimal] = {}
-    recipe_item_ids: set[int] = set()
+    unit_cost_by_key: dict[ReportKey, Decimal] = {}
+    recipe_key_ids: set[ReportKey] = set()
     total_revenue = Decimal("0")
     total_theoretical_cost = Decimal("0")
     items_missing_recipe = 0
     items_missing_recipe_revenue = Decimal("0")
 
     for item in items:
-        has_recipe = bool(item.recipe_lines)
-        recipe_lines = [
-            ((line.product.cost_price if line.product else None) or Decimal("0"), line.quantity_per_unit)
-            for line in item.recipe_lines
-        ]
-        quantity_sold = qty_by_item.get(item.id, 0)
-        revenue = revenue_by_item.get(item.id, Decimal("0"))
-        result = compute_food_cost_result(recipe_lines, quantity_sold, revenue)
-        unit_cost_by_item[item.id] = result.theoretical_unit_cost
-        if has_recipe:
-            recipe_item_ids.add(item.id)
+        available_variants = [v for v in item.variants if v.is_available]
+        # "وحدة تقرير" واحدة لكل متغيّر متاح (لو موجودين)، وإلا وحدة واحدة
+        # للصنف الأساسي — راجع الشرح فوق للتبرير الكامل.
+        report_units: list[tuple[Optional[int], str, list]] = (
+            [(v.id, f"{item.name} - {v.name}", _effective_recipe(item, v)) for v in available_variants]
+            if available_variants
+            else [(None, item.name, item.recipe_lines)]
+        )
 
-        if quantity_sold > 0:
+        for variant_id, display_name, effective_recipe_lines in report_units:
+            key = (item.id, variant_id)
+            has_recipe = bool(effective_recipe_lines)
+            recipe_lines = [
+                ((line.product.cost_price if line.product else None) or Decimal("0"), line.quantity_per_unit)
+                for line in effective_recipe_lines
+            ]
+            quantity_sold = qty_by_key.get(key, 0)
+            revenue = revenue_by_key.get(key, Decimal("0"))
+            result = compute_food_cost_result(recipe_lines, quantity_sold, revenue)
+            unit_cost_by_key[key] = result.theoretical_unit_cost
             if has_recipe:
-                total_revenue += revenue
-                total_theoretical_cost += result.theoretical_total_cost
-            else:
-                # مفيش وصفة → التكلفة "غير معروفة" مش صفر — مُستبعدة من
-                # الإجمالي المالي (وباقي trend) عشان ما تضخّمش هامش الربح
-                # بالغلط، ومعدودة هنا صراحةً عشان تظهر في الملخص كفجوة
-                # بيانات لازم تتقفل.
-                items_missing_recipe += 1
-                items_missing_recipe_revenue += revenue
+                recipe_key_ids.add(key)
 
-        lines.append(FoodCostReportLine(
-            menu_item_id=item.id,
-            menu_item_name=item.name,
-            has_recipe=has_recipe,
-            quantity_sold=quantity_sold,
-            revenue=revenue,
-            theoretical_unit_cost=result.theoretical_unit_cost,
-            theoretical_total_cost=result.theoretical_total_cost,
-            food_cost_pct=result.food_cost_pct if has_recipe else None,
-            gross_margin_amount=result.gross_margin_amount,
-            gross_margin_pct=result.gross_margin_pct if has_recipe else None,
-            exceeds_threshold=has_recipe and exceeds_threshold(result.food_cost_pct, threshold_pct),
-        ))
+            if quantity_sold > 0:
+                if has_recipe:
+                    total_revenue += revenue
+                    total_theoretical_cost += result.theoretical_total_cost
+                else:
+                    # مفيش وصفة → التكلفة "غير معروفة" مش صفر — مُستبعدة من
+                    # الإجمالي المالي (وباقي trend) عشان ما تضخّمش هامش الربح
+                    # بالغلط، ومعدودة هنا صراحةً عشان تظهر في الملخص كفجوة
+                    # بيانات لازم تتقفل.
+                    items_missing_recipe += 1
+                    items_missing_recipe_revenue += revenue
+
+            lines.append(FoodCostReportLine(
+                menu_item_id=item.id,
+                menu_item_name=display_name,
+                variant_id=variant_id,
+                has_recipe=has_recipe,
+                quantity_sold=quantity_sold,
+                revenue=revenue,
+                theoretical_unit_cost=result.theoretical_unit_cost,
+                theoretical_total_cost=result.theoretical_total_cost,
+                food_cost_pct=result.food_cost_pct if has_recipe else None,
+                gross_margin_amount=result.gross_margin_amount,
+                gross_margin_pct=result.gross_margin_pct if has_recipe else None,
+                exceeds_threshold=has_recipe and exceeds_threshold(result.food_cost_pct, threshold_pct),
+            ))
 
     # trend: نفس استبعاد "مفيش وصفة" بتاع الملخص — وإلا نسبة تكلفة الطعام
-    # اليومية هتبقى مخفّضة بالغلط بإيراد أصناف تكلفتها غير معروفة أصلاً.
+    # اليومية هتبقى مخفّضة بالغلط بإيراد أصناف/متغيّرات تكلفتها غير معروفة أصلاً.
     trend: list[CogsTrendPoint] = []
     current = date_from
     while current <= date_to:
         day_revenue = Decimal("0")
         day_cost = Decimal("0")
-        for menu_item_id, (qty, item_revenue) in by_day.get(current, {}).items():
-            if menu_item_id in recipe_item_ids:
+        for key, (qty, item_revenue) in by_day.get(current, {}).items():
+            if key in recipe_key_ids:
                 day_revenue += item_revenue
-                day_cost += unit_cost_by_item.get(menu_item_id, Decimal("0")) * qty
+                day_cost += unit_cost_by_key.get(key, Decimal("0")) * qty
         day_cost = day_cost.quantize(Decimal("0.01"))
         trend.append(CogsTrendPoint(
             date=current,

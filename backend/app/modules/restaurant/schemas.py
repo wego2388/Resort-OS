@@ -114,6 +114,66 @@ class MenuItemRecipeLineRead(BaseModel):
     notes:             Optional[str]
 
 
+# ─────────────────────── Variants (حجم/نوع حقيقي) ──────────────────────
+# متغيّر حقيقي — سعر ووصفة مستقلين تمامًا عن الصنف الأساسي، مختلف عن
+# MenuItemExtra (رسم إضافي فوق وصفة ثابتة). راجع
+# app.modules.restaurant.models.MenuItemVariant للتفاصيل الكاملة.
+
+class MenuItemVariantRecipeLineCreate(BaseModel):
+    product_id:        int
+    quantity_per_unit: Decimal = Field(..., gt=0)
+    notes:             Optional[str] = Field(None, max_length=200)
+
+
+class MenuItemVariantRecipeLineUpdate(BaseModel):
+    quantity_per_unit: Optional[Decimal] = Field(None, gt=0)
+    notes:             Optional[str]     = Field(None, max_length=200)
+
+
+class MenuItemVariantRecipeLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                int
+    variant_id:        int
+    product_id:        int
+    product_name:      str
+    product_unit:      str
+    quantity_per_unit: Decimal
+    unit_cost:         Decimal
+    line_cost:         Decimal
+    notes:             Optional[str]
+
+
+class MenuItemVariantCreate(BaseModel):
+    name:         str = Field(..., max_length=100)
+    name_ar:      Optional[str] = Field(None, max_length=100)
+    price:        Decimal = Field(..., gt=0)
+    is_available: bool = True
+    sort_order:   int = 0
+
+
+class MenuItemVariantUpdate(BaseModel):
+    name:         Optional[str]     = Field(None, max_length=100)
+    name_ar:      Optional[str]     = Field(None, max_length=100)
+    price:        Optional[Decimal] = Field(None, gt=0)
+    is_available: Optional[bool]    = None
+    sort_order:   Optional[int]     = None
+
+
+class MenuItemVariantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:            int
+    menu_item_id:  int
+    name:          str
+    name_ar:       Optional[str]
+    price:         Decimal
+    is_available:  bool
+    sort_order:    int
+    recipe_lines:  list[MenuItemVariantRecipeLineRead] = []
+    computed_cost: Decimal = Decimal("0")
+    # ملحوظة: مبنية من dict جاهز (services.build_variant_read) مش من ORM
+    # مباشرة — نفس أسلوب recipe_lines فوق، مفيش before-validator هنا.
+
+
 class MenuItemRead(MenuItemCreate):
     model_config = ConfigDict(from_attributes=True)
     id:           int
@@ -121,6 +181,7 @@ class MenuItemRead(MenuItemCreate):
     updated_at:   datetime
     extra_groups: list[MenuItemExtraGroupRead] = []
     recipe_lines: list[MenuItemRecipeLineRead] = []
+    variants:     list[MenuItemVariantRead] = []
     # تكلفة محسوبة من الوصفة (مجموع quantity_per_unit × تكلفة المنتج الحالية
     # لكل سطر) لو فيه وصفة حقيقية، وإلا fallback لحقل cost اليدوي — الفورمولا
     # نفسها في services.compute_menu_item_cost (business logic، مش هنا).
@@ -129,18 +190,19 @@ class MenuItemRead(MenuItemCreate):
     @model_validator(mode="before")
     @classmethod
     def _inject_recipe_fields(cls, obj):
-        """recipe_lines/computed_cost مش أعمدة حقيقية على MenuItem (ORM) —
-        بيتحسبوا هنا من الـ relationship + سعر المنتج الحالي قبل الـ
-        validation العادي، عشان MenuItemRead.model_validate(item) يفضل
+        """recipe_lines/variants/computed_cost مش أعمدة حقيقية على MenuItem
+        (ORM) — بيتحسبوا هنا من الـ relationships + سعر المنتج الحالي قبل
+        الـ validation العادي، عشان MenuItemRead.model_validate(item) يفضل
         شغال زي ما هو من كل نقط الاستدعاء الموجودة من غير أي تعديل عليهم."""
         if isinstance(obj, (dict, cls)):
             return obj
         from app.modules.restaurant import services as _services  # noqa: PLC0415 — تجنّب circular import مع services.py
 
         data = {name: getattr(obj, name, None) for name in cls.model_fields
-                if name not in ("recipe_lines", "computed_cost", "extra_groups")}
+                if name not in ("recipe_lines", "computed_cost", "extra_groups", "variants")}
         data["extra_groups"] = getattr(obj, "extra_groups", [])
         data["recipe_lines"] = [_services.build_recipe_line_read(line) for line in getattr(obj, "recipe_lines", [])]
+        data["variants"] = [_services.build_variant_read(v) for v in getattr(obj, "variants", [])]
         data["computed_cost"] = _services.compute_menu_item_cost(obj)
         return data
 
@@ -162,6 +224,7 @@ class DiningTableStatusUpdate(BaseModel):
 
 class OrderItemCreate(BaseModel):
     menu_item_id: int
+    variant_id:   Optional[int] = None  # MenuItemVariant.id — إجباري لو الصنف عنده متغيّرات متاحة
     quantity:     int = Field(1, ge=1)
     notes:        Optional[str] = Field(None, max_length=200)
     extra_ids:    list[int] = Field(default_factory=list)  # MenuItemExtra.id المختارة
@@ -198,6 +261,7 @@ class OrderItemRead(BaseModel):
     id:           int
     order_id:     int
     menu_item_id: int
+    variant_id:   Optional[int] = None
     name:         str
     unit_price:   Decimal
     quantity:     int
@@ -328,6 +392,16 @@ class PublicMenuExtraGroupRead(BaseModel):
     options:    list[PublicMenuExtraRead] = []
 
 
+class PublicMenuVariantRead(BaseModel):
+    """للضيف عبر QR — بدون تكلفة/وصفة، سعر واسم بس."""
+    model_config = ConfigDict(from_attributes=True)
+    id:           int
+    name:         str
+    name_ar:      Optional[str]
+    price:        Decimal
+    is_available: bool
+
+
 class PublicMenuItemRead(BaseModel):
     """للضيف عبر QR — بدون cost أو station أو بيانات داخلية."""
     model_config = ConfigDict(from_attributes=True)
@@ -340,6 +414,7 @@ class PublicMenuItemRead(BaseModel):
     image_url:           Optional[str]
     category_id:         Optional[int]
     extra_groups:        list[PublicMenuExtraGroupRead] = []
+    variants:            list[PublicMenuVariantRead] = []
 
 
 class PublicMenuCategoryRead(BaseModel):
@@ -359,6 +434,7 @@ class PublicMenuResponse(BaseModel):
 
 class GuestOrderItemCreate(BaseModel):
     menu_item_id: int
+    variant_id:   Optional[int] = None
     quantity:     int = Field(1, ge=1)
     notes:        Optional[str] = Field(None, max_length=200)
     extra_ids:    list[int] = Field(default_factory=list)
@@ -387,10 +463,15 @@ class GuestOrderRead(BaseModel):
 # راجع app.resort_os.food_cost_engine للفورمولا الأصلية — هنا بس شكل الرد.
 
 class FoodCostReportLine(BaseModel):
-    """صف واحد لكل صنف قائمة — تكلفة نظرية (وصفة × كمية مباعة فعليًا) مقابل
-    الإيراد الفعلي في المدى المطلوب."""
+    """صف واحد لكل "وحدة تقرير" — الصنف الأساسي لو مفهوش متغيّرات متاحة،
+    وإلا صف منفصل لكل متغيّر (سعر ووصفة مستقلين تمامًا لكل حجم/نوع — راجع
+    services.get_food_cost_report للتبرير الكامل). تكلفة نظرية (وصفة × كمية
+    مباعة فعليًا) مقابل الإيراد الفعلي في المدى المطلوب."""
     menu_item_id:           int
     menu_item_name:         str
+    # اسم العرض يتضمّن اسم المتغيّر لو موجود (مثال: "كابتشينو - كبير") —
+    # variant_id فوق للتعريف البرمجي، الاسم هنا جاهز للعرض المباشر.
+    variant_id:             Optional[int] = None
     has_recipe:             bool
     # False يعني الصنف مفيهوش وصفة (BOM) مسجّلة — التكلفة/النسبة هنا صفر
     # افتراضيًا، مش لأن التكلفة الحقيقية صفر، لازم الواجهة تُظهر تنبيه مختلف

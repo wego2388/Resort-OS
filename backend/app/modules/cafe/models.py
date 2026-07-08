@@ -1,8 +1,8 @@
 """
 app/modules/cafe/models.py
 Cafe Module — يشارك نفس منطق الـ restaurant لكن جداول منفصلة
-Tables: cafe_categories, cafe_items, cafe_item_recipe_lines, cafe_tables,
-        cafe_orders, cafe_order_items
+Tables: cafe_categories, cafe_items, cafe_item_recipe_lines, cafe_item_variants,
+        cafe_item_variant_recipe_lines, cafe_tables, cafe_orders, cafe_order_items
 """
 from __future__ import annotations
 
@@ -54,6 +54,10 @@ class CafeItem(Base, TimestampMixin):
     recipe_lines: Mapped[list["CafeItemRecipeLine"]] = relationship(
         "CafeItemRecipeLine", back_populates="cafe_item", lazy="selectin",
         cascade="all, delete-orphan",
+    )
+    variants: Mapped[list["CafeItemVariant"]] = relationship(
+        "CafeItemVariant", back_populates="cafe_item", lazy="selectin",
+        cascade="all, delete-orphan", order_by="CafeItemVariant.sort_order",
     )
 
 
@@ -111,6 +115,50 @@ class CafeItemRecipeLine(Base, TimestampMixin):
     product:   Mapped["Product"]  = relationship("Product", lazy="joined")
 
 
+class CafeItemVariant(Base, TimestampMixin):
+    """متغيّر حقيقي لصنف كافيه — نفس نمط restaurant.MenuItemVariant بالضبط
+    (راجع هناك للتفاصيل الكاملة). مثال: 'كابتشينو' صغير/كبير بسعر ووصفة
+    مختلفين تمامًا لكل حجم، مش رسم إضافي فوق وصفة ثابتة."""
+    __tablename__ = "cafe_item_variants"
+    __table_args__ = (
+        UniqueConstraint("cafe_item_id", "name", name="uq_cafe_item_variant_name"),
+    )
+
+    id:           Mapped[int]        = mapped_column(primary_key=True)
+    cafe_item_id: Mapped[int]        = mapped_column(ForeignKey("cafe_items.id", ondelete="CASCADE"))
+    name:         Mapped[str]        = mapped_column(String(100))
+    name_ar:      Mapped[str | None] = mapped_column(String(100), nullable=True)
+    price:        Mapped[Decimal]    = mapped_column(Numeric(10, 2))
+    is_available: Mapped[bool]       = mapped_column(Boolean, default=True)
+    sort_order:   Mapped[int]        = mapped_column(Integer, default=0)
+
+    cafe_item: Mapped["CafeItem"] = relationship("CafeItem", back_populates="variants")
+    recipe_lines: Mapped[list["CafeItemVariantRecipeLine"]] = relationship(
+        "CafeItemVariantRecipeLine", back_populates="variant", lazy="selectin",
+        cascade="all, delete-orphan",
+    )
+
+
+class CafeItemVariantRecipeLine(Base, TimestampMixin):
+    """سطر وصفة خاص بمتغيّر واحد — نفس نمط
+    restaurant.MenuItemVariantRecipeLine بالضبط، جدول منفصل عمدًا عن
+    CafeItemRecipeLine عشان cafe_item.recipe_lines يفضل يعني وصفة الصنف
+    الأساسي بس، زي ما كان قبل المتغيّرات."""
+    __tablename__ = "cafe_item_variant_recipe_lines"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "product_id", name="uq_cafe_item_variant_recipe_product"),
+    )
+
+    id:                Mapped[int]     = mapped_column(primary_key=True)
+    variant_id:        Mapped[int]     = mapped_column(ForeignKey("cafe_item_variants.id", ondelete="CASCADE"))
+    product_id:        Mapped[int]     = mapped_column(ForeignKey("products.id", ondelete="RESTRICT"))
+    quantity_per_unit: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    notes:             Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+    variant: Mapped["CafeItemVariant"] = relationship("CafeItemVariant", back_populates="recipe_lines")
+    product: Mapped["Product"]         = relationship("Product", lazy="joined")
+
+
 class CafeTable(Base, TimestampMixin):
     __tablename__ = "cafe_tables"
 
@@ -161,6 +209,8 @@ class CafeOrderItem(Base, TimestampMixin):
     id:          Mapped[int]        = mapped_column(primary_key=True)
     order_id:    Mapped[int]        = mapped_column(ForeignKey("cafe_orders.id", ondelete="CASCADE"))
     item_id:     Mapped[int]        = mapped_column(ForeignKey("cafe_items.id", ondelete="RESTRICT"))
+    variant_id:  Mapped[int | None] = mapped_column(ForeignKey("cafe_item_variants.id", ondelete="SET NULL"), nullable=True)
+    # المتغيّر المختار وقت الطلب — راجع restaurant.OrderItem.variant_id للتفاصيل.
     name:        Mapped[str]        = mapped_column(String(200))
     unit_price:  Mapped[Decimal]    = mapped_column(Numeric(10, 2))
     quantity:    Mapped[int]        = mapped_column(Integer, default=1)

@@ -108,11 +108,69 @@ class CafeItemRecipeLineRead(BaseModel):
     notes:             Optional[str]
 
 
+# ─────────────────────── Variants (حجم/نوع حقيقي) ──────────────────────
+# نفس نمط restaurant.MenuItemVariant* بالضبط — راجع
+# app.modules.cafe.models.CafeItemVariant للتفاصيل الكاملة.
+
+class CafeItemVariantRecipeLineCreate(BaseModel):
+    product_id:        int
+    quantity_per_unit: Decimal = Field(..., gt=0)
+    notes:             Optional[str] = Field(None, max_length=200)
+
+
+class CafeItemVariantRecipeLineUpdate(BaseModel):
+    quantity_per_unit: Optional[Decimal] = Field(None, gt=0)
+    notes:             Optional[str]     = Field(None, max_length=200)
+
+
+class CafeItemVariantRecipeLineRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                int
+    variant_id:        int
+    product_id:        int
+    product_name:      str
+    product_unit:      str
+    quantity_per_unit: Decimal
+    unit_cost:         Decimal
+    line_cost:         Decimal
+    notes:             Optional[str]
+
+
+class CafeItemVariantCreate(BaseModel):
+    name:         str = Field(..., max_length=100)
+    name_ar:      Optional[str] = Field(None, max_length=100)
+    price:        Decimal = Field(..., gt=0)
+    is_available: bool = True
+    sort_order:   int = 0
+
+
+class CafeItemVariantUpdate(BaseModel):
+    name:         Optional[str]     = Field(None, max_length=100)
+    name_ar:      Optional[str]     = Field(None, max_length=100)
+    price:        Optional[Decimal] = Field(None, gt=0)
+    is_available: Optional[bool]    = None
+    sort_order:   Optional[int]     = None
+
+
+class CafeItemVariantRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:            int
+    cafe_item_id:  int
+    name:          str
+    name_ar:       Optional[str]
+    price:         Decimal
+    is_available:  bool
+    sort_order:    int
+    recipe_lines:  list[CafeItemVariantRecipeLineRead] = []
+    computed_cost: Decimal = Decimal("0")
+
+
 class CafeItemRead(CafeItemCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int; created_at: datetime; updated_at: datetime
     extra_groups: list[CafeMenuItemExtraGroupRead] = []
     recipe_lines: list[CafeItemRecipeLineRead] = []
+    variants: list[CafeItemVariantRead] = []
     computed_cost: Decimal = Decimal("0")
 
     @model_validator(mode="before")
@@ -124,9 +182,10 @@ class CafeItemRead(CafeItemCreate):
         from app.modules.cafe import services as _services  # noqa: PLC0415 — تجنّب circular import
 
         data = {name: getattr(obj, name, None) for name in cls.model_fields
-                if name not in ("recipe_lines", "computed_cost", "extra_groups")}
+                if name not in ("recipe_lines", "computed_cost", "extra_groups", "variants")}
         data["extra_groups"] = getattr(obj, "extra_groups", [])
         data["recipe_lines"] = [_services.build_recipe_line_read(line) for line in getattr(obj, "recipe_lines", [])]
+        data["variants"] = [_services.build_variant_read(v) for v in getattr(obj, "variants", [])]
         data["computed_cost"] = _services.compute_cafe_item_cost(obj)
         return data
 
@@ -139,6 +198,7 @@ class CafeTableRead(BaseModel):
 
 class CafeOrderItemCreate(BaseModel):
     item_id:  int
+    variant_id: Optional[int] = None  # CafeItemVariant.id — إجباري لو الصنف عنده متغيّرات متاحة
     quantity: int = Field(1, ge=1)
     notes:    Optional[str] = None
     extra_ids: list[int] = Field(default_factory=list)  # CafeMenuItemExtra.id المختارة
@@ -171,7 +231,7 @@ class CafeOrderItemExtraRead(BaseModel):
 
 class CafeOrderItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: int; order_id: int; item_id: int; name: str
+    id: int; order_id: int; item_id: int; variant_id: Optional[int] = None; name: str
     unit_price: Decimal; quantity: int; notes: Optional[str]; status: str
     extras: list[CafeOrderItemExtraRead] = []
     voided_reason: Optional[str] = None
@@ -218,6 +278,16 @@ class CafePublicMenuExtraGroupRead(BaseModel):
     options:    list[CafePublicMenuExtraRead] = []
 
 
+class CafePublicMenuVariantRead(BaseModel):
+    """للزائر عبر الموقع العام — بدون تكلفة/وصفة، سعر واسم بس."""
+    model_config = ConfigDict(from_attributes=True)
+    id:           int
+    name:         str
+    name_ar:      Optional[str]
+    price:        Decimal
+    is_available: bool
+
+
 class CafePublicMenuItemRead(BaseModel):
     """للزائر عبر الموقع العام — بدون cost أو بيانات داخلية."""
     model_config = ConfigDict(from_attributes=True)
@@ -230,6 +300,7 @@ class CafePublicMenuItemRead(BaseModel):
     image_url:           Optional[str]
     category_id:         Optional[int]
     extra_groups:        list[CafePublicMenuExtraGroupRead] = []
+    variants:            list[CafePublicMenuVariantRead] = []
 
 
 class CafePublicMenuCategoryRead(BaseModel):
@@ -253,6 +324,7 @@ class CafePublicMenuResponse(BaseModel):
 
 class CafeGuestOrderItemCreate(BaseModel):
     item_id:  int
+    variant_id: Optional[int] = None
     quantity: int = Field(1, ge=1)
     notes:    Optional[str] = Field(None, max_length=200)
     extra_ids: list[int] = Field(default_factory=list)
@@ -280,8 +352,11 @@ class CafeGuestOrderRead(BaseModel):
 # نفس نمط restaurant.schemas بالضبط — راجع التعليقات هناك للتفاصيل الكاملة.
 
 class CafeFoodCostReportLine(BaseModel):
+    """راجع restaurant.schemas.FoodCostReportLine للتبرير الكامل — صف واحد
+    لكل "وحدة تقرير" (الصنف الأساسي أو متغيّر منفرد لو موجود)."""
     cafe_item_id:            int
     cafe_item_name:          str
+    variant_id:              Optional[int] = None
     has_recipe:              bool
     quantity_sold:           int
     revenue:                 Decimal

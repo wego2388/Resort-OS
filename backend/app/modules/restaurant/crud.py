@@ -10,11 +10,14 @@ from app.core.config import settings
 from app.resort_os.timezone_utils import local_date_to_utc_range
 from app.modules.restaurant.models import (
     DiningTable, KDSScreen, KitchenTicket, MenuCategory, MenuItem, MenuItemExtra,
-    MenuItemExtraGroup, MenuItemRecipeLine, Order, OrderItem, OrderItemExtra,
+    MenuItemExtraGroup, MenuItemRecipeLine, MenuItemVariant, MenuItemVariantRecipeLine,
+    Order, OrderItem, OrderItemExtra,
 )
 from app.modules.restaurant.schemas import (
     MenuCategoryCreate, MenuItemCreate, MenuItemExtraGroupCreate,
     MenuItemRecipeLineCreate, MenuItemRecipeLineUpdate, MenuItemUpdate,
+    MenuItemVariantCreate, MenuItemVariantRecipeLineCreate,
+    MenuItemVariantRecipeLineUpdate, MenuItemVariantUpdate,
 )
 
 
@@ -118,6 +121,62 @@ def update_recipe_line(db: Session, line: MenuItemRecipeLine, data: MenuItemReci
 
 def delete_recipe_line(db: Session, line_id: int) -> bool:
     line = get_recipe_line(db, line_id)
+    if not line:
+        return False
+    db.delete(line)
+    db.flush()
+    return True
+
+
+# ── Variants ──────────────────────────────────────────────────────────
+
+def get_variant(db: Session, variant_id: int) -> Optional[MenuItemVariant]:
+    return db.query(MenuItemVariant).filter(MenuItemVariant.id == variant_id).first()
+
+
+def create_variant(db: Session, menu_item_id: int, data: MenuItemVariantCreate) -> MenuItemVariant:
+    variant = MenuItemVariant(menu_item_id=menu_item_id, **data.model_dump())
+    db.add(variant)
+    db.flush()
+    return variant
+
+
+def update_variant(db: Session, variant: MenuItemVariant, data: MenuItemVariantUpdate) -> MenuItemVariant:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(variant, field, value)
+    db.flush()
+    return variant
+
+
+def delete_variant(db: Session, variant_id: int) -> bool:
+    variant = get_variant(db, variant_id)
+    if not variant:
+        return False
+    db.delete(variant)
+    db.flush()
+    return True
+
+
+def get_variant_recipe_line(db: Session, line_id: int) -> Optional[MenuItemVariantRecipeLine]:
+    return db.query(MenuItemVariantRecipeLine).filter(MenuItemVariantRecipeLine.id == line_id).first()
+
+
+def create_variant_recipe_line(db: Session, variant_id: int, data: MenuItemVariantRecipeLineCreate) -> MenuItemVariantRecipeLine:
+    line = MenuItemVariantRecipeLine(variant_id=variant_id, **data.model_dump())
+    db.add(line)
+    db.flush()
+    return line
+
+
+def update_variant_recipe_line(db: Session, line: MenuItemVariantRecipeLine, data: MenuItemVariantRecipeLineUpdate) -> MenuItemVariantRecipeLine:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(line, field, value)
+    db.flush()
+    return line
+
+
+def delete_variant_recipe_line(db: Session, line_id: int) -> bool:
+    line = get_variant_recipe_line(db, line_id)
     if not line:
         return False
     db.delete(line)
@@ -364,10 +423,13 @@ def list_menu_items_for_food_cost(db: Session, branch_id: int) -> list[MenuItem]
 
 def get_paid_order_items_for_food_cost(
     db: Session, branch_id: int, range_start: datetime, range_end: datetime,
-) -> list[tuple[int, "Decimal", int, datetime]]:
-    """(menu_item_id, unit_price, quantity, order.created_at) لكل صنف ضمن
-    طلب مدفوع فعليًا في المدى الزمني ده — استعلام واحد، بيتجمّع في Python
-    بعد كده (لكل صنف ولكل يوم) بدل ما نكرر الاستعلام لكل صنف أو لكل يوم.
+) -> list[tuple[int, Optional[int], "Decimal", int, datetime]]:
+    """(menu_item_id, variant_id, unit_price, quantity, order.created_at)
+    لكل صنف ضمن طلب مدفوع فعليًا في المدى الزمني ده — استعلام واحد، بيتجمّع
+    في Python بعد كده (لكل صنف/متغيّر ولكل يوم) بدل ما نكرر الاستعلام.
+    variant_id مُضمّن عشان صنف عنده متغيّرات (أسعار/وصفات مختلفة تمامًا لكل
+    حجم) يتجمّع لكل متغيّر على حدة، مش يتخلط في صف واحد مضلّل — راجع
+    services.get_food_cost_report للتفاصيل الكاملة.
 
     الأصناف الملغاة (status='cancelled') مُستبعدة. الأصناف المرتجعة بعد
     الدفع (status='refunded') **مُتضمّنة عمدًا** — المكوّنات اتصرفت فعليًا من
@@ -383,7 +445,7 @@ def get_paid_order_items_for_food_cost(
     طلب اترجع بالكامل هيختفي تمامًا من التقرير رغم إن مكوّناته اتصرفت فعليًا
     وقت التحضير — نفس السبب اللي خلّانا نضمّن الصنف المرتجع نفسه فوق."""
     rows = (
-        db.query(OrderItem.menu_item_id, OrderItem.unit_price, OrderItem.quantity, Order.created_at)
+        db.query(OrderItem.menu_item_id, OrderItem.variant_id, OrderItem.unit_price, OrderItem.quantity, Order.created_at)
         .join(Order, OrderItem.order_id == Order.id)
         .filter(
             Order.branch_id == branch_id,

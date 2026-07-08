@@ -556,7 +556,17 @@ class TestKDS:
         item = make_menu_item(db, branch, station="grill")
         order = make_order(db, branch, item)
         services.update_order_status(db, order.id, "in_kitchen")
-        tickets = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).all()
+        # ⚠️ KitchenTicket.order_id مش unique عالميًا — نفس القيمة ممكن تتكرر
+        # بين طلب مطعم وطلب كافيه (عمودين مختلفين، جدولين مختلفين، راجع
+        # models.KitchenTicket.order_id: "ID من orders أو cafe_orders حسب
+        # module"). لازم فلترة module معاها دايمًا، زي
+        # services.get_kds_tickets الحقيقية بالظبط — وإلا التست ده ممكن يلاقي
+        # تذكرة كافيه قديمة من تست تاني بنفس order_id بالصدفة (باج تستات
+        # حقيقي اتكشف 2026-07-07 لما تستات تانية زوّدت عدد الصفوف المُلتزَمة
+        # قبل التست ده في نفس session الـ SQLite، فـ ID اتكرر فعليًا).
+        tickets = db.query(KitchenTicket).filter(
+            KitchenTicket.order_id == order.id, KitchenTicket.module == "restaurant",
+        ).all()
         assert len(tickets) == 1
         assert tickets[0].station == "grill"
         assert tickets[0].module == "restaurant"
@@ -574,7 +584,10 @@ class TestKDS:
         order = make_order_items(db, branch, [hot_item, grill_item, bar_item])
         services.update_order_status(db, order.id, "in_kitchen")
 
-        tickets = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).all()
+        # راجع تعليق test_order_in_kitchen_creates_ticket فوق — module فلتر إجباري.
+        tickets = db.query(KitchenTicket).filter(
+            KitchenTicket.order_id == order.id, KitchenTicket.module == "restaurant",
+        ).all()
         stations = {t.station for t in tickets}
         assert stations == {"hot", "grill", "bar"}
         for ticket in tickets:
@@ -591,7 +604,10 @@ class TestKDS:
         db.commit()
 
         services.update_order_status(db, order.id, "in_kitchen")
-        tickets = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).all()
+        # راجع تعليق test_order_in_kitchen_creates_ticket فوق — module فلتر إجباري.
+        tickets = db.query(KitchenTicket).filter(
+            KitchenTicket.order_id == order.id, KitchenTicket.module == "restaurant",
+        ).all()
         assert len(tickets) == 1
         assert tickets[0].station == "hot"
 
@@ -602,7 +618,10 @@ class TestKDS:
         item = make_menu_item(db, branch)
         order = make_order(db, branch, item)
         services.update_order_status(db, order.id, "in_kitchen")
-        ticket = db.query(KitchenTicket).filter(KitchenTicket.order_id == order.id).first()
+        # راجع تعليق test_order_in_kitchen_creates_ticket فوق — module فلتر إجباري.
+        ticket = db.query(KitchenTicket).filter(
+            KitchenTicket.order_id == order.id, KitchenTicket.module == "restaurant",
+        ).first()
         assert ticket is not None
         updated = crud.update_ticket_status(db, ticket.id, "done")
         db.commit()
