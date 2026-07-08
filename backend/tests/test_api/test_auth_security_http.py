@@ -251,11 +251,18 @@ class TestSecretKeyValidation:
 
 class TestRateLimitWiring:
     def test_login_and_register_are_rate_limited(self):
+        """max_req/window بيتحققوا من settings.LOGIN_RATE_LIMIT_* مش أرقام
+        حرفية — القيمة قابلة للتعديل عمدًا لكل بيئة (راجع .env.example)،
+        الحاكم الحقيقي هنا إن الإعداد فعلاً بيوصل للـ middleware، مش رقم
+        بعينه."""
+        from app.core.config import settings
         from app.core.rate_limit import _LIMITED_ROUTES
         assert ("POST", "/api/v1/auth/login") in _LIMITED_ROUTES
         assert ("POST", "/api/v1/auth/register") in _LIMITED_ROUTES
         prefix, max_req, window = _LIMITED_ROUTES[("POST", "/api/v1/auth/login")]
-        assert prefix == "login" and max_req == 5 and window == 300
+        assert prefix == "login"
+        assert max_req == settings.LOGIN_RATE_LIMIT_MAX
+        assert window == settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS
 
     def test_guest_ordering_endpoints_are_rate_limited(self):
         """باج حقيقي اتصلح (2026-07-07): طلب/قائمة المطعم والكافيه كانت

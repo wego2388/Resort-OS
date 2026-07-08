@@ -3,8 +3,14 @@ app/core/rate_limit.py
 IP-keyed rate limiting middleware for unauthenticated / abuse-prone routes.
 
 Per 08-SECURITY.md:
-    login:{ip}        5   / 300s
+    login:{ip}        settings.LOGIN_RATE_LIMIT_MAX / LOGIN_RATE_LIMIT_WINDOW_SECONDS
+                       (5/300s production default — راجع app.core.config.Settings)
     public:{ip}       30  / 60s
+
+⚠️ login threshold بقى قابل للتعديل عبر .env (LOGIN_RATE_LIMIT_MAX/
+LOGIN_RATE_LIMIT_WINDOW_SECONDS) — القيمة الافتراضية (5/300) هي المعتمدة
+أمنيًا وما اتغيّرش، بس بيئة تطوير محلية ممكن ترفعها لراحة اختبار حسابات
+تجريبية كتير بسرعة من غير ما تتقفل. لا تغيّر الافتراضي نفسه، غيّر .env بس.
 
 Resource-keyed limits (otp:{user_id}, payment:{user_id}, eta:{branch_id}) are
 applied as FastAPI dependencies at their own endpoints instead, since they
@@ -17,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from app.core.config import settings
 from app.core.kernel.cache import rate_limit
 
 
@@ -39,8 +46,8 @@ def _client_ip(request: Request) -> str:
 # مسجّلة هنا فعليًا — يعني طلب/قائمة المطعم والكافيه كانت غير محمية تمامًا
 # من الإسبام (لا حد أقصى للطلبات من نفس الـ IP خالص).
 _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
-    ("POST", "/api/v1/auth/login"):    ("login",  5,  300),
-    ("POST", "/api/v1/auth/register"): ("login",  5,  300),
+    ("POST", "/api/v1/auth/login"):    ("login", settings.LOGIN_RATE_LIMIT_MAX, settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS),
+    ("POST", "/api/v1/auth/register"): ("login", settings.LOGIN_RATE_LIMIT_MAX, settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS),
     ("POST", "/api/v1/hub/contact"):   ("public", 30, 60),
     ("GET",  "/api/v1/hub/blog/posts"): ("public", 30, 60),
     ("GET",  "/api/v1/pms/public/room-types"): ("public", 30, 60),

@@ -44,6 +44,14 @@ class Settings(CoreSettings):
     ETA_TAXPAYER_NAME: Optional[str] = None
     ETA_BRANCH_CODE: str = "0"                   # كود الفرع عند ETA — "0" للفرع الرئيسي
 
+    # ── Rate Limiting (login) ──────────────────────────────────────────
+    # الافتراضي (5 محاولات/300 ثانية) هو المعتمد أمنيًا للإنتاج (§15 CLAUDE.md)
+    # — ما اتغيّرش هنا. قابل للتوسيع في `.env` المحلي بس (مش القيمة الافتراضية
+    # دي) وقت التطوير/الاختبار، لما محتاج تبدّل حسابات تجريبية كتير بسرعة
+    # (كل حساب = محاولة تسجيل دخول منفصلة على نفس الـ IP).
+    LOGIN_RATE_LIMIT_MAX: int = 5
+    LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300
+
     # ── Infrastructure ports (for reference) ──────────────────────────
     # Backend: 8005 | Frontend: 5175 | PostgreSQL: 5436 | Redis: 6381
 
