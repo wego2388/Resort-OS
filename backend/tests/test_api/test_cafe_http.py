@@ -1466,7 +1466,7 @@ class TestCafeApplyDiscount:
         assert Decimal(str(resp.json()["total"])) > Decimal("0")
 
     def test_discount_recomputed_on_new_lower_subtotal_after_void(
-        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers,
+        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers, manager_headers,
     ):
         """نفس test_restaurant.py::TestVoidItemDiscountRecompute بس للكافيه —
         الكافيه ما كانش عنده applied_discount_rule_id خالص قبل كده، يعني
@@ -1497,10 +1497,12 @@ class TestCafeApplyDiscount:
         assert Decimal(str(discounted["discount_amount"])) == Decimal("9.00")  # 10% من 90
         item_id = discounted["items"][0]["id"]
 
+        # مدير (مش كاشير) عشان نتجنب متطلب موافقة PIN اللي مش موضوع التست ده —
+        # راجع TestCafeVoidOrderItem لتست موافقة الـ PIN نفسها.
         resp = client.patch(
             f"/api/v1/cafe/orders/{discounted['id']}/items/{item_id}/void",
             json={"reason": "طلب زيادة بالغلط"},
-            headers=cashier_headers,
+            headers=manager_headers,
         )
         assert resp.status_code == 200, resp.text
         updated = resp.json()
