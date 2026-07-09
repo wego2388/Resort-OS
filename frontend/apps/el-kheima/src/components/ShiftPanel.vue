@@ -34,14 +34,42 @@ const closeModal = ref(false)
 const closing = ref(false)
 const closeNotes = ref('')
 const closeHandoverNote = ref('')
-// فئات الجنيه المصري المتداولة فعليًا (ورق) — نفس القائمة المتوقعة في
-// CashCountLine الباك إند (denomination + quantity لكل فئة).
-const DENOMINATIONS = [200, 100, 50, 20, 10, 5, 1]
-const counts = ref<Record<number, number>>(Object.fromEntries(DENOMINATIONS.map((d) => [d, 0])))
-const countedTotal = computed(() =>
-  DENOMINATIONS.reduce((sum, d) => sum + d * (Number(counts.value[d]) || 0), 0),
+// فئات العملات المتداولة — EGP ورق + عملات أجنبية شائعة في المنتجع
+// كل عملة لها قائمة فئات خاصة بها وعدد منفصل
+interface CurrencyGroup {
+  code: string
+  label: string
+  denominations: number[]
+}
+const CURRENCY_GROUPS: CurrencyGroup[] = [
+  { code: 'EGP', label: 'جنيه مصري',    denominations: [200, 100, 50, 20, 10, 5, 1] },
+  { code: 'USD', label: 'دولار أمريكي', denominations: [100, 50, 20, 10, 5, 1] },
+  { code: 'EUR', label: 'يورو',         denominations: [100, 50, 20, 10, 5, 1] },
+]
+
+// counts[currency][denomination] = quantity
+const counts = ref<Record<string, Record<number, number>>>(
+  Object.fromEntries(
+    CURRENCY_GROUPS.map((g) => [g.code, Object.fromEntries(g.denominations.map((d) => [d, 0]))])
+  )
 )
-const lastCloseResult = ref<{ variance: number; expected: number } | null>(null)
+
+// إجمالي EGP فقط (للعرض السريع قبل القفل — الإجمالي الحقيقي يحسبه الباك إند بأسعار الصرف)
+const countedTotalEGP = computed(() =>
+  CURRENCY_GROUPS.find((g) => g.code === 'EGP')!.denominations
+    .reduce((sum, d) => sum + d * (Number(counts.value['EGP'][d]) || 0), 0)
+)
+// هل في عملات أجنبية تم إدخالها؟
+const hasForeignCash = computed(() =>
+  CURRENCY_GROUPS.filter((g) => g.code !== 'EGP').some((g) =>
+    g.denominations.some((d) => (Number(counts.value[g.code][d]) || 0) > 0)
+  )
+)
+const lastCloseResult = ref<{
+  variance: number; expected: number
+  foreign_currency_summary?: { currency: string; total_foreign: number; egp_equivalent: number }[]
+  counted_cash_egp?: number
+} | null>(null)
 
 async function fetchCurrentShift() {
   loading.value = true
@@ -81,7 +109,10 @@ async function confirmOpen() {
 }
 
 function openCloseModalFn() {
-  for (const d of DENOMINATIONS) counts.value[d] = 0
+  // إعادة تصفير عدّادات كل العملات
+  for (const group of CURRENCY_GROUPS) {
+    for (const d of group.denominations) counts.value[group.code][d] = 0
+  }
   closeNotes.value = ''
   closeHandoverNote.value = ''
   lastCloseResult.value = null
@@ -92,17 +123,24 @@ async function confirmClose() {
   if (!shift.value) return
   closing.value = true
   try {
-    const cash_count = DENOMINATIONS
-      .filter((d) => (Number(counts.value[d]) || 0) > 0)
-      .map((d) => ({ denomination: d, quantity: Number(counts.value[d]) }))
+    // اجمع كل الفئات من كل العملات اللي عندها قيمة > 0
+    const cash_count: { denomination: number; currency: string; quantity: number }[] = []
+    for (const group of CURRENCY_GROUPS) {
+      for (const d of group.denominations) {
+        const qty = Number(counts.value[group.code][d]) || 0
+        if (qty > 0) cash_count.push({ denomination: d, currency: group.code, quantity: qty })
+      }
+    }
     const { data } = await api.post(`/api/v1/finance/shifts/${shift.value.id}/close`, {
       cash_count,
       notes: closeNotes.value || undefined,
       handover_note: closeHandoverNote.value || undefined,
     })
     lastCloseResult.value = {
-      variance: Number(data.variance ?? 0),
-      expected: Number(data.expected_cash ?? 0),
+      variance:                Number(data.variance ?? 0),
+      expected:                Number(data.expected_cash ?? 0),
+      foreign_currency_summary: data.foreign_currency_summary ?? [],
+      counted_cash_egp:        data.counted_cash_egp != null ? Number(data.counted_cash_egp) : undefined,
     }
     shift.value = null
     toast.success('تم قفل الوردية')
@@ -156,35 +194,74 @@ onMounted(fetchCurrentShift)
 
     <!-- Close shift — cash count by denomination -->
     <AppModal :open="closeModal" title="قفل الوردية — عدّ الكاش" size="md" @close="closeModal = false">
-      <div v-if="lastCloseResult" class="space-y-2 text-center py-4">
-        <p class="text-sm text-gray-500">المتوقع: {{ lastCloseResult.expected.toFixed(2) }} ج</p>
-        <p class="text-2xl font-black" :class="lastCloseResult.variance === 0 ? 'text-green-600' : lastCloseResult.variance > 0 ? 'text-blue-600' : 'text-red-600'">
-          الفرق: {{ lastCloseResult.variance.toFixed(2) }} ج
-        </p>
+      <div v-if="lastCloseResult" class="space-y-3 py-2">
+        <!-- ملخص الخزينة -->
+        <div class="text-center space-y-1">
+          <p class="text-sm text-gray-500">الكاش المتوقع: {{ lastCloseResult.expected.toFixed(2) }} ج</p>
+          <p v-if="lastCloseResult.counted_cash_egp != null" class="text-sm text-gray-500">
+            إجمالي الخزينة (EGP): {{ lastCloseResult.counted_cash_egp.toFixed(2) }} ج
+          </p>
+          <p class="text-2xl font-black"
+            :class="lastCloseResult.variance === 0 ? 'text-green-600' : lastCloseResult.variance > 0 ? 'text-blue-600' : 'text-red-600'">
+            {{ lastCloseResult.variance > 0 ? '▲ زيادة' : lastCloseResult.variance < 0 ? '▼ عجز' : '✓ مطابق' }}
+            {{ Math.abs(lastCloseResult.variance).toFixed(2) }} ج
+          </p>
+        </div>
+        <!-- ملخص العملات الأجنبية لو موجودة -->
+        <div v-if="lastCloseResult.foreign_currency_summary?.length" class="bg-blue-50 rounded-lg p-2.5 space-y-1">
+          <p class="text-xs font-bold text-blue-700">💱 العملات الأجنبية المعدودة</p>
+          <div v-for="fc in lastCloseResult.foreign_currency_summary" :key="fc.currency"
+            class="flex justify-between text-xs text-blue-800">
+            <span>{{ fc.currency }}: {{ fc.total_foreign.toFixed(2) }}</span>
+            <span>= {{ fc.egp_equivalent.toFixed(2) }} ج</span>
+          </div>
+        </div>
       </div>
-      <div v-else class="space-y-3">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="text-gray-400 text-xs">
-              <th class="text-right py-1.5">الفئة</th>
-              <th class="text-right py-1.5">العدد</th>
-              <th class="text-right py-1.5">الإجمالي</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="d in DENOMINATIONS" :key="d" class="border-t border-stone-100">
-              <td class="py-1.5 font-semibold text-gray-700">{{ d }} ج</td>
-              <td class="py-1.5">
-                <input type="number" min="0" v-model.number="counts[d]"
-                  class="w-20 px-2 py-1 rounded-lg border border-stone-200 text-center" />
-              </td>
-              <td class="py-1.5 text-gray-500">{{ (d * (Number(counts[d]) || 0)).toFixed(2) }} ج</td>
-            </tr>
-          </tbody>
-        </table>
-        <div class="flex justify-between items-center font-bold border-t border-stone-200 pt-2">
-          <span>الإجمالي المعدود</span>
-          <span>{{ countedTotal.toFixed(2) }} ج</span>
+      <div v-else class="space-y-4">
+        <!-- جدول عدّ لكل عملة -->
+        <div v-for="group in CURRENCY_GROUPS" :key="group.code">
+          <div class="flex items-center gap-2 mb-1.5">
+            <span class="text-xs font-bold px-2 py-0.5 rounded-full"
+              :class="group.code === 'EGP' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'">
+              {{ group.code }}
+            </span>
+            <span class="text-xs text-gray-500">{{ group.label }}</span>
+          </div>
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-gray-400 text-xs">
+                <th class="text-right py-1">الفئة</th>
+                <th class="text-right py-1">العدد</th>
+                <th class="text-right py-1">الإجمالي</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="d in group.denominations" :key="d" class="border-t border-stone-100">
+                <td class="py-1 font-semibold text-gray-700">
+                  {{ d }} {{ group.code === 'EGP' ? 'ج' : group.code }}
+                </td>
+                <td class="py-1">
+                  <input type="number" min="0" v-model.number="counts[group.code][d]"
+                    class="w-20 px-2 py-1 rounded-lg border border-stone-200 text-center" />
+                </td>
+                <td class="py-1 text-gray-500">
+                  {{ (d * (Number(counts[group.code][d]) || 0)).toFixed(2) }}
+                  {{ group.code === 'EGP' ? 'ج' : group.code }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- إجمالي الجنيه + تنبيه لو في عملات أجنبية -->
+        <div class="border-t border-stone-200 pt-2 space-y-1">
+          <div class="flex justify-between items-center font-bold">
+            <span>إجمالي الجنيه المصري</span>
+            <span>{{ countedTotalEGP.toFixed(2) }} ج</span>
+          </div>
+          <p v-if="hasForeignCash" class="text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
+            💱 يوجد عملات أجنبية — الإجمالي الكلي بالجنيه سيحسبه النظام بأسعار الصرف عند القفل
+          </p>
         </div>
         <AppInput v-model="closeNotes" label="ملاحظات (اختياري)" placeholder="—" />
         <AppInput v-model="closeHandoverNote" label="ملاحظة تسليم للوردية الجاية (اختياري)" placeholder="—" />

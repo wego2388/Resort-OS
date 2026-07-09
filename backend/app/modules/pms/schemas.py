@@ -90,15 +90,36 @@ class BookingRead(BaseModel):
     source:           str
     folio_id:         Optional[int]
     customer_id:      Optional[int] = None
-    total_rate:       Decimal
-    notes:            Optional[str]
-    rooms:            list[BookingRoomRead] = []
-    created_at:       datetime
-    updated_at:       datetime
+    total_rate:         Decimal
+    extra_charge:       Decimal = Decimal("0")
+    notes:              Optional[str]
+    early_checkin_at:   Optional[datetime] = None
+    late_checkout_at:   Optional[datetime] = None
+    rooms:              list[BookingRoomRead] = []
+    created_at:         datetime
+    updated_at:         datetime
 
 
 class BookingStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(confirmed|checked_in|checked_out|cancelled|no_show)$")
+
+
+class EarlyLateRequest(BaseModel):
+    """طلب وصول مبكر أو مغادرة متأخرة — charge=0 لو مجاني."""
+    early_checkin_at:  Optional[datetime] = None
+    late_checkout_at:  Optional[datetime] = None
+    charge:            Decimal = Field(Decimal("0"), ge=0)
+    notes:             Optional[str] = Field(None, max_length=500)
+
+
+class EarlyLateRequest(BaseModel):
+    """طلب وصول مبكر أو مغادرة متأخرة.
+    charge: رسوم إضافية بالجنيه — 0 لو مجاني أو عرض ترحيبي.
+    """
+    early_checkin_at:  Optional[datetime] = None
+    late_checkout_at:  Optional[datetime] = None
+    charge:            Decimal = Field(Decimal("0"), ge=0)
+    notes:             Optional[str] = Field(None, max_length=500)
 
 
 class HousekeepingTaskRead(BaseModel):

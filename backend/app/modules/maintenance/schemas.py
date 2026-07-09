@@ -92,6 +92,12 @@ class WorkOrderUpdate(BaseModel):
 
 
 class WorkOrderPartCreate(BaseModel):
+    """
+    product_id: اختياري — لو موجود بيخصم من inventory تلقائياً.
+      unit_cost في هذه الحالة بيتملأ من سعر المنتج لو 0.
+    لو مفيش product_id: قطعة خارجية — part_name + unit_cost يدوي.
+    """
+    product_id:  Optional[int]  = None
     part_name:   str = Field(..., max_length=200)
     part_number: Optional[str] = None
     quantity:    Decimal = Field(Decimal("1"), gt=0)
@@ -102,6 +108,7 @@ class WorkOrderPartRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:           int
     work_order_id: int
+    product_id:   Optional[int] = None
     part_name:    str
     part_number:  Optional[str]
     quantity:     Decimal

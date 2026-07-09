@@ -1,6 +1,8 @@
 """app/modules/hr/services.py — Business logic"""
 from __future__ import annotations
 
+import logging
+
 import calendar
 import json
 from datetime import date, datetime
@@ -8,6 +10,8 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.modules.hr import crud
@@ -649,7 +653,7 @@ def get_sales_leaderboard(
         for o in orders:
             _accumulate(o.waiter_id, o.total)
     except Exception:
-        pass
+        logger.warning("get_sales_performance: فشل جلب طلبات المطعم — branch=%s", branch_id, exc_info=True)
 
     try:
         from app.modules.cafe.models import CafeOrder  # noqa: PLC0415
@@ -660,7 +664,7 @@ def get_sales_leaderboard(
         for o in orders:
             _accumulate(o.waiter_id, o.total)
     except Exception:
-        pass
+        logger.warning("get_sales_performance: فشل جلب طلبات الكافيه — branch=%s", branch_id, exc_info=True)
 
     try:
         from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
@@ -672,7 +676,7 @@ def get_sales_leaderboard(
         for tx in txs:
             _accumulate(tx.cashier_id, tx.total_amount + tx.vat_amount)
     except Exception:
-        pass
+        logger.warning("get_sales_performance: فشل جلب معاملات الشاطئ — branch=%s", branch_id, exc_info=True)
 
     employees = {
         e.user_id: e for e in db.query(Employee).filter(Employee.user_id.in_(totals.keys())).all()

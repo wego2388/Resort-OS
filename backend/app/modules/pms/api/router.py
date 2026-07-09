@@ -12,7 +12,7 @@ from app.core.deps import (
 )
 from app.modules.pms import crud, services
 from app.modules.pms.schemas import (
-    BookingCreate, BookingRead, HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
+    BookingCreate, BookingRead, EarlyLateRequest, HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
     NightAuditLogRead, RatePlanCreate, RatePlanRead, RoomCreate, RoomRead,
     RoomStatusUpdate, RoomTypeCreate, RoomTypeRead,
 )
@@ -173,6 +173,22 @@ def checkout(booking_id: int, db: DbDep, _=Depends(get_cashier_user)):
 def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_current_active_user)):
     try:
         return services.cancel_booking(db, booking_id, cancelled_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+
+@router.post("/pms/bookings/{booking_id}/early-late", response_model=BookingRead,
+             summary="طلب وصول مبكر أو مغادرة متأخرة")
+def request_early_late(
+    booking_id: int, data: EarlyLateRequest,
+    db: DbDep, _=Depends(get_cashier_user),
+):
+    """يسجّل وصول مبكر و/أو مغادرة متأخرة على الحجز.
+    لو charge > 0 بيضيف FolioCharge تلقائياً على حساب الضيف.
+    """
+    try:
+        return services.request_early_late(db, booking_id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

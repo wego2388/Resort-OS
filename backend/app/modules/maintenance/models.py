@@ -86,16 +86,21 @@ class WorkOrder(Base, TimestampMixin):
 
 
 class WorkOrderPart(Base, TimestampMixin):
-    """قطع الغيار المستخدمة في أمر الصيانة."""
+    """قطع الغيار المستخدمة في أمر الصيانة.
+
+    لو product_id مضبوط: القطعة مسحوبة من inventory (بيتخصم من current_stock عند الإضافة).
+    لو product_id = None: قطعة خارجية (اشتريناها خصيصًا لهذا الأمر، unit_cost يدوي).
+    """
     __tablename__ = "work_order_parts"
 
-    id:             Mapped[int]     = mapped_column(primary_key=True)
-    work_order_id:  Mapped[int]     = mapped_column(ForeignKey("work_orders.id", ondelete="CASCADE"))
-    part_name:      Mapped[str]     = mapped_column(String(200))
-    part_number:    Mapped[str | None] = mapped_column(String(100), nullable=True)
-    quantity:       Mapped[Decimal] = mapped_column(Numeric(8, 2), default=Decimal("1"))
-    unit_cost:      Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
-    total_cost:     Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    id:             Mapped[int]          = mapped_column(primary_key=True)
+    work_order_id:  Mapped[int]          = mapped_column(ForeignKey("work_orders.id", ondelete="CASCADE"))
+    product_id:     Mapped[int | None]   = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True)
+    part_name:      Mapped[str]          = mapped_column(String(200))
+    part_number:    Mapped[str | None]   = mapped_column(String(100), nullable=True)
+    quantity:       Mapped[Decimal]      = mapped_column(Numeric(8, 2), default=Decimal("1"))
+    unit_cost:      Mapped[Decimal]      = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    total_cost:     Mapped[Decimal]      = mapped_column(Numeric(10, 2), default=Decimal("0"))
 
     work_order: Mapped["WorkOrder"] = relationship("WorkOrder", back_populates="parts")
 

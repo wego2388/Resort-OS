@@ -138,7 +138,11 @@ def add_part(db: Session, work_order_id: int, data: WorkOrderPartCreate) -> Work
     total = data.quantity * data.unit_cost
     part = WorkOrderPart(
         work_order_id=work_order_id,
-        **data.model_dump(),
+        product_id=data.product_id,
+        part_name=data.part_name,
+        part_number=data.part_number,
+        quantity=data.quantity,
+        unit_cost=data.unit_cost,
         total_cost=total,
     )
     db.add(part)

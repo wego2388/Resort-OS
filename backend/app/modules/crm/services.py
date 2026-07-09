@@ -1,9 +1,13 @@
 """app/modules/crm/services.py — Business logic"""
 from __future__ import annotations
 
+import logging
+
 from datetime import date
 
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
@@ -69,7 +73,11 @@ def record_customer_visit(db: Session, customer_id: int, amount, visit_date: dat
             return
         crud.update_customer_stats(db, customer, amount, visit_date)
     except Exception:
-        pass
+        # إحصائيات CRM ثانوية — فشلها لا يوقف العملية الأصلية لكن نسجّل للمتابعة
+        logger.warning(
+            "record_customer_visit فشل — customer_id=%s amount=%s",
+            customer_id, amount, exc_info=True,
+        )
 
 
 def blacklist_customer(db: Session, customer_id: int, req: BlacklistRequest) -> Customer:

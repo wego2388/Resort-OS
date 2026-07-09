@@ -321,6 +321,7 @@ def create_order(
         waiter_id=waiter_id, items_data=items_data,
         status="held" if hold else "open",
         customer_id=data.customer_id,
+        payment_method=data.payment_method if not hold else None,
     )
 
     if data.table_id and data.order_type == "dine_in":
@@ -484,12 +485,84 @@ def generate_receipt_pdf(db: Session, order_id: int) -> bytes:
     )
 
 
+def add_items_to_order(
+    db: Session,
+    order_id: int,
+    items: list,  # list[CafeOrderItemCreate]
+) -> CafeOrder:
+    """يضيف أصناف جديدة لطلب كافيه مفتوح — نفس منطق restaurant.add_items_to_order.
+    لا يُنشئ KitchenTicket تلقائيًا — المستدعي (router) يتولّى الـ broadcast."""
+    from app.modules.cafe.models import CafeOrderItem, CafeOrderItemExtra  # noqa: PLC0415
+
+    order = _get_order_or_404(db, order_id)
+    if order.status in ("paid", "cancelled"):
+        raise ValueError(f"لا يمكن إضافة أصناف لطلب بحالة {order.status}")
+
+    added_subtotal = Decimal("0")
+    for item_req in items:
+        cafe_item = crud.get_item(db, item_req.item_id)
+        if not cafe_item:
+            raise ValueError(f"الصنف {item_req.item_id} غير موجود")
+        if not cafe_item.is_available:
+            raise ValueError(f"الصنف '{cafe_item.name}' غير متاح حالياً")
+
+        variant = _resolve_variant(db, cafe_item, item_req.variant_id)
+        base_price = variant.price if variant else cafe_item.price
+        item_name  = f"{cafe_item.name} - {variant.name}" if variant else cafe_item.name
+        extras_data, extra_price = _resolve_extras(db, cafe_item, item_req.extra_ids)
+
+        new_item = CafeOrderItem(
+            order_id   = order.id,
+            item_id    = item_req.item_id,
+            variant_id = variant.id if variant else None,
+            name       = item_name,
+            unit_price = base_price,
+            quantity   = item_req.quantity,
+            notes      = item_req.notes,
+            status     = "pending",
+        )
+        db.add(new_item)
+        db.flush()
+
+        for e in extras_data:
+            db.add(CafeOrderItemExtra(
+                order_item_id  = new_item.id,
+                extra_id       = e["extra_id"],
+                extra_name     = e["extra_name"],
+                price_addition = e["price_addition"],
+            ))
+
+        added_subtotal += (base_price + extra_price) * item_req.quantity
+
+    vat_pct   = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
+    svc_pct   = Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
+    new_sub   = order.subtotal + added_subtotal
+    new_vat   = (new_sub * vat_pct).quantize(Decimal("0.01"))
+    new_svc   = (new_sub * svc_pct).quantize(Decimal("0.01"))
+    order.subtotal       = new_sub
+    order.vat_amount     = new_vat
+    order.service_charge = new_svc
+    order.total          = new_sub + new_vat + new_svc - order.discount_amount
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 def update_order_status(
-    db: Session, order_id: int, new_status: str, charge_to_room_id: Optional[int] = None,
+    db: Session, order_id: int, new_status: str,
+    charge_to_room_id: Optional[int] = None,
+    payment_method: Optional[str] = None,
 ) -> CafeOrder:
     order = _get_order_or_404(db, order_id)
     if order.status in ("paid", "cancelled"):
         raise ValueError(f"لا يمكن تغيير حالة طلب '{order.status}'")
+
+    # سجّل طريقة الدفع عند التحصيل — لو مش محدد خلّي ما هو موجود أو default "cash"
+    if new_status == "paid" and payment_method:
+        order.payment_method = payment_method
+    elif new_status == "paid" and not order.payment_method:
+        order.payment_method = "cash"
 
     if new_status == "paid" and charge_to_room_id and not order.folio_id:
         from app.modules.pms.services import find_active_folio_for_room  # noqa: PLC0415
@@ -789,7 +862,10 @@ def refund_order_item(db: Session, order_id: int, item_id: int, reason: str, ref
 
 def _reduce_folio_charge_for_refund(db: Session, order: CafeOrder, refund_amount: Decimal) -> None:
     """يقلّل شحنة الفوليو (Charge to Room) المرتبطة بالطلب ده بمقدار المرتجع
-    ويعيد حساب Folio.total — راجع restaurant.services للنسخة المرجعية."""
+    ويعيد حساب Folio.total — راجع restaurant.services للنسخة المرجعية.
+    ⚠️ بيبتلع الأخطاء عمدًا عشان فشل تحديث الفوليو ميمنعش إتمام المرتجع —
+    لكن بيسجّل error في الـ log عشان المحاسب يعرف ويصحح يدوياً لو لزم.
+    """
     try:
         from app.modules.finance import crud as finance_crud  # noqa: PLC0415
         from app.modules.finance.models import FolioCharge  # noqa: PLC0415
@@ -821,7 +897,10 @@ def _reduce_folio_charge_for_refund(db: Session, order: CafeOrder, refund_amount
         finance_crud.recalculate_folio_total(db, folio)
         _post_order_folio_refund_reversal_journal(db, order, refund_amount)
     except Exception:
-        pass
+        logger.error(
+            "_reduce_folio_charge_for_refund فشل — طلب %s مرتجع %.2f ج — الفوليو %s قد يحتاج تصحيح يدوي",
+            order.order_number, refund_amount, order.folio_id, exc_info=True,
+        )
 
 
 def _post_order_folio_refund_reversal_journal(db: Session, order: CafeOrder, refund_amount: Decimal) -> None:

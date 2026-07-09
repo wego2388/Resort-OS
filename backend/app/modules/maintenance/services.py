@@ -142,10 +142,64 @@ def complete_work_order(db: Session, order_id: int) -> WorkOrder:
     return wo
 
 
-def add_part_to_wo(db: Session, order_id: int, data: WorkOrderPartCreate) -> WorkOrder:
+def add_part_to_wo(db: Session, order_id: int, data: WorkOrderPartCreate, added_by: int = 0) -> WorkOrder:
+    """إضافة قطعة غيار لأمر الصيانة.
+
+    لو data.product_id محدد:
+      - بيجيب المنتج من inventory ويملأ part_name + unit_cost تلقائياً
+      - بيخصم الكمية من current_stock (allow_negative=True لنفس سياسة المطعم/الكافيه)
+      - بيسجّل حركة مخزنية من نوع "out" مع reference = رقم أمر الصيانة
+    لو مفيش product_id: قطعة خارجية — part_name + unit_cost يدوي بدون خصم.
+    """
     wo = get_wo_or_404(db, order_id)
     if wo.status in ("completed", "cancelled"):
         raise ValueError("لا يمكن إضافة قطع لأمر صيانة مكتمل أو ملغى")
+
+    if data.product_id:
+        try:
+            from app.modules.inventory import crud as inv_crud   # noqa: PLC0415
+            from app.modules.inventory import services as inv_svc  # noqa: PLC0415
+            from app.modules.inventory.schemas import StockMovementCreate  # noqa: PLC0415
+
+            product = inv_crud.get_product(db, data.product_id)
+            if not product:
+                raise ValueError(f"المنتج {data.product_id} غير موجود في المخزن")
+            if product.branch_id != wo.branch_id:
+                raise ValueError("المنتج يعود لفرع مختلف عن أمر الصيانة")
+
+            # اجلب part_name + unit_cost من المنتج لو مش محدد يدوياً
+            resolved_name = data.part_name or product.name
+            resolved_cost = data.unit_cost if data.unit_cost > 0 else (product.unit_cost or 0)
+
+            # اخصم من المخزن
+            inv_svc.record_movement(
+                db,
+                StockMovementCreate(
+                    product_id=data.product_id,
+                    branch_id=wo.branch_id,
+                    movement_type="out",
+                    quantity=-data.quantity,           # سالب = خروج
+                    reference=wo.order_number,
+                    notes=f"صرف لأمر صيانة {wo.order_number} — {wo.title}",
+                ),
+                moved_by=added_by,
+                allow_negative=True,   # نفس سياسة المطعم: رصيد سالب مؤقت أفضل من إيقاف العمل
+            )
+
+            # أنشئ النسخة المعدّلة من data
+            from app.modules.maintenance.schemas import WorkOrderPartCreate as WPC  # noqa: PLC0415
+            data = WPC(
+                product_id=data.product_id,
+                part_name=resolved_name,
+                part_number=data.part_number or product.sku,
+                quantity=data.quantity,
+                unit_cost=resolved_cost,
+            )
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"فشل خصم المخزن للمنتج {data.product_id}: {exc}") from exc
+
     crud.add_part(db, order_id, data)
     crud.recalculate_parts_cost(db, wo)
     db.commit()

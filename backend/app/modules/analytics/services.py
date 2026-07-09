@@ -199,7 +199,11 @@ def _post_utility_expense_journal(db, reading) -> None:
             ],
         ), reading.recorded_by or 0)
     except Exception:
-        pass
+        logger.error(
+            "_post_utility_expense_journal فشل — قراءة #%s (%s) مبلغ %.2f — القيد يحتاج تسجيل يدوي",
+            getattr(reading, 'id', '?'), getattr(reading, 'utility_type', '?'),
+            float(amount), exc_info=True,
+        )
 
 
 def list_utility_readings(db, branch_id: int, utility_type: str | None = None, period: str | None = None):

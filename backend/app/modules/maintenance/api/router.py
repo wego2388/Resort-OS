@@ -132,9 +132,9 @@ def complete_work_order(order_id: int, db: DbDep, _=Depends(get_manager_user)):
 @router.post("/maintenance/work-orders/{order_id}/parts",
              response_model=WorkOrderRead,
              status_code=status.HTTP_201_CREATED)
-def add_part(order_id: int, data: WorkOrderPartCreate, db: DbDep, _=Depends(get_employee_user)):
+def add_part(order_id: int, data: WorkOrderPartCreate, db: DbDep, user=Depends(get_employee_user)):
     try:
-        return services.add_part_to_wo(db, order_id, data)
+        return services.add_part_to_wo(db, order_id, data, added_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

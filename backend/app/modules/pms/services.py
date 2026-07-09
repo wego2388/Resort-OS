@@ -1,17 +1,21 @@
 """app/modules/pms/services.py — Business logic"""
 from __future__ import annotations
 
+import logging
+
 import json
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.exc import OperationalError
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 
 from app.modules.pms import crud
 from app.modules.pms.models import Booking, NightAuditLog, RatePlan, RoomType
-from app.modules.pms.schemas import BookingCreate
+from app.modules.pms.schemas import BookingCreate, EarlyLateRequest
 
 
 class BookingConflictError(Exception):
@@ -244,6 +248,63 @@ def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
     )
 
 
+def request_early_late(db: Session, booking_id: int, data: "EarlyLateRequest") -> Booking:
+    """تسجيل وصول مبكر أو مغادرة متأخرة.
+
+    - بيحفظ early_checkin_at / late_checkout_at على الحجز
+    - لو data.charge > 0: بيضيف FolioCharge على فوليو الضيف تلقائياً
+      حتى تُحاسَب مع باقي مصاريف إقامته وقت الـ checkout
+    - بيسمح بالاستدعاء أكثر من مرة (update) — آخر قيمة تفوز
+    """
+    booking = get_booking_or_404(db, booking_id)
+    if booking.status not in ("confirmed", "checked_in"):
+        raise ValueError(f"لا يمكن تعديل مواعيد حجز بحالة '{booking.status}'")
+
+    if data.early_checkin_at:
+        booking.early_checkin_at = data.early_checkin_at
+    if data.late_checkout_at:
+        booking.late_checkout_at = data.late_checkout_at
+
+    if data.charge and data.charge > 0:
+        booking.extra_charge = (booking.extra_charge or Decimal("0")) + data.charge
+        booking.total_rate   = (booking.total_rate   or Decimal("0")) + data.charge
+
+        # أضف شحنة على الفوليو لو مفتوح
+        if booking.folio_id:
+            try:
+                from app.core.config import settings as _s  # noqa: PLC0415
+                from app.modules.finance import crud as fcrud  # noqa: PLC0415
+                from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
+                from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+                label_parts = []
+                if data.early_checkin_at:
+                    label_parts.append(f"وصول مبكر {data.early_checkin_at.strftime('%H:%M')}")
+                if data.late_checkout_at:
+                    label_parts.append(f"مغادرة متأخرة {data.late_checkout_at.strftime('%H:%M')}")
+                label = " + ".join(label_parts) or "رسوم إضافية"
+                fcrud.add_charge(db, booking.folio_id, FolioChargeCreate(
+                    description=label,
+                    amount=data.charge,
+                    charge_type="room_extra",
+                    ref_order_id=None,
+                ))
+                fcrud.recalculate_folio_total(db, fcrud.get_folio(db, booking.folio_id))
+            except Exception:
+                logger.error(
+                    "request_early_late: فشل إضافة folio charge — booking %s charge %.2f",
+                    booking_id, float(data.charge), exc_info=True,
+                )
+
+    if data.notes and booking.notes:
+        booking.notes = booking.notes + "\n" + data.notes
+    elif data.notes:
+        booking.notes = data.notes
+
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
 def cancel_booking(db: Session, booking_id: int, cancelled_by: int) -> Booking:
     booking = get_booking_or_404(db, booking_id)
     if booking.status in ("checked_out", "cancelled"):
@@ -329,6 +390,16 @@ def run_night_audit(db: Session, branch_id: int, audit_date: date) -> NightAudit
     if stats["no_shows"] > 0:
         _mark_no_shows(db, branch_id, audit_date)
 
+    # ── Room Revenue Posting ─────────────────────────────────────────────
+    # Night Audit يُثبّت إيراد الغرف لليوم المنتهي (Dr. AR Guests 1150 /
+    # Cr. Room Revenue 4100) لكل حجز checked_in — ده القيد المحاسبي اليومي
+    # الأساسي في أي PMS (يقابل "Room Revenue Post" في Opera/Mews/Cloudbeds).
+    # ⚠️ بيستخدم بيانات BookingRoom.daily_rate المخزّنة — نفس الأرقام اللي
+    # حسبها get_bookings_for_night_audit (stats["room_revenue"]) — ومش ينشئ
+    # نسخة تانية من نفس القيد لو run_night_audit اتعمل مرتين بالغلط
+    # (مضمون بـ "Night Audit ليوم X مكتمل مسبقاً" فوق).
+    _post_room_revenue_for_night_audit(db, branch_id, audit_date, stats["room_revenue"])
+
     db.commit()
     db.refresh(log)
     return log
@@ -353,3 +424,34 @@ def _mark_no_shows(db: Session, branch_id: int, check_in_date: date) -> None:
                 crud.update_room_status(db, room, "available")
     if rows:
         db.flush()
+
+
+def _post_room_revenue_for_night_audit(
+    db: Session, branch_id: int, audit_date: "date", total_revenue: Decimal
+) -> None:
+    """يُسجّل قيد إيراد الغرف اليومي وقت Night Audit.
+
+    Dr. ذمم الضيوف (1150) / Cr. إيراد الغرف (4100)
+    المبلغ = مجموع daily_rate لكل الحجوزات checked_in في audit_date.
+    لو مفيش إيراد (لا توجد غرف مشغولة) مش بيسجّل قيد فارغ.
+    بيبتلع الأخطاء عمدًا عشان فشل القيد ميمنعش إتمام الـ Night Audit —
+    لكن بيسجّل error في الـ log عشان المحاسب يعرف ويصحح يدوياً.
+    """
+    if not total_revenue or total_revenue <= 0:
+        return
+    try:
+        from app.core.config import settings as _settings  # noqa: PLC0415
+        from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+        post_simple_revenue_journal(
+            db, branch_id, audit_date,
+            debit_account_code="1150", credit_account_code="4100",
+            amount=total_revenue,
+            reference=f"AUDIT-{audit_date.strftime('%Y%m%d')}",
+            description=f"إيراد غرف — Night Audit {audit_date}",
+            source="pms_night_audit", source_id=None,
+        )
+    except Exception:
+        logger.error(
+            "_post_room_revenue_for_night_audit فشل — branch=%s date=%s revenue=%.2f — القيد يحتاج تسجيل يدوي",
+            branch_id, audit_date, float(total_revenue), exc_info=True,
+        )

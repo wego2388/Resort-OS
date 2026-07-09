@@ -371,6 +371,77 @@ def create_order(
     return order
 
 
+def add_items_to_order(
+    db: Session,
+    order_id: int,
+    items: list,  # list[OrderItemCreate]
+) -> "Order":
+    """يضيف أصناف جديدة لطلب مفتوح أو في_المطبخ — بدون حذف الأصناف الحالية.
+    يُعيد حساب subtotal/vat/service_charge/total بعد الإضافة.
+
+    مسموح فقط لطلبات بحالة open | in_kitchen | held | served.
+    لا يُنشئ KitchenTicket جديد تلقائيًا — المستدعي (router) مسؤول عن إرسال
+    broadcast للـ KDS لو الطلب كان in_kitchen بالفعل (نفس منطق update_order_status)."""
+    from app.modules.restaurant.models import OrderItem, OrderItemExtra  # noqa: PLC0415
+
+    order = _get_order_or_404(db, order_id)
+    if order.status in ("paid", "cancelled"):
+        raise ValueError(f"لا يمكن إضافة أصناف لطلب بحالة {order.status}")
+
+    added_subtotal = Decimal("0")
+    for item_req in items:
+        menu_item = crud.get_menu_item(db, item_req.menu_item_id)
+        if not menu_item:
+            raise ValueError(f"الصنف {item_req.menu_item_id} غير موجود")
+        if not menu_item.is_available:
+            raise ValueError(f"الصنف '{menu_item.name}' غير متاح حالياً")
+
+        variant = _resolve_variant(db, menu_item, item_req.variant_id)
+        base_price = variant.price if variant else menu_item.price
+        item_name  = f"{menu_item.name} - {variant.name}" if variant else menu_item.name
+        extras_data, extra_price = _resolve_extras(db, menu_item, item_req.extra_ids)
+
+        new_item = OrderItem(
+            order_id     = order.id,
+            menu_item_id = item_req.menu_item_id,
+            variant_id   = variant.id if variant else None,
+            name         = item_name,
+            unit_price   = base_price,
+            quantity     = item_req.quantity,
+            notes        = item_req.notes,
+            status       = "pending",
+        )
+        db.add(new_item)
+        db.flush()  # نحتاج new_item.id للـ extras
+
+        for e in extras_data:
+            db.add(OrderItemExtra(
+                order_item_id  = new_item.id,
+                extra_id       = e["extra_id"],
+                extra_name     = e["extra_name"],
+                price_addition = e["price_addition"],
+            ))
+
+        added_subtotal += (base_price + extra_price) * item_req.quantity
+
+    # أعد حساب المجاميع
+    vat_pct    = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
+    svc_pct    = Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
+    new_sub    = order.subtotal + added_subtotal
+    new_vat    = (new_sub * vat_pct).quantize(Decimal("0.01"))
+    new_svc    = (new_sub * svc_pct).quantize(Decimal("0.01"))
+    new_total  = new_sub + new_vat + new_svc - order.discount_amount
+
+    order.subtotal        = new_sub
+    order.vat_amount      = new_vat
+    order.service_charge  = new_svc
+    order.total           = new_total
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 def sync_offline_order(
     db: Session,
     branch_id: int,
@@ -430,6 +501,14 @@ def sync_offline_order(
     db.commit()
     db.refresh(order)
 
+    # ⚠️ باج حقيقي كان هنا (اتصلح): create_order بيسيّب الطلب في status "open" —
+    # لازم نعمل in_kitchen transition عشان KitchenTicket يتنشأ والمطبخ يشوف
+    # الطلب. من غير الخطوة دي، الطلبات اللي بتتزامن بعد انقطاع النت كانت
+    # بتظهر في النظام كـ "open" من غير ما أي طباخ يشوفها — لازم تدخل يدوي.
+    order = update_order_status(db, order.id, "in_kitchen")
+    db.commit()
+    db.refresh(order)
+
     return {
         "order_id": order.id,
         "status": "partial" if rejected_items else "fulfilled",
@@ -443,13 +522,21 @@ def sync_offline_order(
 
 
 def update_order_status(
-    db: Session, order_id: int, new_status: str, charge_to_room_id: Optional[int] = None,
+    db: Session, order_id: int, new_status: str,
+    charge_to_room_id: Optional[int] = None,
+    payment_method: Optional[str] = None,
 ) -> Order:
     order = _get_order_or_404(db, order_id)
 
     # لا يمكن إرجاع طلب مدفوع أو ملغي
     if order.status in ("paid", "cancelled"):
         raise ValueError(f"لا يمكن تغيير حالة طلب '{order.status}'")
+
+    # سجّل طريقة الدفع عند التحصيل
+    if new_status == "paid" and payment_method:
+        order.payment_method = payment_method
+    elif new_status == "paid" and not order.payment_method:
+        order.payment_method = "cash"
 
     if new_status == "paid" and charge_to_room_id and not order.folio_id:
         from app.modules.pms.services import find_active_folio_for_room  # noqa: PLC0415
@@ -886,7 +973,10 @@ def _reduce_folio_charge_for_refund(db: Session, order: Order, refund_amount: De
         # لازم يترحّل من غير ما يوقف باقي المرتجع لو فشل، نفس فلسفة الدالة دي.
         _post_order_folio_refund_reversal_journal(db, order, refund_amount)
     except Exception:
-        pass
+        logger.error(
+            "_reduce_folio_charge_for_refund فشل — طلب %s مرتجع %.2f ج — الفوليو %s قد يحتاج تصحيح يدوي",
+            order.order_number, refund_amount, order.folio_id, exc_info=True,
+        )
 
 
 def _post_order_folio_refund_reversal_journal(db: Session, order: Order, refund_amount: Decimal) -> None:

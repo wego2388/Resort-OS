@@ -1,6 +1,8 @@
 """app/modules/leasing/services.py"""
 from __future__ import annotations
 
+import logging
+
 from datetime import date
 from decimal import Decimal
 
@@ -8,6 +10,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.leasing import crud
+
+logger = logging.getLogger(__name__)
 from app.modules.leasing.models import LeaseContract, LeasePayment, TenantCashLog
 from app.modules.leasing.schemas import (
     LeaseContractCreate, LeaseContractUpdate, PayLeaseRequest, TenantCashLogCreate,
@@ -124,7 +128,10 @@ def _post_rent_collection_journal(db: "Session", source_obj, contract: "LeaseCon
             ],
         ), contract.signed_by or 0)
     except Exception:
-        pass
+        logger.error(
+            "_post_rent_collection_journal فشل — عقد %s مبلغ %.2f — القيد المحاسبي يحتاج تسجيل يدوي",
+            getattr(contract, 'contract_number', contract.id), float(collected_amount), exc_info=True,
+        )
 
 
 def update_contract(db: Session, contract_id: int, data: LeaseContractUpdate) -> LeaseContract:

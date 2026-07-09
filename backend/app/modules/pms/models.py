@@ -73,8 +73,13 @@ class Booking(Base, TimestampMixin):
     customer_id:     Mapped[int | None]   = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
     total_rate:      Mapped[Decimal]      = mapped_column(Numeric(12, 2), default=Decimal("0"))
     notes:           Mapped[str | None]   = mapped_column(Text, nullable=True)
-    cancelled_at:    Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    cancelled_by:    Mapped[int | None]      = mapped_column(Integer, nullable=True)
+    cancelled_at:      Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_by:      Mapped[int | None]      = mapped_column(Integer, nullable=True)
+    # Early check-in / Late check-out — اختياريان، بيتسجّلوا عند طلب الضيف
+    early_checkin_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    late_checkout_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    extra_charge:      Mapped[Decimal]         = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    # رسوم الوصول المبكر + المغادرة المتأخرة — بتُضاف لـ total_rate وتُحمَّل على الفوليو
 
     rooms: Mapped[list["BookingRoom"]] = relationship("BookingRoom", back_populates="booking", lazy="select")
 
