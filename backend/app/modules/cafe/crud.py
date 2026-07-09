@@ -179,6 +179,29 @@ def get_table(db: Session, table_id: int) -> Optional[CafeTable]:
     return db.query(CafeTable).filter(CafeTable.id == table_id).first()
 
 
+def create_table(db: Session, data) -> CafeTable:
+    obj = CafeTable(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def update_table(db: Session, table: CafeTable, data) -> CafeTable:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(table, field, value)
+    db.flush()
+    return table
+
+
+def delete_table(db: Session, table_id: int) -> bool:
+    table = get_table(db, table_id)
+    if not table:
+        return False
+    db.delete(table)
+    db.flush()
+    return True
+
+
 def update_table_status(db: Session, table: CafeTable, status: str) -> CafeTable:
     table.status = status
     table.occupied_at = datetime.utcnow() if status == "occupied" else None
@@ -211,7 +234,12 @@ def list_orders(
 
 
 def _next_order_number(db: Session, branch_id: int) -> str:
-    today = datetime.utcnow().strftime("%Y%m%d")
+    # #tz-fix: local_now(settings.TIMEZONE) بدل datetime.utcnow() — رقم الطلب
+    # بيتضمن تاريخ اليوم بتوقيت القاهرة (مثلاً CAF-20260709-0001)، لو استخدمنا
+    # UTC كان الرقم هيُطبع بتاريخ أمس بين 21:00-23:59 UTC — مما يُربك المدير
+    # عند مراجعة طلبات نهاية اليوم والتطابق مع Z-report.
+    from app.resort_os.timezone_utils import local_now  # noqa: PLC0415
+    today = local_now(settings.TIMEZONE).strftime("%Y%m%d")
     prefix = f"CAF-{today}-"
     count = db.query(CafeOrder).filter(
         CafeOrder.order_number.like(f"{prefix}%")
@@ -226,6 +254,7 @@ def create_order(
     total: Decimal, waiter_id: Optional[int], items_data: list[dict],
     status: str = "open",
     customer_id: Optional[int] = None,
+    payment_method: Optional[str] = None,
 ) -> CafeOrder:
     order = CafeOrder(
         branch_id=branch_id,
@@ -234,6 +263,7 @@ def create_order(
         subtotal=subtotal, vat_amount=vat_amount,
         service_charge=service_charge, total=total, waiter_id=waiter_id,
         status=status, customer_id=customer_id,
+        payment_method=payment_method,
     )
     db.add(order); db.flush()
     for d in items_data:
@@ -321,3 +351,9 @@ def get_paid_order_items_for_food_cost(
         .all()
     )
     return [tuple(row) for row in rows]
+
+
+def get_cafe_order_by_local_id(db: Session, local_id: str):
+    """#3 fix: idempotency lookup للـ offline sync — نفس منطق restaurant."""
+    from app.modules.cafe.models import CafeOrder  # noqa: PLC0415
+    return db.query(CafeOrder).filter(CafeOrder.client_local_id == local_id).first()

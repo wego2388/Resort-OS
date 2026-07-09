@@ -6,6 +6,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
+
 from app.modules.hub.models import HubOffer, HubOnlineBooking, HubPage, HubSitemapLog
 from app.modules.hub.schemas import (
     HubOfferCreate, HubOfferUpdate,
@@ -87,7 +90,11 @@ def list_offers(
 ) -> tuple[list[HubOffer], int]:
     q = db.query(HubOffer).filter(HubOffer.branch_id == branch_id)
     if active_only:
-        today = date.today()
+        # #tz-fix: local_today بدل date.today() — العروض بتُعرض على الضيوف اللي
+        # بيبصوا على hub من توقيتهم المحلي، مش توقيت UTC للسيرفر. عرض valid_until
+        # = 2026-07-09 مفروض يظهر طوال يوم 9 يوليو بتوقيت القاهرة، مش يختفي الساعة
+        # 9 مساءً بتوقيت UTC (= منتصف ليل Cairo+3).
+        today = local_today(settings.TIMEZONE)
         q = q.filter(
             HubOffer.is_active.is_(True),
             HubOffer.valid_from <= today,

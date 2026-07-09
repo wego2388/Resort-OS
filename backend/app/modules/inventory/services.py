@@ -9,6 +9,9 @@ from typing import Optional
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
+
 from app.modules.inventory import crud
 from app.modules.inventory.models import (
     Product, PurchaseOrder, PurchaseRequest, StockCount, StockCountLine, StockMovement, Warehouse,
@@ -217,7 +220,10 @@ def _post_cogs_journal(
 
         entry_data = JournalEntryCreate(
             branch_id=branch_id,
-            entry_date=_date.today(),
+            # #tz-fix: local_today بدل _date.today() — تاريخ قيد COGS لازم
+            # يكون بتوقيت المنتجع مش UTC، عشان يتطابق مع تاريخ الطلب نفسه
+            # في التقارير المحاسبية اليومية.
+            entry_date=local_today(settings.TIMEZONE),
             reference=f"COGS-{ref_type or 'manual'}-{ref_id or 0}",
             description=f"تكلفة بضاعة مستهلكة — {ref_type or ''}",
             source="inventory",

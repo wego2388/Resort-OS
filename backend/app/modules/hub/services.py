@@ -5,6 +5,9 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
+
 from app.modules.hub import crud
 from app.modules.hub.models import HubOffer, HubOnlineBooking, HubPage
 from app.modules.hub.schemas import (
@@ -91,7 +94,9 @@ def create_online_booking(db: Session, data: OnlineBookingCreate) -> HubOnlineBo
             raise ValueError("العرض المحدد غير موجود")
         if not offer.is_active:
             raise ValueError("هذا العرض غير متاح حالياً")
-        today = date.today()
+        today = local_today(settings.TIMEZONE)
+        # #tz-fix: local_today بدل date.today() — نفس فئة الباج في hub/crud.py:
+        # صلاحية العرض بتُقيَّم وقت حجز الضيف — لازم تكون بتوقيت المنتجع
         if not (offer.valid_from <= today <= offer.valid_until):
             raise ValueError("هذا العرض منتهي الصلاحية")
         if offer.max_bookings != -1 and offer.bookings_count >= offer.max_bookings:

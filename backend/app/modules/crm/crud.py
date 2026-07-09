@@ -7,6 +7,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
 from app.modules.crm.models import Activity, CallNote, Campaign, Customer, CustomerInteraction, Opportunity, Lead, LeadSource, GuestProfile
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityUpdate,
@@ -338,7 +340,9 @@ def update_guest_profile_on_checkout(db: Session, branch_id: int, phone: str, sp
     if not profile:
         return
     profile.total_visits += 1
-    profile.last_stay = _date.today()
+    # #tz-fix: local_today بدل _date.today() — checkout بيحصل في نهار المنتجع
+    # لكن الـ Celery/server ممكن يكون UTC، فاليوم المحلي مختلف في 3 ساعات
+    profile.last_stay = local_today(settings.TIMEZONE)
     total = profile.avg_spend * (profile.total_visits - 1) + spend
     if profile.total_visits > 0:
         profile.avg_spend = (total / profile.total_visits).quantize(Decimal("0.01"))

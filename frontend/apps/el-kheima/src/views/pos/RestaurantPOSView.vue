@@ -59,11 +59,31 @@ const ACTIVE_STATUSES = new Set(['open', 'in_kitchen', 'served'])
 async function loadActiveOrders() {
   activeOrdersLoading.value = true
   try {
-    const { data } = await api.get('/api/v1/restaurant/orders', {
-      params: { branch_id: branchId, size: 100 },
-    })
-    const items: ActiveOrder[] = data.items ?? data
-    activeOrders.value = items.filter(o => ACTIVE_STATUSES.has(o.status))
+    // #17: نجيب *كل* الطلبات الجارية بغض النظر عن العدد — بنستخدم helper
+    // بيعمل pagination تلقائي (page 1, 2, ...) حتى ما يبقاش فيه صفحات تانية.
+    // كل status في request منفصل لأن الـ backend بيدعم فلتر status واحد بس.
+    const fetchAll = async (status: string): Promise<ActiveOrder[]> => {
+      const PAGE_SIZE = 100
+      const results: ActiveOrder[] = []
+      let page = 1
+      while (true) {
+        const res = await api.get('/api/v1/restaurant/orders', {
+          params: { branch_id: branchId, status, page, size: PAGE_SIZE },
+        })
+        const items: ActiveOrder[] = res.data?.items ?? res.data ?? []
+        results.push(...items)
+        // لو الصفحة مش ممتلئة يعني وصلنا لآخر البيانات
+        if (items.length < PAGE_SIZE) break
+        page++
+      }
+      return results
+    }
+    const [openOrders, kitchenOrders, servedOrders] = await Promise.all([
+      fetchAll('open'),
+      fetchAll('in_kitchen'),
+      fetchAll('served'),
+    ])
+    activeOrders.value = [...openOrders, ...kitchenOrders, ...servedOrders]
   } catch {
     toast.error('تعذّر تحميل الطلبات الجارية — حاول تاني')
   } finally {
@@ -87,17 +107,123 @@ function openOrder(orderId: number) {
   selectedOrderId.value = orderId
 }
 
+// ── #3: إضافة أصناف لطلب مفتوح ───────────────────────────────────────────────
+// الـ backend endpoint: POST /restaurant/orders/{id}/items
+// يقبل: { items: [{ menu_item_id, variant_id?, quantity, notes? }] }
+const addItemsOrderId   = ref<number | null>(null)
+const addItemsOrderNum  = ref<string>('')
+const addItemsCart      = ref<CartItem[]>([])
+const addItemsSubmitting = ref(false)
+const addItemsOpen      = computed(() => addItemsOrderId.value !== null)
+
+function openAddItems(o: ActiveOrder) {
+  activeOrdersOpen.value = false
+  addItemsOrderId.value  = o.id
+  addItemsOrderNum.value = o.order_number
+  addItemsCart.value     = []
+}
+
+function addItemsAddToCart(item: MenuItem) {
+  const availableVariants = (item.variants ?? []).filter(v => v.is_available)
+  if (availableVariants.length > 0) {
+    // نفس منطق الـ variantPicker الأصلي — لكن للـ add-items cart
+    variantPickerItem.value = item
+    variantPickerForAddItems.value = true
+    return
+  }
+  const key = cartKey(item.id, null)
+  const existing = addItemsCart.value.find(c => cartKey(c.menu_item_id, c.variant_id) === key)
+  if (existing) { existing.quantity++; return }
+  addItemsCart.value.push({
+    menu_item_id: item.id, variant_id: null, variant_label: null,
+    name: item.name, name_ar: item.name_ar, price: item.price, quantity: 1, notes: '',
+  })
+}
+
+function addItemsAddToCartWithVariant(item: MenuItem, variant: Variant) {
+  variantPickerItem.value = null
+  variantPickerForAddItems.value = false
+  const key = cartKey(item.id, variant.id)
+  const existing = addItemsCart.value.find(c => cartKey(c.menu_item_id, c.variant_id) === key)
+  if (existing) { existing.quantity++; return }
+  addItemsCart.value.push({
+    menu_item_id: item.id, variant_id: variant.id,
+    variant_label: variant.name_ar || variant.name,
+    name: item.name, name_ar: item.name_ar, price: variant.price, quantity: 1, notes: '',
+  })
+}
+
+// علامة لتمييز variant picker بين new order و add-items
+const variantPickerForAddItems = ref(false)
+
+function onVariantPick(item: MenuItem, variant: Variant) {
+  if (variantPickerForAddItems.value) {
+    addItemsAddToCartWithVariant(item, variant)
+  } else {
+    addToCartWithVariant(item, variant)
+  }
+}
+
+function onVariantPickerClose() {
+  variantPickerItem.value = null
+  variantPickerForAddItems.value = false
+}
+
+async function submitAddItems() {
+  if (!addItemsCart.value.length || addItemsSubmitting.value) return
+  addItemsSubmitting.value = true
+  try {
+    const res = await api.post(`/api/v1/restaurant/orders/${addItemsOrderId.value}/items`, {
+      items: addItemsCart.value.map(i => ({
+        menu_item_id: i.menu_item_id,
+        variant_id:   i.variant_id ?? undefined,
+        quantity:     i.quantity,
+        notes:        i.notes || undefined,
+      })),
+    })
+    // #4 fix: لو الطلب كان open (مش in_kitchen بعد)، الـ backend مش بيعمل
+    // broadcast للـ KDS — لازم نبعت PATCH لـ in_kitchen عشان المطبخ يشوف الأصناف
+    const updatedOrder = res.data
+    if (updatedOrder?.status === 'open') {
+      try {
+        await api.patch(`/api/v1/restaurant/orders/${addItemsOrderId.value}/status`, { status: 'in_kitchen' })
+      } catch {
+        toast.warning('أُضيفت الأصناف لكن تعذّر إرسالها للمطبخ — غيّر حالة الطلب يدوياً')
+      }
+    }
+    toast.success(`✓ أُضيفت ${addItemsCart.value.length} أصناف للطلب ${addItemsOrderNum.value}`)
+    addItemsOrderId.value = null
+    addItemsCart.value    = []
+    loadActiveOrders()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'فشل إضافة الأصناف — حاول تاني')
+  } finally {
+    addItemsSubmitting.value = false
+  }
+}
+
 function onOrderDetailClosed() {
   selectedOrderId.value = null
   loadActiveOrders()
 }
 
 // ── Computed ───────────────────────────────────────────────────────────────────
-const filteredItems = computed(() =>
-  selectedCategoryId.value !== null
+const searchQuery = ref('')
+
+const filteredItems = computed(() => {
+  let items = selectedCategoryId.value !== null
     ? menuItems.value.filter(i => i.category_id === selectedCategoryId.value && i.is_available)
     : menuItems.value.filter(i => i.is_available)
-)
+  const q = searchQuery.value.trim().toLowerCase()
+  if (q) {
+    items = items.filter(i =>
+      i.name.toLowerCase().includes(q) ||
+      (i.name_ar ?? '').includes(q) ||
+      (i.description_ar ?? '').includes(q)
+    )
+  }
+  return items
+})
 
 const total    = computed(() => cart.value.reduce((s, i) => s + i.price * i.quantity, 0))
 const hasItems = computed(() => cart.value.length > 0)
@@ -138,6 +264,7 @@ function addToCart(item: MenuItem) {
 
 function addToCartWithVariant(item: MenuItem, variant: Variant) {
   variantPickerItem.value = null
+  variantPickerForAddItems.value = false
   const key = cartKey(item.id, variant.id)
   const existing = cart.value.find(c => cartKey(c.menu_item_id, c.variant_id) === key)
   if (existing) { existing.quantity++; return }
@@ -398,6 +525,21 @@ onMounted(() => {
         >{{ cat.name_ar || cat.name }}</button>
       </div>
 
+      <!-- #12: حقل بحث سريع — لمطاعم عندها 50+ صنف -->
+      <div class="relative">
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="🔍 بحث في الأصناف..."
+          class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-48"
+        />
+        <button
+          v-if="searchQuery"
+          @click="searchQuery = ''"
+          class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none"
+        >×</button>
+      </div>
+
     </div>
 
     <!-- ── Main split: menu + order ── -->
@@ -430,7 +572,7 @@ onMounted(() => {
 
         <div v-if="!loading && filteredItems.length === 0" class="flex flex-col items-center justify-center py-16 text-gray-400">
           <div class="text-4xl mb-2">🍽️</div>
-          <p class="text-sm">لا توجد أصناف في هذه الفئة</p>
+          <p class="text-sm">{{ searchQuery ? `لا نتائج لـ "${searchQuery}"` : 'لا توجد أصناف في هذه الفئة' }}</p>
         </div>
       </div>
 
@@ -586,19 +728,18 @@ onMounted(() => {
       </div>
     </Transition>
 
-    <!-- ── اختيار الحجم/النوع (Variant) — لصنف عنده متغيّرات متاحة، لازم
-         يتحدد واحد قبل الإضافة للسلة (الباك إند بيرفض غير كده). ── -->
+    <!-- ── اختيار الحجم/النوع (Variant) ── -->
     <AppModal
       :open="variantPickerItem !== null"
       :title="`اختر الحجم/النوع — ${variantPickerItem?.name_ar || variantPickerItem?.name || ''}`"
       size="sm"
-      @close="variantPickerItem = null"
+      @close="onVariantPickerClose"
     >
       <div v-if="variantPickerItem" class="space-y-2">
         <button
           v-for="variant in variantPickerItem.variants!.filter(v => v.is_available)"
           :key="variant.id"
-          @click="addToCartWithVariant(variantPickerItem!, variant)"
+          @click="onVariantPick(variantPickerItem!, variant)"
           class="w-full flex items-center justify-between gap-2 p-3 rounded-xl border-2 border-stone-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all text-right"
         >
           <span class="font-semibold text-gray-900 text-sm">{{ variant.name_ar || variant.name }}</span>
@@ -614,21 +755,27 @@ onMounted(() => {
       </div>
       <EmptyState v-else-if="activeOrders.length === 0" icon="🧾" title="مفيش طلبات جارية دلوقتي" />
       <div v-else class="space-y-2">
-        <button
+        <div
           v-for="o in activeOrders"
           :key="o.id"
-          @click="openOrder(o.id)"
-          class="w-full flex items-center justify-between gap-2 p-3 rounded-xl border-2 border-blue-100 bg-blue-50/50 hover:border-blue-400 transition-all text-right"
+          class="flex items-center gap-2 p-3 rounded-xl border-2 border-blue-100 bg-blue-50/50 hover:border-blue-300 transition-all"
         >
-          <div>
+          <!-- معلومات الطلب -->
+          <button @click="openOrder(o.id)" class="flex-1 text-right">
             <div class="font-bold text-gray-900 text-sm">{{ o.order_number }}</div>
-            <div class="text-xs text-gray-500">{{ tableLabelFor(o) }}</div>
+            <div class="text-xs text-gray-500">{{ tableLabelFor(o) }} · {{ o.status }}</div>
+          </button>
+          <div class="text-left flex-shrink-0">
+            <div class="font-bold text-blue-700 text-sm">{{ o.total }} ج</div>
           </div>
-          <div class="text-left">
-            <div class="font-bold text-blue-700">{{ o.total }} ج</div>
-            <div class="text-[11px] text-gray-400">{{ o.status }}</div>
-          </div>
-        </button>
+          <!-- #3: زر إضافة أصناف — متاح فقط للطلبات open أو in_kitchen -->
+          <button
+            v-if="o.status === 'open' || o.status === 'in_kitchen'"
+            @click="openAddItems(o)"
+            class="flex-shrink-0 bg-green-100 hover:bg-green-200 text-green-800 text-xs font-bold px-2 py-1.5 rounded-lg transition-colors"
+            title="إضافة أصناف لهذا الطلب"
+          >➕ أصناف</button>
+        </div>
       </div>
     </AppModal>
 
@@ -637,6 +784,80 @@ onMounted(() => {
       @close="onOrderDetailClosed"
       @changed="loadActiveOrders"
     />
+
+    <!-- ── #3: Modal إضافة أصناف لطلب مفتوح ── -->
+    <AppModal
+      :open="addItemsOpen"
+      :title="`➕ إضافة أصناف — ${addItemsOrderNum}`"
+      size="lg"
+      @close="addItemsOrderId = null; addItemsCart = []"
+    >
+      <div class="flex flex-col gap-4">
+        <!-- Category tabs مصغّرة -->
+        <div class="flex gap-1 flex-wrap">
+          <button
+            @click="selectedCategoryId = null"
+            :class="['px-2 py-1 rounded-lg text-xs font-medium transition-colors',
+              selectedCategoryId === null ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']"
+          >الكل</button>
+          <button
+            v-for="cat in categories" :key="cat.id"
+            @click="selectedCategoryId = cat.id"
+            :class="['px-2 py-1 rounded-lg text-xs font-medium transition-colors',
+              selectedCategoryId === cat.id ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200']"
+          >{{ cat.name_ar || cat.name }}</button>
+        </div>
+
+        <!-- قائمة الأصناف -->
+        <div class="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto">
+          <button
+            v-for="item in filteredItems" :key="item.id"
+            @click="addItemsAddToCart(item)"
+            class="bg-stone-50 border border-stone-200 rounded-lg p-2 text-right text-xs hover:border-blue-400 hover:bg-blue-50 transition-all"
+          >
+            <div class="font-semibold text-gray-900 leading-tight truncate">{{ item.name_ar || item.name }}</div>
+            <div class="text-blue-700 font-bold mt-1">{{ item.price }} ج</div>
+          </button>
+        </div>
+
+        <!-- السلة المؤقتة -->
+        <div v-if="addItemsCart.length" class="border-t pt-3">
+          <div class="text-xs font-bold text-gray-600 mb-2">الأصناف المضافة:</div>
+          <div class="space-y-1.5">
+            <div v-for="(ci, idx) in addItemsCart" :key="idx"
+              class="flex items-center justify-between gap-2 text-sm bg-green-50 border border-green-200 rounded-lg px-3 py-1.5"
+            >
+              <span class="font-medium text-gray-800 flex-1 truncate">
+                {{ ci.name_ar || ci.name }}
+                <span v-if="ci.variant_label" class="text-gray-400 text-xs"> — {{ ci.variant_label }}</span>
+              </span>
+              <div class="flex items-center gap-1 flex-shrink-0">
+                <button @click="ci.quantity > 1 ? ci.quantity-- : addItemsCart.splice(idx,1)"
+                  class="w-6 h-6 rounded-full bg-red-100 text-red-700 font-bold text-sm hover:bg-red-200">−</button>
+                <span class="w-5 text-center font-bold text-sm">{{ ci.quantity }}</span>
+                <button @click="ci.quantity++"
+                  class="w-6 h-6 rounded-full bg-green-100 text-green-700 font-bold text-sm hover:bg-green-200">+</button>
+              </div>
+              <span class="text-blue-700 font-bold text-xs flex-shrink-0">{{ (ci.price * ci.quantity).toFixed(0) }} ج</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- زر الإرسال -->
+        <div class="flex justify-end gap-2 pt-2 border-t">
+          <button @click="addItemsOrderId = null; addItemsCart = []"
+            class="px-4 py-2 rounded-lg text-sm text-gray-600 bg-gray-100 hover:bg-gray-200">إلغاء</button>
+          <button
+            @click="submitAddItems"
+            :disabled="!addItemsCart.length || addItemsSubmitting"
+            class="px-5 py-2 rounded-lg text-sm font-bold text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+          >
+            <span v-if="addItemsSubmitting" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            إرسال الأصناف للمطبخ
+          </button>
+        </div>
+      </div>
+    </AppModal>
 
   </div>
 </template>

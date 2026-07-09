@@ -7,6 +7,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_now
+
 from app.modules.inventory.models import (
     Category, Product, PurchaseOrder, PurchaseOrderItem,
     PurchaseRequest, PurchaseRequestItem, PurchaseApproval,
@@ -168,7 +171,11 @@ def list_movements(
 # ── PurchaseOrder ─────────────────────────────────────────────────────
 
 def _next_po_number(db: Session) -> str:
-    today = datetime.utcnow().strftime("%Y%m%d")
+    # #tz-fix: local_now(settings.TIMEZONE) بدل datetime.utcnow() — رقم أمر
+    # الشراء بيتضمن تاريخ اليوم بتوقيت القاهرة (مثلاً PO-20260709-0001)، لو
+    # استخدمنا UTC كان رقم الـ PO هيُطبع بتاريخ أمس لو طُلب بعد منتصف ليل القاهرة
+    # (21:00-23:59 UTC) مما يُربك مدير المخزون عند مطابقة الفواتير.
+    today = local_now(settings.TIMEZONE).strftime("%Y%m%d")
     count = db.query(PurchaseOrder).filter(
         PurchaseOrder.order_number.like(f"PO-{today}-%")
     ).count()

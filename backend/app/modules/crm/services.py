@@ -5,6 +5,9 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
+
 from app.modules.crm import crud
 from app.modules.crm.models import Activity, Campaign, Customer, CustomerInteraction, Lead, Opportunity
 from app.modules.crm.schemas import (
@@ -249,8 +252,12 @@ def update_lead_details(db: Session, lead_id: int, data) -> Lead:
 
 
 def get_overdue_activities(db: Session, branch_id: int) -> list[Activity]:
-    """يُستخدم من Celery لإرسال تذكيرات."""
-    today = date.today()
+    """يُستخدم من Celery لإرسال تذكيرات.
+    #tz-fix: local_today بدل date.today() — باج التوقيت الموثّق في timezone_utils.py:
+    Celery workers بتشتغل بتوقيت UTC، فـ date.today() كان بيحسب "اليوم" من UTC
+    مش من توقيت المنتجع، يعني نشاط مفروض يتذكّر كل يوم الساعة 9 صباحًا (Cairo)
+    كان ممكن يتأخر أو يتقدم بـ 3 ساعات."""
+    today = local_today(settings.TIMEZONE)
     items, _ = crud.list_activities(
         db, branch_id,
         status="pending",
