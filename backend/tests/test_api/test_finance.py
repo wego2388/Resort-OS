@@ -851,6 +851,93 @@ class TestCashierShift:
         with pytest.raises(ValueError, match="غير موجودة"):
             services.close_shift(db, 9999, closed_by=1, data=CashierShiftClose(counted_cash=Decimal("0")))
 
+    def test_close_shift_multi_currency_cash_count(self, db: Session, branch, folio):
+        """عدّ خزينة متعددة العملات: جنيه + دولار + يورو.
+        الإجمالي المعدود لازم يتحوّل لـ EGP بأسعار الصرف المسجّلة.
+        5×200ج + 10×$1(fx=48) + 2×€50(fx=52) = 1000 + 480 + 5200 = 6680 ج
+        """
+        from datetime import date as _date  # noqa: PLC0415
+        from app.modules.finance.schemas import ExchangeRateCreate as ERC  # noqa: PLC0415
+
+        # سجّل أسعار الصرف بتاريخ فريد لتجنب تعارض مع tests أخرى
+        fx_date = _date(2026, 7, 9)
+        # لو موجود من run سابق في نفس الـ session، نتجاهل الـ duplicate error
+        try:
+            services.create_exchange_rate(db, ERC(
+                from_currency="USD", to_currency="EGP",
+                rate=Decimal("48.00"), effective_date=fx_date,
+            ), created_by=1)
+        except Exception:
+            db.rollback()
+        try:
+            services.create_exchange_rate(db, ERC(
+                from_currency="EUR", to_currency="EGP",
+                rate=Decimal("52.00"), effective_date=fx_date,
+            ), created_by=1)
+        except Exception:
+            db.rollback()
+
+        shift = services.open_shift(
+            db, cashier_id=91, opened_by=91,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        services.add_payment(db, folio.id, PaymentCreate(
+            folio_id=folio.id, branch_id=branch.id, amount=Decimal("1000"),
+            method="cash", posted_at=datetime.utcnow(), cashier_id=91,
+        ))
+
+        closed = services.close_shift(
+            db, shift.id, closed_by=91,
+            data=CashierShiftClose(cash_count=[
+                CashCountLine(denomination=Decimal("200"), currency="EGP", quantity=5),   # 1000 ج
+                CashCountLine(denomination=Decimal("1"),   currency="USD", quantity=10),  # 10$ = 480 ج
+                CashCountLine(denomination=Decimal("50"),  currency="EUR", quantity=2),   # 100€ = 5200 ج
+            ]),
+        )
+        # 1000 + 480 + 5200 = 6680
+        assert closed.counted_cash == Decimal("6680.00")
+        assert closed.expected_cash == Decimal("1000.00")   # opening_float=0 + 1000 cash payment
+        assert closed.variance == Decimal("5680.00")
+
+        lines = crud.list_cash_count_lines(db, shift.id)
+        assert len(lines) == 3
+
+        egp_line  = next(l for l in lines if l.currency == "EGP")
+        usd_line  = next(l for l in lines if l.currency == "USD")
+        eur_line  = next(l for l in lines if l.currency == "EUR")
+
+        assert egp_line.egp_equivalent  == Decimal("1000.00")
+        assert usd_line.egp_equivalent  == Decimal("480.00")
+        assert usd_line.fx_rate         == Decimal("48.000000")
+        assert eur_line.egp_equivalent  == Decimal("5200.00")
+        assert eur_line.fx_rate         == Decimal("52.000000")
+
+        # تحقق من ShiftEndReport — foreign_currency_summary وcounted_cash_egp
+        report = services.build_shift_end_report(db, shift.id)
+        assert report.counted_cash_egp == Decimal("6680.00")
+        assert len(report.foreign_currency_summary) == 2
+
+        usd_fc = next(fc for fc in report.foreign_currency_summary if fc.currency == "USD")
+        eur_fc = next(fc for fc in report.foreign_currency_summary if fc.currency == "EUR")
+        assert usd_fc.total_foreign  == Decimal("10.00")   # 10 × $1
+        assert usd_fc.egp_equivalent == Decimal("480.00")
+        assert eur_fc.total_foreign  == Decimal("100.00")  # 2 × €50
+        assert eur_fc.egp_equivalent == Decimal("5200.00")
+
+    def test_close_shift_missing_exchange_rate_raises(self, db: Session, branch, folio):
+        """لو عملة أجنبية في العدّ ومفيش سعر صرف مسجّل → ValueError واضحة."""
+        shift = services.open_shift(
+            db, cashier_id=92, opened_by=92,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        with pytest.raises(ValueError, match="سعر صرف"):
+            services.close_shift(
+                db, shift.id, closed_by=92,
+                data=CashierShiftClose(cash_count=[
+                    CashCountLine(denomination=Decimal("100"), currency="JPY", quantity=1),
+                ]),
+            )
+
 
 # ── Folio Reports (Statement + All-Invoices Export) ──────────────────
 

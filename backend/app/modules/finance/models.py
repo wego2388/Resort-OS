@@ -141,15 +141,25 @@ class CashierShift(Base, TimestampMixin):
 
 
 class CashierShiftCashCount(Base, TimestampMixin):
-    """تفاصيل عدّ النقدية بالفئة (200ج × 5، 100ج × 3...) وقت قفل الوردية —
-    محفوظة للتدقيق حتى لو الكاشير غيّر رأيه أو حصل خلاف على الإجمالي المعدود."""
+    """تفاصيل عدّ النقدية بالفئة وقت قفل الوردية — بيدعم عملات متعددة (EGP/USD/EUR).
+
+    مثال: 5×200ج (EGP) + 10×$1 (USD fx=48) + 2×€50 (EUR fx=52)
+    - denomination: قيمة الورقة بعملتها الأصلية
+    - currency: عملة هذا السطر — افتراضي EGP
+    - subtotal: denomination × quantity (بالعملة الأصلية — للعرض)
+    - egp_equivalent: subtotal × fx_rate — القيمة بالجنيه (للمطابقة)
+    - fx_rate: سعر الصرف وقت العدّ (1.0 للـ EGP) — للتدقيق التاريخي
+    """
     __tablename__ = "cashier_shift_cash_counts"
 
-    id:           Mapped[int]      = mapped_column(primary_key=True)
-    shift_id:     Mapped[int]      = mapped_column(ForeignKey("cashier_shifts.id", ondelete="CASCADE"), index=True)
-    denomination: Mapped[Decimal]  = mapped_column(Numeric(10, 2))
-    quantity:     Mapped[int]      = mapped_column(Integer)
-    subtotal:     Mapped[Decimal]  = mapped_column(Numeric(10, 2))
+    id:             Mapped[int]     = mapped_column(primary_key=True)
+    shift_id:       Mapped[int]     = mapped_column(ForeignKey("cashier_shifts.id", ondelete="CASCADE"), index=True)
+    denomination:   Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    currency:       Mapped[str]     = mapped_column(String(3), default="EGP")
+    quantity:       Mapped[int]     = mapped_column(Integer)
+    subtotal:       Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    fx_rate:        Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("1"))
+    egp_equivalent: Mapped[Decimal] = mapped_column(Numeric(12, 2))
 
     shift: Mapped["CashierShift"] = relationship("CashierShift", back_populates="cash_count_lines")
 

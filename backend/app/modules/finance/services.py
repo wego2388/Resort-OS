@@ -18,6 +18,7 @@ from app.modules.finance.schemas import (
     BalanceSheetLine, BalanceSheetReport,
     BankAccountCreate, BankAccountUpdate, BankReconciliationSummary, BankStatementImportRequest,
     CashCountLineRead, CashierShiftClose, CashierShiftOpen, CheckCreate, ConditionalDiscountCreate,
+    ForeignCurrencySummary,
     CostCenterCreate,
     CostCenterReport, CostCenterReportLine, DepreciationRunResult, ExchangeRateCreate, FolioChargeCreate,
     FolioCreate,
@@ -390,6 +391,27 @@ def build_shift_end_report(db: Session, shift_id: int) -> ShiftEndReport:
         previous_total_sales = sum((p.amount for p in prev_active), Decimal("0"))
         delta_vs_previous = total_sales - previous_total_sales
 
+    cash_count_lines = crud.list_cash_count_lines(db, shift_id)
+
+    # ملخص العملات الأجنبية — نجمّع لكل عملة غير EGP
+    foreign: dict[str, dict] = {}
+    counted_cash_egp = Decimal("0")
+    for line in cash_count_lines:
+        cur = line.currency or "EGP"
+        counted_cash_egp += line.egp_equivalent
+        if cur != "EGP":
+            if cur not in foreign:
+                foreign[cur] = {
+                    "currency": cur,
+                    "total_foreign": Decimal("0"),
+                    "fx_rate": line.fx_rate,
+                    "egp_equivalent": Decimal("0"),
+                }
+            foreign[cur]["total_foreign"]  += line.subtotal
+            foreign[cur]["egp_equivalent"] += line.egp_equivalent
+
+    foreign_summary = [ForeignCurrencySummary(**v) for v in foreign.values()]
+
     return ShiftEndReport(
         shift_id=shift.id,
         branch_id=shift.branch_id,
@@ -409,10 +431,9 @@ def build_shift_end_report(db: Session, shift_id: int) -> ShiftEndReport:
         expected_cash=expected_cash,
         counted_cash=shift.counted_cash,
         variance=shift.variance,
-        cash_count=[
-            CashCountLineRead.model_validate(line)
-            for line in crud.list_cash_count_lines(db, shift_id)
-        ],
+        cash_count=[CashCountLineRead.model_validate(line) for line in cash_count_lines],
+        foreign_currency_summary=foreign_summary,
+        counted_cash_egp=counted_cash_egp if cash_count_lines else shift.counted_cash,
         previous_shift_id=prev.id if prev else None,
         previous_total_sales=previous_total_sales,
         delta_vs_previous=delta_vs_previous,
@@ -454,7 +475,24 @@ def generate_shift_end_report_pdf(db: Session, shift_id: int) -> bytes:
     if r.cash_count:
         summary.append(("— عدّ الكاش بالفئة —", ""))
         for line in r.cash_count:
-            summary.append((f"{line.denomination:,.2f} EGP × {line.quantity}", f"{line.subtotal:,.2f} EGP"))
+            cur = line.currency or "EGP"
+            if cur == "EGP":
+                label = f"{line.denomination:,.2f} ج × {line.quantity}"
+                value = f"{line.subtotal:,.2f} EGP"
+            else:
+                label = f"{line.denomination:,.2f} {cur} × {line.quantity}"
+                value = f"{line.subtotal:,.2f} {cur}  (= {line.egp_equivalent:,.2f} ج @ {line.fx_rate:,.4f})"
+            summary.append((label, value))
+
+    if r.foreign_currency_summary:
+        summary.append(("— عملات أجنبية (إجمالي) —", ""))
+        for fc in r.foreign_currency_summary:
+            summary.append((
+                f"إجمالي {fc.currency}",
+                f"{fc.total_foreign:,.2f} {fc.currency}  = {fc.egp_equivalent:,.2f} ج",
+            ))
+        if r.counted_cash_egp is not None:
+            summary.append(("إجمالي الخزينة (EGP)", f"{r.counted_cash_egp:,.2f} EGP"))
 
     return builder.table_pdf(
         title="تقرير نهاية الوردية",
@@ -473,16 +511,40 @@ def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftCl
     if shift.status == "closed":
         raise ValueError("الوردية مقفولة بالفعل")
 
-    # لو الكاشير عدّ الكاش بالفئة (200ج × 5، 100ج × 3...)، الإجمالي المعدود بيتحسب من
-    # العدّ الفعلي مش من رقم يكتبه الكاشير بنفسه — ده أساس أي نظام POS جاد لتجنب الغش
-    # أو الغلط في الجمع، والتفاصيل بتتحفظ للتدقيق (راجع cashier_shift_cash_counts).
+    # لو الكاشير عدّ الكاش بالفئة، الإجمالي المعدود بيتحسب من العدّ الفعلي مش من رقم
+    # يكتبه الكاشير بنفسه — ده أساس أي نظام POS جاد لتجنب الغش أو الغلط في الجمع.
+    # بيدعم عملات متعددة: كل سطر بيتحوّل لـ EGP باستخدام أسعار الصرف المسجّلة.
     if data.cash_count:
+        from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+        today = local_today(settings.TIMEZONE)
+
+        lines_for_db = []
+        for line in data.cash_count:
+            currency = (line.currency or "EGP").upper()
+            if currency == "EGP":
+                fx_rate = Decimal("1")
+            else:
+                rate_row = crud.get_latest_exchange_rate(db, currency, "EGP", today)
+                if rate_row is None:
+                    raise ValueError(
+                        f"لا يوجد سعر صرف مسجّل لـ {currency}/EGP — "                        f"أضفه من إعدادات أسعار الصرف أولاً"
+                    )
+                fx_rate = rate_row.rate
+            lines_for_db.append({
+                "denomination": line.denomination,
+                "currency":     currency,
+                "quantity":     line.quantity,
+                "fx_rate":      fx_rate,
+            })
+
+        crud.create_cash_count_lines(db, shift_id, lines_for_db)
+        # counted_cash (EGP) = مجموع egp_equivalent لكل السطور
         counted_cash = sum(
-            (line.denomination * line.quantity for line in data.cash_count), Decimal("0")
-        )
-        crud.create_cash_count_lines(
-            db, shift_id,
-            [{"denomination": line.denomination, "quantity": line.quantity} for line in data.cash_count],
+            (
+                (ln["denomination"] * ln["quantity"] * ln["fx_rate"]).quantize(Decimal("0.01"))
+                for ln in lines_for_db
+            ),
+            Decimal("0"),
         )
     else:
         assert data.counted_cash is not None  # مضمون بالـ model_validator في CashierShiftClose

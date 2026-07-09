@@ -186,15 +186,32 @@ class CashierShiftOpen(BaseModel):
 
 
 class CashCountLine(BaseModel):
+    """سطر عدّ نقدي بالفئة — بيدعم عملات متعددة.
+    denomination: قيمة الورقة/القطعة (200 / 100 / 50 ج أو 1 / 5 / 10 $€)
+    currency: عملة هذا السطر (EGP, USD, EUR) — افتراضي EGP
+    quantity: عدد الأوراق/القطع
+    """
     denomination: Decimal = Field(..., gt=0)
+    currency:     str     = Field("EGP", pattern=r"^[A-Z]{3}$")
     quantity:     int     = Field(..., ge=0)
 
 
 class CashCountLineRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    denomination: Decimal
-    quantity:     int
-    subtotal:     Decimal
+    denomination:   Decimal
+    currency:       str = "EGP"
+    quantity:       int
+    subtotal:       Decimal   # denomination × quantity (عملة أصلية)
+    fx_rate:        Decimal = Decimal("1")
+    egp_equivalent: Decimal   # subtotal × fx_rate (جنيه دايمًا)
+
+
+class ForeignCurrencySummary(BaseModel):
+    """ملخص العملة الأجنبية في عدّ الوردية — لكل عملة غير EGP."""
+    currency:       str
+    total_foreign:  Decimal   # إجمالي بالعملة الأصلية (مثلاً 110 USD)
+    fx_rate:        Decimal   # سعر الصرف المستخدم (مثلاً 48.00 EGP/USD)
+    egp_equivalent: Decimal   # إجمالي بالجنيه (مثلاً 5280 EGP)
 
 
 class CashierShiftClose(BaseModel):
@@ -229,6 +246,11 @@ class CashierShiftRead(BaseModel):
     notes:         Optional[str]
     handover_note: Optional[str] = None
     created_at:    datetime
+    # #14: reconciliation — يُحسب عند الإغلاق بشكل تلقائي
+    # reconciliation_ok: True لو |variance| ≤ 50 ج (مقبول تشغيليًا)
+    # reconciliation_warning: رسالة للمدير لو الفرق كبير (None = كل شيء تمام)
+    reconciliation_ok:      Optional[bool]    = None
+    reconciliation_warning: Optional[str]     = None
 
 
 class ShiftEndReport(BaseModel):
@@ -253,6 +275,11 @@ class ShiftEndReport(BaseModel):
     counted_cash:          Optional[Decimal]
     variance:              Optional[Decimal]
     cash_count:            list[CashCountLineRead] = Field(default_factory=list)
+    # ملخص العملات الأجنبية — فاضي لو كل العدّ EGP، وإلا فيه عنصر لكل عملة أجنبية
+    foreign_currency_summary: list["ForeignCurrencySummary"] = Field(default_factory=list)
+    # counted_cash_egp: إجمالي العدّ المحوّل لـ EGP (يشمل كل العملات)
+    # يساوي sum(egp_equivalent) لكل سطور cash_count
+    counted_cash_egp:      Optional[Decimal] = None
     previous_shift_id:     Optional[int]
     previous_total_sales:  Optional[Decimal]
     delta_vs_previous:     Optional[Decimal]

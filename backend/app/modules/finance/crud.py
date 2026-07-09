@@ -328,15 +328,32 @@ def get_latest_closed_shift(db: Session, branch_id: int) -> Optional[CashierShif
 def create_cash_count_lines(
     db: Session, shift_id: int, lines: list[dict],
 ) -> list[CashierShiftCashCount]:
-    rows = [
-        CashierShiftCashCount(
+    """
+    lines: قائمة dicts بالمفاتيح التالية:
+      - denomination: Decimal — قيمة الورقة/القطعة
+      - currency: str — عملة هذا السطر (افتراضي "EGP")
+      - quantity: int
+      - fx_rate: Decimal — سعر الصرف لـ EGP (افتراضي 1.0 للـ EGP)
+    egp_equivalent يتحسب تلقائياً = denomination × quantity × fx_rate
+    """
+    from decimal import Decimal  # noqa: PLC0415
+    rows = []
+    for line in lines:
+        denom    = line["denomination"]
+        currency = line.get("currency", "EGP") or "EGP"
+        qty      = line["quantity"]
+        fx_rate  = line.get("fx_rate", Decimal("1")) or Decimal("1")
+        subtotal = denom * qty
+        egp_eq   = (subtotal * fx_rate).quantize(Decimal("0.01"))
+        rows.append(CashierShiftCashCount(
             shift_id=shift_id,
-            denomination=line["denomination"],
-            quantity=line["quantity"],
-            subtotal=line["denomination"] * line["quantity"],
-        )
-        for line in lines
-    ]
+            denomination=denom,
+            currency=currency.upper(),
+            quantity=qty,
+            subtotal=subtotal,
+            fx_rate=fx_rate,
+            egp_equivalent=egp_eq,
+        ))
     db.add_all(rows)
     db.flush()
     return rows
