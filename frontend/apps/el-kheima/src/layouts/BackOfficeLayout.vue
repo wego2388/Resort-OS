@@ -11,6 +11,7 @@
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
+import GuestAlertsBell from '../components/GuestAlertsBell.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -189,6 +190,11 @@ function logout() {
           <h1 class="font-bold text-gray-900 text-base">{{ route.meta.title ?? 'Resort OS' }}</h1>
         </div>
         <div class="flex items-center gap-3 text-sm text-gray-600">
+          <!-- تنبيهات الضيوف (نادِ الجرسون / هات الفاتورة) — كانت ظاهرة بس في
+               FieldLayout (نادل/كاشير)، يعني مدير/مشرف/محاسب قاعدين في
+               BackOfficeLayout عمرهم ما كانوا بيشوفوا نداء ضيف خالص لو النادل
+               مشغول. نفس المكوّن بالظبط (لا تكرار منطق). -->
+          <GuestAlertsBell />
           <span>{{ new Date().toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) }}</span>
         </div>
       </header>
