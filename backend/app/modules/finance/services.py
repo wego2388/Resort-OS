@@ -505,11 +505,27 @@ def generate_shift_end_report_pdf(db: Session, shift_id: int) -> bytes:
 
 
 def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftClose) -> CashierShift:
+    """يقفل وردية الكاشير مع مطابقة (reconciliation) حقيقية للكاش — راجع
+    wagdy.md بند 14 (حرج): كان ممكن كاشير يقفل ورديته بفرق ضخم بين المبيعات
+    المسجّلة والكاش الفعلي المعدود من غير أي رفض أو حتى تنبيه حقيقي، يعني عجز
+    كاش حقيقي (سرقة أو غلط جسيم في العدّ) كان بيتسجّل بصمت للأبد.
+
+    الـ "blind count" (راجع test_blind_cash_count_never_reveals_expected_cash_before_close)
+    فضل زي ما هو تمامًا — الكاشير لسه بيعدّ ويبعت رقمه *قبل* ما يشوف أي رقم
+    متوقع. المطابقة هنا بتحصل بعد الاستلام مباشرة، سيرفر-سايد بالكامل.
+    """
     shift = crud.get_shift(db, shift_id)
     if not shift:
         raise ValueError(f"الوردية {shift_id} غير موجودة")
     if shift.status == "closed":
         raise ValueError("الوردية مقفولة بالفعل")
+
+    # نحسب الكاش المتوقع (expected_cash) الأول — قبل أي تعديل فعلي على
+    # الداتابيز، بنفس مبدأ فحص حد الائتمان في beach.services.checkin_b2b:
+    # لو القفل هيترفض، محدش (لا shift ولا cash_count_lines) يتأثر أو
+    # يحتاج عكس لاحقًا.
+    report = build_shift_end_report(db, shift_id)
+    expected_cash = report.expected_cash
 
     # لو الكاشير عدّ الكاش بالفئة، الإجمالي المعدود بيتحسب من العدّ الفعلي مش من رقم
     # يكتبه الكاشير بنفسه — ده أساس أي نظام POS جاد لتجنب الغش أو الغلط في الجمع.
@@ -537,8 +553,9 @@ def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftCl
                 "fx_rate":      fx_rate,
             })
 
-        crud.create_cash_count_lines(db, shift_id, lines_for_db)
-        # counted_cash (EGP) = مجموع egp_equivalent لكل السطور
+        # counted_cash (EGP) = مجموع egp_equivalent لكل السطور — بيتحسب هنا في
+        # الذاكرة بس (السطور لسه ما اتكتبتش في الداتابيز) عشان فحص المطابقة
+        # تحت يقدر يرفض القفل قبل أي كتابة فعلية.
         counted_cash = sum(
             (
                 (ln["denomination"] * ln["quantity"] * ln["fx_rate"]).quantize(Decimal("0.01"))
@@ -549,11 +566,48 @@ def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftCl
     else:
         assert data.counted_cash is not None  # مضمون بالـ model_validator في CashierShiftClose
         counted_cash = data.counted_cash
+        lines_for_db = None
 
-    report = build_shift_end_report(db, shift_id)
-    shift.expected_cash = report.expected_cash
+    variance = counted_cash - expected_cash
+    abs_variance = abs(variance)
+
+    # حد الرفض (reject) = أكبر قيمة بين نسبة مئوية من إجمالي مبيعات الوردية
+    # (CASH_VARIANCE_REJECT_PCT) أو مبلغ ثابت (CASH_VARIANCE_REJECT_FLOOR) —
+    # النسبة المئوية عشان الورديات الكبيرة (مبيعات ضخمة) تستاهل هامش أكبر
+    # بالجنيه من وردية صغيرة، والمبلغ الثابت عشان الورديات الصغيرة/بلا مبيعات
+    # برضو تتحمي من عجز كاش حقيقي بغض النظر عن حجم المبيعات.
+    reject_pct = Decimal(str(settings.CASH_VARIANCE_REJECT_PCT)) / Decimal("100")
+    reject_floor = Decimal(str(settings.CASH_VARIANCE_REJECT_FLOOR))
+    reject_threshold = max(reject_floor, (report.total_sales * reject_pct).quantize(Decimal("0.01")))
+    if abs_variance > reject_threshold:
+        direction = "زيادة" if variance > 0 else "عجز"
+        raise ValueError(
+            f"فرق الكاش ({direction} {abs_variance:,.2f} ج) يتخطى الحد المسموح لهذه "
+            f"الوردية ({reject_threshold:,.2f} ج، بناءً على إجمالي مبيعات "
+            f"{report.total_sales:,.2f} ج) — لا يمكن قفل الوردية. راجع العدّ مرة "
+            f"تانية أو استدعِ المدير لمراجعة الدرج قبل القفل."
+        )
+
+    if lines_for_db is not None:
+        crud.create_cash_count_lines(db, shift_id, lines_for_db)
+
+    # تحذير تشغيلي (مش رفض) — فرق صغير أعلى من التفكة الطبيعية لكن لسه أقل
+    # من حد الرفض، بيتسجّل عشان المدير يراجعه بعدين من غير ما يمنع الكاشير
+    # من إنهاء ورديته والمغادرة (راجع reconciliation_ok/warning في CashierShiftRead).
+    warning_threshold = Decimal(str(settings.CASH_VARIANCE_WARNING_ABS))
+    reconciliation_ok = abs_variance <= warning_threshold
+    reconciliation_warning = None
+    if not reconciliation_ok:
+        direction = "زيادة" if variance > 0 else "عجز"
+        reconciliation_warning = (
+            f"⚠️ فرق كاش غير معتاد: {direction} {abs_variance:,.2f} ج "
+            f"(متوقع {expected_cash:,.2f} ج — معدود {counted_cash:,.2f} ج) — "
+            f"يُنصح بمراجعة المدير."
+        )
+
+    shift.expected_cash = expected_cash
     shift.counted_cash = counted_cash
-    shift.variance = counted_cash - report.expected_cash
+    shift.variance = variance
     shift.status = "closed"
     shift.closed_at = datetime.utcnow()
     shift.closed_by = closed_by
@@ -564,6 +618,10 @@ def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftCl
 
     db.commit()
     db.refresh(shift)
+    # حقول transient (مش أعمدة DB حقيقية) — بيقرأها الراوتر بس عشان يبنيها
+    # في response الـ HTTP، بدون ما يعيد حساب أي منطق عمل بنفسه (راجع §4 CLAUDE.md).
+    shift.reconciliation_ok = reconciliation_ok
+    shift.reconciliation_warning = reconciliation_warning
     return shift
 
 

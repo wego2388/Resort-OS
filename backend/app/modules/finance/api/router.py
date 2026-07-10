@@ -204,32 +204,22 @@ def download_shift_end_report_pdf(shift_id: int, db: DbDep, _=Depends(get_cashie
 
 @router.post("/finance/shifts/{shift_id}/close", response_model=CashierShiftRead)
 def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(get_cashier_user)):
-    """إغلاق وردية الكاشير مع reconciliation تلقائي (#14).
+    """إغلاق وردية الكاشير مع مطابقة كاش حقيقية (#14 + wagdy.md بند 14).
 
-    variance = counted_cash − expected_cash (موجود في DB من قبل).
-    الجديد: reconciliation_ok + reconciliation_warning في الـ response
-    يخبر الكاشير/المدير فورًا لو الفرق خارج النطاق المقبول (±50ج).
-    الإغلاق يكمل دايمًا — مش بنحجبه لأن الكاشير محتاج يقفل حتى لو في فرق.
+    كل منطق المطابقة (تحذير عند فرق بسيط، رفض 400 عند فرق كبير نسبةً لمبيعات
+    الوردية) بيتحسب بالكامل في services.close_shift — الراوتر هنا بيترجم
+    الاستثناء لـ 400 بس ويقرا القيم الجاهزة (reconciliation_ok/warning) اللي
+    الـ service حطّها على الـ instance، من غير ما يعيد أي قرار عمل بنفسه
+    (راجع §4 CLAUDE.md: الراوتر HTTP layer بس).
     """
     try:
         shift = services.close_shift(db, shift_id, user.id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
-    # #14: reconciliation تلقائي — يُحسب بعد الإغلاق مباشرةً
     result = CashierShiftRead.model_validate(shift)
-    VARIANCE_TOLERANCE = Decimal("50")  # 50 ج — نطاق مقبول تشغيليًا
-    if shift.variance is not None:
-        abs_var = abs(shift.variance)
-        result.reconciliation_ok = abs_var <= VARIANCE_TOLERANCE
-        if not result.reconciliation_ok:
-            direction = "زيادة" if shift.variance > 0 else "عجز"
-            result.reconciliation_warning = (
-                f"⚠️ فرق كاش غير مقبول: {direction} {abs_var:,.2f} ج "
-                f"(متوقع {shift.expected_cash:,.2f} ج — معدود {shift.counted_cash:,.2f} ج) "
-                f"— يجب مراجعة المدير قبل مغادرة الوردية"
-            )
-        # else: reconciliation_ok = True — اتحدد فعلاً في السطر فوق (abs_var <= tolerance)
+    result.reconciliation_ok = getattr(shift, "reconciliation_ok", None)
+    result.reconciliation_warning = getattr(shift, "reconciliation_warning", None)
 
     # multi-currency summary — نجيبها من الـ shift report
     try:

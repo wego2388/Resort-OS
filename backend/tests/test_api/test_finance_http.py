@@ -563,6 +563,115 @@ class TestCashierShiftHTTPFlow:
         )
         assert reclose_resp.status_code == 400
 
+    def _open_shift_with_cash_sale(
+        self, client: TestClient, cashier_headers, branch_id: int,
+        opening_float: str, sale_amount: str,
+    ) -> int:
+        """يفتح وردية ويسجّل دفعة كاش حقيقية عليها (مبيعات فعلية) — بيرجع shift_id.
+        Helper مشترك للاختبارات تحت (كلهم محتاجين نفس الإعداد: وردية + مبيعات
+        كاش حقيقية تسجّل عبر HTTP، مش استدعاء مباشر للـ service)."""
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch_id, "opening_float": opening_float},
+            headers=cashier_headers,
+        )
+        assert open_resp.status_code == 201, open_resp.text
+        shift_id = open_resp.json()["id"]
+
+        folio_resp = client.post(
+            "/api/v1/finance/folios",
+            json={
+                "branch_id": branch_id, "guest_name": "ضيف مطابقة الكاش",
+                "check_in": datetime.utcnow().isoformat(),
+                "check_out": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert folio_resp.status_code == 201, folio_resp.text
+        folio_id = folio_resp.json()["id"]
+
+        pay_resp = client.post(
+            f"/api/v1/finance/folios/{folio_id}/payments",
+            json={
+                "folio_id": folio_id, "branch_id": branch_id, "amount": sale_amount,
+                "method": "cash", "posted_at": datetime.utcnow().isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert pay_resp.status_code == 201, pay_resp.text
+        return shift_id
+
+    def test_close_shift_within_tolerance_reconciliation_ok(self, client: TestClient, db, cashier_headers):
+        """فرق كاش صغير جدًا (تفكة/تقريب طبيعي) — الوردية تتقفل عادي وبدون
+        أي تحذير: reconciliation_ok=True وreconciliation_warning=None."""
+        branch = make_branch_committed(db)
+        # افتتاح 500 + مبيعات كاش 300 = متوقع 800 — الكاشير يعدّ 810 (فرق +10 بس)
+        shift_id = self._open_shift_with_cash_sale(
+            client, cashier_headers, branch.id, opening_float="500.00", sale_amount="300.00",
+        )
+
+        close_resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "810.00"},
+            headers=cashier_headers,
+        )
+        assert close_resp.status_code == 200, close_resp.text
+        body = close_resp.json()
+        assert body["status"] == "closed"
+        assert body["expected_cash"] == "800.00"
+        assert body["variance"] == "10.00"
+        assert body["reconciliation_ok"] is True
+        assert body["reconciliation_warning"] is None
+
+    def test_close_shift_flags_moderate_variance_but_still_closes(self, client: TestClient, db, cashier_headers):
+        """فرق أكبر من التفكة الطبيعية (150ج) لكن لسه أقل من حد الرفض
+        (10% من 1000ج مبيعات = 100ج، أو 200ج كحد أدنى مطلق أيهما أكبر → 200ج) —
+        الوردية تتقفل لكن reconciliation_warning لازم يظهر للمدير."""
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift_with_cash_sale(
+            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
+        )
+
+        close_resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "1150.00"},  # فرق +150ج
+            headers=cashier_headers,
+        )
+        assert close_resp.status_code == 200, close_resp.text
+        body = close_resp.json()
+        assert body["status"] == "closed"
+        assert body["variance"] == "150.00"
+        assert body["reconciliation_ok"] is False
+        assert body["reconciliation_warning"] is not None
+        assert "مراجعة المدير" in body["reconciliation_warning"]
+
+    def test_close_shift_rejects_large_cash_variance_against_sales(self, client: TestClient, db, cashier_headers):
+        """فجوة #14 الحرجة (wagdy.md): فرق كاش ضخم نسبةً لمبيعات الوردية
+        (4000ج فرق على 1000ج مبيعات فقط) لازم يترفض بـ 400 — مش يتسجل بصمت.
+        الوردية لازم تفضل مفتوحة (status='open') بعد الرفض، مش مقفولة بفرق
+        غير مراجَع."""
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift_with_cash_sale(
+            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
+        )
+
+        close_resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "5000.00"},  # فرق +4000ج — غير معقول إطلاقًا
+            headers=cashier_headers,
+        )
+        assert close_resp.status_code == 400, close_resp.text
+        assert "يتخطى الحد المسموح" in close_resp.json()["detail"]
+
+        # الوردية لازم تفضل مفتوحة — الرفض ما كسرش حالتها ولا كتب أي بيانات جزئية
+        current_resp = client.get(
+            "/api/v1/finance/shifts/current", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert current_resp.status_code == 200
+        assert current_resp.json()["id"] == shift_id
+        assert current_resp.json()["status"] == "open"
+        assert current_resp.json()["counted_cash"] is None
+
     def test_blind_cash_count_never_reveals_expected_cash_before_close(
         self, client: TestClient, db, cashier_headers,
     ):

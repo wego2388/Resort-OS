@@ -69,6 +69,8 @@ const lastCloseResult = ref<{
   variance: number; expected: number
   foreign_currency_summary?: { currency: string; total_foreign: number; egp_equivalent: number }[]
   counted_cash_egp?: number
+  reconciliation_ok?: boolean | null
+  reconciliation_warning?: string | null
 } | null>(null)
 
 async function fetchCurrentShift() {
@@ -141,10 +143,21 @@ async function confirmClose() {
       expected:                Number(data.expected_cash ?? 0),
       foreign_currency_summary: data.foreign_currency_summary ?? [],
       counted_cash_egp:        data.counted_cash_egp != null ? Number(data.counted_cash_egp) : undefined,
+      reconciliation_ok:       data.reconciliation_ok ?? null,
+      reconciliation_warning:  data.reconciliation_warning ?? null,
     }
     shift.value = null
-    toast.success('تم قفل الوردية')
+    // فرق كاش خارج النطاق المقبول (مش كبير بما يكفي عشان يترفض القفل، لكن
+    // يستاهل مراجعة مدير) — بيتحول لتحذير حقيقي للكاشير هنا، مش يتبلع بصمت.
+    if (data.reconciliation_ok === false && data.reconciliation_warning) {
+      toast.warning(data.reconciliation_warning)
+    } else {
+      toast.success('تم قفل الوردية')
+    }
   } catch (e: any) {
+    // فرق كاش كبير جدًا نسبةً لمبيعات الوردية بيترفض بالكامل من الباك إند
+    // (400) — رسالة الخطأ (عربي، من services.close_shift) بتوصل هنا زي أي
+    // رفض تاني، مش خطأ عام غامض.
     toast.error(e?.response?.data?.detail ?? 'تعذّر قفل الوردية — تأكد من عدّ الكاش')
   } finally { closing.value = false }
 }
@@ -206,6 +219,11 @@ onMounted(fetchCurrentShift)
             {{ lastCloseResult.variance > 0 ? '▲ زيادة' : lastCloseResult.variance < 0 ? '▼ عجز' : '✓ مطابق' }}
             {{ Math.abs(lastCloseResult.variance).toFixed(2) }} ج
           </p>
+        </div>
+        <!-- تحذير مطابقة الكاش — فرق أكبر من الطبيعي، الوردية اتقفلت لكن
+             لازم مدير يراجعها. ثابت في الشاشة (مش توست بس بيختفي). -->
+        <div v-if="lastCloseResult.reconciliation_ok === false" class="bg-amber-50 border border-amber-200 rounded-lg p-2.5">
+          <p class="text-xs font-bold text-amber-800">{{ lastCloseResult.reconciliation_warning }}</p>
         </div>
         <!-- ملخص العملات الأجنبية لو موجودة -->
         <div v-if="lastCloseResult.foreign_currency_summary?.length" class="bg-blue-50 rounded-lg p-2.5 space-y-1">

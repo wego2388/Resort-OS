@@ -855,6 +855,9 @@ class TestCashierShift:
         """عدّ خزينة متعددة العملات: جنيه + دولار + يورو.
         الإجمالي المعدود لازم يتحوّل لـ EGP بأسعار الصرف المسجّلة.
         5×200ج + 10×$1(fx=48) + 2×€50(fx=52) = 1000 + 480 + 5200 = 6680 ج
+        مبيعات الوردية المسجّلة = 6680 ج بالظبط (بدون فرق) عمدًا — الهدف هنا
+        اختبار حساب التحويل بين العملات نفسه (fx math)، مش سلوك المطابقة
+        (reconciliation)، اللي ليه اختبارات مخصصة منفصلة تحت.
         """
         from datetime import date as _date  # noqa: PLC0415
         from app.modules.finance.schemas import ExchangeRateCreate as ERC  # noqa: PLC0415
@@ -882,7 +885,7 @@ class TestCashierShift:
             data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
         )
         services.add_payment(db, folio.id, PaymentCreate(
-            folio_id=folio.id, branch_id=branch.id, amount=Decimal("1000"),
+            folio_id=folio.id, branch_id=branch.id, amount=Decimal("6680"),
             method="cash", posted_at=datetime.utcnow(), cashier_id=91,
         ))
 
@@ -894,10 +897,10 @@ class TestCashierShift:
                 CashCountLine(denomination=Decimal("50"),  currency="EUR", quantity=2),   # 100€ = 5200 ج
             ]),
         )
-        # 1000 + 480 + 5200 = 6680
+        # 1000 + 480 + 5200 = 6680 — يطابق مبيعات الوردية بالظبط (variance=0)
         assert closed.counted_cash == Decimal("6680.00")
-        assert closed.expected_cash == Decimal("1000.00")   # opening_float=0 + 1000 cash payment
-        assert closed.variance == Decimal("5680.00")
+        assert closed.expected_cash == Decimal("6680.00")   # opening_float=0 + 6680 cash payment
+        assert closed.variance == Decimal("0.00")
 
         lines = crud.list_cash_count_lines(db, shift.id)
         assert len(lines) == 3
@@ -1315,9 +1318,12 @@ class TestShiftEndReportEdgeCases:
 
     def test_cash_count_breakdown_appears_in_pdf_summary(self, db: Session, branch, folio):
         from app.modules.finance.schemas import CashCountLine
+        # opening_float=450 يطابق العدّ بالفئة تحت (2×200 + 1×50 = 450) بالظبط —
+        # variance=0، عشان الاختبار ده يتحقق من ظهور تفاصيل العدّ في الـ PDF بس
+        # (مش من سلوك المطابقة/الرفض، اللي ليه اختبارات مخصصة منفصلة).
         shift = services.open_shift(
             db, cashier_id=41, opened_by=41,
-            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("450")),
         )
         services.close_shift(
             db, shift.id, closed_by=41,
