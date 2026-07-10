@@ -13,6 +13,7 @@
 set -euo pipefail
 
 COMPOSE_FILE="docker-compose.prod.yml"
+COMPOSE_OVERRIDE="docker-compose.prod.ip-only.yml"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 RED='\033[0;31m'
@@ -43,16 +44,16 @@ log "Step 2/5 — .env موجود ✓"
 
 # ── 3. docker compose build ───────────────────────────────────────────────
 log "Step 3/5 — docker compose build (قد يأخذ دقيقتين...)"
-docker compose -f "$COMPOSE_FILE" build --parallel || err "docker build فشل"
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" build --parallel || err "docker build فشل"
 
 # ── 4. docker compose up -d ───────────────────────────────────────────────
 log "Step 4/5 — تشغيل الـ containers"
-docker compose -f "$COMPOSE_FILE" up -d || err "docker compose up فشل"
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" up -d || err "docker compose up فشل"
 
 # انتظر الـ backend يصحى
 log "انتظار الـ backend (max 60 ثانية)..."
 for i in $(seq 1 30); do
-    if docker compose -f "$COMPOSE_FILE" exec -T backend \
+    if docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" exec -T backend \
         python -c "import app.main" 2>/dev/null; then
         break
     fi
@@ -64,14 +65,14 @@ done
 
 # ── 5. alembic upgrade head ───────────────────────────────────────────────
 log "Step 5/5 — تطبيق الـ DB migrations"
-docker compose -f "$COMPOSE_FILE" exec -T backend \
+docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" exec -T backend \
     alembic upgrade head || err "alembic upgrade head فشل — راجع اللوجات"
 
 # ── تحقق نهائي ────────────────────────────────────────────────────────────
 log "التحقق من الـ health endpoint..."
 sleep 3
 
-HEALTH=$(docker compose -f "$COMPOSE_FILE" exec -T backend \
+HEALTH=$(docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE" exec -T backend \
     python -c "
 import urllib.request, sys
 try:
