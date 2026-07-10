@@ -65,9 +65,20 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_inventory_categories(db)
     _seed_hr_departments(db)
     _seed_rate_plans(db)
+    _seed_inventory_products_full(db)
+    _seed_restaurant_recipes(db)
+    _seed_cafe_recipes(db)
 
     db.commit()
     print("✅ Seed complete.")
+
+
+# ── Food & Recipes (imported from seed_food.py) ───────────────────────────────
+from app.seed_food import (  # noqa: E402
+    _seed_inventory_products_full,
+    _seed_restaurant_recipes,
+    _seed_cafe_recipes,
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
