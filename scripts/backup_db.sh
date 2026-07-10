@@ -41,10 +41,29 @@ TIMESTAMP="$(date -u +%Y%m%d_%H%M%S)"
 DUMP_FILE="$BACKUP_DIR/${DB_NAME}_${TIMESTAMP}.dump"
 
 echo "→ Backing up '$DB_NAME' @ $DB_HOST:$DB_PORT → $DUMP_FILE"
-PGPASSWORD="$DB_PASS" pg_dump \
-  -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
-  -Fc --no-owner --no-privileges \
-  -f "$DUMP_FILE"
+# Use docker exec if pg_dump is not available on the host (production servers
+# typically don't have the postgres client installed). Falls back to direct
+# pg_dump if docker is unavailable or the compose stack isn't running.
+if ! command -v pg_dump &>/dev/null; then
+  # Detect compose project name: resort-os-prod in production, resort-os in dev
+  COMPOSE_PROJECT="${COMPOSE_PROJECT_NAME:-resort-os-prod}"
+  DB_CONTAINER="${COMPOSE_PROJECT}-db_postgres-1"
+  if docker inspect "$DB_CONTAINER" &>/dev/null; then
+    echo "  (pg_dump not on host — running via docker exec $DB_CONTAINER)"
+    docker exec -e PGPASSWORD="$DB_PASS" "$DB_CONTAINER" \
+      pg_dump -h localhost -U "$DB_USER" -d "$DB_NAME" \
+      -Fc --no-owner --no-privileges \
+      > "$DUMP_FILE"
+  else
+    echo "✗ pg_dump not found on host and docker container '$DB_CONTAINER' not running" >&2
+    exit 1
+  fi
+else
+  PGPASSWORD="$DB_PASS" pg_dump \
+    -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
+    -Fc --no-owner --no-privileges \
+    -f "$DUMP_FILE"
+fi
 
 SIZE="$(du -h "$DUMP_FILE" | cut -f1)"
 echo "✓ Backup complete: $DUMP_FILE ($SIZE)"
