@@ -354,7 +354,8 @@ def list_audit_logs(
 
 
 # ─────────────────────── Users ───────────────────────────────────────
-# super_admin فقط — تغيير role/is_active يُبطل توكنات المستخدم فوراً
+# GET /users مدير+ (شاشة الصلاحيات محتاجة قائمة المستخدمين). تغيير
+# role/is_active يفضل super_admin فقط — بيُبطل توكنات المستخدم فوراً
 # (revoke_user_tokens في services.update_user_role).
 
 @router.get(

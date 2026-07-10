@@ -145,8 +145,15 @@ class TestAuditLogsEndpoint:
 
 
 class TestUsersEndpoints:
-    def test_list_requires_super_admin(self, client: TestClient, manager_headers):
+    def test_list_allows_manager(self, client: TestClient, manager_headers):
+        # اتصلح (2026-07-09): الشاشة اللي بتدي صلاحيات تفصيلية محتاجة قائمة
+        # المستخدمين، فاتفتح لمدير+ (كان super_admin فقط). UserRead ماعندوش
+        # أي حقل حسّاس (لا password_hash ولا 2FA secret)، فمفيش تسريب هنا.
         resp = client.get("/api/v1/users", headers=manager_headers)
+        assert resp.status_code == 200
+
+    def test_list_requires_manager(self, client: TestClient, waiter_headers):
+        resp = client.get("/api/v1/users", headers=waiter_headers)
         assert resp.status_code == 403
 
     def test_list_and_get_and_update_role(self, client: TestClient, super_admin_headers):
