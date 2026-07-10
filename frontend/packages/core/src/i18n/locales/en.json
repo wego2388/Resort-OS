@@ -3339,6 +3339,9 @@
     "status_paid": "Thank you for your visit ✨",
     "status_cancelled": "Order was cancelled",
     "status_pending": "Order is waiting",
-    "no_items": "No items in this category"
+    "no_items": "No items in this category",
+    "poll_error": "Couldn't update order status — check your internet connection",
+    "poll_retry": "Check Again",
+    "poll_checking": "Checking..."
   }
 }

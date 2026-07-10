@@ -77,6 +77,12 @@ const orderMessage = ref('')
 const orderPlaced  = ref(false)
 let   pollTimer:    ReturnType<typeof setInterval> | null = null
 
+// فشل الـ polling (مثلاً الضيف فقد اتصال الشبكة أثناء الانتظار) — راجع pollOrderStatus تحت.
+// pollError بيفضل true لحد ما محاولة (تلقائية أو يدوية) تنجح، عشان الرسالة تفضل ظاهرة طول
+// فترة الانقطاع من غير ما نكرر toasts لكل محاولة فاشلة جديدة (حالة واحدة مستمرة، مش سبام).
+const pollError    = ref(false)
+const pollChecking = ref(false)  // يمنع تداخل محاولة تلقائية مع محاولة يدوية في نفس اللحظة
+
 // ── Extras modal ───────────────────────────────────────────────────────
 const extrasModal = ref<{ open: boolean; item: MenuItem | null }>({ open: false, item: null })
 const tempExtras  = ref<Record<number, number[]>>({})  // group_id → [extra_id]
@@ -231,6 +237,7 @@ async function placeOrder() {
     orderPlaced.value = true
     showCart.value    = false
     cart.value        = []
+    pollError.value   = false
 
     pollTimer = setInterval(pollOrderStatus, 10_000)
 
@@ -242,15 +249,24 @@ async function placeOrder() {
 }
 
 async function pollOrderStatus() {
-  if (!orderId.value) return
+  // pollChecking بيمنع تداخل: تيك تلقائي أثناء ما محاولة يدوية (أو تيك سابق بطيء) لسه شغالة
+  if (!orderId.value || pollChecking.value) return
+  pollChecking.value = true
   try {
     const { data } = await axios.get(`${apiBase.value}/orders/${orderId.value}`)
     orderStatus.value  = data.status
     orderMessage.value = data.message
+    pollError.value    = false
     if (data.status === 'served' || data.status === 'paid' || data.status === 'cancelled') {
-      clearInterval(pollTimer!)
+      if (pollTimer) clearInterval(pollTimer)
     }
-  } catch {}
+  } catch {
+    // شبكة قطعت / timeout / رد غير ناجح — الـ polling التلقائي فضل شغال في الخلفية
+    // (setInterval ماتوقفش)، والضيف بيشوف رسالة + زرار "إعادة التحقق" في الـ template
+    pollError.value = true
+  } finally {
+    pollChecking.value = false
+  }
 }
 
 // ── Guest Alerts (نادِ الجرسون / هات الفاتورة) ──────────────────────────
@@ -353,12 +369,28 @@ onUnmounted(() => {
         <div :class="['text-lg font-bold', statusUI(orderStatus).color]">
           {{ statusMessage(orderStatus) }}
         </div>
-        <div v-if="orderStatus !== 'served' && orderStatus !== 'paid'" class="text-xs text-gray-400 flex items-center justify-center gap-1">
-          <div class="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
-          {{ t('qr.auto_update') }}
-        </div>
+        <template v-if="orderStatus !== 'served' && orderStatus !== 'paid'">
+          <!-- الـ polling التلقائي شغال وناجح -->
+          <div v-if="!pollError" class="text-xs text-gray-400 flex items-center justify-center gap-1">
+            <div class="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
+            {{ t('qr.auto_update') }}
+          </div>
+          <!-- آخر محاولة فشلت (شبكة الضيف قطعت وقت الانتظار) — الـ polling التلقائي فضل
+               شغال في الخلفية (pollTimer مايتوقفش)، وده زرار إعادة تحقق فوري بدل الانتظار
+               للتيك الجاي كل 10 ثواني -->
+          <div v-else class="bg-red-50 rounded-xl p-3 space-y-2">
+            <p class="text-red-600 text-xs font-semibold">{{ t('qr.poll_error') }}</p>
+            <button
+              @click="pollOrderStatus"
+              :disabled="pollChecking"
+              class="px-5 py-2 bg-red-600 text-white rounded-lg font-bold text-xs disabled:opacity-50 active:scale-95 transition-transform"
+            >
+              {{ pollChecking ? t('qr.poll_checking') : t('qr.poll_retry') }}
+            </button>
+          </div>
+        </template>
         <button
-          @click="orderPlaced = false; orderId = null"
+          @click="orderPlaced = false; orderId = null; pollError = false"
           class="mt-2 px-6 py-2.5 border-2 border-blue-700 text-blue-700 rounded-xl font-bold text-sm"
         >
           {{ t('qr.new_order') }}
