@@ -12,6 +12,7 @@
 import { ref, computed, watch } from 'vue'
 import { AppModal, AppButton, AppBadge } from '@resort-os/ui'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
+import { useOrderDiscount } from '@resort-os/core/composables'
 
 interface OrderItemExtra { id: number; extra_id: number | null; extra_name: string; price_addition: number | string }
 interface OrderItem {
@@ -93,27 +94,23 @@ const payError = ref('')
 // ── Apply discount (كاشير بس — POST /restaurant/orders/{id}/discount كان
 // موجود ومغطّى بالتست من غير أي زرار في الواجهة يستخدمه. بيطبّق أفضل قاعدة
 // خصم نشطة (ConditionalDiscount في finance) تلقائيًا على الطلب — مش مبلغ
-// حر بيكتبه الكاشير، فمفيش أي input هنا، زرار واحد بس.) ──
+// حر بيكتبه الكاشير، فمفيش أي input هنا، زرار واحد بس. المنطق نفسه مشترك
+// مع RestaurantPOSView/CafePOSView عبر useOrderDiscount — راجعها.) ──
 const canApplyDiscount = computed(() => auth.hasRole('cashier'))
-const applyingDiscount = ref(false)
-const discountError = ref('')
+const { applyingDiscount, discountError, applyDiscount: applyDiscountRule } = useOrderDiscount(mod.value)
 
 async function applyDiscount() {
   if (!order.value) return
-  discountError.value = ''
-  applyingDiscount.value = true
   try {
-    const { data } = await api.post(`/api/v1/${mod.value}/orders/${order.value.id}/discount`, {})
+    const data = await applyDiscountRule(order.value.id)
     order.value = data
     successMsg.value = Number(data.discount_amount) > 0
       ? `تم تطبيق خصم ${data.discount_amount} ج ✓`
       : 'مفيش قاعدة خصم سارية تنطبق على الطلب ده حاليًا'
     emit('changed')
     setTimeout(() => { successMsg.value = '' }, 3000)
-  } catch (e: any) {
-    discountError.value = e?.response?.data?.detail ?? 'فشل تطبيق الخصم'
-  } finally {
-    applyingDiscount.value = false
+  } catch {
+    // discountError من useOrderDiscount بيتعرض في الـ template تحت
   }
 }
 

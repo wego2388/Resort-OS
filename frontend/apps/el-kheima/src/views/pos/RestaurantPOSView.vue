@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
-import { useOfflineQueue, usePrintDocument } from '@resort-os/core/composables'
+import { useOfflineQueue, usePrintDocument, useOrderDiscount } from '@resort-os/core/composables'
 import { AppModal, AppBadge, EmptyState, useToast } from '@resort-os/ui'
 import OrderDetailModal from '../../components/OrderDetailModal.vue'
 
 const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue, lastPartialRejection } = useOfflineQueue()
 const { printBlob } = usePrintDocument()
+// #5: زرار "تطبيق خصم" وقت بناء طلب جديد — نفس الـ composable المستخدم في
+// OrderDetailModal، عشان محرك الخصم يفضل مكان واحد (راجع applyDiscountToCart تحت)
+const { applyingDiscount, discountError, applyDiscount: applyDiscountRule } = useOrderDiscount('restaurant')
 const toast = useToast()
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
@@ -38,6 +41,22 @@ const loading           = ref(false)
 const submitting        = ref(false)
 const successMsg        = ref('')
 const errorMsg          = ref('')
+
+// ── #5: تطبيق خصم قبل الإرسال للمطبخ ──────────────────────────────────
+// POST /restaurant/orders/{id}/discount محتاج order_id حقيقي موجود في
+// الداتابيز بالفعل (راجع services.apply_order_discount — بيقرا order.items/
+// subtotal/branch_id مباشرة)، لكن السلة هنا لسه client-side بحتة قبل
+// الإرسال. الحل: أول ما الكاشير يضغط "تطبيق خصم"، نعمل POST .../orders/hold
+// (نفس endpoint الطلب المعلّق الموجود أصلاً — بيسجّل الطلب من غير ما
+// يوصل للمطبخ) عشان يبقى عندنا order_id حقيقي، وبعدين نطبّق الخصم عليه
+// بنفس الـ composable المستخدم في OrderDetailModal. لحد ما الطلب ده يتبعت
+// فعليًا (submitOrder) أو يتلغي (clearOrder)، السلة بتتقفل من التعديل —
+// عشان مفيش desync ممكن يحصل بين الأصناف المحلية والطلب المحفوظ سيرفر-سايد.
+const pendingOrderId      = ref<number | null>(null)
+const pendingOrderNumber  = ref('')
+const pendingOrderSummary = ref<{ discount_amount: number | string; total: number | string } | null>(null)
+const cancellingPendingOrder = ref(false)
+const cartLocked = computed(() => pendingOrderId.value !== null)
 
 // Note editor modal — مفتاح مركّب (راجع cartKey) عشان يميّز بين سطرين
 // لنفس الصنف بمتغيّرات مختلفة
@@ -227,6 +246,9 @@ const filteredItems = computed(() => {
 
 const total    = computed(() => cart.value.reduce((s, i) => s + i.price * i.quantity, 0))
 const hasItems = computed(() => cart.value.length > 0)
+// #5: بعد تطبيق الخصم، الإجمالي الحقيقي (بعد VAT/خدمة/خصم) بييجي من السيرفر
+// (pendingOrderSummary) مش من مجموع السلة الخام المحلي.
+const displayTotal = computed(() => pendingOrderSummary.value?.total ?? total.value)
 
 // ── متغيّرات (حجم/نوع) — لو الصنف عنده متغيّرات متاحة، لازم يتحدد واحد
 // منهم إجباريًا وقت الطلب (الباك إند بيرفض غير كده)، فبدل الإضافة المباشرة
@@ -243,6 +265,7 @@ function cartKey(menuItemId: number, variantId: number | null): string {
 
 // ── Cart actions ───────────────────────────────────────────────────────────────
 function addToCart(item: MenuItem) {
+  if (cartLocked.value) return
   const availableVariants = (item.variants ?? []).filter(v => v.is_available)
   if (availableVariants.length > 0) {
     variantPickerItem.value = item
@@ -263,6 +286,7 @@ function addToCart(item: MenuItem) {
 }
 
 function addToCartWithVariant(item: MenuItem, variant: Variant) {
+  if (cartLocked.value) return
   variantPickerItem.value = null
   variantPickerForAddItems.value = false
   const key = cartKey(item.id, variant.id)
@@ -281,11 +305,13 @@ function addToCartWithVariant(item: MenuItem, variant: Variant) {
 }
 
 function removeFromCart(menuItemId: number, variantId: number | null) {
+  if (cartLocked.value) return
   const key = cartKey(menuItemId, variantId)
   cart.value = cart.value.filter(c => cartKey(c.menu_item_id, c.variant_id) !== key)
 }
 
 function adjustQty(menuItemId: number, variantId: number | null, delta: number) {
+  if (cartLocked.value) return
   const key = cartKey(menuItemId, variantId)
   const item = cart.value.find(c => cartKey(c.menu_item_id, c.variant_id) === key)
   if (!item) return
@@ -293,9 +319,66 @@ function adjustQty(menuItemId: number, variantId: number | null, delta: number) 
   if (item.quantity === 0) removeFromCart(menuItemId, variantId)
 }
 
-function clearOrder() {
+/** يمسح السلة المحلية — ولو كان عندنا طلب "held" اتنشأ سيرفر-سايد بس عشان
+ * نطبّق خصم عليه (راجع applyDiscountToCart)، يلغيه فعليًا (status→cancelled)
+ * قبل كده عشان الطاولة ترجع تتاح والطلب ميفضلش معلّق للأبد بلا داعي. */
+async function clearOrder() {
+  if (pendingOrderId.value !== null) {
+    cancellingPendingOrder.value = true
+    try {
+      await api.patch(`/api/v1/restaurant/orders/${pendingOrderId.value}/status`, { status: 'cancelled' })
+    } catch {
+      toast.error('تعذّر إلغاء الطلب المحفوظ من السيرفر — راجعه من الطلبات الجارية وألغِه يدويًا')
+    } finally {
+      cancellingPendingOrder.value = false
+    }
+  }
   cart.value = []
   covers.value = 1
+  pendingOrderId.value = null
+  pendingOrderNumber.value = ''
+  pendingOrderSummary.value = null
+}
+
+/** #5: تطبيق أفضل قاعدة خصم نشطة على الطلب اللي بيتبنى دلوقتي. أول ضغطة
+ * بتنشئ الطلب كـ "held" سيرفر-سايد (لسه ملوش وجود قبل كده)، وأي ضغطة بعد
+ * كده بترجع تحسب الخصم تاني على نفس الطلب (مفيد لو قواعد الخصم اتغيّرت). */
+async function applyDiscountToCart() {
+  if (!hasItems.value || applyingDiscount.value) return
+  errorMsg.value = ''
+
+  if (pendingOrderId.value === null) {
+    try {
+      const { data } = await api.post(`/api/v1/restaurant/orders/hold?branch_id=${branchId}`, {
+        table_id:     selectedTable.value?.id ?? null,
+        order_type:   selectedTable.value ? 'dine_in' : 'takeaway',
+        guests_count: covers.value,
+        items: cart.value.map(i => ({
+          menu_item_id: i.menu_item_id,
+          variant_id:   i.variant_id ?? undefined,
+          quantity:     i.quantity,
+          notes:        i.notes || undefined,
+        })),
+      })
+      pendingOrderId.value     = data.id
+      pendingOrderNumber.value = data.order_number
+    } catch (e: any) {
+      errorMsg.value = e?.response?.data?.detail ?? 'تعذّر تسجيل الطلب لتطبيق الخصم'
+      setTimeout(() => { errorMsg.value = '' }, 4000)
+      return
+    }
+  }
+
+  try {
+    const data = await applyDiscountRule(pendingOrderId.value!)
+    pendingOrderSummary.value = { discount_amount: data.discount_amount, total: data.total }
+    successMsg.value = Number(data.discount_amount) > 0
+      ? `تم تطبيق خصم ${data.discount_amount} ج ✓`
+      : 'مفيش قاعدة خصم سارية تنطبق على الطلب ده حاليًا'
+    setTimeout(() => { successMsg.value = '' }, 3000)
+  } catch {
+    // discountError من useOrderDiscount بيتعرض في الـ template تحت
+  }
 }
 
 // ── Note editor ────────────────────────────────────────────────────────────────
@@ -354,61 +437,77 @@ async function loadData() {
   }
 }
 
+/** ⚠️ باج حقيقي كان هنا (نفس اللي اتصلح في waiter/OrderView.vue.sendToKitchen):
+ * إنشاء الطلب لوحده بيسيبه في status "open"/"held" — تذكرة الـ KDS بترتبط بس
+ * بانتقالة →in_kitchen (services.update_order_status). من غير الـ PATCH ده،
+ * أي طلب يتعمل من شاشة الكاشير هنا كان يوصل للسيرفر ويتسجّل، لكن المطبخ
+ * ماكانش يشوفه خالص. لو الطلب كان "held" (اتنشأ وقت تطبيق خصم — راجع
+ * applyDiscountToCart)، لازم يعدّي held→open الأول (نفس منطق
+ * OrderDetailModal.resumeAndSend) قبل ما يتحول لـ in_kitchen. */
+async function finalizeOrderToKitchen(orderId: number, wasHeld: boolean) {
+  try {
+    if (wasHeld) await api.patch(`/api/v1/restaurant/orders/${orderId}/status`, { status: 'open' })
+    await api.patch(`/api/v1/restaurant/orders/${orderId}/status`, { status: 'in_kitchen' })
+  } catch (e) {
+    console.error('Failed to send order to kitchen', e)
+    errorMsg.value = 'اتسجّل الطلب لكن حصل خطأ في إرساله للمطبخ — راجعه من الطلبات الجارية'
+    setTimeout(() => { errorMsg.value = '' }, 5000)
+  }
+
+  try {
+    const receiptRes = await api.get(`/api/v1/restaurant/orders/${orderId}/receipt`, {
+      responseType: 'blob',
+    })
+    const outcome = printBlob(receiptRes.data, `receipt-${orderId}.pdf`)
+    if (outcome.downloadedInstead) {
+      errorMsg.value = 'الإيصال اتحمّل كملف (المتصفح منع نافذة الطباعة) — افتحه واطبعه يدويًا'
+      setTimeout(() => { errorMsg.value = '' }, 5000)
+    }
+  } catch {
+    // receipt optional — never block the order itself
+  }
+}
+
 async function submitOrder() {
   if (!hasItems.value || submitting.value) return
   submitting.value = true
   try {
-    const payload = {
-      table_id:     selectedTable.value?.id ?? null,
-      order_type:   selectedTable.value ? 'dine_in' : 'takeaway',
-      guests_count: covers.value,
-      items: cart.value.map(i => ({
-        menu_item_id: i.menu_item_id,
-        variant_id:   i.variant_id ?? undefined,
-        quantity:     i.quantity,
-        notes:        i.notes || undefined,
-      })),
-    }
-
-    const data = await submitOrderOnlineOrQueue(branchId, payload)
-
-    if (data === null) {
-      // مفيش نت — اتحفظ في IndexedDB، هيتزامن أوتوماتيك لما الاتصال يرجع
-      clearOrder()
-      successMsg.value = '📥 الطلب محفوظ — هيتبعت للمطبخ أول ما النت يرجع'
-      setTimeout(() => { successMsg.value = '' }, 4000)
-      return
-    }
-
-    const orderId = data.id ?? data.order_id
-    if (orderId) {
-      // ⚠️ باج حقيقي كان هنا (نفس اللي اتصلح في waiter/OrderView.vue.sendToKitchen):
-      // إنشاء الطلب لوحده بيسيبه في status "open" — تذكرة الـ KDS بترتبط بس
-      // بانتقالة open→in_kitchen (services.update_order_status). من غير
-      // الـ PATCH ده، أي طلب يتعمل من شاشة الكاشير هنا كان يوصل للسيرفر
-      // ويتسجّل، لكن المطبخ ماكانش يشوفه خالص.
-      try {
-        await api.patch(`/api/v1/restaurant/orders/${orderId}/status`, { status: 'in_kitchen' })
-      } catch (e) {
-        console.error('Failed to send order to kitchen', e)
-        errorMsg.value = 'اتسجّل الطلب لكن حصل خطأ في إرساله للمطبخ — راجعه من الطلبات الجارية'
-        setTimeout(() => { errorMsg.value = '' }, 5000)
+    if (pendingOrderId.value !== null) {
+      // #5: الطلب اتنشأ بالفعل (held) وقت تطبيق الخصم — منعملش POST تاني،
+      // بس نكمّل نفس الطلب للمطبخ.
+      await finalizeOrderToKitchen(pendingOrderId.value, true)
+    } else {
+      const payload = {
+        table_id:     selectedTable.value?.id ?? null,
+        order_type:   selectedTable.value ? 'dine_in' : 'takeaway',
+        guests_count: covers.value,
+        items: cart.value.map(i => ({
+          menu_item_id: i.menu_item_id,
+          variant_id:   i.variant_id ?? undefined,
+          quantity:     i.quantity,
+          notes:        i.notes || undefined,
+        })),
       }
 
-      try {
-        const receiptRes = await api.get(`/api/v1/restaurant/orders/${orderId}/receipt`, {
-          responseType: 'blob',
-        })
-        const outcome = printBlob(receiptRes.data, `receipt-${orderId}.pdf`)
-        if (outcome.downloadedInstead) {
-          errorMsg.value = 'الإيصال اتحمّل كملف (المتصفح منع نافذة الطباعة) — افتحه واطبعه يدويًا'
-          setTimeout(() => { errorMsg.value = '' }, 5000)
-        }
-      } catch {
-        // receipt optional — never block the order itself
+      const data = await submitOrderOnlineOrQueue(branchId, payload)
+
+      if (data === null) {
+        // مفيش نت — اتحفظ في IndexedDB، هيتزامن أوتوماتيك لما الاتصال يرجع
+        clearOrder()
+        successMsg.value = '📥 الطلب محفوظ — هيتبعت للمطبخ أول ما النت يرجع'
+        setTimeout(() => { successMsg.value = '' }, 4000)
+        return
       }
+
+      const orderId = data.id ?? data.order_id
+      if (orderId) await finalizeOrderToKitchen(orderId, false)
     }
 
+    // الطلب اتبعت فعليًا (أو فشل الإرسال بس اتسجّل — راجع الرسالة فوق) —
+    // مفيش داعي نلغي حاجة في clearOrder() بعد كده، فنصفّر pendingOrderId الأول.
+    pendingOrderId.value      = null
+    pendingOrderNumber.value  = ''
+    pendingOrderSummary.value = null
     clearOrder()
     successMsg.value = 'تم إرسال الطلب للمطبخ ✓'
     setTimeout(() => { successMsg.value = '' }, 3000)
@@ -460,7 +559,8 @@ onMounted(() => {
         <div class="relative">
           <select
             v-model="selectedTable"
-            class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-7 bg-white cursor-pointer"
+            :disabled="cartLocked"
+            class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 appearance-none pr-7 bg-white cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <option :value="null">Takeaway (بدون طاولة)</option>
             <option v-for="t in tables" :key="t.id" :value="t">
@@ -482,12 +582,14 @@ onMounted(() => {
         <div class="flex items-center gap-1 bg-gray-100 rounded-lg p-0.5">
           <button
             @click="covers = Math.max(1, covers - 1)"
-            class="w-7 h-7 rounded-md bg-white hover:bg-gray-50 text-sm font-bold shadow-sm transition-colors"
+            :disabled="cartLocked"
+            class="w-7 h-7 rounded-md bg-white hover:bg-gray-50 text-sm font-bold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >−</button>
           <span class="w-8 text-center font-bold text-sm">{{ covers }}</span>
           <button
             @click="covers++"
-            class="w-7 h-7 rounded-md bg-white hover:bg-gray-50 text-sm font-bold shadow-sm transition-colors"
+            :disabled="cartLocked"
+            class="w-7 h-7 rounded-md bg-white hover:bg-gray-50 text-sm font-bold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >+</button>
         </div>
       </div>
@@ -556,7 +658,8 @@ onMounted(() => {
             v-for="item in filteredItems"
             :key="item.id"
             @click="addToCart(item)"
-            class="bg-white rounded-xl border border-stone-200 p-4 text-right hover:border-blue-400 hover:shadow-md transition-all active:scale-95 active:shadow-sm flex flex-col justify-between min-h-[90px]"
+            :disabled="cartLocked"
+            class="bg-white rounded-xl border border-stone-200 p-4 text-right hover:border-blue-400 hover:shadow-md transition-all active:scale-95 active:shadow-sm flex flex-col justify-between min-h-[90px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:shadow-none"
           >
             <div class="font-semibold text-gray-900 text-sm leading-tight mb-2">
               {{ item.name_ar || item.name }}
@@ -597,6 +700,12 @@ onMounted(() => {
             <p class="text-sm">اختر أصناف من القائمة</p>
           </div>
 
+          <!-- #5: بعد تطبيق الخصم، الطلب بيتسجّل سيرفر-سايد (held) — السلة
+               بتتقفل من التعديل عشان تفضل مطابقة للطلب المحفوظ بالظبط. -->
+          <div v-if="cartLocked" class="bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-xs text-green-700">
+            🔒 الطلب #{{ pendingOrderNumber }} اتسجّل وطُبّق عليه خصم — امسح الطلب لو عايز تعدّل الأصناف
+          </div>
+
           <div
             v-for="item in cart"
             :key="cartKey(item.menu_item_id, item.variant_id)"
@@ -610,7 +719,8 @@ onMounted(() => {
               </span>
               <button
                 @click="removeFromCart(item.menu_item_id, item.variant_id)"
-                class="text-red-400 hover:text-red-600 text-lg leading-none flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-red-50 transition-colors"
+                :disabled="cartLocked"
+                class="text-red-400 hover:text-red-600 text-lg leading-none flex-shrink-0 w-5 h-5 flex items-center justify-center rounded hover:bg-red-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
               >×</button>
             </div>
 
@@ -619,12 +729,14 @@ onMounted(() => {
               <div class="flex items-center gap-1.5">
                 <button
                   @click="adjustQty(item.menu_item_id, item.variant_id, -1)"
-                  class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 text-sm font-bold transition-colors leading-none"
+                  :disabled="cartLocked"
+                  class="w-6 h-6 rounded bg-gray-200 hover:bg-gray-300 text-sm font-bold transition-colors leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                 >−</button>
                 <span class="text-sm font-bold w-5 text-center">{{ item.quantity }}</span>
                 <button
                   @click="adjustQty(item.menu_item_id, item.variant_id, 1)"
-                  class="w-6 h-6 rounded bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-bold transition-colors leading-none"
+                  :disabled="cartLocked"
+                  class="w-6 h-6 rounded bg-blue-100 hover:bg-blue-200 text-blue-700 text-sm font-bold transition-colors leading-none disabled:opacity-40 disabled:cursor-not-allowed"
                 >+</button>
               </div>
               <span class="text-sm font-bold text-blue-700">{{ item.price * item.quantity }} ج</span>
@@ -633,7 +745,8 @@ onMounted(() => {
             <!-- Notes -->
             <button
               @click="openNoteEditor(item.menu_item_id, item.variant_id, item.notes)"
-              class="mt-2 text-xs text-gray-400 hover:text-blue-600 transition-colors text-right w-full truncate"
+              :disabled="cartLocked"
+              class="mt-2 text-xs text-gray-400 hover:text-blue-600 transition-colors text-right w-full truncate disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {{ item.notes ? `📝 ${item.notes}` : '+ إضافة ملاحظة' }}
             </button>
@@ -646,7 +759,29 @@ onMounted(() => {
           <!-- Total -->
           <div class="flex justify-between items-center">
             <span class="text-base font-bold text-gray-900">المجموع</span>
-            <span class="text-xl font-black text-blue-700">{{ total }} ج</span>
+            <span class="text-xl font-black text-blue-700">{{ displayTotal }} ج</span>
+          </div>
+
+          <!-- #5: تطبيق خصم — قبل الإرسال للمطبخ، بنفس محرك الخصم اللي
+               OrderDetailModal بيستخدمه لطلب موجود بالفعل (راجع useOrderDiscount) -->
+          <div v-if="!cartLocked" class="pt-0.5">
+            <button
+              @click="applyDiscountToCart"
+              :disabled="!hasItems || applyingDiscount"
+              class="w-full py-2 rounded-lg border-2 border-dashed border-blue-300 text-blue-700 text-xs font-bold hover:bg-blue-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-1.5"
+            >
+              <div v-if="applyingDiscount" class="animate-spin w-3 h-3 border-2 border-blue-600 border-t-transparent rounded-full" />
+              <span>🏷️ تطبيق خصم</span>
+            </button>
+            <p v-if="discountError" class="text-xs text-red-600 mt-1 text-center">{{ discountError }}</p>
+          </div>
+          <div v-else class="rounded-lg border-2 border-green-200 bg-green-50 px-3 py-2 text-xs">
+            <div class="flex justify-between text-green-700 font-bold">
+              <span>خصم مطبّق ✓</span>
+              <span v-if="pendingOrderSummary && Number(pendingOrderSummary.discount_amount) > 0">
+                −{{ pendingOrderSummary.discount_amount }} ج
+              </span>
+            </div>
           </div>
 
           <!-- Payment method -->
@@ -680,12 +815,12 @@ onMounted(() => {
           <div class="grid grid-cols-2 gap-2">
             <button
               @click="clearOrder"
-              :disabled="!hasItems"
+              :disabled="!hasItems || cancellingPendingOrder"
               class="py-2.5 rounded-xl border-2 border-stone-200 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-40 transition-colors"
-            >مسح</button>
+            >{{ cancellingPendingOrder ? 'جاري الإلغاء...' : 'مسح' }}</button>
             <button
               @click="submitOrder"
-              :disabled="!hasItems || submitting"
+              :disabled="!hasItems || submitting || cancellingPendingOrder"
               class="py-2.5 rounded-xl bg-blue-700 text-white text-sm font-bold hover:bg-blue-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-1.5"
             >
               <div v-if="submitting" class="animate-spin w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full" />
