@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
 
 from app.celery_app import celery_app
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +24,7 @@ def mark_attendance_absent(self):
         from app.modules.hr.schemas import AttendanceRecordCreate  # noqa: PLC0415
         from app.modules.hr.models import AttendanceRecord         # noqa: PLC0415
 
-        today = date.today()
+        today = local_today(settings.TIMEZONE)
         with SessionLocal() as db:
             branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
             for branch in branches:
@@ -61,7 +62,7 @@ def payroll_reminder(self):
         from app.core.database import SessionLocal          # noqa: PLC0415
         from app.modules.core.models import Branch          # noqa: PLC0415
 
-        today = date.today()
+        today = local_today(settings.TIMEZONE)
         with SessionLocal() as db:
             branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
             from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
@@ -88,7 +89,7 @@ def accrue_leave_balances(self):
         )
         from app.resort_os.hr_engine import annual_leave_entitlement  # noqa: PLC0415
 
-        year = date.today().year
+        year = local_today(settings.TIMEZONE).year
         with SessionLocal() as db:
             branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
             total = 0

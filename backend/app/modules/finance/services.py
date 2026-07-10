@@ -35,7 +35,7 @@ from app.resort_os.folio_engine import (
     can_checkout,
     validate_charge,
 )
-from app.resort_os.timezone_utils import local_today
+from app.resort_os.timezone_utils import local_today, utc_naive_to_local_date
 
 if TYPE_CHECKING:
     from app.modules.finance.models import ConditionalDiscount
@@ -228,7 +228,7 @@ def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Opt
     # نضمن ما يحصلش mismatch بين عملة الفوليو وعملة دفعاته.
     payment = crud.create_payment(db, data, shift_id=shift_id, currency=folio.currency)
     post_simple_revenue_journal(
-        db, data.branch_id, data.posted_at.date(),
+        db, data.branch_id, utc_naive_to_local_date(data.posted_at, settings.TIMEZONE),
         debit_account_code="1100", credit_account_code="1150",
         amount=data.amount,
         reference=f"PAY-{payment.id}",
@@ -642,8 +642,8 @@ def validate_period_open(db: Session, branch_id: int, entry_date: date) -> None:
 def post_journal_entry(db: Session, data: JournalEntryCreate, user_id: int) -> JournalEntry:
     """ينشئ قيد يومية متوازن (Debit = Credit)."""
     validate_period_open(db, data.branch_id, data.entry_date)
-    total_debit = sum((l.debit for l in data.lines), Decimal("0"))
-    total_credit = sum((l.credit for l in data.lines), Decimal("0"))
+    total_debit = sum((ln.debit for ln in data.lines), Decimal("0"))
+    total_credit = sum((ln.credit for ln in data.lines), Decimal("0"))
     if abs(total_debit - total_credit) > Decimal("0.01"):
         raise ValueError(f"القيد غير متوازن: مدين={total_debit}, دائن={total_credit}")
     entry = crud.create_journal_entry(db, data, user_id)
@@ -759,7 +759,7 @@ async def submit_eta_invoice(db: Session, settings, data) -> ETAInvoice:
     # عالمي (كل الفروع) مش مقصور على data.branch_id، وإلا فرعين مختلفين
     # بيبعتوا أول فاتورة ETA في نفس اليوم كانوا هيتصادموا على نفس internal_id
     # ويطيحوا بـ IntegrityError (باج حقيقي اتكشف بالتستات — راجع تاريخ الالتزام).
-    today = date.today()
+    today = local_today(settings.TIMEZONE)
     count = db.query(ETAInvoice).filter(
         ETAInvoice.internal_id.like(f"ETA-{today:%Y%m%d}-%"),
     ).count()
@@ -829,7 +829,7 @@ def ensure_default_exchange_rates(db: Session, created_by: int = 0) -> list[Exch
                 db,
                 ExchangeRateCreate(
                     from_currency=from_cur, to_currency=to_cur,
-                    rate=rate, effective_date=date.today(),
+                    rate=rate, effective_date=local_today(settings.TIMEZONE),
                 ),
                 created_by=created_by,
             )
@@ -953,7 +953,7 @@ def get_cost_center_report(db: Session, branch_id: int, date_from: date, date_to
         CostCenterReportLine(code="BEACH", name=centers["BEACH"].name, revenue=beach_rev, source="direct"),
         CostCenterReportLine(code="TS",    name=centers["TS"].name,    revenue=ts_rev,    source="direct"),
     ]
-    total = sum((l.revenue for l in lines), Decimal("0"))
+    total = sum((ln.revenue for ln in lines), Decimal("0"))
 
     return CostCenterReport(
         branch_id=branch_id, date_from=date_from, date_to=date_to,

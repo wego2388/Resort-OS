@@ -7,6 +7,9 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today, utc_naive_to_local_date
+
 from app.modules.finance.models import (
     Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
     CashierShift, CashierShiftCashCount, ConditionalDiscount,
@@ -569,14 +572,11 @@ def move_check_status(db: Session, check_obj: Check, to_status: str, moved_by: i
     )
     check_obj.status = to_status
     if to_status == "deposited":
-        from datetime import date as _date
-        check_obj.deposited_at = _date.today()
+        check_obj.deposited_at = local_today(settings.TIMEZONE)
     elif to_status == "cleared":
-        from datetime import date as _date
-        check_obj.cleared_at = _date.today()
+        check_obj.cleared_at = local_today(settings.TIMEZONE)
     elif to_status == "bounced":
-        from datetime import date as _date
-        check_obj.bounced_at = _date.today()
+        check_obj.bounced_at = local_today(settings.TIMEZONE)
     db.add(movement)
     db.flush()
     return check_obj
@@ -617,7 +617,10 @@ def list_folio_charges_by_type_with_currency(
         )
         .all()
     )
-    return [(amount, currency or "EGP", posted_at.date()) for amount, currency, posted_at in rows]
+    return [
+        (amount, currency or "EGP", utc_naive_to_local_date(posted_at, settings.TIMEZONE))
+        for amount, currency, posted_at in rows
+    ]
 
 
 def sum_beach_revenue(db: Session, branch_id: int, date_from: date, date_to: date) -> Decimal:

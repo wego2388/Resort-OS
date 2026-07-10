@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -26,6 +26,9 @@ from app.resort_os.beach_engine import (
     validate_entry,
     would_exceed_credit_limit,
 )
+
+if TYPE_CHECKING:
+    from app.modules.beach.models import B2BContract, B2BContractDay, BeachReservation
 
 
 def _business_today() -> date:

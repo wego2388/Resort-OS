@@ -108,6 +108,10 @@ onMounted(() => {
       <h1 class="section-title mb-0">الطاولات</h1>
       <div class="flex items-center gap-2">
         <button
+          @click="router.push('/waiter/tables-map')"
+          class="px-4 py-3 bg-white border-2 border-purple-400 text-purple-700 rounded-xl font-bold text-sm hover:bg-purple-50 active:scale-95 transition-all shadow-sm"
+        >🗺️ خريطة القاعة</button>
+        <button
           @click="heldListOpen = true"
           class="relative px-4 py-3 bg-white border-2 border-amber-400 text-amber-700 rounded-xl font-bold text-sm hover:bg-amber-50 active:scale-95 transition-all shadow-sm"
         >

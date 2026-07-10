@@ -93,6 +93,31 @@ def create_all_tables() -> None:
     Base.metadata.create_all(bind=engine)
 
 
+def _create_default_test_user() -> None:
+    """يضمن وجود user.id == 1 في بيئة الاختبار من أجل مراجع التدقيق التلقائية."""
+    from app.core.kernel.models.user import User, UserRole  # noqa: PLC0415
+    from app.core.kernel.security import get_password_hash  # noqa: PLC0415
+
+    db = TestingSessionLocal()
+    try:
+        existing = db.query(User).filter(User.id == 1).first()
+        if existing:
+            return
+        user = User(
+            id=1,
+            email="system@test.local",
+            password_hash=get_password_hash("System@12345"),
+            full_name="System User",
+            role=UserRole.SUPER_ADMIN,
+            is_active=True,
+            two_factor_enabled=False,
+        )
+        db.add(user)
+        db.commit()
+    finally:
+        db.close()
+
+
 # ─── get_test_db ──────────────────────────────────────────────────────
 
 def get_test_db() -> Generator[Session, None, None]:
@@ -159,6 +184,7 @@ def _reset_rate_limit_state():
 def setup_db():
     """ينشئ الجداول مرة واحدة لكل session."""
     create_all_tables()
+    _create_default_test_user()
     yield
     # نظّف بعد كل tests
     from app.core.database import Base  # noqa: PLC0415

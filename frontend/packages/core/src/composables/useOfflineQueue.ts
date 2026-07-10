@@ -5,19 +5,27 @@
  * queued locally, sent FIFO once back online, and the server's response
  * (fulfilled | partial | rejected) is the source of truth for stock —
  * never the client's stale menu snapshot.
+ *
+ * #4: endpoint بقى parameter اختياري (default: restaurant).
+ * CafePOSView تمرّر module: 'cafe' وكل حاجة تانية تشتغل تلقائياً.
  */
 import { ref, onMounted, onUnmounted } from 'vue'
 import { openDB, type IDBPDatabase } from 'idb'
 import { api } from '../api/client'
 
 const DB_NAME = 'resort-os-offline'
-const DB_VERSION = 1
+// v2: أضفنا حقل `module` لـ PendingOrder لتمييز restaurant/cafe في الـ sync.
+// الـ upgrade handler بيعمل migration للـ records القديمة (v1) بإضافة
+// module: 'restaurant' كـ default — backward-compatible مع أي طلبات pending
+// من قبل الـ update.
+const DB_VERSION = 2
 const STORE_PENDING = 'pending_orders'
 const STORE_SYNC_LOG = 'sync_log'
 
 export interface PendingOrder {
   localId: string
   branchId: number
+  module: 'restaurant' | 'cafe'   // #4: تمييز وجهة الـ sync
   payload: Record<string, unknown>
   createdAt: string
 }
@@ -42,13 +50,26 @@ let dbPromise: Promise<IDBPDatabase> | null = null
 
 function getDb(): Promise<IDBPDatabase> {
   dbPromise ??= openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
-      if (!db.objectStoreNames.contains(STORE_PENDING)) {
+    upgrade(db, oldVersion, _newVersion, tx) {
+      // ── v1 → إنشاء الـ stores من الصفر ──
+      if (oldVersion < 1) {
         const store = db.createObjectStore(STORE_PENDING, { keyPath: 'localId' })
         store.createIndex('by_created', 'createdAt')
-      }
-      if (!db.objectStoreNames.contains(STORE_SYNC_LOG)) {
         db.createObjectStore(STORE_SYNC_LOG, { keyPath: 'localId' })
+      }
+      // ── v2 → إضافة حقل module للـ records القديمة (default: 'restaurant') ──
+      if (oldVersion < 2) {
+        const store = tx.objectStore(STORE_PENDING)
+        // IDBPTransaction.objectStore().openCursor() — نعدّل كل record قديم
+        void (async () => {
+          let cursor = await store.openCursor()
+          while (cursor) {
+            if (!(cursor.value as any).module) {
+              await cursor.update({ ...cursor.value, module: 'restaurant' })
+            }
+            cursor = await cursor.continue()
+          }
+        })()
       }
     },
   })
@@ -62,7 +83,8 @@ function isNetworkError(err: unknown): boolean {
   return !!axiosErr.request && !axiosErr.response
 }
 
-export function useOfflineQueue() {
+// #4: module parameter — default 'restaurant' للـ backward compat
+export function useOfflineQueue(module: 'restaurant' | 'cafe' = 'restaurant') {
   const isOnline = ref(navigator.onLine)
   const pendingCount = ref(0)
   const syncing = ref(false)
@@ -70,14 +92,16 @@ export function useOfflineQueue() {
 
   async function refreshPendingCount() {
     const db = await getDb()
-    pendingCount.value = await db.count(STORE_PENDING)
+    // #2 fix: بنعد بس الـ records الخاصة بالـ module ده — مش كل الـ DB
+    const all = (await db.getAllFromIndex(STORE_PENDING, 'by_created')) as PendingOrder[]
+    pendingCount.value = all.filter(o => (o.module ?? 'restaurant') === module).length
   }
 
   async function queueOrder(branchId: number, payload: Record<string, unknown>): Promise<string> {
     const localId = crypto.randomUUID()
     const db = await getDb()
     await db.put(STORE_PENDING, {
-      localId, branchId, payload, createdAt: new Date().toISOString(),
+      localId, branchId, module, payload, createdAt: new Date().toISOString(),
     } satisfies PendingOrder)
     await refreshPendingCount()
     return localId
@@ -91,7 +115,7 @@ export function useOfflineQueue() {
       return null
     }
     try {
-      const { data } = await api.post(`/api/v1/restaurant/orders?branch_id=${branchId}`, payload)
+      const { data } = await api.post(`/api/v1/${module}/orders?branch_id=${branchId}`, payload)
       return data
     } catch (err) {
       if (isNetworkError(err)) {
@@ -107,18 +131,20 @@ export function useOfflineQueue() {
     syncing.value = true
     try {
       const db = await getDb()
-      const pending = (await db.getAllFromIndex(STORE_PENDING, 'by_created')) as PendingOrder[]
+      const all = (await db.getAllFromIndex(STORE_PENDING, 'by_created')) as PendingOrder[]
+      // #2 fix: بنبعت بس الـ records الخاصة بالـ module الحالي (restaurant أو cafe)
+      // منع تداخل instances — شاشة المطعم مش هتبعت طلبات الكافيه والعكس
+      const pending = all.filter(o => (o.module ?? 'restaurant') === module)
 
       for (const order of pending) {
         let response
         try {
           response = await api.post(
-            `/api/v1/restaurant/orders/sync?branch_id=${order.branchId}`,
+            `/api/v1/${module}/orders/sync?branch_id=${order.branchId}`,
             { local_id: order.localId, created_offline_at: order.createdAt, ...order.payload },
           )
         } catch (err) {
-          if (isNetworkError(err)) break // still offline / server unreachable — keep FIFO order, retry later
-          // server explicitly rejected the request shape — log and drop so it doesn't block the queue forever
+          if (isNetworkError(err)) break
           await db.put(STORE_SYNC_LOG, {
             localId: order.localId, status: 'rejected',
             reason: 'invalid_request', timestamp: new Date().toISOString(),

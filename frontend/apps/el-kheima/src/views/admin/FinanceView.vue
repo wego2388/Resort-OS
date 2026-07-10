@@ -6,13 +6,38 @@ import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast, useConf
 const toast = useToast()
 const { confirm } = useConfirm()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'depreciation' | 'bank-reconciliation'>('overview')
+const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'depreciation' | 'bank-reconciliation' | 'shifts'>('overview')
 
 interface Check { id: number; check_number: string; amount: number; drawer_name: string; due_date: string; status: string; bank_name: string }
 interface Account { id: number; code: string; name: string; account_type: string; balance: number }
 interface CostCenterLine { code: string; name: string; revenue: number; source: 'ledger' | 'direct' }
 interface DepreciationEntry { id: number; asset_id: number; year: number; month: number; amount: number; accumulated_after: number }
 interface Asset { id: number; code: string; name: string }
+interface ShiftItem {
+  id: number; cashier_id: number; opened_at: string; closed_at?: string | null
+  status: string; opening_float: number; expected_cash?: number | null
+  counted_cash?: number | null; variance?: number | null
+  reconciliation_ok?: boolean | null; reconciliation_warning?: string | null
+}
+const shifts      = ref<ShiftItem[]>([])
+const shiftsTotal = ref(0)
+const shiftStatus = ref<'all' | 'open' | 'closed'>('all')
+
+async function loadShifts() {
+  try {
+    const params: Record<string, unknown> = { branch_id: branchId, page: 1, size: 30 }
+    if (shiftStatus.value !== 'all') params.status = shiftStatus.value
+    const { data } = await api.get('/api/v1/finance/shifts', { params })
+    shifts.value      = data.items ?? []
+    shiftsTotal.value = data.total ?? 0
+  } catch(e) { console.error(e) }
+}
+
+function shiftVarianceClass(v?: number | null) {
+  if (v == null) return 'text-gray-400'
+  if (Math.abs(v) <= 50) return 'text-green-600 font-bold'
+  return v > 0 ? 'text-blue-600 font-bold' : 'text-red-600 font-bold'
+}
 interface BankAccount {
   id: number; bank_name: string; account_name: string; account_number: string
   currency: string; opening_balance: number; is_active: boolean
@@ -183,6 +208,7 @@ const checkStatusConfig: Record<string, { label: string; variant: 'success' | 'w
 
 async function loadTab(t: typeof tab.value) {
   tab.value = t
+  if (t === 'shifts') await loadShifts()
   if (t === 'depreciation') { await loadDepreciation(); return }
   if (t === 'bank-reconciliation') { await loadBankAccounts(); return }
 
@@ -255,7 +281,7 @@ onMounted(() => loadTab('overview'))
     <h2 class="text-2xl font-black text-gray-900 mb-6">المالية</h2>
 
     <div class="flex gap-1 bg-stone-100 p-1 rounded-xl mb-6 w-fit">
-      <button v-for="t in [{ val: 'overview', label: 'نظرة عامة' }, { val: 'checks', label: 'الشيكات' }, { val: 'accounts', label: 'الحسابات' }, { val: 'cost-centers', label: 'مراكز التكلفة' }, { val: 'depreciation', label: 'إهلاك الأصول' }, { val: 'bank-reconciliation', label: 'التسوية البنكية' }]"
+      <button v-for="t in [{ val: 'overview', label: 'نظرة عامة' }, { val: 'checks', label: 'الشيكات' }, { val: 'accounts', label: 'الحسابات' }, { val: 'cost-centers', label: 'مراكز التكلفة' }, { val: 'depreciation', label: 'إهلاك الأصول' }, { val: 'bank-reconciliation', label: 'التسوية البنكية' }, { val: 'shifts', label: 'الورديات' }]"
         :key="t.val" @click="loadTab(t.val as any)"
         :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700']"
       >{{ t.label }}</button>
@@ -585,5 +611,72 @@ onMounted(() => loadTab('overview'))
         </AppCard>
       </template>
     </div>
+
+    <!-- Shifts tab -->
+    <div v-if="tab === 'shifts'" class="space-y-4">
+      <div class="flex items-center gap-3 flex-wrap">
+        <div class="flex gap-1 bg-stone-100 p-1 rounded-xl">
+          <button v-for="s in [{ v: 'all', l: 'الكل' }, { v: 'open', l: 'مفتوحة' }, { v: 'closed', l: 'مقفولة' }]"
+            :key="s.v" @click="shiftStatus = s.v as any; loadShifts()"
+            :class="['px-3 py-1 rounded-lg text-xs font-semibold transition-all', shiftStatus === s.v ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500']">
+            {{ s.l }}
+          </button>
+        </div>
+        <span class="text-xs text-gray-400">إجمالي: {{ shiftsTotal }}</span>
+      </div>
+      <div class="overflow-x-auto rounded-xl border border-stone-200">
+        <table class="w-full text-sm">
+          <thead class="bg-stone-50 text-xs text-gray-500 uppercase">
+            <tr>
+              <th class="px-4 py-3 text-right">#</th>
+              <th class="px-4 py-3 text-right">كاشير</th>
+              <th class="px-4 py-3 text-right">فُتحت</th>
+              <th class="px-4 py-3 text-right">أُغلقت</th>
+              <th class="px-4 py-3 text-right">الحالة</th>
+              <th class="px-4 py-3 text-right">متوقع</th>
+              <th class="px-4 py-3 text-right">معدود</th>
+              <th class="px-4 py-3 text-right">الفرق</th>
+              <th class="px-4 py-3 text-right">PDF</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-stone-100">
+            <tr v-for="s in shifts" :key="s.id" class="hover:bg-stone-50 transition-colors">
+              <td class="px-4 py-3 font-mono text-gray-500">#{{ s.id }}</td>
+              <td class="px-4 py-3 font-semibold">{{ s.cashier_id }}</td>
+              <td class="px-4 py-3 text-gray-600 text-xs">
+                {{ new Date(s.opened_at).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) }}
+              </td>
+              <td class="px-4 py-3 text-gray-500 text-xs">
+                {{ s.closed_at ? new Date(s.closed_at).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) : '—' }}
+              </td>
+              <td class="px-4 py-3">
+                <span :class="['px-2 py-0.5 rounded-full text-xs font-bold',
+                  s.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600']">
+                  {{ s.status === 'open' ? 'مفتوحة' : 'مقفولة' }}
+                </span>
+                <span v-if="s.reconciliation_warning" class="mr-1 text-red-500 cursor-help"
+                  :title="s.reconciliation_warning">⚠️</span>
+              </td>
+              <td class="px-4 py-3 text-gray-700">{{ s.expected_cash?.toFixed(2) ?? '—' }}</td>
+              <td class="px-4 py-3 text-gray-700">{{ s.counted_cash?.toFixed(2) ?? '—' }}</td>
+              <td class="px-4 py-3" :class="shiftVarianceClass(s.variance)">
+                {{ s.variance != null ? (s.variance > 0 ? '+' : '') + s.variance.toFixed(2) : '—' }}
+              </td>
+              <td class="px-4 py-3">
+                <a v-if="s.status === 'closed'"
+                  :href="`/api/v1/finance/shifts/${s.id}/report/pdf`"
+                  target="_blank"
+                  class="text-xs text-blue-600 hover:underline font-semibold">📄 PDF</a>
+                <span v-else class="text-gray-300 text-xs">—</span>
+              </td>
+            </tr>
+            <tr v-if="!shifts.length">
+              <td colspan="9" class="px-4 py-12 text-center text-gray-400">لا توجد ورديات</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
   </div>
 </template>

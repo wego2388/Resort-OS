@@ -31,7 +31,8 @@ interface OrderDetail {
   status: string
   order_type: string
   table_id: number | null
-  guests_count: number
+  guests_count?: number   // restaurant فقط — cafe مش عندها هذا الحقل
+  payment_method?: string | null  // #21: متاح بعد الدفع (paid)
   subtotal: number | string
   vat_amount: number | string
   service_charge: number | string
@@ -40,8 +41,11 @@ interface OrderDetail {
   items: OrderItem[]
 }
 
-const props = defineProps<{ orderId: number | null; tableLabel?: string }>()
+const props = defineProps<{ orderId: number | null; tableLabel?: string; module?: 'restaurant' | 'cafe' }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
+
+// الموديول المستخدم — restaurant (افتراضي) أو cafe
+const mod = computed(() => props.module ?? 'restaurant')
 
 const auth = useAuthStore()
 const canVoid = computed(() => auth.hasRole('cashier'))
@@ -65,7 +69,24 @@ const approverPin = ref('')
 // ── Complete payment (الكاشير بس — نفس مستوى void، إتمام الدفع فعل مالي
 // فعلي بيقفل الطاولة/ينشر charge على الفوليو/يرحّل قيد إيراد سيرفر-سايد) ──
 const canCompletePayment = computed(() => auth.hasRole('cashier'))
-const payingMethod = ref<'cash' | 'card' | 'room'>('cash')
+const payingMethod = ref<'cash' | 'card' | 'room' | 'wallet'>('cash')
+
+// طرق الدفع المتاحة — الكافيه مش عندها "حساب الغرفة" من هذه الشاشة (يتم
+// عبر CafePOSView مباشرة)، لكن عندها "محفظة" (wallet).
+const paymentMethods = computed(() => {
+  if (mod.value === 'cafe') {
+    return [
+      { val: 'cash',   label: 'كاش' },
+      { val: 'card',   label: 'كارت' },
+      { val: 'wallet', label: 'محفظة' },
+    ]
+  }
+  return [
+    { val: 'cash', label: 'كاش' },
+    { val: 'card', label: 'كارت' },
+    { val: 'room', label: 'حساب الغرفة' },
+  ]
+})
 const roomIdInput = ref('')
 const payError = ref('')
 
@@ -82,7 +103,7 @@ async function applyDiscount() {
   discountError.value = ''
   applyingDiscount.value = true
   try {
-    const { data } = await api.post(`/api/v1/restaurant/orders/${order.value.id}/discount`, {})
+    const { data } = await api.post(`/api/v1/${mod.value}/orders/${order.value.id}/discount`, {})
     order.value = data
     successMsg.value = Number(data.discount_amount) > 0
       ? `تم تطبيق خصم ${data.discount_amount} ج ✓`
@@ -109,7 +130,7 @@ async function loadOrder() {
   loading.value = true
   errorMsg.value = ''
   try {
-    const { data } = await api.get(`/api/v1/restaurant/orders/${props.orderId}`)
+    const { data } = await api.get(`/api/v1/${mod.value}/orders/${props.orderId}`)
     order.value = data
   } catch (e: any) {
     errorMsg.value = e?.response?.data?.detail ?? 'تعذّر تحميل الطلب'
@@ -158,7 +179,7 @@ async function confirmVoid() {
   busy.value = true
   try {
     const { data } = await api.patch(
-      `/api/v1/restaurant/orders/${order.value.id}/items/${voidingItemId.value}/void`,
+      `/api/v1/${mod.value}/orders/${order.value.id}/items/${voidingItemId.value}/void`,
       {
         reason,
         ...(needsPinApproval.value
@@ -182,7 +203,7 @@ async function confirmVoid() {
 async function setStatus(status: string) {
   if (!order.value) return
   await api.patch(
-    `/api/v1/restaurant/orders/${order.value.id}/status`,
+    `/api/v1/${mod.value}/orders/${order.value.id}/status`,
     { status },
     {},
   )
@@ -250,8 +271,8 @@ async function completePayment() {
   busy.value = true
   try {
     await api.patch(
-      `/api/v1/restaurant/orders/${order.value.id}/status`,
-      { status: 'paid', charge_to_room_id },
+      `/api/v1/${mod.value}/orders/${order.value.id}/status`,
+      { status: 'paid', charge_to_room_id, payment_method: payingMethod.value },
       {},
     )
     successMsg.value = 'تم إتمام الدفع ✓'
@@ -286,7 +307,9 @@ function lineTotal(item: OrderItem): number {
             <div class="font-bold text-gray-900">{{ order.order_number }}</div>
             <div class="text-xs text-gray-500 mt-0.5">
               {{ tableLabel || (order.table_id ? `طاولة ${order.table_id}` : 'Takeaway') }}
-              — {{ order.guests_count }} {{ order.guests_count === 1 ? 'غطاء' : 'غطاءات' }}
+              <template v-if="order.guests_count">
+                — {{ order.guests_count }} {{ order.guests_count === 1 ? 'غطاء' : 'غطاءات' }}
+              </template>
             </div>
           </div>
           <AppBadge :variant="statusVariant[order.status] ?? 'neutral'">
@@ -366,6 +389,17 @@ function lineTotal(item: OrderItem): number {
             <span>خصم</span><span>−{{ order.discount_amount }} ج</span>
           </div>
           <div class="flex justify-between font-bold text-gray-900 text-base"><span>الإجمالي</span><span>{{ order.total }} ج</span></div>
+          <!-- #21: عرض طريقة الدفع للطلبات المدفوعة -->
+          <div v-if="order.status === 'paid' && order.payment_method" class="flex justify-between text-gray-500 pt-1 border-t border-stone-100 mt-1">
+            <span>طريقة الدفع</span>
+            <span class="font-medium text-gray-700">{{
+              order.payment_method === 'cash'   ? '💵 كاش'   :
+              order.payment_method === 'card'   ? '💳 كارت'  :
+              order.payment_method === 'room'   ? '🛏️ حساب الغرفة' :
+              order.payment_method === 'wallet' ? '👛 محفظة' :
+              order.payment_method
+            }}</span>
+          </div>
         </div>
 
         <!-- ── تطبيق خصم (كاشير+ بس) — قبل قفل الحساب، أي حالة غير مدفوعة/ملغاة ── -->
@@ -388,9 +422,9 @@ function lineTotal(item: OrderItem): number {
           <div class="text-sm font-bold text-gray-900">إتمام الدفع</div>
           <div class="grid grid-cols-3 gap-1">
             <button
-              v-for="m in [{ val: 'cash', label: 'كاش' }, { val: 'card', label: 'كارت' }, { val: 'room', label: 'حساب الغرفة' }]"
+              v-for="m in paymentMethods"
               :key="m.val"
-              @click="payingMethod = (m.val as 'cash' | 'card' | 'room')"
+              @click="payingMethod = (m.val as 'cash' | 'card' | 'room' | 'wallet')"
               :class="[
                 'py-1.5 rounded-lg text-xs font-semibold border-2 transition-all',
                 payingMethod === m.val ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 text-gray-600',

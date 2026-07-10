@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -26,6 +27,8 @@ from app.resort_os.timezone_utils import (
     local_date_to_utc_range, local_now,
     utc_naive_to_local_date, utc_naive_to_local_time,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _get_order_or_404(db: Session, order_id: int) -> CafeOrder:
@@ -657,7 +660,12 @@ def update_order_status(
             _post_order_revenue_journal(db, order)
         if order.customer_id:
             from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
-            record_customer_visit(db, order.customer_id, order.total, order.created_at.date())
+            # created_at is stored UTC-naive; convert to resort local date for business reporting
+            visit_date = (
+                utc_naive_to_local_date(order.created_at, settings.TIMEZONE)
+                if order.created_at else local_today(settings.TIMEZONE)
+            )
+            record_customer_visit(db, order.customer_id, order.total, visit_date)
 
     db.commit()
     db.refresh(order)

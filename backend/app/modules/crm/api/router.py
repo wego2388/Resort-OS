@@ -174,7 +174,7 @@ def list_leads(
     branch_id: int = Query(...),
     stage: Optional[str] = Query(None),
 ):
-    return [LeadRead.model_validate(l) for l in crud.list_leads(db, branch_id, stage)]
+    return [LeadRead.model_validate(lead) for lead in crud.list_leads(db, branch_id, stage)]
 
 
 @router.post("/crm/leads", response_model=LeadRead,

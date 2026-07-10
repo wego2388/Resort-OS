@@ -15,9 +15,10 @@ from app.core.deps import (
 )
 from app.modules.restaurant import crud, services
 from app.modules.restaurant.schemas import (
-    DiningTableRead, KDSScreenCreate, KDSScreenRead,
+    DiningTableRead, DiningTableCreate, DiningTableUpdate, DiningTableGridUpdate,
+    KDSScreenCreate, KDSScreenRead,
     KitchenTicketRead, TicketStatusUpdate,
-    MenuCategoryCreate, MenuCategoryRead,
+    MenuCategoryCreate, MenuCategoryRead, MenuCategoryUpdate,
     MenuItemCreate, MenuItemExtraGroupCreate, MenuItemExtraGroupRead, MenuItemRead, MenuItemUpdate,
     MenuItemRecipeLineCreate, MenuItemRecipeLineRead, MenuItemRecipeLineUpdate,
     MenuItemVariantCreate, MenuItemVariantRead, MenuItemVariantRecipeLineCreate,
@@ -65,8 +66,7 @@ restaurant_manager = ConnectionManager()
 
 @router.websocket("/restaurant/ws/kds/{branch_id}")
 async def kds_websocket(ws: WebSocket, branch_id: int):
-    """اتصال WebSocket لشاشات الـ KDS — بث تحديثات التذاكر لحظيًا (server→client)،
-    وبيرد على أي رسالة من العميل بـ pong كـ heartbeat فقط (مفيش بروتوكول ثنائي الاتجاه)."""
+    """اتصال WebSocket لشاشات الـ KDS."""
     await restaurant_manager.connect(ws, str(branch_id))
     try:
         while True:
@@ -74,6 +74,19 @@ async def kds_websocket(ws: WebSocket, branch_id: int):
             await ws.send_json({"type": "pong"})
     except WebSocketDisconnect:
         restaurant_manager.disconnect(ws, str(branch_id))
+
+
+@router.websocket("/restaurant/ws/tables/{branch_id}")
+async def tables_websocket(ws: WebSocket, branch_id: int):
+    """اتصال WebSocket لخريطة الطاولات الحية — يبث تحديثات حالة
+    الطاولات لحظيًا (table_updated) عند أي تغيير في الموضع أو الحالة."""
+    await restaurant_manager.connect(ws, f"tables-{branch_id}")
+    try:
+        while True:
+            await ws.receive_text()
+            await ws.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        restaurant_manager.disconnect(ws, f"tables-{branch_id}")
 
 
 # ── Menu ──────────────────────────────────────────────────────────────
@@ -94,6 +107,28 @@ def create_category(data: MenuCategoryCreate, db: DbDep, _=Depends(get_manager_u
     db.commit()
     db.refresh(obj)
     return MenuCategoryRead.model_validate(obj)
+
+
+@router.patch("/restaurant/menu/categories/{category_id}", response_model=MenuCategoryRead,
+              operation_id="restaurant_update_category")
+def update_category(category_id: int, data: MenuCategoryUpdate, db: DbDep,
+                    _=Depends(get_manager_user)):
+    cat = crud.get_category(db, category_id)
+    if not cat:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الفئة غير موجودة")
+    cat = crud.update_category(db, cat, data)
+    db.commit()
+    db.refresh(cat)
+    return MenuCategoryRead.model_validate(cat)
+
+
+@router.delete("/restaurant/menu/categories/{category_id}",
+               status_code=status.HTTP_204_NO_CONTENT,
+               operation_id="restaurant_delete_category")
+def delete_category(category_id: int, db: DbDep, _=Depends(get_manager_user)):
+    if not crud.delete_category(db, category_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الفئة غير موجودة")
+    db.commit()
 
 
 @router.get("/restaurant/menu/items", response_model=list[MenuItemRead])
@@ -127,6 +162,14 @@ def update_menu_item(item_id: int, data: MenuItemUpdate, db: DbDep, _=Depends(ge
     db.commit()
     db.refresh(obj)
     return MenuItemRead.model_validate(obj)
+
+
+@router.delete("/restaurant/menu/items/{item_id}",
+               status_code=status.HTTP_204_NO_CONTENT)
+def delete_menu_item(item_id: int, db: DbDep, _=Depends(get_manager_user)):
+    if not crud.delete_menu_item(db, item_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الصنف غير موجود")
+    db.commit()
 
 
 @router.post("/restaurant/menu/items/{item_id}/extra-groups",
@@ -271,6 +314,53 @@ def list_tables(db: DbDep, _=Depends(get_current_active_user), branch_id: int = 
     return [DiningTableRead.model_validate(t) for t in crud.list_tables(db, branch_id)]
 
 
+@router.post("/restaurant/tables", response_model=DiningTableRead,
+             status_code=status.HTTP_201_CREATED)
+def create_table(data: DiningTableCreate, db: DbDep, _=Depends(get_manager_user)):
+    table = crud.create_table(db, data)
+    db.commit()
+    db.refresh(table)
+    return DiningTableRead.model_validate(table)
+
+
+@router.patch("/restaurant/tables/{table_id}", response_model=DiningTableRead)
+def update_table(table_id: int, data: DiningTableUpdate, db: DbDep, _=Depends(get_manager_user)):
+    table = crud.get_table(db, table_id)
+    if not table:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الطاولة غير موجودة")
+    table = crud.update_table(db, table, data)
+    db.commit()
+    db.refresh(table)
+    return DiningTableRead.model_validate(table)
+
+
+@router.patch("/restaurant/tables/{table_id}/grid", response_model=DiningTableRead)
+async def update_table_grid(table_id: int, data: DiningTableGridUpdate, db: DbDep,
+                      _=Depends(get_manager_user)):
+    """تحديث موضع الطاولة على الخريطة (drag & drop من صفحة الإعدادات)."""
+    table = crud.get_table(db, table_id)
+    if not table:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الطاولة غير موجودة")
+    table = crud.update_table_grid(db, table, data.grid_row, data.grid_col)
+    db.commit()
+    db.refresh(table)
+    await restaurant_manager.broadcast(str(table.branch_id), {
+        "type": "table_updated", "table_id": table.id,
+    })
+    return DiningTableRead.model_validate(table)
+
+
+@router.delete("/restaurant/tables/{table_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_table(table_id: int, db: DbDep, _=Depends(get_manager_user)):
+    table = crud.get_table(db, table_id)
+    if not table:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الطاولة غير موجودة")
+    if table.status == "occupied":
+        raise HTTPException(status.HTTP_409_CONFLICT, "لا يمكن حذف طاولة مشغولة")
+    crud.delete_table(db, table_id)
+    db.commit()
+
+
 # ── Orders ────────────────────────────────────────────────────────────
 
 @router.get("/restaurant/orders", response_model=PaginatedResponse)
@@ -355,13 +445,20 @@ async def update_order_status(order_id: int, data: OrderStatusUpdate,
     if data.status == "paid" and user_level(user) < 40:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "إتمام الدفع يتطلب صلاحية كاشير على الأقل")
     try:
-        order = services.update_order_status(db, order_id, data.status, charge_to_room_id=data.charge_to_room_id)
+        order = services.update_order_status(
+            db, order_id, data.status,
+            charge_to_room_id=data.charge_to_room_id,
+            payment_method=data.payment_method,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if data.status == "in_kitchen":
-        # تذاكر جديدة اتعملت للمطبخ — نبث تحديث لأي شاشة KDS متصلة بدل ما
-        # تستنى الـ polling الدوري (15 ثانية) عشان تشوفها
         await restaurant_manager.broadcast(str(order.branch_id), {"type": "tickets_updated", "order_id": order.id})
+    if data.status in ("in_kitchen", "served", "paid", "cancelled") and order.table_id:
+        # بث تحديث خريطة الطاولات عند أي تغيير يأثر على حالة الطاولة
+        await restaurant_manager.broadcast(f"tables-{order.branch_id}", {
+            "type": "table_updated", "table_id": order.table_id,
+        })
     return order
 
 
@@ -382,6 +479,34 @@ def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest,
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/restaurant/orders/{order_id}/items",
+             response_model=OrderRead,
+             status_code=status.HTTP_200_OK)
+async def add_items_to_order(
+    order_id: int,
+    items: list[OrderItemCreate],
+    db: DbDep,
+    user=Depends(get_waiter_user),
+):
+    """إضافة أصناف جديدة لطلب مفتوح موجود — بدون حذف الأصناف الحالية.
+    مسموح لأي waiter+ على طلبات بحالة open|held|in_kitchen|served.
+    يُعيد الطلب كاملاً بعد إضافة الأصناف مع المجاميع المحدّثة.
+    لو الطلب كان in_kitchen، يُرسل broadcast للـ KDS تلقائياً."""
+    if not items:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "لازم تضيف صنف واحد على الأقل")
+    try:
+        order = services.add_items_to_order(db, order_id, items)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    # لو الطلب كان in_kitchen، أعلم المطبخ بالأصناف الجديدة
+    if order.status == "in_kitchen":
+        await restaurant_manager.broadcast(
+            str(order.branch_id),
+            {"type": "tickets_updated", "order_id": order.id},
+        )
+    return order
 
 
 @router.patch("/restaurant/orders/{order_id}/items/{item_id}/refund",
@@ -589,11 +714,12 @@ def get_guest_order_status(order_id: int, db: DbDep):
 
 
 def _guest_status_message(order_status: str) -> str:
+    # نُرجع مفتاح i18n — الـ frontend (OrderView.vue) بيترجمه عبر statusMessage().
     return {
-        "open":       "تم استلام طلبك ✓",
-        "in_kitchen": "يتم تحضير طلبك الآن 👨‍🍳",
-        "served":     "تم تقديم طلبك، بالهنا والشفا 🎉",
-        "paid":       "شكراً لزيارتك ✨",
-        "cancelled":  "تم إلغاء الطلب",
-        "held":       "الطلب في الانتظار",
-    }.get(order_status, "جاري المعالجة...")
+        "open":       "status_pending",
+        "in_kitchen": "status_in_kitchen",
+        "served":     "status_served",
+        "paid":       "status_paid",
+        "cancelled":  "status_cancelled",
+        "held":       "status_pending",
+    }.get(order_status, "status_pending")

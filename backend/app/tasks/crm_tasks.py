@@ -5,6 +5,8 @@ import logging
 from datetime import date, timedelta
 
 from app.celery_app import celery_app
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +23,7 @@ def activity_reminders(self):
     try:
         from app.core.database import SessionLocal          # noqa: PLC0415
 
-        today = date.today()
+        today = local_today(settings.TIMEZONE)
         tomorrow = today + timedelta(days=1)
 
         with SessionLocal() as db:
@@ -75,7 +77,7 @@ def overdue_activities_alert(self):
     try:
         from app.core.database import SessionLocal          # noqa: PLC0415
 
-        today = date.today()
+        today = local_today(settings.TIMEZONE)
 
         with SessionLocal() as db:
             try:
@@ -122,7 +124,7 @@ def birthday_greetings(self):
     try:
         from app.core.database import SessionLocal          # noqa: PLC0415
 
-        today = date.today()
+        today = local_today(settings.TIMEZONE)
 
         with SessionLocal() as db:
             try:

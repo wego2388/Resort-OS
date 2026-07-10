@@ -332,7 +332,6 @@ def get_or_create_guest_profile(db: Session, branch_id: int, phone: str, default
 
 def update_guest_profile_on_checkout(db: Session, branch_id: int, phone: str, spend: Decimal) -> None:
     """يُحدَّث عند كل checkout."""
-    from datetime import date as _date
     profile = db.query(GuestProfile).filter(
         GuestProfile.branch_id == branch_id,
         GuestProfile.phone == phone,

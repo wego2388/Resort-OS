@@ -15,7 +15,7 @@ from app.core.deps import (
 )
 from app.modules.cafe import crud, services
 from app.modules.cafe.schemas import (
-    CafeCategoryCreate, CafeCategoryRead,
+    CafeCategoryCreate, CafeCategoryRead, CafeCategoryUpdate,
     CafeFoodCostReportResponse,
     CafeGuestOrderCreate, CafeGuestOrderRead,
     CafeItemCreate, CafeItemRead, CafeItemUpdate,
@@ -25,7 +25,7 @@ from app.modules.cafe.schemas import (
     CafeMenuItemExtraGroupCreate, CafeMenuItemExtraGroupRead,
     CafeOrderCreate, CafeOrderItemCreate, CafeOrderItemVoidRequest, CafeOrderRead, CafeOrderStatusUpdate,
     CafePublicMenuCategoryRead, CafePublicMenuItemRead, CafePublicMenuResponse,
-    CafeTableRead,
+    CafeTableCreate, CafeTableRead, CafeTableUpdate,
 )
 from app.modules.core.schemas import PaginatedResponse
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
@@ -45,6 +45,37 @@ def create_category(data: CafeCategoryCreate, db: DbDep, _=Depends(get_manager_u
     obj = crud.create_category(db, data)
     db.commit(); db.refresh(obj)
     return obj
+
+
+@router.patch("/cafe/categories/{category_id}", response_model=CafeCategoryRead,
+              operation_id="cafe_update_category")
+def update_category(category_id: int, data: CafeCategoryUpdate, db: DbDep, _=Depends(get_manager_user)):
+    from app.modules.cafe.models import CafeCategory  # noqa: PLC0415
+    cat = db.query(CafeCategory).filter_by(id=category_id).first()
+    if not cat:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الفئة غير موجودة")
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(cat, field, value)
+    db.commit(); db.refresh(cat)
+    return CafeCategoryRead.model_validate(cat)
+
+
+@router.delete("/cafe/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT,
+               operation_id="cafe_delete_category")
+def delete_category(category_id: int, db: DbDep, _=Depends(get_manager_user)):
+    from app.modules.cafe.models import CafeCategory  # noqa: PLC0415
+    cat = db.query(CafeCategory).filter_by(id=category_id).first()
+    if not cat:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الفئة غير موجودة")
+    db.delete(cat); db.commit()
+
+
+@router.delete("/cafe/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_item(item_id: int, db: DbDep, _=Depends(get_manager_user)):
+    item = crud.get_item(db, item_id)
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الصنف غير موجود")
+    db.delete(item); db.commit()
 
 
 @router.get("/cafe/items", response_model=list[CafeItemRead])
@@ -200,9 +231,132 @@ def get_food_cost_report(
     return services.get_food_cost_report(db, branch_id, date_from, date_to, threshold_pct)
 
 
+# ── Cafe Sales Dashboard ─────────────────────────────────────────────
+# تقرير مبيعات يومي/تاريخي للكافيه — نفس نمط analytics/revenue لكن
+# مخصوص للكافيه فقط مع تفاصيل إضافية (top items, payment breakdown).
+
+@router.get("/cafe/reports/sales")
+def get_cafe_sales_report(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: date = Query(default_factory=lambda: business_today(settings.TIMEZONE) - timedelta(days=7)),
+    date_to: date = Query(default_factory=lambda: business_today(settings.TIMEZONE)),
+):
+    """لوحة مبيعات الكافيه — إجماليات + breakdown طريقة الدفع + أكثر الأصناف
+    مبيعًا في الفترة المحددة."""
+    if date_from > date_to:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "date_from لازم يكون قبل أو يساوي date_to")
+
+    from app.modules.cafe.models import CafeOrder, CafeOrderItem  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_date_to_utc_range  # noqa: PLC0415
+    from sqlalchemy import func  # noqa: PLC0415
+
+    range_start, _ = local_date_to_utc_range(date_from, settings.TIMEZONE)
+    _, range_end   = local_date_to_utc_range(date_to, settings.TIMEZONE)
+
+    paid_orders = db.query(CafeOrder).filter(
+        CafeOrder.branch_id == branch_id,
+        CafeOrder.status == "paid",
+        CafeOrder.created_at >= range_start,
+        CafeOrder.created_at <= range_end,
+    ).all()
+
+    total_orders  = len(paid_orders)
+    total_revenue = sum(o.total for o in paid_orders)
+    total_vat     = sum(o.vat_amount for o in paid_orders)
+    total_discount = sum(o.discount_amount for o in paid_orders)
+
+    # Payment method breakdown
+    payment_breakdown: dict[str, dict] = {}
+    for o in paid_orders:
+        method = o.payment_method or "cash"
+        if method not in payment_breakdown:
+            payment_breakdown[method] = {"orders": 0, "total": Decimal("0")}
+        payment_breakdown[method]["orders"] += 1
+        payment_breakdown[method]["total"]  += o.total
+
+    # Top items (by quantity sold)
+    order_ids = [o.id for o in paid_orders]
+    top_items = []
+    if order_ids:
+        rows = (
+            db.query(CafeOrderItem.name,
+                     func.sum(CafeOrderItem.quantity).label("qty"),
+                     func.sum(CafeOrderItem.unit_price * CafeOrderItem.quantity).label("revenue"))
+            .filter(CafeOrderItem.order_id.in_(order_ids),
+                    CafeOrderItem.status != "cancelled")
+            .group_by(CafeOrderItem.name)
+            .order_by(func.sum(CafeOrderItem.quantity).desc())
+            .limit(10)
+            .all()
+        )
+        top_items = [{"name": r.name, "qty": int(r.qty), "revenue": float(r.revenue)} for r in rows]
+
+    # Daily breakdown
+    from zoneinfo import ZoneInfo  # noqa: PLC0415
+    _tz = ZoneInfo(settings.TIMEZONE)
+    daily: dict[str, dict] = {}
+    for o in paid_orders:
+        try:
+            from datetime import timezone as _utc  # noqa: PLC0415
+            local_dt = o.created_at.replace(tzinfo=_utc.utc).astimezone(_tz)
+        except Exception:
+            local_dt = o.created_at
+        day_key = local_dt.strftime("%Y-%m-%d")
+        if day_key not in daily:
+            daily[day_key] = {"orders": 0, "revenue": Decimal("0")}
+        daily[day_key]["orders"]  += 1
+        daily[day_key]["revenue"] += o.total
+
+    return {
+        "period": {"from": str(date_from), "to": str(date_to)},
+        "branch_id": branch_id,
+        "total_orders": total_orders,
+        "total_revenue": float(total_revenue),
+        "total_vat": float(total_vat),
+        "total_discount": float(total_discount),
+        "avg_order_value": float(total_revenue / total_orders) if total_orders else 0,
+        "payment_breakdown": {k: {"orders": v["orders"], "total": float(v["total"])} for k, v in payment_breakdown.items()},
+        "top_items": top_items,
+        "daily": {k: {"orders": v["orders"], "revenue": float(v["revenue"])} for k, v in sorted(daily.items())},
+    }
+
+
 @router.get("/cafe/tables", response_model=list[CafeTableRead])
 def list_tables(db: DbDep, _=Depends(get_current_active_user), branch_id: int = Query(...)):
     return crud.list_tables(db, branch_id)
+
+
+@router.post("/cafe/tables", response_model=CafeTableRead,
+             status_code=status.HTTP_201_CREATED)
+def create_table(data: CafeTableCreate, db: DbDep, _=Depends(get_manager_user)):
+    table = crud.create_table(db, data)
+    db.commit()
+    db.refresh(table)
+    return CafeTableRead.model_validate(table)
+
+
+@router.patch("/cafe/tables/{table_id}", response_model=CafeTableRead)
+def update_table(table_id: int, data: CafeTableUpdate, db: DbDep, _=Depends(get_manager_user)):
+    table = crud.get_table(db, table_id)
+    if not table:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الطاولة غير موجودة")
+    table = crud.update_table(db, table, data)
+    db.commit()
+    db.refresh(table)
+    return CafeTableRead.model_validate(table)
+
+
+@router.delete("/cafe/tables/{table_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_table(table_id: int, db: DbDep, _=Depends(get_manager_user)):
+    table = crud.get_table(db, table_id)
+    if not table:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الطاولة غير موجودة")
+    if table.status == "occupied":
+        raise HTTPException(status.HTTP_409_CONFLICT, "لا يمكن حذف طاولة مشغولة")
+    crud.delete_table(db, table_id)
+    db.commit()
 
 
 @router.get("/cafe/orders", response_model=PaginatedResponse)
@@ -255,6 +409,32 @@ def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
     return CafeOrderRead.model_validate(order)
 
 
+@router.post("/cafe/orders/{order_id}/items",
+             response_model=CafeOrderRead,
+             status_code=status.HTTP_200_OK)
+async def add_items_to_order(
+    order_id: int,
+    items: list[CafeOrderItemCreate],
+    db: DbDep,
+    user=Depends(get_waiter_user),
+):
+    """إضافة أصناف جديدة لطلب كافيه مفتوح موجود — بدون حذف الأصناف الحالية.
+    لو الطلب كان in_kitchen يُرسل broadcast للـ KDS تلقائياً."""
+    if not items:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "لازم تضيف صنف واحد على الأقل")
+    try:
+        order = services.add_items_to_order(db, order_id, items)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if order.status == "in_kitchen":
+        from app.modules.restaurant.api.router import restaurant_manager  # noqa: PLC0415
+        await restaurant_manager.broadcast(
+            str(order.branch_id),
+            {"type": "tickets_updated", "order_id": order.id},
+        )
+    return CafeOrderRead.model_validate(order)
+
+
 @router.patch("/cafe/orders/{order_id}/status", response_model=CafeOrderRead)
 async def update_order_status(order_id: int, data: CafeOrderStatusUpdate, db: DbDep,
                         user=Depends(get_waiter_user)):
@@ -263,12 +443,24 @@ async def update_order_status(order_id: int, data: CafeOrderStatusUpdate, db: Db
     if data.status == "paid" and user_level(user) < 40:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "إتمام الدفع يتطلب صلاحية كاشير على الأقل")
     try:
-        order = services.update_order_status(db, order_id, data.status, charge_to_room_id=data.charge_to_room_id)
+        order = services.update_order_status(
+            db, order_id, data.status,
+            charge_to_room_id=data.charge_to_room_id,
+            payment_method=data.payment_method,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if data.status == "in_kitchen":
         from app.modules.restaurant.api.router import restaurant_manager  # noqa: PLC0415
         await restaurant_manager.broadcast(str(order.branch_id), {"type": "tickets_updated", "order_id": order.id})
+    # #8: broadcast لـ tables WS لما الكافيه تتدفع — كان ناقص، الطاولة
+    # كانت بتفضل "مشغولة" في TablesMapView بعد الدفع من BarDisplayView/CafePOSView
+    # #5 fix: أضفنا "served" — الطاولة لازم تتحرر لما الطلب يتسلّم كمان
+    if data.status in ("paid", "cancelled", "served") and order.table_id:
+        from app.modules.restaurant.api.router import restaurant_manager  # noqa: PLC0415
+        await restaurant_manager.broadcast(f"tables-{order.branch_id}", {
+            "type": "table_updated", "table_id": order.table_id,
+        })
     return order
 
 
@@ -424,13 +616,14 @@ def get_guest_order_status(order_id: int, db: DbDep):
     if not order:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الطلب غير موجود")
 
-    status_messages = {
-        "held":       "طلبك قيد المراجعة",
-        "open":       "طلبك قيد التحضير",
-        "in_kitchen": "جاري تحضير طلبك 👨‍🍳",
-        "served":     "تم تقديم طلبك 🎉",
-        "paid":       "تم الدفع — شكراً لزيارتك ✨",
-        "cancelled":  "تم إلغاء الطلب",
+    # مفاتيح i18n — الـ frontend (OrderView.vue) بيترجمها عبر statusMessage()
+    STATUS_KEYS = {
+        "held":       "status_pending",
+        "open":       "status_pending",
+        "in_kitchen": "status_in_kitchen",
+        "served":     "status_served",
+        "paid":       "status_paid",
+        "cancelled":  "status_cancelled",
     }
     return CafeGuestOrderRead(
         order_id=order.id,
@@ -438,5 +631,93 @@ def get_guest_order_status(order_id: int, db: DbDep):
         status=order.status,
         total=order.total,
         items_count=sum(i.quantity for i in order.items),
-        message=status_messages.get(order.status, ""),
+        message=STATUS_KEYS.get(order.status, "status_pending"),
     )
+
+
+# ── Offline Sync ──────────────────────────────────────────────────────────────
+# #3 fix: endpoint /cafe/orders/sync — كان ناقصاً، useOfflineQueue في frontend
+# كان بيبعت لـ /cafe/orders/sync لكن الـ route مش موجود فكانت ترجع 404.
+# نفس contract بتاع /restaurant/orders/sync: idempotent عبر local_id،
+# بيرجع fulfilled|partial|rejected بناءً على stock الكافيه الحالي.
+# ⚠️ مسجّل قبل /{order_id} عمداً — "sync" لو جاءت كـ order_id بتتفسّر كـ int
+
+@router.post("/cafe/orders/sync")
+def sync_offline_cafe_order(
+    data: dict,
+    db: DbDep,
+    branch_id: int = Query(...),
+    user=Depends(get_waiter_user),
+):
+    """Offline POS sync للكافيه — نفس contract بتاع /restaurant/orders/sync.
+    يستقبل طلب اتعمل وهو offline ويسوّيه مع حالة الـ stock الحالية.
+    Idempotent: لو local_id اتعمل قبل كده يرجع fulfilled من غير تكرار."""
+    local_id = data.get("local_id", "")
+    if local_id:
+        existing = crud.get_cafe_order_by_local_id(db, local_id)
+        if existing:
+            return {
+                "order_id": existing.id,
+                "status": "fulfilled",
+                "fulfilled_items": [],
+                "rejected_items": [],
+                "message": "الطلب اتسجّل بالفعل (retry آمن)",
+            }
+
+    items_raw = data.get("items", [])
+    if not items_raw:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "لازم يكون فيه أصناف")
+
+    fulfilled = []
+    rejected  = []
+    for item in items_raw:
+        item_id = item.get("item_id") or item.get("menu_item_id")
+        qty     = item.get("quantity", 1)
+        cafe_item = crud.get_item(db, item_id) if item_id else None
+        if not cafe_item or not cafe_item.is_available:
+            rejected.append({
+                "item_id":       item_id,
+                "name":          cafe_item.name if cafe_item else f"#{item_id}",
+                "reason":        "out_of_stock",
+                "available_qty": 0,
+                "requested_qty": qty,
+            })
+        else:
+            fulfilled.append(CafeOrderItemCreate(
+                item_id=item_id,
+                variant_id=item.get("variant_id"),
+                quantity=qty,
+                notes=item.get("notes"),
+            ))
+
+    if not fulfilled:
+        return {
+            "order_id": None, "status": "rejected",
+            "fulfilled_items": [], "rejected_items": rejected,
+            "message": "كل الأصناف غير متاحة حالياً",
+        }
+
+    order_data = CafeOrderCreate(
+        branch_id=branch_id,
+        table_id=data.get("table_id"),
+        order_type=data.get("order_type", "takeaway"),
+        notes=data.get("notes"),
+        items=fulfilled,
+    )
+    try:
+        order = services.create_order(db, order_data, waiter_id=user.id)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    if local_id:
+        order.client_local_id = local_id
+        db.commit()
+
+    sync_status = "partial" if rejected else "fulfilled"
+    return {
+        "order_id":       order.id,
+        "status":         sync_status,
+        "fulfilled_items": [],
+        "rejected_items":  rejected,
+        "message":         "تم تسجيل الطلب" if not rejected else f"تم تسجيل {len(fulfilled)} صنف، رُفض {len(rejected)}",
+    }

@@ -6,7 +6,7 @@
 // both calls always 404'd and every card silently fell back to 0 — an admin
 // opening the dashboard for the first time had no way to tell "no data yet"
 // apart from "this is broken". Rewired to the real endpoints below.
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { api, ENDPOINTS } from '@resort-os/core'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
@@ -97,7 +97,31 @@ function revenueChange(current: number, previous: number) {
   return { pct: Math.abs(pct), up: pct >= 0 }
 }
 
-onMounted(fetchDashboard)
+// #6: إيقاف refresh لما الـ tab في الخلفية — بيوفر API calls غير ضرورية
+// ويمنع تحديث البيانات لما المستخدم مش شايف الشاشة
+const REFRESH_INTERVAL_MS = 60_000
+let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+function handleVisibilityChange() {
+  if (document.hidden) {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null }
+  } else {
+    // الـ tab رجع visible — نحدّث فوراً ونشغّل الـ interval من جديد
+    fetchDashboard()
+    refreshTimer = setInterval(fetchDashboard, REFRESH_INTERVAL_MS)
+  }
+}
+
+onMounted(() => {
+  fetchDashboard()
+  refreshTimer = setInterval(fetchDashboard, REFRESH_INTERVAL_MS)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+})
+
+onUnmounted(() => {
+  if (refreshTimer) clearInterval(refreshTimer)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+})
 </script>
 
 <template>
@@ -182,6 +206,8 @@ onMounted(fetchDashboard)
         { path: '/admin/inventory', label: 'المخزون',          icon: '📦', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
         { path: '/admin/crm',       label: 'إدارة العملاء',    icon: '🤝', color: 'bg-purple-50 border-purple-200 hover:bg-purple-100' },
         { path: '/admin/analytics', label: 'التحليلات',        icon: '📈', color: 'bg-pink-50 border-pink-200 hover:bg-pink-100' },
+        { path: '/admin/cafe-sales', label: 'مبيعات الكافيه',  icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
+        { path: '/admin/tables',    label: 'إدارة الطاولات',   icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
         { path: '/admin/settings',  label: 'الإعدادات',        icon: '⚙️', color: 'bg-gray-50 border-gray-200 hover:bg-gray-100' },
       ]" :key="link.path" :to="link.path"
         :class="['flex items-center gap-3 p-4 rounded-xl border-2 transition-colors', link.color]"

@@ -16,6 +16,7 @@ from app.core.deps import (
     get_current_active_user, get_db, get_manager_user, rate_limit_dep, require_permission,
 )
 from app.modules.finance import crud, services
+from app.resort_os.timezone_utils import business_today
 from app.modules.finance.schemas import (
     AccountCreate, AccountRead,
     AccountingPeriodRead, AssetDepreciationEntryRead, BalanceSheetReport,
@@ -203,10 +204,33 @@ def download_shift_end_report_pdf(shift_id: int, db: DbDep, _=Depends(get_cashie
 
 @router.post("/finance/shifts/{shift_id}/close", response_model=CashierShiftRead)
 def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(get_cashier_user)):
+    """إغلاق وردية الكاشير مع reconciliation تلقائي (#14).
+
+    variance = counted_cash − expected_cash (موجود في DB من قبل).
+    الجديد: reconciliation_ok + reconciliation_warning في الـ response
+    يخبر الكاشير/المدير فورًا لو الفرق خارج النطاق المقبول (±50ج).
+    الإغلاق يكمل دايمًا — مش بنحجبه لأن الكاشير محتاج يقفل حتى لو في فرق.
+    """
     try:
-        return services.close_shift(db, shift_id, user.id, data)
+        shift = services.close_shift(db, shift_id, user.id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    # #14: reconciliation تلقائي — يُحسب بعد الإغلاق مباشرةً
+    result = CashierShiftRead.model_validate(shift)
+    VARIANCE_TOLERANCE = Decimal("50")  # 50 ج — نطاق مقبول تشغيليًا
+    if shift.variance is not None:
+        abs_var = abs(shift.variance)
+        result.reconciliation_ok = abs_var <= VARIANCE_TOLERANCE
+        if not result.reconciliation_ok:
+            direction = "زيادة" if shift.variance > 0 else "عجز"
+            result.reconciliation_warning = (
+                f"⚠️ فرق كاش غير مقبول: {direction} {abs_var:,.2f} ج "
+                f"(متوقع {shift.expected_cash:,.2f} ج — معدود {shift.counted_cash:,.2f} ج) "
+                f"— يجب مراجعة المدير قبل مغادرة الوردية"
+            )
+        # else: reconciliation_ok = True — اتحدد فعلاً في السطر فوق (abs_var <= tolerance)
+    return result
 
 
 # ── Discounts ─────────────────────────────────────────────────────────
@@ -298,7 +322,7 @@ def list_accounts(
     # كان الحقل ده مفقود بالكامل من الـ response (AccountRead ملوش balance
     # خالص)، والفرونت إند (FinanceView.vue) كان بيقرأ acc.balance المش موجود
     # أصلاً — تاب "الحسابات" كان بيطيح فعليًا (undefined.toLocaleString()).
-    sums = crud.sum_journal_lines_by_account(db, branch_id, None, as_of or date.today())
+    sums = crud.sum_journal_lines_by_account(db, branch_id, None, as_of or business_today(settings.TIMEZONE))
     credit_normal_types = {"liability", "equity", "revenue"}
     for acc in items:
         debit_sum, credit_sum = sums.get(acc.id, (Decimal("0"), Decimal("0")))
@@ -387,7 +411,7 @@ def list_revenue_audit_logs(
     entity_id: Optional[int] = Query(None),
 ):
     items = crud.list_revenue_audit_logs(db, branch_id, entity_type, entity_id)
-    return [RevenueAuditLogRead.model_validate(l) for l in items]
+    return [RevenueAuditLogRead.model_validate(row) for row in items]
 
 
 # ── Accounting Periods ────────────────────────────────────────────────
@@ -675,8 +699,8 @@ def import_bank_statement_lines(
     إند) — كل سطر بيدخل الحالة unmatched لحد ما يتطابق (أوتوماتيك أو يدوي)."""
     try:
         return [
-            BankStatementLineRead.model_validate(l)
-            for l in services.import_bank_statement_lines(db, bank_account_id, user.id, data)
+            BankStatementLineRead.model_validate(row)
+            for row in services.import_bank_statement_lines(db, bank_account_id, user.id, data)
         ]
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
@@ -695,7 +719,7 @@ def list_bank_statement_lines(
         db, bank_account_id, status_filter, skip=(page - 1) * size, limit=size,
     )
     return PaginatedResponse(total=total, page=page, size=size,
-                             items=[BankStatementLineRead.model_validate(l) for l in items])
+                             items=[BankStatementLineRead.model_validate(row) for row in items])
 
 
 @router.post("/finance/bank-accounts/{bank_account_id}/statement-lines/auto-match")

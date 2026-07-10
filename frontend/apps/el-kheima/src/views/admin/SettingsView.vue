@@ -113,6 +113,36 @@ onMounted(loadSettings)
       <p class="text-sm text-gray-500 mt-1">إعدادات الفرع الحالي — تعديل القيم يُحفظ فورًا عند الضغط على "حفظ"</p>
     </div>
 
+    <!-- روابط سريعة لأقسام الإدارة ذات الصلة -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <router-link v-for="link in [
+        { path: '/admin/tables',    label: 'إدارة الطاولات', icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
+        { path: '/admin/cafe-menu', label: 'قائمة الكافيه',  icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
+        { path: '/admin/menu',      label: 'قائمة المطعم',   icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
+        { path: '/admin/qr',        label: 'QR Codes',       icon: '📱', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
+      ]" :key="link.path" :to="link.path"
+        :class="['flex items-center gap-2 p-3 rounded-xl border-2 transition-colors text-sm font-semibold text-gray-700', link.color]"
+      >
+        <span class="text-xl">{{ link.icon }}</span>
+        {{ link.label }}
+      </router-link>
+    </div>
+
+    <!-- روابط سريعة لأقسام الإدارة ذات الصلة -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <router-link v-for="link in [
+        { path: '/admin/tables',    label: 'إدارة الطاولات',       icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
+        { path: '/admin/cafe-menu', label: 'قائمة الكافيه',         icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
+        { path: '/admin/menu',      label: 'قائمة المطعم',          icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
+        { path: '/admin/qr',        label: 'QR Codes',              icon: '📱', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
+      ]" :key="link.path" :to="link.path"
+        :class="['flex items-center gap-2 p-3 rounded-xl border-2 transition-colors', link.color]"
+      >
+        <span class="text-xl">{{ link.icon }}</span>
+        <span class="text-sm font-semibold text-gray-700">{{ link.label }}</span>
+      </router-link>
+    </div>
+
     <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between">
       <span>⚠️ {{ loadError }}</span>
       <button @click="loadSettings" class="font-semibold underline hover:no-underline">إعادة المحاولة</button>

@@ -273,8 +273,8 @@ def list_night_audits(
     branch_id: int = Query(...),
     page: int = Query(1, ge=1), size: int = Query(30, ge=1, le=90),
 ):
-    return [NightAuditLogRead.model_validate(l)
-            for l in crud.list_night_audits(db, branch_id, (page-1)*size, size)]
+    return [NightAuditLogRead.model_validate(log)
+            for log in crud.list_night_audits(db, branch_id, (page-1)*size, size)]
 
 
 @router.post("/pms/night-audit/run", response_model=NightAuditLogRead)

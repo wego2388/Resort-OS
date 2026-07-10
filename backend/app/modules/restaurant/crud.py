@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -39,6 +40,26 @@ def create_category(db: Session, data: MenuCategoryCreate) -> MenuCategory:
     return obj
 
 
+def update_category(db: Session, category: MenuCategory, data) -> MenuCategory:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(category, field, value)
+    db.flush()
+    return category
+
+
+def get_category(db: Session, category_id: int) -> Optional[MenuCategory]:
+    return db.query(MenuCategory).filter(MenuCategory.id == category_id).first()
+
+
+def delete_category(db: Session, category_id: int) -> bool:
+    obj = get_category(db, category_id)
+    if not obj:
+        return False
+    db.delete(obj)
+    db.flush()
+    return True
+
+
 # ── MenuItem ──────────────────────────────────────────────────────────
 
 def get_menu_item(db: Session, item_id: int) -> Optional[MenuItem]:
@@ -71,6 +92,15 @@ def update_menu_item(db: Session, item: MenuItem, data: MenuItemUpdate) -> MenuI
         setattr(item, field, value)
     db.flush()
     return item
+
+
+def delete_menu_item(db: Session, item_id: int) -> bool:
+    item = get_menu_item(db, item_id)
+    if not item:
+        return False
+    db.delete(item)
+    db.flush()
+    return True
 
 
 def create_extra_group(db: Session, menu_item_id: int, data: MenuItemExtraGroupCreate) -> MenuItemExtraGroup:
@@ -199,6 +229,36 @@ def get_table(db: Session, table_id: int) -> Optional[DiningTable]:
     return db.query(DiningTable).filter(DiningTable.id == table_id).first()
 
 
+def create_table(db: Session, data) -> DiningTable:
+    table = DiningTable(**data.model_dump())
+    db.add(table)
+    db.flush()
+    return table
+
+
+def update_table(db: Session, table: DiningTable, data) -> DiningTable:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(table, field, value)
+    db.flush()
+    return table
+
+
+def update_table_grid(db: Session, table: DiningTable, grid_row: Optional[int], grid_col: Optional[int]) -> DiningTable:
+    table.grid_row = grid_row
+    table.grid_col = grid_col
+    db.flush()
+    return table
+
+
+def delete_table(db: Session, table_id: int) -> bool:
+    table = get_table(db, table_id)
+    if not table:
+        return False
+    db.delete(table)
+    db.flush()
+    return True
+
+
 def update_table_status(db: Session, table: DiningTable, status: str) -> DiningTable:
     table.status = status
     table.occupied_at = datetime.utcnow() if status == "occupied" else None
@@ -238,7 +298,12 @@ def list_orders(
 
 
 def generate_order_number(db: Session, branch_id: int) -> str:
-    today_str = datetime.utcnow().strftime("%Y%m%d")
+    # #tz-fix: local_now(settings.TIMEZONE) بدل datetime.utcnow() — رقم الطلب
+    # بيتضمن تاريخ اليوم بتوقيت القاهرة (مثلاً ORD-20260709-0001)، لو استخدمنا
+    # UTC كان الرقم هيُطبع بتاريخ أمس بين 21:00-23:59 UTC — مما يُربك المدير
+    # عند مراجعة طلبات نهاية اليوم والتطابق مع Z-report.
+    from app.resort_os.timezone_utils import local_now  # noqa: PLC0415
+    today_str = local_now(settings.TIMEZONE).strftime("%Y%m%d")
     prefix = f"ORD-{today_str}-"
     count = (
         db.query(Order)

@@ -8,12 +8,16 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.inventory.models import Product
 
 
 class CafeCategory(Base, TimestampMixin):
@@ -195,6 +199,9 @@ class CafeOrder(Base, TimestampMixin):
     # إجمالي المرتجع (مرتجع بعد الدفع، صنف بصنف — راجع services.refund_order_item)
     notes:          Mapped[str | None] = mapped_column(String(500), nullable=True)
     waiter_id:      Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payment_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # طريقة الدفع: cash | card | wallet — يتسجّل وقت إنشاء الطلب أو إتمام
+    # الدفع، يُستخدم في تقارير الإيرادات وإغلاق الوردية (finance shift close).
     folio_id:       Mapped[int | None] = mapped_column(Integer, nullable=True)
     applied_discount_rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # الـ ConditionalDiscount (finance module) اللي اتطبّق فعليًا — نفس عمود
@@ -202,6 +209,9 @@ class CafeOrder(Base, TimestampMixin):
     # services.void_order_item يقدر يعيد تقييم نفس القاعدة على subtotal أصغر
     # بعد إلغاء صنف (بدل ما يسيب discount_amount قديم غير متسق).
     customer_id:    Mapped[int | None] = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
+    # #3 fix: idempotency key للـ offline sync — نفس عمود restaurant.Order.client_local_id
+    # يمنع تسجيل نفس الطلب مرتين عند retry بعد انقطاع النت
+    client_local_id: Mapped[str | None] = mapped_column(String(60), nullable=True, unique=True)
 
     table: Mapped["CafeTable"] = relationship("CafeTable", lazy="select")
     items: Mapped[list["CafeOrderItem"]] = relationship(

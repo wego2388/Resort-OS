@@ -272,10 +272,8 @@ def request_early_late(db: Session, booking_id: int, data: "EarlyLateRequest") -
         # أضف شحنة على الفوليو لو مفتوح
         if booking.folio_id:
             try:
-                from app.core.config import settings as _s  # noqa: PLC0415
                 from app.modules.finance import crud as fcrud  # noqa: PLC0415
                 from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
-                from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
                 label_parts = []
                 if data.early_checkin_at:
                     label_parts.append(f"وصول مبكر {data.early_checkin_at.strftime('%H:%M')}")
@@ -440,7 +438,6 @@ def _post_room_revenue_for_night_audit(
     if not total_revenue or total_revenue <= 0:
         return
     try:
-        from app.core.config import settings as _settings  # noqa: PLC0415
         from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
         post_simple_revenue_journal(
             db, branch_id, audit_date,

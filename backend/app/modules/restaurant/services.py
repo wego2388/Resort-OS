@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -24,9 +25,11 @@ from app.modules.restaurant.schemas import (
 from app.resort_os.discount_engine import DiscountRule, OrderContext, OrderLineItem, calculate_discount
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT, compute_food_cost_result, exceeds_threshold
 from app.resort_os.timezone_utils import (
-    local_date_to_utc_range, local_now,
+    local_date_to_utc_range, local_now, local_today,
     utc_naive_to_local_date, utc_naive_to_local_time,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _get_order_or_404(db: Session, order_id: int) -> Order:
@@ -636,7 +639,12 @@ def update_order_status(
             _post_order_revenue_journal(db, order)
         if order.customer_id:
             from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
-            record_customer_visit(db, order.customer_id, order.total, order.created_at.date())
+            # created_at is stored UTC-naive; convert to resort local date for business reporting
+            visit_date = (
+                utc_naive_to_local_date(order.created_at, settings.TIMEZONE)
+                if order.created_at else local_today(settings.TIMEZONE)
+            )
+            record_customer_visit(db, order.customer_id, order.total, visit_date)
 
     db.commit()
     db.refresh(order)
@@ -833,6 +841,17 @@ def _order_local_date_and_time(order: Order) -> tuple[date, time]:
     )
 
 
+def _normalize_order_date(order_date) -> date:
+    """Normalize an order_date which may be a date, datetime, or falsy.
+    Returns a resort-local date (using settings.TIMEZONE) for business logic.
+    """
+    if isinstance(order_date, datetime):
+        return utc_naive_to_local_date(order_date, settings.TIMEZONE)
+    if isinstance(order_date, date):
+        return order_date
+    return local_today(settings.TIMEZONE)
+
+
 def _build_discount_line_items(db: Session, order: Order) -> list[OrderLineItem]:
     """يبني سطور الطلب لمحرك الخصم (مع category_id لكل صنف) — استعلام واحد
     لكل الأصناف المميزة في الطلب (مش N+1 لكل سطر). الأصناف الملغاة مستبعدة —
@@ -875,12 +894,11 @@ def _recompute_discount_for_rule(
     rule_orm = db.query(ConditionalDiscount).filter(ConditionalDiscount.id == rule_id).first()
     if not rule_orm or not rule_orm.is_active:
         return Decimal("0"), None
-
     order_date, order_time = _order_local_date_and_time(order)
     ctx = OrderContext(
         total_amount=new_subtotal,
         item_count=0,
-        order_date=order_date,
+        order_date=_normalize_order_date(order_date),
         order_time=order_time,
         outlet="restaurant",
         line_items=_build_discount_line_items(db, order),

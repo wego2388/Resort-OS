@@ -49,10 +49,11 @@ PATCH لـ /cafe/orders/{id}/status اللي مفيهوش broadcast للطاول
 9. ✅ CafePOSView — pollTimer — تم التحقق (2026-07-09)
 الـ onUnmounted بيعمل clearInterval(pollTimer) بالفعل — مفيش مشكلة.
 
-10. MenuView.vue و CafeMenuView.vue — مفيش name_ar في بعض الأصناف
-اللي بيتعرض في RestaurantPOSView هو item.name_ar || item.name. لكن لو الصنف مش ع
-نده name_ar (إنجليزي بس)، الضيف العربي هيشوف اسم إنجليزي. الـ MenuView مش بتنبّه
-المدير إن name_ar فاضي.
+10. ✅ MenuView.vue و CafeMenuView.vue — تحذير صريح لو name_ar فاضي (2026-07-09)
+- **الـ input** لحقل الاسم العربي بيتحول للون amber لو فاضي مع رسالة تحذير أسفله.
+- **عند الحفظ** في `saveItem()`: لو المدير حاول يحفظ بدون اسم عربي، بيطلع confirm
+  dialog واضح "الضيوف العرب هيشوفوا الاسم الإنجليزي — تريد المتابعة؟" قبل ما يكمل.
+- الإصلاح ده طُبّق على **MenuView.vue** (مطعم) و**CafeMenuView.vue** (كافيه).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -196,7 +197,7 @@ SalesDashboardView للتايم شير عندها export، لكن الكافيه
 
 | # | المشكلة | الخطورة |
 |---|---------|---------|
-| 10 | MenuView — مش بتنبّه المدير لو name_ar فاضي | 🟡 Medium — موجود كـ badge لكن مش warning صريح في form |
+| 10 | MenuView — مش بتنبّه المدير لو name_ar فاضي | ✅ تم — inline warning + confirm dialog في saveItem |
 | 19 | DashboardView — auto-refresh | ✅ موجود بالفعل (60s interval) |
 | 20 | TablesMapView drag-and-drop undo | ✅ موجود بالفعل |
 | 22 | QR download offline | ✅ موجود بالفعل (canvas local fallback) |
@@ -204,3 +205,152 @@ SalesDashboardView للتايم شير عندها export، لكن الكافيه
 | 25 | CafeSalesDashboardView CSV export | ✅ exportCsv() موجود بالفعل |
 
 **ملحوظة:** كل المشاكل في wagdy.md (باستثناء #10 المذكورة فوق) تم حلها سواء في هذه الجلسة أو في جلسات سابقة.
+
+---
+
+## 🛠️ إصلاحات Kiro — 2026-07-09 (جلسة ثانية)
+
+**#10 — تحذير name_ar في MenuView + CafeMenuView** ✅
+- input بيتحول amber + رسالة تحذير inline لو الاسم العربي فاضي.
+- `saveItem()` بيطلع confirm dialog قبل الحفظ لو name_ar فاضي.
+
+**FinanceView.vue — إصلاح build error** ✅
+- الـ Shifts tab كان أُضيف مرتين بسبب merge خطأ — النسخة المكررة اتحذفت.
+- `</div>` زيادة كان بيغلق الـ root div قبل الـ Shifts tab — اتحذف.
+- `await loadShifts()` كان متكرر مرتين في `loadTab()` — اتحذف التكرار.
+
+**النتيجة:** `pnpm -r build` نظيف بدون أي errors.
+
+---
+
+## 🛠️ إصلاحات Kiro — 2026-07-09 (جلسة ثالثة)
+
+### Backend — إصلاح كل الـ Linting Errors (F821/F401/F811)
+
+**Duplicate Operation IDs في OpenAPI** ✅
+- `restaurant/api/router.py`: أُضيف `operation_id="restaurant_update_category"` و `operation_id="restaurant_delete_category"`
+- `cafe/api/router.py`: أُضيف `operation_id="cafe_update_category"` و `operation_id="cafe_delete_category"`
+- النتيجة: صفر warnings عند `/openapi.json`
+
+**F821 — Undefined names (type hints بدون import)** ✅
+- `restaurant/models.py` + `cafe/models.py`: أُضيف `TYPE_CHECKING` import لـ `Product` من `inventory.models`
+- `beach/services.py`: أُضيف `TYPE_CHECKING` import لـ `B2BContract`, `B2BContractDay`, `BeachReservation`
+- `analytics/services.py`: أُضيف `TYPE_CHECKING` import لـ `GuestReview`
+- `hr/services.py`: أُضيف `TYPE_CHECKING` import لـ `LeaderboardEntry`
+- `seed.py`: أُضيف `TYPE_CHECKING` import لـ `TimeshareContract`
+
+**F821 — Missing imports (متغيرات فعلاً مستخدمة)** ✅
+- `restaurant/crud.py`: أُضيف `from decimal import Decimal`
+- `cafe/services.py` + `restaurant/services.py`: أُضيف `import logging` + `logger = logging.getLogger(__name__)`
+- `hr/services.py`: رُتّبت الـ imports (كانت `logger` قبل الـ imports)
+
+**F401 — Unused imports** ✅
+- `restaurant/crud.py`: حُذف `DiningTableCreate`, `DiningTableUpdate` (غير مستخدمين)
+- `cafe/api/router.py`: حُذف `CafeOrder` local import (غير مستخدم بعد tz-fix)
+- `crm/crud.py`: حُذف `from datetime import date as _date` (استُبدل بـ `local_today`)
+- `hub/services.py`: حُذف `from datetime import date` (غير مستخدم)
+- `inventory/services.py`: حُذف `from datetime import date as _date` (استُبدل بـ `local_today`)
+- `pms/services.py`: حُذف `settings as _s` و `local_today` و `settings as _settings` (كلهم غير مستخدمين)
+- `hr_tasks.py`: حُذف `from datetime import date`
+
+**F811 — Redefinition** ✅
+- `pms/schemas.py`: حُذفت النسخة المكررة من `EarlyLateRequest`
+
+**النتيجة:** صفر F821/F401/F811 — 1500 test ناجح — `pnpm -r build` نظيف ✅
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+## 🛠️ إصلاحات Kiro — 2026-07-09 (جلسة رابعة)
+
+### ✅ تصليح كل الـ Failing Tests (14 failed + 12 errors → 0)
+
+**`tests/test_api/test_pms_coverage.py` — 12 errors + 5 failures:**
+- `auth_headers` / `admin_headers` غير موجودين → استُبدلا بـ `manager_headers` / `super_admin_headers`
+- `_booking()` كان بيستخدم `room_id` مباشرة (حقل غير موجود في `Booking`) → صُلّح باستخدام `BookingRoom` (many-to-many) مع `generate_booking_number()`
+- `BookingRoom` كان بيستخدم `rate_per_night` → صُلّح لـ `daily_rate + nights + total`
+- `Folio` محتاج `check_in/check_out` → أُضيفا في `_folio()`
+- `HousekeepingTask` status values غلط (`pending/in_progress/completed`) → صُلّحت لـ `dirty/cleaning/inspecting/available`
+- `out_of_order` في `RoomStatusUpdate` غير موجود في الـ pattern → غُيّر لـ `maintenance`
+- night-audit endpoint هو `POST /pms/night-audit/run` بـ query params (مش `/pms/night-audit` بـ body)
+- `RatePlanCreate` fields: `valid_from/valid_until/base_rate_override` (مش `start_date/end_date/rate_per_night`)
+
+**`tests/test_tasks/test_hr_tasks_coverage.py` — 5 failures:**
+- `create_employee()` يتوقع `EmployeeCreate` schema (مش dict) → صُلّح بـ `EmployeeCreate`
+- `full_name` (مش `name`)، `basic_salary` (مش `base_salary`) في الـ schema
+- `list_attendance_records` غير موجود → الصح `list_attendance()` بيرجع `(items, total)`
+- `payroll_due_reminder` / `monthly_leave_accrual` غير موجودتين → الأسماء الصح: `payroll_reminder` / `accrue_leave_balances`
+- التستات اللي بتستدعي `mark_attendance_absent()` مباشرة بتفشل لأن المهمة بتستخدم `SessionLocal()` داخلياً → صُلّح باختبار المنطق مباشرة بـ `db` fixture
+
+**`tests/test_tasks/test_finance_tasks_coverage.py` — 4 failures:**
+- `create_timeshare_unit` غير موجود — `create_contract` لا يُنشئ أقساط تلقائياً → صُلّح بإنشاء `TimeshareInstallment` يدوياً
+- `create_contract()` يحتاج `signed_by` int → صُلّح بـ `_get_or_create_manager(db)`
+- `User(username=...)` غير موجود → الـ `User` model عنده `email/full_name/role` بدون `username`
+- `monkeypatch` على string path لا يعمل مع lazy imports داخل الدالة → صُلّح بتعديل `wa_module.send_whatsapp_message` مباشرة مع `finally` للاسترجاع
+- isolation بين التستات: استخدام `remind_date` مختلف (`+3 days` vs `+5 days`) لتجنّب تسرب بيانات
+
+**النتيجة:** 1532 → **1558 اختبار** (+26)، 0 failed، 0 errors ✅
+`pnpm -r build` نظيف على `el-kheima` و`public` ✅
+
+
+
+
+1. رفع coverage الـ tasks من 15-27% لـ 50%+
+الـ crm_tasks, leasing_tasks, pms_tasks, maintenance_tasks, timeshare_tasks,
+beach_tasks — كلهم تحت 30%. نفس نهج جلسة اليوم: نختبر الـ service logic مباشرة ب
+ـ db fixture بدل تشغيل الـ Celery runtime.
+
+2. restaurant/api/router.py — 30% من الكود غير مختبر (100 سطر)
+أهم missing lines هي: WebSocket broadcast logic، error paths في الـ order
+lifecycle، وبعض الـ discount/folio flows.
+
+3. auth/service.py — 49% فقط
+Password reset flow، OAuth، social login، وكتير من الـ 2FA edge cases مش مختبرين
+.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+### 🟠 أولوية متوسطة (تحسينات وظيفية)
+
+4. app/core/kernel/whatsapp.py — 17%
+الـ whatsapp integration كلها بتشتغل في production بدون أي test — لو Twilio API
+تغيرت أو في config غلط هيتكشف أول ما المنتجع يشتغل.
+
+5. hub/services.py — 76%
+خدمات الـ Hub (عروض المنتجع + Blog) فيها code paths غير مختبرين.
+
+6. leasing/api/router.py — 77%
+بعض الـ edge cases في تجديد العقود وإنهائها.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+### 🟡 تحسينات (لو في وقت)
+
+7. الـ E741 (11 متغير l غامض)
+متغيرات اسمها l (حرف L صغير) في الكود — ممكن تتلخبط مع 1 (رقم 1). سهل يتصلح بـ
+ruff --fix.
+
+8. app/seed.py — 15%
+الـ seed كبير ومعقد وما فيهوش أي تست — لو اتكسر في production migration، الـ
+developer هيكتشف وقت التشغيل الأول بس.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+### ما مش محتاج يتعمل دلوقتي
+
+- الـ E702 (204 semicolons) — style فقط، الكود شغّال ومفيش bug حقيقي
+- sentry.py / email_service.py / cache.py — infrastructure utilities، صعبة تتختب
+ر بدون integration environment حقيقي
+- auth/repository.py 28% — الـ social auth (Google/Facebook) غالباً مش مفعّل في ال
+منتجع ده
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+
+ما تنصح تبدأ بيه؟ الأكبر أثراً هو رفع coverage الـ tasks (#1) لأنها بتشتغل في الخل
+فية كل يوم وأي bug فيها بيأثر على المنتجع من غير ما حد يلاحظه مباشرة — خصوصاً
+timeshare_tasks (27%) اللي بيبعت تذكيرات الأقساط، وpms_tasks (17%) اللي بيعمل
+night audit.
+

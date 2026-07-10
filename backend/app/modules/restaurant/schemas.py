@@ -16,6 +16,13 @@ class MenuCategoryCreate(BaseModel):
     is_active:  bool = True
 
 
+class MenuCategoryUpdate(BaseModel):
+    name:       Optional[str] = Field(None, max_length=100)
+    name_ar:    Optional[str] = Field(None, max_length=100)
+    sort_order: Optional[int] = None
+    is_active:  Optional[bool] = None
+
+
 class MenuCategoryRead(MenuCategoryCreate):
     model_config = ConfigDict(from_attributes=True)
     id:         int
@@ -216,10 +223,31 @@ class DiningTableRead(BaseModel):
     status:       str
     section:      Optional[str]
     occupied_at:  Optional[datetime] = None
+    grid_row:     Optional[int] = None
+    grid_col:     Optional[int] = None
 
 
-class DiningTableStatusUpdate(BaseModel):
-    status: str = Field(..., pattern=r"^(available|occupied|reserved|out_of_service)$")
+class DiningTableCreate(BaseModel):
+    branch_id:    int
+    table_number: str = Field(..., max_length=20)
+    capacity:     int = Field(4, ge=1)
+    section:      Optional[str] = Field(None, max_length=50)
+    grid_row:     Optional[int] = Field(None, ge=0)
+    grid_col:     Optional[int] = Field(None, ge=0)
+
+
+class DiningTableUpdate(BaseModel):
+    table_number: Optional[str] = Field(None, max_length=20)
+    capacity:     Optional[int] = Field(None, ge=1)
+    section:      Optional[str] = Field(None, max_length=50)
+    grid_row:     Optional[int] = Field(None, ge=0)
+    grid_col:     Optional[int] = Field(None, ge=0)
+
+
+class DiningTableGridUpdate(BaseModel):
+    """تحديث موضع طاولة على الخريطة (drag & drop) — بدون تغيير باقي البيانات."""
+    grid_row: Optional[int] = Field(None, ge=0)
+    grid_col: Optional[int] = Field(None, ge=0)
 
 
 class OrderItemCreate(BaseModel):
@@ -293,6 +321,8 @@ class OrderRead(BaseModel):
     guests_count:             int
     notes:                    Optional[str]
     waiter_id:                Optional[int]
+    payment_method:           Optional[str] = None
+    # cash | card | room | wallet — يتسجّل وقت status=paid، راجع OrderStatusUpdate.
     applied_discount_rule_id: Optional[int]
     customer_id:              Optional[int]
     items:                    list[OrderItemRead] = []
@@ -303,6 +333,7 @@ class OrderRead(BaseModel):
 class OrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
     charge_to_room_id: Optional[int] = None
+    payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet)$")
     # لو موجود وقت status="paid": يدوّر على الحجز الـ checked_in في الغرفة دي
     # ويحمّل قيمة الطلب على فوليو الضيف بدل ما ياخد كاش فورًا (Charge to Room)
 

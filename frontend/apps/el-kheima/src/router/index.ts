@@ -89,7 +89,10 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', redirect: '/kds/kitchen' },
       { path: 'kitchen', name: 'kds-kitchen', component: () => import('../views/kds/KitchenDisplayView.vue') },
-      { path: 'bar', name: 'kds-bar', component: () => import('../views/kds/BarDisplayView.vue') },
+      { path: 'bar',     name: 'kds-bar',     component: () => import('../views/kds/BarDisplayView.vue') },
+      // شاشة الكافيه — نفس BarDisplayView بالظبط (البار يستقبل كل طلبات الكافيه
+      // + أصناف البار من المطعم)، route منفصل بس للتوجيه المباشر من QR أو shortcut
+      { path: 'cafe',    name: 'kds-cafe',    component: () => import('../views/kds/BarDisplayView.vue') },
     ],
   },
 
@@ -134,8 +137,13 @@ const routes: RouteRecordRaw[] = [
       { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { title: 'إدارة العملاء' } },
       { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRole: 'supervisor', title: 'الصيانة' } },
       { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRole: 'supervisor', title: 'الإيجارات' } },
-      { path: 'settings', name: 'admin-settings', component: () => import('../views/admin/SettingsView.vue'), meta: { requiredRole: 'admin', title: 'الإعدادات' } },
-      { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'), meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
+      { path: 'settings',    name: 'admin-settings',    component: () => import('../views/admin/SettingsView.vue'),    meta: { requiredRole: 'admin', title: 'الإعدادات' } },
+      { path: 'menu',        name: 'admin-menu',        component: () => import('../views/admin/MenuView.vue'),             meta: { title: 'إدارة قائمة المطعم' } },
+      { path: 'cafe-menu',   name: 'admin-cafe-menu',   component: () => import('../views/admin/CafeMenuView.vue'),         meta: { title: 'إدارة قائمة الكافيه' } },
+      { path: 'tables',      name: 'admin-tables',      component: () => import('../views/admin/TablesAdminView.vue'),       meta: { title: 'إدارة الطاولات' } },
+      { path: 'cafe-sales',  name: 'admin-cafe-sales',  component: () => import('../views/admin/CafeSalesDashboardView.vue'), meta: { title: 'مبيعات الكافيه' } },
+      { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { title: 'QR Codes' } },
+      { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
     ],
   },
 
@@ -146,9 +154,10 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredRole: 'waiter' },
     children: [
       { path: '', redirect: '/waiter/tables' },
-      { path: 'tables', name: 'waiter-tables', component: () => import('../views/waiter/TablesView.vue') },
+      { path: 'tables',     name: 'waiter-tables',     component: () => import('../views/waiter/TablesView.vue') },
+      { path: 'tables-map', name: 'waiter-tables-map', component: () => import('../views/waiter/TablesMapView.vue') },
       { path: 'order/:tableId', name: 'waiter-order-table', component: () => import('../views/waiter/OrderView.vue'), props: true },
-      { path: 'order', name: 'waiter-order', component: () => import('../views/waiter/OrderView.vue') }, // takeaway (no table)
+      { path: 'order', name: 'waiter-order', component: () => import('../views/waiter/OrderView.vue') },
     ],
   },
 

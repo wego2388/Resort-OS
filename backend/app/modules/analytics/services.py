@@ -4,11 +4,15 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from jose import jwt
 
 from app.core.config import settings
 from app.resort_os.timezone_utils import business_today
+
+if TYPE_CHECKING:
+    from app.modules.analytics.models import GuestReview
 
 logger = logging.getLogger(__name__)
 

@@ -211,7 +211,6 @@ def _post_cogs_journal(
     try:
         from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
         from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
-        from datetime import date as _date  # noqa: PLC0415
 
         cogs_acc  = get_account_by_code(db, branch_id, "5200")
         inv_acc   = get_account_by_code(db, branch_id, "1200")

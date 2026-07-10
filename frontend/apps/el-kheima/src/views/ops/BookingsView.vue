@@ -34,6 +34,9 @@ interface Booking {
   check_out: string
   status: 'pending' | 'confirmed' | 'checked_in' | 'checked_out' | 'cancelled'
   total_rate?: number
+  extra_charge?: number
+  early_checkin_at?: string | null
+  late_checkout_at?: string | null
   notes?: string
 }
 
@@ -255,6 +258,52 @@ async function checkIn(booking: Booking) {
   }
 }
 
+// ─── Early / Late modal ───────────────────────────────────────────────────────
+const showEarlyLateModal = ref(false)
+const earlyLateBooking   = ref<Booking | null>(null)
+const earlyCheckinAt     = ref('')
+const lateCheckoutAt     = ref('')
+const earlyLateCharge    = ref('0')
+const earlyLateNotes     = ref('')
+const earlyLateSubmitting = ref(false)
+
+function openEarlyLate(booking: Booking) {
+  earlyLateBooking.value  = booking
+  earlyCheckinAt.value    = booking.early_checkin_at
+    ? new Date(booking.early_checkin_at).toISOString().slice(0,16) : ''
+  lateCheckoutAt.value    = booking.late_checkout_at
+    ? new Date(booking.late_checkout_at).toISOString().slice(0,16) : ''
+  earlyLateCharge.value   = String(booking.extra_charge ?? 0)
+  earlyLateNotes.value    = ''
+  showEarlyLateModal.value = true
+}
+
+async function submitEarlyLate() {
+  if (!earlyLateBooking.value) return
+  earlyLateSubmitting.value = true
+  try {
+    const payload: Record<string, unknown> = {
+      charge: parseFloat(earlyLateCharge.value) || 0,
+    }
+    if (earlyCheckinAt.value)  payload.early_checkin_at  = new Date(earlyCheckinAt.value).toISOString()
+    if (lateCheckoutAt.value)  payload.late_checkout_at  = new Date(lateCheckoutAt.value).toISOString()
+    if (earlyLateNotes.value)  payload.notes             = earlyLateNotes.value
+    const res = await api.post(`/api/v1/pms/bookings/${earlyLateBooking.value.id}/early-late`, payload)
+    const b = bookings.value.find(x => x.id === earlyLateBooking.value!.id)
+    if (b) {
+      b.early_checkin_at = res.data.early_checkin_at
+      b.late_checkout_at = res.data.late_checkout_at
+      b.extra_charge     = res.data.extra_charge
+    }
+    showEarlyLateModal.value = false
+    toast.success('تم تسجيل طلب الوصول/المغادرة الخاص')
+  } catch(e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الطلب')
+  } finally {
+    earlyLateSubmitting.value = false
+  }
+}
+
 function formatDate(d: string) {
   return new Date(d).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short', year: 'numeric' })
 }
@@ -352,6 +401,12 @@ onMounted(() => {
                 @click="checkOut(b)"
                 class="px-3 py-1 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors"
               >تسجيل خروج</button>
+              <button
+                v-if="b.status === 'confirmed' || b.status === 'checked_in'"
+                @click="openEarlyLate(b)"
+                class="mr-1 px-2 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded-lg hover:bg-purple-200 transition-colors"
+                title="وصول مبكر / مغادرة متأخرة"
+              >🕐</button>
             </td>
           </tr>
           <tr v-if="filteredBookings.length === 0">
@@ -395,11 +450,63 @@ onMounted(() => {
             @click="checkOut(b)"
             class="flex-1 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors"
           >تسجيل خروج</button>
+          <button
+            v-if="b.status === 'confirmed' || b.status === 'checked_in'"
+            @click="openEarlyLate(b)"
+            class="px-3 py-1.5 bg-purple-100 text-purple-700 text-xs font-bold rounded-lg"
+          >🕐 وصول/خروج خاص</button>
         </div>
       </div>
 
       <EmptyState v-if="filteredBookings.length === 0" icon="📋" title="لا توجد حجوزات" />
     </div>
+
+    <!-- Early / Late modal -->
+    <Teleport to="body">
+      <div
+        v-if="showEarlyLateModal"
+        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+        @click.self="showEarlyLateModal = false"
+      >
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+          <h3 class="text-lg font-bold text-gray-900">🕐 وصول مبكر / مغادرة متأخرة</h3>
+          <p class="text-sm text-gray-500">{{ earlyLateBooking?.guest_name }}</p>
+          <div class="space-y-3">
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">وقت الوصول المبكر (اختياري)</label>
+              <input type="datetime-local" v-model="earlyCheckinAt"
+                class="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">وقت المغادرة المتأخرة (اختياري)</label>
+              <input type="datetime-local" v-model="lateCheckoutAt"
+                class="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">رسوم إضافية (ج)</label>
+              <input type="number" min="0" step="50" v-model="earlyLateCharge"
+                class="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
+              <p class="text-xs text-gray-400 mt-0.5">0 = مجاني، أي مبلغ يُضاف لحساب الضيف</p>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-600 mb-1">ملاحظات (اختياري)</label>
+              <input type="text" v-model="earlyLateNotes" placeholder="—"
+                class="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <button @click="showEarlyLateModal = false"
+              class="px-4 py-2 text-sm rounded-lg border border-stone-200 hover:bg-stone-50">
+              إلغاء
+            </button>
+            <button @click="submitEarlyLate" :disabled="earlyLateSubmitting"
+              class="px-4 py-2 text-sm font-bold rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50">
+              {{ earlyLateSubmitting ? '...' : 'حفظ' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 
     <!-- Create booking modal -->
     <Teleport to="body">

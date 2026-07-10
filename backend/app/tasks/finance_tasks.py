@@ -5,6 +5,8 @@ import logging
 from datetime import date, timedelta
 
 from app.celery_app import celery_app
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,7 @@ def check_due_reminders(self):
         from app.core.database import SessionLocal              # noqa: PLC0415
         from app.modules.core.models import Branch # noqa: PLC0415
 
-        today  = date.today()
+        today  = local_today(settings.TIMEZONE)
         remind = today + timedelta(days=3)
 
         with SessionLocal() as db:

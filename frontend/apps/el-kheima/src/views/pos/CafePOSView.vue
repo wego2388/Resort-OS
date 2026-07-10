@@ -1,75 +1,31 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { api } from '@resort-os/core'
-import { usePrintDocument } from '@resort-os/core/composables'
-import { useToast } from '@resort-os/ui'
+import { api, ENDPOINTS } from '@resort-os/core'
+import { useOfflineQueue, usePrintDocument } from '@resort-os/core/composables'
+import { AppBadge, useToast } from '@resort-os/ui'
+import OrderDetailModal from '../../components/OrderDetailModal.vue'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const toast = useToast()
 const { printBlob } = usePrintDocument()
 
 // ── Offline queue ──────────────────────────────────────────────────────────────
-// NOTE: @resort-os/core's useOfflineQueue() posts hard-coded to
-// /api/v1/restaurant/orders(/sync) — reusing it here would silently send cafe
-// orders into the restaurant module. This local queue mirrors the exact same
-// contract (queue while offline, FIFO retry on reconnect, server response is
-// the source of truth for stock) but targets /api/v1/cafe/orders instead.
-const isOnline     = ref(navigator.onLine)
-const pendingCount = ref(0)
-
-interface PendingCafeOrder { localId: string; payload: Record<string, unknown>; createdAt: string }
-
-const QUEUE_KEY = `resort-os-offline-cafe-orders-${branchId}`
-
-function readQueue(): PendingCafeOrder[] {
-  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]') } catch { return [] }
-}
-function writeQueue(queue: PendingCafeOrder[]) {
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
-  pendingCount.value = queue.length
-}
-function queueOrder(payload: Record<string, unknown>) {
-  const queue = readQueue()
-  queue.push({ localId: crypto.randomUUID(), payload, createdAt: new Date().toISOString() })
-  writeQueue(queue)
-}
-
-/** true only for "never reached the server" failures — not 4xx/5xx responses */
-function isNetworkError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false
-  const axiosErr = err as { request?: unknown; response?: unknown }
-  return !!axiosErr.request && !axiosErr.response
-}
-
-let syncing = false
-async function syncPendingOrders() {
-  if (!navigator.onLine || syncing) return
-  syncing = true
-  try {
-    let queue = readQueue()
-    while (queue.length) {
-      const order = queue[0]
-      try {
-        await api.post('/api/v1/cafe/orders', order.payload)
-      } catch (err) {
-        if (isNetworkError(err)) break // still offline — keep FIFO order, retry later
-        // server explicitly rejected it (stock/validation) — drop so it doesn't block the queue forever
-        toast.error(`تعذّر تزامن طلب كافيه محفوظ (${new Date(order.createdAt).toLocaleTimeString('ar-EG')}) — راجعه يدوياً`)
-      }
-      queue = queue.slice(1)
-      writeQueue(queue)
-    }
-  } finally {
-    syncing = false
-  }
-}
+// #4: بدل queue محلي منفصل، بنستخدم useOfflineQueue من core مع module='cafe'
+// وده بيعني طلبات الكافيه offline بتتزامن لـ /api/v1/cafe/orders/sync
+// وبتتحفظ في IndexedDB زي المطعم بالظبط (FIFO, server-authoritative stock)
+const {
+  isOnline,
+  pendingCount,
+  lastPartialRejection,
+  submitOrder: submitOrderOnlineOrQueue,
+  syncPendingOrders,
+} = useOfflineQueue('cafe')
 
 function handleOnline() {
-  isOnline.value = true
   syncPendingOrders()
 }
 function handleOffline() {
-  isOnline.value = false
+  // isOnline بيتحدث تلقائياً في الـ composable
 }
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -111,6 +67,139 @@ const tempNote      = ref('')
 // اختيار الحجم/النوع — لو الصنف عنده متغيّرات متاحة، لازم يتحدد واحد
 // إجباريًا وقت الطلب (الباك إند بيرفض غير كده)
 const variantPickerItem = ref<MenuItem | null>(null)
+
+// ── الطلبات الجارية (كاشير — تحصيل) ──────────────────────────────────
+// المسار الرئيسي للدفع في الكافيه: الوايتر/POS يبعت طلب للبار (in_kitchen)،
+// البار يحضّره ويعلّم "جاهز"، الكاشير يفتح الطلب من هنا ويعمل "تحصيل".
+interface ActiveCafeOrder {
+  id: number; order_number: string; status: string
+  table_id: number | null; order_type: string; total: number | string
+}
+const activeOrdersOpen    = ref(false)
+const activeOrders        = ref<ActiveCafeOrder[]>([])
+const activeOrdersLoading = ref(false)
+const selectedOrderId     = ref<number | null>(null)
+const cafePayingId        = ref<number | null>(null)
+const cafePayingMethod    = ref<'cash' | 'card' | 'wallet'>('cash')
+const cafePayError        = ref('')
+const cafePaySuccess      = ref('')
+
+// ── #13: Held orders — استعادة طلب معلّق ─────────────────────────────
+interface HeldCafeOrder { id: number; order_number: string; table_id: number | null; total: number | string }
+const heldOrdersOpen    = ref(false)
+const heldOrders        = ref<HeldCafeOrder[]>([])
+const heldOrdersLoading = ref(false)
+const resumingOrderId   = ref<number | null>(null)
+
+async function loadHeldOrders() {
+  heldOrdersLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.cafe.heldOrders, {
+      params: { branch_id: branchId },
+    })
+    heldOrders.value = Array.isArray(data) ? data : (data.items ?? [])
+  } catch {
+    toast.error('تعذّر تحميل الطلبات المعلّقة')
+  } finally {
+    heldOrdersLoading.value = false
+  }
+}
+
+async function resumeHeldOrder(order: HeldCafeOrder) {
+  resumingOrderId.value = order.id
+  try {
+    // held → open → in_kitchen (نفس منطق OrderDetailModal.resumeAndSend)
+    await api.patch(ENDPOINTS.cafe.orderStatus(order.id), { status: 'open' })
+    await api.patch(ENDPOINTS.cafe.orderStatus(order.id), { status: 'in_kitchen' })
+    toast.success(`تم إرسال طلب #${order.order_number} للبار ✓`)
+    heldOrders.value = heldOrders.value.filter(o => o.id !== order.id)
+    if (heldOrders.value.length === 0) heldOrdersOpen.value = false
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر استعادة الطلب المعلّق')
+  } finally {
+    resumingOrderId.value = null
+  }
+}
+
+const ACTIVE_STATUSES = new Set(['open', 'in_kitchen', 'served'])
+
+async function loadActiveOrders() {
+  activeOrdersLoading.value = true
+  try {
+    const { data } = await api.get('/api/v1/cafe/orders', {
+      params: { branch_id: branchId, size: 100 },
+    })
+    const items: ActiveCafeOrder[] = data.items ?? data
+    activeOrders.value = items.filter(o => ACTIVE_STATUSES.has(o.status))
+  } catch {
+    toast.error('تعذّر تحميل الطلبات الجارية — حاول تاني')
+  } finally {
+    activeOrdersLoading.value = false
+  }
+}
+
+function openActiveOrders() {
+  activeOrdersOpen.value = true
+  loadActiveOrders()
+}
+
+function cafeTableLabelFor(order: ActiveCafeOrder): string {
+  if (!order.table_id) return 'Takeaway'
+  return `طاولة #${order.table_id}`
+}
+
+function cafeStatusLabel(status: string): string {
+  if (status === 'open')       return 'مفتوح'
+  if (status === 'in_kitchen') return 'عند البار'
+  if (status === 'served')     return 'تم التقديم'
+  return status
+}
+
+function cafeStatusColor(status: string): string {
+  if (status === 'open')       return 'bg-blue-100 text-blue-700'
+  if (status === 'in_kitchen') return 'bg-amber-100 text-amber-700'
+  if (status === 'served')     return 'bg-green-100 text-green-700'
+  return 'bg-gray-100 text-gray-600'
+}
+
+async function collectCafeOrder(order: ActiveCafeOrder) {
+  cafePayingId.value = order.id
+  cafePayError.value = ''
+  cafePaySuccess.value = ''
+  try {
+    await api.patch(`/api/v1/cafe/orders/${order.id}/status`, {
+      status: 'paid',
+      payment_method: cafePayingMethod.value,
+    })
+    // طباعة إيصال
+    try {
+      const receiptRes = await api.get(`/api/v1/cafe/orders/${order.id}/receipt`, { responseType: 'blob' })
+      const outcome = printBlob(receiptRes.data, `cafe-receipt-${order.id}.pdf`)
+      if (outcome.downloadedInstead) {
+        toast.error('الإيصال اتحمّل كملف — افتحه واطبعه يدويًا')
+      }
+    } catch {
+      // إيصال اختياري — متوقّفش عشانه
+    }
+    cafePaySuccess.value = `✓ تم تحصيل طلب #${order.order_number}`
+    activeOrders.value = activeOrders.value.filter(o => o.id !== order.id)
+    setTimeout(() => { cafePaySuccess.value = '' }, 3000)
+  } catch (e: any) {
+    cafePayError.value = e?.response?.data?.detail ?? 'فشل إتمام الدفع'
+  } finally {
+    cafePayingId.value = null
+  }
+}
+
+function openOrderDetail(orderId: number) {
+  activeOrdersOpen.value = false
+  selectedOrderId.value = orderId
+}
+
+function onOrderDetailClosed() {
+  selectedOrderId.value = null
+  loadActiveOrders()
+}
 
 // ── Computed ───────────────────────────────────────────────────────────────────
 const filteredItems = computed(() =>
@@ -263,15 +352,10 @@ async function submitOrder() {
   if (!hasItems.value || submitting.value) return
   submitting.value = true
   try {
-    // ⚠️ باج حقيقي كان هنا: الـ payload كان بيبعت menu_item_id/unit_price/
-    // outlet_type/payment_method — مفيهاش أي حاجة من دول في
-    // CafeOrderCreate (app/modules/cafe/schemas.py)، واللي فعليًا مطلوب
-    // (items[].item_id) ماكانش بيتبعت خالص. النتيجة: كل طلب كافيه من الشاشة
-    // دي كان بيرجع 422 "field required" — الكافيه كان مستحيل تعمل منه أوردر
-    // حقيقي من الـ POS من أصله.
     const payload = {
-      branch_id:  branchId,
-      order_type: 'takeaway',
+      branch_id:      branchId,
+      order_type:     'takeaway',
+      payment_method: paymentMethod.value,
       items: cart.value.map(i => ({
         item_id:    i.menu_item_id,
         variant_id: i.variant_id ?? undefined,
@@ -280,43 +364,25 @@ async function submitOrder() {
       })),
     }
 
-    if (!navigator.onLine) {
-      queueOrder(payload)
+    // #4: submitOrderOnlineOrQueue من useOfflineQueue('cafe') — بيتعامل مع
+    // offline تلقائيًا ويحفظ في IndexedDB ويبعت لـ /cafe/orders لما يرجع النت
+    const data = await submitOrderOnlineOrQueue(branchId, payload)
+
+    if (data === null) {
+      // offline — اتحفظ في queue
       clearOrder()
-      successMsg.value = '📥 الطلب محفوظ — هيتبعت أول ما النت يرجع'
+      successMsg.value = '📥 الطلب محفوظ — هيتبعت للبار أول ما النت يرجع'
       setTimeout(() => { successMsg.value = '' }, 4000)
       return
     }
 
-    let data: any
-    try {
-      const res = await api.post('/api/v1/cafe/orders', payload)
-      data = res.data
-    } catch (err) {
-      if (isNetworkError(err)) {
-        queueOrder(payload)
-        clearOrder()
-        successMsg.value = '📥 الطلب محفوظ — هيتبعت أول ما النت يرجع'
-        setTimeout(() => { successMsg.value = '' }, 4000)
-        return
-      }
-      throw err
-    }
-
     const orderId = data.id ?? data.order_id
     if (orderId) {
-      // إنشاء الطلب لوحده بيسيبه في status "open" — تذكرة الـ KDS (شاشة
-      // البار) بترتبط بس بانتقالة open→in_kitchen (services.update_order_status)،
-      // فمن غيرها الباريستا مايشوفش الطلب أبداً. الكافيه هنا بيع فوري
-      // (الكاشير هو اللي بياخد الطلب ويحصّل الكاش قبل التحضير)، فبعد ما
-      // المطبخ/البار يشوف الطلب بنقفل الدفع فورًا كمان — مفيش شاشة تانية
-      // في الكافيه ترجع تقفل الحساب لاحقًا.
       try {
         await api.patch(`/api/v1/cafe/orders/${orderId}/status`, { status: 'in_kitchen' })
-        await api.patch(`/api/v1/cafe/orders/${orderId}/status`, { status: 'paid' })
       } catch (e) {
-        console.error('Failed to progress cafe order to paid', e)
-        errorMsg.value = 'اتسجّل الطلب لكن حصل خطأ في إتمام الدفع — راجعه من قائمة الطلبات'
+        console.error('Failed to send cafe order to kitchen', e)
+        errorMsg.value = 'اتسجّل الطلب لكن حصل خطأ في إرساله للبار — راجعه من قائمة الطلبات'
         setTimeout(() => { errorMsg.value = '' }, 5000)
       }
 
@@ -329,12 +395,12 @@ async function submitOrder() {
           toast.error('الإيصال اتحمّل كملف (المتصفح منع نافذة الطباعة) — افتحه واطبعه يدويًا')
         }
       } catch {
-        // receipt optional — never block the order itself
+        // receipt optional
       }
     }
 
     clearOrder()
-    successMsg.value = 'تم إرسال الطلب وإتمام الدفع ✓'
+    successMsg.value = 'تم إرسال الطلب للبار ✓ — الدفع يتم بعد التحضير'
     setTimeout(() => { successMsg.value = '' }, 3000)
   } catch (e: any) {
     errorMsg.value = e?.response?.data?.detail ?? 'فشل في إرسال الطلب'
@@ -346,12 +412,11 @@ async function submitOrder() {
 
 onMounted(() => {
   loadData()
+  loadActiveOrders()
   window.addEventListener('online', handleOnline)
   window.addEventListener('offline', handleOffline)
-  pendingCount.value = readQueue().length
   if (navigator.onLine) syncPendingOrders()
   // safety-net poll — covers cases where the 'online' event never fires
-  // reliably but connectivity is actually back
   pollTimer = setInterval(() => {
     if (navigator.onLine && pendingCount.value > 0) syncPendingOrders()
   }, 30_000)
@@ -367,7 +432,7 @@ onUnmounted(() => {
 <template>
   <div class="flex flex-col h-full" dir="rtl">
 
-    <!-- ── Offline banner — visible الطول، مش toast بيختفي ── -->
+    <!-- ── Offline banner ── -->
     <div
       v-if="!isOnline"
       class="bg-amber-500 text-white text-xs font-bold px-4 py-1.5 flex items-center justify-center gap-2 flex-shrink-0"
@@ -381,10 +446,36 @@ onUnmounted(() => {
     >
       <span>⏳ جاري إرسال {{ pendingCount }} طلب محفوظ من فترة الانقطاع...</span>
     </div>
+    <!-- #3 fix: banner لـ partial rejection — كان مستورداً بس مش معروضاً -->
+    <div
+      v-if="lastPartialRejection && lastPartialRejection.length"
+      class="bg-red-100 text-red-800 text-xs font-semibold px-4 py-2 flex-shrink-0 border-b border-red-200"
+    >
+      ⚠️ تم رفض بعض الأصناف من طلب كافيه محفوظ سابقاً (نفاد المخزون):
+      {{ lastPartialRejection.map(i => `${i.name} (×${i.requested_qty})`).join('، ') }}
+    </div>
 
     <!-- ── Category tabs ── -->
     <div class="bg-white border-b border-stone-200 px-4 py-3 flex gap-2 flex-wrap items-center shadow-sm flex-shrink-0">
       <span class="text-sm font-bold text-gray-700 ml-2">☕ الكافيه</span>
+
+      <!-- زر الطلبات الجارية — للكاشير لتحصيل الطلبات اللي جهّزها البار -->
+      <button
+        @click="openActiveOrders"
+        class="relative px-3 py-1.5 bg-white border-2 border-amber-400 text-amber-700 rounded-lg font-bold text-sm hover:bg-amber-50 transition-colors flex items-center gap-1.5"
+      >
+        🧾 الطلبات الجارية
+        <AppBadge v-if="activeOrders.length" variant="warning" size="sm">{{ activeOrders.length }}</AppBadge>
+      </button>
+
+      <!-- #13: زر الطلبات المعلّقة — استعادة held order وإرسالها للبار -->
+      <button
+        @click="heldOrdersOpen = true; loadHeldOrders()"
+        class="relative px-3 py-1.5 bg-white border-2 border-slate-300 text-slate-600 rounded-lg font-bold text-sm hover:bg-slate-50 transition-colors flex items-center gap-1.5"
+      >
+        ⏸ الطلبات المعلّقة
+        <AppBadge v-if="heldOrders.length" variant="neutral" size="sm">{{ heldOrders.length }}</AppBadge>
+      </button>
 
       <button
         @click="selectedCategoryId = null"
@@ -672,6 +763,165 @@ onUnmounted(() => {
               <span class="font-semibold text-gray-900 text-sm">{{ variant.name_ar || variant.name }}</span>
               <span class="font-black text-amber-700">{{ variant.price }} ج</span>
             </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ── الطلبات الجارية — كاشير يحصّل طلبات البار/الكافيه ── -->
+    <Transition name="modal">
+      <div
+        v-if="activeOrdersOpen"
+        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+        @click.self="activeOrdersOpen = false"
+      >
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[80vh] flex flex-col overflow-hidden">
+          <!-- Header -->
+          <div class="bg-amber-600 text-white px-5 py-4 flex items-center justify-between flex-shrink-0">
+            <div>
+              <h2 class="font-black text-lg">🧾 الطلبات الجارية</h2>
+              <p class="text-xs text-amber-100 mt-0.5">اختر طلباً لتحصيله أو عرض تفاصيله</p>
+            </div>
+            <button @click="activeOrdersOpen = false" class="text-amber-200 hover:text-white text-2xl leading-none">×</button>
+          </div>
+
+          <!-- Payment method selector -->
+          <div class="px-5 py-3 border-b border-stone-100 bg-amber-50 flex items-center gap-3 flex-shrink-0">
+            <span class="text-xs font-bold text-gray-600">طريقة الدفع:</span>
+            <div class="flex gap-1">
+              <button
+                v-for="m in [{ val: 'cash', label: 'كاش 💵' }, { val: 'card', label: 'كارت 💳' }, { val: 'wallet', label: 'محفظة 📱' }]"
+                :key="m.val"
+                @click="cafePayingMethod = (m.val as 'cash' | 'card' | 'wallet')"
+                :class="[
+                  'px-3 py-1 rounded-lg text-xs font-semibold border-2 transition-all',
+                  cafePayingMethod === m.val
+                    ? 'border-amber-600 bg-amber-600 text-white'
+                    : 'border-stone-200 text-gray-600 hover:border-amber-300',
+                ]"
+              >{{ m.label }}</button>
+            </div>
+          </div>
+
+          <!-- Messages -->
+          <div v-if="cafePaySuccess" class="bg-green-100 text-green-700 text-sm px-5 py-2 text-center font-medium flex-shrink-0">{{ cafePaySuccess }}</div>
+          <div v-if="cafePayError" class="bg-red-100 text-red-700 text-sm px-5 py-2 text-center font-medium flex-shrink-0">{{ cafePayError }}</div>
+
+          <!-- Orders list -->
+          <div class="flex-1 overflow-y-auto p-4">
+            <div v-if="activeOrdersLoading" class="flex justify-center py-10">
+              <div class="animate-spin w-6 h-6 border-2 border-amber-600 border-t-transparent rounded-full" />
+            </div>
+            <div v-else-if="activeOrders.length === 0" class="flex flex-col items-center justify-center py-12 text-gray-400">
+              <div class="text-4xl mb-3">✅</div>
+              <p class="font-medium">لا توجد طلبات جارية</p>
+            </div>
+            <div v-else class="space-y-3">
+              <div
+                v-for="order in activeOrders"
+                :key="order.id"
+                class="bg-white rounded-xl border-2 border-stone-200 p-4 flex items-center justify-between gap-3 hover:border-amber-300 transition-colors"
+              >
+                <div class="flex-1 min-w-0">
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="font-black text-gray-900">#{{ order.order_number }}</span>
+                    <span :class="['text-xs px-2 py-0.5 rounded-full font-semibold', cafeStatusColor(order.status)]">
+                      {{ cafeStatusLabel(order.status) }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-gray-500">{{ cafeTableLabelFor(order) }}</div>
+                  <div class="text-base font-black text-amber-700 mt-1">{{ order.total }} ج</div>
+                </div>
+                <div class="flex flex-col gap-2 flex-shrink-0">
+                  <button
+                    @click="collectCafeOrder(order)"
+                    :disabled="cafePayingId === order.id"
+                    class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-bold rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                  >
+                    <div v-if="cafePayingId === order.id" class="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
+                    <span>💰 تحصيل</span>
+                  </button>
+                  <button
+                    @click="openOrderDetail(order.id)"
+                    class="px-4 py-2 bg-stone-100 hover:bg-stone-200 text-gray-700 text-xs font-semibold rounded-lg transition-colors"
+                  >
+                    تفاصيل
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div class="px-5 py-3 border-t border-stone-100 flex justify-between items-center flex-shrink-0">
+            <button @click="loadActiveOrders" class="text-xs text-amber-600 hover:underline font-medium">🔄 تحديث</button>
+            <button @click="activeOrdersOpen = false" class="px-4 py-2 bg-stone-100 hover:bg-stone-200 rounded-lg text-sm font-semibold text-gray-700 transition-colors">إغلاق</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ── Order Detail Modal ── -->
+    <OrderDetailModal
+      v-if="selectedOrderId !== null"
+      :order-id="selectedOrderId"
+      module="cafe"
+      @close="onOrderDetailClosed"
+      @changed="loadActiveOrders"
+    />
+
+    <!-- ── #13: Held Orders Modal — استعادة طلب معلّق وإرساله للبار ── -->
+    <Transition name="modal">
+      <div
+        v-if="heldOrdersOpen"
+        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+        @click.self="heldOrdersOpen = false"
+      >
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[70vh] flex flex-col overflow-hidden">
+          <div class="bg-slate-700 text-white px-5 py-4 flex items-center justify-between flex-shrink-0">
+            <div>
+              <h2 class="font-black text-lg">⏸ الطلبات المعلّقة</h2>
+              <p class="text-xs text-slate-300 mt-0.5">اختر طلباً لإرساله للبار مباشرةً</p>
+            </div>
+            <button @click="heldOrdersOpen = false" class="text-slate-300 hover:text-white text-2xl leading-none">×</button>
+          </div>
+
+          <div class="flex-1 overflow-y-auto p-4">
+            <div v-if="heldOrdersLoading" class="flex justify-center py-10">
+              <div class="animate-spin w-6 h-6 border-2 border-slate-600 border-t-transparent rounded-full" />
+            </div>
+            <div v-else-if="heldOrders.length === 0" class="flex flex-col items-center justify-center py-12 text-gray-400">
+              <div class="text-4xl mb-3">✅</div>
+              <p class="font-medium">لا توجد طلبات معلّقة</p>
+            </div>
+            <div v-else class="space-y-3">
+              <div
+                v-for="order in heldOrders"
+                :key="order.id"
+                class="bg-white rounded-xl border-2 border-slate-200 p-4 flex items-center justify-between gap-3"
+              >
+                <div class="flex-1 min-w-0">
+                  <div class="font-black text-gray-900">#{{ order.order_number }}</div>
+                  <div class="text-xs text-gray-500 mt-0.5">
+                    {{ order.table_id ? `طاولة #${order.table_id}` : 'Takeaway' }}
+                  </div>
+                  <div class="text-base font-black text-amber-700 mt-1">{{ order.total }} ج</div>
+                </div>
+                <button
+                  @click="resumeHeldOrder(order)"
+                  :disabled="resumingOrderId === order.id"
+                  class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold rounded-lg transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <div v-if="resumingOrderId === order.id" class="animate-spin w-3 h-3 border-2 border-white border-t-transparent rounded-full" />
+                  <span>▶ إرسال للبار</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="px-5 py-3 border-t border-stone-100 flex justify-between items-center flex-shrink-0">
+            <button @click="loadHeldOrders" class="text-xs text-slate-600 hover:underline font-medium">🔄 تحديث</button>
+            <button @click="heldOrdersOpen = false" class="px-4 py-2 bg-stone-100 hover:bg-stone-200 rounded-lg text-sm font-semibold text-gray-700 transition-colors">إغلاق</button>
           </div>
         </div>
       </div>

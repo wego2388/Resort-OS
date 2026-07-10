@@ -105,14 +105,6 @@ class BookingStatusUpdate(BaseModel):
 
 
 class EarlyLateRequest(BaseModel):
-    """طلب وصول مبكر أو مغادرة متأخرة — charge=0 لو مجاني."""
-    early_checkin_at:  Optional[datetime] = None
-    late_checkout_at:  Optional[datetime] = None
-    charge:            Decimal = Field(Decimal("0"), ge=0)
-    notes:             Optional[str] = Field(None, max_length=500)
-
-
-class EarlyLateRequest(BaseModel):
     """طلب وصول مبكر أو مغادرة متأخرة.
     charge: رسوم إضافية بالجنيه — 0 لو مجاني أو عرض ترحيبي.
     """

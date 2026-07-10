@@ -91,9 +91,16 @@ async function setStatus(alert: GuestAlert, status: 'acknowledged' | 'resolved')
 
 // اتصال لحظي — نفس نمط KDS (useResortWebSocket بيعيد الاتصال تلقائيًا لو
 // النت اتقطع)، الـ GET أعلاه fallback للتحميل الأولي بس.
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+// wsBase: نحترم X-Forwarded-Proto لو الـ reverse proxy بيمرّره (production)،
+// وإلا نستنتج من location.protocol — بدل location.host المباشر اللي ممكن
+// يكسر وراء nginx لو الـ WebSocket path مختلف عن HTTP path.
+const wsProtocol = (
+  window.location.protocol === 'https:' ||
+  document.querySelector('meta[name="x-forwarded-proto"]')?.getAttribute('content') === 'https'
+) ? 'wss:' : 'ws:'
+const wsBase = import.meta.env.VITE_WS_BASE ?? `${wsProtocol}//${window.location.host}`
 const { onMessage } = useResortWebSocket(
-  `${wsProtocol}//${location.host}/api/v1/ws/alerts/${branchId.value}`,
+  `${wsBase}/api/v1/ws/alerts/${branchId.value}`,
 )
 onMessage((data: any) => {
   if (data?.type === 'new_alert') {

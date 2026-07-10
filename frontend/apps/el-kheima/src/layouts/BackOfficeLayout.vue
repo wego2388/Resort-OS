@@ -15,7 +15,15 @@ import { useAuthStore } from '@resort-os/core'
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const sidebarOpen = ref(true)
+
+// #23: حفظ حالة الـ sidebar في localStorage — بيتذكر اختيار المستخدم بين الجلسات
+const SIDEBAR_KEY = 'resort-os-sidebar-open'
+const sidebarOpen = ref(localStorage.getItem(SIDEBAR_KEY) !== 'false')
+
+function toggleSidebar() {
+  sidebarOpen.value = !sidebarOpen.value
+  localStorage.setItem(SIDEBAR_KEY, String(sidebarOpen.value))
+}
 
 interface NavItem {
   path: string
@@ -50,18 +58,25 @@ const allSections: NavSection[] = [
       { path: '/admin/hr', label: 'الموارد البشرية', icon: '👥', requiredRole: 'manager' },
       { path: '/admin/finance', label: 'المالية', icon: '💰', requiredRole: 'manager' },
       { path: '/admin/e-invoice', label: 'الفاتورة الإلكترونية', icon: '🧾', requiredRole: 'manager' },
-      // ⚠️ requiredRole كان 'supervisor' — أعلى من صلاحية تسجيل تحصيل قسط
-      // الفعلية بالباك إند (cashier). رابط الشاشة كان غايب تمامًا عن قائمة
-      // الكاشير رغم إنه مسموحله يحصّل الأقساط فعليًا (راجع router/index.ts).
       { path: '/admin/timeshare', label: 'التايم شير', icon: '🏨', requiredRole: 'cashier' },
       { path: '/admin/sales', label: 'لوحة المبيعات', icon: '📞', requiredRole: 'manager' },
       { path: '/admin/beach-live', label: 'لوحة الشاطئ الحيّة', icon: '🏖️', requiredRole: 'manager' },
+      { path: '/admin/menu', label: 'قائمة المطعم', icon: '🍽️', requiredRole: 'manager' },
+      { path: '/admin/tables', label: 'إدارة الطاولات', icon: '🪑', requiredRole: 'manager' },
       { path: '/admin/inventory', label: 'المخزون', icon: '📦', requiredRole: 'manager' },
       { path: '/admin/recipes', label: 'وصفات الأصناف', icon: '🧾', requiredRole: 'manager' },
       { path: '/admin/food-cost', label: 'تكلفة الطعام', icon: '📉', requiredRole: 'manager' },
       { path: '/admin/crm', label: 'إدارة العملاء', icon: '🤝', requiredRole: 'manager' },
       { path: '/admin/maintenance', label: 'الصيانة', icon: '🔧', requiredRole: 'supervisor' },
       { path: '/admin/leasing', label: 'الإيجارات', icon: '🏢', requiredRole: 'supervisor' },
+    ],
+  },
+  {
+    label: 'الكافيه',
+    items: [
+      { path: '/admin/cafe-menu', label: 'قائمة الكافيه', icon: '☕', requiredRole: 'manager' },
+      { path: '/admin/cafe-sales', label: 'مبيعات الكافيه', icon: '📊', requiredRole: 'manager' },
+      { path: '/admin/qr', label: 'QR Codes', icon: '📱', requiredRole: 'manager' },
     ],
   },
   {
@@ -165,7 +180,7 @@ function logout() {
       <!-- Topbar -->
       <header class="bg-white border-b border-stone-200 px-6 py-3 flex items-center justify-between flex-shrink-0">
         <div class="flex items-center gap-4">
-          <button @click="sidebarOpen = !sidebarOpen"
+          <button @click="toggleSidebar"
             class="p-1.5 rounded-lg hover:bg-gray-100 text-gray-600 transition-colors">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>

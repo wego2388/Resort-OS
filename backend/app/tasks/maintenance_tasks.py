@@ -4,6 +4,8 @@ from __future__ import annotations
 import logging
 
 from app.celery_app import celery_app
+from app.core.config import settings
+from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +61,8 @@ def notify_overdue_work_orders(self):
     """
     try:
         from app.core.database import SessionLocal          # noqa: PLC0415
-        from datetime import date                           # noqa: PLC0415
 
-        today = date.today()
+        today = local_today(settings.TIMEZONE)
 
         with SessionLocal() as db:
             try:

@@ -1,17 +1,14 @@
 """app/modules/hr/services.py — Business logic"""
 from __future__ import annotations
 
-import logging
-
 import calendar
 import json
+import logging
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy.orm import Session
-
-logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.modules.hr import crud
@@ -33,6 +30,11 @@ from app.resort_os.hr_engine import (
     standard_shift_hours,
 )
 from app.resort_os.timezone_utils import local_today
+
+if TYPE_CHECKING:
+    from app.modules.hr.schemas import LeaderboardEntry
+
+logger = logging.getLogger(__name__)
 
 
 def get_employee_or_404(db: Session, employee_id: int) -> Employee:
@@ -528,7 +530,7 @@ def generate_payslip_pdf(db: Session, run_id: int, employee_id: int) -> bytes:
         raise ValueError(f"كشف الرواتب {run_id} غير موجود")
 
     lines = crud.list_lines_for_run(db, run_id)
-    line = next((l for l in lines if l.employee_id == employee_id), None)
+    line = next((ln for ln in lines if ln.employee_id == employee_id), None)
     if not line:
         raise ValueError(f"الموظف {employee_id} غير موجود في هذا الكشف")
 
@@ -579,16 +581,16 @@ def generate_payroll_excel(db: Session, run_id: int) -> bytes:
     period_str = f"{run.period_year}-{run.period_month:02d}"
     rows = [
         [
-            _employee_label(l.employee_id),
-            float(l.basic_salary),
-            float(l.gross_salary),
-            float(l.employee_si),
-            float(l.monthly_tax),
-            float(l.penalty_deduction or 0),
-            float(l.late_penalty_deduction or 0),
-            float(l.net_salary),
+            _employee_label(ln.employee_id),
+            float(ln.basic_salary),
+            float(ln.gross_salary),
+            float(ln.employee_si),
+            float(ln.monthly_tax),
+            float(ln.penalty_deduction or 0),
+            float(ln.late_penalty_deduction or 0),
+            float(ln.net_salary),
         ]
-        for l in lines
+        for ln in lines
     ]
 
     return builder.excel(

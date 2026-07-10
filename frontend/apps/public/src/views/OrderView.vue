@@ -33,14 +33,16 @@ import LanguageSelector from '../components/LanguageSelector.vue'
 import { PUBLIC_BRANCH_ID } from '../constants/resort'
 
 const route = useRoute()
-const { locale } = useI18n()
+const { locale, t } = useI18n()
 
 const outlet   = computed(() => (route.params.outlet === 'cafe' ? 'cafe' : 'restaurant') as 'restaurant' | 'cafe')
 const tableId  = computed(() => route.params.tableId as string)
 const branchId = computed(() => parseInt((route.query.branch as string) ?? '') || PUBLIC_BRANCH_ID)
 const apiBase  = computed(() => `/api/v1/${outlet.value}/public`)
 
-const outletLabel = computed(() => (outlet.value === 'cafe' ? 'الكافيه' : 'المطعم'))
+const outletLabel = computed(() =>
+  outlet.value === 'cafe' ? t('qr.outlet_cafe') : t('qr.outlet_restaurant')
+)
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface ExtraOption  { id: number; name: string; name_ar: string | null; price_addition: number }
@@ -293,6 +295,18 @@ function statusUI(s: string) {
   return STATUS_UI[s] ?? { icon: '⏳', color: 'text-gray-500' }
 }
 
+function statusMessage(s: string): string {
+  const map: Record<string, string> = {
+    held:       t('qr.status_pending'),
+    open:       t('qr.status_pending'),
+    in_kitchen: t('qr.status_in_kitchen'),
+    served:     t('qr.status_served'),
+    paid:       t('qr.status_paid'),
+    cancelled:  t('qr.status_cancelled'),
+  }
+  return map[s] ?? orderMessage.value
+}
+
 onMounted(fetchMenu)
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -307,8 +321,8 @@ onUnmounted(() => {
     <div class="sticky top-0 z-30 bg-white border-b border-stone-200 px-4 py-3 shadow-sm">
       <div class="flex items-center justify-between">
         <div>
-          <div class="font-black text-gray-900 text-lg">قائمة {{ outletLabel }}</div>
-          <div class="text-xs text-gray-400">رقم {{ tableId }}</div>
+          <div class="font-black text-gray-900 text-lg">{{ t('qr.menu_title', { outlet: outletLabel }) }}</div>
+          <div class="text-xs text-gray-400">{{ t('qr.table_label', { tableId: tableId }) }}</div>
         </div>
 
         <div class="flex items-center gap-2">
@@ -334,20 +348,20 @@ onUnmounted(() => {
     <div v-if="orderPlaced" class="p-5">
       <div class="bg-white rounded-2xl p-8 text-center shadow-sm border border-stone-200 space-y-3">
         <div class="text-5xl">{{ statusUI(orderStatus).icon }}</div>
-        <div class="text-2xl font-black text-gray-900">تم استلام طلبك!</div>
-        <div class="text-sm text-gray-500">رقم الطلب: <span class="font-black">{{ orderNumber }}</span></div>
+        <div class="text-2xl font-black text-gray-900">{{ t('qr.order_received') }}</div>
+        <div class="text-sm text-gray-500">{{ t('qr.order_number', { number: orderNumber }) }}</div>
         <div :class="['text-lg font-bold', statusUI(orderStatus).color]">
-          {{ orderMessage }}
+          {{ statusMessage(orderStatus) }}
         </div>
         <div v-if="orderStatus !== 'served' && orderStatus !== 'paid'" class="text-xs text-gray-400 flex items-center justify-center gap-1">
           <div class="w-3 h-3 rounded-full border-2 border-blue-400 border-t-transparent animate-spin" />
-          يتم تحديث الحالة تلقائياً
+          {{ t('qr.auto_update') }}
         </div>
         <button
           @click="orderPlaced = false; orderId = null"
           class="mt-2 px-6 py-2.5 border-2 border-blue-700 text-blue-700 rounded-xl font-bold text-sm"
         >
-          🍽️ طلب جديد
+          {{ t('qr.new_order') }}
         </button>
       </div>
     </div>
@@ -358,7 +372,7 @@ onUnmounted(() => {
       <!-- Loading -->
       <div v-if="loading" class="flex flex-col items-center justify-center py-20 text-gray-400 gap-3">
         <div class="w-10 h-10 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
-        <p class="text-sm">جاري تحميل القائمة...</p>
+        <p class="text-sm">{{ t('qr.loading') }}</p>
       </div>
 
       <!-- Error -->
@@ -366,7 +380,7 @@ onUnmounted(() => {
         <div class="text-4xl mb-3">⚠️</div>
         <p class="text-gray-700 font-medium mb-4">{{ loadError }}</p>
         <button @click="fetchMenu" class="px-5 py-2.5 bg-blue-700 text-white rounded-xl font-bold text-sm">
-          إعادة المحاولة
+          {{ t('qr.retry') }}
         </button>
       </div>
 
@@ -378,7 +392,7 @@ onUnmounted(() => {
             @click="activeCategory = null"
             :class="['flex-shrink-0 px-4 py-1.5 rounded-full text-sm font-semibold transition-colors whitespace-nowrap',
               activeCategory === null ? 'bg-blue-700 text-white' : 'bg-white text-gray-600 border border-stone-200']"
-          >الكل</button>
+          >{{ t('qr.all_categories') }}</button>
           <button
             v-for="cat in categories" :key="cat.id"
             @click="activeCategory = cat.id"
@@ -400,7 +414,7 @@ onUnmounted(() => {
             <div class="flex-1 min-w-0">
               <div class="font-bold text-gray-900 text-sm">{{ itemDisplayName(item) }}</div>
               <div v-if="item.extra_groups.length" class="text-xs text-blue-500 mt-0.5">
-                متاح التخصيص
+                {{ t('qr.customizable') }}
               </div>
               <div class="text-blue-700 font-black mt-1.5">
                 {{ Number(item.price).toLocaleString('ar-EG') }} ج
@@ -423,7 +437,7 @@ onUnmounted(() => {
 
           <div v-if="filteredItems.length === 0" class="text-center py-16 text-gray-400">
             <div class="text-4xl mb-2">{{ outlet === 'cafe' ? '☕' : '🍽️' }}</div>
-            <p class="text-sm">لا توجد أصناف في هذه الفئة</p>
+            <p class="text-sm">{{ t('qr.no_items') }}</p>
           </div>
         </div>
       </template>
@@ -447,7 +461,7 @@ onUnmounted(() => {
               <div class="font-bold text-gray-800 mb-2 text-sm">
                 {{ extraGroupDisplayName(group) }}
                 <span class="text-xs text-gray-400 font-normal mr-1">
-                  ({{ group.min_select === 0 ? 'اختياري' : 'مطلوب' }}{{ group.max_select > 1 ? ` — اختر حتى ${group.max_select}` : '' }})
+                  ({{ group.min_select === 0 ? t('qr.optional') : t('qr.required') }}{{ group.max_select > 1 ? ` — ${t('qr.choose_up_to', { max: group.max_select })}` : '' }})
                 </span>
               </div>
               <div class="space-y-2">
@@ -461,18 +475,18 @@ onUnmounted(() => {
                 >
                   <span>{{ extraOptionDisplayName(opt) }}</span>
                   <span class="font-bold">
-                    {{ opt.price_addition > 0 ? `+${Number(opt.price_addition).toLocaleString('ar-EG')} ج` : 'مجاناً' }}
+                    {{ opt.price_addition > 0 ? `+${Number(opt.price_addition).toLocaleString('ar-EG')} ج` : t('qr.free') }}
                   </span>
                 </button>
               </div>
             </div>
 
             <div>
-              <label class="block font-bold text-gray-800 mb-1.5 text-sm">ملاحظات خاصة</label>
+              <label class="block font-bold text-gray-800 mb-1.5 text-sm">{{ t('qr.special_notes') }}</label>
               <textarea
                 v-model="tempNotes"
                 rows="2"
-                placeholder="مثال: بدون بصل — حار جداً..."
+                :placeholder="t('qr.notes_placeholder')"
                 class="w-full border border-stone-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 resize-none"
               />
             </div>
@@ -483,7 +497,7 @@ onUnmounted(() => {
               @click="confirmExtras"
               class="w-full py-4 bg-blue-700 text-white rounded-2xl font-black text-base"
             >
-              إضافة للطلب ✓
+              {{ t('qr.add_to_order') }}
             </button>
           </div>
         </div>
@@ -500,7 +514,7 @@ onUnmounted(() => {
         <div class="bg-white w-full rounded-t-3xl max-h-[85vh] flex flex-col" dir="rtl">
           <div class="flex items-center justify-between px-5 py-4 border-b border-stone-100">
             <h3 class="font-black text-gray-900 text-lg">
-              سلة الطلبات ({{ cartCount }})
+              {{ t('qr.cart_title', { count: cartCount }) }}
             </h3>
             <button @click="showCart = false" class="text-gray-400 text-2xl leading-none">×</button>
           </div>
@@ -544,7 +558,7 @@ onUnmounted(() => {
 
           <div class="px-5 py-4 border-t border-stone-100 space-y-3">
             <div class="flex justify-between items-center">
-              <span class="font-black text-gray-900 text-lg">الإجمالي</span>
+              <span class="font-black text-gray-900 text-lg">{{ t('qr.total') }}</span>
               <span class="font-black text-blue-700 text-xl">
                 {{ cartTotal.toLocaleString('ar-EG') }} ج
               </span>
@@ -559,7 +573,7 @@ onUnmounted(() => {
               :disabled="placing || cart.length === 0"
               class="w-full py-4 bg-blue-700 text-white rounded-2xl font-black text-lg disabled:opacity-50 active:scale-[0.98] transition-transform"
             >
-              {{ placing ? '⏳ جاري الإرسال...' : `🍳 إرسال الطلب إلى ${outletLabel}` }}
+              {{ placing ? t('qr.placing') : `🍳 ${t('qr.place_order', { outlet: outletLabel })}` }}
             </button>
           </div>
         </div>
@@ -584,7 +598,7 @@ onUnmounted(() => {
             class="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:scale-[0.98] transition-transform"
           >
             <span>🧑‍🍳</span>
-            <span>{{ sendingAlert === 'call_waiter' ? 'جارِ الإرسال...' : 'نادِ الجرسون' }}</span>
+            <span>{{ sendingAlert === 'call_waiter' ? t('qr.sending') : t('qr.call_waiter') }}</span>
           </button>
           <button
             @click="sendGuestAlert('request_bill')"
@@ -592,7 +606,7 @@ onUnmounted(() => {
             class="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:scale-[0.98] transition-transform"
           >
             <span>🧾</span>
-            <span>{{ sendingAlert === 'request_bill' ? 'جارِ الإرسال...' : 'هات الفاتورة' }}</span>
+            <span>{{ sendingAlert === 'request_bill' ? t('qr.sending') : t('qr.request_bill') }}</span>
           </button>
         </div>
       </div>

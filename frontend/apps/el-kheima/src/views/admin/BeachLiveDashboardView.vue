@@ -61,9 +61,8 @@ async function saveCreditLimit(c: B2BStatus) {
     toast.success(`تم تحديث حد الائتمان لـ ${c.hotel_name}`)
     editingCreditId.value = null
     await load()
-  } catch (e) {
-    console.error(e)
-    toast.error('فشل تحديث حد الائتمان')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'فشل تحديث حد الائتمان')
   } finally {
     savingCredit.value = false
   }
@@ -80,9 +79,8 @@ async function settleContract(c: B2BStatus) {
     await api.post(`/api/v1/beach/b2b-contracts/${c.contract_id}/settle`, {}, { params: { branch_id: branchId } })
     toast.success(`تم تسجيل تسوية رصيد ${c.hotel_name}`)
     await load()
-  } catch (e) {
-    console.error(e)
-    toast.error('فشل تسجيل التسوية')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'فشل تسجيل التسوية')
   } finally {
     settlingId.value = null
   }
@@ -97,6 +95,10 @@ interface EODReport {
 
 const loading = ref(true)
 const dash = ref<LiveDashboard | null>(null)
+// #24: polling interval كـ named constant — سهّل التعديل لاحقًا بدون
+// البحث عن الـ magic number 15000 في كل مكان
+const POLL_INTERVAL_MS = 15_000 // 15 ثانية — Beach dashboard حي
+
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // حالة الاتصال بالـ poll — نتّبع نفس نمط KitchenDisplayView/BarDisplayView
@@ -118,9 +120,8 @@ async function loadEod() {
   try {
     const r = await api.get('/api/v1/beach/eod-report', { params: { branch_id: branchId } })
     eod.value = r.data
-  } catch (e) {
-    console.error(e)
-    toast.error('فشل تحميل تقرير نهاية اليوم')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'فشل تحميل تقرير نهاية اليوم')
   } finally {
     eodLoading.value = false
   }
@@ -140,9 +141,8 @@ async function downloadEodPdf() {
       a.download = `beach-eod-${eod.value?.date ?? 'today'}.pdf`
       a.click()
     }
-  } catch (e) {
-    console.error(e)
-    toast.error('فشل تحميل ملف PDF')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'فشل تحميل ملف PDF')
   } finally {
     downloadingPdf.value = false
   }
@@ -161,8 +161,7 @@ async function load() {
     dash.value = r.data
     if (!isConnected.value) toast.success('تم استعادة الاتصال باللوحة الحية')
     isConnected.value = true
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
     // نطلّع toast مرة واحدة بس عند لحظة الانقطاع، مش كل 15 ثانية طول ما
     // الاتصال مقطوع — النقطة الحمراء في الهيدر كفاية كمؤشر مستمر.
     if (isConnected.value) toast.error('فشل تحديث اللوحة الحية — البيانات المعروضة قد تكون قديمة')
@@ -175,7 +174,7 @@ async function load() {
 onMounted(() => {
   load()
   loadEod()
-  pollTimer = setInterval(load, 15000) // تحديث كل 15 ثانية
+  pollTimer = setInterval(load, POLL_INTERVAL_MS)
 })
 onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 </script>

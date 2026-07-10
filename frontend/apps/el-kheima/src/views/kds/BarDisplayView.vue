@@ -23,9 +23,13 @@ let clockInterval: ReturnType<typeof setInterval>
 
 // نفس مبدأ KitchenDisplayView: WebSocket لحظي بإعادة اتصال تلقائية + polling
 // كل 15 ثانية كـ fallback احتياطي
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+const wsProtocol = (
+  window.location.protocol === 'https:' ||
+  document.querySelector('meta[name="x-forwarded-proto"]')?.getAttribute('content') === 'https'
+) ? 'wss:' : 'ws:'
+const wsBase = import.meta.env.VITE_WS_BASE ?? `${wsProtocol}//${window.location.host}`
 const { status: wsStatus, onMessage } = useResortWebSocket(
-  `${wsProtocol}//${location.host}/api/v1/restaurant/ws/kds/${branchId}`,
+  `${wsBase}/api/v1/restaurant/ws/kds/${branchId}`,
 )
 onMessage((data: any) => {
   if (data?.type === 'tickets_updated') fetchTickets()
@@ -95,6 +99,41 @@ async function advanceStatus(ticket: BarTicket) {
     }
   } catch (e: any) {
     toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة التذكرة — حاول تاني')
+  }
+}
+
+// ── تحصيل من شاشة البار (للكافيه بس) ──────────────────────────────────
+// الباريستا في الكافيه الصغيرة بيكون هو الكاشير — يقدر يحصّل مباشرة بعد ما
+// الطلب "جاهز" بدل ما يكمّل على شاشة CafePOS تانية. مش متاحة لطلبات المطعم
+// (module='restaurant') لأن المطبخ والكاشير دايمًا منفصلين هناك.
+const collectingOrderId = ref<number | null>(null)
+const collectMethod = ref<'cash' | 'card' | 'wallet'>('cash')
+const collectError  = ref('')
+
+function openCollect(ticket: BarTicket) {
+  if (ticket.module !== 'cafe') return
+  collectingOrderId.value = ticket.order_id
+  collectMethod.value = 'cash'
+  collectError.value  = ''
+}
+
+function cancelCollect() {
+  collectingOrderId.value = null
+  collectError.value = ''
+}
+
+async function confirmCollect() {
+  if (!collectingOrderId.value) return
+  try {
+    await api.patch(
+      `/api/v1/cafe/orders/${collectingOrderId.value}/status`,
+      { status: 'paid', payment_method: collectMethod.value },
+    )
+    toast.success('تم التحصيل ✓')
+    cancelCollect()
+    await fetchTickets()
+  } catch (e: any) {
+    collectError.value = e?.response?.data?.detail ?? 'تعذّر إتمام التحصيل'
   }
 }
 
@@ -231,12 +270,59 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
             >
               ✓ جاهز
             </button>
-            <div v-else class="w-full py-3 bg-cyan-800 rounded-xl text-sm font-bold text-center text-cyan-200">
-              ✓ تم التسليم
-            </div>
+            <template v-else>
+              <div class="w-full py-3 bg-cyan-800 rounded-xl text-sm font-bold text-center text-cyan-200">
+                ✓ تم التسليم
+              </div>
+              <!-- زر تحصيل — للكافيه بس (الباريستا = الكاشير في الكافيه الصغيرة) -->
+              <button
+                v-if="ticket.module === 'cafe'"
+                @click="openCollect(ticket)"
+                class="w-full py-2.5 bg-green-600 hover:bg-green-500 rounded-xl text-sm font-black transition-colors active:scale-95"
+              >
+                💳 تحصيل
+              </button>
+            </template>
           </div>
         </div>
       </div>
     </div>
   </div>
+
+  <!-- ── Collect Modal ── -->
+  <Teleport to="body">
+    <div v-if="collectingOrderId !== null" class="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" dir="rtl">
+      <div class="bg-slate-800 rounded-2xl border border-slate-600 p-6 w-full max-w-xs space-y-4">
+        <h3 class="text-lg font-black text-white text-center">💳 تحصيل الطلب</h3>
+
+        <!-- طريقة الدفع -->
+        <div class="grid grid-cols-3 gap-2">
+          <button
+            v-for="m in [{ val: 'cash', label: 'كاش' }, { val: 'card', label: 'كارت' }, { val: 'wallet', label: 'محفظة' }]"
+            :key="m.val"
+            @click="collectMethod = (m.val as 'cash' | 'card' | 'wallet')"
+            :class="[
+              'py-2 rounded-xl text-sm font-bold border-2 transition-all',
+              collectMethod === m.val
+                ? 'border-cyan-400 bg-cyan-900 text-cyan-200'
+                : 'border-slate-600 text-slate-300',
+            ]"
+          >{{ m.label }}</button>
+        </div>
+
+        <p v-if="collectError" class="text-xs text-red-400 text-center">{{ collectError }}</p>
+
+        <div class="flex gap-2">
+          <button
+            @click="cancelCollect"
+            class="flex-1 py-2.5 rounded-xl border border-slate-600 text-slate-300 text-sm font-bold"
+          >إلغاء</button>
+          <button
+            @click="confirmCollect"
+            class="flex-1 py-2.5 rounded-xl bg-green-600 hover:bg-green-500 text-white text-sm font-black"
+          >تأكيد التحصيل</button>
+        </div>
+      </div>
+    </div>
+  </Teleport>
 </template>

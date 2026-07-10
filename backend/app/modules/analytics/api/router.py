@@ -61,6 +61,8 @@ def revenue_summary(
         "cafe":       None,
         "pms":        None,
         "beach":      None,
+        "leasing":    None,
+        "timeshare":  None,
         "total":      Decimal("0"),
     }
 
@@ -105,13 +107,35 @@ def revenue_summary(
         ).all()
         return {"visits": len(rows), "total": sum(r.total_amount + r.vat_amount for r in rows)}
 
+    def _leasing(db: Session):
+        from app.modules.leasing.models import LeasePayment  # noqa: PLC0415
+        rows = db.query(LeasePayment).filter(
+            LeasePayment.paid_at.isnot(None),
+            LeasePayment.status == "paid",
+            LeasePayment.paid_at >= range_start,
+            LeasePayment.paid_at <= range_end,
+        ).all()
+        return {"payments": len(rows), "total": sum(p.amount for p in rows)}
+
+    def _timeshare(db: Session):
+        from app.modules.timeshare.models import TimeshareInstallment  # noqa: PLC0415
+        rows = db.query(TimeshareInstallment).filter(
+            TimeshareInstallment.paid_at.isnot(None),
+            TimeshareInstallment.status == "paid",
+            TimeshareInstallment.paid_at >= range_start,
+            TimeshareInstallment.paid_at <= range_end,
+        ).all()
+        return {"payments": len(rows), "total": sum(p.amount for p in rows)}
+
     result["restaurant"] = _safe_query(_restaurant, db)
     result["cafe"]       = _safe_query(_cafe, db)
     result["pms"]        = _safe_query(_pms, db)
     result["beach"]      = _safe_query(_beach, db)
+    result["leasing"]    = _safe_query(_leasing, db)
+    result["timeshare"]  = _safe_query(_timeshare, db)
 
     total = Decimal("0")
-    for key in ("restaurant", "cafe", "pms", "beach"):
+    for key in ("restaurant", "cafe", "pms", "beach", "leasing", "timeshare"):
         val = result[key]
         if val and "total" in val:
             total += Decimal(str(val["total"]))
@@ -506,9 +530,30 @@ def full_dashboard(
             BeachTransaction.branch_id == bid, BeachTransaction.voided_at.is_(None),
             BeachTransaction.tx_date >= dfrom, BeachTransaction.tx_date <= dto,
         ).all())
-        total = rest + cafe + pms_rev + beach_rev
-        return {"restaurant": float(rest), "cafe": float(cafe),
-                "pms": float(pms_rev), "beach": float(beach_rev), "total": float(total)}
+        # إيرادات الإيجار والتايم شير — paid_at مخزّن UTC، نفس نطاق range_start/end
+        try:
+            from app.modules.leasing.models import LeasePayment  # noqa: PLC0415
+            lease_rev = sum(p.amount for p in d.query(LeasePayment).filter(
+                LeasePayment.paid_at.isnot(None), LeasePayment.status == "paid",
+                LeasePayment.paid_at >= range_start, LeasePayment.paid_at <= range_end,
+            ).all())
+        except Exception:
+            lease_rev = Decimal("0")
+        try:
+            from app.modules.timeshare.models import TimeshareInstallment  # noqa: PLC0415
+            ts_rev = sum(p.amount for p in d.query(TimeshareInstallment).filter(
+                TimeshareInstallment.paid_at.isnot(None), TimeshareInstallment.status == "paid",
+                TimeshareInstallment.paid_at >= range_start, TimeshareInstallment.paid_at <= range_end,
+            ).all())
+        except Exception:
+            ts_rev = Decimal("0")
+        total = rest + cafe + pms_rev + beach_rev + lease_rev + ts_rev
+        return {
+            "restaurant": float(rest), "cafe": float(cafe),
+            "pms": float(pms_rev), "beach": float(beach_rev),
+            "leasing": float(lease_rev), "timeshare": float(ts_rev),
+            "total": float(total),
+        }
 
     return {
         "branch_id":   branch_id,

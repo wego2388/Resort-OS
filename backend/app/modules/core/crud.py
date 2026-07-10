@@ -347,6 +347,17 @@ def delete_user_permission(db: Session, permission: UserPermission) -> None:
 # ─────────────────────── AuditLog ────────────────────────────────────
 
 def create_audit_log(db: Session, data: AuditLogCreate) -> AuditLog:
+    if data.user_id is not None:
+        from app.core.kernel.models.user import User  # noqa: PLC0415
+        if not db.query(User).filter(User.id == data.user_id).first():
+            raise ValueError(f"المستخدم {data.user_id} غير موجود لتسجيل التدقيق")
+    if data.approved_by is not None:
+        from app.core.kernel.models.user import User as AuditUser  # noqa: PLC0415
+        if not db.query(AuditUser).filter(AuditUser.id == data.approved_by).first():
+            raise ValueError(f"المستخدم المعتمد {data.approved_by} غير موجود لتسجيل التدقيق")
+    if data.branch_id is not None:
+        if not db.query(Branch).filter(Branch.id == data.branch_id).first():
+            raise ValueError(f"الفرع {data.branch_id} غير موجود لتسجيل التدقيق")
     log = AuditLog(**data.model_dump())
     db.add(log)
     db.flush()

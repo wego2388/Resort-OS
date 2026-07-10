@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, JSON,
@@ -18,6 +19,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
+
+if TYPE_CHECKING:
+    from app.modules.inventory.models import Product
 
 
 class MenuCategory(Base, TimestampMixin):
@@ -195,7 +199,11 @@ class DiningTable(Base, TimestampMixin):
     capacity:     Mapped[int]        = mapped_column(Integer, default=4)
     status:       Mapped[str]        = mapped_column(String(30), default="available")  # available|occupied|reserved|out_of_service
     section:      Mapped[str | None] = mapped_column(String(50), nullable=True)
-    occupied_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)  # وقت آخر ما بقت occupied — لمعرفة مدة الجلوس
+    occupied_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # إحداثيات الشبكة — مطلوبة لخريطة الطاولات الحية (TablesMapView).
+    # NULL = لم يُحدَّد مكانها بعد (لا تظهر على الخريطة حتى يضعها المدير).
+    grid_row:     Mapped[int | None] = mapped_column(Integer, nullable=True)
+    grid_col:     Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Order(Base, TimestampMixin):
@@ -226,6 +234,9 @@ class Order(Base, TimestampMixin):
     client_local_id:         Mapped[str | None]  = mapped_column(String(60), nullable=True, unique=True)
     # UUID من IndexedDB عند الـ offline POS — يمنع تكرار الطلب لو الـ client
     # حاول الـ sync تاني بعد انقطاع اتصال جزئي (نفس الطلب يرجع بدل ما يتكرر)
+    payment_method:          Mapped[str | None]  = mapped_column(String(20), nullable=True)
+    # طريقة الدفع: cash | card | room | wallet — يتسجّل وقت status=paid.
+    # يُستخدم في تقارير الإيرادات وإغلاق الوردية (finance shift close).
 
     table: Mapped["DiningTable"] = relationship("DiningTable", lazy="select")
     items: Mapped[list["OrderItem"]] = relationship("OrderItem", back_populates="order", lazy="select", cascade="all, delete-orphan")

@@ -107,6 +107,11 @@ class OnlineBookingCreate(BaseModel):
     guest_email:    Optional[str] = Field(None, max_length=150)
     guests_count:   int = Field(1, ge=1)
     requested_date: date
+    # بيانات الإقامة — اختيارية للـ lead العادي، إلزامية لو مطلوب PMS booking تلقائي
+    check_in:       Optional[date] = None
+    check_out:      Optional[date] = None
+    room_type_id:   Optional[int]  = None
+    adults:         int = Field(1, ge=1)
     notes:          Optional[str] = None
     source:         str = Field("website", pattern=r"^(website|whatsapp|instagram|tiktok|other)$")
 
@@ -132,6 +137,11 @@ class OnlineBookingRead(BaseModel):
     source:         str
     confirmed_by:   Optional[int]
     confirmed_at:   Optional[datetime]
-    total_amount:   Decimal
-    created_at:     datetime
-    updated_at:     datetime
+    total_amount:    Decimal
+    check_in:        Optional[date] = None
+    check_out:       Optional[date] = None
+    room_type_id:    Optional[int]  = None
+    adults:          int = 1
+    pms_booking_id:  Optional[int]  = None
+    created_at:      datetime
+    updated_at:      datetime

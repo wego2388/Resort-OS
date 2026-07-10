@@ -15,6 +15,13 @@ class CafeCategoryCreate(BaseModel):
     sort_order: int = 0
 
 
+class CafeCategoryUpdate(BaseModel):
+    name:       Optional[str]  = Field(None, max_length=100)
+    name_ar:    Optional[str]  = None
+    sort_order: Optional[int]  = None
+    is_active:  Optional[bool] = None
+
+
 class CafeCategoryRead(CafeCategoryCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int; is_active: bool; created_at: datetime
@@ -192,6 +199,20 @@ class CafeItemRead(CafeItemCreate):
         return data
 
 
+class CafeTableCreate(BaseModel):
+    branch_id:    int
+    table_number: str = Field(..., max_length=20)
+    capacity:     int = Field(2, ge=1)
+    section:      Optional[str] = Field(None, max_length=50)
+
+
+class CafeTableUpdate(BaseModel):
+    table_number: Optional[str] = Field(None, max_length=20)
+    capacity:     Optional[int] = Field(None, ge=1)
+    section:      Optional[str] = Field(None, max_length=50)
+    status:       Optional[str] = None
+
+
 class CafeTableRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; branch_id: int; table_number: str; capacity: int; status: str; section: Optional[str]
@@ -207,12 +228,13 @@ class CafeOrderItemCreate(BaseModel):
 
 
 class CafeOrderCreate(BaseModel):
-    branch_id:  int
-    table_id:   Optional[int] = None
-    order_type: str = Field("dine_in", pattern=r"^(dine_in|takeaway|delivery)$")
-    notes:      Optional[str] = None
-    customer_id: Optional[int] = None
-    items:      list[CafeOrderItemCreate] = Field(..., min_length=1)
+    branch_id:      int
+    table_id:       Optional[int] = None
+    order_type:     str = Field("dine_in", pattern=r"^(dine_in|takeaway|delivery)$")
+    notes:          Optional[str] = None
+    customer_id:    Optional[int] = None
+    payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|wallet)$")
+    items:          list[CafeOrderItemCreate] = Field(..., min_length=1)
 
 
 class CafeOrderItemVoidRequest(BaseModel):
@@ -248,6 +270,10 @@ class CafeOrderRead(BaseModel):
     service_charge: Decimal; discount_amount: Decimal; total: Decimal
     refunded_amount: Decimal = Decimal("0")
     notes: Optional[str]; waiter_id: Optional[int]
+    payment_method: Optional[str] = None
+    # #7: guests_count كان مش موجود في CafeOrderRead — بعض الـ Views كانت
+    # بتفترضه موجود وتعرض "X غطاء" بشكل غلط. Optional=None يمنع أي crash.
+    guests_count: Optional[int] = None
     applied_discount_rule_id: Optional[int] = None
     customer_id: Optional[int] = None
     items: list[CafeOrderItemRead] = []
@@ -257,6 +283,8 @@ class CafeOrderRead(BaseModel):
 class CafeOrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
     charge_to_room_id: Optional[int] = None
+    payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|wallet|room)$")
+    # payment_method يتسجّل وقت إتمام الدفع (status=paid) — اختياري في باقي الحالات.
 
 
 # ── Public (Guest / Marketing site) Schemas — بدون auth ─────────────

@@ -84,6 +84,15 @@ class HubOnlineBooking(Base, TimestampMixin):
     confirmed_by:  Mapped[int | None]   = mapped_column(Integer, nullable=True)
     confirmed_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     total_amount:  Mapped[Decimal]      = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    # بيانات الإقامة — اختيارية، لو موجودة بيتنشأ PMS booking تلقائياً عند التأكيد
+    check_in:      Mapped[date | None]  = mapped_column(Date, nullable=True)
+    check_out:     Mapped[date | None]  = mapped_column(Date, nullable=True)
+    room_type_id:  Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    adults:        Mapped[int]          = mapped_column(Integer, default=1)
+    # الحجز الفعلي في PMS اللي اتنشأ عند التأكيد (None = لو الطلب بيانات ناقصة أو تأكيد يدوي)
+    pms_booking_id: Mapped[int | None]  = mapped_column(
+        ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True,
+    )
 
     offer: Mapped["HubOffer | None"] = relationship("HubOffer", back_populates="online_bookings")
 

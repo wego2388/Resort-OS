@@ -234,7 +234,7 @@ def approve_payroll_run(run_id: int, db: DbDep, user=Depends(get_current_active_
 @router.get("/hr/payroll-runs/{run_id}/lines",
             response_model=list[PayrollLineRead])
 def list_payroll_lines(run_id: int, db: DbDep, _=Depends(get_manager_user)):
-    return [PayrollLineRead.model_validate(l) for l in crud.list_lines_for_run(db, run_id)]
+    return [PayrollLineRead.model_validate(row) for row in crud.list_lines_for_run(db, run_id)]
 
 
 # ── Attendance ────────────────────────────────────────────────────────

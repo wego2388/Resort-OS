@@ -1,7 +1,7 @@
 """app/modules/hub/services.py — Business logic"""
 from __future__ import annotations
 
-from datetime import date
+import logging
 
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,8 @@ from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
 
 from app.modules.hub import crud
+
+logger = logging.getLogger(__name__)
 from app.modules.hub.models import HubOffer, HubOnlineBooking, HubPage
 from app.modules.hub.schemas import (
     HubOfferCreate, HubOfferUpdate,
@@ -113,11 +115,76 @@ def create_online_booking(db: Session, data: OnlineBookingCreate) -> HubOnlineBo
 
 
 def confirm_booking(db: Session, booking_id: int, confirmed_by: int) -> HubOnlineBooking:
+    """يُؤكِّد طلب الحجز الأونلاين.
+
+    لو الطلب عنده check_in + check_out + room_type_id:
+      → بيُنشئ PMS Booking تلقائياً ويحفظ pms_booking_id
+      → الريسبشن يشوف الحجز فوراً في شاشة الحجوزات
+    لو البيانات ناقصة:
+      → بيُؤكِّد فقط بدون PMS — المدير يعمل الحجز يدوياً لاحقاً
+    """
     booking = get_booking_or_404(db, booking_id)
     if booking.status != "pending":
         raise ValueError(f"الحجز في حالة '{booking.status}' ولا يمكن تأكيده")
+
+    pms_booking_id = None
+
+    # محاولة إنشاء PMS booking تلقائياً لو البيانات مكتملة
+    if booking.check_in and booking.check_out and booking.room_type_id:
+        try:
+            from app.modules.pms.services import create_booking as pms_create  # noqa: PLC0415
+            from app.modules.pms.schemas import BookingCreate                  # noqa: PLC0415
+
+            nights = (booking.check_out - booking.check_in).days
+            if nights > 0:
+                # ابحث عن غرفة متاحة من هذا النوع في الفترة المطلوبة
+                from app.modules.pms.crud import get_available_rooms  # noqa: PLC0415
+                available = get_available_rooms(
+                    db,
+                    branch_id=booking.branch_id,
+                    check_in=booking.check_in,
+                    check_out=booking.check_out,
+                    room_type_id=booking.room_type_id,
+                )
+                if not available:
+                    logger.warning(
+                        "Hub #%s: لا توجد غرف متاحة من النوع %s في الفترة %s→%s",
+                        booking.id, booking.room_type_id, booking.check_in, booking.check_out,
+                    )
+                else:
+                    pms_b = pms_create(db, BookingCreate(
+                        branch_id=booking.branch_id,
+                        guest_name=booking.guest_name,
+                        guest_phone=booking.guest_phone,
+                        guest_email=booking.guest_email,
+                        check_in=booking.check_in,
+                        check_out=booking.check_out,
+                        adults=booking.adults or 1,
+                        children=0,
+                        room_ids=[available[0].id],
+                        source="online",
+                        notes=f"حجز من الموقع — Hub #{booking.id}\n{booking.notes or ''}".strip(),
+                    ))
+                    pms_booking_id = pms_b.id
+                    logger.info(
+                        "Hub booking #%s → PMS booking #%s (room #%s) created automatically",
+                        booking.id, pms_b.id, available[0].id,
+                    )
+                pms_booking_id = pms_b.id
+                logger.info(
+                    "Hub booking #%s → PMS booking #%s created automatically",
+                    booking.id, pms_b.id,
+                )
+        except Exception:
+            logger.error(
+                "confirm_booking: فشل إنشاء PMS booking لـ Hub #%s — يحتاج إنشاء يدوي",
+                booking.id, exc_info=True,
+            )
+
     update = OnlineBookingUpdate(status="confirmed")
     obj = crud.update_online_booking(db, booking, update, confirmed_by=confirmed_by)
+    if pms_booking_id:
+        obj.pms_booking_id = pms_booking_id
     db.commit()
     db.refresh(obj)
     return obj

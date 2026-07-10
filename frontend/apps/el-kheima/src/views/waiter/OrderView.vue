@@ -141,10 +141,8 @@ async function sendToKitchen() {
     const data = await submitOrderOnlineOrQueue(branchId, payload)
 
     if (data === null) {
-      // Queued offline — /restaurant/orders/sync will create it once back
-      // online, but (known backend gap, not fixable from this view) the
-      // sync endpoint itself never performs the open→in_kitchen transition
-      // either, so a queued order still needs a manual nudge once synced.
+      // Queued offline — /restaurant/orders/sync سيُنشئ الطلب ويرسله مباشرةً
+      // للمطبخ (in_kitchen transition) أوتوماتيكياً بعد عودة الاتصال.
       successMsg.value = '📥 الطلب محفوظ محلياً — هيتبعت للمطبخ أول ما النت يرجع'
     } else {
       // Creating the order alone leaves it in status "open" — a

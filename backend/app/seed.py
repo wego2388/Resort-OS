@@ -11,8 +11,12 @@ from __future__ import annotations
 import sys
 from decimal import Decimal
 from datetime import date, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    from app.modules.timeshare.models import TimeshareContract
 
 from app.core.database import SessionLocal, Base, get_engine
 from app.core.config import settings

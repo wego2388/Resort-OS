@@ -1095,3 +1095,286 @@ class TestMenuItemRecipeHTTP:
             f"/api/v1/restaurant/menu/items/{item.id}/recipe-lines", json=payload, headers=manager_headers,
         )
         assert second.status_code == 400
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Missing Coverage — lines 116-577
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestRestaurantCategoryErrors:
+    """lines 116-122, 129-131 — category update/delete 404 paths"""
+
+    def test_update_category_not_found(self, client: TestClient, manager_headers):
+        resp = client.patch(
+            "/api/v1/restaurant/menu/categories/99999",
+            json={"name": "Ghost"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_delete_category_not_found(self, client: TestClient, manager_headers):
+        resp = client.delete(
+            "/api/v1/restaurant/menu/categories/99999",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+
+class TestRestaurantMenuItemErrors:
+    """lines 160, 170-172, 181 — menu item update/delete 404 + extra-group 404"""
+
+    def test_update_menu_item_not_found(self, client: TestClient, manager_headers):
+        resp = client.patch(
+            "/api/v1/restaurant/menu/items/99999",
+            json={"name": "Ghost"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_delete_menu_item_not_found(self, client: TestClient, manager_headers):
+        resp = client.delete(
+            "/api/v1/restaurant/menu/items/99999",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_add_extra_group_item_not_found(self, client: TestClient, manager_headers):
+        resp = client.post(
+            "/api/v1/restaurant/menu/items/99999/extra-groups",
+            json={"name": "Sides", "required": False, "max_choices": 1, "options": []},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_delete_extra_group_not_found(self, client: TestClient, manager_headers):
+        resp = client.delete(
+            "/api/v1/restaurant/menu/extra-groups/99999",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+
+class TestRestaurantTableErrors:
+    """lines 215-216, 238-239 — table update/delete 404"""
+
+    def test_update_table_not_found(self, client: TestClient, manager_headers):
+        resp = client.patch(
+            "/api/v1/restaurant/tables/99999",
+            json={"status": "available"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_delete_table_not_found(self, client: TestClient, manager_headers):
+        resp = client.delete(
+            "/api/v1/restaurant/tables/99999",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_delete_occupied_table_rejected(self, client: TestClient, db, manager_headers):
+        from app.modules.restaurant.models import DiningTable
+        branch = make_branch_committed(db)
+        table = DiningTable(
+            branch_id=branch.id, table_number="OCC-01", capacity=4, status="occupied"
+        )
+        db.add(table); db.commit()
+        resp = client.delete(
+            f"/api/v1/restaurant/tables/{table.id}",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 409
+
+
+class TestRestaurantOrderStatusEdgeCases:
+    """lines 245-285 — order status transitions edge cases"""
+
+    def _create_order(self, client, db, waiter_headers):
+        branch = make_branch_committed(db)
+        cat = make_category_committed(db, branch)
+        item = make_menu_item_committed(db, branch, cat)
+        resp = client.post(
+            f"/api/v1/restaurant/orders?branch_id={branch.id}",
+            json={"items": [{"menu_item_id": item.id, "quantity": 1, "notes": ""}]},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_update_order_status_not_found(self, client: TestClient, waiter_headers):
+        resp = client.patch(
+            "/api/v1/restaurant/orders/99999/status",
+            json={"status": "in_kitchen"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_invalid_order_status_transition(self, client: TestClient, db, waiter_headers):
+        order = self._create_order(client, db, waiter_headers)
+        # مش ممكن تروح من open لـ paid مباشرة
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "paid", "payment_method": "cash"},
+            headers=waiter_headers,
+        )
+        # waiter مش عنده صلاحية paid أو الـ transition غلط
+        assert resp.status_code in (400, 403)
+
+
+class TestRestaurantOrderItemsAddRemove:
+    """lines 320-361 — add items to existing order + error cases"""
+
+    def _full_order(self, client, db, waiter_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        cat = make_category_committed(db, branch)
+        item = make_menu_item_committed(db, branch, cat)
+        order_resp = client.post(
+            f"/api/v1/restaurant/orders?branch_id={branch.id}",
+            json={"items": [{"menu_item_id": item.id, "quantity": 1, "notes": ""}]},
+            headers=waiter_headers,
+        )
+        assert order_resp.status_code == 201
+        return order_resp.json(), item.id, branch
+
+    def test_add_items_to_open_order(self, client: TestClient, db, waiter_headers, cashier_headers):
+        order, item, branch = self._full_order(client, db, waiter_headers, cashier_headers)
+        resp = client.post(
+            f"/api/v1/restaurant/orders/{order['id']}/items",
+            json=[{"menu_item_id": item, "quantity": 2, "notes": "extra hot"}],
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert sum(i["quantity"] for i in data["items"]) == 3
+
+    def test_add_items_empty_list_rejected(self, client: TestClient, db, waiter_headers, cashier_headers):
+        order, item, branch = self._full_order(client, db, waiter_headers, cashier_headers)
+        resp = client.post(
+            f"/api/v1/restaurant/orders/{order['id']}/items",
+            json=[],
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_add_items_to_paid_order_rejected(self, client: TestClient, db, waiter_headers, cashier_headers):
+        order, item, branch = self._full_order(client, db, waiter_headers, cashier_headers)
+        # أرسل للمطبخ
+        client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "in_kitchen"},
+            headers=waiter_headers,
+        )
+        # ادفع
+        client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "served"},
+            headers=waiter_headers,
+        )
+        client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "paid", "payment_method": "cash"},
+            headers=cashier_headers,
+        )
+        # حاول تضيف صنف لطلب مدفوع
+        resp = client.post(
+            f"/api/v1/restaurant/orders/{order['id']}/items",
+            json=[{"menu_item_id": item, "quantity": 1, "notes": ""}],
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestRestaurantKDSHTTP:
+    """lines 401-402, 419-420 — KDS tickets list + status update"""
+
+    def test_list_kds_tickets_empty(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            f"/api/v1/restaurant/kitchen/tickets?branch_id={branch.id}",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        assert isinstance(resp.json(), list)
+
+    def test_list_kds_tickets_with_station_filter(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            f"/api/v1/restaurant/kitchen/tickets?branch_id={branch.id}&stations=hot_kitchen",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200
+
+    def test_update_kds_ticket_not_found(self, client: TestClient, manager_headers):
+        resp = client.patch(
+            "/api/v1/restaurant/kitchen/tickets/99999/status",
+            json={"status": "done"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+
+class TestRestaurantSearchOrders:
+    """lines 431-434 — order search filter"""
+
+    def test_list_orders_by_status(self, client: TestClient, db, waiter_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        cat = make_category_committed(db, branch)
+        item = make_menu_item_committed(db, branch, cat)
+        # إنشاء طلب
+        client.post(
+            f"/api/v1/restaurant/orders?branch_id={branch.id}",
+            json={"items": [{"menu_item_id": item.id, "quantity": 1, "notes": ""}]},
+            headers=waiter_headers,
+        )
+        resp = client.get(
+            f"/api/v1/restaurant/orders?branch_id={branch.id}&status=open",
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert all(o["status"] == "open" for o in data["items"])
+
+
+class TestRestaurantDiscountAndReceipt:
+    """lines 497-509, 536-537, 577 — discount + receipt error paths"""
+
+    def test_apply_discount_order_not_found(self, client: TestClient, cashier_headers):
+        resp = client.post(
+            "/api/v1/restaurant/orders/99999/discount",
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_download_receipt_not_found(self, client: TestClient, cashier_headers):
+        resp = client.get(
+            "/api/v1/restaurant/orders/99999/receipt",
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_get_order_not_found(self, client: TestClient, manager_headers):
+        resp = client.get(
+            "/api/v1/restaurant/orders/99999",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+
+def make_category_committed(db, branch):
+    from app.modules.restaurant.models import MenuCategory
+    import uuid
+    cat = MenuCategory(branch_id=branch.id, name=f"Cat-{uuid.uuid4().hex[:4]}", sort_order=0)
+    db.add(cat); db.commit(); return cat
+
+
+def make_menu_item_committed(db, branch, cat=None):
+    from app.modules.restaurant.models import MenuItem
+    import uuid
+    if cat is None:
+        cat = make_category_committed(db, branch)
+    item = MenuItem(
+        branch_id=branch.id, category_id=cat.id,
+        name=f"Item-{uuid.uuid4().hex[:4]}", name_ar="صنف",
+        price=Decimal("80.00"), is_available=True,
+    )
+    db.add(item); db.commit(); return item
