@@ -17,6 +17,7 @@ const activeModule = ref<'restaurant' | 'cafe'>('restaurant')
 interface Table {
   id: number; table_number: string; capacity: number
   status: string; section: string | null; branch_id?: number
+  grid_row?: number | null; grid_col?: number | null
 }
 
 // ── State ─────────────────────────────────────────────────────────────

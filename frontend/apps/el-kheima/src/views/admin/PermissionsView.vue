@@ -50,6 +50,7 @@ const loadingUsers = ref(true)
 const loadingUserPerms = ref(false)
 const savingKey = ref<string | null>(null)   // "resource:action" الجاري حفظه دلوقتي
 const loadError = ref('')
+const needs2FA  = ref(false)
 
 const roleLabels: Record<string, string> = {
   super_admin: 'مدير عام', admin: 'إداري', accountant: 'محاسب', hr_manager: 'مسؤول موارد بشرية',
@@ -100,11 +101,17 @@ function explicitRowFor(entry: CatalogEntry): ExplicitPermission | undefined {
 async function loadCatalog() {
   loadingCatalog.value = true
   loadError.value = ''
+  needs2FA.value = false
   try {
     const res = await api.get('/api/v1/permissions/catalog')
     catalog.value = res.data
-  } catch {
-    loadError.value = 'تعذّر تحميل كتالوج الصلاحيات — تأكد من اتصالك وحاول تاني'
+  } catch (e: any) {
+    const code = e?.response?.data?.detail?.code ?? e?.response?.data?.code
+    if (code === '2FA_REQUIRED') {
+      needs2FA.value = true
+    } else {
+      loadError.value = 'تعذّر تحميل كتالوج الصلاحيات — تأكد من اتصالك وحاول تاني'
+    }
   } finally {
     loadingCatalog.value = false
   }
@@ -116,8 +123,11 @@ async function loadUsers() {
   try {
     const res = await api.get('/api/v1/users', { params: { page: 1, size: 100 } })
     users.value = res.data.items
-  } catch {
-    loadError.value = 'تعذّر تحميل قائمة الموظفين — تأكد من اتصالك وحاول تاني'
+  } catch (e: any) {
+    const code = e?.response?.data?.detail?.code ?? e?.response?.data?.code
+    if (code !== '2FA_REQUIRED') {
+      loadError.value = 'تعذّر تحميل قائمة الموظفين — تأكد من اتصالك وحاول تاني'
+    }
   } finally {
     loadingUsers.value = false
   }
@@ -191,7 +201,23 @@ onMounted(() => {
       <button @click="loadCatalog(); loadUsers()" class="font-semibold underline hover:no-underline">إعادة المحاولة</button>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
+    <!-- 2FA required banner -->
+    <div v-if="needs2FA" class="bg-amber-50 border border-amber-300 rounded-xl p-5 text-center">
+      <div class="text-3xl mb-2">🔐</div>
+      <h2 class="font-black text-amber-800 text-lg mb-1">التحقق بخطوتين مطلوب</h2>
+      <p class="text-amber-700 text-sm mb-3">
+        حسابك يتطلب تفعيل التحقق بخطوتين (2FA) قبل الوصول لإدارة الصلاحيات.
+      </p>
+      <p class="text-amber-600 text-xs">
+        اذهب إلى <strong>الإعدادات ← الأمان</strong> وفعّل التحقق بخطوتين، ثم ارجع لهذه الصفحة.
+      </p>
+      <router-link
+        to="/settings"
+        class="inline-block mt-3 px-5 py-2 bg-amber-600 text-white rounded-lg font-bold text-sm hover:bg-amber-700 transition-colors"
+      >الذهاب للإعدادات</router-link>
+    </div>
+
+    <div v-if="!needs2FA" class="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
       <!-- قائمة الموظفين -->
       <AppCard title="الموظفون" padding="none">
         <div class="p-3 border-b border-stone-100">
