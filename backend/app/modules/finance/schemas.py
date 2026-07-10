@@ -251,6 +251,9 @@ class CashierShiftRead(BaseModel):
     # reconciliation_warning: رسالة للمدير لو الفرق كبير (None = كل شيء تمام)
     reconciliation_ok:      Optional[bool]    = None
     reconciliation_warning: Optional[str]     = None
+    # multi-currency close summary — مش None إلا لما في close مع عملات أجنبية
+    foreign_currency_summary: list["ForeignCurrencySummary"] = Field(default_factory=list)
+    counted_cash_egp:       Optional[Decimal] = None
 
 
 class ShiftEndReport(BaseModel):

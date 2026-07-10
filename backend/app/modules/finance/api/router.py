@@ -230,6 +230,15 @@ def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(
                 f"— يجب مراجعة المدير قبل مغادرة الوردية"
             )
         # else: reconciliation_ok = True — اتحدد فعلاً في السطر فوق (abs_var <= tolerance)
+
+    # multi-currency summary — نجيبها من الـ shift report
+    try:
+        report = services.build_shift_end_report(db, shift_id)
+        result.foreign_currency_summary = report.foreign_currency_summary or []
+        result.counted_cash_egp = report.counted_cash_egp
+    except Exception:
+        pass
+
     return result
 
 
