@@ -62,6 +62,9 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_b2b_contracts(db)
     _seed_beach_reservations(db)
     _seed_beach_locations(db)
+    _seed_inventory_categories(db)
+    _seed_hr_departments(db)
+    _seed_rate_plans(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -1787,6 +1790,106 @@ def _seed_crm(db: Session) -> None:
     db.flush()
     print(f"  ✓ CRM seeded ({len(sources)} lead sources, {len(customers) + 1} customers, "
           f"{len(leads)} leads, {len(call_note_specs)} call notes, {len(campaign_specs)} campaigns)")
+
+
+def _seed_inventory_categories(db: Session) -> None:
+    """فئات المخزون الأساسية."""
+    from app.modules.inventory.models import Category
+    from app.modules.core.models import Branch
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+
+    existing = db.query(Category).filter(Category.branch_id == branch.id).count()
+    if existing:
+        return
+
+    cats = [
+        ("Food Items",      "مواد غذائية"),
+        ("Beverages",       "مشروبات"),
+        ("Cleaning Supplies", "لوازم نظافة"),
+        ("Beach Supplies",  "لوازم شاطئ"),
+        ("Spare Parts",     "قطع غيار"),
+        ("Kitchen Supplies", "مستلزمات مطبخ"),
+        ("Furniture",       "أثاث ومفروشات"),
+        ("Raw Materials",   "مواد خام"),
+    ]
+    for name, name_ar in cats:
+        db.add(Category(name=name, name_ar=name_ar, branch_id=branch.id))
+    db.flush()
+    print(f"  ✓ Inventory categories seeded ({len(cats)})")
+
+
+def _seed_hr_departments(db: Session) -> None:
+    """الأقسام الوظيفية الأساسية."""
+    from app.modules.hr.models import Department
+    from app.modules.core.models import Branch
+    from decimal import Decimal
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+
+    existing = db.query(Department).filter(Department.branch_id == branch.id).count()
+    if existing:
+        return
+
+    depts = [
+        ("Management",     "الإدارة"),
+        ("Reception",      "الاستقبال"),
+        ("Restaurant",     "المطعم"),
+        ("Cafe",           "الكافيه"),
+        ("Beach",          "الشاطئ"),
+        ("Rooms",          "الغرف"),
+        ("Kitchen",        "المطبخ"),
+        ("Maintenance",    "الصيانة"),
+        ("Finance",        "الحسابات"),
+        ("Human Resources", "الموارد البشرية"),
+        ("Security",       "الأمن"),
+        ("Housekeeping",   "النظافة"),
+    ]
+    for name, name_ar in depts:
+        db.add(Department(name=name, name_ar=name_ar, branch_id=branch.id,
+                          budget_limit=Decimal("0")))
+    db.flush()
+    print(f"  ✓ HR departments seeded ({len(depts)})")
+
+
+def _seed_rate_plans(db: Session) -> None:
+    """خطط أسعار الغرف الأساسية."""
+    from app.modules.pms.models import RatePlan
+    from app.modules.core.models import Branch
+    from decimal import Decimal
+    from datetime import date
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+
+    existing = db.query(RatePlan).filter(RatePlan.branch_id == branch.id).count()
+    if existing:
+        return
+
+    year = date.today().year
+    plans = [
+        ("Standard Rate",        "السعر القياسي",            Decimal("1.0000"), 1),
+        ("Weekend Rate",         "سعر نهاية الأسبوع",         Decimal("1.2000"), 1),
+        ("Summer Season",        "موسم الصيف",               Decimal("1.4000"), 2),
+        ("Long Stay Discount",   "خصم الإقامة الطويلة",       Decimal("0.8500"), 7),
+    ]
+    for name, name_ar, multiplier, min_nights in plans:
+        db.add(RatePlan(
+            branch_id=branch.id,
+            name=name, name_ar=name_ar,
+            rate_multiplier=multiplier,
+            valid_from=date(year, 1, 1),
+            valid_until=date(year, 12, 31),
+            min_nights=min_nights,
+            is_active=True,
+        ))
+    db.flush()
+    print(f"  ✓ Rate plans seeded ({len(plans)})")
 
 
 # ── CLI Entry Point ───────────────────────────────────────────────────────────
