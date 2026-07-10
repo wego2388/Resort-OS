@@ -23,7 +23,9 @@ backend/uploads/
 # Real secrets live in backend/.env — never commit it.
 # backend/.env.example is a template with no real secrets and MUST stay tracked.
 backend/.env
+backend/.env.prod
 !backend/.env.example
+backend/coverage.json
 
 # ── Frontend: Node / pnpm monorepo ────────────────────────────────────────────
 **/node_modules/
@@ -44,6 +46,9 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+# ── Claude Code local state (agent worktrees, local settings) ─────────────────
+.claude/
 
 # ── Misc local artifacts ───────────────────────────────────────────────────────
 # scripts/start.sh|stop.sh|status.sh write real PID files + logs here (moved
