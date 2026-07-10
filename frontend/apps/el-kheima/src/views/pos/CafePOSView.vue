@@ -31,6 +31,12 @@ function handleOffline() {
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // ── Types ──────────────────────────────────────────────────────────────────────
+// ملاحظة (wagdy.md #3): الكاشير محتاج يعرف طاولة/موقع كل طلب جاري من غير ما
+// يفتح تفاصيله — نفس الحل الموجود في RestaurantPOSView.tableLabelFor بالظبط،
+// بس هنا لازم ناخد بالنا إن الشمسيات/البرجولات ممثّلة كصفوف cafe_tables
+// عادية برقم واصف زي "شمسية 12" (نفس آلية ترقيم الكافيه، مفيش موديل منفصل —
+// راجع CLAUDE.md §18)، فـ table_number ممكن يكون رقم صرف أو نص واصف كامل.
+interface CafeTable { id: number; table_number: string }
 interface Category { id: number; name: string; name_ar: string }
 interface Variant  { id: number; name: string; name_ar: string | null; price: number; is_available: boolean }
 interface MenuItem { id: number; name: string; name_ar: string; price: number; is_available: boolean; category_id: number; variants?: Variant[] }
@@ -40,6 +46,7 @@ interface CartItem {
 }
 
 // ── State ──────────────────────────────────────────────────────────────────────
+const tables             = ref<CafeTable[]>([])
 const categories         = ref<Category[]>([])
 const menuItems          = ref<MenuItem[]>([])
 const selectedCategoryId = ref<number | null>(null)
@@ -143,9 +150,14 @@ function openActiveOrders() {
   loadActiveOrders()
 }
 
-function cafeTableLabelFor(order: ActiveCafeOrder): string {
+function cafeTableLabelFor(order: { table_id: number | null }): string {
   if (!order.table_id) return 'Takeaway'
-  return `طاولة #${order.table_id}`
+  const t = tables.value.find(t => t.id === order.table_id)
+  if (!t) return `طاولة #${order.table_id}`
+  // رقم صرف (طاولة كافيه عادية) ياخد بادئة "طاولة" زي المطعم بالظبط، أما
+  // نص واصف كامل (شمسية/برجولة الشاطئ، زي "شمسية 12") فبيتعرض زي ما هو —
+  // "طاولة شمسية 12" تكرار مربك، مش تحسين.
+  return /^\d+$/.test(t.table_number) ? `طاولة ${t.table_number}` : t.table_number
 }
 
 function cafeStatusLabel(status: string): string {
@@ -325,7 +337,10 @@ async function loadData() {
   loading.value = true
   loadError.value = false
   try {
-    const [catsRes, itemsRes] = await Promise.all([
+    const [tablesRes, catsRes, itemsRes] = await Promise.all([
+      api.get(ENDPOINTS.cafe.tables, {
+        params: { branch_id: branchId },
+      }),
       api.get('/api/v1/cafe/categories', {
         params: { branch_id: branchId },
       }),
@@ -334,6 +349,7 @@ async function loadData() {
       }),
     ])
 
+    tables.value     = tablesRes.data.tables    ?? tablesRes.data.items    ?? tablesRes.data
     categories.value = catsRes.data.categories  ?? catsRes.data.items  ?? catsRes.data
     menuItems.value  = itemsRes.data.items       ?? itemsRes.data
 
@@ -903,7 +919,7 @@ onUnmounted(() => {
                 <div class="flex-1 min-w-0">
                   <div class="font-black text-gray-900">#{{ order.order_number }}</div>
                   <div class="text-xs text-gray-500 mt-0.5">
-                    {{ order.table_id ? `طاولة #${order.table_id}` : 'Takeaway' }}
+                    {{ cafeTableLabelFor(order) }}
                   </div>
                   <div class="text-base font-black text-amber-700 mt-1">{{ order.total }} ج</div>
                 </div>
