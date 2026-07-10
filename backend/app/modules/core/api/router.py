@@ -363,7 +363,7 @@ def list_audit_logs(
 )
 def list_users(
     db: DbDep,
-    _user=Depends(get_admin_user),
+    _user=Depends(get_manager_user),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
