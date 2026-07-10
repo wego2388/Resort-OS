@@ -80,7 +80,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    env_file: ./backend/.env
+    env_file: ./backend/.env.prod
     ports: ["127.0.0.1:8005:8005"]
     depends_on:
       db_postgres:
@@ -99,7 +99,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    env_file: ./backend/.env
+    env_file: ./backend/.env.prod
     command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
     # Overrides the backend image's inherited HEALTHCHECK (curl :8005/health) —
     # a worker never opens that port (it runs `celery worker`, not uvicorn), so
@@ -124,7 +124,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    env_file: ./backend/.env
+    env_file: ./backend/.env.prod
     command: ["celery", "-A", "app.celery_app", "beat", "--loglevel=info"]
     # Same inherited-HEALTHCHECK problem as celery_worker above, but beat has
     # no equivalent to `inspect ping` (it's a scheduler, not a worker) — the
