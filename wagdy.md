@@ -1,356 +1,203 @@
+# 📋 تقرير شامل — كل النواقص والمشاكل في resort-os
 
-### 🔴 مشاكل حرجة (Critical) — بتأثر على الإنتاج مباشرة
+## 🔴 مشاكل حرجة (بتأثر على تشغيل حقيقي يومي)
 
-1. ✅ تكرار Endpoints في restaurant router — تم التحقق (2026-07-09)
-الروتر الحالي نظيف تمامًا — مفيش أي تعريف مكرر.
-update_category وdelete_category معرّفين مرة واحدة بس.
+### 1. GuestAlerts موجودة في FieldLayout فقط — مش في BackOfficeLayout
+مدير/supervisor/accountant بيشتغلوا على /admin/* و/ops/* (BackOfficeLayout) — الجرس
+مش موجود هناك خالص. لو ضيف نادى الجرسون أو طلب الفاتورة، التنبيه هيوصل للنادل على ال
+شاشة الميدانية بس، مش للمدير أو المشرف اللي ممكن يكون هو الأقرب.
 
-2. ✅ ENDPOINTS.cafe في الـ frontend — اكتمل (2026-07-09)
-cafe و restaurant و analytics كلها مكتملة في endpoints.ts.
+### 2. إغلاق الوردية بدون reconciliation تلقائي
+الكاشير يقدر يغلق الوردية وإجمالي المبيعات المسجّلة يختلف عن النقدية الفعلية بدون أي
+تحقق أو تحذير. shift_close مش بيقارن expected_cash بـtotal_sales قبل الإغلاق ويرفض ل
+و الفرق كبير.
 
-3. RestaurantPOSView — إضافة أصناف لطلب مفتوح غير ممكنة (wagdy.md #8)
-الـ backend عنده endpoint لإنشاء طلب جديد بس، مفيش
-POST /restaurant/orders/{id}/items لإضافة صنف لطلب موجود. الكاشير لو الزبون طلب
-حاجة تانية بعد ما الطلب اتبعت — لازم يلغي الطلب الأول ويعمل جديد. ده خسارة UX وو
-قت.
+### 3. CafePOSView لا يعرض طاولة الطلب الجاري
+شاشة الكافيه مفيهاش عمود "الطاولة" في قائمة الطلبات النشطة — الكاشير مش عارف الطلب د
+ه لطاولة كام بدون ما يفتح التفاصيل. RestaurantPOS عنده tableLabelFor() صريح، الكافيه
+لأ.
 
-4. useOfflineQueue في CafePOSView — مش متزامن مع restaurant sync
-الـ CafePOSView عمل offline queue محلي خاص بيه لأن useOfflineQueue بيبعت لـ
-/restaurant/orders. لكن لو تم تحديث useOfflineQueue في الـ core، الـ cafe queue
-هيفضل قديم — code duplication خطير.
+### 4. OrderView (QR) — الضيف مش لاقي حالة الطلب بعد تقديمه
+بعد تقديم الطلب، الضيف بيشوف polling للحالة بس. لو الـ polling فشل (انقطع النت)، الض
+يف مش عارف إيه اللي حصل — مفيش fallback message واضحة أو زر "إعادة التحقق يدويًا".
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### 5. زرار الخصم غايب من RestaurantPOSView
+الزرار موجود بس في OrderDetailModal (اللي بيفتح من الطلبات الجارية). الكاشير اللي بي
+بني طلب جديد مباشرة على الشاشة مش لاقي طريقة يطبّق خصم عليه قبل ما يبعته للمطبخ. كل ا
+لـ endpoints والـ business logic موجودة.
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 🟠 مشاكل عالية (High)
 
-5. ✅ ENDPOINTS.restaurant و ENDPOINTS.cafe — اكتملت (2026-07-09)
-كل المفاتيح المفقودة اتضافت في endpoints.ts.
+## 🟠 نواقص وظيفية عالية
 
-6. ✅ _guest_status_message() في restaurant — اتصلحت (2026-07-09)
-الدالة دلوقتي بتبعت مفاتيح i18n ("status_in_kitchen" إلخ) مش نصوص عربية.
-OrderView.vue يترجمها بـ statusMessage().
+### 6. InventoryView — مفيش إضافة/تعديل/خصم مخزون من الواجهة
+الشاشة عرض فقط (read-only تمامًا). المدير مش يقدر يضيف منتج جديد، يعدّل سعر التكلفة، ي
+سجّل استلام بضاعة (Purchase Order)، أو يعمل خصم يدوي. كل ده عنده endpoints كاملة في ا
+لباك إند (/inventory/products, /inventory/purchase-orders).
 
-7. CafeOrderRead — guests_count مش موجود لكن بعض الـ Views بتفترضه
-في OrderDetailModal عملنا guard، لكن في CafePOSView الـ active orders section بت
-عرض "X غطاء" لطلبات الكافيه اللي مفيهاش هذا الحقل. لازم نضيف
-guests_count: Optional[int] = None لـ CafeOrderRead على الأقل كـ None.
+### 7. MaintenanceView — مفيش إشعار واتساب عند إنشاء أمر صيانة عاجل
+الـ Celery tasks موجودة بس مش مربوطة بأي trigger من الواجهة. لو فيه تكييف اتعطّل وموظ
+ف سجّل أمر صيانة "urgent"، محدش بيتبعتله واتساب تلقائيًا.
 
-8. restaurant/api/router.py — broadcast بعد paid مش بيبعت لـ tables WS
-python
-# update_order_status — سطر ~340
-if data.status in ("in_kitchen", "served", "paid", "cancelled") and order.table_id:
-    await restaurant_manager.broadcast(f"tables-{order.branch_id}", {...})
+### 8. HRView — تاب الحضور لا يدعم تعديل سجل حضور يدوي
+المدير مش يقدر يصحّح بصمة خاطئة (موظف نسي يسجّل انصراف مثلاً). الباك إند عنده
+PATCH /hr/attendance/{id} لكن مفيش زرار "تعديل" في الواجهة.
 
-لكن لما الطلب يتدفع من OrderDetailModal مباشرة، الـ broadcast بيحصل — لكن لما يت
-دفع من BarDisplayView (confirmCollect اللي عملناه) مش بيحصل broadcast عشان بيعمل
-PATCH لـ /cafe/orders/{id}/status اللي مفيهوش broadcast للطاولات.
+### 9. BookingsView — مفيش حجز متعدد الغرف من الواجهة
+الـ schema (room_ids: list[int]) بيدعم حجز غرف متعددة، لكن form الحجز بيديك dropdown
+لغرفة واحدة بس. فندق محتاج يحجز جناح + غرفة قريبة مش يقدر.
 
-9. ✅ CafePOSView — pollTimer — تم التحقق (2026-07-09)
-الـ onUnmounted بيعمل clearInterval(pollTimer) بالفعل — مفيش مشكلة.
+### 10. TimeshareView — مفيش شاشة "نقل وحدة" (Unit Transfer)
+لو عميل أحب يغيّر وحدته (بتحويل/ترقية)، لازم مدير يدخل backend مباشرة. مفيش workflow
+من الواجهة لنقل عقد من وحدة لوحدة تانية.
 
-10. ✅ MenuView.vue و CafeMenuView.vue — تحذير صريح لو name_ar فاضي (2026-07-09)
-- **الـ input** لحقل الاسم العربي بيتحول للون amber لو فاضي مع رسالة تحذير أسفله.
-- **عند الحفظ** في `saveItem()`: لو المدير حاول يحفظ بدون اسم عربي، بيطلع confirm
-  dialog واضح "الضيوف العرب هيشوفوا الاسم الإنجليزي — تريد المتابعة؟" قبل ما يكمل.
-- الإصلاح ده طُبّق على **MenuView.vue** (مطعم) و**CafeMenuView.vue** (كافيه).
+### 11. CRMView — Opportunities/Activities عرض فقط، مفيش إنشاء
+تاب "الليدز" شغال كامل بإنشاء/تعديل، لكن Opportunities وActivities (اللي ليهم APIs ك
+املة في الباك إند) مش ظاهرين في الواجهة خالص.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### 12. SalesDashboardView — مفيش تصدير تقارير
+لوحة مبيعات التايم شير فيها بيانات مهمة (عملاء متأخرين، زيارات قادمة) بس مفيش export
+لـ Excel/CSV. مدير المبيعات عايز يطبع قائمة المكالمات اليومية.
 
+### 13. BeachPOSView — Offline queue محلي منفصل (code duplication)
+الملف نفسه بيعمل queue محلي بدل ما يستخدم useOfflineQueue('beach') من الـ core. لو ا
+لـ core اتحدث، الشاطئ هيفضل قديم — نفس المشكلة اللي اتصلحت في الكافيه.
 
-### 🟡 نواقص وظيفية (Medium)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-11. ✅ ENDPOINTS analytics — اكتملت (2026-07-09)
-تم إضافة جميع الـ analytics endpoints الموجودة فعلاً في الـ backend:
-dashboard, occupancy, hr, maintenance, crm, inventory, utilities, energy,
-reviews, reviewInsights, reviewSubmit, reviewSurveyToken,
-reviewTimeshareSurveyToken, reviewTimeshareSurveySend.
-ملاحظة: /analytics/hourly-stats و /analytics/revenue-by-source غير موجودين
-في الـ backend فعلاً — لم تُضف.
 
-12. RestaurantPOSView — البحث في الأصناف غير موجود
-CafeMenuView عندها search (عملناه)، لكن RestaurantPOSView و OrderView مفيهاش. في
-مطعم عنده 50+ صنف، الكاشير بيضطر يتصفح category by category.
+## 🟡 نواقص وظيفية متوسطة
 
-13. ✅ CafePOSView — held_orders زر "استعادة طلب معلّق" — اتعمل (2026-07-09)
-تم إضافة زر "⏸ الطلبات المعلّقة" في شريط الأزرار العلوي.
-Modal بيجيب الطلبات المعلّقة من ENDPOINTS.cafe.heldOrders ويتيح إرسالها
-للبار مباشرةً (held → open → in_kitchen) بنفس منطق OrderDetailModal.resumeAndSend.
+### 14. EInvoiceView — بدون validation لبيانات الفاتورة
+نموذج إنشاء فاتورة ETA بيقبل receiver_rin فاضي أو بأي شكل. الباك إند بيرجع 400، لكن
+الواجهة مش بتتحقق من format الـ Tax Registration Number قبل الإرسال.
 
-14. finance/api/router.py — shift close مفيش reconciliation تلقائي
-الـ shift close بيقفل الوردية، لكن مفيش تحقق تلقائي إن مجموع المبيعات المسجّلة يس
-اوي المدفوعات الفعلية قبل الإغلاق — خطر مالي.
+### 15. RecipesView — مفيش ربط وصفة بالكافيه من نفس الشاشة
+مدير الكافيه لازم يروح /admin/cafe-menu ثم يلاقي الصنف ثم يضغط "وصفة" — مفيش تبويب ي
+جمع وصفات المطعم والكافيه مع بعض في شاشة الوصفات.
 
-15. باب أمان: public endpoints مفيش rate-limit فعلي موثّق
-python
-# main.py
-app.add_middleware(RateLimitMiddleware)
+### 16. FoodCostReportView — مفيش export
+التقرير بيعرض بيانات مهمة (تكلفة مقارنة بإيراد لكل صنف) بس مفيش زرار تصدير Excel/PDF
+للاجتماعات.
 
-الـ RateLimitMiddleware موجود لكن مش واضح إنه بيطبّق على /public/ endpoints خصوصاً
-— محتاج فحص.
+### 17. DashboardView — مفيش كارت "تنبيهات عاجلة" مجمّعة
+اللوحة بتعرض أرقام KPIs عامة، لكن مفيش section يجمع: مخزون منخفض + صيانة متأخرة + أق
+ساط متأخرة + شيكات مرتجعة. المدير لازم يفتح 4 شاشات منفصلة عشان يعرف فيه مشكلة.
 
-16. ✅ KitchenDisplayView — WS URL — تم التحقق (2026-07-09)
-الملف بيستخدم location.protocol و location.host بشكل صحيح — مفيش مشكلة.
+### 18. AnalyticsView — energy/utilities لا يدعم تصدير أو تحليل trend
+عرض فقط. في منتجعات حقيقية، تكلفة الكهرباء/المياه بتتحلّل trend شهري ومقارنة بالسنة ا
+لسابقة — مش بس لقطة شهر واحد.
 
-17. RestaurantPOSView — مفيش pagination في active orders
-typescript
-api.get('/api/v1/restaurant/orders', { params: { branch_id: branchId, size: 100 } })
+### 19. QRGeneratorView — مش بيدعم الشاطئ (beach locations)
+الـ QR Generator بيولّد QR للمطعم والكافيه فقط، بدون قسم للشمسيات/البرجولات (beach
+locations). الضيف على الشاطئ لازم يطلب يدويًا أو بـ checkin flow منفصل.
 
-Hard-coded size: 100 — لو في فرع busy عنده أكتر من 100 طلب جاري، هيتقطع.
+### 20. OrderView (public) — مفيش دعم variants للضيف
+الضيف عند طلبه من QR لا يرى الـ variants (صغير/كبير) — اللي ظهروا في POS الداخلي وال
+وصفات بس. الـ public menu endpoint لازم يرجعهم ويعرضهم.
 
-18. ✅ CafeMenuView search — بتفلتر variants دلوقتي (2026-07-09)
-الـ filteredItems بتبحث في item.name, item.name_ar, وكل variant.name/variant.name_ar.
-مثلاً "كبير" دلوقتي هيلاقي "كابتشينو كبير".
+### 21. BackOfficeLayout — مفيش breadcrumb navigation
+كل الشاشات عندها title بس، مفيش مسار تنقل. لما مدير يكون في /admin/finance تحت تاب "
+تسوية بنكية" مش واضح مكانه في البنية.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 
-### 🟢 تحسينات (Low)
+## 🟢 مشاكل UX/عرض (منخفضة الأولوية لكن مؤثرة)
 
-19. DashboardView — مفيش refresh interval تلقائي
-اللوحة بتتحمّل مرة عند الـ mount وخلاص. في بيئة مطعم/فندق، المدير المفروض يشوف أر
-قام محدّثة كل دقيقة بدون ما يضغط "تحديث" يدوياً.
+### 22. SettingsView — مفيش documentation للـ keys
+قائمة الإعدادات بتعرض keys زي whatsapp_api_url, surge_multiplier بدون أي شرح لكل
+key. مدير مش هندسي هيتوه.
 
-20. TablesMapView — drag & drop مفيش undo
-لو المدير سحب طاولة غلط، مفيش طريقة يرجع — لازم يسحبها تاني يدوياً.
+### 23. RoomsView — مفيش real-time update
+الغرف بتتحمّل مرة عند mount وتاني مش بيتحدثوا. لو كاشير تاني سجّل دخول ضيف، المدير لاز
+م يعمل refresh يدوي عشان يشوف التغيير.
 
-21. ✅ OrderDetailModal — عرض payment_method للطلبات المدفوعة (2026-07-09)
-تم إضافة صف "طريقة الدفع" في قسم الإجماليات يظهر فقط لو status == 'paid'
-وfiled payment_method موجود — مع أيقونات (💵 كاش / 💳 كارت / 🛏️ غرفة / 👛 محفظة).
+### 24. TimeshareView calendar — مفيش طباعة/export للكالندر
+الكالندر السنوي مفيهوش أي إمكانية طباعة أو تصدير PDF — مهم جداً لعروض المبيعات.
 
-22. QRGeneratorView — الـ downloadQr بيعمل fetch من api.qrserver.com
-لو النت قاطع، التحميل هيفشل. ممكن نعمل download من الـ canvas المحلي مباشرة.
+### 25. HRView — مفيش bulk payroll approval
+لو مدير عايز يعتمد رواتب كل الموظفين دفعة واحدة، لازم يفتح كل كشف لوحده ويعتمده. مفي
+ش "اعتماد الكل" checkbox.
 
-23. ✅ BackOfficeLayout — sidebar state في localStorage (2026-07-09)
-الـ sidebarOpen دلوقتي بيتحفظ في localStorage['resort-os-sidebar-open'].
-toggleSidebar() بتحدّث الـ ref والـ storage في نفس الوقت — حالة الـ sidebar
-بتتذكّر بين الجلسات.
+### 26. POS screens — مفيش keyboard shortcuts
+POS الحقيقية (Foodics, Square) كلهم بيدعموا shortcuts للباركود/بحث سريع. الكاشير بيض
+طر ينقر بكثافة.
 
-24. BeachLiveDashboardView — polling interval 15s غير قابل للضبط
-hard-coded في 3 أماكن — لو الإنتاج محتاج 30s أو 5s، لازم تعديل في الكود.
+### 27. OrderDetailModal — مفيش تاريخ/وقت الطلب
+Modal الطلب بيعرض حالة وأصناف، بس مفيش "وقت تقديم الطلب" — مهم للـ kitchen timing وح
+ل نزاعات الزبائن.
 
-25. CafeSalesDashboardView — مفيش export لـ Excel/CSV
-SalesDashboardView للتايم شير عندها export، لكن الكافيه لأ.
+### 28. LeasingView — مفيش تذكير تلقائي قابل للتهيئة
+العقود اللي بتنتهي خلال 30 يوم مش بتظهر تلقائياً كـ warning في الشاشة — المدير بيكتشف
+ها بالصدفة.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### 29. الـ sidebar مش بيعرض الـ active tab الحالي بوضوح في mobile
+على شاشات صغيرة (تابلت)، لما الـ sidebar بيتضغط، مفيش breadcrumb أو tab indicator يف
+ضّل ظاهر.
 
+### 30. auth/service.py — password reset flow غير مكتمل من الواجهة
+الباك إند عنده POST /auth/reset-password/request وPOST /auth/reset-password/confirm
+— مفيش أي صفحة في الفرونت إند تستخدمهم. لو موظف نسى باسورده، لازم يتصل بـ super_
+admin.
 
-### 📋 ملخص الأولويات
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-| # | المشكلة | الخطورة | الحالة |
-|---|---------|---------|--------|
-| 1 | تكرار endpoints في router | 🔴 Critical | ✅ لم يكن موجوداً |
-| 2 | ENDPOINTS ناقص | 🔴 Critical | ✅ اكتمل |
-| 3 | إضافة أصناف لطلب موجود | 🔴 Critical | ⏳ لسه (backend + frontend كبير) |
-| 4 | offline queue تكرار | 🔴 Critical | ⏳ لسه (refactor كبير) |
-| 5 | ENDPOINTS مفاتيح مفقودة | 🟠 High | ✅ اكتمل |
-| 6 | status message مش i18n | 🟠 High | ✅ اتصلح |
-| 7 | guests_count في CafeOrderRead | 🟠 High | ⏳ لسه (backend schema) |
-| 8 | broadcast بعد collect في Bar | 🟠 High | ⏳ لسه |
-| 9 | pollTimer unmount | 🟠 High | ✅ كان صح |
-| 11 | ENDPOINTS analytics | 🟡 Medium | ✅ اكتمل |
-| 13 | held orders في CafePOSView | 🟡 Medium | ✅ اتعمل |
-| 16 | KitchenDisplayView WS URL | 🟡 Medium | ✅ كان صح |
-| 18 | CafeMenuView search variants | 🟡 Medium | ✅ اتصلح |
-| 21 | عرض payment_method في modal | 🟢 Low | ✅ اتعمل |
-| 23 | sidebar state في localStorage | 🟢 Low | ✅ اتعمل |
 
+## 🏗️ ديون تقنية (Technical Debt)
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+### 31. localStorage token بدلاً من httpOnly cookie
+الـ JWT محفوظ في localStorage — عرضة لـ XSS. تحويله لـ httpOnly cookie بيحتاج تعديل
+في الباك إند والفرونت إند معاً.
 
-## 🛠️ إصلاحات Kiro — 2026-07-09
+### 32. مزامنة النسخ الاحتياطية خارج السيرفر
+النسخ الاحتياطية محلية على نفس السيرفر. لو السيرفر نفسه اتضرب، بيانات المنتجع ضاعت ك
+لها.
 
-### ✅ مشاكل أُصلحت (كانت مبلّغ عنها لكن اتأكد إنها تُصلح أو تم الإصلاح):
+### 33. Celery tasks coverage منخفضة جداً (15-30%)
+المهام اللي بتشتغل كل يوم تلقائياً (تذكيرات الأقساط، night audit، تجميد حجوزات المتأخ
+رين) مغطاة بشكل ضعيف — أي bug فيها هيظهر في production بس.
 
-**#3 — إضافة أصناف لطلب مفتوح** ✅ مُصلحة
-`POST /restaurant/orders/{order_id}/items` موجود منذ جلسة سابقة.
+### 34. auth/service.py coverage 49% فقط
+Password reset, OAuth, 2FA edge cases كلهم غير مختبرين. ثغرات محتملة في أكتر نقطة حس
+اسة في النظام.
 
-**#4 — offline queue تكرار cafe/restaurant** ✅ مُصلحة
-`CafePOSView` دلوقتي بيستخدم `useOfflineQueue('cafe')` من core package.
+### 35. تفعيل LOGIN_2FA_ENFORCED معلّق
+الـ 2FA enrollment-only حالياً (الموظف يقدر يفعّله، بس مش إجباري وقت الدخول حتى لو فعّل
+ه). القدرة الباك إندية جاهزة بالكامل، محتاجة فقط تعديل بسيط في شاشة الدخول.
 
-**#7 — guests_count في CafeOrderRead** ✅ مُصلحة
-`guests_count: Optional[int] = None` موجود في schema.
+### 36. PMS coverage 88% (تحت 91%+ للباقي)
+services.py غير مكتمل. موديول الفندق مهم ومش متغطّى كفاية.
 
-**#8 — broadcast بعد collect في Bar** ✅ مُصلحة
-`PATCH /cafe/orders/{id}/status` بيبعت broadcast لـ `tables-{branch_id}` عند `paid/cancelled/served`.
+### 37. beach_offline_queue code duplication مع restaurant
+شرحنا في رقم 13 — ده ديون تقني حقيقي بيعرّض الـ beach لأي تغيير في الـ core.
 
-### ✅ إصلاحات جديدة اتعملت في هذه الجلسة (commit 7582258):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-**Timezone fixes — أرقام الطلبات وتواريخ القيود:**
-- `cafe/crud.py` — CAF-YYYYMMDD order numbers بتوقيت القاهرة (مش UTC)
-- `inventory/crud.py` — PO-YYYYMMDD purchase orders بتوقيت القاهرة
-- `inventory/services.py` — COGS journal entry_date بتوقيت القاهرة
-- `hub/crud.py` + `hub/services.py` — فلتر صلاحية العروض بتوقيت القاهرة
-- `crm/services.py` — Celery task للأنشطة المتأخرة بتوقيت القاهرة
-- `crm/crud.py` — last_stay عند checkout بتوقيت القاهرة
 
-**Frontend:**
-- `RestaurantPOSView` — pagination كامل للطلبات الجارية (loop حتى ما تبقاش صفحات، بدل size:100 hard-coded)
-- `TablesMapView` — إصلاح `v-if as table` syntax → `v-for` singleton (TS-safe)
-- `TablesMapView` — إصلاح `v-else-if` بدون adjacent `v-if` (كان بيمنع الـ build)
-- `vite-env.d.ts` — ملف جديد: يعرّف `window.QRCode` وـ `import.meta.env`
-- `tsconfig.json` — إضافة `types: ["vite/client"]`
+## 🆕 ميزات مقترحة (تفكير مني — مش موجودة ومش في الخطة الحالية)
 
-**النتيجة:** 1498 اختبار ناجح، `pnpm -r build` نظيف بدون أي errors.
+### أ. Folio PDF للضيف (Checkout Statement)
+عند checkout الضيف، إرسال/طباعة statement كامل (غرفة + مطعم + كافيه + شاطئ) في ملف
+PDF واحد. الباك إند عنده كل البيانات (Folio charges) بس مفيش endpoint يولّد PDF للفول
+يو الكامل.
 
-### ⏳ مشاكل لم تُصلح بعد (تحتاج قرار أو وقت أكبر):
+### ب. Dashboard notifications system داخلي
+الإشعارات (/api/v1/notifications) موجودة في الباك إند والـ core، بس BackOfficeLayout
+مش بتعرضها. مدير مش بيعرف لو وصله notification إلا لو فتح شاشة معيّنة.
 
-| # | المشكلة | الخطورة |
-|---|---------|---------|
-| 10 | MenuView — مش بتنبّه المدير لو name_ar فاضي | ✅ تم — inline warning + confirm dialog في saveItem |
-| 19 | DashboardView — auto-refresh | ✅ موجود بالفعل (60s interval) |
-| 20 | TablesMapView drag-and-drop undo | ✅ موجود بالفعل |
-| 22 | QR download offline | ✅ موجود بالفعل (canvas local fallback) |
-| 24 | BeachLiveDashboardView polling 15s | ✅ POLL_INTERVAL_MS constant موجود |
-| 25 | CafeSalesDashboardView CSV export | ✅ exportCsv() موجود بالفعل |
+### ج. Shift handover report مطبوع
+عند إغلاق الوردية، توليد PDF بسيط (ملخص المبيعات + الفرق + ملاحظات التسليم) يطبعه ال
+كاشير ويوقّع عليه. الباك إند عنده كل البيانات في ShiftEndReport.
 
-**ملحوظة:** كل المشاكل في wagdy.md (باستثناء #10 المذكورة فوق) تم حلها سواء في هذه الجلسة أو في جلسات سابقة.
+### د. Search global
+مفيش بحث شامل في أي شاشة — كل شاشة عندها بحثها الخاص لو موجود. مدير يبحث عن "محمد أح
+مد" لازم يعرف يدخل CRM ولا HR ولا Timeshare.
 
----
+### هـ. Beach location QR
+الشاطئ عنده BeachLocation (شمسية/برجولة) بـ QR check-in flow موجود. لكن مفيش أي QR م
+ولود للشاطئ في QRGeneratorView — بيدعم المطعم والكافيه فقط.
 
-## 🛠️ إصلاحات Kiro — 2026-07-09 (جلسة ثانية)
-
-**#10 — تحذير name_ar في MenuView + CafeMenuView** ✅
-- input بيتحول amber + رسالة تحذير inline لو الاسم العربي فاضي.
-- `saveItem()` بيطلع confirm dialog قبل الحفظ لو name_ar فاضي.
-
-**FinanceView.vue — إصلاح build error** ✅
-- الـ Shifts tab كان أُضيف مرتين بسبب merge خطأ — النسخة المكررة اتحذفت.
-- `</div>` زيادة كان بيغلق الـ root div قبل الـ Shifts tab — اتحذف.
-- `await loadShifts()` كان متكرر مرتين في `loadTab()` — اتحذف التكرار.
-
-**النتيجة:** `pnpm -r build` نظيف بدون أي errors.
-
----
-
-## 🛠️ إصلاحات Kiro — 2026-07-09 (جلسة ثالثة)
-
-### Backend — إصلاح كل الـ Linting Errors (F821/F401/F811)
-
-**Duplicate Operation IDs في OpenAPI** ✅
-- `restaurant/api/router.py`: أُضيف `operation_id="restaurant_update_category"` و `operation_id="restaurant_delete_category"`
-- `cafe/api/router.py`: أُضيف `operation_id="cafe_update_category"` و `operation_id="cafe_delete_category"`
-- النتيجة: صفر warnings عند `/openapi.json`
-
-**F821 — Undefined names (type hints بدون import)** ✅
-- `restaurant/models.py` + `cafe/models.py`: أُضيف `TYPE_CHECKING` import لـ `Product` من `inventory.models`
-- `beach/services.py`: أُضيف `TYPE_CHECKING` import لـ `B2BContract`, `B2BContractDay`, `BeachReservation`
-- `analytics/services.py`: أُضيف `TYPE_CHECKING` import لـ `GuestReview`
-- `hr/services.py`: أُضيف `TYPE_CHECKING` import لـ `LeaderboardEntry`
-- `seed.py`: أُضيف `TYPE_CHECKING` import لـ `TimeshareContract`
-
-**F821 — Missing imports (متغيرات فعلاً مستخدمة)** ✅
-- `restaurant/crud.py`: أُضيف `from decimal import Decimal`
-- `cafe/services.py` + `restaurant/services.py`: أُضيف `import logging` + `logger = logging.getLogger(__name__)`
-- `hr/services.py`: رُتّبت الـ imports (كانت `logger` قبل الـ imports)
-
-**F401 — Unused imports** ✅
-- `restaurant/crud.py`: حُذف `DiningTableCreate`, `DiningTableUpdate` (غير مستخدمين)
-- `cafe/api/router.py`: حُذف `CafeOrder` local import (غير مستخدم بعد tz-fix)
-- `crm/crud.py`: حُذف `from datetime import date as _date` (استُبدل بـ `local_today`)
-- `hub/services.py`: حُذف `from datetime import date` (غير مستخدم)
-- `inventory/services.py`: حُذف `from datetime import date as _date` (استُبدل بـ `local_today`)
-- `pms/services.py`: حُذف `settings as _s` و `local_today` و `settings as _settings` (كلهم غير مستخدمين)
-- `hr_tasks.py`: حُذف `from datetime import date`
-
-**F811 — Redefinition** ✅
-- `pms/schemas.py`: حُذفت النسخة المكررة من `EarlyLateRequest`
-
-**النتيجة:** صفر F821/F401/F811 — 1500 test ناجح — `pnpm -r build` نظيف ✅
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-## 🛠️ إصلاحات Kiro — 2026-07-09 (جلسة رابعة)
-
-### ✅ تصليح كل الـ Failing Tests (14 failed + 12 errors → 0)
-
-**`tests/test_api/test_pms_coverage.py` — 12 errors + 5 failures:**
-- `auth_headers` / `admin_headers` غير موجودين → استُبدلا بـ `manager_headers` / `super_admin_headers`
-- `_booking()` كان بيستخدم `room_id` مباشرة (حقل غير موجود في `Booking`) → صُلّح باستخدام `BookingRoom` (many-to-many) مع `generate_booking_number()`
-- `BookingRoom` كان بيستخدم `rate_per_night` → صُلّح لـ `daily_rate + nights + total`
-- `Folio` محتاج `check_in/check_out` → أُضيفا في `_folio()`
-- `HousekeepingTask` status values غلط (`pending/in_progress/completed`) → صُلّحت لـ `dirty/cleaning/inspecting/available`
-- `out_of_order` في `RoomStatusUpdate` غير موجود في الـ pattern → غُيّر لـ `maintenance`
-- night-audit endpoint هو `POST /pms/night-audit/run` بـ query params (مش `/pms/night-audit` بـ body)
-- `RatePlanCreate` fields: `valid_from/valid_until/base_rate_override` (مش `start_date/end_date/rate_per_night`)
-
-**`tests/test_tasks/test_hr_tasks_coverage.py` — 5 failures:**
-- `create_employee()` يتوقع `EmployeeCreate` schema (مش dict) → صُلّح بـ `EmployeeCreate`
-- `full_name` (مش `name`)، `basic_salary` (مش `base_salary`) في الـ schema
-- `list_attendance_records` غير موجود → الصح `list_attendance()` بيرجع `(items, total)`
-- `payroll_due_reminder` / `monthly_leave_accrual` غير موجودتين → الأسماء الصح: `payroll_reminder` / `accrue_leave_balances`
-- التستات اللي بتستدعي `mark_attendance_absent()` مباشرة بتفشل لأن المهمة بتستخدم `SessionLocal()` داخلياً → صُلّح باختبار المنطق مباشرة بـ `db` fixture
-
-**`tests/test_tasks/test_finance_tasks_coverage.py` — 4 failures:**
-- `create_timeshare_unit` غير موجود — `create_contract` لا يُنشئ أقساط تلقائياً → صُلّح بإنشاء `TimeshareInstallment` يدوياً
-- `create_contract()` يحتاج `signed_by` int → صُلّح بـ `_get_or_create_manager(db)`
-- `User(username=...)` غير موجود → الـ `User` model عنده `email/full_name/role` بدون `username`
-- `monkeypatch` على string path لا يعمل مع lazy imports داخل الدالة → صُلّح بتعديل `wa_module.send_whatsapp_message` مباشرة مع `finally` للاسترجاع
-- isolation بين التستات: استخدام `remind_date` مختلف (`+3 days` vs `+5 days`) لتجنّب تسرب بيانات
-
-**النتيجة:** 1532 → **1558 اختبار** (+26)، 0 failed، 0 errors ✅
-`pnpm -r build` نظيف على `el-kheima` و`public` ✅
-
-
-
-
-1. رفع coverage الـ tasks من 15-27% لـ 50%+
-الـ crm_tasks, leasing_tasks, pms_tasks, maintenance_tasks, timeshare_tasks,
-beach_tasks — كلهم تحت 30%. نفس نهج جلسة اليوم: نختبر الـ service logic مباشرة ب
-ـ db fixture بدل تشغيل الـ Celery runtime.
-
-2. restaurant/api/router.py — 30% من الكود غير مختبر (100 سطر)
-أهم missing lines هي: WebSocket broadcast logic، error paths في الـ order
-lifecycle، وبعض الـ discount/folio flows.
-
-3. auth/service.py — 49% فقط
-Password reset flow، OAuth، social login، وكتير من الـ 2FA edge cases مش مختبرين
-.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
-### 🟠 أولوية متوسطة (تحسينات وظيفية)
-
-4. app/core/kernel/whatsapp.py — 17%
-الـ whatsapp integration كلها بتشتغل في production بدون أي test — لو Twilio API
-تغيرت أو في config غلط هيتكشف أول ما المنتجع يشتغل.
-
-5. hub/services.py — 76%
-خدمات الـ Hub (عروض المنتجع + Blog) فيها code paths غير مختبرين.
-
-6. leasing/api/router.py — 77%
-بعض الـ edge cases في تجديد العقود وإنهائها.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
-### 🟡 تحسينات (لو في وقت)
-
-7. الـ E741 (11 متغير l غامض)
-متغيرات اسمها l (حرف L صغير) في الكود — ممكن تتلخبط مع 1 (رقم 1). سهل يتصلح بـ
-ruff --fix.
-
-8. app/seed.py — 15%
-الـ seed كبير ومعقد وما فيهوش أي تست — لو اتكسر في production migration، الـ
-developer هيكتشف وقت التشغيل الأول بس.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
-### ما مش محتاج يتعمل دلوقتي
-
-- الـ E702 (204 semicolons) — style فقط، الكود شغّال ومفيش bug حقيقي
-- sentry.py / email_service.py / cache.py — infrastructure utilities، صعبة تتختب
-ر بدون integration environment حقيقي
-- auth/repository.py 28% — الـ social auth (Google/Facebook) غالباً مش مفعّل في ال
-منتجع ده
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-
-ما تنصح تبدأ بيه؟ الأكبر أثراً هو رفع coverage الـ tasks (#1) لأنها بتشتغل في الخل
-فية كل يوم وأي bug فيها بيأثر على المنتجع من غير ما حد يلاحظه مباشرة — خصوصاً
-timeshare_tasks (27%) اللي بيبعت تذكيرات الأقساط، وpms_tasks (17%) اللي بيعمل
-night audit.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
