@@ -98,10 +98,20 @@ def list_work_orders(
 @router.post("/maintenance/work-orders", response_model=WorkOrderRead,
              status_code=status.HTTP_201_CREATED)
 def create_work_order(data: WorkOrderCreate, db: DbDep, user=Depends(get_current_active_user)):
+    """wagdy.md #7: أمر صيانة priority=critical كان بينسجّل من غير أي إشعار
+    واتساب فوري رغم إن الـ Celery task (notify_overdue_work_orders) والبنية
+    التحتية (send_whatsapp_message/notify_admin) موجودين بالفعل — كانوا بس
+    مستخدمين في تنبيه يومي مجدول، مش trigger فوري وقت الإنشاء. الإرسال عبر
+    .delay() (نفس نمط send_visit_survey في analytics.router) — مش synchronous
+    في مسار الـ request، عشان رد الـ API للموظف اللي بيسجّل الأمر ميتأخّرش."""
     try:
-        return services.create_work_order(db, data, reported_by=user.id)
+        wo = services.create_work_order(db, data, reported_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if wo.priority == "critical":
+        from app.tasks.maintenance_tasks import notify_critical_work_order  # noqa: PLC0415
+        notify_critical_work_order.delay(wo.id)
+    return wo
 
 
 @router.get("/maintenance/work-orders/{order_id}", response_model=WorkOrderRead)

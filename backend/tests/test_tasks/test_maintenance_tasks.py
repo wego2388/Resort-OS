@@ -315,3 +315,61 @@ class TestNotifyOverdueWorkOrders:
         finally:
             wa_module.send_whatsapp_message = original_send
             wa_module.notify_admin = original_notify
+
+
+# ─── notify_critical_work_order (wagdy.md #7) ────────────────────────────────
+
+class TestNotifyCriticalWorkOrder:
+    """اختبار notify_critical_work_order — trigger فوري (مش مجدول) وقت
+    إنشاء أمر صيانة priority=critical. راجع test_maintenance_http.py لاختبار
+    إن الـ router فعلاً بيستدعي .delay() — هنا بنختبر منطق الـ task نفسه
+    (البحث عن الأمر + اختيار الموظف/notify_admin) بنفس نمط SessionLocal
+    patch اللي notify_overdue_work_orders فوق بيستخدمه."""
+
+    def test_sends_to_assigned_employee(self, db):
+        from unittest.mock import patch, MagicMock
+        branch = _make_branch(db)
+        emp = _make_employee(db, branch, phone="01098765432")
+        wo = _make_work_order(db, branch, status="open", assigned_to=emp.id)
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx), \
+             patch("app.core.kernel.whatsapp.send_whatsapp_message", return_value=True) as mock_send, \
+             patch("app.core.kernel.whatsapp.notify_admin") as mock_admin:
+            from app.tasks.maintenance_tasks import notify_critical_work_order
+            notify_critical_work_order(wo.id)
+
+        mock_send.assert_called_once()
+        phone_arg, message_arg = mock_send.call_args[0]
+        assert phone_arg == "01098765432"
+        assert wo.title in message_arg
+        mock_admin.assert_not_called()
+
+    def test_falls_back_to_admin_when_unassigned(self, db):
+        from unittest.mock import patch, MagicMock
+        branch = _make_branch(db)
+        wo = _make_work_order(db, branch, status="open", assigned_to=None)
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx), \
+             patch("app.core.kernel.whatsapp.send_whatsapp_message") as mock_send, \
+             patch("app.core.kernel.whatsapp.notify_admin") as mock_admin:
+            from app.tasks.maintenance_tasks import notify_critical_work_order
+            notify_critical_work_order(wo.id)
+
+        mock_send.assert_not_called()
+        mock_admin.assert_called_once()
+        assert str(wo.id) in mock_admin.call_args[0][0]
+
+    def test_missing_work_order_does_not_raise(self, db):
+        from unittest.mock import patch, MagicMock
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.maintenance_tasks import notify_critical_work_order
+            notify_critical_work_order(999999999)  # should not raise
