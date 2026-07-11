@@ -216,6 +216,30 @@ class TestBeachValidation:
         )
         assert resp.status_code == 400
 
+    def test_sell_with_local_id_is_idempotent_on_retry(self, client: TestClient, db, fake_redis, cashier_headers):
+        """wagdy.md #13/#37: BeachPOSView's offline-queue retry (useOfflineQueue)
+        must not double-sell (double capacity deduction) if the same request is
+        replayed after a lost response — same local_id must return the exact
+        same transaction, not create a second one."""
+        branch = make_branch_committed(db)
+        payload = {"tx_type": "entry", "quantity": 2, "local_id": "offline-retry-abc123"}
+
+        first = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id}, json=payload, headers=cashier_headers,
+        )
+        assert first.status_code == 201, first.text
+
+        retry = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id}, json=payload, headers=cashier_headers,
+        )
+        assert retry.status_code == 201, retry.text
+        assert retry.json()["id"] == first.json()["id"]
+
+        list_resp = client.get(
+            "/api/v1/beach/transactions", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert list_resp.json()["total"] == 1  # مش 2 — الـ retry مارجعش يعمل بيع جديد
+
 
 class TestBeachB2BContracts:
     def test_b2b_checkin_and_quota_status_via_http(self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers):

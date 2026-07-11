@@ -63,6 +63,10 @@ class BeachSellRequest(BaseModel):
     # None لبيع تذاكر عادي من POS من غير خريطة. services.checkin_location
     # بيضبط الحقل ده داخليًا وقت بناء الطلب.
     location_id:     Optional[int] = None
+    # مفتاح idempotency لـ retry بعد بيع أوفلاين (useOfflineQueue('beach')) —
+    # راجع BeachTransaction.client_local_id. اختياري: بيع مباشر أونلاين
+    # عادي (POS متصل) مش محتاجه، زي نفس نمط restaurant/cafe بالظبط.
+    local_id:        Optional[str] = Field(None, max_length=60)
 
 
 class BeachTransactionRead(BaseModel):

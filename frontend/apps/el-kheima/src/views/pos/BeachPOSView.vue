@@ -1,26 +1,21 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { api } from '@resort-os/core'
-import { usePrintDocument } from '@resort-os/core/composables'
+import { usePrintDocument, useOfflineQueue } from '@resort-os/core/composables'
 import { useToast } from '@resort-os/ui'
 
 const toast = useToast()
 const { printBlob } = usePrintDocument()
 
 // ── Offline queue ──────────────────────────────────────────────────────────────
-// NOTE: @resort-os/core's useOfflineQueue() posts hard-coded to
-// /api/v1/restaurant/orders(/sync) — reusing it here would silently send beach
-// sales into the restaurant module. This local queue mirrors the exact same
-// contract (queue while offline, FIFO retry on reconnect, server response is
-// the source of truth for stock/capacity) but targets /api/v1/beach/sell instead.
-interface PendingBeachSale { localId: string; payload: Record<string, unknown>; createdAt: string }
-
-/** true only for "never reached the server" failures — not 4xx/5xx responses */
-function isNetworkError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false
-  const axiosErr = err as { request?: unknown; response?: unknown }
-  return !!axiosErr.request && !axiosErr.response
-}
+// wagdy.md #13/#37: كان هنا queue محلي منفصل (localStorage، كود مكرر) —
+// اتصلح باستخدام useOfflineQueue('beach') المشترك (IndexedDB، نفس نمط
+// المطعم/الكافيه). فيه فرق حقيقي مهم اكتشفناه أثناء الدمج: الـ queue القديم
+// كان بيعيد إرسال البيع وقت الـ retry من غير أي مفتاح idempotency — لو رد
+// السيرفر ضاع بعد ما خصم السعة فعلاً، الـ retry كان يعمل بيع مزدوج حقيقي.
+// الـ composable المشترك بيبعت local_id مع كل retry، وbeach.services.sell_ticket
+// بقى يتجاهل أي retry بنفس الـ local_id ويرجّع نفس المعاملة القديمة.
+const { isOnline, pendingCount, submitOrder: submitBeachSale } = useOfflineQueue('beach')
 
 // مطابق فعليًا لـ app/modules/beach/schemas.py::BeachInventoryRead — الشاطئ
 // عنده مجمّع سعة واحد (capacity_max/capacity_used) مش حصة منفصلة للبالغين
@@ -50,59 +45,14 @@ const submitting = ref(false)
 const successMsg = ref('')
 const errorMsg = ref('')
 
-const isOnline     = ref(navigator.onLine)
-const pendingCount = ref(0)
-
-const QUEUE_KEY = `resort-os-offline-beach-sales-${branchId}`
-
-function readQueue(): PendingBeachSale[] {
-  try { return JSON.parse(localStorage.getItem(QUEUE_KEY) ?? '[]') } catch { return [] }
-}
-function writeQueue(queue: PendingBeachSale[]) {
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
-  pendingCount.value = queue.length
-}
-function queueSale(payload: Record<string, unknown>) {
-  const queue = readQueue()
-  queue.push({ localId: crypto.randomUUID(), payload, createdAt: new Date().toISOString() })
-  writeQueue(queue)
-}
-
-let syncing = false
-async function syncPendingSales() {
-  if (!navigator.onLine || syncing) return
-  syncing = true
-  try {
-    let queue = readQueue()
-    let syncedAny = false
-    while (queue.length) {
-      const sale = queue[0]
-      try {
-        await api.post('/api/v1/beach/sell', sale.payload, { params: { branch_id: branchId } })
-        syncedAny = true
-      } catch (err) {
-        if (isNetworkError(err)) break // still offline — keep FIFO order, retry later
-        // server explicitly rejected it (e.g. capacity exceeded since queued) — drop so it doesn't block the queue forever
-        toast.error(`تعذّر تزامن عملية بيع شاطئ محفوظة (${new Date(sale.createdAt).toLocaleTimeString('ar-EG')}) — راجعها يدوياً`)
-      }
-      queue = queue.slice(1)
-      writeQueue(queue)
-    }
-    if (syncedAny) await fetchInventory() // refresh capacity/occupancy after any successful syncs
-  } finally {
-    syncing = false
-  }
-}
-
-function handleOnline() {
-  isOnline.value = true
-  syncPendingSales()
-}
-function handleOffline() {
-  isOnline.value = false
-}
-
-let pollTimer: ReturnType<typeof setInterval> | null = null
+// بعد أي تزامن ناجح (كامل أو جزئي)، سعة/إشغال الشاطئ المعروضة لازم تتحدّث
+// فورًا (مش تستنى الـ poll الدوري كل 30 ثانية). useOfflineQueue نفسه عام
+// ومالوش فكرة عن "inventory"، وبيعمل sync تلقائي لوحده (وقت reconnect + safety
+// poll داخلي) — فبنراقب pendingCount تفاعليًا (بغض النظر مين استدعى الـ sync)
+// بدل ما نلف حول syncPendingOrders بنفسنا ونفوّت مسارات الـ sync التلقائية.
+watch(pendingCount, (curr, prev) => {
+  if (curr < prev) fetchInventory()
+})
 
 // Cart state
 const adultQty = ref(0)
@@ -193,14 +143,6 @@ function buildCartLineItems(): BeachSaleLineItem[] {
   return items
 }
 
-async function sellOne(item: BeachSaleLineItem) {
-  return api.post(
-    '/api/v1/beach/sell',
-    { tx_type: item.tx_type, quantity: item.quantity },
-    { params: { branch_id: branchId } },
-  )
-}
-
 async function printTicket(txId: number) {
   try {
     const ticketRes = await api.get(`/api/v1/beach/transactions/${txId}/ticket`, { responseType: 'blob' })
@@ -222,24 +164,13 @@ async function completeSale() {
     let anyQueued = false
 
     for (const item of lineItems) {
-      if (!navigator.onLine) {
-        queueSale({ tx_type: item.tx_type, quantity: item.quantity })
-        anyQueued = true
-        continue
-      }
-      try {
-        const res = await sellOne(item)
-        soldTxIds.push(res.data.id)
-      } catch (err) {
-        if (isNetworkError(err)) {
-          queueSale({ tx_type: item.tx_type, quantity: item.quantity })
-          anyQueued = true
-          continue
-        }
-        // خطأ حقيقي من السيرفر (زي تجاوز السعة) — وقف هنا، الأصناف اللي
-        // اتباعت قبل كده فعلاً اتسجّلت (مش rollback جماعي، كل عملية مستقلة)
-        throw err
-      }
+      // submitOrder بيرجّع null لو اتقفل في الطابور (offline أو انقطاع نت
+      // لحظي)، ويرمي الخطأ نفسه لو السيرفر رفضه صراحة (زي تجاوز السعة) —
+      // نوقف هنا في الحالة دي، الأصناف اللي اتباعت قبل كده فعلاً اتسجّلت
+      // (مش rollback جماعي، كل عملية مستقلة).
+      const data = await submitBeachSale(branchId, { tx_type: item.tx_type, quantity: item.quantity })
+      if (data === null) { anyQueued = true; continue }
+      soldTxIds.push(data.id)
     }
 
     for (const txId of soldTxIds) await printTicket(txId)
@@ -263,28 +194,19 @@ async function completeSale() {
   }
 }
 
+// useOfflineQueue('beach') بيتكفّل بـ online/offline listeners والـ
+// sync التلقائي (وقت reconnect + safety poll داخلي) لوحده — مش محتاجين
+// نلمسه هنا خالص، بس الـ watch(pendingCount) فوق بيحدّث السعة بعد أي
+// تزامن منه.
 let refreshInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   fetchInventory()
   refreshInterval = setInterval(fetchInventory, 30_000)
-
-  window.addEventListener('online', handleOnline)
-  window.addEventListener('offline', handleOffline)
-  pendingCount.value = readQueue().length
-  if (navigator.onLine) syncPendingSales()
-  // safety-net poll — covers cases where the 'online' event never fires
-  // reliably but connectivity is actually back
-  pollTimer = setInterval(() => {
-    if (navigator.onLine && pendingCount.value > 0) syncPendingSales()
-  }, 30_000)
 })
 
 onUnmounted(() => {
   if (refreshInterval) clearInterval(refreshInterval)
-  window.removeEventListener('online', handleOnline)
-  window.removeEventListener('offline', handleOffline)
-  if (pollTimer) clearInterval(pollTimer)
 })
 </script>
 

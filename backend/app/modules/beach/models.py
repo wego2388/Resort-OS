@@ -67,6 +67,12 @@ class BeachTransaction(Base, TimestampMixin):
     # تسجيل الدخول لموقع فعلي بيعمل BeachTransaction حقيقي (مش تتبع منفصل)
     # ويربطها هنا للتاريخ، حتى بعد ما الموقع نفسه يتفضّى (checkout).
     location_id:     Mapped[int | None]      = mapped_column(ForeignKey("beach_locations.id", ondelete="SET NULL"), nullable=True, index=True)
+    # مفتاح idempotency لإعادة إرسال بيع أوفلاين (BeachPOSView عبر
+    # useOfflineQueue('beach')) — نفس نمط Order.client_local_id في المطعم/
+    # الكافيه بالظبط. لو نفس local_id اتبعت تاني (retry بعد رد ضاع أو نت
+    # اتقطع فجأة بعد ما الطلب وصل للسيرفر فعلاً)، بترجع نفس المعاملة القديمة
+    # بدل ما تعمل بيع/خصم سعة تاني (راجع services.sell_ticket).
+    client_local_id: Mapped[str | None]      = mapped_column(String(60), nullable=True, unique=True)
 
 
 class B2BContract(Base, TimestampMixin):

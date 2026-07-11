@@ -120,6 +120,10 @@ def get_transaction(db: Session, tx_id: int) -> Optional[BeachTransaction]:
     return db.query(BeachTransaction).filter(BeachTransaction.id == tx_id).first()
 
 
+def get_transaction_by_local_id(db: Session, local_id: str) -> Optional[BeachTransaction]:
+    return db.query(BeachTransaction).filter(BeachTransaction.client_local_id == local_id).first()
+
+
 def void_transaction(db: Session, tx: BeachTransaction, voided_by: int, reason: str) -> BeachTransaction:
     tx.voided_at = datetime.utcnow()
     tx.voided_by = voided_by

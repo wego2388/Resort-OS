@@ -8,24 +8,46 @@
  *
  * #4: endpoint بقى parameter اختياري (default: restaurant).
  * CafePOSView تمرّر module: 'cafe' وكل حاجة تانية تشتغل تلقائياً.
+ *
+ * wagdy.md #13/#37: BeachPOSView كان عنده queue محلي منفصل (localStorage،
+ * كود مكرر) بدل ما يستخدم الـ composable ده — وكان فيه باج حقيقي فيه: الـ
+ * retry بعد انقطاع نت كان بيعيد إرسال نفس البيع من غير أي مفتاح idempotency،
+ * فلو الرد ضاع بعد ما السيرفر خصم السعة فعلاً، الـ retry كان يعمل بيع تاني
+ * حقيقي (خصم سعة مزدوج). beach مضاف هنا بنفس القفل الأساسي (IndexedDB،
+ * FIFO، دعم offline)، لكن endpoint مختلف تمامًا عن restaurant/cafe:
+ * - مفيش "order" بعدة أصناف — كل "بيع" مستقل (`/beach/sell` واحد لكل
+ *   نوع تذكرة)، فمفيش partial/rejected على مستوى الطلب زي المطعم.
+ * - نفس /beach/sell (مش endpoint /sync منفصل) بيقبل local_id اختياري
+ *   للـ idempotency — لو نفس local_id اتبعت تاني بيرجع نفس المعاملة القديمة
+ *   بدل ما يعمل بيع جديد (راجع beach.services.sell_ticket).
  */
 import { ref, onMounted, onUnmounted } from 'vue'
 import { openDB, type IDBPDatabase } from 'idb'
 import { api } from '../api/client'
 
 const DB_NAME = 'resort-os-offline'
-// v2: أضفنا حقل `module` لـ PendingOrder لتمييز restaurant/cafe في الـ sync.
-// الـ upgrade handler بيعمل migration للـ records القديمة (v1) بإضافة
-// module: 'restaurant' كـ default — backward-compatible مع أي طلبات pending
-// من قبل الـ update.
+// لسه v2 — إضافة 'beach' كـ قيمة تالتة ممكنة لحقل module نص عادي (مش enum
+// حقيقي جوه IndexedDB) مش تغيير في شكل الـ stores/indices نفسها، فمفيش
+// داعي لأي DB_VERSION bump أو upgrade handler جديد.
 const DB_VERSION = 2
 const STORE_PENDING = 'pending_orders'
 const STORE_SYNC_LOG = 'sync_log'
 
+export type OfflineQueueModule = 'restaurant' | 'cafe' | 'beach'
+
+// كل module وطريقة الـ endpoint بتاعته: restaurant/cafe عندهم "order" حقيقي
+// (POST مباشر + /sync منفصل بعقد OrderSyncResponse)، beach عنده بيع فردي
+// بس (نفس /sell للاتنين، idempotency عبر local_id في الجسم نفسه).
+const MODULE_CONFIG: Record<OfflineQueueModule, { createPath: string; syncPath: string; hasOrderSync: boolean }> = {
+  restaurant: { createPath: 'restaurant/orders', syncPath: 'restaurant/orders/sync', hasOrderSync: true },
+  cafe:       { createPath: 'cafe/orders',       syncPath: 'cafe/orders/sync',       hasOrderSync: true },
+  beach:      { createPath: 'beach/sell',        syncPath: 'beach/sell',             hasOrderSync: false },
+}
+
 export interface PendingOrder {
   localId: string
   branchId: number
-  module: 'restaurant' | 'cafe'   // #4: تمييز وجهة الـ sync
+  module: OfflineQueueModule   // #4: تمييز وجهة الـ sync
   payload: Record<string, unknown>
   createdAt: string
 }
@@ -84,7 +106,8 @@ function isNetworkError(err: unknown): boolean {
 }
 
 // #4: module parameter — default 'restaurant' للـ backward compat
-export function useOfflineQueue(module: 'restaurant' | 'cafe' = 'restaurant') {
+export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
+  const cfg = MODULE_CONFIG[module]
   const isOnline = ref(navigator.onLine)
   const pendingCount = ref(0)
   const syncing = ref(false)
@@ -115,7 +138,7 @@ export function useOfflineQueue(module: 'restaurant' | 'cafe' = 'restaurant') {
       return null
     }
     try {
-      const { data } = await api.post(`/api/v1/${module}/orders?branch_id=${branchId}`, payload)
+      const { data } = await api.post(`/api/v1/${cfg.createPath}?branch_id=${branchId}`, payload)
       return data
     } catch (err) {
       if (isNetworkError(err)) {
@@ -137,10 +160,33 @@ export function useOfflineQueue(module: 'restaurant' | 'cafe' = 'restaurant') {
       const pending = all.filter(o => (o.module ?? 'restaurant') === module)
 
       for (const order of pending) {
+        // beach: بيع فردي بسيط — نفس /beach/sell (مش /sync منفصل)، idempotency
+        // عبر local_id في الجسم، ومفيش partial/rejected على مستوى الطلب
+        // (كل بيع إما نجح أو اترفض بالكامل، مفيش "أصناف" داخله).
+        if (!cfg.hasOrderSync) {
+          try {
+            await api.post(
+              `/api/v1/${cfg.syncPath}?branch_id=${order.branchId}`,
+              { ...order.payload, local_id: order.localId },
+            )
+            await db.delete(STORE_PENDING, order.localId)
+          } catch (err) {
+            if (isNetworkError(err)) break // لسه offline فعليًا — سيبه في الطابور، حاول تاني بعدين
+            // السيرفر رفضه صراحة (زي تجاوز السعة بعد ما اتحفظ محليًا) — امسحه
+            // عشان ميقفلش الطابور للأبد، وسجّله في sync_log عشان الكاشير يراجعه
+            await db.put(STORE_SYNC_LOG, {
+              localId: order.localId, status: 'rejected',
+              reason: 'invalid_request', timestamp: new Date().toISOString(),
+            } satisfies SyncLogEntry)
+            await db.delete(STORE_PENDING, order.localId)
+          }
+          continue
+        }
+
         let response
         try {
           response = await api.post(
-            `/api/v1/${module}/orders/sync?branch_id=${order.branchId}`,
+            `/api/v1/${cfg.syncPath}?branch_id=${order.branchId}`,
             { local_id: order.localId, created_offline_at: order.createdAt, ...order.payload },
           )
         } catch (err) {

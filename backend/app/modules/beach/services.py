@@ -164,6 +164,17 @@ def sell_ticket(
     data: BeachSellRequest,
     tx_date: Optional[date] = None,
 ) -> BeachTransaction:
+    """⚠️ فجوة حقيقية اتصلحت هنا (wagdy.md #13/#37): BeachPOSView كان عنده
+    offline queue محلي منفصل (localStorage) بيعيد إرسال نفس طلب البيع بدون
+    أي مفتاح idempotency وقت الـ retry — لو الـ request وصل السيرفر فعلاً
+    وخصم السعة، لكن الرد ضاع (قطع نت لحظي بعد الإرسال مباشرة)، الـ retry
+    كان هيعمل بيع تاني حقيقي (خصم سعة مزدوج) بدل ما يكتشف إنه اتسجّل بالفعل
+    — نفس فئة الحماية اللي restaurant/cafe عندهم من الأول عبر
+    client_local_id. راجع local_id في BeachSellRequest."""
+    if data.local_id:
+        existing = crud.get_transaction_by_local_id(db, data.local_id)
+        if existing:
+            return existing
     tx = _sell_ticket_no_commit(db, branch_id, data, tx_date)
     db.commit()
     db.refresh(tx)
@@ -244,6 +255,7 @@ def _sell_ticket_no_commit(
         "notes":           data.notes,
         "shift_id":        shift_id,
         "location_id":     data.location_id,
+        "client_local_id": data.local_id,
     })
 
     # قيد الإيراد يترحّل فورًا في الحالتين — بس لحساب مختلف حسب طريقة الدفع:
