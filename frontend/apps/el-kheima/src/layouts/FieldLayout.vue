@@ -8,24 +8,29 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
 import { useOfflineQueue } from '@resort-os/core/composables'
+import { useI18n } from 'vue-i18n'
 import ShiftPanel from '../components/ShiftPanel.vue'
 import GuestAlertsBell from '../components/GuestAlertsBell.vue'
 import OperatorSwitchModal from '../components/OperatorSwitchModal.vue'
+import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const { t, locale } = useI18n()
 const { isOnline, pendingCount } = useOfflineQueue()
 
 const showOperatorSwitch = ref(false)
 
-const branchName = computed(() => `فرع ${auth.branchId}`)
+const branchName = computed(() => `${t('backoffice.layout.branch')} ${auth.branchId}`)
 
 const currentTime = ref('')
 function updateClock() {
-  currentTime.value = new Date().toLocaleTimeString('ar-EG', {
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  })
+  // Clock locale follows UI locale — Arabic gets Arabic-Indic numerals, others get Latin
+  currentTime.value = new Date().toLocaleTimeString(
+    locale.value === 'ar' ? 'ar-EG' : 'en-GB',
+    { hour: '2-digit', minute: '2-digit', hour12: locale.value === 'ar' },
+  )
 }
 let clockInterval: ReturnType<typeof setInterval> | null = null
 onMounted(() => { updateClock(); clockInterval = setInterval(updateClock, 1000) })
@@ -33,18 +38,18 @@ onUnmounted(() => { if (clockInterval) clearInterval(clockInterval) })
 
 const isWaiter = computed(() => route.path.startsWith('/waiter'))
 
-const allNavItems = [
-  { path: '/pos/beach', label: 'الشاطئ', icon: '🏖️' },
-  { path: '/pos/beach-map', label: 'خريطة الشاطئ', icon: '🗺️' },
-  { path: '/pos/restaurant', label: 'المطعم', icon: '🍽️' },
-  { path: '/pos/cafe', label: 'الكافيه', icon: '☕' },
-  { path: '/pos/shift', label: 'الوردية', icon: '🧾' },
-  { path: '/waiter/tables', label: 'الطاولات', icon: '🧑‍🍳' },
-]
+const allNavItems = computed(() => [
+  { path: '/pos/beach',       label: t('backoffice.nav.beachPos'),   icon: '🏖️' },
+  { path: '/pos/beach-map',   label: t('backoffice.nav.beachMap'),   icon: '🗺️' },
+  { path: '/pos/restaurant',  label: t('backoffice.nav.restaurant'), icon: '🍽️' },
+  { path: '/pos/cafe',        label: t('backoffice.nav.cafe'),       icon: '☕' },
+  { path: '/pos/shift',       label: t('backoffice.nav.shift'),      icon: '🧾' },
+  { path: '/waiter/tables',   label: t('backoffice.nav.tables'),     icon: '🧑‍🍳' },
+])
 
 // Nav is scoped to the active section (pos vs waiter).
 const navItems = computed(() =>
-  allNavItems.filter((item) => item.path.startsWith(isWaiter.value ? '/waiter' : '/pos')),
+  allNavItems.value.filter((item) => item.path.startsWith(isWaiter.value ? '/waiter' : '/pos')),
 )
 
 function logout() {
@@ -54,7 +59,7 @@ function logout() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-resort-bg flex flex-col" dir="rtl">
+  <div class="min-h-screen bg-resort-bg flex flex-col" :dir="locale === 'ar' ? 'rtl' : 'ltr'">
 
     <header class="bg-white border-b border-resort-border shadow-sm flex-shrink-0">
       <div class="flex items-center justify-between px-4 py-2.5">
@@ -64,7 +69,9 @@ function logout() {
             <span class="text-white text-xs font-black">{{ isWaiter ? '🧑‍🍳' : 'POS' }}</span>
           </div>
           <div>
-            <div class="font-bold text-gray-900 text-sm leading-tight">{{ isWaiter ? 'أوردر تيكر' : 'نقطة البيع' }}</div>
+            <div class="font-bold text-gray-900 text-sm leading-tight">
+              {{ isWaiter ? t('backoffice.layout.orderTaker') : t('backoffice.layout.pos') }}
+            </div>
             <div class="text-xs text-gray-400 leading-tight">{{ branchName }}</div>
           </div>
         </div>
@@ -80,7 +87,7 @@ function logout() {
           <GuestAlertsBell />
 
           <!-- Connectivity dot (offline order queue) -->
-          <div class="flex items-center gap-1.5" :title="isOnline ? 'متصل' : 'غير متصل'">
+          <div class="flex items-center gap-1.5" :title="isOnline ? t('backoffice.nav.operations') : ''">
             <span class="w-2 h-2 rounded-full" :class="isOnline ? 'bg-green-500' : 'bg-amber-500 animate-pulse'" />
             <span v-if="pendingCount > 0" class="text-xs font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">
               {{ pendingCount }}
@@ -94,16 +101,18 @@ function logout() {
           <button
             @click="showOperatorSwitch = true"
             class="hidden sm:flex flex-col items-end hover:bg-gray-50 rounded-lg px-1.5 py-0.5 transition-colors"
-            title="تبديل المشغّل"
           >
             <span class="text-sm font-medium text-gray-700">{{ auth.user?.full_name }}</span>
-            <span class="text-xs text-blue-600">{{ auth.role }} · تبديل ↔</span>
+            <span class="text-xs text-blue-600">{{ auth.role }}</span>
           </button>
+
+          <!-- Language switcher — compact mode for the tight field header -->
+          <LanguageSwitcher variant="compact" />
 
           <button
             @click="logout"
             class="text-sm text-red-600 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50 transition-colors"
-          >خروج</button>
+          >{{ t('backoffice.layout.logout') }}</button>
         </div>
       </div>
 
