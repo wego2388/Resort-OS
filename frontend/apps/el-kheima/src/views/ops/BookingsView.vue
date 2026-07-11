@@ -94,22 +94,26 @@ const ratePlans       = ref<RatePlanOption[]>([])
 const form = ref({
   guest_name:   '',
   guest_phone:  '',
-  room_id:      null as number | null,
+  room_ids:     [] as number[],
   check_in:     '',
   check_out:    '',
   notes:        '',
   rate_plan_id: null as number | null,
 })
 
-// خطط الأسعار الفعّالة اللي تنطبق فعليًا على نوع الغرفة المختارة — إما خطة
-// عامة (room_type_id = null، لكل الفرع) أو خطة مخصصة لنفس نوع الغرفة دي
-// بالظبط. باقي الخطط (مخصصة لنوع تاني) بتتخفي عشان الاستقبال ميختارش خطة
-// هتتجاهل بصمت وقت الحساب (services._room_rate_for بتطبّقها بس لو نوع الغرفة
-// مطابق، غير كده بترجع للسعر الأساسي الخام).
+// خطط الأسعار الفعّالة اللي تنطبق فعليًا على أنواع الغرف المختارة (ممكن يبقى
+// أكتر من غرفة/نوع في نفس الحجز — غرفة جناح + غرفة مجاورة مثلاً) — إما خطة
+// عامة (room_type_id = null، لكل الفرع) أو خطة مخصصة لنوع من أنواع الغرف
+// المختارة بالظبط. باقي الخطط (مخصصة لنوع مالوش أي غرفة مختارة) بتتخفي عشان
+// الاستقبال ميختارش خطة هتتجاهل بصمت وقت الحساب (services._room_rate_for
+// بتطبّقها بس على الغرف اللي نوعها مطابق، غير كده بترجع للسعر الأساسي الخام
+// لباقي الغرف).
 const applicableRatePlans = computed(() => {
-  const room = rooms.value.find((r) => r.id === form.value.room_id)
-  if (!room) return []
-  return ratePlans.value.filter((p) => p.room_type_id === null || p.room_type_id === room.room_type_id)
+  const selectedTypeIds = new Set(
+    rooms.value.filter((r) => form.value.room_ids.includes(r.id)).map((r) => r.room_type_id)
+  )
+  if (selectedTypeIds.size === 0) return []
+  return ratePlans.value.filter((p) => p.room_type_id === null || selectedTypeIds.has(p.room_type_id))
 })
 
 async function fetchRatePlans() {
@@ -125,7 +129,7 @@ async function fetchRatePlans() {
 
 function openCreateModal() {
   form.value = {
-    guest_name: '', guest_phone: '', room_id: null,
+    guest_name: '', guest_phone: '', room_ids: [],
     check_in: '', check_out: '', notes: '', rate_plan_id: null,
   }
   createError.value = ''
@@ -182,9 +186,10 @@ async function fetchAvailableRooms() {
       params: { branch_id: branchId, check_in: form.value.check_in, check_out: form.value.check_out },
     })
     rooms.value = res.data
-    // الغرفة المختارة سابقًا ممكن تبقى مش متاحة بعد تغيير التواريخ
-    if (form.value.room_id && !rooms.value.some((r) => r.id === form.value.room_id)) {
-      form.value.room_id = null
+    // الغرف المختارة سابقًا ممكن يبقى بعضها مش متاح بعد تغيير التواريخ
+    const stillAvailable = form.value.room_ids.filter((id) => rooms.value.some((r) => r.id === id))
+    if (stillAvailable.length !== form.value.room_ids.length) {
+      form.value.room_ids = stillAvailable
       form.value.rate_plan_id = null
     }
   } catch(e) {
@@ -197,18 +202,18 @@ async function fetchAvailableRooms() {
 
 watch(() => [form.value.check_in, form.value.check_out], fetchAvailableRooms)
 
-// خطة الأسعار المختارة ممكن تبقى مش منطبقة بعد تغيير الغرفة (نوع مختلف)
-watch(() => form.value.room_id, () => {
+// خطة الأسعار المختارة ممكن تبقى مش منطبقة بعد تغيير اختيار الغرف (نوع مختلف)
+watch(() => form.value.room_ids, () => {
   if (form.value.rate_plan_id && !applicableRatePlans.value.some((p) => p.id === form.value.rate_plan_id)) {
     form.value.rate_plan_id = null
   }
-})
+}, { deep: true })
 
 async function createBooking() {
   if (!form.value.guest_name.trim()) { createError.value = 'اسم الضيف مطلوب'; return }
   if (!form.value.check_in)           { createError.value = 'تاريخ الوصول مطلوب'; return }
   if (!form.value.check_out)          { createError.value = 'تاريخ المغادرة مطلوب'; return }
-  if (!form.value.room_id)            { createError.value = 'اختر الغرفة'; return }
+  if (form.value.room_ids.length === 0) { createError.value = 'اختر غرفة واحدة على الأقل'; return }
 
   submitting.value = true
   createError.value = ''
@@ -219,7 +224,7 @@ async function createBooking() {
       check_in:     form.value.check_in,
       check_out:    form.value.check_out,
       notes:        form.value.notes || undefined,
-      room_ids:     [form.value.room_id],
+      room_ids:     form.value.room_ids,
       branch_id:    branchId,
       rate_plan_id: form.value.rate_plan_id || undefined,
     })
@@ -570,29 +575,40 @@ onMounted(() => {
               </div>
             </div>
 
-            <!-- Room selection — depends on the dates above -->
+            <!-- Room selection — multi-select checklist so one booking can cover
+                 several rooms at once (e.g. a suite + an adjacent room). Depends
+                 on the dates above. -->
             <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1">الغرفة *</label>
-              <select
-                v-model="form.room_id"
-                :disabled="!form.check_in || !form.check_out || roomsLoading"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white disabled:bg-gray-50 disabled:text-gray-400"
+              <label class="block text-sm font-semibold text-gray-700 mb-1">
+                الغرف *
+                <span v-if="form.room_ids.length" class="font-normal text-blue-600">({{ form.room_ids.length }} مختارة)</span>
+              </label>
+              <div
+                v-if="form.check_in && form.check_out && !roomsLoading && rooms.length > 0"
+                class="border border-stone-300 rounded-xl max-h-40 overflow-y-auto divide-y divide-stone-100"
               >
-                <option :value="null" disabled>اختر غرفة...</option>
-                <option
+                <label
                   v-for="room in rooms"
                   :key="room.id"
-                  :value="room.id"
-                >{{ room.name }}</option>
-              </select>
+                  class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-stone-50"
+                >
+                  <input
+                    type="checkbox"
+                    :value="room.id"
+                    v-model="form.room_ids"
+                    class="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span>{{ room.name }}</span>
+                </label>
+              </div>
               <p v-if="!form.check_in || !form.check_out" class="text-xs text-gray-400 mt-1">اختر تاريخ الوصول والمغادرة أولاً لعرض الغرف المتاحة</p>
               <p v-else-if="roomsLoading" class="text-xs text-gray-400 mt-1">جاري تحميل الغرف المتاحة...</p>
               <p v-else-if="rooms.length === 0" class="text-xs text-amber-600 mt-1">لا توجد غرف متاحة في هذه الفترة</p>
             </div>
 
             <!-- Rate plan — optional, only plans that actually apply to the
-                 chosen room's type show up (see applicableRatePlans above) -->
-            <div v-if="form.room_id">
+                 chosen rooms' types show up (see applicableRatePlans above) -->
+            <div v-if="form.room_ids.length > 0">
               <label class="block text-sm font-semibold text-gray-700 mb-1">خطة الأسعار (اختياري)</label>
               <select
                 v-model="form.rate_plan_id"
