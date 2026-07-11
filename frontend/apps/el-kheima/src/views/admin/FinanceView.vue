@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { api } from '@resort-os/core'
-import { AppCard, AppBadge, AppButton, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
+import { ref, computed, onMounted } from 'vue'
+import { api, ENDPOINTS } from '@resort-os/core'
+import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -22,6 +22,16 @@ interface ShiftItem {
 const shifts      = ref<ShiftItem[]>([])
 const shiftsTotal = ref(0)
 const shiftStatus = ref<'all' | 'open' | 'closed'>('all')
+// فلتر "فرق > 0" (S-05) — الورديات اللي فيها فرق كاش حقيقي (زيادة أو عجز)
+// بس، بدل ما تتوه وسط ورديات مطابقة تمامًا (variance=0) أو لسه مفتوحة
+// (variance=null).
+const shiftVarianceOnly = ref(false)
+
+const filteredShifts = computed(() =>
+  shiftVarianceOnly.value
+    ? shifts.value.filter(s => s.variance != null && Math.abs(s.variance) > 0)
+    : shifts.value,
+)
 
 async function loadShifts() {
   try {
@@ -33,10 +43,58 @@ async function loadShifts() {
   } catch(e) { console.error(e) }
 }
 
-function shiftVarianceClass(v?: number | null) {
+// تدرّج لوني حسب حجم الفرق — مش ثنائي (مقبول/مرفوض) زي قبل كده: مطابق تمامًا
+// (أخضر) → فرق طبيعي بسيط (كهرماني فاتح) → فرق يستاهل مراجعة مدير (كهرماني
+// غامق) → فرق كبير (أحمر، نفس عتبة الرفض في services.close_shift تقريبًا).
+function shiftVarianceClass(v?: number | null): string {
   if (v == null) return 'text-gray-400'
-  if (Math.abs(v) <= 50) return 'text-green-600 font-bold'
-  return v > 0 ? 'text-blue-600 font-bold' : 'text-red-600 font-bold'
+  const abs = Math.abs(v)
+  if (abs === 0) return 'text-green-600 font-bold'
+  if (abs <= 50) return 'text-amber-500 font-semibold'
+  if (abs <= 200) return 'text-amber-700 font-bold'
+  return 'text-red-600 font-bold'
+}
+
+// ── Drill-down لكل وردية (S-05) — تقرير X/Z كامل + سجل الفواتير، نفس
+// endpoints S-04/S-02. مدير+ بيشوف أي وردية من غير أي بوابة PIN إضافية
+// (services.list_shift_invoices: acting_user_level>=60 مؤهّل بنفسه). ──────
+interface ShiftDetailReport {
+  total_cash: number; total_card: number; total_credit: number; total_other: number
+  total_sales: number; invoice_count: number; voided_count: number; voided_amount: number
+  cash_count: { denomination: number; currency: string; quantity: number; subtotal: number; egp_equivalent: number }[]
+}
+interface ShiftInvoiceLine {
+  payment_id: number; guest_name: string; amount: number; method: string
+  posted_at: string; is_voided: boolean
+}
+const detailShift    = ref<ShiftItem | null>(null)
+const detailReport   = ref<ShiftDetailReport | null>(null)
+const detailInvoices = ref<ShiftInvoiceLine[]>([])
+const detailLoading  = ref(false)
+
+async function openShiftDetail(s: ShiftItem) {
+  detailShift.value = s
+  detailReport.value = null
+  detailInvoices.value = []
+  detailLoading.value = true
+  try {
+    const [reportRes, invoicesRes] = await Promise.all([
+      api.get(ENDPOINTS.finance.shiftReport(s.id)),
+      api.get(ENDPOINTS.finance.shiftInvoices(s.id)),
+    ])
+    detailReport.value = reportRes.data
+    detailInvoices.value = invoicesRes.data
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل تفاصيل الوردية')
+  } finally {
+    detailLoading.value = false
+  }
+}
+function closeShiftDetail() { detailShift.value = null }
+
+const METHOD_LABEL: Record<string, string> = {
+  cash: '💵 كاش', card: '💳 كارت', bank_transfer: '🏦 تحويل بنكي',
+  credit: '📝 آجل', room_charge: '🛏️ حساب الغرفة', other: 'أخرى',
 }
 interface BankAccount {
   id: number; bank_name: string; account_name: string; account_number: string
@@ -622,7 +680,13 @@ onMounted(() => loadTab('overview'))
             {{ s.l }}
           </button>
         </div>
-        <span class="text-xs text-gray-400">إجمالي: {{ shiftsTotal }}</span>
+        <!-- فلتر "فرق > 0" (S-05) -->
+        <button
+          @click="shiftVarianceOnly = !shiftVarianceOnly"
+          :class="['px-3 py-1 rounded-lg text-xs font-semibold border transition-all',
+            shiftVarianceOnly ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-stone-200 text-gray-500']"
+        >⚠️ فرق &gt; 0 فقط</button>
+        <span class="text-xs text-gray-400">إجمالي: {{ shiftsTotal }} — معروض: {{ filteredShifts.length }}</span>
       </div>
       <div class="overflow-x-auto rounded-xl border border-stone-200">
         <table class="w-full text-sm">
@@ -640,7 +704,11 @@ onMounted(() => loadTab('overview'))
             </tr>
           </thead>
           <tbody class="divide-y divide-stone-100">
-            <tr v-for="s in shifts" :key="s.id" class="hover:bg-stone-50 transition-colors">
+            <tr
+              v-for="s in filteredShifts" :key="s.id"
+              class="hover:bg-stone-50 transition-colors cursor-pointer"
+              @click="openShiftDetail(s)"
+            >
               <td class="px-4 py-3 font-mono text-gray-500">#{{ s.id }}</td>
               <td class="px-4 py-3 font-semibold">{{ s.cashier_id }}</td>
               <td class="px-4 py-3 text-gray-600 text-xs">
@@ -666,17 +734,76 @@ onMounted(() => loadTab('overview'))
                 <a v-if="s.status === 'closed'"
                   :href="`/api/v1/finance/shifts/${s.id}/report/pdf`"
                   target="_blank"
+                  @click.stop
                   class="text-xs text-blue-600 hover:underline font-semibold">📄 PDF</a>
                 <span v-else class="text-gray-300 text-xs">—</span>
               </td>
             </tr>
-            <tr v-if="!shifts.length">
+            <tr v-if="!filteredShifts.length">
               <td colspan="9" class="px-4 py-12 text-center text-gray-400">لا توجد ورديات</td>
             </tr>
           </tbody>
         </table>
       </div>
     </div>
+
+    <!-- Shift drill-down (S-05) — تقرير كامل + سجل فواتير لوردية واحدة -->
+    <AppModal :open="!!detailShift" :title="`تفاصيل وردية #${detailShift?.id ?? ''}`" size="lg" @close="closeShiftDetail">
+      <div v-if="detailLoading" class="flex justify-center py-10"><AppSpinner size="lg" /></div>
+      <div v-else-if="detailReport" dir="rtl" class="space-y-4">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div class="bg-emerald-50 rounded-xl p-3 text-center border border-emerald-100">
+            <div class="text-lg font-black text-emerald-700">{{ detailReport.total_sales.toFixed(2) }}</div>
+            <div class="text-xs text-emerald-600 mt-0.5">إجمالي المبيعات</div>
+          </div>
+          <div class="bg-blue-50 rounded-xl p-3 text-center border border-blue-100">
+            <div class="text-lg font-black text-blue-700">{{ detailReport.total_cash.toFixed(2) }}</div>
+            <div class="text-xs text-blue-600 mt-0.5">كاش</div>
+          </div>
+          <div class="bg-purple-50 rounded-xl p-3 text-center border border-purple-100">
+            <div class="text-lg font-black text-purple-700">{{ detailReport.total_card.toFixed(2) }}</div>
+            <div class="text-xs text-purple-600 mt-0.5">كارت</div>
+          </div>
+          <div class="rounded-xl p-3 text-center border" :class="shiftVarianceClass(detailShift?.variance).includes('red') ? 'bg-red-50 border-red-100' : 'bg-stone-50 border-stone-200'">
+            <div class="text-lg font-black" :class="shiftVarianceClass(detailShift?.variance)">
+              {{ detailShift?.variance != null ? (detailShift.variance > 0 ? '+' : '') + detailShift.variance.toFixed(2) : '—' }}
+            </div>
+            <div class="text-xs text-gray-500 mt-0.5">الفرق</div>
+          </div>
+        </div>
+
+        <!-- عدّ الكاش بالفئة -->
+        <div v-if="detailReport.cash_count.length">
+          <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">عدّ الكاش بالفئة</h3>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
+            <div v-for="(line, i) in detailReport.cash_count" :key="i" class="bg-stone-50 rounded-lg px-2 py-1.5 flex justify-between">
+              <span>{{ line.denomination }} {{ line.currency }} × {{ line.quantity }}</span>
+              <span class="font-semibold">{{ line.egp_equivalent.toFixed(2) }} ج</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- سجل الفواتير -->
+        <div>
+          <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">
+            الفواتير ({{ detailInvoices.length }})
+          </h3>
+          <EmptyState v-if="!detailInvoices.length" title="مفيش فواتير في الوردية دي" />
+          <div v-else class="divide-y divide-stone-100 max-h-64 overflow-y-auto">
+            <div v-for="inv in detailInvoices" :key="inv.payment_id" class="py-2 flex items-center justify-between gap-2" :class="inv.is_voided && 'opacity-50'">
+              <div>
+                <span class="text-sm font-semibold text-gray-800" :class="inv.is_voided && 'line-through'">{{ inv.guest_name }}</span>
+                <span class="text-xs text-gray-400 mr-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
+              </div>
+              <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 line-through' : 'text-blue-700'">{{ inv.amount }} ج</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <AppButton variant="ghost" block @click="closeShiftDetail">إغلاق</AppButton>
+      </template>
+    </AppModal>
 
   </div>
 </template>

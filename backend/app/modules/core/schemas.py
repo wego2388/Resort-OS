@@ -116,6 +116,14 @@ class AuditLogRead(BaseModel):
     new_data:    Optional[str]
     ip_address:  Optional[str]
     user_agent:  Optional[str]
+    # ⚠️ باج حقيقي كان هنا: AuditLog.approved_by (مين وافق بالـ PIN على
+    # إجراء حسّاس — إلغاء صنف، تخطي حد فرق كاش...) موجود كعمود DB فعلي
+    # (راجع models.py) ومُمرَّر من كل مكان بينادي create_audit_log، لكن
+    # AuditLogRead ماكانتش بترجّعه خالص — يعني GET /audit-logs كان مستحيل
+    # يوريك مين المدير اللي وافق فعليًا، رغم إن العمود اتسجّل صح في
+    # الداتابيز من أول يوم PIN approval اتعمل (2026-07-07). اتكشف أثناء
+    # كتابة تست S-06 (وردية بفرق كبير + تخطي بموافقة مدير).
+    approved_by: Optional[int] = None
     created_at:  datetime
 
 

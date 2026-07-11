@@ -38,6 +38,7 @@ const allNavItems = [
   { path: '/pos/beach-map', label: 'خريطة الشاطئ', icon: '🗺️' },
   { path: '/pos/restaurant', label: 'المطعم', icon: '🍽️' },
   { path: '/pos/cafe', label: 'الكافيه', icon: '☕' },
+  { path: '/pos/shift', label: 'الوردية', icon: '🧾' },
   { path: '/waiter/tables', label: 'الطاولات', icon: '🧑‍🍳' },
 ]
 

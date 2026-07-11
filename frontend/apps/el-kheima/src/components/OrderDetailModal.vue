@@ -11,8 +11,9 @@
 //    held order chains both PATCH calls before the kitchen actually sees it.
 import { ref, computed, watch } from 'vue'
 import { AppModal, AppButton, AppBadge } from '@resort-os/ui'
-import { api, useAuthStore, ENDPOINTS, parseApiTimestamp } from '@resort-os/core'
+import { api, useAuthStore, parseApiTimestamp } from '@resort-os/core'
 import { useOrderDiscount } from '@resort-os/core/composables'
+import PinGuardModal from './PinGuardModal.vue'
 
 interface OrderItemExtra { id: number; extra_id: number | null; extra_name: string; price_addition: number | string }
 interface OrderItem {
@@ -51,9 +52,6 @@ const mod = computed(() => props.module ?? 'restaurant')
 
 const auth = useAuthStore()
 const canVoid = computed(() => auth.hasRole('cashier'))
-// مدير+ مؤهّل بنفسه (راجع core.services.resolve_pin_approval) — كاشير/نادل
-// (canVoid=true بس manager=false) لازم موافقة PIN من مدير حاضر فعليًا.
-const needsPinApproval = computed(() => !auth.hasRole('manager'))
 
 const order = ref<OrderDetail | null>(null)
 const loading = ref(false)
@@ -61,12 +59,15 @@ const busy = ref(false)
 const errorMsg = ref('')
 const successMsg = ref('')
 
+// إلغاء صنف — لازم موافقة PIN مدير+ لو المنفّذ نفسه أقل من مدير (راجع
+// PinGuardModal.vue وcore.services.resolve_pin_approval). البوابة دي كانت
+// منطق inline هنا لحالها (اختيار مدير + إدخال PIN)، اتستخرجت لكومبوننت
+// مشترك قابل لإعادة الاستخدام (wagdy.md بند S-03) — راجع requestVoid/
+// performVoid تحت لتسلسل التنفيذ الفعلي.
 const voidingItemId = ref<number | null>(null)
 const voidReason = ref('')
 const voidError = ref('')
-const approvers = ref<{ id: number; full_name: string; role: string }[]>([])
-const approverUserId = ref<number | null>(null)
-const approverPin = ref('')
+const showPinGuard = ref(false)
 
 // ── Complete payment (الكاشير بس — نفس مستوى void، إتمام الدفع فعل مالي
 // فعلي بيقفل الطاولة/ينشر charge على الفوليو/يرحّل قيد إيراد سيرفر-سايد) ──
@@ -139,51 +140,44 @@ async function loadOrder() {
 
 watch(() => props.orderId, loadOrder, { immediate: true })
 
-async function openVoidPrompt(itemId: number) {
+function openVoidPrompt(itemId: number) {
   voidingItemId.value = itemId
   voidReason.value = ''
   voidError.value = ''
-  approverUserId.value = null
-  approverPin.value = ''
-  if (needsPinApproval.value && approvers.value.length === 0) {
-    try {
-      const { data } = await api.get(ENDPOINTS.core.pinApprovers)
-      approvers.value = data
-    } catch {
-      // فشل تحميل قائمة المديرين — الحقل هيفضل فاضي، المستخدم هياخد رسالة
-      // 400 واضحة من الباك إند لو حاول يأكد من غير موافقة
-    }
-  }
+  showPinGuard.value = false
 }
 function cancelVoidPrompt() {
   voidingItemId.value = null
   voidReason.value = ''
   voidError.value = ''
-  approverUserId.value = null
-  approverPin.value = ''
+  showPinGuard.value = false
 }
 
-async function confirmVoid() {
-  if (!order.value || voidingItemId.value === null) return
+/** خطوة أولى: تحقق من السبب محليًا، وبعدين افتح PinGuardModal — لو المنفّذ
+ * مدير+ (مؤهّل بنفسه)، بيرجع approved فورًا من غير أي UI مرئي (راجع
+ * PinGuardModal.vue) والإلغاء بينفّذ على طول. */
+function requestVoid() {
   const reason = voidReason.value.trim()
   if (reason.length < 3) {
     voidError.value = 'السبب لازم يكون 3 حروف على الأقل'
     return
   }
-  if (needsPinApproval.value && (!approverUserId.value || !approverPin.value)) {
-    voidError.value = 'اختر المدير وأدخل رقم الـ PIN بتاعه'
-    return
-  }
+  voidError.value = ''
+  showPinGuard.value = true
+}
+
+function onVoidPinApproved(payload: { approverUserId: number | null; approverPin: string | null }) {
+  performVoid(payload.approverUserId, payload.approverPin)
+}
+
+async function performVoid(approverUserId: number | null, approverPin: string | null) {
+  if (!order.value || voidingItemId.value === null) return
+  const reason = voidReason.value.trim()
   busy.value = true
   try {
     const { data } = await api.patch(
       `/api/v1/${mod.value}/orders/${order.value.id}/items/${voidingItemId.value}/void`,
-      {
-        reason,
-        ...(needsPinApproval.value
-          ? { approver_user_id: approverUserId.value, approver_pin: approverPin.value }
-          : {}),
-      },
+      { reason, ...(approverUserId ? { approver_user_id: approverUserId, approver_pin: approverPin } : {}) },
       {},
     )
     order.value = data
@@ -192,6 +186,8 @@ async function confirmVoid() {
     emit('changed')
     setTimeout(() => { successMsg.value = '' }, 2500)
   } catch (e: any) {
+    // showPinGuard يفضل زي ما هو (true لو كان مفتوح) — المستخدم يقدر يصحح
+    // الـ PIN ويحاول تاني من غير ما يفقد اختياره للمدير أو سبب الإلغاء.
     voidError.value = e?.response?.data?.detail ?? 'فشل إلغاء الصنف'
   } finally {
     busy.value = false
@@ -357,27 +353,10 @@ function lineTotal(item: OrderItem): number {
                 class="w-full border border-stone-300 rounded-lg p-2 text-xs focus:outline-none focus:ring-2 focus:ring-red-400 resize-none"
                 autofocus
               />
-              <!-- كاشير/نادل (مش مدير+) — لازم موافقة PIN من مدير حاضر فعليًا
-                   قبل ما الإلغاء يتقبل (راجع core.services.resolve_pin_approval) -->
-              <div v-if="needsPinApproval" class="space-y-2 bg-amber-50 border border-amber-200 rounded-lg p-2">
-                <p class="text-xs font-semibold text-amber-800">محتاج موافقة مدير</p>
-                <select v-model="approverUserId" class="w-full border border-stone-300 rounded-lg p-1.5 text-xs">
-                  <option :value="null" disabled>اختر المدير...</option>
-                  <option v-for="a in approvers" :key="a.id" :value="a.id">{{ a.full_name }}</option>
-                </select>
-                <input
-                  v-model="approverPin"
-                  type="password"
-                  inputmode="numeric"
-                  maxlength="6"
-                  placeholder="PIN المدير"
-                  class="w-full border border-stone-300 rounded-lg p-1.5 text-xs tracking-widest"
-                />
-              </div>
               <p v-if="voidError" class="text-xs text-red-600">{{ voidError }}</p>
               <div class="flex gap-2">
                 <button @click="cancelVoidPrompt" class="flex-1 py-1.5 text-xs font-semibold text-gray-600 border border-stone-200 rounded-lg">إلغاء</button>
-                <button :disabled="busy" @click="confirmVoid" class="flex-1 py-1.5 text-xs font-bold text-white bg-red-600 rounded-lg disabled:opacity-50">تأكيد الإلغاء</button>
+                <button :disabled="busy" @click="requestVoid" class="flex-1 py-1.5 text-xs font-bold text-white bg-red-600 rounded-lg disabled:opacity-50">تأكيد الإلغاء</button>
               </div>
             </div>
           </div>
@@ -476,6 +455,18 @@ function lineTotal(item: OrderItem): number {
       </div>
     </template>
   </AppModal>
+
+  <!-- بوابة موافقة PIN لإلغاء صنف — راجع requestVoid/performVoid فوق -->
+  <PinGuardModal
+    v-if="showPinGuard"
+    :min-level="60"
+    title="موافقة إلغاء الصنف"
+    message="إلغاء صنف من الطلب يحتاج موافقة مدير بالـ PIN"
+    :loading="busy"
+    :error-message="voidError"
+    @approved="onVoidPinApproved"
+    @cancel="showPinGuard = false"
+  />
 </template>
 
 <style scoped>

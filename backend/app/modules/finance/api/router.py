@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_db, get_manager_user, rate_limit_dep, require_permission,
+    get_current_active_user, get_db, get_manager_user, rate_limit_dep, require_permission, user_level,
 )
 from app.modules.finance import crud, services
 from app.resort_os.timezone_utils import business_today
@@ -33,7 +33,7 @@ from app.modules.finance.schemas import (
     FolioCreate, FolioRead, IncomeStatementReport, JournalEntryCreate, JournalEntryRead,
     PaymentCreate, PaymentRead,
     RevenueAuditLogRead,
-    ShiftEndReport, TrialBalanceReport, VoidPaymentRequest,
+    ShiftEndReport, ShiftInvoiceLine, TrialBalanceReport, VoidPaymentRequest,
 )
 from app.modules.core.schemas import PaginatedResponse
 
@@ -202,18 +202,37 @@ def download_shift_end_report_pdf(shift_id: int, db: DbDep, _=Depends(get_cashie
     )
 
 
+@router.get("/finance/shifts/{shift_id}/invoices", response_model=list[ShiftInvoiceLine])
+def list_shift_invoices(
+    shift_id: int, db: DbDep, user=Depends(get_cashier_user),
+    approver_user_id: Optional[int] = Query(None),
+    approver_pin: Optional[str] = Query(None, pattern=r"^\d{4,6}$"),
+):
+    """سجل فواتير الوردية (InvoiceLogModal، wagdy.md بند S-02) — كاشير يشوف
+    وردية نفسه بس (PermissionError→403)، وحتى وردية نفسه محتاجة موافقة PIN
+    من مدير+ (approver_user_id/approver_pin، أو يكون هو نفسه مدير+) — راجع
+    services.list_shift_invoices وPinGuardModal (وردية S-03) على الفرونت إند."""
+    try:
+        return services.list_shift_invoices(db, shift_id, user, approver_user_id, approver_pin)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
 @router.post("/finance/shifts/{shift_id}/close", response_model=CashierShiftRead)
 def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(get_cashier_user)):
-    """إغلاق وردية الكاشير مع مطابقة كاش حقيقية (#14 + wagdy.md بند 14).
+    """إغلاق وردية الكاشير مع مطابقة كاش حقيقية (#14 + wagdy.md بند 14 وS-06).
 
     كل منطق المطابقة (تحذير عند فرق بسيط، رفض 400 عند فرق كبير نسبةً لمبيعات
-    الوردية) بيتحسب بالكامل في services.close_shift — الراوتر هنا بيترجم
-    الاستثناء لـ 400 بس ويقرا القيم الجاهزة (reconciliation_ok/warning) اللي
-    الـ service حطّها على الـ instance، من غير ما يعيد أي قرار عمل بنفسه
+    الوردية، أو تجاوز الرفض بموافقة PIN مدير لو data.force_close=True)
+    بيتحسب بالكامل في services.close_shift — الراوتر هنا بيترجم الاستثناء
+    لـ 400 بس ويقرا القيم الجاهزة (reconciliation_ok/warning) اللي الـ
+    service حطّها على الـ instance، من غير ما يعيد أي قرار عمل بنفسه
     (راجع §4 CLAUDE.md: الراوتر HTTP layer بس).
     """
     try:
-        shift = services.close_shift(db, shift_id, user.id, data)
+        shift = services.close_shift(db, shift_id, user.id, data, acting_user_level=user_level(user))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

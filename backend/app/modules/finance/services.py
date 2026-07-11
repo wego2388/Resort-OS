@@ -1,6 +1,7 @@
 """app/modules/finance/services.py — Business logic"""
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
@@ -23,7 +24,7 @@ from app.modules.finance.schemas import (
     CostCenterReport, CostCenterReportLine, DepreciationRunResult, ExchangeRateCreate, FolioChargeCreate,
     FolioCreate,
     IncomeStatementLine, IncomeStatementReport,
-    JournalEntryCreate, JournalLineCreate, PaymentCreate, ShiftEndReport,
+    JournalEntryCreate, JournalLineCreate, PaymentCreate, ShiftEndReport, ShiftInvoiceLine,
     TrialBalanceLine, TrialBalanceReport,
 )
 from app.resort_os.discount_engine import (
@@ -504,7 +505,10 @@ def generate_shift_end_report_pdf(db: Session, shift_id: int) -> bytes:
     )
 
 
-def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftClose) -> CashierShift:
+def close_shift(
+    db: Session, shift_id: int, closed_by: int, data: CashierShiftClose,
+    acting_user_level: int = 100,
+) -> CashierShift:
     """يقفل وردية الكاشير مع مطابقة (reconciliation) حقيقية للكاش — راجع
     wagdy.md بند 14 (حرج): كان ممكن كاشير يقفل ورديته بفرق ضخم بين المبيعات
     المسجّلة والكاش الفعلي المعدود من غير أي رفض أو حتى تنبيه حقيقي، يعني عجز
@@ -513,6 +517,13 @@ def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftCl
     الـ "blind count" (راجع test_blind_cash_count_never_reveals_expected_cash_before_close)
     فضل زي ما هو تمامًا — الكاشير لسه بيعدّ ويبعت رقمه *قبل* ما يشوف أي رقم
     متوقع. المطابقة هنا بتحصل بعد الاستلام مباشرة، سيرفر-سايد بالكامل.
+
+    ``acting_user_level`` الافتراضي (100) مقصود — نفس اتفاقية
+    restaurant.services.void_order_item، أي caller داخلي (تستات/سكريبتات) من
+    غير ما يحدده معناه "موثوق"، بس الراوتر (المسار الإنتاجي الوحيد) بيمرّر
+    المستوى الفعلي دايمًا. راجع wagdy.md بند S-06: فرق كاش أكبر من الحد
+    المسموح بيترفض القفل (تحت) — إلا لو ``data.force_close=True`` مع موافقة
+    PIN من مدير+ (أو المنفّذ نفسه مدير+، راجع core.services.resolve_pin_approval).
     """
     shift = crud.get_shift(db, shift_id)
     if not shift:
@@ -579,14 +590,40 @@ def close_shift(db: Session, shift_id: int, closed_by: int, data: CashierShiftCl
     reject_pct = Decimal(str(settings.CASH_VARIANCE_REJECT_PCT)) / Decimal("100")
     reject_floor = Decimal(str(settings.CASH_VARIANCE_REJECT_FLOOR))
     reject_threshold = max(reject_floor, (report.total_sales * reject_pct).quantize(Decimal("0.01")))
+    variance_override_approved_by: Optional[int] = None
     if abs_variance > reject_threshold:
         direction = "زيادة" if variance > 0 else "عجز"
-        raise ValueError(
-            f"فرق الكاش ({direction} {abs_variance:,.2f} ج) يتخطى الحد المسموح لهذه "
-            f"الوردية ({reject_threshold:,.2f} ج، بناءً على إجمالي مبيعات "
-            f"{report.total_sales:,.2f} ج) — لا يمكن قفل الوردية. راجع العدّ مرة "
-            f"تانية أو استدعِ المدير لمراجعة الدرج قبل القفل."
+        if not data.force_close:
+            raise ValueError(
+                f"فرق الكاش ({direction} {abs_variance:,.2f} ج) يتخطى الحد المسموح لهذه "
+                f"الوردية ({reject_threshold:,.2f} ج، بناءً على إجمالي مبيعات "
+                f"{report.total_sales:,.2f} ج) — لا يمكن قفل الوردية. راجع العدّ مرة "
+                f"تانية أو استدعِ المدير لمراجعة الدرج قبل القفل، أو اطلب موافقة "
+                f"مدير بالـ PIN لتخطي الحد (force_close)."
+            )
+        # مدير حاضر فعليًا وموافق يعتمد الفرق ده رغم تخطّيه الحد — نفس بوابة
+        # موافقة PIN المستخدمة في إلغاء صنف الطلب (wagdy.md بند S-06)، مش
+        # منطق مصادقة موازٍ. لو المنفّذ نفسه مدير+، مفيش داعي لموافقة منفصلة.
+        from app.modules.core import crud as core_crud, services as core_services  # noqa: PLC0415
+        from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+        variance_override_approved_by = core_services.resolve_pin_approval(
+            db, acting_user_level, data.approver_user_id, data.approver_pin,
+            min_approver_level=60,
         )
+        core_crud.create_audit_log(db, AuditLogCreate(
+            user_id=closed_by, approved_by=variance_override_approved_by,
+            branch_id=shift.branch_id, action="close_shift_variance_override",
+            entity_type="cashier_shift", entity_id=shift.id,
+            new_data=json.dumps({
+                "direction": direction,
+                "variance": str(abs_variance),
+                "expected_cash": str(expected_cash),
+                "counted_cash": str(counted_cash),
+                "reject_threshold": str(reject_threshold),
+                "total_sales": str(report.total_sales),
+            }),
+        ))
 
     if lines_for_db is not None:
         crud.create_cash_count_lines(db, shift_id, lines_for_db)
@@ -630,6 +667,51 @@ def get_latest_handover_note(db: Session, branch_id: int) -> Optional[str]:
     الوردية الجاية قبل ما يبدأ، عشان يعرف أي حاجة معلّقة من الوردية اللي قبله."""
     shift = crud.get_latest_closed_shift(db, branch_id)
     return shift.handover_note if shift else None
+
+
+def list_shift_invoices(
+    db: Session, shift_id: int, requesting_user,
+    approver_user_id: Optional[int] = None, approver_pin: Optional[str] = None,
+) -> list[ShiftInvoiceLine]:
+    """سجل فواتير الوردية (InvoiceLogModal، wagdy.md بند S-02) — كل دفعة
+    حقيقية مربوطة بالوردية عبر Payment.shift_id، مع اسم ضيف كل فاتورة.
+
+    قيدين محكومين هنا (مش endpoint عرض عام):
+    1. كاشير (level < مدير) يقدر يشوف وردية نفسه بس — أي وردية غيره PermissionError.
+    2. حتى وردية نفسه، لازم موافقة PIN من مدير+ (أو يكون هو نفسه مدير+) —
+       بيانات مالية تفصيلية حسّاسة (راجع core.services.resolve_pin_approval
+       وwagdy.md بند S-03: PinGuardModal هي البوابة على الفرونت إند لده).
+    """
+    shift = crud.get_shift(db, shift_id)
+    if not shift:
+        raise ValueError(f"الوردية {shift_id} غير موجودة")
+
+    from app.core.deps import user_level  # noqa: PLC0415
+    from app.modules.core import services as core_services  # noqa: PLC0415
+
+    acting_level = user_level(requesting_user)
+    if acting_level < 60 and shift.cashier_id != requesting_user.id:
+        raise PermissionError("لا يمكنك عرض فواتير وردية غيرك")
+
+    core_services.resolve_pin_approval(
+        db, acting_level, approver_user_id, approver_pin, min_approver_level=60,
+    )
+
+    payments = crud.list_shift_payments_with_folio(db, shift_id)
+    return [
+        ShiftInvoiceLine(
+            payment_id=p.id,
+            folio_id=p.folio_id,
+            guest_name=p.folio.guest_name if p.folio else "—",
+            amount=p.amount,
+            method=p.method,
+            reference=p.reference,
+            posted_at=p.posted_at,
+            is_voided=p.voided_at is not None,
+            voided_at=p.voided_at,
+        )
+        for p in payments
+    ]
 
 
 # ── Discount ──────────────────────────────────────────────────────────

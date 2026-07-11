@@ -40,6 +40,13 @@ export const useAuthStore = defineStore('auth', () => {
     return userLevel >= minLevel
   }
 
+  // Numeric level of the current user — for components that gate on a raw
+  // threshold (e.g. PinGuardModal's `minLevel` prop, mirroring backend
+  // core.services.resolve_pin_approval's `min_approver_level`) instead of a
+  // named role. hasRole() above stays the primary API for router guards/
+  // v-if checks against a known role name.
+  const roleLevel = computed(() => ROLE_LEVELS[role.value] ?? 0)
+
   // Mirrors backend app/core/deps.py::MANDATORY_2FA_ROLES exactly (same
   // duplication pattern as ROLE_LEVELS above — see CLAUDE.md § 14 rule 5).
   // Every request from these roles gets a 403 `2FA_REQUIRED` from the backend
@@ -104,5 +111,5 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.removeItem('access_token')
   }
 
-  return { user, token, isAuthenticated, role, branchId, isLoading, login, logout, fetchUser, hasRole, needsTwoFactorSetup, pinSwitch }
+  return { user, token, isAuthenticated, role, branchId, isLoading, login, logout, fetchUser, hasRole, roleLevel, needsTwoFactorSetup, pinSwitch }
 })
