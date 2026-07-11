@@ -3,6 +3,9 @@
 // الهدف: مين نشط/متأخر/منتهي، مين يستاهل مكالمة النهاردة (بالتليفون)، والـ pipeline العام.
 import { ref, onMounted } from 'vue'
 import { api } from '@resort-os/core'
+import { useToast } from '@resort-os/ui'
+
+const toast = useToast()
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
@@ -66,6 +69,29 @@ function pipelineTotal(): number {
   return Object.values(dash.value.pipeline).reduce((a, b) => a + b, 0)
 }
 
+// wagdy.md #12: تصدير Excel حقيقي (مش CSV محلي) — الباك إند بيبني الشيت
+// بنفس ReportBuilder المستخدم في باقي تقارير المشروع (تنسيق/عناوين موحّدة).
+const exporting = ref(false)
+async function exportExcel() {
+  exporting.value = true
+  try {
+    const res = await api.get('/api/v1/timeshare/sales-dashboard/export', {
+      params: { branch_id: branchId },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `sales-dashboard-${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  } catch {
+    toast.error('تعذّر تصدير التقرير')
+  } finally {
+    exporting.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -76,9 +102,17 @@ onMounted(load)
         <h1 class="text-xl font-black text-gray-900">📞 لوحة مبيعات التايم شير</h1>
         <p class="text-xs text-gray-400 mt-1">مين يستاهل مكالمة النهاردة، وحالة العقود بشكل عام</p>
       </div>
-      <button @click="load" class="px-4 py-2 rounded-xl bg-white border border-stone-200 text-sm font-bold text-gray-600 hover:bg-stone-50">
-        🔄 تحديث
-      </button>
+      <div class="flex items-center gap-2">
+        <button
+          @click="exportExcel" :disabled="exporting || !dash"
+          class="px-4 py-2 rounded-xl bg-white border border-stone-200 text-sm font-bold text-gray-600 hover:bg-stone-50 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {{ exporting ? '⏳ جارِ التصدير...' : '📊 تصدير Excel' }}
+        </button>
+        <button @click="load" class="px-4 py-2 rounded-xl bg-white border border-stone-200 text-sm font-bold text-gray-600 hover:bg-stone-50">
+          🔄 تحديث
+        </button>
+      </div>
     </div>
 
     <div v-if="loading" class="flex justify-center py-20">

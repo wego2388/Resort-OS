@@ -113,6 +113,18 @@ def get_sales_dashboard(db: DbDep, _=Depends(get_current_active_user), branch_id
     return services.get_sales_dashboard(db, branch_id)
 
 
+@router.get("/timeshare/sales-dashboard/export")
+def download_sales_dashboard_excel(db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...)):
+    """تصدير Excel للوحة مبيعات التايم شير (wagdy.md #12) — مدير+ زي باقي
+    exports التقارير الحساسة في المشروع (راجع finance.download_folios_report_excel)."""
+    xlsx = services.generate_sales_dashboard_excel(db, branch_id)
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=sales-dashboard.xlsx"},
+    )
+
+
 @router.get("/timeshare/calendar")
 def get_calendar(
     db: DbDep, _=Depends(get_current_active_user),

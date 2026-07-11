@@ -329,6 +329,30 @@ class TestTimeshareReportingHttp:
         assert data["total_value"] == 200000.0  # عقدين نشطين × 100000 (الملغى مستبعَد)
         assert c1["id"] != to_cancel["id"]
 
+    def test_sales_dashboard_export_returns_valid_excel_for_manager(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        """wagdy.md #12: export Excel للوحة مبيعات التايم شير — مدير+ بس."""
+        branch = make_branch_committed(db)
+        client.post("/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers)
+
+        resp = client.get(
+            f"/api/v1/timeshare/sales-dashboard/export?branch_id={branch.id}", headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert "attachment" in resp.headers["content-disposition"]
+        assert len(resp.content) > 0
+
+    def test_sales_dashboard_export_requires_manager(self, client: TestClient, db, fake_redis, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            f"/api/v1/timeshare/sales-dashboard/export?branch_id={branch.id}", headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
     def test_calendar_shows_booked_week_with_contract(self, client: TestClient, db, fake_redis, manager_headers):
         """عقد بأسبوع ثابت 28 → total_booked_weeks=1 والعقد يظهر تحت أسبوع 28."""
         branch = make_branch_committed(db)

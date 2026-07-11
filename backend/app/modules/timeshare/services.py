@@ -282,6 +282,51 @@ def get_sales_dashboard(db: Session, branch_id: int) -> dict:
     }
 
 
+def generate_sales_dashboard_excel(db: Session, branch_id: int) -> bytes:
+    """تصدير Excel للوحة مبيعات التايم شير — قائمة اتصال يومية (متأخرات السداد)
+    وزيارات قادمة، لمدير المبيعات (طباعة/مشاركة، راجع wagdy.md #12).
+    نفس بيانات SalesDashboardView.vue بالظبط، بدون أي منطق عمل إضافي هنا —
+    الشيت مجرد عرض مختلف لنفس get_sales_dashboard."""
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    dash = get_sales_dashboard(db, branch_id)
+
+    overdue_rows = [
+        [c["customer_name"], c["customer_phone"] or "—", c["room_type"],
+         c["pending_count"], c["overdue_amount"], c["next_due"] or "—"]
+        for c in dash["overdue_clients"]
+    ]
+    total_overdue = sum(c["overdue_amount"] for c in dash["overdue_clients"])
+
+    visit_rows = [
+        [v["customer_name"], v["customer_phone"] or "—", v["contract_number"],
+         v["room_type"], v["week_number"], v["visit_start"], v["days_until"]]
+        for v in dash["upcoming_visits"]
+    ]
+
+    return builder.excel(
+        sheets=[
+            {
+                "name": "متأخرات السداد",
+                "headers": ["اسم العميل", "رقم الهاتف", "نوع الوحدة",
+                            "أقساط معلقة", "المبلغ المتأخر", "أقرب استحقاق"],
+                "rows": overdue_rows,
+                "col_types": ["text", "text", "text", "number", "currency", "text"],
+                "summary": {"عدد العملاء": len(overdue_rows), "إجمالي المتأخر": total_overdue},
+            },
+            {
+                "name": "زيارات قادمة",
+                "headers": ["اسم العميل", "رقم الهاتف", "رقم العقد",
+                            "نوع الوحدة", "رقم الأسبوع", "تاريخ الزيارة", "الأيام المتبقية"],
+                "rows": visit_rows,
+                "col_types": ["text", "text", "text", "text", "number", "text", "number"],
+                "summary": {"عدد الزيارات": len(visit_rows)},
+            },
+        ],
+        title=f"لوحة مبيعات التايم شير — فرع {branch_id}",
+    )
+
+
 def get_calendar(db: Session, branch_id: int, year: Optional[int] = None) -> dict:
     """تقويم 52 أسبوع ISO — كل أسبوع وعقوده."""
     from datetime import date as _date, timedelta as _timedelta  # noqa: PLC0415
