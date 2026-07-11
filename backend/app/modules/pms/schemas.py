@@ -132,6 +132,10 @@ class HousekeepingTaskRead(BaseModel):
 class HousekeepingTaskStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(dirty|cleaning|inspecting|available)$")
     notes:  Optional[str] = None
+    # wagdy.md P-12: assigned_to كان عمود حقيقي في الموديل وبيتعرض في
+    # الفرونت إند، بس مفيش أي طريقة تحدّده — المشرف كان مضطر يبلّغ الموظف
+    # شفهيًا بدل ما يعيّنه من الشاشة نفسها.
+    assigned_to: Optional[int] = None
 
 
 class RatePlanCreate(BaseModel):

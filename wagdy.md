@@ -72,7 +72,7 @@ finance/schemas.py     → ShiftInvoiceLine بسيط
 | P-09 | **Table Reservation (مطعم)** — حجز طاولة مسبقاً (مختلف عن حجز الغرفة) | ⬜ | L | 🟡 | Backend: جدول `restaurant_reservations` جديد |
 | P-10 | **Course Firing** — إرسال المطبخ بالمراحل (مقبّلات أولاً، ثم رئيسية) | ⬜ | M | 🟡 | Backend: `course_number` على OrderItem + `fire_course` endpoint |
 | P-11 | **Sales Leaderboard Frontend** — عرض ترتيب الموظفين حسب المبيعات | ✅ (2026-07-11) | S | 🟢 | تم — تاب "🏆 لوحة الأداء" جديد في HRView.vue، ميداليات لأول 3، فلتر مدى تاريخ |
-| P-12 | **Housekeeping Assignment** — تعيين موظف على task تنظيف من الفرونت | ⬜ | S | 🟢 | Frontend فقط — `assigned_to` في PATCH موجود |
+| P-12 | **Housekeeping Assignment** — تعيين موظف على task تنظيف من الفرونت | ✅ (2026-07-11) | S | 🟢 | تم — ⚠️ تصحيح: `assigned_to` ماكانش في `HousekeepingTaskStatusUpdate` أصلاً، اتضاف للـ schema+service+router كمان مش frontend بس |
 
 ---
 

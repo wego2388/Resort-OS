@@ -12,9 +12,10 @@ interface HKTask {
   task_type: string
   status: string
   priority: string
-  assigned_to?: string
+  assigned_to?: number | null
   created_at: string
 }
+interface EmployeeOption { id: number; full_name: string }
 
 // HousekeepingTaskRead (app/modules/pms/schemas.py) مفيهوش room_number —
 // كانت الشاشة بتعرض رقم الغرفة الداخلي (room_id) بدل اسمها الحقيقي (زي
@@ -88,6 +89,42 @@ async function fetchRoomNames() {
   }
 }
 
+// wagdy.md P-12: assigned_to كان عمود حقيقي بيتعرض كـ رقم موظف خام بدون
+// اسم، ومن غير أي طريقة يتحدّد بيها من الشاشة أصلاً.
+const employees = ref<EmployeeOption[]>([])
+const employeeNameById = ref<Record<number, string>>({})
+const assigningTaskId = ref<number | null>(null)
+
+async function fetchEmployees() {
+  try {
+    const res = await api.get('/api/v1/hr/employees', {
+      params: { branch_id: branchId, status: 'active', size: 100 },
+    })
+    employees.value = res.data.items ?? []
+    employeeNameById.value = Object.fromEntries(employees.value.map((e) => [e.id, e.full_name]))
+  } catch (e) {
+    console.error(e)
+    // غير حرج لعرض المهام — بس هيمنع التعيين لو فشل
+  }
+}
+
+async function assignTask(task: HKTask, employeeId: number | null) {
+  const previous = task.assigned_to
+  task.assigned_to = employeeId
+  try {
+    await api.patch(`/api/v1/pms/housekeeping/tasks/${task.id}`, {
+      status: task.status, assigned_to: employeeId,
+    })
+    toast.success(employeeId ? 'تم تعيين الموظف' : 'تم إلغاء التعيين')
+  } catch (e: any) {
+    task.assigned_to = previous
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تعيين الموظف')
+  } finally {
+    assigningTaskId.value = null
+  }
+}
+
 async function fetchTasks() {
   loading.value = true
   try {
@@ -120,6 +157,7 @@ async function advanceStatus(task: HKTask) {
 
 onMounted(() => {
   fetchRoomNames()
+  fetchEmployees()
   fetchTasks()
 })
 </script>
@@ -196,7 +234,26 @@ onMounted(() => {
             >عاجل</span>
           </div>
           <div class="text-sm text-gray-500 mb-0.5">{{ statusLabels[task.status] ?? task.status }}</div>
-          <div v-if="task.assigned_to" class="text-xs text-gray-400">{{ task.assigned_to }}</div>
+
+          <!-- تعيين موظف — عرض عادي بيتحول لـ select عند الضغط -->
+          <div v-if="assigningTaskId !== task.id" class="text-xs mt-0.5">
+            <button
+              @click="assigningTaskId = task.id"
+              class="text-gray-400 hover:text-blue-600 underline decoration-dotted"
+            >
+              👤 {{ task.assigned_to ? (employeeNameById[task.assigned_to] ?? `موظف #${task.assigned_to}`) : 'تعيين موظف...' }}
+            </button>
+          </div>
+          <select
+            v-else
+            :value="task.assigned_to ?? ''"
+            @change="assignTask(task, ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)"
+            @blur="assigningTaskId = null"
+            class="text-xs border border-stone-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            <option value="">بدون تعيين</option>
+            <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.full_name }}</option>
+          </select>
         </div>
 
         <div class="flex-shrink-0">

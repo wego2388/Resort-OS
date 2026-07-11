@@ -286,7 +286,9 @@ async def update_housekeeping_task_status(
     _=Depends(get_current_active_user),
 ):
     try:
-        task = services.update_housekeeping_task_status(db, task_id, data.status, data.notes)
+        task = services.update_housekeeping_task_status(
+            db, task_id, data.status, data.notes, data.assigned_to,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
     await pms_rooms_manager.broadcast(str(task.branch_id), {"type": "rooms_changed"})

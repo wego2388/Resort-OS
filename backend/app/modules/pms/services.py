@@ -321,10 +321,15 @@ def cancel_booking(db: Session, booking_id: int, cancelled_by: int) -> Booking:
     return booking
 
 
-def update_housekeeping_task_status(db: Session, task_id: int, new_status: str, notes: Optional[str] = None):
+def update_housekeeping_task_status(
+    db: Session, task_id: int, new_status: str,
+    notes: Optional[str] = None, assigned_to: Optional[int] = None,
+):
     """يحدّث حالة مهمة تنظيف — dirty → cleaning → inspecting → available.
     لما توصل available، بيرجّع الغرفة نفسها لـ available تلقائياً (خلصت
-    من دورة checkout_pending اللي بدأت في checkout_booking)."""
+    من دورة checkout_pending اللي بدأت في checkout_booking). assigned_to
+    (wagdy.md P-12) بيتحدّث بشكل مستقل عن status لو اتبعت — تعيين موظف
+    مش لازم يترافق مع تغيير حالة."""
     task = crud.get_housekeeping_task(db, task_id)
     if not task:
         raise ValueError(f"مهمة التنظيف {task_id} غير موجودة")
@@ -332,6 +337,8 @@ def update_housekeeping_task_status(db: Session, task_id: int, new_status: str, 
     update_data: dict = {"status": new_status}
     if notes is not None:
         update_data["notes"] = notes
+    if assigned_to is not None:
+        update_data["assigned_to"] = assigned_to
     if new_status == "cleaning" and not task.started_at:
         update_data["started_at"] = datetime.utcnow()
     if new_status == "available":

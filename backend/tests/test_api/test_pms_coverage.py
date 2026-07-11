@@ -208,6 +208,29 @@ def test_pms_update_hk_task_to_in_progress(client: TestClient, manager_headers, 
     assert resp.json()["notes"] == "Started"
 
 
+def test_pms_update_hk_task_assigns_employee(client: TestClient, manager_headers, db):
+    """wagdy.md P-12: assigned_to كان عمود حقيقي بيتعرض في الفرونت إند بدون
+    أي طريقة تحدّده."""
+    br = _branch(db)
+    rt = _room_type(db, br.id)
+    room = _room(db, br.id, rt.id, "802")
+    task = _hk_task(db, br.id, room.id, "checkout_clean", "dirty")
+
+    resp = client.patch(f"/api/v1/pms/housekeeping/tasks/{task.id}",
+                        json={"status": "dirty", "assigned_to": 42},
+                        headers=manager_headers)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["assigned_to"] == 42
+
+    # تعيين موظف تاني ميغيّرش الحالة لو مش مبعوتة تغيير حقيقي
+    resp2 = client.patch(f"/api/v1/pms/housekeeping/tasks/{task.id}",
+                         json={"status": "dirty", "assigned_to": 7},
+                         headers=manager_headers)
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json()["assigned_to"] == 7
+    assert resp2.json()["status"] == "dirty"
+
+
 def test_pms_update_hk_task_to_completed(client: TestClient, manager_headers, db):
     br = _branch(db)
     rt = _room_type(db, br.id)
