@@ -8,8 +8,17 @@
 // حجز حالي أبدًا حتى للغرف المشغولة — نفس فئة الباج اللي اتصلح قبل كده في
 // BookingsView.vue (شوف تعليقه فوق). اتصلح بجلب أنواع الغرف + الحجوزات
 // النشطة (checked_in) وتجميعها هنا للعرض فقط (مفيش منطق عمل، عرض بيانات بس).
+//
+// ⚠️ فجوة حقيقية تانية اتصلحت (wagdy.md #23): الشاشة كانت بتجيب حالة الغرف
+// مرة واحدة عند الفتح + polling كل 60 ثانية بس — لو كاشير تاني سجّل دخول/
+// خروج ضيف في نفس اللحظة، شاشة مدير تانية فاتحة الصفحة كانت تفضل قديمة لحد
+// الـ polling التالي. اتضاف اتصال WebSocket لحظي حقيقي (نفس نمط
+// BeachMapView.vue/useResortWebSocket — بث "rooms_changed" من
+// pms/api/router.py عند أي تغيير حالة غرفة عبر HTTP). الـ polling كل 60
+// ثانية والزرار اليدوي فضلوا زي ما هما عمدًا كطبقة أمان إضافية (WebSocket
+// بيعيد الاتصال تلقائيًا لو النت اتقطع، لكن مفيش داعي نعتمد عليه 100%).
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, useResortWebSocket } from '@resort-os/core'
 import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
@@ -110,11 +119,26 @@ async function fetchRooms() {
   } finally { loading.value = false }
 }
 
+// اتصال لحظي — نفس نمط BeachMapView.vue/useResortWebSocket (بيعيد الاتصال
+// تلقائيًا لو النت اتقطع). الرسالة الوحيدة "rooms_changed" عامة عمدًا
+// (راجع تعليق pms_rooms_websocket في الباك إند) — بترجّع نفس fetchRooms()
+// اللي الشاشة أصلاً بتستخدمها، فمفيش منطق state-merge جديد يحتاج اختبار.
+const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+const { onMessage } = useResortWebSocket(
+  `${wsProtocol}//${location.host}/api/v1/pms/ws/rooms/${branchId}`,
+)
+onMessage((data: any) => {
+  if (data?.type === 'rooms_changed') fetchRooms()
+})
+
 let refreshInterval: ReturnType<typeof setInterval>
 
 onMounted(() => {
   fetchRoomTypes()
   fetchRooms()
+  // طبقة أمان إضافية — الـ WebSocket فوق بيغطي التحديث اللحظي، لكن ده
+  // بيضمن الشاشة تتصحّح لوحدها حتى لو رسالة WS اتفقدت (مثلاً reconnect
+  // في نفس لحظة التغيير) من غير ما حد يحتاج يضغط "تحديث" يدوي.
   refreshInterval = setInterval(fetchRooms, 60_000)
 })
 onUnmounted(() => clearInterval(refreshInterval))

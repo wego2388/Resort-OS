@@ -4,7 +4,10 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect,
+    status,
+)
 
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user, get_current_active_user,
@@ -19,6 +22,61 @@ from app.modules.pms.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["pms"])
+
+
+# ── WebSocket Room Map Manager ──────────────────────────────────────────
+# نفس نمط beach_map_manager (beach/api/router.py) بالظبط — بث بسيط بالفرع،
+# من غير أي بروتوكول ثنائي الاتجاه حقيقي ولا auth على مستوى الـ socket نفسه
+# (فجوة معروفة عبر المشروع كله، مش خاصة بالقناة دي — راجع نفس التعليق في
+# beach/api/router.py وcore/api/router.py).
+#
+# الفجوة اللي بيسدّها ده: RoomsView.vue (خريطة الغرف) كانت بتجيب حالة الغرف
+# مرة واحدة عند فتح الشاشة + polling كل 60 ثانية بس — لو كاشير تاني سجّل
+# دخول/خروج ضيف أو غيّر حالة تنظيف، شاشة المدير الفاتحها من قبل كانت بتفضل
+# قديمة لحد الـ polling التالي أو تحديث يدوي.
+
+class PmsRoomsConnectionManager:
+    def __init__(self):
+        self.active: dict[str, list[WebSocket]] = {}  # branch_id → قائمة اتصالات WS
+
+    async def connect(self, ws: WebSocket, branch_id: str):
+        await ws.accept()
+        self.active.setdefault(branch_id, []).append(ws)
+
+    def disconnect(self, ws: WebSocket, branch_id: str):
+        connections = self.active.get(branch_id, [])
+        if ws in connections:
+            connections.remove(ws)
+
+    async def broadcast(self, branch_id: str, data: dict):
+        for ws in list(self.active.get(branch_id, [])):
+            try:
+                await ws.send_json(data)
+            except Exception:
+                pass
+
+
+pms_rooms_manager = PmsRoomsConnectionManager()
+
+
+@router.websocket("/pms/ws/rooms/{branch_id}")
+async def pms_rooms_websocket(ws: WebSocket, branch_id: int):
+    """اتصال WebSocket لخريطة الغرف الحية (RoomsView.vue) — بث "rooms_changed"
+    لأي تغيير في حالة الغرف (تشيك-إن/تشيك-أوت/إلغاء حجز/تغيير حالة يدوي/
+    تحديث مهمة تنظيف) لكل الموظفين الفاتحين الشاشة في نفس الوقت. الرسالة
+    عامة عمدًا (مفيش بيانات غرفة كاملة داخلها) — الشاشة أصلاً عندها
+    fetchRooms() اللي بتجيب الغرف + الحجوزات الحالية النشطة مع بعض من
+    endpoint-ين مختلفين، فمفيش داعي نبني DTO مختلط (Room+Booking) جديد
+    للبث نفسه؛ نفس فكرة "locations_changed" في beach/api/router.py (اللي
+    فيها كمان تغيير مركّب مش سهل تمثيله في رسالة واحدة). بيرد بـ pong
+    كـ heartbeat فقط، زي KDS وخريطة الشاطئ."""
+    await pms_rooms_manager.connect(ws, str(branch_id))
+    try:
+        while True:
+            await ws.receive_text()
+            await ws.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        pms_rooms_manager.disconnect(ws, str(branch_id))
 
 
 # ── Room Types ────────────────────────────────────────────────────────
@@ -92,12 +150,13 @@ def create_room(data: RoomCreate, db: DbDep, _=Depends(get_admin_user)):
 
 
 @router.patch("/pms/rooms/{room_id}/status", response_model=RoomRead)
-def update_room_status(room_id: int, data: RoomStatusUpdate, db: DbDep, _=Depends(get_manager_user)):
+async def update_room_status(room_id: int, data: RoomStatusUpdate, db: DbDep, _=Depends(get_manager_user)):
     room = crud.get_room(db, room_id)
     if not room:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الغرفة غير موجودة")
     crud.update_room_status(db, room, data.status, data.notes)
     db.commit(); db.refresh(room)
+    await pms_rooms_manager.broadcast(str(room.branch_id), {"type": "rooms_changed"})
     return RoomRead.model_validate(room)
 
 
@@ -123,7 +182,7 @@ def list_bookings(
 
 @router.post("/pms/bookings", response_model=BookingRead,
              status_code=status.HTTP_201_CREATED)
-def create_booking(data: BookingCreate, db: DbDep, _=Depends(get_cashier_user)):
+async def create_booking(data: BookingCreate, db: DbDep, _=Depends(get_cashier_user)):
     # ⚠️ باج صلاحيات حقيقي اتكشف حي (2026-07-06، اختبار استقبال كامل):
     # إنشاء حجز/تسجيل دخول/تسجيل خروج كانوا الثلاثة محتاجين get_manager_user
     # (level 60+) — يعني موظف الاستقبال (receptionist، level 40) اللي شغلته
@@ -134,11 +193,13 @@ def create_booking(data: BookingCreate, db: DbDep, _=Depends(get_cashier_user)):
     # المفروض يقدر يحصّل) — هنا get_cashier_user (level 40+) هو الحد الأدنى
     # الصحيح فعليًا لعمليات الاستقبال اليومية.
     try:
-        return services.create_booking(db, data)
+        booking = services.create_booking(db, data)
     except services.BookingConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await pms_rooms_manager.broadcast(str(data.branch_id), {"type": "rooms_changed"})
+    return booking
 
 
 @router.get("/pms/bookings/{booking_id}", response_model=BookingRead)
@@ -151,30 +212,36 @@ def get_booking(booking_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 @router.post("/pms/bookings/{booking_id}/checkin",
              response_model=BookingRead)
-def checkin(booking_id: int, db: DbDep, _=Depends(get_cashier_user)):
+async def checkin(booking_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
-        return services.checkin_booking(db, booking_id)
+        booking = services.checkin_booking(db, booking_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await pms_rooms_manager.broadcast(str(booking.branch_id), {"type": "rooms_changed"})
+    return booking
 
 
 @router.post("/pms/bookings/{booking_id}/checkout",
              response_model=BookingRead)
-def checkout(booking_id: int, db: DbDep, _=Depends(get_cashier_user)):
+async def checkout(booking_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
-        return services.checkout_booking(db, booking_id)
+        booking = services.checkout_booking(db, booking_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await pms_rooms_manager.broadcast(str(booking.branch_id), {"type": "rooms_changed"})
+    return booking
 
 
 @router.post("/pms/bookings/{booking_id}/cancel",
              dependencies=[Depends(require_permission("pms.cancel_booking", "execute", min_role_level=60))],
              response_model=BookingRead)
-def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_current_active_user)):
+async def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_current_active_user)):
     try:
-        return services.cancel_booking(db, booking_id, cancelled_by=user.id)
+        booking = services.cancel_booking(db, booking_id, cancelled_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await pms_rooms_manager.broadcast(str(booking.branch_id), {"type": "rooms_changed"})
+    return booking
 
 
 
@@ -212,15 +279,16 @@ def list_housekeeping_tasks(
 
 
 @router.patch("/pms/housekeeping/tasks/{task_id}", response_model=HousekeepingTaskRead)
-def update_housekeeping_task_status(
+async def update_housekeeping_task_status(
     task_id: int, data: HousekeepingTaskStatusUpdate, db: DbDep,
     _=Depends(get_current_active_user),
 ):
     try:
         task = services.update_housekeeping_task_status(db, task_id, data.status, data.notes)
-        return HousekeepingTaskRead.model_validate(task)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    await pms_rooms_manager.broadcast(str(task.branch_id), {"type": "rooms_changed"})
+    return HousekeepingTaskRead.model_validate(task)
 
 
 # ── Rate Plans ────────────────────────────────────────────────────────

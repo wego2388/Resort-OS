@@ -352,6 +352,104 @@ class TestRatePlans:
         assert resp.status_code == 404
 
 
+class TestRoomsWebSocketBroadcast:
+    """خريطة الغرف (RoomsView.vue) كانت بتجيب حالة الغرف مرة واحدة عند الفتح
+    + polling كل 60 ثانية بس — لو كاشير تاني سجّل دخول/خروج ضيف في نفس
+    اللحظة، شاشة مدير تانية فاتحة الصفحة كانت تفضل قديمة (wagdy.md #23).
+    اتضاف WebSocket لحظي حقيقي (pms_rooms_manager، نفس نمط beach_map_manager)
+    بيبعت "rooms_changed" عند أي تغيير حالة غرفة عبر HTTP. التستات دي بتتأكد
+    إن اتصال WS حقيقي متصل فعلاً بيستقبل الرسالة — مش بس إن broadcast()
+    اتنادى (نفس أسلوب test_kds_websocket_client_actually_receives_broadcast_message
+    في test_restaurant_http.py)."""
+
+    def test_manual_room_status_update_broadcasts(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        room_type = make_room_type_committed(db, branch)
+        room = make_room_committed(db, branch, room_type)
+
+        with client.websocket_connect(f"/api/v1/pms/ws/rooms/{branch.id}") as ws:
+            resp = client.patch(
+                f"/api/v1/pms/rooms/{room.id}/status",
+                json={"status": "maintenance", "notes": "تسريب مياه"},
+                headers=manager_headers,
+            )
+            assert resp.status_code == 200, resp.text
+
+            message = ws.receive_json()
+            assert message["type"] == "rooms_changed"
+
+    def test_checkin_and_checkout_broadcast(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        room_type = make_room_type_committed(db, branch)
+        room = make_room_committed(db, branch, room_type)
+
+        booking = client.post(
+            "/api/v1/pms/bookings",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف WS",
+                "check_in": str(date.today()), "check_out": str(date.today() + timedelta(days=1)),
+                "room_ids": [room.id],
+            },
+            headers=manager_headers,
+        ).json()
+
+        with client.websocket_connect(f"/api/v1/pms/ws/rooms/{branch.id}") as ws:
+            checkin_resp = client.post(
+                f"/api/v1/pms/bookings/{booking['id']}/checkin", headers=manager_headers,
+            )
+            assert checkin_resp.status_code == 200, checkin_resp.text
+            assert ws.receive_json()["type"] == "rooms_changed"
+
+            checkout_resp = client.post(
+                f"/api/v1/pms/bookings/{booking['id']}/checkout", headers=manager_headers,
+            )
+            assert checkout_resp.status_code == 200, checkout_resp.text
+            assert ws.receive_json()["type"] == "rooms_changed"
+
+    def test_housekeeping_status_update_broadcasts(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        room_type = make_room_type_committed(db, branch)
+        room = make_room_committed(db, branch, room_type)
+        from app.modules.pms.models import HousekeepingTask
+        task = HousekeepingTask(branch_id=branch.id, room_id=room.id, task_type="checkout_clean", status="dirty")
+        db.add(task)
+        db.commit()
+
+        with client.websocket_connect(f"/api/v1/pms/ws/rooms/{branch.id}") as ws:
+            resp = client.patch(
+                f"/api/v1/pms/housekeeping/tasks/{task.id}",
+                json={"status": "cleaning"},
+                headers=manager_headers,
+            )
+            assert resp.status_code == 200, resp.text
+            assert ws.receive_json()["type"] == "rooms_changed"
+
+    def test_broadcast_is_scoped_to_branch(self, client: TestClient, db, fake_redis, manager_headers):
+        """فرع تاني متصل بالخريطة الحية بتاعته مش المفروض يستقبل حاجة لما
+        غرفة في فرع مختلف تتغيّر — نفس عزل الفروع اللي beach_map_manager
+        بيطبّقه (dict مفتاحه branch_id، مش broadcast عام)."""
+        branch_a = make_branch_committed(db)
+        branch_b = make_branch_committed(db)
+        room_type_a = make_room_type_committed(db, branch_a)
+        room_a = make_room_committed(db, branch_a, room_type_a)
+
+        with client.websocket_connect(f"/api/v1/pms/ws/rooms/{branch_b.id}") as ws_b:
+            resp = client.patch(
+                f"/api/v1/pms/rooms/{room_a.id}/status",
+                json={"status": "maintenance"},
+                headers=manager_headers,
+            )
+            assert resp.status_code == 200, resp.text
+
+            # لو الفرع التاني استلم رسالة غلط، الـ heartbeat pong هو الطريقة
+            # العملية الوحيدة نتأكد بيها إن مفيش "rooms_changed" واصل —
+            # نبعت ping ونستنى pong، لو ده وصل قبل أي "rooms_changed" يبقى
+            # مفيش تسريب عبر الفروع.
+            ws_b.send_text("ping")
+            message = ws_b.receive_json()
+            assert message["type"] == "pong"
+
+
 class TestPublicRoomTypes:
     """للموقع العام — بدون تسجيل دخول، نفس نمط restaurant/public/menu."""
 
