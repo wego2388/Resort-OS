@@ -7,6 +7,8 @@ export const ENDPOINTS = {
     setup2fa: '/api/v1/auth/2fa/setup',
     enable2fa: '/api/v1/auth/2fa/enable',
     disable2fa: '/api/v1/auth/2fa/disable',
+    passwordResetRequest: '/api/v1/auth/password-reset/request',
+    passwordResetConfirm: '/api/v1/auth/password-reset/confirm',
   },
   core: {
     branches: '/api/v1/branches',

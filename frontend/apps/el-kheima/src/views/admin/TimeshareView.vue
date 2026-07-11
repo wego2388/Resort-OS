@@ -220,6 +220,110 @@ async function loadCalendar() {
   } catch (e) { console.error(e); toast.error('فشل تحميل الكالندر') } finally { calLoading.value = false }
 }
 
+// ── Print calendar (لعرض تقديمي في اجتماعات المبيعات) ──────────────────────
+// طباعة/تصدير PDF من المتصفح مباشرة — نفس نمط QRGeneratorView.printSelected،
+// لأن كالندر 52 أسبوع أصلاً layout مرئي (شبكة)، مش بيانات صفوف تصلح لملف Excel
+function escapeHtml(s: string): string {
+  const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
+  return s.replace(/[&<>"']/g, (ch) => map[ch])
+}
+
+function calContractPrintClass(c: any): string {
+  if (c.rci_included) return 'rci'
+  const m: Record<string, string> = { '2R': 'r2', '4R': 'r4', '6R': 'r6' }
+  return m[c.room_type] || 'other'
+}
+
+function printCalendarView() {
+  if (!calendar.value.calendar.length) { toast.error('لا يوجد بيانات كالندر للطباعة'); return }
+
+  const exportedAt = new Date().toLocaleString('ar-EG')
+  const exportedBy = auth.user?.full_name || auth.user?.username || '—'
+
+  const monthsHtml = calendar.value.calendar.map(month => `
+    <div class="month-card">
+      <div class="month-header">${escapeHtml(month.month_name)} ${calYear.value}</div>
+      <div class="weeks">
+        ${month.weeks.map(week => `
+          <div class="week-row ${week.is_current ? 'current' : ''} ${week.is_past && !week.is_current ? 'past' : ''}">
+            <span class="week-no">${week.week}</span>
+            <span class="week-date">${escapeHtml(week.start_date?.slice(5) ?? '')}</span>
+            <span class="week-contracts">
+              ${week.contracts.length
+                ? week.contracts.map((c: any) => `<span class="tag ${calContractPrintClass(c)}">${escapeHtml((c.customer_name ?? '').split(' ').slice(0, 2).join(' '))}${c.rci_included ? ' ✦' : ''}</span>`).join('')
+                : '<span class="empty">—</span>'}
+            </span>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `).join('')
+
+  const html = `<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<title>كالندر التايم شير ${calYear.value}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: 'Cairo', 'Segoe UI', sans-serif; margin: 0; padding: 24px; color: #1a1a1a; }
+  .header { text-align: center; margin-bottom: 20px; }
+  .header h1 { font-size: 20px; margin: 0 0 4px; }
+  .header .meta { font-size: 11px; color: #666; }
+  .legend { display: flex; gap: 14px; justify-content: center; margin-bottom: 18px; font-size: 11px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .month-card { border: 1px solid #ddd; border-radius: 10px; overflow: hidden; page-break-inside: avoid; }
+  .month-header { background: #f5f5f4; padding: 6px 10px; font-weight: 700; font-size: 12px; border-bottom: 1px solid #eee; }
+  .week-row { display: flex; align-items: center; gap: 6px; padding: 3px 8px; border-bottom: 1px solid #f3f3f3; font-size: 9px; }
+  .week-row.current { background: #fffbeb; }
+  .week-row.past { opacity: 0.45; }
+  .week-no { width: 16px; text-align: center; color: #999; font-weight: 700; }
+  .week-date { width: 40px; color: #aaa; }
+  .week-contracts { flex: 1; display: flex; flex-wrap: wrap; gap: 3px; }
+  .tag { padding: 1px 5px; border-radius: 6px; font-weight: 700; border: 1px solid; }
+  .tag.rci { background: #f3e8ff; color: #7e22ce; border-color: #e9d5ff; }
+  .tag.r2 { background: #e0f2fe; color: #0369a1; border-color: #bae6fd; }
+  .tag.r4 { background: #fef3c7; color: #b45309; border-color: #fde68a; }
+  .tag.r6 { background: #d1fae5; color: #047857; border-color: #a7f3d0; }
+  .tag.other { background: #f5f5f4; color: #78716c; border-color: #e7e5e4; }
+  .empty { color: #d6d3d1; }
+  @media print {
+    @page { size: A4 landscape; margin: 12mm; }
+    .no-print { display: none; }
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <h1>📅 كالندر التايم شير — ${calYear.value}</h1>
+    <div class="meta">
+      أسابيع محجوزة: ${calendar.value.total_booked_weeks || 0} ·
+      صدّره: ${escapeHtml(exportedBy)} · بتاريخ: ${escapeHtml(exportedAt)}
+    </div>
+  </div>
+  <div class="legend">
+    <span><span class="swatch" style="background:#bae6fd"></span> 2R</span>
+    <span><span class="swatch" style="background:#fde68a"></span> 4R</span>
+    <span><span class="swatch" style="background:#a7f3d0"></span> 6R</span>
+    <span><span class="swatch" style="background:#e9d5ff"></span> RCI ✦</span>
+  </div>
+  <div class="grid">
+    ${monthsHtml}
+  </div>
+  <div class="no-print" style="text-align:center;margin-top:20px;color:#999;font-size:12px;">اضغط Ctrl+P للطباعة أو الحفظ كـ PDF</div>
+</body>
+</html>`
+
+  const win = window.open('', '_blank')
+  if (!win) { toast.error('المتصفح منع فتح نافذة الطباعة — فعّل النوافذ المنبثقة'); return }
+  win.document.write(html)
+  win.document.close()
+  win.focus()
+  setTimeout(() => win.print(), 500)
+}
+
 async function loadClients() {
   clientsLoading.value = true
   try {
@@ -510,7 +614,14 @@ onMounted(refreshAll)
           <h3 class="text-lg font-black text-gray-900">{{ calYear }}</h3>
           <button @click="calYear++; loadCalendar()" class="w-8 h-8 rounded-xl bg-white border border-stone-200 text-gray-500 hover:bg-stone-50 text-sm font-bold">‹</button>
         </div>
-        <span class="text-xs text-gray-400">أسابيع محجوزة: <span class="text-amber-500 font-bold">{{ calendar.total_booked_weeks || 0 }}</span></span>
+        <div class="flex items-center gap-3">
+          <span class="text-xs text-gray-400">أسابيع محجوزة: <span class="text-amber-500 font-bold">{{ calendar.total_booked_weeks || 0 }}</span></span>
+          <button @click="printCalendarView"
+            class="px-2.5 py-1.5 rounded-xl bg-primary-50 text-primary-700 text-[10px] font-bold border border-primary-200 hover:bg-primary-100"
+            title="طباعة الكالندر أو حفظه كـ PDF لعرضه في اجتماع مبيعات">
+            🖨️ طباعة / PDF
+          </button>
+        </div>
       </div>
 
       <div v-if="calLoading" class="flex justify-center py-12">

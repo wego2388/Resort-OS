@@ -57,6 +57,14 @@ export function homeRouteFor(role: string): string {
 const routes: RouteRecordRaw[] = [
   { path: '/login', component: () => import('@resort-os/ui').then((m) => ({ default: m.LoginView })) },
 
+  // Standalone (no layout, no auth) — reached from the "نسيت كلمة السر؟" link
+  // on /login, or (for /reset-password) from the email link the backend sends
+  // (app/core/kernel/email_service.py::send_password_reset_email). Both call
+  // the existing app/core/kernel/auth/router.py password-reset endpoints —
+  // no backend changes needed for either.
+  { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue') },
+  { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue') },
+
   // Standalone (no layout) — same tier as /login. Reached either by force
   // (router guard below, for MANDATORY_2FA_ROLES with two_factor_enabled=false)
   // or voluntarily by any authenticated user who wants to turn 2FA on/off.

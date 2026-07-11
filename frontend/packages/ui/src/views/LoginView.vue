@@ -84,6 +84,11 @@ async function handleLogin() {
               class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
             />
           </div>
+          <div v-if="!needsOtp" class="text-center -mt-2">
+            <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline">
+              نسيت كلمة السر؟
+            </router-link>
+          </div>
           <div v-if="needsOtp">
             <label class="block text-sm font-medium text-gray-700 mb-1">كود التحقق بخطوتين</label>
             <input

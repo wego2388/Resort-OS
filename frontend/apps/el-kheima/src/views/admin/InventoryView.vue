@@ -219,8 +219,20 @@ async function fetchWarehouses() {
 async function fetchProducts() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/inventory/products', { params: { branch_id: branchId, limit: 200 } })
-    products.value = res.data.products ?? res.data.items ?? res.data
+    // الشاشة بتفلتر/تبحث client-side على القائمة كاملة (راجع filtered() فوق)،
+    // والباك إند مش بيقبل limit — بس size (حد أقصى 100) — فلازم نلف على كل
+    // الصفحات بدل ما نتوهم إن size=200 هيرجّع كل الأصناف مرة واحدة.
+    const size = 100
+    let page = 1
+    let all: any[] = []
+    while (true) {
+      const res = await api.get('/api/v1/inventory/products', { params: { branch_id: branchId, page, size } })
+      const items = res.data.items ?? []
+      all = all.concat(items)
+      if (all.length >= res.data.total || items.length < size) break
+      page += 1
+    }
+    products.value = all
   } catch { toast.error('تعذّر تحميل الأصناف — حاول تاني') }
   finally { loading.value = false }
 }
