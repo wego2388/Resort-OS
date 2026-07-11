@@ -262,6 +262,54 @@ def get_energy_kpis(db, branch_id: int, period: str) -> dict:
     }
 
 
+def get_energy_trend(db, branch_id: int, end_period: str, months: int = 24) -> list[dict]:
+    """wagdy.md #18: كانت شاشة المرافق بتعرض لقطة شهر واحد بس — مفيش اتجاه
+    شهري ولا مقارنة بالسنة السابقة. بيرجّع `months` شهر متتالي (افتراضيًا 24
+    — سنة حالية + سنة سابقة، عشان الفرونت إند يقدر يعرض المقارنة السنوية من
+    نفس الرد بدون طلب تاني) بترتيب زمني تصاعدي، كل شهر بنفس شكل
+    get_energy_kpis بالظبط (نفس الاستعلام، مُكرَّر لكل شهر — الشاشة دي إدارية
+    مش عالية التردد، فمفيش داعي لتحسين أداء إضافي)."""
+    year, month = (int(x) for x in end_period.split("-"))
+    periods: list[str] = []
+    for i in range(months - 1, -1, -1):
+        y, m = year, month - i
+        while m <= 0:
+            m += 12
+            y -= 1
+        periods.append(f"{y:04d}-{m:02d}")
+    return [get_energy_kpis(db, branch_id, p) for p in periods]
+
+
+def generate_energy_trend_excel(db, branch_id: int, end_period: str, months: int = 24) -> bytes:
+    """تصدير Excel لاتجاه تكلفة المرافق (wagdy.md #18)."""
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    trend = get_energy_trend(db, branch_id, end_period, months)
+    utility_types = sorted({k for row in trend for k in row["by_type"].keys()})
+
+    rows = [
+        [
+            row["period"],
+            *[row["by_type"].get(t, 0) for t in utility_types],
+            row["total_cost"], row["guest_nights"],
+            row["electricity_cost_per_guest_night"] if row["electricity_cost_per_guest_night"] is not None else "—",
+        ]
+        for row in trend
+    ]
+
+    return builder.excel(
+        sheets=[{
+            "name": "اتجاه تكلفة المرافق",
+            "headers": ["الشهر", *[k for k in utility_types], "إجمالي التكلفة",
+                        "ليالي الإشغال", "تكلفة الكهرباء/ليلة نزيل"],
+            "rows": rows,
+            "col_types": ["text", *(["currency"] * len(utility_types)), "currency", "number", "currency"],
+            "summary": {"عدد الأشهر": len(trend)},
+        }],
+        title=f"اتجاه تكلفة المرافق — حتى {end_period}",
+    )
+
+
 # ── Guest Feedback per-category insights ("GSS + per-category insights") ──
 # Task B audit: ReviewCategory بيتسجّل فعلاً في submit_review() أعلاه، بس
 # مفيش أي مكان في النظام كان بيقرأه أو يجمّعه — البيانات موجودة، العرض ناقص.

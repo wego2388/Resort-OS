@@ -18,7 +18,7 @@
 // كل الأقسام تُجمّع من modules تانية (restaurant/cafe/pms/beach/hr/...) عبر
 // _safe_query في الباك إند — لو module مش مبني، القيمة بترجع null، فكل قسم
 // هنا لازم يتعامل مع احتمال null بشكل صريح (مش يفترض وجود بيانات).
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppInput, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
@@ -187,6 +187,62 @@ async function loadEnergy() {
   }
 }
 
+// #18: اتجاه شهري (24 شهر = سنة حالية + سابقة) بدل لقطة شهر واحد بس —
+// السنة الحالية (آخر 12 شهر) مقابل نفس الأشهر من السنة اللي فاتت، من نفس
+// الرد الواحد (مفيش طلب تاني منفصل للمقارنة).
+interface EnergyTrendPoint {
+  period: string; by_type: Record<string, number>; total_cost: number
+  guest_nights: number; electricity_cost_per_guest_night: number | null
+}
+const energyTrend = ref<EnergyTrendPoint[]>([])
+const exportingEnergyTrend = ref(false)
+
+const thisYearTrend = computed(() => energyTrend.value.slice(12))
+const lastYearTrend = computed(() => energyTrend.value.slice(0, 12))
+const trendMaxCost = computed(() => Math.max(...energyTrend.value.map(t => t.total_cost), 1))
+function monthLabelShort(period: string) {
+  const [, m] = period.split('-')
+  return ['', 'ينا', 'فبر', 'مار', 'أبر', 'ماي', 'يون', 'يول', 'أغس', 'سبت', 'أكت', 'نوف', 'ديس'][Number(m)]
+}
+// مقارنة سنة بسنة لإجمالي تكلفة آخر 12 شهر مقابل الـ 12 قبلهم
+const yoyChangePct = computed(() => {
+  const thisYearTotal = thisYearTrend.value.reduce((s, t) => s + t.total_cost, 0)
+  const lastYearTotal = lastYearTrend.value.reduce((s, t) => s + t.total_cost, 0)
+  if (!lastYearTotal) return null
+  return Math.round(((thisYearTotal - lastYearTotal) / lastYearTotal) * 100)
+})
+
+async function loadEnergyTrend() {
+  try {
+    const res = await api.get('/api/v1/analytics/energy/trend', {
+      params: { branch_id: branchId, end_period: currentPeriod, months: 24 },
+    })
+    energyTrend.value = res.data
+  } catch {
+    energyTrend.value = []
+  }
+}
+
+async function exportEnergyTrend() {
+  exportingEnergyTrend.value = true
+  try {
+    const res = await api.get('/api/v1/analytics/energy/trend/export', {
+      params: { branch_id: branchId, end_period: currentPeriod, months: 24 },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `energy-trend-${currentPeriod}.xlsx`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  } catch {
+    toast.error('تعذّر تصدير اتجاه تكلفة المرافق')
+  } finally {
+    exportingEnergyTrend.value = false
+  }
+}
+
 async function submitUtilityReading() {
   if (!utilityForm.reading_value || Number(utilityForm.reading_value) <= 0) {
     toast.error('اكتب قيمة استهلاك أكبر من صفر')
@@ -216,7 +272,7 @@ async function loadAll() {
   loading.value = true
   await Promise.all([
     loadDashboard(), loadOccupancy(), loadDailyStats(), loadReviews(),
-    loadReviewInsights(), loadUtilities(), loadEnergy(),
+    loadReviewInsights(), loadUtilities(), loadEnergy(), loadEnergyTrend(),
   ])
   loading.value = false
 }
@@ -461,6 +517,28 @@ onMounted(loadAll)
           <AppBadge v-if="energyKpi.electricity_cost_per_guest_night != null" variant="warning">
             {{ energyKpi.electricity_cost_per_guest_night.toFixed(2) }} جنيه / ليلة إشغال (كهرباء)
           </AppBadge>
+        </div>
+
+        <!-- #18: اتجاه شهري (سنة حالية + سابقة) + تصدير — بدل لقطة شهر واحد -->
+        <div v-if="thisYearTrend.length" class="mb-5 border-t border-stone-100 pt-4">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+              <p class="text-sm font-bold text-gray-700">📈 اتجاه تكلفة المرافق (آخر 12 شهر)</p>
+              <AppBadge v-if="yoyChangePct !== null" :variant="yoyChangePct > 0 ? 'danger' : 'success'">
+                {{ yoyChangePct > 0 ? '▲' : '▼' }} {{ Math.abs(yoyChangePct) }}% عن نفس الفترة السنة اللي فاتت
+              </AppBadge>
+            </div>
+            <AppButton variant="secondary" size="sm" :loading="exportingEnergyTrend" @click="exportEnergyTrend">
+              📊 تصدير Excel
+            </AppButton>
+          </div>
+          <div class="flex items-end gap-1.5 h-28 bg-stone-50 rounded-xl p-3">
+            <div v-for="t in thisYearTrend" :key="t.period" class="flex-1 flex flex-col items-center justify-end h-full gap-1">
+              <div class="w-full bg-blue-500 rounded-t" :style="{ height: `${Math.max(4, (t.total_cost / trendMaxCost) * 100)}%` }"
+                :title="`${t.period}: ${money(t.total_cost)} ج`" />
+              <span class="text-[9px] text-gray-400">{{ monthLabelShort(t.period) }}</span>
+            </div>
+          </div>
         </div>
 
         <EmptyState v-if="utilityReadings.length === 0" icon="🔌" title="لا توجد قراءات مسجّلة بعد" />

@@ -136,6 +136,51 @@ class TestUtilityReadingFlow:
         assert body["guest_nights"] == 10
         assert Decimal(str(body["electricity_cost_per_guest_night"])) == Decimal("30.00")
 
+    def test_energy_trend_includes_reading_month_and_is_chronological(self, client: TestClient, db, manager_headers):
+        """wagdy.md #18: اتجاه شهري بدل لقطة شهر واحد فقط."""
+        branch = make_branch_committed(db)
+        client.post(
+            "/api/v1/analytics/utilities",
+            json={
+                "branch_id": branch.id, "reading_date": "2026-02-10",
+                "utility_type": "electricity", "reading_value": "50.000", "unit_cost": "3.00",
+            },
+            headers=manager_headers,
+        )
+
+        resp = client.get(
+            "/api/v1/analytics/energy/trend",
+            params={"branch_id": branch.id, "end_period": "2026-03", "months": 4},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        periods = [row["period"] for row in body]
+        assert periods == ["2025-12", "2026-01", "2026-02", "2026-03"]
+        feb = next(row for row in body if row["period"] == "2026-02")
+        assert feb["by_type"]["electricity"] == 150.0
+
+    def test_energy_trend_export_returns_valid_excel(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/analytics/energy/trend/export",
+            params={"branch_id": branch.id, "end_period": "2026-03", "months": 3},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert len(resp.content) > 0
+
+    def test_energy_trend_requires_manager(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/analytics/energy/trend",
+            params={"branch_id": branch.id}, headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
 
 class TestUtilityReadingPermissions:
     def test_create_utility_reading_requires_manager(self, client: TestClient, db, cashier_headers):

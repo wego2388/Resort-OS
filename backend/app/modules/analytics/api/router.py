@@ -12,6 +12,7 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -355,6 +356,34 @@ def energy_kpis(
     """مؤشر الطاقة (تكلفة كيلوواط/نزيل) — من قايمة KPIs الأساسية في السبيك
     اللي مكنش ليها أي endpoint خالص."""
     return services.get_energy_kpis(db, branch_id, period)
+
+
+@router.get("/analytics/energy/trend")
+def energy_trend(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    end_period: str = Query(default_factory=lambda: business_today(settings.TIMEZONE).strftime("%Y-%m"), description="YYYY-MM"),
+    months: int = Query(24, ge=1, le=60),
+):
+    """اتجاه تكلفة المرافق الشهري + مقارنة سنة بسنة (wagdy.md #18) — 24 شهر
+    افتراضيًا (سنة حالية + سابقة) عشان الفرونت إند يقارن من نفس الرد."""
+    return services.get_energy_trend(db, branch_id, end_period, months)
+
+
+@router.get("/analytics/energy/trend/export")
+def download_energy_trend_excel(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    end_period: str = Query(default_factory=lambda: business_today(settings.TIMEZONE).strftime("%Y-%m"), description="YYYY-MM"),
+    months: int = Query(24, ge=1, le=60),
+):
+    """تصدير Excel لاتجاه تكلفة المرافق (wagdy.md #18)."""
+    xlsx = services.generate_energy_trend_excel(db, branch_id, end_period, months)
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=energy-trend.xlsx"},
+    )
 
 
 def _compute_live_kpis(branch_id: int) -> dict:
