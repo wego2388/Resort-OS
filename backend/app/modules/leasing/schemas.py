@@ -50,6 +50,13 @@ class LeaseContractRead(BaseModel):
     status: str; notes: Optional[str]
     payments: list[LeasePaymentRead] = []
     created_at: datetime; updated_at: datetime
+    # أيام متبقية حتى نهاية العقد (سالب = العقد منتهي بالفعل بتاريخه) — بيتحسب
+    # لحظيًا وقت الاستجابة (`app.resort_os.timezone_utils.local_today`)، مش عمود
+    # مخزّن، عشان يفضل real-time دايمًا. بيُستخدم لتنبيه "عقد قريب من الانتهاء"
+    # في LeasingView.vue (wagdy.md بند #28). الـ default هنا بس عشان
+    # `model_validate(from_attributes=True)` من الـ ORM object مباشرة ما يفشلش —
+    # القيمة الحقيقية دايمًا بتتحط صراحةً في الـ router.
+    days_until_expiry: int = 0
 
 
 class PayLeaseRequest(BaseModel):

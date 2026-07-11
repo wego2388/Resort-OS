@@ -1,7 +1,7 @@
 """app/modules/leasing/crud.py"""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -48,6 +48,29 @@ def list_contracts(
     total = q.count()
     items = q.order_by(LeaseContract.created_at.desc()).offset(skip).limit(limit).all()
     return items, total
+
+
+def list_contracts_expiring_soon(
+    db: Session, branch_id: int, today: date, within_days: int = 30,
+) -> list[LeaseContract]:
+    """عقود نشطة هتنتهي خلال `within_days` يوم القادمة (شامل النهاردة نفسه).
+
+    wagdy.md بند #28: عقود الإيجار كانت بتنتهي من غير أي تنبيه — مدير الإيجارات
+    كان بيكتشف الانتهاء بالصدفة بس. `today` لازم يتحسب بتوقيت المنتجع
+    (استدعِ عبر `services.list_expiring_soon` اللي بيمرر `local_today()`، مش
+    `date.today()` الخام هنا)."""
+    horizon = today + timedelta(days=within_days)
+    return (
+        db.query(LeaseContract)
+        .filter(
+            LeaseContract.branch_id == branch_id,
+            LeaseContract.status == "active",
+            LeaseContract.end_date >= today,
+            LeaseContract.end_date <= horizon,
+        )
+        .order_by(LeaseContract.end_date)
+        .all()
+    )
 
 
 def create_contract(db: Session, data: LeaseContractCreate, signed_by: int) -> LeaseContract:

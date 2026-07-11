@@ -31,6 +31,23 @@ from app.resort_os.timezone_utils import local_today
 # (3/15 يوم) كانت غير مطابقة للسبيك — اتصححت 2026-07-01 بعد مراجعة Task B.
 
 
+def days_until_expiry(contract: LeaseContract, today: date | None = None) -> int:
+    """أيام متبقية حتى نهاية عقد الإيجار (سالب لو العقد منتهي بالفعل بتاريخه).
+    نفس فكرة `VisitWindow.days_until` في `timeshare_engine.py` — لازم `today`
+    يتحسب بتوقيت المنتجع (Africa/Cairo)، مش تاريخ السيرفر."""
+    today = today or local_today(settings.TIMEZONE)
+    return (contract.end_date - today).days
+
+
+def list_expiring_soon(db: Session, branch_id: int, within_days: int = 30) -> list[LeaseContract]:
+    """عقود إيجار نشطة هتنتهي خلال `within_days` يوم القادمة — wagdy.md بند #28:
+    عقود قربت تنتهي كانت من غير أي تنبيه، مدير الإيجارات بيكتشفها بالصدفة بس.
+    اتستخدمت من `GET /leasing/contracts?expiring_within_days=` لإظهار تنبيه
+    فوري (real-time، مش مخزّن/stale) في LeasingView.vue."""
+    today = local_today(settings.TIMEZONE)
+    return crud.list_contracts_expiring_soon(db, branch_id, today, within_days)
+
+
 def get_contract_or_404(db: Session, contract_id: int) -> LeaseContract:
     c = crud.get_contract(db, contract_id)
     if not c:

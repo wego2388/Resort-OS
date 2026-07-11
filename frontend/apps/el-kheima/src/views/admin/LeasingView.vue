@@ -31,6 +31,7 @@ interface Contract {
   grace_months: number; payment_period: string; security_deposit: number
   status: string; notes: string | null
   payments: Payment[]
+  days_until_expiry: number
 }
 
 const contracts = ref<Contract[]>([])
@@ -57,6 +58,20 @@ const paymentPeriodLabels: Record<string, string> = {
 const activityTypeLabels: Record<string, string> = {
   rent_payment: 'دفعة إيجار', penalty: 'غرامة', deposit: 'تأمين',
   refund: 'استرداد', maintenance: 'صيانة', revenue_share: 'حصة إيراد', other: 'أخرى',
+}
+
+// #28: تنبيه عقود قرب انتهائها — استعلام منفصل عن قائمة العقود الرئيسية
+// (اللي ممكن تبقى مفلترة بحالة تانية زي "مسودة") عشان البانر يفضل صحيح
+// بصرف النظر عن أي فلتر الحالة المستخدم مختاره حاليًا. الباك إند بيحسب
+// days_until_expiry لحظيًا (راجع leasing.services.days_until_expiry).
+const expiringSoonContracts = ref<Contract[]>([])
+async function loadExpiringSoon() {
+  try {
+    const { data } = await api.get('/api/v1/leasing/contracts', {
+      params: { branch_id: branchId, expiring_within_days: 30 },
+    })
+    expiringSoonContracts.value = data.items ?? []
+  } catch { /* بانر ثانوي — فشله ما يمنعش الشاشة تشتغل */ }
 }
 
 async function loadContracts() {
@@ -240,7 +255,7 @@ async function saveCashLog() {
   }
 }
 
-onMounted(loadContracts)
+onMounted(() => { loadContracts(); loadExpiringSoon() })
 </script>
 
 <template>
@@ -248,6 +263,18 @@ onMounted(loadContracts)
     <div class="flex items-center justify-between mb-6">
       <h2 class="text-2xl font-black text-gray-900">عقود الإيجار التجاري</h2>
       <AppButton v-if="auth.hasRole('manager')" size="sm" @click="openCreateContract">+ عقد جديد</AppButton>
+    </div>
+
+    <!-- #28: عقود قرب انتهائها (خلال 30 يوم) — تنبيه ثابت ظاهر، مش حاجة
+         مدير الإيجارات يكتشفها بالصدفة -->
+    <div v-if="expiringSoonContracts.length" class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
+      <p class="text-xs font-bold text-amber-800 mb-2">⏰ عقود قرب انتهائها ({{ expiringSoonContracts.length }})</p>
+      <div class="flex flex-wrap gap-2">
+        <span v-for="c in expiringSoonContracts" :key="c.id"
+          class="text-xs bg-white border border-amber-200 rounded-full px-2.5 py-1 text-amber-700">
+          {{ c.tenant_name }} — {{ c.days_until_expiry === 0 ? 'ينتهي اليوم' : `${c.days_until_expiry} يوم` }}
+        </span>
+      </div>
     </div>
 
     <div class="flex gap-2 mb-4">
