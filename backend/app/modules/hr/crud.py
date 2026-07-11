@@ -14,7 +14,7 @@ from app.modules.hr.models import (
     SocialInsuranceConfig, TaxBracketConfig,
 )
 from app.modules.hr.schemas import (
-    AttendancePolicyUpsert, AttendanceRecordCreate, DepartmentCreate,
+    AttendancePolicyUpsert, AttendanceRecordCreate, AttendanceRecordUpdate, DepartmentCreate,
     EmployeeCreate, EmployeeUpdate,
     EmployeeAllowanceCreate, EmployeeAllowanceUpdate,
     EmployeePenaltyCreate, LeaveTypeCreate, PenaltyTypeCreate,
@@ -245,6 +245,10 @@ def list_payslips_for_employee(
 
 # ── Attendance ────────────────────────────────────────────────────────
 
+def get_attendance(db: Session, record_id: int) -> Optional[AttendanceRecord]:
+    return db.query(AttendanceRecord).filter(AttendanceRecord.id == record_id).first()
+
+
 def get_attendance_for_date(db: Session, employee_id: int, record_date: date) -> Optional[AttendanceRecord]:
     return (
         db.query(AttendanceRecord)
@@ -273,6 +277,13 @@ def upsert_attendance(db: Session, data: AttendanceRecordCreate) -> AttendanceRe
         db.add(row)
     db.flush()
     return row
+
+
+def update_attendance(db: Session, record: AttendanceRecord, data: AttendanceRecordUpdate) -> AttendanceRecord:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(record, field, value)
+    db.flush()
+    return record
 
 
 def list_attendance(

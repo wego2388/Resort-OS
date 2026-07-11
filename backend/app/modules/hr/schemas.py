@@ -199,6 +199,16 @@ class AttendanceRecordRead(AttendanceRecordCreate):
         return round((self.check_out - self.check_in).total_seconds() / 3600, 2)
 
 
+class AttendanceRecordUpdate(BaseModel):
+    """تصحيح إداري لسجل حضور موجود (موظف نسي يبصم انصراف، وقت خطأ...) — مدير+
+    فقط (راجع الراوتر). notes بيتحدّث كمان عشان المدير يوثّق سبب التصحيح؛
+    مفيش عمود "سبب" منفصل، notes هو نفسه ده."""
+    check_in:  Optional[datetime] = None
+    check_out: Optional[datetime] = None
+    status:    Optional[str] = Field(None, pattern=r"^(present|absent|late|leave|holiday)$")
+    notes:     Optional[str] = Field(None, max_length=300)
+
+
 class LeaveBalanceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:              int

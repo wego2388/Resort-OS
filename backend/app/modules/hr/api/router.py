@@ -15,7 +15,7 @@ from app.modules.hr import crud, services
 from app.modules.hr.schemas import (
     AllowanceRead,
     AttendancePolicyRead, AttendancePolicyUpsert,
-    AttendanceRecordCreate, AttendanceRecordRead,
+    AttendanceRecordCreate, AttendanceRecordRead, AttendanceRecordUpdate,
     DepartmentCreate, DepartmentRead,
     EmployeeCreate, EmployeeRead, EmployeeUpdate,
     EmployeeAllowanceCreate, EmployeeAllowanceUpdate,
@@ -243,6 +243,20 @@ def list_payroll_lines(run_id: int, db: DbDep, _=Depends(get_manager_user)):
              status_code=status.HTTP_201_CREATED)
 def record_attendance(data: AttendanceRecordCreate, db: DbDep, _=Depends(get_manager_user)):
     row = crud.upsert_attendance(db, data)
+    db.commit()
+    db.refresh(row)
+    return AttendanceRecordRead.model_validate(row)
+
+
+@router.patch("/hr/attendance/{record_id}", response_model=AttendanceRecordRead)
+def update_attendance(record_id: int, data: AttendanceRecordUpdate, db: DbDep, _=Depends(get_manager_user)):
+    """تصحيح إداري لسجل حضور موجود (wagdy.md #8) — مدير+ بس، زي أي تعديل
+    حسّاس على بيانات موظف تاني. مفيش validation إضافية هنا غير اللي في
+    الـ schema نفسه — الحقول كلها Optional وبتتحدّث بـ exclude_unset."""
+    row = crud.get_attendance(db, record_id)
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"سجل الحضور {record_id} غير موجود")
+    row = crud.update_attendance(db, row, data)
     db.commit()
     db.refresh(row)
     return AttendanceRecordRead.model_validate(row)

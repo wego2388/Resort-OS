@@ -568,6 +568,48 @@ class TestAttendanceHttp:
         assert list_resp.status_code == 200, list_resp.text
         assert list_resp.json()["total"] == 1
 
+    def test_manager_can_correct_missing_checkout(self, client: TestClient, db, manager_headers):
+        """wagdy.md #8: موظف نسي يبصم انصراف — مدير يصحّح السجل يدويًا."""
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        create_resp = client.post(
+            "/api/v1/hr/attendance",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "record_date": str(date.today()), "status": "present",
+                "check_in": "2026-07-09T09:00:00",
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        record_id = create_resp.json()["id"]
+        assert create_resp.json()["check_out"] is None
+
+        patch_resp = client.patch(
+            f"/api/v1/hr/attendance/{record_id}",
+            json={"check_out": "2026-07-09T17:00:00", "notes": "نسي يبصم انصراف — صححها المدير"},
+            headers=manager_headers,
+        )
+        assert patch_resp.status_code == 200, patch_resp.text
+        body = patch_resp.json()
+        assert body["check_out"] == "2026-07-09T17:00:00"
+        assert body["notes"] == "نسي يبصم انصراف — صححها المدير"
+        assert body["check_in"] == "2026-07-09T09:00:00"  # لسه زي ما هو، منعدلوش
+
+    def test_update_missing_attendance_404(self, client: TestClient, manager_headers):
+        resp = client.patch(
+            "/api/v1/hr/attendance/999999999", json={"status": "absent"}, headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_update_attendance_requires_manager(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.patch(
+            f"/api/v1/hr/attendance/{emp.id}", json={"status": "absent"}, headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
 
 class TestDepartmentHttp:
     def test_create_and_list_departments(self, client: TestClient, db, manager_headers):

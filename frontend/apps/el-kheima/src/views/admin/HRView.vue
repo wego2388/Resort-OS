@@ -334,6 +334,57 @@ function monthLabel(year: number, month: number) {
   catch { return `${month}/${year}` }
 }
 
+// ── #8: تصحيح سجل حضور يدويًا (موظف نسي يبصم انصراف، وقت خطأ...) ──────
+// <input type="datetime-local"> بيشتغل بتوقيت المتصفح المحلي بدون أي معلومة
+// timezone — لازم تحويل صريح للـ UTC الخام (naive) اللي الباك إند مخزّنه،
+// نفس منطق parseApiTimestamp بالظبط لكن بالعكس.
+const editingAttendance = ref<AttendanceRecord | null>(null)
+const editForm = ref<{ check_in: string; check_out: string; status: string; notes: string }>({
+  check_in: '', check_out: '', status: '', notes: '',
+})
+const savingAttendanceEdit = ref(false)
+
+function toDatetimeLocalInput(iso: string | null): string {
+  if (!iso) return ''
+  const d = parseApiTimestamp(iso)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+function fromDatetimeLocalInput(value: string): string | null {
+  if (!value) return null
+  return new Date(value).toISOString().replace('Z', '')
+}
+
+function openEditAttendance(rec: AttendanceRecord) {
+  editingAttendance.value = rec
+  editForm.value = {
+    check_in:  toDatetimeLocalInput(rec.check_in),
+    check_out: toDatetimeLocalInput(rec.check_out),
+    status:    rec.status,
+    notes:     '',
+  }
+}
+
+async function saveAttendanceEdit() {
+  if (!editingAttendance.value) return
+  savingAttendanceEdit.value = true
+  try {
+    await api.patch(`/api/v1/hr/attendance/${editingAttendance.value.id}`, {
+      check_in:  fromDatetimeLocalInput(editForm.value.check_in),
+      check_out: fromDatetimeLocalInput(editForm.value.check_out),
+      status:    editForm.value.status,
+      notes:     editForm.value.notes || undefined,
+    })
+    toast.success('تم تصحيح سجل الحضور')
+    editingAttendance.value = null
+    await fetchAttendance()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ التصحيح')
+  } finally {
+    savingAttendanceEdit.value = false
+  }
+}
+
 onMounted(fetchEmployees)
 </script>
 
@@ -453,6 +504,33 @@ onMounted(fetchEmployees)
       </div>
     </AppModal>
 
+    <!-- #8: تصحيح سجل حضور -->
+    <AppModal :open="!!editingAttendance"
+      :title="`تصحيح حضور — ${editingAttendance ? (employeeNameById[editingAttendance.employee_id] ?? `موظف #${editingAttendance.employee_id}`) : ''}`"
+      @close="editingAttendance = null">
+      <div class="space-y-3">
+        <label class="block text-xs font-semibold text-gray-500">وقت الحضور</label>
+        <input v-model="editForm.check_in" type="datetime-local"
+          class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+        <label class="block text-xs font-semibold text-gray-500">وقت الانصراف</label>
+        <input v-model="editForm.check_out" type="datetime-local"
+          class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+        <label class="block text-xs font-semibold text-gray-500">الحالة</label>
+        <select v-model="editForm.status"
+          class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500">
+          <option value="present">حاضر</option>
+          <option value="absent">غائب</option>
+          <option value="late">متأخر</option>
+          <option value="leave">إجازة</option>
+          <option value="holiday">عطلة</option>
+        </select>
+        <AppInput v-model="editForm.notes" placeholder="سبب التصحيح (اختياري لكن مستحسن)" />
+        <AppButton :disabled="savingAttendanceEdit" @click="saveAttendanceEdit" variant="primary" size="sm">
+          {{ savingAttendanceEdit ? 'جاري الحفظ...' : 'حفظ التصحيح' }}
+        </AppButton>
+      </div>
+    </AppModal>
+
     <!-- Payroll Tab -->
     <div v-if="tab === 'payroll'">
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
@@ -562,6 +640,7 @@ onMounted(fetchEmployees)
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الانصراف</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">ساعات العمل</th>
                 <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase"></th>
               </tr>
             </thead>
             <tbody>
@@ -575,6 +654,9 @@ onMounted(fetchEmployees)
                 <td class="px-4 py-3 text-sm text-gray-700">{{ rec.hours_worked != null ? rec.hours_worked.toFixed(2) : '—' }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="statusVariant[rec.status] ?? 'neutral'">{{ statusLabel(rec.status) }}</AppBadge>
+                </td>
+                <td class="px-4 py-3 text-left">
+                  <button @click="openEditAttendance(rec)" class="text-xs font-semibold text-primary-700 hover:underline">تعديل</button>
                 </td>
               </tr>
             </tbody>
