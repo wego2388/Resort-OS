@@ -23,12 +23,12 @@
 
 | # | المهمة | الحالة | الحجم | المخاطرة | ملاحظة |
 |---|---|---|---|---|---|
-| S-01 | **ShiftDashboard** — صفحة `/pos/shift` تعرض: ملخص المبيعات، الطاولات المفتوحة live، الطلبات الجارية، زرار قفل الوردية | ⬜ | M | 🟢 | Frontend جديد فقط — backend كامل |
-| S-02 | **InvoiceLogModal** — سجل فواتير الوردية الحالية، مرئي للكاشير فقط (لا يرى ورديات غيره) | ⬜ | S | 🟢 | ⚠️ تصحيح: الموجود بس ملخّص إجمالي (`invoice_count` في `/finance/shifts/{id}/report`) — محتاج endpoint جديد فعلي يرجّع قائمة الفواتير نفسها، مش فرونت إند بس |
-| S-03 | **PinGuardModal** — كومبوننت PIN قابل للإعادة (min_level كـ prop) يُستخدم لفتح سجل الفواتير بكود محاسب/مدير | ⬜ | S | 🟢 | ⚠️ تصحيح: النمط موجود فعلاً inline في `OrderDetailModal.vue` (إلغاء صنف) و`OperatorSwitchModal.vue` (تبديل مشغّل) — الشغل الحقيقي هو استخراج كومبوننت قابل لإعادة الاستخدام من الكود الموجود، مش بناء من الصفر |
-| S-04 | **X-Report** — تقرير مبيعات لحظي وسط الوردية بدون قفلها (`GET /finance/shifts/{id}/report` موجود) | ⬜ | S | 🟢 | Frontend زرار فقط — backend جاهز |
-| S-05 | **ShiftDetail في FinanceView** — drill-down لكل وردية (فواتير + عدّ الكاش)، فلتر "فرق > 0"، ألوان variance | ⬜ | S | 🟢 | تعديل FinanceView.vue فقط |
-| S-06 | **PIN guard على قفل الوردية بفرق كبير** — بدل رفض 400 تلقائي، يسمح للمدير يتخطى بكوده | ⬜ | M | 🟡 | Backend تعديل بسيط + frontend |
+| S-01 | **ShiftDashboard** — صفحة `/pos/shift` تعرض: ملخص المبيعات، الطاولات المفتوحة live، الطلبات الجارية، زرار قفل الوردية | ✅ (2026-07-11) | M | 🟢 | تم |
+| S-02 | **InvoiceLogModal** — سجل فواتير الوردية الحالية، مرئي للكاشير فقط (لا يرى ورديات غيره) | ✅ (2026-07-11) | S | 🟢 | تم — `GET /finance/shifts/{id}/invoices` جديد + `list_shift_payments_with_folio` (joinedload، بدون N+1) |
+| S-03 | **PinGuardModal** — كومبوننت PIN قابل للإعادة (min_level كـ prop) يُستخدم لفتح سجل الفواتير بكود محاسب/مدير | ✅ (2026-07-11) | S | 🟢 | تم — استُخرج من `OrderDetailModal.vue`، بقى مُستخدم في S-02 وS-06 كمان |
+| S-04 | **X-Report** — تقرير مبيعات لحظي وسط الوردية بدون قفلها (`GET /finance/shifts/{id}/report` موجود) | ✅ (2026-07-11) | S | 🟢 | تم |
+| S-05 | **ShiftDetail في FinanceView** — drill-down لكل وردية (فواتير + عدّ الكاش)، فلتر "فرق > 0"، ألوان variance | ✅ (2026-07-11) | S | 🟢 | تم |
+| S-06 | **PIN guard على قفل الوردية بفرق كبير** — بدل رفض 400 تلقائي، يسمح للمدير يتخطى بكوده | ✅ (2026-07-11) | M | 🟡 | تم — `force_close`+PIN عبر `resolve_pin_approval`، يسجّل `AuditLog(action="close_shift_variance_override")`. باج حقيقي اتصلح أثناء الشغل: `AuditLogRead` ماكانش بيعرض عمود `approved_by` رغم إنه موجود ومتعبّى فعليًا |
 
 **ما يحتاجه backend في S-06 فقط:**
 ```
