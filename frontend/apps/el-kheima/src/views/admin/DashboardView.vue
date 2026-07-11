@@ -21,6 +21,41 @@ const data = ref<DashboardData | null>(null)
 const loading = ref(false)
 const loadError = ref(false)
 
+// #17: كارت "تنبيهات عاجلة" مجمّع — المدير كان محتاج يفتح 4 شاشات منفصلة
+// (مخزون/صيانة/تايم شير/حسابات) عشان يعرف فيه مشكلة. كل رقم هنا بيجي من
+// endpoint موجود بالفعل (مفيش منطق عمل جديد، بس تجميع للعرض).
+interface UrgentAlerts {
+  lowStock: number; overdueMaintenance: number; overdueInstallments: number; bouncedChecks: number
+}
+const alerts = ref<UrgentAlerts>({ lowStock: 0, overdueMaintenance: 0, overdueInstallments: 0, bouncedChecks: 0 })
+const alertsTotal = () => alerts.value.lowStock + alerts.value.overdueMaintenance + alerts.value.overdueInstallments + alerts.value.bouncedChecks
+
+async function fetchUrgentAlerts() {
+  const today = isoDate(new Date())
+  const [stockRes, maintOpenRes, maintInProgressRes, tsRes, checksRes] = await Promise.allSettled([
+    api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId, low_stock_only: true, size: 1 } }),
+    api.get('/api/v1/maintenance/work-orders', { params: { branch_id: branchId, status: 'open', size: 100 } }),
+    api.get('/api/v1/maintenance/work-orders', { params: { branch_id: branchId, status: 'in_progress', size: 100 } }),
+    api.get('/api/v1/timeshare/cs-summary', { params: { branch_id: branchId } }),
+    api.get(ENDPOINTS.finance.checks, { params: { branch_id: branchId, status: 'bounced' } }),
+  ])
+
+  // أوامر صيانة متأخرة — نفس تعريف notify_overdue_work_orders (scheduled_date
+  // < النهاردة، status لسه open/in_progress). الباك إند مالوش فلتر "متأخر"
+  // جاهز، فبنفلتر هنا للعرض بس (مفيش قرار عمل، مجرد عدّ).
+  const isOverdue = (o: { scheduled_date: string | null }) => !!o.scheduled_date && o.scheduled_date < today
+  const openOrders = maintOpenRes.status === 'fulfilled' ? (maintOpenRes.value.data?.items ?? []) : []
+  const inProgressOrders = maintInProgressRes.status === 'fulfilled' ? (maintInProgressRes.value.data?.items ?? []) : []
+  const overdueMaintenance = [...openOrders, ...inProgressOrders].filter(isOverdue).length
+
+  alerts.value = {
+    lowStock: stockRes.status === 'fulfilled' ? (stockRes.value.data?.total ?? 0) : 0,
+    overdueMaintenance,
+    overdueInstallments: tsRes.status === 'fulfilled' ? (tsRes.value.data?.overdue_contracts_count ?? 0) : 0,
+    bouncedChecks: checksRes.status === 'fulfilled' ? (checksRes.value.data?.length ?? 0) : 0,
+  }
+}
+
 function isoDate(d: Date) {
   return d.toISOString().split('T')[0]
 }
@@ -108,13 +143,15 @@ function handleVisibilityChange() {
   } else {
     // الـ tab رجع visible — نحدّث فوراً ونشغّل الـ interval من جديد
     fetchDashboard()
-    refreshTimer = setInterval(fetchDashboard, REFRESH_INTERVAL_MS)
+    fetchUrgentAlerts()
+    refreshTimer = setInterval(() => { fetchDashboard(); fetchUrgentAlerts() }, REFRESH_INTERVAL_MS)
   }
 }
 
 onMounted(() => {
   fetchDashboard()
-  refreshTimer = setInterval(fetchDashboard, REFRESH_INTERVAL_MS)
+  fetchUrgentAlerts()
+  refreshTimer = setInterval(() => { fetchDashboard(); fetchUrgentAlerts() }, REFRESH_INTERVAL_MS)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
@@ -139,6 +176,33 @@ onUnmounted(() => {
     <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between mb-5">
       <span>⚠️ تعذّر تحميل بعض بيانات لوحة التحكم — تأكد من اتصالك وحاول تاني</span>
       <button @click="fetchDashboard" class="font-semibold underline hover:no-underline">إعادة المحاولة</button>
+    </div>
+
+    <!-- #17: تنبيهات عاجلة مجمّعة — بديل عن فتح 4 شاشات منفصلة للتأكد من عدم وجود مشاكل -->
+    <div v-if="alertsTotal() > 0" class="bg-red-50 border border-red-200 rounded-2xl p-4 mb-6">
+      <p class="text-sm font-black text-red-800 mb-3">🚨 تنبيهات عاجلة ({{ alertsTotal() }})</p>
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <router-link v-if="alerts.lowStock" to="/admin/inventory"
+          class="bg-white rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
+          <div class="text-xs text-gray-500">📦 مخزون منخفض</div>
+          <div class="text-lg font-black text-red-600">{{ alerts.lowStock }}</div>
+        </router-link>
+        <router-link v-if="alerts.overdueMaintenance" to="/admin/maintenance"
+          class="bg-white rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
+          <div class="text-xs text-gray-500">🔧 صيانة متأخرة</div>
+          <div class="text-lg font-black text-red-600">{{ alerts.overdueMaintenance }}</div>
+        </router-link>
+        <router-link v-if="alerts.overdueInstallments" to="/admin/timeshare"
+          class="bg-white rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
+          <div class="text-xs text-gray-500">🏨 أقساط متأخرة</div>
+          <div class="text-lg font-black text-red-600">{{ alerts.overdueInstallments }}</div>
+        </router-link>
+        <router-link v-if="alerts.bouncedChecks" to="/admin/finance"
+          class="bg-white rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
+          <div class="text-xs text-gray-500">🏦 شيكات مرتجعة</div>
+          <div class="text-lg font-black text-red-600">{{ alerts.bouncedChecks }}</div>
+        </router-link>
+      </div>
     </div>
 
     <!-- KPI Cards -->
