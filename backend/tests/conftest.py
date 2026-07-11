@@ -242,6 +242,16 @@ def _make_token(email: str) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
+def ws_url(path: str, headers: dict[str, str]) -> str:
+    """يحوّل مسار WebSocket + fixture headers (زي waiter_headers) لرابط فيه
+    ?token=... — كل WebSocket endpoint بقى يتطلبه (wagdy.md A-01،
+    get_websocket_user في app/core/deps.py). WebSocket API في المتصفح
+    مايدعمش custom headers، فالتوكن بيوصل كـ query param بدل Authorization."""
+    token = headers["Authorization"].removeprefix("Bearer ")
+    sep = "&" if "?" in path else "?"
+    return f"{path}{sep}token={token}"
+
+
 def _create_test_user(email: str, role: str, two_factor_enabled: bool = False):
     """ينشئ (أو يرجّع الموجود) صف User حقيقي — يُستخدم من fixtures الـ headers."""
     from app.core.kernel.models.user import User  # noqa: PLC0415

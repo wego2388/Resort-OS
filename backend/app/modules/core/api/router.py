@@ -53,6 +53,7 @@ from app.core.deps import (
     get_manager_user,
     get_super_admin_user,
     get_waiter_user,
+    get_websocket_user,
 )
 from app.modules.core import crud, services
 from app.modules.core.permission_catalog import PERMISSION_CATALOG
@@ -87,7 +88,8 @@ router = APIRouter(tags=["core"])
 
 # ── WebSocket Guest-Alerts Manager ─────────────────────────────────────
 # نفس نمط restaurant_manager (app/modules/restaurant/api/router.py) —
-# بث بسيط بالفرع، من غير أي بروتوكول ثنائي الاتجاه حقيقي.
+# بث بسيط بالفرع، من غير أي بروتوكول ثنائي الاتجاه حقيقي. auth بقى موحّد
+# عبر get_websocket_user (wagdy.md A-01) — ?token= JWT صالح إجباري.
 
 class AlertConnectionManager:
     def __init__(self):
@@ -114,9 +116,12 @@ alerts_manager = AlertConnectionManager()
 
 
 @router.websocket("/ws/alerts/{branch_id}")
-async def guest_alerts_websocket(ws: WebSocket, branch_id: int):
+async def guest_alerts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     """اتصال WebSocket لطاقم الخدمة (نادل/كاشير) — بث تنبيهات الضيوف الجديدة
-    وتحديثات حالتها لحظيًا. بيرد بـ pong كـ heartbeat فقط، زي restaurant KDS."""
+    وتحديثات حالتها لحظيًا. بيرد بـ pong كـ heartbeat فقط، زي restaurant KDS.
+    محتاج ?token= JWT صالح بمستوى نادل+."""
+    if not await get_websocket_user(ws, db, min_level=30):
+        return
     await alerts_manager.connect(ws, str(branch_id))
     try:
         while True:

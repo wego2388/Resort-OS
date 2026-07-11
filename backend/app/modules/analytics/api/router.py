@@ -16,7 +16,7 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.deps import DbDep, get_current_active_user, get_manager_user
+from app.core.deps import DbDep, get_current_active_user, get_manager_user, get_websocket_user
 from app.core.database import SessionLocal
 from app.modules.analytics import services
 from app.modules.analytics.schemas import UtilityReadingCreate, UtilityReadingRead
@@ -441,8 +441,12 @@ def _compute_live_kpis(branch_id: int) -> dict:
 
 
 @router.websocket("/ws/analytics/kpis/{branch_id}")
-async def kpi_websocket(websocket: WebSocket, branch_id: int):
-    """WebSocket يُرسل KPIs كل 10 ثوانٍ للـ frontend."""
+async def kpi_websocket(websocket: WebSocket, branch_id: int, db: DbDep):
+    """WebSocket يُرسل KPIs كل 10 ثوانٍ للـ frontend. بيانات مالية حسّاسة —
+    محتاج ?token= JWT صالح بمستوى مدير+ (نفس مستوى /analytics/reviews
+    وباقي endpoints الموديول)."""
+    if not await get_websocket_user(websocket, db, min_level=60):
+        return
     await websocket.accept()
     try:
         while True:

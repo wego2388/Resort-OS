@@ -75,23 +75,22 @@ def settings_refresh_ttl_seconds() -> int:
 MANDATORY_2FA_ROLES = {"super_admin", "accountant"}
 
 
-def get_current_user(request: Request, db: DbDep):
-    """يُستخرج الـ user من JWT — يتحقق من التوقيع والـ token_blacklist والـ revocation."""
+def _resolve_user_from_token(token: str, db: Session):
+    """المنطق المشترك بين get_current_user (Authorization header) وWebSocket
+    auth (?token= query param — WebSocket API في المتصفح مايدعمش custom
+    headers، فمفيش بديل غير query param هنا). يرجّع None عند أي فشل بدل ما
+    يرمي HTTPException — الـ caller هو اللي يقرر شكل الرفض (401 HTTP أو
+    قفل WebSocket)."""
     from jose import JWTError  # noqa: PLC0415
     from app.core.kernel.cache import get_cache  # noqa: PLC0415
     from app.core.kernel.models.user import TokenBlacklist, User  # noqa: PLC0415
     from app.core.kernel.security import decode_token, hash_token  # noqa: PLC0415
 
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "غير مصرح")
-    token = auth_header.removeprefix("Bearer ")
-
     settings = get_settings()
     try:
         payload = decode_token(token, settings.SECRET_KEY, settings.ALGORITHM)
     except JWTError:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token غير صالح")
+        return None
 
     blacklisted = (
         db.query(TokenBlacklist)
@@ -99,16 +98,52 @@ def get_current_user(request: Request, db: DbDep):
         .first()
     )
     if blacklisted:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token ملغي")
+        return None
 
     email = payload.get("sub")
     user = db.query(User).filter(User.email == email).first()
     if not user:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User غير موجود")
+        return None
 
     revoked_at = get_cache(f"{REVOKED_CACHE_PREFIX}:{user.id}")
     if revoked_at and payload.get("iat", 0) < revoked_at:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "تم تغيير الصلاحيات — سجّل دخول مرة أخرى")
+        return None
+
+    return user
+
+
+def get_current_user(request: Request, db: DbDep):
+    """يُستخرج الـ user من JWT — يتحقق من التوقيع والـ token_blacklist والـ revocation."""
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "غير مصرح")
+    token = auth_header.removeprefix("Bearer ")
+
+    user = _resolve_user_from_token(token, db)
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token غير صالح أو منتهي")
+    return user
+
+
+async def get_websocket_user(websocket, db: Session, min_level: int = 0):
+    """بوابة تحقق موحّدة لكل WebSocket endpoint في المشروع (راجع A-01 في
+    wagdy.md — كانت الاتصالات دي كلها بتتقبل من غير أي تحقق هوية خالص).
+    التوكن بيوصل كـ query param (`?token=...`) مش header. بترجع الـ user
+    لو التحقق نجح، أو تقفل الاتصال بـ code مناسب وترجع None لو فشل —
+    الـ caller لازم يتأكد إن القيمة الراجعة مش None قبل `.accept()`."""
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4401)
+        return None
+
+    user = _resolve_user_from_token(token, db)
+    if not user or not user.is_active:
+        await websocket.close(code=4401)
+        return None
+
+    if user_level(user) < min_level:
+        await websocket.close(code=4403)
+        return None
 
     return user
 

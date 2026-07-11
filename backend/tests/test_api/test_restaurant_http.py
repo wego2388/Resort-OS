@@ -18,6 +18,8 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import ws_url
+
 
 def make_branch_committed(db):
     from app.modules.core.models import Branch
@@ -158,7 +160,7 @@ class TestRestaurantOrderHTTP:
         )
         order_id = order_resp.json()["id"]
 
-        with client.websocket_connect(f"/api/v1/restaurant/ws/kds/{branch.id}") as ws:
+        with client.websocket_connect(ws_url(f"/api/v1/restaurant/ws/kds/{branch.id}", waiter_headers)) as ws:
             in_kitchen_resp = client.patch(
                 f"/api/v1/restaurant/orders/{order_id}/status",
                 json={"status": "in_kitchen"}, headers=waiter_headers,

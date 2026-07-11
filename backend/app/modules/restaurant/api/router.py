@@ -10,7 +10,7 @@ from fastapi.responses import Response
 
 from app.core.config import settings
 from app.core.deps import (
-    DbDep, get_cashier_user, get_current_active_user,
+    DbDep, get_cashier_user, get_current_active_user, get_websocket_user,
     get_manager_user, get_waiter_user, require_permission, user_level,
 )
 from app.modules.restaurant import crud, services
@@ -65,8 +65,12 @@ restaurant_manager = ConnectionManager()
 
 
 @router.websocket("/restaurant/ws/kds/{branch_id}")
-async def kds_websocket(ws: WebSocket, branch_id: int):
-    """اتصال WebSocket لشاشات الـ KDS."""
+async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
+    """اتصال WebSocket لشاشات الـ KDS. محتاج ?token= JWT صالح — نفس مستوى
+    الصلاحية بالظبط اللي محتاجها REST endpoint المكافئ (update_ticket_status
+    فوق: get_current_active_user، أي موظف نشط)."""
+    if not await get_websocket_user(ws, db):
+        return
     await restaurant_manager.connect(ws, str(branch_id))
     try:
         while True:
@@ -77,9 +81,12 @@ async def kds_websocket(ws: WebSocket, branch_id: int):
 
 
 @router.websocket("/restaurant/ws/tables/{branch_id}")
-async def tables_websocket(ws: WebSocket, branch_id: int):
+async def tables_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     """اتصال WebSocket لخريطة الطاولات الحية — يبث تحديثات حالة
-    الطاولات لحظيًا (table_updated) عند أي تغيير في الموضع أو الحالة."""
+    الطاولات لحظيًا (table_updated) عند أي تغيير في الموضع أو الحالة.
+    محتاج ?token= JWT صالح."""
+    if not await get_websocket_user(ws, db):
+        return
     await restaurant_manager.connect(ws, f"tables-{branch_id}")
     try:
         while True:

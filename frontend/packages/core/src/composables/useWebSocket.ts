@@ -20,7 +20,14 @@ export function useResortWebSocket(url: string) {
   function connect() {
     if (ws?.readyState === WebSocket.OPEN) return
     intentionalClose = false
-    ws = new WebSocket(url)
+    // كل WebSocket endpoint في الباك إند بقى بيتطلب ?token= JWT صالح
+    // (wagdy.md A-01 — كانت الاتصالات دي كلها من غير أي تحقق هوية خالص).
+    // نفس التوكن المستخدم في Authorization header للـ REST calls العادية.
+    const token = localStorage.getItem('access_token')
+    const authedUrl = token
+      ? `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+      : url
+    ws = new WebSocket(authedUrl)
     status.value = 'connecting'
 
     ws.onopen = () => {

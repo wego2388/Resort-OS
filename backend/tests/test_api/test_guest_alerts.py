@@ -13,7 +13,10 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
 from fastapi.testclient import TestClient
+
+from tests.conftest import ws_url
 
 
 def make_branch(db):
@@ -175,13 +178,13 @@ class TestStaffAlertsFeed:
 
 
 class TestGuestAlertsWebSocket:
-    def test_websocket_client_receives_new_alert_broadcast(self, client: TestClient, db):
+    def test_websocket_client_receives_new_alert_broadcast(self, client: TestClient, db, waiter_headers):
         """يتأكد إن اتصال WebSocket حقيقي بيستلم فعليًا التنبيه الجديد لحظة
         إنشائه — نفس فكرة test_kds_websocket_client_actually_receives_broadcast_message
         في المطعم (مش بس mock للـ broadcast، اتصال حقيقي)."""
         branch = make_branch(db)
 
-        with client.websocket_connect(f"/api/v1/ws/alerts/{branch.id}") as ws:
+        with client.websocket_connect(ws_url(f"/api/v1/ws/alerts/{branch.id}", waiter_headers)) as ws:
             create_resp = client.post("/api/v1/public/alerts", json={
                 "branch_id": branch.id,
                 "context_type": "restaurant_table",
@@ -206,7 +209,7 @@ class TestGuestAlertsWebSocket:
         })
         alert_id = create_resp.json()["alert_id"]
 
-        with client.websocket_connect(f"/api/v1/ws/alerts/{branch.id}") as ws:
+        with client.websocket_connect(ws_url(f"/api/v1/ws/alerts/{branch.id}", waiter_headers)) as ws:
             resp = client.patch(
                 f"/api/v1/alerts/{alert_id}/status", json={"status": "acknowledged"}, headers=waiter_headers,
             )
@@ -216,3 +219,25 @@ class TestGuestAlertsWebSocket:
             assert message["type"] == "alert_status_changed"
             assert message["alert"]["id"] == alert_id
             assert message["alert"]["status"] == "acknowledged"
+
+    def test_websocket_rejects_connection_without_token(self, client: TestClient, db):
+        """wagdy.md A-01: كل WebSocket في المشروع كان بيتقبل من غير أي تحقق
+        هوية خالص. get_websocket_user (app/core/deps.py) بيقفل الاتصال بـ
+        code 4401 لو مفيش ?token= صالح — هنا بنتأكد إن ده بيحصل فعليًا على
+        اتصال حقيقي، مش بس قراءة كود."""
+        from starlette.websockets import WebSocketDisconnect
+        branch = make_branch(db)
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with client.websocket_connect(f"/api/v1/ws/alerts/{branch.id}"):
+                pass
+        assert exc_info.value.code == 4401
+
+    def test_websocket_rejects_invalid_token(self, client: TestClient, db):
+        from starlette.websockets import WebSocketDisconnect
+        branch = make_branch(db)
+
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            with client.websocket_connect(f"/api/v1/ws/alerts/{branch.id}?token=garbage-not-a-real-jwt"):
+                pass
+        assert exc_info.value.code == 4401

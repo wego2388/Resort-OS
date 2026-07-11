@@ -21,6 +21,8 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
+from tests.conftest import ws_url
+
 
 def make_branch_committed(db):
     from app.modules.core.models import Branch
@@ -367,7 +369,7 @@ class TestRoomsWebSocketBroadcast:
         room_type = make_room_type_committed(db, branch)
         room = make_room_committed(db, branch, room_type)
 
-        with client.websocket_connect(f"/api/v1/pms/ws/rooms/{branch.id}") as ws:
+        with client.websocket_connect(ws_url(f"/api/v1/pms/ws/rooms/{branch.id}", manager_headers)) as ws:
             resp = client.patch(
                 f"/api/v1/pms/rooms/{room.id}/status",
                 json={"status": "maintenance", "notes": "تسريب مياه"},
@@ -393,7 +395,7 @@ class TestRoomsWebSocketBroadcast:
             headers=manager_headers,
         ).json()
 
-        with client.websocket_connect(f"/api/v1/pms/ws/rooms/{branch.id}") as ws:
+        with client.websocket_connect(ws_url(f"/api/v1/pms/ws/rooms/{branch.id}", manager_headers)) as ws:
             checkin_resp = client.post(
                 f"/api/v1/pms/bookings/{booking['id']}/checkin", headers=manager_headers,
             )
@@ -415,7 +417,7 @@ class TestRoomsWebSocketBroadcast:
         db.add(task)
         db.commit()
 
-        with client.websocket_connect(f"/api/v1/pms/ws/rooms/{branch.id}") as ws:
+        with client.websocket_connect(ws_url(f"/api/v1/pms/ws/rooms/{branch.id}", manager_headers)) as ws:
             resp = client.patch(
                 f"/api/v1/pms/housekeeping/tasks/{task.id}",
                 json={"status": "cleaning"},
@@ -433,7 +435,7 @@ class TestRoomsWebSocketBroadcast:
         room_type_a = make_room_type_committed(db, branch_a)
         room_a = make_room_committed(db, branch_a, room_type_a)
 
-        with client.websocket_connect(f"/api/v1/pms/ws/rooms/{branch_b.id}") as ws_b:
+        with client.websocket_connect(ws_url(f"/api/v1/pms/ws/rooms/{branch_b.id}", manager_headers)) as ws_b:
             resp = client.patch(
                 f"/api/v1/pms/rooms/{room_a.id}/status",
                 json={"status": "maintenance"},

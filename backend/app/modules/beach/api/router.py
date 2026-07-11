@@ -13,7 +13,7 @@ from fastapi.responses import Response
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_manager_user, require_permission,
+    get_current_active_user, get_manager_user, get_websocket_user, require_permission,
 )
 from app.modules.beach import crud, services
 from app.modules.beach.schemas import (
@@ -34,8 +34,8 @@ router = APIRouter(tags=["beach"])
 # ── WebSocket Live Map Manager ──────────────────────────────────────────
 # نفس نمط restaurant_manager (restaurant/api/router.py) وalerts_manager
 # (core/api/router.py) بالظبط — بث بسيط بالفرع، من غير أي بروتوكول ثنائي
-# الاتجاه حقيقي ولا auth على مستوى الـ socket نفسه (فجوة معروفة عبر
-# المشروع كله، مش خاصة بالقناة دي — راجع نفس التعليق في core/api/router.py).
+# الاتجاه حقيقي. auth بقى موحّد عبر get_websocket_user (app/core/deps.py،
+# wagdy.md A-01) — ?token= JWT صالح إجباري قبل .accept().
 
 class BeachMapConnectionManager:
     def __init__(self):
@@ -62,11 +62,13 @@ beach_map_manager = BeachMapConnectionManager()
 
 
 @router.websocket("/beach/ws/map/{branch_id}")
-async def beach_map_websocket(ws: WebSocket, branch_id: int):
+async def beach_map_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     """اتصال WebSocket لطاقم الشاطئ — بث تحديثات الخريطة الحية (تشيك-إن/
     تشيك-أوت/إضافة أو حذف مواقع/تغيير حالة) لحظيًا لكل الكاشيرين/المشرفين
     الفاتحين الشاشة في نفس الوقت. بيرد بـ pong كـ heartbeat فقط، زي KDS
-    وتنبيهات الضيوف."""
+    وتنبيهات الضيوف. محتاج ?token= JWT صالح بمستوى كاشير+."""
+    if not await get_websocket_user(ws, db, min_level=40):
+        return
     await beach_map_manager.connect(ws, str(branch_id))
     try:
         while True:

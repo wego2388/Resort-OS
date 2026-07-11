@@ -11,7 +11,7 @@ from fastapi import (
 
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user, get_current_active_user,
-    get_manager_user, require_permission,
+    get_manager_user, get_websocket_user, require_permission,
 )
 from app.modules.pms import crud, services
 from app.modules.pms.schemas import (
@@ -26,9 +26,8 @@ router = APIRouter(tags=["pms"])
 
 # ── WebSocket Room Map Manager ──────────────────────────────────────────
 # نفس نمط beach_map_manager (beach/api/router.py) بالظبط — بث بسيط بالفرع،
-# من غير أي بروتوكول ثنائي الاتجاه حقيقي ولا auth على مستوى الـ socket نفسه
-# (فجوة معروفة عبر المشروع كله، مش خاصة بالقناة دي — راجع نفس التعليق في
-# beach/api/router.py وcore/api/router.py).
+# من غير أي بروتوكول ثنائي الاتجاه حقيقي. auth بقى موحّد عبر get_websocket_user
+# (app/core/deps.py، wagdy.md A-01) — ?token= JWT صالح إجباري قبل .accept().
 #
 # الفجوة اللي بيسدّها ده: RoomsView.vue (خريطة الغرف) كانت بتجيب حالة الغرف
 # مرة واحدة عند فتح الشاشة + polling كل 60 ثانية بس — لو كاشير تاني سجّل
@@ -60,7 +59,7 @@ pms_rooms_manager = PmsRoomsConnectionManager()
 
 
 @router.websocket("/pms/ws/rooms/{branch_id}")
-async def pms_rooms_websocket(ws: WebSocket, branch_id: int):
+async def pms_rooms_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     """اتصال WebSocket لخريطة الغرف الحية (RoomsView.vue) — بث "rooms_changed"
     لأي تغيير في حالة الغرف (تشيك-إن/تشيك-أوت/إلغاء حجز/تغيير حالة يدوي/
     تحديث مهمة تنظيف) لكل الموظفين الفاتحين الشاشة في نفس الوقت. الرسالة
@@ -69,7 +68,10 @@ async def pms_rooms_websocket(ws: WebSocket, branch_id: int):
     endpoint-ين مختلفين، فمفيش داعي نبني DTO مختلط (Room+Booking) جديد
     للبث نفسه؛ نفس فكرة "locations_changed" في beach/api/router.py (اللي
     فيها كمان تغيير مركّب مش سهل تمثيله في رسالة واحدة). بيرد بـ pong
-    كـ heartbeat فقط، زي KDS وخريطة الشاطئ."""
+    كـ heartbeat فقط، زي KDS وخريطة الشاطئ. محتاج ?token= JWT صالح بمستوى
+    كاشير+ (نفس مستوى create_booking تحت)."""
+    if not await get_websocket_user(ws, db, min_level=40):
+        return
     await pms_rooms_manager.connect(ws, str(branch_id))
     try:
         while True:
