@@ -47,11 +47,17 @@ const outletLabel = computed(() =>
 // ── Types ──────────────────────────────────────────────────────────────
 interface ExtraOption  { id: number; name: string; name_ar: string | null; price_addition: number }
 interface ExtraGroup   { id: number; name: string; name_ar: string | null; min_select: number; max_select: number; options: ExtraOption[] }
-interface MenuItem     { id: number; name: string; name_ar: string | null; price: number; category_id: number | null; extra_groups: ExtraGroup[] }
+// #20: صغير/كبير إلخ — سعر ووصفة مستقلين تمامًا لكل حجم (راجع POS الداخلي
+// RestaurantPOSView/CafePOSView.variantPickerItem لنفس المنطق بالظبط)، مش
+// رسم إضافي فوق سعر ثابت زي ExtraOption. الباك إند (PublicMenuItemRead/
+// CafePublicMenuItemRead) كان بيرجّعهم بالفعل من غير ما الشاشة تعرضهم خالص.
+interface Variant      { id: number; name: string; name_ar: string | null; price: number; is_available: boolean }
+interface MenuItem     { id: number; name: string; name_ar: string | null; price: number; category_id: number | null; extra_groups: ExtraGroup[]; variants: Variant[] }
 interface Category     { id: number; name: string; name_ar: string | null }
 
 interface CartItem {
   item:        MenuItem
+  variant:     Variant | null
   qty:         number
   notes:       string
   selectedExtras: Record<number, number[]>  // group_id → [extra_id, ...]
@@ -83,10 +89,12 @@ let   pollTimer:    ReturnType<typeof setInterval> | null = null
 const pollError    = ref(false)
 const pollChecking = ref(false)  // يمنع تداخل محاولة تلقائية مع محاولة يدوية في نفس اللحظة
 
-// ── Extras modal ───────────────────────────────────────────────────────
+// ── Extras/Variant modal ─────────────────────────────────────────────────
 const extrasModal = ref<{ open: boolean; item: MenuItem | null }>({ open: false, item: null })
 const tempExtras  = ref<Record<number, number[]>>({})  // group_id → [extra_id]
 const tempNotes   = ref('')
+const tempVariant = ref<Variant | null>(null)
+const variantRequiredError = ref(false)
 
 // ── Computed ───────────────────────────────────────────────────────────
 const filteredItems = computed(() =>
@@ -98,16 +106,24 @@ const filteredItems = computed(() =>
 const cartCount = computed(() => cart.value.reduce((s, c) => s + c.qty, 0))
 const cartTotal = computed(() =>
   cart.value.reduce((sum, c) => {
+    const basePrice = c.variant?.price ?? c.item.price
     const extrasPrice = Object.entries(c.selectedExtras).flatMap(([gid, eids]) => {
       const group = c.item.extra_groups.find(g => g.id === parseInt(gid))
       return eids.map(eid => group?.options.find(o => o.id === eid)?.price_addition ?? 0)
     }).reduce((a, b) => a + b, 0)
-    return sum + (c.item.price + extrasPrice) * c.qty
+    return sum + (basePrice + extrasPrice) * c.qty
   }, 0)
 )
 
+// إجمالي عدد النسخ من نفس الصنف في السلة (كل المتغيّرات مع بعض) — مستخدم
+// بس لعرض عداد سريع في قائمة الأصناف؛ الأصناف اللي عندها متغيّرات دايمًا
+// بتفتح المودال بدل +/- سريع (راجع openItem) لأن ممكن يبقى أكتر من سطر
+// سلة منفصل لنفس الصنف (حجم مختلف).
 function itemInCart(itemId: number) {
-  return cart.value.find(c => c.item.id === itemId)
+  return cart.value.find(c => c.item.id === itemId && !c.variant)
+}
+function itemTotalQtyInCart(itemId: number) {
+  return cart.value.filter(c => c.item.id === itemId).reduce((s, c) => s + c.qty, 0)
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -155,32 +171,42 @@ async function fetchMenu() {
 
 // ── Cart ───────────────────────────────────────────────────────────────
 function openItem(item: MenuItem) {
-  if (item.extra_groups.length > 0) {
+  const availableVariants = item.variants.filter(v => v.is_available)
+  if (availableVariants.length > 0 || item.extra_groups.length > 0) {
     extrasModal.value = { open: true, item }
     tempExtras.value  = {}
-    tempNotes.value   = itemInCart(item.id)?.notes ?? ''
-    const existing = itemInCart(item.id)
-    if (existing) tempExtras.value = { ...existing.selectedExtras }
+    tempNotes.value   = ''
+    // اختيار المتغيّر إجباري لو الصنف عنده متغيّرات متاحة — نفس قاعدة
+    // POS الداخلي بالظبط (والباك إند برضو بيرفض الطلب من غيره، راجع
+    // restaurant/cafe services.create_order). صنف بمتغيّر واحد بس نختاره
+    // تلقائيًا (تجربة أسهل، مفيش قرار حقيقي هيتاخد).
+    tempVariant.value = availableVariants.length === 1 ? availableVariants[0] : null
+    variantRequiredError.value = false
   } else {
-    addToCartDirect(item, {}, '')
+    addToCartDirect(item, null, {}, '')
   }
 }
 
-function addToCartDirect(item: MenuItem, extras: Record<number, number[]>, notes: string) {
-  const existing = cart.value.find(c => c.item.id === item.id)
+function addToCartDirect(item: MenuItem, variant: Variant | null, extras: Record<number, number[]>, notes: string) {
+  const existing = cart.value.find(c => c.item.id === item.id && (c.variant?.id ?? null) === (variant?.id ?? null))
   if (existing) {
     existing.qty++
     existing.selectedExtras = extras
     existing.notes = notes
   } else {
-    cart.value.push({ item, qty: 1, notes, selectedExtras: extras })
+    cart.value.push({ item, variant, qty: 1, notes, selectedExtras: extras })
   }
 }
 
 function confirmExtras() {
   const item = extrasModal.value.item
   if (!item) return
-  addToCartDirect(item, { ...tempExtras.value }, tempNotes.value)
+  const availableVariants = item.variants.filter(v => v.is_available)
+  if (availableVariants.length > 0 && !tempVariant.value) {
+    variantRequiredError.value = true
+    return
+  }
+  addToCartDirect(item, tempVariant.value, { ...tempExtras.value }, tempNotes.value)
   extrasModal.value = { open: false, item: null }
 }
 
@@ -196,15 +222,24 @@ function toggleExtra(groupId: number, extraId: number, maxSelect: number) {
   }
 }
 
-function adjustQty(itemId: number, delta: number) {
-  const idx = cart.value.findIndex(c => c.item.id === itemId)
+// بياخد الـ CartItem نفسه (مش itemId) عشان يميّز بين أكتر من سطر لنفس
+// الصنف بمتغيّرات مختلفة (راجع addToCartDirect) — itemId لوحده كان كافي
+// قبل دعم المتغيّرات لما كل صنف سطر واحد بالضبط في السلة.
+function adjustQtyLine(line: CartItem, delta: number) {
+  const idx = cart.value.indexOf(line)
   if (idx < 0) return
   cart.value[idx].qty = Math.max(0, cart.value[idx].qty + delta)
   if (cart.value[idx].qty === 0) cart.value.splice(idx, 1)
 }
 
-function removeFromCart(itemId: number) {
-  cart.value = cart.value.filter(c => c.item.id !== itemId)
+function adjustQty(itemId: number, delta: number) {
+  const line = cart.value.find(c => c.item.id === itemId && !c.variant)
+  if (line) adjustQtyLine(line, delta)
+}
+
+function removeFromCartLine(line: CartItem) {
+  const idx = cart.value.indexOf(line)
+  if (idx >= 0) cart.value.splice(idx, 1)
 }
 
 // ── Place Order ────────────────────────────────────────────────────────
@@ -216,6 +251,7 @@ async function placeOrder() {
     const items = cart.value.map(c => ({
       // المطعم بيسميها menu_item_id، الكافيه بيسميها item_id — نفس الفكرة
       [outlet.value === 'cafe' ? 'item_id' : 'menu_item_id']: c.item.id,
+      variant_id: c.variant?.id ?? undefined,
       quantity: c.qty,
       notes:    c.notes || undefined,
       extra_ids: Object.values(c.selectedExtras).flat(),
@@ -445,7 +481,10 @@ onUnmounted(() => {
 
             <div class="flex-1 min-w-0">
               <div class="font-bold text-gray-900 text-sm">{{ itemDisplayName(item) }}</div>
-              <div v-if="item.extra_groups.length" class="text-xs text-blue-500 mt-0.5">
+              <div v-if="item.variants.filter(v => v.is_available).length" class="text-xs text-blue-500 mt-0.5">
+                {{ t('qr.has_variants') }}
+              </div>
+              <div v-else-if="item.extra_groups.length" class="text-xs text-blue-500 mt-0.5">
                 {{ t('qr.customizable') }}
               </div>
               <div class="text-blue-700 font-black mt-1.5">
@@ -458,6 +497,10 @@ onUnmounted(() => {
                 <button @click="adjustQty(item.id, -1)" class="w-8 h-8 bg-stone-100 rounded-full font-black flex items-center justify-center text-lg">−</button>
                 <span class="font-black text-blue-700 w-5 text-center">{{ itemInCart(item.id)!.qty }}</span>
                 <button @click="openItem(item)" class="w-8 h-8 bg-blue-700 rounded-full text-white font-black flex items-center justify-center text-lg">+</button>
+              </template>
+              <template v-else-if="itemTotalQtyInCart(item.id) > 0">
+                <span class="text-[10px] text-gray-400">{{ itemTotalQtyInCart(item.id) }} {{ t('qr.in_cart') }}</span>
+                <button @click="openItem(item)" class="w-8 h-8 bg-blue-700 rounded-full text-white font-black flex items-center justify-center text-xl">+</button>
               </template>
               <button
                 v-else
@@ -489,6 +532,27 @@ onUnmounted(() => {
           </div>
 
           <div class="overflow-y-auto flex-1 px-5 py-4 space-y-5">
+            <!-- #20: اختيار الحجم/النوع — سعر مستقل تمامًا لكل متغيّر، إجباري
+                 لو الصنف عنده متغيّرات متاحة (نفس قاعدة POS الداخلي) -->
+            <div v-if="extrasModal.item.variants.filter(v => v.is_available).length">
+              <div class="font-bold text-gray-800 mb-2 text-sm">
+                {{ t('qr.choose_variant') }}
+                <span class="text-xs text-red-500 font-normal mr-1">({{ t('qr.required') }})</span>
+              </div>
+              <div class="space-y-2">
+                <button
+                  v-for="v in extrasModal.item.variants.filter(v => v.is_available)" :key="v.id"
+                  @click="tempVariant = v; variantRequiredError = false"
+                  :class="['w-full flex items-center justify-between px-4 py-3 rounded-xl border-2 transition-colors text-sm',
+                    tempVariant?.id === v.id ? 'border-blue-600 bg-blue-50 text-blue-700 font-semibold' : 'border-stone-200 text-gray-700']"
+                >
+                  <span>{{ localizedName(v) }}</span>
+                  <span class="font-bold">{{ Number(v.price).toLocaleString('ar-EG') }} ج</span>
+                </button>
+              </div>
+              <p v-if="variantRequiredError" class="text-xs text-red-600 mt-1.5">{{ t('qr.variant_required_error') }}</p>
+            </div>
+
             <div v-for="group in extrasModal.item.extra_groups" :key="group.id">
               <div class="font-bold text-gray-800 mb-2 text-sm">
                 {{ extraGroupDisplayName(group) }}
@@ -553,12 +617,14 @@ onUnmounted(() => {
 
           <div class="overflow-y-auto flex-1 px-5 py-3 space-y-3">
             <div
-              v-for="ci in cart" :key="ci.item.id"
+              v-for="(ci, ciIdx) in cart" :key="`${ci.item.id}-${ci.variant?.id ?? 'novariant'}-${ciIdx}`"
               class="bg-stone-50 rounded-xl p-3 border border-stone-100"
             >
               <div class="flex items-start justify-between mb-2 gap-2">
                 <div class="flex-1">
-                  <div class="font-semibold text-sm text-gray-900">{{ itemDisplayName(ci.item) }}</div>
+                  <div class="font-semibold text-sm text-gray-900">
+                    {{ itemDisplayName(ci.item) }}<span v-if="ci.variant"> — {{ localizedName(ci.variant) }}</span>
+                  </div>
                   <div
                     v-if="Object.values(ci.selectedExtras).flat().length > 0"
                     class="text-xs text-blue-500 mt-0.5"
@@ -573,16 +639,16 @@ onUnmounted(() => {
                   </div>
                   <div v-if="ci.notes" class="text-xs text-gray-400 mt-0.5 italic">{{ ci.notes }}</div>
                 </div>
-                <button @click="removeFromCart(ci.item.id)" class="text-red-400 hover:text-red-600 text-xl leading-none">×</button>
+                <button @click="removeFromCartLine(ci)" class="text-red-400 hover:text-red-600 text-xl leading-none">×</button>
               </div>
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <button @click="adjustQty(ci.item.id, -1)" class="w-8 h-8 rounded-lg bg-stone-200 font-black flex items-center justify-center">−</button>
+                  <button @click="adjustQtyLine(ci, -1)" class="w-8 h-8 rounded-lg bg-stone-200 font-black flex items-center justify-center">−</button>
                   <span class="font-black w-5 text-center">{{ ci.qty }}</span>
-                  <button @click="adjustQty(ci.item.id, 1)" class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 font-black flex items-center justify-center">+</button>
+                  <button @click="adjustQtyLine(ci, 1)" class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 font-black flex items-center justify-center">+</button>
                 </div>
                 <span class="font-black text-blue-700 text-sm">
-                  {{ Number(ci.item.price * ci.qty).toLocaleString('ar-EG') }} ج
+                  {{ Number((ci.variant?.price ?? ci.item.price) * ci.qty).toLocaleString('ar-EG') }} ج
                 </span>
               </div>
             </div>
