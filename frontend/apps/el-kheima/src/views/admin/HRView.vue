@@ -7,7 +7,7 @@ const toast = useToast()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves'>('employees')
+const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard'>('employees')
 
 interface Employee {
   id: number; full_name: string; position: string; department?: string
@@ -41,6 +41,10 @@ interface AttendancePolicy {
   standard_shift_start: string; standard_shift_end: string
   overtime_rate_multiplier: number | string; late_penalty_rate_multiplier: number | string
   is_active: boolean
+}
+interface LeaderboardEntry {
+  user_id: number; employee_name?: string | null; employee_code?: string | null
+  total_sales: number; order_count: number
 }
 
 const employees = ref<Employee[]>([])
@@ -339,7 +343,39 @@ async function loadTab(t: typeof tab.value) {
   if (t === 'payroll') await fetchPayroll()
   if (t === 'leaves') await fetchLeaves()
   if (t === 'attendance') await fetchAttendance()
+  if (t === 'leaderboard') await fetchLeaderboard()
 }
+
+// ── Leaderboard (wagdy.md P-11) ──────────────────────────────────────────
+// GET /hr/leaderboard كان موجود بالكامل (مبيعات حقيقية من المطعم/الكافيه/
+// الشاطئ مجمّعة بالموظف) من غير أي شاشة تعرضه.
+function firstOfMonthStr(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+}
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+const leaderboard = ref<LeaderboardEntry[]>([])
+const leaderboardLoading = ref(false)
+const leaderboardFrom = ref(firstOfMonthStr())
+const leaderboardTo = ref(todayStr())
+
+async function fetchLeaderboard() {
+  leaderboardLoading.value = true
+  try {
+    const res = await api.get('/api/v1/hr/leaderboard', {
+      params: { branch_id: branchId, date_from: leaderboardFrom.value, date_to: leaderboardTo.value },
+    })
+    leaderboard.value = res.data
+  } catch (e) {
+    console.error(e)
+    toast.error('تعذّر تحميل لوحة الأداء')
+  } finally { leaderboardLoading.value = false }
+}
+
+const leaderboardMedal = (rank: number) => rank === 0 ? '🥇' : rank === 1 ? '🥈' : rank === 2 ? '🥉' : `#${rank + 1}`
 
 async function approveLeave(id: number) {
   try {
@@ -455,10 +491,11 @@ onMounted(fetchEmployees)
     <!-- Tabs -->
     <div class="flex gap-1 bg-stone-100 p-1 rounded-xl mb-6 w-fit">
       <button v-for="t in [
-        { val: 'employees',  label: 'الموظفون' },
-        { val: 'attendance', label: 'الحضور' },
-        { val: 'payroll',    label: 'الرواتب' },
-        { val: 'leaves',     label: 'الإجازات' },
+        { val: 'employees',   label: 'الموظفون' },
+        { val: 'attendance',  label: 'الحضور' },
+        { val: 'payroll',     label: 'الرواتب' },
+        { val: 'leaves',      label: 'الإجازات' },
+        { val: 'leaderboard', label: '🏆 لوحة الأداء' },
       ]" :key="t.val"
         @click="loadTab(t.val as any)"
         :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700']"
@@ -748,6 +785,52 @@ onMounted(fetchEmployees)
                 <td class="px-4 py-3 text-left">
                   <button @click="openEditAttendance(rec)" class="text-xs font-semibold text-primary-700 hover:underline">تعديل</button>
                 </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </AppCard>
+    </div>
+
+    <!-- Leaderboard Tab -->
+    <div v-if="tab === 'leaderboard'" class="space-y-4">
+      <div class="flex flex-wrap items-end gap-3">
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1">من تاريخ</label>
+          <input v-model="leaderboardFrom" type="date"
+            class="px-3 py-1.5 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+        </div>
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1">إلى تاريخ</label>
+          <input v-model="leaderboardTo" type="date"
+            class="px-3 py-1.5 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+        </div>
+        <AppButton size="sm" @click="fetchLeaderboard">تحديث</AppButton>
+      </div>
+
+      <AppSpinner v-if="leaderboardLoading" />
+      <EmptyState v-else-if="!leaderboard.length" icon="🏆" title="لا توجد مبيعات مسجّلة"
+        subtitle="لا يوجد مبيعات مرتبطة بموظفين خلال المدى المحدد" />
+      <AppCard v-else padding="none">
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead class="bg-stone-50">
+              <tr>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الترتيب</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الموظف</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">إجمالي المبيعات</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">عدد الطلبات</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(entry, i) in leaderboard" :key="entry.user_id" class="border-t border-stone-100 hover:bg-stone-50">
+                <td class="px-4 py-3 text-lg font-black">{{ leaderboardMedal(i) }}</td>
+                <td class="px-4 py-3 text-sm font-semibold text-gray-900">
+                  {{ entry.employee_name ?? `موظف #${entry.user_id}` }}
+                  <span v-if="entry.employee_code" class="text-gray-400 font-normal">({{ entry.employee_code }})</span>
+                </td>
+                <td class="px-4 py-3 text-sm font-bold text-green-700">{{ Number(entry.total_sales).toLocaleString('ar-EG') }} ج</td>
+                <td class="px-4 py-3 text-sm text-gray-700">{{ entry.order_count }}</td>
               </tr>
             </tbody>
           </table>
