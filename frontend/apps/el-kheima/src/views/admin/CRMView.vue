@@ -5,7 +5,7 @@ import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToas
 
 const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const tab = ref<'leads' | 'customers' | 'campaigns' | 'guests'>('leads')
+const tab = ref<'leads' | 'customers' | 'opportunities' | 'activities' | 'campaigns' | 'guests'>('leads')
 
 interface LeadSource { id: number; name: string; is_active: boolean }
 interface Lead {
@@ -23,6 +23,17 @@ interface Customer {
   id: number; full_name: string; phone?: string; email?: string; segment: string
   total_spent: number; visits_count: number; vip_flag?: boolean; blacklisted: boolean
 }
+interface Opportunity {
+  id: number; customer_id: number; title: string; product_type: string; stage: string
+  expected_value: number; probability: number; assigned_to?: number | null
+  expected_close?: string | null; closed_at?: string | null
+  lost_reason?: string | null; notes?: string | null; created_at: string
+}
+interface Activity {
+  id: number; customer_id: number; activity_type: string; title: string
+  due_date: string; due_time?: string | null; assigned_to?: number | null
+  status: string; done_at?: string | null; notes?: string | null; created_at: string
+}
 interface Campaign {
   id: number; name: string; campaign_type: string; status: string
   start_date: string; end_date: string
@@ -37,6 +48,8 @@ interface GuestProfile {
 const leads = ref<Lead[]>([])
 const leadSources = ref<LeadSource[]>([])
 const customers = ref<Customer[]>([])
+const opportunities = ref<Opportunity[]>([])
+const activities = ref<Activity[]>([])
 const campaigns = ref<Campaign[]>([])
 const guestProfiles = ref<GuestProfile[]>([])
 const guestVipOnly = ref(false)
@@ -53,6 +66,20 @@ const showCustomerForm = ref(false)
 const savingCustomer = ref(false)
 const customerForm = ref({
   full_name: '', phone: '', email: '', nationality: '', segment: 'regular', notes: '',
+})
+
+const showOpportunityForm = ref(false)
+const savingOpportunity = ref(false)
+const opportunityForm = ref({
+  customer_id: '' as number | '', title: '', product_type: 'other',
+  expected_value: '0', probability: '20', expected_close: '', notes: '',
+})
+
+const showActivityForm = ref(false)
+const savingActivity = ref(false)
+const activityForm = ref({
+  customer_id: '' as number | '', activity_type: 'follow_up', title: '',
+  due_date: '', due_time: '', notes: '',
 })
 
 const showCampaignForm = ref(false)
@@ -91,6 +118,33 @@ const outcomeLabels: Record<string, string> = {
 const segmentVariants: Record<string, 'success' | 'warning' | 'danger' | 'info' | 'neutral'> = {
   regular: 'neutral', vip: 'warning', corporate: 'info', travel_agent: 'info',
 }
+
+const productTypeLabels: Record<string, string> = {
+  timeshare: 'تايم شير', leasing: 'إيجار', membership: 'عضوية',
+  group_booking: 'حجز جماعي', other: 'أخرى',
+}
+const oppStageConfig: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
+  lead:        { label: 'مبدئي',   variant: 'neutral' },
+  qualified:   { label: 'مؤهلة',   variant: 'info' },
+  proposal:    { label: 'عرض',     variant: 'warning' },
+  negotiation: { label: 'تفاوض',   variant: 'warning' },
+  won:         { label: 'مُغلقة ✓', variant: 'success' },
+  lost:        { label: 'خسارة',   variant: 'danger' },
+}
+const activityTypeLabels: Record<string, string> = {
+  follow_up: 'متابعة', meeting: 'اجتماع', demo: 'عرض توضيحي',
+  proposal_send: 'إرسال عرض', contract_sign: 'توقيع عقد',
+}
+const activityStatusConfig: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
+  pending:   { label: 'معلّقة', variant: 'warning' },
+  done:      { label: 'منجزة', variant: 'success' },
+  cancelled: { label: 'ملغاة', variant: 'danger' },
+}
+const customerNameById = computed<Record<number, string>>(() => {
+  const map: Record<number, string> = {}
+  for (const c of customers.value) map[c.id] = c.full_name
+  return map
+})
 
 const campaignTypeLabels: Record<string, string> = {
   social_media: 'سوشيال ميديا', email: 'إيميل', sms: 'رسائل نصية',
@@ -144,6 +198,26 @@ async function loadCustomers() {
   finally { loading.value = false }
 }
 
+async function loadOpportunities() {
+  loading.value = true
+  try {
+    if (customers.value.length === 0) await loadCustomers()
+    const res = await api.get('/api/v1/crm/opportunities', { params: { branch_id: branchId, size: 100 } })
+    opportunities.value = res.data.items ?? res.data
+  } catch { toast.error('تعذّر تحميل الفرص البيعية — حاول تاني') }
+  finally { loading.value = false }
+}
+
+async function loadActivities() {
+  loading.value = true
+  try {
+    if (customers.value.length === 0) await loadCustomers()
+    const res = await api.get('/api/v1/crm/activities', { params: { branch_id: branchId, size: 100 } })
+    activities.value = res.data.items ?? res.data
+  } catch { toast.error('تعذّر تحميل الأنشطة — حاول تاني') }
+  finally { loading.value = false }
+}
+
 async function loadCampaigns() {
   loading.value = true
   try {
@@ -166,6 +240,8 @@ async function loadTab(t: typeof tab.value) {
   tab.value = t
   if (t === 'leads') await loadLeads()
   if (t === 'customers') await loadCustomers()
+  if (t === 'opportunities') await loadOpportunities()
+  if (t === 'activities') await loadActivities()
   if (t === 'campaigns') await loadCampaigns()
   if (t === 'guests') await loadGuestProfiles()
 }
@@ -324,6 +400,100 @@ async function createCustomer() {
   }
 }
 
+// ── Opportunities ─────────────────────────────────────────────────────
+async function createOpportunity() {
+  if (!opportunityForm.value.customer_id) { toast.error('اختر العميل'); return }
+  if (!opportunityForm.value.title.trim()) { toast.error('عنوان الفرصة مطلوب'); return }
+  savingOpportunity.value = true
+  try {
+    await api.post('/api/v1/crm/opportunities', {
+      branch_id: branchId,
+      customer_id: opportunityForm.value.customer_id,
+      title: opportunityForm.value.title,
+      product_type: opportunityForm.value.product_type,
+      expected_value: opportunityForm.value.expected_value || '0',
+      probability: Number(opportunityForm.value.probability) || 20,
+      expected_close: opportunityForm.value.expected_close || undefined,
+      notes: opportunityForm.value.notes || undefined,
+    })
+    toast.success('تم إضافة الفرصة البيعية')
+    showOpportunityForm.value = false
+    opportunityForm.value = { customer_id: '', title: '', product_type: 'other', expected_value: '0', probability: '20', expected_close: '', notes: '' }
+    await loadOpportunities()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر إضافة الفرصة البيعية')
+  } finally {
+    savingOpportunity.value = false
+  }
+}
+
+// خسارة فرصة محتاجة سبب إجباري — بدل window.prompt() (اتشالت من المشروع
+// كله في مراجعة سابقة، راجع CLAUDE.md)، حقل نص مصغّر بيظهر جوه الصف نفسه.
+const lostOpportunityId = ref<number | null>(null)
+const lostOpportunityReason = ref('')
+
+function openLostOpportunity(opp: Opportunity) {
+  lostOpportunityId.value = opp.id
+  lostOpportunityReason.value = ''
+}
+
+async function confirmOpportunityLost() {
+  if (!lostOpportunityId.value) return
+  if (!lostOpportunityReason.value.trim()) { toast.error('اكتب سبب الخسارة أولًا'); return }
+  try {
+    const res = await api.patch(`/api/v1/crm/opportunities/${lostOpportunityId.value}`, {
+      stage: 'lost', lost_reason: lostOpportunityReason.value,
+    })
+    const opp = opportunities.value.find(o => o.id === lostOpportunityId.value)
+    if (opp) { opp.stage = res.data.stage; opp.lost_reason = res.data.lost_reason }
+    lostOpportunityId.value = null
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة الفرصة')
+  }
+}
+
+async function setOpportunityStage(opp: Opportunity, stage: string) {
+  try {
+    const res = await api.patch(`/api/v1/crm/opportunities/${opp.id}`, { stage })
+    opp.stage = res.data.stage
+  } catch { toast.error('تعذّر تحديث حالة الفرصة') }
+}
+
+// ── Activities ────────────────────────────────────────────────────────
+async function createActivity() {
+  if (!activityForm.value.customer_id) { toast.error('اختر العميل'); return }
+  if (!activityForm.value.title.trim()) { toast.error('عنوان النشاط مطلوب'); return }
+  if (!activityForm.value.due_date) { toast.error('تاريخ الاستحقاق مطلوب'); return }
+  savingActivity.value = true
+  try {
+    await api.post('/api/v1/crm/activities', {
+      branch_id: branchId,
+      customer_id: activityForm.value.customer_id,
+      activity_type: activityForm.value.activity_type,
+      title: activityForm.value.title,
+      due_date: activityForm.value.due_date,
+      due_time: activityForm.value.due_time || undefined,
+      notes: activityForm.value.notes || undefined,
+    })
+    toast.success('تم إضافة النشاط')
+    showActivityForm.value = false
+    activityForm.value = { customer_id: '', activity_type: 'follow_up', title: '', due_date: '', due_time: '', notes: '' }
+    await loadActivities()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر إضافة النشاط')
+  } finally {
+    savingActivity.value = false
+  }
+}
+
+async function setActivityStatus(activity: Activity, newStatus: string) {
+  try {
+    const res = await api.patch(`/api/v1/crm/activities/${activity.id}`, { status: newStatus })
+    activity.status = res.data.status
+    activity.done_at = res.data.done_at
+  } catch { toast.error('تعذّر تحديث حالة النشاط') }
+}
+
 // ── Campaigns ────────────────────────────────────────────────────────────
 async function createCampaign() {
   if (!campaignForm.value.name || !campaignForm.value.start_date || !campaignForm.value.end_date) {
@@ -366,7 +536,7 @@ onMounted(loadLeads)
 
     <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
       <div class="flex gap-1 bg-stone-100 p-1 rounded-xl w-fit">
-        <button v-for="t in [{ val: 'leads', label: 'العملاء المحتملون' }, { val: 'customers', label: 'العملاء' }, { val: 'campaigns', label: 'الحملات' }, { val: 'guests', label: 'ملفات الضيوف' }]"
+        <button v-for="t in [{ val: 'leads', label: 'العملاء المحتملون' }, { val: 'customers', label: 'العملاء' }, { val: 'opportunities', label: 'الفرص البيعية' }, { val: 'activities', label: 'الأنشطة' }, { val: 'campaigns', label: 'الحملات' }, { val: 'guests', label: 'ملفات الضيوف' }]"
           :key="t.val" @click="loadTab(t.val as any)"
           :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700']"
         >{{ t.label }}</button>
@@ -376,6 +546,12 @@ onMounted(loadLeads)
       </AppButton>
       <AppButton v-if="tab === 'customers'" size="sm" @click="showCustomerForm = !showCustomerForm">
         {{ showCustomerForm ? 'إلغاء' : '+ عميل جديد' }}
+      </AppButton>
+      <AppButton v-if="tab === 'opportunities'" size="sm" @click="showOpportunityForm = !showOpportunityForm">
+        {{ showOpportunityForm ? 'إلغاء' : '+ فرصة بيعية جديدة' }}
+      </AppButton>
+      <AppButton v-if="tab === 'activities'" size="sm" @click="showActivityForm = !showActivityForm">
+        {{ showActivityForm ? 'إلغاء' : '+ نشاط جديد' }}
       </AppButton>
       <AppButton v-if="tab === 'campaigns'" size="sm" @click="showCampaignForm = !showCampaignForm">
         {{ showCampaignForm ? 'إلغاء' : '+ حملة جديدة' }}
@@ -503,6 +679,114 @@ onMounted(loadLeads)
           </tbody>
         </table>
       </AppCard>
+    </div>
+
+    <!-- Opportunities -->
+    <div v-if="tab === 'opportunities'">
+      <AppCard v-if="showOpportunityForm" class="mb-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <select v-model="opportunityForm.customer_id" class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2">
+            <option value="">اختر العميل *</option>
+            <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.full_name }}</option>
+          </select>
+          <input v-model="opportunityForm.title" type="text" placeholder="عنوان الفرصة *"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+          <select v-model="opportunityForm.product_type" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            <option v-for="(label, val) in productTypeLabels" :key="val" :value="val">{{ label }}</option>
+          </select>
+          <input v-model="opportunityForm.expected_value" type="number" min="0" step="0.01" placeholder="القيمة المتوقعة"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="opportunityForm.probability" type="number" min="0" max="100" placeholder="نسبة الترجيح %"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="opportunityForm.expected_close" type="date" placeholder="تاريخ الإغلاق المتوقع"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="opportunityForm.notes" type="text" placeholder="ملاحظات"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+        </div>
+        <AppButton class="mt-3" size="sm" :loading="savingOpportunity" @click="createOpportunity">حفظ الفرصة البيعية</AppButton>
+      </AppCard>
+
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <div v-else class="space-y-3">
+        <div v-for="opp in opportunities" :key="opp.id" class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <span class="font-bold text-gray-900">{{ opp.title }}</span>
+              <span class="text-xs text-gray-400 mr-2">{{ customerNameById[opp.customer_id] ?? `عميل #${opp.customer_id}` }}</span>
+            </div>
+            <AppBadge size="sm" :variant="oppStageConfig[opp.stage]?.variant ?? 'neutral'">
+              {{ oppStageConfig[opp.stage]?.label ?? opp.stage }}
+            </AppBadge>
+          </div>
+          <div class="flex items-center gap-4 text-xs text-gray-500 mb-3 flex-wrap">
+            <span>{{ productTypeLabels[opp.product_type] ?? opp.product_type }}</span>
+            <span>قيمة متوقعة: {{ Number(opp.expected_value).toLocaleString('ar-EG') }} ج</span>
+            <span>ترجيح: {{ opp.probability }}%</span>
+            <span v-if="opp.expected_close">إغلاق متوقع: {{ fmtDate(opp.expected_close) }}</span>
+            <span v-if="opp.lost_reason" class="text-red-600">سبب الخسارة: {{ opp.lost_reason }}</span>
+          </div>
+          <div v-if="!['won','lost'].includes(opp.stage)" class="flex items-center gap-2 flex-wrap">
+            <AppButton v-if="opp.stage === 'lead'" size="sm" @click="setOpportunityStage(opp, 'qualified')">تأهيل</AppButton>
+            <AppButton v-if="opp.stage === 'qualified'" size="sm" @click="setOpportunityStage(opp, 'proposal')">إرسال عرض</AppButton>
+            <AppButton v-if="opp.stage === 'proposal'" size="sm" @click="setOpportunityStage(opp, 'negotiation')">تفاوض</AppButton>
+            <AppButton v-if="['proposal','negotiation'].includes(opp.stage)" size="sm" @click="setOpportunityStage(opp, 'won')">إغلاق كصفقة رابحة</AppButton>
+            <AppButton size="sm" variant="secondary" @click="openLostOpportunity(opp)">خسارة</AppButton>
+          </div>
+          <div v-if="lostOpportunityId === opp.id" class="flex gap-2 mt-2 pt-2 border-t border-stone-100">
+            <input v-model="lostOpportunityReason" type="text" placeholder="سبب الخسارة (مطلوب) *"
+              class="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <AppButton size="sm" variant="secondary" @click="confirmOpportunityLost">تأكيد</AppButton>
+            <AppButton size="sm" variant="secondary" @click="lostOpportunityId = null">إلغاء</AppButton>
+          </div>
+        </div>
+        <EmptyState v-if="opportunities.length === 0" icon="💼" title="لا توجد فرص بيعية" />
+      </div>
+    </div>
+
+    <!-- Activities -->
+    <div v-if="tab === 'activities'">
+      <AppCard v-if="showActivityForm" class="mb-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <select v-model="activityForm.customer_id" class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2">
+            <option value="">اختر العميل *</option>
+            <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.full_name }}</option>
+          </select>
+          <select v-model="activityForm.activity_type" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            <option v-for="(label, val) in activityTypeLabels" :key="val" :value="val">{{ label }}</option>
+          </select>
+          <input v-model="activityForm.title" type="text" placeholder="عنوان النشاط *"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="activityForm.due_date" type="date" class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="activityForm.due_time" type="time" class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="activityForm.notes" type="text" placeholder="ملاحظات"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+        </div>
+        <AppButton class="mt-3" size="sm" :loading="savingActivity" @click="createActivity">حفظ النشاط</AppButton>
+      </AppCard>
+
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <div v-else class="space-y-3">
+        <div v-for="act in activities" :key="act.id" class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm flex items-center justify-between">
+          <div>
+            <div class="flex items-center gap-2 mb-1">
+              <span class="font-bold text-gray-900">{{ act.title }}</span>
+              <span class="text-xs text-gray-400">{{ customerNameById[act.customer_id] ?? `عميل #${act.customer_id}` }}</span>
+            </div>
+            <div class="flex items-center gap-2 text-xs flex-wrap">
+              <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">{{ activityTypeLabels[act.activity_type] ?? act.activity_type }}</span>
+              <span class="text-gray-400">استحقاق {{ fmtDate(act.due_date) }}<span v-if="act.due_time"> — {{ act.due_time }}</span></span>
+            </div>
+          </div>
+          <div class="flex items-center gap-2">
+            <AppBadge size="sm" :variant="activityStatusConfig[act.status]?.variant ?? 'neutral'">
+              {{ activityStatusConfig[act.status]?.label ?? act.status }}
+            </AppBadge>
+            <AppButton v-if="act.status === 'pending'" size="sm" @click="setActivityStatus(act, 'done')">إنجاز</AppButton>
+            <AppButton v-if="act.status === 'pending'" size="sm" variant="secondary" @click="setActivityStatus(act, 'cancelled')">إلغاء</AppButton>
+          </div>
+        </div>
+        <EmptyState v-if="activities.length === 0" icon="🗓️" title="لا توجد أنشطة مجدولة" />
+      </div>
     </div>
 
     <!-- Guest Profiles (PMS checkout integration — read-only) -->
