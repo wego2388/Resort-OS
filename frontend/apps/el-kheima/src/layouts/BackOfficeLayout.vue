@@ -113,6 +113,19 @@ function isActive(path: string) {
   return route.path === path || route.path.startsWith(path + '/')
 }
 
+// #21/#29: breadcrumb (قسم ← صفحة) في التوببار — ثابت وظاهر بصرف النظر عن
+// حالة الـ sidebar (مفتوح/مقفول/على شاشة صغيرة)، بيحل المشكلتين مع بعض:
+// المدير كان تايه في البنية (#21)، وعلى تابلت لما الـ sidebar يتقفل لأيقونات
+// بس مفيش أي مؤشر تاني لمكانه الحالي (#29). بيتبني من allSections نفسها
+// (نفس مصدر الـ nav) — مفيش مصدر تاني منفصل يتزامن معاه بالغلط.
+const breadcrumb = computed(() => {
+  for (const section of allSections) {
+    const item = section.items.find((i) => isActive(i.path))
+    if (item) return { section: section.label, page: item.label }
+  }
+  return null
+})
+
 function logout() {
   auth.logout()
   router.push('/login')
@@ -187,7 +200,14 @@ function logout() {
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
           </button>
-          <h1 class="font-bold text-gray-900 text-base">{{ route.meta.title ?? 'Resort OS' }}</h1>
+          <div>
+            <nav v-if="breadcrumb" class="flex items-center gap-1.5 text-[11px] text-gray-400 mb-0.5">
+              <span>{{ breadcrumb.section }}</span>
+              <span>/</span>
+              <span class="text-gray-500 font-medium">{{ breadcrumb.page }}</span>
+            </nav>
+            <h1 class="font-bold text-gray-900 text-base">{{ route.meta.title ?? 'Resort OS' }}</h1>
+          </div>
         </div>
         <div class="flex items-center gap-3 text-sm text-gray-600">
           <!-- تنبيهات الضيوف (نادِ الجرسون / هات الفاتورة) — كانت ظاهرة بس في

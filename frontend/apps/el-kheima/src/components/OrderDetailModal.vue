@@ -11,7 +11,7 @@
 //    held order chains both PATCH calls before the kitchen actually sees it.
 import { ref, computed, watch } from 'vue'
 import { AppModal, AppButton, AppBadge } from '@resort-os/ui'
-import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
+import { api, useAuthStore, ENDPOINTS, parseApiTimestamp } from '@resort-os/core'
 import { useOrderDiscount } from '@resort-os/core/composables'
 
 interface OrderItemExtra { id: number; extra_id: number | null; extra_name: string; price_addition: number | string }
@@ -32,6 +32,7 @@ interface OrderDetail {
   status: string
   order_type: string
   table_id: number | null
+  created_at: string
   guests_count?: number   // restaurant فقط — cafe مش عندها هذا الحقل
   payment_method?: string | null  // #21: متاح بعد الدفع (paid)
   subtotal: number | string
@@ -307,6 +308,10 @@ function lineTotal(item: OrderItem): number {
               <template v-if="order.guests_count">
                 — {{ order.guests_count }} {{ order.guests_count === 1 ? 'غطاء' : 'غطاءات' }}
               </template>
+            </div>
+            <!-- #27: وقت تقديم الطلب — مهم لتوقيت المطبخ وحل نزاعات الزبائن -->
+            <div v-if="order.created_at" class="text-[11px] text-gray-400 mt-0.5">
+              🕐 {{ parseApiTimestamp(order.created_at).toLocaleString('ar-EG', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }) }}
             </div>
           </div>
           <AppBadge :variant="statusVariant[order.status] ?? 'neutral'">
