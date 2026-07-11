@@ -46,7 +46,7 @@ finance/schemas.py     → ShiftInvoiceLine بسيط
 | P-01 | **Table Transfer** — نقل طلب من طاولة لأخرى (ضيوف اتحركوا) | ⬜ | M | 🟡 | Backend جديد: `PATCH /restaurant/orders/{id}/transfer` |
 | P-02 | **Discount Button في POS** — زرار خصم مباشر في شاشة الكاشير (بدون فتح OrderDetailModal) | ✅ (2026-07-11) | S | 🟢 | تم — `applyDiscountToCart()` في RestaurantPOSView.vue وCafePOSView.vue |
 | P-03 | **Item Availability Schedule** — صنف يشتغل في أوقات محددة (إفطار 7-11، غداء 12-4، عشاء 7-11) | ⬜ | M | 🟡 | Backend: عمودين `available_from/until_time` + migration |
-| P-04 | **Night Audit Frontend** — زرار تشغيل night audit اليومي للاستقبال | ⬜ | S | 🟢 | Frontend فقط — `POST /pms/night-audit/run` موجود |
+| P-04 | **Night Audit Frontend** — زرار تشغيل night audit اليومي للاستقبال | ✅ (2026-07-11) | S | 🟢 | تم — زرار + مودال نتيجة في RoomsView.vue. ⚠️ تصحيح: الزرار بيبان لـ admin+ بس مش الاستقبال (`run_night_audit` محتاج get_admin_user، مش get_manager_user، في الباك إند) |
 | P-05 | **Kitchen Item Bump** — تأكيد صنف بصنف من شاشة KDS (بدل تأكيد الـ ticket كلها) | ⬜ | M | 🟡 | Backend: `PATCH /restaurant/orders/{order_id}/items/{item_id}/status` |
 | P-06 | **Rate Plans Frontend** — شاشة إدارة خطط الأسعار الموسمية/العروض | ⬜ | M | 🟢 | Frontend فقط — `GET/POST /pms/rate-plans` موجود |
 
@@ -56,8 +56,8 @@ finance/schemas.py     → ShiftInvoiceLine بسيط
 
 | # | المهمة | الحالة | الحجم | المخاطرة | ملاحظة |
 |---|---|---|---|---|---|
-| A-01 | **WebSocket Authentication** — الـ KDS/tables/beach WebSocket بدون auth حالياً | ⬜ | S | 🟡 | Backend: `?token=` query param + تحقق عند أول رسالة |
-| A-02 | **Inventory Low-Stock Alert** — Celery task يبعت واتساب للمدير لما مخزون يوصل للحد الأدنى | ⬜ | S | 🟢 | Backend task جديد — موديولات تانية عندها نفس النمط |
+| A-01 | **WebSocket Authentication** — الـ KDS/tables/beach WebSocket بدون auth حالياً | ✅ (2026-07-11) | S | 🟡 | تم — `get_websocket_user()` موحّد لكل الـ 6 قنوات (KDS/tables/pms rooms/beach/alerts/analytics)، `?token=` من useResortWebSocket |
+| A-02 | **Inventory Low-Stock Alert** — Celery task يبعت واتساب للمدير لما مخزون يوصل للحد الأدنى | ✅ (تأكيد 2026-07-11) | S | 🟢 | كان موجود بالفعل — `inventory_tasks.check_low_stock` مسجّل في celery beat (7 صباحًا يوميًا)، مختبر بالكامل |
 
 ---
 

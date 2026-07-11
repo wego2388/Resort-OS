@@ -18,10 +18,11 @@
 // ثانية والزرار اليدوي فضلوا زي ما هما عمدًا كطبقة أمان إضافية (WebSocket
 // بيعيد الاتصال تلقائيًا لو النت اتقطع، لكن مفيش داعي نعتمد عليه 100%).
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { api, useResortWebSocket } from '@resort-os/core'
-import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
+import { api, useAuthStore, useResortWebSocket } from '@resort-os/core'
+import { AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const auth = useAuthStore()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
 interface Room {
@@ -131,6 +132,58 @@ onMessage((data: any) => {
   if (data?.type === 'rooms_changed') fetchRooms()
 })
 
+// ── Night Audit (wagdy.md P-04) ─────────────────────────────────────────
+// الـ endpoint (`POST /pms/night-audit/run`) كان موجود بالكامل من غير أي
+// زرار يشغّله — الاستقبال كان مضطر يطلب من مدير/مبرمج يشغّله يدويًا عبر
+// API مباشرة. `run_night_audit` محتاج get_admin_user (level 80) في الباك
+// إند — أعلى من مستوى الاستقبال العادي، فالزرار ده بيبان بس لـ admin+.
+interface NightAuditResult {
+  audit_date: string
+  occupied_rooms: number
+  total_rooms: number
+  occupancy_pct: number | string
+  room_revenue: number | string
+  no_shows: number
+  checkins_today: number
+  checkouts_today: number
+  status: string
+}
+
+function yesterdayStr(): string {
+  const d = new Date()
+  d.setDate(d.getDate() - 1)
+  return d.toISOString().slice(0, 10)
+}
+
+const nightAuditOpen = ref(false)
+const nightAuditDate = ref(yesterdayStr())
+const nightAuditLoading = ref(false)
+const nightAuditResult = ref<NightAuditResult | null>(null)
+const nightAuditError = ref('')
+
+function openNightAudit() {
+  nightAuditResult.value = null
+  nightAuditError.value = ''
+  nightAuditDate.value = yesterdayStr()
+  nightAuditOpen.value = true
+}
+
+async function runNightAudit() {
+  nightAuditLoading.value = true
+  nightAuditError.value = ''
+  try {
+    const res = await api.post('/api/v1/pms/night-audit/run', null, {
+      params: { branch_id: branchId, audit_date: nightAuditDate.value },
+    })
+    nightAuditResult.value = res.data
+    toast.success('تم تشغيل التدقيق الليلي بنجاح')
+  } catch (e: any) {
+    nightAuditError.value = e?.response?.data?.detail ?? 'تعذّر تشغيل التدقيق الليلي'
+  } finally {
+    nightAuditLoading.value = false
+  }
+}
+
 let refreshInterval: ReturnType<typeof setInterval>
 
 onMounted(() => {
@@ -149,11 +202,74 @@ onUnmounted(() => clearInterval(refreshInterval))
     <!-- Page title + refresh -->
     <div class="flex items-center justify-between mb-4">
       <h1 class="text-xl font-bold text-gray-900">خريطة الغرف</h1>
-      <button
-        @click="fetchRooms"
-        class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-      >🔄 تحديث</button>
+      <div class="flex items-center gap-2">
+        <button
+          v-if="auth.hasRole('admin')"
+          @click="openNightAudit"
+          class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
+        >🌙 تدقيق ليلي</button>
+        <button
+          @click="fetchRooms"
+          class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+        >🔄 تحديث</button>
+      </div>
     </div>
+
+    <AppModal :open="nightAuditOpen" title="🌙 التدقيق الليلي (Night Audit)" @close="nightAuditOpen = false">
+      <div class="space-y-4" dir="rtl">
+        <template v-if="!nightAuditResult">
+          <p class="text-sm text-gray-600">
+            بيقفل يوم التشغيل، يحسب نسبة الإشغال والإيراد، ويسجّل حالات عدم الحضور
+            (no-show) لليوم المحدد. شغّله بعد منتصف الليل لليوم اللي خلص.
+          </p>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">تاريخ التدقيق</label>
+            <input
+              v-model="nightAuditDate" type="date"
+              class="w-full px-3 py-2 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+          </div>
+          <p v-if="nightAuditError" class="text-red-600 text-sm">{{ nightAuditError }}</p>
+          <button
+            @click="runNightAudit" :disabled="nightAuditLoading"
+            class="w-full bg-indigo-600 text-white py-2.5 rounded-xl font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50"
+          >{{ nightAuditLoading ? 'جاري التشغيل...' : 'تشغيل التدقيق' }}</button>
+        </template>
+
+        <template v-else>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="bg-stone-50 rounded-xl p-3">
+              <div class="text-xs text-gray-500">نسبة الإشغال</div>
+              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.occupancy_pct }}%</div>
+            </div>
+            <div class="bg-stone-50 rounded-xl p-3">
+              <div class="text-xs text-gray-500">إيراد الغرف</div>
+              <div class="text-lg font-black text-gray-900">{{ Number(nightAuditResult.room_revenue).toLocaleString('ar-EG') }} ج</div>
+            </div>
+            <div class="bg-stone-50 rounded-xl p-3">
+              <div class="text-xs text-gray-500">غرف مشغولة</div>
+              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.occupied_rooms }} / {{ nightAuditResult.total_rooms }}</div>
+            </div>
+            <div class="bg-stone-50 rounded-xl p-3">
+              <div class="text-xs text-gray-500">عدم حضور (No-show)</div>
+              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.no_shows }}</div>
+            </div>
+            <div class="bg-stone-50 rounded-xl p-3">
+              <div class="text-xs text-gray-500">تسجيل دخول اليوم</div>
+              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.checkins_today }}</div>
+            </div>
+            <div class="bg-stone-50 rounded-xl p-3">
+              <div class="text-xs text-gray-500">تسجيل خروج اليوم</div>
+              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.checkouts_today }}</div>
+            </div>
+          </div>
+          <button
+            @click="nightAuditOpen = false"
+            class="w-full bg-stone-100 text-gray-700 py-2.5 rounded-xl font-semibold hover:bg-stone-200 transition-colors"
+          >إغلاق</button>
+        </template>
+      </div>
+    </AppModal>
 
     <!-- Status stat cards / filter -->
     <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
