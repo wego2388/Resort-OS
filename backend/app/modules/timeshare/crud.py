@@ -478,6 +478,18 @@ def get_visit(db: Session, visit_id: int) -> Optional[TimeshareVisit]:
     return db.query(TimeshareVisit).filter(TimeshareVisit.id == visit_id).first()
 
 
+def has_upcoming_visit(db: Session, contract_id: int, today: date) -> bool:
+    """فيه زيارة مجدولة/جارية (scheduled|active) لسه ما خلصتش لهذا العقد —
+    راجع services.transfer_unit: تحويل وحدة عقد عنده زيارة قادمة على الوحدة
+    القديمة هيسيب تعارض بين TimeshareVisit.unit_id (لسه القديمة) وعقد بقى
+    مربوط بوحدة تانية، فبنرفض التحويل لحد ما المدير يلغي/يعيد جدولة الزيارة."""
+    return db.query(TimeshareVisit).filter(
+        TimeshareVisit.contract_id == contract_id,
+        TimeshareVisit.status.in_(["scheduled", "active"]),
+        TimeshareVisit.check_out >= today,
+    ).first() is not None
+
+
 def list_visits(
     db: Session, branch_id: int,
     contract_id: Optional[int] = None, status: Optional[str] = None,

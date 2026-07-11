@@ -107,6 +107,16 @@ class TimeshareCancelRequest(BaseModel):
     cancel_amount: Decimal = Field(Decimal("0"), ge=0)
 
 
+class TimeshareUnitTransferRequest(BaseModel):
+    """wagdy.md #10: نقل عقد من وحدة ثابتة لوحدة تانية (نفس room_type —
+    تغيير نوع الوحدة/"ترقية" بقيمة مختلفة قرار تسعير منفصل، مش في نطاق
+    العملية دي، راجع services.transfer_unit). التعديل المباشر عبر
+    TimeshareContractUpdate.unit_id كان موجود من غير أي تحقق خالص — مش مجرد
+    UI ناقص، عملية غير آمنة فعليًا لو استُخدمت مباشرة."""
+    new_unit_id: int
+    reason: str = Field(..., min_length=3, max_length=300)
+
+
 class PayInstallmentRequest(BaseModel):
     paid_amount:    Decimal = Field(..., gt=0)
     payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")

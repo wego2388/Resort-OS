@@ -87,6 +87,118 @@ class TestTimeshareContractFlow:
         assert cancel_resp.json()["status"] == "cancelled"
 
 
+class TestTimeshareUnitTransfer:
+    """wagdy.md #10: نقل عقد من وحدته الثابتة لوحدة تانية."""
+
+    def _make_units(self, db, branch):
+        from app.modules.timeshare.models import TimeshareUnit
+        old_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R", status="available")
+        new_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="2R", status="available")
+        other_type_unit = TimeshareUnit(branch_id=branch.id, unit_number="B-201", unit_type="4R", status="available")
+        maint_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-103", unit_type="2R", status="maintenance")
+        db.add_all([old_unit, new_unit, other_type_unit, maint_unit])
+        db.commit()
+        return old_unit, new_unit, other_type_unit, maint_unit
+
+    def _make_fixed_contract(self, client, branch_id, unit_id, headers):
+        payload = contract_payload(branch_id)
+        payload["unit_id"] = unit_id
+        resp = client.post("/api/v1/timeshare/contracts", json=payload, headers=headers)
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_transfer_succeeds_between_same_room_type_units(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        old_unit, new_unit, _, _ = self._make_units(db, branch)
+        contract = self._make_fixed_contract(client, branch.id, old_unit.id, manager_headers)
+
+        resp = client.post(
+            f"/api/v1/timeshare/contracts/{contract['id']}/transfer-unit",
+            json={"new_unit_id": new_unit.id, "reason": "الضيف طلب وحدة بإطلالة مختلفة"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["unit_id"] == new_unit.id
+
+    def test_transfer_rejects_different_room_type(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        old_unit, _, other_type_unit, _ = self._make_units(db, branch)
+        contract = self._make_fixed_contract(client, branch.id, old_unit.id, manager_headers)
+
+        resp = client.post(
+            f"/api/v1/timeshare/contracts/{contract['id']}/transfer-unit",
+            json={"new_unit_id": other_type_unit.id, "reason": "ترقية"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "نوع" in resp.json()["detail"]
+
+    def test_transfer_rejects_unit_under_maintenance(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        old_unit, _, _, maint_unit = self._make_units(db, branch)
+        contract = self._make_fixed_contract(client, branch.id, old_unit.id, manager_headers)
+
+        resp = client.post(
+            f"/api/v1/timeshare/contracts/{contract['id']}/transfer-unit",
+            json={"new_unit_id": maint_unit.id, "reason": "test"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "صيانة" in resp.json()["detail"]
+
+    def test_transfer_rejects_floating_contract(self, client: TestClient, db, fake_redis, manager_headers):
+        """عقد عائم (unit_id=None) — مفيش وحدة ثابتة تُنقَل منها أصلاً."""
+        branch = make_branch_committed(db)
+        _, new_unit, _, _ = self._make_units(db, branch)
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+
+        resp = client.post(
+            f"/api/v1/timeshare/contracts/{contract['id']}/transfer-unit",
+            json={"new_unit_id": new_unit.id, "reason": "test"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "عائم" in resp.json()["detail"]
+
+    def test_transfer_rejects_when_upcoming_visit_exists(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        old_unit, new_unit, _, _ = self._make_units(db, branch)
+        contract = self._make_fixed_contract(client, branch.id, old_unit.id, manager_headers)
+
+        visit_resp = client.post(
+            "/api/v1/timeshare/visits",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "check_in": str(date.today() + timedelta(days=10)),
+                "check_out": str(date.today() + timedelta(days=17)),
+            },
+            headers=manager_headers,
+        )
+        assert visit_resp.status_code == 201, visit_resp.text
+
+        resp = client.post(
+            f"/api/v1/timeshare/contracts/{contract['id']}/transfer-unit",
+            json={"new_unit_id": new_unit.id, "reason": "test"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "زيارة" in resp.json()["detail"]
+
+    def test_transfer_requires_manager(self, client: TestClient, db, fake_redis, manager_headers, cashier_headers):
+        branch = make_branch_committed(db)
+        old_unit, new_unit, _, _ = self._make_units(db, branch)
+        contract = self._make_fixed_contract(client, branch.id, old_unit.id, manager_headers)
+
+        resp = client.post(
+            f"/api/v1/timeshare/contracts/{contract['id']}/transfer-unit",
+            json={"new_unit_id": new_unit.id, "reason": "test"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestTimesharePermissions:
     def test_create_contract_requires_manager(self, client: TestClient, db, fake_redis, cashier_headers):
         """cashier (40) must not be able to create timeshare contracts (manager=60 required)."""

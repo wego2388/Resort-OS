@@ -24,6 +24,7 @@ interface Contract {
   partner_company: string | null; maintenance_fee: number
   installments_list: Installment[]
   collected?: number; overdue_amount?: number
+  unit_id: number | null
 }
 interface CalendarWeek { week: number; start_date: string; end_date: string; is_current: boolean; is_past: boolean; contracts: any[] }
 interface CalendarMonth { month: number; month_name: string; weeks: CalendarWeek[] }
@@ -303,6 +304,45 @@ async function cancelContract(c: Contract) {
     toast.success('تم إلغاء العقد')
     await loadSummary()
   } catch (e: any) { toast.error(e?.response?.data?.detail ?? 'خطأ في الإلغاء') }
+}
+
+// ── #10: نقل وحدة ────────────────────────────────────────────────────────
+// مقصور على نفس room_type بالتصميم (راجع services.transfer_unit — تغيير
+// النوع "ترقية" قرار تسعير منفصل)، فقائمة الوحدات المرشّحة هنا بتتفلتر
+// بنفس نوع العقد فقط.
+const transferModal = reactive({ open: false, contract: null as Contract | null, new_unit_id: '' as number | '', reason: '', saving: false })
+
+function openTransferModal(c: Contract) {
+  transferModal.contract = c
+  transferModal.new_unit_id = ''
+  transferModal.reason = ''
+  transferModal.open = true
+}
+
+const transferCandidateUnits = computed(() => {
+  if (!transferModal.contract) return []
+  return units.value.filter(u => u.unit_type === transferModal.contract!.room_type && u.id !== transferModal.contract!.unit_id)
+})
+
+async function saveTransfer() {
+  if (!transferModal.contract) return
+  if (!transferModal.new_unit_id) { toast.error('اختر الوحدة الجديدة'); return }
+  if (!transferModal.reason.trim() || transferModal.reason.trim().length < 3) {
+    toast.error('سبب النقل مطلوب (3 أحرف على الأقل)'); return
+  }
+  transferModal.saving = true
+  try {
+    const { data } = await api.post(`/api/v1/timeshare/contracts/${transferModal.contract.id}/transfer-unit`, {
+      new_unit_id: transferModal.new_unit_id, reason: transferModal.reason,
+    })
+    transferModal.contract.unit_id = data.unit_id
+    toast.success('تم نقل الوحدة')
+    transferModal.open = false
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر نقل الوحدة')
+  } finally {
+    transferModal.saving = false
+  }
 }
 
 // ── Excel Import ─────────────────────────────────────────────────────────
@@ -602,6 +642,8 @@ onMounted(refreshAll)
                 class="px-4 py-2 rounded-xl bg-yellow-50 text-yellow-700 text-xs font-bold border border-yellow-200 hover:bg-yellow-100 disabled:opacity-40">⏸️ تعليق</button>
               <button v-else-if="auth.hasRole('manager') && c.status === 'suspended'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
                 class="px-4 py-2 rounded-xl bg-green-50 text-green-700 text-xs font-bold border border-green-200 hover:bg-green-100 disabled:opacity-40">▶️ تفعيل</button>
+              <button v-if="auth.hasRole('manager') && c.unit_id && !['cancelled','expired'].includes(c.status)" @click="openTransferModal(c)"
+                class="px-4 py-2 rounded-xl bg-violet-50 text-violet-700 text-xs font-bold border border-violet-200 hover:bg-violet-100">🔑 نقل الوحدة</button>
               <AppButton v-if="auth.hasRole('manager') && c.status !== 'cancelled'" variant="danger" size="sm" @click="cancelContract(c)">🗑️ إلغاء</AppButton>
             </div>
           </div>
@@ -656,6 +698,26 @@ onMounted(refreshAll)
         </table>
       </AppCard>
     </div>
+
+    <!-- ══ TRANSFER UNIT MODAL (#10) ══ -->
+    <AppModal :open="transferModal.open" title="🔑 نقل الوحدة" size="sm" @close="transferModal.open = false">
+      <div v-if="transferModal.contract" class="space-y-3">
+        <p class="text-xs text-gray-500">
+          {{ transferModal.contract.customer_name }} — الوحدة الحالية:
+          <span class="font-bold">{{ transferModal.contract.unit_id ? (unitNumberById[transferModal.contract.unit_id] ?? `#${transferModal.contract.unit_id}`) : '—' }}</span>
+        </p>
+        <select v-model="transferModal.new_unit_id" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm">
+          <option value="">اختر الوحدة الجديدة (نفس نوع {{ transferModal.contract.room_type }}) *</option>
+          <option v-for="u in transferCandidateUnits" :key="u.id" :value="u.id" :disabled="u.status === 'maintenance'">
+            {{ u.unit_number }}{{ u.status === 'maintenance' ? ' (تحت الصيانة)' : '' }}
+          </option>
+        </select>
+        <p v-if="transferCandidateUnits.length === 0" class="text-xs text-amber-600">لا توجد وحدات أخرى متاحة من نفس النوع حاليًا</p>
+        <input v-model="transferModal.reason" type="text" placeholder="سبب النقل (مطلوب) *"
+          class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+        <AppButton class="w-full" :loading="transferModal.saving" @click="saveTransfer">تأكيد النقل</AppButton>
+      </div>
+    </AppModal>
 
     <!-- ══ PAY MODAL ══ -->
     <AppModal :open="payModal.open" title="💰 تسجيل دفعة" size="sm" @close="payModal.open = false">

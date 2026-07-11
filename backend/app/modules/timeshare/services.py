@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.modules.timeshare import crud
 from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment, TimeshareVisit
 from app.modules.timeshare.schemas import (
-    TimeshareContractCreate, TimeshareContractUpdate,
+    TimeshareContractCreate, TimeshareContractUpdate, TimeshareUnitTransferRequest,
     PayInstallmentRequest, TimeshareVisitCreate, TimeshareVisitUpdate, WaitlistCreate,
 )
 from app.resort_os.timeshare_engine import (
@@ -468,6 +468,66 @@ def cancel_contract(db: Session, contract_id: int, cancel_amount) -> TimeshareCo
     db.commit()
     db.refresh(obj)
     return obj
+
+
+def transfer_unit(
+    db: Session, contract_id: int, data: TimeshareUnitTransferRequest,
+    transferred_by: Optional[int] = None,
+) -> TimeshareContract:
+    """wagdy.md #10: نقل عقد من الوحدة الثابتة المخصَّصة له لوحدة تانية —
+    التعديل المباشر عبر update_contract (TimeshareContractUpdate.unit_id)
+    كان موجود من غير أي تحقق خالص. عمدًا مقصور على نفس room_type — تحويل
+    لنوع وحدة مختلف ("ترقية") معناه غالبًا تغيير في قيمة العقد، وده قرار
+    تسعير منفصل مش جزء من "نقل الوحدة الفعلي"، فبنرفضه بوضوح بدل ما نخمّن.
+
+    مفيش قفل صف على الوحدة الهدف (على عكس create_visit) — عمدًا: على عكس
+    حجز زيارة فعلي، أكتر من عقد ممكن يشير لنفس unit_id بالفعل في التصميم
+    الحالي (عقود عائمة/مؤجَّرة سنويًا بأسابيع مختلفة على نفس الوحدة الفعلية)،
+    فمفيش مورد حصري بنحميه هنا — الحماية الحقيقية اللازمة هي التحقق من عدم
+    وجود زيارة قادمة لسه شايلة الوحدة القديمة (تحت)."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+
+    contract = get_contract_or_404(db, contract_id)
+    if contract.status in ("cancelled", "expired"):
+        raise ValueError(f"العقد {contract.contract_number} {contract.status} — لا يمكن نقل وحدته")
+    if contract.unit_id is None:
+        raise ValueError("العقد عائم (بدون وحدة ثابتة مخصَّصة) — لا يوجد شيء يُنقَل منه")
+    if data.new_unit_id == contract.unit_id:
+        raise ValueError("الوحدة الجديدة هي نفس الوحدة الحالية")
+
+    new_unit = crud.get_unit(db, data.new_unit_id)
+    if not new_unit:
+        raise ValueError(f"الوحدة {data.new_unit_id} غير موجودة")
+    if new_unit.branch_id != contract.branch_id:
+        raise ValueError("الوحدة الجديدة في فرع مختلف")
+    if new_unit.unit_type != contract.room_type:
+        raise ValueError(
+            f"الوحدة {new_unit.unit_number} من نوع {new_unit.unit_type} — العقد من نوع "
+            f"{contract.room_type}. نقل لنوع مختلف (ترقية) قرار تسعير منفصل، راجع المدير أولاً."
+        )
+    if new_unit.status == "maintenance":
+        raise ValueError(f"الوحدة {new_unit.unit_number} تحت الصيانة حاليًا")
+
+    today = business_today(settings.TIMEZONE)
+    if crud.has_upcoming_visit(db, contract.id, today):
+        raise ValueError(
+            "فيه زيارة مجدولة/جارية لسه على الوحدة الحالية — ألغِ أو أعِد جدولة الزيارة أولاً"
+        )
+
+    old_unit_id = contract.unit_id
+    create_audit_log(db, AuditLogCreate(
+        user_id=transferred_by, branch_id=contract.branch_id, action="transfer_unit",
+        entity_type="timeshare_contract", entity_id=contract.id,
+        old_data=f'{{"unit_id": {old_unit_id}}}',
+        new_data=f'{{"unit_id": {data.new_unit_id}, "reason": "{data.reason}"}}',
+    ))
+    contract.unit_id = data.new_unit_id
+    db.commit()
+    db.refresh(contract)
+    return contract
 
 
 # ── Visits ───────────────────────────────────────────────────────────

@@ -10,7 +10,7 @@ from app.core.deps import DbDep, get_cashier_user, get_current_active_user, get_
 from app.modules.timeshare import crud, services
 from app.modules.timeshare.schemas import (
     PayInstallmentRequest, InstallmentRead,
-    TimeshareCancelRequest,
+    TimeshareCancelRequest, TimeshareUnitTransferRequest,
     TimeshareContractCreate, TimeshareContractRead, TimeshareContractUpdate,
     TimeshareUnitRead,
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
@@ -182,6 +182,20 @@ def cancel_contract(
 ):
     try:
         return services.cancel_contract(db, contract_id, data.cancel_amount)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/timeshare/contracts/{contract_id}/transfer-unit", response_model=TimeshareContractRead)
+def transfer_unit(
+    contract_id: int, data: TimeshareUnitTransferRequest, db: DbDep,
+    user=Depends(get_manager_user),
+):
+    """wagdy.md #10: نقل عقد من وحدته الثابتة لوحدة تانية من نفس room_type —
+    راجع services.transfer_unit للتحقق الكامل (لا زيارة قادمة، نوع الوحدة
+    مطابق، الوحدة مش تحت الصيانة، عقد نشط)."""
+    try:
+        return services.transfer_unit(db, contract_id, data, transferred_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
