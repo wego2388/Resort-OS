@@ -858,6 +858,71 @@ class TestTableOccupancy:
         assert found["occupied_at"] is None
 
 
+class TestTableTransferHTTP:
+    """wagdy.md P-01 — PATCH /restaurant/orders/{id}/transfer."""
+
+    def test_transfer_order_via_http(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        old_table = make_table_committed(db, branch)
+        new_table = make_table_committed(db, branch)
+
+        order = client.post(
+            "/api/v1/restaurant/orders",
+            params={"branch_id": branch.id},
+            json={"table_id": old_table.id, "order_type": "dine_in", "guests_count": 2,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/transfer",
+            json={"table_id": new_table.id},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["table_id"] == new_table.id
+
+        tables = client.get("/api/v1/restaurant/tables", params={"branch_id": branch.id}, headers=waiter_headers).json()
+        assert next(t for t in tables if t["id"] == old_table.id)["status"] == "available"
+        assert next(t for t in tables if t["id"] == new_table.id)["status"] == "occupied"
+
+    def test_transfer_to_occupied_table_returns_400(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        table_a = make_table_committed(db, branch)
+        table_b = make_table_committed(db, branch)
+
+        order_a = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"table_id": table_a.id, "order_type": "dine_in", "guests_count": 2,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"table_id": table_b.id, "order_type": "dine_in", "guests_count": 2,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        )
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order_a['id']}/transfer",
+            json={"table_id": table_b.id},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_transfer_requires_auth(self, client: TestClient, db):
+        branch = make_branch_committed(db)
+        table = make_table_committed(db, branch)
+        resp = client.patch(
+            "/api/v1/restaurant/orders/1/transfer",
+            json={"table_id": table.id},
+        )
+        assert resp.status_code == 401
+
+
 class TestRestaurantReceiptPdf:
     """قبل الإصلاح: generate_receipt_pdf كانت بتستخدم receipt_pdf العادي (مقاس A4 كامل)،
     مش المناسب لطابعة رول حراري 80mm الحقيقية المستخدمة في أي كاشير مطعم. اتصلحت لاستخدام
@@ -917,6 +982,30 @@ class TestMenuItemCrudHTTP:
         updated = update_resp.json()
         assert Decimal(str(updated["price"])) == Decimal("250.00")
         assert updated["is_available"] is False
+
+    def test_create_and_update_menu_item_availability_window(self, client: TestClient, db, manager_headers):
+        """wagdy.md P-03 — available_from_time/available_until_time بيتحفظوا
+        ويترجعوا صح عبر create/update، ونقدر نمسحهم (NULL) تاني."""
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/restaurant/menu/items",
+            json={"branch_id": branch.id, "name": "فطار صباحي", "price": "60.00",
+                  "available_from_time": "07:00:00", "available_until_time": "11:00:00"},
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        item = create_resp.json()
+        assert item["available_from_time"] == "07:00:00"
+        assert item["available_until_time"] == "11:00:00"
+
+        clear_resp = client.patch(
+            f"/api/v1/restaurant/menu/items/{item['id']}",
+            json={"available_from_time": None, "available_until_time": None},
+            headers=manager_headers,
+        )
+        assert clear_resp.status_code == 200, clear_resp.text
+        assert clear_resp.json()["available_from_time"] is None
+        assert clear_resp.json()["available_until_time"] is None
 
     def test_create_menu_item_requires_manager(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
@@ -1311,6 +1400,115 @@ class TestRestaurantKDSHTTP:
             headers=manager_headers,
         )
         assert resp.status_code == 404
+
+
+class TestKitchenItemBumpHTTP:
+    """wagdy.md P-05 — PATCH /restaurant/orders/{order_id}/items/{item_id}/status
+    (تأكيد صنف بصنف من شاشة KDS، بدل تأكيد التذكرة كلها دفعة واحدة)."""
+
+    def _order_in_kitchen(self, client, db, waiter_headers, branch, items):
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": i.id, "quantity": 1} for i in items]},
+            headers=waiter_headers,
+        ).json()
+        client.patch(f"/api/v1/restaurant/orders/{order['id']}/status",
+                     json={"status": "in_kitchen"}, headers=waiter_headers)
+        return order
+
+    def test_bump_single_item_updates_status_and_ticket(self, client: TestClient, db, waiter_headers, manager_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = self._order_in_kitchen(client, db, waiter_headers, branch, [item])
+        item_id = order["items"][0]["id"]
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/{item_id}/status",
+            json={"status": "ready"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["items"][0]["status"] == "ready"
+
+        # التذكرة اللي فيها الصنف ده بس لازم تبقى 'done' تلقائيًا — راجع
+        # services._sync_kitchen_tickets_for_order
+        tickets = client.get(
+            f"/api/v1/restaurant/kitchen/tickets?branch_id={branch.id}&module=restaurant",
+            headers=manager_headers,
+        ).json()
+        assert not any(t["order_id"] == order["id"] for t in tickets)  # مش pending/in_progress بقى
+
+    def test_ticket_stays_pending_until_all_items_bumped(self, client: TestClient, db, waiter_headers, manager_headers):
+        branch = make_branch_committed(db)
+        hot_item = make_menu_item_committed(db, branch)
+        from app.modules.restaurant.models import MenuItem
+        grill_item = MenuItem(branch_id=branch.id, name="مشويات اختبار",
+                              price=Decimal("60.00"), is_available=True, station="hot")
+        db.add(grill_item); db.commit()
+
+        order = self._order_in_kitchen(client, db, waiter_headers, branch, [hot_item, grill_item])
+        first_item_id = order["items"][0]["id"]
+
+        client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/{first_item_id}/status",
+            json={"status": "ready"}, headers=waiter_headers,
+        )
+
+        tickets = client.get(
+            f"/api/v1/restaurant/kitchen/tickets?branch_id={branch.id}&module=restaurant",
+            headers=manager_headers,
+        ).json()
+        ticket = next(t for t in tickets if t["order_id"] == order["id"])
+        assert ticket["status"] == "in_progress"  # لسه مش كل الأصناف اتأكدت
+        item_statuses = {i["order_item_id"]: i["status"] for i in ticket["items_snapshot"]}
+        assert item_statuses[first_item_id] == "ready"
+
+    def test_bump_item_not_found_returns_400(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = self._order_in_kitchen(client, db, waiter_headers, branch, [item])
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/999999/status",
+            json={"status": "ready"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_bump_invalid_status_rejected(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = self._order_in_kitchen(client, db, waiter_headers, branch, [item])
+        item_id = order["items"][0]["id"]
+
+        resp = client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/items/{item_id}/status",
+            json={"status": "cancelled"},  # ليه endpoint مخصص (void) — مش مسموح هنا
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 422
+
+    def test_confirming_whole_ticket_bumps_remaining_items_to_ready(self, client: TestClient, db, waiter_headers, manager_headers):
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = self._order_in_kitchen(client, db, waiter_headers, branch, [item])
+
+        tickets = client.get(
+            f"/api/v1/restaurant/kitchen/tickets?branch_id={branch.id}&module=restaurant",
+            headers=manager_headers,
+        ).json()
+        ticket = next(t for t in tickets if t["order_id"] == order["id"])
+
+        resp = client.patch(
+            f"/api/v1/restaurant/kitchen/tickets/{ticket['id']}/status",
+            json={"status": "done"}, headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["items_snapshot"][0]["status"] == "ready"
+
+        order_resp = client.get(f"/api/v1/restaurant/orders/{order['id']}", headers=manager_headers).json()
+        assert order_resp["items"][0]["status"] == "ready"
 
 
 class TestRestaurantSearchOrders:

@@ -456,3 +456,29 @@ def test_cafe_offline_sync_new_order(client: TestClient, waiter_headers, db):
     data = r.json()
     assert data["order_id"] > 0
     assert data["status"] in ("fulfilled", "partial")
+
+
+def test_cafe_create_and_update_item_availability_window(client: TestClient, manager_headers, db):
+    """wagdy.md P-03 — available_from_time/available_until_time على
+    CafeItem (نفس restaurant.MenuItem بالظبط، راجع
+    test_restaurant_http.TestMenuItemCrudHTTP)."""
+    br = _branch(db)
+    create_resp = client.post(
+        "/api/v1/cafe/items",
+        json={"branch_id": br.id, "name": "عصير الصباح", "price": "30.00",
+              "available_from_time": "07:00:00", "available_until_time": "11:00:00"},
+        headers=manager_headers,
+    )
+    assert create_resp.status_code == 201, create_resp.text
+    item = create_resp.json()
+    assert item["available_from_time"] == "07:00:00"
+    assert item["available_until_time"] == "11:00:00"
+
+    update_resp = client.patch(
+        f"/api/v1/cafe/items/{item['id']}",
+        json={"available_until_time": "12:00:00"},
+        headers=manager_headers,
+    )
+    assert update_resp.status_code == 200, update_resp.text
+    assert update_resp.json()["available_until_time"] == "12:00:00"
+    assert update_resp.json()["available_from_time"] == "07:00:00"

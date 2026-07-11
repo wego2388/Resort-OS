@@ -7,13 +7,13 @@ Tables: menu_categories, menu_items, menu_item_extra_groups, menu_item_extras,
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, JSON,
-    Numeric, String, UniqueConstraint,
+    Numeric, String, Time, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,6 +54,12 @@ class MenuItem(Base, TimestampMixin):
     linked_product_id:    Mapped[int | None]  = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     # ربط اختياري بصنف مخزني (inventory.Product) — لو موجود، دفع الطلب بيخصم
     # المخزون تلقائياً (استهلاك). معظم الأصناف مفهاش ربط، وده متوقع.
+    available_from_time:  Mapped[time | None] = mapped_column(Time, nullable=True)
+    available_until_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # نافذة تقديم الصنف (مثال: إفطار 07:00-11:00) — NULL في أي منهم يعني
+    # بدون قيد وقتي من هذه الجهة (زي معظم الحقول الاختيارية في المشروع ده).
+    # لو from > until بيتفسّر كنافذة عابرة لمنتصف الليل (زي بار مفتوح
+    # 22:00-02:00) — راجع services._is_item_available_now للتحقق الفعلي.
 
     category: Mapped["MenuCategory"] = relationship("MenuCategory", back_populates="items")
     extra_groups: Mapped[list["MenuItemExtraGroup"]] = relationship(

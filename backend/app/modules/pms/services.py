@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.modules.pms import crud
 from app.modules.pms.models import Booking, NightAuditLog, RatePlan, RoomType
-from app.modules.pms.schemas import BookingCreate, EarlyLateRequest
+from app.modules.pms.schemas import BookingCreate, EarlyLateRequest, RatePlanCreate, RatePlanUpdate
 
 
 class BookingConflictError(Exception):
@@ -65,6 +65,39 @@ def _room_rate_for(room_type: "RoomType | None", plan: "RatePlan | None", room_t
             return plan.base_rate_override
         return (base * plan.rate_multiplier).quantize(Decimal("0.01"))
     return base
+
+
+def _validate_rate_plan_dates(valid_from: date, valid_until: date) -> None:
+    if valid_until <= valid_from:
+        raise ValueError("valid_until يجب أن يكون بعد valid_from")
+
+
+def create_rate_plan(db: Session, data: RatePlanCreate) -> RatePlan:
+    """إنشاء خطة أسعار موسمية — راجع models.RatePlan/_resolve_rate_plan
+    للتفاصيل الكاملة عن كيفية تأثيرها على سعر الحجز الفعلي."""
+    _validate_rate_plan_dates(data.valid_from, data.valid_until)
+    plan = crud.create_rate_plan(db, data)
+    db.commit()
+    db.refresh(plan)
+    return plan
+
+
+def update_rate_plan(db: Session, plan_id: int, data: RatePlanUpdate) -> RatePlan:
+    """تعديل خطة أسعار موجودة — بما في ذلك إلغاء تفعيلها (is_active=False).
+    التحقق من valid_from/valid_until بيراعي القيم الجديدة المرسلة *أو* القيم
+    الحالية لو الحقل مش متضمّن في الطلب (تحديث جزئي)."""
+    plan = crud.get_rate_plan(db, plan_id)
+    if not plan:
+        raise ValueError(f"خطة الأسعار {plan_id} غير موجودة")
+
+    new_valid_from = data.valid_from if data.valid_from is not None else plan.valid_from
+    new_valid_until = data.valid_until if data.valid_until is not None else plan.valid_until
+    _validate_rate_plan_dates(new_valid_from, new_valid_until)
+
+    plan = crud.update_rate_plan(db, plan, data)
+    db.commit()
+    db.refresh(plan)
+    return plan
 
 
 def create_booking(db: Session, data: BookingCreate) -> Booking:

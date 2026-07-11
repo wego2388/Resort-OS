@@ -5,8 +5,9 @@ Integration tests for restaurant module.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime, time
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -102,6 +103,108 @@ class TestMenuItem:
         )
         with pytest.raises(ValueError):
             services.create_order(db, branch.id, data)
+
+
+def make_scheduled_item(db, branch, from_time=None, until_time=None):
+    from app.modules.restaurant.models import MenuItem
+    item = MenuItem(
+        branch_id=branch.id, name="فطار إنجليزي", price=Decimal("70.00"),
+        is_available=True,
+        available_from_time=from_time, available_until_time=until_time,
+    )
+    db.add(item)
+    db.commit()
+    return item
+
+
+class TestItemAvailabilitySchedule:
+    """wagdy.md P-03 — صنف يشتغل في أوقات محددة (إفطار 7-11، غداء 12-4،
+    عشاء 7-11). available_from_time/available_until_time = NULL يعني بدون
+    قيد وقتي (متاح دايمًا، زي قبل الميزة دي)."""
+
+    def _order_data(self, item):
+        return OrderCreate(
+            order_type="takeaway",
+            items=[OrderItemCreate(menu_item_id=item.id, quantity=1)],
+        )
+
+    def test_item_without_window_always_available(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_item(db, branch)  # NULL/NULL
+        order = services.create_order(db, branch.id, self._order_data(item))
+        assert order.id is not None
+
+    def test_item_available_inside_window(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_item(db, branch, time(7, 0), time(11, 0))
+        with patch("app.modules.restaurant.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 9, 0)  # 09:00 جوه 07:00-11:00
+            order = services.create_order(db, branch.id, self._order_data(item))
+        assert order.id is not None
+
+    def test_item_unavailable_outside_window(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_item(db, branch, time(7, 0), time(11, 0))
+        with patch("app.modules.restaurant.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 15, 0)  # 15:00 برّه 07:00-11:00
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.create_order(db, branch.id, self._order_data(item))
+
+    def test_item_available_at_exact_boundary(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_item(db, branch, time(7, 0), time(11, 0))
+        with patch("app.modules.restaurant.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 11, 0)  # الحد الأقصى نفسه — شامل
+            order = services.create_order(db, branch.id, self._order_data(item))
+        assert order.id is not None
+
+    def test_overnight_window_available_late_night(self, db):
+        """بار مفتوح 22:00-02:00 (from > until) — نافذة عابرة لمنتصف الليل."""
+        branch = make_branch(db)
+        item = make_scheduled_item(db, branch, time(22, 0), time(2, 0))
+        with patch("app.modules.restaurant.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 23, 30)
+            order = services.create_order(db, branch.id, self._order_data(item))
+        assert order.id is not None
+
+    def test_overnight_window_available_early_morning(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_item(db, branch, time(22, 0), time(2, 0))
+        with patch("app.modules.restaurant.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 1, 30)
+            order = services.create_order(db, branch.id, self._order_data(item))
+        assert order.id is not None
+
+    def test_overnight_window_unavailable_midday(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_item(db, branch, time(22, 0), time(2, 0))
+        with patch("app.modules.restaurant.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 12, 0)
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.create_order(db, branch.id, self._order_data(item))
+
+    def test_only_from_time_set_means_no_upper_bound(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_item(db, branch, from_time=time(7, 0))  # until=NULL
+        with patch("app.modules.restaurant.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 23, 0)
+            order = services.create_order(db, branch.id, self._order_data(item))
+        assert order.id is not None
+
+    def test_add_items_to_order_respects_availability_window(self, db):
+        """نفس التحقق لازم يتطبّق وقت إضافة صنف لطلب مفتوح موجود، مش وقت
+        الإنشاء بس."""
+        branch = make_branch(db)
+        base_item = make_menu_item(db, branch)
+        order = make_order(db, branch, base_item)
+        scheduled_item = make_scheduled_item(db, branch, time(7, 0), time(11, 0))
+
+        with patch("app.modules.restaurant.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 15, 0)
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.add_items_to_order(db, order.id, [
+                    OrderItemCreate(menu_item_id=scheduled_item.id, quantity=1),
+                ])
 
 
 class TestOrder:
@@ -228,6 +331,100 @@ class TestOrderStatus:
     def test_order_not_found_raises(self, db):
         with pytest.raises(ValueError):
             services.update_order_status(db, 9999, "paid")
+
+
+class TestTableTransfer:
+    """wagdy.md P-01 — نقل طلب مفتوح من طاولة لأخرى (ضيوف اتحركوا فعليًا)."""
+
+    def test_transfer_moves_order_and_updates_table_statuses(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        old_table = make_table(db, branch)
+        new_table = make_table(db, branch)
+        order = make_order(db, branch, item, old_table)
+        assert order.table_id == old_table.id
+
+        updated = services.transfer_order_table(db, order.id, new_table.id)
+        assert updated.table_id == new_table.id
+
+        db.refresh(old_table)
+        db.refresh(new_table)
+        assert old_table.status == "available"
+        assert new_table.status == "occupied"
+
+    def test_transfer_rejects_occupied_table_with_other_open_order(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table_a = make_table(db, branch)
+        table_b = make_table(db, branch)
+        order_a = make_order(db, branch, item, table_a)
+        make_order(db, branch, item, table_b)  # طلب مفتوح تاني على table_b
+
+        with pytest.raises(ValueError, match="مشغولة"):
+            services.transfer_order_table(db, order_a.id, table_b.id)
+
+    def test_transfer_allows_table_freed_by_paid_order(self, db):
+        """طاولة كان عليها طلب لكنه اتدفع/اتلغى — مش 'مشغولة' فعليًا، النقل لازم يعدي."""
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table_a = make_table(db, branch)
+        table_b = make_table(db, branch)
+        order_a = make_order(db, branch, item, table_a)
+        old_order_b = make_order(db, branch, item, table_b)
+        services.update_order_status(db, old_order_b.id, "paid")
+
+        updated = services.transfer_order_table(db, order_a.id, table_b.id)
+        assert updated.table_id == table_b.id
+
+    def test_transfer_rejects_out_of_service_table(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table_a = make_table(db, branch)
+        broken_table = make_table(db, branch, status="out_of_service")
+        order = make_order(db, branch, item, table_a)
+
+        with pytest.raises(ValueError, match="خارج الخدمة"):
+            services.transfer_order_table(db, order.id, broken_table.id)
+
+    def test_transfer_rejects_different_branch_table(self, db):
+        branch = make_branch(db)
+        other_branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table_a = make_table(db, branch)
+        other_table = make_table(db, other_branch)
+        order = make_order(db, branch, item, table_a)
+
+        with pytest.raises(ValueError, match="فرع"):
+            services.transfer_order_table(db, order.id, other_table.id)
+
+    def test_transfer_rejects_nonexistent_table(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table_a = make_table(db, branch)
+        order = make_order(db, branch, item, table_a)
+
+        with pytest.raises(ValueError, match="غير موجودة"):
+            services.transfer_order_table(db, order.id, 999999)
+
+    def test_cannot_transfer_paid_order(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table_a = make_table(db, branch)
+        table_b = make_table(db, branch)
+        order = make_order(db, branch, item, table_a)
+        services.update_order_status(db, order.id, "paid")
+
+        with pytest.raises(ValueError, match="paid"):
+            services.transfer_order_table(db, order.id, table_b.id)
+
+    def test_transfer_same_table_rejected(self, db):
+        branch = make_branch(db)
+        item = make_menu_item(db, branch)
+        table_a = make_table(db, branch)
+        order = make_order(db, branch, item, table_a)
+
+        with pytest.raises(ValueError):
+            services.transfer_order_table(db, order.id, table_a.id)
 
 
 def make_finance_accounts(db, branch):
@@ -631,7 +828,10 @@ class TestKDS:
         assert not any(t.id == ticket.id for t in pending)
 
     def test_get_kds_tickets_module_isolation(self, db):
-        """services.get_kds_tickets بموديول 'cafe' لازم ميرجّعش تذاكر المطعم، والعكس."""
+        """services.get_kds_tickets بموديول 'cafe' لازم ميرجّعش تذاكر المطعم، والعكس.
+        get_kds_tickets بيرجّع list[dict] (مش ORM objects مباشرة) من
+        2026-07-12 — راجع services._ticket_read_dict: تذاكر المطعم بتتضمّن
+        حالة كل صنف اللحظية جوه items_snapshot (wagdy.md P-05)."""
         from app.modules.restaurant.models import KitchenTicket
         branch = make_branch(db)
         item = make_menu_item(db, branch, station="hot")
@@ -646,13 +846,13 @@ class TestKDS:
         db.commit()
 
         restaurant_only = services.get_kds_tickets(db, branch.id, module="restaurant")
-        assert all(t.module == "restaurant" for t in restaurant_only)
-        assert any(t.order_id == order.id for t in restaurant_only)
+        assert all(t["module"] == "restaurant" for t in restaurant_only)
+        assert any(t["order_id"] == order.id for t in restaurant_only)
 
         cafe_only = services.get_kds_tickets(db, branch.id, module="cafe")
-        assert all(t.module == "cafe" for t in cafe_only)
-        assert any(t.id == cafe_ticket.id for t in cafe_only)
-        assert not any(t.order_id == order.id for t in cafe_only)
+        assert all(t["module"] == "cafe" for t in cafe_only)
+        assert any(t["id"] == cafe_ticket.id for t in cafe_only)
+        assert not any(t["order_id"] == order.id for t in cafe_only)
 
 
 class TestChargeToRoom:

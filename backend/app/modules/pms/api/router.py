@@ -16,7 +16,7 @@ from app.core.deps import (
 from app.modules.pms import crud, services
 from app.modules.pms.schemas import (
     BookingCreate, BookingRead, EarlyLateRequest, HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
-    NightAuditLogRead, RatePlanCreate, RatePlanRead, RoomCreate, RoomRead,
+    NightAuditLogRead, RatePlanCreate, RatePlanRead, RatePlanUpdate, RoomCreate, RoomRead,
     RoomStatusUpdate, RoomTypeCreate, RoomTypeRead,
 )
 from app.modules.core.schemas import PaginatedResponse
@@ -326,10 +326,23 @@ def get_rate_plan(plan_id: int, db: DbDep, _=Depends(get_current_active_user)):
 @router.post("/pms/rate-plans", response_model=RatePlanRead,
              status_code=status.HTTP_201_CREATED)
 def create_rate_plan(data: RatePlanCreate, db: DbDep, _=Depends(get_admin_user)):
-    if data.valid_until <= data.valid_from:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "valid_until يجب أن يكون بعد valid_from")
-    obj = crud.create_rate_plan(db, data)
-    db.commit(); db.refresh(obj)
+    try:
+        obj = services.create_rate_plan(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return RatePlanRead.model_validate(obj)
+
+
+@router.patch("/pms/rate-plans/{plan_id}", response_model=RatePlanRead)
+def update_rate_plan(plan_id: int, data: RatePlanUpdate, db: DbDep, _=Depends(get_admin_user)):
+    """تعديل خطة أسعار موجودة — بما فيها إلغاء تفعيلها (`is_active=false`)،
+    مفيش endpoint حذف منفصل (زي باقي المشروع: خطة قديمة بتتعطّل مش بتتشال،
+    عشان الحجوزات التاريخية المرتبطة بيها (BookingRoom.rate_plan_id) تفضل
+    قابلة للتتبّع)."""
+    try:
+        obj = services.update_rate_plan(db, plan_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     return RatePlanRead.model_validate(obj)
 
 

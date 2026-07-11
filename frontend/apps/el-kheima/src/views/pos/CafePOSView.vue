@@ -42,7 +42,11 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 interface CafeTable { id: number; table_number: string }
 interface Category { id: number; name: string; name_ar: string }
 interface Variant  { id: number; name: string; name_ar: string | null; price: number; is_available: boolean }
-interface MenuItem { id: number; name: string; name_ar: string; price: number; is_available: boolean; category_id: number; variants?: Variant[] }
+interface MenuItem {
+  id: number; name: string; name_ar: string; price: number; is_available: boolean
+  category_id: number; variants?: Variant[]
+  available_from_time?: string | null; available_until_time?: string | null
+}
 interface CartItem {
   menu_item_id: number; variant_id: number | null; variant_label: string | null
   name: string; name_ar: string; price: number; quantity: number; notes: string
@@ -244,6 +248,27 @@ const displayTotal = computed(() => pendingOrderSummary.value?.total ?? total.va
 // سطر لنفس الصنف بمتغيّرات مختلفة (راجع RestaurantPOSView.vue.cartKey لنفس المنطق).
 function cartKey(menuItemId: number, variantId: number | null): string {
   return variantId != null ? `${menuItemId}:${variantId}` : `${menuItemId}`
+}
+
+// نافذة تقديم الصنف (wagdy.md P-03) — نفس منطق RestaurantPOSView.isItemOutOfWindow
+// بالظبط، مش مكرر عمدًا كـ composable مشترك — راجع تعليقه هناك للتبرير الكامل.
+function isItemOutOfWindow(item: MenuItem): boolean {
+  if (!item.available_from_time && !item.available_until_time) return false
+  const toMinutes = (t: string) => {
+    const [h, m] = t.split(':').map(Number)
+    return h * 60 + m
+  }
+  const now = new Date()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const start = item.available_from_time ? toMinutes(item.available_from_time) : 0
+  const end = item.available_until_time ? toMinutes(item.available_until_time) : 24 * 60 - 1
+  if (start <= end) return !(nowMinutes >= start && nowMinutes <= end)
+  return !(nowMinutes >= start || nowMinutes <= end)
+}
+function itemWindowLabel(item: MenuItem): string {
+  const from = item.available_from_time?.slice(0, 5) ?? '00:00'
+  const until = item.available_until_time?.slice(0, 5) ?? '23:59'
+  return `متاح ${from}-${until}`
 }
 
 // ── Cart actions ───────────────────────────────────────────────────────────────
@@ -678,8 +703,9 @@ onUnmounted(() => {
             :key="item.id"
             @click="addToCart(item)"
             @contextmenu.prevent="openQtyPad(item)"
-            :disabled="cartLocked"
-            class="group bg-white rounded-2xl border border-stone-200 p-5 text-right hover:border-amber-400 hover:shadow-lg transition-all active:scale-95 flex flex-col justify-between min-h-[110px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:shadow-none"
+            :disabled="cartLocked || isItemOutOfWindow(item)"
+            :title="isItemOutOfWindow(item) ? itemWindowLabel(item) : undefined"
+            class="group relative bg-white rounded-2xl border border-stone-200 p-5 text-right hover:border-amber-400 hover:shadow-lg transition-all active:scale-95 flex flex-col justify-between min-h-[110px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:shadow-none"
           >
             <div class="font-bold text-gray-900 leading-tight text-sm mb-2">
               {{ item.name_ar || item.name }}
@@ -696,6 +722,10 @@ onUnmounted(() => {
                 <span class="text-amber-700 group-hover:text-white font-bold text-lg leading-none">+</span>
               </div>
             </div>
+            <span
+              v-if="isItemOutOfWindow(item)"
+              class="absolute top-1.5 left-1.5 bg-stone-700/90 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded"
+            >⏰ {{ itemWindowLabel(item) }}</span>
           </button>
         </div>
 

@@ -1,7 +1,7 @@
 """app/modules/cafe/schemas.py — Pydantic v2 (نفس نمط restaurant)"""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Optional
 
@@ -76,6 +76,9 @@ class CafeItemCreate(BaseModel):
     image_url:           Optional[str] = None
     station:             str = Field("bar", pattern=r"^(hot|grill|cold|bar|dessert)$")
     linked_product_id:   Optional[int] = None
+    available_from_time: Optional[time] = None
+    available_until_time: Optional[time] = None
+    # نافذة تقديم الصنف — نفس restaurant.MenuItemCreate بالظبط.
 
 
 class CafeItemUpdate(BaseModel):
@@ -87,6 +90,8 @@ class CafeItemUpdate(BaseModel):
     category_id:         Optional[int]     = None
     station:             Optional[str]     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert)$")
     linked_product_id:   Optional[int]     = None
+    available_from_time: Optional[time]    = None
+    available_until_time: Optional[time]   = None
 
 
 # ─────────────────────── Recipe / BOM ───────────────────────────────────

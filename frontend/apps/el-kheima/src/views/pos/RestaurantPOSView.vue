@@ -18,7 +18,11 @@ const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 interface Table    { id: number; table_number: string; status: string; capacity: number }
 interface Category { id: number; name: string; name_ar: string }
 interface Variant  { id: number; name: string; name_ar: string | null; price: number; is_available: boolean }
-interface MenuItem { id: number; name: string; name_ar: string; price: number; is_available: boolean; category_id: number; description_ar?: string; variants?: Variant[] }
+interface MenuItem {
+  id: number; name: string; name_ar: string; price: number; is_available: boolean
+  category_id: number; description_ar?: string; variants?: Variant[]
+  available_from_time?: string | null; available_until_time?: string | null
+}
 interface CartItem {
   menu_item_id: number; variant_id: number | null; variant_label: string | null
   name: string; name_ar: string; price: number; quantity: number; notes: string
@@ -264,6 +268,29 @@ function cartKey(menuItemId: number, variantId: number | null): string {
   return variantId != null ? `${menuItemId}:${variantId}` : `${menuItemId}`
 }
 
+// ── نافذة تقديم الصنف (wagdy.md P-03) — مثال: إفطار 07:00-11:00. عرض بصري
+// بس (تحسين UX، يقلل محاولات طلب مرفوضة) — التحقق الحقيقي دايمًا سيرفر-سايد
+// (services._check_item_available_now)، هنا نفس منطق النافذة العابرة لمنتصف
+// الليل بالظبط، بس على وقت الجهاز المحلي (مفروض يبقى نفس توقيت المنتجع). ──
+function isItemOutOfWindow(item: MenuItem): boolean {
+  if (!item.available_from_time && !item.available_until_time) return false
+  const toMinutes = (t: string) => {
+    const [h, m] = t.split(':').map(Number)
+    return h * 60 + m
+  }
+  const now = new Date()
+  const nowMinutes = now.getHours() * 60 + now.getMinutes()
+  const start = item.available_from_time ? toMinutes(item.available_from_time) : 0
+  const end = item.available_until_time ? toMinutes(item.available_until_time) : 24 * 60 - 1
+  if (start <= end) return !(nowMinutes >= start && nowMinutes <= end)
+  return !(nowMinutes >= start || nowMinutes <= end)
+}
+function itemWindowLabel(item: MenuItem): string {
+  const from = item.available_from_time?.slice(0, 5) ?? '00:00'
+  const until = item.available_until_time?.slice(0, 5) ?? '23:59'
+  return `متاح ${from}-${until}`
+}
+
 // ── Cart actions ───────────────────────────────────────────────────────────────
 function addToCart(item: MenuItem) {
   if (cartLocked.value) return
@@ -435,6 +462,18 @@ async function loadData() {
     toast.error('تعذّر تحميل بيانات المطعم — تأكد من الاتصال وحاول تاني')
   } finally {
     loading.value = false
+  }
+}
+
+/** تحديث خفيف لقائمة الطاولات بس — بعد نقل طلب لطاولة تانية (OrderDetailModal
+ * "نقل لطاولة") حالة الطاولتين (القديمة/الجديدة) بتتغيّر سيرفر-سايد، فقائمة
+ * الطاولات المستخدمة في تحديد طلب جديد لازم تتحدّث فورًا، مش تنتظر تحديث كامل. */
+async function refreshTables() {
+  try {
+    const { data } = await api.get('/api/v1/restaurant/tables', { params: { branch_id: branchId } })
+    tables.value = data.tables ?? data.items ?? data
+  } catch {
+    // فشل صامت — الطاولات هتتحدّث في المرة الجاية اللي loadData بيتنادى فيها
   }
 }
 
@@ -720,8 +759,9 @@ onUnmounted(() => {
             v-for="item in filteredItems"
             :key="item.id"
             @click="addToCart(item)"
-            :disabled="cartLocked"
-            class="bg-white rounded-xl border border-stone-200 p-4 text-right hover:border-blue-400 hover:shadow-md transition-all active:scale-95 active:shadow-sm flex flex-col justify-between min-h-[90px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:shadow-none"
+            :disabled="cartLocked || isItemOutOfWindow(item)"
+            :title="isItemOutOfWindow(item) ? itemWindowLabel(item) : undefined"
+            class="relative bg-white rounded-xl border border-stone-200 p-4 text-right hover:border-blue-400 hover:shadow-md transition-all active:scale-95 active:shadow-sm flex flex-col justify-between min-h-[90px] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:shadow-none"
           >
             <div class="font-semibold text-gray-900 text-sm leading-tight mb-2">
               {{ item.name_ar || item.name }}
@@ -732,6 +772,10 @@ onUnmounted(() => {
             <div v-else class="text-lg font-black text-blue-700">
               {{ item.price }}<span class="text-xs font-normal text-gray-400 mr-0.5">ج</span>
             </div>
+            <span
+              v-if="isItemOutOfWindow(item)"
+              class="absolute top-1.5 left-1.5 bg-stone-700/90 text-white text-[10px] font-semibold px-1.5 py-0.5 rounded"
+            >⏰ {{ itemWindowLabel(item) }}</span>
           </button>
         </div>
 
@@ -978,8 +1022,9 @@ onUnmounted(() => {
 
     <OrderDetailModal
       :order-id="selectedOrderId"
+      :tables="tables"
       @close="onOrderDetailClosed"
-      @changed="loadActiveOrders"
+      @changed="loadActiveOrders(); refreshTables()"
     />
 
     <!-- ── #3: Modal إضافة أصناف لطلب مفتوح ── -->
@@ -1010,10 +1055,13 @@ onUnmounted(() => {
           <button
             v-for="item in filteredItems" :key="item.id"
             @click="addItemsAddToCart(item)"
-            class="bg-stone-50 border border-stone-200 rounded-lg p-2 text-right text-xs hover:border-blue-400 hover:bg-blue-50 transition-all"
+            :disabled="isItemOutOfWindow(item)"
+            :title="isItemOutOfWindow(item) ? itemWindowLabel(item) : undefined"
+            class="bg-stone-50 border border-stone-200 rounded-lg p-2 text-right text-xs hover:border-blue-400 hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:border-stone-200 disabled:hover:bg-stone-50"
           >
             <div class="font-semibold text-gray-900 leading-tight truncate">{{ item.name_ar || item.name }}</div>
             <div class="text-blue-700 font-bold mt-1">{{ item.price }} ج</div>
+            <div v-if="isItemOutOfWindow(item)" class="text-[10px] text-stone-500 mt-0.5">⏰ {{ itemWindowLabel(item) }}</div>
           </button>
         </div>
 

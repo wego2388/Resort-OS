@@ -97,6 +97,28 @@ def _effective_recipe(cafe_item: CafeItem, variant: Optional[CafeItemVariant]) -
     return cafe_item.recipe_lines
 
 
+def _is_item_available_now(item: CafeItem) -> bool:
+    """نفس منطق restaurant.services._is_item_available_now بالظبط."""
+    start, end = item.available_from_time, item.available_until_time
+    if start is None and end is None:
+        return True
+    start = start or time.min
+    end = end or time.max
+    now_time = local_now(settings.TIMEZONE).time()
+    if start <= end:
+        return start <= now_time <= end
+    return now_time >= start or now_time <= end
+
+
+def _check_item_available_now(item: CafeItem) -> None:
+    """نفس منطق restaurant.services._check_item_available_now بالظبط."""
+    if _is_item_available_now(item):
+        return
+    start = item.available_from_time.strftime("%H:%M") if item.available_from_time else "00:00"
+    end = item.available_until_time.strftime("%H:%M") if item.available_until_time else "23:59"
+    raise ValueError(f"الصنف '{item.name}' متاح فقط من {start} إلى {end}")
+
+
 # ─────────────────────── Recipe / BOM ──────────────────────────────────
 # نفس منطق restaurant.services (compute_menu_item_cost/build_recipe_line_read/
 # add_recipe_line/...) بالضبط — راجع التعليقات هناك للتفاصيل الكاملة.
@@ -291,6 +313,7 @@ def create_order(
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
+        _check_item_available_now(item)
 
         variant = _resolve_variant(db, item, item_req.variant_id)
         base_price = variant.price if variant else item.price
@@ -508,6 +531,7 @@ def add_items_to_order(
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
         if not cafe_item.is_available:
             raise ValueError(f"الصنف '{cafe_item.name}' غير متاح حالياً")
+        _check_item_available_now(cafe_item)
 
         variant = _resolve_variant(db, cafe_item, item_req.variant_id)
         base_price = variant.price if variant else cafe_item.price

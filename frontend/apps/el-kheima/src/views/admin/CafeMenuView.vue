@@ -25,6 +25,7 @@ interface MenuItem {
   category_id: number | null; station: string
   preparation_minutes: number; image_url: string | null
   variants?: MenuItemVariant[]
+  available_from_time: string | null; available_until_time: string | null
 }
 
 // ── State ─────────────────────────────────────────────────────────────
@@ -96,6 +97,8 @@ const itemForm     = ref({
   name: '', name_ar: '', price: 0, cost: '',
   is_available: true, category_id: null as number | null,
   station: 'bar', preparation_minutes: 5, image_url: '',
+  available_from_time: '', available_until_time: '',
+  // نافذة تقديم الصنف (wagdy.md P-03) — راجع MenuView.vue.itemForm للتبرير الكامل.
 })
 
 const STATIONS = [
@@ -117,9 +120,12 @@ function openItemForm(item?: MenuItem) {
     is_available: item.is_available, category_id: item.category_id,
     station: item.station, preparation_minutes: item.preparation_minutes,
     image_url: item.image_url ?? '',
+    available_from_time: item.available_from_time?.slice(0, 5) ?? '',
+    available_until_time: item.available_until_time?.slice(0, 5) ?? '',
   } : {
     name: '', name_ar: '', price: 0, cost: '', is_available: true,
     category_id: selectedCatId.value, station: 'bar', preparation_minutes: 5, image_url: '',
+    available_from_time: '', available_until_time: '',
   }
   itemFormOpen.value = true
 }
@@ -144,6 +150,8 @@ async function saveItem() {
       station:             itemForm.value.station,
       preparation_minutes: itemForm.value.preparation_minutes,
       image_url:           itemForm.value.image_url.trim() || null,
+      available_from_time:  itemForm.value.available_from_time || null,
+      available_until_time: itemForm.value.available_until_time || null,
     }
     if (itemFormEdit.value) {
       const { data } = await api.patch(`/api/v1/cafe/items/${itemFormEdit.value.id}`, payload)
@@ -488,6 +496,22 @@ onMounted(loadData)
                   class="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
             </div>
+            <!-- ── نافذة تقديم الصنف (wagdy.md P-03) — راجع MenuView.vue للتبرير الكامل ── -->
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-sm font-bold text-gray-700 mb-1.5">متاح من (اختياري)</label>
+                <input v-model="itemForm.available_from_time" type="time"
+                  class="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label class="block text-sm font-bold text-gray-700 mb-1.5">متاح حتى (اختياري)</label>
+                <input v-model="itemForm.available_until_time" type="time"
+                  class="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+            <p v-if="itemForm.available_from_time || itemForm.available_until_time" class="text-[11px] text-gray-400 -mt-2">
+              الصنف هيبقى غير متاح للطلب برّه النافذة دي — سيب الحقلين فاضيين لإتاحته طول اليوم.
+            </p>
             <label class="flex items-center gap-3 cursor-pointer">
               <input v-model="itemForm.is_available" type="checkbox" class="w-4 h-4 accent-amber-600" />
               <span class="text-sm font-medium text-gray-700">الصنف متاح (يظهر في قائمة POS)</span>

@@ -12,7 +12,7 @@ from app.modules.pms.models import (
     Booking, BookingRoom, HousekeepingTask, NightAuditLog, RatePlan, Room, RoomType,
 )
 from app.modules.pms.schemas import (
-    BookingCreate, RatePlanCreate, RoomCreate, RoomTypeCreate,
+    BookingCreate, RatePlanCreate, RatePlanUpdate, RoomCreate, RoomTypeCreate,
 )
 
 
@@ -388,3 +388,10 @@ def list_rate_plans(
 
 def get_rate_plan(db: Session, plan_id: int) -> Optional[RatePlan]:
     return db.query(RatePlan).filter(RatePlan.id == plan_id).first()
+
+
+def update_rate_plan(db: Session, plan: RatePlan, data: RatePlanUpdate) -> RatePlan:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(plan, field, value)
+    db.flush()
+    return plan

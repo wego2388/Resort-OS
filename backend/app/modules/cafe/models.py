@@ -6,11 +6,11 @@ Tables: cafe_categories, cafe_items, cafe_item_recipe_lines, cafe_item_variants,
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Time, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.kernel.models.mixins import TimestampMixin
@@ -55,6 +55,10 @@ class CafeItem(Base, TimestampMixin):
     linked_product_id:   Mapped[int | None]  = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     # ربط اختياري بصنف مخزني (inventory.Product) — زي MenuItem.linked_product_id
     # عند restaurant. لو موجود، دفع الطلب بيخصم المخزون تلقائياً.
+    available_from_time:  Mapped[time | None] = mapped_column(Time, nullable=True)
+    available_until_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # نافذة تقديم الصنف — نفس عمود restaurant.MenuItem بالظبط، راجع هناك
+    # للتبرير الكامل. cafe.services._is_item_available_now بيطبّق نفس التحقق.
 
     category: Mapped["CafeCategory"] = relationship("CafeCategory", back_populates="items")
     extra_groups: Mapped[list["CafeMenuItemExtraGroup"]] = relationship(
