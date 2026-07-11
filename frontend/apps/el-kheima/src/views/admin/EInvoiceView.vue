@@ -6,7 +6,7 @@
 // ناقص). قائمة الفواتير (GET) مبتتحققش من الإعداد ده خالص فمفيش إشارة "غير مفعّل"
 // وقت فتح الشاشة — الإشارة الوحيدة الحقيقية بتظهر أول ما حد يحاول يبعت فاتورة.
 // notEnabledError بيتفعّل من رد الإرسال ده ويعرض بانر واضح فوق الصفحة.
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, EmptyState, useToast } from '@resort-os/ui'
 
@@ -53,6 +53,17 @@ function openSubmitModal() {
 function addLine() { submitModal.items.push({ description: '', quantity: 1, unit_price: 0 }) }
 function removeLine(i: number) { submitModal.items.splice(i, 1) }
 
+// wagdy.md #14: الرقم الضريبي الموحّد المصري (RIN) 9 أرقام بالظبط — فاضي
+// = B2C (اختياري فعلاً، راجع eta_service.build_invoice_document: receiver.type
+// بيبقى "P" لو مفيش receiver_rin) لكن لو المستخدم كتب حاجة، لازم تبقى صحيحة
+// الشكل قبل ما نبعتها لبوابة الضرائب أصلاً — كانت بتتقبل أي نص وتترفض بعيد
+// (فشل إرسال كامل) بدل تنبيه فوري وواضح جوه المودال.
+const rinError = computed(() => {
+  const v = submitModal.receiver_rin.trim()
+  if (!v) return ''
+  return /^\d{9}$/.test(v) ? '' : 'الرقم الضريبي لازم يكون 9 أرقام بالظبط'
+})
+
 async function loadInvoices() {
   loading.value = true
   try {
@@ -74,6 +85,7 @@ async function loadInvoices() {
 const ETA_CONFIG_MARKERS = ['ETA_ENABLED', 'ETA_CLIENT_ID', 'ETA_TAXPAYER']
 
 async function submitInvoice() {
+  if (rinError.value) { submitModal.error = rinError.value; return }
   submitModal.saving = true
   submitModal.error = ''
   try {
@@ -182,8 +194,9 @@ onMounted(loadInvoices)
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">الرقم الضريبي (اختياري — فاضي = B2C)</label>
-          <input v-model="submitModal.receiver_rin" type="text"
-                 class="w-full border border-stone-200 rounded-lg px-3 py-2 text-sm" />
+          <input v-model="submitModal.receiver_rin" type="text" maxlength="9"
+                 :class="['w-full border rounded-lg px-3 py-2 text-sm', rinError ? 'border-red-400' : 'border-stone-200']" />
+          <p v-if="rinError" class="text-[11px] text-red-600 mt-1">{{ rinError }}</p>
         </div>
         <div>
           <label class="block text-xs text-gray-400 mb-1">رقم الفوليو (اختياري)</label>
@@ -208,7 +221,7 @@ onMounted(loadInvoices)
       <template #footer>
         <div class="flex gap-2">
           <AppButton variant="outline" block @click="submitModal.open = false">إلغاء</AppButton>
-          <AppButton block :loading="submitModal.saving" @click="submitInvoice">
+          <AppButton block :disabled="!!rinError" :loading="submitModal.saving" @click="submitInvoice">
             {{ submitModal.saving ? 'جاري الإرسال...' : 'إرسال لمصلحة الضرائب' }}
           </AppButton>
         </div>
