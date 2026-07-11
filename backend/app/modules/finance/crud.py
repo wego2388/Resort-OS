@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_today, utc_naive_to_local_date
@@ -390,6 +390,20 @@ def get_previous_closed_shift(
 
 def payments_for_shift(db: Session, shift_id: int) -> list[Payment]:
     return db.query(Payment).filter(Payment.shift_id == shift_id).all()
+
+
+def list_shift_payments_with_folio(db: Session, shift_id: int) -> list[Payment]:
+    """دفعات الوردية مع الفوليو محمّل مسبقًا (joinedload) — لسجل فواتير
+    الوردية (InvoiceLogModal، wagdy.md بند S-02)، عشان نعرض اسم الضيف بدون
+    N+1 query لكل دفعة (مختلف عن payments_for_shift فوق، المستخدمة للتجميع
+    الرقمي بس في build_shift_end_report من غير أي حاجة لبيانات الفوليو)."""
+    return (
+        db.query(Payment)
+        .options(joinedload(Payment.folio))
+        .filter(Payment.shift_id == shift_id)
+        .order_by(Payment.posted_at.desc())
+        .all()
+    )
 
 
 # ── Account (Chart of Accounts) ───────────────────────────────────────

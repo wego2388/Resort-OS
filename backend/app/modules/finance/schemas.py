@@ -222,6 +222,16 @@ class CashierShiftClose(BaseModel):
     # ملاحظة تسليم — بتظهر لصاحب الوردية الجاية في نفس الفرع (راجع
     # GET /finance/shifts/handover-note) قبل ما يفتح ورديته
 
+    # فرق كاش أكبر من الحد المسموح (راجع services.close_shift —
+    # CASH_VARIANCE_REJECT_PCT/FLOOR) بيترفض القفل تلقائيًا بـ 400. لو مدير
+    # حاضر فعليًا وعايز يعتمد الفرق ده بدل ما يفضل الكاشير معلّق لحد ما مدير
+    # يتفرّغ لاحقًا، force_close=true + موافقة PIN (نفس نمط
+    # core.services.resolve_pin_approval المستخدم في إلغاء صنف الطلب) بيسمحوا
+    # بالقفل — مع AuditLog إجباري يوثّق مين وافق (راجع wagdy.md بند S-06).
+    force_close:      bool = False
+    approver_user_id: Optional[int] = None
+    approver_pin:     Optional[str] = Field(None, pattern=r"^\d{4,6}$")
+
     @model_validator(mode="after")
     def _require_counted_amount(self) -> "CashierShiftClose":
         if self.counted_cash is None and not self.cash_count:
@@ -289,6 +299,22 @@ class ShiftEndReport(BaseModel):
     reporting_currency:    str = "EGP"
     # كل الإجماليات هنا EGP equivalent — أي دفعة بعملة غير EGP بتتحوّل بسعر
     # الصرف وقت تاريخ الدفعة قبل الجمع (راجع build_shift_end_report).
+
+
+class ShiftInvoiceLine(BaseModel):
+    """سطر واحد في سجل فواتير الوردية (InvoiceLogModal، wagdy.md بند S-02) —
+    دفعة حقيقية مربوطة بالوردية عبر Payment.shift_id، مع اسم الضيف من
+    الفوليو المرتبط. مختلف عن ``invoice_count`` الإجمالي في ShiftEndReport:
+    هنا كل فاتورة سطر مستقل بتفاصيلها، مش رقم مجمّع بس."""
+    payment_id: int
+    folio_id:   int
+    guest_name: str
+    amount:     Decimal
+    method:     str
+    reference:  Optional[str]
+    posted_at:  datetime
+    is_voided:  bool
+    voided_at:  Optional[datetime]
 
 
 class DiscountCalculateRequest(BaseModel):

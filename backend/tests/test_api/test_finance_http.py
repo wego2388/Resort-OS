@@ -776,6 +776,330 @@ class TestCashierShiftHTTPFlow:
         assert any(s["id"] == shift_id for s in resp.json()["items"])
 
 
+def _set_shift_pin(db, email: str, pin: str) -> int:
+    """نفس نمط _set_pin في test_restaurant_http.py — يضبط PIN حقيقي عبر
+    core.services (مش تلاعب مباشر بالداتابيز) ويرجّع user.id."""
+    from app.core.kernel.models.user import User
+    from app.modules.core import services as core_services
+
+    user = db.query(User).filter(User.email == email).first()
+    core_services.set_pin(db, user.id, pin, created_by=user.id)
+    db.commit()
+    return user.id
+
+
+def _second_cashier_headers(db) -> dict[str, str]:
+    """كاشير تاني (مختلف عن fixture cashier_headers) — لازم لاختبارات عزل
+    البيانات بين ورديات الكاشيرية المختلفة (S-02: كاشير لا يرى وردية غيره)."""
+    import os
+    from datetime import datetime, timedelta
+
+    from jose import jwt
+
+    from app.core.kernel.models.user import User
+    from app.core.kernel.security import get_password_hash
+
+    email = "cashier2@test.local"
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+        user = User(
+            email=email, password_hash=get_password_hash("Test@12345"),
+            full_name="Test cashier2", role="cashier", is_active=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+    secret = os.environ["SECRET_KEY"]
+    now = datetime.utcnow()
+    token = jwt.encode(
+        {"sub": email, "iat": now, "exp": now + timedelta(hours=1)}, secret, algorithm="HS256",
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+class TestShiftInvoicesHTTP:
+    """GET /finance/shifts/{shift_id}/invoices — wagdy.md بند S-02: سجل
+    فواتير الوردية، مقصور على كاشير الوردية نفسه + محتاج موافقة PIN مدير+
+    (راجع services.list_shift_invoices وPinGuardModal)."""
+
+    def _open_shift_with_paid_folio(
+        self, client: TestClient, cashier_headers, branch_id: int, guest_name: str, amount: str,
+    ) -> tuple[int, int]:
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch_id, "opening_float": "0"},
+            headers=cashier_headers,
+        )
+        assert open_resp.status_code == 201, open_resp.text
+        shift_id = open_resp.json()["id"]
+
+        folio_resp = client.post(
+            "/api/v1/finance/folios",
+            json={
+                "branch_id": branch_id, "guest_name": guest_name,
+                "check_in": datetime.utcnow().isoformat(),
+                "check_out": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert folio_resp.status_code == 201, folio_resp.text
+        folio_id = folio_resp.json()["id"]
+
+        pay_resp = client.post(
+            f"/api/v1/finance/folios/{folio_id}/payments",
+            json={
+                "folio_id": folio_id, "branch_id": branch_id, "amount": amount,
+                "method": "cash", "posted_at": datetime.utcnow().isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert pay_resp.status_code == 201, pay_resp.text
+        return shift_id, pay_resp.json()["id"]
+
+    def test_manager_lists_invoices_without_pin(self, client: TestClient, db, cashier_headers, manager_headers):
+        branch = make_branch_committed(db)
+        shift_id, payment_id = self._open_shift_with_paid_folio(
+            client, cashier_headers, branch.id, "ضيف سجل الفواتير", "150.00",
+        )
+
+        resp = client.get(f"/api/v1/finance/shifts/{shift_id}/invoices", headers=manager_headers)
+        assert resp.status_code == 200, resp.text
+        lines = resp.json()
+        assert len(lines) == 1
+        assert lines[0]["payment_id"] == payment_id
+        assert lines[0]["guest_name"] == "ضيف سجل الفواتير"
+        assert Decimal(lines[0]["amount"]) == Decimal("150.00")
+        assert lines[0]["is_voided"] is False
+
+    def test_cashier_own_shift_requires_pin_approval(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        shift_id, _ = self._open_shift_with_paid_folio(
+            client, cashier_headers, branch.id, "ضيف بدون موافقة", "50.00",
+        )
+
+        resp = client.get(f"/api/v1/finance/shifts/{shift_id}/invoices", headers=cashier_headers)
+        assert resp.status_code == 400
+        assert "PIN" in resp.json()["detail"] or "موافقة" in resp.json()["detail"]
+
+    def test_cashier_own_shift_with_manager_pin_succeeds(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        manager_id = _set_shift_pin(db, "manager@test.local", "4321")
+        branch = make_branch_committed(db)
+        shift_id, payment_id = self._open_shift_with_paid_folio(
+            client, cashier_headers, branch.id, "ضيف بموافقة مدير", "75.00",
+        )
+
+        resp = client.get(
+            f"/api/v1/finance/shifts/{shift_id}/invoices",
+            params={"approver_user_id": manager_id, "approver_pin": "4321"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()[0]["payment_id"] == payment_id
+
+    def test_cashier_own_shift_wrong_pin_rejected(self, client: TestClient, db, cashier_headers, manager_headers):
+        manager_id = _set_shift_pin(db, "manager@test.local", "4321")
+        branch = make_branch_committed(db)
+        shift_id, _ = self._open_shift_with_paid_folio(
+            client, cashier_headers, branch.id, "ضيف PIN غلط", "25.00",
+        )
+
+        resp = client.get(
+            f"/api/v1/finance/shifts/{shift_id}/invoices",
+            params={"approver_user_id": manager_id, "approver_pin": "0000"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_cashier_cannot_view_other_cashiers_shift(self, client: TestClient, db, cashier_headers, manager_headers):
+        """⚠️ عزل بيانات إجباري (S-02): حتى مع موافقة PIN مدير صحيحة، كاشير
+        مايشوفش وردية كاشير تاني خالص — 403 مش 400."""
+        manager_id = _set_shift_pin(db, "manager@test.local", "4321")
+        branch = make_branch_committed(db)
+        shift_id, _ = self._open_shift_with_paid_folio(
+            client, cashier_headers, branch.id, "ضيف كاشير أول", "60.00",
+        )
+
+        other_headers = _second_cashier_headers(db)
+        resp = client.get(
+            f"/api/v1/finance/shifts/{shift_id}/invoices",
+            params={"approver_user_id": manager_id, "approver_pin": "4321"},
+            headers=other_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_invoices_404_for_missing_shift(self, client: TestClient, db, manager_headers):
+        resp = client.get("/api/v1/finance/shifts/999999/invoices", headers=manager_headers)
+        assert resp.status_code == 400
+
+    def test_voided_payment_shows_is_voided_true(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        shift_id, payment_id = self._open_shift_with_paid_folio(
+            client, cashier_headers, branch.id, "ضيف فاتورة ملغاة", "40.00",
+        )
+        void_resp = client.post(
+            f"/api/v1/finance/payments/{payment_id}/void",
+            json={"reason": "خطأ في التسجيل"},
+            headers=manager_headers,
+        )
+        assert void_resp.status_code == 200, void_resp.text
+
+        resp = client.get(f"/api/v1/finance/shifts/{shift_id}/invoices", headers=manager_headers)
+        assert resp.status_code == 200
+        assert resp.json()[0]["is_voided"] is True
+        assert resp.json()[0]["voided_at"] is not None
+
+
+class TestCloseShiftVarianceOverrideHTTP:
+    """POST /finance/shifts/{shift_id}/close مع force_close — wagdy.md بند
+    S-06: فرق كاش أكبر من الحد المسموح بيترفض القفل افتراضيًا (400)، إلا لو
+    force_close=true مع موافقة PIN مدير+ (أو المنفّذ نفسه مدير+)."""
+
+    def _open_shift_with_cash_sale(
+        self, client: TestClient, headers, branch_id: int, opening_float: str, sale_amount: str,
+    ) -> int:
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch_id, "opening_float": opening_float},
+            headers=headers,
+        )
+        assert open_resp.status_code == 201, open_resp.text
+        shift_id = open_resp.json()["id"]
+
+        folio_resp = client.post(
+            "/api/v1/finance/folios",
+            json={
+                "branch_id": branch_id, "guest_name": "ضيف تخطي الفرق",
+                "check_in": datetime.utcnow().isoformat(),
+                "check_out": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            },
+            headers=headers,
+        )
+        assert folio_resp.status_code == 201, folio_resp.text
+        folio_id = folio_resp.json()["id"]
+
+        pay_resp = client.post(
+            f"/api/v1/finance/folios/{folio_id}/payments",
+            json={
+                "folio_id": folio_id, "branch_id": branch_id, "amount": sale_amount,
+                "method": "cash", "posted_at": datetime.utcnow().isoformat(),
+            },
+            headers=headers,
+        )
+        assert pay_resp.status_code == 201, pay_resp.text
+        return shift_id
+
+    def test_force_close_without_pin_still_rejected(self, client: TestClient, db, cashier_headers):
+        """force_close=true من غير approver_user_id/approver_pin — لازم
+        يترفض برضو (كاشير مش مؤهّل يعتمد نفسه)."""
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift_with_cash_sale(
+            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
+        )
+
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "5000.00", "force_close": True},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+        assert "PIN" in resp.json()["detail"] or "موافقة" in resp.json()["detail"]
+
+        # الوردية لازم تفضل مفتوحة — نفس ضمان test_close_shift_rejects_large_cash_variance_against_sales
+        current_resp = client.get(
+            "/api/v1/finance/shifts/current", params={"branch_id": branch.id}, headers=cashier_headers,
+        )
+        assert current_resp.json()["status"] == "open"
+
+    def test_force_close_with_wrong_pin_rejected(self, client: TestClient, db, cashier_headers, manager_headers):
+        manager_id = _set_shift_pin(db, "manager@test.local", "7777")
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift_with_cash_sale(
+            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
+        )
+
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={
+                "counted_cash": "5000.00", "force_close": True,
+                "approver_user_id": manager_id, "approver_pin": "0000",
+            },
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_force_close_with_correct_manager_pin_succeeds_and_audits(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        manager_id = _set_shift_pin(db, "manager@test.local", "7777")
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift_with_cash_sale(
+            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
+        )
+
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={
+                "counted_cash": "5000.00", "force_close": True,
+                "approver_user_id": manager_id, "approver_pin": "7777",
+            },
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["status"] == "closed"
+        assert body["variance"] == "4000.00"
+
+        # AuditLog إجباري يوثّق مين وافق على تخطي الحد (راجع services.close_shift)
+        logs_resp = client.get(
+            "/api/v1/audit-logs",
+            params={"branch_id": branch.id, "entity_type": "cashier_shift", "entity_id": shift_id},
+            headers=manager_headers,
+        )
+        assert logs_resp.status_code == 200
+        items = logs_resp.json()["items"]
+        assert len(items) == 1
+        assert items[0]["action"] == "close_shift_variance_override"
+        assert items[0]["approved_by"] == manager_id
+
+    def test_manager_closing_own_shift_self_qualifies_no_pin_needed(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """مدير (level 60) بيقفل ورديته هو نفسه بفرق كبير — مؤهّل بنفسه من
+        غير موافقة PIN منفصلة (نفس مبدأ resolve_pin_approval للأدوار الأعلى)."""
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift_with_cash_sale(
+            client, manager_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
+        )
+
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "5000.00", "force_close": True},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "closed"
+
+    def test_force_close_ignored_when_variance_within_threshold(self, client: TestClient, db, cashier_headers):
+        """force_close=true لكن الفرق أصلاً داخل الحد المسموح — قفل عادي، من
+        غير أي حاجة لموافقة PIN (مفيش تجاوز لازم يعتمد أصلاً)."""
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift_with_cash_sale(
+            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
+        )
+
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "1000.00", "force_close": True},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["variance"] == "0.00"
+
+
 class TestDiscountHTTPFlow:
     def test_create_list_update_delete_discount(self, client: TestClient, db, manager_headers, super_admin_headers):
         branch = make_branch_committed(db)
