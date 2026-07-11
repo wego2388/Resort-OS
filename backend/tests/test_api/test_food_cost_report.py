@@ -415,6 +415,39 @@ class TestFoodCostReportHTTP:
         )
         assert resp.status_code == 400
 
+    def test_export_returns_valid_excel_for_manager(self, client: TestClient, db, manager_headers, waiter_headers):
+        """wagdy.md #16: تصدير Excel لتقرير تكلفة الطعام."""
+        branch = make_branch_committed(db)
+        item = make_menu_item_committed(db, branch)
+        order = client.post(
+            "/api/v1/restaurant/orders", params={"branch_id": branch.id},
+            json={"order_type": "takeaway", "guests_count": 1,
+                  "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        client.patch(
+            f"/api/v1/restaurant/orders/{order['id']}/status",
+            json={"status": "paid"}, headers=manager_headers,
+        )
+
+        resp = client.get(
+            "/api/v1/restaurant/reports/food-cost/export",
+            params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+        assert len(resp.content) > 0
+
+    def test_export_requires_manager(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/restaurant/reports/food-cost/export",
+            params={"branch_id": branch.id}, headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
     def test_cafe_requires_manager_level(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
         resp = client.get(
@@ -448,3 +481,14 @@ class TestFoodCostReportHTTP:
         body = resp.json()
         line = next(l for l in body["lines"] if l["cafe_item_id"] == item.id)
         assert line["quantity_sold"] == 2
+
+    def test_cafe_export_returns_valid_excel(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.get(
+            "/api/v1/cafe/reports/food-cost/export",
+            params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"] == (
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )

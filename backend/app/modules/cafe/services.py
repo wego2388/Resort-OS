@@ -1072,3 +1072,42 @@ def get_food_cost_report(
 
     alerts = [line for line in lines if line.exceeds_threshold]
     return CafeFoodCostReportResponse(lines=lines, alerts=alerts, trend=trend, summary=summary)
+
+
+def generate_food_cost_excel(
+    db: Session, branch_id: int, date_from: date, date_to: date,
+    threshold_pct: Decimal = DEFAULT_FOOD_COST_THRESHOLD_PCT,
+) -> bytes:
+    """تصدير Excel لتقرير تكلفة الطعام (wagdy.md #16) — راجع
+    restaurant.services.generate_food_cost_excel للتبرير الكامل، نفس
+    المنطق بالظبط."""
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    report = get_food_cost_report(db, branch_id, date_from, date_to, threshold_pct)
+
+    rows = [
+        [
+            line.cafe_item_name, "نعم" if line.has_recipe else "لا (تكلفة غير معروفة)",
+            line.quantity_sold, line.revenue, line.theoretical_total_cost,
+            line.food_cost_pct if line.food_cost_pct is not None else "—",
+            line.gross_margin_amount, "نعم" if line.exceeds_threshold else "لا",
+        ]
+        for line in report.lines
+    ]
+
+    return builder.excel(
+        sheets=[{
+            "name": "تكلفة الطعام",
+            "headers": ["الصنف", "وصفة مسجّلة؟", "الكمية المباعة", "الإيراد",
+                        "التكلفة النظرية", "نسبة التكلفة %", "هامش الربح", "تخطّى الحد؟"],
+            "rows": rows,
+            "col_types": ["text", "text", "number", "currency", "currency", "text", "currency", "text"],
+            "summary": {
+                "إجمالي الإيراد": report.summary.total_revenue,
+                "إجمالي التكلفة النظرية": report.summary.total_theoretical_cost,
+                "هامش الربح الإجمالي": report.summary.gross_margin_amount,
+                "أصناف بدون وصفة": report.summary.items_missing_recipe,
+            },
+        }],
+        title=f"تقرير تكلفة الطعام (الكافيه) — {date_from} إلى {date_to}",
+    )

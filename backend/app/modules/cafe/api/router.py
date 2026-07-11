@@ -231,6 +231,26 @@ def get_food_cost_report(
     return services.get_food_cost_report(db, branch_id, date_from, date_to, threshold_pct)
 
 
+@router.get("/cafe/reports/food-cost/export")
+def download_food_cost_report_excel(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    date_from: date = Query(default_factory=lambda: business_today(settings.TIMEZONE) - timedelta(days=30)),
+    date_to: date = Query(default_factory=lambda: business_today(settings.TIMEZONE)),
+    threshold_pct: Decimal = Query(DEFAULT_FOOD_COST_THRESHOLD_PCT, gt=0, le=100),
+):
+    """تصدير Excel لتقرير تكلفة الطعام (wagdy.md #16)."""
+    if date_from > date_to:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "date_from لازم يكون قبل أو يساوي date_to")
+    xlsx = services.generate_food_cost_excel(db, branch_id, date_from, date_to, threshold_pct)
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=food-cost-report-cafe.xlsx"},
+    )
+
+
 # ── Cafe Sales Dashboard ─────────────────────────────────────────────
 # تقرير مبيعات يومي/تاريخي للكافيه — نفس نمط analytics/revenue لكن
 # مخصوص للكافيه فقط مع تفاصيل إضافية (top items, payment breakdown).

@@ -111,6 +111,28 @@ function switchModule(m: ModuleType) {
   fetchReport()
 }
 
+// wagdy.md #16: تصدير Excel — نفس مدى التاريخ/الحد المعروض حاليًا
+const exporting = ref(false)
+async function exportExcel() {
+  exporting.value = true
+  try {
+    const res = await api.get(`${reportPath.value}/export`, {
+      params: { branch_id: branchId, date_from: dateFrom.value, date_to: dateTo.value, threshold_pct: thresholdPct.value || '30' },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `food-cost-${activeModule.value}-${dateFrom.value}-to-${dateTo.value}.xlsx`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 5000)
+  } catch {
+    toast.error('تعذّر تصدير التقرير')
+  } finally {
+    exporting.value = false
+  }
+}
+
 function money(v: string | number | null | undefined) {
   if (v == null) return '—'
   return Number(v).toLocaleString('ar-EG', { maximumFractionDigits: 2 })
@@ -153,7 +175,12 @@ onMounted(fetchReport)
           التكلفة النظرية (وصفة × كمية مباعة فعليًا) مقابل الإيراد الفعلي — لكشف الأصناف اللي تكلفتها أعلى من المسموح.
         </p>
       </div>
-      <AppButton variant="secondary" size="sm" :disabled="loading" @click="fetchReport">تحديث ↻</AppButton>
+      <div class="flex items-center gap-2">
+        <AppButton variant="secondary" size="sm" :disabled="loading || exporting || !report" :loading="exporting" @click="exportExcel">
+          📊 تصدير Excel
+        </AppButton>
+        <AppButton variant="secondary" size="sm" :disabled="loading" @click="fetchReport">تحديث ↻</AppButton>
+      </div>
     </div>
 
     <!-- Module tabs -->
