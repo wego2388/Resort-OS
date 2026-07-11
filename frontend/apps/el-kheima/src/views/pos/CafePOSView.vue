@@ -519,11 +519,49 @@ async function submitOrder() {
   }
 }
 
+// ── اختصارات لوحة المفاتيح (wagdy.md #26) ──────────────────────────────────
+// نفس منطق RestaurantPOSView.handleKeydown بالظبط، بس مُكيّف على مودالات
+// الكافيه (مفيش حقل بحث هنا فمفيش اختصار "/" — مفيش داعي نخترع ميزة بحث
+// جديدة عشان بس نديها اختصار).
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    if (qtyPadItem.value !== null) { qtyPadItem.value = null; return }
+    if (editingNoteId.value !== null) { editingNoteId.value = null; return }
+    if (variantPickerItem.value !== null) { variantPickerItem.value = null; return }
+    if (heldOrdersOpen.value) { heldOrdersOpen.value = false; return }
+    if (activeOrdersOpen.value) { activeOrdersOpen.value = false; return }
+    if (selectedOrderId.value !== null) { onOrderDetailClosed(); return }
+    if (isTypingTarget(e.target)) return
+    // نفس شرط تعطيل زرار "مسح" بالظبط — cartLocked مش بيمنع المسح لأن
+    // clearOrder() هي اللي بتلغي الطلب المعلّق سيرفر-سايد أصلاً.
+    if (hasItems.value && !cancellingPendingOrder.value) clearOrder()
+    return
+  }
+
+  if (isTypingTarget(e.target)) return
+
+  if (e.key === 'Enter') {
+    // نفس شرط تعطيل زرار "تأكيد الطلب" بالظبط.
+    if (hasItems.value && !submitting.value && !cancellingPendingOrder.value) {
+      e.preventDefault()
+      submitOrder()
+    }
+  }
+}
+
 onMounted(() => {
   loadData()
   loadActiveOrders()
   window.addEventListener('online', handleOnline)
   window.addEventListener('offline', handleOffline)
+  window.addEventListener('keydown', handleKeydown)
   if (navigator.onLine) syncPendingOrders()
   // safety-net poll — covers cases where the 'online' event never fires
   pollTimer = setInterval(() => {
@@ -534,6 +572,7 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('online', handleOnline)
   window.removeEventListener('offline', handleOffline)
+  window.removeEventListener('keydown', handleKeydown)
   if (pollTimer) clearInterval(pollTimer)
 })
 </script>
@@ -567,6 +606,12 @@ onUnmounted(() => {
     <!-- ── Category tabs ── -->
     <div class="bg-white border-b border-stone-200 px-4 py-3 flex gap-2 flex-wrap items-center shadow-sm flex-shrink-0">
       <span class="text-sm font-bold text-gray-700 ml-2">☕ الكافيه</span>
+
+      <!-- #26: تلميح اختصارات لوحة المفاتيح -->
+      <span
+        class="text-gray-300 hover:text-gray-500 cursor-help text-sm select-none transition-colors"
+        title="⌨️ اختصارات لوحة المفاتيح:&#10;Enter — تأكيد الطلب&#10;Esc — إغلاق نافذة مفتوحة، أو مسح الطلب"
+      >⌨️</span>
 
       <!-- زر الطلبات الجارية — للكاشير لتحصيل الطلبات اللي جهّزها البار -->
       <button

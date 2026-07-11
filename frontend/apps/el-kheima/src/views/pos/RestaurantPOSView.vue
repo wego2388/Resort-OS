@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api } from '@resort-os/core'
 import { useOfflineQueue, usePrintDocument, useOrderDiscount } from '@resort-os/core/composables'
 import { AppModal, AppBadge, EmptyState, useToast } from '@resort-os/ui'
@@ -228,6 +228,7 @@ function onOrderDetailClosed() {
 
 // ── Computed ───────────────────────────────────────────────────────────────────
 const searchQuery = ref('')
+const searchInputEl = ref<HTMLInputElement | null>(null)
 
 const filteredItems = computed(() => {
   let items = selectedCategoryId.value !== null
@@ -519,9 +520,63 @@ async function submitOrder() {
   }
 }
 
+// ── اختصارات لوحة المفاتيح (wagdy.md #26) ──────────────────────────────────
+// هدفها تسريع أكتر الحركات تكرارًا للكاشير من غير ما يحتاج يلمس الشاشة كل
+// مرة: بحث سريع، إرسال الطلب، إغلاق مودال/مسح السلة. مش بديل لأزرار
+// الماوس/اللمس — إضافة اختيارية بس فوقها.
+function isTypingTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable
+}
+
+function handleKeydown(e: KeyboardEvent) {
+  // Esc بتقفل أقرب مودال مفتوح لو فيه واحد — وده لازم يشتغل حتى لو الفوكس
+  // جوه حقل نص داخل المودال نفسه (زي textarea الملاحظة)، عشان ده السلوك
+  // المتوقع من أي مستخدم. لو مفيش مودال مفتوح، بتمسح السلة (لو مسموح).
+  if (e.key === 'Escape') {
+    if (editingNoteId.value !== null) { editingNoteId.value = null; return }
+    if (variantPickerItem.value !== null) { onVariantPickerClose(); return }
+    if (addItemsOpen.value) { addItemsOrderId.value = null; addItemsCart.value = []; return }
+    if (activeOrdersOpen.value) { activeOrdersOpen.value = false; return }
+    if (selectedOrderId.value !== null) { onOrderDetailClosed(); return }
+    if (isTypingTarget(e.target)) return
+    // نفس شرط تعطيل زرار "مسح" بالظبط — cartLocked مش بيمنع المسح لأن
+    // clearOrder() هي اللي بتلغي الطلب المعلّق سيرفر-سايد أصلاً.
+    if (hasItems.value && !cancellingPendingOrder.value) clearOrder()
+    return
+  }
+
+  // باقي الاختصارات ميشتغلوش وقت الكتابة في أي حقل نص — أشهر باج في أي
+  // تطبيق اختصارات لوحة مفاتيح.
+  if (isTypingTarget(e.target)) return
+
+  if (e.key === '/') {
+    e.preventDefault()
+    searchInputEl.value?.focus()
+    return
+  }
+
+  if (e.key === 'Enter') {
+    // نفس شرط تعطيل زرار "إرسال للمطبخ" بالظبط. preventDefault هنا كمان
+    // بيمنع تفعيل الزرار اللي ممكن يكون فوكس عليه (زي صنف من المنيو) من
+    // إضافة نفس الصنف مرة تانية في نفس الضغطة.
+    if (hasItems.value && !submitting.value && !cancellingPendingOrder.value) {
+      e.preventDefault()
+      submitOrder()
+    }
+  }
+}
+
 onMounted(() => {
   loadData()
   loadActiveOrders()
+  window.addEventListener('keydown', handleKeydown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', handleKeydown)
 })
 </script>
 
@@ -630,9 +685,10 @@ onMounted(() => {
       <!-- #12: حقل بحث سريع — لمطاعم عندها 50+ صنف -->
       <div class="relative">
         <input
+          ref="searchInputEl"
           v-model="searchQuery"
           type="text"
-          placeholder="🔍 بحث في الأصناف..."
+          placeholder="🔍 بحث في الأصناف... (/)"
           class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white w-48"
         />
         <button
@@ -641,6 +697,12 @@ onMounted(() => {
           class="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-lg leading-none"
         >×</button>
       </div>
+
+      <!-- #26: تلميح اختصارات لوحة المفاتيح -->
+      <span
+        class="text-gray-300 hover:text-gray-500 cursor-help text-sm select-none transition-colors"
+        title="⌨️ اختصارات لوحة المفاتيح:&#10;/  — تركيز على حقل البحث&#10;Enter — إرسال الطلب للمطبخ&#10;Esc — إغلاق نافذة مفتوحة، أو مسح الطلب"
+      >⌨️</span>
 
     </div>
 
