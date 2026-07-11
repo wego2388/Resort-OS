@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api, parseApiTimestamp, useAuthStore } from '@resort-os/core'
-import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, AppInput, EmptyState, useToast } from '@resort-os/ui'
+import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, AppInput, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
+const { confirm } = useConfirm()
 const auth = useAuthStore()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves'>('employees')
@@ -15,6 +16,9 @@ interface Employee {
 interface PayrollRun {
   id: number; period_year: number; period_month: number; status: string
   total_net: number; total_gross: number
+}
+interface PayrollLine {
+  id: number; employee_id: number; net_salary: number; gross_salary: number
 }
 interface LeaveRequest {
   id: number; employee_id: number; leave_type_id: number
@@ -41,6 +45,16 @@ interface AttendancePolicy {
 
 const employees = ref<Employee[]>([])
 const payrollRuns = ref<PayrollRun[]>([])
+// اعتماد الرواتب أصلاً على مستوى الدفعة الكاملة في الباك إند
+// (POST /hr/payroll-runs/{id}/approve بيعتمد كل قسائم الموظفين في الدفعة
+// دفعة واحدة، مفيش مفهوم اعتماد لكل قسيمة منفصل — راجع PayrollLine في
+// backend/app/modules/hr/models.py، مفيهاش عمود status خالص). الفجوة كانت
+// إن الشاشة دي ماكانش فيها زرار اعتماد خالص، فالمستخدم مكانش قادر يعتمد
+// من هنا أصلاً (مش بس "واحد واحد").
+const expandedRunId = ref<number | null>(null)
+const payrollLinesByRun = ref<Record<number, PayrollLine[]>>({})
+const payrollLinesLoading = ref(false)
+const approvingRunId = ref<number | null>(null)
 const leaveRequests = ref<LeaveRequest[]>([])
 const leaveTypes = ref<LeaveType[]>([])
 const attendanceRecords = ref<AttendanceRecord[]>([])
@@ -138,10 +152,56 @@ async function fetchPayroll() {
   try {
     const res = await api.get('/api/v1/hr/payroll/runs', { params: { branch_id: branchId } })
     payrollRuns.value = res.data.runs ?? res.data.items ?? res.data
+    if (!employees.value.length) await fetchEmployees()
   } catch (e) {
     console.error(e)
     toast.error('فشل تحميل بيانات الرواتب')
   } finally { loading.value = false }
+}
+
+// عرض قسائم كل الموظفين في الدفعة قبل الاعتماد — عشان المدير يشوف مين
+// داخل في الدفعة والمبالغ قبل ما يعتمدها كلها بضغطة واحدة.
+async function togglePayrollRunDetails(run: PayrollRun) {
+  if (expandedRunId.value === run.id) {
+    expandedRunId.value = null
+    return
+  }
+  expandedRunId.value = run.id
+  if (payrollLinesByRun.value[run.id]) return
+  payrollLinesLoading.value = true
+  try {
+    const res = await api.get(`/api/v1/hr/payroll-runs/${run.id}/lines`)
+    payrollLinesByRun.value = { ...payrollLinesByRun.value, [run.id]: res.data ?? [] }
+  } catch (e) {
+    console.error(e)
+    toast.error('فشل تحميل قسائم الرواتب')
+  } finally { payrollLinesLoading.value = false }
+}
+
+// اعتماد الدفعة كاملة — إجراء واحد يعتمد رواتب كل الموظفين في الدفعة دفعة
+// واحدة (نفس الـ endpoint الموجود أصلاً في الباك إند)، بدل ما يكون المستخدم
+// مضطر يفتح كل قسيمة لوحدها من غير ما يكون فيه زرار اعتماد أصلاً.
+async function approvePayrollRun(run: PayrollRun) {
+  const employeeCount = payrollLinesByRun.value[run.id]?.length
+  const ok = await confirm({
+    title: 'اعتماد صرف الرواتب',
+    message: `هل تريد اعتماد رواتب ${monthLabel(run.period_year, run.period_month)}` +
+      `${employeeCount ? ` لكل الموظفين (${employeeCount})` : ' لكل الموظفين'}؟ ` +
+      'لا يمكن التراجع عن هذا الإجراء بعد الاعتماد.',
+    confirmText: 'اعتماد الكل',
+    danger: true,
+  })
+  if (!ok) return
+  approvingRunId.value = run.id
+  try {
+    const res = await api.post(`/api/v1/hr/payroll-runs/${run.id}/approve`)
+    const updated = res.data as PayrollRun
+    payrollRuns.value = payrollRuns.value.map(r => (r.id === run.id ? { ...r, ...updated } : r))
+    toast.success('تم اعتماد رواتب كل الموظفين في الدفعة')
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل اعتماد الرواتب')
+  } finally { approvingRunId.value = null }
 }
 
 async function fetchLeaves() {
@@ -550,6 +610,36 @@ onMounted(fetchEmployees)
             <div class="text-left">
               <div class="text-xl font-black text-gray-900">{{ (run.total_net ?? 0).toLocaleString('ar-EG') }} ج</div>
               <AppBadge size="sm" :variant="statusVariant[run.status] ?? 'neutral'">{{ statusLabel(run.status) }}</AppBadge>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between mt-3 pt-3 border-t border-stone-100">
+            <AppButton size="sm" variant="secondary" @click="togglePayrollRunDetails(run)">
+              {{ expandedRunId === run.id ? 'إخفاء القسائم' : 'عرض القسائم' }}
+            </AppButton>
+            <!-- الاعتماد على مستوى الدفعة كلها دفعة واحدة (نفس صلاحية الباك إند:
+                 hr.approve_payroll_run، admin فأعلى فقط) — بضغطة واحدة بيعتمد
+                 رواتب كل الموظفين في الدفعة، مش لازم فتح كل قسيمة لوحدها. -->
+            <AppButton v-if="run.status === 'draft' && auth.hasRole('admin')" size="sm" variant="primary"
+              :loading="approvingRunId === run.id" @click="approvePayrollRun(run)">
+              {{ payrollLinesByRun[run.id]?.length ? `اعتماد الكل (${payrollLinesByRun[run.id].length})` : 'اعتماد الكل' }}
+            </AppButton>
+          </div>
+
+          <div v-if="expandedRunId === run.id" class="mt-3 pt-3 border-t border-stone-100">
+            <div v-if="payrollLinesLoading" class="flex items-center gap-2 py-2">
+              <AppSpinner size="sm" />
+              <span class="text-xs text-gray-400">جاري تحميل القسائم...</span>
+            </div>
+            <div v-else-if="!payrollLinesByRun[run.id]?.length" class="text-xs text-gray-400 py-2">
+              لا توجد قسائم في هذه الدفعة
+            </div>
+            <div v-else class="space-y-1.5">
+              <div v-for="line in payrollLinesByRun[run.id]" :key="line.id"
+                class="flex items-center justify-between text-sm">
+                <span class="text-gray-700">{{ employeeNameById[line.employee_id] ?? `موظف #${line.employee_id}` }}</span>
+                <span class="text-gray-900 font-semibold">{{ (line.net_salary ?? 0).toLocaleString('ar-EG') }} ج</span>
+              </div>
             </div>
           </div>
         </AppCard>
