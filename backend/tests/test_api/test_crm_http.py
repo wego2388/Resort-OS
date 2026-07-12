@@ -16,8 +16,11 @@ GET /restaurant/menu/categories 404 documented in CLAUDE.md § 11.6.
 from __future__ import annotations
 
 import uuid
+from datetime import date, timedelta
 
 from fastapi.testclient import TestClient
+
+from tests.test_api.test_pms import make_room, make_room_type
 
 
 def make_branch_committed(db):
@@ -232,6 +235,94 @@ class TestCustomerDuplicates:
         )
         assert first.status_code == 201
         assert second.status_code == 201
+
+
+class TestLeadConvertHttp:
+    """wagdy.md C-03 — POST /crm/leads/{id}/convert عبر التوجيه الحقيقي
+    (permission dependency + الاستدعاء المتقاطع لـ pms.services.create_booking)."""
+
+    def test_convert_lead_success(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+        room_type = make_room_type(db, branch)
+        room = make_room(db, branch, room_type)
+
+        lead_resp = client.post(
+            "/api/v1/crm/leads",
+            json={"branch_id": branch.id, "full_name": "غادة سمير",
+                  "phone": "01066677788", "interest": "booking"},
+            headers=cashier_headers,
+        )
+        assert lead_resp.status_code == 201, lead_resp.text
+        lead_id = lead_resp.json()["id"]
+
+        check_in = (date.today() + timedelta(days=3)).isoformat()
+        check_out = (date.today() + timedelta(days=5)).isoformat()
+        convert_resp = client.post(
+            f"/api/v1/crm/leads/{lead_id}/convert",
+            json={"check_in": check_in, "check_out": check_out, "room_ids": [room.id]},
+            headers=cashier_headers,
+        )
+        assert convert_resp.status_code == 201, convert_resp.text
+        body = convert_resp.json()
+        assert body["lead"]["stage"] == "won"
+        assert body["lead"]["booking_id"] == body["booking_id"]
+        assert body["booking_number"]
+
+        # الـ lead بقى نهائي — أي محاولة تعديل تانية لازم تترفض
+        stage_resp = client.patch(
+            f"/api/v1/crm/leads/{lead_id}", json={"stage": "contacted"}, headers=cashier_headers,
+        )
+        assert stage_resp.status_code == 400
+
+    def test_convert_lead_requires_cashier_or_above(self, client: TestClient, db, fake_redis, waiter_headers):
+        branch = make_branch_committed(db)
+        room_type = make_room_type(db, branch)
+        room = make_room(db, branch, room_type)
+
+        lead = _create_lead_direct(db, branch)
+
+        resp = client.post(
+            f"/api/v1/crm/leads/{lead.id}/convert",
+            json={
+                "check_in": (date.today() + timedelta(days=1)).isoformat(),
+                "check_out": (date.today() + timedelta(days=2)).isoformat(),
+                "room_ids": [room.id],
+            },
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_convert_lead_room_conflict_returns_409(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+        room_type = make_room_type(db, branch)
+        room = make_room(db, branch, room_type)
+        check_in = (date.today() + timedelta(days=10)).isoformat()
+        check_out = (date.today() + timedelta(days=12)).isoformat()
+
+        # حجز أول يمسك الغرفة في نفس المدى
+        first_lead = _create_lead_direct(db, branch)
+        first_resp = client.post(
+            f"/api/v1/crm/leads/{first_lead.id}/convert",
+            json={"check_in": check_in, "check_out": check_out, "room_ids": [room.id]},
+            headers=cashier_headers,
+        )
+        assert first_resp.status_code == 201, first_resp.text
+
+        second_lead = _create_lead_direct(db, branch)
+        conflict_resp = client.post(
+            f"/api/v1/crm/leads/{second_lead.id}/convert",
+            json={"check_in": check_in, "check_out": check_out, "room_ids": [room.id]},
+            headers=cashier_headers,
+        )
+        assert conflict_resp.status_code == 409
+
+
+def _create_lead_direct(db, branch):
+    from app.modules.crm.crud import create_lead
+    return create_lead(db, {
+        "branch_id": branch.id, "full_name": "عميل اختبار",
+        "phone": "01000000000", "interest": "booking", "stage": "new",
+    })
 
 
 class TestCRMPermissions:

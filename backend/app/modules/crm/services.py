@@ -20,7 +20,7 @@ from app.modules.crm.schemas import (
     CampaignCreate, CampaignUpdate,
     CustomerCreate, CustomerUpdate,
     InteractionCreate,
-    LeadCreate, LeadStageUpdate,
+    LeadConvertRequest, LeadCreate, LeadStageUpdate,
     OpportunityCreate, OpportunityUpdate,
 )
 
@@ -257,6 +257,50 @@ def update_lead_details(db: Session, lead_id: int, data) -> Lead:
         raise ValueError(f"الـ lead في حالة نهائية '{lead.stage}' ولا يمكن تعديله")
     update_data = data.model_dump(exclude_unset=True)
     return crud.update_lead(db, lead, update_data)
+
+
+def convert_lead_to_booking(db: Session, lead_id: int, data: LeadConvertRequest) -> tuple[Lead, "object"]:
+    """wagdy.md C-03 — يحوّل lead لحجز PMS حقيقي بضغطة واحدة، بدل ما يضطر
+    الاستقبال ينسخ اسم/هاتف/إيميل الـ lead يدويًا في شاشة حجز منفصلة.
+    البيانات اللي مش موجودة على الـ lead نفسه (الغرف/التواريخ) بتيجي من
+    LeadConvertRequest. بيستخدم pms.services.create_booking الموجود فعلاً —
+    نفس نمط الاستدعاء المتقاطع بين الموديولات المستخدم في
+    restaurant/beach.services (راجع record_customer_visit)."""
+    from app.modules.pms.schemas import BookingCreate  # noqa: PLC0415
+    from app.modules.pms.services import create_booking as pms_create_booking  # noqa: PLC0415
+
+    lead = get_lead_or_404(db, lead_id)
+    if lead.stage in ("won", "lost"):
+        raise ValueError(f"الـ lead في حالة نهائية '{lead.stage}' ولا يمكن تحويله لحجز")
+
+    booking_data = BookingCreate(
+        branch_id=lead.branch_id,
+        guest_name=lead.full_name,
+        guest_phone=lead.phone,
+        guest_email=lead.email,
+        check_in=data.check_in,
+        check_out=data.check_out,
+        adults=data.adults,
+        children=data.children,
+        source="direct",
+        room_ids=data.room_ids,
+        notes=data.notes,
+        rate_plan_id=data.rate_plan_id,
+    )
+    # ⚠️ pms.services.create_booking بيعمل commit() داخلي (نقطة دخول أساسية
+    # مستخدمة من الراوتر بتاعها مباشرة) — تحديث الـ lead تحت بيتعمله commit
+    # منفصل. لو فشل تحديث الـ lead بعد نجاح الحجز، هيفضل حجز حقيقي من غير
+    # ربط lead.booking_id (نادر، وقابل للتصحيح يدويًا)، أفضل من عكس حجز
+    # ناجح فعليًا.
+    booking = pms_create_booking(db, booking_data)
+
+    from datetime import datetime as _dt  # noqa: PLC0415
+    lead.stage = "won"
+    lead.won_at = _dt.utcnow()
+    lead.booking_id = booking.id
+    db.commit()
+    db.refresh(lead)
+    return lead, booking
 
 
 def get_overdue_activities(db: Session, branch_id: int) -> list[Activity]:

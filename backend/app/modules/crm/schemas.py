@@ -193,6 +193,19 @@ class LeadUpdate(BaseModel):
     notes:          Optional[str] = None
 
 
+class LeadConvertRequest(BaseModel):
+    """POST /crm/leads/{id}/convert body — تفاصيل الحجز اللي مش موجودة على
+    الـ lead نفسه (الغرف/التواريخ). الاسم/الهاتف/الإيميل بياخدهم من الـ lead
+    تلقائيًا (wagdy.md C-03: تحويل بضغطة واحدة، مش نسخ يدوي)."""
+    check_in:     date
+    check_out:    date
+    room_ids:     list[int] = Field(..., min_length=1)
+    adults:       int = Field(1, ge=1)
+    children:     int = Field(0, ge=0)
+    rate_plan_id: Optional[int] = None
+    notes:        Optional[str] = None
+
+
 class LeadRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:             int
@@ -213,6 +226,15 @@ class LeadRead(BaseModel):
     notes:          Optional[str]
     created_at:     datetime
     updated_at:     datetime
+
+
+class LeadConvertResponse(BaseModel):
+    """رد POST /crm/leads/{id}/convert — الـ lead بعد ما بقى won ومربوط
+    بالحجز + رقم الحجز نفسه (بدون استيراد BookingRead من pms.schemas عمدًا،
+    عشان الموديولين يفضلوا منفصلين على مستوى الـ API contract)."""
+    lead:           LeadRead
+    booking_id:     int
+    booking_number: str
 
 
 # ── Campaign ──────────────────────────────────────────────────────────

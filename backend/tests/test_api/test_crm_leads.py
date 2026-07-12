@@ -1,8 +1,11 @@
 """tests/test_api/test_crm_leads.py"""
 from __future__ import annotations
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
-from tests.test_api.test_pms import make_branch
+
+import pytest
+
+from tests.test_api.test_pms import make_branch, make_room, make_room_type
 
 
 class TestLeads:
@@ -58,6 +61,104 @@ class TestLeads:
             })
         all_leads = list_leads(db, branch.id)
         assert len(all_leads) >= 3
+
+
+class TestLeadConvert:
+    """wagdy.md C-03 — POST /crm/leads/{id}/convert (services.convert_lead_to_booking)."""
+
+    def _make_lead(self, db, branch, **overrides):
+        from app.modules.crm.crud import create_lead
+        data = {
+            "branch_id": branch.id,
+            "full_name": "خالد إبراهيم",
+            "phone": "01055512345",
+            "email": "khaled@example.com",
+            "interest": "booking",
+            "stage": "new",
+            "expected_value": Decimal("0"),
+        }
+        data.update(overrides)
+        return create_lead(db, data)
+
+    def test_convert_creates_booking_and_marks_lead_won(self, db):
+        from app.modules.crm.schemas import LeadConvertRequest
+        from app.modules.crm.services import convert_lead_to_booking
+
+        branch = make_branch(db)
+        room_type = make_room_type(db, branch)
+        room = make_room(db, branch, room_type)
+        lead = self._make_lead(db, branch)
+
+        check_in = date.today() + timedelta(days=5)
+        check_out = check_in + timedelta(days=2)
+        updated_lead, booking = convert_lead_to_booking(db, lead.id, LeadConvertRequest(
+            check_in=check_in, check_out=check_out, room_ids=[room.id],
+        ))
+
+        assert updated_lead.stage == "won"
+        assert updated_lead.won_at is not None
+        assert updated_lead.booking_id == booking.id
+        assert booking.guest_name == lead.full_name
+        assert booking.guest_phone == lead.phone
+        assert booking.branch_id == branch.id
+        assert booking.status == "confirmed"
+
+    def test_convert_already_won_lead_raises(self, db):
+        from app.modules.crm.schemas import LeadConvertRequest
+        from app.modules.crm.services import convert_lead_to_booking
+
+        branch = make_branch(db)
+        room_type = make_room_type(db, branch)
+        room = make_room(db, branch, room_type)
+        lead = self._make_lead(db, branch, stage="won")
+
+        with pytest.raises(ValueError, match="حالة نهائية"):
+            convert_lead_to_booking(db, lead.id, LeadConvertRequest(
+                check_in=date.today() + timedelta(days=1),
+                check_out=date.today() + timedelta(days=2),
+                room_ids=[room.id],
+            ))
+
+    def test_convert_lost_lead_raises(self, db):
+        from app.modules.crm.schemas import LeadConvertRequest
+        from app.modules.crm.services import convert_lead_to_booking
+
+        branch = make_branch(db)
+        room_type = make_room_type(db, branch)
+        room = make_room(db, branch, room_type)
+        lead = self._make_lead(db, branch, stage="lost", lost_reason="مش مهتم")
+
+        with pytest.raises(ValueError, match="حالة نهائية"):
+            convert_lead_to_booking(db, lead.id, LeadConvertRequest(
+                check_in=date.today() + timedelta(days=1),
+                check_out=date.today() + timedelta(days=2),
+                room_ids=[room.id],
+            ))
+
+    def test_convert_unknown_room_raises(self, db):
+        from app.modules.crm.schemas import LeadConvertRequest
+        from app.modules.crm.services import convert_lead_to_booking
+
+        branch = make_branch(db)
+        lead = self._make_lead(db, branch)
+
+        with pytest.raises(ValueError):
+            convert_lead_to_booking(db, lead.id, LeadConvertRequest(
+                check_in=date.today() + timedelta(days=1),
+                check_out=date.today() + timedelta(days=2),
+                room_ids=[999999],
+            ))
+
+    def test_convert_unknown_lead_raises(self, db):
+        from app.modules.crm.schemas import LeadConvertRequest
+        from app.modules.crm.services import convert_lead_to_booking
+
+        with pytest.raises(ValueError, match="غير موجود"):
+            convert_lead_to_booking(db, 999999, LeadConvertRequest(
+                check_in=date.today() + timedelta(days=1),
+                check_out=date.today() + timedelta(days=2),
+                room_ids=[1],
+            ))
 
 
 class TestGuestProfile:
