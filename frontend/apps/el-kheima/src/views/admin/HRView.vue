@@ -12,6 +12,7 @@ const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves'>('employees')
 interface Employee {
   id: number; full_name: string; position: string; department?: string
   hire_date: string; basic_salary: number; status: string; phone?: string
+  insurance_base_salary?: number | null; holiday_bonus?: number
 }
 interface PayrollRun {
   id: number; period_year: number; period_month: number; status: string
@@ -333,6 +334,50 @@ async function submitPenalty() {
   } finally { savingPenalty.value = false }
 }
 
+// ── wagdy.md H-04/H-05: وعاء تأمين منفصل + مكافأة عيد ثابتة — حقلان
+// جديدان على Employee مش قابلين للتعديل من أي شاشة خالص لحد دلوقتي (حتى
+// basic_salary نفسه مكانش قابل للتعديل من هنا) — مودال بسيط زي بدلات/جزاءات
+// بدل شاشة تعديل موظف كاملة (out of scope لدفعة الشغل دي).
+const compModalEmployee = ref<Employee | null>(null)
+const compForm = ref({ basic_salary: 0, insurance_base_salary: null as number | null, holiday_bonus: 0 })
+const savingComp = ref(false)
+
+function openCompModal(emp: Employee) {
+  compModalEmployee.value = emp
+  compForm.value = {
+    basic_salary: emp.basic_salary ?? 0,
+    insurance_base_salary: emp.insurance_base_salary ?? null,
+    holiday_bonus: emp.holiday_bonus ?? 0,
+  }
+}
+
+async function submitComp() {
+  if (!compModalEmployee.value) return
+  const basicSalary = Number(compForm.value.basic_salary)
+  if (!(basicSalary > 0)) {
+    toast.error('الراتب الأساسي لازم يكون أكبر من صفر')
+    return
+  }
+  const insuranceBase = compForm.value.insurance_base_salary
+  const insuranceBaseNum = insuranceBase === null || insuranceBase === undefined || insuranceBase === ('' as any)
+    ? null : Number(insuranceBase)
+  savingComp.value = true
+  try {
+    const empId = compModalEmployee.value.id
+    const { data } = await api.patch(`/api/v1/hr/employees/${empId}`, {
+      basic_salary: basicSalary,
+      insurance_base_salary: insuranceBaseNum,
+      holiday_bonus: Number(compForm.value.holiday_bonus) || 0,
+    })
+    employees.value = employees.value.map(e => (e.id === empId ? { ...e, ...data } : e))
+    toast.success('تم تحديث بيانات الراتب')
+    compModalEmployee.value = null
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل حفظ بيانات الراتب')
+  } finally { savingComp.value = false }
+}
+
 async function loadTab(t: typeof tab.value) {
   tab.value = t
   if (t === 'employees') await fetchEmployees()
@@ -507,6 +552,7 @@ onMounted(fetchEmployees)
                   <div class="flex items-center gap-2">
                     <button @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800">+ بدل</button>
                     <button @click="openPenaltyModal(emp)" class="text-xs font-semibold text-red-600 hover:text-red-800">+ جزاء</button>
+                    <button v-if="auth.hasRole('admin')" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 hover:text-gray-900">✏️ الراتب</button>
                   </div>
                 </td>
               </tr>
@@ -544,6 +590,26 @@ onMounted(fetchEmployees)
             {{ savingAllowance ? 'جاري الحفظ...' : 'إضافة البدل' }}
           </AppButton>
         </div>
+      </div>
+    </AppModal>
+
+    <!-- wagdy.md H-04/H-05: تعديل الراتب الأساسي/وعاء التأمين/مكافأة العيد -->
+    <AppModal :open="!!compModalEmployee" :title="`بيانات الراتب — ${compModalEmployee?.full_name ?? ''}`"
+      @close="compModalEmployee = null">
+      <div class="space-y-3">
+        <AppInput label="الراتب الأساسي" v-model.number="compForm.basic_salary" type="number" />
+        <div>
+          <AppInput label="وعاء التأمينات الاجتماعية (اختياري)" v-model.number="compForm.insurance_base_salary" type="number"
+            placeholder="اتركه فاضي لاستخدام الراتب الأساسي" />
+          <p class="text-xs text-gray-400 mt-1">لو مختلف عن الراتب الأساسي (بعض الموظفين وعاءهم التأميني المسجّل أقل) — لو فاضي، الراتب الأساسي هو المستخدَم.</p>
+        </div>
+        <div>
+          <AppInput label="مكافأة الأعياد الرسمية" v-model.number="compForm.holiday_bonus" type="number" />
+          <p class="text-xs text-gray-400 mt-1">بند ثابت بيدخل الصافي تلقائيًا في كل كشف رواتب — صفّره بعد شهر العيد لو مش عايزه يتكرر.</p>
+        </div>
+        <AppButton :disabled="savingComp" @click="submitComp" variant="primary" size="sm">
+          {{ savingComp ? 'جاري الحفظ...' : 'حفظ' }}
+        </AppButton>
       </div>
     </AppModal>
 

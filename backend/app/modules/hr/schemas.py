@@ -16,6 +16,13 @@ class EmployeeCreate(BaseModel):
     position:      str = Field(..., max_length=100)
     department:    Optional[str] = Field(None, max_length=100)
     basic_salary:  Decimal = Field(..., gt=0)
+    # وعاء التأمينات الاجتماعية — None يعني "استخدم basic_salary" (راجع
+    # hr_engine.calculate_payroll). موجود لأن بعض الموظفين وعاءهم التأميني
+    # المسجّل رسميًا أقل من راتبهم الأساسي الفعلي.
+    insurance_base_salary: Optional[Decimal] = Field(None, gt=0)
+    # مكافأة الأعياد الرسمية — بند ثابت يدخل حساب الراتب تلقائيًا كل مرة
+    # يُشغَّل فيها كشف رواتب لهذا الموظف (راجع hr_engine.calculate_payroll).
+    holiday_bonus: Decimal = Field(Decimal("0"), ge=0)
     hire_date:     date
     birth_date:    Optional[date] = None
     phone:         Optional[str] = Field(None, max_length=20)
@@ -28,6 +35,8 @@ class EmployeeUpdate(BaseModel):
     position:     Optional[str]     = None
     department:   Optional[str]     = None
     basic_salary: Optional[Decimal] = Field(None, gt=0)
+    insurance_base_salary: Optional[Decimal] = Field(None, gt=0)
+    holiday_bonus: Optional[Decimal] = Field(None, ge=0)
     status:       Optional[str]     = Field(None, pattern=r"^(active|on_leave|terminated)$")
     phone:        Optional[str]     = None
     email:        Optional[str]     = None
@@ -134,6 +143,7 @@ class PayrollResultRead(BaseModel):
     penalty_deduction:        Decimal
     late_penalty_deduction:   Decimal
     unpaid_leave_deduction:   Decimal
+    holiday_bonus:            Decimal
     net_salary:               Decimal
     journal_entry:            dict
 
@@ -158,6 +168,7 @@ class PayrollLineRead(BaseModel):
     penalty_deduction:      Decimal
     late_penalty_deduction: Decimal
     unpaid_leave_deduction: Decimal
+    holiday_bonus:          Decimal
 
 
 class PayrollRunRead(BaseModel):
@@ -171,6 +182,7 @@ class PayrollRunRead(BaseModel):
     total_net:    Decimal
     total_tax:    Decimal
     total_si:     Decimal
+    total_holiday_bonus: Decimal
     approved_by:  Optional[int]
     approved_at:  Optional[datetime]
     created_at:   datetime
@@ -506,6 +518,7 @@ class MyPayslipRead(BaseModel):
     penalty_deduction:      Decimal
     late_penalty_deduction: Decimal
     unpaid_leave_deduction: Decimal
+    holiday_bonus:          Decimal = Decimal("0")
 
 
 class LeaderboardEntry(BaseModel):

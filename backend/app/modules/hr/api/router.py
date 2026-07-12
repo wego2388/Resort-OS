@@ -568,6 +568,7 @@ def get_my_payslips(
             penalty_deduction=line.penalty_deduction,
             late_penalty_deduction=line.late_penalty_deduction,
             unpaid_leave_deduction=line.unpaid_leave_deduction,
+            holiday_bonus=line.holiday_bonus,
         )
         for line in lines
     ]

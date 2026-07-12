@@ -62,6 +62,8 @@ def _basic_employee(
     penalty_days: int = 0,
     unpaid_leave_days: int = 0,
     late_penalty_amount: Decimal = Decimal("0"),
+    insurance_base_salary: Decimal | None = None,
+    holiday_bonus_amount: Decimal = Decimal("0"),
 ) -> EmployeePayrollInput:
     return EmployeePayrollInput(
         employee_id=1,
@@ -71,6 +73,8 @@ def _basic_employee(
         penalty_days=penalty_days,
         late_penalty_amount=late_penalty_amount,
         unpaid_leave_days=unpaid_leave_days,
+        insurance_base_salary=insurance_base_salary,
+        holiday_bonus_amount=holiday_bonus_amount,
         hire_date=date(2020, 1, 1),
         birth_date=date(1990, 6, 15),
         period_month=date(2026, 6, 1),
@@ -392,6 +396,75 @@ class TestCalculatePayroll:
         emp = _basic_employee(basic_salary=Decimal("5000"))
         result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
         assert result.late_penalty_deduction == Decimal("0.00")
+
+    # ── wagdy.md H-04: insurance_base_salary ────────────────────────────
+
+    def test_insurance_base_salary_none_falls_back_to_basic_salary(self):
+        """من غير insurance_base_salary — نفس السلوك القديم بالظبط (basic_salary
+        هو الوعاء التأميني)."""
+        emp = _basic_employee(basic_salary=Decimal("20000"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        assert result.insurable_salary == Decimal("14000")  # min(20000, 14000)
+
+    def test_insurance_base_salary_used_when_set(self):
+        """راتب أساسي 20,000 لكن وعاء تأميني 13,500 (مثال حقيقي من Mohamed) —
+        التأمينات تُحسب على 13,500 مش 20,000."""
+        emp = _basic_employee(
+            basic_salary=Decimal("20000"),
+            insurance_base_salary=Decimal("13500"),
+        )
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        assert result.insurable_salary == Decimal("13500")
+        assert result.employee_si == Decimal("1485.00")   # 13500 × 0.11
+        assert result.employer_si == Decimal("2531.25")   # 13500 × 0.1875
+        # gross_salary/net_salary لسه مبنيين على basic_salary الحقيقي
+        assert result.gross_salary == Decimal("20000")
+
+    def test_insurance_base_salary_still_capped_at_maximum(self):
+        """حتى لو insurance_base_salary أعلى من basic_salary، لسه محدود بالحد الأقصى."""
+        emp = _basic_employee(
+            basic_salary=Decimal("10000"),
+            insurance_base_salary=Decimal("18000"),
+        )
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        assert result.insurable_salary == Decimal("14000")
+
+    # ── wagdy.md H-05: holiday_bonus ─────────────────────────────────────
+
+    def test_holiday_bonus_defaults_to_zero(self):
+        emp = _basic_employee(basic_salary=Decimal("5000"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        assert result.holiday_bonus == Decimal("0.00")
+
+    def test_holiday_bonus_added_to_net_not_gross(self):
+        """مكافأة العيد بتُضاف للصافي مباشرة، مش جزء من gross_salary (عشان
+        متدخلش حساب annual_gross/الضريبة السنوية زي بند متكرر)."""
+        emp = _basic_employee(basic_salary=Decimal("5000"), holiday_bonus_amount=Decimal("1000"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+
+        assert result.holiday_bonus == Decimal("1000.00")
+        assert result.gross_salary == Decimal("5000")  # لا يتأثر
+
+        base = calculate_payroll(_basic_employee(basic_salary=Decimal("5000")), _si_config(), _tax_brackets(), 5)
+        assert result.net_salary == base.net_salary + Decimal("1000.00")
+
+    def test_holiday_bonus_not_insurable(self):
+        """مكافأة العيد مش خاضعة للتأمينات — الوعاء التأميني ثابت بغض النظر عنها."""
+        emp = _basic_employee(basic_salary=Decimal("5000"), holiday_bonus_amount=Decimal("2000"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        assert result.insurable_salary == Decimal("5000")
+
+    def test_holiday_bonus_adds_debit_line_to_journal(self):
+        emp = _basic_employee(basic_salary=Decimal("5000"), holiday_bonus_amount=Decimal("500"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        debit_accounts = [d["account"] for d in result.journal_entry["debits"]]
+        assert "مصروف مكافأة عيد" in debit_accounts
+
+    def test_no_holiday_bonus_no_extra_debit_line(self):
+        emp = _basic_employee(basic_salary=Decimal("5000"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        debit_accounts = [d["account"] for d in result.journal_entry["debits"]]
+        assert "مصروف مكافأة عيد" not in debit_accounts
 
 
 # ─── standard_shift_hours ──────────────────────────────────────────────

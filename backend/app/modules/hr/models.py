@@ -32,6 +32,16 @@ class Employee(Base, TimestampMixin):
     position:      Mapped[str]         = mapped_column(String(100))
     department:    Mapped[str | None]  = mapped_column(String(100), nullable=True)
     basic_salary:  Mapped[Decimal]     = mapped_column(Numeric(10, 2))
+    # وعاء التأمينات الاجتماعية — منفصل عمدًا عن basic_salary (وعده وقانوني
+    # المتري: راتب 20,000 لكن وعاء تأميني 13,500 لبعض الموظفين، تُفرَّغ عمدًا).
+    # NULL = يُستخدم basic_salary كوعاء تأميني (السلوك القديم قبل الحقل ده،
+    # محفوظ لكل الموظفين الحاليين تلقائيًا) — راجع hr_engine.calculate_payroll.
+    insurance_base_salary: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # مكافأة الأعياد الرسمية — مبلغ ثابت لكل موظف بيدخل حساب الراتب تلقائيًا
+    # كل مرة يتشغّل فيها كشف رواتب له (راجع hr_engine.calculate_payroll: بند
+    # منفصل عن الأساسي/البدلات، مش خاضع لضريبة ولا تأمينات، بيُضاف للصافي
+    # مباشرة). الإدارة تصفّره بعد شهر العيد لو مش عايزاه يتكرر كل شهر.
+    holiday_bonus: Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
     hire_date:     Mapped[date]        = mapped_column(Date)
     birth_date:    Mapped[date | None] = mapped_column(Date, nullable=True)
     status:        Mapped[str]         = mapped_column(String(20), default="active")  # active|on_leave|terminated
@@ -100,6 +110,11 @@ class PayrollRun(Base, TimestampMixin):
     total_net:    Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
     total_tax:    Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
     total_si:     Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # إجمالي مكافآت الأعياد المُصروفة ضمن الكشف ده — منفصل عن total_gross
+    # (مكافأة العيد مش خاضعة لضريبة/تأمينات، فمش جزء من gross_salary القياسي)
+    # لكن لازم يُحتسب في القيد المحاسبي المجمّع (_post_payroll_journal) عشان
+    # المدين يفضل متوازن مع صافي الرواتب المستحقة اللي بيشمل المكافأة.
+    total_holiday_bonus: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
     approved_by:  Mapped[int | None]     = mapped_column(Integer, nullable=True)
     approved_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -121,6 +136,7 @@ class PayrollLine(Base, TimestampMixin):
     penalty_deduction:     Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     late_penalty_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # خصم تأخير محسوب تلقائيًا من الحضور — منفصل عن penalty_deduction (جزاءات تأديبية يدوية بالأيام)
     unpaid_leave_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    holiday_bonus:          Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # مكافأة العيد المُطبَّقة على هذا الموظف لهذا الكشف — راجع Employee.holiday_bonus
     journal_entry:         Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON
 
     run: Mapped["PayrollRun"] = relationship("PayrollRun", back_populates="lines")

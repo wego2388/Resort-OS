@@ -236,6 +236,42 @@ class TestPayroll:
         assert line.penalty_deduction == expected
         assert line.net_salary < baseline_line.net_salary
 
+    def test_payroll_uses_employee_insurance_base_salary(self, db, branch, si_config, tax_brackets):
+        """wagdy.md H-04 — موظف براتب أساسي 20,000 لكن وعاء تأميني 13,500
+        مسجّل على الـ Employee نفسه (مش parameter لكل تشغيلة) — calculate_
+        employee_payroll لازم يستخدمه تلقائيًا."""
+        # ملحوظة: si_config fixture هنا max_insurable_salary=9400 (مختلف عن
+        # _si_config() في test_hr_engine.py) — استخدمنا وعاء تأميني أقل من
+        # الحد ده عشان نتأكد إننا بنختبر "استخدام insurance_base_salary" مش
+        # مجرد الـ cap القانوني (ده متغطي بالفعل في test_hr_engine.py).
+        emp = services.create_employee(db, EmployeeCreate(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="أسامة", position="مدير عام", basic_salary=Decimal("20000.00"),
+            insurance_base_salary=Decimal("6000.00"),
+            hire_date=date(2020, 1, 1),
+        ))
+        result = services.calculate_employee_payroll(db, emp.id, 2026, 6)
+        assert result.insurable_salary == Decimal("6000.00")
+        assert result.employee_si == Decimal("660.00")  # 6000 × 0.11
+        assert result.gross_salary == Decimal("20000.00")  # basic_salary لسه هو الأساس للإجمالي
+
+    def test_payroll_applies_employee_holiday_bonus_automatically(self, db, branch, si_config, tax_brackets):
+        """wagdy.md H-05 — موظف عنده holiday_bonus مسجّل، وكشف الرواتب بياخده
+        تلقائيًا كل مرة يتشغّل من غير أي إدخال يدوي إضافي."""
+        emp = services.create_employee(db, EmployeeCreate(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="موظف بمكافأة عيد", position="نادل", basic_salary=Decimal("4000.00"),
+            holiday_bonus=Decimal("500.00"),
+            hire_date=date(2020, 1, 1),
+        ))
+        result = services.calculate_employee_payroll(db, emp.id, 2026, 6)
+        assert result.holiday_bonus == Decimal("500.00")
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        assert run.total_holiday_bonus == Decimal("500.00")
+        line = crud.list_lines_for_run(db, run.id)[0]
+        assert line.holiday_bonus == Decimal("500.00")
+
     def test_duplicate_payroll_run_raises(self, db, branch, employee, si_config, tax_brackets):
         services.run_payroll_for_branch(db, branch.id, 2026, 7)
         with pytest.raises(ValueError, match="موجود مسبقاً"):
@@ -305,6 +341,44 @@ class TestPayroll:
         total_debit  = sum(l.debit for l in lines)
         total_credit = sum(l.credit for l in lines)
         assert total_debit == total_credit, "القيد لازم يكون متوازن (مدين = دائن)"
+
+    def test_approve_payroll_run_with_holiday_bonus_posts_balanced_journal(
+        self, db, branch, si_config, tax_brackets,
+    ):
+        """wagdy.md H-05 — مكافأة العيد مستبعدة عمدًا من total_gross (مش
+        خاضعة لضريبة/تأمينات) لكن لازم تدخل صافي الرواتب المستحقة، فلو
+        _post_payroll_journal مادتش الحساب في المدين هيبقى القيد غير متوازن.
+        ده regression test مباشر لإصلاح _post_payroll_journal."""
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
+
+        for code, acc_type in [
+            ("5100", "expense"),
+            ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        services.create_employee(db, EmployeeCreate(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="موظف بمكافأة عيد", position="نادل", basic_salary=Decimal("4000.00"),
+            holiday_bonus=Decimal("750.00"),
+            hire_date=date(2020, 1, 1),
+        ))
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 12)
+        assert run.total_holiday_bonus == Decimal("750.00")
+
+        services.approve_payroll_run(db, run.id, approved_by=1)
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll", JournalEntry.source_id == run.id)
+            .first()
+        )
+        assert entry is not None
+        lines = db.query(JournalLine).filter(JournalLine.entry_id == entry.id).all()
+        total_debit  = sum(l.debit for l in lines)
+        total_credit = sum(l.credit for l in lines)
+        assert total_debit == total_credit, "القيد لازم يتوازن حتى مع مكافأة العيد"
 
     def test_new_tax_bracket_version_does_not_corrupt_current_period(
         self, db, employee, si_config, tax_brackets,

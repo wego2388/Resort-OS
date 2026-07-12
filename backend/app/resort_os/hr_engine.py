@@ -64,6 +64,13 @@ class EmployeePayrollInput:
     penalty_days: int = 0           # أيام الجزاءات التأديبية اليدوية (مادة 69 — EmployeePenalty)
     late_penalty_amount: Decimal = Decimal("0")   # خصم تأخير محسوب تلقائيًا من الحضور — منفصل عن penalty_days
     unpaid_leave_days: int = 0      # أيام الإجازة بدون أجر
+    # وعاء التأمينات الاجتماعية — لو None يُستخدم basic_salary (سلوك قديم
+    # محفوظ). موجود لأن بعض الموظفين وعاءهم التأميني المسجّل أقل من راتبهم
+    # الأساسي الفعلي (Employee.insurance_base_salary).
+    insurance_base_salary: Decimal | None = None
+    # مكافأة عيد ثابتة — غير خاضعة لضريبة الدخل ولا للتأمينات الاجتماعية،
+    # بتُضاف مباشرة للصافي (Employee.holiday_bonus).
+    holiday_bonus_amount: Decimal = Decimal("0")
     hire_date: date = field(default_factory=date.today)
     birth_date: date = field(default_factory=date.today)
     period_month: date = field(default_factory=date.today)
@@ -96,6 +103,9 @@ class PayrollResult:
     penalty_deduction: Decimal
     late_penalty_deduction: Decimal     # خصم تأخير تلقائي من الحضور (منفصل عن penalty_deduction اليدوي)
     unpaid_leave_deduction: Decimal
+
+    # مكافأة العيد — غير خاضعة لضريبة/تأمينات، بند مستقل يُضاف للصافي مباشرة
+    holiday_bonus: Decimal
 
     # الصافي
     net_salary: Decimal
@@ -388,8 +398,12 @@ def calculate_payroll(
     gross = emp.basic_salary + taxable_allowances + emp.overtime_amount
 
     # ─── التأمينات الاجتماعية ─────────────────────────────────────────
-    # الأجر التأميني = min(أساسي + بدلات خاضعة للتأمين، الحد الأقصى)
-    pensionable_gross = emp.basic_salary + pensionable_allowances
+    # الأجر التأميني = min(وعاء التأمين + بدلات خاضعة للتأمين، الحد الأقصى).
+    # وعاء التأمين = insurance_base_salary لو محدَّد (بعض الموظفين وعاءهم
+    # التأميني المسجّل رسميًا أقل من راتبهم الأساسي الفعلي)، وإلا basic_salary
+    # (السلوك القديم — كل الموظفين الحاليين من غير الحقل ده يتأثروش خالص).
+    insurance_base = emp.insurance_base_salary if emp.insurance_base_salary is not None else emp.basic_salary
+    pensionable_gross = insurance_base + pensionable_allowances
     insurable = min(pensionable_gross, si_config.max_insurable_salary)
 
     employee_si = (insurable * si_config.employee_rate).quantize(
@@ -433,10 +447,17 @@ def calculate_payroll(
         Decimal("0.01"), rounding=ROUND_HALF_UP
     )
 
+    # ─── مكافأة العيد ─────────────────────────────────────────────────
+    # بند ثابت غير خاضع لضريبة/تأمينات (مش جزء من gross فوق عمدًا — لو
+    # دخل annual_gross هيتفرض عليه ضريبة سنوية متكررة رغم إنه مبلغ موسمي
+    # لمرة واحدة)، بيُضاف مباشرة للصافي زي non_taxable_allowances بالظبط.
+    holiday_bonus = emp.holiday_bonus_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
     # ─── الصافي ───────────────────────────────────────────────────────
     net = (
         gross
         + non_taxable_allowances
+        + holiday_bonus
         - employee_si
         - monthly_tax
         - penalty_deduction
@@ -447,12 +468,17 @@ def calculate_payroll(
     period_str = emp.period_month.strftime("%Y-%m")
 
     # ─── القيد المحاسبي ───────────────────────────────────────────────
+    debits = [
+        {"account": "مصروف رواتب",                   "amount": float(gross + non_taxable_allowances)},
+        {"account": "مصروف تأمينات اجتماعية (صاحب عمل)", "amount": float(employer_si)},
+    ]
+    if holiday_bonus > Decimal("0"):
+        # سطر مدين مستقل — مضاف عشان المدين يفضل متوازن مع "صافي رواتب
+        # مستحقة" تحت (اللي بيشمل holiday_bonus فعليًا عبر net فوق).
+        debits.append({"account": "مصروف مكافأة عيد", "amount": float(holiday_bonus)})
     journal_entry = {
         "description": f"رواتب شهر {period_str} — موظف {emp.employee_id}",
-        "debits": [
-            {"account": "مصروف رواتب",                   "amount": float(gross + non_taxable_allowances)},
-            {"account": "مصروف تأمينات اجتماعية (صاحب عمل)", "amount": float(employer_si)},
-        ],
+        "debits": debits,
         "credits": [
             {"account": "ضريبة دخل مستحقة",               "amount": float(monthly_tax)},
             {"account": "تأمينات اجتماعية مستحقة",          "amount": float(employee_si + employer_si)},
@@ -477,6 +503,7 @@ def calculate_payroll(
         penalty_deduction=penalty_deduction,
         late_penalty_deduction=late_penalty_deduction,
         unpaid_leave_deduction=unpaid_leave_deduction,
+        holiday_bonus=holiday_bonus,
         net_salary=net,
         journal_entry=journal_entry,
     )

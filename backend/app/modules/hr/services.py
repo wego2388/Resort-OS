@@ -195,6 +195,8 @@ def calculate_employee_payroll(
         penalty_days=penalty_days,
         late_penalty_amount=late_penalty_amount,
         unpaid_leave_days=unpaid_leave_days,
+        insurance_base_salary=emp.insurance_base_salary,
+        holiday_bonus_amount=emp.holiday_bonus,
         hire_date=emp.hire_date,
         birth_date=emp.birth_date or emp.hire_date,
         period_month=date(period_year, period_month, 1),
@@ -279,6 +281,7 @@ def run_payroll_for_branch(
     total_net   = Decimal("0")
     total_tax   = Decimal("0")
     total_si    = Decimal("0")
+    total_holiday_bonus = Decimal("0")
 
     period_str = f"{period_year}-{period_month:02d}"
 
@@ -321,6 +324,7 @@ def run_payroll_for_branch(
             "penalty_deduction":      result.penalty_deduction,
             "late_penalty_deduction": result.late_penalty_deduction,
             "unpaid_leave_deduction": result.unpaid_leave_deduction,
+            "holiday_bonus":          result.holiday_bonus,
             "journal_entry":          json.dumps(result.journal_entry, ensure_ascii=False),
         })
 
@@ -328,11 +332,13 @@ def run_payroll_for_branch(
         total_net   += result.net_salary
         total_tax   += result.monthly_tax
         total_si    += result.employee_si
+        total_holiday_bonus += result.holiday_bonus
 
     run.total_gross = total_gross
     run.total_net   = total_net
     run.total_tax   = total_tax
     run.total_si    = total_si
+    run.total_holiday_bonus = total_holiday_bonus
 
     db.commit()
     db.refresh(run)
@@ -388,10 +394,15 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
     # run.total_si (SI الموظف) تحت مسمى "مصروف صاحب العمل" بدون أي قيد دائن
     # مقابل — ده كان بيكسر توازن القيد (مدين ≠ دائن) في أي مرة الحساب يكون
     # موجود فعلاً. اتشال لحد ما يُضاف عمود total_employer_si حقيقي (migration).
-    if "5100" in accs and run.total_gross:
+    # مكافآت الأعياد (total_holiday_bonus) مضافة هنا لنفس حساب "مصروف رواتب"
+    # — مش خاضعة لضريبة/تأمينات فمستبعدة من total_gross نفسه (راجع
+    # hr_engine.calculate_payroll)، لكن لازم تدخل المدين هنا عشان يفضل متوازن
+    # مع "صافي رواتب مستحقة" تحت (اللي total_net بتاعه بيشملها فعليًا).
+    gross_debit = (run.total_gross or Decimal("0")) + (run.total_holiday_bonus or Decimal("0"))
+    if "5100" in accs and gross_debit:
         lines.append(JournalLineCreate(
             account_id=accs["5100"],
-            debit=run.total_gross,
+            debit=gross_debit,
             credit=Decimal("0"),
             description=f"مصروف رواتب {period_str}",
         ))
