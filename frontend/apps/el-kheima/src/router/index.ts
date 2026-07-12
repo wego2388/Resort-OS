@@ -87,6 +87,13 @@ const routes: RouteRecordRaw[] = [
       { path: 'restaurant', name: 'pos-restaurant', component: () => import('../views/pos/RestaurantPOSView.vue') },
       { path: 'cafe', name: 'pos-cafe', component: () => import('../views/pos/CafePOSView.vue') },
       { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue') },
+      // Unified dining POS (Batch B, additive — DINING_CUTOVER_PLAN.md). NOT
+      // in FieldLayout's cashier-facing nav list (every /pos/* item there is
+      // visible to every cashier with zero role filter) — requiredRole
+      // overridden to 'manager' here so a waiter/cashier's daily workflow is
+      // literally unchanged by this route existing; reachable only from the
+      // manager-only "Dining موحّد (تجريبي)" nav section in BackOfficeLayout.
+      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'manager' } },
     ],
   },
 
@@ -102,6 +109,10 @@ const routes: RouteRecordRaw[] = [
       // شاشة الكافيه — نفس BarDisplayView بالظبط (البار يستقبل كل طلبات الكافيه
       // + أصناف البار من المطعم)، route منفصل بس للتوجيه المباشر من QR أو shortcut
       { path: 'cafe',    name: 'kds-cafe',    component: () => import('../views/kds/BarDisplayView.vue') },
+      // Unified dining KDS (Batch B, additive) — same manager-only override
+      // rationale as /pos/dining above; KioskLayout's nav array (kitchen/bar)
+      // is untouched so kitchen/bar staff see no new tab.
+      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue'), meta: { requiredRole: 'manager' } },
     ],
   },
 
@@ -152,6 +163,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'tables',      name: 'admin-tables',      component: () => import('../views/admin/TablesAdminView.vue'),       meta: { title: 'إدارة الطاولات' } },
       { path: 'cafe-sales',  name: 'admin-cafe-sales',  component: () => import('../views/admin/CafeSalesDashboardView.vue'), meta: { title: 'مبيعات الكافيه' } },
       { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { title: 'QR Codes' } },
+      // Unified dining module admin (Batch B, additive — DINING_CUTOVER_PLAN.md).
+      // Not a replacement for admin-menu/admin-cafe-menu/admin-tables above,
+      // which stay untouched and remain the live source of truth.
+      { path: 'dining-menu', name: 'admin-dining-menu', component: () => import('../views/admin/DiningMenuView.vue'),        meta: { title: 'إدارة الدايننج الموحّدة' } },
       { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
     ],
   },

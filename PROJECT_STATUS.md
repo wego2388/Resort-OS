@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1879 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-12) |
+| **الاختبارات** | **1927 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-12) |
 | **الـ Coverage** | **95%+ إجمالي** (مطعم/كافيه/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
 | **الاستضافة** | جاهز للـ VPS (docker-compose + Dockerfiles + DEPLOYMENT.md) — **لسه ما جربناهوش على سيرفر حقيقي** |
@@ -74,6 +74,79 @@
 - **`DINING_CUTOVER_PLAN.md`** (جذر المشروع) — المقترح المكتوب لـ D-05 (تحويل analytics/finance
   للقراءة من `dining` بدل `restaurant`+`cafe`) بدل تنفيذه بدون مراجعة — نفس مبدأ فجوة إيراد الغرفة
   في §18 بند 0: قرار بأثر مالي حقيقي يستاهل مراجعة صريحة مع Mohamed، مش تعديل عابر وسط دفعة تانية.
+
+---
+
+## 🍽️ اللي اتعمل يوم 2026-07-12 — موديول `dining` Batch B: free-text extra-group + أول POS/admin/KDS حقيقي
+
+دفعة تانية إضافية بالكامل جنب Batch A فوق — **مفيش لمس** لـ `restaurant/`, `cafe/`, `analytics/`,
+`finance/`، ولا لمصدر بيانات أي تقرير موجود (قرار الـ cutover الكامل D-05→D-08 لسه محتاج مراجعة
+مخصصة مع Mohamed، مش جزء من الدفعة دي — راجع `DINING_CUTOVER_PLAN.md`).
+
+- **Backend — `group_type` على `DiningItemExtraGroup`** — فجوة حقيقية اتكشفت بمقارنة نظام "Click"
+  القديم اللي المنتجع استخدمه فعليًا: نظام الإضافات كان pick-list بس (اختيارات محدودة)، من غير طريقة
+  للتعبير عن prompt نصي حر على الصنف (مثال حقيقي من النظام القديم: "كام سمكة؟"). اتضاف
+  `group_type` ("pick_list"|"text"، افتراضي pick_list = صفر تغيير سلوك لأي مجموعة موجودة)،
+  `DiningOrderItemExtra.text_value` (تخزين الإجابة، snapshot زي باقي الإضافات)، و
+  `OrderItemCreate.extra_texts` (`group_id` → نص) عبر `_resolve_extras` في `create_order` و
+  `add_items_to_order` الاتنين — مجموعة نصية `min_select>=1` بترفض بـ400 لو الإجابة فاضية، `min_select=0`
+  اختيارية. Migration `f4a7c9b2d105` (down_revision `0bd6f63e5446`، head واحد اتأكد منه). النطاق
+  محصور بالكامل جوه `app/modules/dining/` — `restaurant`/`cafe` معندهمش المفهوم ده أصلاً ولا هيتلمسوا.
+  6 اختبارات جديدة (`TestExtraGroups` في `test_dining.py`: pick-list سعر إضافي، نص إجباري مرفوض،
+  نص مخزّن صح وميزودش السعر، نص اختياري، مسار `add_items_to_order`) = **1927 اختبار إجمالي، صفر
+  رجوع** (`pytest tests/ -v` كامل اتشغّل بعد كل حاجة، مش رقم قديم).
+
+- **Frontend — أول شاشات حقيقية ضد `dining` API + أول استخدام حقيقي لـ `@resort-os/ui`** (29 مكوّن،
+  مفيش شاشة كانت بتستخدمهم قبل كده — Design System كان بنية تحتية بس من غير أي عرض حي):
+  - `frontend/apps/el-kheima/src/views/pos/UnifiedPOSView.vue` — الـ "POS سريع" المطلوب: تابات
+    order-type حقيقية (`dine_in`/`takeaway`/`delivery`/`room_service`) بلابل عربي حقيقي (مش أخطاء
+    إملائية النظام القديم "دايت-إن" إلخ)، كل نوع طلب بيعرض بس الحقول اللي تخصه (طاولة لـ dine_in،
+    عنوان/رقم غرفة لـ delivery/room_service، تيك أواي من غير أي حقل زيادة). خريطة طاولات مجمّعة
+    بصريًا حسب `VenueTable.section` (بحث Zone/section من "Click" القديم — تجميع مسطّح، مش hierarchy
+    كامل، عمدًا). مودال إضافات/متغيّرات (`DiningExtrasModal.vue`) بما فيه النوع النصي الجديد. حدود لمس
+    48px + اختصارات لوحة مفاتيح (`/` بحث، Enter إرسال، Esc إغلاق/مسح) — نفس نمط
+    `RestaurantPOSView.vue` القائم.
+  - `frontend/apps/el-kheima/src/views/admin/DiningMenuView.vue` — إدارة منافذ/فئات/أصناف (بما فيها
+    مجموعات الإضافات بنوعيها) وطاولات، أول Drawer/DataTable/Tabs حقيقيين من الـ Design System.
+  - `frontend/apps/el-kheima/src/views/kds/DiningKDSView.vue` — KDS موحّد بيوجّه حسب
+    `DiningItem.station` الحقيقي (نفس نمط CLAUDE.md §13 بند ⓭)، موحّد عبر كل الـ outlets افتراضيًا.
+    **مؤجَّل عمدًا**: bump على مستوى الصنف الواحد (زي `KitchenDisplayView.vue`) — `dining` router
+    معندهوش `PATCH .../items/{id}/status` لسه، بس bump على مستوى التذكرة كله (pending→in_progress→done)
+    شغال بالكامل.
+  - `DiningOrderDetailModal.vue` بيعيد استخدام `PinGuardModal.vue` الموجود لموافقة إلغاء الصنف —
+    **مفيش نظام موافقة موازي اتعمل**. المرتجع (refund) مش محتاج PIN إضافي (الباك إند أصلاً بيقفله على
+    مدير+ بس، مفيش مسار تصعيد لدور أقل زي الإلغاء).
+  - Routes جديدة بس (`/pos/dining`، `/admin/dining-menu`، `/kds/dining`) — `requiredRole: 'manager'`
+    مضبوطة صراحةً على الـ route نفسها حتى لو الـ layout الأب أوطى (زي `/pos` بتاعت كاشير)، عشان
+    الشاشات دي **متظهرش خالص** في أي nav بيشوفه نادل أو كاشير عادي (كل عنصر في FieldLayout's/
+    KioskLayout's nav array مفيهوش role filter أصلاً — أي إضافة هناك كانت هتغيّر workflow كل
+    كاشير/طباخ يوميًا). الوصول الوحيد: قسم "دايننج موحّد (تجريبي)" جديد في `BackOfficeLayout.vue`
+    (مدير+ بس). **الشاشات الحالية اللي الموظفين بيستخدموها كل يوم
+    (`RestaurantPOSView.vue`/`CafePOSView.vue`/`KitchenDisplayView.vue`/`BarDisplayView.vue`) متغيّرتش
+    خالص — نفس المسارات، نفس الـ nav، صفر تغيير مرئي.**
+
+- **التحقق الفعلي (2026-07-12، حي مش تخمين)**: `pytest tests/ -v` → 1927 اختبار كلهم عدّوا (3 skip
+  Postgres-only زي العادة). `alembic upgrade head` اتجرّب فعليًا على Postgres حقيقي (migration
+  `f4a7c9b2d105`). `pnpm --filter el-kheima type-check`/`build` و`pnpm --filter public build` الاتنين
+  نضاف. **End-to-end حي على سيرفرين منفصلين** (backend 8006 + frontend 3011، ضد نفس Postgres/Redis
+  المشتركين، منفصلين عن سيرفرات main checkout 8005/3001 عشان ميتأثروش): تسجيل دخول مدير حقيقي، إنشاء
+  outlet/item/مجموعة نصية عبر الـ API، طلب من غير الإجابة المطلوبة رجع 400 بالرسالة الصح، طلب بالإجابة
+  نجح واتخزّنت `text_value` صح مع سعر محايد، انتقال `in_kitchen` ولّد تذكرة على المحطة الصحيحة (grill،
+  مش قيمة ثابتة)، الدفع اتم صح وقيد الإيراد اترحّل. Playwright browser walkthrough حقيقي (مش curl بس):
+  تسجيل دخول → `/admin/dining-menu` → `/pos/dining` → `/kds/dining`، أكّد نص nav الجديد ظاهر لمدير،
+  الشاشات التلاتة بتحمّل بيانات حقيقية من غير أي JS/console error (التذكرة الحقيقية اللي اتعملت من
+  التست ظهرت فعليًا في شاشة KDS، الصنف بعلامة "إضافات" ظهر في الـ POS). **ملاحظة بيئة**: Playwright
+  headless في السانبوكس ده مابيرندرش screenshots بصريًا صح (مفيش فونتات/GPU فعّالة) رغم إن DOM/
+  innerText والـ API network calls كلهم اشتغلوا صح 100% — التفاعل الكامل بالماوس (فتح مودال الإضافات
+  فعليًا، إتمام طلب من واجهة المتصفح) لسه محتاج تأكيد بصري على جهاز حقيقي. بيانات الاختبار المؤقتة
+  (outlet/item/order/journal entry) اتمسحت بالكامل من قاعدة البيانات المشتركة بعد التأكد — مفيش أي أثر
+  باقي على بيانات main checkout الحية.
+
+- **مؤجَّل عمدًا لهذه الدفعة** (مش نسيان — قرار نطاق واضح): offline queue parity مع
+  `useOfflineQueue` (المطعم/الكافيه/الشاطئ الاتلاتة بيستخدموها فعليًا في الإنتاج — تمديدها لمسارات
+  `dining` الـ outlet-scoped يحتاج path-templating حقيقي جوه composable مشترك، خطر على 3 شاشات POS
+  شغالة عشان شاشة preview واحدة)، KDS bump على مستوى الصنف الواحد (يحتاج endpoint backend جديد)،
+  course firing، kitchen timer، customer display.
 
 ---
 

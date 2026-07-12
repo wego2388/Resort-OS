@@ -125,6 +125,10 @@ class DiningItemExtraRead(DiningItemExtraCreate):
 class DiningItemExtraGroupCreate(BaseModel):
     name:       str = Field(..., max_length=100)
     name_ar:    Optional[str] = Field(None, max_length=100)
+    group_type: str = Field("pick_list", pattern=r"^(pick_list|text)$")
+    # pick_list = قائمة اختيارات (options تحت)، text = prompt نصي حر (مثلاً
+    # "كام سمكة؟") — راجع docstring models.DiningItemExtraGroup. لمجموعات
+    # النص min_select يتصرف كـ "إجباري؟" (0/1)، وoptions المفروض تفضل فاضية.
     min_select: int = Field(0, ge=0)
     max_select: int = Field(1, ge=1)
     sort_order: int = 0
@@ -137,6 +141,7 @@ class DiningItemExtraGroupRead(BaseModel):
     item_id:    int
     name:       str
     name_ar:    Optional[str]
+    group_type: str
     min_select: int
     max_select: int
     sort_order: int
@@ -301,6 +306,10 @@ class OrderItemCreate(BaseModel):
     quantity:   int = Field(1, ge=1)
     notes:      Optional[str] = Field(None, max_length=200)
     extra_ids:  list[int] = Field(default_factory=list)
+    extra_texts: dict[int, str] = Field(default_factory=dict)
+    # group_id (DiningItemExtraGroup.id بـ group_type="text") -> إجابة نصية
+    # حرة، مثال حقيقي: {12: "3 سمكات"} لمجموعة "كام سمكة؟" — راجع
+    # services._resolve_extras للتحقق (إجباري/اختياري حسب min_select).
 
 
 class OrderCreate(BaseModel):
@@ -325,6 +334,7 @@ class OrderItemExtraRead(BaseModel):
     extra_id:       Optional[int]
     extra_name:     str
     price_addition: Decimal
+    text_value:     Optional[str] = None
 
 
 class OrderItemRead(BaseModel):

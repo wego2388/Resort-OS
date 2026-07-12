@@ -64,13 +64,21 @@ def _service_charge_pct(outlet: Optional[Outlet]) -> Decimal:
     return Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
 
 
-def _resolve_extras(db: Session, item: DiningItem, extra_ids: list[int]) -> tuple[list[dict], Decimal]:
-    """راجع restaurant.services._resolve_extras — نفس المنطق بالظبط."""
-    if not item.extra_groups and not extra_ids:
+def _resolve_extras(
+    db: Session, item: DiningItem, extra_ids: list[int],
+    extra_texts: Optional[dict[int, str]] = None,
+) -> tuple[list[dict], Decimal]:
+    """راجع restaurant.services._resolve_extras — نفس منطق قوائم الاختيار
+    (pick_list) بالظبط، زائد مجموعات النص الحر (group_type="text") — راجع
+    docstring models.DiningItemExtraGroup. ``extra_texts`` = group_id ->
+    إجابة نصية (مثال حقيقي: "كام سمكة؟" -> "3 سمكات")."""
+    extra_texts = extra_texts or {}
+    if not item.extra_groups and not extra_ids and not extra_texts:
         return [], Decimal("0")
 
     valid_extra_ids = {
-        extra.id for group in item.extra_groups for extra in group.options
+        extra.id for group in item.extra_groups if group.group_type == "pick_list"
+        for extra in group.options
     }
     for extra_id in extra_ids:
         if extra_id not in valid_extra_ids:
@@ -81,6 +89,20 @@ def _resolve_extras(db: Session, item: DiningItem, extra_ids: list[int]) -> tupl
     price_addition = Decimal("0")
 
     for group in item.extra_groups:
+        if group.group_type == "text":
+            text_value = (extra_texts.get(group.id) or "").strip()
+            if not text_value:
+                if group.min_select >= 1:
+                    raise ValueError(f"لازم تدخل قيمة لـ '{group.name}'")
+                continue
+            extras_data.append({
+                "extra_id":       None,
+                "extra_name":     group.name,
+                "price_addition": Decimal("0"),
+                "text_value":     text_value,
+            })
+            continue
+
         group_selected = [opt for opt in group.options if opt.id in selected]
         if len(group_selected) < group.min_select:
             raise ValueError(f"لازم تختار {group.min_select} على الأقل من '{group.name}'")
@@ -322,7 +344,7 @@ def create_order(
         base_price = variant.price if variant else item.price
         item_name = f"{item.name} - {variant.name}" if variant else item.name
 
-        extras_data, extra_price_per_unit = _resolve_extras(db, item, item_req.extra_ids)
+        extras_data, extra_price_per_unit = _resolve_extras(db, item, item_req.extra_ids, item_req.extra_texts)
 
         line_total = (base_price + extra_price_per_unit) * item_req.quantity
         subtotal += line_total
@@ -393,7 +415,7 @@ def add_items_to_order(db: Session, order_id: int, items: list) -> DiningOrder:
         variant = _resolve_variant(db, item, item_req.variant_id)
         base_price = variant.price if variant else item.price
         item_name  = f"{item.name} - {variant.name}" if variant else item.name
-        extras_data, extra_price = _resolve_extras(db, item, item_req.extra_ids)
+        extras_data, extra_price = _resolve_extras(db, item, item_req.extra_ids, item_req.extra_texts)
 
         new_item = DiningOrderItem(
             order_id  = order.id,
@@ -414,6 +436,7 @@ def add_items_to_order(db: Session, order_id: int, items: list) -> DiningOrder:
                 extra_id       = e["extra_id"],
                 extra_name     = e["extra_name"],
                 price_addition = e["price_addition"],
+                text_value     = e.get("text_value"),
             ))
 
         added_subtotal += (base_price + extra_price) * item_req.quantity

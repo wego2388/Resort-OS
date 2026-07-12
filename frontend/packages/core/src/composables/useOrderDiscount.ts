@@ -2,8 +2,9 @@
  * useOrderDiscount — shared "apply best active discount rule" action for
  * restaurant/cafe orders.
  *
- * Both `POST /restaurant/orders/{id}/discount` and `POST
- * /cafe/orders/{id}/discount` have the exact same contract: no request body,
+ * `POST /restaurant/orders/{id}/discount`, `POST /cafe/orders/{id}/discount`,
+ * and `POST /dining/orders/{id}/discount` (dining — additive unified module,
+ * DINING_CUTOVER_PLAN.md) all share the exact same contract: no request body,
  * the server evaluates every active `ConditionalDiscount` (finance module —
  * flat/percentage/combo_fixed_price, optionally scoped to outlet/category/item
  * and/or a time-of-day "Happy Hour" window) and applies the best-matching one
@@ -20,7 +21,7 @@
 import { ref } from 'vue'
 import { api } from '../api/client'
 
-export function useOrderDiscount(module: 'restaurant' | 'cafe') {
+export function useOrderDiscount(module: 'restaurant' | 'cafe' | 'dining') {
   const applyingDiscount = ref(false)
   const discountError = ref('')
 

@@ -84,6 +84,21 @@ const allSections = computed<NavSection[]>(() => [
     ],
   },
   {
+    // Unified dining module (Batch B, additive — DINING_CUTOVER_PLAN.md).
+    // manager+ only, deliberately: every /pos/* item a waiter/cashier sees
+    // in FieldLayout has zero role filter, so putting the preview screens
+    // there would change every cashier's daily nav. Gating discovery to
+    // this manager-only section keeps their workflow untouched while still
+    // giving Mohamed/managers a real way to reach all three preview
+    // screens (menu admin, unified POS, unified KDS) for review.
+    label: t('backoffice.nav.diningPreview'),
+    items: [
+      { path: '/admin/dining-menu', label: t('backoffice.nav.diningMenu'), icon: '🍽️', requiredRole: 'manager' },
+      { path: '/pos/dining',        label: t('backoffice.nav.diningPos'),  icon: '🧾', requiredRole: 'manager' },
+      { path: '/kds/dining',        label: t('backoffice.nav.diningKds'), icon: '👨‍🍳', requiredRole: 'manager' },
+    ],
+  },
+  {
     label: t('backoffice.nav.settings'),
     items: [
       { path: '/admin/settings',    label: t('backoffice.nav.settings'),    icon: '⚙️', requiredRole: 'admin' },

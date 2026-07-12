@@ -141,6 +141,7 @@ def create_extra_group(db: Session, item_id: int, data: DiningItemExtraGroupCrea
         item_id=item_id,
         name=data.name,
         name_ar=data.name_ar,
+        group_type=data.group_type,
         min_select=data.min_select,
         max_select=data.max_select,
         sort_order=data.sort_order,
