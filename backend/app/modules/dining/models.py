@@ -165,7 +165,20 @@ class DiningItem(Base, TimestampMixin):
 
 class DiningItemExtraGroup(Base, TimestampMixin):
     """مجموعة اختيارات لصنف — يدمج restaurant.MenuItemExtraGroup +
-    cafe.CafeMenuItemExtraGroup (نفس الشكل بالظبط).
+    cafe.CafeMenuItemExtraGroup (نفس الشكل بالظبط) + ``group_type`` جديد
+    (فجوة حقيقية اتكشفت بمقارنة نظام "Click" القديم اللي المنتجع ده كان
+    شغال بيه فعليًا — راجع wagdy.md/CLAUDE.md: مطلوب free-text extra-group
+    type مش pick-list بس، مثال حقيقي: "كام سمكة؟" كـ prompt نصي على الصنف
+    بدل قائمة اختيارات).
+
+    group_type="pick_list" (الافتراضي، السلوك القديم 100%) — options
+    اختيارات محدودة زي الأصل.
+    group_type="text" — مفيش options خالص، الـ name/name_ar نفسها هي الـ
+    prompt المعروض للموظف (مثلاً "كام سمكة؟")، والإجابة نص حر بيتخزّن على
+    مستوى صنف الطلب (``DiningOrderItemExtra.text_value``) وقت اختيار الصنف
+    — راجع ``services._resolve_extras`` و``schemas.OrderItemCreate.extra_texts``.
+    ``min_select`` بيتلعب دور "إجباري؟" لمجموعات النص (0=اختياري،
+    1=إجباري)، و``max_select`` مالوش معنى هنا (متجاهَل).
 
     legacy_module/legacy_id هنا برضه (رغم إنها "مجرد" جدول ابن لـ
     DiningItem) — عشان migration D-02 تقدر تنسخ dining_item_extras بـ
@@ -182,6 +195,8 @@ class DiningItemExtraGroup(Base, TimestampMixin):
     item_id:    Mapped[int]        = mapped_column(ForeignKey("dining_items.id", ondelete="CASCADE"))
     name:       Mapped[str]        = mapped_column(String(100))
     name_ar:    Mapped[str | None] = mapped_column(String(100), nullable=True)
+    group_type: Mapped[str]        = mapped_column(String(20), default="pick_list")
+    # pick_list|text — راجع docstring الكلاس فوق.
     min_select: Mapped[int]        = mapped_column(Integer, default=0)
     max_select: Mapped[int]        = mapped_column(Integer, default=1)
     sort_order: Mapped[int]        = mapped_column(Integer, default=0)
@@ -409,7 +424,9 @@ class DiningOrderItem(Base, TimestampMixin):
 
 class DiningOrderItemExtra(Base, TimestampMixin):
     """snapshot للإضافة المختارة وقت الطلب — يدمج restaurant.OrderItemExtra
-    + cafe.CafeOrderItemExtra."""
+    + cafe.CafeOrderItemExtra. ``text_value`` جديد: إجابة النص الحر لمجموعة
+    ``group_type="text"`` (extra_id بيفضل NULL في الحالة دي — مفيش
+    DiningItemExtra حقيقي مرتبط، الصف بيمثّل إجابة المجموعة النصية نفسها)."""
     __tablename__ = "dining_order_item_extras"
 
     id:             Mapped[int]      = mapped_column(primary_key=True)
@@ -417,6 +434,7 @@ class DiningOrderItemExtra(Base, TimestampMixin):
     extra_id:       Mapped[int | None] = mapped_column(ForeignKey("dining_item_extras.id", ondelete="SET NULL"), nullable=True)
     extra_name:     Mapped[str]      = mapped_column(String(100))
     price_addition: Mapped[Decimal]  = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    text_value:     Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     order_item: Mapped["DiningOrderItem"] = relationship("DiningOrderItem", back_populates="extras")
 

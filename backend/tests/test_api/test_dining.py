@@ -16,6 +16,7 @@ import pytest
 
 from app.modules.dining import crud, services
 from app.modules.dining.schemas import (
+    DiningItemExtraCreate, DiningItemExtraGroupCreate,
     DiningItemRecipeLineCreate, DiningItemVariantCreate,
     DiningItemVariantRecipeLineCreate, OrderCreate, OrderItemCreate,
     OutletCreate,
@@ -506,3 +507,117 @@ class TestCrossOutletIsolation:
         r_only, r_total = crud.list_orders(db, branch.id, outlet_id=restaurant.id)
         assert r_total == 1
         assert r_only[0].id == r_order.id
+
+
+class TestExtraGroups:
+    """اختبارات group_type — الفجوة الحقيقية اللي اتكشفت بمقارنة نظام
+    "Click" القديم: free-text extra-group prompt (مثال حقيقي: "كام سمكة؟")
+    مش pick-list بس. راجع docstring dining.models.DiningItemExtraGroup."""
+
+    def test_pick_list_group_defaults_to_pick_list_type(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet)
+        group = crud.create_extra_group(db, item.id, DiningItemExtraGroupCreate(
+            name="الإضافات", min_select=0, max_select=2,
+            options=[DiningItemExtraCreate(name="جبنة إضافية", price_addition=Decimal("10.00"))],
+        ))
+        db.commit()
+        assert group.group_type == "pick_list"
+        assert len(group.options) == 1
+
+    def test_pick_list_extra_adds_to_price(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        group = crud.create_extra_group(db, item.id, DiningItemExtraGroupCreate(
+            name="الإضافات", min_select=0, max_select=2,
+            options=[DiningItemExtraCreate(name="جبنة إضافية", price_addition=Decimal("10.00"))],
+        ))
+        db.commit()
+        extra_id = group.options[0].id
+
+        data = OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway",
+            items=[OrderItemCreate(item_id=item.id, quantity=1, extra_ids=[extra_id])],
+        )
+        order = services.create_order(db, branch.id, data, waiter_id=1)
+        assert order.subtotal == Decimal("60.00")
+        assert order.items[0].extras[0].extra_name == "جبنة إضافية"
+        assert order.items[0].extras[0].text_value is None
+
+    def test_text_group_required_rejects_missing_answer(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet)
+        crud.create_extra_group(db, item.id, DiningItemExtraGroupCreate(
+            name="كام سمكة؟", group_type="text", min_select=1,
+        ))
+        db.commit()
+
+        data = OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway",
+            items=[OrderItemCreate(item_id=item.id, quantity=1)],
+        )
+        with pytest.raises(ValueError, match="لازم تدخل قيمة"):
+            services.create_order(db, branch.id, data)
+
+    def test_text_group_stores_free_text_answer(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        group = crud.create_extra_group(db, item.id, DiningItemExtraGroupCreate(
+            name="كام سمكة؟", group_type="text", min_select=1,
+        ))
+        db.commit()
+
+        data = OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway",
+            items=[OrderItemCreate(item_id=item.id, quantity=1, extra_texts={group.id: "3 سمكات"})],
+        )
+        order = services.create_order(db, branch.id, data, waiter_id=1)
+        text_extra = order.items[0].extras[0]
+        assert text_extra.text_value == "3 سمكات"
+        assert text_extra.extra_id is None
+        assert text_extra.price_addition == Decimal("0.00")
+        # مجموعة النص ميزيدش سعر الصنف — نفس السعر الأساسي بالظبط
+        assert order.subtotal == Decimal("50.00")
+
+    def test_text_group_optional_when_min_select_zero(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet)
+        crud.create_extra_group(db, item.id, DiningItemExtraGroupCreate(
+            name="ملاحظات خاصة", group_type="text", min_select=0,
+        ))
+        db.commit()
+
+        data = OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway",
+            items=[OrderItemCreate(item_id=item.id, quantity=1)],
+        )
+        order = services.create_order(db, branch.id, data)
+        assert order.items[0].extras == []
+
+    def test_add_items_to_order_resolves_text_extras(self, db):
+        """راجع add_items_to_order — نفس منطق create_order للنص الحر."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        group = crud.create_extra_group(db, item.id, DiningItemExtraGroupCreate(
+            name="كام سمكة؟", group_type="text", min_select=1,
+        ))
+        db.commit()
+
+        data = OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway",
+            items=[OrderItemCreate(item_id=item.id, quantity=1, extra_texts={group.id: "سمكة واحدة"})],
+        )
+        order = services.create_order(db, branch.id, data, waiter_id=1)
+
+        updated = services.add_items_to_order(
+            db, order.id,
+            [OrderItemCreate(item_id=item.id, quantity=1, extra_texts={group.id: "سمكتين"})],
+        )
+        new_item = [i for i in updated.items if i.extras and i.extras[0].text_value == "سمكتين"][0]
+        assert new_item.extras[0].text_value == "سمكتين"
