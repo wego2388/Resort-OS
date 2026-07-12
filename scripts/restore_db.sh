@@ -15,6 +15,14 @@
 #  backup_db.sh — <target_db_name> overrides just the database name, host/
 #  port/user/password stay the same (both dev and prod publish Postgres to
 #  127.0.0.1 on the host).
+#
+#  Offsite fallback (wagdy.md T-04): if `latest` is requested and the local
+#  backups/ dir has nothing (real disaster recovery — server rebuilt from
+#  scratch, backups/ itself is gone with it), and BACKUP_REMOTE_ENABLED +
+#  BACKUP_RCLONE_REMOTE are set in backend/.env (same vars backup_db.sh
+#  uses), automatically pull the newest dump from the offsite remote first.
+#  A local backup always wins over the remote if both exist — no network
+#  round-trip needed for the common case.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -39,10 +47,26 @@ u = urlparse('$DATABASE_URL'.replace('postgresql+psycopg://', 'postgresql://'))
 print(u.username, u.password, u.hostname, u.port or 5432, u.path.lstrip('/'))
 ")
 
+BACKUP_RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-$(grep -E '^BACKUP_RCLONE_REMOTE=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)}"
+BACKUP_RCLONE_CONFIG="${BACKUP_RCLONE_CONFIG:-$(grep -E '^BACKUP_RCLONE_CONFIG=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)}"
+
 # ── Resolve dump file ───────────────────────────────────────────────────────
 if [[ "$DUMP_ARG" == "latest" ]]; then
   DUMP_FILE="$(find "$BACKUP_DIR" -name "${SOURCE_DB_NAME}_*.dump" -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-)"
-  [[ -n "$DUMP_FILE" ]] || { echo "✗ No backups found in $BACKUP_DIR" >&2; exit 1; }
+  if [[ -z "$DUMP_FILE" && -n "$BACKUP_RCLONE_REMOTE" ]] && command -v rclone &>/dev/null; then
+    echo "→ No local backups in $BACKUP_DIR — trying offsite remote $BACKUP_RCLONE_REMOTE"
+    RCLONE_ARGS=()
+    [[ -n "$BACKUP_RCLONE_CONFIG" ]] && RCLONE_ARGS=(--config "$BACKUP_RCLONE_CONFIG")
+    LATEST_REMOTE="$(rclone "${RCLONE_ARGS[@]}" lsf "$BACKUP_RCLONE_REMOTE" --files-only 2>/dev/null \
+      | grep -E "^${SOURCE_DB_NAME}_.*\.dump\$" | sort -r | head -1 || true)"
+    if [[ -n "$LATEST_REMOTE" ]]; then
+      mkdir -p "$BACKUP_DIR"
+      echo "→ Downloading $LATEST_REMOTE from offsite remote..."
+      rclone "${RCLONE_ARGS[@]}" copyto "$BACKUP_RCLONE_REMOTE/$LATEST_REMOTE" "$BACKUP_DIR/$LATEST_REMOTE"
+      DUMP_FILE="$BACKUP_DIR/$LATEST_REMOTE"
+    fi
+  fi
+  [[ -n "$DUMP_FILE" ]] || { echo "✗ No backups found in $BACKUP_DIR (or offsite remote)" >&2; exit 1; }
 else
   DUMP_FILE="$DUMP_ARG"
 fi

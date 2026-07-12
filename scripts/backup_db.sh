@@ -15,6 +15,20 @@
 #
 #  Output: backups/resort_os_<UTC timestamp>.dump  (pg_dump custom format,
 #  compressed, restorable with pg_restore — see scripts/restore_db.sh)
+#
+#  Offsite sync (wagdy.md T-04, optional — the local backup/restore/
+#  systemd-timer flow above is completely unchanged if this isn't set):
+#  set these in backend/.env (same file DATABASE_URL is read from) to also
+#  push every fresh dump to S3/Backblaze B2/any rclone-supported remote —
+#  "backups only exist on the same server they're protecting against" is a
+#  real disaster-recovery gap otherwise (disk failure / VPS lost = backups
+#  lost too).
+#      BACKUP_REMOTE_ENABLED=true
+#      BACKUP_RCLONE_REMOTE=b2:my-bucket/resort-os-backups   # or s3:bucket/path, etc.
+#      BACKUP_RCLONE_CONFIG=/opt/wegosharm/.config/rclone/rclone.conf   # optional, defaults to rclone's own default config location
+#  Requires `rclone` installed + the remote already configured
+#  (`rclone config` — the part before the colon above, e.g. `b2`/`s3`, is
+#  the configured remote's name).
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -24,6 +38,16 @@ BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
 [[ -f "$ENV_FILE" ]] || { echo "✗ $ENV_FILE not found" >&2; exit 1; }
+
+# ── Offsite sync config (env wins if already exported, else read from backend/.env) ──
+# `|| true` on each grep is required: these vars are optional (unlike
+# DATABASE_URL above) so the pattern often won't match, and grep's exit 1
+# on no-match would otherwise abort the whole script here (set -o pipefail
+# makes a no-match failure propagate out of the `grep | head | cut` pipeline
+# even though head/cut themselves "succeed" on empty input).
+BACKUP_REMOTE_ENABLED="${BACKUP_REMOTE_ENABLED:-$(grep -E '^BACKUP_REMOTE_ENABLED=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)}"
+BACKUP_RCLONE_REMOTE="${BACKUP_RCLONE_REMOTE:-$(grep -E '^BACKUP_RCLONE_REMOTE=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)}"
+BACKUP_RCLONE_CONFIG="${BACKUP_RCLONE_CONFIG:-$(grep -E '^BACKUP_RCLONE_CONFIG=' "$ENV_FILE" | head -1 | cut -d= -f2- || true)}"
 
 # ── Parse DATABASE_URL (postgresql+psycopg://user:pass@host:port/dbname) ──────
 DATABASE_URL="$(grep -E '^DATABASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
@@ -67,6 +91,34 @@ fi
 
 SIZE="$(du -h "$DUMP_FILE" | cut -f1)"
 echo "✓ Backup complete: $DUMP_FILE ($SIZE)"
+
+# ── Offsite sync (optional — see header) ────────────────────────────────────
+# Runs after the local dump is confirmed on disk, so a sync failure never
+# costs the local backup itself. Exits non-zero on sync failure (loud,
+# visible in `systemctl status`/journalctl) rather than swallowing it —
+# unlike a purely local failure, an offsite sync failure is easy to miss
+# for weeks since the local backup still "looks" successful every day.
+if [[ "$BACKUP_REMOTE_ENABLED" == "true" ]]; then
+  if [[ -z "$BACKUP_RCLONE_REMOTE" ]]; then
+    echo "✗ BACKUP_REMOTE_ENABLED=true but BACKUP_RCLONE_REMOTE is not set in $ENV_FILE" >&2
+    exit 1
+  fi
+  if ! command -v rclone &>/dev/null; then
+    echo "✗ BACKUP_REMOTE_ENABLED=true but rclone is not installed on this host" >&2
+    exit 1
+  fi
+
+  RCLONE_ARGS=()
+  [[ -n "$BACKUP_RCLONE_CONFIG" ]] && RCLONE_ARGS=(--config "$BACKUP_RCLONE_CONFIG")
+
+  echo "→ Syncing to offsite remote: $BACKUP_RCLONE_REMOTE"
+  if rclone "${RCLONE_ARGS[@]}" copyto "$DUMP_FILE" "$BACKUP_RCLONE_REMOTE/$(basename "$DUMP_FILE")"; then
+    echo "✓ Offsite sync complete"
+  else
+    echo "✗ Offsite sync failed — local backup is still safe at $DUMP_FILE, but it is NOT off this server yet" >&2
+    exit 1
+  fi
+fi
 
 # ── Retention: delete dumps older than RETENTION_DAYS ──────────────────────
 DELETED=0

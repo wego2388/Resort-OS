@@ -265,11 +265,23 @@ Edit `WorkingDirectory=`/`User=` in `resort-os-backup.service` first if your
 checkout path or run user differs from `/opt/wegosharm/resort-os` / `resortos`.
 
 Retention defaults to 14 days (`BACKUP_RETENTION_DAYS` env var to change).
-Backups land in `backups/` at the repo root — gitignored, and **not** copied
-off the server by anything in this repo. For real disaster recovery (the
-server itself dying, not just the database), also sync `backups/` somewhere
-off-box — e.g. a nightly `rclone`/`rsync` to S3/Backblaze — that part is
-infrastructure-specific and left to you.
+Backups land in `backups/` at the repo root — gitignored.
+
+**Offsite sync** (wagdy.md T-04) — for real disaster recovery (the server
+itself dying, not just the database), `backup_db.sh` can also push every
+fresh dump to S3/Backblaze B2/any `rclone`-supported remote in the same run.
+Set in `backend/.env` (unset by default — the local-only flow above works
+exactly the same either way):
+
+```bash
+# requires: rclone installed + `rclone config` already run once for the remote
+BACKUP_REMOTE_ENABLED=true
+BACKUP_RCLONE_REMOTE=b2:my-bucket/resort-os-backups   # or s3:bucket/path, etc.
+```
+
+`restore_db.sh latest` automatically falls back to pulling the newest dump
+from this same remote if `backups/` is empty (e.g. after a full server
+rebuild) — no separate disaster-recovery procedure to remember.
 
 ## Updating / redeploying
 
