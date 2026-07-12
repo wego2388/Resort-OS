@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
 from app.core.deps import (
@@ -13,7 +13,9 @@ from app.core.deps import (
 )
 from app.modules.hr import crud, services
 from app.modules.hr.schemas import (
+    AdvancePaymentCreate, AdvancePaymentRead,
     AllowanceRead,
+    AttendanceImportResult,
     AttendancePolicyRead, AttendancePolicyUpsert,
     AttendanceRecordCreate, AttendanceRecordRead, AttendanceRecordUpdate,
     DepartmentCreate, DepartmentRead,
@@ -23,6 +25,7 @@ from app.modules.hr.schemas import (
     EmployeePenaltyCreate, EmployeePenaltyRead,
     LeaderboardEntry,
     LeaveApproveRequest, LeaveRejectRequest,
+    LeaveBalanceMonthlyRead,
     LeaveRequestCreate, LeaveRequestRead, LeaveStatusUpdate,
     LeaveTypeCreate, LeaveTypeRead,
     MyLeaveRequestCreate, MyPayslipRead, MyProfileRead,
@@ -31,6 +34,7 @@ from app.modules.hr.schemas import (
     PenaltyTypeCreate, PenaltyTypeRead,
     RotaAssignmentCreate, RotaAssignmentRead,
     RotaTemplateCreate, RotaTemplateRead, RotaTemplateUpdate,
+    SalaryAdvanceCancel, SalaryAdvanceCreate, SalaryAdvanceRead,
     ShiftCreate, ShiftRead,
     ShiftSwapRequestCreate, ShiftSwapRequestRead,
     SocialInsuranceConfigCreate, SocialInsuranceConfigRead,
@@ -162,6 +166,78 @@ def update_employee_allowance(
     return AllowanceRead.model_validate(allowance)
 
 
+# ── Salary Advances (wagdy.md H-01) ─────────────────────────────────────
+# سلفة راتب — قرض بيُخصم على أقساط شهرية ثابتة (راجع hr.models.SalaryAdvance).
+# admin-only للإنشاء/الإلغاء (نفس مستوى تعديل الراتب الأساسي — بيانات مالية
+# حساسة عن موظف)، manager+ للقراءة.
+
+@router.post("/hr/salary-advances", response_model=SalaryAdvanceRead,
+             status_code=status.HTTP_201_CREATED)
+def create_salary_advance(data: SalaryAdvanceCreate, db: DbDep, user=Depends(get_admin_user)):
+    try:
+        return services.create_salary_advance(db, data, created_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/hr/salary-advances", response_model=list[SalaryAdvanceRead])
+def list_salary_advances(
+    db: DbDep, _=Depends(get_manager_user),
+    employee_id: Optional[int] = Query(None),
+    branch_id: Optional[int] = Query(None),
+    status_filter: Optional[str] = Query(None, alias="status"),
+):
+    return [SalaryAdvanceRead.model_validate(a)
+            for a in crud.list_salary_advances(db, employee_id, branch_id, status_filter)]
+
+
+@router.patch("/hr/salary-advances/{advance_id}/cancel", response_model=SalaryAdvanceRead)
+def cancel_salary_advance(advance_id: int, data: SalaryAdvanceCancel, db: DbDep, _=Depends(get_admin_user)):
+    try:
+        return services.cancel_salary_advance(db, advance_id, data.reason)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Advance Payments (wagdy.md H-02) ────────────────────────────────────
+# دفعة جزئية يومية خلال الشهر — بتُخصم بالكامل من صافي راتب نفس الشهر
+# (راجع hr.models.AdvancePayment). manager+ للإنشاء (عملية يومية متكررة،
+# زي تسجيل جزاء) — مختلف عمدًا عن admin-only لسلف H-01 فوق (قرار مالي أكبر).
+
+@router.post("/hr/advance-payments", response_model=AdvancePaymentRead,
+             status_code=status.HTTP_201_CREATED)
+def create_advance_payment(data: AdvancePaymentCreate, db: DbDep, user=Depends(get_manager_user)):
+    try:
+        return services.create_advance_payment(db, data, recorded_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/hr/advance-payments", response_model=list[AdvancePaymentRead])
+def list_advance_payments(
+    db: DbDep, _=Depends(get_manager_user),
+    employee_id: Optional[int] = Query(None),
+    branch_id: Optional[int] = Query(None),
+    deducted: Optional[bool] = Query(None),
+):
+    return [AdvancePaymentRead.model_validate(p)
+            for p in crud.list_advance_payments(db, employee_id, branch_id, deducted)]
+
+
+# ── Leave Balance Monthly (wagdy.md H-03) ────────────────────────────────
+# رصيد إجازات متحرّك شهري (7.5 يوم/شهر) — راجع hr.models.LeaveBalanceMonthly.
+# للقراءة فقط من الـ API (بيتحدّث تلقائيًا عبر Celery task شهري، مش يدويًا).
+
+@router.get("/hr/leave-balance-monthly", response_model=list[LeaveBalanceMonthlyRead])
+def list_leave_balance_monthly(
+    db: DbDep, _=Depends(get_manager_user),
+    employee_id: int = Query(...),
+    limit: int = Query(24, ge=1, le=60),
+):
+    return [LeaveBalanceMonthlyRead.model_validate(r)
+            for r in crud.list_leave_balance_monthly(db, employee_id, limit)]
+
+
 # ── Leaderboard ───────────────────────────────────────────────────────
 
 @router.get("/hr/leaderboard", response_model=list[LeaderboardEntry])
@@ -276,6 +352,24 @@ def list_attendance(
                                         (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[AttendanceRecordRead.model_validate(r) for r in items])
+
+
+@router.post("/hr/attendance/import-excel", response_model=AttendanceImportResult)
+async def import_attendance_excel(
+    file: UploadFile, db: DbDep,
+    branch_id: int = Query(...),
+    period_year: int = Query(..., ge=2020, le=2099),
+    period_month: int = Query(..., ge=1, le=12),
+    _=Depends(get_manager_user),
+):
+    """wagdy.md H-07 — رفع ملف حضور Excel (عمود موظف أول + عمود لكل يوم في
+    الشهر، قيمة الخلية كود حالة زي p/v/u) وتحويله لسجلات AttendanceRecord
+    حقيقية دفعة واحدة. نفس نمط POST /timeshare/contracts/import-excel."""
+    try:
+        content = await file.read()
+        return services.import_attendance_excel(db, branch_id, period_year, period_month, content)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 # ── Departments ───────────────────────────────────────────────────────
@@ -536,6 +630,18 @@ def get_my_leaves(
                              items=[LeaveRequestRead.model_validate(r) for r in items])
 
 
+@router.get("/hr/me/leave-balance-monthly", response_model=list[LeaveBalanceMonthlyRead])
+def get_my_leave_balance_monthly(
+    db: DbDep, user=Depends(get_current_active_user),
+    limit: int = Query(12, ge=1, le=60),
+):
+    """wagdy.md H-03 — الموظف يشوف رصيد إجازاته الشهري المتحرّك بنفسه، زي
+    باقي /hr/me/* (بروفايل/حضور/راتب)."""
+    emp = _my_employee_or_404(db, user)
+    return [LeaveBalanceMonthlyRead.model_validate(r)
+            for r in crud.list_leave_balance_monthly(db, emp.id, limit)]
+
+
 @router.post("/hr/me/leaves/request", response_model=LeaveRequestRead,
              status_code=status.HTTP_201_CREATED)
 def request_my_leave(data: MyLeaveRequestCreate, db: DbDep, user=Depends(get_current_active_user)):
@@ -568,6 +674,8 @@ def get_my_payslips(
             penalty_deduction=line.penalty_deduction,
             late_penalty_deduction=line.late_penalty_deduction,
             unpaid_leave_deduction=line.unpaid_leave_deduction,
+            holiday_bonus=line.holiday_bonus,
+            advance_deduction=line.advance_deduction,
         )
         for line in lines
     ]

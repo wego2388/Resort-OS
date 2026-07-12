@@ -7,7 +7,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
-    DbDep, get_current_active_user,
+    DbDep, get_cashier_user, get_current_active_user,
     get_manager_user, require_permission,
 )
 from app.modules.crm import crud, services
@@ -19,6 +19,7 @@ from app.modules.crm.schemas import (
     CustomerCreate, CustomerRead, CustomerUpdate,
     GuestProfileRead,
     InteractionCreate, InteractionRead,
+    LeadConvertRequest, LeadConvertResponse,
     LeadCreate, LeadRead, LeadSourceCreate, LeadSourceRead, LeadStageUpdate, LeadUpdate,
     OpportunityCreate, OpportunityRead, OpportunityUpdate,
 )
@@ -209,6 +210,36 @@ def update_lead_details(lead_id: int, data: LeadUpdate, db: DbDep,
         return LeadRead.model_validate(services.update_lead_details(db, lead_id, data))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/crm/leads/{lead_id}/convert", response_model=LeadConvertResponse,
+             status_code=status.HTTP_201_CREATED)
+async def convert_lead(lead_id: int, data: LeadConvertRequest, db: DbDep,
+                       _=Depends(get_cashier_user)):
+    """wagdy.md C-03 — تحويل lead لحجز مباشرة بضغطة واحدة. نفس مستوى صلاحية
+    إنشاء حجز في PMS نفسه (get_cashier_user) عشان الطريق البديل ده (عبر CRM)
+    ميبقاش أضعف أمنيًا من المسار المباشر POST /pms/bookings."""
+    from app.modules.pms.services import BookingConflictError  # noqa: PLC0415
+    try:
+        lead, booking = services.convert_lead_to_booking(db, lead_id, data)
+    except BookingConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    # نفس بث "rooms_changed" اللي POST /pms/bookings بيعمله — بدونه شاشة
+    # خريطة الغرف الحية متعرفش إن حجز جديد اتعمل غير بعد refresh يدوي.
+    try:
+        from app.modules.pms.api.router import pms_rooms_manager  # noqa: PLC0415
+        await pms_rooms_manager.broadcast(str(lead.branch_id), {"type": "rooms_changed"})
+    except Exception:
+        pass  # بث لحظي ثانوي — فشله ميلغيش نجاح التحويل نفسه
+
+    return LeadConvertResponse(
+        lead=LeadRead.model_validate(lead),
+        booking_id=booking.id,
+        booking_number=booking.booking_number,
+    )
 
 
 # ── Call Notes ────────────────────────────────────────────────────────

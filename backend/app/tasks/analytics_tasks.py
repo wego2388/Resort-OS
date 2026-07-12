@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from app.celery_app import celery_app
+from app.core.kernel.worker import notify_task_failure
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,10 @@ def generate_daily_stats(self, branch_id: int | None = None, stat_date_str: str 
                     logger.info("DailyStats generated: branch=%s date=%s", branch.id, stat_date)
                 except Exception as exc:
                     logger.error("DailyStats failed: branch=%s error=%s", branch.id, exc)
+                    notify_task_failure(
+                        "app.tasks.analytics_tasks.generate_daily_stats", exc,
+                        extra={"branch_id": branch.id, "stat_date": str(stat_date)},
+                    )
 
     except Exception as exc:
         logger.error("generate_daily_stats task failed: %s", exc)

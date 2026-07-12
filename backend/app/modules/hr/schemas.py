@@ -16,6 +16,13 @@ class EmployeeCreate(BaseModel):
     position:      str = Field(..., max_length=100)
     department:    Optional[str] = Field(None, max_length=100)
     basic_salary:  Decimal = Field(..., gt=0)
+    # وعاء التأمينات الاجتماعية — None يعني "استخدم basic_salary" (راجع
+    # hr_engine.calculate_payroll). موجود لأن بعض الموظفين وعاءهم التأميني
+    # المسجّل رسميًا أقل من راتبهم الأساسي الفعلي.
+    insurance_base_salary: Optional[Decimal] = Field(None, gt=0)
+    # مكافأة الأعياد الرسمية — بند ثابت يدخل حساب الراتب تلقائيًا كل مرة
+    # يُشغَّل فيها كشف رواتب لهذا الموظف (راجع hr_engine.calculate_payroll).
+    holiday_bonus: Decimal = Field(Decimal("0"), ge=0)
     hire_date:     date
     birth_date:    Optional[date] = None
     phone:         Optional[str] = Field(None, max_length=20)
@@ -28,6 +35,8 @@ class EmployeeUpdate(BaseModel):
     position:     Optional[str]     = None
     department:   Optional[str]     = None
     basic_salary: Optional[Decimal] = Field(None, gt=0)
+    insurance_base_salary: Optional[Decimal] = Field(None, gt=0)
+    holiday_bonus: Optional[Decimal] = Field(None, ge=0)
     status:       Optional[str]     = Field(None, pattern=r"^(active|on_leave|terminated)$")
     phone:        Optional[str]     = None
     email:        Optional[str]     = None
@@ -134,6 +143,8 @@ class PayrollResultRead(BaseModel):
     penalty_deduction:        Decimal
     late_penalty_deduction:   Decimal
     unpaid_leave_deduction:   Decimal
+    advance_deduction:        Decimal
+    holiday_bonus:            Decimal
     net_salary:               Decimal
     journal_entry:            dict
 
@@ -158,6 +169,8 @@ class PayrollLineRead(BaseModel):
     penalty_deduction:      Decimal
     late_penalty_deduction: Decimal
     unpaid_leave_deduction: Decimal
+    advance_deduction:      Decimal
+    holiday_bonus:          Decimal
 
 
 class PayrollRunRead(BaseModel):
@@ -171,6 +184,8 @@ class PayrollRunRead(BaseModel):
     total_net:    Decimal
     total_tax:    Decimal
     total_si:     Decimal
+    total_holiday_bonus: Decimal
+    total_advance_deduction: Decimal
     approved_by:  Optional[int]
     approved_at:  Optional[datetime]
     created_at:   datetime
@@ -209,6 +224,19 @@ class AttendanceRecordUpdate(BaseModel):
     notes:     Optional[str] = Field(None, max_length=300)
 
 
+class AttendanceImportResult(BaseModel):
+    """POST /hr/attendance/import-excel — نتيجة استيراد ملف حضور Excel
+    (wagdy.md H-07). imported = عدد خلايا (موظف × يوم) اتحوّلت لسجل حضور
+    حقيقي بنجاح (إنشاء أو تحديث — upsert، مش رفض التكرار). errors محدودة
+    بـ 20 سطر (نفس نمط استيراد عقود التايم شير) عشان الرد ميضخمش على ملف
+    فيه مشاكل كتير. unmatched_employees = القيم في عمود تعريف الموظف (كود
+    أو اسم) اللي مالقتلهاش أي Employee مطابق في الفرع — أكتر سبب واقعي
+    للفشل الجزئي، فبتترجع صريحة بدل ما تتخبّى جوه errors العامة."""
+    imported:            int
+    errors:              list[str]
+    unmatched_employees: list[str]
+
+
 class LeaveBalanceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:              int
@@ -222,6 +250,78 @@ class LeaveBalanceRead(BaseModel):
     def model_post_init(self, __context: object) -> None:
         object.__setattr__(self, "annual_remaining",
                            max(0, self.annual_entitled - self.annual_taken))
+
+
+# ── SalaryAdvance (wagdy.md H-01) ────────────────────────────────────────
+
+class SalaryAdvanceCreate(BaseModel):
+    employee_id:              int
+    branch_id:                int
+    amount:                   Decimal = Field(..., gt=0)
+    disbursed_date:           date
+    monthly_deduction_amount: Decimal = Field(..., gt=0)
+    notes:                    Optional[str] = Field(None, max_length=500)
+
+
+class SalaryAdvanceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                        int
+    employee_id:               int
+    branch_id:                 int
+    amount:                    Decimal
+    disbursed_date:            date
+    monthly_deduction_amount:  Decimal
+    remaining_balance:         Decimal
+    status:                    str
+    notes:                     Optional[str]
+    created_by:                int
+    created_at:                datetime
+
+
+class SalaryAdvanceCancel(BaseModel):
+    """PATCH /hr/salary-advances/{id}/cancel — يلغي سلفة نشطة (لسه ماتخصمش
+    ولا قسط منها) قبل ما تدخل حساب الراتب. سلفة اتخصم منها أي قسط بالفعل
+    ماينفعش تتلغى (راجع services.cancel_salary_advance)."""
+    reason: Optional[str] = Field(None, max_length=300)
+
+
+# ── AdvancePayment (wagdy.md H-02) ───────────────────────────────────────
+
+class AdvancePaymentCreate(BaseModel):
+    employee_id:  int
+    branch_id:    int
+    amount:       Decimal = Field(..., gt=0)
+    payment_date: date
+    notes:        Optional[str] = Field(None, max_length=300)
+
+
+class AdvancePaymentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:               int
+    employee_id:      int
+    branch_id:        int
+    amount:           Decimal
+    payment_date:     date
+    notes:            Optional[str]
+    recorded_by:      int
+    deducted:          bool
+    payroll_line_id:  Optional[int]
+    created_at:       datetime
+
+
+# ── LeaveBalanceMonthly (wagdy.md H-03) ──────────────────────────────────
+
+class LeaveBalanceMonthlyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:               int
+    employee_id:      int
+    branch_id:        int
+    period_year:      int
+    period_month:      int
+    opening_balance:  Decimal
+    accrued:          Decimal
+    consumed:         Decimal
+    closing_balance:  Decimal
 
 
 # ── Department ────────────────────────────────────────────────────────
@@ -506,6 +606,8 @@ class MyPayslipRead(BaseModel):
     penalty_deduction:      Decimal
     late_penalty_deduction: Decimal
     unpaid_leave_deduction: Decimal
+    holiday_bonus:          Decimal = Decimal("0")
+    advance_deduction:      Decimal = Decimal("0")
 
 
 class LeaderboardEntry(BaseModel):

@@ -18,6 +18,7 @@ from typing import Optional
 
 from app.celery_app import celery_app
 from app.core.config import settings
+from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import business_today
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ def process_reservation_no_shows(self):
 
     except Exception as exc:
         logger.error("process_reservation_no_shows failed: %s", exc)
+        notify_task_failure("app.tasks.beach_tasks.process_reservation_no_shows", exc)
 
 
 @celery_app.task(name="app.tasks.beach_tasks.mark_b2b_overdue", bind=True, max_retries=3)

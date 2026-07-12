@@ -14,8 +14,10 @@ from app.core.config import settings
 from app.modules.hr import crud
 from app.modules.hr.models import AttendancePolicy, AttendanceRecord, Employee, LeaveRequest, PayrollRun
 from app.modules.hr.schemas import (
+    AdvancePaymentCreate,
     AttendanceRecordCreate, EmployeeCreate, EmployeeUpdate,
     PayrollResultRead, PayrollRunCreate,
+    SalaryAdvanceCreate,
 )
 from app.resort_os.hr_engine import (
     Allowance as AllowanceDC,
@@ -138,6 +140,121 @@ def punch_out(db: Session, user_id: int) -> AttendanceRecord:
     return existing
 
 
+# ── Excel Attendance Import (wagdy.md H-07) ─────────────────────────────
+# الحضور لسه بيتسجّل يدويًا في Excel (كشف "يوم بيوم" — عمود موظف + عمود لكل
+# يوم في الشهر، وقيمة الخلية كود حالة p/v/u...) مش في النظام خالص. نفس نمط
+# استيراد عقود التايم شير (timeshare.services.import_contracts_excel):
+# openpyxl، لا dry-run، commit واحد في الآخر، أخطاء لكل صف/خلية بتتجمّع
+# بدل ما توقف الاستيراد كله (errors[:20])، بس هنا upsert حقيقي (مش skip-on-
+# duplicate) لأن AttendanceRecord عنده مفتاح طبيعي حقيقي (employee_id +
+# record_date، UniqueConstraint فعلي) — إعادة رفع نفس الملف بعد تصحيح خانة
+# لازم يحدّث السجل الموجود، مش يتجاهله.
+_STATUS_CODE_MAP: dict[str, str] = {
+    "p": "present", "present": "present", "حاضر": "present", "ح": "present",
+    "u": "absent", "absent": "absent", "غياب": "absent", "غ": "absent", "a": "absent",
+    "v": "leave", "leave": "leave", "اجازة": "leave", "إجازة": "leave",
+    "late": "late", "متاخر": "late", "متأخر": "late",
+    "h": "holiday", "holiday": "holiday", "عطلة": "holiday",
+}
+
+
+def _resolve_import_column_day(header: object) -> Optional[tuple[int, int, int] | int]:
+    """يحلّل عنوان عمود يوم في ملف الحضور — إما رقم يوم خام (يُستخدم مع
+    period_year/period_month اللي المدير اختارهم وقت الرفع) أو تاريخ كامل
+    (openpyxl بيرجّعه date/datetime حقيقي لو الخلية متنسّقة كتاريخ في
+    الإكسل) بيغلب period_year/period_month لنفس العمود ده تحديدًا. أي حاجة
+    تانية (عمود اسم/ملاحظات) بترجع None وتتجاهل بصمت."""
+    if isinstance(header, bool):
+        return None
+    if isinstance(header, (int, float)):
+        return int(header)
+    if isinstance(header, (date, datetime)):
+        d = header.date() if isinstance(header, datetime) else header
+        return (d.year, d.month, d.day)
+    if isinstance(header, str) and header.strip().isdigit():
+        return int(header.strip())
+    return None
+
+
+def import_attendance_excel(
+    db: Session, branch_id: int, period_year: int, period_month: int, file_content: bytes,
+):
+    """wagdy.md H-07 — يحوّل ملف Excel (عمود موظف أول + عمود لكل يوم) لسجلات
+    AttendanceRecord حقيقية. العمود الأول بيتقارن بـ employee_code أولاً
+    (تطابق حرفي)، وإلا بالاسم الكامل (case-insensitive) داخل نفس الفرع."""
+    import openpyxl  # noqa: PLC0415
+    import io as _io  # noqa: PLC0415
+    import calendar as _calendar  # noqa: PLC0415
+
+    from app.modules.hr.schemas import AttendanceImportResult, AttendanceRecordCreate  # noqa: PLC0415
+
+    wb = openpyxl.load_workbook(_io.BytesIO(file_content), data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows or len(rows) < 2:
+        raise ValueError("الملف فاضي")
+
+    headers = rows[0]
+    day_columns: list[tuple[int, object]] = []  # (col_index, resolved_day_info)
+    for col_idx, header in enumerate(headers[1:], start=1):
+        resolved = _resolve_import_column_day(header)
+        if resolved is not None:
+            day_columns.append((col_idx, resolved))
+
+    if not day_columns:
+        raise ValueError("لم يتم العثور على أي عمود يوم صالح (رقم يوم أو تاريخ) في الصف الأول")
+
+    days_in_month = _calendar.monthrange(period_year, period_month)[1]
+
+    imported = 0
+    errors: list[str] = []
+    unmatched: set[str] = set()
+
+    for row_idx, row in enumerate(rows[1:], start=2):
+        identifier = row[0] if row else None
+        if identifier is None or str(identifier).strip() == "":
+            continue  # صف فاضي/فاصل — يتجاهل بصمت
+
+        identifier_str = str(identifier).strip()
+        emp = crud.get_employee_by_code(db, identifier_str)
+        if not emp or emp.branch_id != branch_id:
+            emp = crud.get_employee_by_name(db, branch_id, identifier_str)
+        if not emp:
+            unmatched.add(identifier_str)
+            continue
+
+        for col_idx, day_info in day_columns:
+            cell = row[col_idx] if col_idx < len(row) else None
+            if cell is None or str(cell).strip() == "":
+                continue  # مفيش بيانات لليوم ده — يوم مستقبلي غالبًا، يتجاهل
+
+            try:
+                if isinstance(day_info, tuple):
+                    y, m, d = day_info
+                else:
+                    y, m, d = period_year, period_month, day_info
+                    if d < 1 or d > days_in_month:
+                        raise ValueError(f"رقم يوم غير صالح: {d}")
+
+                status = _STATUS_CODE_MAP.get(str(cell).strip().lower())
+                if not status:
+                    raise ValueError(f"قيمة حالة غير معروفة: '{cell}'")
+
+                crud.upsert_attendance(db, AttendanceRecordCreate(
+                    employee_id=emp.id, branch_id=branch_id,
+                    record_date=date(y, m, d), status=status,
+                ))
+                imported += 1
+            except Exception as exc:
+                if len(errors) < 20:
+                    errors.append(f"صف {row_idx} ({identifier_str}), يوم {day_info}: {str(exc)[:120]}")
+
+    db.commit()
+    return AttendanceImportResult(
+        imported=imported, errors=errors, unmatched_employees=sorted(unmatched),
+    )
+
+
 def calculate_employee_payroll(
     db: Session,
     employee_id: int,
@@ -147,6 +264,7 @@ def calculate_employee_payroll(
     unpaid_leave_days: int = 0,
     overtime_amount: Decimal = Decimal("0"),
     late_penalty_amount: Decimal = Decimal("0"),
+    advance_deduction_amount: Decimal = Decimal("0"),
 ) -> PayrollResultRead:
     emp = get_employee_or_404(db, employee_id)
 
@@ -195,6 +313,9 @@ def calculate_employee_payroll(
         penalty_days=penalty_days,
         late_penalty_amount=late_penalty_amount,
         unpaid_leave_days=unpaid_leave_days,
+        insurance_base_salary=emp.insurance_base_salary,
+        holiday_bonus_amount=emp.holiday_bonus,
+        advance_deduction_amount=advance_deduction_amount,
         hire_date=emp.hire_date,
         birth_date=emp.birth_date or emp.hire_date,
         period_month=date(period_year, period_month, 1),
@@ -257,6 +378,42 @@ def _compute_auto_attendance_adjustments(
     return overtime_amount, late_penalty_amount
 
 
+def _compute_advance_deductions(
+    db: Session, emp: Employee, period_year: int, period_month: int,
+) -> tuple[Decimal, list, list]:
+    """wagdy.md H-01/H-02 — يجمع (إجمالي الخصم, أقساط السلف النشطة اللي
+    هتتخصم, دفعات الشهر اللي لسه ما اتخصمتش) لموظف/فترة. الإجمالي فقط هو
+    اللي بيدخل حساب الراتب (hr_engine)؛ القوائم بترجع عشان run_payroll_for_
+    branch يقدر يطبّق التغيير الفعلي (remaining_balance/deducted) بعد ما
+    يتأكد إن سطر كشف الرواتب اتسجّل بنجاح — مش قبل كده."""
+    advances = crud.list_active_advances_for_employee(db, emp.id)
+    payments = crud.list_undeducted_payments_for_period(db, emp.id, period_year, period_month)
+
+    total = Decimal("0")
+    for adv in advances:
+        deduct = min(adv.monthly_deduction_amount, adv.remaining_balance)
+        total += deduct
+    for payment in payments:
+        total += payment.amount
+
+    return total.quantize(Decimal("0.01")), advances, payments
+
+
+def _apply_advance_deductions(db: Session, advances: list, payments: list, payroll_line_id: int) -> None:
+    """يطبّق فعليًا أثر الخصم المحسوب في _compute_advance_deductions — بيتنادى
+    بعد ما سطر كشف الرواتب يتسجّل بنجاح فقط (نفس الـ transaction، commit
+    واحد في الآخر مع باقي run_payroll_for_branch)."""
+    for adv in advances:
+        deduct = min(adv.monthly_deduction_amount, adv.remaining_balance)
+        adv.remaining_balance -= deduct
+        if adv.remaining_balance <= Decimal("0"):
+            adv.remaining_balance = Decimal("0")
+            adv.status = "settled"
+    for payment in payments:
+        payment.deducted = True
+        payment.payroll_line_id = payroll_line_id
+
+
 def run_payroll_for_branch(
     db: Session,
     branch_id: int,
@@ -279,6 +436,8 @@ def run_payroll_for_branch(
     total_net   = Decimal("0")
     total_tax   = Decimal("0")
     total_si    = Decimal("0")
+    total_holiday_bonus = Decimal("0")
+    total_advance_deduction = Decimal("0")
 
     period_str = f"{period_year}-{period_month:02d}"
 
@@ -300,17 +459,23 @@ def run_payroll_for_branch(
             db, emp, period_year, period_month, policy_orm,
         )
 
+        # wagdy.md H-01/H-02 — أقساط سلف نشطة + دفعات الشهر غير المخصومة بعد.
+        advance_deduction_amount, active_advances, undeducted_payments = _compute_advance_deductions(
+            db, emp, period_year, period_month,
+        )
+
         try:
             result = calculate_employee_payroll(
                 db, emp.id, period_year, period_month,
                 penalty_days=penalty_days,
                 overtime_amount=overtime_amount,
                 late_penalty_amount=late_penalty_amount,
+                advance_deduction_amount=advance_deduction_amount,
             )
         except ValueError:
             continue  # تجاهل الموظفين الذين لا تتوفر لهم بيانات
 
-        crud.create_payroll_line(db, run.id, {
+        line = crud.create_payroll_line(db, run.id, {
             "employee_id":            emp.id,
             "basic_salary":           result.basic_salary,
             "gross_salary":           result.gross_salary,
@@ -321,18 +486,27 @@ def run_payroll_for_branch(
             "penalty_deduction":      result.penalty_deduction,
             "late_penalty_deduction": result.late_penalty_deduction,
             "unpaid_leave_deduction": result.unpaid_leave_deduction,
+            "holiday_bonus":          result.holiday_bonus,
+            "advance_deduction":      result.advance_deduction,
             "journal_entry":          json.dumps(result.journal_entry, ensure_ascii=False),
         })
+        # الرصيد الفعلي (SalaryAdvance.remaining_balance/AdvancePayment.deducted)
+        # يتحدّث بس دلوقتي — بعد ما السطر يتسجّل بنجاح، مش قبله.
+        _apply_advance_deductions(db, active_advances, undeducted_payments, line.id)
 
         total_gross += result.gross_salary
         total_net   += result.net_salary
         total_tax   += result.monthly_tax
         total_si    += result.employee_si
+        total_holiday_bonus += result.holiday_bonus
+        total_advance_deduction += result.advance_deduction
 
     run.total_gross = total_gross
     run.total_net   = total_net
     run.total_tax   = total_tax
     run.total_si    = total_si
+    run.total_holiday_bonus = total_holiday_bonus
+    run.total_advance_deduction = total_advance_deduction
 
     db.commit()
     db.refresh(run)
@@ -361,7 +535,20 @@ def approve_payroll_run(
 
 
 def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
-    """يُنشئ قيد مزدوج مجمّع لكشف الرواتب المعتمد."""
+    """يُنشئ قيد مزدوج مجمّع لكشف الرواتب المعتمد.
+
+    ⚠️ فجوة محاسبية معروفة وموجودة من قبل (مش من هذا التعديل): penalty_
+    deduction/late_penalty_deduction/unpaid_leave_deduction — وwagdy.md
+    H-01/H-02 (advance_deduction) اتضاف بنفس النمط عمدًا — كل دول بيقللوا
+    total_net (وبالتالي القيد الدائن "صافي رواتب مستحقة" أوتوماتيك) من غير
+    أي قيد مدين مقابل. القيد بيفضل "متوازن" ظاهريًا بس لأن كل الخصومات دي
+    بتتشال من نفس الجانب (لا يوجد سطر مدين إضافي زيها زي holiday_bonus تحت)،
+    يعني إجمالي المدين/الدائن بيتساووا فقط لو مفيش أي خصم من الفئة دي في
+    الكشف. المعالجة الصحيحة محاسبيًا (خصوصًا advance_deduction) محتاجة حساب
+    أصول "سلف موظفين مستحقة" بيتقيّد عليه Dr وقت صرف السلفة وCr وقت الخصم من
+    الراتب — ده تصميم أكبر (حساب جديد + قيد عند POST /hr/salary-advances)
+    مؤجَّل عمدًا لنفس سبب فجوة إيراد الغرفة الموثّقة في CLAUDE.md §18 بند 0:
+    يستاهل مراجعة صريحة مع Mohamed قبل ما يتنفّذ، مش تعديل عابر وسط ميزة تانية."""
     try:
         from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
         from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
@@ -388,10 +575,15 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
     # run.total_si (SI الموظف) تحت مسمى "مصروف صاحب العمل" بدون أي قيد دائن
     # مقابل — ده كان بيكسر توازن القيد (مدين ≠ دائن) في أي مرة الحساب يكون
     # موجود فعلاً. اتشال لحد ما يُضاف عمود total_employer_si حقيقي (migration).
-    if "5100" in accs and run.total_gross:
+    # مكافآت الأعياد (total_holiday_bonus) مضافة هنا لنفس حساب "مصروف رواتب"
+    # — مش خاضعة لضريبة/تأمينات فمستبعدة من total_gross نفسه (راجع
+    # hr_engine.calculate_payroll)، لكن لازم تدخل المدين هنا عشان يفضل متوازن
+    # مع "صافي رواتب مستحقة" تحت (اللي total_net بتاعه بيشملها فعليًا).
+    gross_debit = (run.total_gross or Decimal("0")) + (run.total_holiday_bonus or Decimal("0"))
+    if "5100" in accs and gross_debit:
         lines.append(JournalLineCreate(
             account_id=accs["5100"],
-            debit=run.total_gross,
+            debit=gross_debit,
             credit=Decimal("0"),
             description=f"مصروف رواتب {period_str}",
         ))
@@ -434,6 +626,82 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
         create_journal_entry(db, entry_data, user_id)
     except Exception:
         pass  # لا نوقف الاعتماد إذا فشل القيد
+
+
+# ── SalaryAdvance (wagdy.md H-01) ────────────────────────────────────────
+
+def create_salary_advance(db: Session, data: SalaryAdvanceCreate, created_by: int):
+    get_employee_or_404(db, data.employee_id)
+    if data.monthly_deduction_amount > data.amount:
+        raise ValueError("القسط الشهري لا يمكن أن يكون أكبر من مبلغ السلفة نفسه")
+    advance = crud.create_salary_advance(db, data, created_by)
+    db.commit()
+    db.refresh(advance)
+    return advance
+
+
+def cancel_salary_advance(db: Session, advance_id: int, reason: Optional[str] = None):
+    """يلغي سلفة لسه ما اتخصمش منها أي قسط (remaining_balance == amount).
+    سلفة اتخصم منها قسط بالفعل بقت جزء من كشوف رواتب معتمدة/محسوبة — إلغاؤها
+    هيكسر الاتساق المحاسبي (نفس فلسفة §5.2 Finance First)، فممنوع."""
+    advance = crud.get_salary_advance(db, advance_id)
+    if not advance:
+        raise ValueError(f"السلفة {advance_id} غير موجودة")
+    if advance.status != "active":
+        raise ValueError(f"السلفة في حالة '{advance.status}' ولا يمكن إلغاؤها")
+    if advance.remaining_balance != advance.amount:
+        raise ValueError("لا يمكن إلغاء سلفة تم خصم أقساط منها بالفعل")
+    advance.status = "cancelled"
+    if reason:
+        advance.notes = f"{advance.notes or ''}\n[إلغاء] {reason}".strip()
+    db.commit()
+    db.refresh(advance)
+    return advance
+
+
+# ── AdvancePayment (wagdy.md H-02) ───────────────────────────────────────
+
+def create_advance_payment(db: Session, data: AdvancePaymentCreate, recorded_by: int):
+    get_employee_or_404(db, data.employee_id)
+    payment = crud.create_advance_payment(db, data, recorded_by)
+    db.commit()
+    db.refresh(payment)
+    return payment
+
+
+# ── LeaveBalanceMonthly (wagdy.md H-03) ──────────────────────────────────
+
+def accrue_monthly_leave_balance(
+    db: Session, employee_id: int, branch_id: int, period_year: int, period_month: int,
+    monthly_rate: Decimal = Decimal("7.5"),
+):
+    """يستحق 7.5 يوم إجازة للموظف للشهر ده، بيخصم منها أيام الإجازة
+    المعتمدة اللي بدايتها وقعت في نفس الشهر، ويرحّل الرصيد الختامي للشهر
+    اللي فات كرصيد افتتاحي (راجع LeaveBalanceMonthly.__doc__ للفرق عن
+    LeaveBalance.annual_entitled القانوني). يُستدعى شهريًا من
+    app.tasks.hr_tasks.accrue_monthly_leave_ledger لكل موظف نشط."""
+    previous = crud.get_latest_leave_balance_monthly(db, employee_id)
+    opening_balance = previous.closing_balance if previous else Decimal("0")
+
+    first_day = date(period_year, period_month, 1)
+    last_day = date(period_year, period_month, calendar.monthrange(period_year, period_month)[1])
+    approved_leaves = crud.list_leave_requests(
+        db, branch_id, employee_id=employee_id, status="approved",
+        limit=200,
+    )[0]
+    consumed = sum(
+        (Decimal(str(lr.days_requested)) for lr in approved_leaves
+         if first_day <= lr.start_date <= last_day),
+        Decimal("0"),
+    )
+
+    row = crud.upsert_leave_balance_monthly(
+        db, employee_id, branch_id, period_year, period_month,
+        opening_balance=opening_balance, accrued=monthly_rate, consumed=consumed,
+    )
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 # ── Leave Management ──────────────────────────────────────────────────

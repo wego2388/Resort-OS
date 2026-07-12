@@ -12,6 +12,7 @@ const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard
 interface Employee {
   id: number; full_name: string; position: string; department?: string
   hire_date: string; basic_salary: number; status: string; phone?: string
+  insurance_base_salary?: number | null; holiday_bonus?: number
 }
 interface PayrollRun {
   id: number; period_year: number; period_month: number; status: string
@@ -337,6 +338,190 @@ async function submitPenalty() {
   } finally { savingPenalty.value = false }
 }
 
+// ── wagdy.md H-04/H-05: وعاء تأمين منفصل + مكافأة عيد ثابتة — حقلان
+// جديدان على Employee مش قابلين للتعديل من أي شاشة خالص لحد دلوقتي (حتى
+// basic_salary نفسه مكانش قابل للتعديل من هنا) — مودال بسيط زي بدلات/جزاءات
+// بدل شاشة تعديل موظف كاملة (out of scope لدفعة الشغل دي).
+const compModalEmployee = ref<Employee | null>(null)
+// insurance_base_salary فاضي = '' (مش null) — AppInput.modelValue بيقبل
+// string | number بس، مش null.
+const compForm = ref({ basic_salary: 0 as number | string, insurance_base_salary: '' as number | string, holiday_bonus: 0 as number | string })
+const savingComp = ref(false)
+
+function openCompModal(emp: Employee) {
+  compModalEmployee.value = emp
+  compForm.value = {
+    basic_salary: emp.basic_salary ?? 0,
+    insurance_base_salary: emp.insurance_base_salary ?? '',
+    holiday_bonus: emp.holiday_bonus ?? 0,
+  }
+}
+
+async function submitComp() {
+  if (!compModalEmployee.value) return
+  const basicSalary = Number(compForm.value.basic_salary)
+  if (!(basicSalary > 0)) {
+    toast.error('الراتب الأساسي لازم يكون أكبر من صفر')
+    return
+  }
+  const insuranceBase = compForm.value.insurance_base_salary
+  const insuranceBaseNum = insuranceBase === '' || insuranceBase === null || insuranceBase === undefined
+    ? null : Number(insuranceBase)
+  savingComp.value = true
+  try {
+    const empId = compModalEmployee.value.id
+    const { data } = await api.patch(`/api/v1/hr/employees/${empId}`, {
+      basic_salary: basicSalary,
+      insurance_base_salary: insuranceBaseNum,
+      holiday_bonus: Number(compForm.value.holiday_bonus) || 0,
+    })
+    employees.value = employees.value.map(e => (e.id === empId ? { ...e, ...data } : e))
+    toast.success('تم تحديث بيانات الراتب')
+    compModalEmployee.value = null
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل حفظ بيانات الراتب')
+  } finally { savingComp.value = false }
+}
+
+// ── wagdy.md H-01: سلفة راتب (قرض بأقساط شهرية ثابتة) ──────────────────
+interface SalaryAdvance {
+  id: number; employee_id: number; amount: number
+  disbursed_date: string; monthly_deduction_amount: number
+  remaining_balance: number; status: string; notes?: string | null
+}
+const advanceModalEmployee = ref<Employee | null>(null)
+const employeeAdvances = ref<SalaryAdvance[]>([])
+const advancesLoading = ref(false)
+const advanceForm = ref({ amount: 0, disbursed_date: localDateStr(new Date()), monthly_deduction_amount: 0, notes: '' })
+const savingAdvance = ref(false)
+
+async function openAdvanceModal(emp: Employee) {
+  advanceModalEmployee.value = emp
+  advanceForm.value = { amount: 0, disbursed_date: localDateStr(new Date()), monthly_deduction_amount: 0, notes: '' }
+  advancesLoading.value = true
+  try {
+    const res = await api.get('/api/v1/hr/salary-advances', { params: { employee_id: emp.id } })
+    employeeAdvances.value = res.data ?? []
+  } catch (e) {
+    console.error(e)
+    toast.error('فشل تحميل سلف الموظف')
+  } finally { advancesLoading.value = false }
+}
+
+async function submitAdvance() {
+  if (!advanceModalEmployee.value) return
+  const amount = Number(advanceForm.value.amount)
+  const monthlyDeduction = Number(advanceForm.value.monthly_deduction_amount)
+  if (!(amount > 0) || !(monthlyDeduction > 0)) {
+    toast.error('المبلغ والقسط الشهري (أكبر من صفر) مطلوبان')
+    return
+  }
+  savingAdvance.value = true
+  try {
+    const empId = advanceModalEmployee.value.id
+    const { data } = await api.post('/api/v1/hr/salary-advances', {
+      employee_id: empId, branch_id: branchId,
+      amount, disbursed_date: advanceForm.value.disbursed_date,
+      monthly_deduction_amount: monthlyDeduction,
+      notes: advanceForm.value.notes || undefined,
+    })
+    employeeAdvances.value = [data, ...employeeAdvances.value]
+    advanceForm.value = { amount: 0, disbursed_date: localDateStr(new Date()), monthly_deduction_amount: 0, notes: '' }
+    toast.success('تم تسجيل السلفة — سيبدأ خصمها من كشف الرواتب القادم')
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل حفظ السلفة')
+  } finally { savingAdvance.value = false }
+}
+
+async function cancelAdvance(advance: SalaryAdvance) {
+  const ok = await confirm({
+    title: 'إلغاء السلفة',
+    message: `هل تريد إلغاء السلفة (${advance.amount.toLocaleString('ar-EG')} ج)؟`,
+    confirmText: 'إلغاء السلفة', danger: true,
+  })
+  if (!ok) return
+  try {
+    await api.patch(`/api/v1/hr/salary-advances/${advance.id}/cancel`, {})
+    employeeAdvances.value = employeeAdvances.value.map(a => (a.id === advance.id ? { ...a, status: 'cancelled' } : a))
+    toast.success('تم إلغاء السلفة')
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل إلغاء السلفة — ربما تم خصم قسط منها بالفعل')
+  }
+}
+
+// ── wagdy.md H-02: دفعة يومية بسيطة تُخصم بالكامل في نفس الشهر ──────────
+interface AdvancePayment {
+  id: number; employee_id: number; amount: number; payment_date: string
+  deducted: boolean; notes?: string | null
+}
+const paymentModalEmployee = ref<Employee | null>(null)
+const employeePayments = ref<AdvancePayment[]>([])
+const paymentsLoading = ref(false)
+const paymentForm = ref({ amount: 0, payment_date: localDateStr(new Date()), notes: '' })
+const savingPayment = ref(false)
+
+async function openPaymentModal(emp: Employee) {
+  paymentModalEmployee.value = emp
+  paymentForm.value = { amount: 0, payment_date: localDateStr(new Date()), notes: '' }
+  paymentsLoading.value = true
+  try {
+    const res = await api.get('/api/v1/hr/advance-payments', { params: { employee_id: emp.id } })
+    employeePayments.value = res.data ?? []
+  } catch (e) {
+    console.error(e)
+    toast.error('فشل تحميل دفعات الموظف')
+  } finally { paymentsLoading.value = false }
+}
+
+async function submitPayment() {
+  if (!paymentModalEmployee.value) return
+  const amount = Number(paymentForm.value.amount)
+  if (!(amount > 0)) {
+    toast.error('المبلغ لازم يكون أكبر من صفر')
+    return
+  }
+  savingPayment.value = true
+  try {
+    const empId = paymentModalEmployee.value.id
+    const { data } = await api.post('/api/v1/hr/advance-payments', {
+      employee_id: empId, branch_id: branchId,
+      amount, payment_date: paymentForm.value.payment_date,
+      notes: paymentForm.value.notes || undefined,
+    })
+    employeePayments.value = [data, ...employeePayments.value]
+    paymentForm.value = { amount: 0, payment_date: localDateStr(new Date()), notes: '' }
+    toast.success('تم تسجيل الدفعة — سيتم خصمها من صافي راتب نفس الشهر')
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل حفظ الدفعة')
+  } finally { savingPayment.value = false }
+}
+
+// ── wagdy.md H-03: رصيد الإجازة الشهري المتحرّك (7.5 يوم/شهر) — للقراءة فقط،
+// بيتحدّث تلقائيًا عبر Celery task شهري (hr_tasks.accrue_monthly_leave_ledger).
+interface LeaveBalanceMonthly {
+  id: number; period_year: number; period_month: number
+  opening_balance: number; accrued: number; consumed: number; closing_balance: number
+}
+const balanceModalEmployee = ref<Employee | null>(null)
+const employeeLeaveBalances = ref<LeaveBalanceMonthly[]>([])
+const balancesLoading = ref(false)
+
+async function openBalanceModal(emp: Employee) {
+  balanceModalEmployee.value = emp
+  balancesLoading.value = true
+  try {
+    const res = await api.get('/api/v1/hr/leave-balance-monthly', { params: { employee_id: emp.id } })
+    employeeLeaveBalances.value = res.data ?? []
+  } catch (e) {
+    console.error(e)
+    toast.error('فشل تحميل رصيد الإجازة')
+  } finally { balancesLoading.value = false }
+}
+
 async function loadTab(t: typeof tab.value) {
   tab.value = t
   if (t === 'employees') await fetchEmployees()
@@ -481,6 +666,53 @@ async function saveAttendanceEdit() {
   }
 }
 
+// ── wagdy.md H-07: استيراد ملف حضور Excel (عمود موظف أول + عمود لكل يوم) ──
+// نفس نمط استيراد عقود التايم شير (TimeshareView.vue) — رفع بضغطة واحدة،
+// من غير معاينة مسبقة، ملخص النتيجة (استيراد/أخطاء/موظفين غير متعرّف
+// عليهم) بيظهر بعد الرفع مباشرة.
+interface AttendanceImportResult { imported: number; errors: string[]; unmatched_employees: string[] }
+const showImportModal = ref(false)
+const importFile = ref<File | null>(null)
+const importPeriodYear = ref(today.getFullYear())
+const importPeriodMonth = ref(today.getMonth() + 1)
+const importUploading = ref(false)
+const importResult = ref<AttendanceImportResult | { error: string } | null>(null)
+
+function onImportFilePicked(e: Event) {
+  const target = e.target as HTMLInputElement
+  importFile.value = target.files?.[0] ?? null
+  importResult.value = null
+}
+
+async function submitAttendanceImport() {
+  if (!importFile.value || importUploading.value) return
+  importUploading.value = true
+  importResult.value = null
+  try {
+    const form = new FormData()
+    form.append('file', importFile.value)
+    const res = await api.post('/api/v1/hr/attendance/import-excel', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      params: { branch_id: branchId, period_year: importPeriodYear.value, period_month: importPeriodMonth.value },
+    })
+    importResult.value = res.data
+    toast.success(`تم استيراد ${res.data.imported} سجل حضور`)
+    await fetchAttendance()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail ?? 'فشل الاستيراد'
+    importResult.value = { error: msg }
+    toast.error(msg)
+  } finally {
+    importUploading.value = false
+  }
+}
+
+function openImportModal() {
+  importFile.value = null
+  importResult.value = null
+  showImportModal.value = true
+}
+
 onMounted(fetchEmployees)
 </script>
 
@@ -544,6 +776,10 @@ onMounted(fetchEmployees)
                   <div class="flex items-center gap-2">
                     <button @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800">+ بدل</button>
                     <button @click="openPenaltyModal(emp)" class="text-xs font-semibold text-red-600 hover:text-red-800">+ جزاء</button>
+                    <button v-if="auth.hasRole('admin')" @click="openAdvanceModal(emp)" class="text-xs font-semibold text-amber-600 hover:text-amber-800">💰 سلفة</button>
+                    <button @click="openPaymentModal(emp)" class="text-xs font-semibold text-teal-600 hover:text-teal-800">📅 دفعة</button>
+                    <button @click="openBalanceModal(emp)" class="text-xs font-semibold text-purple-600 hover:text-purple-800">📊 رصيد إجازة</button>
+                    <button v-if="auth.hasRole('admin')" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 hover:text-gray-900">✏️ الراتب</button>
                   </div>
                 </td>
               </tr>
@@ -584,6 +820,26 @@ onMounted(fetchEmployees)
       </div>
     </AppModal>
 
+    <!-- wagdy.md H-04/H-05: تعديل الراتب الأساسي/وعاء التأمين/مكافأة العيد -->
+    <AppModal :open="!!compModalEmployee" :title="`بيانات الراتب — ${compModalEmployee?.full_name ?? ''}`"
+      @close="compModalEmployee = null">
+      <div class="space-y-3">
+        <AppInput label="الراتب الأساسي" v-model.number="compForm.basic_salary" type="number" />
+        <div>
+          <AppInput label="وعاء التأمينات الاجتماعية (اختياري)" v-model.number="compForm.insurance_base_salary" type="number"
+            placeholder="اتركه فاضي لاستخدام الراتب الأساسي" />
+          <p class="text-xs text-gray-400 mt-1">لو مختلف عن الراتب الأساسي (بعض الموظفين وعاءهم التأميني المسجّل أقل) — لو فاضي، الراتب الأساسي هو المستخدَم.</p>
+        </div>
+        <div>
+          <AppInput label="مكافأة الأعياد الرسمية" v-model.number="compForm.holiday_bonus" type="number" />
+          <p class="text-xs text-gray-400 mt-1">بند ثابت بيدخل الصافي تلقائيًا في كل كشف رواتب — صفّره بعد شهر العيد لو مش عايزه يتكرر.</p>
+        </div>
+        <AppButton :disabled="savingComp" @click="submitComp" variant="primary" size="sm">
+          {{ savingComp ? 'جاري الحفظ...' : 'حفظ' }}
+        </AppButton>
+      </div>
+    </AppModal>
+
     <!-- Penalty Modal -->
     <AppModal :open="!!penaltyModalEmployee" :title="`تسجيل جزاء — ${penaltyModalEmployee?.full_name ?? ''}`"
       @close="penaltyModalEmployee = null">
@@ -598,6 +854,131 @@ onMounted(fetchEmployees)
         <AppButton :disabled="savingPenalty" @click="submitPenalty" variant="danger" size="sm">
           {{ savingPenalty ? 'جاري الحفظ...' : 'تسجيل الجزاء' }}
         </AppButton>
+      </div>
+    </AppModal>
+
+    <!-- wagdy.md H-01: سلفة راتب -->
+    <AppModal :open="!!advanceModalEmployee" :title="`سلف — ${advanceModalEmployee?.full_name ?? ''}`"
+      @close="advanceModalEmployee = null">
+      <div class="space-y-4">
+        <div v-if="advancesLoading" class="text-center py-4 text-sm text-gray-400">جاري التحميل...</div>
+        <div v-else-if="employeeAdvances.length" class="space-y-2">
+          <div v-for="a in employeeAdvances" :key="a.id" class="text-sm bg-stone-50 rounded-lg px-3 py-2">
+            <div class="flex items-center justify-between">
+              <span class="font-medium text-gray-800">{{ a.amount.toLocaleString('ar-EG') }} ج — قسط {{ a.monthly_deduction_amount.toLocaleString('ar-EG') }} ج/شهر</span>
+              <AppBadge size="sm" :variant="a.status === 'active' ? 'info' : a.status === 'settled' ? 'success' : 'neutral'">
+                {{ a.status === 'active' ? 'نشطة' : a.status === 'settled' ? 'مسدّدة' : 'ملغاة' }}
+              </AppBadge>
+            </div>
+            <div class="text-xs text-gray-500 mt-1">
+              المتبقي: {{ a.remaining_balance.toLocaleString('ar-EG') }} ج — صرفت في {{ formatDate(a.disbursed_date) }}
+            </div>
+            <button v-if="a.status === 'active' && a.remaining_balance == a.amount"
+              @click="cancelAdvance(a)" class="text-xs font-semibold text-red-600 hover:text-red-800 mt-1">إلغاء</button>
+          </div>
+        </div>
+        <EmptyState v-else icon="💰" title="لا يوجد سلف مسجّلة" />
+
+        <div class="border-t border-stone-100 pt-4 space-y-3">
+          <div class="text-xs font-semibold text-gray-500 uppercase">تسجيل سلفة جديدة</div>
+          <AppInput v-model.number="advanceForm.amount" type="number" placeholder="المبلغ (جنيه)" />
+          <label class="block text-xs font-semibold text-gray-500">تاريخ الصرف</label>
+          <input v-model="advanceForm.disbursed_date" type="date"
+            class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+          <AppInput v-model.number="advanceForm.monthly_deduction_amount" type="number" placeholder="القسط الشهري (جنيه)" />
+          <AppInput v-model="advanceForm.notes" placeholder="ملاحظات (اختياري)" />
+          <AppButton :disabled="savingAdvance" @click="submitAdvance" variant="primary" size="sm">
+            {{ savingAdvance ? 'جاري الحفظ...' : 'تسجيل السلفة' }}
+          </AppButton>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- wagdy.md H-02: دفعة يومية -->
+    <AppModal :open="!!paymentModalEmployee" :title="`دفعات — ${paymentModalEmployee?.full_name ?? ''}`"
+      @close="paymentModalEmployee = null">
+      <div class="space-y-4">
+        <div v-if="paymentsLoading" class="text-center py-4 text-sm text-gray-400">جاري التحميل...</div>
+        <div v-else-if="employeePayments.length" class="space-y-2">
+          <div v-for="p in employeePayments" :key="p.id" class="flex items-center justify-between text-sm bg-stone-50 rounded-lg px-3 py-2">
+            <div>
+              <span class="font-medium text-gray-800">{{ p.amount.toLocaleString('ar-EG') }} ج</span>
+              <span class="text-xs text-gray-400 mr-2">{{ formatDate(p.payment_date) }}</span>
+            </div>
+            <AppBadge size="sm" :variant="p.deducted ? 'success' : 'warning'">{{ p.deducted ? 'اتخصمت' : 'لسه' }}</AppBadge>
+          </div>
+        </div>
+        <EmptyState v-else icon="📅" title="لا يوجد دفعات مسجّلة" />
+
+        <div class="border-t border-stone-100 pt-4 space-y-3">
+          <div class="text-xs font-semibold text-gray-500 uppercase">تسجيل دفعة جديدة</div>
+          <AppInput v-model.number="paymentForm.amount" type="number" placeholder="المبلغ (جنيه)" />
+          <label class="block text-xs font-semibold text-gray-500">تاريخ الدفعة</label>
+          <input v-model="paymentForm.payment_date" type="date"
+            class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+          <AppInput v-model="paymentForm.notes" placeholder="ملاحظات (اختياري)" />
+          <AppButton :disabled="savingPayment" @click="submitPayment" variant="primary" size="sm">
+            {{ savingPayment ? 'جاري الحفظ...' : 'تسجيل الدفعة' }}
+          </AppButton>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- wagdy.md H-07: استيراد حضور من Excel -->
+    <AppModal :open="showImportModal" title="📥 استيراد حضور من Excel" @close="showImportModal = false">
+      <div class="space-y-3">
+        <p class="text-xs text-gray-400">
+          العمود الأول = كود الموظف أو اسمه الكامل زي المسجّل في النظام بالظبط، وباقي الأعمدة = أيام
+          الشهر (1، 2، 3...) أو تواريخ كاملة. قيمة الخلية: p = حاضر، u = غائب، v = إجازة.
+        </p>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 mb-1">السنة</label>
+            <AppInput v-model.number="importPeriodYear" type="number" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 mb-1">الشهر</label>
+            <AppInput v-model.number="importPeriodMonth" type="number" />
+          </div>
+        </div>
+        <input type="file" accept=".xlsx,.xls" @change="onImportFilePicked"
+          class="w-full text-xs text-gray-600 file:ml-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
+
+        <div v-if="importResult" class="p-3 rounded-xl text-xs"
+          :class="'error' in importResult ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'">
+          <div v-if="'error' in importResult">{{ importResult.error }}</div>
+          <div v-else>
+            ✅ تم استيراد {{ importResult.imported }} سجل حضور
+            <div v-if="importResult.unmatched_employees.length" class="mt-2 text-amber-600">
+              موظفون غير معروفين: {{ importResult.unmatched_employees.join('، ') }}
+            </div>
+            <div v-if="importResult.errors.length" class="mt-2 text-red-500">
+              <div v-for="(err, i) in importResult.errors" :key="i">{{ err }}</div>
+            </div>
+          </div>
+        </div>
+
+        <AppButton :disabled="!importFile || importUploading" :loading="importUploading"
+          @click="submitAttendanceImport" variant="primary" size="sm">
+          {{ importUploading ? 'جاري الاستيراد...' : 'استيراد' }}
+        </AppButton>
+      </div>
+    </AppModal>
+
+    <!-- wagdy.md H-03: رصيد الإجازة الشهري -->
+    <AppModal :open="!!balanceModalEmployee" :title="`رصيد الإجازة — ${balanceModalEmployee?.full_name ?? ''}`"
+      @close="balanceModalEmployee = null">
+      <div v-if="balancesLoading" class="text-center py-4 text-sm text-gray-400">جاري التحميل...</div>
+      <EmptyState v-else-if="!employeeLeaveBalances.length" icon="📊" title="لا يوجد رصيد إجازة مسجّل بعد"
+        subtitle="يُحسب تلقائيًا أول كل شهر (7.5 يوم يُستحق شهريًا)" />
+      <div v-else class="space-y-2">
+        <div v-for="b in employeeLeaveBalances" :key="b.id" class="flex items-center justify-between text-sm bg-stone-50 rounded-lg px-3 py-2">
+          <span class="text-gray-700">{{ monthLabel(b.period_year, b.period_month) }}</span>
+          <div class="text-left">
+            <div class="font-bold text-gray-900">{{ b.closing_balance }} يوم</div>
+            <div class="text-xs text-gray-400">+{{ b.accrued }} − {{ b.consumed }}</div>
+          </div>
+        </div>
       </div>
     </AppModal>
 
@@ -721,6 +1102,9 @@ onMounted(fetchEmployees)
         <label class="text-xs font-semibold text-gray-500">إلى</label>
         <input v-model="attendanceDateTo" @change="fetchAttendance" type="date"
           class="bg-white border border-stone-200 text-gray-700 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+        <AppButton v-if="auth.hasRole('manager')" size="sm" variant="secondary" @click="openImportModal">
+          📥 استيراد من Excel
+        </AppButton>
       </div>
 
       <!-- سياسة الحضور — سماحية التأخير/الانصراف المبكر ونسب الأوفرتايم/الخصم

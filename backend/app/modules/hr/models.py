@@ -32,6 +32,16 @@ class Employee(Base, TimestampMixin):
     position:      Mapped[str]         = mapped_column(String(100))
     department:    Mapped[str | None]  = mapped_column(String(100), nullable=True)
     basic_salary:  Mapped[Decimal]     = mapped_column(Numeric(10, 2))
+    # وعاء التأمينات الاجتماعية — منفصل عمدًا عن basic_salary (وعده وقانوني
+    # المتري: راتب 20,000 لكن وعاء تأميني 13,500 لبعض الموظفين، تُفرَّغ عمدًا).
+    # NULL = يُستخدم basic_salary كوعاء تأميني (السلوك القديم قبل الحقل ده،
+    # محفوظ لكل الموظفين الحاليين تلقائيًا) — راجع hr_engine.calculate_payroll.
+    insurance_base_salary: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    # مكافأة الأعياد الرسمية — مبلغ ثابت لكل موظف بيدخل حساب الراتب تلقائيًا
+    # كل مرة يتشغّل فيها كشف رواتب له (راجع hr_engine.calculate_payroll: بند
+    # منفصل عن الأساسي/البدلات، مش خاضع لضريبة ولا تأمينات، بيُضاف للصافي
+    # مباشرة). الإدارة تصفّره بعد شهر العيد لو مش عايزاه يتكرر كل شهر.
+    holiday_bonus: Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
     hire_date:     Mapped[date]        = mapped_column(Date)
     birth_date:    Mapped[date | None] = mapped_column(Date, nullable=True)
     status:        Mapped[str]         = mapped_column(String(20), default="active")  # active|on_leave|terminated
@@ -100,6 +110,16 @@ class PayrollRun(Base, TimestampMixin):
     total_net:    Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
     total_tax:    Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
     total_si:     Mapped[Decimal]        = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # إجمالي مكافآت الأعياد المُصروفة ضمن الكشف ده — منفصل عن total_gross
+    # (مكافأة العيد مش خاضعة لضريبة/تأمينات، فمش جزء من gross_salary القياسي)
+    # لكن لازم يُحتسب في القيد المحاسبي المجمّع (_post_payroll_journal) عشان
+    # المدين يفضل متوازن مع صافي الرواتب المستحقة اللي بيشمل المكافأة.
+    total_holiday_bonus: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # إجمالي خصومات السلف/الدفعات (H-01+H-02) المطبَّقة في الكشف ده — جزء من
+    # total_net (مخصوم منه فعلاً في hr_engine.calculate_payroll) فمش محتاج
+    # سطر قيد محاسبي منفصل في _post_payroll_journal (خصومات الصافي الأخرى
+    # زي penalty_deduction ماعندهاش سطر منفصل برضه، نفس النمط الموجود).
+    total_advance_deduction: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
     approved_by:  Mapped[int | None]     = mapped_column(Integer, nullable=True)
     approved_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
@@ -121,6 +141,8 @@ class PayrollLine(Base, TimestampMixin):
     penalty_deduction:     Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     late_penalty_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # خصم تأخير محسوب تلقائيًا من الحضور — منفصل عن penalty_deduction (جزاءات تأديبية يدوية بالأيام)
     unpaid_leave_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    holiday_bonus:          Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # مكافأة العيد المُطبَّقة على هذا الموظف لهذا الكشف — راجع Employee.holiday_bonus
+    advance_deduction:      Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # إجمالي أقساط سلف (H-01) + دفعات (H-02) المخصومة لهذا الموظف لهذا الكشف
     journal_entry:         Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON
 
     run: Mapped["PayrollRun"] = relationship("PayrollRun", back_populates="lines")
@@ -180,6 +202,82 @@ class LeaveBalance(Base, TimestampMixin):
     annual_entitled:  Mapped[int] = mapped_column(Integer)
     annual_taken:     Mapped[int] = mapped_column(Integer, default=0)
     sick_taken:       Mapped[int] = mapped_column(Integer, default=0)
+
+
+class SalaryAdvance(Base, TimestampMixin):
+    """سلفة راتب — قرض بيُخصم على أقساط شهرية ثابتة من الراتب لحد ما يتسدد
+    بالكامل (wagdy.md H-01). دي "السلف" اللي ظهرت في كشف يناير الحقيقي
+    (60,066 ج شهريًا، 26% من المستحق) — منفصلة عمدًا عن AdvancePayment تحت
+    (H-02، دفعات يومية بسيطة بتتخصم بالكامل في نفس شهرها، مش قرض بأقساط)."""
+    __tablename__ = "salary_advances"
+
+    id:                        Mapped[int]        = mapped_column(primary_key=True)
+    employee_id:               Mapped[int]        = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    branch_id:                 Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    amount:                    Mapped[Decimal]    = mapped_column(Numeric(10, 2))
+    disbursed_date:            Mapped[date]       = mapped_column(Date)
+    monthly_deduction_amount:  Mapped[Decimal]    = mapped_column(Numeric(10, 2))
+    # يبدأ = amount، وينقص كل مرة كشف رواتب يتشغّل ويخصم قسط (راجع
+    # services._compute_advance_deductions) لحد ما يوصل صفر → status="settled".
+    remaining_balance:         Mapped[Decimal]    = mapped_column(Numeric(10, 2))
+    status:                    Mapped[str]        = mapped_column(String(20), default="active")  # active|settled|cancelled
+    notes:                     Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by:                Mapped[int]        = mapped_column(Integer)
+
+    employee: Mapped["Employee"] = relationship("Employee", lazy="select")
+
+
+class AdvancePayment(Base, TimestampMixin):
+    """دفعة جزئية يومية للموظف خلال الشهر (wagdy.md H-02) — الملف الحقيقي
+    "دفعات المرتبات.xlsx" منفصل تمامًا عن ملف السلف. بتُخصم بالكامل من صافي
+    راتب نفس الشهر (مش أقساط زي SalaryAdvance فوق). deducted/payroll_line_id
+    بيتسجّلوا لما run_payroll_for_branch يخصمها فعليًا — audit trail واضح
+    لمين اتخصم فين، مش شرط لصحة الحساب نفسه (تشغيل كشف رواتب لنفس الفترة
+    مرتين ممنوع أصلاً عبر UniqueConstraint على payroll_runs)."""
+    __tablename__ = "advance_payments"
+
+    id:               Mapped[int]        = mapped_column(primary_key=True)
+    employee_id:      Mapped[int]        = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    branch_id:        Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    amount:           Mapped[Decimal]    = mapped_column(Numeric(10, 2))
+    payment_date:     Mapped[date]       = mapped_column(Date, index=True)
+    notes:            Mapped[str | None] = mapped_column(String(300), nullable=True)
+    recorded_by:      Mapped[int]        = mapped_column(Integer)
+    deducted:         Mapped[bool]       = mapped_column(Boolean, default=False)
+    payroll_line_id:  Mapped[int | None] = mapped_column(
+        ForeignKey("payroll_lines.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    employee: Mapped["Employee"] = relationship("Employee", lazy="select")
+
+
+class LeaveBalanceMonthly(Base, TimestampMixin):
+    """رصيد إجازات شهري متحرّك (wagdy.md H-03) — لقطة واحدة لكل موظف لكل
+    شهر: 7.5 يوم يُستحق (accrued)، أيام الإجازات المعتمدة المستهلكة في نفس
+    الشهر تُخصم (consumed)، والرصيد الجاري (closing_balance) يترحّل لأول
+    الشهر التالي كـ opening_balance — بالظبط زي الطريقة اللي بتتابَع بيها
+    الإجازات فعليًا في Excel اليوم (كشف حضور منفصل لكل موظف).
+
+    منفصل عمدًا عن LeaveBalance.annual_entitled (الاستحقاق القانوني السنوي
+    حسب مادة 47 قانون العمل — 21/30 يوم حسب الأقدمية/السن، محسوب في
+    hr_engine.annual_leave_entitlement وبيُحدَّث مرة واحدة يناير) — ده تتبّع
+    تشغيلي شهري إضافي حسب سياسة المنتجع الفعلية، مش بديل للحساب القانوني."""
+    __tablename__ = "leave_balance_monthly"
+    __table_args__ = (
+        UniqueConstraint("employee_id", "period_year", "period_month", name="uq_leave_monthly_employee_period"),
+    )
+
+    id:               Mapped[int]     = mapped_column(primary_key=True)
+    employee_id:      Mapped[int]     = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
+    branch_id:        Mapped[int]     = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    period_year:      Mapped[int]     = mapped_column(Integer)
+    period_month:     Mapped[int]     = mapped_column(Integer)
+    opening_balance:  Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    accrued:          Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("7.5"))
+    consumed:         Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+    closing_balance:  Mapped[Decimal] = mapped_column(Numeric(6, 2), default=Decimal("0"))
+
+    employee: Mapped["Employee"] = relationship("Employee", lazy="select")
 
 
 class Department(Base, TimestampMixin):

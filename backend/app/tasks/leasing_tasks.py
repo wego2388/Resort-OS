@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from app.celery_app import celery_app
+from app.core.kernel.worker import notify_task_failure
 
 logger = logging.getLogger(__name__)
 
@@ -98,3 +99,4 @@ def send_due_reminders(self):
 
     except Exception as exc:
         logger.error("leasing send_due_reminders failed: %s", exc)
+        notify_task_failure("app.tasks.leasing_tasks.send_due_reminders", exc)

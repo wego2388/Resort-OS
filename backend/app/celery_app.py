@@ -81,6 +81,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.hr_tasks.accrue_leave_balances",
         "schedule": crontab(hour=0, minute=1, month_of_year=1, day_of_month=1),
     },
+    "hr-accrue-monthly-leave-ledger": {
+        # wagdy.md H-03 — رصيد إجازات شهري متحرّك (7.5 يوم/شهر)، منفصل عن
+        # hr-accrue-leave السنوي فوق (استحقاق قانوني مادة 47 مرة واحدة/سنة).
+        "task": "app.tasks.hr_tasks.accrue_monthly_leave_ledger",
+        "schedule": crontab(hour=0, minute=30, day_of_month=1),
+    },
     "hr-weekly-rota": {
         "task": "app.tasks.hr_tasks.generate_weekly_rota",
         "schedule": crontab(hour=8, minute=0, day_of_week=5),  # الجمعة

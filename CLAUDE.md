@@ -683,6 +683,24 @@ migrations) في `PROJECT_STATUS.md`.
   الكافيه الغلط أصلاً) اتربطت بالمنيو الصح، تغطي كل المحطات. تفاصيل كاملة في `PROJECT_STATUS.md`.
   **مؤجَّل عمدًا** (قرار معماري كبير منفصل، زي إيراد الغرفة): دمج المطعم/الكافيه في تاب POS واحد زي
   Foodics — الموديولين لسه منفصلين تمامًا (Order/CafeOrder مختلفين).
+- **رؤية فشل Celery الحقيقية + نسخ احتياطي خارج السيرفر + تحويل Lead لحجز + سلسلة السلف/الدفعات/
+  الإجازات** (2026-07-12) — 8 بنود من `wagdy.md`. `app.core.kernel.worker.notify_task_failure()` دالة
+  مشتركة (Sentry + واتساب) بقت متنادية من كل except block بيبتلع خطأ نهائي عبر كل ملفات `app/tasks/`
+  (كانت بتكتفي بـ `logger.error()` فـ `CoreTask.on_failure` عمره ما كان بيتفعّل ليها). `scripts/
+  backup_db.sh` بقى فيه مزامنة rclone اختيارية لـ S3/Backblaze بعد الباك أب المحلي (اتأكد live بدورة
+  backup→sync→restore كاملة، وكشفت باج حقيقي: `set -o pipefail` كان بيوقف السكريبت بصمت لو env var
+  اختياري مش موجود). `POST /crm/leads/{id}/convert` بيحوّل lead لحجز PMS حقيقي بضغطة واحدة (بيستخدم
+  `pms.services.create_booking` الموجود، نفس مسار قفل الغرف/409). `Employee.insurance_base_salary`/
+  `holiday_bonus` بقوا بيدخلوا حساب الراتب فعليًا في `hr_engine.calculate_payroll` (مش حقول زينة).
+  `SalaryAdvance`/`AdvancePayment` (نظام السلف اليومي والدفعات الجزئية — 60,066 ج شهريًا في كشف يناير
+  الحقيقي، 26% من المستحق، مش مسجّلة في النظام خالص قبل كده) بيتخصموا تلقائيًا جوه `run_payroll_for_
+  branch` كـ `advance_deduction` واحد مجمّع، محدود بالرصيد المتبقي. `LeaveBalanceMonthly` جدول جديد
+  (رصيد إجازات شهري متحرّك، 7.5 يوم/شهر — منفصل عمدًا عن `LeaveBalance.annual_entitled` القانوني
+  السنوي) عبر Celery task شهري جديد. `POST /hr/attendance/import-excel` (نفس نمط استيراد عقود التايم
+  شير، upsert حقيقي بدل skip-on-duplicate لأن `AttendanceRecord` عنده مفتاح طبيعي حقيقي). Migrations
+  `a1b2c3d4e5f6` + `b3c7d9e1f2a4`. **فجوة محاسبية موثّقة صراحةً في الكود** (مش جديدة، نفس فئة
+  penalty_deduction الموجودة من قبل): خصم السلف بيقلل الصافي من غير حساب أصول "سلف موظفين مستحقة"
+  مقابل — مؤجَّل عمدًا لنفس سبب فجوة إيراد الغرفة تحت. تفاصيل كاملة في `PROJECT_STATUS.md`.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش
@@ -818,5 +836,5 @@ ETA_ENABLED=false
 
 ---
 
-*آخر تحديث: 2026-07-08*
+*آخر تحديث: 2026-07-12*
 *المشروع يستخدم: github.com/wego2388/Resort-OS · FastAPI 0.115 · SQLAlchemy 2.0 · Pydantic v2 · Vue 3.4 · pnpm*

@@ -17,6 +17,7 @@ import logging
 from datetime import timedelta
 
 from app.celery_app import celery_app
+from app.core.kernel.worker import notify_task_failure
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,10 @@ def run_night_audit(self, branch_id: int | None = None, audit_date_str: str | No
                     logger.info("Night Audit completed: branch=%s date=%s", branch.id, audit_date)
                 except Exception as exc:
                     logger.error("Night Audit failed: branch=%s error=%s", branch.id, exc)
+                    notify_task_failure(
+                        "app.tasks.pms_tasks.run_night_audit", exc,
+                        extra={"branch_id": branch.id, "audit_date": str(audit_date)},
+                    )
 
         return results
 
@@ -108,3 +113,4 @@ def process_no_shows(self, branch_id: int | None = None):
 
     except Exception as exc:
         logger.error("process_no_shows failed: %s", exc)
+        notify_task_failure("app.tasks.pms_tasks.process_no_shows", exc)

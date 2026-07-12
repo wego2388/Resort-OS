@@ -289,6 +289,8 @@ async function openLeadDetail(lead: Lead) {
   selectedLead.value = lead
   editLeadForm.value = { phone: lead.phone ?? '', source_id: lead.source_id ?? '', notes: lead.notes ?? '' }
   lostReason.value = ''
+  convertForm.value = { check_in: '', check_out: '', room_id: '' }
+  availableRoomsForConvert.value = []
   callNoteForm.value = { direction: 'outbound', duration_min: '', summary: '', outcome: 'no_decision' }
   await loadCallNotes(lead.id)
 }
@@ -370,6 +372,59 @@ async function markLeadLost() {
     toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة العميل المحتمل')
   } finally {
     savingLost.value = false
+  }
+}
+
+// ── wagdy.md C-03: تحويل lead لحجز مباشرة بضغطة واحدة ──────────────────
+interface AvailableRoom { id: number; name: string }
+const convertForm = ref({ check_in: '', check_out: '', room_id: '' as number | '' })
+const availableRoomsForConvert = ref<AvailableRoom[]>([])
+const loadingAvailableRooms = ref(false)
+const convertingLead = ref(false)
+
+async function loadAvailableRoomsForConvert() {
+  availableRoomsForConvert.value = []
+  convertForm.value.room_id = ''
+  if (!convertForm.value.check_in || !convertForm.value.check_out) return
+  if (convertForm.value.check_out <= convertForm.value.check_in) return
+  loadingAvailableRooms.value = true
+  try {
+    const res = await api.get('/api/v1/pms/rooms/available', {
+      params: { branch_id: branchId, check_in: convertForm.value.check_in, check_out: convertForm.value.check_out },
+    })
+    availableRoomsForConvert.value = res.data ?? []
+  } catch (e) {
+    console.error(e)
+    toast.error('فشل تحميل الغرف المتاحة')
+  } finally {
+    loadingAvailableRooms.value = false
+  }
+}
+
+async function convertLeadToBooking() {
+  if (!selectedLead.value) return
+  if (!convertForm.value.check_in || !convertForm.value.check_out || !convertForm.value.room_id) {
+    toast.error('حدّد تاريخ الوصول/المغادرة والغرفة أولًا')
+    return
+  }
+  convertingLead.value = true
+  try {
+    const res = await api.post(`/api/v1/crm/leads/${selectedLead.value.id}/convert`, {
+      check_in: convertForm.value.check_in,
+      check_out: convertForm.value.check_out,
+      room_ids: [convertForm.value.room_id],
+    })
+    toast.success(`تم تحويل العميل المحتمل لحجز رقم ${res.data.booking_number}`)
+    Object.assign(selectedLead.value, res.data.lead)
+    const idx = leads.value.findIndex(l => l.id === selectedLead.value!.id)
+    if (idx !== -1) leads.value[idx] = { ...leads.value[idx], ...res.data.lead }
+    convertForm.value = { check_in: '', check_out: '', room_id: '' }
+    availableRoomsForConvert.value = []
+  } catch (e: any) {
+    console.error(e)
+    toast.error(e?.response?.data?.detail ?? 'فشل تحويل العميل المحتمل لحجز')
+  } finally {
+    convertingLead.value = false
   }
 }
 
@@ -948,6 +1003,26 @@ onMounted(loadLeads)
               class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-40" />
             <AppButton size="sm" :loading="savingCallNote" @click="addCallNote">+ تسجيل ملاحظة مكالمة</AppButton>
           </div>
+        </div>
+
+        <!-- wagdy.md C-03: تحويل مباشر لحجز -->
+        <div v-if="!['won','lost'].includes(selectedLead.stage)" class="border-t border-stone-100 pt-4">
+          <h3 class="text-sm font-bold text-gray-700 mb-2">🏨 تحويل لحجز مباشرة</h3>
+          <div class="grid grid-cols-2 gap-2 mb-2">
+            <input v-model="convertForm.check_in" @change="loadAvailableRoomsForConvert" type="date"
+              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <input v-model="convertForm.check_out" @change="loadAvailableRoomsForConvert" type="date"
+              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          </div>
+          <div class="flex gap-2">
+            <select v-model="convertForm.room_id" class="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm">
+              <option value="" disabled>{{ loadingAvailableRooms ? 'جاري التحميل...' : 'اختر غرفة متاحة' }}</option>
+              <option v-for="r in availableRoomsForConvert" :key="r.id" :value="r.id">{{ r.name }}</option>
+            </select>
+            <AppButton size="sm" variant="primary" :loading="convertingLead" @click="convertLeadToBooking">تحويل لحجز</AppButton>
+          </div>
+          <p v-if="convertForm.check_in && convertForm.check_out && !loadingAvailableRooms && !availableRoomsForConvert.length"
+            class="text-xs text-amber-600 mt-1">لا توجد غرف متاحة في هذه الفترة</p>
         </div>
 
         <!-- وسم كخسارة -->

@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 from app.celery_app import celery_app
 from app.core.config import settings
+from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
@@ -111,6 +112,7 @@ def overdue_activities_alert(self):
 
     except Exception as exc:
         logger.error("crm overdue_activities_alert failed: %s", exc)
+        notify_task_failure("app.tasks.crm_tasks.overdue_activities_alert", exc)
 
 
 @celery_app.task(
@@ -167,3 +169,4 @@ def birthday_greetings(self):
 
     except Exception as exc:
         logger.error("crm birthday_greetings failed: %s", exc)
+        notify_task_failure("app.tasks.crm_tasks.birthday_greetings", exc)

@@ -5,6 +5,7 @@ import logging
 
 from app.celery_app import celery_app
 from app.core.config import settings
+from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ def notify_overdue_work_orders(self):
 
     except Exception as exc:
         logger.error("notify_overdue_work_orders failed: %s", exc)
+        notify_task_failure("app.tasks.maintenance_tasks.notify_overdue_work_orders", exc)
 
 
 @celery_app.task(

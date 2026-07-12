@@ -9,6 +9,13 @@
 #   sudo systemctl enable --now resort-os-backup.timer
 #   systemctl list-timers resort-os-backup.timer   # confirm next run time
 #   journalctl -u resort-os-backup.service          # check logs after it fires
+#
+# Offsite sync to S3/Backblaze (wagdy.md T-04, optional) is controlled by
+# BACKUP_REMOTE_ENABLED/BACKUP_RCLONE_REMOTE/BACKUP_RCLONE_CONFIG in
+# backend/.env (same file DATABASE_URL is read from) — not set here, so this
+# unit file doesn't need touching to turn it on/off. If it's enabled and the
+# sync fails, this service reports FAILED (non-zero exit) even though the
+# local dump still succeeded — check journalctl, the local backup is safe.
 
 [Unit]
 Description=Resort OS — PostgreSQL backup

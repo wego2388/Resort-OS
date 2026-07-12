@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from app.celery_app import celery_app
+from app.core.kernel.worker import notify_task_failure
 
 logger = logging.getLogger(__name__)
 
@@ -42,3 +43,4 @@ def check_low_stock(self):
 
     except Exception as exc:
         logger.error("inventory check_low_stock failed: %s", exc)
+        notify_task_failure("app.tasks.inventory_tasks.check_low_stock", exc)

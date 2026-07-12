@@ -6,6 +6,7 @@ from datetime import date
 
 from app.celery_app import celery_app
 from app.core.config import settings
+from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,7 @@ def expire_old_offers(self):
 
     except Exception as exc:
         logger.error("hub expire_old_offers failed: %s", exc)
+        notify_task_failure("app.tasks.hub_tasks.expire_old_offers", exc)
 
 
 @celery_app.task(
@@ -140,3 +142,4 @@ def process_pending_bookings_reminder(self):
 
     except Exception as exc:
         logger.error("hub process_pending_bookings_reminder failed: %s", exc)
+        notify_task_failure("app.tasks.hub_tasks.process_pending_bookings_reminder", exc)
