@@ -62,6 +62,22 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "endpoint": "PATCH /cafe/orders/{order_id}/items/{item_id}/void",
     },
     {
+        "resource": "dining.void_order_item",
+        "action": "execute",
+        "label_ar": "إلغاء صنف من طلب (دايننج موحّد)",
+        "module": "dining",
+        "min_role_level": 40,
+        "endpoint": "PATCH /dining/orders/{order_id}/items/{item_id}/void",
+    },
+    {
+        "resource": "dining.refund_order_item",
+        "action": "execute",
+        "label_ar": "مرتجع صنف بعد الدفع (دايننج موحّد)",
+        "module": "dining",
+        "min_role_level": 60,
+        "endpoint": "PATCH /dining/orders/{order_id}/items/{item_id}/refund",
+    },
+    {
         "resource": "beach.void_transaction",
         "action": "execute",
         "label_ar": "إلغاء معاملة شاطئ",
