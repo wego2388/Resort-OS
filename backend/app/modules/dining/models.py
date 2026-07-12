@@ -165,8 +165,18 @@ class DiningItem(Base, TimestampMixin):
 
 class DiningItemExtraGroup(Base, TimestampMixin):
     """مجموعة اختيارات لصنف — يدمج restaurant.MenuItemExtraGroup +
-    cafe.CafeMenuItemExtraGroup (نفس الشكل بالظبط)."""
+    cafe.CafeMenuItemExtraGroup (نفس الشكل بالظبط).
+
+    legacy_module/legacy_id هنا برضه (رغم إنها "مجرد" جدول ابن لـ
+    DiningItem) — عشان migration D-02 تقدر تنسخ dining_item_extras بـ
+    INSERT...SELECT خالص (SQL-only، بدون loop في Python) وهي محتاجة تلاقي
+    المجموعة الجديدة المقابلة لـ menu_item_extra_group_id/
+    cafe_menu_item_extra_group_id الأصلي. من غيرها مفيش مفتاح طبيعي موثوق
+    (name مش unique constraint فعليًا حتى في الجداول الأصلية) تربط بيه."""
     __tablename__ = "dining_item_extra_groups"
+    __table_args__ = (
+        UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_item_extra_group_legacy"),
+    )
 
     id:         Mapped[int]        = mapped_column(primary_key=True)
     item_id:    Mapped[int]        = mapped_column(ForeignKey("dining_items.id", ondelete="CASCADE"))
@@ -175,6 +185,8 @@ class DiningItemExtraGroup(Base, TimestampMixin):
     min_select: Mapped[int]        = mapped_column(Integer, default=0)
     max_select: Mapped[int]        = mapped_column(Integer, default=1)
     sort_order: Mapped[int]        = mapped_column(Integer, default=0)
+    legacy_module: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    legacy_id:     Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     item: Mapped["DiningItem"] = relationship("DiningItem", back_populates="extra_groups")
     options: Mapped[list["DiningItemExtra"]] = relationship(
