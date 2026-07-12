@@ -719,6 +719,45 @@ migrations) في `PROJECT_STATUS.md`.
   (تحويل analytics/finance للقراءة من dining، الفرونت إند، حذف الموديولين القديمين) لسه مؤجَّلين
   عمدًا** — راجع `DINING_CUTOVER_PLAN.md` (جذر المشروع) للمقترح المكتوب الكامل. تفاصيل تقنية كاملة
   في `PROJECT_STATUS.md`.
+- **موديول `dining` — Batch B: free-text extra-group prompt + أول POS/admin/KDS حقيقي على الـ Design
+  System** (2026-07-12) — مقارنة مع نظام "Click" القديم اللي المنتجع ده كان شغال بيه كشفت فجوة حقيقية:
+  `DiningItemExtraGroup` كان pick-list بس، من غير طريقة للتعبير عن prompt نصي حر على الصنف (مثال حقيقي:
+  "كام سمكة؟"). اتضاف `group_type` ("pick_list"|"text"، افتراضي pick_list = صفر تغيير سلوك للمجموعات
+  الموجودة) + `DiningOrderItemExtra.text_value` لتخزين الإجابة + `OrderItemCreate.extra_texts`
+  (group_id → نص) عبر `_resolve_extras` في create_order وadd_items_to_order الاتنين. Migration
+  `f4a7c9b2d105` (نطاق محصور بالكامل جوه `dining/` — restaurant/cafe متلمسوش). 6 اختبارات جديدة
+  (إجباري/اختياري، حياد السعر، مسار add-items) = 1927 اختبار إجمالي، صفر رجوع.
+
+  الفرونت إند: أول شاشات حقيقية بتستخدم `dining` API + أول استخدام حقيقي لمكتبة `@resort-os/ui`
+  (29 مكوّن، مفيش شاشة كانت بتستخدمهم قبل كده) — `frontend/apps/el-kheima/src/views/pos/
+  UnifiedPOSView.vue` (POS سريع: تابات order-type حقيقية dine_in/takeaway/delivery/room_service بلابل
+  عربي حقيقي مش أخطاء إملائية النظام القديم، خريطة طاولات مجمّعة بصريًا حسب `VenueTable.section`،
+  مودال إضافات/متغيّرات بما فيه النوع النصي الجديد، حدود لمس 48px، اختصارات لوحة مفاتيح)،
+  `frontend/apps/el-kheima/src/views/admin/DiningMenuView.vue` (منافذ/فئات/أصناف/مجموعات إضافات/طاولات)،
+  `frontend/apps/el-kheima/src/views/kds/DiningKDSView.vue` (KDS موحّد بيوجّه حسب `DiningItem.station`
+  الحقيقي، نفس نمط §13 بند ⓭)، زائد `DiningExtrasModal.vue`/`DiningOrderDetailModal.vue` (بتعيد استخدام
+  `PinGuardModal.vue` الموجود لموافقة الإلغاء — مفيش نظام موافقة موازي). Routes جديدة بس
+  (`/pos/dining`، `/admin/dining-menu`، `/kds/dining`) مقفولة بـ `requiredRole: 'manager'` صراحةً حتى
+  لو الـ layout الأب أوطى (زي `/pos` بتاعت كاشير) — عشان الشاشات دي متظهرش في أي nav بيشوفه نادل/كاشير
+  عادي، ومتاحة بس من قسم "دايننج موحّد (تجريبي)" الجديد في `BackOfficeLayout.vue` (مدير+). **الشاشات دي
+  مش الـ POS الافتراضي — استخدام الموظفين اليومي `RestaurantPOSView.vue`/`CafePOSView.vue`/
+  `KitchenDisplayView.vue`/`BarDisplayView.vue` القدام متغيّرش خالص.**
+
+  اتأكد end-to-end حي (2026-07-12، مش تخمين): سيرفر backend + frontend منفصلين على منافذ تانية (8006/
+  3011) ضد نفس Postgres/Redis المشتركين، تسجيل دخول مدير حقيقي، إنشاء outlet/item/مجموعة نصية عبر الـ
+  API، طلب من غير الإجابة المطلوبة رجع 400 صح، طلب بالإجابة نجح واتخزّنت `text_value` صح، انتقال
+  in_kitchen ولّد تذكرة على المحطة الصحيحة (`grill`)، الدفع اتم صح. Playwright browser walkthrough حقيقي
+  (login → `/admin/dining-menu`، `/pos/dining`، `/kds/dining`) أكّد: nav الجديد ظاهر لمدير، الشاشات
+  الثلاثة بتحمّل بيانات حقيقية من غير أي JS error (تذكرة المطبخ الحقيقية ظهرت في KDS، الصنف باستخراج
+  الإضافات ظهر في الـ POS). بيئة الاختبار Playwright headless في السانبوكس ده مش بترندر screenshots
+  بصريًا صح (مشكلة بيئة، مفيش فونتات/GPU — DOM/innerText والـ API تصرفوا صح 100%)، فالتفاعل الكامل
+  بالماوس (فتح مودال الإضافات، إتمام طلب من المتصفح) لسه محتاج تأكيد بصري حقيقي على جهاز حقيقي لاحقًا.
+  بيانات الاختبار المؤقتة (outlet/item/order/journal entry) اتمسحت بالكامل من قاعدة البيانات المشتركة
+  بعد التأكد. `pnpm --filter el-kheima type-check`/`build` وكمان `pnpm --filter public build` نضاف.
+
+  **متلمسناش عمدًا**: `restaurant/`, `cafe/`, `analytics/`, `finance/`، ولا مصدر البيانات لأي تقرير/
+  dashboard موجود — قرار الـ cutover الكامل (D-05 → D-08) لسه محتاج مراجعة مخصصة مع Mohamed منفصلة عن
+  الدفعة دي (راجع `DINING_CUTOVER_PLAN.md`)، مش جزء منها.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش
