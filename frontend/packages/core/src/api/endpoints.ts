@@ -98,6 +98,7 @@ export const ENDPOINTS = {
     orderItems: (orderId: number) => `/api/v1/dining/orders/${orderId}/items`,
     orderItemVoid: (orderId: number, itemId: number) => `/api/v1/dining/orders/${orderId}/items/${itemId}/void`,
     orderItemRefund: (orderId: number, itemId: number) => `/api/v1/dining/orders/${orderId}/items/${itemId}/refund`,
+    orderItemStatus: (orderId: number, itemId: number) => `/api/v1/dining/orders/${orderId}/items/${itemId}/status`,
     orderStatus: (orderId: number) => `/api/v1/dining/orders/${orderId}/status`,
     orderDiscount: (orderId: number) => `/api/v1/dining/orders/${orderId}/discount`,
     receipt: (orderId: number) => `/api/v1/dining/orders/${orderId}/receipt`,

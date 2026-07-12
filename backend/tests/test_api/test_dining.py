@@ -236,8 +236,8 @@ class TestOrderStatus:
         services.update_order_status(db, order.id, "in_kitchen")
         tickets = services.get_kds_tickets(db, branch.id)
         assert len(tickets) == 1
-        assert tickets[0].station == "grill"
-        assert tickets[0].order_id == order.id
+        assert tickets[0]["station"] == "grill"
+        assert tickets[0]["order_id"] == order.id
 
     def test_pay_order_frees_table(self, db):
         branch = make_branch(db)

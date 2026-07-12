@@ -12,11 +12,10 @@
  * "same KDS regardless of outlet" promise the dining merge exists for
  * (docstring on dining.models.DiningKDSScreen).
  *
- * Deliberately deferred for this pass: per-item bump (dining's router has
- * no PATCH .../items/{id}/status endpoint yet, unlike restaurant/cafe's
- * KitchenDisplayView — only whole-ticket pending→in_progress→done is
- * available today). Adding item-level status is a real, scoped backend gap
- * for a later pass, not something silently faked here.
+ * Per-item bump (tap any item to confirm it individually, mirroring
+ * restaurant/cafe's KitchenDisplayView — DINING_CUTOVER_PLAN.md Batch 1
+ * parity gap, closed via PATCH /dining/orders/{order_id}/items/{item_id}/status)
+ * alongside whole-ticket pending→in_progress→done confirmation.
  *
  * Same dark full-screen kiosk visual language as the existing kds/kitchen
  * and kds/bar screens (KitchenDisplayView.vue/BarDisplayView.vue) rather
@@ -33,11 +32,13 @@ const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const toast = useToast()
 
 type TicketStatus = 'pending' | 'in_progress' | 'done'
-interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null }
+type ItemStatus = 'pending' | 'in_kitchen' | 'ready' | 'served' | 'cancelled'
+interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null; status?: ItemStatus }
 interface Ticket {
   id: number; order_id: number; outlet_id: number; station: string
   items_snapshot: TicketItem[]; status: TicketStatus; created_at: string
 }
+const ITEM_DONE_STATUSES: ItemStatus[] = ['ready', 'served']
 
 const STATIONS = [
   { val: null, label: 'كل المحطات' },
@@ -92,6 +93,21 @@ async function fetchTickets() {
     isConnected.value = true
   } catch {
     isConnected.value = false
+  }
+}
+
+// تأكيد صنف واحد جوه تذكرة — بدل الاضطرار لتأكيد التذكرة كلها حتى لو صنف
+// واحد بس خلص فعليًا. تاب واحد = pending/in_kitchen→ready، تاب تاني على
+// صنف جاهز بالفعل = رجوع لـ pending (تصحيح غلطة). السيرفر هو اللي بيقرر
+// تلقائيًا لو التذكرة كلها بقت 'done' — راجع KitchenDisplayView.vue::bumpItem
+// (نفس النمط بالظبط).
+async function bumpItem(ticket: Ticket, item: TicketItem) {
+  const next: ItemStatus = ITEM_DONE_STATUSES.includes(item.status ?? 'pending') ? 'pending' : 'ready'
+  try {
+    await api.patch(ENDPOINTS.dining.orderItemStatus(ticket.order_id, item.order_item_id), { status: next })
+    await fetchTickets()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة الصنف — حاول تاني')
   }
 }
 
@@ -180,10 +196,18 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
 
           <ul class="flex-1 space-y-1.5 mb-3">
             <li v-for="item in ticket.items_snapshot" :key="item.order_item_id" class="text-sm">
-              <div class="flex items-start gap-2 px-1.5 py-1">
+              <button
+                type="button"
+                @click="bumpItem(ticket, item)"
+                :class="[
+                  'w-full text-right rounded-lg px-1.5 py-1 flex items-start gap-2 transition-colors',
+                  ITEM_DONE_STATUSES.includes(item.status ?? 'pending') ? 'bg-green-800/40' : 'hover:bg-white/10 active:bg-white/20',
+                ]"
+              >
                 <span class="bg-white/20 text-white rounded px-1.5 py-0.5 text-xs font-bold flex-shrink-0">{{ item.quantity }}</span>
-                <span class="leading-tight flex-1">{{ item.name }}</span>
-              </div>
+                <span :class="['leading-tight flex-1', ITEM_DONE_STATUSES.includes(item.status ?? 'pending') && 'line-through text-slate-400']">{{ item.name }}</span>
+                <span v-if="ITEM_DONE_STATUSES.includes(item.status ?? 'pending')" class="text-green-400 text-xs flex-shrink-0">✓</span>
+              </button>
               <p v-if="item.notes" class="text-xs text-amber-300 mr-6 mt-0.5">⚠️ {{ item.notes }}</p>
             </li>
           </ul>

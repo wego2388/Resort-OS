@@ -784,6 +784,50 @@ def void_order_item(
     return order
 
 
+def bump_order_item_status(db: Session, order_id: int, item_id: int, new_status: str) -> DiningOrder:
+    """يبدّل حالة صنف واحد داخل طلب دايننج (pending → in_kitchen → ready →
+    served) — تأكيد صنف بصنف من شاشة الـ KDS، بدل الاضطرار لتأكيد التذكرة
+    كلها. راجع restaurant.services.bump_order_item_status — نفس المنطق
+    بالظبط. لما كل أصناف تذكرة معيّنة (محطة واحدة) تبقى ready/served/
+    cancelled، التذكرة نفسها بتتحوّل لـ 'done' تلقائيًا."""
+    order = _get_order_or_404(db, order_id)
+    item = crud.get_order_item(db, order_id, item_id)
+    if not item:
+        raise ValueError(f"الصنف {item_id} غير موجود في هذا الطلب")
+    if item.status in ("cancelled", "refunded"):
+        raise ValueError(f"لا يمكن تغيير حالة صنف {item.status}")
+
+    crud.update_order_item_status(db, item, new_status)
+    _sync_kitchen_tickets_for_order(db, order)
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def _sync_kitchen_tickets_for_order(db: Session, order: DiningOrder) -> None:
+    """يحدّث حالة تذاكر المطبخ المرتبطة بالطلب ده حسب حالة أصنافها الفعلية —
+    تذكرة تبقى 'done' لو كل أصنافها ready/served/cancelled، أو 'in_progress'
+    لو أي صنف بدأ يتحرّك من pending. راجع
+    restaurant.services._sync_kitchen_tickets_for_order — نفس المنطق
+    بالظبط (تُستدعى بعد أي bump فردي، مش بعد التأكيد اليدوي الكامل)."""
+    tickets = crud.list_tickets_for_order(db, order.id)
+    if not tickets:
+        return
+    status_by_item_id = {item.id: item.status for item in order.items}
+    for ticket in tickets:
+        if ticket.status == "done":
+            continue
+        item_ids = [entry.get("order_item_id") for entry in ticket.items_snapshot]
+        statuses = [status_by_item_id[iid] for iid in item_ids if iid in status_by_item_id]
+        if not statuses:
+            continue
+        if all(s in ("ready", "served", "cancelled") for s in statuses):
+            crud.update_ticket_status(db, ticket.id, "done")
+        elif ticket.status == "pending" and any(s != "pending" for s in statuses):
+            crud.update_ticket_status(db, ticket.id, "in_progress")
+
+
 def _order_local_date_and_time(order: DiningOrder) -> tuple[date, time]:
     """راجع restaurant.services._order_local_date_and_time — نفس المنطق بالظبط."""
     if not order.created_at:
@@ -951,13 +995,86 @@ def _post_order_refund_reversal_journal(db: Session, order: DiningOrder, refund_
     )
 
 
+def _order_item_statuses(db: Session, item_ids: set[int]) -> dict[int, str]:
+    """(order_item_id → status) لمجموعة أصناف — استعلام واحد بدل N+1 لكل
+    تذكرة عند تجميع عدة تذاكر مع بعض. راجع
+    restaurant.services._order_item_statuses — نفس المنطق بالظبط."""
+    if not item_ids:
+        return {}
+    from app.modules.dining.models import DiningOrderItem  # noqa: PLC0415
+    return dict(db.query(DiningOrderItem.id, DiningOrderItem.status).filter(DiningOrderItem.id.in_(item_ids)).all())
+
+
+def _ticket_read_dict(ticket: DiningKitchenTicket, status_by_item_id: dict[int, str]) -> dict:
+    """يبني dict متوافق مع KitchenTicketRead — بيضيف حالة كل صنف اللحظية
+    (status) جوه items_snapshot من DiningOrderItem.status الحقيقي، بدل ما
+    يفضل items_snapshot (JSON ثابت وقت إنشاء التذكرة) بيقول 'pending'
+    للأبد حتى لو الصنف اتأكد فعليًا (bump فردي — راجع bump_order_item_status).
+    راجع restaurant.services._ticket_read_dict — نفس المنطق بالظبط."""
+    items_snapshot = [
+        {**entry, "status": status_by_item_id.get(entry.get("order_item_id"), "pending")}
+        for entry in ticket.items_snapshot
+    ]
+    return {
+        "id": ticket.id,
+        "branch_id": ticket.branch_id,
+        "outlet_id": ticket.outlet_id,
+        "order_id": ticket.order_id,
+        "station": ticket.station,
+        "items_snapshot": items_snapshot,
+        "status": ticket.status,
+        "created_at": ticket.created_at,
+    }
+
+
 def get_kds_tickets(
     db: Session,
     branch_id: int,
     outlet_id: Optional[int] = None,
     stations: Optional[list[str]] = None,
-) -> list[DiningKitchenTicket]:
-    return crud.list_pending_tickets(db, branch_id, outlet_id=outlet_id, stations=stations)
+) -> list[dict]:
+    """يرجّع تذاكر الـ KDS المعلقة لفرع معيّن — كل تذكرة بترجع مع حالة كل
+    صنف اللحظية (راجع _ticket_read_dict)، استعلام واحد لكل الأصناف عبر كل
+    التذاكر المرجّعة، مش N+1 لكل تذكرة. راجع restaurant.services.get_kds_tickets."""
+    tickets = crud.list_pending_tickets(db, branch_id, outlet_id=outlet_id, stations=stations)
+    item_ids = {
+        entry.get("order_item_id")
+        for t in tickets
+        for entry in t.items_snapshot
+        if entry.get("order_item_id") is not None
+    }
+    status_by_item_id = _order_item_statuses(db, item_ids)
+    return [_ticket_read_dict(t, status_by_item_id) for t in tickets]
+
+
+def update_kitchen_ticket_status(db: Session, ticket_id: int, new_status: str) -> dict:
+    """يحدّث حالة تذكرة كاملة يدويًا (pending/in_progress/done) — تأكيد
+    دفعة واحدة، بدل صنف بصنف (راجع bump_order_item_status). لو التذكرة
+    اتأكدت كاملة (done)، أي صنف لسه pending/in_kitchen جواها بيترقّى لـ
+    'ready' تلقائيًا — عشان DiningOrderItem.status وحالة التذكرة يفضلوا
+    متسقين. راجع restaurant.services.update_kitchen_ticket_status."""
+    from app.modules.dining.models import DiningOrderItem  # noqa: PLC0415
+
+    ticket = crud.update_ticket_status(db, ticket_id, new_status)
+    if not ticket:
+        raise ValueError(f"التذكرة {ticket_id} غير موجودة")
+
+    if new_status == "done" and ticket.items_snapshot:
+        item_ids = {
+            entry.get("order_item_id") for entry in ticket.items_snapshot
+            if entry.get("order_item_id") is not None
+        }
+        if item_ids:
+            db.query(DiningOrderItem).filter(
+                DiningOrderItem.id.in_(item_ids),
+                DiningOrderItem.status.in_(("pending", "in_kitchen")),
+            ).update({"status": "ready"}, synchronize_session=False)
+
+    db.commit()
+    db.refresh(ticket)
+
+    item_ids = {e.get("order_item_id") for e in ticket.items_snapshot if e.get("order_item_id") is not None}
+    return _ticket_read_dict(ticket, _order_item_statuses(db, item_ids))
 
 
 def generate_receipt_pdf(db: Session, order_id: int) -> bytes:

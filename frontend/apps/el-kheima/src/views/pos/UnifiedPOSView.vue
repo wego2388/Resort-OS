@@ -18,16 +18,18 @@
  *  - void/refund reuse the existing PIN-approval pattern via
  *    DiningOrderDetailModal (no parallel approval flow invented).
  *  - built entirely from @resort-os/ui — no ad-hoc buttons/inputs/badges.
+ *  - offline queue parity with restaurant/cafe (DINING_CUTOVER_PLAN.md
+ *    Batch 1): useOfflineQueue('dining') — same IndexedDB queue/FIFO/
+ *    fulfilled|partial|rejected contract, outlet_id threaded through
+ *    (dining's create/sync routes are outlet-scoped, unlike restaurant/
+ *    cafe's flat paths — see useOfflineQueue.ts's MODULE_CONFIG).
  *
  * Deliberately deferred for this pass (see CLAUDE.md §18 / PROJECT_STATUS.md):
- * offline queue parity with restaurant/cafe (useOfflineQueue's module union
- * would need path-templating for dining's outlet-scoped URLs — a real
- * change to a composable 3 shipped POS screens depend on, out of scope for
- * a preview screen), course firing, kitchen timer, customer display.
+ * course firing, kitchen timer, customer display.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
-import { useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
+import { useOfflineQueue, useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
 import {
   AppButton, AppBadge, AppTabs, AppSelect, SearchInput, AppTextarea,
   EmptyState, LoadingState, IconButton, useToast,
@@ -41,6 +43,7 @@ const toast = useToast()
 const { printBlob } = usePrintDocument()
 const auth = useAuthStore()
 const branchId = auth.branchId
+const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue, lastPartialRejection } = useOfflineQueue('dining')
 
 // ── Types ────────────────────────────────────────────────────────────────
 interface Outlet { id: number; name: string; name_ar: string | null; outlet_type: string; is_active: boolean }
@@ -369,14 +372,20 @@ async function submitOrder() {
   }
   submitting.value = true
   try {
-    let orderId: number
     if (pendingOrderId.value !== null) {
-      orderId = pendingOrderId.value
-      await finalizeOrderToKitchen(orderId, true)
+      // #5: الطلب اتنشأ بالفعل (held) وقت تطبيق الخصم — منعملش POST تاني،
+      // ومحتاج نت أصلاً عشان applyDiscountToCart بيبعت مباشرة (مش عبر
+      // الطابور)، فمفيش داعي لمسار offline هنا. راجع RestaurantPOSView.
+      await finalizeOrderToKitchen(pendingOrderId.value, true)
     } else {
-      const { data } = await api.post(ENDPOINTS.dining.outletOrders(selectedOutletId.value), buildOrderPayload())
-      orderId = data.id
-      await finalizeOrderToKitchen(orderId, false)
+      const data = await submitOrderOnlineOrQueue(branchId, buildOrderPayload(), selectedOutletId.value)
+      if (data === null) {
+        // مفيش نت — اتحفظ محليًا (IndexedDB)، هيتزامن أوتوماتيك لما الاتصال يرجع
+        await clearOrder()
+        toast.success('📥 الطلب محفوظ — هيتبعت للمطبخ أول ما النت يرجع')
+        return
+      }
+      await finalizeOrderToKitchen(data.id, false)
     }
     await clearOrder()
     toast.success('تم إرسال الطلب للمطبخ ✓')
@@ -419,6 +428,28 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 
 <template>
   <div class="flex flex-col h-full" dir="rtl">
+
+    <!-- ── Offline banner — visible الطول، مش toast بيختفي (راجع RestaurantPOSView) ── -->
+    <div
+      v-if="!isOnline"
+      class="bg-amber-500 text-white text-xs font-bold px-4 py-1.5 flex items-center justify-center gap-2 flex-shrink-0"
+    >
+      <span>⚠️ وضع offline — الطلبات بتتحفظ محلياً وهتتبعت أول ما النت يرجع</span>
+      <span v-if="pendingCount > 0" class="bg-amber-700 px-2 py-0.5 rounded-full">{{ pendingCount }} في الانتظار</span>
+    </div>
+    <div
+      v-else-if="pendingCount > 0"
+      class="bg-primary-500 text-white text-xs font-bold px-4 py-1.5 flex items-center justify-center gap-2 flex-shrink-0"
+    >
+      <span>⏳ جاري إرسال {{ pendingCount }} طلب محفوظ من فترة الانقطاع...</span>
+    </div>
+    <div
+      v-if="lastPartialRejection && lastPartialRejection.length"
+      class="bg-red-100 text-red-800 text-xs font-semibold px-4 py-2 flex-shrink-0 border-b border-red-200"
+    >
+      ⚠️ تم رفض بعض الأصناف من طلب محفوظ سابقاً (نفاد المخزون):
+      {{ lastPartialRejection.map(i => `${i.name} (×${i.requested_qty})`).join('، ') }}
+    </div>
 
     <!-- ── Top bar ── -->
     <div class="bg-white border-b border-stone-200 px-4 py-3 flex flex-wrap gap-3 items-center shadow-sm flex-shrink-0">

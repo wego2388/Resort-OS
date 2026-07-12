@@ -386,6 +386,14 @@ class OrderStatusUpdate(BaseModel):
     payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet)$")
 
 
+class OrderItemStatusUpdate(BaseModel):
+    """تأكيد صنف واحد داخل تذكرة مطبخ (bump فردي) — بدل تأكيد التذكرة كلها
+    دفعة واحدة عبر TicketStatusUpdate. راجع restaurant.schemas.OrderItemStatusUpdate
+    — نفس المنطق بالظبط. cancelled/refunded مستبعدين عمداً — ليهم endpoints
+    مخصصة (void/refund) بمنطق مالي/صلاحيات مختلف تمامًا."""
+    status: str = Field(..., pattern=r"^(pending|in_kitchen|ready|served)$")
+
+
 # ─────────────────────── Offline POS Sync ─────────────────────────────
 
 class OrderSyncRequest(BaseModel):
