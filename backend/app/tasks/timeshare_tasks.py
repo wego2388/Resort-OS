@@ -12,6 +12,7 @@ from datetime import date
 
 from app.celery_app import celery_app
 from app.core.config import settings
+from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import business_today
 
 logger = logging.getLogger(__name__)
@@ -127,6 +128,7 @@ def send_visit_reminders(self):
 
     except Exception as exc:
         logger.error("send_visit_reminders failed: %s", exc)
+        notify_task_failure("app.tasks.timeshare_tasks.send_visit_reminders", exc)
 
 
 @celery_app.task(name="app.tasks.timeshare_tasks.send_installment_reminders", bind=True)
@@ -174,6 +176,7 @@ def send_installment_reminders(self):
 
     except Exception as exc:
         logger.error("send_installment_reminders failed: %s", exc)
+        notify_task_failure("app.tasks.timeshare_tasks.send_installment_reminders", exc)
 
 
 @celery_app.task(name="app.tasks.timeshare_tasks.send_visit_survey", bind=True, max_retries=3)
@@ -216,3 +219,7 @@ def send_visit_survey(self, visit_id: int, branch_id: int):
 
     except Exception as exc:
         logger.error("send_visit_survey failed: %s", exc)
+        notify_task_failure(
+            "app.tasks.timeshare_tasks.send_visit_survey", exc,
+            extra={"visit_id": visit_id, "branch_id": branch_id},
+        )

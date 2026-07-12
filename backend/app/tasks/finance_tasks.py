@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 from app.celery_app import celery_app
 from app.core.config import settings
+from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
@@ -32,9 +33,14 @@ def check_due_reminders(self):
                     _check_leasing_dues(db, branch.id, remind)
                 except Exception as exc:
                     logger.warning("Finance reminder failed: branch=%s error=%s", branch.id, exc)
+                    notify_task_failure(
+                        "app.tasks.finance_tasks.check_due_reminders", exc,
+                        extra={"branch_id": branch.id},
+                    )
 
     except Exception as exc:
         logger.error("check_due_reminders failed: %s", exc)
+        notify_task_failure("app.tasks.finance_tasks.check_due_reminders", exc)
 
 
 def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:

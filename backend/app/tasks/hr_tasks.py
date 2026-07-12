@@ -5,6 +5,7 @@ import logging
 
 from app.celery_app import celery_app
 from app.core.config import settings
+from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ def mark_attendance_absent(self):
 
     except Exception as exc:
         logger.error("mark_attendance_absent failed: %s", exc)
+        notify_task_failure("app.tasks.hr_tasks.mark_attendance_absent", exc)
 
 
 @celery_app.task(name="app.tasks.hr_tasks.payroll_reminder", bind=True)
@@ -74,6 +76,7 @@ def payroll_reminder(self):
                 notify_admin(f"تذكير: موعد إعداد كشف رواتب شهر {today.month}/{today.year} — فرع #{branch.id}.")
     except Exception as exc:
         logger.error("payroll_reminder failed: %s", exc)
+        notify_task_failure("app.tasks.hr_tasks.payroll_reminder", exc)
 
 
 @celery_app.task(name="app.tasks.hr_tasks.accrue_leave_balances", bind=True)
@@ -107,6 +110,7 @@ def accrue_leave_balances(self):
 
     except Exception as exc:
         logger.error("accrue_leave_balances failed: %s", exc)
+        notify_task_failure("app.tasks.hr_tasks.accrue_leave_balances", exc)
 
 
 @celery_app.task(name="app.tasks.hr_tasks.generate_weekly_rota", bind=True)
