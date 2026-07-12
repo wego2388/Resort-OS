@@ -1072,17 +1072,34 @@ def _sum_folio_charges_in_egp(
                Decimal("0"))
 
 
+def _sum_dining_folio_charges_in_egp(
+    db: Session, branch_id: int, outlet_type: str, date_from: date, date_to: date,
+) -> Decimal:
+    """راجع _sum_folio_charges_in_egp — نفس منطق تحويل العملة بالظبط، لكن
+    بيستخدم list_folio_charges_by_outlet_family_with_currency (يغطي
+    restaurant/cafe القديمة + dining الجديدة أثناء فترة الانتقال — راجع
+    docstring الدالة دي في crud.py)."""
+    rows = crud.list_folio_charges_by_outlet_family_with_currency(db, branch_id, outlet_type, date_from, date_to)
+    return sum((convert_to_egp(db, amount, currency, posted_date) for amount, currency, posted_date in rows),
+               Decimal("0"))
+
+
 def get_cost_center_report(db: Session, branch_id: int, date_from: date, date_to: date) -> CostCenterReport:
     """تقرير الإيراد حسب مركز التكلفة — المطعم/الكافيه/الشاطئ كل واحد سطر
     منفصل. البيانات بتيجي من مصدرين حسب الموديول: دفتر اليومية للي بيرحّل فعلياً
     (الفندق عبر حساب 4100)، أو الجداول المباشرة للي لسه ميرحّلش (مطعم/كافيه/شاطئ).
     كل مبلغ من folio_charges بيتحوّل لـ EGP equivalent بسعر الصرف وقت الحركة
-    نفسها لو الفوليو مش EGP — التقرير كله EGP-only (reporting_currency)."""
+    نفسها لو الفوليو مش EGP — التقرير كله EGP-only (reporting_currency).
+
+    REST/CAFE بيقروا من dining (DINING_CUTOVER_PLAN.md D-05) عبر
+    _sum_dining_folio_charges_in_egp — بتغطي charge_type='dining' الجديد
+    *و* charge_type='restaurant'/'cafe' القديم لسه (فترة انتقالية، لحد ما
+    الفرونت إند بالكامل يبقى بيكلّم /dining — راجع Batch 4)."""
     centers = {c.code: c for c in ensure_default_cost_centers(db, branch_id)}
 
     room_rev  = crud.sum_revenue_account_by_code(db, branch_id, "4100", date_from, date_to)
-    rest_rev  = _sum_folio_charges_in_egp(db, branch_id, "restaurant", date_from, date_to)
-    cafe_rev  = _sum_folio_charges_in_egp(db, branch_id, "cafe", date_from, date_to)
+    rest_rev  = _sum_dining_folio_charges_in_egp(db, branch_id, "restaurant", date_from, date_to)
+    cafe_rev  = _sum_dining_folio_charges_in_egp(db, branch_id, "cafe", date_from, date_to)
     beach_rev = crud.sum_beach_revenue(db, branch_id, date_from, date_to)
     ts_rev    = crud.sum_timeshare_revenue(db, branch_id, date_from, date_to)
 

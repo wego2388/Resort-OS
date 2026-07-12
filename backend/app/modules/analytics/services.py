@@ -7,6 +7,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from jose import jwt
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.resort_os.timezone_utils import business_today
@@ -15,6 +16,43 @@ if TYPE_CHECKING:
     from app.modules.analytics.models import GuestReview
 
 logger = logging.getLogger(__name__)
+
+
+def get_dining_revenue_by_outlet_type(
+    db: Session, branch_id: int, range_start: datetime, range_end: datetime,
+) -> dict[str, dict]:
+    """إيراد المطعم/الكافيه (والـ outlets المستقبلية زي بار المسبح/البوفيه من
+    غير أي كود إضافي) — DINING_CUTOVER_PLAN.md D-05: بديل استعلامين منفصلين
+    (restaurant.Order + cafe.CafeOrder) باستعلام واحد على DiningOrder،
+    مفلتر بـ Outlet.outlet_type. مصدر الحقيقة الوحيد بعد الـ cutover.
+
+    بيرجّع dict مفتاحه outlet_type، كل bucket فيه orders/total/covers
+    (guests_count مجموع — مستخدم لـ DailyStats.restaurant_covers في
+    app/tasks/analytics_tasks.py). الـ caller هو اللي بيقرر إيه المفاتيح
+    المضمونة الوجود في الـ response (زي "restaurant"/"cafe" اللي الفرونت
+    إند بيعتمد عليهم فعليًا)، الدالة دي مجرد بترجع اللي لقيته فعليًا في
+    البيانات."""
+    from app.modules.dining.models import DiningOrder, Outlet  # noqa: PLC0415
+
+    rows = (
+        db.query(Outlet.outlet_type, DiningOrder)
+        .join(Outlet, DiningOrder.outlet_id == Outlet.id)
+        .filter(
+            DiningOrder.branch_id == branch_id,
+            DiningOrder.status == "paid",
+            DiningOrder.created_at >= range_start,
+            DiningOrder.created_at <= range_end,
+        )
+        .all()
+    )
+    result: dict[str, dict] = {}
+    for outlet_type, order in rows:
+        bucket = result.setdefault(outlet_type, {"orders": 0, "total": Decimal("0"), "covers": 0})
+        bucket["orders"] += 1
+        bucket["total"] += order.total or Decimal("0")
+        bucket["covers"] += order.guests_count or 0
+    return result
+
 
 SURVEY_TOKEN_ALGORITHM = "HS256"
 SURVEY_TOKEN_TTL_DAYS = 7

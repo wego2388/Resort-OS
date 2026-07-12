@@ -38,11 +38,20 @@ class TestRevenueSummary:
         assert body["restaurant"]["orders"] == 0
 
     def test_paid_restaurant_order_counted_in_total(self, client: TestClient, db, manager_headers):
-        from app.modules.restaurant.models import Order
+        """DINING_CUTOVER_PLAN.md D-05 — /analytics/revenue بيقرا من
+        dining.DiningOrder (مفلتر بـ Outlet.outlet_type='restaurant') بدل
+        restaurant.Order مباشرة."""
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.models import DiningOrder
+        from app.modules.dining.schemas import OutletCreate
         branch = make_branch_committed(db)
-        order = Order(
-            branch_id=branch.id, order_number=f"O-{uuid.uuid4().hex[:8]}", order_type="takeaway",
-            status="paid", subtotal=Decimal("200.00"), total=Decimal("200.00"),
+        outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم تحليلات", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        order = DiningOrder(
+            branch_id=branch.id, outlet_id=outlet.id, order_number=f"O-{uuid.uuid4().hex[:8]}",
+            order_type="takeaway", status="paid", subtotal=Decimal("200.00"), total=Decimal("200.00"),
         )
         db.add(order)
         db.commit()

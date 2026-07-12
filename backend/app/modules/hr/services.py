@@ -915,26 +915,18 @@ def get_sales_leaderboard(
         counts[user_id] = counts.get(user_id, 0) + 1
 
     try:
-        from app.modules.restaurant.models import Order  # noqa: PLC0415
-        orders = db.query(Order).filter(
-            Order.branch_id == branch_id, Order.status == "paid",
-            Order.created_at >= dt_from, Order.created_at <= dt_to,
+        # dining.DiningOrder بدل restaurant.Order/cafe.CafeOrder المنفصلين
+        # (DINING_CUTOVER_PLAN.md D-05) — نفس استعلام واحد يغطي المطعم
+        # والكافيه معًا (مفيش فرق فعلي هنا، اللوحة بتجمّع الاتنين على أي حال).
+        from app.modules.dining.models import DiningOrder  # noqa: PLC0415
+        orders = db.query(DiningOrder).filter(
+            DiningOrder.branch_id == branch_id, DiningOrder.status == "paid",
+            DiningOrder.created_at >= dt_from, DiningOrder.created_at <= dt_to,
         ).all()
         for o in orders:
             _accumulate(o.waiter_id, o.total)
     except Exception:
-        logger.warning("get_sales_performance: فشل جلب طلبات المطعم — branch=%s", branch_id, exc_info=True)
-
-    try:
-        from app.modules.cafe.models import CafeOrder  # noqa: PLC0415
-        orders = db.query(CafeOrder).filter(
-            CafeOrder.branch_id == branch_id, CafeOrder.status == "paid",
-            CafeOrder.created_at >= dt_from, CafeOrder.created_at <= dt_to,
-        ).all()
-        for o in orders:
-            _accumulate(o.waiter_id, o.total)
-    except Exception:
-        logger.warning("get_sales_performance: فشل جلب طلبات الكافيه — branch=%s", branch_id, exc_info=True)
+        logger.warning("get_sales_performance: فشل جلب طلبات الدايننج — branch=%s", branch_id, exc_info=True)
 
     try:
         from app.modules.beach.models import BeachTransaction  # noqa: PLC0415

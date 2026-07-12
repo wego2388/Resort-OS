@@ -1087,6 +1087,81 @@ class TestCostCenterReport:
         assert report.total_revenue == sum((l.revenue for l in report.lines), Decimal("0"))
         assert report.total_revenue == Decimal("230")  # 200 (beach entry) + 30 (cafe)
 
+    def test_dining_sourced_charges_bucket_by_outlet_type(self, db: Session, branch, folio):
+        """DINING_CUTOVER_PLAN.md D-05 — أي طلب حقيقي عبر /dining مباشرة
+        (charge_type='dining') لازم يظهر في سطر REST/CAFE الصح، مبني على
+        Outlet.outlet_type بتاعه (عبر ref_order_id)، مش يختفي من التقرير.
+        راجع crud.list_folio_charges_by_outlet_family_with_currency."""
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.models import DiningOrder
+        from app.modules.dining.schemas import OutletCreate
+
+        rest_outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم dining", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        cafe_outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="كافيه dining", outlet_type="cafe",
+            revenue_account_code="4400",
+        ))
+        rest_order = DiningOrder(
+            branch_id=branch.id, outlet_id=rest_outlet.id, order_number=f"O-{uuid.uuid4().hex[:8]}",
+            order_type="takeaway", status="paid", subtotal=Decimal("120"), total=Decimal("120"),
+        )
+        cafe_order = DiningOrder(
+            branch_id=branch.id, outlet_id=cafe_outlet.id, order_number=f"O-{uuid.uuid4().hex[:8]}",
+            order_type="takeaway", status="paid", subtotal=Decimal("40"), total=Decimal("40"),
+        )
+        db.add_all([rest_order, cafe_order])
+        db.commit()
+
+        services.post_charge(db, folio.id, FolioChargeCreate(
+            charge_type="dining", description="عشاء dining", amount=Decimal("120"),
+            posted_at=datetime(2026, 6, 10, 20, 0), ref_order_id=rest_order.id,
+        ))
+        services.post_charge(db, folio.id, FolioChargeCreate(
+            charge_type="dining", description="قهوة dining", amount=Decimal("40"),
+            posted_at=datetime(2026, 6, 10, 10, 0), ref_order_id=cafe_order.id,
+        ))
+
+        report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
+        by_code = {l.code: l for l in report.lines}
+        assert by_code["REST"].revenue == Decimal("120")
+        assert by_code["CAFE"].revenue == Decimal("40")
+
+    def test_legacy_and_dining_charges_sum_together_during_transition(self, db: Session, branch, folio):
+        """أثناء فترة الانتقال (قبل Batch 4 — الفرونت إند لسه ممكن يكلّم
+        /restaurant/cafe القديمين)، charge_type='restaurant' القديم *و*
+        charge_type='dining' الجديد لازم يتجمّعوا في نفس سطر REST — مفيش
+        فقدان بيانات، ومفيش عدّ مزدوج."""
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.models import DiningOrder
+        from app.modules.dining.schemas import OutletCreate
+
+        rest_outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم مختلط", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        dining_order = DiningOrder(
+            branch_id=branch.id, outlet_id=rest_outlet.id, order_number=f"O-{uuid.uuid4().hex[:8]}",
+            order_type="takeaway", status="paid", subtotal=Decimal("75"), total=Decimal("75"),
+        )
+        db.add(dining_order)
+        db.commit()
+
+        services.post_charge(db, folio.id, FolioChargeCreate(
+            charge_type="restaurant", description="طلب قديم عبر /restaurant", amount=Decimal("300"),
+            posted_at=datetime(2026, 6, 10, 20, 0),
+        ))
+        services.post_charge(db, folio.id, FolioChargeCreate(
+            charge_type="dining", description="طلب جديد عبر /dining", amount=Decimal("75"),
+            posted_at=datetime(2026, 6, 11, 13, 0), ref_order_id=dining_order.id,
+        ))
+
+        report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
+        by_code = {l.code: l for l in report.lines}
+        assert by_code["REST"].revenue == Decimal("375")  # 300 + 75, not double-counted
+
 
 # ── ETA E-Invoice list/tracking ─────────────────────────────────────────
 

@@ -126,37 +126,21 @@ def _build_stats(db, branch_id: int, stat_date: date) -> None:
     except Exception:
         pass
 
-    # Restaurant
+    # Restaurant + Cafe — dining.DiningOrder بدل restaurant.Order/
+    # cafe.CafeOrder المنفصلين (DINING_CUTOVER_PLAN.md D-05، مصدر الحقيقة
+    # الوحيد بعد الـ cutover). كان فيه باج حقيقي هنا قبل كده (اتصلح
+    # 2026-07-05): Order.covers مش موجود خالص في الموديل الأصلي (الاسم
+    # الصح guests_count) — get_dining_revenue_by_outlet_type بتستخدم
+    # guests_count الصح من الأساس.
     restaurant_covers  = 0
     restaurant_revenue = Decimal("0")
-    try:
-        from app.modules.restaurant.models import Order  # noqa: PLC0415
-        orders = db.query(Order).filter(
-            Order.branch_id == branch_id,
-            Order.status == "paid",
-            Order.created_at >= day_start,
-            Order.created_at <= day_end,
-        ).all()
-        # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-05): كان بيقرأ Order.covers —
-        # حقل مش موجود خالص في الموديل (الاسم الصح guests_count)، فـ
-        # hasattr كان بيرجع False دايمًا وrestaurant_covers كان صفر ثابت
-        # في كل DailyStats اتولّدت من أول ما الكود ده اتكتب.
-        restaurant_covers  = sum(o.guests_count for o in orders if o.guests_count)
-        restaurant_revenue = sum((o.total for o in orders), Decimal("0"))
-    except Exception:
-        pass
-
-    # Cafe
     cafe_revenue = Decimal("0")
     try:
-        from app.modules.cafe.models import CafeOrder  # noqa: PLC0415
-        cafe_orders = db.query(CafeOrder).filter(
-            CafeOrder.branch_id == branch_id,
-            CafeOrder.status == "paid",
-            CafeOrder.created_at >= day_start,
-            CafeOrder.created_at <= day_end,
-        ).all()
-        cafe_revenue = sum((o.total for o in cafe_orders), Decimal("0"))
+        from app.modules.analytics import services as analytics_services  # noqa: PLC0415
+        by_outlet = analytics_services.get_dining_revenue_by_outlet_type(db, branch_id, day_start, day_end)
+        restaurant_covers  = by_outlet.get("restaurant", {}).get("covers", 0)
+        restaurant_revenue = by_outlet.get("restaurant", {}).get("total", Decimal("0"))
+        cafe_revenue        = by_outlet.get("cafe", {}).get("total", Decimal("0"))
     except Exception:
         pass
 

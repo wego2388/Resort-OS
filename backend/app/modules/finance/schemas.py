@@ -327,8 +327,8 @@ class DiscountCalculateRequest(BaseModel):
     # ملحوظة: preview بمستوى الطلب كله بس (بدون سطور) — عمدًا مفيهوش outlet/
     # line_items، فقواعد scope_type="outlet"/"category"/"item" أو
     # condition_type="combo_items" مش هتتحقق أبدًا هنا (نفس سلوك أي rule
-    # نطاقها مش منطبق). استخدم POST /restaurant|cafe/orders/{id}/discount
-    # الحقيقي لمعاينة/تطبيق خصومات بنطاق محدد على طلب فعلي.
+    # نطاقها مش منطبق). استخدم POST /dining/orders/{id}/discount الحقيقي
+    # لمعاينة/تطبيق خصومات بنطاق محدد على طلب فعلي.
 
 
 # ── Double-Entry Accounting Schemas ───────────────────────────────────

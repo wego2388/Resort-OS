@@ -11,14 +11,22 @@ from typing import Optional
 
 
 CHARGE_TYPES = (
-    "room", "restaurant", "cafe", "beach",
+    "room", "restaurant", "cafe", "dining", "beach",
     "activity", "minibar", "spa", "laundry", "other",
 )
-
+# "dining" — الموديول الموحّد الجديد (DINING_CUTOVER_PLAN.md D-05)؛
+# update_order_status الحقيقي بتاعه بينادي crud.add_charge مباشرة (متجاوز
+# validate_charge/post_charge هنا)، فده الغياب ماكانش يمنع الطلبات
+# الحقيقية من الترحيل — لكن كان معناه إن أي شحنة يدوية بـ charge_type=
+# 'dining' عبر POST /finance/folios/{id}/charges العام (تصحيح مدير مثلاً)
+# كانت هترفض بـ "نوع charge غير معروف" غلط. "restaurant"/"cafe" فضلوا
+# عمدًا (مش هيتحذفوا) — لسه قيم تاريخية حقيقية موجودة في folio_charges
+# القديمة، وهيفضلوا كده للأبد حتى بعد حذف موديولي restaurant/cafe.
 CHARGE_LABELS_AR = {
     "room":       "إقامة",
     "restaurant": "مطعم",
     "cafe":       "كافيه",
+    "dining":     "دايننج",
     "beach":      "شاطئ",
     "activity":   "أنشطة",
     "minibar":    "ميني بار",
