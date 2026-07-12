@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "main": "./src/index.ts",
+  "dependencies": {
+    "@heroicons/vue": "^2.1.5"
+  },
   "peerDependencies": {
     "vue": "^3.4.0",
     "@resort-os/core": "workspace:*",

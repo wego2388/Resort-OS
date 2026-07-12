@@ -1,9 +1,17 @@
+import dsPreset from '../../packages/ui/tailwind-preset.js'
+
 /** @type {import('tailwindcss').Config} */
 export default {
   // ⚠️ نفس باج el-kheima's tailwind.config.js — content مكنش شامل
   // '../../packages/ui/src'، يعني Tailwind classes مستخدمة بس جوه مكوّنات
   // @resort-os/ui المشتركة (ToastContainer مثلاً) كانت بتتشال بصمت من الـ CSS.
   content: ['./index.html', './src/**/*.{vue,ts}', '../../packages/ui/src/**/*.{vue,ts}'],
+  // Shared Design System preset (packages/ui/tailwind-preset.js) — see
+  // el-kheima's tailwind.config.js for the full rationale. `extend` below
+  // still merges on top, so public's own primary/gold/resort/brand palette
+  // and heading/body fonts are untouched.
+  presets: [dsPreset],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {

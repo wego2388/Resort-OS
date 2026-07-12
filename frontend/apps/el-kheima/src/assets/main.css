@@ -1,3 +1,10 @@
+/* Design System tokens (colors/focus-ring/reduced-motion CSS vars) — must
+   load before the @tailwind directives below so the vars exist by the time
+   any Tailwind-generated rule references them. Purely additive: see
+   packages/ui/src/styles/tokens.css for why importing this changes nothing
+   visually until a component actually opts into the new tokens. */
+@import '@resort-os/ui/src/styles/tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

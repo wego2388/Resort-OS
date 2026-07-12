@@ -1,0 +1,87 @@
+/**
+ * Design System tokens — the runtime half of tailwind-preset.js.
+ *
+ * Every color the preset exposes (secondary/success/warning/danger/info/
+ * surface/border/muted/background/dark/light) resolves to one of the CSS
+ * custom properties below via `rgb(var(--color-x) / <alpha>)`. Values are
+ * "R G B" triplets (no commas, no rgb() wrapper) so Tailwind's opacity
+ * modifier syntax can splice in an alpha channel.
+ *
+ * Import this file exactly once per app, near the top of main.css, before
+ * @tailwind base/components/utilities. It only *defines variables and a
+ * couple of accessibility base rules* — it emits no visible styles on its
+ * own, so importing it changes nothing until a component actually consumes
+ * a `--color-*` var or a `.dark` class is toggled (see
+ * packages/core/src/composables/useTheme.ts).
+ */
+
+:root {
+  /* Brand-derived defaults — chosen to sit next to the existing
+     primary (#0B4F8A) / gold (#C9963C) / resort.bg/surface/border palette
+     already used across both apps, so a component built with these new
+     tokens looks native alongside not-yet-migrated screens. */
+  --color-secondary: 201 150 60;   /* gold DEFAULT #C9963C */
+  --color-success: 22 163 74;      /* green-600 */
+  --color-warning: 217 119 6;      /* amber-600 */
+  --color-danger: 220 38 38;       /* red-600 */
+  --color-info: 37 99 235;         /* blue-600 */
+  --color-surface: 255 255 255;    /* white */
+  --color-border: 229 224 216;     /* resort.border #E5E0D8 */
+  --color-muted: 120 113 108;      /* stone-500 */
+  --color-background: 249 247 244; /* resort.bg #F9F7F4 */
+  --color-dark: 28 25 23;          /* stone-900 */
+  --color-light: 255 255 255;
+
+  /* Referenced by the shadow-focus-ring utility — kept as its own var
+     (rather than reusing --color-primary, which this preset doesn't
+     redeclare) so focus rings render correctly even in apps/components
+     that only ever see the DS tokens. Matches primary.700 (#0B4F8A). */
+  --color-primary-ring: 11 79 138;
+}
+
+/* Dark mode — class strategy (see useTheme.ts). Every var above gets a
+   dark-safe counterpart; nothing outside this block changes when `.dark`
+   toggles, so existing screens (which use the separate primary/gold/resort/
+   brand palettes, none of which are redeclared here) are entirely
+   unaffected either way until they're migrated onto these tokens. */
+.dark {
+  --color-secondary: 245 215 142;  /* gold.light — brighter for dark surfaces */
+  --color-success: 74 222 128;
+  --color-warning: 251 191 36;
+  --color-danger: 248 113 113;
+  --color-info: 96 165 250;
+  --color-surface: 28 25 23;       /* stone-900 */
+  --color-border: 68 64 60;        /* stone-700 */
+  --color-muted: 168 162 158;      /* stone-400 */
+  --color-background: 12 10 9;     /* near-black */
+  --color-dark: 245 245 244;
+  --color-light: 20 18 17;
+  --color-primary-ring: 96 165 250; /* blue-400 — visible on dark surfaces */
+}
+
+@layer base {
+  /* Visible focus ring on every focusable element, keyboard-navigation only
+     (mouse/touch clicks never trigger :focus-visible) — a safety net for any
+     element that doesn't already define its own focus treatment. Individual
+     Design System components (Button, Input, ...) layer a matching
+     shadow-focus-ring on top of this for a consistent look; this rule is
+     what guarantees WCAG 2.4.7 compliance even on elements nobody has
+     migrated yet. */
+  :focus-visible {
+    outline: 2px solid rgb(var(--color-primary-ring));
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Respect the OS-level "reduce motion" accessibility setting — disables
+     all DS-authored keyframe animations/transitions without having to
+     sprinkle motion-reduce: on every single component. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
