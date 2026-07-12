@@ -1,26 +1,22 @@
 <script setup lang="ts">
-// Visual output is byte-identical to before this refactor (see
-// utils/inputClasses.ts for why) — this change only removes the duplicated
-// Tailwind string that six new sibling components (Textarea, Select,
-// MoneyInput, PhoneInput, DatePicker, TimePicker) would otherwise each have
-// hand-copied. `required` is new and purely additive (renders nothing extra
-// unless a label is also given).
+// Sibling of DatePicker.vue — same rationale (native <input type="time">
+// over a custom widget). Value is always "HH:MM" 24h, the native shape.
 import { computed } from 'vue'
 import { fieldClasses, fieldLabelClasses, fieldErrorClasses } from '../utils/inputClasses'
 
 const props = defineProps<{
   label?: string
   error?: string
-  placeholder?: string
-  type?: string
   disabled?: boolean
   required?: boolean
-  modelValue?: string | number
+  modelValue?: string
 }>()
+
 defineEmits<{ 'update:modelValue': [v: string] }>()
 
-const classes = computed(() => fieldClasses({ error: !!props.error, disabled: props.disabled }))
+const classes = computed(() => [...fieldClasses({ error: !!props.error, disabled: props.disabled }), 'tabular-nums'])
 </script>
+
 <template>
   <div class="flex flex-col gap-1">
     <label v-if="label" :class="fieldLabelClasses">
@@ -28,8 +24,7 @@ const classes = computed(() => fieldClasses({ error: !!props.error, disabled: pr
       <span v-if="required" class="text-danger" aria-hidden="true">*</span>
     </label>
     <input
-      :type="type ?? 'text'"
-      :placeholder="placeholder"
+      type="time"
       :disabled="disabled"
       :required="required"
       :aria-invalid="!!error"

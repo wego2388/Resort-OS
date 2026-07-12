@@ -99,7 +99,12 @@ export default {
         'ds-scale-in':  { from: { opacity: 0, transform: 'scale(0.96)' }, to: { opacity: 1, transform: 'scale(1)' } },
         'ds-slide-up':  { from: { opacity: 0, transform: 'translateY(8px)' },  to: { opacity: 1, transform: 'translateY(0)' } },
         'ds-slide-down': { from: { opacity: 0, transform: 'translateY(-8px)' }, to: { opacity: 1, transform: 'translateY(0)' } },
-        'ds-pulse-ring': { '0%': { boxShadow: '0 0 0 0 rgb(var(--color-primary) / 0.35)' }, '100%': { boxShadow: '0 0 0 8px rgb(var(--color-primary) / 0)' } },
+        // Uses --color-primary-ring (defined in tokens.css, dark-mode aware)
+        // rather than --color-primary, which this preset deliberately never
+        // redeclares as a CSS var (see the `colors` block above).
+        'ds-pulse-ring': { '0%': { boxShadow: '0 0 0 0 rgb(var(--color-primary-ring) / 0.35)' }, '100%': { boxShadow: '0 0 0 8px rgb(var(--color-primary-ring) / 0)' } },
+        // Sweeping bar for Progress.vue's `indeterminate` state.
+        'ds-indeterminate': { '0%': { transform: 'translateX(-100%)' }, '100%': { transform: 'translateX(400%)' } },
       },
       animation: {
         'ds-fade-in':   'ds-fade-in 200ms cubic-bezier(0.4,0,0.2,1) both',
@@ -108,6 +113,7 @@ export default {
         'ds-slide-up':  'ds-slide-up 200ms cubic-bezier(0,0,0.2,1) both',
         'ds-slide-down': 'ds-slide-down 200ms cubic-bezier(0,0,0.2,1) both',
         'ds-pulse-ring': 'ds-pulse-ring 1.2s cubic-bezier(0.4,0,0.2,1) infinite',
+        'ds-indeterminate': 'ds-indeterminate 1.2s ease-in-out infinite',
       },
 
       // Responsive tokens — additive named breakpoints for the 4 device
