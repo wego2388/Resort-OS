@@ -784,6 +784,43 @@ def void_order_item(
     return order
 
 
+def transfer_order_table(db: Session, order_id: int, table_id: int) -> DiningOrder:
+    """نقل طلب مفتوح من طاولة لأخرى — الضيوف اتحركوا فعليًا لطاولة تانية،
+    والكاشير/النادل محتاج ينقل الطلب الجاري من غير ما يلغيه ويعمل واحد
+    جديد. راجع restaurant.services.transfer_order_table — نفس المنطق
+    بالظبط (الطاولة الجديدة لازم تكون في نفس الفرع، مش خارج الخدمة، ومش
+    مشغولة بطلب مفتوح تاني)."""
+    order = _get_order_or_404(db, order_id)
+    if order.status in ("paid", "cancelled"):
+        raise ValueError(f"لا يمكن نقل طلب بحالة '{order.status}'")
+
+    new_table = crud.get_table(db, table_id)
+    if not new_table:
+        raise ValueError(f"الطاولة {table_id} غير موجودة")
+    if new_table.branch_id != order.branch_id:
+        raise ValueError("الطاولة المطلوبة لا تنتمي لنفس فرع الطلب")
+    if new_table.status == "out_of_service":
+        raise ValueError(f"الطاولة {new_table.table_number} خارج الخدمة")
+    if order.table_id == table_id:
+        raise ValueError(f"الطلب بالفعل على الطاولة {new_table.table_number}")
+
+    conflicting = crud.get_active_order_for_table(db, table_id, exclude_order_id=order.id)
+    if conflicting:
+        raise ValueError(f"الطاولة {new_table.table_number} مشغولة بطلب آخر ({conflicting.order_number})")
+
+    old_table_id = order.table_id
+    order.table_id = table_id
+    crud.update_table_status(db, new_table, "occupied")
+    if old_table_id and old_table_id != table_id:
+        old_table = crud.get_table(db, old_table_id)
+        if old_table:
+            crud.update_table_status(db, old_table, "available")
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
 def bump_order_item_status(db: Session, order_id: int, item_id: int, new_status: str) -> DiningOrder:
     """يبدّل حالة صنف واحد داخل طلب دايننج (pending → in_kitchen → ready →
     served) — تأكيد صنف بصنف من شاشة الـ KDS، بدل الاضطرار لتأكيد التذكرة

@@ -300,6 +300,21 @@ def update_table_status(db: Session, table: VenueTable, status: str) -> VenueTab
     return table
 
 
+def get_active_order_for_table(
+    db: Session, table_id: int, exclude_order_id: Optional[int] = None,
+) -> Optional[DiningOrder]:
+    """أي طلب غير مقفول (مش paid/cancelled) مرتبط بالطاولة دي حاليًا — يُستخدم
+    للتحقق إن الطاولة "مشغولة بطلب آخر" قبل نقل طلب ليها. راجع
+    restaurant.crud.get_active_order_for_table — نفس المنطق بالظبط."""
+    q = db.query(DiningOrder).filter(
+        DiningOrder.table_id == table_id,
+        DiningOrder.status.notin_(("paid", "cancelled")),
+    )
+    if exclude_order_id is not None:
+        q = q.filter(DiningOrder.id != exclude_order_id)
+    return q.first()
+
+
 # ── Order ─────────────────────────────────────────────────────────────
 
 def get_order(db: Session, order_id: int) -> Optional[DiningOrder]:
