@@ -55,7 +55,7 @@ export function homeRouteFor(role: string): string {
 }
 
 const routes: RouteRecordRaw[] = [
-  { path: '/login', component: () => import('@resort-os/ui').then((m) => ({ default: m.LoginView })) },
+  { path: '/login', component: () => import('../views/account/LoginView.vue') },
 
   // Standalone (no layout, no auth) — reached from the "نسيت كلمة السر؟" link
   // on /login, or (for /reset-password) from the email link the backend sends

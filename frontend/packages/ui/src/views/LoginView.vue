@@ -1,4 +1,7 @@
 <script setup lang="ts">
+// LoginView (packages/ui) — generic fallback login used by apps that don't
+// have their own localised LoginView. El-kheima uses its own
+// views/account/LoginView.vue (which adds LanguageSwitcher + i18n).
 import { ref } from 'vue'
 import { useAuthStore } from '@resort-os/core'
 import { useToast } from '../composables/useToast'
@@ -10,12 +13,6 @@ const router = useRouter()
 const username = ref('')
 const password = ref('')
 const loading = ref(false)
-
-// LOGIN_2FA_ENFORCED (backend, off by default): once on, a 2FA-enabled
-// account's POST /login returns 401 `2FA_CODE_REQUIRED` until the current
-// TOTP code is submitted alongside the password — same code the account
-// already set up in TwoFactorSetupView.vue. `needsOtp` switches the form to
-// collect it; every other account/config never sees this branch at all.
 const needsOtp = ref(false)
 const otpCode = ref('')
 
@@ -49,7 +46,6 @@ async function handleLogin() {
 <template>
   <div class="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center p-4">
     <div class="w-full max-w-md">
-      <!-- Logo -->
       <div class="text-center mb-8">
         <div class="w-20 h-20 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur">
           <svg class="w-10 h-10 text-amber-300" fill="currentColor" viewBox="0 0 24 24">
@@ -59,55 +55,31 @@ async function handleLogin() {
         <h1 class="text-3xl font-bold text-white mb-1">Resort OS</h1>
         <p class="text-blue-200 text-sm">نظام إدارة المنتجع المتكامل</p>
       </div>
-
-      <!-- Form -->
       <div class="bg-white rounded-2xl p-8 shadow-2xl">
         <h2 class="text-xl font-bold text-gray-900 mb-6 text-center">تسجيل الدخول</h2>
         <form @submit.prevent="handleLogin" class="space-y-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">اسم المستخدم</label>
-            <input
-              v-model="username"
-              type="text"
-              placeholder="username"
-              autocomplete="username"
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-            />
+            <input v-model="username" type="text" placeholder="username" autocomplete="username"
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900" />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">كلمة المرور</label>
-            <input
-              v-model="password"
-              type="password"
-              placeholder="••••••••"
-              autocomplete="current-password"
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-            />
+            <input v-model="password" type="password" placeholder="••••••••" autocomplete="current-password"
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900" />
           </div>
           <div v-if="!needsOtp" class="text-center -mt-2">
-            <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline">
-              نسيت كلمة السر؟
-            </router-link>
+            <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline">نسيت كلمة السر؟</router-link>
           </div>
           <div v-if="needsOtp">
             <label class="block text-sm font-medium text-gray-700 mb-1">كود التحقق بخطوتين</label>
-            <input
-              v-model="otpCode"
-              type="text"
-              inputmode="numeric"
-              maxlength="6"
-              placeholder="000000"
-              autocomplete="one-time-code"
-              autofocus
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900"
-            />
+            <input v-model="otpCode" type="text" inputmode="numeric" maxlength="6" placeholder="000000"
+              autocomplete="one-time-code" autofocus
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900" />
             <p class="text-xs text-gray-400 mt-1">أدخل الكود من تطبيق المصادقة (Google Authenticator أو Authy)</p>
           </div>
-          <button
-            type="submit"
-            :disabled="loading"
-            class="w-full bg-blue-700 text-white py-3 rounded-xl font-semibold hover:bg-blue-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-          >
+          <button type="submit" :disabled="loading"
+            class="w-full bg-blue-700 text-white py-3 rounded-xl font-semibold hover:bg-blue-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
             <svg v-if="loading" class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>

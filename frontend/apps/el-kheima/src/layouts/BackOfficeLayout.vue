@@ -11,11 +11,14 @@
 import { ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
+import { useI18n } from 'vue-i18n'
 import GuestAlertsBell from '../components/GuestAlertsBell.vue'
+import LanguageSwitcher from '../components/LanguageSwitcher.vue'
 
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
+const { t, locale } = useI18n()
 
 // #23: حفظ حالة الـ sidebar في localStorage — بيتذكر اختيار المستخدم بين الجلسات
 const SIDEBAR_KEY = 'resort-os-sidebar-open'
@@ -37,69 +40,69 @@ interface NavSection {
   items: NavItem[]
 }
 
-const allSections: NavSection[] = [
+const allSections = computed<NavSection[]>(() => [
   {
-    label: 'العمليات',
+    label: t('backoffice.nav.operations'),
     items: [
-      { path: '/ops/rooms', label: 'الغرف', icon: '🛏️' },
-      { path: '/ops/bookings', label: 'الحجوزات', icon: '📋' },
-      { path: '/ops/housekeeping', label: 'التنظيف', icon: '🧹' },
+      { path: '/ops/rooms',       label: t('backoffice.nav.rooms'),       icon: '🛏️' },
+      { path: '/ops/bookings',    label: t('backoffice.nav.bookings'),    icon: '📋' },
+      { path: '/ops/housekeeping',label: t('backoffice.nav.housekeeping'),icon: '🧹' },
     ],
   },
   {
-    label: 'الرئيسية',
+    label: t('backoffice.nav.main'),
     items: [
-      { path: '/admin/dashboard', label: 'لوحة التحكم', icon: '📊', requiredRole: 'manager' },
-      { path: '/admin/analytics', label: 'التحليلات', icon: '📈', requiredRole: 'manager' },
+      { path: '/admin/dashboard', label: t('backoffice.nav.dashboard'), icon: '📊', requiredRole: 'manager' },
+      { path: '/admin/analytics', label: t('backoffice.nav.analytics'), icon: '📈', requiredRole: 'manager' },
     ],
   },
   {
-    label: 'الإدارة',
+    label: t('backoffice.nav.management'),
     items: [
-      { path: '/admin/hr', label: 'الموارد البشرية', icon: '👥', requiredRole: 'manager' },
-      { path: '/admin/finance', label: 'المالية', icon: '💰', requiredRole: 'manager' },
-      { path: '/admin/e-invoice', label: 'الفاتورة الإلكترونية', icon: '🧾', requiredRole: 'manager' },
-      { path: '/admin/timeshare', label: 'التايم شير', icon: '🏨', requiredRole: 'cashier' },
-      { path: '/admin/sales', label: 'لوحة المبيعات', icon: '📞', requiredRole: 'manager' },
-      { path: '/admin/beach-live', label: 'لوحة الشاطئ الحيّة', icon: '🏖️', requiredRole: 'manager' },
-      { path: '/admin/menu', label: 'قائمة المطعم', icon: '🍽️', requiredRole: 'manager' },
-      { path: '/admin/tables', label: 'إدارة الطاولات', icon: '🪑', requiredRole: 'manager' },
-      { path: '/admin/inventory', label: 'المخزون', icon: '📦', requiredRole: 'manager' },
-      { path: '/admin/recipes', label: 'وصفات الأصناف', icon: '🧾', requiredRole: 'manager' },
-      { path: '/admin/food-cost', label: 'تكلفة الطعام', icon: '📉', requiredRole: 'manager' },
-      { path: '/admin/crm', label: 'إدارة العملاء', icon: '🤝', requiredRole: 'manager' },
-      { path: '/admin/maintenance', label: 'الصيانة', icon: '🔧', requiredRole: 'supervisor' },
-      { path: '/admin/leasing', label: 'الإيجارات', icon: '🏢', requiredRole: 'supervisor' },
+      { path: '/admin/hr',           label: t('backoffice.nav.hr'),             icon: '👥',  requiredRole: 'manager' },
+      { path: '/admin/finance',      label: t('backoffice.nav.finance'),        icon: '💰',  requiredRole: 'manager' },
+      { path: '/admin/e-invoice',    label: t('backoffice.nav.eInvoice'),       icon: '🧾',  requiredRole: 'manager' },
+      { path: '/admin/timeshare',    label: t('backoffice.nav.timeshare'),      icon: '🏨',  requiredRole: 'cashier' },
+      { path: '/admin/sales',        label: t('backoffice.nav.sales'),          icon: '📞',  requiredRole: 'manager' },
+      { path: '/admin/beach-live',   label: t('backoffice.nav.beachLive'),      icon: '🏖️',  requiredRole: 'manager' },
+      { path: '/admin/menu',         label: t('backoffice.nav.restaurantMenu'), icon: '🍽️',  requiredRole: 'manager' },
+      { path: '/admin/tables',       label: t('backoffice.nav.tablesManagement'),icon: '🪑', requiredRole: 'manager' },
+      { path: '/admin/inventory',    label: t('backoffice.nav.inventory'),      icon: '📦',  requiredRole: 'manager' },
+      { path: '/admin/recipes',      label: t('backoffice.nav.recipes'),        icon: '🧾',  requiredRole: 'manager' },
+      { path: '/admin/food-cost',    label: t('backoffice.nav.foodCost'),       icon: '📉',  requiredRole: 'manager' },
+      { path: '/admin/crm',          label: t('backoffice.nav.crm'),            icon: '🤝',  requiredRole: 'manager' },
+      { path: '/admin/maintenance',  label: t('backoffice.nav.maintenance'),    icon: '🔧',  requiredRole: 'supervisor' },
+      { path: '/admin/leasing',      label: t('backoffice.nav.leasing'),        icon: '🏢',  requiredRole: 'supervisor' },
     ],
   },
   {
-    label: 'الكافيه',
+    label: t('backoffice.nav.cafe'),
     items: [
-      { path: '/admin/cafe-menu', label: 'قائمة الكافيه', icon: '☕', requiredRole: 'manager' },
-      { path: '/admin/cafe-sales', label: 'مبيعات الكافيه', icon: '📊', requiredRole: 'manager' },
-      { path: '/admin/qr', label: 'QR Codes', icon: '📱', requiredRole: 'manager' },
+      { path: '/admin/cafe-menu',  label: t('backoffice.nav.cafeMenu'),  icon: '☕', requiredRole: 'manager' },
+      { path: '/admin/cafe-sales', label: t('backoffice.nav.cafeSales'), icon: '📊', requiredRole: 'manager' },
+      { path: '/admin/qr',         label: t('backoffice.nav.qrCodes'),   icon: '📱', requiredRole: 'manager' },
     ],
   },
   {
-    label: 'الإعدادات',
+    label: t('backoffice.nav.settings'),
     items: [
-      { path: '/admin/settings', label: 'الإعدادات', icon: '⚙️', requiredRole: 'admin' },
-      { path: '/admin/permissions', label: 'الصلاحيات', icon: '🔐', requiredRole: 'super_admin' },
+      { path: '/admin/settings',    label: t('backoffice.nav.settings'),    icon: '⚙️', requiredRole: 'admin' },
+      { path: '/admin/permissions', label: t('backoffice.nav.permissions'), icon: '🔐', requiredRole: 'super_admin' },
     ],
   },
   {
-    label: 'بوابة الموظفين',
+    label: t('backoffice.nav.portalSection'),
     items: [
-      { path: '/portal/attendance', label: 'الحضور والانصراف', icon: '⏰' },
-      { path: '/portal/leaves', label: 'طلبات الإجازة', icon: '🌴' },
-      { path: '/portal/payroll', label: 'الرواتب', icon: '💳' },
-      { path: '/portal/profile', label: 'ملفي الشخصي', icon: '👤' },
+      { path: '/portal/attendance', label: t('backoffice.nav.attendance'), icon: '⏰' },
+      { path: '/portal/leaves',     label: t('backoffice.nav.leaves'),     icon: '🌴' },
+      { path: '/portal/payroll',    label: t('backoffice.nav.payroll'),    icon: '💳' },
+      { path: '/portal/profile',    label: t('backoffice.nav.profile'),    icon: '👤' },
     ],
   },
-]
+])
 
 const navSections = computed(() =>
-  allSections
+  allSections.value
     .map((section) => ({
       ...section,
       items: section.items.filter(
@@ -119,7 +122,7 @@ function isActive(path: string) {
 // بس مفيش أي مؤشر تاني لمكانه الحالي (#29). بيتبني من allSections نفسها
 // (نفس مصدر الـ nav) — مفيش مصدر تاني منفصل يتزامن معاه بالغلط.
 const breadcrumb = computed(() => {
-  for (const section of allSections) {
+  for (const section of allSections.value) {
     const item = section.items.find((i) => isActive(i.path))
     if (item) return { section: section.label, page: item.label }
   }
@@ -133,7 +136,7 @@ function logout() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-stone-50 flex" dir="rtl">
+  <div class="min-h-screen bg-stone-50 flex" :dir="locale === 'ar' ? 'rtl' : 'ltr'">
     <!-- Sidebar -->
     <aside :class="['bg-slate-900 text-white flex-shrink-0 flex flex-col transition-all duration-300', sidebarOpen ? 'w-60' : 'w-16']">
       <!-- Logo -->
@@ -143,7 +146,7 @@ function logout() {
         </div>
         <div v-if="sidebarOpen" class="overflow-hidden">
           <div class="font-bold text-sm text-white">Resort OS</div>
-          <div class="text-xs text-slate-400 truncate">فرع {{ auth.branchId }}</div>
+          <div class="text-xs text-slate-400 truncate">{{ t('backoffice.layout.branch') }} {{ auth.branchId }}</div>
         </div>
       </div>
 
@@ -184,7 +187,7 @@ function logout() {
           :class="['w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-400 hover:bg-red-900/30 transition-colors', !sidebarOpen && 'justify-center']"
         >
           <span>🚪</span>
-          <span v-if="sidebarOpen">تسجيل الخروج</span>
+          <span v-if="sidebarOpen">{{ t('backoffice.layout.logout') }}</span>
         </button>
       </div>
     </aside>
@@ -215,7 +218,8 @@ function logout() {
                BackOfficeLayout عمرهم ما كانوا بيشوفوا نداء ضيف خالص لو النادل
                مشغول. نفس المكوّن بالظبط (لا تكرار منطق). -->
           <GuestAlertsBell />
-          <span>{{ new Date().toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) }}</span>
+          <LanguageSwitcher variant="compact" />
+          <span>{{ new Date().toLocaleDateString(locale === 'ar' ? 'ar-EG' : 'en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) }}</span>
         </div>
       </header>
 

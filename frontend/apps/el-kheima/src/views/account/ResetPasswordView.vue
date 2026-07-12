@@ -12,7 +12,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, ENDPOINTS } from '@resort-os/core'
+import { useI18n } from 'vue-i18n'
+import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 
+const { t, locale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 
@@ -38,11 +41,11 @@ const missingToken = computed(() => !token.value)
 async function handleSubmit() {
   error.value = ''
   if (newPassword.value.length < 8) {
-    error.value = 'كلمة المرور يجب أن تكون 8 أحرف على الأقل'
+    error.value = t('backoffice.resetPassword.errorMinLength')
     return
   }
   if (newPassword.value !== confirmPassword.value) {
-    error.value = 'كلمتا المرور غير متطابقتين'
+    error.value = t('backoffice.resetPassword.errorMismatch')
     return
   }
   loading.value = true
@@ -57,11 +60,11 @@ async function handleSubmit() {
     const detail = e?.response?.data?.detail
     if (typeof detail === 'string' && detail.toLowerCase().includes('token')) {
       tokenInvalid.value = true
-      error.value = 'الرابط غير صالح أو انتهت صلاحيته (صالح لمدة ساعتين من الإرسال) — اطلب رابط جديد'
+      error.value = t('backoffice.resetPassword.noToken')
     } else {
       // رسائل قوة كلمة السر بترجع من الباك إند كنص واضح (مطلوب حرف كبير/رقم/
       // رمز خاص...) — إظهارها زي ما هي أفيد للمستخدم من رسالة عامة هنا.
-      error.value = typeof detail === 'string' ? detail : 'تعذّر تحديث كلمة المرور — حاول تاني'
+      error.value = typeof detail === 'string' ? detail : t('errors.generic')
     }
   } finally {
     loading.value = false
@@ -70,25 +73,31 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div dir="rtl" class="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center p-4">
+  <div
+    class="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center p-4"
+    :dir="locale === 'ar' ? 'rtl' : 'ltr'"
+  >
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
         <div class="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur text-3xl">🔒</div>
-        <h1 class="text-2xl font-bold text-white mb-1">تعيين كلمة سر جديدة</h1>
+        <h1 class="text-2xl font-bold text-white mb-1">{{ t('backoffice.resetPassword.title') }}</h1>
+        <p class="text-blue-200 text-sm">{{ t('backoffice.resetPassword.subtitle') }}</p>
       </div>
 
       <div class="bg-white rounded-2xl p-8 shadow-2xl">
+        <div class="flex justify-end mb-4">
+          <LanguageSwitcher variant="compact" />
+        </div>
+
         <!-- لا يوجد توكن في الرابط أصلاً -->
         <template v-if="missingToken && !done">
           <div class="text-center py-4">
-            <p class="text-gray-600 text-sm mb-4">
-              الرابط ده غير مكتمل — افتح رابط إعادة تعيين كلمة السر اللي وصلك بالبريد الإلكتروني بالكامل، أو اطلب رابط جديد.
-            </p>
+            <p class="text-gray-600 text-sm mb-4">{{ t('backoffice.resetPassword.noToken') }}</p>
             <router-link
               to="/forgot-password"
               class="inline-block bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 transition-colors"
             >
-              طلب رابط جديد
+              {{ t('backoffice.resetPassword.requestNew') }}
             </router-link>
           </div>
         </template>
@@ -97,7 +106,7 @@ async function handleSubmit() {
         <template v-else-if="done">
           <div class="flex items-center gap-3 bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3 mb-2">
             <span class="text-xl">✓</span>
-            <span class="font-medium text-sm">تم تحديث كلمة السر بنجاح — جاري تحويلك لتسجيل الدخول...</span>
+            <span class="font-medium text-sm">{{ t('backoffice.resetPassword.successMessage') }}</span>
           </div>
         </template>
 
@@ -105,18 +114,18 @@ async function handleSubmit() {
         <template v-else>
           <form @submit.prevent="handleSubmit" class="space-y-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">كلمة المرور الجديدة</label>
+              <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('backoffice.resetPassword.newPassword') }}</label>
               <input
                 v-model="newPassword"
                 type="password"
-                placeholder="8 أحرف على الأقل، حرف كبير وصغير ورقم ورمز"
+                placeholder="••••••••"
                 autocomplete="new-password"
                 autofocus
                 class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
               />
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">تأكيد كلمة المرور</label>
+              <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('backoffice.resetPassword.confirmPassword') }}</label>
               <input
                 v-model="confirmPassword"
                 type="password"
@@ -131,7 +140,7 @@ async function handleSubmit() {
               to="/forgot-password"
               class="block text-center text-sm text-blue-700 font-medium hover:underline"
             >
-              طلب رابط جديد
+              {{ t('backoffice.resetPassword.requestNew') }}
             </router-link>
             <button
               type="submit"
@@ -142,15 +151,15 @@ async function handleSubmit() {
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
               </svg>
-              {{ loading ? 'جاري الحفظ...' : 'تحديث كلمة المرور' }}
+              {{ loading ? t('backoffice.resetPassword.submitting') : t('backoffice.resetPassword.submit') }}
             </button>
           </form>
         </template>
 
         <router-link to="/login" class="block text-center text-sm text-blue-700 font-medium hover:underline mt-6">
-          الرجوع لتسجيل الدخول
+          {{ t('backoffice.resetPassword.backToLogin') }}
         </router-link>
-        <p class="text-center text-xs text-gray-400 mt-6">El Kheima Beach — Resort OS v1.0</p>
+        <p class="text-center text-xs text-gray-400 mt-6">{{ t('backoffice.login.footer') }}</p>
       </div>
     </div>
   </div>

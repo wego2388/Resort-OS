@@ -1,25 +1,34 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { useAuthStore } from '@resort-os/core'
+import { useAuthStore, i18n, getSavedLocale } from '@resort-os/core'
 import router from './router'
 import App from './App.vue'
 import './assets/main.css'
 
 /**
- * Boot sequence: restore session *before* the router's first navigation
- * resolves.
+ * Boot sequence — order matters:
+ *   1. Pinia (stores depend on it)
+ *   2. i18n (locale restored from localStorage before any template renders)
+ *   3. Auth session (must resolve before router's first beforeEach runs)
+ *   4. Router (first navigation fires synchronously on app.use(router))
+ *   5. Mount
  *
- * `app.use(router)` triggers the router's initial navigation synchronously
- * (it calls `router.push(currentLocation)` internally) — so if we installed
- * the router right after Pinia and let `fetchUser()` run concurrently in the
- * background, the very first `beforeEach` guard could evaluate
- * `auth.isAuthenticated` against stale (empty) state and wrongly bounce a
- * logged-in user to /login. Awaiting the boot work *before* `app.use(router)`
- * guarantees the guard's first run already has real state instead of racing it.
+ * i18n is installed before the router so route titles and any SSR-style
+ * pre-render calls that reference $t() already have a valid locale.
+ * getSavedLocale() is called inside createI18n in packages/core/src/i18n/index.ts
+ * so the locale is already set — no extra async call needed here.
  */
 async function main() {
   const app = createApp(App)
   app.use(createPinia())
+  app.use(i18n)
+
+  // Apply dir/lang to <html> immediately from saved locale — avoids a brief
+  // flash of RTL→LTR or the wrong lang attribute before Vue hydrates.
+  const locale = getSavedLocale()
+  document.documentElement.lang = locale
+  document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr'
+  document.body.dir = locale === 'ar' ? 'rtl' : 'ltr'
 
   const auth = useAuthStore()
 
