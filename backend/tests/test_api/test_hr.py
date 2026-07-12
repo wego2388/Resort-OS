@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.modules.hr.schemas import (
+    AdvancePaymentCreate,
     AttendanceRecordCreate,
     DepartmentCreate,
     EmployeeCreate,
@@ -21,6 +22,7 @@ from app.modules.hr.schemas import (
     LeaveRequestCreate,
     LeaveTypeCreate,
     RotaAssignmentCreate,
+    SalaryAdvanceCreate,
     ShiftCreate,
     ShiftSwapRequestCreate,
 )
@@ -841,6 +843,220 @@ class TestLeaveBalance:
         # نفس السنة — يُحدَّث
         balance = crud.get_leave_balance(db, employee.id, year=2026)
         assert balance.annual_entitled == 25
+
+
+class TestSalaryAdvance:
+    """wagdy.md H-01 — سلفة راتب بأقساط شهرية ثابتة."""
+
+    def test_create_salary_advance(self, db, branch, employee):
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("3000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("500"),
+        ), created_by=1)
+        assert advance.id is not None
+        assert advance.status == "active"
+        assert advance.remaining_balance == Decimal("3000")
+
+    def test_monthly_deduction_larger_than_amount_raises(self, db, branch, employee):
+        with pytest.raises(ValueError, match="أكبر من مبلغ السلفة"):
+            services.create_salary_advance(db, SalaryAdvanceCreate(
+                employee_id=employee.id, branch_id=branch.id,
+                amount=Decimal("1000"), disbursed_date=date(2026, 1, 5),
+                monthly_deduction_amount=Decimal("1500"),
+            ), created_by=1)
+
+    def test_cancel_untouched_advance(self, db, branch, employee):
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("2000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("400"),
+        ), created_by=1)
+        cancelled = services.cancel_salary_advance(db, advance.id, reason="غلط في الإدخال")
+        assert cancelled.status == "cancelled"
+
+    def test_cancel_advance_with_deduction_raises(self, db, branch, employee, si_config, tax_brackets):
+        """سلفة اتخصم منها قسط بالفعل (عبر تشغيل كشف رواتب) ما ينفعش تتلغي —
+        كسر الاتساق المحاسبي (§5.2 Finance First)."""
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("2000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("400"),
+        ), created_by=1)
+        services.run_payroll_for_branch(db, branch.id, 2026, 6)
+
+        with pytest.raises(ValueError, match="تم خصم أقساط منها بالفعل"):
+            services.cancel_salary_advance(db, advance.id)
+
+
+class TestAdvancePayment:
+    """wagdy.md H-02 — دفعة يومية بسيطة بتتخصم بالكامل في نفس شهرها."""
+
+    def test_create_advance_payment(self, db, branch, employee):
+        payment = services.create_advance_payment(db, AdvancePaymentCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("200"), payment_date=date(2026, 6, 10),
+        ), recorded_by=1)
+        assert payment.id is not None
+        assert payment.deducted is False
+
+
+class TestPayrollAdvanceDeductionIntegration:
+    """wagdy.md H-01/H-02 مطبَّقين فعليًا داخل تشغيل كشف الرواتب الحقيقي —
+    مش مجرد إنشاء سجلات، لازم تدخل حساب الصافي وتتخصم فعليًا."""
+
+    def test_advance_installment_deducted_and_balance_reduced(self, db, branch, employee, si_config, tax_brackets):
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("3000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("500"),
+        ), created_by=1)
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        line = crud.list_lines_for_run(db, run.id)[0]
+        assert line.advance_deduction == Decimal("500.00")
+        assert run.total_advance_deduction == Decimal("500.00")
+
+        db.refresh(advance)
+        assert advance.remaining_balance == Decimal("2500.00")
+        assert advance.status == "active"
+
+    def test_advance_fully_settled_marks_status(self, db, branch, employee, si_config, tax_brackets):
+        """آخر قسط بيوصل بالرصيد لصفر بالظبط — الحالة تبقى settled تلقائيًا."""
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("500"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("500"),
+        ), created_by=1)
+
+        services.run_payroll_for_branch(db, branch.id, 2026, 6)
+
+        db.refresh(advance)
+        assert advance.remaining_balance == Decimal("0.00")
+        assert advance.status == "settled"
+
+    def test_advance_deduction_capped_at_remaining_balance(self, db, branch, employee, si_config, tax_brackets):
+        """آخر قسط جزئي: الرصيد المتبقي (300) أقل من القسط الشهري الثابت
+        (500) بعد أول تشغيلة — الخصم الفعلي في التشغيلة الثانية = الرصيد
+        المتبقي، مش القسط الكامل، ومفيش خصم أكبر من السلفة نفسها."""
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("800"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("500"),
+        ), created_by=1)
+
+        services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        db.refresh(advance)
+        assert advance.remaining_balance == Decimal("300.00")  # 800 - 500
+
+        run2 = services.run_payroll_for_branch(db, branch.id, 2026, 7)
+        line2 = crud.list_lines_for_run(db, run2.id)[0]
+        assert line2.advance_deduction == Decimal("300.00")  # مش 500 — القسط محدود بالرصيد المتبقي
+
+        db.refresh(advance)
+        assert advance.remaining_balance == Decimal("0.00")
+        assert advance.status == "settled"
+
+    def test_advance_payment_deducted_and_linked_to_payroll_line(self, db, branch, employee, si_config, tax_brackets):
+        payment = services.create_advance_payment(db, AdvancePaymentCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("150"), payment_date=date(2026, 6, 15),
+        ), recorded_by=1)
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        line = crud.list_lines_for_run(db, run.id)[0]
+        assert line.advance_deduction == Decimal("150.00")
+
+        db.refresh(payment)
+        assert payment.deducted is True
+        assert payment.payroll_line_id == line.id
+
+    def test_advance_payment_from_different_month_not_deducted(self, db, branch, employee, si_config, tax_brackets):
+        """دفعة اتسجّلت في شهر مختلف عن الفترة اللي بيتشغّل كشف رواتبها
+        لازم متتخصمش — نفس منطق الجزاءات (month= فلتر صريح)."""
+        payment = services.create_advance_payment(db, AdvancePaymentCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("150"), payment_date=date(2026, 7, 1),
+        ), recorded_by=1)
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        line = crud.list_lines_for_run(db, run.id)[0]
+        assert line.advance_deduction == Decimal("0.00")
+
+        db.refresh(payment)
+        assert payment.deducted is False
+
+    def test_advance_and_installment_combine_in_same_run(self, db, branch, employee, si_config, tax_brackets):
+        services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("3000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("500"),
+        ), created_by=1)
+        services.create_advance_payment(db, AdvancePaymentCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("200"), payment_date=date(2026, 6, 3),
+        ), recorded_by=1)
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        line = crud.list_lines_for_run(db, run.id)[0]
+        assert line.advance_deduction == Decimal("700.00")  # 500 + 200
+
+    def test_cancelled_advance_not_deducted(self, db, branch, employee, si_config, tax_brackets):
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("1000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("300"),
+        ), created_by=1)
+        services.cancel_salary_advance(db, advance.id)
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        line = crud.list_lines_for_run(db, run.id)[0]
+        assert line.advance_deduction == Decimal("0.00")
+
+
+class TestLeaveBalanceMonthly:
+    """wagdy.md H-03 — رصيد إجازات شهري متحرّك."""
+
+    def test_first_month_accrues_from_zero(self, db, branch, employee):
+        row = services.accrue_monthly_leave_balance(db, employee.id, branch.id, 2026, 6)
+        assert row.opening_balance == Decimal("0")
+        assert row.accrued == Decimal("7.5")
+        assert row.consumed == Decimal("0")
+        assert row.closing_balance == Decimal("7.5")
+
+    def test_second_month_rolls_over_opening_balance(self, db, branch, employee):
+        services.accrue_monthly_leave_balance(db, employee.id, branch.id, 2026, 6)
+        row = services.accrue_monthly_leave_balance(db, employee.id, branch.id, 2026, 7)
+        assert row.opening_balance == Decimal("7.5")
+        assert row.closing_balance == Decimal("15.0")
+
+    def test_approved_leave_in_period_consumed(self, db, branch, employee, leave_type):
+        req = services.request_leave(
+            db, employee.id, branch.id, leave_type.id,
+            start_date=date(2026, 6, 10), end_date=date(2026, 6, 12),
+        )
+        services.approve_leave(db, req.id, approved_by=999)
+
+        row = services.accrue_monthly_leave_balance(db, employee.id, branch.id, 2026, 6)
+        assert row.consumed == Decimal("3")  # 10, 11, 12 يونيو
+        assert row.closing_balance == Decimal("4.5")  # 7.5 - 3
+
+    def test_leave_outside_period_not_consumed(self, db, branch, employee, leave_type):
+        req = services.request_leave(
+            db, employee.id, branch.id, leave_type.id,
+            start_date=date(2026, 7, 1), end_date=date(2026, 7, 2),
+        )
+        services.approve_leave(db, req.id, approved_by=999)
+
+        row = services.accrue_monthly_leave_balance(db, employee.id, branch.id, 2026, 6)
+        assert row.consumed == Decimal("0")
+
+    def test_list_leave_balance_monthly_history(self, db, branch, employee):
+        services.accrue_monthly_leave_balance(db, employee.id, branch.id, 2026, 5)
+        services.accrue_monthly_leave_balance(db, employee.id, branch.id, 2026, 6)
+        history = crud.list_leave_balance_monthly(db, employee.id)
+        assert len(history) == 2
+        assert history[0].period_month == 6  # الأحدث أولاً
 
 
 # ── Fixtures for new modules ──────────────────────────────────────────

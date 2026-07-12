@@ -64,6 +64,7 @@ def _basic_employee(
     late_penalty_amount: Decimal = Decimal("0"),
     insurance_base_salary: Decimal | None = None,
     holiday_bonus_amount: Decimal = Decimal("0"),
+    advance_deduction_amount: Decimal = Decimal("0"),
 ) -> EmployeePayrollInput:
     return EmployeePayrollInput(
         employee_id=1,
@@ -75,6 +76,7 @@ def _basic_employee(
         unpaid_leave_days=unpaid_leave_days,
         insurance_base_salary=insurance_base_salary,
         holiday_bonus_amount=holiday_bonus_amount,
+        advance_deduction_amount=advance_deduction_amount,
         hire_date=date(2020, 1, 1),
         birth_date=date(1990, 6, 15),
         period_month=date(2026, 6, 1),
@@ -465,6 +467,39 @@ class TestCalculatePayroll:
         result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
         debit_accounts = [d["account"] for d in result.journal_entry["debits"]]
         assert "مصروف مكافأة عيد" not in debit_accounts
+
+    # ── wagdy.md H-01/H-02: advance_deduction ────────────────────────────
+
+    def test_advance_deduction_defaults_to_zero(self):
+        emp = _basic_employee(basic_salary=Decimal("5000"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+        assert result.advance_deduction == Decimal("0.00")
+
+    def test_advance_deduction_reduces_net_salary(self):
+        """خصم سلفة/دفعة (H-01/H-02) بيقلل الصافي مباشرة، مش بيأثر على
+        gross_salary ولا insurable_salary — نفس فئة penalty_deduction."""
+        emp = _basic_employee(basic_salary=Decimal("6000"), advance_deduction_amount=Decimal("500"))
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+
+        assert result.advance_deduction == Decimal("500.00")
+        assert result.gross_salary == Decimal("6000")
+        assert result.insurable_salary == Decimal("6000")
+
+        base = calculate_payroll(_basic_employee(basic_salary=Decimal("6000")), _si_config(), _tax_brackets(), 5)
+        assert result.net_salary == base.net_salary - Decimal("500.00")
+
+    def test_advance_deduction_combines_with_other_deductions(self):
+        """خصم السلفة يتحسم مع الجزاءات/إجازة بدون أجر مع بعض، مش بدلاً منهم."""
+        emp = _basic_employee(
+            basic_salary=Decimal("6000"),
+            penalty_days=1,                       # 200.00
+            unpaid_leave_days=1,                  # 200.00
+            advance_deduction_amount=Decimal("300"),
+        )
+        result = calculate_payroll(emp, _si_config(), _tax_brackets(), max_penalty_days=5)
+
+        base = calculate_payroll(_basic_employee(basic_salary=Decimal("6000")), _si_config(), _tax_brackets(), 5)
+        assert result.net_salary == base.net_salary - Decimal("200.00") - Decimal("200.00") - Decimal("300.00")
 
 
 # ─── standard_shift_hours ──────────────────────────────────────────────

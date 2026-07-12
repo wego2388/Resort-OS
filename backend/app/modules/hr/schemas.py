@@ -143,6 +143,7 @@ class PayrollResultRead(BaseModel):
     penalty_deduction:        Decimal
     late_penalty_deduction:   Decimal
     unpaid_leave_deduction:   Decimal
+    advance_deduction:        Decimal
     holiday_bonus:            Decimal
     net_salary:               Decimal
     journal_entry:            dict
@@ -168,6 +169,7 @@ class PayrollLineRead(BaseModel):
     penalty_deduction:      Decimal
     late_penalty_deduction: Decimal
     unpaid_leave_deduction: Decimal
+    advance_deduction:      Decimal
     holiday_bonus:          Decimal
 
 
@@ -183,6 +185,7 @@ class PayrollRunRead(BaseModel):
     total_tax:    Decimal
     total_si:     Decimal
     total_holiday_bonus: Decimal
+    total_advance_deduction: Decimal
     approved_by:  Optional[int]
     approved_at:  Optional[datetime]
     created_at:   datetime
@@ -234,6 +237,78 @@ class LeaveBalanceRead(BaseModel):
     def model_post_init(self, __context: object) -> None:
         object.__setattr__(self, "annual_remaining",
                            max(0, self.annual_entitled - self.annual_taken))
+
+
+# ── SalaryAdvance (wagdy.md H-01) ────────────────────────────────────────
+
+class SalaryAdvanceCreate(BaseModel):
+    employee_id:              int
+    branch_id:                int
+    amount:                   Decimal = Field(..., gt=0)
+    disbursed_date:           date
+    monthly_deduction_amount: Decimal = Field(..., gt=0)
+    notes:                    Optional[str] = Field(None, max_length=500)
+
+
+class SalaryAdvanceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:                        int
+    employee_id:               int
+    branch_id:                 int
+    amount:                    Decimal
+    disbursed_date:            date
+    monthly_deduction_amount:  Decimal
+    remaining_balance:         Decimal
+    status:                    str
+    notes:                     Optional[str]
+    created_by:                int
+    created_at:                datetime
+
+
+class SalaryAdvanceCancel(BaseModel):
+    """PATCH /hr/salary-advances/{id}/cancel — يلغي سلفة نشطة (لسه ماتخصمش
+    ولا قسط منها) قبل ما تدخل حساب الراتب. سلفة اتخصم منها أي قسط بالفعل
+    ماينفعش تتلغى (راجع services.cancel_salary_advance)."""
+    reason: Optional[str] = Field(None, max_length=300)
+
+
+# ── AdvancePayment (wagdy.md H-02) ───────────────────────────────────────
+
+class AdvancePaymentCreate(BaseModel):
+    employee_id:  int
+    branch_id:    int
+    amount:       Decimal = Field(..., gt=0)
+    payment_date: date
+    notes:        Optional[str] = Field(None, max_length=300)
+
+
+class AdvancePaymentRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:               int
+    employee_id:      int
+    branch_id:        int
+    amount:           Decimal
+    payment_date:     date
+    notes:            Optional[str]
+    recorded_by:      int
+    deducted:          bool
+    payroll_line_id:  Optional[int]
+    created_at:       datetime
+
+
+# ── LeaveBalanceMonthly (wagdy.md H-03) ──────────────────────────────────
+
+class LeaveBalanceMonthlyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:               int
+    employee_id:      int
+    branch_id:        int
+    period_year:      int
+    period_month:      int
+    opening_balance:  Decimal
+    accrued:          Decimal
+    consumed:         Decimal
+    closing_balance:  Decimal
 
 
 # ── Department ────────────────────────────────────────────────────────
@@ -519,6 +594,7 @@ class MyPayslipRead(BaseModel):
     late_penalty_deduction: Decimal
     unpaid_leave_deduction: Decimal
     holiday_bonus:          Decimal = Decimal("0")
+    advance_deduction:      Decimal = Decimal("0")
 
 
 class LeaderboardEntry(BaseModel):

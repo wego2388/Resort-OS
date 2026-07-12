@@ -71,6 +71,10 @@ class EmployeePayrollInput:
     # مكافأة عيد ثابتة — غير خاضعة لضريبة الدخل ولا للتأمينات الاجتماعية،
     # بتُضاف مباشرة للصافي (Employee.holiday_bonus).
     holiday_bonus_amount: Decimal = Decimal("0")
+    # إجمالي أقساط سلف (SalaryAdvance) + دفعات (AdvancePayment) لهذا الموظف
+    # لهذه الفترة — محسوب مسبقًا خارج الـ engine (زي late_penalty_amount)
+    # ومخصوم من الصافي مباشرة.
+    advance_deduction_amount: Decimal = Decimal("0")
     hire_date: date = field(default_factory=date.today)
     birth_date: date = field(default_factory=date.today)
     period_month: date = field(default_factory=date.today)
@@ -103,6 +107,7 @@ class PayrollResult:
     penalty_deduction: Decimal
     late_penalty_deduction: Decimal     # خصم تأخير تلقائي من الحضور (منفصل عن penalty_deduction اليدوي)
     unpaid_leave_deduction: Decimal
+    advance_deduction: Decimal          # إجمالي أقساط سلف + دفعات (H-01/H-02)
 
     # مكافأة العيد — غير خاضعة لضريبة/تأمينات، بند مستقل يُضاف للصافي مباشرة
     holiday_bonus: Decimal
@@ -453,6 +458,11 @@ def calculate_payroll(
     # لمرة واحدة)، بيُضاف مباشرة للصافي زي non_taxable_allowances بالظبط.
     holiday_bonus = emp.holiday_bonus_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
+    # ─── خصم السلف/الدفعات (H-01/H-02) ────────────────────────────────
+    # محسوب مسبقًا خارج الـ engine (زي late_penalty_amount) — مجموع أقساط
+    # سلف نشطة + دفعات الشهر غير المخصومة بعد، مخصوم مباشرة من الصافي.
+    advance_deduction = emp.advance_deduction_amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
     # ─── الصافي ───────────────────────────────────────────────────────
     net = (
         gross
@@ -463,6 +473,7 @@ def calculate_payroll(
         - penalty_deduction
         - late_penalty_deduction
         - unpaid_leave_deduction
+        - advance_deduction
     ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     period_str = emp.period_month.strftime("%Y-%m")
@@ -503,6 +514,7 @@ def calculate_payroll(
         penalty_deduction=penalty_deduction,
         late_penalty_deduction=late_penalty_deduction,
         unpaid_leave_deduction=unpaid_leave_deduction,
+        advance_deduction=advance_deduction,
         holiday_bonus=holiday_bonus,
         net_salary=net,
         journal_entry=journal_entry,

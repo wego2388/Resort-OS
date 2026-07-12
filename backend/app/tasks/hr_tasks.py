@@ -113,6 +113,35 @@ def accrue_leave_balances(self):
         notify_task_failure("app.tasks.hr_tasks.accrue_leave_balances", exc)
 
 
+@celery_app.task(name="app.tasks.hr_tasks.accrue_monthly_leave_ledger", bind=True)
+def accrue_monthly_leave_ledger(self):
+    """
+    أول يوم في كل شهر — يستحق 7.5 يوم إجازة (wagdy.md H-03) لكل موظف نشط
+    ويرحّل رصيده الشهري (راجع services.accrue_monthly_leave_balance للتفاصيل
+    وليه ده منفصل عن accrue_leave_balances السنوي فوق).
+    """
+    try:
+        from app.core.database import SessionLocal          # noqa: PLC0415
+        from app.modules.core.models import Branch          # noqa: PLC0415
+        from app.modules.hr.crud import list_employees        # noqa: PLC0415
+        from app.modules.hr.services import accrue_monthly_leave_balance  # noqa: PLC0415
+
+        today = local_today(settings.TIMEZONE)
+        with SessionLocal() as db:
+            branches = db.query(Branch).filter(Branch.is_active.is_(True)).all()
+            total = 0
+            for branch in branches:
+                employees, _ = list_employees(db, branch.id, status="active", limit=1000)
+                for emp in employees:
+                    accrue_monthly_leave_balance(db, emp.id, branch.id, today.year, today.month)
+                    total += 1
+            logger.info("Monthly leave ledger accrued: period=%s-%s employees=%s", today.year, today.month, total)
+
+    except Exception as exc:
+        logger.error("accrue_monthly_leave_ledger failed: %s", exc)
+        notify_task_failure("app.tasks.hr_tasks.accrue_monthly_leave_ledger", exc)
+
+
 @celery_app.task(name="app.tasks.hr_tasks.generate_weekly_rota", bind=True)
 def generate_weekly_rota(self):
     """

@@ -270,6 +270,48 @@ class TestAccrueLeaveBalances:
             accrue_leave_balances()
 
 
+# ─── accrue_monthly_leave_ledger (wagdy.md H-03) ──────────────────────────────
+
+class TestAccrueMonthlyLeaveLedger:
+
+    def test_task_creates_monthly_row_for_active_employee(self, db):
+        from app.modules.hr.models import LeaveBalanceMonthly
+
+        branch = _make_branch(db)
+        emp = _make_employee(db, branch)
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.hr_tasks import accrue_monthly_leave_ledger
+            accrue_monthly_leave_ledger()
+
+        row = db.query(LeaveBalanceMonthly).filter(
+            LeaveBalanceMonthly.employee_id == emp.id,
+        ).first()
+        assert row is not None
+        assert row.accrued == Decimal("7.50")
+        assert row.closing_balance == Decimal("7.50")
+
+    def test_task_skips_inactive_branch(self, db):
+        from app.modules.hr.models import LeaveBalanceMonthly
+
+        branch = _make_branch(db, active=False)
+        emp = _make_employee(db, branch)
+
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.hr_tasks import accrue_monthly_leave_ledger
+            accrue_monthly_leave_ledger()
+
+        row = db.query(LeaveBalanceMonthly).filter(
+            LeaveBalanceMonthly.employee_id == emp.id,
+        ).first()
+        assert row is None
+
+    def test_task_runs_without_error(self, db):
+        with patch("app.core.database.SessionLocal", return_value=_db_ctx(db)):
+            from app.tasks.hr_tasks import accrue_monthly_leave_ledger
+            accrue_monthly_leave_ledger()
+
+
 # ─── generate_weekly_rota ─────────────────────────────────────────────────────
 
 class TestGenerateWeeklyRota:

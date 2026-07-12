@@ -1157,3 +1157,147 @@ class TestAttendancePolicyEndpoints:
         branch = make_branch_committed(db)
         resp = client.get("/api/v1/hr/attendance-policy", params={"branch_id": branch.id}, headers=waiter_headers)
         assert resp.status_code == 403
+
+
+class TestSalaryAdvanceHttp:
+    """wagdy.md H-01 — POST/GET/PATCH /hr/salary-advances."""
+
+    def test_create_and_list_salary_advance(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+
+        create_resp = client.post(
+            "/api/v1/hr/salary-advances",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "amount": "3000.00", "disbursed_date": "2026-01-05",
+                "monthly_deduction_amount": "500.00",
+            },
+            headers=super_admin_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        advance = create_resp.json()
+        assert advance["status"] == "active"
+        assert advance["remaining_balance"] == "3000.00"
+
+        list_resp = client.get(
+            "/api/v1/hr/salary-advances", params={"employee_id": emp.id}, headers=super_admin_headers,
+        )
+        assert list_resp.status_code == 200
+        assert any(a["id"] == advance["id"] for a in list_resp.json())
+
+    def test_create_requires_admin_not_manager(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.post(
+            "/api/v1/hr/salary-advances",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "amount": "1000.00", "disbursed_date": "2026-01-05",
+                "monthly_deduction_amount": "200.00",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_cancel_untouched_advance(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        create_resp = client.post(
+            "/api/v1/hr/salary-advances",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "amount": "1000.00", "disbursed_date": "2026-01-05",
+                "monthly_deduction_amount": "200.00",
+            },
+            headers=super_admin_headers,
+        )
+        advance_id = create_resp.json()["id"]
+
+        cancel_resp = client.patch(
+            f"/api/v1/hr/salary-advances/{advance_id}/cancel",
+            json={"reason": "غلط"}, headers=super_admin_headers,
+        )
+        assert cancel_resp.status_code == 200
+        assert cancel_resp.json()["status"] == "cancelled"
+
+    def test_monthly_deduction_exceeds_amount_rejected(self, client: TestClient, db, super_admin_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.post(
+            "/api/v1/hr/salary-advances",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "amount": "500.00", "disbursed_date": "2026-01-05",
+                "monthly_deduction_amount": "800.00",
+            },
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestAdvancePaymentHttp:
+    """wagdy.md H-02 — POST/GET /hr/advance-payments."""
+
+    def test_create_and_list_advance_payment(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+
+        create_resp = client.post(
+            "/api/v1/hr/advance-payments",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "amount": "200.00", "payment_date": "2026-06-10",
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        payment = create_resp.json()
+        assert payment["deducted"] is False
+
+        list_resp = client.get(
+            "/api/v1/hr/advance-payments", params={"employee_id": emp.id}, headers=manager_headers,
+        )
+        assert list_resp.status_code == 200
+        assert any(p["id"] == payment["id"] for p in list_resp.json())
+
+    def test_create_requires_manager_not_waiter(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.post(
+            "/api/v1/hr/advance-payments",
+            json={
+                "employee_id": emp.id, "branch_id": branch.id,
+                "amount": "100.00", "payment_date": "2026-06-10",
+            },
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+
+class TestLeaveBalanceMonthlyHttp:
+    """wagdy.md H-03 — GET /hr/leave-balance-monthly + /hr/me/leave-balance-monthly."""
+
+    def test_list_leave_balance_monthly(self, client: TestClient, db, manager_headers):
+        from app.modules.hr import services as hr_services
+
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        hr_services.accrue_monthly_leave_balance(db, emp.id, branch.id, 2026, 6)
+
+        resp = client.get(
+            "/api/v1/hr/leave-balance-monthly", params={"employee_id": emp.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200
+        rows = resp.json()
+        assert len(rows) == 1
+        assert rows[0]["accrued"] == "7.50"
+        assert rows[0]["closing_balance"] == "7.50"
+
+    def test_requires_manager_role(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.get(
+            "/api/v1/hr/leave-balance-monthly", params={"employee_id": emp.id}, headers=waiter_headers,
+        )
+        assert resp.status_code == 403

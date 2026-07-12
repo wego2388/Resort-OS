@@ -3,22 +3,25 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.orm import Session, joinedload
 
 from app.modules.hr.models import (
-    AttendancePolicy, AttendanceRecord, Department, Employee, EmployeeAllowance,
-    EmployeePenalty, LeaveBalance, LeaveRequest, LeaveType, PenaltyType,
-    PayrollLine, PayrollRun, RotaAssignment, RotaTemplate, ShiftSwapRequest, Shift,
+    AdvancePayment, AttendancePolicy, AttendanceRecord, Department, Employee, EmployeeAllowance,
+    EmployeePenalty, LeaveBalance, LeaveBalanceMonthly, LeaveRequest, LeaveType, PenaltyType,
+    PayrollLine, PayrollRun, RotaAssignment, RotaTemplate, SalaryAdvance, ShiftSwapRequest, Shift,
     SocialInsuranceConfig, TaxBracketConfig,
 )
 from app.modules.hr.schemas import (
+    AdvancePaymentCreate,
     AttendancePolicyUpsert, AttendanceRecordCreate, AttendanceRecordUpdate, DepartmentCreate,
     EmployeeCreate, EmployeeUpdate,
     EmployeeAllowanceCreate, EmployeeAllowanceUpdate,
     EmployeePenaltyCreate, LeaveTypeCreate, PenaltyTypeCreate,
     PayrollRunCreate, RotaAssignmentCreate, RotaTemplateCreate, RotaTemplateUpdate,
+    SalaryAdvanceCreate,
     ShiftCreate, ShiftSwapRequestCreate,
     SocialInsuranceConfigCreate, TaxBracketConfigCreate,
 )
@@ -390,6 +393,150 @@ def upsert_leave_balance(
             employee_id=employee_id,
             year=year,
             annual_entitled=annual_entitled,
+        )
+        db.add(row)
+    db.flush()
+    return row
+
+
+# ── SalaryAdvance (wagdy.md H-01) ────────────────────────────────────────
+
+def get_salary_advance(db: Session, advance_id: int) -> Optional[SalaryAdvance]:
+    return db.query(SalaryAdvance).filter(SalaryAdvance.id == advance_id).first()
+
+
+def create_salary_advance(db: Session, data: SalaryAdvanceCreate, created_by: int) -> SalaryAdvance:
+    advance = SalaryAdvance(
+        **data.model_dump(),
+        remaining_balance=data.amount,
+        created_by=created_by,
+    )
+    db.add(advance)
+    db.flush()
+    return advance
+
+
+def list_salary_advances(
+    db: Session, employee_id: Optional[int] = None, branch_id: Optional[int] = None,
+    status: Optional[str] = None,
+) -> list[SalaryAdvance]:
+    q = db.query(SalaryAdvance)
+    if employee_id is not None:
+        q = q.filter(SalaryAdvance.employee_id == employee_id)
+    if branch_id is not None:
+        q = q.filter(SalaryAdvance.branch_id == branch_id)
+    if status is not None:
+        q = q.filter(SalaryAdvance.status == status)
+    return q.order_by(SalaryAdvance.disbursed_date.desc()).all()
+
+
+def list_active_advances_for_employee(db: Session, employee_id: int) -> list[SalaryAdvance]:
+    """السلف النشطة (لسه فيها رصيد) لموظف — تُستخدم وقت حساب خصم كشف
+    الرواتب (راجع services._compute_advance_deductions)."""
+    return (
+        db.query(SalaryAdvance)
+        .filter(SalaryAdvance.employee_id == employee_id, SalaryAdvance.status == "active")
+        .order_by(SalaryAdvance.disbursed_date)
+        .all()
+    )
+
+
+# ── AdvancePayment (wagdy.md H-02) ───────────────────────────────────────
+
+def create_advance_payment(db: Session, data: AdvancePaymentCreate, recorded_by: int) -> AdvancePayment:
+    payment = AdvancePayment(**data.model_dump(), recorded_by=recorded_by)
+    db.add(payment)
+    db.flush()
+    return payment
+
+
+def list_advance_payments(
+    db: Session, employee_id: Optional[int] = None, branch_id: Optional[int] = None,
+    deducted: Optional[bool] = None,
+) -> list[AdvancePayment]:
+    q = db.query(AdvancePayment)
+    if employee_id is not None:
+        q = q.filter(AdvancePayment.employee_id == employee_id)
+    if branch_id is not None:
+        q = q.filter(AdvancePayment.branch_id == branch_id)
+    if deducted is not None:
+        q = q.filter(AdvancePayment.deducted.is_(deducted))
+    return q.order_by(AdvancePayment.payment_date.desc()).all()
+
+
+def list_undeducted_payments_for_period(
+    db: Session, employee_id: int, period_year: int, period_month: int,
+) -> list[AdvancePayment]:
+    """دفعات الشهر دي لموظف لسه ما اتخصمتش من كشف رواتب — تُستخدم وقت
+    حساب خصم كشف الرواتب (راجع services._compute_advance_deductions)."""
+    first_day = date(period_year, period_month, 1)
+    last_day = date(period_year, period_month, calendar.monthrange(period_year, period_month)[1])
+    return (
+        db.query(AdvancePayment)
+        .filter(
+            AdvancePayment.employee_id == employee_id,
+            AdvancePayment.deducted.is_(False),
+            AdvancePayment.payment_date >= first_day,
+            AdvancePayment.payment_date <= last_day,
+        )
+        .all()
+    )
+
+
+# ── LeaveBalanceMonthly (wagdy.md H-03) ──────────────────────────────────
+
+def get_leave_balance_monthly(
+    db: Session, employee_id: int, period_year: int, period_month: int,
+) -> Optional[LeaveBalanceMonthly]:
+    return (
+        db.query(LeaveBalanceMonthly)
+        .filter(
+            LeaveBalanceMonthly.employee_id == employee_id,
+            LeaveBalanceMonthly.period_year == period_year,
+            LeaveBalanceMonthly.period_month == period_month,
+        )
+        .first()
+    )
+
+
+def get_latest_leave_balance_monthly(db: Session, employee_id: int) -> Optional[LeaveBalanceMonthly]:
+    return (
+        db.query(LeaveBalanceMonthly)
+        .filter(LeaveBalanceMonthly.employee_id == employee_id)
+        .order_by(LeaveBalanceMonthly.period_year.desc(), LeaveBalanceMonthly.period_month.desc())
+        .first()
+    )
+
+
+def list_leave_balance_monthly(
+    db: Session, employee_id: int, limit: int = 24,
+) -> list[LeaveBalanceMonthly]:
+    return (
+        db.query(LeaveBalanceMonthly)
+        .filter(LeaveBalanceMonthly.employee_id == employee_id)
+        .order_by(LeaveBalanceMonthly.period_year.desc(), LeaveBalanceMonthly.period_month.desc())
+        .limit(limit)
+        .all()
+    )
+
+
+def upsert_leave_balance_monthly(
+    db: Session, employee_id: int, branch_id: int, period_year: int, period_month: int,
+    opening_balance: Decimal, accrued: Decimal, consumed: Decimal,
+) -> LeaveBalanceMonthly:
+    row = get_leave_balance_monthly(db, employee_id, period_year, period_month)
+    closing_balance = opening_balance + accrued - consumed
+    if row:
+        row.opening_balance = opening_balance
+        row.accrued = accrued
+        row.consumed = consumed
+        row.closing_balance = closing_balance
+    else:
+        row = LeaveBalanceMonthly(
+            employee_id=employee_id, branch_id=branch_id,
+            period_year=period_year, period_month=period_month,
+            opening_balance=opening_balance, accrued=accrued, consumed=consumed,
+            closing_balance=closing_balance,
         )
         db.add(row)
     db.flush()
