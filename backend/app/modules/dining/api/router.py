@@ -33,7 +33,7 @@ from app.modules.dining.schemas import (
     KDSScreenCreate, KDSScreenRead,
     KitchenTicketRead, TicketStatusUpdate,
     OrderCreate, OrderItemCreate, OrderItemRead, OrderItemStatusUpdate, OrderItemVoidRequest,
-    OrderRead, OrderStatusUpdate,
+    OrderRead, OrderStatusUpdate, OrderTransferRequest,
     OrderSyncRequest, OrderSyncResponse,
     OutletCreate, OutletRead, OutletUpdate,
 )
@@ -513,6 +513,22 @@ async def update_order_status(order_id: int, data: OrderStatusUpdate, db: DbDep,
         await dining_manager.broadcast(f"tables-{order.branch_id}", {
             "type": "table_updated", "table_id": order.table_id,
         })
+    return order
+
+
+@router.patch("/dining/orders/{order_id}/transfer", response_model=OrderRead)
+async def transfer_order_table(order_id: int, data: OrderTransferRequest,
+                               db: DbDep, user=Depends(get_waiter_user)):
+    """نقل طلب مفتوح لطاولة تانية (الضيوف اتحركوا فعليًا) — نفس مستوى صلاحية
+    باقي عمليات التشغيل اليومية على الطلب (get_waiter_user)، مش إجراء مالي.
+    راجع restaurant.api.router.transfer_order_table — نفس المنطق بالظبط."""
+    try:
+        order = services.transfer_order_table(db, order_id, data.table_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await dining_manager.broadcast(f"tables-{order.branch_id}", {
+        "type": "table_updated", "table_id": order.table_id,
+    })
     return order
 
 

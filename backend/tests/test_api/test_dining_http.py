@@ -104,6 +104,32 @@ class TestDiningMenuHTTP:
         names = [i["name"] for i in resp.json()]
         assert item.name in names
 
+    def test_create_and_update_item_availability_window(self, client: TestClient, db, manager_headers):
+        """wagdy.md P-03 — available_from_time/available_until_time بيتحفظوا
+        ويترجعوا صح عبر create/update، ونقدر نمسحهم (NULL) تاني. راجع
+        restaurant.tests.test_create_and_update_menu_item_availability_window."""
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        create_resp = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/items",
+            json={"branch_id": branch.id, "outlet_id": outlet.id, "name": "فطار صباحي",
+                  "price": "60.00", "available_from_time": "07:00:00", "available_until_time": "11:00:00"},
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        item = create_resp.json()
+        assert item["available_from_time"] == "07:00:00"
+        assert item["available_until_time"] == "11:00:00"
+
+        clear_resp = client.patch(
+            f"/api/v1/dining/items/{item['id']}",
+            json={"available_from_time": None, "available_until_time": None},
+            headers=manager_headers,
+        )
+        assert clear_resp.status_code == 200, clear_resp.text
+        assert clear_resp.json()["available_from_time"] is None
+        assert clear_resp.json()["available_until_time"] is None
+
 
 class TestDiningOrderHTTP:
     def test_create_order_via_http(self, client: TestClient, db, waiter_headers):
@@ -383,6 +409,71 @@ class TestDiningKitchenItemBumpHTTP:
 
         order_resp = client.get(f"/api/v1/dining/orders/{order['id']}", headers=manager_headers).json()
         assert order_resp["items"][0]["status"] == "ready"
+
+
+class TestDiningTableTransferHTTP:
+    """راجع restaurant.tests.TestTableTransferHTTP (wagdy.md P-01) — نفس
+    السيناريوهات بالظبط، على PATCH /dining/orders/{order_id}/transfer
+    (فجوة تكافؤ أُغلقت قبل حذف restaurant/cafe — DINING_CUTOVER_PLAN.md Batch 1)."""
+
+    def test_transfer_order_via_http(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        old_table = make_table_committed(db, branch, outlet)
+        new_table = make_table_committed(db, branch, outlet)
+
+        order = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "table_id": old_table.id, "order_type": "dine_in",
+                  "guests_count": 2, "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/dining/orders/{order['id']}/transfer",
+            json={"table_id": new_table.id},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["table_id"] == new_table.id
+
+        tables = client.get(
+            f"/api/v1/dining/outlets/{outlet.id}/tables", headers=waiter_headers,
+        ).json()
+        assert next(t for t in tables if t["id"] == old_table.id)["status"] == "available"
+        assert next(t for t in tables if t["id"] == new_table.id)["status"] == "occupied"
+
+    def test_transfer_to_occupied_table_returns_400(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        table_a = make_table_committed(db, branch, outlet)
+        table_b = make_table_committed(db, branch, outlet)
+
+        order_a = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "table_id": table_a.id, "order_type": "dine_in",
+                  "guests_count": 2, "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        ).json()
+        client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "table_id": table_b.id, "order_type": "dine_in",
+                  "guests_count": 2, "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        )
+
+        resp = client.patch(
+            f"/api/v1/dining/orders/{order_a['id']}/transfer",
+            json={"table_id": table_b.id},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_transfer_requires_auth(self, client: TestClient, db):
+        resp = client.patch("/api/v1/dining/orders/1/transfer", json={"table_id": 1})
+        assert resp.status_code == 401
 
 
 class TestOldUrlsStillWork:

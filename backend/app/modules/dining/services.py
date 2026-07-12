@@ -136,6 +136,33 @@ def _resolve_variant(db: Session, item: DiningItem, variant_id: Optional[int]) -
     return variant
 
 
+def _is_item_available_now(item: DiningItem) -> bool:
+    """يتحقق إن الصنف داخل نافذة تقديمه الحالية (available_from_time/
+    available_until_time) — راجع restaurant.services._is_item_available_now
+    — نفس المنطق بالظبط (NULL في الاتنين = بدون قيد وقتي، نافذة عابرة
+    لمنتصف الليل مدعومة، local_now مش وقت السيرفر الخام)."""
+    start, end = item.available_from_time, item.available_until_time
+    if start is None and end is None:
+        return True
+    start = start or time.min
+    end = end or time.max
+    now_time = local_now(settings.TIMEZONE).time()
+    if start <= end:
+        return start <= now_time <= end
+    return now_time >= start or now_time <= end
+
+
+def _check_item_available_now(item: DiningItem) -> None:
+    """يرفع ValueError برسالة عربية واضحة لو الصنف خارج نافذة تقديمه
+    الحالية — يُستدعى وقت إضافة صنف لطلب (إنشاء طلب جديد أو إضافة لطلب
+    مفتوح)، مش وقت عرض المنيو بس. راجع restaurant.services._check_item_available_now."""
+    if _is_item_available_now(item):
+        return
+    start = item.available_from_time.strftime("%H:%M") if item.available_from_time else "00:00"
+    end = item.available_until_time.strftime("%H:%M") if item.available_until_time else "23:59"
+    raise ValueError(f"الصنف '{item.name}' متاح فقط من {start} إلى {end}")
+
+
 def _effective_recipe(item: DiningItem, variant: Optional[DiningItemVariant]) -> list:
     """راجع restaurant.services._effective_recipe — نفس المنطق بالظبط."""
     if variant is not None and variant.recipe_lines:
@@ -339,6 +366,7 @@ def create_order(
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
+        _check_item_available_now(item)
 
         variant = _resolve_variant(db, item, item_req.variant_id)
         base_price = variant.price if variant else item.price
@@ -411,6 +439,7 @@ def add_items_to_order(db: Session, order_id: int, items: list) -> DiningOrder:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
+        _check_item_available_now(item)
 
         variant = _resolve_variant(db, item, item_req.variant_id)
         base_price = variant.price if variant else item.price

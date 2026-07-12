@@ -62,6 +62,15 @@ const busy = ref(false)
 const errorMsg = ref('')
 const successMsg = ref('')
 
+// ── نقل لطاولة (wagdy.md P-01، dining parity — DINING_CUTOVER_PLAN.md Batch 1) ──
+// نفس مستوى صلاحية باقي عمليات التشغيل اليومية على الطلب (نادل+، راجع
+// PATCH /dining/orders/{id}/transfer::get_waiter_user), مش إجراء مالي.
+const canTransferTable = computed(() => auth.hasRole('waiter'))
+const transferOpen = ref(false)
+const transferTableId = ref<number | null>(null)
+const transferError = ref('')
+const otherTables = computed(() => (props.tables ?? []).filter(t => t.id !== order.value?.table_id))
+
 const ORDER_TYPE_LABELS: Record<string, string> = {
   dine_in: '🍽️ صالة', takeaway: '🥡 تيك أواي', delivery: '🛵 توصيل', room_service: '🛎️ خدمة الغرف',
 }
@@ -85,6 +94,36 @@ async function loadOrder() {
   }
 }
 watch(() => props.orderId, loadOrder, { immediate: true })
+
+function openTransferPrompt() {
+  transferOpen.value = true
+  transferTableId.value = null
+  transferError.value = ''
+}
+function cancelTransferPrompt() {
+  transferOpen.value = false
+  transferTableId.value = null
+  transferError.value = ''
+}
+async function confirmTransfer() {
+  if (!order.value || !transferTableId.value) {
+    transferError.value = 'اختر الطاولة الجديدة'
+    return
+  }
+  busy.value = true
+  try {
+    const { data } = await api.patch(ENDPOINTS.dining.orderTransfer(order.value.id), { table_id: transferTableId.value })
+    order.value = data
+    cancelTransferPrompt()
+    successMsg.value = 'تم نقل الطلب للطاولة الجديدة ✓'
+    emit('changed')
+    setTimeout(() => { successMsg.value = '' }, 2500)
+  } catch (e: any) {
+    transferError.value = e?.response?.data?.detail ?? 'فشل نقل الطلب'
+  } finally {
+    busy.value = false
+  }
+}
 
 // ── Void item (cashier+, PIN-gated at manager level if acting user < manager) ──
 const voidingItemId = ref<number | null>(null)
@@ -295,6 +334,29 @@ function lineTotal(item: OrderItem): number {
             cancelled: { label: 'ملغي', variant: 'danger' },
             refunded: { label: 'مرتجع', variant: 'danger' },
           }" />
+        </div>
+
+        <!-- ── نقل لطاولة (wagdy.md P-01) — نادل+، أي حالة غير مقفولة ── -->
+        <div v-if="canTransferTable && !['paid', 'cancelled'].includes(order.status)">
+          <button
+            v-if="!transferOpen"
+            @click="openTransferPrompt"
+            class="text-xs text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1"
+          >🔀 نقل لطاولة تانية</button>
+
+          <div v-else class="mt-2 space-y-2 bg-blue-50 border border-blue-200 rounded-lg p-2.5">
+            <select v-model="transferTableId" class="w-full border border-stone-300 rounded-lg p-1.5 text-xs">
+              <option :value="null" disabled>اختر الطاولة الجديدة...</option>
+              <option v-for="t in otherTables" :key="t.id" :value="t.id" :disabled="t.status === 'occupied' || t.status === 'out_of_service'">
+                طاولة {{ t.table_number }} — {{ t.status === 'available' ? 'متاحة' : t.status === 'occupied' ? 'مشغولة' : t.status === 'out_of_service' ? 'خارج الخدمة' : t.status }}
+              </option>
+            </select>
+            <p v-if="transferError" class="text-xs text-red-600">{{ transferError }}</p>
+            <div class="flex gap-2">
+              <button @click="cancelTransferPrompt" class="flex-1 py-1.5 text-xs font-semibold text-gray-600 border border-stone-200 rounded-lg bg-white">إلغاء</button>
+              <button :disabled="busy" @click="confirmTransfer" class="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg disabled:opacity-50">تأكيد النقل</button>
+            </div>
+          </div>
         </div>
 
         <div class="space-y-2 max-h-64 overflow-y-auto">

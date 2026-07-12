@@ -36,6 +36,7 @@ interface DiningItemRow {
   id: number; outlet_id: number; category_id: number | null
   name: string; name_ar: string | null; price: number | string; cost: number | string | null
   is_available: boolean; station: string; preparation_minutes: number
+  available_from_time: string | null; available_until_time: string | null
   extra_groups: ExtraGroup[]
 }
 interface VenueTable { id: number; outlet_id: number; table_number: string; capacity: number; section: string | null; status: string }
@@ -182,6 +183,7 @@ const itemEdit = ref<DiningItemRow | null>(null)
 const itemForm = ref({
   name: '', name_ar: '', price: '', cost: '', is_available: true,
   category_id: null as number | null, station: 'hot', preparation_minutes: 10,
+  available_from_time: '', available_until_time: '',
 })
 // Same null<->undefined proxy rationale as selectedOutletIdOption above.
 const itemCategoryIdOption = computed<string | number | undefined>({
@@ -214,8 +216,8 @@ const stationLabel = (s: string) => STATIONS.find(st => st.value === s)?.label ?
 function openItemForm(item?: DiningItemRow) {
   itemEdit.value = item ?? null
   itemForm.value = item
-    ? { name: item.name, name_ar: item.name_ar ?? '', price: String(item.price), cost: item.cost != null ? String(item.cost) : '', is_available: item.is_available, category_id: item.category_id, station: item.station, preparation_minutes: item.preparation_minutes }
-    : { name: '', name_ar: '', price: '', cost: '', is_available: true, category_id: selectedCategoryId.value, station: 'hot', preparation_minutes: 10 }
+    ? { name: item.name, name_ar: item.name_ar ?? '', price: String(item.price), cost: item.cost != null ? String(item.cost) : '', is_available: item.is_available, category_id: item.category_id, station: item.station, preparation_minutes: item.preparation_minutes, available_from_time: item.available_from_time?.slice(0, 5) ?? '', available_until_time: item.available_until_time?.slice(0, 5) ?? '' }
+    : { name: '', name_ar: '', price: '', cost: '', is_available: true, category_id: selectedCategoryId.value, station: 'hot', preparation_minutes: 10, available_from_time: '', available_until_time: '' }
   itemDrawerOpen.value = true
 }
 
@@ -231,6 +233,8 @@ async function saveItem() {
       price, cost: itemForm.value.cost !== '' ? Number(itemForm.value.cost) : null,
       is_available: itemForm.value.is_available, category_id: itemForm.value.category_id,
       station: itemForm.value.station, preparation_minutes: Number(itemForm.value.preparation_minutes),
+      available_from_time: itemForm.value.available_from_time || null,
+      available_until_time: itemForm.value.available_until_time || null,
     }
     if (itemEdit.value) {
       const { data } = await api.patch(ENDPOINTS.dining.item(itemEdit.value.id), payload)
@@ -577,6 +581,17 @@ onMounted(async () => {
           <AppSelect v-model="itemForm.station" :options="STATIONS" label="المحطة (KDS)" />
         </div>
         <AppInput v-model.number="itemForm.preparation_minutes" type="number" label="وقت التحضير (دقيقة)" />
+
+        <!-- ── نافذة تقديم الصنف (wagdy.md P-03، dining parity — DINING_CUTOVER_PLAN.md
+             Batch 1) — إفطار 7-11، غداء 12-4، عشاء 7-11. فاضي/فاضي = بدون قيد وقتي. ── -->
+        <div class="grid grid-cols-2 gap-3">
+          <AppInput v-model="itemForm.available_from_time" type="time" label="متاح من (اختياري)" />
+          <AppInput v-model="itemForm.available_until_time" type="time" label="متاح حتى (اختياري)" />
+        </div>
+        <p v-if="itemForm.available_from_time || itemForm.available_until_time" class="text-[11px] text-gray-400 -mt-2">
+          الصنف هيبقى غير متاح للطلب برّه النافذة دي — سيب الحقلين فاضيين لإتاحته طول اليوم.
+        </p>
+
         <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
           <input type="checkbox" v-model="itemForm.is_available" class="rounded" /> متاح للطلب
         </label>

@@ -6,7 +6,7 @@ DiningItem/DiningOrder وباقي دوكسترنجز models.py للتبرير ا
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Optional
 
@@ -91,6 +91,8 @@ class DiningItemCreate(BaseModel):
     image_url:           Optional[str] = Field(None, max_length=500)
     station:             str = Field("hot", pattern=r"^(hot|grill|cold|bar|dessert)$")
     linked_product_id:   Optional[int] = None
+    available_from_time:  Optional[time] = None
+    available_until_time: Optional[time] = None
 
 
 class DiningItemUpdate(BaseModel):
@@ -104,6 +106,8 @@ class DiningItemUpdate(BaseModel):
     station:             Optional[str]     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert)$")
     image_url:           Optional[str]     = None
     linked_product_id:   Optional[int]     = None
+    available_from_time:  Optional[time]   = None
+    available_until_time: Optional[time]   = None
 
 
 # ─────────────────────── Extras / Modifiers ───────────────────────────
@@ -384,6 +388,13 @@ class OrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
     charge_to_room_id: Optional[int] = None
     payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet)$")
+
+
+class OrderTransferRequest(BaseModel):
+    """نقل طلب مفتوح من طاولة لأخرى (الضيوف اتحركوا فعليًا) — راجع
+    services.transfer_order_table للتحقق الكامل (نفس الفرع/مش مشغولة بطلب
+    تاني/الطاولة مش خارج الخدمة). راجع restaurant.schemas.OrderTransferRequest."""
+    table_id: int
 
 
 class OrderItemStatusUpdate(BaseModel):
