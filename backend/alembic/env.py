@@ -34,6 +34,7 @@ import app.modules.crm.models          # noqa: F401
 import app.modules.maintenance.models  # noqa: F401
 import app.modules.hub.models          # noqa: F401
 import app.modules.analytics.models   # noqa: F401
+import app.modules.dining.models      # noqa: F401
 
 # ── Alembic Config ────────────────────────────────────────────────────────────
 config = context.config

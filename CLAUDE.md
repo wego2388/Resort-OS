@@ -279,14 +279,18 @@ resort-os/
 │   │   │   ├── rate_limit.py      ← IP-keyed middleware
 │   │   │   └── kernel/            ← البنية التحتية المملوكة بالكامل (auth/security/cache/...) — راجع §13
 │   │   │
-│   │   ├── modules/               ← 14 module، كل منهم دايمًا شغال (مفيش تفعيل/تعطيل):
+│   │   ├── modules/               ← 15 module، كل منهم دايمًا شغال (مفيش تفعيل/تعطيل):
 │   │   │   │                         models → schemas → crud → services → api/router
 │   │   │   ├── core/              ← branches, settings, users, audit
 │   │   │   ├── finance/           ← folios, payments, journal, shifts, ETA
 │   │   │   ├── inventory/         ← warehouses, products, stock
 │   │   │   ├── hr/                ← employees, payroll, attendance, leaves
 │   │   │   ├── restaurant/        ← menu, orders, KDS WebSocket, extras, void, hold
-│   │   │   ├── cafe/
+│   │   │   │                         (لسه المصدر الوحيد للحقيقة — راجع dining/ تحت)
+│   │   │   ├── cafe/              ← (نفس ملاحظة restaurant/)
+│   │   │   ├── dining/            ← موديول Outlet الموحّد الجديد (Batch A، 2026-07-12) — إضافي
+│   │   │   │                         بالكامل جنب restaurant/cafe، مش بديل عنهم لسه. راجع
+│   │   │   │                         DINING_CUTOVER_PLAN.md لخطة الانتقال الكاملة (D-05→D-08)
 │   │   │   ├── pms/               ← rooms, bookings, housekeeping, rate_plans
 │   │   │   ├── timeshare/         ← contracts, installments, visits, Excel import
 │   │   │   ├── beach/             ← transactions, B2B, capacity/surge
@@ -357,7 +361,8 @@ customer=0       guest=0
 
 ## § 12 — لا يوجد نظام تفعيل/تعطيل موديولات
 
-**قرار معماري متعمد (2026-07-02)**: كل الـ 14 موديول دايمًا شغالة، زي `core`/`finance` قبل كده تمامًا —
+**قرار معماري متعمد (2026-07-02)**: كل الـ 15 موديول دايمًا شغالة (`dining` انضم 2026-07-12 كموديول
+إضافي جنب `restaurant`/`cafe`، راجع §18)، زي `core`/`finance` قبل كده تمامًا —
 مفيش `require_module()`، مفيش `ModuleState` في الداتابيز، مفيش `useModulesStore` في الفرونت إند.
 كان فيه نظام dynamic toggle (DB+Redis-cached، تفعيل/تعطيل فوري بدون restart) لكن اتشال بالكامل لأن
 المشروع منتجع واحد مش منتج SaaS بيتباع لعملاء بمزايا مختلفة — الحماية الوحيدة الباقية على كل endpoint
@@ -681,8 +686,8 @@ migrations) في `PROJECT_STATUS.md`.
   اتضاف `CafeItem.station` (migration `8b1b5d6ced99`) وكود توليد التذاكر بقى بيقسّم حسب المحطة الفعلية
   زي `restaurant.services` بالظبط (مش قيمة ثابتة). 13 وصفة/BOM حقيقية جديدة (كانت 3 مربوطة بأصناف
   الكافيه الغلط أصلاً) اتربطت بالمنيو الصح، تغطي كل المحطات. تفاصيل كاملة في `PROJECT_STATUS.md`.
-  **مؤجَّل عمدًا** (قرار معماري كبير منفصل، زي إيراد الغرفة): دمج المطعم/الكافيه في تاب POS واحد زي
-  Foodics — الموديولين لسه منفصلين تمامًا (Order/CafeOrder مختلفين).
+  **دمج المطعم/الكافيه في موديول dining واحد زي Foodics بدأ فعليًا 2026-07-12 (Batch A، راجع البند
+  التالي)** — لسه `restaurant`/`cafe` هما مصدر الحقيقة الوحيد حتى إشعار آخر.
 - **رؤية فشل Celery الحقيقية + نسخ احتياطي خارج السيرفر + تحويل Lead لحجز + سلسلة السلف/الدفعات/
   الإجازات** (2026-07-12) — 8 بنود من `wagdy.md`. `app.core.kernel.worker.notify_task_failure()` دالة
   مشتركة (Sentry + واتساب) بقت متنادية من كل except block بيبتلع خطأ نهائي عبر كل ملفات `app/tasks/`
@@ -701,6 +706,19 @@ migrations) في `PROJECT_STATUS.md`.
   `a1b2c3d4e5f6` + `b3c7d9e1f2a4`. **فجوة محاسبية موثّقة صراحةً في الكود** (مش جديدة، نفس فئة
   penalty_deduction الموجودة من قبل): خصم السلف بيقلل الصافي من غير حساب أصول "سلف موظفين مستحقة"
   مقابل — مؤجَّل عمدًا لنفس سبب فجوة إيراد الغرفة تحت. تفاصيل كاملة في `PROJECT_STATUS.md`.
+- **موديول `dining` الموحّد — Batch A: D-01 → D-04 من wagdy.md "المرحلة الثالثة"** (2026-07-12) —
+  `app/modules/dining/` جديد وإضافي بالكامل (models/schemas/crud/services/router)، نموذج `Outlet`
+  (`outlet_type` نص مفتوح، `revenue_account_code` بديل حسابات 4200/4400 الثابتة في
+  restaurant/cafe.services القديمة) بديل الفصل بين موديولين منفصلين. `restaurant`/`cafe` **متلمسوش
+  خالص** — لسه المصدر الوحيد للحقيقة، مسجّلين بنفس الترتيب، لسه بيقروا/يكتبوا في جداولهم الأصلية.
+  Migration `0bd6f63e5446` بتنسخ (مش تنقل) بياناتهم لجداول `dining_*` الجديدة عبر
+  `legacy_module`/`legacy_id` (SQL خالص، idempotent). 45 اختبار جديد + اختبار migration Postgres-only
+  (`test_dining_migration.py`، skip افتراضيًا) = 1879 اختبار إجمالي، صفر رجوع. قرار موثّق: **مفيش
+  alias حرفي على `/restaurant`/`/cafe`** — الروترين القديمين متلمسوش فمفيش حاجة تحتاج alias، اتأكد
+  بـ route dump كامل (493 مسار، صفر تصادم) + الاختبارات القديمة عدّت من غير تعديل. **D-05 → D-08
+  (تحويل analytics/finance للقراءة من dining، الفرونت إند، حذف الموديولين القديمين) لسه مؤجَّلين
+  عمدًا** — راجع `DINING_CUTOVER_PLAN.md` (جذر المشروع) للمقترح المكتوب الكامل. تفاصيل تقنية كاملة
+  في `PROJECT_STATUS.md`.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش

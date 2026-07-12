@@ -1,6 +1,6 @@
 # حالة المشروع — El Kheima Beach Resort OS
 
-> **آخر تحديث حقيقي:** 2026-07-07 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست، تجربة live)،
+> **آخر تحديث حقيقي:** 2026-07-12 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست، تجربة live)،
 > مش افتراض ولا خطة. لو لقيت رقم يبان قديم، قول لـ Claude "الملف مش محدّث" وهو يراجعه من الكود
 > مباشرة قبل ما يصدّقه.
 >
@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1819 اختبار، كلهم شغالين** ✅ (2026-07-12) |
+| **الاختبارات** | **1879 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-12) |
 | **الـ Coverage** | **95%+ إجمالي** (مطعم/كافيه/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
 | **الاستضافة** | جاهز للـ VPS (docker-compose + Dockerfiles + DEPLOYMENT.md) — **لسه ما جربناهوش على سيرفر حقيقي** |
@@ -23,6 +23,57 @@
 | **النسخ الاحتياطي** | `scripts/backup_db.sh` + `restore_db.sh` + systemd timer، اتجرّب backup→restore→مقارنة بيانات فعليًا |
 | **التشغيل** | `scripts/start.sh`/`stop.sh`/`status.sh`/`restart.sh`/`logs.sh` — حساب تجريبي واحد لكل دور (12 حساب) |
 | **الدستور الهندسي** | `CLAUDE.md` بقى فيه دستور CTO كامل (أولويات 70% جودة/20% تنضيج/10% ميزات جديدة) — راجعه أول أي جلسة |
+
+---
+
+## 🍽️ اللي اتعمل يوم 2026-07-12 — موديول `dining` الموحّد (Batch A: D-01 → D-04)
+
+دمج المطعم/الكافيه في موديول `dining` واحد (wagdy.md "المرحلة الثالثة — المشروع الكبير")، بنموذج
+**Outlet** زي Foodics/Toast — هذا الـ commit فقط النطاق المُتفَق عليه (D-01 → D-04)، **مش** حذف
+`restaurant`/`cafe` ولا تحويل الفرونت إند (ده D-05 → D-08، مؤجَّل عمدًا، راجع
+`DINING_CUTOVER_PLAN.md` الجديد في جذر المشروع).
+
+- **D-01 — `app/modules/dining/models.py`** (14 جدول جديد، `dining_*`) — superset حقيقي لـ
+  `restaurant.models` + `cafe.models`: `Outlet` (`outlet_type` نص مفتوح بدون CHECK constraint —
+  outlet جديد زي بار المسبح = صف جديد بس، صفر migration؛ `revenue_account_code` بديل حسابات
+  4200/4400 الثابتة)، `DiningItem` (عمود `station` إجباري على الكل من الأساس — نفس الباج اللي كان
+  في `CafeItem` قبل الإصلاح، هنا مستحيل يتكرر)، `DiningItemVariant`/`DiningItemVariantRecipeLine`
+  (وصفة مستقلة تمامًا زي `MenuItemVariant` الأصلي، **مش** عمود `variant_id` على جدول وصفة مشترك —
+  نفس القرار المعماري في CLAUDE.md §18 "Variants حقيقية")، و`DiningKitchenTicket.order_id` بقى
+  **FK حقيقي** على `dining_orders` (تحسين عن الأصل — `KitchenTicket.order_id` القديم كان Integer
+  خام لأنه بيشاور على جدولين مختلفين حسب `module`). كل الكيانات المنسوخة من D-02 عندها
+  `legacy_module`/`legacy_id` (unique) — **مش** PK حرفي محفوظ، لأن `restaurant.Order.id` و
+  `cafe.CafeOrder.id` sequences منفصلة بتتصادم طبيعيًا.
+- **D-02 — Migration `0bd6f63e5446`** — بيعمل الجداول ثم **ينسخ** (مش ينقل) كل بيانات
+  `restaurant`/`cafe` الموجودة فعليًا بـ SQL خالص (`INSERT...SELECT` مترابط عبر
+  `legacy_module`/`legacy_id`، `NOT EXISTS` على كل سطر عشان يفضل idempotent لو اتكرر تشغيله). قبل
+  الكتابة: backup حقيقي (`scripts/backup_db.sh`) + restore-verified (`COUNT(*)` مطابق حرفيًا) على
+  6 جداول. الـ migration نفسها اتبنت واتأكد منها بالكامل على قاعدة بيانات تجريبية منفصلة (seed
+  واقعي: فئة/صنف/وصفة/متغيّر/وصفة متغيّر/إضافات/طلب مدفوع فيه إضافة/طلب معلّق بدون طاولة/طلب كافيه
+  مرتجع بالكامل) — تطابق عدد الصفوف حرفيًا، صحة كل العلاقات، إعادة تشغيل من غير تكرار، ودورة
+  downgrade↔upgrade نضيفة. التحقق ده بقى **pytest حقيقي وقابل لإعادة الاستخدام**
+  (`backend/tests/test_dining_migration.py`، Postgres-only، skip تلقائي لو
+  `DINING_MIGRATION_TEST_ADMIN_URL` مش موجود — صفر أثر على `pytest tests/` العادي).
+- **D-03 — `dining/{crud,schemas,services}.py`** — محرك طلبات واحد (create/hold/sync
+  offline/add-items/status transitions/void/refund/discount/food-cost report) بدل نسخة
+  restaurant + نسخة cafe متطابقتين تقريبًا. **الإصلاح المطلوب فعليًا**: حسابات الإيراد الثابتة
+  `"4200"`/`"4400"` بقت `outlet.revenue_account_code` — خاصية على سجل الـ outlet، مش literal في
+  الكود. كل باقي المنطق (خصم مخزون بنفس أولوية وصفة→ربط 1:1→تجاهل، PIN موافقة عبر
+  `core.services.resolve_pin_approval` الموجودة، محرك الخصم `resort_os/discount_engine.py` غير
+  مُلمَس، تجميع تقرير تكلفة الطعام بـ `(item_id, variant_id)`) اتنقل بنفس السلوك بالظبط.
+- **D-04 — `dining/api/router.py`** — موحّد على `/api/v1/dining/outlets/{id}/...` (50 مسار)، KDS
+  ticket feed موحّد عبر الـ outlets كلها (`outlet_id` اختياري = "كل المنافذ على شاشة واحدة"، الرؤية
+  اللي طلبتها مذكرة Mohamed المعمارية). **قرار موثّق صراحةً**: مفيش alias حرفي على مسارات
+  `/restaurant`/`/cafe` القديمة — الروترين القديمين متلمسوش خالص (لسه بيقروا/يكتبوا في
+  `orders`/`cafe_orders` الأصليين زي ما هما)، فمفيش حاجة تحتاج alias أصلاً. اتأكد بـ 3 طرق مستقلة:
+  220 اختبار restaurant/cafe عدّوا من غير أي تعديل، route dump كامل (493 مسار: 47 restaurant + 41
+  cafe + 50 dining) بصفر تصادم، واختبارات HTTP جديدة صريحة (`TestOldUrlsStillWork`) بتضرب
+  `/restaurant`/`/cafe` مباشرة بعد إضافة dining.
+- **45 اختبار جديد** (`test_dining.py` 32 + `test_dining_http.py` 13) + 3 اختبار migration
+  اختياري = 1834 → 1879 اختبار عادي، صفر رجوع.
+- **`DINING_CUTOVER_PLAN.md`** (جذر المشروع) — المقترح المكتوب لـ D-05 (تحويل analytics/finance
+  للقراءة من `dining` بدل `restaurant`+`cafe`) بدل تنفيذه بدون مراجعة — نفس مبدأ فجوة إيراد الغرفة
+  في §18 بند 0: قرار بأثر مالي حقيقي يستاهل مراجعة صريحة مع Mohamed، مش تعديل عابر وسط دفعة تانية.
 
 ---
 

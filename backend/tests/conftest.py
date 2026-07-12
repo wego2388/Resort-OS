@@ -90,6 +90,7 @@ def create_all_tables() -> None:
     import app.modules.leasing.models      # noqa: F401, PLC0415
     import app.modules.cafe.models         # noqa: F401, PLC0415
     import app.modules.analytics.models    # noqa: F401, PLC0415
+    import app.modules.dining.models       # noqa: F401, PLC0415
     Base.metadata.create_all(bind=engine)
 
 

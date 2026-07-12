@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # كل الموديولات دايمًا مفعّلة — مفيش نظام تفعيل/تعطيل. القايمة هنا بس لتحديد
 # ترتيب الـ router registration، مش لأي قرار وصول.
 _MODULE_KEYS = (
-    "core", "finance", "inventory", "hr", "restaurant", "cafe", "pms",
+    "core", "finance", "inventory", "hr", "restaurant", "cafe", "dining", "pms",
     "timeshare", "beach", "maintenance", "crm", "analytics", "hub", "leasing",
 )
 
