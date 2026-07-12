@@ -20,6 +20,7 @@ interface MenuItem {
   price: number; cost: number | null; is_available: boolean
   category_id: number | null; station: string
   preparation_minutes: number; image_url: string | null
+  available_from_time: string | null; available_until_time: string | null
 }
 
 // ── State ──────────────────────────────────────────────────────────────
@@ -89,6 +90,10 @@ const itemForm       = ref({
   name: '', name_ar: '', price: 0, cost: '',
   is_available: true, category_id: null as number | null,
   station: 'hot', preparation_minutes: 10, image_url: '',
+  available_from_time: '', available_until_time: '',
+  // نافذة تقديم الصنف (wagdy.md P-03) — سلسلة نصية فاضية = بدون قيد وقتي
+  // (NULL في الـ payload)، مطابقة لـ <input type="time"> اللي بيرجّع "" وقت
+  // ما يبقى فاضي.
 })
 
 const STATIONS = [
@@ -107,9 +112,13 @@ function openItemForm(item?: MenuItem) {
     is_available: item.is_available, category_id: item.category_id,
     station: item.station, preparation_minutes: item.preparation_minutes,
     image_url: item.image_url ?? '',
+    // "HH:MM:SS" من السيرفر → "HH:MM" اللي <input type="time"> محتاجه
+    available_from_time: item.available_from_time?.slice(0, 5) ?? '',
+    available_until_time: item.available_until_time?.slice(0, 5) ?? '',
   } : {
     name: '', name_ar: '', price: 0, cost: '', is_available: true,
     category_id: selectedCatId.value, station: 'hot', preparation_minutes: 10, image_url: '',
+    available_from_time: '', available_until_time: '',
   }
   itemFormOpen.value = true
 }
@@ -134,6 +143,8 @@ async function saveItem() {
       station:             itemForm.value.station,
       preparation_minutes: itemForm.value.preparation_minutes,
       image_url:           itemForm.value.image_url.trim() || null,
+      available_from_time:  itemForm.value.available_from_time || null,
+      available_until_time: itemForm.value.available_until_time || null,
     }
     if (itemFormEdit.value) {
       const { data } = await api.patch(`/api/v1/restaurant/menu/items/${itemFormEdit.value.id}`, payload)
@@ -488,6 +499,24 @@ onMounted(loadData)
               <input v-model="itemForm.image_url" type="url" placeholder="https://..."
                 class="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
             </div>
+
+            <!-- ── نافذة تقديم الصنف (wagdy.md P-03) — إفطار 7-11، غداء 12-4،
+                 عشاء 7-11. فاضي/فاضي = بدون قيد وقتي (متاح دايمًا). ── -->
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-bold text-gray-600 mb-1">متاح من (اختياري)</label>
+                <input v-model="itemForm.available_from_time" type="time"
+                  class="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-gray-600 mb-1">متاح حتى (اختياري)</label>
+                <input v-model="itemForm.available_until_time" type="time"
+                  class="w-full border border-stone-300 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+              </div>
+            </div>
+            <p v-if="itemForm.available_from_time || itemForm.available_until_time" class="text-[11px] text-gray-400 -mt-2">
+              الصنف هيبقى غير متاح للطلب برّه النافذة دي — سيب الحقلين فاضيين لإتاحته طول اليوم.
+            </p>
 
             <div class="flex items-center gap-3">
               <label class="text-xs font-bold text-gray-600">متاح للطلب</label>

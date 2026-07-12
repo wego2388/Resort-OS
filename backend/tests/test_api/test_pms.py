@@ -444,6 +444,70 @@ class TestRatePlanBookingIntegration:
             ))
 
 
+class TestRatePlanManagement:
+    """wagdy.md P-06 — services.update_rate_plan (PATCH كان غير موجود خالص،
+    GET/POST بس)."""
+
+    def test_update_rate_plan_partial_fields(self, db):
+        from app.modules.pms.schemas import RatePlanUpdate
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="خطة أصلية",
+            rate_multiplier=Decimal("1.1000"),
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=90),
+        ))
+        db.commit()
+
+        updated = services.update_rate_plan(db, plan.id, RatePlanUpdate(
+            rate_multiplier=Decimal("1.3000"),
+        ))
+        assert updated.rate_multiplier == Decimal("1.3000")
+        assert updated.name == "خطة أصلية"  # مش متضمّن في التحديث، لازم يفضل زي ما هو
+
+    def test_deactivate_rate_plan(self, db):
+        from app.modules.pms.schemas import RatePlanUpdate
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="خطة هتتعطّل",
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=90),
+        ))
+        db.commit()
+        assert plan.is_active is True
+
+        updated = services.update_rate_plan(db, plan.id, RatePlanUpdate(is_active=False))
+        assert updated.is_active is False
+
+    def test_update_nonexistent_rate_plan_raises(self, db):
+        from app.modules.pms.schemas import RatePlanUpdate
+        with pytest.raises(ValueError, match="غير موجودة"):
+            services.update_rate_plan(db, 999999, RatePlanUpdate(name="x"))
+
+    def test_update_rate_plan_invalid_date_range_raises(self, db):
+        from app.modules.pms.schemas import RatePlanUpdate
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        plan = crud.create_rate_plan(db, RatePlanCreate(
+            branch_id=branch.id, room_type_id=rt.id, name="خطة تواريخ",
+            valid_from=date.today(), valid_until=date.today() + timedelta(days=30),
+        ))
+        db.commit()
+        # valid_from جديد بعد valid_until الحالي (مش متضمّن في التحديث)
+        with pytest.raises(ValueError, match="valid_until"):
+            services.update_rate_plan(db, plan.id, RatePlanUpdate(
+                valid_from=date.today() + timedelta(days=60),
+            ))
+
+    def test_create_rate_plan_via_service_validates_dates(self, db):
+        branch = make_branch(db)
+        with pytest.raises(ValueError, match="valid_until"):
+            services.create_rate_plan(db, RatePlanCreate(
+                branch_id=branch.id, name="خطة غلط",
+                valid_from=date.today(), valid_until=date.today() - timedelta(days=1),
+            ))
+
+
 class TestNightAudit:
 
     def test_run_night_audit(self, db):

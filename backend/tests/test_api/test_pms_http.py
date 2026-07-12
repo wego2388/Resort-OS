@@ -354,6 +354,110 @@ class TestRatePlans:
         assert resp.status_code == 404
 
 
+class TestRatePlanUpdate:
+    """wagdy.md P-06 — شاشة إدارة خطط الأسعار محتاجة PATCH حقيقي (تعديل +
+    إلغاء تفعيل) غير موجود قبل كده، GET/POST بس."""
+
+    def test_update_rate_plan_fields(self, client: TestClient, db, fake_redis, super_admin_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/pms/rate-plans",
+            json={
+                "branch_id": branch.id, "name": "Low Season", "name_ar": "الموسم المنخفض",
+                "rate_multiplier": "0.8000",
+                "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=60)),
+            },
+            headers=super_admin_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        plan_id = create_resp.json()["id"]
+
+        patch_resp = client.patch(
+            f"/api/v1/pms/rate-plans/{plan_id}",
+            json={"name": "Low Season Updated", "rate_multiplier": "0.7500"},
+            headers=super_admin_headers,
+        )
+        assert patch_resp.status_code == 200, patch_resp.text
+        updated = patch_resp.json()
+        assert updated["name"] == "Low Season Updated"
+        assert Decimal(str(updated["rate_multiplier"])) == Decimal("0.7500")
+        # مش متضمّنة في الـ PATCH request — لازم تفضل زي ما كانت (partial update)
+        assert updated["name_ar"] == "الموسم المنخفض"
+
+    def test_deactivate_rate_plan_via_patch(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/pms/rate-plans",
+            json={
+                "branch_id": branch.id, "name": "To Deactivate",
+                "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
+            },
+            headers=super_admin_headers,
+        )
+        plan_id = create_resp.json()["id"]
+
+        patch_resp = client.patch(
+            f"/api/v1/pms/rate-plans/{plan_id}",
+            json={"is_active": False},
+            headers=super_admin_headers,
+        )
+        assert patch_resp.status_code == 200
+        assert patch_resp.json()["is_active"] is False
+
+        # active_only=True (الافتراضي) لازم يستبعدها من قائمة القوائم
+        list_resp = client.get(
+            "/api/v1/pms/rate-plans", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert plan_id not in [p["id"] for p in list_resp.json()]
+
+    def test_update_rate_plan_rejects_invalid_date_range(self, client: TestClient, db, fake_redis, super_admin_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/pms/rate-plans",
+            json={
+                "branch_id": branch.id, "name": "Range Test",
+                "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
+            },
+            headers=super_admin_headers,
+        )
+        plan_id = create_resp.json()["id"]
+
+        # valid_until جديد قبل valid_from الحالي (مش متضمّن في الطلب) — لازم يترفض
+        patch_resp = client.patch(
+            f"/api/v1/pms/rate-plans/{plan_id}",
+            json={"valid_until": str(date.today() - timedelta(days=1))},
+            headers=super_admin_headers,
+        )
+        assert patch_resp.status_code == 400
+
+    def test_update_rate_plan_404(self, client: TestClient, db, fake_redis, super_admin_headers):
+        resp = client.patch(
+            "/api/v1/pms/rate-plans/999999",
+            json={"name": "Nope"},
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 400
+
+    def test_update_rate_plan_requires_admin(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/pms/rate-plans",
+            json={
+                "branch_id": branch.id, "name": "Admin Only",
+                "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
+            },
+            headers=super_admin_headers,
+        )
+        plan_id = create_resp.json()["id"]
+
+        resp = client.patch(
+            f"/api/v1/pms/rate-plans/{plan_id}",
+            json={"name": "Should Fail"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestRoomsWebSocketBroadcast:
     """خريطة الغرف (RoomsView.vue) كانت بتجيب حالة الغرف مرة واحدة عند الفتح
     + polling كل 60 ثانية بس — لو كاشير تاني سجّل دخول/خروج ضيف في نفس

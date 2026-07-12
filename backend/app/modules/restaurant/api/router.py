@@ -23,7 +23,8 @@ from app.modules.restaurant.schemas import (
     MenuItemRecipeLineCreate, MenuItemRecipeLineRead, MenuItemRecipeLineUpdate,
     MenuItemVariantCreate, MenuItemVariantRead, MenuItemVariantRecipeLineCreate,
     MenuItemVariantRecipeLineRead, MenuItemVariantRecipeLineUpdate, MenuItemVariantUpdate,
-    OrderCreate, OrderItemCreate, OrderItemRead, OrderItemVoidRequest, OrderRead, OrderStatusUpdate,
+    OrderCreate, OrderItemCreate, OrderItemRead, OrderItemStatusUpdate, OrderItemVoidRequest,
+    OrderRead, OrderStatusUpdate, OrderTransferRequest,
     OrderSyncRequest, OrderSyncResponse,
     # Reporting / Food Cost
     FoodCostReportResponse,
@@ -489,6 +490,35 @@ async def update_order_status(order_id: int, data: OrderStatusUpdate,
     return order
 
 
+@router.patch("/restaurant/orders/{order_id}/transfer", response_model=OrderRead)
+async def transfer_order_table(order_id: int, data: OrderTransferRequest,
+                               db: DbDep, user=Depends(get_waiter_user)):
+    """نقل طلب مفتوح لطاولة تانية (الضيوف اتحركوا فعليًا) — نفس مستوى صلاحية
+    باقي عمليات التشغيل اليومية على الطلب (get_waiter_user)، مش إجراء مالي."""
+    try:
+        order = services.transfer_order_table(db, order_id, data.table_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await restaurant_manager.broadcast(f"tables-{order.branch_id}", {
+        "type": "table_updated", "table_id": order.table_id,
+    })
+    return order
+
+
+@router.patch("/restaurant/orders/{order_id}/items/{item_id}/status", response_model=OrderRead)
+async def update_order_item_status(order_id: int, item_id: int, data: OrderItemStatusUpdate,
+                                   db: DbDep, _=Depends(get_current_active_user)):
+    """تأكيد صنف واحد داخل تذكرة مطبخ (bump فردي من شاشة KDS) — نفس مستوى
+    صلاحية تأكيد التذكرة كلها (get_current_active_user، أي موظف مسجّل دخول
+    زي طاقم المطبخ)، مش إجراء مالي."""
+    try:
+        order = services.bump_order_item_status(db, order_id, item_id, data.status)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await restaurant_manager.broadcast(str(order.branch_id), {"type": "tickets_updated", "order_id": order.id})
+    return order
+
+
 @router.patch("/restaurant/orders/{order_id}/items/{item_id}/void",
               response_model=OrderRead,
               dependencies=[Depends(require_permission("restaurant.void_order_item", "execute", min_role_level=40))])
@@ -584,7 +614,10 @@ def list_kitchen_tickets(
     stations: Optional[str] = Query(None, description="Comma-separated list of stations"),
     module: str = Query("restaurant", pattern=r"^(restaurant|cafe)$"),
 ):
-    """قائمة تذاكر الـ KDS المعلقة — لكل شاشة KDS (مطبخ/بار/...) حسب المحطة والموديول."""
+    """قائمة تذاكر الـ KDS المعلقة — لكل شاشة KDS (مطبخ/بار/...) حسب المحطة والموديول.
+    لتذاكر المطعم، كل صنف جوه items_snapshot بيرجع مع status لحظي حقيقي من
+    OrderItem.status (راجع services._ticket_read_dict) — عشان الشاشة تقدر
+    تعرض صنف اتأكد لوحده (bump فردي) من غير ما تنتظر تأكيد التذكرة كلها."""
     station_list = [s.strip() for s in stations.split(",")] if stations else None
     tickets = services.get_kds_tickets(db, branch_id, stations=station_list, module=module)
     return [KitchenTicketRead.model_validate(t) for t in tickets]
@@ -598,14 +631,15 @@ async def update_ticket_status(
     db: DbDep,
     _=Depends(get_current_active_user),
 ):
-    """يحدّث حالة تذكرة الـ KDS (pending → in_progress → done)."""
-    ticket = crud.update_ticket_status(db, ticket_id, data.status)
-    if not ticket:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"التذكرة {ticket_id} غير موجودة")
-    db.commit()
-    db.refresh(ticket)
-    await restaurant_manager.broadcast(str(ticket.branch_id), {"type": "tickets_updated", "ticket_id": ticket.id})
-    return KitchenTicketRead.model_validate(ticket)
+    """يحدّث حالة تذكرة الـ KDS كاملة (pending → in_progress → done) — تأكيد
+    دفعة واحدة. لو تذكرة مطعم اتأكدت done، أي صنف لسه pending/in_kitchen
+    جواها بيترقّى لـ ready تلقائيًا (راجع services.update_kitchen_ticket_status)."""
+    try:
+        ticket_dict = services.update_kitchen_ticket_status(db, ticket_id, data.status)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    await restaurant_manager.broadcast(str(ticket_dict["branch_id"]), {"type": "tickets_updated", "ticket_id": ticket_dict["id"]})
+    return KitchenTicketRead.model_validate(ticket_dict)
 
 
 @router.get("/restaurant/kds-screens",

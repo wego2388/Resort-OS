@@ -152,6 +152,21 @@ class RatePlanCreate(BaseModel):
     is_active:            bool = True
 
 
+class RatePlanUpdate(BaseModel):
+    room_type_id:         Optional[int] = None
+    name:                 Optional[str] = Field(None, max_length=100)
+    name_ar:              Optional[str] = None
+    base_rate_override:   Optional[Decimal] = Field(None, gt=0)
+    rate_multiplier:      Optional[Decimal] = Field(None, gt=0)
+    valid_from:           Optional[date] = None
+    valid_until:          Optional[date] = None
+    seasonal_adjustments: Optional[str] = None
+    min_nights:           Optional[int] = Field(None, ge=1)
+    is_active:            Optional[bool] = None
+    # is_active=False هو طريقة إلغاء تفعيل الخطة — مفيش endpoint منفصل،
+    # نفس نمط MenuItem.is_available/is_active في باقي المشروع.
+
+
 class RatePlanRead(RatePlanCreate):
     model_config = ConfigDict(from_attributes=True)
     id: int

@@ -5,7 +5,9 @@ Integration tests for cafe module.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, time
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -110,6 +112,75 @@ class TestCafeOrder:
         order = make_order(db, branch, item)
         assert order.vat_amount > Decimal("0")
         assert order.total > order.subtotal
+
+
+def make_scheduled_cafe_item(db, branch, from_time=None, until_time=None):
+    from app.modules.cafe.models import CafeItem
+    item = CafeItem(
+        branch_id=branch.id, name="عصير موسمي", price=Decimal("30.00"), is_available=True,
+        available_from_time=from_time, available_until_time=until_time,
+    )
+    db.add(item)
+    db.commit()
+    return item
+
+
+class TestCafeItemAvailabilitySchedule:
+    """wagdy.md P-03 — نفس منطق restaurant.TestItemAvailabilitySchedule
+    بالظبط لكن للكافيه (CafeItem.available_from_time/available_until_time)."""
+
+    def _order_data(self, branch, item):
+        return CafeOrderCreate(
+            branch_id=branch.id, order_type="takeaway",
+            items=[CafeOrderItemCreate(item_id=item.id, quantity=1)],
+        )
+
+    def test_item_without_window_always_available(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_cafe_item(db, branch)
+        order = services.create_order(db, self._order_data(branch, item))
+        assert order.id is not None
+
+    def test_item_unavailable_outside_window(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_cafe_item(db, branch, time(7, 0), time(11, 0))
+        with patch("app.modules.cafe.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 15, 0)
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.create_order(db, self._order_data(branch, item))
+
+    def test_item_available_inside_window(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_cafe_item(db, branch, time(7, 0), time(11, 0))
+        with patch("app.modules.cafe.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 8, 0)
+            order = services.create_order(db, self._order_data(branch, item))
+        assert order.id is not None
+
+    def test_overnight_window(self, db):
+        branch = make_branch(db)
+        item = make_scheduled_cafe_item(db, branch, time(22, 0), time(2, 0))
+        with patch("app.modules.cafe.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 23, 0)
+            order = services.create_order(db, self._order_data(branch, item))
+        assert order.id is not None
+        with patch("app.modules.cafe.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 12, 0)
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.create_order(db, self._order_data(branch, item))
+
+    def test_add_items_to_order_respects_availability_window(self, db):
+        branch = make_branch(db)
+        base_item = make_cafe_item(db, branch)
+        order = make_order(db, branch, base_item)
+        scheduled_item = make_scheduled_cafe_item(db, branch, time(7, 0), time(11, 0))
+
+        with patch("app.modules.cafe.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 15, 0)
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.add_items_to_order(db, order.id, [
+                    CafeOrderItemCreate(item_id=scheduled_item.id, quantity=1),
+                ])
 
 
 class TestCafeOrderStatus:

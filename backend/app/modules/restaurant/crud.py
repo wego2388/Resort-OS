@@ -266,6 +266,21 @@ def update_table_status(db: Session, table: DiningTable, status: str) -> DiningT
     return table
 
 
+def get_active_order_for_table(
+    db: Session, table_id: int, exclude_order_id: Optional[int] = None,
+) -> Optional[Order]:
+    """أي طلب غير مقفول (مش paid/cancelled) مرتبط بالطاولة دي حاليًا — يُستخدم
+    للتحقق إن الطاولة "مشغولة بطلب آخر" قبل نقل طلب ليها (راجع
+    services.transfer_order_table)."""
+    q = db.query(Order).filter(
+        Order.table_id == table_id,
+        Order.status.notin_(("paid", "cancelled")),
+    )
+    if exclude_order_id is not None:
+        q = q.filter(Order.id != exclude_order_id)
+    return q.first()
+
+
 # ── Order ─────────────────────────────────────────────────────────────
 
 def get_order(db: Session, order_id: int) -> Optional[Order]:
@@ -384,6 +399,16 @@ def void_order_item(db: Session, item: OrderItem, reason: str, voided_by: int) -
     return item
 
 
+def update_order_item_status(db: Session, item: OrderItem, status: str) -> OrderItem:
+    """تحديث حالة صنف واحد داخل طلب (pending|in_kitchen|ready|served) — bump
+    فردي من شاشة الـ KDS. مختلف عن void_order_item/refund_order_item
+    (ليهم status='cancelled'/'refunded' ومنطق مالي كامل) — هنا مجرد تتبّع
+    مرحلة التحضير، بدون أي أثر مالي."""
+    item.status = status
+    db.flush()
+    return item
+
+
 def refund_order_item(db: Session, item: OrderItem, reason: str, refunded_by: int) -> OrderItem:
     """مرتجع بعد الدفع — نفس حقول void_order_item بالظبط (مين/ليه/إمتى)، بس
     status='refunded' بدل 'cancelled' عشان يتفرّق تقريريًا عن إلغاء قبل الدفع."""
@@ -416,6 +441,16 @@ def create_kitchen_ticket(
     db.add(ticket)
     db.flush()
     return ticket
+
+
+def list_tickets_for_order(db: Session, order_id: int, module: str = "restaurant") -> list[KitchenTicket]:
+    """كل تذاكر المطبخ (أي حالة، بما فيها 'done') لطلب معيّن — يُستخدم لمزامنة
+    حالة التذكرة بعد bump فردي لصنف (راجع services._sync_kitchen_tickets_for_order)."""
+    return (
+        db.query(KitchenTicket)
+        .filter(KitchenTicket.order_id == order_id, KitchenTicket.module == module)
+        .all()
+    )
 
 
 def list_pending_tickets(

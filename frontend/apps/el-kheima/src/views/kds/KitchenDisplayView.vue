@@ -10,12 +10,14 @@ const toast = useToast()
 const KITCHEN_STATIONS = 'hot,grill,cold,dessert'
 
 type TicketStatus = 'pending' | 'in_progress' | 'done'
-interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null }
+type ItemStatus = 'pending' | 'in_kitchen' | 'ready' | 'served' | 'cancelled'
+interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null; status?: ItemStatus }
 interface Ticket {
   id: number; order_id: number; station: string
   items_snapshot: TicketItem[]; status: TicketStatus
   created_at: string
 }
+const ITEM_DONE_STATUSES: ItemStatus[] = ['ready', 'served']
 
 const tickets = ref<Ticket[]>([])
 const filterStatus = ref<TicketStatus | null>(null)
@@ -79,6 +81,24 @@ async function fetchTickets() {
     isConnected.value = true
   } catch {
     isConnected.value = false
+  }
+}
+
+// تأكيد صنف واحد جوه تذكرة (wagdy.md P-05) — بدل الاضطرار لتأكيد التذكرة
+// كلها حتى لو صنف واحد بس خلص فعليًا. تاب واحد = pending/in_kitchen→ready،
+// تاب تاني على صنف جاهز بالفعل = رجوع لـ pending (تصحيح غلطة). السيرفر هو
+// اللي بيقرر تلقائيًا لو التذكرة كلها بقت 'done' (كل أصنافها ready/served)
+// — fetchTickets() بعد كل bump بيعكس ده فورًا، مش لازم ننتظر WS broadcast.
+async function bumpItem(ticket: Ticket, item: TicketItem) {
+  const next: ItemStatus = ITEM_DONE_STATUSES.includes(item.status ?? 'pending') ? 'pending' : 'ready'
+  try {
+    await api.patch(
+      `/api/v1/restaurant/orders/${ticket.order_id}/items/${item.order_item_id}/status`,
+      { status: next },
+    )
+    await fetchTickets()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة الصنف — حاول تاني')
   }
 }
 
@@ -195,15 +215,25 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
             </div>
           </div>
 
-          <!-- Items -->
+          <!-- Items — تاب على أي صنف يأكده لوحده (wagdy.md P-05) -->
           <ul class="flex-1 space-y-1.5 mb-3">
             <li v-for="item in ticket.items_snapshot" :key="item.order_item_id" class="text-sm">
-              <div class="flex items-start gap-2">
+              <button
+                type="button"
+                @click="bumpItem(ticket, item)"
+                :class="[
+                  'w-full text-right rounded-lg px-1.5 py-1 flex items-start gap-2 transition-colors',
+                  ITEM_DONE_STATUSES.includes(item.status ?? 'pending') ? 'bg-green-800/40' : 'hover:bg-white/10 active:bg-white/20',
+                ]"
+              >
                 <span class="bg-white/20 text-white rounded px-1.5 py-0.5 text-xs font-bold flex-shrink-0">
                   {{ item.quantity }}
                 </span>
-                <span class="leading-tight">{{ item.name }}</span>
-              </div>
+                <span :class="['leading-tight flex-1', ITEM_DONE_STATUSES.includes(item.status ?? 'pending') && 'line-through text-slate-400']">
+                  {{ item.name }}
+                </span>
+                <span v-if="ITEM_DONE_STATUSES.includes(item.status ?? 'pending')" class="text-green-400 text-xs flex-shrink-0">✓</span>
+              </button>
               <p v-if="item.notes" class="text-xs text-amber-300 mr-6 mt-0.5">⚠️ {{ item.notes }}</p>
             </li>
           </ul>

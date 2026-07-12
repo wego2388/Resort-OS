@@ -1,7 +1,7 @@
 """app/modules/restaurant/schemas.py — Pydantic v2"""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Optional
 
@@ -41,6 +41,10 @@ class MenuItemCreate(BaseModel):
     image_url:           Optional[str] = Field(None, max_length=500)
     station:             str = Field("hot", pattern=r"^(hot|grill|cold|bar|dessert)$")
     linked_product_id:   Optional[int] = None
+    available_from_time: Optional[time] = None
+    available_until_time: Optional[time] = None
+    # نافذة تقديم الصنف (مثال: إفطار 07:00-11:00) — NULL في أي منهم يعني بدون
+    # قيد وقتي، راجع models.MenuItem للتفاصيل الكاملة.
 
 
 class MenuItemUpdate(BaseModel):
@@ -54,6 +58,8 @@ class MenuItemUpdate(BaseModel):
     station:             Optional[str]     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert)$")
     image_url:           Optional[str]     = None
     linked_product_id:   Optional[int]     = None
+    available_from_time: Optional[time]    = None
+    available_until_time: Optional[time]   = None
 
 
 # ─────────────────────── Extras / Modifiers ───────────────────────────
@@ -336,6 +342,20 @@ class OrderStatusUpdate(BaseModel):
     payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet)$")
     # لو موجود وقت status="paid": يدوّر على الحجز الـ checked_in في الغرفة دي
     # ويحمّل قيمة الطلب على فوليو الضيف بدل ما ياخد كاش فورًا (Charge to Room)
+
+
+class OrderTransferRequest(BaseModel):
+    """نقل طلب مفتوح من طاولة لأخرى (الضيوف اتحركوا فعليًا) — راجع
+    services.transfer_order_table للتحقق الكامل (نفس الفرع/مش مشغولة بطلب
+    تاني/الطاولة مش خارج الخدمة)."""
+    table_id: int
+
+
+class OrderItemStatusUpdate(BaseModel):
+    """تأكيد صنف واحد داخل تذكرة مطبخ (bump فردي) — بدل تأكيد التذكرة كلها
+    دفعة واحدة عبر TicketStatusUpdate. cancelled/refunded مستبعدين عمداً —
+    ليهم endpoints مخصصة (void/refund) بمنطق مالي/صلاحيات مختلف تمامًا."""
+    status: str = Field(..., pattern=r"^(pending|in_kitchen|ready|served)$")
 
 
 # ─────────────────────── Offline POS Sync ─────────────────────────────
