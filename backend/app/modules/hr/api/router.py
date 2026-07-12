@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
 from app.core.deps import (
@@ -15,6 +15,7 @@ from app.modules.hr import crud, services
 from app.modules.hr.schemas import (
     AdvancePaymentCreate, AdvancePaymentRead,
     AllowanceRead,
+    AttendanceImportResult,
     AttendancePolicyRead, AttendancePolicyUpsert,
     AttendanceRecordCreate, AttendanceRecordRead, AttendanceRecordUpdate,
     DepartmentCreate, DepartmentRead,
@@ -351,6 +352,24 @@ def list_attendance(
                                         (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[AttendanceRecordRead.model_validate(r) for r in items])
+
+
+@router.post("/hr/attendance/import-excel", response_model=AttendanceImportResult)
+async def import_attendance_excel(
+    file: UploadFile, db: DbDep,
+    branch_id: int = Query(...),
+    period_year: int = Query(..., ge=2020, le=2099),
+    period_month: int = Query(..., ge=1, le=12),
+    _=Depends(get_manager_user),
+):
+    """wagdy.md H-07 — رفع ملف حضور Excel (عمود موظف أول + عمود لكل يوم في
+    الشهر، قيمة الخلية كود حالة زي p/v/u) وتحويله لسجلات AttendanceRecord
+    حقيقية دفعة واحدة. نفس نمط POST /timeshare/contracts/import-excel."""
+    try:
+        content = await file.read()
+        return services.import_attendance_excel(db, branch_id, period_year, period_month, content)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 # ── Departments ───────────────────────────────────────────────────────

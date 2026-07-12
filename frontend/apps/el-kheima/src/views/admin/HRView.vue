@@ -630,6 +630,53 @@ async function saveAttendanceEdit() {
   }
 }
 
+// ── wagdy.md H-07: استيراد ملف حضور Excel (عمود موظف أول + عمود لكل يوم) ──
+// نفس نمط استيراد عقود التايم شير (TimeshareView.vue) — رفع بضغطة واحدة،
+// من غير معاينة مسبقة، ملخص النتيجة (استيراد/أخطاء/موظفين غير متعرّف
+// عليهم) بيظهر بعد الرفع مباشرة.
+interface AttendanceImportResult { imported: number; errors: string[]; unmatched_employees: string[] }
+const showImportModal = ref(false)
+const importFile = ref<File | null>(null)
+const importPeriodYear = ref(today.getFullYear())
+const importPeriodMonth = ref(today.getMonth() + 1)
+const importUploading = ref(false)
+const importResult = ref<AttendanceImportResult | { error: string } | null>(null)
+
+function onImportFilePicked(e: Event) {
+  const target = e.target as HTMLInputElement
+  importFile.value = target.files?.[0] ?? null
+  importResult.value = null
+}
+
+async function submitAttendanceImport() {
+  if (!importFile.value || importUploading.value) return
+  importUploading.value = true
+  importResult.value = null
+  try {
+    const form = new FormData()
+    form.append('file', importFile.value)
+    const res = await api.post('/api/v1/hr/attendance/import-excel', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      params: { branch_id: branchId, period_year: importPeriodYear.value, period_month: importPeriodMonth.value },
+    })
+    importResult.value = res.data
+    toast.success(`تم استيراد ${res.data.imported} سجل حضور`)
+    await fetchAttendance()
+  } catch (e: any) {
+    const msg = e?.response?.data?.detail ?? 'فشل الاستيراد'
+    importResult.value = { error: msg }
+    toast.error(msg)
+  } finally {
+    importUploading.value = false
+  }
+}
+
+function openImportModal() {
+  importFile.value = null
+  importResult.value = null
+  showImportModal.value = true
+}
+
 onMounted(fetchEmployees)
 </script>
 
@@ -840,6 +887,47 @@ onMounted(fetchEmployees)
       </div>
     </AppModal>
 
+    <!-- wagdy.md H-07: استيراد حضور من Excel -->
+    <AppModal :open="showImportModal" title="📥 استيراد حضور من Excel" @close="showImportModal = false">
+      <div class="space-y-3">
+        <p class="text-xs text-gray-400">
+          العمود الأول = كود الموظف أو اسمه الكامل زي المسجّل في النظام بالظبط، وباقي الأعمدة = أيام
+          الشهر (1، 2، 3...) أو تواريخ كاملة. قيمة الخلية: p = حاضر، u = غائب، v = إجازة.
+        </p>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 mb-1">السنة</label>
+            <AppInput v-model.number="importPeriodYear" type="number" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 mb-1">الشهر</label>
+            <AppInput v-model.number="importPeriodMonth" type="number" />
+          </div>
+        </div>
+        <input type="file" accept=".xlsx,.xls" @change="onImportFilePicked"
+          class="w-full text-xs text-gray-600 file:ml-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
+
+        <div v-if="importResult" class="p-3 rounded-xl text-xs"
+          :class="'error' in importResult ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'">
+          <div v-if="'error' in importResult">{{ importResult.error }}</div>
+          <div v-else>
+            ✅ تم استيراد {{ importResult.imported }} سجل حضور
+            <div v-if="importResult.unmatched_employees.length" class="mt-2 text-amber-600">
+              موظفون غير معروفين: {{ importResult.unmatched_employees.join('، ') }}
+            </div>
+            <div v-if="importResult.errors.length" class="mt-2 text-red-500">
+              <div v-for="(err, i) in importResult.errors" :key="i">{{ err }}</div>
+            </div>
+          </div>
+        </div>
+
+        <AppButton :disabled="!importFile || importUploading" :loading="importUploading"
+          @click="submitAttendanceImport" variant="primary" size="sm">
+          {{ importUploading ? 'جاري الاستيراد...' : 'استيراد' }}
+        </AppButton>
+      </div>
+    </AppModal>
+
     <!-- wagdy.md H-03: رصيد الإجازة الشهري -->
     <AppModal :open="!!balanceModalEmployee" :title="`رصيد الإجازة — ${balanceModalEmployee?.full_name ?? ''}`"
       @close="balanceModalEmployee = null">
@@ -977,6 +1065,9 @@ onMounted(fetchEmployees)
         <label class="text-xs font-semibold text-gray-500">إلى</label>
         <input v-model="attendanceDateTo" @change="fetchAttendance" type="date"
           class="bg-white border border-stone-200 text-gray-700 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+        <AppButton v-if="auth.hasRole('manager')" size="sm" variant="secondary" @click="openImportModal">
+          📥 استيراد من Excel
+        </AppButton>
       </div>
 
       <!-- سياسة الحضور — سماحية التأخير/الانصراف المبكر ونسب الأوفرتايم/الخصم

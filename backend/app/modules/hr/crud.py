@@ -37,6 +37,22 @@ def get_employee_by_code(db: Session, code: str) -> Optional[Employee]:
     return db.query(Employee).filter(Employee.employee_code == code).first()
 
 
+def get_employee_by_name(db: Session, branch_id: int, full_name: str) -> Optional[Employee]:
+    """مطابقة بالاسم (case-insensitive، بعد trim) — fallback لاستيراد الحضور
+    من Excel (wagdy.md H-07) لو الملف مافيهوش عمود كود الموظف، بس فيه الاسم
+    زي ما هو متسجّل بالظبط في النظام. مقيّد بالفرع عشان اسم مكرر في فرع تاني
+    ميتلخبطش مع الموظف الصح."""
+    from sqlalchemy import func  # noqa: PLC0415
+    return (
+        db.query(Employee)
+        .filter(
+            Employee.branch_id == branch_id,
+            func.lower(Employee.full_name) == full_name.strip().lower(),
+        )
+        .first()
+    )
+
+
 def get_employee_by_user_id(db: Session, user_id: int) -> Optional[Employee]:
     return db.query(Employee).filter(Employee.user_id == user_id).first()
 

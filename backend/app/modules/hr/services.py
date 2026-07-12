@@ -140,6 +140,121 @@ def punch_out(db: Session, user_id: int) -> AttendanceRecord:
     return existing
 
 
+# ── Excel Attendance Import (wagdy.md H-07) ─────────────────────────────
+# الحضور لسه بيتسجّل يدويًا في Excel (كشف "يوم بيوم" — عمود موظف + عمود لكل
+# يوم في الشهر، وقيمة الخلية كود حالة p/v/u...) مش في النظام خالص. نفس نمط
+# استيراد عقود التايم شير (timeshare.services.import_contracts_excel):
+# openpyxl، لا dry-run، commit واحد في الآخر، أخطاء لكل صف/خلية بتتجمّع
+# بدل ما توقف الاستيراد كله (errors[:20])، بس هنا upsert حقيقي (مش skip-on-
+# duplicate) لأن AttendanceRecord عنده مفتاح طبيعي حقيقي (employee_id +
+# record_date، UniqueConstraint فعلي) — إعادة رفع نفس الملف بعد تصحيح خانة
+# لازم يحدّث السجل الموجود، مش يتجاهله.
+_STATUS_CODE_MAP: dict[str, str] = {
+    "p": "present", "present": "present", "حاضر": "present", "ح": "present",
+    "u": "absent", "absent": "absent", "غياب": "absent", "غ": "absent", "a": "absent",
+    "v": "leave", "leave": "leave", "اجازة": "leave", "إجازة": "leave",
+    "late": "late", "متاخر": "late", "متأخر": "late",
+    "h": "holiday", "holiday": "holiday", "عطلة": "holiday",
+}
+
+
+def _resolve_import_column_day(header: object) -> Optional[tuple[int, int, int] | int]:
+    """يحلّل عنوان عمود يوم في ملف الحضور — إما رقم يوم خام (يُستخدم مع
+    period_year/period_month اللي المدير اختارهم وقت الرفع) أو تاريخ كامل
+    (openpyxl بيرجّعه date/datetime حقيقي لو الخلية متنسّقة كتاريخ في
+    الإكسل) بيغلب period_year/period_month لنفس العمود ده تحديدًا. أي حاجة
+    تانية (عمود اسم/ملاحظات) بترجع None وتتجاهل بصمت."""
+    if isinstance(header, bool):
+        return None
+    if isinstance(header, (int, float)):
+        return int(header)
+    if isinstance(header, (date, datetime)):
+        d = header.date() if isinstance(header, datetime) else header
+        return (d.year, d.month, d.day)
+    if isinstance(header, str) and header.strip().isdigit():
+        return int(header.strip())
+    return None
+
+
+def import_attendance_excel(
+    db: Session, branch_id: int, period_year: int, period_month: int, file_content: bytes,
+):
+    """wagdy.md H-07 — يحوّل ملف Excel (عمود موظف أول + عمود لكل يوم) لسجلات
+    AttendanceRecord حقيقية. العمود الأول بيتقارن بـ employee_code أولاً
+    (تطابق حرفي)، وإلا بالاسم الكامل (case-insensitive) داخل نفس الفرع."""
+    import openpyxl  # noqa: PLC0415
+    import io as _io  # noqa: PLC0415
+    import calendar as _calendar  # noqa: PLC0415
+
+    from app.modules.hr.schemas import AttendanceImportResult, AttendanceRecordCreate  # noqa: PLC0415
+
+    wb = openpyxl.load_workbook(_io.BytesIO(file_content), data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows or len(rows) < 2:
+        raise ValueError("الملف فاضي")
+
+    headers = rows[0]
+    day_columns: list[tuple[int, object]] = []  # (col_index, resolved_day_info)
+    for col_idx, header in enumerate(headers[1:], start=1):
+        resolved = _resolve_import_column_day(header)
+        if resolved is not None:
+            day_columns.append((col_idx, resolved))
+
+    if not day_columns:
+        raise ValueError("لم يتم العثور على أي عمود يوم صالح (رقم يوم أو تاريخ) في الصف الأول")
+
+    days_in_month = _calendar.monthrange(period_year, period_month)[1]
+
+    imported = 0
+    errors: list[str] = []
+    unmatched: set[str] = set()
+
+    for row_idx, row in enumerate(rows[1:], start=2):
+        identifier = row[0] if row else None
+        if identifier is None or str(identifier).strip() == "":
+            continue  # صف فاضي/فاصل — يتجاهل بصمت
+
+        identifier_str = str(identifier).strip()
+        emp = crud.get_employee_by_code(db, identifier_str)
+        if not emp or emp.branch_id != branch_id:
+            emp = crud.get_employee_by_name(db, branch_id, identifier_str)
+        if not emp:
+            unmatched.add(identifier_str)
+            continue
+
+        for col_idx, day_info in day_columns:
+            cell = row[col_idx] if col_idx < len(row) else None
+            if cell is None or str(cell).strip() == "":
+                continue  # مفيش بيانات لليوم ده — يوم مستقبلي غالبًا، يتجاهل
+
+            try:
+                if isinstance(day_info, tuple):
+                    y, m, d = day_info
+                else:
+                    y, m, d = period_year, period_month, day_info
+                    if d < 1 or d > days_in_month:
+                        raise ValueError(f"رقم يوم غير صالح: {d}")
+
+                status = _STATUS_CODE_MAP.get(str(cell).strip().lower())
+                if not status:
+                    raise ValueError(f"قيمة حالة غير معروفة: '{cell}'")
+
+                crud.upsert_attendance(db, AttendanceRecordCreate(
+                    employee_id=emp.id, branch_id=branch_id,
+                    record_date=date(y, m, d), status=status,
+                ))
+                imported += 1
+            except Exception as exc:
+                if len(errors) < 20:
+                    errors.append(f"صف {row_idx} ({identifier_str}), يوم {day_info}: {str(exc)[:120]}")
+
+    db.commit()
+    return AttendanceImportResult(
+        imported=imported, errors=errors, unmatched_employees=sorted(unmatched),
+    )
+
+
 def calculate_employee_payroll(
     db: Session,
     employee_id: int,

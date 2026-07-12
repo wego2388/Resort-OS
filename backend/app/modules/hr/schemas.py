@@ -224,6 +224,19 @@ class AttendanceRecordUpdate(BaseModel):
     notes:     Optional[str] = Field(None, max_length=300)
 
 
+class AttendanceImportResult(BaseModel):
+    """POST /hr/attendance/import-excel — نتيجة استيراد ملف حضور Excel
+    (wagdy.md H-07). imported = عدد خلايا (موظف × يوم) اتحوّلت لسجل حضور
+    حقيقي بنجاح (إنشاء أو تحديث — upsert، مش رفض التكرار). errors محدودة
+    بـ 20 سطر (نفس نمط استيراد عقود التايم شير) عشان الرد ميضخمش على ملف
+    فيه مشاكل كتير. unmatched_employees = القيم في عمود تعريف الموظف (كود
+    أو اسم) اللي مالقتلهاش أي Employee مطابق في الفرع — أكتر سبب واقعي
+    للفشل الجزئي، فبتترجع صريحة بدل ما تتخبّى جوه errors العامة."""
+    imported:            int
+    errors:              list[str]
+    unmatched_employees: list[str]
+
+
 class LeaveBalanceRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:              int
