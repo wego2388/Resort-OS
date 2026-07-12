@@ -25,11 +25,13 @@
  * introducing a visual mismatch on a wall-mounted kitchen display.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { api, useResortWebSocket, parseApiTimestamp, ENDPOINTS } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const toast = useToast()
+const route = useRoute()
 
 type TicketStatus = 'pending' | 'in_progress' | 'done'
 type ItemStatus = 'pending' | 'in_kitchen' | 'ready' | 'served' | 'cancelled'
@@ -40,6 +42,18 @@ interface Ticket {
 }
 const ITEM_DONE_STATUSES: ItemStatus[] = ['ready', 'served']
 
+// راجع DINING_CUTOVER_PLAN.md Batch 4 — القديم كان عنده شاشتين فعليًا مركّبتين
+// في أماكن مختلفة (KitchenDisplayView = hot+grill+cold+dessert مجمّعين،
+// BarDisplayView = bar بس). موحّدين هنا في شاشة واحدة بمجموعات فلترة سريعة
+// (بدل شاشتين منفصلتين)، زائد فلتر محطة مفردة لتحكّم أدق لو احتاجه حد.
+// ?stations=hot,grill,cold,dessert في الـ URL بيحدد الفلتر الافتراضي وقت
+// الفتح (راجع router/index.ts's /kds/kitchen و/kds/bar redirects) — عشان
+// جهاز مثبّت فعليًا في المطبخ يفضل يفتح على تذاكر المطبخ بس زي الأول بالظبط.
+const STATION_GROUPS: { val: string[] | null; label: string }[] = [
+  { val: null, label: 'كل المحطات' },
+  { val: ['hot', 'grill', 'cold', 'dessert'], label: '🍳 المطبخ' },
+  { val: ['bar'], label: '🍹 البار' },
+]
 const STATIONS = [
   { val: null, label: 'كل المحطات' },
   { val: 'hot', label: '🔥 ساخن' },
@@ -49,8 +63,14 @@ const STATIONS = [
   { val: 'dessert', label: '🍰 حلويات' },
 ]
 
+function initialStationFilter(): string[] | null {
+  const q = route.query.stations
+  const raw = Array.isArray(q) ? q[0] : q
+  return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : null
+}
+
 const tickets = ref<Ticket[]>([])
-const stationFilter = ref<string | null>(null)
+const stationFilter = ref<string[] | null>(initialStationFilter())
 const now = ref(new Date())
 const isConnected = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
@@ -61,7 +81,11 @@ const { status: wsStatus, onMessage } = useResortWebSocket(`${wsProtocol}//${loc
 onMessage((data: any) => { if (data?.type === 'tickets_updated') fetchTickets() })
 
 const filteredTickets = computed(() =>
-  stationFilter.value ? tickets.value.filter(t => t.station === stationFilter.value) : tickets.value)
+  stationFilter.value ? tickets.value.filter(t => stationFilter.value!.includes(t.station)) : tickets.value)
+function isActiveFilter(val: string[] | null) {
+  if (val === null) return stationFilter.value === null
+  return !!stationFilter.value && stationFilter.value.length === val.length && val.every(s => stationFilter.value!.includes(s))
+}
 
 function minutesElapsed(createdAt: string) {
   return Math.floor((now.value.getTime() - parseApiTimestamp(createdAt).getTime()) / 60000)
@@ -157,15 +181,26 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
       <span class="text-2xl font-mono font-bold text-amber-300">{{ currentTime }}</span>
     </header>
 
-    <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 flex gap-2 flex-wrap">
+    <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 flex flex-wrap items-center gap-2">
       <button
-        v-for="s in STATIONS"
-        :key="String(s.val)"
+        v-for="g in STATION_GROUPS"
+        :key="'group-' + String(g.val)"
         type="button"
-        @click="stationFilter = s.val"
+        @click="stationFilter = g.val"
         :class="[
-          'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors min-h-[36px]',
-          stationFilter === s.val ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600',
+          'px-3 py-1.5 rounded-lg text-sm font-bold transition-colors min-h-[36px]',
+          isActiveFilter(g.val) ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600',
+        ]"
+      >{{ g.label }}</button>
+      <span class="w-px h-5 bg-slate-600 mx-1" />
+      <button
+        v-for="s in STATIONS.filter(s => s.val !== null)"
+        :key="'single-' + s.val"
+        type="button"
+        @click="stationFilter = [s.val as string]"
+        :class="[
+          'px-2.5 py-1 rounded-lg text-xs font-medium transition-colors min-h-[32px]',
+          isActiveFilter([s.val as string]) ? 'bg-blue-600/70 text-white' : 'bg-slate-700/60 text-slate-400 hover:bg-slate-600',
         ]"
       >{{ s.label }}</button>
     </div>

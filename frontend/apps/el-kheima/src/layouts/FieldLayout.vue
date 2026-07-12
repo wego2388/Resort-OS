@@ -36,21 +36,23 @@ let clockInterval: ReturnType<typeof setInterval> | null = null
 onMounted(() => { updateClock(); clockInterval = setInterval(updateClock, 1000) })
 onUnmounted(() => { if (clockInterval) clearInterval(clockInterval) })
 
-const isWaiter = computed(() => route.path.startsWith('/waiter'))
+// DINING_CUTOVER_PLAN.md Batch 4 — role-based بدل path-based (كان
+// route.path.startsWith('/waiter') قبل كده). /waiter/tables|order|order/:id
+// اتحوّلوا كلهم لـ redirect على /pos/dining (نفس شاشة UnifiedPOSView
+// الموحّدة، بتغطي dine_in بخريطة طاولات حقيقية) — يعني مفيش /waiter/* مسار
+// حي تاني نميّز بيه، والدور نفسه (waiter) هو مصدر الحقيقة الأصح أصلاً.
+const isWaiter = computed(() => auth.role === 'waiter')
 
+// كل تاب وأقل صلاحية تقدر توصله — نادل بس /pos/dining (تاخد طلبات، مش
+// إجراء مالي)، كاشير+ يشوف كل التابات (بيتش/دايننج/وردية).
 const allNavItems = computed(() => [
-  { path: '/pos/beach',       label: t('backoffice.nav.beachPos'),   icon: '🏖️' },
-  { path: '/pos/beach-map',   label: t('backoffice.nav.beachMap'),   icon: '🗺️' },
-  { path: '/pos/restaurant',  label: t('backoffice.nav.restaurant'), icon: '🍽️' },
-  { path: '/pos/cafe',        label: t('backoffice.nav.cafe'),       icon: '☕' },
-  { path: '/pos/shift',       label: t('backoffice.nav.shift'),      icon: '🧾' },
-  { path: '/waiter/tables',   label: t('backoffice.nav.tables'),     icon: '🧑‍🍳' },
+  { path: '/pos/beach',       label: t('backoffice.nav.beachPos'),   icon: '🏖️', minRole: 'cashier' },
+  { path: '/pos/beach-map',   label: t('backoffice.nav.beachMap'),   icon: '🗺️', minRole: 'cashier' },
+  { path: '/pos/dining',      label: t('backoffice.nav.diningPos'),  icon: '🍽️', minRole: 'waiter' },
+  { path: '/pos/shift',       label: t('backoffice.nav.shift'),      icon: '🧾', minRole: 'cashier' },
 ])
 
-// Nav is scoped to the active section (pos vs waiter).
-const navItems = computed(() =>
-  allNavItems.value.filter((item) => item.path.startsWith(isWaiter.value ? '/waiter' : '/pos')),
-)
+const navItems = computed(() => allNavItems.value.filter((item) => auth.hasRole(item.minRole)))
 
 function logout() {
   auth.logout()
@@ -77,10 +79,10 @@ function logout() {
         </div>
 
         <div class="flex items-center gap-4">
-          <!-- Cashier shift open/close + cash count — POS section only.
-               راجع components/ShiftPanel.vue للسبب الكامل: الباك إند كان
-               عنده دورة وردية كاملة من غير أي واجهة تستخدمها. -->
-          <ShiftPanel v-if="!isWaiter && auth.hasRole('cashier')" />
+          <!-- Cashier shift open/close + cash count — كاشير+ بس (نادل مالوش
+               وردية كاش يقفلها). راجع components/ShiftPanel.vue للسبب الكامل:
+               الباك إند كان عنده دورة وردية كاملة من غير أي واجهة تستخدمها. -->
+          <ShiftPanel v-if="auth.hasRole('cashier')" />
 
           <!-- تنبيهات الضيوف (نادِ الجرسون / هات الفاتورة) — ظاهرة لأي حد
                بيشتغل على الأرض (نادل أو كاشير)، مش بس النادل. -->

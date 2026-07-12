@@ -84,16 +84,17 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: '/pos/beach' },
       { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue') },
       { path: 'beach-map', name: 'pos-beach-map', component: () => import('../views/pos/BeachMapView.vue') },
-      { path: 'restaurant', name: 'pos-restaurant', component: () => import('../views/pos/RestaurantPOSView.vue') },
-      { path: 'cafe', name: 'pos-cafe', component: () => import('../views/pos/CafePOSView.vue') },
+      // DINING_CUTOVER_PLAN.md Batch 4 — dining هو الـ POS الافتراضي دلوقتي
+      // (مش manager-only preview بقى). requiredRole مخفّض لـ 'waiter' هنا
+      // عشان يفوّت بوابة الأب (cashier) — نادل يقدر ياخد طلبات ويبعتها
+      // للمطبخ، لكن مش يقفل الحساب (paid يتطلب get_cashier_user في الباك
+      // إند نفسه، مستقل تمامًا عن الـ route gate ده). الروترات القديمة
+      // (restaurant/cafe) اتسابت كـ redirect بدل حذف فوري — مفيش رابط حي
+      // بيوصلها تاني، لكن أي bookmark قديم لسه بيشتغل صح.
+      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'waiter' } },
+      { path: 'restaurant', redirect: '/pos/dining' },
+      { path: 'cafe', redirect: '/pos/dining' },
       { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue') },
-      // Unified dining POS (Batch B, additive — DINING_CUTOVER_PLAN.md). NOT
-      // in FieldLayout's cashier-facing nav list (every /pos/* item there is
-      // visible to every cashier with zero role filter) — requiredRole
-      // overridden to 'manager' here so a waiter/cashier's daily workflow is
-      // literally unchanged by this route existing; reachable only from the
-      // manager-only "Dining موحّد (تجريبي)" nav section in BackOfficeLayout.
-      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'manager' } },
     ],
   },
 
@@ -103,16 +104,16 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../layouts/KioskLayout.vue'),
     meta: { requiresAuth: true, requiredRole: 'waiter' },
     children: [
-      { path: '', redirect: '/kds/kitchen' },
-      { path: 'kitchen', name: 'kds-kitchen', component: () => import('../views/kds/KitchenDisplayView.vue') },
-      { path: 'bar',     name: 'kds-bar',     component: () => import('../views/kds/BarDisplayView.vue') },
-      // شاشة الكافيه — نفس BarDisplayView بالظبط (البار يستقبل كل طلبات الكافيه
-      // + أصناف البار من المطعم)، route منفصل بس للتوجيه المباشر من QR أو shortcut
-      { path: 'cafe',    name: 'kds-cafe',    component: () => import('../views/kds/BarDisplayView.vue') },
-      // Unified dining KDS (Batch B, additive) — same manager-only override
-      // rationale as /pos/dining above; KioskLayout's nav array (kitchen/bar)
-      // is untouched so kitchen/bar staff see no new tab.
-      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue'), meta: { requiredRole: 'manager' } },
+      { path: '', redirect: '/kds/dining' },
+      // DINING_CUTOVER_PLAN.md Batch 4 — شاشة موحّدة واحدة بدل station-specific
+      // منفصلة (kitchen/bar/cafe) — بتغطي كل المحطات بتابات فلترة داخلية
+      // (راجع DiningKDSView.vue's STATIONS)، نفس رؤية "نفس المطبخ لكل الـ
+      // outlets" الموثّقة في dining.models.DiningKDSScreen. requiredRole
+      // بيرث من الأب (waiter، level 30) — نفس مستوى kitchen/chef بالظبط.
+      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue') },
+      { path: 'kitchen', redirect: '/kds/dining' },
+      { path: 'bar',     redirect: '/kds/dining' },
+      { path: 'cafe',    redirect: '/kds/dining' },
     ],
   },
 
