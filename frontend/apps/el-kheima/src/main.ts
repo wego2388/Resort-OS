@@ -1,9 +1,16 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { useAuthStore } from '@resort-os/core'
+import { useAuthStore, initTheme } from '@resort-os/core'
 import router from './router'
 import App from './App.vue'
 import './assets/main.css'
+
+// Applies the saved/system dark-mode preference to <html class="dark"> before
+// first paint — see packages/core/src/composables/useTheme.ts. No screen
+// opts into the `.dark` tokens yet (no ThemeToggle is mounted anywhere), so
+// this is a visual no-op today beyond making the mechanism real/testable —
+// exactly what "real working dark mode" (Design System Phase 1) requires.
+initTheme()
 
 /**
  * Boot sequence: restore session *before* the router's first navigation

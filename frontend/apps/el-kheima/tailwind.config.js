@@ -1,3 +1,5 @@
+import dsPreset from '../../packages/ui/tailwind-preset.js'
+
 /** @type {import('tailwindcss').Config} */
 export default {
   // ⚠️ باج حقيقي اتكشف أثناء اختبار حي لشاشة التايم شير: content مكنش شامل
@@ -12,6 +14,12 @@ export default {
   // من الـ CSS) — يعني الموظف ممكن يفوّت رسالة خطأ حقيقية ليها معنى (زي رفض
   // دفعة زيادة عن المستحق) لأنها بتظهر في مكان غير متوقع بدون أي تنسيق.
   content: ['./index.html', './src/**/*.{vue,ts}', '../../packages/ui/src/**/*.{vue,ts}'],
+  // Shared Design System preset (packages/ui/tailwind-preset.js) — semantic
+  // color tokens, type scale, elevation, motion, responsive tokens. `extend`
+  // below still merges on top of it (Tailwind presets deep-merge), so
+  // el-kheima's own primary/gold/resort palette and Cairo font are untouched.
+  presets: [dsPreset],
+  darkMode: 'class',
   theme: {
     extend: {
       colors: {

@@ -1,10 +1,15 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { initTheme } from '@resort-os/core'
 import i18n from '@resort-os/core/i18n'
 import router from './router'
 import App from './App.vue'
 import { marketingMessages } from './i18n/marketing'
 import './assets/main.css'
+
+// See apps/el-kheima/src/main.ts for the full rationale — same Design
+// System dark-mode bootstrap, kept in sync between both apps.
+initTheme()
 
 // Merge this app's marketing-copy keys (hero/rooms/footer/etc, under the
 // `marketing` namespace) into the shared i18n instance for every supported
