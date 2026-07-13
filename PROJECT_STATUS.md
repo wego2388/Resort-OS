@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1697 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-13، بعد Batch 1 — موافقة PIN على الخصم) |
+| **الاختبارات** | **1707 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-13، بعد Batch 2 — Cash Control ledger) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
@@ -24,6 +24,48 @@
 | **النسخ الاحتياطي** | `scripts/backup_db.sh` + `restore_db.sh` + systemd timer، اتجرّب backup→restore→مقارنة بيانات فعليًا |
 | **التشغيل** | `scripts/start.sh`/`stop.sh`/`status.sh`/`restart.sh`/`logs.sh` — حساب تجريبي واحد لكل دور (12 حساب) |
 | **الدستور الهندسي** | `CLAUDE.md` بقى فيه دستور CTO كامل (أولويات 70% جودة/20% تنضيج/10% ميزات جديدة) — راجعه أول أي جلسة |
+
+---
+
+## 💰 اللي اتعمل يوم 2026-07-13 — Operations & Control Layer Batch 2: Cash Control ledger
+
+جدول جديد `CashMovement` (`finance/models.py`) — حركات نقدية يدوية على درج الوردية منفصلة تمامًا عن
+أي حركة بيع: `cash_in`/`cash_out`/`petty_cash`/`safe_drop`/`drawer_open`/`correction`. Migration
+`23e4eca09fe0` (جدول واحد بس + 3 indexes — الـ autogenerate الخام كان مقترح DROP TABLE لجداول
+restaurant/cafe القديمة (أرشيف عمدًا) + drop/create index مش متعلّقين بالتغيير خالص، اتشالوا يدويًا
+زي ما موثّق في `alembic/env.py:37-46`؛ `alembic upgrade head` اتجرّب فعليًا على Postgres حقيقي، صفر
+انحراف بعدها غير الأرشيف المعروف).
+
+**قرار موثّق واضح — توسيع نطاق قرار Mohamed**: هو سمّى "التصحيح" (correction) صراحةً كمحتاج موافقة
+PIN مدير+ دايمًا. الدفعة دي وسّعت الحماية دي لتشمل الأنواع الستة كلها (`cash_in`/`cash_out`/
+`petty_cash`/`safe_drop`/`drawer_open` كمان) — نفس فئة الخطر بالظبط (حركة نقدية يدوية بدون تتبّع بيع
+مقابلها)، وبيدعم القرار ده بحث الخطة (`OPERATIONS_CONTROL_LAYER_PLAN.md`) اللي لاحظ إن نظام Click
+القديم كان بيسجّل `Safe_History.IsApproved` على **كل** حركة، مش بس التصحيحات. **ده اختيار محافظ
+صريح، مش افتراض بلا مبرر** — لو Mohamed حابب يضيّق النطاق لبس "correction"، القرار سهل الرجوع فيه
+(باراميتر واحد `min_approver_level` بيتغيّر في `record_cash_movement`).
+
+- **الباك إند** — `finance.services.record_cash_movement` بينادي
+  `core.services.resolve_pin_approval(min_approver_level=60)` **قبل** أي كتابة، بغض النظر عن قيمة
+  المبلغ (حتى `drawer_open` بمبلغ صفر — الإشراف على *محاولة* التسجيل نفسها زي void/apply_discount
+  بالظبط). `AuditLog(action=f"cash_movement_{movement_type}")` بيتسجّل مع كل حركة (`approved_by`
+  منفصل عن `performed_by`). `POST /finance/shifts/{id}/cash-movements` (كاشير+، `drawer_open` هنا
+  بالظبط زي ما الخطة طلبت — بدون أي بيع مرتبط) و`GET /finance/shifts/{id}/cash-movements` (مدير+
+  فقط، **بدون** أي مسار موافقة PIN بديل — زي `/audit-logs` بالظبط، راجع Batch 4 تحت).
+- **باجين حقيقيين اتكشفوا واتصلحوا أثناء كتابة التستات** (مش نظري): (1) `crud.create_cash_movement`
+  كان بيتلقى `approved_by` من الخدمة بس منساش يحطه على صف `CashMovement` نفسه — الـ `AuditLog` كان
+  بيسجّله صح، بس عمود `CashMovement.approved_by` كان فاضل `NULL` دايمًا حتى بعد موافقة PIN صحيحة.
+  (2) `list_cash_movements` كان بيرتّب بـ `created_at.desc()` بس — حركتين في نفس المعاملة (نفس
+  المللي ثانية) كانوا بيرجعوا بترتيب غير محدد، مش "الأحدث فعلاً الأول". اتصلح بإضافة `id.desc()`
+  كـ tiebreak حتمي.
+- **الفرونت إند** — `CashControlPanel.vue` جديد (نموذج نوع حركة/مبلغ/سبب + `PinGuardModal.vue`
+  `min-level={60}` قبل الإرسال دايمًا، نفس نمط void/discount بالظبط) داخل `ShiftDashboardView.vue`
+  جنب `ShiftPanel` مباشرة. سجل الحركات (تاريخ من نفّذ/وافق) بيظهر بس لمدير+ (`auth.hasRole('manager')`)
+  — كاشير يقدر يسجّل حركة (بموافقة PIN) بس مايشوفش تاريخ الحركات، زي الـ API بالظبط.
+- **الاختبارات** — 10 اختبار جديد (service-level: مدير مؤهّل بنفسه، كاشير محتاج PIN للتصحيح وحتى
+  drawer_open بمبلغ صفر، PIN صحيح بيعدّي ويسجّل AuditLog+CashMovement.approved_by، وردية مقفولة
+  بترفض، ترتيب السجل الأحدث الأول؛ HTTP-level: 400 لكاشير من غير PIN، 201 لمدير بنفسه، 201 لكاشير
+  بـ PIN مدير صحيح، 403 لكاشير على GET بينما 200 لمدير) = **1707 اختبار إجمالي، صفر فشل** (كان
+  1697). `pnpm run type-check:all`/`build:all` نضاف.
 
 ---
 

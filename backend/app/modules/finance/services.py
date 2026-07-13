@@ -390,6 +390,7 @@ def record_cash_movement(
 
     movement = crud.create_cash_movement(
         db, shift.branch_id, shift_id, data.movement_type, data.amount, data.reason, performed_by,
+        approved_by=approved_by,
     )
     core_crud.create_audit_log(db, AuditLogCreate(
         user_id=performed_by, approved_by=approved_by, branch_id=shift.branch_id,

@@ -321,11 +321,11 @@ def list_shifts(
 
 def create_cash_movement(
     db: Session, branch_id: int, shift_id: int, movement_type: str,
-    amount: Decimal, reason: str, performed_by: int,
+    amount: Decimal, reason: str, performed_by: int, approved_by: Optional[int] = None,
 ) -> CashMovement:
     row = CashMovement(
         branch_id=branch_id, shift_id=shift_id, movement_type=movement_type,
-        amount=amount, reason=reason, performed_by=performed_by,
+        amount=amount, reason=reason, performed_by=performed_by, approved_by=approved_by,
     )
     db.add(row)
     db.flush()
@@ -333,10 +333,13 @@ def create_cash_movement(
 
 
 def list_cash_movements(db: Session, shift_id: int) -> list[CashMovement]:
+    # created_at وحدها مش كافية للترتيب — أكتر من حركة في نفس المعاملة/نفس
+    # المللي ثانية ممكن ياخدوا نفس القيمة بالظبط، فـ id.desc() (تايبريك
+    # حتمي، بيزيد بترتيب الإدخال دايمًا) هو الأدق لـ "الأحدث الأول".
     return (
         db.query(CashMovement)
         .filter(CashMovement.shift_id == shift_id)
-        .order_by(CashMovement.created_at.desc())
+        .order_by(CashMovement.created_at.desc(), CashMovement.id.desc())
         .all()
     )
 

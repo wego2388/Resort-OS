@@ -101,6 +101,7 @@ export const ENDPOINTS = {
     shiftInvoices: (id: number) => `/api/v1/finance/shifts/${id}/invoices`,
     shiftClose: (id: number) => `/api/v1/finance/shifts/${id}/close`,
     shiftHandoverNote: '/api/v1/finance/shifts/handover-note',
+    shiftCashMovements: (id: number) => `/api/v1/finance/shifts/${id}/cash-movements`,
     costCenterReport: '/api/v1/finance/cost-centers/report',
     etaInvoices: '/api/v1/finance/eta/invoices',
     etaInvoice: (id: number) => `/api/v1/finance/eta/invoices/${id}`,

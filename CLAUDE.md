@@ -843,6 +843,21 @@ migrations) في `PROJECT_STATUS.md`.
   `AuditLog(action="apply_discount")`. الفرونت إند (`DiningOrderDetailModal.vue`،
   `UnifiedPOSView.vue`) بيفتح `PinGuardModal.vue` (`min-level={60}`) عند الضغط على "تطبيق خصم" —
   نفس المكوّن المستخدم للإلغاء، مفيش نظام موافقة موازي. 9 اختبار جديد = 1697 اختبار إجمالي.
+- **Operations & Control Layer — Batch 2: Cash Control ledger** (2026-07-13) — جدول جديد
+  `CashMovement` (`finance/models.py`، migration `23e4eca09fe0`): `cash_in`/`cash_out`/
+  `petty_cash`/`safe_drop`/`drawer_open`/`correction` على وردية الكاشير، منفصل تمامًا عن أي حركة
+  بيع. **قرار موثّق يوسّع طلب Mohamed الصريح**: هو سمّى "correction" بس كمحتاج PIN مدير+ دايمًا —
+  اتوسّع هنا ليشمل الأنواع الستة كلها (نفس فئة الخطر، بحثًا مدعوم بملاحظة الخطة إن Click القديم كان
+  بيسجّل `Safe_History.IsApproved` على كل حركة مش بس التصحيح) — اختيار محافظ صريح، سهل التضييق لاحقًا
+  لو Mohamed حابب. `finance.services.record_cash_movement` بينادي
+  `core.services.resolve_pin_approval(min_approver_level=60)` قبل أي كتابة بغض النظر عن المبلغ (حتى
+  drawer_open بمبلغ صفر). `POST /finance/shifts/{id}/cash-movements` (كاشير+) و
+  `GET .../cash-movements` (مدير+ فقط، بدون أي مسار PIN بديل — زي `/audit-logs`). باجين حقيقيين
+  اتصلحوا أثناء الاختبار: `CashMovement.approved_by` كان بيفضل NULL رغم موافقة PIN صحيحة
+  (approved_by ماكانش بيتمرر لـ `crud.create_cash_movement`)، وترتيب `list_cash_movements` بـ
+  `created_at.desc()` بس مش حتمي لحركتين في نفس المللي ثانية (اتصلح بـ `id.desc()` tiebreak).
+  الفرونت إند: `CashControlPanel.vue` جديد داخل `ShiftDashboardView.vue` (نموذج + `PinGuardModal.vue`
+  دايمًا قبل الإرسال)، سجل الحركات بيظهر لمدير+ بس. 10 اختبار جديد = 1707 اختبار إجمالي.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش
