@@ -12,7 +12,8 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.modules.finance.schemas import (
-    AccountCreate, CashCountLine, CashierShiftClose, CashierShiftOpen, ConditionalDiscountCreate,
+    AccountCreate, CashCountLine, CashierShiftClose, CashierShiftOpen, CashMovementCreate,
+    ConditionalDiscountCreate,
     FolioCreate, FolioChargeCreate, JournalEntryCreate, JournalLineCreate, PaymentCreate,
 )
 from app.modules.finance import services, crud
@@ -940,6 +941,101 @@ class TestCashierShift:
                     CashCountLine(denomination=Decimal("100"), currency="JPY", quantity=1),
                 ]),
             )
+
+
+# ── Cash Control ledger (Operations & Control Layer plan §3.2) ────────
+
+class TestCashMovement:
+
+    def _open_shift(self, db, branch, cashier_id):
+        return services.open_shift(
+            db, cashier_id=cashier_id, opened_by=cashier_id,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("500")),
+        )
+
+    def test_manager_self_qualified_no_pin_needed(self, db: Session, branch):
+        shift = self._open_shift(db, branch, cashier_id=201)
+        movement = services.record_cash_movement(
+            db, shift.id, CashMovementCreate(movement_type="cash_in", amount=Decimal("100"), reason="عهدة إضافية"),
+            performed_by=201, acting_user_level=60,
+        )
+        assert movement.movement_type == "cash_in"
+        assert movement.amount == Decimal("100")
+        assert movement.approved_by is None
+
+    def test_cashier_needs_pin_for_correction(self, db: Session, branch):
+        """قرار Mohamed الصريح — التصحيح محتاج موافقة PIN مدير+ دايمًا."""
+        shift = self._open_shift(db, branch, cashier_id=202)
+        with pytest.raises(ValueError, match="موافقة مدير"):
+            services.record_cash_movement(
+                db, shift.id, CashMovementCreate(movement_type="correction", amount=Decimal("50"), reason="تصحيح عدّ"),
+                performed_by=202, acting_user_level=40,
+            )
+
+    def test_cashier_needs_pin_for_drawer_open_even_zero_amount(self, db: Session, branch):
+        """drawer_open بمبلغ صفر (فتح الدرج بدون بيع) لسه محتاج موافقة —
+        الإشراف على الفعل نفسه مش على قيمة المبلغ."""
+        shift = self._open_shift(db, branch, cashier_id=203)
+        with pytest.raises(ValueError, match="موافقة مدير"):
+            services.record_cash_movement(
+                db, shift.id, CashMovementCreate(movement_type="drawer_open", amount=Decimal("0"), reason="فحص الدرج"),
+                performed_by=203, acting_user_level=40,
+            )
+
+    def test_cashier_with_valid_manager_pin_succeeds_and_audits(self, db: Session, branch):
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
+        from app.modules.core import services as core_services
+        from app.modules.core.models import AuditLog
+
+        manager = User(email="cash-mgr@test.local", password_hash=get_password_hash("Test@12345"),
+                        full_name="Cash Manager", role="manager", is_active=True)
+        db.add(manager); db.commit()
+        core_services.set_pin(db, manager.id, "1122", created_by=manager.id)
+        db.commit()
+
+        shift = self._open_shift(db, branch, cashier_id=204)
+        movement = services.record_cash_movement(
+            db, shift.id,
+            CashMovementCreate(
+                movement_type="safe_drop", amount=Decimal("300"), reason="تنزيل خزنة نهاية اليوم",
+                approver_user_id=manager.id, approver_pin="1122",
+            ),
+            performed_by=204, acting_user_level=40,
+        )
+        assert movement.approved_by == manager.id
+
+        log = (
+            db.query(AuditLog)
+            .filter(AuditLog.entity_type == "cash_movement", AuditLog.entity_id == movement.id,
+                    AuditLog.action == "cash_movement_safe_drop")
+            .first()
+        )
+        assert log is not None
+        assert log.approved_by == manager.id
+        assert log.user_id == 204
+
+    def test_movement_rejected_on_closed_shift(self, db: Session, branch):
+        shift = self._open_shift(db, branch, cashier_id=205)
+        services.close_shift(db, shift.id, closed_by=205, data=CashierShiftClose(counted_cash=Decimal("500")))
+        with pytest.raises(ValueError, match="مقفولة"):
+            services.record_cash_movement(
+                db, shift.id, CashMovementCreate(movement_type="cash_out", amount=Decimal("10"), reason="اختبار"),
+                performed_by=205, acting_user_level=60,
+            )
+
+    def test_list_cash_movements_returns_newest_first(self, db: Session, branch):
+        shift = self._open_shift(db, branch, cashier_id=206)
+        m1 = services.record_cash_movement(
+            db, shift.id, CashMovementCreate(movement_type="cash_in", amount=Decimal("50"), reason="أول حركة"),
+            performed_by=206, acting_user_level=60,
+        )
+        m2 = services.record_cash_movement(
+            db, shift.id, CashMovementCreate(movement_type="cash_out", amount=Decimal("20"), reason="تاني حركة"),
+            performed_by=206, acting_user_level=60,
+        )
+        movements = services.list_cash_movements(db, shift.id)
+        assert [m.id for m in movements] == [m2.id, m1.id]
 
 
 # ── Folio Reports (Statement + All-Invoices Export) ──────────────────

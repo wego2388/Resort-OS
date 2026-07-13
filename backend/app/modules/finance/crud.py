@@ -12,7 +12,7 @@ from app.resort_os.timezone_utils import local_today, utc_naive_to_local_date
 
 from app.modules.finance.models import (
     Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,
-    CashierShift, CashierShiftCashCount, ConditionalDiscount,
+    CashierShift, CashierShiftCashCount, CashMovement, ConditionalDiscount,
     CostCenter, ETAInvoice, ExchangeRate, Folio, FolioCharge, JournalEntry, JournalLine, Payment,
     Check, CheckMovement, RevenueAuditLog,
 )
@@ -317,6 +317,28 @@ def list_shifts(
     total = q.count()
     items = q.order_by(CashierShift.opened_at.desc()).offset(skip).limit(limit).all()
     return items, total
+
+
+def create_cash_movement(
+    db: Session, branch_id: int, shift_id: int, movement_type: str,
+    amount: Decimal, reason: str, performed_by: int,
+) -> CashMovement:
+    row = CashMovement(
+        branch_id=branch_id, shift_id=shift_id, movement_type=movement_type,
+        amount=amount, reason=reason, performed_by=performed_by,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def list_cash_movements(db: Session, shift_id: int) -> list[CashMovement]:
+    return (
+        db.query(CashMovement)
+        .filter(CashMovement.shift_id == shift_id)
+        .order_by(CashMovement.created_at.desc())
+        .all()
+    )
 
 
 def get_latest_closed_shift(db: Session, branch_id: int) -> Optional[CashierShift]:
