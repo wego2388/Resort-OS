@@ -2,12 +2,16 @@
 tests/test_api/test_public_menu.py
 Public (Guest QR) endpoints — بدون auth
 
+راجع DINING_CUTOVER_PLAN.md Batch 6 — بورتت لـ /dining/public/* بدل
+/restaurant/public/* (فجوة تكافؤ حقيقية اتقفلت قبل حذف restaurant/cafe،
+راجع dining/api/router.py's "Public Endpoints" docstring للتفاصيل الكاملة).
+
 يتحقق من:
-1. GET /restaurant/public/menu → 200 بدون token
-2. POST /restaurant/public/orders → 201 بدون token
-3. GET /restaurant/public/orders/{id} → 200 بدون token
-4. GET /restaurant/menu/items → 401 بدون token (internal endpoint مازال محمي)
-5. POST /restaurant/public/orders → 400 لو item غير متاح
+1. GET /dining/public/menu → 200 بدون token
+2. POST /dining/public/orders → 201 بدون token
+3. GET /dining/public/orders/{id} → 200 بدون token
+4. GET /dining/outlets/{id}/items → 401 بدون token (internal endpoint مازال محمي)
+5. POST /dining/public/orders → 400 لو item غير متاح
 """
 from __future__ import annotations
 
@@ -26,18 +30,28 @@ def make_branch(db):
     return b
 
 
-def make_category(db, branch):
-    from app.modules.restaurant.models import MenuCategory
-    cat = MenuCategory(branch_id=branch.id, name="مشويات", name_ar="مشويات")
+def make_outlet(db, branch):
+    from app.modules.dining import services as dining_services
+    from app.modules.dining.schemas import OutletCreate
+    return dining_services.create_outlet(db, OutletCreate(
+        branch_id=branch.id, name="مطعم QR", outlet_type="restaurant",
+        revenue_account_code="4200",
+    ))
+
+
+def make_category(db, branch, outlet):
+    from app.modules.dining.models import DiningCategory
+    cat = DiningCategory(branch_id=branch.id, outlet_id=outlet.id, name="مشويات", name_ar="مشويات")
     db.add(cat)
     db.commit()
     return cat
 
 
-def make_item(db, branch, category, available=True):
-    from app.modules.restaurant.models import MenuItem
-    item = MenuItem(
+def make_item(db, branch, outlet, category, available=True):
+    from app.modules.dining.models import DiningItem
+    item = DiningItem(
         branch_id=branch.id,
+        outlet_id=outlet.id,
         category_id=category.id,
         name="كباب",
         name_ar="كباب",
@@ -49,10 +63,10 @@ def make_item(db, branch, category, available=True):
     return item
 
 
-def make_table(db, branch):
-    from app.modules.restaurant.models import DiningTable
-    t = DiningTable(branch_id=branch.id, table_number="T5",
-                    capacity=4, status="available")
+def make_table(db, branch, outlet):
+    from app.modules.dining.models import VenueTable
+    t = VenueTable(branch_id=branch.id, outlet_id=outlet.id, table_number="T5",
+                   capacity=4, status="available")
     db.add(t)
     db.commit()
     return t
@@ -60,66 +74,75 @@ def make_table(db, branch):
 
 class TestPublicMenuEndpoint:
     def test_public_menu_no_auth_required(self, client: TestClient, db):
-        """GET /restaurant/public/menu يشتغل بدون token."""
+        """GET /dining/public/menu يشتغل بدون token."""
         branch = make_branch(db)
-        resp = client.get("/api/v1/restaurant/public/menu",
-                          params={"branch_id": branch.id})
+        outlet = make_outlet(db, branch)
+        resp = client.get("/api/v1/dining/public/menu",
+                          params={"outlet_id": outlet.id})
         assert resp.status_code == 200
 
     def test_public_menu_returns_items(self, client: TestClient, db):
         """القائمة ترجع الأصناف المتاحة فقط مع categories."""
         branch   = make_branch(db)
-        category = make_category(db, branch)
-        item     = make_item(db, branch, category)
+        outlet   = make_outlet(db, branch)
+        category = make_category(db, branch, outlet)
+        item     = make_item(db, branch, outlet, category)
 
-        resp = client.get("/api/v1/restaurant/public/menu",
-                          params={"branch_id": branch.id, "table_id": 1})
+        resp = client.get("/api/v1/dining/public/menu",
+                          params={"outlet_id": outlet.id, "table_id": 1})
         assert resp.status_code == 200
 
         data = resp.json()
         assert "categories" in data
         assert "items" in data
         assert data["branch_id"] == branch.id
+        assert data["outlet_id"] == outlet.id
         item_ids = [i["id"] for i in data["items"]]
         assert item.id in item_ids
 
     def test_public_menu_no_internal_fields(self, client: TestClient, db):
         """الـ cost و station مش موجودين في الـ public response."""
         branch   = make_branch(db)
-        category = make_category(db, branch)
-        make_item(db, branch, category)
+        outlet   = make_outlet(db, branch)
+        category = make_category(db, branch, outlet)
+        make_item(db, branch, outlet, category)
 
-        resp = client.get("/api/v1/restaurant/public/menu",
-                          params={"branch_id": branch.id})
+        resp = client.get("/api/v1/dining/public/menu",
+                          params={"outlet_id": outlet.id})
         items = resp.json()["items"]
         if items:
             assert "cost"    not in items[0]
             assert "station" not in items[0]
 
+    def test_public_menu_unknown_outlet_returns_404(self, client: TestClient, db):
+        resp = client.get("/api/v1/dining/public/menu", params={"outlet_id": 999999})
+        assert resp.status_code == 404
+
     def test_internal_menu_still_requires_auth(self, client: TestClient, db):
         """الـ internal endpoint لازم يفضل محمي — Public مش فتح كل حاجة."""
         branch = make_branch(db)
-        resp = client.get("/api/v1/restaurant/menu/items",
-                          params={"branch_id": branch.id})
+        outlet = make_outlet(db, branch)
+        resp = client.get(f"/api/v1/dining/outlets/{outlet.id}/items")
         assert resp.status_code == 401
 
 
 class TestPublicOrderEndpoint:
     def test_create_guest_order_no_auth(self, client: TestClient, db):
-        """POST /restaurant/public/orders يشتغل بدون token."""
+        """POST /dining/public/orders يشتغل بدون token."""
         branch = make_branch(db)
-        cat    = make_category(db, branch)
-        item   = make_item(db, branch, cat)
-        table  = make_table(db, branch)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
+        table  = make_table(db, branch, outlet)
 
         payload = {
-            "branch_id":    branch.id,
+            "outlet_id":    outlet.id,
             "table_id":     table.id,
             "guests_count": 2,
-            "items": [{"menu_item_id": item.id, "quantity": 1}],
+            "items": [{"item_id": item.id, "quantity": 1}],
         }
-        resp = client.post("/api/v1/restaurant/public/orders", json=payload)
-        assert resp.status_code == 201
+        resp = client.post("/api/v1/dining/public/orders", json=payload)
+        assert resp.status_code == 201, resp.text
 
         data = resp.json()
         assert "order_id"     in data
@@ -131,54 +154,64 @@ class TestPublicOrderEndpoint:
     def test_create_guest_order_unavailable_item(self, client: TestClient, db):
         """صنف is_available=False → 400."""
         branch = make_branch(db)
-        cat    = make_category(db, branch)
-        item   = make_item(db, branch, cat, available=False)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat, available=False)
 
         payload = {
-            "branch_id": branch.id,
-            "items": [{"menu_item_id": item.id, "quantity": 1}],
+            "outlet_id": outlet.id,
+            "items": [{"item_id": item.id, "quantity": 1}],
         }
-        resp = client.post("/api/v1/restaurant/public/orders", json=payload)
+        resp = client.post("/api/v1/dining/public/orders", json=payload)
         assert resp.status_code == 400
 
     def test_create_guest_order_empty_items_rejected(self, client: TestClient, db):
         """items فارغة → 422 Validation Error."""
         branch = make_branch(db)
-        payload = {"branch_id": branch.id, "items": []}
-        resp = client.post("/api/v1/restaurant/public/orders", json=payload)
+        outlet = make_outlet(db, branch)
+        payload = {"outlet_id": outlet.id, "items": []}
+        resp = client.post("/api/v1/dining/public/orders", json=payload)
         assert resp.status_code == 422
 
     def test_create_guest_order_without_table(self, client: TestClient, db):
         """table_id=None مسموح (takeaway من الـ lobby مثلاً)."""
         branch = make_branch(db)
-        cat    = make_category(db, branch)
-        item   = make_item(db, branch, cat)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
 
         payload = {
-            "branch_id": branch.id,
+            "outlet_id": outlet.id,
             "table_id":  None,
-            "items": [{"menu_item_id": item.id, "quantity": 2}],
+            "items": [{"item_id": item.id, "quantity": 2}],
         }
-        resp = client.post("/api/v1/restaurant/public/orders", json=payload)
+        resp = client.post("/api/v1/dining/public/orders", json=payload)
         assert resp.status_code == 201
         assert resp.json()["items_count"] == 2
+
+    def test_create_guest_order_unknown_outlet_returns_404(self, client: TestClient, db):
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": 999999, "items": [{"item_id": 1, "quantity": 1}],
+        })
+        assert resp.status_code == 404
 
 
 class TestPublicOrderStatusEndpoint:
     def test_get_order_status_no_auth(self, client: TestClient, db):
-        """GET /restaurant/public/orders/{id} يشتغل بدون token."""
+        """GET /dining/public/orders/{id} يشتغل بدون token."""
         branch = make_branch(db)
-        cat    = make_category(db, branch)
-        item   = make_item(db, branch, cat)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
 
-        create_resp = client.post("/api/v1/restaurant/public/orders", json={
-            "branch_id": branch.id,
-            "items": [{"menu_item_id": item.id, "quantity": 2}],
+        create_resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "items": [{"item_id": item.id, "quantity": 2}],
         })
         assert create_resp.status_code == 201
         order_id = create_resp.json()["order_id"]
 
-        status_resp = client.get(f"/api/v1/restaurant/public/orders/{order_id}")
+        status_resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
         assert status_resp.status_code == 200
 
         data = status_resp.json()
@@ -192,7 +225,7 @@ class TestPublicOrderStatusEndpoint:
 
     def test_get_nonexistent_order_returns_404(self, client: TestClient, db):
         """Order غير موجود → 404."""
-        resp = client.get("/api/v1/restaurant/public/orders/999999")
+        resp = client.get("/api/v1/dining/public/orders/999999")
         assert resp.status_code == 404
 
     def test_full_qr_flow(self, client: TestClient, db):
@@ -203,27 +236,28 @@ class TestPublicOrderStatusEndpoint:
         3. تابع حالة الطلب بدون auth
         """
         branch = make_branch(db)
-        cat    = make_category(db, branch)
-        item   = make_item(db, branch, cat)
-        table  = make_table(db, branch)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
+        table  = make_table(db, branch, outlet)
 
         # Step 1: fetch menu
-        menu_resp = client.get("/api/v1/restaurant/public/menu",
-                               params={"branch_id": branch.id, "table_id": table.id})
+        menu_resp = client.get("/api/v1/dining/public/menu",
+                               params={"outlet_id": outlet.id, "table_id": table.id})
         assert menu_resp.status_code == 200
         menu = menu_resp.json()
         assert len(menu["items"]) >= 1
 
         # Step 2: place order
-        order_resp = client.post("/api/v1/restaurant/public/orders", json={
-            "branch_id": branch.id,
+        order_resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
             "table_id":  table.id,
-            "items": [{"menu_item_id": menu["items"][0]["id"], "quantity": 1}],
+            "items": [{"item_id": menu["items"][0]["id"], "quantity": 1}],
         })
         assert order_resp.status_code == 201
         order_id = order_resp.json()["order_id"]
 
         # Step 3: poll status
-        poll_resp = client.get(f"/api/v1/restaurant/public/orders/{order_id}")
+        poll_resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
         assert poll_resp.status_code == 200
         assert poll_resp.json()["order_id"] == order_id

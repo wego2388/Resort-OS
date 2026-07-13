@@ -1048,6 +1048,25 @@ def _seed_maintenance(db: Session) -> None:
           f"open/in-progress/completed)")
 
 
+def _get_or_create_outlet(db: Session, branch_id: int, outlet_type: str,
+                           name_ar: str, revenue_account_code: str):
+    """راجع dining.models.Outlet — get-or-create مشتركة بين كل دوال الـ seed
+    اللي محتاجة outlet مطعم/كافيه (DINING_CUTOVER_PLAN.md Batch 6: كانت
+    _seed_menus و_seed_dining_tables بتكرر نفس المنطق ده لحالها بعد ما
+    اتحوّلوا من restaurant.models/cafe.models القديمين لـ dining.models)."""
+    from app.modules.dining.models import Outlet
+
+    outlet = db.query(Outlet).filter(
+        Outlet.branch_id == branch_id, Outlet.outlet_type == outlet_type,
+    ).first()
+    if not outlet:
+        outlet = Outlet(branch_id=branch_id, name=name_ar, name_ar=name_ar,
+                         outlet_type=outlet_type, revenue_account_code=revenue_account_code)
+        db.add(outlet)
+        db.flush()
+    return outlet
+
+
 def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
     """⚠️ نفس ملاحظة _seed_rooms — ترقيم منطقي افتراضي مش أرقام طاولات حقيقية
     موثّقة. قبل هذا التعديل كان جدول dining_tables (مطعم) و cafe_tables (كافيه)
@@ -1061,30 +1080,36 @@ def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
     `branch_id` اختياري — للتستات بس (عشان تحدد فرع بعينه بدل الاعتماد على
     'أول فرع في الداتابيز' اللي مش مضمون يكون معزول في session-scoped test DB
     فيها فروع تانية من تستات HTTP بتعمل commit حقيقي). الاستخدام الحقيقي من
-    seed_all() مبيبعتش الحجة دي خالص — بيعتمد على أول فرع زي باقي دوال الـ seed."""
-    from app.modules.restaurant.models import DiningTable
-    from app.modules.cafe.models import CafeTable
+    seed_all() مبيبعتش الحجة دي خالص — بيعتمد على أول فرع زي باقي دوال الـ seed.
+
+    DINING_CUTOVER_PLAN.md Batch 6 — بتزرع dining.models.VenueTable (بـ
+    outlet_id مطعم/كافيه، عبر _get_or_create_outlet المشتركة) بدل
+    restaurant.DiningTable/cafe.CafeTable القديمين اللي اتحذفوا، نفس
+    الأرقام والسعات بالحرف الواحد."""
+    from app.modules.dining.models import VenueTable
     from app.modules.core.models import Branch
 
     branch = db.query(Branch).filter(Branch.id == branch_id).first() if branch_id else db.query(Branch).first()
     if not branch:
         return
 
-    if not db.query(DiningTable).filter(DiningTable.branch_id == branch.id).first():
+    restaurant_outlet = _get_or_create_outlet(db, branch.id, "restaurant", "المطعم", "4200")
+    if not db.query(VenueTable).filter(VenueTable.outlet_id == restaurant_outlet.id).first():
         total = 0
         for i in range(1, 11):
-            db.add(DiningTable(branch_id=branch.id, table_number=str(i), capacity=4))
+            db.add(VenueTable(branch_id=branch.id, outlet_id=restaurant_outlet.id, table_number=str(i), capacity=4))
             total += 1
         for i in range(11, 13):
-            db.add(DiningTable(branch_id=branch.id, table_number=str(i), capacity=8))
+            db.add(VenueTable(branch_id=branch.id, outlet_id=restaurant_outlet.id, table_number=str(i), capacity=8))
             total += 1
         db.flush()
         print(f"  ✓ Restaurant tables seeded ({total} tables — logical default numbering, not verified real numbers)")
 
-    if not db.query(CafeTable).filter(CafeTable.branch_id == branch.id).first():
+    cafe_outlet = _get_or_create_outlet(db, branch.id, "cafe", "الكافيه", "4400")
+    if not db.query(VenueTable).filter(VenueTable.outlet_id == cafe_outlet.id).first():
         total = 0
         for i in range(1, 9):
-            db.add(CafeTable(branch_id=branch.id, table_number=str(i), capacity=2))
+            db.add(VenueTable(branch_id=branch.id, outlet_id=cafe_outlet.id, table_number=str(i), capacity=2))
             total += 1
         db.flush()
         print(f"  ✓ Cafe tables seeded ({total} tables — logical default numbering, not verified real numbers)")
@@ -1270,7 +1295,7 @@ def _seed_menus(db: Session) -> None:
     CafeItem القديمين اللي اتحذفوا — نفس البيانات الحقيقية بالحرف الواحد،
     مصدر واحد بدل جدولين (dining هو الوحيد اللي أي بيئة جديدة (VPS جديد،
     clone جديد) هتتزرع فيه من الأول)."""
-    from app.modules.dining.models import DiningCategory, DiningItem, Outlet
+    from app.modules.dining.models import DiningCategory, DiningItem
     from app.modules.core.models import Branch
 
     branch = db.query(Branch).first()
@@ -1278,16 +1303,7 @@ def _seed_menus(db: Session) -> None:
         return
 
     # ══════════════════════ المطعم (Restaurant_menu.json) ══════════════════
-    restaurant_outlet = db.query(Outlet).filter(
-        Outlet.branch_id == branch.id, Outlet.outlet_type == "restaurant",
-    ).first()
-    if not restaurant_outlet:
-        restaurant_outlet = Outlet(
-            branch_id=branch.id, name="المطعم", name_ar="المطعم",
-            outlet_type="restaurant", revenue_account_code="4200",
-        )
-        db.add(restaurant_outlet)
-        db.flush()
+    restaurant_outlet = _get_or_create_outlet(db, branch.id, "restaurant", "المطعم", "4200")
 
     if not db.query(DiningItem).filter(DiningItem.outlet_id == restaurant_outlet.id).first():
         # (category_key, name_ar) — بالترتيب اللي هيظهر بيه في POS
@@ -1380,16 +1396,7 @@ def _seed_menus(db: Session) -> None:
     # مشروبات بس — station="bar" لكل الأصناف (كافيه المنتجع مش عنده مطبخ
     # حقيقي، بس بار/باريستا). الأصناف اللي status="removed" في المصدر
     # (متوقفة فعليًا) اتستبعدت عمدًا.
-    cafe_outlet = db.query(Outlet).filter(
-        Outlet.branch_id == branch.id, Outlet.outlet_type == "cafe",
-    ).first()
-    if not cafe_outlet:
-        cafe_outlet = Outlet(
-            branch_id=branch.id, name="الكافيه", name_ar="الكافيه",
-            outlet_type="cafe", revenue_account_code="4400",
-        )
-        db.add(cafe_outlet)
-        db.flush()
+    cafe_outlet = _get_or_create_outlet(db, branch.id, "cafe", "الكافيه", "4400")
 
     if not db.query(DiningItem).filter(DiningItem.outlet_id == cafe_outlet.id).first():
         cafe_categories = [
@@ -1497,10 +1504,16 @@ def _seed_inventory_recipes(db: Session) -> None:
     بأصناف كافيه غلط أصلاً (برجر/مارجريتا/حواوشي كانت CafeItem مش MenuItem) —
     اتصلحت هنا مع باقي المنيو، وبقى العدد 13 وصفة حقيقية تغطي كل محطات
     المطبخ (grill/hot/cold/dessert) بدل 3 أمثلة توضيحية بس، عشان تقرير تكلفة
-    الطعام (`/admin/food-cost`) يبقى له معنى حقيقي عبر المنيو مش صنف واحد."""
+    الطعام (`/admin/food-cost`) يبقى له معنى حقيقي عبر المنيو مش صنف واحد.
+
+    DINING_CUTOVER_PLAN.md Batch 6 — dining.DiningItem/DiningItemRecipeLine
+    بدل restaurant.MenuItem/MenuItemRecipeLine القديمين. مفلترة بـ outlet
+    outlet_type='restaurant' صراحةً (dining_items جدول موحّد بين المطعم
+    والكافيه دلوقتي، فلازم فلتر outlet عشان مانخلطش لو صنف بنفس الاسم
+    موجود في الاتنين — نظريًا مش عمليًا هنا، لكن الفلتر الصريح أسلم)."""
     try:
         from app.modules.inventory.models import Product, StockMovement, Warehouse
-        from app.modules.restaurant.models import MenuItem, MenuItemRecipeLine
+        from app.modules.dining.models import DiningItem, DiningItemRecipeLine
         from app.modules.core.models import Branch
     except ImportError:
         return
@@ -1510,6 +1523,8 @@ def _seed_inventory_recipes(db: Session) -> None:
         return
     if db.query(Warehouse).filter(Warehouse.branch_id == branch.id).first():
         return
+
+    restaurant_outlet = _get_or_create_outlet(db, branch.id, "restaurant", "المطعم", "4200")
 
     warehouse = Warehouse(branch_id=branch.id, name="Main Kitchen Store",
                            name_ar="مخزن المطبخ الرئيسي", code="WH-KITCHEN")
@@ -1559,15 +1574,15 @@ def _seed_inventory_recipes(db: Session) -> None:
     db.flush()
 
     def _link_recipe(menu_item_name_ar: str, lines: list[tuple[str, Decimal]]) -> None:
-        item = db.query(MenuItem).filter(
-            MenuItem.branch_id == branch.id, MenuItem.name_ar == menu_item_name_ar,
+        item = db.query(DiningItem).filter(
+            DiningItem.outlet_id == restaurant_outlet.id, DiningItem.name_ar == menu_item_name_ar,
         ).first()
         if not item:
             return
         for product_name_ar, qty in lines:
             product = products.get(product_name_ar)
             if product:
-                db.add(MenuItemRecipeLine(menu_item_id=item.id, product_id=product.id, quantity_per_unit=qty))
+                db.add(DiningItemRecipeLine(item_id=item.id, product_id=product.id, quantity_per_unit=qty))
 
     recipes: list[tuple[str, list[tuple[str, Decimal]]]] = [
         # سندوتشات

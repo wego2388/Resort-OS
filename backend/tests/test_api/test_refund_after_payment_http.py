@@ -1,15 +1,20 @@
 """
 tests/test_api/test_refund_after_payment_http.py
-HTTP-level tests for the post-payment refund flow — restaurant + cafe.
+HTTP-level tests for the post-payment refund flow — dining (unified outlet).
 
-Confirmed real gap (2026-07-04): both restaurant.services.void_order_item and
-cafe.services.void_order_item raised "لا يمكن إلغاء صنف من طلب 'paid' —
-استخدم مرتجع بعد الدفع" (use a refund after payment) whenever anyone tried to
-void an item on an already-paid order — but no refund-after-payment feature
-existed anywhere in the codebase. This adds a real per-item refund endpoint
-for both modules that reverses the financial impact (a reversing journal
-entry for cash sales, or a reduced folio charge for Charge-to-Room orders)
-without mutating the original paid order's historical totals.
+Confirmed real gap (2026-07-04, restaurant/cafe at the time): void_order_item
+raised "لا يمكن إلغاء صنف من طلب 'paid' — استخدم مرتجع بعد الدفع" (use a
+refund after payment) whenever anyone tried to void an item on an
+already-paid order — but no refund-after-payment feature existed anywhere
+in the codebase. A real per-item refund endpoint was added that reverses
+the financial impact (a reversing journal entry for cash sales, or a
+reduced folio charge for Charge-to-Room orders) without mutating the
+original paid order's historical totals.
+
+راجع DINING_CUTOVER_PLAN.md Batch 6 — بورتت من restaurant/cafe (اللي
+اتحذفوا) لـ dining الموحّد. restaurant/cafe كانوا موديولين منفصلين
+(نفس المنطق مكرر مرتين)؛ dining بيغطي الاتنين بـ outlet_type واحد، فالكلاس
+هنا واحد بدل TestRestaurantRefundAfterPayment/TestCafeRefundAfterPayment.
 """
 from __future__ import annotations
 
@@ -29,17 +34,19 @@ def make_branch_committed(db):
     return b
 
 
-def make_menu_item_committed(db, branch):
-    from app.modules.restaurant.models import MenuItem
-    item = MenuItem(branch_id=branch.id, name="برجر اختبار", price=Decimal("100.00"), is_available=True)
-    db.add(item)
-    db.commit()
-    return item
+def make_outlet_committed(db, branch):
+    from app.modules.dining import services as dining_services
+    from app.modules.dining.schemas import OutletCreate
+    return dining_services.create_outlet(db, OutletCreate(
+        branch_id=branch.id, name="مطعم اختبار مرتجع", outlet_type="restaurant",
+        revenue_account_code="4200",
+    ))
 
 
-def make_cafe_item_committed(db, branch):
-    from app.modules.cafe.models import CafeItem
-    item = CafeItem(branch_id=branch.id, name="كابتشينو", price=Decimal("50.00"), is_available=True)
+def make_item_committed(db, branch, outlet, price=Decimal("100.00")):
+    from app.modules.dining.models import DiningItem
+    item = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name="برجر اختبار",
+                       price=price, is_available=True)
     db.add(item)
     db.commit()
     return item
@@ -49,10 +56,9 @@ def make_finance_accounts(db, branch):
     from app.modules.finance.models import Account
     cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
     rest_rev = Account(branch_id=branch.id, code="4200", name="Restaurant Revenue", account_type="revenue")
-    cafe_rev = Account(branch_id=branch.id, code="4400", name="Cafe Revenue", account_type="revenue")
-    db.add_all([cash, rest_rev, cafe_rev])
+    db.add_all([cash, rest_rev])
     db.commit()
-    return cash, rest_rev, cafe_rev
+    return cash, rest_rev
 
 
 def make_room_and_folio(db, branch):
@@ -82,29 +88,29 @@ def make_room_and_folio(db, branch):
     return room, folio
 
 
-class TestRestaurantRefundAfterPayment:
-    def _create_paid_order(self, client, db, branch, item, headers_waiter, headers_cashier, qty=1):
+class TestDiningRefundAfterPayment:
+    def _create_paid_order(self, client, db, branch, outlet, item, headers_waiter, headers_cashier, qty=1):
         order = client.post(
-            "/api/v1/restaurant/orders",
-            params={"branch_id": branch.id},
-            json={"order_type": "takeaway", "guests_count": 1,
-                  "items": [{"menu_item_id": item.id, "quantity": qty}]},
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
+                  "items": [{"item_id": item.id, "quantity": qty}]},
             headers=headers_waiter,
         ).json()
-        client.patch(f"/api/v1/restaurant/orders/{order['id']}/status",
+        client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                      json={"status": "in_kitchen"}, headers=headers_waiter)
-        paid = client.patch(f"/api/v1/restaurant/orders/{order['id']}/status",
+        paid = client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                             json={"status": "paid"}, headers=headers_cashier)
         return paid.json()
 
     def test_refund_requires_manager_level_not_cashier(self, client: TestClient, db, waiter_headers, cashier_headers):
         branch = make_branch_committed(db)
-        item = make_menu_item_committed(db, branch)
-        order = self._create_paid_order(client, db, branch, item, waiter_headers, cashier_headers)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order = self._create_paid_order(client, db, branch, outlet, item, waiter_headers, cashier_headers)
         item_id = order["items"][0]["id"]
 
         resp = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{item_id}/refund",
+            f"/api/v1/dining/orders/{order['id']}/items/{item_id}/refund",
             json={"reason": "الأكل كان بايظ"},
             headers=cashier_headers,
         )
@@ -114,14 +120,15 @@ class TestRestaurantRefundAfterPayment:
         self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers,
     ):
         branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
         make_finance_accounts(db, branch)
-        item = make_menu_item_committed(db, branch)
-        order = self._create_paid_order(client, db, branch, item, waiter_headers, cashier_headers)
+        item = make_item_committed(db, branch, outlet)
+        order = self._create_paid_order(client, db, branch, outlet, item, waiter_headers, cashier_headers)
         item_id = order["items"][0]["id"]
         original_total = Decimal(str(order["total"]))
 
         resp = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{item_id}/refund",
+            f"/api/v1/dining/orders/{order['id']}/items/{item_id}/refund",
             json={"reason": "الأكل كان بايظ"},
             headers=manager_headers,
         )
@@ -137,17 +144,18 @@ class TestRestaurantRefundAfterPayment:
 
     def test_refund_rejected_for_unpaid_order(self, client: TestClient, db, waiter_headers, manager_headers):
         branch = make_branch_committed(db)
-        item = make_menu_item_committed(db, branch)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
         order = client.post(
-            "/api/v1/restaurant/orders",
-            params={"branch_id": branch.id},
-            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
+                  "items": [{"item_id": item.id, "quantity": 1}]},
             headers=waiter_headers,
         ).json()
         item_id = order["items"][0]["id"]
 
         resp = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{item_id}/refund",
+            f"/api/v1/dining/orders/{order['id']}/items/{item_id}/refund",
             json={"reason": "اختبار"},
             headers=manager_headers,
         )
@@ -156,19 +164,20 @@ class TestRestaurantRefundAfterPayment:
 
     def test_double_refund_rejected(self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers):
         branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
         make_finance_accounts(db, branch)
-        item = make_menu_item_committed(db, branch)
-        order = self._create_paid_order(client, db, branch, item, waiter_headers, cashier_headers)
+        item = make_item_committed(db, branch, outlet)
+        order = self._create_paid_order(client, db, branch, outlet, item, waiter_headers, cashier_headers)
         item_id = order["items"][0]["id"]
 
         first = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{item_id}/refund",
+            f"/api/v1/dining/orders/{order['id']}/items/{item_id}/refund",
             json={"reason": "الأول"}, headers=manager_headers,
         )
         assert first.status_code == 200, first.text
 
         second = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{item_id}/refund",
+            f"/api/v1/dining/orders/{order['id']}/items/{item_id}/refund",
             json={"reason": "التاني"}, headers=manager_headers,
         )
         assert second.status_code == 400
@@ -178,17 +187,18 @@ class TestRestaurantRefundAfterPayment:
     ):
         from app.modules.finance import crud as finance_crud
         branch = make_branch_committed(db)
-        cash, rest_rev, _ = make_finance_accounts(db, branch)
-        item = make_menu_item_committed(db, branch)
-        order = self._create_paid_order(client, db, branch, item, waiter_headers, cashier_headers)
+        outlet = make_outlet_committed(db, branch)
+        cash, rest_rev = make_finance_accounts(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order = self._create_paid_order(client, db, branch, outlet, item, waiter_headers, cashier_headers)
         item_id = order["items"][0]["id"]
 
         client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{item_id}/refund",
+            f"/api/v1/dining/orders/{order['id']}/items/{item_id}/refund",
             json={"reason": "اختبار عكس القيد"}, headers=manager_headers,
         )
 
-        entries, total = finance_crud.list_journal_entries(db, branch.id, source="restaurant_refund")
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="dining_refund")
         assert total == 1
         entry = entries[0]
         total_debit = sum(l.debit for l in entry.lines)
@@ -201,21 +211,21 @@ class TestRestaurantRefundAfterPayment:
         assert rev_line.debit == total_debit    # إيراد اتعكس
 
     def test_refund_reduces_room_folio_charge(self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers):
-        from app.modules.finance import crud as finance_crud
         branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
         room, folio = make_room_and_folio(db, branch)
-        item = make_menu_item_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
 
         order = client.post(
-            "/api/v1/restaurant/orders",
-            params={"branch_id": branch.id},
-            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
+                  "items": [{"item_id": item.id, "quantity": 1}]},
             headers=waiter_headers,
         ).json()
-        client.patch(f"/api/v1/restaurant/orders/{order['id']}/status",
+        client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                      json={"status": "in_kitchen"}, headers=waiter_headers)
         paid = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/status",
+            f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "paid", "charge_to_room_id": room.id},
             headers=cashier_headers,
         ).json()
@@ -225,7 +235,7 @@ class TestRestaurantRefundAfterPayment:
         assert folio.total > Decimal("0")
 
         client.patch(
-            f"/api/v1/restaurant/orders/{paid['id']}/items/{item_id}/refund",
+            f"/api/v1/dining/orders/{paid['id']}/items/{item_id}/refund",
             json={"reason": "الأكل رجع"}, headers=manager_headers,
         )
 
@@ -236,36 +246,36 @@ class TestRestaurantRefundAfterPayment:
         self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers,
     ):
         """Regression: _reduce_folio_charge_for_refund كانت بتفلتر بـ
-        ref_order_id بس — ده رقم PK جدول Order (المطعم)، ومش فريد عبر
-        الموديولات (نفس الرقم ممكن يتكرر كـ ref_order_id على FolioCharge
-        تانية جوه فوليو ضيف مختلف تمامًا، كافيه مثلًا). من غير فلترة
-        charge_type + folio_id، مرتجع صنف من طلب مطعم كان (نظريًا) ممكن
-        يقلّل شحنة فوليو ضيف تاني خالص لو الأرقام اتصادفت."""
+        ref_order_id بس (في restaurant الأصلي) — رقم PK جدول Order، مش
+        فريد عبر الموديولات (نفس الرقم ممكن يتكرر كـ ref_order_id على
+        FolioCharge تانية جوه فوليو ضيف مختلف تمامًا). dining.services
+        بتفلتر بـ charge_type='dining' + folio_id كمان — التست ده بيتأكد
+        إن الفلترة دي لسه شغالة صح."""
         branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
         room, folio = make_room_and_folio(db, branch)
-        item = make_menu_item_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
 
         order = client.post(
-            "/api/v1/restaurant/orders",
-            params={"branch_id": branch.id},
-            json={"order_type": "takeaway", "guests_count": 1, "items": [{"menu_item_id": item.id, "quantity": 1}]},
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
+                  "items": [{"item_id": item.id, "quantity": 1}]},
             headers=waiter_headers,
         ).json()
 
-        # فوليو/شحنة "كافيه" تانية تمامًا بنفس ref_order_id بالظبط عمدًا،
-        # ومتعمولة قبل شحنة المطعم الحقيقية (PK أصغر) — عشان لو الفلترة
-        # القديمة (ref_order_id بس، من غير charge_type/folio_id) رجعت،
-        # الـ .first() كان هيرجّع الـ decoy دي غلط بدل شحنة المطعم الصح.
+        # فوليو/شحنة تانية تمامًا بنفس ref_order_id بالظبط عمدًا، ومتعمولة
+        # قبل شحنة الطلب الحقيقية (PK أصغر) — عشان لو الفلترة القديمة
+        # (ref_order_id بس، من غير charge_type/folio_id) رجعت، الـ .first()
+        # كان هيرجّع الـ decoy دي غلط بدل الشحنة الصح.
         from app.modules.finance import crud as finance_crud
         from app.modules.finance.schemas import FolioCreate, FolioChargeCreate
-        from datetime import datetime, timedelta as _td
         decoy_folio = finance_crud.create_folio(db, FolioCreate(
             branch_id=branch.id, guest_name="ضيف تاني", check_in=datetime.utcnow(),
-            check_out=datetime.utcnow() + _td(days=1),
+            check_out=datetime.utcnow() + timedelta(days=1),
         ))
         db.commit()
         decoy_charge = finance_crud.add_charge(db, decoy_folio.id, FolioChargeCreate(
-            charge_type="cafe", description="كابتشينو decoy",
+            charge_type="dining", description="كابتشينو decoy",
             amount=Decimal("50.00"), vat_amount=Decimal("7.00"), service_charge=Decimal("6.00"),
             posted_at=datetime.utcnow(), ref_order_id=order["id"],  # نفس ref_order_id عمدًا
         ))
@@ -275,73 +285,20 @@ class TestRestaurantRefundAfterPayment:
         assert decoy_total_before == Decimal("63.00")
 
         paid = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/status",
+            f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "paid", "charge_to_room_id": room.id},
             headers=cashier_headers,
         ).json()
         item_id = paid["items"][0]["id"]
 
         client.patch(
-            f"/api/v1/restaurant/orders/{paid['id']}/items/{item_id}/refund",
+            f"/api/v1/dining/orders/{paid['id']}/items/{item_id}/refund",
             json={"reason": "الأكل رجع"}, headers=manager_headers,
         )
 
         db.refresh(folio)
-        assert folio.total == Decimal("0.00")  # فوليو المطعم اترجع صح
+        assert folio.total == Decimal("0.00")  # فوليو الطلب اترجع صح
 
         db.refresh(decoy_folio)
         db.refresh(decoy_charge)
         assert decoy_folio.total == decoy_total_before  # فوليو الضيف التاني متلمسش خالص
-
-
-class TestCafeRefundAfterPayment:
-    def test_refund_marks_item_refunded(self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers, manager_headers):
-        branch = make_branch_committed(db)
-        make_finance_accounts(db, branch)
-        item = make_cafe_item_committed(db, branch)
-
-        order = client.post(
-            "/api/v1/cafe/orders",
-            json={"branch_id": branch.id, "order_type": "takeaway",
-                  "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
-        ).json()
-        # كافيه: create_order بيوديه لـ open، لازم يتحوّل لـ paid زي المطعم
-        client.patch(f"/api/v1/cafe/orders/{order['id']}/status",
-                     json={"status": "in_kitchen"}, headers=waiter_headers)
-        paid = client.patch(f"/api/v1/cafe/orders/{order['id']}/status",
-                            json={"status": "paid"}, headers=cashier_headers).json()
-        item_id = paid["items"][0]["id"]
-
-        resp = client.patch(
-            f"/api/v1/cafe/orders/{paid['id']}/items/{item_id}/refund",
-            json={"reason": "طلب غلط"},
-            headers=manager_headers,
-        )
-        assert resp.status_code == 200, resp.text
-        body = resp.json()
-        assert body["items"][0]["status"] == "refunded"
-        assert body["status"] == "refunded"
-        assert Decimal(str(body["refunded_amount"])) > Decimal("0")
-
-    def test_refund_requires_manager_level(self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers):
-        branch = make_branch_committed(db)
-        item = make_cafe_item_committed(db, branch)
-        order = client.post(
-            "/api/v1/cafe/orders",
-            json={"branch_id": branch.id, "order_type": "takeaway",
-                  "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=waiter_headers,
-        ).json()
-        client.patch(f"/api/v1/cafe/orders/{order['id']}/status",
-                     json={"status": "in_kitchen"}, headers=waiter_headers)
-        paid = client.patch(f"/api/v1/cafe/orders/{order['id']}/status",
-                            json={"status": "paid"}, headers=cashier_headers).json()
-        item_id = paid["items"][0]["id"]
-
-        resp = client.patch(
-            f"/api/v1/cafe/orders/{paid['id']}/items/{item_id}/refund",
-            json={"reason": "طلب غلط"},
-            headers=waiter_headers,
-        )
-        assert resp.status_code == 403
