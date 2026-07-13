@@ -88,7 +88,7 @@ def _import_all_models() -> None:
     import app.modules.core.models         # noqa: F401
     import app.modules.finance.models      # noqa: F401
     import app.modules.hr.models           # noqa: F401
-    import app.modules.restaurant.models   # noqa: F401
+    import app.modules.dining.models       # noqa: F401
     import app.modules.pms.models          # noqa: F401
     import app.modules.beach.models        # noqa: F401
     import app.modules.maintenance.models  # noqa: F401
@@ -97,7 +97,6 @@ def _import_all_models() -> None:
     import app.modules.inventory.models    # noqa: F401
     import app.modules.timeshare.models    # noqa: F401
     import app.modules.leasing.models      # noqa: F401
-    import app.modules.cafe.models         # noqa: F401
     import app.modules.analytics.models    # noqa: F401
 
 
@@ -1259,24 +1258,38 @@ def _seed_menus(db: Session) -> None:
     أصناف بس. النتيجة كانت خطأين مركّبين: (1) المنيو نفسه غلط — كاشير المطعم
     شايف 4 أصناف بس، وكاشير الكافيه شايف بيتزا/حواوشي بدل مشروبات، (2) شاشات
     الـ KDS كانت متأثرة فعليًا — كل تذاكر الكافيه كانت متوجّهة لمحطة "bar"
-    ثابتة (راجع CafeItem.station الجديد + CLAUDE.md §13 بند ⓭)، يعني بيتزا/
-    باستا/حواوشي عمرها ما وصلت لشاشة kds/kitchen، وشاشة kds/bar كانت مزدحمة
-    بأطباق كاملة مش مشروبات. الحل: المطعم = المنيو الحقيقي الكامل (9 فئات،
-    ~44 صنف، من Restaurant_menu.json)، والكافيه = مشروبات حقيقية بس (6 فئات،
-    من beverages_menu.json) — كل صنف بمحطة KDS صحيحة."""
-    try:
-        from app.modules.restaurant.models import MenuCategory, MenuItem
-        from app.modules.cafe.models import CafeCategory, CafeItem
-        from app.modules.core.models import Branch
-    except ImportError:
-        return
+    ثابتة (راجع CafeItem.station الجديد وقتها + CLAUDE.md §13 بند ⓭)، يعني
+    بيتزا/باستا/حواوشي عمرها ما وصلت لشاشة kds/kitchen، وشاشة kds/bar كانت
+    مزدحمة بأطباق كاملة مش مشروبات. الحل: المطعم = المنيو الحقيقي الكامل
+    (9 فئات، ~44 صنف، من Restaurant_menu.json)، والكافيه = مشروبات حقيقية
+    بس (6 فئات، من beverages_menu.json) — كل صنف بمحطة KDS صحيحة.
+
+    DINING_CUTOVER_PLAN.md Batch 6 — بعد حذف restaurant/cafe، الدالة دي بقت
+    بتزرع مباشرة في dining.models (Outlet outlet_type='restaurant'|'cafe' +
+    DiningCategory + DiningItem) بدل MenuCategory/MenuItem/CafeCategory/
+    CafeItem القديمين اللي اتحذفوا — نفس البيانات الحقيقية بالحرف الواحد،
+    مصدر واحد بدل جدولين (dining هو الوحيد اللي أي بيئة جديدة (VPS جديد،
+    clone جديد) هتتزرع فيه من الأول)."""
+    from app.modules.dining.models import DiningCategory, DiningItem, Outlet
+    from app.modules.core.models import Branch
 
     branch = db.query(Branch).first()
     if not branch:
         return
 
     # ══════════════════════ المطعم (Restaurant_menu.json) ══════════════════
-    if not db.query(MenuItem).filter(MenuItem.branch_id == branch.id).first():
+    restaurant_outlet = db.query(Outlet).filter(
+        Outlet.branch_id == branch.id, Outlet.outlet_type == "restaurant",
+    ).first()
+    if not restaurant_outlet:
+        restaurant_outlet = Outlet(
+            branch_id=branch.id, name="المطعم", name_ar="المطعم",
+            outlet_type="restaurant", revenue_account_code="4200",
+        )
+        db.add(restaurant_outlet)
+        db.flush()
+
+    if not db.query(DiningItem).filter(DiningItem.outlet_id == restaurant_outlet.id).first():
         # (category_key, name_ar) — بالترتيب اللي هيظهر بيه في POS
         restaurant_categories = [
             ("appetizers", "المقبلات"),
@@ -1291,7 +1304,8 @@ def _seed_menus(db: Session) -> None:
         ]
         cat_map: dict[str, int] = {}
         for i, (key, name_ar) in enumerate(restaurant_categories):
-            c = MenuCategory(branch_id=branch.id, name=key.replace("_", " ").title(), name_ar=name_ar, sort_order=i)
+            c = DiningCategory(branch_id=branch.id, outlet_id=restaurant_outlet.id,
+                                name=key.replace("_", " ").title(), name_ar=name_ar, sort_order=i)
             db.add(c)
             db.flush()
             cat_map[key] = c.id
@@ -1355,9 +1369,9 @@ def _seed_menus(db: Session) -> None:
             ("dessert", "Fried Banana", "موز مقلي", Decimal("250"), "dessert"),
         ]
         for cat_key, name, name_ar, price, station in restaurant_items:
-            db.add(MenuItem(
-                branch_id=branch.id, category_id=cat_map[cat_key], name=name, name_ar=name_ar,
-                price=price, station=station,
+            db.add(DiningItem(
+                branch_id=branch.id, outlet_id=restaurant_outlet.id, category_id=cat_map[cat_key],
+                name=name, name_ar=name_ar, price=price, station=station,
             ))
         db.flush()
         print(f"  ✓ Restaurant menu seeded ({len(restaurant_items)} items across {len(restaurant_categories)} categories)")
@@ -1366,7 +1380,18 @@ def _seed_menus(db: Session) -> None:
     # مشروبات بس — station="bar" لكل الأصناف (كافيه المنتجع مش عنده مطبخ
     # حقيقي، بس بار/باريستا). الأصناف اللي status="removed" في المصدر
     # (متوقفة فعليًا) اتستبعدت عمدًا.
-    if not db.query(CafeItem).filter(CafeItem.branch_id == branch.id).first():
+    cafe_outlet = db.query(Outlet).filter(
+        Outlet.branch_id == branch.id, Outlet.outlet_type == "cafe",
+    ).first()
+    if not cafe_outlet:
+        cafe_outlet = Outlet(
+            branch_id=branch.id, name="الكافيه", name_ar="الكافيه",
+            outlet_type="cafe", revenue_account_code="4400",
+        )
+        db.add(cafe_outlet)
+        db.flush()
+
+    if not db.query(DiningItem).filter(DiningItem.outlet_id == cafe_outlet.id).first():
         cafe_categories = [
             ("Cocktails", "كوكتيلات"),
             ("Fresh Juices", "عصائر طازجة"),
@@ -1377,7 +1402,8 @@ def _seed_menus(db: Session) -> None:
         ]
         cat_map2: dict[str, int] = {}
         for i, (name_en, name_ar) in enumerate(cafe_categories):
-            c = CafeCategory(branch_id=branch.id, name=name_en, name_ar=name_ar, sort_order=i)
+            c = DiningCategory(branch_id=branch.id, outlet_id=cafe_outlet.id,
+                                name=name_en, name_ar=name_ar, sort_order=i)
             db.add(c)
             db.flush()
             cat_map2[name_en] = c.id
@@ -1439,9 +1465,8 @@ def _seed_menus(db: Session) -> None:
             ("Cold Drinks", "Small Water", "مياه صغيرة", Decimal("20")),
             # ⚠️ "Small Water" سعره في المصدر "20/30" (نص، مش رقم — على الأرجح
             # سعرين لحجمين مختلفين). اتاخد أقل سعر (20) كقيمة افتراضية مؤقتة —
-            # لو الفرق بين الحجمين مهم فعليًا، ده مرشّح طبيعي لـ CafeItemVariant
-            # (نفس ميزة الـ variants اللي اتبنت النهاردة بالظبط) بدل صنف واحد
-            # بسعر تقريبي، محتاج تأكيد من Mohamed للسعرين الحقيقيين الأول.
+            # لو الفرق بين الحجمين مهم فعليًا، ده مرشّح طبيعي لـ DiningItemVariant
+            # بدل صنف واحد بسعر تقريبي، محتاج تأكيد من Mohamed للسعرين الحقيقيين الأول.
 
             ("Hot Drinks", "Single Espresso", "إسبريسو سنجل", Decimal("70")),
             ("Hot Drinks", "Double Espresso", "إسبريسو دبل", Decimal("85")),
@@ -1458,9 +1483,9 @@ def _seed_menus(db: Session) -> None:
             ("Hot Drinks", "Tea with Milk", "شاي باللبن", Decimal("90")),
         ]
         for cat_en, name, name_ar, price in cafe_items:
-            db.add(CafeItem(
-                branch_id=branch.id, category_id=cat_map2[cat_en], name=name, name_ar=name_ar,
-                price=price, station="bar",
+            db.add(DiningItem(
+                branch_id=branch.id, outlet_id=cafe_outlet.id, category_id=cat_map2[cat_en],
+                name=name, name_ar=name_ar, price=price, station="bar",
             ))
         db.flush()
         print(f"  ✓ Cafe menu seeded ({len(cafe_items)} beverage items across {len(cafe_categories)} categories)")

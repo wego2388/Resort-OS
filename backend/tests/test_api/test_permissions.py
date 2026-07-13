@@ -5,6 +5,11 @@ endpoint, the /me effective-permissions endpoint, and — most importantly —
 proof that an explicit UserPermission grant/deny actually changes the
 behavior of a real endpoint wired with require_permission(), not just a
 row sitting unused in the database.
+
+راجع DINING_CUTOVER_PLAN.md Batch 6 — كان بيستخدم restaurant.void_order_item
+كمثال حي (endpoint حقيقي مربوط بـ require_permission، min_role_level=40)،
+اتحول لـ dining.void_order_item (نفس min_role_level بالظبط، بعد حذف
+restaurant/cafe من المشروع).
 """
 from __future__ import annotations
 
@@ -25,12 +30,20 @@ def _branch_committed(db):
     return b
 
 
-def _menu_item_committed(db, branch):
-    from app.modules.restaurant.models import MenuItem
-    item = MenuItem(branch_id=branch.id, name="صنف اختبار الصلاحيات", price=Decimal("80.00"), is_available=True)
+def _outlet_and_item_committed(db, branch):
+    from app.modules.dining import services as dining_services
+    from app.modules.dining.models import DiningItem
+    from app.modules.dining.schemas import OutletCreate
+
+    outlet = dining_services.create_outlet(db, OutletCreate(
+        branch_id=branch.id, name="مطعم اختبار الصلاحيات", outlet_type="restaurant",
+        revenue_account_code="4200",
+    ))
+    item = DiningItem(branch_id=branch.id, outlet_id=outlet.id,
+                       name="صنف اختبار الصلاحيات", price=Decimal("80.00"), is_available=True)
     db.add(item)
     db.commit()
-    return item
+    return outlet, item
 
 
 def _set_manager_pin(db, pin: str) -> int:
@@ -45,11 +58,11 @@ def _set_manager_pin(db, pin: str) -> int:
     return user.id
 
 
-def _create_order(client: TestClient, branch_id: int, item_id: int, headers: dict) -> dict:
+def _create_order(client: TestClient, outlet_id: int, item_id: int, headers: dict) -> dict:
     resp = client.post(
-        "/api/v1/restaurant/orders", params={"branch_id": branch_id},
-        json={"order_type": "takeaway", "guests_count": 1,
-              "items": [{"menu_item_id": item_id, "quantity": 1}]},
+        f"/api/v1/dining/outlets/{outlet_id}/orders",
+        json={"outlet_id": outlet_id, "order_type": "takeaway", "guests_count": 1,
+              "items": [{"item_id": item_id, "quantity": 1}]},
         headers=headers,
     )
     assert resp.status_code == 201, resp.text
@@ -63,7 +76,7 @@ class TestPermissionCatalog:
         body = resp.json()
         assert len(body) == len(PERMISSION_CATALOG)
         resources = {e["resource"] for e in body}
-        assert "restaurant.void_order_item" in resources
+        assert "dining.void_order_item" in resources
         assert "hr.approve_payroll_run" in resources
         # كل صف لازم يكون فيه label_ar حقيقي مش فاضي
         assert all(e["label_ar"] for e in body)
@@ -79,9 +92,9 @@ class TestEffectivePermissions:
         assert resp.status_code == 200
         by_resource = {e["resource"]: e for e in resp.json()}
 
-        # manager (level 60) >= restaurant.void_order_item الحد الأدنى (40) → مسموح
-        assert by_resource["restaurant.void_order_item"]["allowed"] is True
-        assert by_resource["restaurant.void_order_item"]["source"] == "role"
+        # manager (level 60) >= dining.void_order_item الحد الأدنى (40) → مسموح
+        assert by_resource["dining.void_order_item"]["allowed"] is True
+        assert by_resource["dining.void_order_item"]["source"] == "role"
 
         # manager (level 60) < hr.approve_payroll_run الحد الأدنى (80) → ممنوع
         assert by_resource["hr.approve_payroll_run"]["allowed"] is False
@@ -90,9 +103,9 @@ class TestEffectivePermissions:
     def test_waiter_me_reflects_lower_role(self, client: TestClient, waiter_headers):
         resp = client.get("/api/v1/permissions/me", headers=waiter_headers)
         by_resource = {e["resource"]: e for e in resp.json()}
-        # waiter (level 30) < restaurant.void_order_item الحد الأدنى (40) → ممنوع
-        assert by_resource["restaurant.void_order_item"]["allowed"] is False
-        assert by_resource["restaurant.void_order_item"]["source"] == "role"
+        # waiter (level 30) < dining.void_order_item الحد الأدنى (40) → ممنوع
+        assert by_resource["dining.void_order_item"]["allowed"] is False
+        assert by_resource["dining.void_order_item"]["source"] == "role"
 
 
 class TestExplicitOverrideEndToEnd:
@@ -114,13 +127,13 @@ class TestExplicitOverrideEndToEnd:
         manager_id = _set_manager_pin(db, "1234")
 
         branch = _branch_committed(db)
-        item = _menu_item_committed(db, branch)
-        order = _create_order(client, branch.id, item.id, custom_headers)
+        outlet, item = _outlet_and_item_committed(db, branch)
+        order = _create_order(client, outlet.id, item.id, custom_headers)
         order_item_id = order["items"][0]["id"]
 
         # قبل المنح: واتر (level 30) أقل من الحد الأدنى (40) للـ endpoint ده → 403
         resp = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            f"/api/v1/dining/orders/{order['id']}/items/{order_item_id}/void",
             json={"reason": "تجربة قبل المنح"}, headers=custom_headers,
         )
         assert resp.status_code == 403
@@ -128,7 +141,7 @@ class TestExplicitOverrideEndToEnd:
         # منح استثناء صريح من super_admin
         grant = client.post(
             "/api/v1/permissions",
-            json={"user_id": waiter_id, "resource": "restaurant.void_order_item",
+            json={"user_id": waiter_id, "resource": "dining.void_order_item",
                   "action": "execute", "allowed": True},
             headers=super_admin_headers,
         )
@@ -137,13 +150,13 @@ class TestExplicitOverrideEndToEnd:
         # بعد المنح: مسموح له يحاول (role gate اتخطّى)، بس لسه محتاج موافقة
         # PIN من مدير حقيقي (waiter مش مدير، حتى مع الاستثناء)
         resp_no_pin = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            f"/api/v1/dining/orders/{order['id']}/items/{order_item_id}/void",
             json={"reason": "بدون موافقة PIN"}, headers=custom_headers,
         )
         assert resp_no_pin.status_code == 400
 
         resp2 = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            f"/api/v1/dining/orders/{order['id']}/items/{order_item_id}/void",
             json={"reason": "تجربة بعد المنح", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=custom_headers,
         )
@@ -157,13 +170,13 @@ class TestExplicitOverrideEndToEnd:
         custom_headers = {"Authorization": f"Bearer {_make_token(email)}"}
 
         branch = _branch_committed(db)
-        item = _menu_item_committed(db, branch)
-        order = _create_order(client, branch.id, item.id, custom_headers)
+        outlet, item = _outlet_and_item_committed(db, branch)
+        order = _create_order(client, outlet.id, item.id, custom_headers)
         order_item_id = order["items"][0]["id"]
 
         deny = client.post(
             "/api/v1/permissions",
-            json={"user_id": mgr_id, "resource": "restaurant.void_order_item",
+            json={"user_id": mgr_id, "resource": "dining.void_order_item",
                   "action": "execute", "allowed": False},
             headers=super_admin_headers,
         )
@@ -171,7 +184,7 @@ class TestExplicitOverrideEndToEnd:
 
         # المدير ده عادةً يقدر (level 60 >= 40) بس اتمنع صراحةً — لازم يتمنع
         resp = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/items/{order_item_id}/void",
+            f"/api/v1/dining/orders/{order['id']}/items/{order_item_id}/void",
             json={"reason": "تجربة منع صريح"}, headers=custom_headers,
         )
         assert resp.status_code == 403
@@ -184,14 +197,14 @@ class TestExplicitOverrideEndToEnd:
         manager_id = _set_manager_pin(db, "1234")
 
         branch = _branch_committed(db)
-        item = _menu_item_committed(db, branch)
+        outlet, item = _outlet_and_item_committed(db, branch)
 
-        order1 = _create_order(client, branch.id, item.id, custom_headers)
+        order1 = _create_order(client, outlet.id, item.id, custom_headers)
         order1_item_id = order1["items"][0]["id"]
 
         grant = client.post(
             "/api/v1/permissions",
-            json={"user_id": waiter_id, "resource": "restaurant.void_order_item",
+            json={"user_id": waiter_id, "resource": "dining.void_order_item",
                   "action": "execute", "allowed": True},
             headers=super_admin_headers,
         ).json()
@@ -199,7 +212,7 @@ class TestExplicitOverrideEndToEnd:
         # الاستثناء شغال فعلاً — بس لسه محتاج موافقة PIN (راجع تعليق
         # test_grant_lets_waiter_void_despite_role للتفصيل الكامل)
         assert client.patch(
-            f"/api/v1/restaurant/orders/{order1['id']}/items/{order1_item_id}/void",
+            f"/api/v1/dining/orders/{order1['id']}/items/{order1_item_id}/void",
             json={"reason": "أول مرة", "approver_user_id": manager_id, "approver_pin": "1234"},
             headers=custom_headers,
         ).status_code == 200
@@ -209,10 +222,10 @@ class TestExplicitOverrideEndToEnd:
         assert revoke.status_code == 204
 
         # طلب تاني، بعد الإلغاء، لازم يرجع لسلوك الـ role الافتراضي (ممنوع)
-        order2 = _create_order(client, branch.id, item.id, custom_headers)
+        order2 = _create_order(client, outlet.id, item.id, custom_headers)
         order2_item_id = order2["items"][0]["id"]
         resp = client.patch(
-            f"/api/v1/restaurant/orders/{order2['id']}/items/{order2_item_id}/void",
+            f"/api/v1/dining/orders/{order2['id']}/items/{order2_item_id}/void",
             json={"reason": "بعد الإلغاء"}, headers=custom_headers,
         )
         assert resp.status_code == 403
