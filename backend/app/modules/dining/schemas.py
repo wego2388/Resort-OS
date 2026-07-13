@@ -522,6 +522,17 @@ class FoodCostReportResponse(BaseModel):
 # بدون أي إصدار dining مقابل، فحذفهم من غير الإضافة دي كان هيكسر طلب
 # الضيف عبر QR بالكامل).
 
+class PublicOutletRead(BaseModel):
+    """للموقع العام (apps/public's DiningView.vue — صفحة المنيو التسويقية)
+    عشان يعرف outlet_id لكل منفذ من غير تسجيل دخول. حقول محدودة عمدًا —
+    بدون revenue_account_code/branch_id الداخليين (راجع OutletRead)."""
+    model_config = ConfigDict(from_attributes=True)
+    id:          int
+    name:        str
+    name_ar:     Optional[str]
+    outlet_type: str
+
+
 class PublicMenuExtraRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:             int

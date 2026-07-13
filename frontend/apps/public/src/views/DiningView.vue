@@ -1,13 +1,21 @@
 <script setup lang="ts">
 /**
  * Dining / menu page for the public marketing site — pulls real menu data
- * (seeded 2026-07-01, see backend/app/seed.py::_seed_menus) from the two
- * public, unauthenticated menu endpoints:
- *   - GET /api/v1/restaurant/public/menu (pre-existing, used by apps/qr)
- *   - GET /api/v1/cafe/public/menu (new — added alongside this page)
+ * (seeded 2026-07-01, see backend/app/seed.py::_seed_menus) from the unified
+ * dining module's public, unauthenticated endpoints:
+ *   - GET /api/v1/dining/public/outlets (which outlet_ids exist for the branch)
+ *   - GET /api/v1/dining/public/menu?outlet_id=... (categories + items, one per outlet)
  * Same fetching pattern as the Rooms section in HomeView.vue: plain axios
  * (not @resort-os/core's api client — this app is deliberately
  * unauthenticated-only), PUBLIC_BRANCH_ID for the single seeded branch.
+ *
+ * DINING_CUTOVER_PLAN.md Batch 6 (2026-07-13): used to call
+ * /api/v1/restaurant/public/menu + /api/v1/cafe/public/menu directly (two
+ * fixed outlets, hardcoded rendering — flat grid for restaurant, grouped-by-
+ * category for cafe). Both deleted along with the restaurant/cafe modules.
+ * Now generalized to any number of outlets: one grouped-by-category section
+ * per outlet, in outlet order — no more hardcoded "restaurant" vs "cafe"
+ * layout branch.
  */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -35,14 +43,27 @@ interface PublicMenuCategory {
 
 interface PublicMenuResponse {
   branch_id: number
+  outlet_id: number
+  outlet_name: string
+  outlet_name_ar: string | null
   categories: PublicMenuCategory[]
   items: PublicMenuItem[]
 }
 
-const restaurantItems = ref<PublicMenuItem[]>([])
-const cafeCategories = ref<PublicMenuCategory[]>([])
-const cafeItems = ref<PublicMenuItem[]>([])
+interface PublicOutlet {
+  id: number
+  name: string
+  name_ar: string | null
+  outlet_type: string
+}
 
+interface OutletMenu {
+  outlet: PublicOutlet
+  categories: PublicMenuCategory[]
+  items: PublicMenuItem[]
+}
+
+const outletMenus = ref<OutletMenu[]>([])
 const loading = ref(true)
 const error = ref(false)
 
@@ -54,36 +75,39 @@ function categoryName(cat: PublicMenuCategory): string {
   return locale.value === 'ar' && cat.name_ar ? cat.name_ar : cat.name
 }
 
+function outletName(o: PublicOutlet): string {
+  return locale.value === 'ar' && o.name_ar ? o.name_ar : o.name
+}
+
 function formatPrice(price: string): string {
   const n = Number(price)
   return Number.isFinite(n) ? n.toLocaleString(locale.value === 'ar' ? 'ar-EG' : 'en-US') : price
 }
 
-// Cafe items grouped by category, in the order categories came back
-// (already sorted server-side by CafeCategory.sort_order — see
-// app/modules/cafe/crud.py::list_categories).
-const cafeGrouped = computed(() =>
-  cafeCategories.value
-    .map((cat) => ({
-      category: cat,
-      items: cafeItems.value.filter((i) => i.category_id === cat.id),
-    }))
-    .filter((g) => g.items.length > 0),
-)
+// كل منفذ بيتعرض مقسّم حسب فئاته (نفس ترتيب sort_order من الباك إند —
+// راجع dining.crud.list_categories) — بديل عن الفصل الثابت مطعم/كافيه القديم.
+function groupedByCategory(menu: OutletMenu) {
+  return menu.categories
+    .map((cat) => ({ category: cat, items: menu.items.filter((i) => i.category_id === cat.id) }))
+    .filter((g) => g.items.length > 0)
+}
+
+const hasAnyItems = computed(() => outletMenus.value.some((m) => m.items.length > 0))
 
 onMounted(async () => {
   try {
-    const [restaurantRes, cafeRes] = await Promise.all([
-      axios.get<{ items: PublicMenuItem[] }>('/api/v1/restaurant/public/menu', {
-        params: { branch_id: PUBLIC_BRANCH_ID },
+    const { data: outlets } = await axios.get<PublicOutlet[]>('/api/v1/dining/public/outlets', {
+      params: { branch_id: PUBLIC_BRANCH_ID },
+    })
+    const menus = await Promise.all(
+      outlets.map(async (outlet) => {
+        const { data } = await axios.get<PublicMenuResponse>('/api/v1/dining/public/menu', {
+          params: { outlet_id: outlet.id },
+        })
+        return { outlet, categories: data.categories, items: data.items }
       }),
-      axios.get<PublicMenuResponse>('/api/v1/cafe/public/menu', {
-        params: { branch_id: PUBLIC_BRANCH_ID },
-      }),
-    ])
-    restaurantItems.value = restaurantRes.data.items
-    cafeCategories.value = cafeRes.data.categories
-    cafeItems.value = cafeRes.data.items
+    )
+    outletMenus.value = menus
   } catch {
     error.value = true
   } finally {
@@ -112,52 +136,36 @@ onMounted(async () => {
       {{ t('marketing.dining.error') }}
     </div>
 
-    <div v-else-if="!restaurantItems.length && !cafeItems.length" class="max-w-2xl mx-auto text-center text-gray-400 bg-stone-50 rounded-2xl my-16 py-10 px-6">
+    <div v-else-if="!hasAnyItems" class="max-w-2xl mx-auto text-center text-gray-400 bg-stone-50 rounded-2xl my-16 py-10 px-6">
       {{ t('marketing.dining.empty') }}
     </div>
 
     <template v-else>
-      <!-- Restaurant — signature dishes -->
-      <div v-if="restaurantItems.length" class="max-w-5xl mx-auto px-6 py-16">
-        <h2 class="font-heading text-3xl font-black text-brand-charcoal text-center mb-2">{{ t('marketing.dining.restaurant.title') }}</h2>
-        <p class="text-gray-500 text-center mb-10 font-body">{{ t('marketing.dining.restaurant.subtitle') }}</p>
-
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-          <div v-for="item in restaurantItems" :key="`r-${item.id}`"
-            class="bg-white rounded-2xl border border-stone-200 shadow-sm hover:shadow-lg transition-shadow overflow-hidden flex flex-col">
-            <div class="h-2 bg-gradient-to-r from-brand-sunset to-brand-coral" />
-            <div class="p-5 flex flex-col flex-1">
-              <h3 class="font-heading font-bold text-brand-charcoal text-base mb-3 flex-1">{{ itemName(item) }}</h3>
-              <p class="font-heading font-black text-brand-ocean text-lg">
-                {{ formatPrice(item.price) }} <span class="text-xs font-semibold text-gray-400">EGP</span>
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Cafe — full menu grouped by category -->
-      <div v-if="cafeGrouped.length" class="bg-brand-lightgray/50 py-16">
+      <!-- منفذ واحد لكل قسم، متبادل بين خلفية بيضاء/رمادية فاتحة عشان يبان
+           الفصل بصريًا من غير الاعتماد على نوع ثابت (مطعم/كافيه) -->
+      <div v-for="(menu, idx) in outletMenus" :key="menu.outlet.id"
+        v-show="menu.items.length" :class="idx % 2 === 1 ? 'bg-brand-lightgray/50' : ''" class="py-16">
         <div class="max-w-5xl mx-auto px-6">
-          <h2 class="font-heading text-3xl font-black text-brand-charcoal text-center mb-2">{{ t('marketing.dining.cafe.title') }}</h2>
-          <p class="text-gray-500 text-center mb-6 font-body">{{ t('marketing.dining.cafe.subtitle') }}</p>
+          <h2 class="font-heading text-3xl font-black text-brand-charcoal text-center mb-2">{{ outletName(menu.outlet) }}</h2>
+          <p class="text-gray-500 text-center mb-6 font-body">{{ t('marketing.dining.outletSubtitle') }}</p>
 
           <!-- Quick category nav -->
-          <div class="flex flex-wrap justify-center gap-2 mb-12">
-            <a v-for="group in cafeGrouped" :key="`nav-${group.category.id}`"
-              :href="`#cat-${group.category.id}`"
+          <div v-if="groupedByCategory(menu).length > 1" class="flex flex-wrap justify-center gap-2 mb-12">
+            <a v-for="group in groupedByCategory(menu)" :key="`nav-${menu.outlet.id}-${group.category.id}`"
+              :href="`#cat-${menu.outlet.id}-${group.category.id}`"
               class="text-xs font-bold bg-white border border-stone-200 text-brand-teal px-3 py-1.5 rounded-full hover:bg-brand-teal hover:text-white hover:border-brand-teal transition-colors">
               {{ categoryName(group.category) }}
             </a>
           </div>
 
           <div class="space-y-12">
-            <div v-for="group in cafeGrouped" :key="group.category.id" :id="`cat-${group.category.id}`" class="scroll-mt-24">
+            <div v-for="group in groupedByCategory(menu)" :key="group.category.id"
+              :id="`cat-${menu.outlet.id}-${group.category.id}`" class="scroll-mt-24">
               <h3 class="font-heading font-black text-brand-charcoal text-xl mb-4 pb-2 border-b-2 border-brand-sandy inline-block">
                 {{ categoryName(group.category) }}
               </h3>
               <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                <div v-for="item in group.items" :key="`c-${item.id}`"
+                <div v-for="item in group.items" :key="`i-${item.id}`"
                   class="bg-white rounded-xl border border-stone-200 px-4 py-3 flex items-center justify-between gap-3 hover:shadow-sm transition-shadow">
                   <span class="font-body font-semibold text-brand-charcoal text-sm">{{ itemName(item) }}</span>
                   <span class="font-heading font-black text-brand-ocean text-sm whitespace-nowrap">

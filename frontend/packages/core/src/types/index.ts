@@ -51,43 +51,6 @@ export interface BeachInventory {
   surge_multiplier: number
 }
 
-// Restaurant types
-export interface MenuCategory {
-  id: number
-  name: string
-  name_ar: string
-  sort_order: number
-}
-
-export interface MenuItem {
-  id: number
-  category_id: number
-  name: string
-  name_ar: string
-  price: number
-  is_available: boolean
-  image_url?: string
-}
-
-export interface OrderItem {
-  menu_item_id: number
-  name: string
-  name_ar: string
-  quantity: number
-  unit_price: number
-  notes?: string
-}
-
-export interface Order {
-  id: number
-  table_id?: number
-  status: 'pending' | 'preparing' | 'ready' | 'paid' | 'cancelled'
-  items: OrderItem[]
-  total: number
-  covers?: number
-  outlet_type: 'restaurant' | 'cafe'
-}
-
 // PMS types
 export interface Room {
   id: number
@@ -107,13 +70,3 @@ export interface Booking {
   total_amount: number
 }
 
-// KDS types
-export interface KitchenTicket {
-  id: number
-  order_id: number
-  table_number?: string
-  items: { name: string; name_ar: string; quantity: number; notes?: string }[]
-  status: 'pending' | 'preparing' | 'ready'
-  created_at: string
-  station: string
-}

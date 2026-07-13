@@ -5,7 +5,7 @@
  * instead of restaurant/cafe. Same PIN-approval pattern for void (reuses
  * PinGuardModal.vue + core.services.resolve_pin_approval — no parallel
  * approval flow invented here, per the task's explicit instruction), same
- * discount composable (useOrderDiscount('dining')).
+ * discount composable (useOrderDiscount()).
  *
  * Two things dining has that restaurant/cafe's modal doesn't need to show:
  *  - order_type is a 4-way taxonomy (dine_in|takeaway|delivery|room_service),
@@ -215,7 +215,7 @@ async function confirmRefund() {
 }
 
 // ── Discount (best active ConditionalDiscount rule — no manual amount) ──
-const { applyingDiscount, discountError, applyDiscount: applyDiscountRule } = useOrderDiscount('dining')
+const { applyingDiscount, discountError, applyDiscount: applyDiscountRule } = useOrderDiscount()
 async function applyDiscount() {
   if (!order.value) return
   try {

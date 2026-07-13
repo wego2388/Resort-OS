@@ -174,7 +174,7 @@ function shortDay(iso: string) {
   return new Date(iso).toLocaleDateString('ar-EG', { day: 'numeric', month: 'numeric' })
 }
 
-onMounted(fetchReport)
+onMounted(async () => { await loadOutlets(); await fetchReport() })
 </script>
 
 <template>
@@ -194,15 +194,15 @@ onMounted(fetchReport)
       </div>
     </div>
 
-    <!-- Module tabs -->
-    <div class="flex gap-2">
+    <!-- Outlet tabs — ديناميكية من /dining/outlets (أي عدد منافذ) -->
+    <div v-if="outlets.length" class="flex gap-2 flex-wrap">
       <button
-        v-for="m in (['restaurant', 'cafe'] as ModuleType[])" :key="m"
-        @click="switchModule(m)"
+        v-for="o in outlets" :key="o.id"
+        @click="switchOutlet(o.id)"
         :class="['px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors',
-                 activeModule === m ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 text-gray-600 hover:border-blue-300']"
+                 activeOutletId === o.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 text-gray-600 hover:border-blue-300']"
       >
-        {{ m === 'restaurant' ? '🍽️ المطعم' : '☕ الكافيه' }}
+        {{ outletLabel(o) }}
       </button>
     </div>
 

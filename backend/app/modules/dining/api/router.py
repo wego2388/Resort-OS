@@ -37,6 +37,7 @@ from app.modules.dining.schemas import (
     OrderSyncRequest, OrderSyncResponse,
     OutletCreate, OutletRead, OutletUpdate,
     GuestOrderCreate, GuestOrderRead, PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
+    PublicOutletRead,
 )
 from app.modules.core.schemas import PaginatedResponse
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
@@ -46,9 +47,8 @@ router = APIRouter(tags=["dining"])
 
 
 # ── WebSocket KDS Manager ──────────────────────────────────────────────
-# راجع restaurant.api.router.ConnectionManager — نفس الشكل بالظبط، instance
-# منفصل عمدًا (dining بيبث لمشتركي /dining/ws/*، مش مشترك مع restaurant_manager
-# القديم — الاتنين لسه شغالين بمعزل عن بعض حتى D-05/D-08).
+# dining بيبث لمشتركي /dining/ws/* لوحده — restaurant/cafe اتحذفوا بالكامل
+# (DINING_CUTOVER_PLAN.md Batch 6)، dining هو مصدر البث اللحظي الوحيد دلوقتي.
 
 class ConnectionManager:
     def __init__(self):
@@ -750,6 +750,21 @@ def _guest_status_message(order_status: str) -> str:
         "cancelled":  "status_cancelled",
         "refunded":   "status_cancelled",
     }.get(order_status, "status_pending")
+
+
+@router.get(
+    "/dining/public/outlets",
+    response_model=list[PublicOutletRead],
+    tags=["dining-public"],
+    summary="منافذ الفرع النشطة — بدون auth (لموقع الحجز العام)",
+)
+def list_public_outlets(db: DbDep, branch_id: int = Query(...)):
+    """Public endpoint — لا يحتاج login. يُستدعى من apps/public's DiningView.vue
+    (صفحة المنيو التسويقية) عشان تعرف outlet_id لكل منفذ قبل ما تنادي
+    GET /dining/public/menu لكل واحد. راجع docstring PublicOutletRead —
+    حقول محدودة عمدًا، بدون بيانات داخلية زي revenue_account_code."""
+    outlets = crud.list_outlets(db, branch_id, active_only=True)
+    return [PublicOutletRead.model_validate(o) for o in outlets]
 
 
 @router.get(

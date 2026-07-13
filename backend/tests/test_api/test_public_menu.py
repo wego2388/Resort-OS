@@ -12,6 +12,9 @@ Public (Guest QR) endpoints — بدون auth
 3. GET /dining/public/orders/{id} → 200 بدون token
 4. GET /dining/outlets/{id}/items → 401 بدون token (internal endpoint مازال محمي)
 5. POST /dining/public/orders → 400 لو item غير متاح
+6. GET /dining/public/outlets → 200 بدون token (Batch 6 frontend: موقع الحجز
+   العام apps/public's DiningView.vue محتاجها تعرف outlet_id لكل منفذ قبل
+   ما تنادي /dining/public/menu — راجع docstring PublicOutletRead)
 """
 from __future__ import annotations
 
@@ -124,6 +127,50 @@ class TestPublicMenuEndpoint:
         outlet = make_outlet(db, branch)
         resp = client.get(f"/api/v1/dining/outlets/{outlet.id}/items")
         assert resp.status_code == 401
+
+
+class TestPublicOutletsEndpoint:
+    def test_no_auth_required(self, client: TestClient, db):
+        branch = make_branch(db)
+        make_outlet(db, branch)
+        resp = client.get("/api/v1/dining/public/outlets", params={"branch_id": branch.id})
+        assert resp.status_code == 200
+
+    def test_returns_active_outlets_with_minimal_fields(self, client: TestClient, db):
+        """id/name/name_ar/outlet_type بس — بدون revenue_account_code أو أي
+        بيانات داخلية (راجع docstring PublicOutletRead)."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+
+        resp = client.get("/api/v1/dining/public/outlets", params={"branch_id": branch.id})
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["id"] == outlet.id
+        assert data[0]["outlet_type"] == "restaurant"
+        assert "revenue_account_code" not in data[0]
+        assert "branch_id" not in data[0]
+
+    def test_excludes_inactive_outlets(self, client: TestClient, db):
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.schemas import OutletUpdate
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        dining_services.update_outlet(db, outlet.id, OutletUpdate(is_active=False))
+
+        resp = client.get("/api/v1/dining/public/outlets", params={"branch_id": branch.id})
+        assert resp.json() == []
+
+    def test_scoped_to_branch_id(self, client: TestClient, db):
+        branch_a = make_branch(db)
+        branch_b = make_branch(db)
+        make_outlet(db, branch_a)
+        make_outlet(db, branch_b)
+
+        resp = client.get("/api/v1/dining/public/outlets", params={"branch_id": branch_a.id})
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["id"] != 0
 
 
 class TestPublicOrderEndpoint:

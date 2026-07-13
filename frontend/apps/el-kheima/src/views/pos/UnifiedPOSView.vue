@@ -98,7 +98,7 @@ const pendingOrderId = ref<number | null>(null)
 const pendingOrderNumber = ref('')
 const pendingOrderSummary = ref<{ discount_amount: number | string; total: number | string } | null>(null)
 const cartLocked = computed(() => pendingOrderId.value !== null)
-const { applyingDiscount, discountError, applyDiscount: applyDiscountRule } = useOrderDiscount('dining')
+const { applyingDiscount, discountError, applyDiscount: applyDiscountRule } = useOrderDiscount()
 
 const extrasModalItem = ref<DiningItemRow | null>(null)
 

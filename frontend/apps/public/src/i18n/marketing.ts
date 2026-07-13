@@ -67,8 +67,7 @@ export interface MarketingMessages {
   dining: {
     title: string
     subtitle: string
-    restaurant: { title: string; subtitle: string }
-    cafe: { title: string; subtitle: string }
+    outletSubtitle: string
     loading: string
     error: string
     empty: string
@@ -171,8 +170,7 @@ const ar: MarketingMessages = {
   dining: {
     title: 'قائمة الطعام والمشروبات',
     subtitle: 'تذوق أشهى الأطباق ومشروباتنا المميزة',
-    restaurant: { title: 'أطباقنا المميزة', subtitle: 'مطعمنا الراقي يقدم أشهى الأطباق المشوية والبحرية' },
-    cafe: { title: 'قائمة الكافيه', subtitle: 'بيتزا، باستا، ساندوتشات ومشروبات — على البحر مباشرة' },
+    outletSubtitle: 'اكتشف قائمتنا الكاملة',
     loading: 'جاري تحميل القائمة...',
     error: 'تعذر تحميل القائمة الآن، يرجى المحاولة لاحقاً',
     empty: 'القائمة غير متاحة حالياً',
@@ -275,8 +273,7 @@ const en: MarketingMessages = {
   dining: {
     title: 'Food & Drinks Menu',
     subtitle: 'Taste our finest dishes and signature drinks',
-    restaurant: { title: 'Signature Dishes', subtitle: 'Our fine-dining restaurant serves the finest grilled and seafood dishes' },
-    cafe: { title: 'Café Menu', subtitle: 'Pizza, pasta, sandwiches and drinks — right on the beach' },
+    outletSubtitle: 'Discover our full menu',
     loading: 'Loading the menu...',
     error: 'Could not load the menu right now, please try again later',
     empty: 'Menu is currently unavailable',
@@ -379,8 +376,7 @@ const ru: MarketingMessages = {
   dining: {
     title: 'Меню еды и напитков',
     subtitle: 'Попробуйте наши лучшие блюда и фирменные напитки',
-    restaurant: { title: 'Фирменные блюда', subtitle: 'Наш изысканный ресторан предлагает лучшие блюда на гриле и морепродукты' },
-    cafe: { title: 'Меню кафе', subtitle: 'Пицца, паста, сэндвичи и напитки — прямо на пляже' },
+    outletSubtitle: 'Ознакомьтесь с полным меню',
     loading: 'Загрузка меню...',
     error: 'Не удалось загрузить меню, попробуйте позже',
     empty: 'Меню временно недоступно',
@@ -483,8 +479,7 @@ const it: MarketingMessages = {
   dining: {
     title: 'Menu Cibo e Bevande',
     subtitle: 'Assapora i nostri piatti migliori e le bevande esclusive',
-    restaurant: { title: 'Piatti Signature', subtitle: 'Il nostro ristorante raffinato serve i migliori piatti alla griglia e di mare' },
-    cafe: { title: 'Menu del Café', subtitle: 'Pizza, pasta, panini e bevande — proprio sulla spiaggia' },
+    outletSubtitle: 'Scopri il nostro menu completo',
     loading: 'Caricamento del menu...',
     error: 'Impossibile caricare il menu al momento, riprova più tardi',
     empty: 'Il menu non è al momento disponibile',
