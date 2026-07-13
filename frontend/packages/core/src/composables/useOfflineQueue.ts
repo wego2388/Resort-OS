@@ -20,34 +20,54 @@
  * - نفس /beach/sell (مش endpoint /sync منفصل) بيقبل local_id اختياري
  *   للـ idempotency — لو نفس local_id اتبعت تاني بيرجع نفس المعاملة القديمة
  *   بدل ما يعمل بيع جديد (راجع beach.services.sell_ticket).
+ *
+ * DINING_CUTOVER_PLAN.md Batch 1: 'dining' مضاف بنفس عقد restaurant/cafe
+ * بالظبط (POST مباشر + /sync بعقد OrderSyncResponse مطابق) — الفرق
+ * الوحيد إن مسار dining outlet-scoped (`/dining/outlets/{outlet_id}/orders`)
+ * بدل مسار مسطّح، فـ createPath/syncPath بقوا دوال بتاخد outletId اختياري
+ * بدل نص ثابت (restaurant/cafe/beach بيتجاهلوه). outletId بيتخزّن مع كل
+ * طلب معلّق نفسه — مش قيمة عامة واحدة للطابور كله — عشان لو الكاشير غيّر
+ * المنفذ المختار وهو offline، كل طلب يتزامن على المنفذ اللي اتعمل بيه فعليًا.
  */
 import { ref, onMounted, onUnmounted } from 'vue'
 import { openDB, type IDBPDatabase } from 'idb'
 import { api } from '../api/client'
 
 const DB_NAME = 'resort-os-offline'
-// لسه v2 — إضافة 'beach' كـ قيمة تالتة ممكنة لحقل module نص عادي (مش enum
-// حقيقي جوه IndexedDB) مش تغيير في شكل الـ stores/indices نفسها، فمفيش
+// لسه v2 — إضافة 'beach'/'dining' كـ قيم تالتة/رابعة ممكنة لحقل module نص
+// عادي (مش enum حقيقي جوه IndexedDB)، وoutletId عمود إضافي اختياري على
+// نفس الـ record — ولا واحد فيهم يغيّر شكل الـ stores/indices نفسها، فمفيش
 // داعي لأي DB_VERSION bump أو upgrade handler جديد.
 const DB_VERSION = 2
 const STORE_PENDING = 'pending_orders'
 const STORE_SYNC_LOG = 'sync_log'
 
-export type OfflineQueueModule = 'restaurant' | 'cafe' | 'beach'
+export type OfflineQueueModule = 'restaurant' | 'cafe' | 'beach' | 'dining'
 
-// كل module وطريقة الـ endpoint بتاعته: restaurant/cafe عندهم "order" حقيقي
-// (POST مباشر + /sync منفصل بعقد OrderSyncResponse)، beach عنده بيع فردي
-// بس (نفس /sell للاتنين، idempotency عبر local_id في الجسم نفسه).
-const MODULE_CONFIG: Record<OfflineQueueModule, { createPath: string; syncPath: string; hasOrderSync: boolean }> = {
-  restaurant: { createPath: 'restaurant/orders', syncPath: 'restaurant/orders/sync', hasOrderSync: true },
-  cafe:       { createPath: 'cafe/orders',       syncPath: 'cafe/orders/sync',       hasOrderSync: true },
-  beach:      { createPath: 'beach/sell',        syncPath: 'beach/sell',             hasOrderSync: false },
+// كل module وطريقة الـ endpoint بتاعته: restaurant/cafe/dining عندهم "order"
+// حقيقي (POST مباشر + /sync منفصل بعقد OrderSyncResponse)، beach عنده بيع
+// فردي بس (نفس /sell للاتنين، idempotency عبر local_id في الجسم نفسه).
+// دوال بدل نصوص ثابتة عشان dining يقدر يحقن outlet_id جوه المسار.
+const MODULE_CONFIG: Record<OfflineQueueModule, {
+  createPath: (outletId?: number) => string
+  syncPath: (outletId?: number) => string
+  hasOrderSync: boolean
+}> = {
+  restaurant: { createPath: () => 'restaurant/orders', syncPath: () => 'restaurant/orders/sync', hasOrderSync: true },
+  cafe:       { createPath: () => 'cafe/orders',       syncPath: () => 'cafe/orders/sync',       hasOrderSync: true },
+  beach:      { createPath: () => 'beach/sell',        syncPath: () => 'beach/sell',             hasOrderSync: false },
+  dining:     {
+    createPath: (outletId) => `dining/outlets/${outletId}/orders`,
+    syncPath:   (outletId) => `dining/outlets/${outletId}/orders/sync`,
+    hasOrderSync: true,
+  },
 }
 
 export interface PendingOrder {
   localId: string
   branchId: number
   module: OfflineQueueModule   // #4: تمييز وجهة الـ sync
+  outletId?: number            // dining فقط — المنفذ اللي اتعمل فيه الطلب ده تحديدًا
   payload: Record<string, unknown>
   createdAt: string
 }
@@ -120,29 +140,31 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
     pendingCount.value = all.filter(o => (o.module ?? 'restaurant') === module).length
   }
 
-  async function queueOrder(branchId: number, payload: Record<string, unknown>): Promise<string> {
+  async function queueOrder(branchId: number, payload: Record<string, unknown>, outletId?: number): Promise<string> {
     const localId = crypto.randomUUID()
     const db = await getDb()
     await db.put(STORE_PENDING, {
-      localId, branchId, module, payload, createdAt: new Date().toISOString(),
+      localId, branchId, module, outletId, payload, createdAt: new Date().toISOString(),
     } satisfies PendingOrder)
     await refreshPendingCount()
     return localId
   }
 
   /** Submit now if online; transparently falls back to the offline queue
-   * on network failure. Returns the live order on success, or null if queued. */
-  async function submitOrder(branchId: number, payload: Record<string, unknown>) {
+   * on network failure. Returns the live order on success, or null if queued.
+   * outletId مطلوب فعليًا لـ module: 'dining' بس (مسار outlet-scoped) —
+   * الموديولات التانية بتتجاهله. */
+  async function submitOrder(branchId: number, payload: Record<string, unknown>, outletId?: number) {
     if (!navigator.onLine) {
-      await queueOrder(branchId, payload)
+      await queueOrder(branchId, payload, outletId)
       return null
     }
     try {
-      const { data } = await api.post(`/api/v1/${cfg.createPath}?branch_id=${branchId}`, payload)
+      const { data } = await api.post(`/api/v1/${cfg.createPath(outletId)}?branch_id=${branchId}`, payload)
       return data
     } catch (err) {
       if (isNetworkError(err)) {
-        await queueOrder(branchId, payload)
+        await queueOrder(branchId, payload, outletId)
         return null
       }
       throw err
@@ -166,7 +188,7 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
         if (!cfg.hasOrderSync) {
           try {
             await api.post(
-              `/api/v1/${cfg.syncPath}?branch_id=${order.branchId}`,
+              `/api/v1/${cfg.syncPath(order.outletId)}?branch_id=${order.branchId}`,
               { ...order.payload, local_id: order.localId },
             )
             await db.delete(STORE_PENDING, order.localId)
@@ -186,7 +208,7 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
         let response
         try {
           response = await api.post(
-            `/api/v1/${cfg.syncPath}?branch_id=${order.branchId}`,
+            `/api/v1/${cfg.syncPath(order.outletId)}?branch_id=${order.branchId}`,
             { local_id: order.localId, created_offline_at: order.createdAt, ...order.payload },
           )
         } catch (err) {

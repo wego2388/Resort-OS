@@ -1,30 +1,30 @@
 """
 tests/test_api/test_pos_full_cycle_http.py
-End-to-end HTTP-level order-to-payment cycle for restaurant + cafe POS —
-written during a QA pass that could not complete a live browser walkthrough
-(environment blocked interactive login this session). These tests exercise
-the exact same request shapes the fixed frontend views now send, end to end
-through real routing/permission dependencies, to compensate for the missing
-live verification:
+End-to-end HTTP-level order-to-payment cycle for the unified dining POS —
+written originally during a QA pass that could not complete a live browser
+walkthrough (restaurant/cafe at the time). These tests exercise the exact
+same request shapes the frontend POS (UnifiedPOSView.vue) sends, end to end
+through real routing/permission dependencies:
 
   create order → send to kitchen (KitchenTicket created, routed by station)
   → advance KDS ticket → complete payment (cashier+) → verify table freed +
   VAT/service-charge totals math (14% / 12%, per app/core/config.py defaults).
 
-Two real bugs found+fixed this session, exercised here:
-  1. CafePOSView.vue was posting {menu_item_id, unit_price, outlet_type,
-     payment_method} — none of which match CafeOrderCreate (needs
-     items[].item_id) — so every cafe order from the POS screen 422'd.
-     test_cafe_full_cycle_matches_fixed_frontend_payload uses the corrected
-     shape end to end.
+Two real bugs found+fixed originally in restaurant/cafe, still exercised
+here against the now-unified dining implementation:
+  1. The old CafePOSView.vue posted a payload shape that didn't match
+     CafeOrderCreate (needs items[].item_id, not menu_item_id/unit_price/
+     outlet_type/payment_method) — every cafe order from the POS screen
+     422'd. test_dining_full_cycle_matches_frontend_payload uses the
+     correct dining shape end to end (item_id, outlet_id).
   2. update_order_status allowed ANY waiter (role level 30) to transition an
      order straight to "paid" — a real financial action (folio charge,
-     revenue journal, inventory deduction) with no cashier-level gate, unlike
-     the equivalent void_order_item endpoint. Fixed to require cashier+ for
-     the "paid" transition specifically; covered by
-     TestOrderPaymentPermission in test_restaurant_http.py and
-     test_waiter_cannot_mark_order_paid in test_cafe_http.py, and exercised
-     again here as part of the full cycle.
+     revenue journal, inventory deduction) with no cashier-level gate.
+     Fixed to require cashier+ for the "paid" transition specifically;
+     exercised again here as part of the full cycle.
+
+راجع DINING_CUTOVER_PLAN.md Batch 6 — بورتت من restaurant/cafe (اللي
+اتحذفوا) لـ dining الموحّد.
 """
 from __future__ import annotations
 
@@ -43,36 +43,47 @@ def make_branch(db):
     return b
 
 
-def make_table(db, branch):
-    from app.modules.restaurant.models import DiningTable
-    t = DiningTable(branch_id=branch.id, table_number="F1", capacity=4, status="available")
+def make_outlet(db, branch, outlet_type="restaurant", revenue_account_code="4200"):
+    from app.modules.dining import services as dining_services
+    from app.modules.dining.schemas import OutletCreate
+    return dining_services.create_outlet(db, OutletCreate(
+        branch_id=branch.id, name=f"منفذ-{outlet_type}-{uuid.uuid4().hex[:6]}",
+        outlet_type=outlet_type, revenue_account_code=revenue_account_code,
+    ))
+
+
+def make_table(db, branch, outlet):
+    from app.modules.dining.models import VenueTable
+    t = VenueTable(branch_id=branch.id, outlet_id=outlet.id, table_number="F1", capacity=4, status="available")
     db.add(t)
     db.commit()
     return t
 
 
-class TestRestaurantFullCycle:
+class TestDiningFullCycle:
     def test_order_to_payment_cycle_with_real_vat_and_service_charge(
         self, client: TestClient, db, waiter_headers, cashier_headers,
     ):
-        from app.modules.restaurant.models import MenuItem
+        from app.modules.dining.models import DiningItem
 
         branch = make_branch(db)
-        table = make_table(db, branch)
-        fish = MenuItem(branch_id=branch.id, name="Grilled Sea Bass", price=Decimal("85.00"), station="grill")
-        pasta = MenuItem(branch_id=branch.id, name="Seafood Pasta", price=Decimal("75.00"), station="hot")
+        outlet = make_outlet(db, branch)
+        table = make_table(db, branch, outlet)
+        fish = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name="Grilled Sea Bass",
+                          price=Decimal("85.00"), station="grill")
+        pasta = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name="Seafood Pasta",
+                           price=Decimal("75.00"), station="hot")
         db.add_all([fish, pasta])
         db.commit()
 
         # 1) واحد ياخد الطلب (نادل)
         order = client.post(
-            "/api/v1/restaurant/orders",
-            params={"branch_id": branch.id},
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={
-                "table_id": table.id, "order_type": "dine_in", "guests_count": 2,
+                "outlet_id": outlet.id, "table_id": table.id, "order_type": "dine_in", "guests_count": 2,
                 "items": [
-                    {"menu_item_id": fish.id, "quantity": 1},
-                    {"menu_item_id": pasta.id, "quantity": 2},
+                    {"item_id": fish.id, "quantity": 1},
+                    {"item_id": pasta.id, "quantity": 2},
                 ],
             },
             headers=waiter_headers,
@@ -88,14 +99,14 @@ class TestRestaurantFullCycle:
 
         # 2) يتبعت للمطبخ — لازم تذكرتين منفصلتين (grill + hot)
         resp = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/status",
+            f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "in_kitchen"}, headers=waiter_headers,
         )
         assert resp.status_code == 200, resp.text
 
         tickets_resp = client.get(
-            "/api/v1/restaurant/kitchen/tickets",
-            params={"branch_id": branch.id, "module": "restaurant", "stations": "hot,grill,cold,dessert"},
+            "/api/v1/dining/kitchen/tickets",
+            params={"branch_id": branch.id, "outlet_id": outlet.id},
             headers=waiter_headers,
         )
         tickets = tickets_resp.json()
@@ -107,26 +118,26 @@ class TestRestaurantFullCycle:
             if ticket["order_id"] != order["id"]:
                 continue
             r1 = client.patch(
-                f"/api/v1/restaurant/kitchen/tickets/{ticket['id']}/status",
+                f"/api/v1/dining/kitchen/tickets/{ticket['id']}/status",
                 json={"status": "in_progress"}, headers=waiter_headers,
             )
             assert r1.status_code == 200
             r2 = client.patch(
-                f"/api/v1/restaurant/kitchen/tickets/{ticket['id']}/status",
+                f"/api/v1/dining/kitchen/tickets/{ticket['id']}/status",
                 json={"status": "done"}, headers=waiter_headers,
             )
             assert r2.status_code == 200
 
         # 4) نادل ملوش صلاحية يقفل الحساب
         denied = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/status",
+            f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "paid"}, headers=waiter_headers,
         )
         assert denied.status_code == 403
 
         # 5) الكاشير بيقفل الحساب فعليًا
         paid = client.patch(
-            f"/api/v1/restaurant/orders/{order['id']}/status",
+            f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "paid"}, headers=cashier_headers,
         )
         assert paid.status_code == 200, paid.text
@@ -135,51 +146,51 @@ class TestRestaurantFullCycle:
 
         # 6) الطاولة اترجعت متاحة
         tables_resp = client.get(
-            "/api/v1/restaurant/tables", params={"branch_id": branch.id}, headers=waiter_headers,
+            f"/api/v1/dining/outlets/{outlet.id}/tables", headers=waiter_headers,
         )
         found = next(t for t in tables_resp.json() if t["id"] == table.id)
         assert found["status"] == "available"
 
-
-class TestCafeFullCycle:
-    def test_cafe_full_cycle_matches_fixed_frontend_payload(
-        self, client: TestClient, db, fake_redis, waiter_headers, cashier_headers,
+    def test_dining_full_cycle_matches_frontend_payload(
+        self, client: TestClient, db, waiter_headers, cashier_headers,
     ):
-        """نفس الـ shape اللي CafePOSView.vue بيبعته دلوقتي بعد الإصلاح —
-        item_id (مش menu_item_id)، من غير outlet_type/payment_method/unit_price."""
-        from app.modules.cafe.models import CafeItem
+        """نفس الـ shape اللي UnifiedPOSView.vue بيبعته فعليًا —
+        item_id (مش menu_item_id)، outlet_id، من غير unit_price/payment_method."""
+        from app.modules.dining.models import DiningItem
 
         branch = make_branch(db)
-        pizza = CafeItem(branch_id=branch.id, name="Margherita", price=Decimal("220.00"), is_available=True)
+        outlet = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        pizza = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name="Margherita",
+                           price=Decimal("220.00"), is_available=True)
         db.add(pizza)
         db.commit()
 
         payload = {
-            "branch_id": branch.id,
+            "outlet_id": outlet.id,
             "order_type": "takeaway",
             "items": [{"item_id": pizza.id, "quantity": 2, "notes": None}],
         }
-        order = client.post("/api/v1/cafe/orders", json=payload, headers=waiter_headers).json()
+        order = client.post(f"/api/v1/dining/outlets/{outlet.id}/orders", json=payload, headers=waiter_headers).json()
         assert order["status"] == "open"
         subtotal = Decimal("220.00") * 2
         assert Decimal(str(order["subtotal"])) == subtotal
 
-        # in_kitchen (بار) — نفس اللي CafePOSView.submitOrder() بيعمله دلوقتي
+        # in_kitchen (بار) — نفس اللي UnifiedPOSView.submitOrder() بيعمله فعليًا
         r1 = client.patch(
-            f"/api/v1/cafe/orders/{order['id']}/status",
+            f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "in_kitchen"}, headers=waiter_headers,
         )
         assert r1.status_code == 200, r1.text
 
         # الدفع فوري عند الكاونتر — كاشير بس
         denied = client.patch(
-            f"/api/v1/cafe/orders/{order['id']}/status",
+            f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "paid"}, headers=waiter_headers,
         )
         assert denied.status_code == 403
 
         paid = client.patch(
-            f"/api/v1/cafe/orders/{order['id']}/status",
+            f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "paid"}, headers=cashier_headers,
         )
         assert paid.status_code == 200, paid.text

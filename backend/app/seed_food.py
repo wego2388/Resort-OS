@@ -217,12 +217,24 @@ def _seed_inventory_products_full(db: Session) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _seed_restaurant_recipes(db: Session) -> None:
-    """Recipe lines for all 44 restaurant menu items. Idempotent."""
-    from app.modules.restaurant.models import MenuItem, MenuItemRecipeLine
+    """Recipe lines for all 44 restaurant menu items. Idempotent.
+
+    DINING_CUTOVER_PLAN.md Batch 6 — dining.DiningItem/DiningItemRecipeLine
+    (outlet_type='restaurant') بدل restaurant.MenuItem/MenuItemRecipeLine
+    القديمين اللي اتحذفوا."""
+    from app.modules.core.models import Branch
+    from app.modules.dining.models import DiningItem, DiningItemRecipeLine, Outlet
     from app.modules.inventory.models import Product
 
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+    outlet = db.query(Outlet).filter(Outlet.branch_id == branch.id, Outlet.outlet_type == "restaurant").first()
+    if not outlet:
+        return
+
     prods = {p.sku: p.id for p in db.query(Product).all()}
-    items = {i.name: i.id for i in db.query(MenuItem).all()}
+    items = {i.name: i.id for i in db.query(DiningItem).filter(DiningItem.outlet_id == outlet.id).all()}
 
     def pid(sku: str) -> int:
         v = prods.get(sku)
@@ -381,11 +393,11 @@ def _seed_restaurant_recipes(db: Session) -> None:
         item_id = iid(item_name)
         if item_id is None:
             continue
-        db.query(MenuItemRecipeLine).filter(MenuItemRecipeLine.menu_item_id == item_id).delete()
+        db.query(DiningItemRecipeLine).filter(DiningItemRecipeLine.item_id == item_id).delete()
         for sku, qty in lines:
             try:
-                db.add(MenuItemRecipeLine(menu_item_id=item_id, product_id=pid(sku),
-                                         quantity_per_unit=qty))
+                db.add(DiningItemRecipeLine(item_id=item_id, product_id=pid(sku),
+                                            quantity_per_unit=qty))
             except KeyError as e:
                 print(f"    WARN: {e}")
         seeded += 1
@@ -400,12 +412,24 @@ def _seed_restaurant_recipes(db: Session) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _seed_cafe_recipes(db: Session) -> None:
-    """Recipe lines for all 60 cafe items. Idempotent."""
-    from app.modules.cafe.models import CafeItem, CafeItemRecipeLine
+    """Recipe lines for all 60 cafe items. Idempotent.
+
+    DINING_CUTOVER_PLAN.md Batch 6 — dining.DiningItem/DiningItemRecipeLine
+    (outlet_type='cafe') بدل cafe.CafeItem/CafeItemRecipeLine القديمين
+    اللي اتحذفوا."""
+    from app.modules.core.models import Branch
+    from app.modules.dining.models import DiningItem, DiningItemRecipeLine, Outlet
     from app.modules.inventory.models import Product
 
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+    outlet = db.query(Outlet).filter(Outlet.branch_id == branch.id, Outlet.outlet_type == "cafe").first()
+    if not outlet:
+        return
+
     prods = {p.sku: p.id for p in db.query(Product).all()}
-    items = {i.name: i.id for i in db.query(CafeItem).all()}
+    items = {i.name: i.id for i in db.query(DiningItem).filter(DiningItem.outlet_id == outlet.id).all()}
 
     def pid(sku: str) -> int:
         v = prods.get(sku)
@@ -531,11 +555,11 @@ def _seed_cafe_recipes(db: Session) -> None:
         item_id = iid(item_name)
         if item_id is None:
             continue
-        db.query(CafeItemRecipeLine).filter(CafeItemRecipeLine.cafe_item_id == item_id).delete()
+        db.query(DiningItemRecipeLine).filter(DiningItemRecipeLine.item_id == item_id).delete()
         for sku, qty in lines:
             try:
-                db.add(CafeItemRecipeLine(cafe_item_id=item_id, product_id=pid(sku),
-                                          quantity_per_unit=qty))
+                db.add(DiningItemRecipeLine(item_id=item_id, product_id=pid(sku),
+                                            quantity_per_unit=qty))
             except KeyError as e:
                 print(f"    WARN: {e}")
         seeded += 1

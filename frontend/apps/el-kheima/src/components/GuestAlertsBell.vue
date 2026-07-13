@@ -33,12 +33,17 @@ const alerts = ref<GuestAlert[]>([])
 const panelOpen = ref(false)
 const updatingId = ref<number | null>(null)
 
+// dining_table (DINING_CUTOVER_PLAN.md Batch 6) هو context_type الوحيد
+// المُصدَر دلوقتي من apps/public's OrderView.vue — restaurant_table/
+// cafe_table باقيين هنا بس عشان أي تنبيه تاريخي قديم لسه في الداتابيز
+// يفضل يترجم صح، مش لأنهم بيتصدروا تاني.
 const CONTEXT_LABEL: Record<string, string> = {
-  restaurant_table: 'طاولة مطعم',
-  cafe_table:       'طاولة كافيه',
-  beach_location:   'موقع شاطئ',
-  room:             'غرفة',
-  other:            'أخرى',
+  dining_table:      'طاولة',
+  restaurant_table:  'طاولة مطعم',
+  cafe_table:        'طاولة كافيه',
+  beach_location:    'موقع شاطئ',
+  room:               'غرفة',
+  other:              'أخرى',
 }
 
 const ALERT_UI: Record<string, { icon: string; label: string }> = {

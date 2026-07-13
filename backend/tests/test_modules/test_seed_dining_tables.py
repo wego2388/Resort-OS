@@ -6,6 +6,10 @@ never seeded at all (0 rows), so a waiter opening the "Tables" screen always
 saw an empty state ("لا توجد طاولات مسجّلة لهذا الفرع") and could never place
 a real dine_in order tied to an actual table — the exact same class of bug as
 the previously-empty `rooms` table (PMS).
+
+راجع DINING_CUTOVER_PLAN.md Batch 6 — _seed_dining_tables بقى بيزرع
+dining.models.VenueTable (بـ outlet_id مطعم/كافيه) بدل restaurant.DiningTable/
+cafe.CafeTable القديمين اللي اتحذفوا.
 """
 from __future__ import annotations
 
@@ -13,9 +17,8 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from app.modules.cafe.models import CafeTable
 from app.modules.core.models import Branch
-from app.modules.restaurant.models import DiningTable
+from app.modules.dining.models import Outlet, VenueTable
 from app.seed import _seed_dining_tables
 
 
@@ -30,13 +33,20 @@ def _make_branch(db: Session) -> Branch:
     return b
 
 
+def _tables_for(db: Session, branch_id: int, outlet_type: str) -> list[VenueTable]:
+    outlet = db.query(Outlet).filter(Outlet.branch_id == branch_id, Outlet.outlet_type == outlet_type).first()
+    if not outlet:
+        return []
+    return db.query(VenueTable).filter(VenueTable.outlet_id == outlet.id).all()
+
+
 def test_seed_dining_tables_creates_restaurant_and_cafe_tables(db: Session):
     branch = _make_branch(db)
     _seed_dining_tables(db, branch_id=branch.id)
     db.commit()
 
-    restaurant_tables = db.query(DiningTable).filter(DiningTable.branch_id == branch.id).all()
-    cafe_tables = db.query(CafeTable).filter(CafeTable.branch_id == branch.id).all()
+    restaurant_tables = _tables_for(db, branch.id, "restaurant")
+    cafe_tables = _tables_for(db, branch.id, "cafe")
 
     assert len(restaurant_tables) == 12
     assert len(cafe_tables) == 8
@@ -51,5 +61,5 @@ def test_seed_dining_tables_is_idempotent(db: Session):
     _seed_dining_tables(db, branch_id=branch.id)  # running twice must not duplicate rows
     db.commit()
 
-    assert db.query(DiningTable).filter(DiningTable.branch_id == branch.id).count() == 12
-    assert db.query(CafeTable).filter(CafeTable.branch_id == branch.id).count() == 8
+    assert len(_tables_for(db, branch.id, "restaurant")) == 12
+    assert len(_tables_for(db, branch.id, "cafe")) == 8

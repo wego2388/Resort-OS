@@ -22,10 +22,12 @@ declare module 'vue-router' {
 export function homeRouteFor(role: string): string {
   switch (role) {
     case 'waiter':
-      return '/waiter/tables'
+      // DINING_CUTOVER_PLAN.md Batch 4 — UnifiedPOSView بديل TablesView/
+      // OrderView (كانوا restaurant-only بالكامل، بدون أي إصدار dining).
+      return '/pos/dining'
     case 'chef':
     case 'kitchen':
-      return '/kds/kitchen'
+      return '/kds/dining'
     case 'cashier':
     case 'receptionist':
       return '/pos/beach'
@@ -84,16 +86,17 @@ const routes: RouteRecordRaw[] = [
       { path: '', redirect: '/pos/beach' },
       { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue') },
       { path: 'beach-map', name: 'pos-beach-map', component: () => import('../views/pos/BeachMapView.vue') },
-      { path: 'restaurant', name: 'pos-restaurant', component: () => import('../views/pos/RestaurantPOSView.vue') },
-      { path: 'cafe', name: 'pos-cafe', component: () => import('../views/pos/CafePOSView.vue') },
+      // DINING_CUTOVER_PLAN.md Batch 4 — dining هو الـ POS الافتراضي دلوقتي
+      // (مش manager-only preview بقى). requiredRole مخفّض لـ 'waiter' هنا
+      // عشان يفوّت بوابة الأب (cashier) — نادل يقدر ياخد طلبات ويبعتها
+      // للمطبخ، لكن مش يقفل الحساب (paid يتطلب get_cashier_user في الباك
+      // إند نفسه، مستقل تمامًا عن الـ route gate ده). الروترات القديمة
+      // (restaurant/cafe) اتسابت كـ redirect بدل حذف فوري — مفيش رابط حي
+      // بيوصلها تاني، لكن أي bookmark قديم لسه بيشتغل صح.
+      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'waiter' } },
+      { path: 'restaurant', redirect: '/pos/dining' },
+      { path: 'cafe', redirect: '/pos/dining' },
       { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue') },
-      // Unified dining POS (Batch B, additive — DINING_CUTOVER_PLAN.md). NOT
-      // in FieldLayout's cashier-facing nav list (every /pos/* item there is
-      // visible to every cashier with zero role filter) — requiredRole
-      // overridden to 'manager' here so a waiter/cashier's daily workflow is
-      // literally unchanged by this route existing; reachable only from the
-      // manager-only "Dining موحّد (تجريبي)" nav section in BackOfficeLayout.
-      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'manager' } },
     ],
   },
 
@@ -103,16 +106,19 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../layouts/KioskLayout.vue'),
     meta: { requiresAuth: true, requiredRole: 'waiter' },
     children: [
-      { path: '', redirect: '/kds/kitchen' },
-      { path: 'kitchen', name: 'kds-kitchen', component: () => import('../views/kds/KitchenDisplayView.vue') },
-      { path: 'bar',     name: 'kds-bar',     component: () => import('../views/kds/BarDisplayView.vue') },
-      // شاشة الكافيه — نفس BarDisplayView بالظبط (البار يستقبل كل طلبات الكافيه
-      // + أصناف البار من المطعم)، route منفصل بس للتوجيه المباشر من QR أو shortcut
-      { path: 'cafe',    name: 'kds-cafe',    component: () => import('../views/kds/BarDisplayView.vue') },
-      // Unified dining KDS (Batch B, additive) — same manager-only override
-      // rationale as /pos/dining above; KioskLayout's nav array (kitchen/bar)
-      // is untouched so kitchen/bar staff see no new tab.
-      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue'), meta: { requiredRole: 'manager' } },
+      { path: '', redirect: '/kds/dining' },
+      // DINING_CUTOVER_PLAN.md Batch 4 — شاشة موحّدة واحدة بدل station-specific
+      // منفصلة (kitchen/bar/cafe) — بتغطي كل المحطات بتابات فلترة داخلية
+      // (راجع DiningKDSView.vue's STATIONS)، نفس رؤية "نفس المطبخ لكل الـ
+      // outlets" الموثّقة في dining.models.DiningKDSScreen. requiredRole
+      // بيرث من الأب (waiter، level 30) — نفس مستوى kitchen/chef بالظبط.
+      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue') },
+      // ?stations=... يخلي جهاز مثبّت فعليًا في المطبخ/البار يفتح على
+      // فلتره الأصلي بالظبط (راجع DiningKDSView.vue's initialStationFilter)
+      // بدل ما يفضل يبدأ بـ "كل المحطات" كل مرة.
+      { path: 'kitchen', redirect: () => ({ path: '/kds/dining', query: { stations: 'hot,grill,cold,dessert' } }) },
+      { path: 'bar',     redirect: () => ({ path: '/kds/dining', query: { stations: 'bar' } }) },
+      { path: 'cafe',    redirect: () => ({ path: '/kds/dining', query: { stations: 'bar' } }) },
     ],
   },
 
@@ -158,30 +164,36 @@ const routes: RouteRecordRaw[] = [
       { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRole: 'supervisor', title: 'الصيانة' } },
       { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRole: 'supervisor', title: 'الإيجارات' } },
       { path: 'settings',    name: 'admin-settings',    component: () => import('../views/admin/SettingsView.vue'),    meta: { requiredRole: 'admin', title: 'الإعدادات' } },
-      { path: 'menu',        name: 'admin-menu',        component: () => import('../views/admin/MenuView.vue'),             meta: { title: 'إدارة قائمة المطعم' } },
-      { path: 'cafe-menu',   name: 'admin-cafe-menu',   component: () => import('../views/admin/CafeMenuView.vue'),         meta: { title: 'إدارة قائمة الكافيه' } },
-      { path: 'tables',      name: 'admin-tables',      component: () => import('../views/admin/TablesAdminView.vue'),       meta: { title: 'إدارة الطاولات' } },
-      { path: 'cafe-sales',  name: 'admin-cafe-sales',  component: () => import('../views/admin/CafeSalesDashboardView.vue'), meta: { title: 'مبيعات الكافيه' } },
       { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { title: 'QR Codes' } },
-      // Unified dining module admin (Batch B, additive — DINING_CUTOVER_PLAN.md).
-      // Not a replacement for admin-menu/admin-cafe-menu/admin-tables above,
-      // which stay untouched and remain the live source of truth.
-      { path: 'dining-menu', name: 'admin-dining-menu', component: () => import('../views/admin/DiningMenuView.vue'),        meta: { title: 'إدارة الدايننج الموحّدة' } },
+      // DINING_CUTOVER_PLAN.md Batch 4 — dining-menu هو الافتراضي دلوقتي،
+      // بيغطي منافذ/فئات/أصناف/مجموعات إضافات/طاولات المطعم والكافيه معًا
+      // (راجع DiningMenuView.vue). menu/cafe-menu/tables القدام باقيين كـ
+      // redirect — cafe-sales (تقرير مبيعات cafe.reports/sales) اتحول لـ
+      // /admin/analytics لحد ما يتعمل شاشة تقرير مبيعات dining مخصصة (فجوة
+      // موثّقة، راجع تقرير الـ cutover).
+      { path: 'dining-menu', name: 'admin-dining-menu', component: () => import('../views/admin/DiningMenuView.vue'),        meta: { title: 'إدارة الدايننج' } },
+      { path: 'menu',        redirect: '/admin/dining-menu' },
+      { path: 'cafe-menu',   redirect: '/admin/dining-menu' },
+      { path: 'tables',      redirect: '/admin/dining-menu' },
+      { path: 'cafe-sales',  redirect: '/admin/analytics' },
       { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
     ],
   },
 
-  // ── /waiter — FieldLayout (lightweight header, on-floor order-taking) ──
+  // ── /waiter — DINING_CUTOVER_PLAN.md Batch 4: TablesView/OrderView/
+  // TablesMapView كانوا restaurant-only بالكامل (كل استدعاء API فيهم على
+  // /api/v1/restaurant/...، بدون أي outlet-awareness) من غير أي إصدار
+  // dining مقابل. UnifiedPOSView بيغطي نفس المهمة (dine_in بخريطة طاولات
+  // حقيقية مجمّعة بالقسم) على الـ API الموحّد — redirect بدل إعادة كتابة
+  // 3 شاشات لنفس القدرة المتاحة فعليًا في /pos/dining.
   {
     path: '/waiter',
-    component: () => import('../layouts/FieldLayout.vue'),
-    meta: { requiresAuth: true, requiredRole: 'waiter' },
     children: [
-      { path: '', redirect: '/waiter/tables' },
-      { path: 'tables',     name: 'waiter-tables',     component: () => import('../views/waiter/TablesView.vue') },
-      { path: 'tables-map', name: 'waiter-tables-map', component: () => import('../views/waiter/TablesMapView.vue') },
-      { path: 'order/:tableId', name: 'waiter-order-table', component: () => import('../views/waiter/OrderView.vue'), props: true },
-      { path: 'order', name: 'waiter-order', component: () => import('../views/waiter/OrderView.vue') },
+      { path: '', redirect: '/pos/dining' },
+      { path: 'tables', redirect: '/pos/dining' },
+      { path: 'tables-map', redirect: '/pos/dining' },
+      { path: 'order/:tableId', redirect: '/pos/dining' },
+      { path: 'order', redirect: '/pos/dining' },
     ],
   },
 

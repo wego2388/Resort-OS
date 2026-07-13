@@ -12,11 +12,10 @@
  * "same KDS regardless of outlet" promise the dining merge exists for
  * (docstring on dining.models.DiningKDSScreen).
  *
- * Deliberately deferred for this pass: per-item bump (dining's router has
- * no PATCH .../items/{id}/status endpoint yet, unlike restaurant/cafe's
- * KitchenDisplayView — only whole-ticket pending→in_progress→done is
- * available today). Adding item-level status is a real, scoped backend gap
- * for a later pass, not something silently faked here.
+ * Per-item bump (tap any item to confirm it individually, mirroring
+ * restaurant/cafe's KitchenDisplayView — DINING_CUTOVER_PLAN.md Batch 1
+ * parity gap, closed via PATCH /dining/orders/{order_id}/items/{item_id}/status)
+ * alongside whole-ticket pending→in_progress→done confirmation.
  *
  * Same dark full-screen kiosk visual language as the existing kds/kitchen
  * and kds/bar screens (KitchenDisplayView.vue/BarDisplayView.vue) rather
@@ -26,19 +25,35 @@
  * introducing a visual mismatch on a wall-mounted kitchen display.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { api, useResortWebSocket, parseApiTimestamp, ENDPOINTS } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
 
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const toast = useToast()
+const route = useRoute()
 
 type TicketStatus = 'pending' | 'in_progress' | 'done'
-interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null }
+type ItemStatus = 'pending' | 'in_kitchen' | 'ready' | 'served' | 'cancelled'
+interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null; status?: ItemStatus }
 interface Ticket {
   id: number; order_id: number; outlet_id: number; station: string
   items_snapshot: TicketItem[]; status: TicketStatus; created_at: string
 }
+const ITEM_DONE_STATUSES: ItemStatus[] = ['ready', 'served']
 
+// راجع DINING_CUTOVER_PLAN.md Batch 4 — القديم كان عنده شاشتين فعليًا مركّبتين
+// في أماكن مختلفة (KitchenDisplayView = hot+grill+cold+dessert مجمّعين،
+// BarDisplayView = bar بس). موحّدين هنا في شاشة واحدة بمجموعات فلترة سريعة
+// (بدل شاشتين منفصلتين)، زائد فلتر محطة مفردة لتحكّم أدق لو احتاجه حد.
+// ?stations=hot,grill,cold,dessert في الـ URL بيحدد الفلتر الافتراضي وقت
+// الفتح (راجع router/index.ts's /kds/kitchen و/kds/bar redirects) — عشان
+// جهاز مثبّت فعليًا في المطبخ يفضل يفتح على تذاكر المطبخ بس زي الأول بالظبط.
+const STATION_GROUPS: { val: string[] | null; label: string }[] = [
+  { val: null, label: 'كل المحطات' },
+  { val: ['hot', 'grill', 'cold', 'dessert'], label: '🍳 المطبخ' },
+  { val: ['bar'], label: '🍹 البار' },
+]
 const STATIONS = [
   { val: null, label: 'كل المحطات' },
   { val: 'hot', label: '🔥 ساخن' },
@@ -48,8 +63,14 @@ const STATIONS = [
   { val: 'dessert', label: '🍰 حلويات' },
 ]
 
+function initialStationFilter(): string[] | null {
+  const q = route.query.stations
+  const raw = Array.isArray(q) ? q[0] : q
+  return raw ? raw.split(',').map(s => s.trim()).filter(Boolean) : null
+}
+
 const tickets = ref<Ticket[]>([])
-const stationFilter = ref<string | null>(null)
+const stationFilter = ref<string[] | null>(initialStationFilter())
 const now = ref(new Date())
 const isConnected = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
@@ -60,7 +81,11 @@ const { status: wsStatus, onMessage } = useResortWebSocket(`${wsProtocol}//${loc
 onMessage((data: any) => { if (data?.type === 'tickets_updated') fetchTickets() })
 
 const filteredTickets = computed(() =>
-  stationFilter.value ? tickets.value.filter(t => t.station === stationFilter.value) : tickets.value)
+  stationFilter.value ? tickets.value.filter(t => stationFilter.value!.includes(t.station)) : tickets.value)
+function isActiveFilter(val: string[] | null) {
+  if (val === null) return stationFilter.value === null
+  return !!stationFilter.value && stationFilter.value.length === val.length && val.every(s => stationFilter.value!.includes(s))
+}
 
 function minutesElapsed(createdAt: string) {
   return Math.floor((now.value.getTime() - parseApiTimestamp(createdAt).getTime()) / 60000)
@@ -92,6 +117,21 @@ async function fetchTickets() {
     isConnected.value = true
   } catch {
     isConnected.value = false
+  }
+}
+
+// تأكيد صنف واحد جوه تذكرة — بدل الاضطرار لتأكيد التذكرة كلها حتى لو صنف
+// واحد بس خلص فعليًا. تاب واحد = pending/in_kitchen→ready، تاب تاني على
+// صنف جاهز بالفعل = رجوع لـ pending (تصحيح غلطة). السيرفر هو اللي بيقرر
+// تلقائيًا لو التذكرة كلها بقت 'done' — راجع KitchenDisplayView.vue::bumpItem
+// (نفس النمط بالظبط).
+async function bumpItem(ticket: Ticket, item: TicketItem) {
+  const next: ItemStatus = ITEM_DONE_STATUSES.includes(item.status ?? 'pending') ? 'pending' : 'ready'
+  try {
+    await api.patch(ENDPOINTS.dining.orderItemStatus(ticket.order_id, item.order_item_id), { status: next })
+    await fetchTickets()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة الصنف — حاول تاني')
   }
 }
 
@@ -141,15 +181,26 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
       <span class="text-2xl font-mono font-bold text-amber-300">{{ currentTime }}</span>
     </header>
 
-    <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 flex gap-2 flex-wrap">
+    <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 flex flex-wrap items-center gap-2">
       <button
-        v-for="s in STATIONS"
-        :key="String(s.val)"
+        v-for="g in STATION_GROUPS"
+        :key="'group-' + String(g.val)"
         type="button"
-        @click="stationFilter = s.val"
+        @click="stationFilter = g.val"
         :class="[
-          'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors min-h-[36px]',
-          stationFilter === s.val ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600',
+          'px-3 py-1.5 rounded-lg text-sm font-bold transition-colors min-h-[36px]',
+          isActiveFilter(g.val) ? 'bg-blue-600 text-white' : 'bg-slate-700 text-slate-300 hover:bg-slate-600',
+        ]"
+      >{{ g.label }}</button>
+      <span class="w-px h-5 bg-slate-600 mx-1" />
+      <button
+        v-for="s in STATIONS.filter(s => s.val !== null)"
+        :key="'single-' + s.val"
+        type="button"
+        @click="stationFilter = [s.val as string]"
+        :class="[
+          'px-2.5 py-1 rounded-lg text-xs font-medium transition-colors min-h-[32px]',
+          isActiveFilter([s.val as string]) ? 'bg-blue-600/70 text-white' : 'bg-slate-700/60 text-slate-400 hover:bg-slate-600',
         ]"
       >{{ s.label }}</button>
     </div>
@@ -180,10 +231,18 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
 
           <ul class="flex-1 space-y-1.5 mb-3">
             <li v-for="item in ticket.items_snapshot" :key="item.order_item_id" class="text-sm">
-              <div class="flex items-start gap-2 px-1.5 py-1">
+              <button
+                type="button"
+                @click="bumpItem(ticket, item)"
+                :class="[
+                  'w-full text-right rounded-lg px-1.5 py-1 flex items-start gap-2 transition-colors',
+                  ITEM_DONE_STATUSES.includes(item.status ?? 'pending') ? 'bg-green-800/40' : 'hover:bg-white/10 active:bg-white/20',
+                ]"
+              >
                 <span class="bg-white/20 text-white rounded px-1.5 py-0.5 text-xs font-bold flex-shrink-0">{{ item.quantity }}</span>
-                <span class="leading-tight flex-1">{{ item.name }}</span>
-              </div>
+                <span :class="['leading-tight flex-1', ITEM_DONE_STATUSES.includes(item.status ?? 'pending') && 'line-through text-slate-400']">{{ item.name }}</span>
+                <span v-if="ITEM_DONE_STATUSES.includes(item.status ?? 'pending')" class="text-green-400 text-xs flex-shrink-0">✓</span>
+              </button>
               <p v-if="item.notes" class="text-xs text-amber-300 mr-6 mt-0.5">⚠️ {{ item.notes }}</p>
             </li>
           </ul>

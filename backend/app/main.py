@@ -25,8 +25,10 @@ logger = logging.getLogger(__name__)
 
 # كل الموديولات دايمًا مفعّلة — مفيش نظام تفعيل/تعطيل. القايمة هنا بس لتحديد
 # ترتيب الـ router registration، مش لأي قرار وصول.
+# DINING_CUTOVER_PLAN.md Batch 6 — restaurant/cafe اتشالوا (dining هو
+# المصدر الوحيد للحقيقة دلوقتي، راجع CLAUDE.md §18 للتاريخ الكامل).
 _MODULE_KEYS = (
-    "core", "finance", "inventory", "hr", "restaurant", "cafe", "dining", "pms",
+    "core", "finance", "inventory", "hr", "dining", "pms",
     "timeshare", "beach", "maintenance", "crm", "analytics", "hub", "leasing",
 )
 

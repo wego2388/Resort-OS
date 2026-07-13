@@ -45,37 +45,9 @@ export const ENDPOINTS = {
     locationCheckin: (id: number) => `/api/v1/beach/locations/${id}/checkin`,
     locationCheckout: (id: number) => `/api/v1/beach/locations/${id}/checkout`,
   },
-  restaurant: {
-    tables: '/api/v1/restaurant/tables',
-    menu: '/api/v1/restaurant/menu/items',
-    categories: '/api/v1/restaurant/menu/categories',
-    orders: '/api/v1/restaurant/orders',
-    heldOrders: '/api/v1/restaurant/orders/held',
-    orderSync: '/api/v1/restaurant/orders/sync',
-    orderItems: (orderId: number) => `/api/v1/restaurant/orders/${orderId}/items`,
-    orderStatus: (orderId: number) => `/api/v1/restaurant/orders/${orderId}/status`,
-    orderDiscount: (orderId: number) => `/api/v1/restaurant/orders/${orderId}/discount`,
-    receipt: (orderId: number) => `/api/v1/restaurant/orders/${orderId}/receipt`,
-    kitchenTickets: '/api/v1/restaurant/kitchen/tickets',
-    ticketStatus: (ticketId: number) => `/api/v1/restaurant/kitchen/tickets/${ticketId}/status`,
-    foodCostReport: '/api/v1/restaurant/reports/food-cost',
-  },
-  cafe: {
-    menu: '/api/v1/cafe/items',
-    categories: '/api/v1/cafe/categories',
-    tables: '/api/v1/cafe/tables',
-    orders: '/api/v1/cafe/orders',
-    heldOrders: '/api/v1/cafe/orders/held',
-    orderItems: (orderId: number) => `/api/v1/cafe/orders/${orderId}/items`,
-    orderStatus: (orderId: number) => `/api/v1/cafe/orders/${orderId}/status`,
-    orderDiscount: (orderId: number) => `/api/v1/cafe/orders/${orderId}/discount`,
-    receipt: (orderId: number) => `/api/v1/cafe/orders/${orderId}/receipt`,
-    salesReport: '/api/v1/cafe/reports/sales',
-    foodCostReport: '/api/v1/cafe/reports/food-cost',
-  },
-  // Unified dining module (Batch A backend, 2026-07-12) — additive, parallel
-  // to restaurant/cafe above (DINING_CUTOVER_PLAN.md). outlet_id-scoped
-  // paths mirror app/modules/dining/api/router.py exactly.
+  // Unified dining module — replaced the old separate restaurant:/cafe:
+  // blocks entirely (DINING_CUTOVER_PLAN.md Batch 6, 2026-07-13). outlet_id-
+  // scoped paths mirror app/modules/dining/api/router.py exactly.
   dining: {
     outlets: '/api/v1/dining/outlets',
     outlet: (outletId: number) => `/api/v1/dining/outlets/${outletId}`,
@@ -98,7 +70,9 @@ export const ENDPOINTS = {
     orderItems: (orderId: number) => `/api/v1/dining/orders/${orderId}/items`,
     orderItemVoid: (orderId: number, itemId: number) => `/api/v1/dining/orders/${orderId}/items/${itemId}/void`,
     orderItemRefund: (orderId: number, itemId: number) => `/api/v1/dining/orders/${orderId}/items/${itemId}/refund`,
+    orderItemStatus: (orderId: number, itemId: number) => `/api/v1/dining/orders/${orderId}/items/${itemId}/status`,
     orderStatus: (orderId: number) => `/api/v1/dining/orders/${orderId}/status`,
+    orderTransfer: (orderId: number) => `/api/v1/dining/orders/${orderId}/transfer`,
     orderDiscount: (orderId: number) => `/api/v1/dining/orders/${orderId}/discount`,
     receipt: (orderId: number) => `/api/v1/dining/orders/${orderId}/receipt`,
     kitchenTickets: '/api/v1/dining/kitchen/tickets',

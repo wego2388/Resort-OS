@@ -637,6 +637,47 @@ def list_folio_charges_by_type_with_currency(
     ]
 
 
+def list_folio_charges_by_outlet_family_with_currency(
+    db: Session, branch_id: int, outlet_type: str, date_from: date, date_to: date,
+) -> list[tuple[Decimal, str, date]]:
+    """راجع list_folio_charges_by_type_with_currency — نفس الفكرة، لكن بيغطي
+    فترة الانتقال بين restaurant/cafe (لسه المصدر الحي للطلبات الفعلية حتى
+    Batch 4 من DINING_CUTOVER_PLAN.md) وdining (المصدر الجديد، D-05):
+    charge_type="restaurant"/"cafe" القديمة *زائد* أي charge_type="dining"
+    جديدة اللي outlet بتاعها (عبر ref_order_id → dining_orders.outlet_id →
+    dining_outlets.outlet_type) بيطابق outlet_type المطلوب. راجع
+    DINING_CUTOVER_PLAN.md §ب بند 2 — "أي كود finance بيفلتر على charge_type
+    لازم يشمل dining كمان أثناء فترة انتقالية". بدون ده، أي طلب حقيقي عبر
+    /dining مباشرة كان هيختفي من تقرير مركز التكلفة تمامًا — إيراد غير مرئي،
+    مش مجرد بيانات ناقصة."""
+    from sqlalchemy import and_, func, or_  # noqa: PLC0415
+    from app.modules.dining.models import DiningOrder, Outlet  # noqa: PLC0415
+
+    rows = (
+        db.query(FolioCharge.amount, Folio.currency, FolioCharge.posted_at)
+        .join(Folio, Folio.id == FolioCharge.folio_id)
+        .outerjoin(
+            DiningOrder,
+            and_(FolioCharge.charge_type == "dining", DiningOrder.id == FolioCharge.ref_order_id),
+        )
+        .outerjoin(Outlet, Outlet.id == DiningOrder.outlet_id)
+        .filter(
+            Folio.branch_id == branch_id,
+            or_(
+                FolioCharge.charge_type == outlet_type,
+                and_(FolioCharge.charge_type == "dining", Outlet.outlet_type == outlet_type),
+            ),
+            func.date(FolioCharge.posted_at) >= date_from,
+            func.date(FolioCharge.posted_at) <= date_to,
+        )
+        .all()
+    )
+    return [
+        (amount, currency or "EGP", utc_naive_to_local_date(posted_at, settings.TIMEZONE))
+        for amount, currency, posted_at in rows
+    ]
+
+
 def sum_beach_revenue(db: Session, branch_id: int, date_from: date, date_to: date) -> Decimal:
     """إيراد الشاطئ مباشرة من beach_transactions — الموديول ده لسه ميرحّلش
     لدفتر اليومية، فده أدق مصدر متاح حالياً."""

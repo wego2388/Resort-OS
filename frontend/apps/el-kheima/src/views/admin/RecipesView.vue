@@ -1,23 +1,26 @@
 <script setup lang="ts">
-// وصفات (Recipe/BOM) المطعم والكافيه — كل صنف كان معاه بس تكلفة يدوية (cost)
+// وصفات (Recipe/BOM) منافذ الدايننج — كل صنف كان معاه بس تكلفة يدوية (cost)
 // + ربط اختياري 1:1 بمنتج مخزني واحد (linked_product_id)، مفيش أي طريقة
 // تعبّر إن "برجر" بيستهلك لحم + رغيف + جبنة بكميات مختلفة من المخزون. الشاشة
 // دي أول UI حقيقي لإدارة الوصفات — الـ backend (recipe-lines endpoints) كان
 // موجود من غير أي واجهة تستخدمه خالص.
 //
-// Backend: app/modules/restaurant/api/router.py + app/modules/cafe/api/router.py
-// (POST/PATCH/DELETE .../recipe-lines) — مستوى manager، نفس بوابة تعديل
-// الصنف نفسه (create/update menu item).
+// Backend: app/modules/dining/api/router.py (POST/PATCH/DELETE .../
+// recipe-lines) — مستوى manager، نفس بوابة تعديل الصنف نفسه. تابات المنافذ
+// ديناميكية من /dining/outlets (DINING_CUTOVER_PLAN.md Batch 6 — كانت
+// restaurant/cafe تابين ثابتين، دلوقتي أي عدد منافذ).
 import { ref, computed, onMounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
-type ModuleType = 'restaurant' | 'cafe'
-const activeModule = ref<ModuleType>('restaurant')
+interface Outlet { id: number; name: string; name_ar: string | null; is_active: boolean }
+const outlets = ref<Outlet[]>([])
+const activeOutletId = ref<number | null>(null)
+function outletLabel(o: Outlet): string { return o.name_ar || o.name }
 
 interface RecipeLine {
   id: number; product_id: number; product_name: string; product_unit: string
@@ -66,39 +69,31 @@ const savingVariantLine = ref(false)
 const editingVariantLineId = ref<number | null>(null)
 const editingVariantLineQty = ref('')
 
-// ── مسارات API — مختلفة بين مطعم/كافيه (جداول منفصلة في الباك إند، نفس
-// نمط ازدواجية extra-groups الموجود فعلاً) ─────────────────────────────
-const itemsPath = computed(() =>
-  activeModule.value === 'restaurant' ? '/api/v1/restaurant/menu/items' : '/api/v1/cafe/items')
-const recipeLinesPath = (itemId: number) =>
-  activeModule.value === 'restaurant'
-    ? `/api/v1/restaurant/menu/items/${itemId}/recipe-lines`
-    : `/api/v1/cafe/items/${itemId}/recipe-lines`
-const recipeLinePath = (lineId: number) =>
-  activeModule.value === 'restaurant'
-    ? `/api/v1/restaurant/menu/recipe-lines/${lineId}`
-    : `/api/v1/cafe/recipe-lines/${lineId}`
-const variantsPath = (itemId: number) =>
-  activeModule.value === 'restaurant'
-    ? `/api/v1/restaurant/menu/items/${itemId}/variants`
-    : `/api/v1/cafe/items/${itemId}/variants`
-const variantPath = (variantId: number) =>
-  activeModule.value === 'restaurant'
-    ? `/api/v1/restaurant/menu/variants/${variantId}`
-    : `/api/v1/cafe/variants/${variantId}`
-const variantLinesPath = (variantId: number) =>
-  activeModule.value === 'restaurant'
-    ? `/api/v1/restaurant/menu/variants/${variantId}/recipe-lines`
-    : `/api/v1/cafe/variants/${variantId}/recipe-lines`
-const variantLinePath = (lineId: number) =>
-  activeModule.value === 'restaurant'
-    ? `/api/v1/restaurant/menu/variant-recipe-lines/${lineId}`
-    : `/api/v1/cafe/variant-recipe-lines/${lineId}`
+// ── مسارات API — outlet_id-scoped (DINING_CUTOVER_PLAN.md Batch 6: كانت
+// جداول منفصلة تمامًا لمطعم/كافيه، دلوقتي جدول dining واحد، فرق المنفذ
+// بس رقم في المسار بدل موديول تاني بالكامل) ────────────────────────────
+const recipeLinesPath = (itemId: number) => `/api/v1/dining/items/${itemId}/recipe-lines`
+const recipeLinePath = (lineId: number) => `/api/v1/dining/recipe-lines/${lineId}`
+const variantsPath = (itemId: number) => `/api/v1/dining/items/${itemId}/variants`
+const variantPath = (variantId: number) => `/api/v1/dining/variants/${variantId}`
+const variantLinesPath = (variantId: number) => `/api/v1/dining/variants/${variantId}/recipe-lines`
+const variantLinePath = (lineId: number) => `/api/v1/dining/variant-recipe-lines/${lineId}`
+
+async function loadOutlets() {
+  try {
+    const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId, active_only: true } })
+    outlets.value = data?.items ?? data ?? []
+    activeOutletId.value = outlets.value[0]?.id ?? null
+  } catch {
+    toast.error('تعذّر تحميل منافذ الدايننج')
+  }
+}
 
 async function fetchItems() {
+  if (activeOutletId.value == null) { items.value = []; return }
   loading.value = true
   try {
-    const res = await api.get(itemsPath.value, { params: { branch_id: branchId, available_only: false } })
+    const res = await api.get(ENDPOINTS.dining.items(activeOutletId.value), { params: { available_only: false } })
     items.value = res.data
   } catch {
     toast.error('تعذّر تحميل الأصناف — حاول تاني')
@@ -116,9 +111,9 @@ async function fetchProducts() {
   }
 }
 
-function switchModule(m: ModuleType) {
-  if (activeModule.value === m) return
-  activeModule.value = m
+function switchOutlet(id: number) {
+  if (activeOutletId.value === id) return
+  activeOutletId.value = id
   selectedItem.value = null
   showRecipeModal.value = false
   fetchItems()
@@ -220,7 +215,7 @@ async function removeLine(line: RecipeLine) {
 }
 
 // ── متغيّرات (حجم/نوع) ────────────────────────────────────────────────
-// راجع app.modules.restaurant.models.MenuItemVariant — سعر ووصفة مستقلين
+// راجع app.modules.dining.models.DiningItemVariant — سعر ووصفة مستقلين
 // تمامًا عن الصنف الأساسي لكل متغيّر، مش رسم إضافي فوق وصفة ثابتة.
 
 async function addVariant() {
@@ -334,7 +329,7 @@ async function removeVariantLine(variant: Variant, line: RecipeLine) {
   }
 }
 
-onMounted(() => { fetchItems(); fetchProducts() })
+onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fetchProducts()]) })
 </script>
 
 <template>
@@ -349,15 +344,15 @@ onMounted(() => { fetchItems(); fetchProducts() })
       <AppButton variant="secondary" size="sm" @click="fetchItems">🔄</AppButton>
     </div>
 
-    <!-- Module tabs -->
-    <div class="flex gap-2 mb-4">
+    <!-- Outlet tabs — ديناميكية من /dining/outlets -->
+    <div v-if="outlets.length" class="flex gap-2 mb-4 flex-wrap">
       <button
-        v-for="m in (['restaurant', 'cafe'] as ModuleType[])" :key="m"
-        @click="switchModule(m)"
+        v-for="o in outlets" :key="o.id"
+        @click="switchOutlet(o.id)"
         :class="['px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors',
-                 activeModule === m ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 text-gray-600 hover:border-blue-300']"
+                 activeOutletId === o.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 text-gray-600 hover:border-blue-300']"
       >
-        {{ m === 'restaurant' ? '🍽️ المطعم' : '☕ الكافيه' }}
+        {{ outletLabel(o) }}
       </button>
       <span class="self-center text-xs text-gray-400 mr-2">
         {{ recipeCount }} صنف من أصل {{ items.length }} معاه وصفة حقيقية

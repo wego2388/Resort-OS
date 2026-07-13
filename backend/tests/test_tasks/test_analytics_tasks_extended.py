@@ -104,26 +104,34 @@ class TestBuildStats:
         assert len(records) >= 3
 
     def test_build_stats_with_restaurant_revenue(self, db):
-        """_build_stats يحسب restaurant_revenue من الأوردرات المدفوعة"""
+        """_build_stats يحسب restaurant_revenue من الأوردرات المدفوعة —
+        راجع DINING_CUTOVER_PLAN.md D-05: dining.DiningOrder بدل
+        restaurant.Order القديم اللي اتحذف."""
         from datetime import datetime, timezone
         branch = _make_branch(db)
         yesterday = date.today() - timedelta(days=1)
 
-        # أنشئ category + menu item + order
-        from app.modules.restaurant.models import MenuCategory, MenuItem, Order
-        cat = MenuCategory(branch_id=branch.id, name="Food", is_active=True)
+        # أنشئ outlet + category + item + order
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.models import DiningCategory, DiningItem, DiningOrder
+        from app.modules.dining.schemas import OutletCreate
+        outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم تحليلات ممتدة", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        cat = DiningCategory(branch_id=branch.id, outlet_id=outlet.id, name="Food", is_active=True)
         db.add(cat)
         db.flush()
-        item = MenuItem(
-            branch_id=branch.id, category_id=cat.id,
+        item = DiningItem(
+            branch_id=branch.id, outlet_id=outlet.id, category_id=cat.id,
             name="Dish", price=Decimal("50"), is_available=True,
         )
         db.add(item)
         db.flush()
 
         day_start = datetime.combine(yesterday, datetime.min.time())
-        order = Order(
-            branch_id=branch.id,
+        order = DiningOrder(
+            branch_id=branch.id, outlet_id=outlet.id,
             order_number=f"ORD-{uuid.uuid4().hex[:8].upper()}",
             status="paid",
             subtotal=Decimal("50"),

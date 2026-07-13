@@ -78,7 +78,7 @@ const catalogByModule = computed(() => {
 
 function moduleLabel(m: string) {
   const labels: Record<string, string> = {
-    finance: 'الحسابات', restaurant: 'المطعم', cafe: 'الكافيه', beach: 'الشاطئ',
+    finance: 'الحسابات', dining: 'الدايننج', beach: 'الشاطئ',
     hr: 'الموارد البشرية', timeshare: 'التايم شير', pms: 'الفنادق', inventory: 'المخزون', crm: 'العملاء',
   }
   return labels[m] ?? m

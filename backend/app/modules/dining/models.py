@@ -21,13 +21,13 @@ _LegacyTrackedMixin تحت لسبب الاستحالة المعمارية لحف
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, JSON,
-    Numeric, String, UniqueConstraint,
+    Numeric, String, Time, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -144,6 +144,12 @@ class DiningItem(Base, TimestampMixin):
     linked_product_id:   Mapped[int | None]  = mapped_column(ForeignKey("products.id", ondelete="SET NULL"), nullable=True)
     # ربط اختياري بصنف مخزني (inventory.Product) — fallback خصم مخزون 1:1
     # لو الصنف مفهوش وصفة حقيقية (راجع services._deduct_inventory_for_order).
+    available_from_time:  Mapped[time | None] = mapped_column(Time, nullable=True)
+    available_until_time: Mapped[time | None] = mapped_column(Time, nullable=True)
+    # نافذة تقديم اختيارية (إفطار 7-11، غداء 12-4، عشاء 7-11) — NULL في
+    # الاتنين يعني بدون قيد وقتي (الافتراضي، صفر تغيير سلوك). راجع
+    # restaurant.models.MenuItem وservices._check_item_available_now
+    # (نفس المنطق بالظبط، بما فيه دعم نافذة عابرة لمنتصف الليل).
     legacy_module: Mapped[str | None] = mapped_column(String(20), nullable=True)
     legacy_id:     Mapped[int | None] = mapped_column(Integer, nullable=True)
 

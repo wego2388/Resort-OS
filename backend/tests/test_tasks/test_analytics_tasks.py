@@ -111,23 +111,27 @@ class TestBuildStats:
     def test_restaurant_revenue_captures_early_morning_cairo_order(self, db):
         """باج حقيقي (اتصلح): day_start/day_end كانوا بيتبنوا بـ
         datetime.combine ساذج من stat_date مباشرة (كأنه يوم UTC)، لكن
-        Order.created_at متخزّن UTC فعليًا بينما stat_date تاريخ محلي
+        DiningOrder.created_at متخزّن UTC فعليًا بينما stat_date تاريخ محلي
         (Africa/Cairo، +3). النتيجة: طلب اتعمل الساعة 00:30 بتوقيت القاهرة
         (created_at UTC = 21:30 اليوم اللي فات) كان بيقع بره حدود يوم
         DailyStats الصح (لأن الحدود الساذجة كانت بتبدأ من منتصف ليل UTC، مش
         منتصف ليل القاهرة) — يعني إيراد الصبح الباكر كان بيضيع من إحصائية
         اليوم الصح. تست ده بيبني الطلب بتوقيت 00:30 القاهرة صراحة (بدل ما
-        يعتمد على وقت تشغيل التست الفعلي) عشان يثبت الحدود بقت صح دايمًا."""
+        يعتمد على وقت تشغيل التست الفعلي) عشان يثبت الحدود بقت صح دايمًا.
+
+        راجع DINING_CUTOVER_PLAN.md D-05 — _build_stats بقى بيقرا من
+        dining.DiningOrder بدل restaurant.Order مباشرة."""
         from datetime import datetime, timedelta as _td
         from zoneinfo import ZoneInfo
         from app.modules.analytics.models import DailyStats
-        from tests.test_api.test_pms import make_branch
-        from tests.test_api.test_restaurant import make_menu_item, make_order
-        from app.modules.restaurant import services
+        from app.modules.dining import services
+        from app.modules.dining.models import DiningOrder
+        from tests.test_api.test_dining import make_branch, make_item, make_order, make_outlet
 
         branch = make_branch(db)
-        item = make_menu_item(db, branch)
-        order = make_order(db, branch, item)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet)
+        order = make_order(db, branch, outlet, item)
         services.update_order_status(db, order.id, "in_kitchen")
         services.update_order_status(db, order.id, "paid")
 
@@ -135,7 +139,7 @@ class TestBuildStats:
         # بمعنى created_at (UTC) لازم يبقى 21:30 يوم stat_date - 1
         stat_date = date.today()
         cairo_early_morning = datetime.combine(stat_date, datetime.min.time(), tzinfo=ZoneInfo("Africa/Cairo")) + _td(minutes=30)
-        db.query(type(order)).filter(type(order).id == order.id).update({
+        db.query(DiningOrder).filter(DiningOrder.id == order.id).update({
             "created_at": cairo_early_morning.astimezone(ZoneInfo("UTC")).replace(tzinfo=None),
         })
         db.commit()
@@ -161,19 +165,22 @@ class TestBuildStats:
         تمرير تاريخ UTC هنا كان بيعمل إزاحة 3 ساعات غلط قرب منتصف الليل
         بتوقيت القاهرة (~21:00-24:00 UTC) — بالظبط الوقت اللي الباج اتكشف
         فيه فعليًا وقت تشغيل الجلسة دي. الحل: local_today(TIMEZONE)، نفس
-        التحويل اللي _build_stats بتتوقعه فعليًا (راجع §13 CLAUDE.md)."""
+        التحويل اللي _build_stats بتتوقعه فعليًا (راجع §13 CLAUDE.md).
+
+        راجع DINING_CUTOVER_PLAN.md D-05 — dining.DiningOrder.guests_count
+        بدل restaurant.Order.guests_count."""
         from app.modules.analytics.models import DailyStats
         from app.core.config import settings
         from app.resort_os.timezone_utils import local_today
-        from tests.test_api.test_pms import make_branch
-        from tests.test_api.test_restaurant import make_menu_item, make_order
-        from app.modules.restaurant import services
+        from app.modules.dining import services
+        from tests.test_api.test_dining import make_branch, make_item, make_order, make_outlet
 
         branch = make_branch(db)
-        item = make_menu_item(db, branch)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet)
 
-        order1 = make_order(db, branch, item)  # guests_count=2 (helper default)
-        order2 = make_order(db, branch, item)  # guests_count=2
+        order1 = make_order(db, branch, outlet, item)  # guests_count=2 (helper default)
+        order2 = make_order(db, branch, outlet, item)  # guests_count=2
         services.update_order_status(db, order1.id, "in_kitchen")
         services.update_order_status(db, order1.id, "paid")
         services.update_order_status(db, order2.id, "in_kitchen")

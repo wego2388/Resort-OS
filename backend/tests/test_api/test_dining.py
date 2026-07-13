@@ -10,7 +10,9 @@ restaurant/cafe equivalent because the concept didn't exist there.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, time
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 
@@ -216,6 +218,105 @@ class TestOrder:
             services.add_items_to_order(db, order.id, [OrderItemCreate(item_id=item.id, quantity=1)])
 
 
+def make_scheduled_item(db, branch, outlet, from_time=None, until_time=None):
+    from app.modules.dining.models import DiningItem
+    item = DiningItem(
+        branch_id=branch.id, outlet_id=outlet.id, name="فطار إنجليزي",
+        price=Decimal("70.00"), is_available=True,
+        available_from_time=from_time, available_until_time=until_time,
+    )
+    db.add(item)
+    db.commit()
+    return item
+
+
+class TestDiningItemAvailabilitySchedule:
+    """wagdy.md P-03 — صنف يشتغل في أوقات محددة (إفطار 7-11، غداء 12-4،
+    عشاء 7-11). راجع restaurant.tests.TestItemAvailabilitySchedule — نفس
+    السيناريوهات بالظبط (فجوة تكافؤ أُغلقت قبل حذف restaurant/cafe —
+    DINING_CUTOVER_PLAN.md Batch 1)."""
+
+    def _order_data(self, outlet, item):
+        return OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway",
+            items=[OrderItemCreate(item_id=item.id, quantity=1)],
+        )
+
+    def test_item_without_window_always_available(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_scheduled_item(db, branch, outlet)  # NULL/NULL
+        order = services.create_order(db, branch.id, self._order_data(outlet, item))
+        assert order.id is not None
+
+    def test_item_available_inside_window(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_scheduled_item(db, branch, outlet, time(7, 0), time(11, 0))
+        with patch("app.modules.dining.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 9, 0)  # 09:00 جوه 07:00-11:00
+            order = services.create_order(db, branch.id, self._order_data(outlet, item))
+        assert order.id is not None
+
+    def test_item_unavailable_outside_window(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_scheduled_item(db, branch, outlet, time(7, 0), time(11, 0))
+        with patch("app.modules.dining.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 15, 0)  # 15:00 برّه 07:00-11:00
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.create_order(db, branch.id, self._order_data(outlet, item))
+
+    def test_item_available_at_exact_boundary(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_scheduled_item(db, branch, outlet, time(7, 0), time(11, 0))
+        with patch("app.modules.dining.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 11, 0)  # الحد الأقصى نفسه — شامل
+            order = services.create_order(db, branch.id, self._order_data(outlet, item))
+        assert order.id is not None
+
+    def test_overnight_window_available_late_night(self, db):
+        """بار مفتوح 22:00-02:00 (from > until) — نافذة عابرة لمنتصف الليل."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_scheduled_item(db, branch, outlet, time(22, 0), time(2, 0))
+        with patch("app.modules.dining.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 23, 30)
+            order = services.create_order(db, branch.id, self._order_data(outlet, item))
+        assert order.id is not None
+
+    def test_overnight_window_available_early_morning(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_scheduled_item(db, branch, outlet, time(22, 0), time(2, 0))
+        with patch("app.modules.dining.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 1, 30)
+            order = services.create_order(db, branch.id, self._order_data(outlet, item))
+        assert order.id is not None
+
+    def test_overnight_window_unavailable_midday(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_scheduled_item(db, branch, outlet, time(22, 0), time(2, 0))
+        with patch("app.modules.dining.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 12, 0)
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.create_order(db, branch.id, self._order_data(outlet, item))
+
+    def test_add_items_to_order_also_enforces_window(self, db):
+        """add_items_to_order لازم يتحقق كمان — مش create_order بس."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet)
+        scheduled_item = make_scheduled_item(db, branch, outlet, time(7, 0), time(11, 0))
+        order = make_order(db, branch, outlet, item)
+        with patch("app.modules.dining.services.local_now") as mock_now:
+            mock_now.return_value = datetime(2026, 7, 12, 15, 0)
+            with pytest.raises(ValueError, match="متاح فقط من"):
+                services.add_items_to_order(db, order.id, [OrderItemCreate(item_id=scheduled_item.id, quantity=1)])
+
+
 class TestOrderStatus:
 
     def test_update_status_to_in_kitchen(self, db):
@@ -236,8 +337,8 @@ class TestOrderStatus:
         services.update_order_status(db, order.id, "in_kitchen")
         tickets = services.get_kds_tickets(db, branch.id)
         assert len(tickets) == 1
-        assert tickets[0].station == "grill"
-        assert tickets[0].order_id == order.id
+        assert tickets[0]["station"] == "grill"
+        assert tickets[0]["order_id"] == order.id
 
     def test_pay_order_frees_table(self, db):
         branch = make_branch(db)

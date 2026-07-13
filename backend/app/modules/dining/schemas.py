@@ -6,7 +6,7 @@ DiningItem/DiningOrder وباقي دوكسترنجز models.py للتبرير ا
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Optional
 
@@ -91,6 +91,8 @@ class DiningItemCreate(BaseModel):
     image_url:           Optional[str] = Field(None, max_length=500)
     station:             str = Field("hot", pattern=r"^(hot|grill|cold|bar|dessert)$")
     linked_product_id:   Optional[int] = None
+    available_from_time:  Optional[time] = None
+    available_until_time: Optional[time] = None
 
 
 class DiningItemUpdate(BaseModel):
@@ -104,6 +106,8 @@ class DiningItemUpdate(BaseModel):
     station:             Optional[str]     = Field(None, pattern=r"^(hot|grill|cold|bar|dessert)$")
     image_url:           Optional[str]     = None
     linked_product_id:   Optional[int]     = None
+    available_from_time:  Optional[time]   = None
+    available_until_time: Optional[time]   = None
 
 
 # ─────────────────────── Extras / Modifiers ───────────────────────────
@@ -386,6 +390,21 @@ class OrderStatusUpdate(BaseModel):
     payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet)$")
 
 
+class OrderTransferRequest(BaseModel):
+    """نقل طلب مفتوح من طاولة لأخرى (الضيوف اتحركوا فعليًا) — راجع
+    services.transfer_order_table للتحقق الكامل (نفس الفرع/مش مشغولة بطلب
+    تاني/الطاولة مش خارج الخدمة). راجع restaurant.schemas.OrderTransferRequest."""
+    table_id: int
+
+
+class OrderItemStatusUpdate(BaseModel):
+    """تأكيد صنف واحد داخل تذكرة مطبخ (bump فردي) — بدل تأكيد التذكرة كلها
+    دفعة واحدة عبر TicketStatusUpdate. راجع restaurant.schemas.OrderItemStatusUpdate
+    — نفس المنطق بالظبط. cancelled/refunded مستبعدين عمداً — ليهم endpoints
+    مخصصة (void/refund) بمنطق مالي/صلاحيات مختلف تمامًا."""
+    status: str = Field(..., pattern=r"^(pending|in_kitchen|ready|served)$")
+
+
 # ─────────────────────── Offline POS Sync ─────────────────────────────
 
 class OrderSyncRequest(BaseModel):
@@ -493,3 +512,115 @@ class FoodCostReportResponse(BaseModel):
     alerts:  list[FoodCostReportLine]
     trend:   list[CogsTrendPoint]
     summary: GrossMarginSummary
+
+
+# ─────────────────────── Public / Guest (QR ordering, no auth) ────────
+# راجع restaurant.schemas.PublicMenuItemRead وما حولها — نفس الشكل بالظبط،
+# outlet_id بدل الفصل بين restaurant/cafe (DINING_CUTOVER_PLAN.md Batch 6:
+# فجوة تكافؤ حقيقية اتكشفت وهي بتحذف restaurant/cafe — موقع الحجز العام
+# (`public` app) كان بيكلّم /restaurant/public/* و/cafe/public/* حصريًا،
+# بدون أي إصدار dining مقابل، فحذفهم من غير الإضافة دي كان هيكسر طلب
+# الضيف عبر QR بالكامل).
+
+class PublicOutletRead(BaseModel):
+    """للموقع العام (apps/public's DiningView.vue — صفحة المنيو التسويقية)
+    عشان يعرف outlet_id لكل منفذ من غير تسجيل دخول. حقول محدودة عمدًا —
+    بدون revenue_account_code/branch_id الداخليين (راجع OutletRead)."""
+    model_config = ConfigDict(from_attributes=True)
+    id:          int
+    name:        str
+    name_ar:     Optional[str]
+    outlet_type: str
+
+
+class PublicMenuExtraRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:             int
+    name:           str
+    name_ar:        Optional[str]
+    price_addition: Decimal
+
+
+class PublicMenuExtraGroupRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:         int
+    name:       str
+    name_ar:    Optional[str]
+    group_type: str
+    min_select: int
+    max_select: int
+    options:    list[PublicMenuExtraRead] = []
+
+
+class PublicMenuVariantRead(BaseModel):
+    """للضيف عبر QR — بدون تكلفة/وصفة، سعر واسم بس."""
+    model_config = ConfigDict(from_attributes=True)
+    id:           int
+    name:         str
+    name_ar:      Optional[str]
+    price:        Decimal
+    is_available: bool
+
+
+class PublicMenuItemRead(BaseModel):
+    """للضيف عبر QR — بدون cost أو station أو بيانات داخلية."""
+    model_config = ConfigDict(from_attributes=True)
+    id:                  int
+    name:                str
+    name_ar:             Optional[str]
+    price:               Decimal
+    is_available:        bool
+    preparation_minutes: int
+    image_url:           Optional[str]
+    category_id:         Optional[int]
+    extra_groups:        list[PublicMenuExtraGroupRead] = []
+    variants:            list[PublicMenuVariantRead] = []
+
+
+class PublicMenuCategoryRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:      int
+    name:    str
+    name_ar: Optional[str]
+
+
+class PublicMenuResponse(BaseModel):
+    """الرد الكامل على GET /dining/public/menu — categories + items في طلب واحد.
+    outlet_name/outlet_name_ar مضافين (DINING_CUTOVER_PLAN.md Batch 6 frontend)
+    عشان apps/public's OrderView.vue تعرض اسم المنفذ الحقيقي بدل تسمية ثابتة
+    "المطعم"/"الكافيه" (dining بيدعم أي outlet_type مفتوح، مش بس النوعين دول)."""
+    branch_id:      int
+    outlet_id:      int
+    outlet_name:    str
+    outlet_name_ar: Optional[str]
+    table_id:       Optional[int]
+    categories:     list[PublicMenuCategoryRead]
+    items:          list[PublicMenuItemRead]
+
+
+class GuestOrderItemCreate(BaseModel):
+    item_id:     int
+    variant_id:  Optional[int] = None
+    quantity:    int = Field(1, ge=1)
+    notes:       Optional[str] = Field(None, max_length=200)
+    extra_ids:   list[int] = Field(default_factory=list)
+    extra_texts: dict[int, str] = Field(default_factory=dict)
+
+
+class GuestOrderCreate(BaseModel):
+    """الطلب من الضيف عبر QR."""
+    outlet_id:    int
+    table_id:     Optional[int] = None
+    guests_count: int = Field(1, ge=1)
+    notes:        Optional[str] = Field(None, max_length=300)
+    items:        list[GuestOrderItemCreate] = Field(..., min_length=1)
+
+
+class GuestOrderRead(BaseModel):
+    """ما يشوفه الضيف بعد تقديم الطلب — بدون بيانات مالية داخلية."""
+    order_id:     int
+    order_number: str
+    status:       str
+    total:        Decimal
+    items_count:  int
+    message:      str

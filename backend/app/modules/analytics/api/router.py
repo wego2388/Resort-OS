@@ -67,26 +67,12 @@ def revenue_summary(
         "total":      Decimal("0"),
     }
 
-    # Restaurant revenue
-    def _restaurant(db: Session):
-        from app.modules.restaurant.models import Order  # noqa: PLC0415
-        rows = db.query(Order).filter(
-            Order.branch_id == branch_id,
-            Order.status == "paid",
-            Order.created_at >= range_start,
-            Order.created_at <= range_end,
-        ).all()
-        return {"orders": len(rows), "total": sum(o.total for o in rows)}
-
-    def _cafe(db: Session):
-        from app.modules.cafe.models import CafeOrder  # noqa: PLC0415
-        rows = db.query(CafeOrder).filter(
-            CafeOrder.branch_id == branch_id,
-            CafeOrder.status == "paid",
-            CafeOrder.created_at >= range_start,
-            CafeOrder.created_at <= range_end,
-        ).all()
-        return {"orders": len(rows), "total": sum(o.total for o in rows)}
+    # إيراد المطعم/الكافيه — يقرأ من dining.DiningOrder بدل restaurant.Order/
+    # cafe.CafeOrder المنفصلين (DINING_CUTOVER_PLAN.md D-05، dining هو مصدر
+    # الحقيقة الوحيد للتقارير المالية من هنا فصاعدًا). استعلام واحد مفلتر
+    # بـ Outlet.outlet_type بدل استعلامين منفصلين.
+    def _dining_by_outlet_type(db: Session):
+        return services.get_dining_revenue_by_outlet_type(db, branch_id, range_start, range_end)
 
     def _pms(db: Session):
         from app.modules.pms.models import Booking  # noqa: PLC0415
@@ -128,8 +114,10 @@ def revenue_summary(
         ).all()
         return {"payments": len(rows), "total": sum(p.amount for p in rows)}
 
-    result["restaurant"] = _safe_query(_restaurant, db)
-    result["cafe"]       = _safe_query(_cafe, db)
+    dining_by_outlet = _safe_query(_dining_by_outlet_type, db)
+    empty_bucket = {"orders": 0, "total": Decimal("0")}
+    result["restaurant"] = (dining_by_outlet or {}).get("restaurant", empty_bucket) if dining_by_outlet is not None else None
+    result["cafe"]       = (dining_by_outlet or {}).get("cafe", empty_bucket) if dining_by_outlet is not None else None
     result["pms"]        = _safe_query(_pms, db)
     result["beach"]      = _safe_query(_beach, db)
     result["leasing"]    = _safe_query(_leasing, db)
@@ -532,29 +520,20 @@ def full_dashboard(
         return _safe_query(lambda d: _build_revenue(d, branch_id, date_from_30, today), db)
 
     def _build_revenue(d, bid, dfrom, dto):
-        from app.modules.restaurant.models import Order  # noqa: PLC0415
-        from app.modules.cafe.models import CafeOrder    # noqa: PLC0415
         from app.modules.pms.models import Booking       # noqa: PLC0415
         from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
-        # ⚠️ باج حقيقي (اتصلح هنا): كان بيقارن created_at (UTC فعليًا) بحدود
-        # يوم مبنية بـ datetime.combine ساذج من تاريخ محلي (Africa/Cairo) —
-        # نفس الباج اللي اتصلح في /analytics/revenue جنبه بالظبط، لكن هنا في
-        # لوحة القيادة الرئيسية (اللي AnalyticsView.vue بيعرضها كـ"إجمالي
-        # الإيرادات 30 يوم") فضل من غير ما يتصلح. النتيجة: إيرادات المطعم/
-        # الكافيه في نافذة ~3 ساعات كل يوم (منتصف ليل القاهرة → 3 فجرًا) كانت
-        # بتتحسب على اليوم الغلط.
+        # ⚠️ باج حقيقي (اتصلح هنا، تاريخيًا): كان بيقارن created_at (UTC
+        # فعليًا) بحدود يوم مبنية بـ datetime.combine ساذج من تاريخ محلي
+        # (Africa/Cairo) — نفس الباج اللي اتصلح في /analytics/revenue جنبه
+        # بالظبط. local_date_to_utc_range تحت هي الإصلاح.
         range_start, _ = local_date_to_utc_range(dfrom, settings.TIMEZONE)
         _, range_end = local_date_to_utc_range(dto, settings.TIMEZONE)
-        rest = sum(o.total for o in d.query(Order).filter(
-            Order.branch_id == bid, Order.status == "paid",
-            Order.created_at >= range_start,
-            Order.created_at <= range_end,
-        ).all())
-        cafe = sum(o.total for o in d.query(CafeOrder).filter(
-            CafeOrder.branch_id == bid, CafeOrder.status == "paid",
-            CafeOrder.created_at >= range_start,
-            CafeOrder.created_at <= range_end,
-        ).all())
+        # إيراد المطعم/الكافيه — dining.DiningOrder بدل restaurant.Order/
+        # cafe.CafeOrder (DINING_CUTOVER_PLAN.md D-05، نفس دالة
+        # /analytics/revenue بالظبط، مفيش تكرار منطق).
+        dining_by_outlet = services.get_dining_revenue_by_outlet_type(d, bid, range_start, range_end)
+        rest = dining_by_outlet.get("restaurant", {}).get("total", Decimal("0"))
+        cafe = dining_by_outlet.get("cafe", {}).get("total", Decimal("0"))
         pms_rev = sum(b.total_rate for b in d.query(Booking).filter(
             Booking.branch_id == bid, Booking.status == "checked_out",
             Booking.check_out >= dfrom, Booking.check_out <= dto,

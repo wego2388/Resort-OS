@@ -724,18 +724,25 @@ class TestLeaderboard:
     """لوحة أداء الموظفين — لازم تكون مبيعات حقيقية من الطلبات المدفوعة فعليًا،
     مش أرقام مصنوعة."""
 
-    def _make_paid_restaurant_order(self, db, branch, waiter_user_id, amount):
+    def _make_paid_dining_order(self, db, branch, waiter_user_id, amount):
+        """راجع DINING_CUTOVER_PLAN.md D-05 — get_sales_leaderboard بقى بيقرا
+        من dining.DiningOrder بدل restaurant.Order/cafe.CafeOrder المنفصلين."""
         import uuid as _uuid
-        from app.modules.restaurant.models import MenuItem
-        from app.modules.restaurant.schemas import OrderCreate, OrderItemCreate
-        from app.modules.restaurant import services as rest_services
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.models import DiningItem
+        from app.modules.dining.schemas import OrderCreate, OrderItemCreate, OutletCreate
 
-        item = MenuItem(branch_id=branch.id, name=f"Item {_uuid.uuid4().hex[:4]}", price=amount)
+        outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name=f"Outlet {_uuid.uuid4().hex[:4]}",
+            outlet_type="restaurant", revenue_account_code="4200",
+        ))
+        item = DiningItem(branch_id=branch.id, outlet_id=outlet.id,
+                           name=f"Item {_uuid.uuid4().hex[:4]}", price=amount)
         db.add(item); db.commit()
-        data = OrderCreate(order_type="takeaway", guests_count=1,
-                            items=[OrderItemCreate(menu_item_id=item.id, quantity=1)])
-        order = rest_services.create_order(db, branch.id, data, waiter_id=waiter_user_id)
-        rest_services.update_order_status(db, order.id, "paid")
+        data = OrderCreate(outlet_id=outlet.id, order_type="takeaway", guests_count=1,
+                            items=[OrderItemCreate(item_id=item.id, quantity=1)])
+        order = dining_services.create_order(db, branch.id, data, waiter_id=waiter_user_id)
+        dining_services.update_order_status(db, order.id, "paid")
         return order
 
     def test_leaderboard_ranks_by_real_sales(self, db, branch, employee):
@@ -752,9 +759,9 @@ class TestLeaderboard:
         db.add_all([top_user, low_user]); db.flush()
         services.link_employee_to_user(db, employee, top_user.id)
 
-        self._make_paid_restaurant_order(db, branch, top_user.id, D("500"))
-        self._make_paid_restaurant_order(db, branch, top_user.id, D("300"))
-        self._make_paid_restaurant_order(db, branch, low_user.id, D("50"))
+        self._make_paid_dining_order(db, branch, top_user.id, D("500"))
+        self._make_paid_dining_order(db, branch, top_user.id, D("300"))
+        self._make_paid_dining_order(db, branch, low_user.id, D("50"))
 
         # نطاق يومين حوالين اليوم (مش يوم واحد بالظبط) — الـ timestamps بتتسجل
         # بتوقيت UTC من السيرفر بينما date.today() المحلي ممكن يكون قدّامه
@@ -772,15 +779,19 @@ class TestLeaderboard:
         assert board[0].total_sales > board[1].total_sales
 
     def test_leaderboard_ignores_unpaid_orders(self, db, branch):
-        from app.modules.restaurant.models import MenuItem
-        from app.modules.restaurant.schemas import OrderCreate, OrderItemCreate
-        from app.modules.restaurant import services as rest_services
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.models import DiningItem
+        from app.modules.dining.schemas import OrderCreate, OrderItemCreate, OutletCreate
 
-        item = MenuItem(branch_id=branch.id, name="Unpaid Item", price=Decimal("100"))
+        outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم غير مدفوع", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        item = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name="Unpaid Item", price=Decimal("100"))
         db.add(item); db.commit()
-        data = OrderCreate(order_type="takeaway", guests_count=1,
-                            items=[OrderItemCreate(menu_item_id=item.id, quantity=1)])
-        rest_services.create_order(db, branch.id, data, waiter_id=999)  # لسه "open"، مش paid
+        data = OrderCreate(outlet_id=outlet.id, order_type="takeaway", guests_count=1,
+                            items=[OrderItemCreate(item_id=item.id, quantity=1)])
+        dining_services.create_order(db, branch.id, data, waiter_id=999)  # لسه "open"، مش paid
 
         today = date.today()
         board = services.get_sales_leaderboard(
@@ -790,18 +801,25 @@ class TestLeaderboard:
 
     def test_leaderboard_includes_cafe_and_beach_sales(self, db, branch):
         """لوحة الأداء لازم تجمع مبيعات الكافيه والشاطئ مش بس المطعم — الفروع
-        التلاتة بتتجمّع في _accumulate واحدة."""
+        التلاتة بتتجمّع في _accumulate واحدة. راجع DINING_CUTOVER_PLAN.md
+        D-05 — dining.DiningOrder (outlet_type='cafe') بدل cafe.CafeOrder."""
         from datetime import datetime as _dt
-        from app.modules.cafe.models import CafeOrder
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.models import DiningOrder
+        from app.modules.dining.schemas import OutletCreate
         from app.modules.beach.models import BeachTransaction
 
-        cafe_order = CafeOrder(
-            branch_id=branch.id, order_number=f"CAF-{uuid.uuid4().hex[:8]}",
+        cafe_outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="كافيه لوحة الأداء", outlet_type="cafe",
+            revenue_account_code="4400",
+        ))
+        cafe_order = DiningOrder(
+            branch_id=branch.id, outlet_id=cafe_outlet.id, order_number=f"CAF-{uuid.uuid4().hex[:8]}",
             status="paid", total=Decimal("120.00"), waiter_id=777,
         )
         # طلب كافيه بدون waiter_id — لازم يتجاهله _accumulate بهدوء (guard clause)
-        cafe_order_no_waiter = CafeOrder(
-            branch_id=branch.id, order_number=f"CAF-{uuid.uuid4().hex[:8]}",
+        cafe_order_no_waiter = DiningOrder(
+            branch_id=branch.id, outlet_id=cafe_outlet.id, order_number=f"CAF-{uuid.uuid4().hex[:8]}",
             status="paid", total=Decimal("999.00"), waiter_id=None,
         )
         db.add_all([cafe_order, cafe_order_no_waiter])

@@ -136,6 +136,33 @@ def _resolve_variant(db: Session, item: DiningItem, variant_id: Optional[int]) -
     return variant
 
 
+def _is_item_available_now(item: DiningItem) -> bool:
+    """يتحقق إن الصنف داخل نافذة تقديمه الحالية (available_from_time/
+    available_until_time) — راجع restaurant.services._is_item_available_now
+    — نفس المنطق بالظبط (NULL في الاتنين = بدون قيد وقتي، نافذة عابرة
+    لمنتصف الليل مدعومة، local_now مش وقت السيرفر الخام)."""
+    start, end = item.available_from_time, item.available_until_time
+    if start is None and end is None:
+        return True
+    start = start or time.min
+    end = end or time.max
+    now_time = local_now(settings.TIMEZONE).time()
+    if start <= end:
+        return start <= now_time <= end
+    return now_time >= start or now_time <= end
+
+
+def _check_item_available_now(item: DiningItem) -> None:
+    """يرفع ValueError برسالة عربية واضحة لو الصنف خارج نافذة تقديمه
+    الحالية — يُستدعى وقت إضافة صنف لطلب (إنشاء طلب جديد أو إضافة لطلب
+    مفتوح)، مش وقت عرض المنيو بس. راجع restaurant.services._check_item_available_now."""
+    if _is_item_available_now(item):
+        return
+    start = item.available_from_time.strftime("%H:%M") if item.available_from_time else "00:00"
+    end = item.available_until_time.strftime("%H:%M") if item.available_until_time else "23:59"
+    raise ValueError(f"الصنف '{item.name}' متاح فقط من {start} إلى {end}")
+
+
 def _effective_recipe(item: DiningItem, variant: Optional[DiningItemVariant]) -> list:
     """راجع restaurant.services._effective_recipe — نفس المنطق بالظبط."""
     if variant is not None and variant.recipe_lines:
@@ -339,6 +366,7 @@ def create_order(
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
+        _check_item_available_now(item)
 
         variant = _resolve_variant(db, item, item_req.variant_id)
         base_price = variant.price if variant else item.price
@@ -411,6 +439,7 @@ def add_items_to_order(db: Session, order_id: int, items: list) -> DiningOrder:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
+        _check_item_available_now(item)
 
         variant = _resolve_variant(db, item, item_req.variant_id)
         base_price = variant.price if variant else item.price
@@ -784,6 +813,87 @@ def void_order_item(
     return order
 
 
+def transfer_order_table(db: Session, order_id: int, table_id: int) -> DiningOrder:
+    """نقل طلب مفتوح من طاولة لأخرى — الضيوف اتحركوا فعليًا لطاولة تانية،
+    والكاشير/النادل محتاج ينقل الطلب الجاري من غير ما يلغيه ويعمل واحد
+    جديد. راجع restaurant.services.transfer_order_table — نفس المنطق
+    بالظبط (الطاولة الجديدة لازم تكون في نفس الفرع، مش خارج الخدمة، ومش
+    مشغولة بطلب مفتوح تاني)."""
+    order = _get_order_or_404(db, order_id)
+    if order.status in ("paid", "cancelled"):
+        raise ValueError(f"لا يمكن نقل طلب بحالة '{order.status}'")
+
+    new_table = crud.get_table(db, table_id)
+    if not new_table:
+        raise ValueError(f"الطاولة {table_id} غير موجودة")
+    if new_table.branch_id != order.branch_id:
+        raise ValueError("الطاولة المطلوبة لا تنتمي لنفس فرع الطلب")
+    if new_table.status == "out_of_service":
+        raise ValueError(f"الطاولة {new_table.table_number} خارج الخدمة")
+    if order.table_id == table_id:
+        raise ValueError(f"الطلب بالفعل على الطاولة {new_table.table_number}")
+
+    conflicting = crud.get_active_order_for_table(db, table_id, exclude_order_id=order.id)
+    if conflicting:
+        raise ValueError(f"الطاولة {new_table.table_number} مشغولة بطلب آخر ({conflicting.order_number})")
+
+    old_table_id = order.table_id
+    order.table_id = table_id
+    crud.update_table_status(db, new_table, "occupied")
+    if old_table_id and old_table_id != table_id:
+        old_table = crud.get_table(db, old_table_id)
+        if old_table:
+            crud.update_table_status(db, old_table, "available")
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def bump_order_item_status(db: Session, order_id: int, item_id: int, new_status: str) -> DiningOrder:
+    """يبدّل حالة صنف واحد داخل طلب دايننج (pending → in_kitchen → ready →
+    served) — تأكيد صنف بصنف من شاشة الـ KDS، بدل الاضطرار لتأكيد التذكرة
+    كلها. راجع restaurant.services.bump_order_item_status — نفس المنطق
+    بالظبط. لما كل أصناف تذكرة معيّنة (محطة واحدة) تبقى ready/served/
+    cancelled، التذكرة نفسها بتتحوّل لـ 'done' تلقائيًا."""
+    order = _get_order_or_404(db, order_id)
+    item = crud.get_order_item(db, order_id, item_id)
+    if not item:
+        raise ValueError(f"الصنف {item_id} غير موجود في هذا الطلب")
+    if item.status in ("cancelled", "refunded"):
+        raise ValueError(f"لا يمكن تغيير حالة صنف {item.status}")
+
+    crud.update_order_item_status(db, item, new_status)
+    _sync_kitchen_tickets_for_order(db, order)
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def _sync_kitchen_tickets_for_order(db: Session, order: DiningOrder) -> None:
+    """يحدّث حالة تذاكر المطبخ المرتبطة بالطلب ده حسب حالة أصنافها الفعلية —
+    تذكرة تبقى 'done' لو كل أصنافها ready/served/cancelled، أو 'in_progress'
+    لو أي صنف بدأ يتحرّك من pending. راجع
+    restaurant.services._sync_kitchen_tickets_for_order — نفس المنطق
+    بالظبط (تُستدعى بعد أي bump فردي، مش بعد التأكيد اليدوي الكامل)."""
+    tickets = crud.list_tickets_for_order(db, order.id)
+    if not tickets:
+        return
+    status_by_item_id = {item.id: item.status for item in order.items}
+    for ticket in tickets:
+        if ticket.status == "done":
+            continue
+        item_ids = [entry.get("order_item_id") for entry in ticket.items_snapshot]
+        statuses = [status_by_item_id[iid] for iid in item_ids if iid in status_by_item_id]
+        if not statuses:
+            continue
+        if all(s in ("ready", "served", "cancelled") for s in statuses):
+            crud.update_ticket_status(db, ticket.id, "done")
+        elif ticket.status == "pending" and any(s != "pending" for s in statuses):
+            crud.update_ticket_status(db, ticket.id, "in_progress")
+
+
 def _order_local_date_and_time(order: DiningOrder) -> tuple[date, time]:
     """راجع restaurant.services._order_local_date_and_time — نفس المنطق بالظبط."""
     if not order.created_at:
@@ -951,13 +1061,86 @@ def _post_order_refund_reversal_journal(db: Session, order: DiningOrder, refund_
     )
 
 
+def _order_item_statuses(db: Session, item_ids: set[int]) -> dict[int, str]:
+    """(order_item_id → status) لمجموعة أصناف — استعلام واحد بدل N+1 لكل
+    تذكرة عند تجميع عدة تذاكر مع بعض. راجع
+    restaurant.services._order_item_statuses — نفس المنطق بالظبط."""
+    if not item_ids:
+        return {}
+    from app.modules.dining.models import DiningOrderItem  # noqa: PLC0415
+    return dict(db.query(DiningOrderItem.id, DiningOrderItem.status).filter(DiningOrderItem.id.in_(item_ids)).all())
+
+
+def _ticket_read_dict(ticket: DiningKitchenTicket, status_by_item_id: dict[int, str]) -> dict:
+    """يبني dict متوافق مع KitchenTicketRead — بيضيف حالة كل صنف اللحظية
+    (status) جوه items_snapshot من DiningOrderItem.status الحقيقي، بدل ما
+    يفضل items_snapshot (JSON ثابت وقت إنشاء التذكرة) بيقول 'pending'
+    للأبد حتى لو الصنف اتأكد فعليًا (bump فردي — راجع bump_order_item_status).
+    راجع restaurant.services._ticket_read_dict — نفس المنطق بالظبط."""
+    items_snapshot = [
+        {**entry, "status": status_by_item_id.get(entry.get("order_item_id"), "pending")}
+        for entry in ticket.items_snapshot
+    ]
+    return {
+        "id": ticket.id,
+        "branch_id": ticket.branch_id,
+        "outlet_id": ticket.outlet_id,
+        "order_id": ticket.order_id,
+        "station": ticket.station,
+        "items_snapshot": items_snapshot,
+        "status": ticket.status,
+        "created_at": ticket.created_at,
+    }
+
+
 def get_kds_tickets(
     db: Session,
     branch_id: int,
     outlet_id: Optional[int] = None,
     stations: Optional[list[str]] = None,
-) -> list[DiningKitchenTicket]:
-    return crud.list_pending_tickets(db, branch_id, outlet_id=outlet_id, stations=stations)
+) -> list[dict]:
+    """يرجّع تذاكر الـ KDS المعلقة لفرع معيّن — كل تذكرة بترجع مع حالة كل
+    صنف اللحظية (راجع _ticket_read_dict)، استعلام واحد لكل الأصناف عبر كل
+    التذاكر المرجّعة، مش N+1 لكل تذكرة. راجع restaurant.services.get_kds_tickets."""
+    tickets = crud.list_pending_tickets(db, branch_id, outlet_id=outlet_id, stations=stations)
+    item_ids = {
+        entry.get("order_item_id")
+        for t in tickets
+        for entry in t.items_snapshot
+        if entry.get("order_item_id") is not None
+    }
+    status_by_item_id = _order_item_statuses(db, item_ids)
+    return [_ticket_read_dict(t, status_by_item_id) for t in tickets]
+
+
+def update_kitchen_ticket_status(db: Session, ticket_id: int, new_status: str) -> dict:
+    """يحدّث حالة تذكرة كاملة يدويًا (pending/in_progress/done) — تأكيد
+    دفعة واحدة، بدل صنف بصنف (راجع bump_order_item_status). لو التذكرة
+    اتأكدت كاملة (done)، أي صنف لسه pending/in_kitchen جواها بيترقّى لـ
+    'ready' تلقائيًا — عشان DiningOrderItem.status وحالة التذكرة يفضلوا
+    متسقين. راجع restaurant.services.update_kitchen_ticket_status."""
+    from app.modules.dining.models import DiningOrderItem  # noqa: PLC0415
+
+    ticket = crud.update_ticket_status(db, ticket_id, new_status)
+    if not ticket:
+        raise ValueError(f"التذكرة {ticket_id} غير موجودة")
+
+    if new_status == "done" and ticket.items_snapshot:
+        item_ids = {
+            entry.get("order_item_id") for entry in ticket.items_snapshot
+            if entry.get("order_item_id") is not None
+        }
+        if item_ids:
+            db.query(DiningOrderItem).filter(
+                DiningOrderItem.id.in_(item_ids),
+                DiningOrderItem.status.in_(("pending", "in_kitchen")),
+            ).update({"status": "ready"}, synchronize_session=False)
+
+    db.commit()
+    db.refresh(ticket)
+
+    item_ids = {e.get("order_item_id") for e in ticket.items_snapshot if e.get("order_item_id") is not None}
+    return _ticket_read_dict(ticket, _order_item_statuses(db, item_ids))
 
 
 def generate_receipt_pdf(db: Session, order_id: int) -> bytes:

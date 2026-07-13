@@ -1,29 +1,34 @@
 <script setup lang="ts">
 /**
- * OrderView — قائمة الطعام/الكافيه للضيف عبر QR (طاولة أو شمسية).
+ * OrderView — قائمة الطعام للضيف عبر QR (منفذ + طاولة/شمسية).
  *
  * دمج frontend/apps/qr → apps/public (2026-07-06): كان فيه تطبيق مستقل
  * بالكامل (apps/qr، بورت 3005) لسكانر الـ QR بس، رغم إنه زي apps/public
  * تمامًا ضيف بدون تسجيل دخول — الدمج قلل تطبيق كامل (build/deploy/nginx)
  * من غير أي فايدة معمارية حقيقية (لسه مفيش أكواد QR مطبوعة فعليًا وقت الدمج).
  *
- * الـ outlet (مطعم/كافيه) والرقم (طاولة أو شمسية) بييجوا من الـ QR نفسه:
- *   /order/restaurant/5   → قائمة المطعم، طاولة 5
- *   /order/cafe/12        → قائمة الكافيه، طاولة/شمسية 12
- * الشمسيات مُمثَّلة بنفس صفوف cafe_tables برقم مميز (زي "شمسية 12") —
- * مفيش موديل "sunbed" منفصل، راجع CLAUDE.md §13.
+ * DINING_CUTOVER_PLAN.md Batch 6 (2026-07-13): كانت restaurant/cafe موديولين
+ * منفصلين بمسار QR بالنوع (`/order/restaurant/5`) — بعد الدمج في dining
+ * (outlet_type نص مفتوح، مش بس مطعم/كافيه)، مفيش معنى نفرّق بالنوع في
+ * الـ URL؛ الـ QR بيشاور مباشرة على رقم المنفذ (outlet_id) الحقيقي:
+ *   /order/12/5   → منفذ #12، طاولة/شمسية #5
+ * ⚠️ QR القديمة (restaurant/cafe) بقت غير صالحة فعليًا بعد الحذف — لازم
+ * إعادة طباعة كل QR الطاولات عبر admin/QRGeneratorView.vue الجديدة (نفس
+ * الملاحظة موجودة في تقرير الـ cutover). الشمسيات مُمثَّلة بنفس صفوف
+ * dining_tables برقم مميز (زي "شمسية 12") — مفيش موديل "sunbed" منفصل،
+ * راجع CLAUDE.md §13.
  *
  * يستخدم (بدون auth):
- *   GET  /api/v1/{outlet}/public/menu
- *   POST /api/v1/{outlet}/public/orders
- *   GET  /api/v1/{outlet}/public/orders/:id  (polling حالة الطلب)
- *   POST /api/v1/public/alerts               (نادِ الجرسون / هات الفاتورة)
+ *   GET  /api/v1/dining/public/menu
+ *   POST /api/v1/dining/public/orders
+ *   GET  /api/v1/dining/public/orders/:id  (polling حالة الطلب)
+ *   POST /api/v1/public/alerts             (نادِ الجرسون / هات الفاتورة)
  *
  * تنبيهات الضيف (guest alerts): قناة منفصلة تمامًا عن الطلبات نفسها —
  * الضيف يقدر "ينادي" طاقم الخدمة مباشرة من غير ما يحتاج يطلب صنف أصلاً.
- * context_type بيفرّق بين طاولة مطعم/كافيه (نفس الفكرة اللي بتفرّق menu_item_id
- * عن item_id فوق في placeOrder) لأن الـ backend مفيهوش FK حقيقي على
- * context_id — راجع app/modules/core/models.py::GuestAlert للتفاصيل.
+ * context_type="dining_table" (بدل restaurant_table/cafe_table القديمين)
+ * لأن الـ backend مفيهوش FK حقيقي على context_id — راجع
+ * app/modules/core/models.py::GuestAlert للتفاصيل.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
@@ -35,22 +40,26 @@ import { PUBLIC_BRANCH_ID } from '../constants/resort'
 const route = useRoute()
 const { locale, t } = useI18n()
 
-const outlet   = computed(() => (route.params.outlet === 'cafe' ? 'cafe' : 'restaurant') as 'restaurant' | 'cafe')
+const outletId = computed(() => parseInt(route.params.outletId as string))
 const tableId  = computed(() => route.params.tableId as string)
 const branchId = computed(() => parseInt((route.query.branch as string) ?? '') || PUBLIC_BRANCH_ID)
-const apiBase  = computed(() => `/api/v1/${outlet.value}/public`)
+const apiBase  = '/api/v1/dining/public'
 
-const outletLabel = computed(() =>
-  outlet.value === 'cafe' ? t('qr.outlet_cafe') : t('qr.outlet_restaurant')
-)
+// اسم المنفذ الحقيقي (من الـ API نفسه — راجع PublicMenuResponse.outlet_name/
+// outlet_name_ar) بدل تسمية ثابتة "المطعم"/"الكافيه" (dining بيدعم أي
+// outlet_type مفتوح، مش بس النوعين دول).
+const outletName   = ref('')
+const outletNameAr = ref<string | null>(null)
+const outletLabel = computed(() => (locale.value === 'ar' ? (outletNameAr.value ?? outletName.value) : outletName.value))
 
 // ── Types ──────────────────────────────────────────────────────────────
 interface ExtraOption  { id: number; name: string; name_ar: string | null; price_addition: number }
-interface ExtraGroup   { id: number; name: string; name_ar: string | null; min_select: number; max_select: number; options: ExtraOption[] }
+// group_type: 'pick_list' (افتراضي، اختيار من قايمة) | 'text' (برومبت نصي حر
+// زي "كام سمكة؟" — راجع DiningItemExtraGroup.group_type وDiningMenuView.vue)
+interface ExtraGroup   { id: number; name: string; name_ar: string | null; group_type: string; min_select: number; max_select: number; options: ExtraOption[] }
 // #20: صغير/كبير إلخ — سعر ووصفة مستقلين تمامًا لكل حجم (راجع POS الداخلي
-// RestaurantPOSView/CafePOSView.variantPickerItem لنفس المنطق بالظبط)، مش
-// رسم إضافي فوق سعر ثابت زي ExtraOption. الباك إند (PublicMenuItemRead/
-// CafePublicMenuItemRead) كان بيرجّعهم بالفعل من غير ما الشاشة تعرضهم خالص.
+// UnifiedPOSView.vue لنفس المنطق بالظبط)، مش رسم إضافي فوق سعر ثابت زي
+// ExtraOption. الباك إند (PublicMenuItemRead) بيرجّعهم بالفعل.
 interface Variant      { id: number; name: string; name_ar: string | null; price: number; is_available: boolean }
 interface MenuItem     { id: number; name: string; name_ar: string | null; price: number; category_id: number | null; extra_groups: ExtraGroup[]; variants: Variant[] }
 interface Category     { id: number; name: string; name_ar: string | null }
@@ -60,7 +69,8 @@ interface CartItem {
   variant:     Variant | null
   qty:         number
   notes:       string
-  selectedExtras: Record<number, number[]>  // group_id → [extra_id, ...]
+  selectedExtras:     Record<number, number[]>  // group_id → [extra_id, ...] (pick_list)
+  selectedExtraTexts: Record<number, string>    // group_id → free text (text)
 }
 
 // ── State ──────────────────────────────────────────────────────────────
@@ -90,10 +100,11 @@ const pollError    = ref(false)
 const pollChecking = ref(false)  // يمنع تداخل محاولة تلقائية مع محاولة يدوية في نفس اللحظة
 
 // ── Extras/Variant modal ─────────────────────────────────────────────────
-const extrasModal = ref<{ open: boolean; item: MenuItem | null }>({ open: false, item: null })
-const tempExtras  = ref<Record<number, number[]>>({})  // group_id → [extra_id]
-const tempNotes   = ref('')
-const tempVariant = ref<Variant | null>(null)
+const extrasModal    = ref<{ open: boolean; item: MenuItem | null }>({ open: false, item: null })
+const tempExtras     = ref<Record<number, number[]>>({})  // group_id → [extra_id]
+const tempExtraTexts = ref<Record<number, string>>({})    // group_id → free text
+const tempNotes      = ref('')
+const tempVariant    = ref<Variant | null>(null)
 const variantRequiredError = ref(false)
 
 // ── Computed ───────────────────────────────────────────────────────────
@@ -156,9 +167,11 @@ async function fetchMenu() {
   cart.value = []
   orderPlaced.value = false
   try {
-    const { data } = await axios.get(`${apiBase.value}/menu`, {
-      params: { branch_id: branchId.value, table_id: tableId.value || undefined },
+    const { data } = await axios.get(`${apiBase}/menu`, {
+      params: { outlet_id: outletId.value, table_id: tableId.value || undefined },
     })
+    outletName.value   = data.outlet_name ?? ''
+    outletNameAr.value = data.outlet_name_ar ?? null
     categories.value  = data.categories ?? []
     menuItems.value   = data.items ?? []
     activeCategory.value = categories.value[0]?.id ?? null
@@ -174,27 +187,32 @@ function openItem(item: MenuItem) {
   const availableVariants = item.variants.filter(v => v.is_available)
   if (availableVariants.length > 0 || item.extra_groups.length > 0) {
     extrasModal.value = { open: true, item }
-    tempExtras.value  = {}
+    tempExtras.value     = {}
+    tempExtraTexts.value = {}
     tempNotes.value   = ''
     // اختيار المتغيّر إجباري لو الصنف عنده متغيّرات متاحة — نفس قاعدة
     // POS الداخلي بالظبط (والباك إند برضو بيرفض الطلب من غيره، راجع
-    // restaurant/cafe services.create_order). صنف بمتغيّر واحد بس نختاره
-    // تلقائيًا (تجربة أسهل، مفيش قرار حقيقي هيتاخد).
+    // dining.services.create_order). صنف بمتغيّر واحد بس نختاره تلقائيًا
+    // (تجربة أسهل، مفيش قرار حقيقي هيتاخد).
     tempVariant.value = availableVariants.length === 1 ? availableVariants[0] : null
     variantRequiredError.value = false
   } else {
-    addToCartDirect(item, null, {}, '')
+    addToCartDirect(item, null, {}, {}, '')
   }
 }
 
-function addToCartDirect(item: MenuItem, variant: Variant | null, extras: Record<number, number[]>, notes: string) {
+function addToCartDirect(
+  item: MenuItem, variant: Variant | null,
+  extras: Record<number, number[]>, extraTexts: Record<number, string>, notes: string,
+) {
   const existing = cart.value.find(c => c.item.id === item.id && (c.variant?.id ?? null) === (variant?.id ?? null))
   if (existing) {
     existing.qty++
     existing.selectedExtras = extras
+    existing.selectedExtraTexts = extraTexts
     existing.notes = notes
   } else {
-    cart.value.push({ item, variant, qty: 1, notes, selectedExtras: extras })
+    cart.value.push({ item, variant, qty: 1, notes, selectedExtras: extras, selectedExtraTexts: extraTexts })
   }
 }
 
@@ -206,7 +224,7 @@ function confirmExtras() {
     variantRequiredError.value = true
     return
   }
-  addToCartDirect(item, tempVariant.value, { ...tempExtras.value }, tempNotes.value)
+  addToCartDirect(item, tempVariant.value, { ...tempExtras.value }, { ...tempExtraTexts.value }, tempNotes.value)
   extrasModal.value = { open: false, item: null }
 }
 
@@ -220,6 +238,10 @@ function toggleExtra(groupId: number, extraId: number, maxSelect: number) {
     if (arr.length >= maxSelect) arr.splice(0, 1)  // استبدل الأول لو max=1
     arr.push(extraId)
   }
+}
+
+function setExtraText(groupId: number, value: string) {
+  tempExtraTexts.value[groupId] = value
 }
 
 // بياخد الـ CartItem نفسه (مش itemId) عشان يميّز بين أكتر من سطر لنفس
@@ -249,22 +271,22 @@ async function placeOrder() {
   placeError.value = ''
   try {
     const items = cart.value.map(c => ({
-      // المطعم بيسميها menu_item_id، الكافيه بيسميها item_id — نفس الفكرة
-      [outlet.value === 'cafe' ? 'item_id' : 'menu_item_id']: c.item.id,
-      variant_id: c.variant?.id ?? undefined,
-      quantity: c.qty,
-      notes:    c.notes || undefined,
-      extra_ids: Object.values(c.selectedExtras).flat(),
+      item_id:     c.item.id,
+      variant_id:  c.variant?.id ?? undefined,
+      quantity:    c.qty,
+      notes:       c.notes || undefined,
+      extra_ids:   Object.values(c.selectedExtras).flat(),
+      extra_texts: c.selectedExtraTexts,
     }))
 
-    const payload: Record<string, unknown> = {
-      branch_id: branchId.value,
-      table_id:  tableId.value ? parseInt(tableId.value) : null,
+    const payload = {
+      outlet_id:    outletId.value,
+      table_id:     tableId.value ? parseInt(tableId.value) : null,
+      guests_count: 1,
       items,
     }
-    if (outlet.value === 'restaurant') payload.guests_count = 1
 
-    const { data } = await axios.post(`${apiBase.value}/orders`, payload)
+    const { data } = await axios.post(`${apiBase}/orders`, payload)
 
     orderId.value     = data.order_id
     orderNumber.value = data.order_number
@@ -289,7 +311,7 @@ async function pollOrderStatus() {
   if (!orderId.value || pollChecking.value) return
   pollChecking.value = true
   try {
-    const { data } = await axios.get(`${apiBase.value}/orders/${orderId.value}`)
+    const { data } = await axios.get(`${apiBase}/orders/${orderId.value}`)
     orderStatus.value  = data.status
     orderMessage.value = data.message
     pollError.value    = false
@@ -317,7 +339,7 @@ async function sendGuestAlert(alertType: 'call_waiter' | 'request_bill') {
   try {
     const { data } = await axios.post('/api/v1/public/alerts', {
       branch_id: branchId.value,
-      context_type: outlet.value === 'cafe' ? 'cafe_table' : 'restaurant_table',
+      context_type: 'dining_table',
       context_id: parseInt(tableId.value),
       alert_type: alertType,
     })
@@ -476,7 +498,7 @@ onUnmounted(() => {
             class="bg-white rounded-2xl border border-stone-200 p-4 flex gap-3 shadow-sm active:scale-[0.99] transition-transform"
           >
             <div class="w-14 h-14 bg-stone-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">
-              {{ outlet === 'cafe' ? '☕' : '🍽️' }}
+              🍽️
             </div>
 
             <div class="flex-1 min-w-0">
@@ -511,7 +533,7 @@ onUnmounted(() => {
           </div>
 
           <div v-if="filteredItems.length === 0" class="text-center py-16 text-gray-400">
-            <div class="text-4xl mb-2">{{ outlet === 'cafe' ? '☕' : '🍽️' }}</div>
+            <div class="text-4xl mb-2">🍽️</div>
             <p class="text-sm">{{ t('qr.no_items') }}</p>
           </div>
         </div>
@@ -557,10 +579,19 @@ onUnmounted(() => {
               <div class="font-bold text-gray-800 mb-2 text-sm">
                 {{ extraGroupDisplayName(group) }}
                 <span class="text-xs text-gray-400 font-normal mr-1">
-                  ({{ group.min_select === 0 ? t('qr.optional') : t('qr.required') }}{{ group.max_select > 1 ? ` — ${t('qr.choose_up_to', { max: group.max_select })}` : '' }})
+                  ({{ group.min_select === 0 ? t('qr.optional') : t('qr.required') }}{{ group.group_type === 'pick_list' && group.max_select > 1 ? ` — ${t('qr.choose_up_to', { max: group.max_select })}` : '' }})
                 </span>
               </div>
-              <div class="space-y-2">
+              <!-- برومبت نصي حر (زي "كام سمكة؟") — راجع DiningItemExtraGroup.group_type -->
+              <textarea
+                v-if="group.group_type === 'text'"
+                :value="tempExtraTexts[group.id] ?? ''"
+                @input="setExtraText(group.id, ($event.target as HTMLTextAreaElement).value)"
+                rows="2"
+                :placeholder="t('qr.extra_text_placeholder')"
+                class="w-full border border-stone-200 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 resize-none"
+              />
+              <div v-else class="space-y-2">
                 <button
                   v-for="opt in group.options" :key="opt.id"
                   @click="toggleExtra(group.id, opt.id, group.max_select)"

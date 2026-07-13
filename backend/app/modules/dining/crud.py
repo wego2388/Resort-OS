@@ -300,6 +300,21 @@ def update_table_status(db: Session, table: VenueTable, status: str) -> VenueTab
     return table
 
 
+def get_active_order_for_table(
+    db: Session, table_id: int, exclude_order_id: Optional[int] = None,
+) -> Optional[DiningOrder]:
+    """أي طلب غير مقفول (مش paid/cancelled) مرتبط بالطاولة دي حاليًا — يُستخدم
+    للتحقق إن الطاولة "مشغولة بطلب آخر" قبل نقل طلب ليها. راجع
+    restaurant.crud.get_active_order_for_table — نفس المنطق بالظبط."""
+    q = db.query(DiningOrder).filter(
+        DiningOrder.table_id == table_id,
+        DiningOrder.status.notin_(("paid", "cancelled")),
+    )
+    if exclude_order_id is not None:
+        q = q.filter(DiningOrder.id != exclude_order_id)
+    return q.first()
+
+
 # ── Order ─────────────────────────────────────────────────────────────
 
 def get_order(db: Session, order_id: int) -> Optional[DiningOrder]:
@@ -423,6 +438,15 @@ def void_order_item(db: Session, item: DiningOrderItem, reason: str, voided_by: 
     return item
 
 
+def update_order_item_status(db: Session, item: DiningOrderItem, status: str) -> DiningOrderItem:
+    """تحديث حالة صنف واحد داخل طلب (pending|in_kitchen|ready|served) — bump
+    فردي من شاشة الـ KDS. راجع restaurant.crud.update_order_item_status —
+    نفس المنطق بالظبط، بدون أي أثر مالي."""
+    item.status = status
+    db.flush()
+    return item
+
+
 def refund_order_item(db: Session, item: DiningOrderItem, reason: str, refunded_by: int) -> DiningOrderItem:
     item.status = "refunded"
     item.voided_reason = reason
@@ -469,6 +493,18 @@ def create_kitchen_ticket(
     db.add(ticket)
     db.flush()
     return ticket
+
+
+def list_tickets_for_order(db: Session, order_id: int) -> list[DiningKitchenTicket]:
+    """كل تذاكر المطبخ (أي حالة، بما فيها 'done') لطلب معيّن — يُستخدم لمزامنة
+    حالة التذكرة بعد bump فردي لصنف (راجع services._sync_kitchen_tickets_for_order).
+    راجع restaurant.crud.list_tickets_for_order — نفس المنطق، بدون فلتر module
+    (dining_kitchen_tickets FK حقيقي على dining_orders، مفيش ambiguity)."""
+    return (
+        db.query(DiningKitchenTicket)
+        .filter(DiningKitchenTicket.order_id == order_id)
+        .all()
+    )
 
 
 def list_pending_tickets(

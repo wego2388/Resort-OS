@@ -32,9 +32,12 @@ from app.modules.dining.schemas import (
     FoodCostReportResponse,
     KDSScreenCreate, KDSScreenRead,
     KitchenTicketRead, TicketStatusUpdate,
-    OrderCreate, OrderItemCreate, OrderItemRead, OrderItemVoidRequest, OrderRead, OrderStatusUpdate,
+    OrderCreate, OrderItemCreate, OrderItemRead, OrderItemStatusUpdate, OrderItemVoidRequest,
+    OrderRead, OrderStatusUpdate, OrderTransferRequest,
     OrderSyncRequest, OrderSyncResponse,
     OutletCreate, OutletRead, OutletUpdate,
+    GuestOrderCreate, GuestOrderRead, PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
+    PublicOutletRead,
 )
 from app.modules.core.schemas import PaginatedResponse
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
@@ -44,9 +47,8 @@ router = APIRouter(tags=["dining"])
 
 
 # ── WebSocket KDS Manager ──────────────────────────────────────────────
-# راجع restaurant.api.router.ConnectionManager — نفس الشكل بالظبط، instance
-# منفصل عمدًا (dining بيبث لمشتركي /dining/ws/*، مش مشترك مع restaurant_manager
-# القديم — الاتنين لسه شغالين بمعزل عن بعض حتى D-05/D-08).
+# dining بيبث لمشتركي /dining/ws/* لوحده — restaurant/cafe اتحذفوا بالكامل
+# (DINING_CUTOVER_PLAN.md Batch 6)، dining هو مصدر البث اللحظي الوحيد دلوقتي.
 
 class ConnectionManager:
     def __init__(self):
@@ -515,6 +517,37 @@ async def update_order_status(order_id: int, data: OrderStatusUpdate, db: DbDep,
     return order
 
 
+@router.patch("/dining/orders/{order_id}/transfer", response_model=OrderRead)
+async def transfer_order_table(order_id: int, data: OrderTransferRequest,
+                               db: DbDep, user=Depends(get_waiter_user)):
+    """نقل طلب مفتوح لطاولة تانية (الضيوف اتحركوا فعليًا) — نفس مستوى صلاحية
+    باقي عمليات التشغيل اليومية على الطلب (get_waiter_user)، مش إجراء مالي.
+    راجع restaurant.api.router.transfer_order_table — نفس المنطق بالظبط."""
+    try:
+        order = services.transfer_order_table(db, order_id, data.table_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await dining_manager.broadcast(f"tables-{order.branch_id}", {
+        "type": "table_updated", "table_id": order.table_id,
+    })
+    return order
+
+
+@router.patch("/dining/orders/{order_id}/items/{item_id}/status", response_model=OrderRead)
+async def update_order_item_status(order_id: int, item_id: int, data: OrderItemStatusUpdate,
+                                    db: DbDep, _=Depends(get_current_active_user)):
+    """تأكيد صنف واحد داخل تذكرة مطبخ (bump فردي من شاشة KDS) — نفس مستوى
+    صلاحية تأكيد التذكرة كلها (get_current_active_user، أي موظف مسجّل دخول
+    زي طاقم المطبخ)، مش إجراء مالي. راجع
+    restaurant.api.router.update_order_item_status — نفس المنطق بالظبط."""
+    try:
+        order = services.bump_order_item_status(db, order_id, item_id, data.status)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await dining_manager.broadcast(str(order.branch_id), {"type": "tickets_updated", "order_id": order.id})
+    return order
+
+
 @router.patch("/dining/orders/{order_id}/items/{item_id}/void", response_model=OrderRead,
               dependencies=[Depends(require_permission("dining.void_order_item", "execute", min_role_level=40))])
 def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest, db: DbDep, user=Depends(get_current_active_user)):
@@ -591,13 +624,15 @@ def list_kitchen_tickets(
 
 @router.patch("/dining/kitchen/tickets/{ticket_id}/status", response_model=KitchenTicketRead)
 async def update_ticket_status(ticket_id: int, data: TicketStatusUpdate, db: DbDep, _=Depends(get_current_active_user)):
-    ticket = crud.update_ticket_status(db, ticket_id, data.status)
-    if not ticket:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"التذكرة {ticket_id} غير موجودة")
-    db.commit()
-    db.refresh(ticket)
-    await dining_manager.broadcast(str(ticket.branch_id), {"type": "tickets_updated", "ticket_id": ticket.id})
-    return KitchenTicketRead.model_validate(ticket)
+    """يحدّث حالة تذكرة الـ KDS كاملة (pending → in_progress → done) — تأكيد
+    دفعة واحدة. لو التذكرة اتأكدت done، أي صنف لسه pending/in_kitchen جواها
+    بيترقّى لـ ready تلقائيًا (راجع services.update_kitchen_ticket_status)."""
+    try:
+        ticket_dict = services.update_kitchen_ticket_status(db, ticket_id, data.status)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    await dining_manager.broadcast(str(ticket_dict["branch_id"]), {"type": "tickets_updated", "ticket_id": ticket_dict["id"]})
+    return KitchenTicketRead.model_validate(ticket_dict)
 
 
 @router.get("/dining/kds-screens", response_model=list[KDSScreenRead])
@@ -686,3 +721,137 @@ def get_outlet_sales_report(
         "payment_breakdown": {k: {"orders": v["orders"], "total": float(v["total"])} for k, v in payment_breakdown.items()},
         "top_items": top_items,
     }
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Public Endpoints — للضيوف عبر QR (بدون auth)
+# ══════════════════════════════════════════════════════════════════════
+# راجع restaurant.api.router's نفس القسم (المصدر الأصلي قبل الدمج) — نفس
+# المنطق بالظبط، outlet_id بدل الفصل بين restaurant/cafe. DINING_CUTOVER_PLAN.md
+# Batch 6: فجوة تكافؤ حقيقية اتقفلت هنا قبل حذف restaurant/cafe — موقع
+# الحجز العام (`public` app's OrderView.vue) كان بيكلّم /restaurant/public/*
+# و/cafe/public/* حصريًا، بدون أي بديل هنا، فحذفهم من غير الإضافة دي كان
+# هيكسر طلب الضيف عبر QR بالكامل (ميزة حقيقية شغالة، مش تجريبية).
+#
+# أمان: rate limited بالـ middleware (30 req/60s per IP)
+#        order_type ثابت "dine_in" — نفس تقييد restaurant/cafe الأصليين
+#        لا يوجد تعديل أو حذف من هنا — read + create فقط
+# ══════════════════════════════════════════════════════════════════════
+
+
+def _guest_status_message(order_status: str) -> str:
+    # نُرجع مفتاح i18n — الـ frontend (OrderView.vue) بيترجمه عبر statusMessage().
+    return {
+        "open":       "status_pending",
+        "held":       "status_pending",
+        "in_kitchen": "status_in_kitchen",
+        "served":     "status_served",
+        "paid":       "status_paid",
+        "cancelled":  "status_cancelled",
+        "refunded":   "status_cancelled",
+    }.get(order_status, "status_pending")
+
+
+@router.get(
+    "/dining/public/outlets",
+    response_model=list[PublicOutletRead],
+    tags=["dining-public"],
+    summary="منافذ الفرع النشطة — بدون auth (لموقع الحجز العام)",
+)
+def list_public_outlets(db: DbDep, branch_id: int = Query(...)):
+    """Public endpoint — لا يحتاج login. يُستدعى من apps/public's DiningView.vue
+    (صفحة المنيو التسويقية) عشان تعرف outlet_id لكل منفذ قبل ما تنادي
+    GET /dining/public/menu لكل واحد. راجع docstring PublicOutletRead —
+    حقول محدودة عمدًا، بدون بيانات داخلية زي revenue_account_code."""
+    outlets = crud.list_outlets(db, branch_id, active_only=True)
+    return [PublicOutletRead.model_validate(o) for o in outlets]
+
+
+@router.get(
+    "/dining/public/menu",
+    response_model=PublicMenuResponse,
+    tags=["dining-public"],
+    summary="قائمة المنفذ للضيف (QR) — بدون auth",
+)
+def get_public_menu(
+    db: DbDep,
+    outlet_id: int = Query(..., description="رقم المنفذ (مطعم/كافيه/...) — مضمّن في الـ QR"),
+    table_id: Optional[int] = Query(None, description="رقم الطاولة — مضمّن في الـ QR"),
+):
+    """Public endpoint — لا يحتاج login. يُستدعى من apps/public's OrderView
+    عند مسح QR الطاولة. يُرجع categories + items في طلب واحد لتقليل round trips."""
+    outlet = crud.get_outlet(db, outlet_id)
+    if not outlet:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+
+    categories = crud.list_categories(db, outlet_id)
+    items = crud.list_items(db, outlet_id, available_only=True)
+
+    return PublicMenuResponse(
+        branch_id=outlet.branch_id,
+        outlet_id=outlet_id,
+        outlet_name=outlet.name,
+        outlet_name_ar=outlet.name_ar,
+        table_id=table_id,
+        categories=[PublicMenuCategoryRead.model_validate(c) for c in categories],
+        items=[PublicMenuItemRead.model_validate(i) for i in items],
+    )
+
+
+@router.post(
+    "/dining/public/orders",
+    response_model=GuestOrderRead,
+    status_code=status.HTTP_201_CREATED,
+    tags=["dining-public"],
+    summary="تقديم طلب من الضيف (QR) — بدون auth",
+)
+def create_guest_order(data: GuestOrderCreate, db: DbDep):
+    """Public endpoint — لا يحتاج login. الضيف يطلب من القائمة عبر QR الطاولة.
+    - order_type ثابت dine_in
+    - waiter_id = None (النادل يتولى التذكرة من KDS/POS بعدين)
+    - مفيش customer_id (ضيف مجهول، مفيش تسجيل دخول)"""
+    try:
+        order_data = OrderCreate(
+            outlet_id=data.outlet_id,
+            table_id=data.table_id,
+            order_type="dine_in",
+            guests_count=data.guests_count,
+            notes=data.notes,
+            items=[OrderItemCreate(**i.model_dump()) for i in data.items],
+        )
+        outlet = crud.get_outlet(db, data.outlet_id)
+        if not outlet:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+        order = services.create_order(db, branch_id=outlet.branch_id, data=order_data, waiter_id=None)
+        return GuestOrderRead(
+            order_id=order.id,
+            order_number=order.order_number,
+            status=order.status,
+            total=order.total,
+            items_count=sum(i.quantity for i in order.items),
+            message="تم استلام طلبك! سيصل إليك قريباً 🍽️",
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get(
+    "/dining/public/orders/{order_id}",
+    response_model=GuestOrderRead,
+    tags=["dining-public"],
+    summary="حالة الطلب للضيف (QR) — بدون auth",
+)
+def get_guest_order_status(order_id: int, db: DbDep):
+    """Public endpoint — لا يحتاج login. الضيف يتابع حالة طلبه بعد التقديم
+    (polling كل 10 ثواني). لا يُظهر بيانات مالية داخلية — status فقط."""
+    order = crud.get_order(db, order_id)
+    if not order:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الطلب غير موجود")
+    return GuestOrderRead(
+        order_id=order.id,
+        order_number=order.order_number,
+        status=order.status,
+        total=order.total,
+        items_count=sum(i.quantity for i in order.items if i.status != "cancelled"),
+        message=_guest_status_message(order.status),
+    )

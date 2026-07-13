@@ -87,7 +87,7 @@ router = APIRouter(tags=["core"])
 
 
 # ── WebSocket Guest-Alerts Manager ─────────────────────────────────────
-# نفس نمط restaurant_manager (app/modules/restaurant/api/router.py) —
+# نفس نمط dining_manager (app/modules/dining/api/router.py) —
 # بث بسيط بالفرع، من غير أي بروتوكول ثنائي الاتجاه حقيقي. auth بقى موحّد
 # عبر get_websocket_user (wagdy.md A-01) — ?token= JWT صالح إجباري.
 

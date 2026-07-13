@@ -79,7 +79,6 @@ def create_all_tables() -> None:
     import app.modules.core.models         # noqa: F401, PLC0415
     import app.modules.finance.models      # noqa: F401, PLC0415
     import app.modules.hr.models           # noqa: F401, PLC0415
-    import app.modules.restaurant.models   # noqa: F401, PLC0415
     import app.modules.pms.models          # noqa: F401, PLC0415
     import app.modules.beach.models        # noqa: F401, PLC0415
     import app.modules.maintenance.models  # noqa: F401, PLC0415
@@ -88,7 +87,6 @@ def create_all_tables() -> None:
     import app.modules.inventory.models    # noqa: F401, PLC0415
     import app.modules.timeshare.models    # noqa: F401, PLC0415
     import app.modules.leasing.models      # noqa: F401, PLC0415
-    import app.modules.cafe.models         # noqa: F401, PLC0415
     import app.modules.analytics.models    # noqa: F401, PLC0415
     import app.modules.dining.models       # noqa: F401, PLC0415
     Base.metadata.create_all(bind=engine)
@@ -343,25 +341,6 @@ def sample_room(db: Session, sample_branch):
         return room
     except ImportError:
         pytest.skip("PMS module not implemented yet")
-
-
-@pytest.fixture
-def sample_product(db: Session, sample_branch):
-    """منتج اختباري — تتطلب Restaurant models."""
-    try:
-        from app.modules.restaurant.models import MenuItem  # noqa: PLC0415
-        item = MenuItem(
-            branch_id=sample_branch.id,
-            name="Test Item",
-            name_ar="صنف اختباري",
-            price=Decimal("50.00"),
-            is_available=True,
-        )
-        db.add(item)
-        db.flush()
-        return item
-    except ImportError:
-        pytest.skip("Restaurant module not implemented yet")
 
 
 @pytest.fixture
