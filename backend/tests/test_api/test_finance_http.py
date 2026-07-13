@@ -1005,6 +1005,46 @@ class TestShiftInvoicesHTTP:
         )
         assert resp.status_code == 403
 
+    def test_cashier_cannot_view_other_cashiers_shift_report(
+        self, client: TestClient, db, cashier_headers,
+    ):
+        """راجع Operations & Control Layer Batch 4 (2026-07-13) — نفس عزل
+        test_cashier_cannot_view_other_cashiers_shift فوق (S-02)، بس على
+        /report/report-pdf مش /invoices. GET /finance/shifts/{id}/report
+        كان مقفول على get_cashier_user بس من غير أي تحقق ملكية خالص —
+        أي كاشير كان يقدر يشوف تقرير وردية كاشير تاني (مبيعات/فرق
+        كاش/هويته) بس بتخمين الـ shift_id، حتى من غير أي PIN. اتصلح ليطابق
+        نمط list_shift_invoices (كاشير+ مؤهّل لوردية نفسه بس، مدير+ لأي
+        وردية)."""
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "100.00"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+
+        other_headers = _second_cashier_headers(db)
+        report_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report", headers=other_headers)
+        assert report_resp.status_code == 403
+
+        pdf_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report/pdf", headers=other_headers)
+        assert pdf_resp.status_code == 403
+
+    def test_manager_can_view_any_cashiers_shift_report(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "100.00"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+
+        report_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report", headers=manager_headers)
+        assert report_resp.status_code == 200
+
     def test_invoices_404_for_missing_shift(self, client: TestClient, db, manager_headers):
         resp = client.get("/api/v1/finance/shifts/999999/invoices", headers=manager_headers)
         assert resp.status_code == 400

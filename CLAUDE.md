@@ -879,6 +879,20 @@ migrations) في `PROJECT_STATUS.md`.
   صراحةً) — موثّق في كود `fraud_tasks.py` وPROJECT_STATUS.md، سهل التوسيع لاحقًا. `find_fraud_signals()`
   هي المنطق القابل للاختبار (استعلامات + عتبات، مفيش Celery/Redis هنا). 8 اختبار جديد = 1715 اختبار
   إجمالي.
+- **Operations & Control Layer — Batch 4: تحقق شامل من رؤية سجل التدقيق** (2026-07-13) — مراجعة أمنية
+  منهجية عبر كل endpoint كاشير/نادل يقدر يوصله. `/audit-logs` و`/finance/shifts/{id}/cash-movements`
+  (Batch 2) كانوا فعلاً مقفولين صح على مدير+ من الأول. **لكن اتكشفت ثغرة حقيقية منفصلة**:
+  `GET /finance/shifts/{id}/report`/`report/pdf` كانوا مقفولين على `get_cashier_user` بس **من غير
+  أي تحقق ملكية** — أي كاشير كان يقدر يشوف تقرير وردية كاشير تاني (مبيعات/فرق كاش/هويته) بمجرد تخمين
+  `shift_id`، عكس `GET .../invoices` المجاورة اللي كانت بالفعل بتفرض "وردية نفسك بس" (S-02). اتصلح:
+  `services.build_shift_end_report`/`generate_shift_end_report_pdf` بقوا ياخدوا `requesting_user`
+  اختياري وبيفرضوا نفس قيد الملكية. اتأكد بتست بيثبت الباج قبل الإصلاح (200) ثم يتحقق من الإصلاح
+  (403). فحص تفصيلي لباقي الموديولات (`dining.OrderItemRead.voided_by`،
+  `inventory.StockCountRead.approved_by`، `finance.CheckRead.created_by`، `beach.
+  BeachTransactionRead.cashier_id`) موثّق بالكامل في `PROJECT_STATUS.md` — معظمها "مين سجّل" عادي
+  مش "مين وافق على إجراء حسّاس"، عدا `StockCountRead` اللي مقفول بأوسع بوابة في المشروع
+  (`get_current_active_user`) ومذكور كملاحظة منفصلة لقرار Mohamed مستقبلي (خارج نطاق موديول
+  الكاشير/الكاش). 3 اختبار جديد = 1718 اختبار إجمالي.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش

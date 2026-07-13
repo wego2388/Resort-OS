@@ -138,6 +138,14 @@ class TestAuditLogsEndpoint:
         resp = client.get("/api/v1/audit-logs", headers=waiter_headers)
         assert resp.status_code == 403
 
+    def test_cashier_cannot_view_audit_logs(self, client: TestClient, cashier_headers):
+        """راجع Operations & Control Layer Batch 4 (2026-07-13) — Mohamed
+        صراحةً: كاشير ميقدرش يشوف سجل التدقيق حتى بتاع نفسه. level=40 <
+        get_manager_user (60)، مفيش أي مسار موافقة PIN بديل هنا (عكس
+        list_shift_invoices) — 403 دايمًا بغض النظر عن أي حاجة."""
+        resp = client.get("/api/v1/audit-logs", headers=cashier_headers)
+        assert resp.status_code == 403
+
     def test_lists_with_pagination(self, client: TestClient, manager_headers):
         resp = client.get("/api/v1/audit-logs", params={"page": 1, "size": 10}, headers=manager_headers)
         assert resp.status_code == 200

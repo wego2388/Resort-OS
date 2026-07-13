@@ -183,19 +183,25 @@ def list_shifts(
 
 
 @router.get("/finance/shifts/{shift_id}/report", response_model=ShiftEndReport)
-def shift_end_report(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def shift_end_report(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
+    """راجع Batch 4 (Operations & Control Layer) — كاشير يشوف تقرير وردية
+    نفسه بس، مدير+ يشوف أي وردية (services.build_shift_end_report)."""
     try:
-        return services.build_shift_end_report(db, shift_id)
+        return services.build_shift_end_report(db, shift_id, requesting_user=user)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
 @router.get("/finance/shifts/{shift_id}/report/pdf")
-def download_shift_end_report_pdf(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def download_shift_end_report_pdf(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
     try:
-        pdf = services.generate_shift_end_report_pdf(db, shift_id)
+        pdf = services.generate_shift_end_report_pdf(db, shift_id, requesting_user=user)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return Response(
         content=pdf,
         media_type="application/pdf",
