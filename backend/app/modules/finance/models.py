@@ -244,9 +244,18 @@ class JournalLine(Base, TimestampMixin):
     debit:       Mapped[Decimal]  = mapped_column(Numeric(12, 2), default=Decimal("0"))
     credit:      Mapped[Decimal]  = mapped_column(Numeric(12, 2), default=Decimal("0"))
     description: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    # مركز التكلفة اللي السطر ده بيخص أي موديول (ROOM/REST/CAFE/BEACH/TS) —
+    # بيتحدد وقت الترحيل نفسه (راجع services.post_simple_revenue_journal's
+    # cost_center_code) بدل استنتاجه بعدين من account_id/source زي ما كان
+    # get_cost_center_report بيعمل قبل كده. nullable — قيود عامة (تحصيل/
+    # إلغاء دفعة فوليو، رواتب...) مش دايمًا مرتبطة بمركز تكلفة واحد واضح.
+    cost_center_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cost_centers.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
 
-    entry:   Mapped["JournalEntry"] = relationship("JournalEntry", back_populates="lines")
-    account: Mapped["Account"]      = relationship("Account", back_populates="lines")
+    entry:       Mapped["JournalEntry"]      = relationship("JournalEntry", back_populates="lines")
+    account:     Mapped["Account"]           = relationship("Account", back_populates="lines")
+    cost_center: Mapped["CostCenter | None"] = relationship("CostCenter")
 
 
 class AccountingPeriod(Base, TimestampMixin):

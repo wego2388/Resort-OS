@@ -278,6 +278,7 @@ def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
         reference=f"CHK-{booking.booking_number}",
         description=f"إيرادات غرف — {booking.booking_number}",
         source="pms", source_id=booking.id,
+        cost_center_code="ROOM",
     )
 
 
@@ -486,6 +487,7 @@ def _post_room_revenue_for_night_audit(
             reference=f"AUDIT-{audit_date.strftime('%Y%m%d')}",
             description=f"إيراد غرف — Night Audit {audit_date}",
             source="pms_night_audit", source_id=None,
+            cost_center_code="ROOM",
         )
     except Exception:
         logger.error(

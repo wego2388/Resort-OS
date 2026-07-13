@@ -330,6 +330,7 @@ def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
         reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
         description=f"إيرادات شاطئ — {tx.tx_type}",
         source="beach", source_id=tx.id,
+        cost_center_code="BEACH",
     )
 
 
@@ -346,6 +347,7 @@ def _post_beach_folio_charge_journal(db: Session, tx: "BeachTransaction") -> Non
         reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
         description=f"إيرادات شاطئ (محمّل على الغرفة) — {tx.tx_type}",
         source="beach_folio_charge", source_id=tx.id,
+        cost_center_code="BEACH",
     )
 
 
@@ -529,6 +531,7 @@ def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") ->
         reference=f"BCH-VOID-{tx.id:06d}",
         description=f"إلغاء عملية شاطئ — {tx.tx_type}",
         source="beach_void", source_id=tx.id,
+        cost_center_code="BEACH",
     )
 
 
@@ -544,6 +547,7 @@ def _post_beach_folio_charge_reversal_journal(db: Session, tx: "BeachTransaction
         reference=f"BCH-VOID-{tx.id:06d}",
         description=f"إلغاء عملية شاطئ (محمّل على الغرفة) — {tx.tx_type}",
         source="beach_folio_void", source_id=tx.id,
+        cost_center_code="BEACH",
     )
 
 

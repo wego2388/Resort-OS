@@ -64,6 +64,19 @@ def _service_charge_pct(outlet: Optional[Outlet]) -> Decimal:
     return Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
 
 
+# مركز التكلفة (finance.CostCenter.code — Batch 3) المقابل لـ outlet_type —
+# مبني على نفس ROOM/REST/CAFE/BEACH/TS اللي finance.services.DEFAULT_COST_CENTERS
+# بتستخدمها كمصدر حقيقة وحيد. outlet_type غير معروف (مش "restaurant"/"cafe")
+# → None عمدًا (مفيش مركز تكلفة رابع/خامس مخترع هنا، نفس الـ 5 الموجودين بس).
+_OUTLET_TYPE_TO_COST_CENTER = {"restaurant": "REST", "cafe": "CAFE"}
+
+
+def _outlet_cost_center_code(outlet: Optional[Outlet]) -> Optional[str]:
+    if outlet is None:
+        return None
+    return _OUTLET_TYPE_TO_COST_CENTER.get(outlet.outlet_type)
+
+
 def _resolve_extras(
     db: Session, item: DiningItem, extra_ids: list[int],
     extra_texts: Optional[dict[int, str]] = None,
@@ -692,6 +705,9 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
     from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
     from app.modules.inventory import services as inventory_services  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
+    cost_center_code = _outlet_cost_center_code(outlet)
+
     for order_item in order.items:
         if order_item.status == "cancelled":
             continue
@@ -716,6 +732,7 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
                         reference_id=order.id,
                         moved_by=0,
                         allow_negative=True,
+                        cost_center_code=cost_center_code,
                     )
                 continue
             if not item.linked_product_id:
@@ -732,6 +749,7 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
                 reference_type="dining_order",
                 reference_id=order.id,
                 moved_by=0,
+                cost_center_code=cost_center_code,
             )
         except Exception:
             continue
@@ -742,6 +760,7 @@ def _post_order_revenue_journal(db: Session, order: DiningOrder, revenue_account
     دفع كاش/كارت فوري."""
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
     post_simple_revenue_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="1100", credit_account_code=revenue_account_code,
@@ -749,6 +768,7 @@ def _post_order_revenue_journal(db: Session, order: DiningOrder, revenue_account
         reference=f"ORD-{order.order_number}",
         description=f"إيرادات دايننج — {order.order_number}",
         source="dining", source_id=order.id,
+        cost_center_code=_outlet_cost_center_code(outlet),
     )
 
 
@@ -757,6 +777,7 @@ def _post_order_folio_charge_journal(db: Session, order: DiningOrder, revenue_ac
     غرفة. راجع restaurant.services._post_order_folio_charge_journal."""
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
     post_simple_revenue_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="1150", credit_account_code=revenue_account_code,
@@ -764,6 +785,7 @@ def _post_order_folio_charge_journal(db: Session, order: DiningOrder, revenue_ac
         reference=f"ORD-{order.order_number}",
         description=f"إيرادات دايننج (محمّل على الغرفة) — {order.order_number}",
         source="dining_folio_charge", source_id=order.id,
+        cost_center_code=_outlet_cost_center_code(outlet),
     )
 
 
@@ -1095,6 +1117,7 @@ def _reduce_folio_charge_for_refund(db: Session, order: DiningOrder, refund_amou
 def _post_order_folio_refund_reversal_journal(db: Session, order: DiningOrder, refund_amount: Decimal, revenue_account_code: str) -> None:
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
     post_simple_revenue_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code=revenue_account_code, credit_account_code="1150",
@@ -1102,12 +1125,14 @@ def _post_order_folio_refund_reversal_journal(db: Session, order: DiningOrder, r
         reference=f"ORD-REFUND-{order.order_number}",
         description=f"مرتجع بعد الدفع (محمّل على الغرفة) — {order.order_number}",
         source="dining_folio_refund", source_id=order.id,
+        cost_center_code=_outlet_cost_center_code(outlet),
     )
 
 
 def _post_order_refund_reversal_journal(db: Session, order: DiningOrder, refund_amount: Decimal, revenue_account_code: str) -> None:
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
     post_simple_revenue_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code=revenue_account_code, credit_account_code="1100",
@@ -1115,6 +1140,7 @@ def _post_order_refund_reversal_journal(db: Session, order: DiningOrder, refund_
         reference=f"ORD-REFUND-{order.order_number}",
         description=f"مرتجع بعد الدفع — {order.order_number}",
         source="dining_refund", source_id=order.id,
+        cost_center_code=_outlet_cost_center_code(outlet),
     )
 
 

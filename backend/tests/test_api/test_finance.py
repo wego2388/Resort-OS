@@ -1103,6 +1103,27 @@ class TestFolioReports:
 
 
 # ── Cost Center Report ───────────────────────────────────────────────
+# Batch 3: التقرير بقى بيقرأ journal_lines.cost_center_id مباشرة (مش
+# جداول عمليات منفصلة زي beach_transactions/folio_charges قبل كده) —
+# فالتستات هنا لازم تمرّ فعليًا عبر عمليات حقيقية بترحّل قيود (بيع شاطئ،
+# دفع طلب dining) بدل إنشاء FolioCharge مباشرة (اللي مالوش أي أثر على
+# دفتر اليومية). محتاجة دليل حسابات حقيقي (1100/1150/4100-4600...) عشان
+# post_simple_revenue_journal يقدر يرحّل أصلاً.
+
+def _seed_full_chart_of_accounts(db: Session, branch_id: int) -> None:
+    codes = [
+        ("1100", "Cash", "asset"), ("1150", "Guest Ledger", "asset"),
+        ("1200", "Inventory", "asset"),
+        ("4100", "Room Revenue", "revenue"), ("4200", "Restaurant Revenue", "revenue"),
+        ("4300", "Beach Revenue", "revenue"), ("4400", "Cafe Revenue", "revenue"),
+        ("4600", "Timeshare Revenue", "revenue"),
+        ("5200", "COGS", "expense"),
+    ]
+    for code, name, acc_type in codes:
+        if not crud.get_account_by_code(db, branch_id, code):
+            crud.create_account(db, AccountCreate(branch_id=branch_id, code=code, name=name, account_type=acc_type))
+    db.commit()
+
 
 class TestCostCenterReport:
 
@@ -1118,61 +1139,33 @@ class TestCostCenterReport:
         )
         assert len(report.lines) == 5
         assert report.total_revenue == Decimal("0")
-        assert all(l.revenue == Decimal("0") for l in report.lines)
+        assert report.total_expense == Decimal("0")
+        assert all(l.revenue == Decimal("0") and l.expense == Decimal("0") for l in report.lines)
 
-    def test_beach_revenue_shows_as_separate_line(self, db: Session, branch):
+    def test_beach_revenue_tagged_from_real_ledger_posting(self, db: Session, branch):
+        """راجع beach.services._post_beach_revenue_journal —
+        cost_center_code="BEACH" بيتوسم وقت الترحيل نفسه، مش استنتاج بعدي."""
         from app.modules.beach import services as beach_services
         from app.modules.beach.schemas import BeachSellRequest
 
+        _seed_full_chart_of_accounts(db, branch.id)
         today = date(2026, 6, 15)
-        beach_services.sell_ticket(
+        tx = beach_services.sell_ticket(
             db, branch.id, BeachSellRequest(tx_type="entry", quantity=2), tx_date=today,
         )
+        expected = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
+
         report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
         by_code = {l.code: l for l in report.lines}
-        assert by_code["BEACH"].revenue == Decimal("400")  # 2 * 200 (default entry price)
-        assert by_code["BEACH"].source == "direct"
+        assert by_code["BEACH"].revenue == expected
+        assert by_code["BEACH"].source == "ledger"
         assert by_code["REST"].revenue == Decimal("0")
-
-    def test_restaurant_and_cafe_revenue_from_folio_charges(self, db: Session, branch, folio):
-        services.post_charge(db, folio.id, FolioChargeCreate(
-            charge_type="restaurant", description="عشاء", amount=Decimal("300"),
-            posted_at=datetime(2026, 6, 10, 20, 0),
-        ))
-        services.post_charge(db, folio.id, FolioChargeCreate(
-            charge_type="cafe", description="قهوة", amount=Decimal("50"),
-            posted_at=datetime(2026, 6, 10, 10, 0),
-        ))
-        report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
-        by_code = {l.code: l for l in report.lines}
-        assert by_code["REST"].revenue == Decimal("300")
-        assert by_code["CAFE"].revenue == Decimal("50")
-
-    def test_room_revenue_from_ledger_account_4100(self, db: Session, branch, account, account2):
-        room_acc = crud.create_account(db, AccountCreate(
-            branch_id=branch.id, code="4100", name="Room Revenue", account_type="revenue",
-        ))
-        db.commit(); db.refresh(room_acc)
-
-        entry_data = JournalEntryCreate(
-            branch_id=branch.id, entry_date=date(2026, 6, 12),
-            reference="CHK-001", description="Room checkout",
-            lines=[
-                JournalLineCreate(account_id=account.id, debit=Decimal("1000"), credit=Decimal("0")),
-                JournalLineCreate(account_id=room_acc.id, debit=Decimal("0"), credit=Decimal("1000")),
-            ],
-        )
-        services.post_journal_entry(db, entry_data, user_id=1)
-
-        report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
-        by_code = {l.code: l for l in report.lines}
-        assert by_code["ROOM"].revenue == Decimal("1000")
-        assert by_code["ROOM"].source == "ledger"
 
     def test_out_of_range_dates_excluded(self, db: Session, branch):
         from app.modules.beach import services as beach_services
         from app.modules.beach.schemas import BeachSellRequest
 
+        _seed_full_chart_of_accounts(db, branch.id)
         beach_services.sell_ticket(
             db, branch.id, BeachSellRequest(tx_type="entry", quantity=1),
             tx_date=date(2026, 5, 1),  # خارج نطاق يونيو
@@ -1181,95 +1174,93 @@ class TestCostCenterReport:
         by_code = {l.code: l for l in report.lines}
         assert by_code["BEACH"].revenue == Decimal("0")
 
-    def test_total_revenue_sums_all_lines(self, db: Session, branch, folio):
+    def test_room_revenue_tagged_via_post_simple_revenue_journal(self, db: Session, branch):
+        """راجع pms.services._post_checkout_journal —
+        cost_center_code="ROOM"."""
+        _seed_full_chart_of_accounts(db, branch.id)
+        services.post_simple_revenue_journal(
+            db, branch.id, date(2026, 6, 12),
+            debit_account_code="1100", credit_account_code="4100",
+            amount=Decimal("1000"), reference="CHK-001", description="Room checkout",
+            source="pms", source_id=1, cost_center_code="ROOM",
+        )
+        report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
+        by_code = {l.code: l for l in report.lines}
+        assert by_code["ROOM"].revenue == Decimal("1000")
+        assert by_code["ROOM"].source == "ledger"
+
+    def test_dining_order_payment_tags_revenue_and_cogs_expense_by_outlet(self, db: Session, branch):
+        """أهم تست في الدفعة دي — بيثبت المطلب الأساسي: التقرير بقى بيحسب
+        المصروف (COGS) مش الإيراد بس. طلب مطعم حقيقي بصنف عنده وصفة/BOM،
+        استهلاك المخزون وقت الدفع بيرحّل قيد COGS موسوم REST — لازم يظهر
+        كـ expense على REST وde يقلل net، من غير ما يأثر على CAFE."""
+        from app.modules.dining import crud as dining_crud, services as dining_services
+        from app.modules.dining.models import DiningItem, DiningItemRecipeLine
+        from app.modules.dining.schemas import OutletCreate, OrderCreate, OrderItemCreate
+        from app.modules.inventory.schemas import ProductCreate, StockMovementCreate, WarehouseCreate
+        from app.modules.inventory import services as inventory_services
+
+        _seed_full_chart_of_accounts(db, branch.id)
+
+        warehouse = inventory_services.create_warehouse(
+            db, WarehouseCreate(branch_id=branch.id, name="WH", code=f"WH-{uuid.uuid4().hex[:6]}"),
+        )
+        product = inventory_services.create_product(db, ProductCreate(
+            branch_id=branch.id, warehouse_id=warehouse.id, name="دجاج", sku=f"SKU-{uuid.uuid4().hex[:8]}",
+            unit="kg", cost_price=Decimal("20.00"), min_stock=Decimal("0"), reorder_point=Decimal("0"),
+        ))
+        # رصيد ابتدائي عشان الاستهلاك ميرجعش سالب
+        inventory_services.record_movement(db, StockMovementCreate(
+            branch_id=branch.id, product_id=product.id, warehouse_id=warehouse.id,
+            movement_type="adjustment", quantity=Decimal("100"), unit_cost=Decimal("20.00"),
+            moved_at=datetime(2026, 6, 1),
+        ), moved_by=1)
+
+        rest_outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم COGS", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        item = DiningItem(branch_id=branch.id, outlet_id=rest_outlet.id, name="طبق دجاج",
+                          price=Decimal("100.00"), is_available=True, station="hot")
+        db.add(item); db.commit()
+        recipe = DiningItemRecipeLine(item_id=item.id, product_id=product.id, quantity_per_unit=Decimal("1"))
+        db.add(recipe); db.commit()
+
+        order = dining_services.create_order(
+            db, branch.id,
+            OrderCreate(outlet_id=rest_outlet.id, order_type="takeaway",
+                        items=[OrderItemCreate(item_id=item.id, quantity=1)]),
+            waiter_id=1,
+        )
+        dining_services.update_order_status(db, order.id, "paid")
+
+        # ⚠️ قيد إيراد الدايننج/COGS بيترحّل بـ local_today() (تاريخ اليوم
+        # الحقيقي بتوقيت المنتجع)، مش تاريخ ثابت في الماضي — التقرير هنا
+        # لازم يغطي نفس اليوم ده.
+        today = date.today()
+        report = services.get_cost_center_report(db, branch.id, today, today)
+        by_code = {l.code: l for l in report.lines}
+        assert by_code["REST"].revenue == order.total
+        assert by_code["REST"].expense == Decimal("20.00")  # 1 * cost_price
+        assert by_code["REST"].net == order.total - Decimal("20.00")
+        assert by_code["CAFE"].revenue == Decimal("0")
+        assert by_code["CAFE"].expense == Decimal("0")
+
+    def test_total_revenue_and_expense_sum_all_lines(self, db: Session, branch):
         from app.modules.beach import services as beach_services
         from app.modules.beach.schemas import BeachSellRequest
 
-        beach_services.sell_ticket(
+        _seed_full_chart_of_accounts(db, branch.id)
+        tx = beach_services.sell_ticket(
             db, branch.id, BeachSellRequest(tx_type="entry", quantity=1), tx_date=date(2026, 6, 5),
         )
-        services.post_charge(db, folio.id, FolioChargeCreate(
-            charge_type="cafe", description="Coffee", amount=Decimal("30"),
-            posted_at=datetime(2026, 6, 5, 9, 0),
-        ))
+        expected_beach = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
+
         report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
         assert report.total_revenue == sum((l.revenue for l in report.lines), Decimal("0"))
-        assert report.total_revenue == Decimal("230")  # 200 (beach entry) + 30 (cafe)
-
-    def test_dining_sourced_charges_bucket_by_outlet_type(self, db: Session, branch, folio):
-        """DINING_CUTOVER_PLAN.md D-05 — أي طلب حقيقي عبر /dining مباشرة
-        (charge_type='dining') لازم يظهر في سطر REST/CAFE الصح، مبني على
-        Outlet.outlet_type بتاعه (عبر ref_order_id)، مش يختفي من التقرير.
-        راجع crud.list_folio_charges_by_outlet_family_with_currency."""
-        from app.modules.dining import services as dining_services
-        from app.modules.dining.models import DiningOrder
-        from app.modules.dining.schemas import OutletCreate
-
-        rest_outlet = dining_services.create_outlet(db, OutletCreate(
-            branch_id=branch.id, name="مطعم dining", outlet_type="restaurant",
-            revenue_account_code="4200",
-        ))
-        cafe_outlet = dining_services.create_outlet(db, OutletCreate(
-            branch_id=branch.id, name="كافيه dining", outlet_type="cafe",
-            revenue_account_code="4400",
-        ))
-        rest_order = DiningOrder(
-            branch_id=branch.id, outlet_id=rest_outlet.id, order_number=f"O-{uuid.uuid4().hex[:8]}",
-            order_type="takeaway", status="paid", subtotal=Decimal("120"), total=Decimal("120"),
-        )
-        cafe_order = DiningOrder(
-            branch_id=branch.id, outlet_id=cafe_outlet.id, order_number=f"O-{uuid.uuid4().hex[:8]}",
-            order_type="takeaway", status="paid", subtotal=Decimal("40"), total=Decimal("40"),
-        )
-        db.add_all([rest_order, cafe_order])
-        db.commit()
-
-        services.post_charge(db, folio.id, FolioChargeCreate(
-            charge_type="dining", description="عشاء dining", amount=Decimal("120"),
-            posted_at=datetime(2026, 6, 10, 20, 0), ref_order_id=rest_order.id,
-        ))
-        services.post_charge(db, folio.id, FolioChargeCreate(
-            charge_type="dining", description="قهوة dining", amount=Decimal("40"),
-            posted_at=datetime(2026, 6, 10, 10, 0), ref_order_id=cafe_order.id,
-        ))
-
-        report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
-        by_code = {l.code: l for l in report.lines}
-        assert by_code["REST"].revenue == Decimal("120")
-        assert by_code["CAFE"].revenue == Decimal("40")
-
-    def test_legacy_and_dining_charges_sum_together_during_transition(self, db: Session, branch, folio):
-        """أثناء فترة الانتقال (قبل Batch 4 — الفرونت إند لسه ممكن يكلّم
-        /restaurant/cafe القديمين)، charge_type='restaurant' القديم *و*
-        charge_type='dining' الجديد لازم يتجمّعوا في نفس سطر REST — مفيش
-        فقدان بيانات، ومفيش عدّ مزدوج."""
-        from app.modules.dining import services as dining_services
-        from app.modules.dining.models import DiningOrder
-        from app.modules.dining.schemas import OutletCreate
-
-        rest_outlet = dining_services.create_outlet(db, OutletCreate(
-            branch_id=branch.id, name="مطعم مختلط", outlet_type="restaurant",
-            revenue_account_code="4200",
-        ))
-        dining_order = DiningOrder(
-            branch_id=branch.id, outlet_id=rest_outlet.id, order_number=f"O-{uuid.uuid4().hex[:8]}",
-            order_type="takeaway", status="paid", subtotal=Decimal("75"), total=Decimal("75"),
-        )
-        db.add(dining_order)
-        db.commit()
-
-        services.post_charge(db, folio.id, FolioChargeCreate(
-            charge_type="restaurant", description="طلب قديم عبر /restaurant", amount=Decimal("300"),
-            posted_at=datetime(2026, 6, 10, 20, 0),
-        ))
-        services.post_charge(db, folio.id, FolioChargeCreate(
-            charge_type="dining", description="طلب جديد عبر /dining", amount=Decimal("75"),
-            posted_at=datetime(2026, 6, 11, 13, 0), ref_order_id=dining_order.id,
-        ))
-
-        report = services.get_cost_center_report(db, branch.id, date(2026, 6, 1), date(2026, 6, 30))
-        by_code = {l.code: l for l in report.lines}
-        assert by_code["REST"].revenue == Decimal("375")  # 300 + 75, not double-counted
+        assert report.total_expense == sum((l.expense for l in report.lines), Decimal("0"))
+        assert report.total_revenue == expected_beach
+        assert report.total_net == report.total_revenue - report.total_expense
 
 
 # ── ETA E-Invoice list/tracking ─────────────────────────────────────────

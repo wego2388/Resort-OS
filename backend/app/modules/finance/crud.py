@@ -491,6 +491,7 @@ def create_journal_entry(
             debit=line_data.debit,
             credit=line_data.credit,
             description=line_data.description,
+            cost_center_id=line_data.cost_center_id,
         )
         db.add(line)
     db.flush()
@@ -637,124 +638,53 @@ def create_cost_center(db: Session, data: CostCenterCreate) -> CostCenter:
     return obj
 
 
-def list_folio_charges_by_type_with_currency(
-    db: Session, branch_id: int, charge_type: str, date_from: date, date_to: date,
-) -> list[tuple[Decimal, str, date]]:
-    """يرجّع كل حركة فولیو لوحدها مع عملتها وتاريخها (بدل الجمع في SQL) — عشان
-    services يقدر يحوّل كل حركة لـ EGP equivalent بسعر الصرف في تاريخها قبل
-    الجمع، لو الفوليوهات مختلطة العملة."""
+def get_cost_center_by_code(db: Session, branch_id: int, code: str) -> Optional[CostCenter]:
+    return (
+        db.query(CostCenter)
+        .filter(CostCenter.branch_id == branch_id, CostCenter.code == code)
+        .first()
+    )
+
+
+def sum_journal_lines_by_cost_center(
+    db: Session, branch_id: int, date_from: date, date_to: date,
+) -> dict[int, dict[str, Decimal]]:
+    """إجمالي مدين/دائن لكل (مركز تكلفة × نوع حساب) خلال المدى المطلوب —
+    يُستخدم في services.get_cost_center_report عشان يحسب الإيراد
+    (دائن-مدين لحسابات revenue) والمصروف (مدين-دائن لحسابات expense) لكل
+    مركز تكلفة من journal_lines.cost_center_id مباشرة، بدل استنتاجه من
+    جداول عمليات منفصلة (folio_charges/beach_transactions) زي قبل كده.
+    بيرجّع {cost_center_id: {"revenue": Decimal, "expense": Decimal}}."""
     from sqlalchemy import func  # noqa: PLC0415
 
     rows = (
-        db.query(FolioCharge.amount, Folio.currency, FolioCharge.posted_at)
-        .join(Folio, Folio.id == FolioCharge.folio_id)
-        .filter(
-            Folio.branch_id == branch_id,
-            FolioCharge.charge_type == charge_type,
-            func.date(FolioCharge.posted_at) >= date_from,
-            func.date(FolioCharge.posted_at) <= date_to,
+        db.query(
+            JournalLine.cost_center_id,
+            Account.account_type,
+            func.coalesce(func.sum(JournalLine.debit), 0),
+            func.coalesce(func.sum(JournalLine.credit), 0),
         )
+        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
+        .join(Account, Account.id == JournalLine.account_id)
+        .filter(
+            JournalEntry.branch_id == branch_id,
+            JournalEntry.entry_date >= date_from,
+            JournalEntry.entry_date <= date_to,
+            JournalLine.cost_center_id.isnot(None),
+            Account.account_type.in_(("revenue", "expense")),
+        )
+        .group_by(JournalLine.cost_center_id, Account.account_type)
         .all()
     )
-    return [
-        (amount, currency or "EGP", utc_naive_to_local_date(posted_at, settings.TIMEZONE))
-        for amount, currency, posted_at in rows
-    ]
 
-
-def list_folio_charges_by_outlet_family_with_currency(
-    db: Session, branch_id: int, outlet_type: str, date_from: date, date_to: date,
-) -> list[tuple[Decimal, str, date]]:
-    """راجع list_folio_charges_by_type_with_currency — نفس الفكرة، لكن بيغطي
-    فترة الانتقال بين restaurant/cafe (لسه المصدر الحي للطلبات الفعلية حتى
-    Batch 4 من DINING_CUTOVER_PLAN.md) وdining (المصدر الجديد، D-05):
-    charge_type="restaurant"/"cafe" القديمة *زائد* أي charge_type="dining"
-    جديدة اللي outlet بتاعها (عبر ref_order_id → dining_orders.outlet_id →
-    dining_outlets.outlet_type) بيطابق outlet_type المطلوب. راجع
-    DINING_CUTOVER_PLAN.md §ب بند 2 — "أي كود finance بيفلتر على charge_type
-    لازم يشمل dining كمان أثناء فترة انتقالية". بدون ده، أي طلب حقيقي عبر
-    /dining مباشرة كان هيختفي من تقرير مركز التكلفة تمامًا — إيراد غير مرئي،
-    مش مجرد بيانات ناقصة."""
-    from sqlalchemy import and_, func, or_  # noqa: PLC0415
-    from app.modules.dining.models import DiningOrder, Outlet  # noqa: PLC0415
-
-    rows = (
-        db.query(FolioCharge.amount, Folio.currency, FolioCharge.posted_at)
-        .join(Folio, Folio.id == FolioCharge.folio_id)
-        .outerjoin(
-            DiningOrder,
-            and_(FolioCharge.charge_type == "dining", DiningOrder.id == FolioCharge.ref_order_id),
-        )
-        .outerjoin(Outlet, Outlet.id == DiningOrder.outlet_id)
-        .filter(
-            Folio.branch_id == branch_id,
-            or_(
-                FolioCharge.charge_type == outlet_type,
-                and_(FolioCharge.charge_type == "dining", Outlet.outlet_type == outlet_type),
-            ),
-            func.date(FolioCharge.posted_at) >= date_from,
-            func.date(FolioCharge.posted_at) <= date_to,
-        )
-        .all()
-    )
-    return [
-        (amount, currency or "EGP", utc_naive_to_local_date(posted_at, settings.TIMEZONE))
-        for amount, currency, posted_at in rows
-    ]
-
-
-def sum_beach_revenue(db: Session, branch_id: int, date_from: date, date_to: date) -> Decimal:
-    """إيراد الشاطئ مباشرة من beach_transactions — الموديول ده لسه ميرحّلش
-    لدفتر اليومية، فده أدق مصدر متاح حالياً."""
-    from sqlalchemy import func  # noqa: PLC0415
-
-    from app.modules.beach.models import BeachTransaction  # noqa: PLC0415
-
-    total = (
-        db.query(func.coalesce(func.sum(BeachTransaction.total_amount), 0))
-        .filter(
-            BeachTransaction.branch_id == branch_id,
-            BeachTransaction.voided_at.is_(None),
-            BeachTransaction.tx_type != "towel_return",
-            BeachTransaction.tx_date >= date_from,
-            BeachTransaction.tx_date <= date_to,
-        )
-        .scalar()
-    )
-    return total or Decimal("0")
-
-
-def sum_timeshare_revenue(db: Session, branch_id: int, date_from: date, date_to: date) -> Decimal:
-    """تحصيلات التايم شير الفعلية (أقساط مدفوعة + دفعات أولى) — التايم شير
-    بيرحّل للإيراد المؤجَّل (liability) مش حساب إيراد، فالأدق هنا التحصيل الفعلي."""
-    from sqlalchemy import func  # noqa: PLC0415
-
-    from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment  # noqa: PLC0415
-
-    installments_paid = (
-        db.query(func.coalesce(func.sum(TimeshareInstallment.paid_amount), 0))
-        .join(TimeshareContract, TimeshareContract.id == TimeshareInstallment.contract_id)
-        .filter(
-            TimeshareContract.branch_id == branch_id,
-            TimeshareInstallment.paid_at.isnot(None),
-            func.date(TimeshareInstallment.paid_at) >= date_from,
-            func.date(TimeshareInstallment.paid_at) <= date_to,
-        )
-        .scalar()
-    ) or Decimal("0")
-
-    down_payments = (
-        db.query(func.coalesce(func.sum(TimeshareContract.down_payment), 0))
-        .filter(
-            TimeshareContract.branch_id == branch_id,
-            TimeshareContract.status != "cancelled",
-            TimeshareContract.start_date >= date_from,
-            TimeshareContract.start_date <= date_to,
-        )
-        .scalar()
-    ) or Decimal("0")
-
-    return installments_paid + down_payments
+    result: dict[int, dict[str, Decimal]] = {}
+    for cost_center_id, account_type, debit_sum, credit_sum in rows:
+        bucket = result.setdefault(cost_center_id, {"revenue": Decimal("0"), "expense": Decimal("0")})
+        if account_type == "revenue":
+            bucket["revenue"] += (credit_sum or Decimal("0")) - (debit_sum or Decimal("0"))
+        else:  # expense
+            bucket["expense"] += (debit_sum or Decimal("0")) - (credit_sum or Decimal("0"))
+    return result
 
 
 def sum_journal_lines_by_account(
@@ -785,28 +715,6 @@ def sum_journal_lines_by_account(
         row[0]: (row[1] or Decimal("0"), row[2] or Decimal("0"))
         for row in q.all()
     }
-
-
-def sum_revenue_account_by_code(
-    db: Session, branch_id: int, account_code: str, date_from: date, date_to: date,
-) -> Decimal:
-    """إجمالي دائن حساب إيراد معيّن من دفتر اليومية — مصدر أدق من الجداول
-    المباشرة لأي موديول بيرحّل فعلياً لدفتر اليومية (زي PMS عند الـ checkout)."""
-    from sqlalchemy import func  # noqa: PLC0415
-
-    total = (
-        db.query(func.coalesce(func.sum(JournalLine.credit), 0))
-        .join(JournalEntry, JournalEntry.id == JournalLine.entry_id)
-        .join(Account, Account.id == JournalLine.account_id)
-        .filter(
-            JournalEntry.branch_id == branch_id,
-            Account.code == account_code,
-            JournalEntry.entry_date >= date_from,
-            JournalEntry.entry_date <= date_to,
-        )
-        .scalar()
-    )
-    return total or Decimal("0")
 
 
 # ── Exchange Rates (Multi-Currency) ───────────────────────────────────

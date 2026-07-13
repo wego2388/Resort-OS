@@ -194,9 +194,14 @@ def consume_stock(
     reference_id: Optional[int] = None,
     moved_by: int = 0,
     allow_negative: bool = False,
+    cost_center_code: Optional[str] = None,
 ):
-    """اختصار لخصم من المخزون — يُستدعى من Restaurant/Cafe (ربط 1:1 قديم أو
-    استهلاك وصفة). راجع توثيق allow_negative في record_movement."""
+    """اختصار لخصم من المخزون — يُستدعى من Dining (ربط 1:1 قديم أو استهلاك
+    وصفة). راجع توثيق allow_negative في record_movement.
+
+    cost_center_code (Batch 3): مركز التكلفة (REST/CAFE...) اللي الاستهلاك
+    ده بيخصه — بيتوسم على قيد الـ COGS (راجع _post_cogs_journal)، عشان
+    تقرير مركز التكلفة يقدر يحسب المصروف مش الإيراد بس."""
     product = get_product_or_404(db, product_id)
     avg_cost = product.cost_price or Decimal("0")
 
@@ -216,7 +221,7 @@ def consume_stock(
     # COGS Journal Entry
     cogs_amount = avg_cost * abs(quantity)
     if cogs_amount > 0:
-        _post_cogs_journal(db, branch_id, cogs_amount, reference_type, reference_id, moved_by)
+        _post_cogs_journal(db, branch_id, cogs_amount, reference_type, reference_id, moved_by, cost_center_code)
 
     return mov
 
@@ -228,16 +233,26 @@ def _post_cogs_journal(
     ref_type: Optional[str],
     ref_id: Optional[int],
     user_id: int,
+    cost_center_code: Optional[str] = None,
 ) -> None:
     """يُنشئ قيد COGS إذا كانت الحسابات مُعرَّفة."""
     try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
+        from app.modules.finance.crud import get_account_by_code, create_journal_entry, get_cost_center_by_code  # noqa: PLC0415
         from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
+        from app.modules.finance.services import ensure_default_cost_centers  # noqa: PLC0415
 
         cogs_acc  = get_account_by_code(db, branch_id, "5200")
         inv_acc   = get_account_by_code(db, branch_id, "1200")
         if not cogs_acc or not inv_acc:
             return
+
+        cost_center_id = None
+        if cost_center_code:
+            cc = get_cost_center_by_code(db, branch_id, cost_center_code)
+            if not cc:
+                ensure_default_cost_centers(db, branch_id)
+                cc = get_cost_center_by_code(db, branch_id, cost_center_code)
+            cost_center_id = cc.id if cc else None
 
         entry_data = JournalEntryCreate(
             branch_id=branch_id,
@@ -250,8 +265,10 @@ def _post_cogs_journal(
             source="inventory",
             source_id=ref_id,
             lines=[
-                JournalLineCreate(account_id=cogs_acc.id,  debit=amount,           credit=Decimal("0")),
-                JournalLineCreate(account_id=inv_acc.id,   debit=Decimal("0"),     credit=amount),
+                JournalLineCreate(account_id=cogs_acc.id, debit=amount, credit=Decimal("0"),
+                                   cost_center_id=cost_center_id),
+                JournalLineCreate(account_id=inv_acc.id, debit=Decimal("0"), credit=amount,
+                                   cost_center_id=cost_center_id),
             ],
         )
         create_journal_entry(db, entry_data, user_id)

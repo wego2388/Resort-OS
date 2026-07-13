@@ -880,6 +880,7 @@ def post_simple_revenue_journal(
     source_id: Optional[int],
     created_by: int = 0,
     currency: str = "EGP",
+    cost_center_code: Optional[str] = None,
 ) -> Optional[JournalEntry]:
     """يرحّل قيد بسيط بسطرين (Dr. حساب / Cr. حساب) — النمط المتكرر اللي كان
     منسوخ في 6 موديولات (مطعم/كافيه/شاطئ/PMS/تايم شير/إيجارات) كل واحد بنسخته
@@ -892,7 +893,14 @@ def post_simple_revenue_journal(
     لو currency مش EGP: amount هي القيمة بالعملة الأصلية، وبتتحوّل هنا لـ EGP
     بسعر الصرف وقت entry_date (نفس آلية convert_to_egp المستخدمة للفواتير) —
     السطور (debit/credit) دايمًا EGP-equivalent عشان التقارير المجمّعة تفضل
-    صح، وbعملة/سعر الصرف الأصليين بيتسجّلوا على القيد نفسه للمراجعة."""
+    صح، وbعملة/سعر الصرف الأصليين بيتسجّلوا على القيد نفسه للمراجعة.
+
+    cost_center_code (Batch 3): كود مركز التكلفة (ROOM/REST/CAFE/BEACH/TS —
+    راجع DEFAULT_COST_CENTERS) — لو متحدد، بيتوسم على السطرين الاتنين (مش
+    الحساب الإيرادي/المصروفي بس، السطر المقابل كمان — تبسيط متعمد، والتقرير
+    بيفلتر بالفعل حسب account_type فمش بيتأثر). لو مركز التكلفة مش موجود
+    بعد لفرع ده (أول قيد يترحّل قبل أي نداء لـ ensure_default_cost_centers)،
+    بيتزرع هنا تلقائيًا (idempotent) بدل ما التوسيم يفشل بصمت."""
     try:
         if amount <= 0:
             return None
@@ -900,6 +908,14 @@ def post_simple_revenue_journal(
         credit_acc = crud.get_account_by_code(db, branch_id, credit_account_code)
         if not debit_acc or not credit_acc:
             return None
+
+        cost_center_id = None
+        if cost_center_code:
+            cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
+            if not cc:
+                ensure_default_cost_centers(db, branch_id)
+                cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
+            cost_center_id = cc.id if cc else None
 
         currency = (currency or "EGP").upper()
         if currency == "EGP":
@@ -920,8 +936,10 @@ def post_simple_revenue_journal(
             currency=currency,
             fx_rate=fx_rate,
             lines=[
-                JournalLineCreate(account_id=debit_acc.id, debit=egp_amount, credit=Decimal("0")),
-                JournalLineCreate(account_id=credit_acc.id, debit=Decimal("0"), credit=egp_amount),
+                JournalLineCreate(account_id=debit_acc.id, debit=egp_amount, credit=Decimal("0"),
+                                   cost_center_id=cost_center_id),
+                JournalLineCreate(account_id=credit_acc.id, debit=Decimal("0"), credit=egp_amount,
+                                   cost_center_id=cost_center_id),
             ],
         )
         return crud.create_journal_entry(db, entry_data, created_by)
@@ -1136,60 +1154,37 @@ def ensure_default_cost_centers(db: Session, branch_id: int) -> list[CostCenter]
     return crud.list_cost_centers(db, branch_id, active_only=False)
 
 
-def _sum_folio_charges_in_egp(
-    db: Session, branch_id: int, charge_type: str, date_from: date, date_to: date,
-) -> Decimal:
-    """يجمع مصاريف الفوليو حسب النوع بس بيحوّل كل حركة لـ EGP equivalent
-    بسعر الصرف في تاريخها قبل الجمع — لازم عشان فوليوهات مختلطة العملة
-    (بعد إضافة Folio.currency) ما تدّيش مجموع غلط لو جُمعت كأرقام خام."""
-    rows = crud.list_folio_charges_by_type_with_currency(db, branch_id, charge_type, date_from, date_to)
-    return sum((convert_to_egp(db, amount, currency, posted_date) for amount, currency, posted_date in rows),
-               Decimal("0"))
-
-
-def _sum_dining_folio_charges_in_egp(
-    db: Session, branch_id: int, outlet_type: str, date_from: date, date_to: date,
-) -> Decimal:
-    """راجع _sum_folio_charges_in_egp — نفس منطق تحويل العملة بالظبط، لكن
-    بيستخدم list_folio_charges_by_outlet_family_with_currency (يغطي
-    restaurant/cafe القديمة + dining الجديدة أثناء فترة الانتقال — راجع
-    docstring الدالة دي في crud.py)."""
-    rows = crud.list_folio_charges_by_outlet_family_with_currency(db, branch_id, outlet_type, date_from, date_to)
-    return sum((convert_to_egp(db, amount, currency, posted_date) for amount, currency, posted_date in rows),
-               Decimal("0"))
-
-
 def get_cost_center_report(db: Session, branch_id: int, date_from: date, date_to: date) -> CostCenterReport:
-    """تقرير الإيراد حسب مركز التكلفة — المطعم/الكافيه/الشاطئ كل واحد سطر
-    منفصل. البيانات بتيجي من مصدرين حسب الموديول: دفتر اليومية للي بيرحّل فعلياً
-    (الفندق عبر حساب 4100)، أو الجداول المباشرة للي لسه ميرحّلش (مطعم/كافيه/شاطئ).
-    كل مبلغ من folio_charges بيتحوّل لـ EGP equivalent بسعر الصرف وقت الحركة
-    نفسها لو الفوليو مش EGP — التقرير كله EGP-only (reporting_currency).
+    """تقرير مركز التكلفة (الفندق/المطعم/الكافيه/الشاطئ/التايم شير) — إيراد
+    *ومصروف* كل واحد سطر منفصل، الاتنين من journal_lines.cost_center_id
+    مباشرة (Batch 3) — مش استنتاج بعدي من جداول عمليات منفصلة (folio_charges/
+    beach_transactions) زي قبل كده. الوسم بيحصل وقت الترحيل نفسه (راجع
+    post_simple_revenue_journal's cost_center_code وكل نقاط الترحيل في
+    dining/beach/pms/timeshare/inventory.services).
 
-    REST/CAFE بيقروا من dining (DINING_CUTOVER_PLAN.md D-05) عبر
-    _sum_dining_folio_charges_in_egp — بتغطي charge_type='dining' الجديد
-    *و* charge_type='restaurant'/'cafe' القديم لسه (فترة انتقالية، لحد ما
-    الفرونت إند بالكامل يبقى بيكلّم /dining — راجع Batch 4)."""
-    centers = {c.code: c for c in ensure_default_cost_centers(db, branch_id)}
-
-    room_rev  = crud.sum_revenue_account_by_code(db, branch_id, "4100", date_from, date_to)
-    rest_rev  = _sum_dining_folio_charges_in_egp(db, branch_id, "restaurant", date_from, date_to)
-    cafe_rev  = _sum_dining_folio_charges_in_egp(db, branch_id, "cafe", date_from, date_to)
-    beach_rev = crud.sum_beach_revenue(db, branch_id, date_from, date_to)
-    ts_rev    = crud.sum_timeshare_revenue(db, branch_id, date_from, date_to)
+    ⚠️ قيود قديمة اتُرحّلت قبل هذه الدفعة مالهاش cost_center_id (NULL) —
+    مفيش backfill رجعي هنا (قرار نطاق موثّق في CostCenterReport docstring)،
+    فتقرير على مدى قبل تاريخ الدفعة دي هيورّي أرقام أقل من الحقيقة الفعلية
+    حتى تتراكم قيود جديدة موسومة."""
+    centers = ensure_default_cost_centers(db, branch_id)
+    sums = crud.sum_journal_lines_by_cost_center(db, branch_id, date_from, date_to)
 
     lines = [
-        CostCenterReportLine(code="ROOM",  name=centers["ROOM"].name,  revenue=room_rev,  source="ledger"),
-        CostCenterReportLine(code="REST",  name=centers["REST"].name,  revenue=rest_rev,  source="direct"),
-        CostCenterReportLine(code="CAFE",  name=centers["CAFE"].name,  revenue=cafe_rev,  source="direct"),
-        CostCenterReportLine(code="BEACH", name=centers["BEACH"].name, revenue=beach_rev, source="direct"),
-        CostCenterReportLine(code="TS",    name=centers["TS"].name,    revenue=ts_rev,    source="direct"),
+        CostCenterReportLine(
+            code=c.code, name=c.name,
+            revenue=sums.get(c.id, {}).get("revenue", Decimal("0")),
+            expense=sums.get(c.id, {}).get("expense", Decimal("0")),
+            net=sums.get(c.id, {}).get("revenue", Decimal("0")) - sums.get(c.id, {}).get("expense", Decimal("0")),
+        )
+        for c in centers
     ]
-    total = sum((ln.revenue for ln in lines), Decimal("0"))
+    total_revenue = sum((ln.revenue for ln in lines), Decimal("0"))
+    total_expense = sum((ln.expense for ln in lines), Decimal("0"))
 
     return CostCenterReport(
         branch_id=branch_id, date_from=date_from, date_to=date_to,
-        lines=lines, total_revenue=total,
+        lines=lines, total_revenue=total_revenue, total_expense=total_expense,
+        total_net=total_revenue - total_expense,
     )
 
 
@@ -1199,20 +1194,64 @@ def get_cost_center_report(db: Session, branch_id: int, date_from: date, date_to
 # بالضرورة — وده اللي بيخلي trial balance وbalance sheet بيوازنوا تلقائياً
 # من غير ما نحتاج قيد "إقفال" فعلي لنقل الأرباح لحساب حقوق ملكية.
 
-def get_trial_balance(db: Session, branch_id: int, as_of: date) -> TrialBalanceReport:
+def get_trial_balance(
+    db: Session, branch_id: int, as_of: date, group_by_parent: bool = False,
+) -> TrialBalanceReport:
     """ميزان المراجعة — كل حساب له نشاط حتى تاريخ as_of، برصيده الختامي في
-    عمود المدين أو الدائن حسب طبيعته. إجمالي المدين لازم يساوي إجمالي الدائن."""
+    عمود المدين أو الدائن حسب طبيعته. إجمالي المدين لازم يساوي إجمالي الدائن.
+
+    group_by_parent=True (Batch 3): بدل سطر لكل حساب فردي، كل سطر بيمثّل
+    حساب أب (Account.parent_id — راجع seed.py's PARENT_HEADERS، 1-2 مستوى
+    بس) برصيده المجمّع من كل حساباته الفرعية. حساب من غير أب (نادر، أي
+    حساب مستقبلي يتضاف من غير ما يتحدد له parent_id) بيتعامل معاه كأب
+    لنفسه — عشان ميختفيش من التقرير المجمّع بصمت."""
     accounts, _ = crud.list_accounts(db, branch_id, active_only=False, limit=1000)
     sums = crud.sum_journal_lines_by_account(db, branch_id, None, as_of)
 
-    lines: list[TrialBalanceLine] = []
-    total_debit = Decimal("0")
-    total_credit = Decimal("0")
+    if not group_by_parent:
+        lines: list[TrialBalanceLine] = []
+        total_debit = Decimal("0")
+        total_credit = Decimal("0")
+        for acc in accounts:
+            debit_sum, credit_sum = sums.get(acc.id, (Decimal("0"), Decimal("0")))
+            if debit_sum == 0 and credit_sum == 0:
+                continue
+            net = debit_sum - credit_sum
+            if net >= 0:
+                debit_display, credit_display = net, Decimal("0")
+            else:
+                debit_display, credit_display = Decimal("0"), -net
+            total_debit += debit_display
+            total_credit += credit_display
+            lines.append(TrialBalanceLine(
+                account_code=acc.code, account_name=acc.name, account_type=acc.account_type,
+                debit=debit_display, credit=credit_display,
+            ))
+
+        return TrialBalanceReport(
+            branch_id=branch_id, as_of=as_of, lines=lines,
+            total_debit=total_debit, total_credit=total_credit,
+            is_balanced=abs(total_debit - total_credit) <= Decimal("0.01"),
+        )
+
+    # ── وضع التجميع بالحساب الأب ──────────────────────────────────────
+    accounts_by_id = {a.id: a for a in accounts}
+    parent_net: dict[int, Decimal] = {}
+    parent_account: dict[int, "Account"] = {}
     for acc in accounts:
         debit_sum, credit_sum = sums.get(acc.id, (Decimal("0"), Decimal("0")))
         if debit_sum == 0 and credit_sum == 0:
             continue
-        net = debit_sum - credit_sum
+        parent = accounts_by_id.get(acc.parent_id) if acc.parent_id else None
+        parent_id = parent.id if parent else acc.id  # حساب من غير أب = أب لنفسه
+        parent_account.setdefault(parent_id, parent or acc)
+        parent_net[parent_id] = parent_net.get(parent_id, Decimal("0")) + (debit_sum - credit_sum)
+
+    lines = []
+    total_debit = Decimal("0")
+    total_credit = Decimal("0")
+    for parent_id, net in parent_net.items():
+        header = parent_account[parent_id]
         if net >= 0:
             debit_display, credit_display = net, Decimal("0")
         else:
@@ -1220,14 +1259,16 @@ def get_trial_balance(db: Session, branch_id: int, as_of: date) -> TrialBalanceR
         total_debit += debit_display
         total_credit += credit_display
         lines.append(TrialBalanceLine(
-            account_code=acc.code, account_name=acc.name, account_type=acc.account_type,
+            account_code=header.code, account_name=header.name, account_type=header.account_type,
             debit=debit_display, credit=credit_display,
         ))
+    lines.sort(key=lambda ln: ln.account_code)
 
     return TrialBalanceReport(
         branch_id=branch_id, as_of=as_of, lines=lines,
         total_debit=total_debit, total_credit=total_credit,
         is_balanced=abs(total_debit - total_credit) <= Decimal("0.01"),
+        grouped_by_parent=True,
     )
 
 

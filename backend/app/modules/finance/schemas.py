@@ -386,21 +386,23 @@ class AccountRead(AccountCreate):
 
 
 class JournalLineCreate(BaseModel):
-    account_id:  int
-    debit:       Decimal = Field(Decimal("0"), ge=0)
-    credit:      Decimal = Field(Decimal("0"), ge=0)
-    description: Optional[str] = Field(None, max_length=300)
+    account_id:      int
+    debit:           Decimal = Field(Decimal("0"), ge=0)
+    credit:          Decimal = Field(Decimal("0"), ge=0)
+    description:     Optional[str] = Field(None, max_length=300)
+    cost_center_id:  Optional[int] = None
 
 
 class JournalLineRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id:          int
-    entry_id:    int
-    account_id:  int
-    debit:       Decimal
-    credit:      Decimal
-    description: Optional[str]
-    created_at:  datetime
+    id:              int
+    entry_id:        int
+    account_id:      int
+    debit:           Decimal
+    credit:          Decimal
+    description:     Optional[str]
+    cost_center_id:  Optional[int]
+    created_at:      datetime
 
 
 class JournalEntryCreate(BaseModel):
@@ -546,7 +548,14 @@ class CostCenterReportLine(BaseModel):
     code:    str
     name:    str
     revenue: Decimal
-    source:  str  # "ledger" (من دفتر اليومية) | "direct" (من جداول العمليات مباشرة)
+    expense: Decimal = Decimal("0")
+    net:     Decimal = Decimal("0")
+    source:  str = "ledger"
+    # "ledger" دايمًا من دلوقتي — قبل كده كان فيه مصدر "direct" (جداول
+    # العمليات مباشرة لـ REST/CAFE/BEACH لأنهم ماكانوش بيتحسبوا من
+    # journal_lines.cost_center_id خالص). الحقل باقٍ للتوافق مع الفرونت
+    # إند الحالي، لكن قيمته الوحيدة دلوقتي "ledger" — راجع
+    # services.get_cost_center_report للتفاصيل.
 
 
 class CostCenterReport(BaseModel):
@@ -555,11 +564,17 @@ class CostCenterReport(BaseModel):
     date_to:            date
     lines:              list[CostCenterReportLine]
     total_revenue:      Decimal
+    total_expense:      Decimal = Decimal("0")
+    total_net:          Decimal = Decimal("0")
     reporting_currency: str = "EGP"
-    # المصدر "direct" (REST/CAFE/BEACH) بيقرأ folio_charges/beach_transactions
-    # مباشرة — لو الفوليو بعملة غير EGP بيتحوّل هنا لـ EGP equivalent بسعر
-    # الصرف وقت الحركة نفسها قبل الجمع، عشان الفوليوهات المختلطة العملة ما
-    # تدّيش رقم غلط.
+    # كل الأرقام دلوقتي من journal_lines.cost_center_id المُوسوم فعليًا وقت
+    # الترحيل (راجع services.post_simple_revenue_journal's cost_center_code)
+    # — مش استنتاج بعدي من جداول العمليات. قيود قديمة اتُرحّلت قبل هذه
+    # الدفعة (Batch 3) مالهاش cost_center_id (NULL) عمدًا — مفيش backfill
+    # تاريخي هنا (قرار نطاق: الاستنتاج الرجعي محتاج ربط كل قيد قديم بمصدره
+    # الأصلي عبر source_id، تعقيد إضافي غير مبرر لبيانات تطوير/ما قبل
+    # الإطلاق) — فتقرير على مدى تاريخي قديم هيورّي أرقام أقل من الحقيقة لحد
+    # ما قيود جديدة موسومة تتراكم.
 
 
 # ── Exchange Rates (Multi-Currency) ───────────────────────────────────
@@ -611,6 +626,12 @@ class TrialBalanceReport(BaseModel):
     total_credit:       Decimal
     is_balanced:        bool
     reporting_currency: str = "EGP"
+    grouped_by_parent:  bool = False
+    # لو True: كل سطر في lines فوق بيمثّل حساب أب (parent header — مثال
+    # "الأصول"/"الإيرادات") برصيده المجمّع من كل الحسابات الفرعية تحته، مش
+    # حساب فردي. راجع Account.parent_id + services.get_trial_balance's
+    # group_by_parent param + seed.py's 4 حسابات أب (1-2 مستويات بس، حسب
+    # توصية البحث الصريحة بعدم بناء تسلسل هرمي عميق للشجرة المزروعة).
 
 
 class IncomeStatementLine(BaseModel):

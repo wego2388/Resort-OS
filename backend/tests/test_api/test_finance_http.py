@@ -71,6 +71,58 @@ class TestTrialBalanceHTTP:
         codes = {line["account_code"] for line in body["lines"]}
         assert {"1100", "4100"} <= codes
 
+    def test_trial_balance_group_by_parent_rolls_up_children(self, client: TestClient, db, manager_headers):
+        """Batch 3 — group_by_parent=True بيجمّع الحسابات تحت رؤوس المجموعات
+        (Account.parent_id). حسابين أصول (1100/1110) تحت نفس الأب لازم
+        يظهروا كسطر واحد مجمّع، مش سطرين منفصلين."""
+        from app.modules.finance.models import Account
+
+        branch = make_branch_committed(db)
+        parent = Account(branch_id=branch.id, code="1000", name="الأصول", account_type="asset")
+        db.add(parent); db.commit()
+        cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset", parent_id=parent.id)
+        bank = Account(branch_id=branch.id, code="1110", name="Bank", account_type="asset", parent_id=parent.id)
+        revenue = Account(branch_id=branch.id, code="4100", name="Room Revenue", account_type="revenue")
+        db.add_all([cash, bank, revenue]); db.commit()
+
+        client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch.id, "entry_date": str(date.today()),
+                "reference": "JE-GRP-1", "description": "cash revenue",
+                "lines": [
+                    {"account_id": cash.id, "debit": "600.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "600.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+        client.post(
+            "/api/v1/finance/journal-entries",
+            json={
+                "branch_id": branch.id, "entry_date": str(date.today()),
+                "reference": "JE-GRP-2", "description": "bank revenue",
+                "lines": [
+                    {"account_id": bank.id, "debit": "400.00", "credit": "0"},
+                    {"account_id": revenue.id, "debit": "0", "credit": "400.00"},
+                ],
+            },
+            headers=manager_headers,
+        )
+
+        tb_resp = client.get(
+            "/api/v1/finance/reports/trial-balance",
+            params={"branch_id": branch.id, "as_of": str(date.today()), "group_by_parent": True},
+            headers=manager_headers,
+        )
+        assert tb_resp.status_code == 200, tb_resp.text
+        body = tb_resp.json()
+        assert body["grouped_by_parent"] is True
+        assert body["is_balanced"] is True
+        by_code = {line["account_code"]: line for line in body["lines"]}
+        assert "1100" not in by_code and "1110" not in by_code  # مش منفصلين
+        assert Decimal(by_code["1000"]["debit"]) == Decimal("1000.00")  # 600 + 400 مجمّعين
+
     def test_trial_balance_excludes_future_entries(self, client: TestClient, db, manager_headers):
         """as_of في الماضي يجب ألا يشمل قيوداً بتاريخ لاحق."""
         branch = make_branch_committed(db)

@@ -448,7 +448,14 @@ def _seed_payroll(db: Session) -> None:
 
 
 def _seed_chart_of_accounts(db: Session) -> None:
-    """حسابات الرواتب والتأمينات الضرورية للقيود."""
+    """حسابات الرواتب والتأمينات الضرورية للقيود.
+
+    Batch 3 (تفعيل تسلسل الحسابات — Account.parent_id): 4 حسابات أب (رؤوس
+    مجموعات) بمستوى واحد بس — الأصول/الخصوم/الإيرادات/المصروفات — كل حساب
+    من الـ 22 المزروعين تحته بيتبع أبوه حسب account_type. مفيش مستوى تاني
+    (زي "أصول متداولة" تحت "الأصول") — الشجرة المزروعة (22 حساب) مش
+    مبررة لتسلسل أعمق من ده (توصية البحث الصريحة بعدم بناء هرمية عميقة).
+    equity مالهاش حساب مزروع لحد دلوقتي فمفيهوش حساب أب equity."""
     try:
         from app.modules.finance.models import Account
         from app.modules.core.models import Branch
@@ -458,6 +465,13 @@ def _seed_chart_of_accounts(db: Session) -> None:
     branch = db.query(Branch).first()
     if not branch:
         return
+
+    PARENT_HEADERS = {
+        "asset":     {"code": "1000", "name": "الأصول",      "account_type": "asset"},
+        "liability": {"code": "2000", "name": "الخصوم",      "account_type": "liability"},
+        "revenue":   {"code": "4000", "name": "الإيرادات",   "account_type": "revenue"},
+        "expense":   {"code": "5000", "name": "المصروفات",   "account_type": "expense"},
+    }
 
     accounts = [
         {"code": "5100", "name": "مصروف رواتب وأجور",           "account_type": "expense"},
@@ -484,14 +498,32 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "1590", "name": "مجمّع إهلاك الأصول الثابتة",     "account_type": "asset"},
     ]
 
-    existing_codes = {
-        r.code for r in db.query(Account).filter(Account.branch_id == branch.id).all()
+    existing = {
+        r.code: r for r in db.query(Account).filter(Account.branch_id == branch.id).all()
     }
+
+    # رؤوس المجموعات أولاً (idempotent — بيتزرعوا مرة واحدة بس)
+    header_by_type: dict[str, Account] = {}
+    for acc_type, header in PARENT_HEADERS.items():
+        existing_header = existing.get(header["code"])
+        if not existing_header:
+            existing_header = Account(branch_id=branch.id, is_active=True, **header)
+            db.add(existing_header)
+            db.flush()
+            existing[header["code"]] = existing_header
+        header_by_type[acc_type] = existing_header
+
     added = 0
     for acc in accounts:
-        if acc["code"] not in existing_codes:
-            db.add(Account(branch_id=branch.id, is_active=True, **acc))
+        row = existing.get(acc["code"])
+        if not row:
+            row = Account(branch_id=branch.id, is_active=True, parent_id=header_by_type[acc["account_type"]].id, **acc)
+            db.add(row)
             added += 1
+        elif row.parent_id is None:
+            # حساب موجود من قبل (زُرع قبل تفعيل التسلسل) — نلحقه بأبوه
+            # بأثر رجعي، idempotent (بيتخطى لو parent_id متحدد بالفعل).
+            row.parent_id = header_by_type[acc["account_type"]].id
     if added:
         db.flush()
         print(f"  ✓ Chart of accounts seeded ({added} accounts)")
