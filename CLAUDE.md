@@ -314,7 +314,7 @@ resort-os/
 │   │   ├── celery_app.py
 │   │   └── seed.py                ← Idempotent
 │   │
-│   ├── tests/                     ← 1688 tests (آخر رقم مؤكد 2026-07-13 — بيتغيّر، شغّل بنفسك)
+│   ├── tests/                     ← 1748 tests (آخر رقم مؤكد 2026-07-14 — بيتغيّر، شغّل بنفسك)
 │   ├── alembic/
 │   └── requirements.txt           ← كل الاعتماديات pinned، مفيش أي editable local path
 │
@@ -893,6 +893,30 @@ migrations) في `PROJECT_STATUS.md`.
   مش "مين وافق على إجراء حسّاس"، عدا `StockCountRead` اللي مقفول بأوسع بوابة في المشروع
   (`get_current_active_user`) ومذكور كملاحظة منفصلة لقرار Mohamed مستقبلي (خارج نطاق موديول
   الكاشير/الكاش). 3 اختبار جديد = 1718 اختبار إجمالي.
+- **موردين حقيقيين + مجموعات عملاء بخصم دائم + ربط مركز التكلفة** (2026-07-14، 3 دفعات، راجع
+  `PROJECT_STATUS.md` للتفاصيل الكاملة) — جولة بحث مقارنة (Click القديم + `elkheima-beach-resort`)
+  بإذن صريح من Mohamed. المتطلب الصريح الوحيد ("الموردون وأوامر الشراء بتأثر في المخزون") كان شغال
+  بالفعل (`inventory.crud.receive_purchase_order`)؛ الشغل ده كله إضافي فوقه.
+  **Batch 1**: `inventory.Supplier` جديد (كيان حقيقي، مش نص حر) مربوط بـ `PurchaseOrder.supplier_id`
+  (nullable FK، `supplier_name`/`supplier_phone` بقوا لقطة/snapshot). Migration `8a78528e9403` بتنسخ
+  best-effort كل `supplier_name` قديم لصف Supplier حقيقي. باج حقيقي اتصلح: `convert_to_purchase_order`
+  كان بيحطّ `supplier_name="TBD (من طلب شراء #N)"` ثابت — بقى `supplier_id` إجباري وقت التحويل.
+  **Batch 2**: `crm.CustomerGroup` (خصم دائم، نفس نمط `/finance/discounts`) + `Customer.
+  customer_group_id` عبر endpoint منفصل مقفول مدير+ (`PATCH /crm/customers/{id}/group`، عمدًا مش
+  جوه `CustomerUpdate` العادي المفتوح). **قرار سياسة تجارية**: خصم المجموعة الدائم وقاعدة الخصم
+  الشرطية اليدوية (`discount_engine.py`، متلمسش) ميتجمعوش على نفس الطلب — الأعلى قيمة بس يفوز
+  (`dining.services._resolve_order_discount`). باج حقيقي اتصلح: `add_items_to_order` كان بيسيب
+  الخصم زي ما هو من غير إعادة حساب لما الـ subtotal يتغيّر. Migration `561c30b7cc11`.
+  **Batch 3**: `JournalLine.cost_center_id` (nullable FK) بيتوسم وقت الترحيل نفسه في كل نقطة ترحيل
+  حقيقية (dining/beach/pms/timeshare/inventory COGS) — أول توسيم مصروف في المشروع. `get_cost_center_
+  report` اتعمله rewrite كامل يقرأ `journal_lines.cost_center_id` مباشرة (إيراد ومصروف) بدل الخلطة
+  القديمة "ledger"/"direct". تفعيل `Account.parent_id` (كان موجود بدون استخدام): 4 حسابات أب بمستوى
+  واحد (1000/2000/4000/5000)، `GET .../trial-balance?group_by_parent=true` اختياري. Migration
+  `0921acaccd1f`. **قرار نطاق موثّق**: قيود قديمة قبل الدفعة دي من غير `cost_center_id` — مفيش
+  backfill رجعي (تعقيد غير مبرر لبيانات ما قبل الإطلاق).
+  كل الـ 3 migrations اتأكدوا فعليًا على Postgres حقيقي (قواعد بيانات معزولة مؤقتة، مش المشتركة) —
+  إنشاء→تحقق→حذف، بما فيها دورة downgrade/upgrade، و`python -m app.seed` end-to-end بعد Batch 3.
+  `pytest tests/ -v` → 1748 اختبار (كان 1721)، `pnpm type-check`/`build` نضاف.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش
@@ -1028,5 +1052,5 @@ ETA_ENABLED=false
 
 ---
 
-*آخر تحديث: 2026-07-13*
+*آخر تحديث: 2026-07-14*
 *المشروع يستخدم: github.com/wego2388/Resort-OS · FastAPI 0.115 · SQLAlchemy 2.0 · Pydantic v2 · Vue 3.4 · pnpm*

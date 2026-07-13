@@ -1,6 +1,6 @@
 # حالة المشروع — El Kheima Beach Resort OS
 
-> **آخر تحديث حقيقي:** 2026-07-13 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست، تجربة live)،
+> **آخر تحديث حقيقي:** 2026-07-14 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست، تجربة live)،
 > مش افتراض ولا خطة. لو لقيت رقم يبان قديم، قول لـ Claude "الملف مش محدّث" وهو يراجعه من الكود
 > مباشرة قبل ما يصدّقه.
 >
@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1718 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-13، بعد Batch 4 — تحقق رؤية سجل التدقيق) |
+| **الاختبارات** | **1748 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-14، بعد موردين حقيقيين + مجموعات عملاء بخصم دائم + ربط مركز التكلفة) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
@@ -24,6 +24,82 @@
 | **النسخ الاحتياطي** | `scripts/backup_db.sh` + `restore_db.sh` + systemd timer، اتجرّب backup→restore→مقارنة بيانات فعليًا |
 | **التشغيل** | `scripts/start.sh`/`stop.sh`/`status.sh`/`restart.sh`/`logs.sh` — حساب تجريبي واحد لكل دور (12 حساب) |
 | **الدستور الهندسي** | `CLAUDE.md` بقى فيه دستور CTO كامل (أولويات 70% جودة/20% تنضيج/10% ميزات جديدة) — راجعه أول أي جلسة |
+
+---
+
+## 🏭 اللي اتعمل يوم 2026-07-14 — موردين حقيقيين + مجموعات عملاء بخصم دائم + ربط مركز التكلفة
+
+جولة بحث مقارنة (Click القديم + `elkheima-beach-resort` القديم مقابل resort-os الحالي، بإذن صريح من
+Mohamed: "اعملها بفهم وذكاء ولو شايف شي غير منطقي أو خطأ صلح وحسّن للأفضل") كشفت 3 فجوات حقيقية.
+**المتطلب الصريح الوحيد من Mohamed** — "الأهم يكون الموردون وأوامر الشراء بتأثر في المخزون" — كان
+شغال بالفعل من الأول (`inventory.crud.receive_purchase_order` بيرحّل `StockMovement` حقيقي مع
+`SELECT FOR UPDATE NOWAIT`)؛ الشغل هنا كله إضافي فوقه، مش إصلاح له. 3 دفعات، كل واحدة بـ commit
+مستقل و`pytest tests/ -v` أخضر بعدها مباشرة.
+
+**Batch 1 — كيان Supplier حقيقي مربوط بأوامر الشراء**: `PurchaseOrder.supplier_name`/
+`supplier_phone` كانوا نص حر بدون كيان حقيقي، رغم إن سير عمل الاستلام (والأثر على المخزون) كان
+شغال فعليًا من الأول. `Supplier` جديد (`branch_id, name/name_ar, contact_person, phone, email,
+address, tax_number, category, payment_terms_days, credit_limit, notes, is_active`) — مبني على
+`Supplier` في `elkheima-beach-resort` القديم + الحقول الموسّعة اللي البحث أوصى بيها، بس عمدًا
+**مش** بتصميم Click القديم اللي بيدمج الموردين والعملاء في جدول Party واحد (كيانين مختلفين
+تمامًا هنا). `PurchaseOrder.supplier_id` (FK nullable) جنب `supplier_name`/`supplier_phone`
+القديمين (بقوا لقطة/snapshot، بيتعبّوا تلقائيًا من المورد لو `supplier_id` متحدد ومفيش نص صريح).
+CRUD/API كامل (`/inventory/suppliers`، قراءة لأي مستخدم نشط، كتابة لمدير+ زي `Product`).
+Migration `8a78528e9403` بتنسخ (best-effort) كل `supplier_name` قديم لصف `Supplier` حقيقي (مطابقة
+بالاسم بالظبط، أو إنشاء جديد لو مفيش تطابق) — اتأكد فعليًا على Postgres حقيقي ببيانات شكلها قديم
+(بما فيها اسم "TBD (من طلب شراء #N)" الناتج عن الباج اللي اتصلح تحت). **باج حقيقي اتصلح**:
+`inventory.services.convert_to_purchase_order` (تحويل طلب شراء موافق عليه لأمر شراء) كان بيحطّ
+`supplier_name=f"TBD (من طلب شراء #{id})"` ثابت — مورد حقيقي عمره ما كان بيتحدد فعليًا عند
+التحويل، والـ placeholder ده كان بيعدّي الـ validation بصمت. القرار: `supplier_id` بقى إجباري
+وقت التحويل نفسه (422 من غيره) — نفس اللحظة اللي "هنشتري من مين فعليًا" لازم تتحدد فيها، مش بعدها.
+فرونت إند: قائمة موردين منسدلة (بتعبّي الاسم/التليفون تلقائيًا) في مودال "تسجيل استلام بضاعة"
+بـ`InventoryView.vue` + شاشة إدارة موردين كاملة (قائمة/إضافة/تعديل/إيقاف) جوه نفس الشاشة.
+
+**Batch 2 — مجموعات عملاء بخصم دائم (`CustomerGroup`)**: `CustomerGroup` جديد
+(`branch_id, name/name_ar, discount_percentage, is_active`) — نفس نمط `/finance/discounts` بالظبط
+(قراءة لمدير+، إنشاء/تعديل لـ admin+ فقط). `Customer.customer_group_id` (FK nullable) — **عمدًا
+مش** في `CustomerUpdate` العادي (مفتوح لأي مستخدم نشط عبر `get_current_active_user`)، لأن تعيين
+مجموعة = خصم دائم تلقائي حقيقي؛ endpoint منفصل `PATCH /crm/customers/{id}/group` مقفول على مدير+.
+**قرار سياسة تجارية موثّق (يستاهل انتباه Mohamed)**: خصم مجموعة العميل الدائم وقاعدة الخصم
+الشرطية اليدوية (Happy Hour/بروموشن، `discount_engine.py` — اتسابت من غير أي تعديل) **ميتجمعوش**
+لما الاتنين ينطبقوا على نفس الطلب — الأعلى قيمة بس هو اللي يتطبّق فعليًا (`dining.services.
+_resolve_order_discount`)، اختيار محافظ بيعكس نفس فلسفة `discount_engine.calculate_discount`
+نفسها (بتاخد أعلى priority بين قواعدها، مش بتجمعهم). خصم الشاطئ (`beach_transactions.
+discount_amount` عمود جديد، `total_amount` بقى صافي بعد الخصم من دلوقتي) تلقائي بالكامل، مفيش نوع
+خصم منافس هناك. **باج حقيقي اتصلح أثناء الربط**: `dining.services.add_items_to_order` كان بيسيب
+`discount_amount` زي ما هو من غير أي إعادة حساب لما الـ subtotal يتغيّر (`void_order_item` كان
+بيعمل ده صح للقاعدة الشرطية بس، مش لخصم المجموعة الجديد) — الاتنين بقوا بيمرّوا على نفس
+`_resolve_order_discount` دلوقتي. Migration `561c30b7cc11`. فرونت إند: لوحة مجموعات (قائمة لمدير+،
+إضافة/تعديل لـ admin+) + عمود اختيار مجموعة لكل عميل (مدير+) في `CRMView.vue`.
+
+**Batch 3 — ربط مركز التكلفة بدفتر اليومية + تفعيل تسلسل الحسابات**: `JournalLine.cost_center_id`
+(FK nullable) — بيتوسم وقت الترحيل نفسه في كل نقطة ترحيل حقيقية (مش يُستنتج بعدين): dining (إيراد +
+شحنة فوليو + عكس مرتجعين، REST/CAFE حسب `Outlet.outlet_type`)، beach (الأربع قيود، BEACH ثابت)،
+pms (checkout + Night Audit، ROOM)، timeshare (دفعة أولى + تحصيل قسط، TS)، وinventory's COGS
+(أول توسيم مصروف في المشروع كله، مموّل من dining's outlet resolution وقت الاستهلاك).
+`finance.services.get_cost_center_report` اتعمله rewrite كامل — بيقرأ `journal_lines.
+cost_center_id` مباشرة (إيراد **ومصروف**، مدين ودائن) بدل الخلطة القديمة بين قراءة حساب 4100
+من الدفتر ومسح مباشر لجداول `beach_transactions`/`folio_charges`/`timeshare_installments`. الدوال
+الميتة اللي كانت بتغذي المسار القديم (`sum_beach_revenue`, `sum_timeshare_revenue`,
+`sum_revenue_account_by_code`, `list_folio_charges_by_type_with_currency`,
+`list_folio_charges_by_outlet_family_with_currency`) اتشالت بالكامل. **قرار نطاق موثّق**: قيود
+قديمة اتُرحّلت قبل الدفعة دي مالهاش `cost_center_id` (NULL) — **مفيش backfill رجعي** (محتاج تتبّع
+كل قيد قديم لمصدره الأصلي عبر `source_id`، تعقيد مش مبرر لبيانات تطوير/ما قبل الإطلاق)، موثّق في
+كود `CostCenterReport`. تفعيل `Account.parent_id` (كان موجود في الـ schema من زمان، صفر استخدام):
+4 حسابات أب بمستوى واحد بس (الأصول 1000/الخصوم 2000/الإيرادات 4000/المصروفات 5000 — البحث نصح
+صراحةً بعدم بناء هرمية أعمق لشجرة 22 حساب)، `seed.py` بيزرعهم ويربط أي حساب قديم من غير أب بأثر
+رجعي (idempotent)، ونفس الـ backfill بيحصل كـ data migration لقواعد بيانات مزروعة بالفعل. `GET
+/finance/reports/trial-balance?group_by_parent=true` (اختياري) بيجمّع الحسابات تحت رؤوسها بدل سطر
+لكل حساب فردي. Migration `0921acaccd1f` (تسلسل واحد مع migration الأعمدة، اتأكد منه على Postgres
+حقيقي بسلسلة كاملة + بيانات موجودة مسبقًا من غير أب + دورة downgrade/upgrade idempotent) —
+`python -m app.seed` اتأكد منه end-to-end بعدها على Postgres حقيقي منفصل: "Chart of accounts
+seeded (22 accounts)" وكل الحسابات الـ22 مربوطة صح بآبائها الأربعة.
+
+**النتيجة النهائية**: `pytest tests/ -v` → **1748 اختبار، كلهم عدّوا** (كان 1721 قبل هذه الجولة).
+`pnpm --filter el-kheima type-check`/`build` نضاف بعد كل دفعة. كل الـ 3 migrations
+(`8a78528e9403`, `561c30b7cc11`, `0921acaccd1f`) اتأكد منها فعليًا على Postgres حقيقي في قواعد
+بيانات معزولة مؤقتة (مش الـ `resort_os` المشتركة) — إنشاء→تحقق→حذف لكل واحدة، بما فيها دورة
+downgrade/upgrade كاملة. `alembic heads` فضل head واحد طول الوقت.
 
 ---
 
