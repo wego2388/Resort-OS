@@ -117,6 +117,7 @@ export const ENDPOINTS = {
     movements: '/api/v1/inventory/movements',
     purchaseOrders: '/api/v1/inventory/purchase-orders',
     lowStock: '/api/v1/inventory/low-stock',
+    suppliers: '/api/v1/inventory/suppliers',
   },
   analytics: {
     // Note: there is no per-branch-id-in-path `/analytics/dashboard/{id}` route

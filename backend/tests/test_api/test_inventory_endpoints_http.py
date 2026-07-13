@@ -34,6 +34,14 @@ def create_product(client: TestClient, branch_id: int, headers: dict, **override
     return resp.json()
 
 
+def create_supplier(client: TestClient, branch_id: int, headers: dict, **overrides) -> dict:
+    payload = {"branch_id": branch_id, "name": f"مورد اختبار {uuid.uuid4().hex[:6]}"}
+    payload.update(overrides)
+    resp = client.post("/api/v1/inventory/suppliers", json=payload, headers=headers)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
 class TestWarehousesAndCategories:
     def test_create_and_list_warehouse(self, client: TestClient, db, manager_headers, waiter_headers):
         branch = make_branch_committed(db)
@@ -68,6 +76,94 @@ class TestWarehousesAndCategories:
 
         list_resp = client.get("/api/v1/inventory/categories", params={"branch_id": branch.id}, headers=waiter_headers)
         assert any(c["id"] == create_resp.json()["id"] for c in list_resp.json())
+
+
+class TestSupplierEndpoints:
+    def test_create_get_list_update_supplier(self, client: TestClient, db, manager_headers, waiter_headers):
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/inventory/suppliers",
+            json={
+                "branch_id": branch.id, "name": "شركة الأغذية المصرية", "name_ar": "شركة الأغذية المصرية",
+                "contact_person": "أحمد علي", "phone": "01012345678", "tax_number": "123-456-789",
+                "payment_terms_days": 30, "credit_limit": "50000.00",
+            },
+            headers=manager_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        supplier = create_resp.json()
+        assert supplier["payment_terms_days"] == 30
+        assert supplier["is_active"] is True
+
+        get_resp = client.get(f"/api/v1/inventory/suppliers/{supplier['id']}", headers=waiter_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["name"] == "شركة الأغذية المصرية"
+
+        list_resp = client.get("/api/v1/inventory/suppliers", params={"branch_id": branch.id}, headers=waiter_headers)
+        assert list_resp.status_code == 200
+        assert any(s["id"] == supplier["id"] for s in list_resp.json()["items"])
+
+        update_resp = client.patch(
+            f"/api/v1/inventory/suppliers/{supplier['id']}",
+            json={"phone": "01099998888", "is_active": False},
+            headers=manager_headers,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+        assert update_resp.json()["phone"] == "01099998888"
+        assert update_resp.json()["is_active"] is False
+
+    def test_create_supplier_requires_manager(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/inventory/suppliers",
+            json={"branch_id": branch.id, "name": "مورد"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_get_missing_supplier_404(self, client: TestClient, waiter_headers):
+        resp = client.get("/api/v1/inventory/suppliers/999999999", headers=waiter_headers)
+        assert resp.status_code == 404
+
+    def test_create_purchase_order_with_supplier_id_snapshots_name(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """PurchaseOrderCreate بـ supplier_id بس (من غير supplier_name صريح) —
+        لازم يتعبّى supplier_name تلقائيًا من بيانات المورد (لقطة/snapshot)."""
+        branch = make_branch_committed(db)
+        product = create_product(client, branch.id, manager_headers)
+        supplier = create_supplier(client, branch.id, manager_headers, phone="0122223333")
+
+        po_resp = client.post(
+            "/api/v1/inventory/purchase-orders",
+            json={
+                "branch_id": branch.id, "supplier_id": supplier["id"],
+                "ordered_at": str(date.today()),
+                "items": [{"product_id": product["id"], "ordered_qty": "5", "unit_cost": "10.00"}],
+            },
+            headers=manager_headers,
+        )
+        assert po_resp.status_code == 201, po_resp.text
+        po = po_resp.json()
+        assert po["supplier_id"] == supplier["id"]
+        assert po["supplier_name"] == supplier["name"]
+        assert po["supplier_phone"] == "0122223333"
+
+    def test_create_purchase_order_without_any_supplier_rejected(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """لا supplier_id ولا supplier_name — 422 (بديل "TBD" الصامت القديم)."""
+        branch = make_branch_committed(db)
+        product = create_product(client, branch.id, manager_headers)
+        resp = client.post(
+            "/api/v1/inventory/purchase-orders",
+            json={
+                "branch_id": branch.id, "ordered_at": str(date.today()),
+                "items": [{"product_id": product["id"], "ordered_qty": "5", "unit_cost": "10.00"}],
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 422
 
 
 class TestProductsEndpoints:
@@ -192,8 +288,33 @@ class TestPurchaseRequestWorkflow:
         assert approve_fin.status_code == 200, approve_fin.text
         assert approve_fin.json()["status"] == "finance_approved"
 
-        convert_resp = client.post(f"/api/v1/inventory/purchase-requests/{pr['id']}/convert", headers=manager_headers)
+        supplier = create_supplier(client, branch.id, manager_headers)
+        convert_resp = client.post(
+            f"/api/v1/inventory/purchase-requests/{pr['id']}/convert",
+            json={"supplier_id": supplier["id"]}, headers=manager_headers,
+        )
         assert convert_resp.status_code == 200, convert_resp.text
+        assert convert_resp.json()["supplier_id"] == supplier["id"]
+        assert convert_resp.json()["supplier_name"] == supplier["name"]
+
+    def test_convert_without_supplier_id_rejected(self, client: TestClient, db, waiter_headers, manager_headers):
+        """بديل "TBD" الصامت القديم — التحويل بدون مورد لازم يترفض (422:
+        supplier_id حقل إجباري في ConvertToPurchaseOrderRequest)."""
+        branch = make_branch_committed(db)
+        product = create_product(client, branch.id, manager_headers)
+        pr = client.post(
+            "/api/v1/inventory/purchase-requests",
+            json={
+                "branch_id": branch.id, "requester_id": 1, "department": "المطبخ",
+                "items": [{"product_id": product["id"], "quantity_requested": "5", "unit": "kg", "estimated_unit_cost": "10.00"}],
+            },
+            headers=waiter_headers,
+        ).json()
+        client.patch(f"/api/v1/inventory/purchase-requests/{pr['id']}/approve", json={"level": "dept"}, headers=manager_headers)
+        client.patch(f"/api/v1/inventory/purchase-requests/{pr['id']}/approve", json={"level": "finance"}, headers=manager_headers)
+
+        resp = client.post(f"/api/v1/inventory/purchase-requests/{pr['id']}/convert", json={}, headers=manager_headers)
+        assert resp.status_code == 422
 
     def test_get_missing_request_404(self, client: TestClient, waiter_headers):
         resp = client.get("/api/v1/inventory/purchase-requests/999999999", headers=waiter_headers)

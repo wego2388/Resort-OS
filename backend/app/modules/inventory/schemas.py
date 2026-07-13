@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class WarehouseCreate(BaseModel):
@@ -105,12 +105,23 @@ class PurchaseOrderItemCreate(BaseModel):
 
 class PurchaseOrderCreate(BaseModel):
     branch_id:      int
-    supplier_name:  str = Field(..., max_length=200)
+    # لازم يتوفر واحد على الأقل من supplier_id (مورد حقيقي مسجّل — المسار
+    # المفضّل الآن) وsupplier_name (نص حر — توافق مع التدفق القديم/أمر بدون
+    # مورد مسجّل بعد). لو supplier_id متحدد وsupplier_name فاضي، بيتعبّى
+    # تلقائيًا من بيانات المورد وقت الحفظ (راجع crud.create_purchase_order).
+    supplier_id:    Optional[int] = None
+    supplier_name:  Optional[str] = Field(None, max_length=200)
     supplier_phone: Optional[str] = None
     ordered_at:     date
     expected_at:    Optional[date] = None
     notes:          Optional[str] = None
     items:          list[PurchaseOrderItemCreate] = Field(..., min_length=1)
+
+    @model_validator(mode="after")
+    def _require_a_supplier(self) -> "PurchaseOrderCreate":
+        if not self.supplier_id and not (self.supplier_name and self.supplier_name.strip()):
+            raise ValueError("لازم تحدد المورد — supplier_id (مورد مسجّل) أو supplier_name (نص حر) على الأقل")
+        return self
 
 
 class PurchaseOrderItemRead(BaseModel):
@@ -121,11 +132,54 @@ class PurchaseOrderItemRead(BaseModel):
 
 class PurchaseOrderRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: int; branch_id: int; order_number: str; supplier_name: str
+    id: int; branch_id: int; order_number: str
+    supplier_id: Optional[int]; supplier_name: Optional[str]
     supplier_phone: Optional[str]; status: str; ordered_at: date
     expected_at: Optional[date]; received_at: Optional[date]
     total_amount: Decimal; notes: Optional[str]
     items: list[PurchaseOrderItemRead] = []
+    created_at: datetime; updated_at: datetime
+
+
+# ── Supplier ──────────────────────────────────────────────────────────
+
+class SupplierCreate(BaseModel):
+    branch_id:          int
+    name:               str = Field(..., max_length=200)
+    name_ar:            Optional[str] = Field(None, max_length=200)
+    contact_person:     Optional[str] = Field(None, max_length=150)
+    phone:              Optional[str] = Field(None, max_length=20)
+    email:              Optional[str] = Field(None, max_length=150)
+    address:            Optional[str] = Field(None, max_length=300)
+    tax_number:         Optional[str] = Field(None, max_length=50)
+    category:           Optional[str] = Field(None, max_length=100)
+    payment_terms_days: int = Field(0, ge=0)
+    credit_limit:       Optional[Decimal] = Field(None, ge=0)
+    notes:              Optional[str] = None
+
+
+class SupplierUpdate(BaseModel):
+    name:               Optional[str] = Field(None, max_length=200)
+    name_ar:            Optional[str] = Field(None, max_length=200)
+    contact_person:     Optional[str] = Field(None, max_length=150)
+    phone:              Optional[str] = Field(None, max_length=20)
+    email:              Optional[str] = Field(None, max_length=150)
+    address:            Optional[str] = Field(None, max_length=300)
+    tax_number:         Optional[str] = Field(None, max_length=50)
+    category:           Optional[str] = Field(None, max_length=100)
+    payment_terms_days: Optional[int] = Field(None, ge=0)
+    credit_limit:       Optional[Decimal] = Field(None, ge=0)
+    notes:              Optional[str] = None
+    is_active:          Optional[bool] = None
+
+
+class SupplierRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; name: str; name_ar: Optional[str]
+    contact_person: Optional[str]; phone: Optional[str]; email: Optional[str]
+    address: Optional[str]; tax_number: Optional[str]; category: Optional[str]
+    payment_terms_days: int; credit_limit: Optional[Decimal]
+    notes: Optional[str]; is_active: bool
     created_at: datetime; updated_at: datetime
 
 
@@ -186,6 +240,15 @@ class RejectRequest(BaseModel):
     level:  str = Field(..., pattern=r"^(dept|finance)$")
     reason: str = Field(..., max_length=300)
     notes:  Optional[str] = None
+
+
+class ConvertToPurchaseOrderRequest(BaseModel):
+    """مورد إجباري وقت تحويل طلب الشراء لأمر شراء — بديل قيمة "TBD (من طلب
+    شراء #N)" اللي كانت بتتحط بصمت من غير اختيار مورد حقيقي فعليًا. القرار
+    (أقل مفاجأة من ترك supplier_id فاضي ويسمح بأمر بلا مورد لحد لحظة لاحقة):
+    التحويل نفسه — لحظة تحديد "هنشتري من مين فعليًا" — هو أنسب نقطة لفرض
+    اختيار المورد، مش بعدها."""
+    supplier_id: int
 
 
 # ── Stock Count ───────────────────────────────────────────────────────

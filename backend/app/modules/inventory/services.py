@@ -14,12 +14,12 @@ from app.resort_os.timezone_utils import local_today
 
 from app.modules.inventory import crud
 from app.modules.inventory.models import (
-    Product, PurchaseOrder, PurchaseRequest, StockCount, StockCountLine, StockMovement, Warehouse,
+    Product, PurchaseOrder, PurchaseRequest, StockCount, StockCountLine, StockMovement, Supplier, Warehouse,
 )
 from app.modules.inventory.schemas import (
     CategoryCreate, ProductCreate, ProductUpdate,
     PurchaseOrderCreate, PurchaseOrderItemCreate, ReceiveItemsRequest,
-    StockMovementCreate, WarehouseCreate,
+    StockMovementCreate, SupplierCreate, SupplierUpdate, WarehouseCreate,
     PurchaseRequestCreate, StockCountCreate,
 )
 
@@ -39,6 +39,28 @@ def create_warehouse(db: Session, data: WarehouseCreate):
 
 def create_category(db: Session, data: CategoryCreate):
     obj = crud.create_category(db, data)
+    db.commit(); db.refresh(obj)
+    return obj
+
+
+# ── Supplier ─────────────────────────────────────────────────────────
+
+def get_supplier_or_404(db: Session, supplier_id: int) -> Supplier:
+    supplier = crud.get_supplier(db, supplier_id)
+    if not supplier:
+        raise ValueError(f"المورد {supplier_id} غير موجود")
+    return supplier
+
+
+def create_supplier(db: Session, data: SupplierCreate) -> Supplier:
+    obj = crud.create_supplier(db, data)
+    db.commit(); db.refresh(obj)
+    return obj
+
+
+def update_supplier(db: Session, supplier_id: int, data: SupplierUpdate) -> Supplier:
+    supplier = get_supplier_or_404(db, supplier_id)
+    obj = crud.update_supplier(db, supplier, data)
     db.commit(); db.refresh(obj)
     return obj
 
@@ -356,11 +378,17 @@ def reject_purchase_request(
     return request
 
 
-def convert_to_purchase_order(db: Session, request_id: int) -> PurchaseOrder:
+def convert_to_purchase_order(db: Session, request_id: int, supplier_id: int) -> PurchaseOrder:
     """
     Converts a finance_approved PR into a PurchaseOrder.
     PR status: finance_approved → converted
-    """
+
+    ⚠️ باج حقيقي كان هنا (اتصلح): كان بيحط supplier_name="TBD (من طلب شراء #N)"
+    ثابت — يعني مورد حقيقي عمره ما كان بيتحدد فعليًا عند التحويل، وده placeholder
+    كان بيعدّي الـ validation بصمت (str عادي، مفيش قيد يمنعه). القرار: المورد
+    بقى إجباري (supplier_id) وقت التحويل نفسه — أنسب لحظة لفرض "هنشتري من مين"
+    فعليًا، بدل ما نسمح بأمر شراء بلا مورد حقيقي يتحرك للمرحلة الجاية (إرسال/
+    استلام) من غيره. راجع ConvertToPurchaseOrderRequest في schemas.py."""
     from datetime import date as date_type  # avoid shadowing
 
     request = crud.get_purchase_request(db, request_id)
@@ -368,6 +396,10 @@ def convert_to_purchase_order(db: Session, request_id: int) -> PurchaseOrder:
         raise ValueError(f"طلب الشراء {request_id} غير موجود")
     if request.status != "finance_approved":
         raise ValueError("طلب الشراء يجب أن يكون في حالة finance_approved للتحويل")
+
+    supplier = get_supplier_or_404(db, supplier_id)
+    if supplier.branch_id != request.branch_id:
+        raise ValueError("المورد المحدد لا يتبع نفس فرع طلب الشراء")
 
     po_items = [
         PurchaseOrderItemCreate(
@@ -379,7 +411,7 @@ def convert_to_purchase_order(db: Session, request_id: int) -> PurchaseOrder:
     ]
     po_data = PurchaseOrderCreate(
         branch_id=request.branch_id,
-        supplier_name=f"TBD (من طلب شراء #{request.id})",
+        supplier_id=supplier.id,
         ordered_at=date_type.today(),
         items=po_items,
     )

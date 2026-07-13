@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.modules.inventory.schemas import (
-    ProductCreate, StockMovementCreate, WarehouseCreate,
+    ProductCreate, StockMovementCreate, SupplierCreate, WarehouseCreate,
     PurchaseRequestCreate, PurchaseRequestItemCreate,
     StockCountCreate,
 )
@@ -33,6 +33,12 @@ def warehouse(db: Session, branch):
     data = WarehouseCreate(branch_id=branch.id, name="المخزن الرئيسي",
                            code=f"WH-{uuid.uuid4().hex[:6].upper()}")
     return services.create_warehouse(db, data)
+
+
+@pytest.fixture
+def supplier(db: Session, branch):
+    data = SupplierCreate(branch_id=branch.id, name="شركة التوريد المصرية")
+    return services.create_supplier(db, data)
 
 
 @pytest.fixture
@@ -339,7 +345,7 @@ class TestPurchaseApproval:
         with pytest.raises(ValueError, match="dept_approved"):
             services.approve_purchase_request(db, pr.id, approver_id=2, level="finance")
 
-    def test_convert_to_purchase_order(self, db, branch, product):
+    def test_convert_to_purchase_order(self, db, branch, product, supplier):
         data = PurchaseRequestCreate(
             branch_id=branch.id,
             requester_id=1,
@@ -356,12 +362,40 @@ class TestPurchaseApproval:
         pr = services.create_purchase_request(db, data)
         services.approve_purchase_request(db, pr.id, approver_id=2, level="dept")
         services.approve_purchase_request(db, pr.id, approver_id=3, level="finance")
-        po = services.convert_to_purchase_order(db, pr.id)
+        po = services.convert_to_purchase_order(db, pr.id, supplier.id)
         assert po.id is not None
         assert po.status == "draft"
         assert po.total_amount == Decimal("360")  # 20 * 18
+        assert po.supplier_id == supplier.id
+        assert po.supplier_name == supplier.name  # لقطة (snapshot) — مش "TBD" بعد الآن
         db.refresh(pr)
         assert pr.status == "converted"
+
+    def test_convert_requires_valid_supplier_in_same_branch(self, db, branch, product):
+        """المورد لازم يتبع نفس فرع طلب الشراء — منع تلبيس مورد فرع تاني
+        (نفس فئة الحماية الموجودة في كل مكان تاني بالمشروع بين الفروع)."""
+        import uuid
+
+        from app.modules.core.models import Branch
+
+        other_branch = Branch(name="Other", name_ar="فرع آخر", code=f"OTH-{uuid.uuid4().hex[:6].upper()}")
+        db.add(other_branch); db.flush()
+        other_supplier = services.create_supplier(
+            db, SupplierCreate(branch_id=other_branch.id, name="مورد فرع تاني"),
+        )
+
+        data = PurchaseRequestCreate(
+            branch_id=branch.id, requester_id=1, department="Restaurant",
+            items=[PurchaseRequestItemCreate(
+                product_id=product.id, quantity_requested=Decimal("5"),
+                unit="liter", estimated_unit_cost=Decimal("10"),
+            )],
+        )
+        pr = services.create_purchase_request(db, data)
+        services.approve_purchase_request(db, pr.id, approver_id=2, level="dept")
+        services.approve_purchase_request(db, pr.id, approver_id=3, level="finance")
+        with pytest.raises(ValueError, match="فرع"):
+            services.convert_to_purchase_order(db, pr.id, other_supplier.id)
 
 
 class TestStockCount:

@@ -13,11 +13,11 @@ from app.resort_os.timezone_utils import local_now
 from app.modules.inventory.models import (
     Category, Product, PurchaseOrder, PurchaseOrderItem,
     PurchaseRequest, PurchaseRequestItem, PurchaseApproval,
-    StockCount, StockMovement, Warehouse,
+    StockCount, StockMovement, Supplier, Warehouse,
 )
 from app.modules.inventory.schemas import (
     CategoryCreate, ProductCreate, ProductUpdate,
-    PurchaseOrderCreate, StockMovementCreate, WarehouseCreate,
+    PurchaseOrderCreate, StockMovementCreate, SupplierCreate, SupplierUpdate, WarehouseCreate,
 )
 
 
@@ -168,6 +168,52 @@ def list_movements(
     return items, total
 
 
+# ── Supplier ──────────────────────────────────────────────────────────
+
+def get_supplier(db: Session, supplier_id: int) -> Optional[Supplier]:
+    return db.query(Supplier).filter(Supplier.id == supplier_id).first()
+
+
+def get_supplier_by_name(db: Session, branch_id: int, name: str) -> Optional[Supplier]:
+    """مطابقة اسم حرفي (case-sensitive) — تُستخدم في مطابقة أفضل-محاولة
+    (best-effort) لأسماء الموردين النصية القديمة على PurchaseOrder.supplier_name
+    وقت الترحيل (migration) لكيان Supplier حقيقي."""
+    return db.query(Supplier).filter(Supplier.branch_id == branch_id, Supplier.name == name).first()
+
+
+def list_suppliers(
+    db: Session,
+    branch_id: int,
+    active_only: bool = True,
+    search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[Supplier], int]:
+    q = db.query(Supplier).filter(Supplier.branch_id == branch_id)
+    if active_only:
+        q = q.filter(Supplier.is_active.is_(True))
+    if search:
+        like = f"%{search}%"
+        q = q.filter(Supplier.name.ilike(like) | Supplier.name_ar.ilike(like))
+    total = q.count()
+    items = q.order_by(Supplier.name).offset(skip).limit(limit).all()
+    return items, total
+
+
+def create_supplier(db: Session, data: SupplierCreate) -> Supplier:
+    obj = Supplier(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def update_supplier(db: Session, supplier: Supplier, data: SupplierUpdate) -> Supplier:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(supplier, field, value)
+    db.flush()
+    return supplier
+
+
 # ── PurchaseOrder ─────────────────────────────────────────────────────
 
 def _next_po_number(db: Session) -> str:
@@ -204,6 +250,19 @@ def list_purchase_orders(
 def create_purchase_order(db: Session, data: PurchaseOrderCreate) -> PurchaseOrder:
     items_data = data.items
     po_data = data.model_dump(exclude={"items"})
+
+    # لو المورد متحدد بـ supplier_id بس التطبيق ماكتبش supplier_name/phone
+    # صراحةً (المسار العادي من الفرونت إند الجديد) — بنعبّيهم من بيانات
+    # المورد نفسها كلقطة (snapshot) وقت إنشاء الأمر، عشان الأمر يفضل مقروء
+    # حتى لو اسم/تليفون المورد اتغيّر لاحقًا، ولضمان توافق تام مع أي كود قديم
+    # لسه بيقرأ supplier_name مباشرة من PurchaseOrderRead بدل عمل join.
+    if po_data.get("supplier_id") and not po_data.get("supplier_name"):
+        supplier = get_supplier(db, po_data["supplier_id"])
+        if supplier:
+            po_data["supplier_name"] = supplier.name
+            if not po_data.get("supplier_phone"):
+                po_data["supplier_phone"] = supplier.phone
+
     po = PurchaseOrder(**po_data, order_number=_next_po_number(db), total_amount=Decimal("0"))
     db.add(po)
     db.flush()
