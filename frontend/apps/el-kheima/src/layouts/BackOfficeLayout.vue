@@ -65,8 +65,6 @@ const allSections = computed<NavSection[]>(() => [
       { path: '/admin/timeshare',    label: t('backoffice.nav.timeshare'),      icon: '🏨',  requiredRole: 'cashier' },
       { path: '/admin/sales',        label: t('backoffice.nav.sales'),          icon: '📞',  requiredRole: 'manager' },
       { path: '/admin/beach-live',   label: t('backoffice.nav.beachLive'),      icon: '🏖️',  requiredRole: 'manager' },
-      { path: '/admin/menu',         label: t('backoffice.nav.restaurantMenu'), icon: '🍽️',  requiredRole: 'manager' },
-      { path: '/admin/tables',       label: t('backoffice.nav.tablesManagement'),icon: '🪑', requiredRole: 'manager' },
       { path: '/admin/inventory',    label: t('backoffice.nav.inventory'),      icon: '📦',  requiredRole: 'manager' },
       { path: '/admin/recipes',      label: t('backoffice.nav.recipes'),        icon: '🧾',  requiredRole: 'manager' },
       { path: '/admin/food-cost',    label: t('backoffice.nav.foodCost'),       icon: '📉',  requiredRole: 'manager' },
@@ -76,26 +74,16 @@ const allSections = computed<NavSection[]>(() => [
     ],
   },
   {
-    label: t('backoffice.nav.cafe'),
-    items: [
-      { path: '/admin/cafe-menu',  label: t('backoffice.nav.cafeMenu'),  icon: '☕', requiredRole: 'manager' },
-      { path: '/admin/cafe-sales', label: t('backoffice.nav.cafeSales'), icon: '📊', requiredRole: 'manager' },
-      { path: '/admin/qr',         label: t('backoffice.nav.qrCodes'),   icon: '📱', requiredRole: 'manager' },
-    ],
-  },
-  {
-    // Unified dining module (Batch B, additive — DINING_CUTOVER_PLAN.md).
-    // manager+ only, deliberately: every /pos/* item a waiter/cashier sees
-    // in FieldLayout has zero role filter, so putting the preview screens
-    // there would change every cashier's daily nav. Gating discovery to
-    // this manager-only section keeps their workflow untouched while still
-    // giving Mohamed/managers a real way to reach all three preview
-    // screens (menu admin, unified POS, unified KDS) for review.
-    label: t('backoffice.nav.diningPreview'),
+    // DINING_CUTOVER_PLAN.md Batch 4 — dining بقى الافتراضي الحقيقي دلوقتي
+    // (مش manager-only preview) — بس القسم نفسه فضل manager+ لأنه إدارة/
+    // إشراف (منيو، تقارير)، مش استخدام يومي. النادل/الكاشير بيوصلوا
+    // /pos/dining و/kds/dining من FieldLayout/KioskLayout مباشرة، مش من هنا.
+    label: t('backoffice.nav.dining'),
     items: [
       { path: '/admin/dining-menu', label: t('backoffice.nav.diningMenu'), icon: '🍽️', requiredRole: 'manager' },
       { path: '/pos/dining',        label: t('backoffice.nav.diningPos'),  icon: '🧾', requiredRole: 'manager' },
       { path: '/kds/dining',        label: t('backoffice.nav.diningKds'), icon: '👨‍🍳', requiredRole: 'manager' },
+      { path: '/admin/qr',          label: t('backoffice.nav.qrCodes'),   icon: '📱', requiredRole: 'manager' },
     ],
   },
   {
