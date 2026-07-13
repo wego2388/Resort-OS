@@ -5,12 +5,14 @@
  * الباك إند كان جاهزًا بالكامل من غير أي واجهة تجمّعه في مكان واحد:
  * GET /finance/shifts/{id}/report (ملخص المبيعات، X/Z-Report — نفس بند
  * S-04)، GET /finance/shifts/{id}/invoices (سجل الفواتير، S-02)، وGET
- * /restaurant|cafe/orders?status=... (الطلبات/الطاولات الجارية). الكاشير
- * كان عنده بس ShiftPanel.vue المدمج في هيدر FieldLayout — عرض مختصر
- * (فتح/قفل بس، من غير أي رقم مبيعات أو رؤية على الطلبات الجارية). الشاشة
- * دي عرض أوسع، مش تكرار لـ ShiftPanel: بتضمّه فعليًا (نفس منطق فتح/قفل
- * الوردية وعدّ الكاش، بدون تكرار الكود) وتضيف حوله ملخص المبيعات اللحظي +
- * الطلبات الجارية عبر المطعم والكافيه.
+ * /dining/orders?status=... (الطلبات/الطاولات الجارية عبر كل المنافذ).
+ * الكاشير كان عنده بس ShiftPanel.vue المدمج في هيدر FieldLayout — عرض
+ * مختصر (فتح/قفل بس، من غير أي رقم مبيعات أو رؤية على الطلبات الجارية).
+ * الشاشة دي عرض أوسع، مش تكرار لـ ShiftPanel: بتضمّه فعليًا (نفس منطق
+ * فتح/قفل الوردية وعدّ الكاش، بدون تكرار الكود) وتضيف حوله ملخص المبيعات
+ * اللحظي + الطلبات الجارية عبر كل منافذ الدايننج (DINING_CUTOVER_PLAN.md
+ * Batch 6 — كانت restaurant+cafe منفصلين، دلوقتي مصدر واحد مجمّع حسب
+ * outlet بدل موديول ثابت، عشان يفضل يشتغل صح لأي outlet_type مستقبلي).
  */
 import { ref, computed, onMounted } from 'vue'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
@@ -64,21 +66,30 @@ async function loadReport() {
   }
 }
 
-// ── الطلبات الجارية (مطعم + كافيه) — نفس نمط RestaurantPOSView.loadActiveOrders
-// (#17: pagination كامل، status واحد لكل نداء) لكن للموديولين معًا هنا ────
-interface LiveOrder { id: number; order_number: string; status: string; table_id: number | null; order_type: string; total: number | string }
-const restaurantOrders = ref<LiveOrder[]>([])
-const cafeOrders = ref<LiveOrder[]>([])
+// ── الطلبات الجارية (كل منافذ الدايننج) — DINING_CUTOVER_PLAN.md Batch 6:
+// كانت restaurant/cafe نداءين منفصلين على endpoints مختلفة، دلوقتي مصدر
+// واحد (/dining/orders) مجمّع حسب outlet_id فعليًا بدل موديول ثابت في
+// الكود، عشان يفضل يشتغل صح لأي outlet_type يتضاف مستقبلاً من غير تعديل
+// هنا (pagination كامل، status واحد لكل نداء — نفس نمط UnifiedPOSView) ──
+interface LiveOrder { id: number; order_number: string; status: string; table_id: number | null; order_type: string; total: number | string; outlet_id: number }
+interface Outlet { id: number; name: string; name_ar: string | null }
+const outletsById = ref<Record<number, Outlet>>({})
+const ordersByOutlet = ref<{ outlet: Outlet; orders: LiveOrder[] }[]>([])
 const loadingOrders = ref(false)
 
-async function fetchAllOpenOrders(module: 'restaurant' | 'cafe'): Promise<LiveOrder[]> {
-  const base = module === 'restaurant' ? ENDPOINTS.restaurant.orders : ENDPOINTS.cafe.orders
+async function fetchOutlets(): Promise<void> {
+  const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId.value, active_only: true } })
+  const list: Outlet[] = data?.items ?? data ?? []
+  outletsById.value = Object.fromEntries(list.map(o => [o.id, o]))
+}
+
+async function fetchAllOpenOrders(): Promise<LiveOrder[]> {
   const fetchStatus = async (status: string): Promise<LiveOrder[]> => {
     const PAGE_SIZE = 100
     const results: LiveOrder[] = []
     let page = 1
     while (true) {
-      const res = await api.get(base, { params: { branch_id: branchId.value, status, page, size: PAGE_SIZE } })
+      const res = await api.get(ENDPOINTS.dining.orders, { params: { branch_id: branchId.value, status, page, size: PAGE_SIZE } })
       const items: LiveOrder[] = res.data?.items ?? res.data ?? []
       results.push(...items)
       if (items.length < PAGE_SIZE) break
@@ -95,12 +106,19 @@ async function fetchAllOpenOrders(module: 'restaurant' | 'cafe'): Promise<LiveOr
 async function loadOpenOrders() {
   loadingOrders.value = true
   try {
-    const [rest, cafe] = await Promise.all([
-      fetchAllOpenOrders('restaurant'),
-      fetchAllOpenOrders('cafe'),
-    ])
-    restaurantOrders.value = rest
-    cafeOrders.value = cafe
+    await fetchOutlets()
+    const orders = await fetchAllOpenOrders()
+    const grouped = new Map<number, LiveOrder[]>()
+    for (const o of orders) {
+      if (!grouped.has(o.outlet_id)) grouped.set(o.outlet_id, [])
+      grouped.get(o.outlet_id)!.push(o)
+    }
+    ordersByOutlet.value = [...grouped.entries()]
+      .map(([outletId, list]) => ({
+        outlet: outletsById.value[outletId] ?? { id: outletId, name: `منفذ #${outletId}`, name_ar: null },
+        orders: list,
+      }))
+      .sort((a, b) => a.outlet.id - b.outlet.id)
   } catch {
     toast.error('تعذّر تحميل الطلبات الجارية')
   } finally {
@@ -108,8 +126,9 @@ async function loadOpenOrders() {
   }
 }
 
+const totalOpenOrdersCount = computed(() => ordersByOutlet.value.reduce((sum, g) => sum + g.orders.length, 0))
 const openTablesCount = computed(() =>
-  new Set([...restaurantOrders.value, ...cafeOrders.value].filter(o => o.table_id).map(o => `${o.table_id}`)).size,
+  new Set(ordersByOutlet.value.flatMap(g => g.orders).filter(o => o.table_id).map(o => `${o.table_id}`)).size,
 )
 
 const STATUS_LABEL: Record<string, string> = { open: 'مفتوح', in_kitchen: 'في المطبخ', served: 'اتقدّم' }
@@ -201,34 +220,19 @@ onMounted(fetchShift)
         </template>
       </AppCard>
 
-      <!-- الطاولات/الطلبات المفتوحة لحظيًا (مطعم + كافيه) -->
-      <AppCard :title="`الطلبات الجارية (${restaurantOrders.length + cafeOrders.length}) — ${openTablesCount} طاولة مفتوحة`">
+      <!-- الطاولات/الطلبات المفتوحة لحظيًا (كل منافذ الدايننج) -->
+      <AppCard :title="`الطلبات الجارية (${totalOpenOrdersCount}) — ${openTablesCount} طاولة مفتوحة`">
         <div v-if="loadingOrders" class="text-center text-sm text-gray-400 py-4">جاري التحميل...</div>
         <EmptyState
-          v-else-if="restaurantOrders.length === 0 && cafeOrders.length === 0"
+          v-else-if="totalOpenOrdersCount === 0"
           icon="✅"
           title="مفيش طلبات جارية حاليًا"
         />
         <div v-else class="space-y-4">
-          <div v-if="restaurantOrders.length">
-            <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">🍽️ المطعم</h3>
+          <div v-for="group in ordersByOutlet" :key="group.outlet.id">
+            <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">{{ group.outlet.name_ar || group.outlet.name }}</h3>
             <div class="divide-y divide-stone-100">
-              <div v-for="o in restaurantOrders" :key="o.id" class="py-2 flex items-center justify-between gap-2">
-                <div>
-                  <span class="text-sm font-semibold text-gray-800">{{ o.order_number }}</span>
-                  <span class="text-xs text-gray-400 mr-2">{{ orderLabel(o) }}</span>
-                </div>
-                <div class="flex items-center gap-2">
-                  <span class="text-sm font-bold text-blue-700">{{ Number(o.total).toFixed(2) }} ج</span>
-                  <AppBadge :variant="STATUS_VARIANT[o.status] ?? 'neutral'">{{ STATUS_LABEL[o.status] ?? o.status }}</AppBadge>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div v-if="cafeOrders.length">
-            <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">☕ الكافيه</h3>
-            <div class="divide-y divide-stone-100">
-              <div v-for="o in cafeOrders" :key="o.id" class="py-2 flex items-center justify-between gap-2">
+              <div v-for="o in group.orders" :key="o.id" class="py-2 flex items-center justify-between gap-2">
                 <div>
                   <span class="text-sm font-semibold text-gray-800">{{ o.order_number }}</span>
                   <span class="text-xs text-gray-400 mr-2">{{ orderLabel(o) }}</span>

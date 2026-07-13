@@ -6,28 +6,31 @@
 // يكشف الأصناف اللي نسبة تكلفتها أعلى من حد مقبول (منذر/alert) — نفس
 // التقرير القياسي في صناعة المطاعم (theoretical vs actual food cost).
 //
-// Backend: app/modules/restaurant/api/router.py + app/modules/cafe/api/router.py
-// GET .../reports/food-cost — مستوى مدير (get_manager_user)، نفس بوابة
-// تعديل الوصفة نفسها. راجع app.resort_os.food_cost_engine للفورمولا الخام.
+// Backend: app/modules/dining/api/router.py — GET /dining/outlets/{id}/
+// reports/food-cost (مستوى مدير، نفس بوابة تعديل الوصفة نفسها). تابات
+// المنافذ ديناميكية من /dining/outlets (DINING_CUTOVER_PLAN.md Batch 6 —
+// كانت restaurant/cafe تابين ثابتين، دلوقتي أي عدد منافذ). راجع
+// app.resort_os.food_cost_engine للفورمولا الخام.
 //
 // أصناف بدون وصفة (has_recipe=false) بتتعرض في الجدول لكن تكلفتها "غير
 // معروفة" مش صفر — مُستبعدة من الملخص والاتجاه اليومي عمدًا (راجع تعليقات
 // services.get_food_cost_report) عشان ما تضخّمش هامش الربح الظاهر بالغلط.
-import { ref, computed, onMounted, watch } from 'vue'
-import { api } from '@resort-os/core'
+import { ref, computed, onMounted } from 'vue'
+import { api, ENDPOINTS } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppInput, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 
-type ModuleType = 'restaurant' | 'cafe'
-const activeModule = ref<ModuleType>('restaurant')
+interface Outlet { id: number; name: string; name_ar: string | null; is_active: boolean }
+const outlets = ref<Outlet[]>([])
+const activeOutletId = ref<number | null>(null)
+function outletLabel(o: Outlet): string { return o.name_ar || o.name }
 
 interface ReportLine {
-  menu_item_id?: number
-  cafe_item_id?: number
-  menu_item_name?: string
-  cafe_item_name?: string
+  item_id: number
+  item_name: string
+  variant_id: number | null
   has_recipe: boolean
   quantity_sold: number
   revenue: string
@@ -75,22 +78,29 @@ const dateFrom = ref(isoDate(thirtyDaysAgo))
 const dateTo = ref(isoDate(today))
 const thresholdPct = ref('30')
 
-const reportPath = computed(() =>
-  activeModule.value === 'restaurant' ? '/api/v1/restaurant/reports/food-cost' : '/api/v1/cafe/reports/food-cost')
-
 function itemName(line: ReportLine) {
-  return line.menu_item_name ?? line.cafe_item_name ?? '—'
+  return line.item_name ?? '—'
 }
 function itemKey(line: ReportLine) {
-  return line.menu_item_id ?? line.cafe_item_id ?? 0
+  return `${line.item_id}-${line.variant_id ?? 0}`
+}
+
+async function loadOutlets() {
+  try {
+    const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId, active_only: true } })
+    outlets.value = data?.items ?? data ?? []
+    activeOutletId.value = outlets.value[0]?.id ?? null
+  } catch {
+    toast.error('تعذّر تحميل منافذ الدايننج')
+  }
 }
 
 async function fetchReport() {
+  if (activeOutletId.value == null) { report.value = null; return }
   loading.value = true
   try {
-    const res = await api.get(reportPath.value, {
+    const res = await api.get(ENDPOINTS.dining.foodCostReport(activeOutletId.value), {
       params: {
-        branch_id: branchId,
         date_from: dateFrom.value,
         date_to: dateTo.value,
         threshold_pct: thresholdPct.value || '30',
@@ -105,25 +115,26 @@ async function fetchReport() {
   }
 }
 
-function switchModule(m: ModuleType) {
-  if (activeModule.value === m) return
-  activeModule.value = m
+function switchOutlet(id: number) {
+  if (activeOutletId.value === id) return
+  activeOutletId.value = id
   fetchReport()
 }
 
 // wagdy.md #16: تصدير Excel — نفس مدى التاريخ/الحد المعروض حاليًا
 const exporting = ref(false)
 async function exportExcel() {
+  if (activeOutletId.value == null) return
   exporting.value = true
   try {
-    const res = await api.get(`${reportPath.value}/export`, {
-      params: { branch_id: branchId, date_from: dateFrom.value, date_to: dateTo.value, threshold_pct: thresholdPct.value || '30' },
+    const res = await api.get(`${ENDPOINTS.dining.foodCostReport(activeOutletId.value)}/export`, {
+      params: { date_from: dateFrom.value, date_to: dateTo.value, threshold_pct: thresholdPct.value || '30' },
       responseType: 'blob',
     })
     const url = URL.createObjectURL(res.data)
     const a = document.createElement('a')
     a.href = url
-    a.download = `food-cost-${activeModule.value}-${dateFrom.value}-to-${dateTo.value}.xlsx`
+    a.download = `food-cost-outlet-${activeOutletId.value}-${dateFrom.value}-to-${dateTo.value}.xlsx`
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 5000)
   } catch {

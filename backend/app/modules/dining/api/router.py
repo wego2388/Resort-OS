@@ -775,6 +775,8 @@ def get_public_menu(
     return PublicMenuResponse(
         branch_id=outlet.branch_id,
         outlet_id=outlet_id,
+        outlet_name=outlet.name,
+        outlet_name_ar=outlet.name_ar,
         table_id=table_id,
         categories=[PublicMenuCategoryRead.model_validate(c) for c in categories],
         items=[PublicMenuItemRead.model_validate(i) for i in items],

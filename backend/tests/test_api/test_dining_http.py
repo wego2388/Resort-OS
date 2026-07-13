@@ -1,15 +1,12 @@
 """
 tests/test_api/test_dining_http.py
 HTTP-level tests for the unified dining router (wagdy.md D-04) — exercises
-the FastAPI app + TestClient, not just service functions directly. Mirrors
-test_restaurant_http.py's structure.
+the FastAPI app + TestClient, not just service functions directly.
 
-Also concretely proves the D-04 "zero existing frontend code breaks" claim:
-TestOldUrlsStillWork below hits the untouched /api/v1/restaurant/... and
-/api/v1/cafe/... routers directly and confirms they still answer exactly as
-before dining was added — the full restaurant/cafe suites passing unmodified
-already proves this at the service layer; this proves it at the live HTTP
-layer too.
+راجع DINING_CUTOVER_PLAN.md Batch 6 (2026-07-13) — restaurant/cafe اتحذفوا
+بالكامل من المشروع، فـ TestOldUrlsStillWork (كانت بتثبت إن /restaurant
+و/cafe لسه شغالين جنب /dining أثناء الفترة الانتقالية) اتشالت — مفيش
+/restaurant أو /cafe تاني يتأكد إنه شغال.
 """
 from __future__ import annotations
 
@@ -476,40 +473,3 @@ class TestDiningTableTransferHTTP:
         assert resp.status_code == 401
 
 
-class TestOldUrlsStillWork:
-    """راجع docstring أعلى الملف — يثبت مباشرة إن /restaurant و/cafe لسه
-    شغالين بالظبط زي قبل إضافة dining، من غير أي alias/تداخل."""
-
-    def test_old_restaurant_menu_endpoint_untouched(self, client: TestClient, db, waiter_headers):
-        from app.modules.restaurant.models import MenuItem
-        branch = make_branch_committed(db)
-        old_item = MenuItem(branch_id=branch.id, name="طبق مطعم قديم", price=Decimal("60.00"), is_available=True)
-        db.add(old_item)
-        db.commit()
-
-        resp = client.get("/api/v1/restaurant/menu/items", params={"branch_id": branch.id}, headers=waiter_headers)
-        assert resp.status_code == 200
-        assert old_item.name in [i["name"] for i in resp.json()]
-
-    def test_old_cafe_menu_endpoint_untouched(self, client: TestClient, db, waiter_headers):
-        from app.modules.cafe.models import CafeItem
-        branch = make_branch_committed(db)
-        old_item = CafeItem(branch_id=branch.id, name="مشروب كافيه قديم", price=Decimal("25.00"), is_available=True)
-        db.add(old_item)
-        db.commit()
-
-        resp = client.get("/api/v1/cafe/items", params={"branch_id": branch.id}, headers=waiter_headers)
-        assert resp.status_code == 200
-        assert old_item.name in [i["name"] for i in resp.json()]
-
-    def test_old_and_new_menu_items_are_fully_independent(self, client: TestClient, db, manager_headers):
-        """طلب/صنف جديد عبر /dining ميظهرش أبدًا في /restaurant أو /cafe
-        القديمين — الموديولين لسه منفصلين تمامًا (Batch A إضافي بالكامل)."""
-        branch = make_branch_committed(db)
-        outlet = make_outlet_committed(db, branch)
-        dining_item = make_item_committed(db, branch, outlet)
-
-        old_restaurant_resp = client.get(
-            "/api/v1/restaurant/menu/items", params={"branch_id": branch.id}, headers=manager_headers,
-        )
-        assert dining_item.name not in [i["name"] for i in old_restaurant_resp.json()]

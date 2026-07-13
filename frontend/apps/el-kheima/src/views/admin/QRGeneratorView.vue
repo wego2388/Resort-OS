@@ -1,12 +1,19 @@
 <script setup lang="ts">
 /**
- * QRGeneratorView — توليد وطباعة QR codes لطاولات المطعم والكافيه
+ * QRGeneratorView — توليد وطباعة QR codes لطاولات منافذ الدايننج.
  * يستخدم qrcode.js عبر CDN أو الـ Canvas API المدمج في المتصفح.
- * المدير يختار الموديول، يختار الطاولة، يطبع أو يحمّل الـ QR.
+ * المدير يختار المنفذ، يختار الطاولة، يطبع أو يحمّل الـ QR.
+ *
+ * DINING_CUTOVER_PLAN.md Batch 6 (2026-07-13): كانت restaurant/cafe تابين
+ * ثابتين (موديولين منفصلين، endpoints مختلفة) — دلوقتي قايمة منافذ ديناميكية
+ * حقيقية من /dining/outlets (بتغطي أي outlet_type مستقبلي من غير تعديل هنا).
+ * الـ QR بيشاور على `/order/{outlet_id}/{table_id}` بدل `/order/{restaurant|
+ * cafe}/{table_id}` القديم — ⚠️ يعني أي QR مطبوع قبل الـ cutover بقى غير
+ * صالح، لازم إعادة طباعة كل QR الطاولات من هنا من جديد.
  */
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
 
 const toast    = useToast()
@@ -22,20 +29,39 @@ const PUBLIC_BASE = computed(() => {
   return origin
 })
 
+interface Outlet { id: number; name: string; name_ar: string | null; outlet_type: string; is_active: boolean }
 interface Table { id: number; table_number: string; section: string | null; status: string }
 
-const activeModule = ref<'restaurant' | 'cafe'>('restaurant')
-const tables       = ref<Table[]>([])
-const loading      = ref(false)
-const selectedIds  = ref<Set<number>>(new Set())
-const canvasRefs   = ref<Record<number, HTMLCanvasElement | null>>({})
+const outlets        = ref<Outlet[]>([])
+const activeOutletId = ref<number | null>(null)
+const tables          = ref<Table[]>([])
+const loading         = ref(false)
+const selectedIds     = ref<Set<number>>(new Set())
+const canvasRefs      = ref<Record<number, HTMLCanvasElement | null>>({})
 
-// دعم query params من TablesAdminView: ?module=cafe&highlight=5
-// يختار الموديول الصح ويحدد الطاولة المطلوبة تلقائياً
+function outletLabel(o: Outlet): string {
+  return o.name_ar || o.name
+}
+const activeOutletLabel = computed(() => {
+  const o = outlets.value.find(o => o.id === activeOutletId.value)
+  return o ? outletLabel(o) : ''
+})
+
+// دعم query params من شاشات إدارة الطاولات: ?outlet=12&highlight=5
+// يختار المنفذ الصح ويحدد الطاولة المطلوبة تلقائياً
 onMounted(async () => {
-  if (route.query.module === 'cafe' || route.query.module === 'restaurant') {
-    activeModule.value = route.query.module as 'restaurant' | 'cafe'
+  try {
+    const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId, active_only: true } })
+    outlets.value = data?.items ?? data ?? []
+  } catch {
+    toast.error('تعذّر تحميل منافذ الدايننج')
+    return
   }
+  const queryOutlet = route.query.outlet ? parseInt(route.query.outlet as string) : NaN
+  activeOutletId.value = !isNaN(queryOutlet) && outlets.value.some(o => o.id === queryOutlet)
+    ? queryOutlet
+    : (outlets.value[0]?.id ?? null)
+
   await loadTables()
   if (route.query.highlight) {
     const id = parseInt(route.query.highlight as string)
@@ -48,13 +74,12 @@ onMounted(async () => {
 })
 
 async function loadTables() {
+  if (activeOutletId.value == null) { tables.value = []; return }
   loading.value = true
   tables.value = []
   selectedIds.value = new Set()
   try {
-    const { data } = await api.get(`/api/v1/${activeModule.value}/tables`, {
-      params: { branch_id: branchId },
-    })
+    const { data } = await api.get(ENDPOINTS.dining.tables(activeOutletId.value))
     tables.value = data.tables ?? data.items ?? data
   } catch {
     toast.error('تعذّر تحميل الطاولات')
@@ -83,21 +108,19 @@ function clearAll() {
 // (tiny-qr) محسوب في الـ browser مباشرة — بدون dependency خارجية إضافية.
 // الـ fallback بيشتغل تلقائياً عبر @error على الـ <img>.
 
+function orderPath(tableId: number): string {
+  return `/order/${activeOutletId.value}/${tableId}`
+}
+
 function qrUrl(tableId: number): string {
-  const path = activeModule.value === 'restaurant'
-    ? `/order/restaurant/${tableId}`
-    : `/order/cafe/${tableId}`
-  const target = encodeURIComponent(`${PUBLIC_BASE.value}${path}`)
+  const target = encodeURIComponent(`${PUBLIC_BASE.value}${orderPath(tableId)}`)
   return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${target}&margin=10`
 }
 
 /** Canvas fallback — يُرسم لو <img> فشل في التحميل (offline / مُحجوب).
  * يستخدم script lazy من CDN أو يرسم QR بسيط بـ ASCII matrix (placeholder). */
 async function drawQrFallback(tableId: number, canvas: HTMLCanvasElement) {
-  const path = activeModule.value === 'restaurant'
-    ? `/order/restaurant/${tableId}`
-    : `/order/cafe/${tableId}`
-  const url = `${PUBLIC_BASE.value}${path}`
+  const url = `${PUBLIC_BASE.value}${orderPath(tableId)}`
 
   // نحاول نحمّل مكتبة qrcode خفيفة من CDN (تعمل offline لو كانت cached)
   try {
@@ -140,13 +163,13 @@ function printSelected() {
   const selectedTables = tables.value.filter(t => selectedIds.value.has(t.id))
   if (selectedTables.length === 0) { toast.error('اختر طاولة واحدة على الأقل'); return }
 
-  const module_ar = activeModule.value === 'restaurant' ? 'المطعم' : 'الكافيه'
+  const outlet_ar = activeOutletLabel.value
 
   const html = `<!DOCTYPE html>
 <html dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>QR Codes — ${module_ar}</title>
+  <title>QR Codes — ${outlet_ar}</title>
   <style>
     body { font-family: 'Cairo', sans-serif; margin: 0; padding: 20px; background: #fff; }
     .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
@@ -171,17 +194,14 @@ function printSelected() {
   </div>
   <div class="grid">
     ${selectedTables.map(t => {
-      const path = activeModule.value === 'restaurant'
-        ? `/order/restaurant/${t.id}`
-        : `/order/cafe/${t.id}`
-      const fullUrl = `${PUBLIC_BASE.value}${path}`
+      const fullUrl = `${PUBLIC_BASE.value}${orderPath(t.id)}`
       const qr = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(fullUrl)}&margin=10`
       return `<div class="card">
         <img src="${qr}" alt="QR ${t.table_number}"
           onerror="this.style.display='none';var c=this.nextElementSibling;c.style.display='block';if(window.QRCode){QRCode.toCanvas(c,'${fullUrl}',{width:180,margin:2})}else{var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';s.onload=function(){QRCode.toCanvas(c,'${fullUrl}',{width:180,margin:2})};document.head.appendChild(s)}" />
         <canvas style="display:none;width:180px;height:180px"></canvas>
         <div class="table-name">طاولة ${t.table_number}</div>
-        <div class="module-name">${module_ar}</div>
+        <div class="module-name">${outlet_ar}</div>
         <div class="url">${fullUrl}</div>
       </div>`
     }).join('\n')}
@@ -202,10 +222,7 @@ function printSelected() {
 // بنستخدم canvas محلي — نفس منطق drawQrFallback لكن بـ offscreen canvas
 // عشان مايأثرش على العرض، وبنصدّر PNG محليًا من toDataURL.
 async function downloadQr(table: Table) {
-  const path = activeModule.value === 'restaurant'
-    ? `/order/restaurant/${table.id}`
-    : `/order/cafe/${table.id}`
-  const targetUrl = `${PUBLIC_BASE.value}${path}`
+  const targetUrl = `${PUBLIC_BASE.value}${orderPath(table.id)}`
 
   // خطوة 1: حاول تحميل QRCode lib من CDN (cached بعد أول مرة)
   try {
@@ -225,7 +242,7 @@ async function downloadQr(table: Table) {
     const dataUrl = offscreen.toDataURL('image/png')
     const a = document.createElement('a')
     a.href     = dataUrl
-    a.download = `qr-${activeModule.value}-${table.table_number}.png`
+    a.download = `qr-${activeOutletId.value}-${table.table_number}.png`
     a.click()
     return
   } catch {
@@ -240,7 +257,7 @@ async function downloadQr(table: Table) {
     const blob = await res.blob()
     const a    = document.createElement('a')
     a.href     = URL.createObjectURL(blob)
-    a.download = `qr-${activeModule.value}-${table.table_number}.png`
+    a.download = `qr-${activeOutletId.value}-${table.table_number}.png`
     a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 5000)
   } catch {
@@ -285,18 +302,19 @@ const grouped = computed(() => {
       </div>
     </div>
 
-    <!-- Module tabs -->
-    <div class="flex gap-2 mb-6 bg-stone-100 p-1 rounded-xl w-fit">
+    <!-- Outlet tabs — ديناميكية من /dining/outlets (أي عدد منافذ، مش بس اتنين) -->
+    <div v-if="outlets.length" class="flex gap-2 mb-6 bg-stone-100 p-1 rounded-xl w-fit flex-wrap">
       <button
-        v-for="m in [{ val: 'restaurant', label: '🍽️ المطعم' }, { val: 'cafe', label: '☕ الكافيه' }]"
-        :key="m.val"
-        @click="activeModule = (m.val as 'restaurant' | 'cafe'); loadTables()"
+        v-for="o in outlets"
+        :key="o.id"
+        @click="activeOutletId = o.id; loadTables()"
         :class="[
           'px-5 py-2 rounded-lg text-sm font-bold transition-all',
-          activeModule === m.val ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700',
+          activeOutletId === o.id ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700',
         ]"
-      >{{ m.label }}</button>
+      >{{ outletLabel(o) }}</button>
     </div>
+    <div v-else-if="!loading" class="text-sm text-gray-400 mb-6">لا توجد منافذ دايننج مفعّلة</div>
 
     <!-- Loading -->
     <div v-if="loading" class="flex justify-center py-16">
@@ -378,7 +396,7 @@ const grouped = computed(() => {
         <li>اختر الطاولات بالضغط عليها</li>
         <li>اضغط "طباعة" لفتح نافذة الطباعة مع كل QR codes المختارة</li>
         <li>أو اضغط "تحميل" على أي طاولة لتحميل الـ QR منفرداً</li>
-        <li>الـ QR بيشاور على شاشة الضيف ({{ activeModule === 'restaurant' ? '/order/restaurant' : '/order/cafe' }}/[id])</li>
+        <li>الـ QR بيشاور على شاشة الضيف (/order/{{ activeOutletId }}/[table_id])</li>
       </ul>
     </div>
 

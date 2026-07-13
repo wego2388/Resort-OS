@@ -574,12 +574,17 @@ class PublicMenuCategoryRead(BaseModel):
 
 
 class PublicMenuResponse(BaseModel):
-    """الرد الكامل على GET /dining/public/menu — categories + items في طلب واحد."""
-    branch_id:  int
-    outlet_id:  int
-    table_id:   Optional[int]
-    categories: list[PublicMenuCategoryRead]
-    items:      list[PublicMenuItemRead]
+    """الرد الكامل على GET /dining/public/menu — categories + items في طلب واحد.
+    outlet_name/outlet_name_ar مضافين (DINING_CUTOVER_PLAN.md Batch 6 frontend)
+    عشان apps/public's OrderView.vue تعرض اسم المنفذ الحقيقي بدل تسمية ثابتة
+    "المطعم"/"الكافيه" (dining بيدعم أي outlet_type مفتوح، مش بس النوعين دول)."""
+    branch_id:      int
+    outlet_id:      int
+    outlet_name:    str
+    outlet_name_ar: Optional[str]
+    table_id:       Optional[int]
+    categories:     list[PublicMenuCategoryRead]
+    items:          list[PublicMenuItemRead]
 
 
 class GuestOrderItemCreate(BaseModel):
