@@ -129,6 +129,100 @@ class TestCustomersEndpoints:
         assert unbl_resp.json()["blacklisted"] is False
 
 
+def create_customer_group(client: TestClient, branch_id: int, headers: dict, **overrides) -> dict:
+    payload = {"branch_id": branch_id, "name": f"Group {uuid.uuid4().hex[:6]}", "discount_percentage": "10"}
+    payload.update(overrides)
+    resp = client.post("/api/v1/crm/customer-groups", json=payload, headers=headers)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+class TestCustomerGroupEndpoints:
+    """مجموعات عملاء بخصم دائم — نفس نمط /finance/discounts بالظبط (قراءة
+    لمدير+، إنشاء/تعديل لـ admin+ فقط)."""
+
+    def test_create_requires_admin_not_just_manager(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/crm/customer-groups",
+            json={"branch_id": branch.id, "name": "موظفين", "discount_percentage": "15"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_create_list_and_update(self, client: TestClient, db, manager_headers, super_admin_headers):
+        branch = make_branch_committed(db)
+        group = create_customer_group(
+            client, branch.id, super_admin_headers, name="موظفين", name_ar="موظفين", discount_percentage="15",
+        )
+        assert group["discount_percentage"] == "15.00" or float(group["discount_percentage"]) == 15
+        assert group["is_active"] is True
+
+        list_resp = client.get("/api/v1/crm/customer-groups", params={"branch_id": branch.id}, headers=manager_headers)
+        assert list_resp.status_code == 200
+        assert any(g["id"] == group["id"] for g in list_resp.json())
+
+        update_resp = client.patch(
+            f"/api/v1/crm/customer-groups/{group['id']}",
+            json={"discount_percentage": "20", "is_active": False},
+            headers=super_admin_headers,
+        )
+        assert update_resp.status_code == 200, update_resp.text
+        assert float(update_resp.json()["discount_percentage"]) == 20
+        assert update_resp.json()["is_active"] is False
+
+    def test_list_requires_manager(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        resp = client.get("/api/v1/crm/customer-groups", params={"branch_id": branch.id}, headers=waiter_headers)
+        assert resp.status_code == 403
+
+
+class TestAssignCustomerGroup:
+    """PATCH /crm/customers/{id}/group — مقفول على مدير+ عمدًا (مش
+    get_current_active_user زي باقي حقول CustomerUpdate)، لأن تعيين مجموعة
+    يمنح خصم دائم تلقائي فعلي."""
+
+    def test_assign_requires_manager_not_just_active_user(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        customer = create_customer(client, branch.id, waiter_headers)
+        resp = client.patch(
+            f"/api/v1/crm/customers/{customer['id']}/group",
+            json={"customer_group_id": 1}, headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_assign_and_unassign_round_trip(self, client: TestClient, db, waiter_headers, manager_headers, super_admin_headers):
+        branch = make_branch_committed(db)
+        customer = create_customer(client, branch.id, waiter_headers)
+        group = create_customer_group(client, branch.id, super_admin_headers)
+
+        assign_resp = client.patch(
+            f"/api/v1/crm/customers/{customer['id']}/group",
+            json={"customer_group_id": group["id"]}, headers=manager_headers,
+        )
+        assert assign_resp.status_code == 200, assign_resp.text
+        assert assign_resp.json()["customer_group_id"] == group["id"]
+
+        unassign_resp = client.patch(
+            f"/api/v1/crm/customers/{customer['id']}/group",
+            json={"customer_group_id": None}, headers=manager_headers,
+        )
+        assert unassign_resp.status_code == 200
+        assert unassign_resp.json()["customer_group_id"] is None
+
+    def test_assign_rejects_group_from_other_branch(self, client: TestClient, db, waiter_headers, manager_headers, super_admin_headers):
+        branch_a = make_branch_committed(db)
+        branch_b = make_branch_committed(db)
+        customer = create_customer(client, branch_a.id, waiter_headers)
+        other_group = create_customer_group(client, branch_b.id, super_admin_headers)
+
+        resp = client.patch(
+            f"/api/v1/crm/customers/{customer['id']}/group",
+            json={"customer_group_id": other_group["id"]}, headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+
 class TestInteractionsEndpoints:
     def test_log_and_list_interactions(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)

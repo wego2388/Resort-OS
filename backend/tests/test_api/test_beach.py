@@ -290,6 +290,67 @@ class TestSellTicket:
             dbB.close()
 
 
+class TestCustomerGroupDiscount:
+    """خصم مجموعة العميل الدائم على معاملة شاطئ — تلقائي بالكامل، بيتحسب
+    على السعر الأصلي قبل الـ VAT وبيتخصم من total_amount (اللي بقى صافي
+    من دلوقتي، مش unit_price × quantity زي قبل كده). الشاطئ مفيهوش خصم
+    شرطي منافس (زي dining) فمفيش سيناريو "أفضل يفوز" هنا."""
+
+    def _make_customer_with_group(self, db, branch, pct=Decimal("10")):
+        from app.modules.crm import services as crm_services
+        from app.modules.crm.schemas import CustomerCreate, CustomerGroupCreate
+
+        group = crm_services.create_customer_group(
+            db, CustomerGroupCreate(branch_id=branch.id, name="Staff", discount_percentage=pct),
+        )
+        customer = crm_services.create_customer(
+            db, CustomerCreate(branch_id=branch.id, full_name="Staff Member"),
+        )
+        crm_services.assign_customer_group(db, customer.id, group.id)
+        return customer
+
+    def test_sell_ticket_applies_group_discount_automatically(self, db):
+        from app.modules.core.crud import upsert_setting
+
+        branch = make_branch(db)
+        upsert_setting(db, "beach.price.adult", "200", branch_id=branch.id)
+        db.commit()
+        customer = self._make_customer_with_group(db, branch, pct=Decimal("10"))
+
+        req = BeachSellRequest(tx_type="entry", quantity=1, customer_id=customer.id)
+        tx = services.sell_ticket(db, branch.id, req)
+
+        assert tx.unit_price == Decimal("200")
+        assert tx.discount_amount == Decimal("20.00")  # 10% of 200
+        assert tx.total_amount == Decimal("180.00")  # صافي بعد الخصم
+
+    def test_sell_ticket_no_customer_no_discount(self, db):
+        from app.modules.core.crud import upsert_setting
+
+        branch = make_branch(db)
+        upsert_setting(db, "beach.price.adult", "200", branch_id=branch.id)
+        db.commit()
+
+        req = BeachSellRequest(tx_type="entry", quantity=1)
+        tx = services.sell_ticket(db, branch.id, req)
+        assert tx.discount_amount == Decimal("0")
+        assert tx.total_amount == Decimal("200.00")
+
+    def test_sell_ticket_discount_scales_with_quantity(self, db):
+        from app.modules.core.crud import upsert_setting
+
+        branch = make_branch(db)
+        upsert_setting(db, "beach.price.adult", "200", branch_id=branch.id)
+        db.commit()
+        customer = self._make_customer_with_group(db, branch, pct=Decimal("25"))
+
+        req = BeachSellRequest(tx_type="entry", quantity=3, customer_id=customer.id)
+        tx = services.sell_ticket(db, branch.id, req)
+        # gross = 200*3=600 → discount 25% = 150 → net = 450
+        assert tx.discount_amount == Decimal("150.00")
+        assert tx.total_amount == Decimal("450.00")
+
+
 class TestVoidTransaction:
 
     def test_void_transaction(self, db):

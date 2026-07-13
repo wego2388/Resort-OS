@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api, parseApiTimestamp } from '@resort-os/core'
+import { api, parseApiTimestamp, useAuthStore } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const authStore = useAuthStore()
 const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
 const tab = ref<'leads' | 'customers' | 'opportunities' | 'activities' | 'campaigns' | 'guests'>('leads')
 
@@ -22,6 +23,10 @@ interface CallNote {
 interface Customer {
   id: number; full_name: string; phone?: string; email?: string; segment: string
   total_spent: number; visits_count: number; vip_flag?: boolean; blacklisted: boolean
+  customer_group_id?: number | null
+}
+interface CustomerGroup {
+  id: number; name: string; name_ar?: string | null; discount_percentage: number; is_active: boolean
 }
 interface Opportunity {
   id: number; customer_id: number; title: string; product_type: string; stage: string
@@ -67,6 +72,23 @@ const savingCustomer = ref(false)
 const customerForm = ref({
   full_name: '', phone: '', email: '', nationality: '', segment: 'regular', notes: '',
 })
+
+// ── مجموعات العملاء (خصم دائم) ──────────────────────────────────────────
+// قراءة لمدير+، إنشاء/تعديل لـ admin+ فقط — نفس نمط /finance/discounts.
+const groups = ref<CustomerGroup[]>([])
+const groupModal = ref(false)
+const savingGroup = ref(false)
+const editingGroup = ref<CustomerGroup | null>(null)
+const groupForm = ref({ name: '', name_ar: '', discount_percentage: '10' })
+
+function openCreateGroup() {
+  editingGroup.value = null
+  groupForm.value = { name: '', name_ar: '', discount_percentage: '10' }
+}
+function openEditGroup(g: CustomerGroup) {
+  editingGroup.value = g
+  groupForm.value = { name: g.name, name_ar: g.name_ar ?? '', discount_percentage: String(g.discount_percentage) }
+}
 
 const showOpportunityForm = ref(false)
 const savingOpportunity = ref(false)
@@ -194,8 +216,65 @@ async function loadCustomers() {
   try {
     const res = await api.get('/api/v1/crm/customers', { params: { branch_id: branchId } })
     customers.value = res.data.customers ?? res.data.items ?? res.data
+    if (authStore.roleLevel >= 60) await loadGroups()
   } catch { toast.error('تعذّر تحميل العملاء — حاول تاني') }
   finally { loading.value = false }
+}
+
+async function loadGroups() {
+  try {
+    const res = await api.get('/api/v1/crm/customer-groups', { params: { branch_id: branchId, active_only: false } })
+    groups.value = res.data ?? []
+  } catch {
+    // غير حرج لعرض قائمة العملاء — بس هيمنع تعيين/عرض المجموعات لو فشل
+  }
+}
+
+async function saveGroup() {
+  if (!groupForm.value.name.trim()) { toast.error('اسم المجموعة مطلوب'); return }
+  savingGroup.value = true
+  try {
+    const payload = {
+      name: groupForm.value.name,
+      name_ar: groupForm.value.name_ar || undefined,
+      discount_percentage: groupForm.value.discount_percentage || '0',
+    }
+    if (editingGroup.value) {
+      await api.patch(`/api/v1/crm/customer-groups/${editingGroup.value.id}`, payload)
+      toast.success('تم تعديل المجموعة')
+    } else {
+      await api.post('/api/v1/crm/customer-groups', { branch_id: branchId, ...payload })
+      toast.success('تم إضافة المجموعة')
+    }
+    openCreateGroup()
+    await loadGroups()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ المجموعة')
+  } finally {
+    savingGroup.value = false
+  }
+}
+
+async function toggleGroupActive(g: CustomerGroup) {
+  try {
+    await api.patch(`/api/v1/crm/customer-groups/${g.id}`, { is_active: !g.is_active })
+    await loadGroups()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة المجموعة')
+  }
+}
+
+async function assignGroup(customer: Customer, groupId: number | '') {
+  try {
+    const { data } = await api.patch(`/api/v1/crm/customers/${customer.id}/group`, {
+      customer_group_id: groupId === '' ? null : groupId,
+    })
+    const idx = customers.value.findIndex(c => c.id === customer.id)
+    if (idx !== -1) customers.value[idx] = data
+    toast.success('تم تحديث مجموعة العميل')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث مجموعة العميل')
+  }
 }
 
 async function loadOpportunities() {
@@ -599,9 +678,14 @@ onMounted(loadLeads)
       <AppButton v-if="tab === 'leads'" size="sm" @click="showLeadForm = !showLeadForm">
         {{ showLeadForm ? 'إلغاء' : '+ عميل محتمل جديد' }}
       </AppButton>
-      <AppButton v-if="tab === 'customers'" size="sm" @click="showCustomerForm = !showCustomerForm">
-        {{ showCustomerForm ? 'إلغاء' : '+ عميل جديد' }}
-      </AppButton>
+      <div v-if="tab === 'customers'" class="flex items-center gap-2">
+        <AppButton v-if="authStore.roleLevel >= 60" size="sm" variant="secondary" @click="groupModal = true">
+          🏷️ مجموعات العملاء
+        </AppButton>
+        <AppButton size="sm" @click="showCustomerForm = !showCustomerForm">
+          {{ showCustomerForm ? 'إلغاء' : '+ عميل جديد' }}
+        </AppButton>
+      </div>
       <AppButton v-if="tab === 'opportunities'" size="sm" @click="showOpportunityForm = !showOpportunityForm">
         {{ showOpportunityForm ? 'إلغاء' : '+ فرصة بيعية جديدة' }}
       </AppButton>
@@ -700,6 +784,7 @@ onMounted(loadLeads)
             <tr>
               <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">العميل</th>
               <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الشريحة</th>
+              <th v-if="authStore.roleLevel >= 60" class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">مجموعة الخصم</th>
               <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الزيارات</th>
               <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">إجمالي الإنفاق</th>
             </tr>
@@ -723,11 +808,18 @@ onMounted(loadLeads)
                   {{ c.segment === 'vip' ? 'VIP' : c.segment === 'corporate' ? 'شركة' : c.segment === 'travel_agent' ? 'وكيل سفر' : 'عادي' }}
                 </AppBadge>
               </td>
+              <td v-if="authStore.roleLevel >= 60" class="px-4 py-3">
+                <select :value="c.customer_group_id ?? ''" @change="assignGroup(c, ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : '')"
+                  class="border border-stone-200 rounded-lg px-2 py-1 text-xs">
+                  <option value="">بدون مجموعة</option>
+                  <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name_ar || g.name }} ({{ g.discount_percentage }}%)</option>
+                </select>
+              </td>
               <td class="px-4 py-3 text-sm text-gray-700 font-medium">{{ c.visits_count }}</td>
               <td class="px-4 py-3 text-sm font-bold text-blue-700">{{ Number(c.total_spent).toLocaleString('ar-EG') }} ج</td>
             </tr>
             <tr v-if="customers.length === 0">
-              <td colspan="4" class="px-4 py-8">
+              <td colspan="5" class="px-4 py-8">
                 <EmptyState icon="👥" title="لا توجد عملاء" />
               </td>
             </tr>
@@ -1033,6 +1125,54 @@ onMounted(loadLeads)
               class="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm" />
             <AppButton size="sm" variant="secondary" :loading="savingLost" @click="markLeadLost">خسارة</AppButton>
           </div>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- مجموعات العملاء (خصم دائم) -->
+    <AppModal :open="groupModal" title="مجموعات العملاء" size="lg" @close="groupModal = false">
+      <div class="space-y-4">
+        <p class="text-xs text-gray-500">
+          خصم دائم يتطبّق تلقائيًا على مبيعات أي عميل عضو في المجموعة (مطعم/كافيه/شاطئ) — منفصل
+          تمامًا عن خصومات Happy Hour/البروموشن المؤقتة. لو الاتنين انطبقوا على نفس الطلب، الأعلى
+          قيمة بس هو اللي يتطبّق (مش تراكم).
+        </p>
+
+        <AppCard v-if="authStore.roleLevel >= 80" padding="sm">
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            <input v-model="groupForm.name" type="text" placeholder="الاسم (إنجليزي) *"
+              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <input v-model="groupForm.name_ar" type="text" placeholder="الاسم (عربي)"
+              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <input v-model="groupForm.discount_percentage" type="number" min="0" max="100" step="0.01" placeholder="نسبة الخصم %"
+              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          </div>
+          <div class="flex gap-2 mt-2">
+            <AppButton size="sm" :loading="savingGroup" @click="saveGroup">
+              {{ editingGroup ? 'حفظ التعديلات' : '+ إضافة مجموعة' }}
+            </AppButton>
+            <AppButton v-if="editingGroup" size="sm" variant="secondary" @click="openCreateGroup">إلغاء التعديل</AppButton>
+          </div>
+        </AppCard>
+        <p v-else class="text-xs text-amber-600">إنشاء/تعديل المجموعات يقتصر على المدير العام (admin+).</p>
+
+        <div class="border-t border-stone-100 pt-3 space-y-2">
+          <div v-for="g in groups" :key="g.id" class="flex items-center justify-between bg-stone-50 rounded-xl px-3 py-2">
+            <div>
+              <span class="font-medium text-sm text-gray-900">{{ g.name_ar || g.name }}</span>
+              <span class="text-xs text-gray-500 ml-2">خصم {{ g.discount_percentage }}%</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <AppBadge size="sm" :variant="g.is_active ? 'success' : 'neutral'">{{ g.is_active ? 'نشطة' : 'موقوفة' }}</AppBadge>
+              <template v-if="authStore.roleLevel >= 80">
+                <button @click="openEditGroup(g)" class="text-xs font-semibold text-primary-700 hover:underline">تعديل</button>
+                <button @click="toggleGroupActive(g)" class="text-xs font-semibold text-gray-500 hover:underline">
+                  {{ g.is_active ? 'إيقاف' : 'تفعيل' }}
+                </button>
+              </template>
+            </div>
+          </div>
+          <EmptyState v-if="groups.length === 0" icon="🏷️" title="لا توجد مجموعات عملاء بعد" />
         </div>
       </div>
     </AppModal>
