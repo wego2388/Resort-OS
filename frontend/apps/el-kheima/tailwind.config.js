@@ -1,7 +1,18 @@
+import defaultTheme from 'tailwindcss/defaultConfig.js'
 import dsPreset from '../../packages/ui/tailwind-preset.js'
 
 /** @type {import('tailwindcss').Config} */
 export default {
+  // ⚠️ باج حقيقي اتكشف بعد الدمج (2026-07-13، شاشة تسجيل الدخول بيضاء تمامًا):
+  // `presets: [dsPreset]` لوحدها كانت بتستبدل الـ preset الافتراضي بتاع
+  // Tailwind بالكامل، مش تدمج معاه — التعليق القديم "Tailwind presets
+  // deep-merge" غلط. النتيجة: كل الألوان الافتراضية (blue-900, gray-500...)
+  // اختفت تمامًا من الـ CSS، فأي كلاس زي `bg-gradient-to-br from-blue-900`
+  // كان بيتولّد بدون أي قاعدة CSS فعلية (شفاف تمامًا). الحل: `defaultTheme`
+  // (نفس الـ preset الافتراضي بتاع Tailwind نفسه) لازم يترتّب أول واحد في
+  // presets، وdsPreset بعده — presets بتتدمج بالترتيب ده فعليًا (defaultTheme
+  // أساس، dsPreset extend عليه، بعدين theme.extend تحت ده extend نهائي).
+  presets: [defaultTheme, dsPreset],
   // ⚠️ باج حقيقي اتكشف أثناء اختبار حي لشاشة التايم شير: content مكنش شامل
   // '../../packages/ui/src' (@resort-os/ui — مصدر مباشر، مفيش build step،
   // مكوّناته بتتحمّل زي أي كود تاني في المشروع). يعني أي Tailwind class
@@ -14,11 +25,6 @@ export default {
   // من الـ CSS) — يعني الموظف ممكن يفوّت رسالة خطأ حقيقية ليها معنى (زي رفض
   // دفعة زيادة عن المستحق) لأنها بتظهر في مكان غير متوقع بدون أي تنسيق.
   content: ['./index.html', './src/**/*.{vue,ts}', '../../packages/ui/src/**/*.{vue,ts}'],
-  // Shared Design System preset (packages/ui/tailwind-preset.js) — semantic
-  // color tokens, type scale, elevation, motion, responsive tokens. `extend`
-  // below still merges on top of it (Tailwind presets deep-merge), so
-  // el-kheima's own primary/gold/resort palette and Cairo font are untouched.
-  presets: [dsPreset],
   darkMode: 'class',
   theme: {
     extend: {

@@ -71,11 +71,25 @@ const emit = defineEmits<{ close: [] }>()
 .drawer-end-enter-from, .drawer-end-leave-to { transform: translateX(100%); }
 .drawer-start-enter-from, .drawer-start-leave-to { transform: translateX(-100%); }
 
-/* RTL (this project's default locale): "end" = left edge, "start" = right
-   edge — mirror the slide direction so the panel always enters from off the
-   edge it's actually anchored to, not off the opposite one. */
-:global([dir="rtl"]) .drawer-end-enter-from,
-:global([dir="rtl"]) .drawer-end-leave-to { transform: translateX(-100%); }
-:global([dir="rtl"]) .drawer-start-enter-from,
-:global([dir="rtl"]) .drawer-start-leave-to { transform: translateX(100%); }
+</style>
+
+<!--
+  ⚠️ باج حقيقي جدًا اتكشف (2026-07-13، شاشة تسجيل الدخول بيضاء بالكامل في كل
+  صفحة بالمشروع، مش بس اللي فيها Drawer فعليًا): الـ 4 قواعد دول كانت جوه
+  <style scoped> فوق مكتوبة `:global([dir="rtl"]) .drawer-end-enter-from`
+  — طلع إن Vue's scoped-CSS compiler (النسخة المستخدمة هنا) بيفقد جزء الـ
+  class بالكامل من أي selector فيه :global(ancestor) .descendant (مش بس
+  في قايمة selectors بفاصلة زي ما اتفتكر الأول — بيحصل حتى مع selector واحد
+  لوحده)، فالناتج المُصرَّف كان حرفيًا `[dir="rtl"] { transform: translateX(...) }`
+  بدون أي تقييد بـ class خالص — أي عنصر عنده dir="rtl" (html وbody الاتنين
+  في نفس الوقت، كل واحد بيدي +100%/-100% من عرضه منفصل) كان بيتحرك برّه
+  الشاشة بالكامل. الإصلاح: نقل القواعد دي لـ <style> غير scoped منفصل، بعيد
+  عن الباج ده تمامًا — أسماء الـ class (drawer-end-enter-from...) مميزة
+  بما يكفي إن مفيش خطر تصادم حقيقي بكونها عامة.
+-->
+<style>
+[dir="rtl"] .drawer-end-enter-from,
+[dir="rtl"] .drawer-end-leave-to { transform: translateX(-100%); }
+[dir="rtl"] .drawer-start-enter-from,
+[dir="rtl"] .drawer-start-leave-to { transform: translateX(100%); }
 </style>
