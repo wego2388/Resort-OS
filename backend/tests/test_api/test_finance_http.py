@@ -776,6 +776,82 @@ class TestCashierShiftHTTPFlow:
         assert any(s["id"] == shift_id for s in resp.json()["items"])
 
 
+class TestCashMovementHTTP:
+    """Cash Control ledger (Operations & Control Layer plan §3.2، Batch 2) —
+    قرار Mohamed 2026-07-13: الكاشير صفر صلاحية على أي حركة كاش يدوية، أي
+    مستوى أقل من مدير محتاج PIN دايمًا. راجع Batch 4 (سياسة رؤية سجل
+    التدقيق): GET يقتصر على مدير+ بالظبط زي /audit-logs."""
+
+    def _open_shift(self, client, headers, branch_id) -> int:
+        resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch_id, "opening_float": "500.00"},
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+
+    def test_cashier_movement_without_pin_rejected(self, client: TestClient, db, cashier_headers):
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift(client, cashier_headers, branch.id)
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/cash-movements",
+            json={"movement_type": "correction", "amount": "50.00", "reason": "تصحيح عدّ الكاش"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+        assert "موافقة" in resp.json()["detail"]
+
+    def test_manager_movement_self_qualified(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift(client, manager_headers, branch.id)
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/cash-movements",
+            json={"movement_type": "drawer_open", "amount": "0", "reason": "فحص روتيني للدرج"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["approved_by"] is None
+
+    def test_cashier_movement_with_valid_manager_pin_succeeds(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        manager_id = _set_shift_pin(db, "manager@test.local", "6688")
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift(client, cashier_headers, branch.id)
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/cash-movements",
+            json={
+                "movement_type": "safe_drop", "amount": "400.00", "reason": "تنزيل خزنة",
+                "approver_user_id": manager_id, "approver_pin": "6688",
+            },
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["approved_by"] == manager_id
+
+    def test_cashier_cannot_list_cash_movements(self, client: TestClient, db, cashier_headers, manager_headers):
+        """راجع Batch 4 — سجل حركات الكاش تفصيل من سجل التدقيق (مين نفّذ/
+        وافق)، زي /audit-logs بالظبط: مدير+ فقط، كاشير يترفض بـ 403."""
+        manager_id = _set_shift_pin(db, "manager@test.local", "6699")
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift(client, cashier_headers, branch.id)
+        client.post(
+            f"/api/v1/finance/shifts/{shift_id}/cash-movements",
+            json={
+                "movement_type": "cash_in", "amount": "100.00", "reason": "عهدة",
+                "approver_user_id": manager_id, "approver_pin": "6699",
+            },
+            headers=cashier_headers,
+        )
+        forbidden = client.get(f"/api/v1/finance/shifts/{shift_id}/cash-movements", headers=cashier_headers)
+        assert forbidden.status_code == 403
+
+        allowed = client.get(f"/api/v1/finance/shifts/{shift_id}/cash-movements", headers=manager_headers)
+        assert allowed.status_code == 200
+        assert len(allowed.json()) == 1
+
+
 def _set_shift_pin(db, email: str, pin: str) -> int:
     """نفس نمط _set_pin في test_restaurant_http.py — يضبط PIN حقيقي عبر
     core.services (مش تلاعب مباشر بالداتابيز) ويرجّع user.id."""
@@ -928,6 +1004,46 @@ class TestShiftInvoicesHTTP:
             headers=other_headers,
         )
         assert resp.status_code == 403
+
+    def test_cashier_cannot_view_other_cashiers_shift_report(
+        self, client: TestClient, db, cashier_headers,
+    ):
+        """راجع Operations & Control Layer Batch 4 (2026-07-13) — نفس عزل
+        test_cashier_cannot_view_other_cashiers_shift فوق (S-02)، بس على
+        /report/report-pdf مش /invoices. GET /finance/shifts/{id}/report
+        كان مقفول على get_cashier_user بس من غير أي تحقق ملكية خالص —
+        أي كاشير كان يقدر يشوف تقرير وردية كاشير تاني (مبيعات/فرق
+        كاش/هويته) بس بتخمين الـ shift_id، حتى من غير أي PIN. اتصلح ليطابق
+        نمط list_shift_invoices (كاشير+ مؤهّل لوردية نفسه بس، مدير+ لأي
+        وردية)."""
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "100.00"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+
+        other_headers = _second_cashier_headers(db)
+        report_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report", headers=other_headers)
+        assert report_resp.status_code == 403
+
+        pdf_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report/pdf", headers=other_headers)
+        assert pdf_resp.status_code == 403
+
+    def test_manager_can_view_any_cashiers_shift_report(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "100.00"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+
+        report_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report", headers=manager_headers)
+        assert report_resp.status_code == 200
 
     def test_invoices_404_for_missing_shift(self, client: TestClient, db, manager_headers):
         resp = client.get("/api/v1/finance/shifts/999999/invoices", headers=manager_headers)

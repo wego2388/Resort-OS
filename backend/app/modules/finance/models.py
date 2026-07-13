@@ -4,7 +4,7 @@ Finance Module — always_on
 Tables: folios, folio_charges, payments, conditional_discounts,
         accounts, journal_entries, journal_lines, accounting_periods,
         eta_invoices, asset_depreciation_entries, bank_accounts,
-        bank_statement_lines
+        bank_statement_lines, cash_movements
 """
 from __future__ import annotations
 
@@ -162,6 +162,33 @@ class CashierShiftCashCount(Base, TimestampMixin):
     egp_equivalent: Mapped[Decimal] = mapped_column(Numeric(12, 2))
 
     shift: Mapped["CashierShift"] = relationship("CashierShift", back_populates="cash_count_lines")
+
+
+class CashMovement(Base, TimestampMixin):
+    """حركة نقدية يدوية على درج الكاشير — إيداع/سحب/عهدة نثرية/تنزيل خزنة/
+    فتح الدرج/تصحيح — منفصلة تمامًا عن أي حركة بيع (Payment). راجع Operations
+    & Control Layer plan §3.2: كشف Click القديم كان بيسجّل كل حركة يدوية على
+    الدرج في Safe_History.IsApproved، مش بس التصحيحات — نفس القرار هنا (قرار
+    Mohamed 2026-07-13 عن "التصحيح" حصرًا اتوسّع ليشمل بقية الأنواع، لأنها
+    نفس فئة الخطر بالظبط؛ راجع تقرير الدفعة دي لو حابب تضيّق النطاق لاحقًا).
+
+    كل حركة (بغض النظر عن نوعها) من مستوى أقل من مدير محتاجة موافقة PIN —
+    راجع finance.services.record_cash_movement و core.services.resolve_pin_approval
+    (نفس الدالة المركزية المستخدمة في void/discount/close_shift variance،
+    مفيش نظام موافقة موازي)."""
+    __tablename__ = "cash_movements"
+
+    id:            Mapped[int]           = mapped_column(primary_key=True)
+    branch_id:     Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    shift_id:      Mapped[int]           = mapped_column(ForeignKey("cashier_shifts.id", ondelete="CASCADE"), index=True)
+    movement_type: Mapped[str]           = mapped_column(String(20), index=True)
+    # cash_in | cash_out | petty_cash | safe_drop | drawer_open | correction
+    amount:        Mapped[Decimal]       = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    reason:        Mapped[str]           = mapped_column(String(500))
+    performed_by:  Mapped[int]           = mapped_column(Integer)
+    approved_by:   Mapped[int | None]    = mapped_column(Integer, nullable=True)
+
+    shift: Mapped["CashierShift"] = relationship("CashierShift")
 
 
 # ── Double-Entry Accounting ────────────────────────────────────────────

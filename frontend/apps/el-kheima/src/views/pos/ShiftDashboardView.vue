@@ -19,6 +19,7 @@ import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
 import { AppCard, AppBadge, EmptyState, useToast } from '@resort-os/ui'
 import ShiftPanel from '../../components/ShiftPanel.vue'
 import InvoiceLogModal from '../../components/InvoiceLogModal.vue'
+import CashControlPanel from '../../components/CashControlPanel.vue'
 
 const auth = useAuthStore()
 const toast = useToast()
@@ -179,6 +180,10 @@ onMounted(fetchShift)
           <ShiftPanel @shift-changed="refreshAll" />
         </div>
       </AppCard>
+
+      <!-- ضبط الكاش (Cash Control ledger) — إيداع/سحب/عهدة/تنزيل خزنة/فتح
+           درج/تصحيح، كل واحدة محتاجة موافقة PIN مدير+ (راجع CashControlPanel) -->
+      <CashControlPanel :shift-id="shift.id" />
 
       <!-- ملخص المبيعات — X-Report (S-04)، مبني على نفس endpoint التقرير
            بدون قفل الوردية -->

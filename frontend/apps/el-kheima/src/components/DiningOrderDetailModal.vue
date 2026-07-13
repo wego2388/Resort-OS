@@ -19,6 +19,14 @@
  * min_role_level=60), no PIN escalation path for a lower role). Mirroring
  * that exactly here, rather than inventing an extra approval step the
  * backend doesn't ask for.
+ *
+ * Discount (Mohamed, 2026-07-13): the cashier role has zero discount
+ * authority at all, so applying a discount is now gated exactly like void —
+ * clicking "تطبيق خصم" always mounts PinGuardModal (min-level=60), which
+ * self-qualifies silently (no visible UI, immediate `approved` emit) for
+ * manager+ and otherwise blocks on an approver pick + PIN. Same backend gate
+ * (resolve_pin_approval), same frontend component — no parallel approval
+ * flow invented here.
  */
 import { ref, computed, watch } from 'vue'
 import { AppModal, AppButton, StatusBadge, AppTextarea } from '@resort-os/ui'
@@ -214,12 +222,21 @@ async function confirmRefund() {
   }
 }
 
-// ── Discount (best active ConditionalDiscount rule — no manual amount) ──
+// ── Discount (best active ConditionalDiscount rule — no manual amount,
+// PIN-gated at manager level since the cashier has zero discount authority) ──
 const { applyingDiscount, discountError, applyDiscount: applyDiscountRule } = useOrderDiscount()
-async function applyDiscount() {
+const showDiscountPinGuard = ref(false)
+function requestDiscount() {
+  showDiscountPinGuard.value = true
+}
+function onDiscountPinApproved(payload: { approverUserId: number | null; approverPin: string | null }) {
+  showDiscountPinGuard.value = false
+  performApplyDiscount(payload)
+}
+async function performApplyDiscount(approver: { approverUserId: number | null; approverPin: string | null }) {
   if (!order.value) return
   try {
-    const data = await applyDiscountRule(order.value.id)
+    const data = await applyDiscountRule(order.value.id, approver)
     order.value = data
     successMsg.value = Number(data.discount_amount) > 0
       ? `تم تطبيق خصم ${data.discount_amount} ج ✓`
@@ -442,7 +459,7 @@ function lineTotal(item: OrderItem): number {
         </div>
 
         <div v-if="canApplyDiscount && !['paid', 'cancelled'].includes(order.status)" class="border-t border-stone-200 pt-3">
-          <AppButton variant="secondary" block :loading="applyingDiscount" @click="applyDiscount">🏷️ تطبيق خصم</AppButton>
+          <AppButton variant="secondary" block :loading="applyingDiscount" @click="requestDiscount">🏷️ تطبيق خصم</AppButton>
           <p v-if="discountError" class="text-xs text-danger mt-1.5">{{ discountError }}</p>
         </div>
 
@@ -499,6 +516,17 @@ function lineTotal(item: OrderItem): number {
     :error-message="voidError"
     @approved="onVoidPinApproved"
     @cancel="showPinGuard = false"
+  />
+
+  <PinGuardModal
+    v-if="showDiscountPinGuard"
+    :min-level="60"
+    title="موافقة تطبيق خصم"
+    message="الكاشير مالوش صلاحية خصم — محتاج موافقة مدير/محاسب بالـ PIN"
+    :loading="applyingDiscount"
+    :error-message="discountError"
+    @approved="onDiscountPinApproved"
+    @cancel="showDiscountPinGuard = false"
   />
 </template>
 

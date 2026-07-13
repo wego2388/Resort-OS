@@ -309,7 +309,7 @@ resort-os/
 │   │   │   ├── food_cost_engine.py← تكلفة نظرية/فعلية، food cost %، gross margin (Decimal بالكامل)
 │   │   │   └── report_builder.py
 │   │   │
-│   │   ├── tasks/                 ← Celery tasks (كل module جديد → سجّله في celery_app.py)
+│   │   ├── tasks/                 ← Celery tasks (auto-registered — راجع §13 بند ❹؛ periodic؟ ضيفه في celery_app.py's beat_schedule)
 │   │   ├── main.py
 │   │   ├── celery_app.py
 │   │   └── seed.py                ← Idempotent
@@ -387,8 +387,16 @@ value or default                          # ❌ يفشل مع 0/False/""
 national_id: Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
 # مُطبَّقة على: employees، bookings، timeshare_contracts، crm_customers، guest_profiles
 
-# ❹ Celery task module جديد → سجّله في celery_app.py
-import app.tasks.<new_module>  # في آخر الملف — وإلا beat يفشل بـ "unregistered task"
+# ❹ Celery task module جديد — التسجيل نفسه أوتوماتيكي (مش يدوي زي ما كان
+# موثّق هنا قديمًا): app/tasks/__init__.py بيعمل pkgutil.iter_modules على
+# أي ملف *.py جوه app/tasks/ ويستورده، فأي @celery_app.task بيتسجّل لوحده
+# (اتأكد من الكود فعليًا 2026-07-13 وقت بناء fraud_tasks.py — الملاحظة
+# القديمة هنا كانت غلط/قديمة). **اللي لازم تضيفه يدويًا فعليًا** هو سطر في
+# celery_app.py's beat_schedule لو الـ task دوري (crontab)، مش استيراد.
+
+# ❹-ب alembic/env.py برضو محتاج import صريح لأي app.modules.<x>.models
+# جديد (عكس tasks/، الـ models بتتحمّل يدويًا هنا) — وإلا autogenerate
+# مايشوفش الجداول الجديدة خالص.
 
 # ❺ role جديد → ROLE_LEVELS في deps.py + useAuthStore.ts (نفس الأرقام)
 
@@ -834,6 +842,57 @@ migrations) في `PROJECT_STATUS.md`.
   (كان 15 وقت Batch A/B، `dining` كان إضافي جنب `restaurant`/`cafe` — دلوقتي حلّ محلهم نهائيًا).
   الشاشات القديمة المذكورة في مدخل Batch B فوق ("الشاشات دي مش الـ POS الافتراضي") **بقت الافتراضي
   فعليًا دلوقتي** — الجملة دي باقية كسجل تاريخي لوقتها، مش وصف للوضع الحالي.
+- **Operations & Control Layer — Batch 1: موافقة PIN على الخصم** (2026-07-13، راجع
+  `OPERATIONS_CONTROL_LAYER_PLAN.md`) — قرار Mohamed: الكاشير صفر صلاحية خصم خالص (مفيش جدول درجات
+  نسب مئوية)، أي محاولة تطبيق خصم من مستوى أقل من مدير محتاجة `core.services.resolve_pin_approval
+  (min_approver_level=60)` بغض النظر عن نتيجة القاعدة، بالظبط زي `void_order_item`. `POST
+  /dining/orders/{id}/discount` بقى ياخد `ApplyDiscountRequest` (`approver_user_id`/`approver_pin`)،
+  `dining.services.apply_order_discount` بينادي `resolve_pin_approval` قبل حساب القاعدة ويكتب
+  `AuditLog(action="apply_discount")`. الفرونت إند (`DiningOrderDetailModal.vue`،
+  `UnifiedPOSView.vue`) بيفتح `PinGuardModal.vue` (`min-level={60}`) عند الضغط على "تطبيق خصم" —
+  نفس المكوّن المستخدم للإلغاء، مفيش نظام موافقة موازي. 9 اختبار جديد = 1697 اختبار إجمالي.
+- **Operations & Control Layer — Batch 2: Cash Control ledger** (2026-07-13) — جدول جديد
+  `CashMovement` (`finance/models.py`، migration `23e4eca09fe0`): `cash_in`/`cash_out`/
+  `petty_cash`/`safe_drop`/`drawer_open`/`correction` على وردية الكاشير، منفصل تمامًا عن أي حركة
+  بيع. **قرار موثّق يوسّع طلب Mohamed الصريح**: هو سمّى "correction" بس كمحتاج PIN مدير+ دايمًا —
+  اتوسّع هنا ليشمل الأنواع الستة كلها (نفس فئة الخطر، بحثًا مدعوم بملاحظة الخطة إن Click القديم كان
+  بيسجّل `Safe_History.IsApproved` على كل حركة مش بس التصحيح) — اختيار محافظ صريح، سهل التضييق لاحقًا
+  لو Mohamed حابب. `finance.services.record_cash_movement` بينادي
+  `core.services.resolve_pin_approval(min_approver_level=60)` قبل أي كتابة بغض النظر عن المبلغ (حتى
+  drawer_open بمبلغ صفر). `POST /finance/shifts/{id}/cash-movements` (كاشير+) و
+  `GET .../cash-movements` (مدير+ فقط، بدون أي مسار PIN بديل — زي `/audit-logs`). باجين حقيقيين
+  اتصلحوا أثناء الاختبار: `CashMovement.approved_by` كان بيفضل NULL رغم موافقة PIN صحيحة
+  (approved_by ماكانش بيتمرر لـ `crud.create_cash_movement`)، وترتيب `list_cash_movements` بـ
+  `created_at.desc()` بس مش حتمي لحركتين في نفس المللي ثانية (اتصلح بـ `id.desc()` tiebreak).
+  الفرونت إند: `CashControlPanel.vue` جديد داخل `ShiftDashboardView.vue` (نموذج + `PinGuardModal.vue`
+  دايمًا قبل الإرسال)، سجل الحركات بيظهر لمدير+ بس. 10 اختبار جديد = 1707 اختبار إجمالي.
+- **Operations & Control Layer — Batch 3: كشف الاحتيال (Fraud Detection)** (2026-07-13) —
+  `app/tasks/fraud_tasks.py` جديد، `scan_for_fraud_signals` (كل 15 دقيقة عبر `celery_app.py`
+  beat_schedule). بيفحص `AuditLog` (مرتجع/إلغاء صنف/محاولة خصم — Batch 1/2 كتبوها بالفعل) +
+  `CashMovement` (فتح الدرج — Batch 2) لكل كاشير خلال نافذة دوّارة، وبيبعت واتساب حقيقي
+  (`core.kernel.whatsapp.notify_admin`) لما عتبة تتخطى، مع dedup عبر Redis (24 ساعة). **قرار Mohamed
+  "اعمل حقيقي" بدون أرقام محددة — مفوَّض هندسيًا بالكامل**: العتبات كلها `Settings` قابلة للتعديل في
+  `app/core/config.py` (`FRAUD_REFUND_COUNT_THRESHOLD=15/60min`،
+  `FRAUD_VOID_COUNT_THRESHOLD=15/60min`، `FRAUD_DISCOUNT_COUNT_THRESHOLD=10/60min` [أقل عمدًا — بعد
+  Batch 1 الكاشير صفر صلاحية خصم أصلاً]، `FRAUD_DRAWER_OPEN_COUNT_THRESHOLD=20/24h`). **قرار تصميمي
+  محافظ صريح**: عدّ مطلق خلال نافذة، مش نسبة مئوية حقيقية (حساب نسبة محتاج مقام Mohamed ما حددهوش
+  صراحةً) — موثّق في كود `fraud_tasks.py` وPROJECT_STATUS.md، سهل التوسيع لاحقًا. `find_fraud_signals()`
+  هي المنطق القابل للاختبار (استعلامات + عتبات، مفيش Celery/Redis هنا). 8 اختبار جديد = 1715 اختبار
+  إجمالي.
+- **Operations & Control Layer — Batch 4: تحقق شامل من رؤية سجل التدقيق** (2026-07-13) — مراجعة أمنية
+  منهجية عبر كل endpoint كاشير/نادل يقدر يوصله. `/audit-logs` و`/finance/shifts/{id}/cash-movements`
+  (Batch 2) كانوا فعلاً مقفولين صح على مدير+ من الأول. **لكن اتكشفت ثغرة حقيقية منفصلة**:
+  `GET /finance/shifts/{id}/report`/`report/pdf` كانوا مقفولين على `get_cashier_user` بس **من غير
+  أي تحقق ملكية** — أي كاشير كان يقدر يشوف تقرير وردية كاشير تاني (مبيعات/فرق كاش/هويته) بمجرد تخمين
+  `shift_id`، عكس `GET .../invoices` المجاورة اللي كانت بالفعل بتفرض "وردية نفسك بس" (S-02). اتصلح:
+  `services.build_shift_end_report`/`generate_shift_end_report_pdf` بقوا ياخدوا `requesting_user`
+  اختياري وبيفرضوا نفس قيد الملكية. اتأكد بتست بيثبت الباج قبل الإصلاح (200) ثم يتحقق من الإصلاح
+  (403). فحص تفصيلي لباقي الموديولات (`dining.OrderItemRead.voided_by`،
+  `inventory.StockCountRead.approved_by`، `finance.CheckRead.created_by`، `beach.
+  BeachTransactionRead.cashier_id`) موثّق بالكامل في `PROJECT_STATUS.md` — معظمها "مين سجّل" عادي
+  مش "مين وافق على إجراء حسّاس"، عدا `StockCountRead` اللي مقفول بأوسع بوابة في المشروع
+  (`get_current_active_user`) ومذكور كملاحظة منفصلة لقرار Mohamed مستقبلي (خارج نطاق موديول
+  الكاشير/الكاش). 3 اختبار جديد = 1718 اختبار إجمالي.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش
@@ -959,7 +1018,7 @@ ETA_ENABLED=false
 ❌ لا تستخدم float للأموال
 ❌ لا تخزّن PII بدون EncryptedString
 ❌ لا تغيّر role/is_active بدون revoke_user_tokens()
-❌ لا تضيف Celery task بدون تسجيله في celery_app.py
+❌ لا تنسى تضيف Celery task دوري في celery_app.py's beat_schedule (التسجيل نفسه أوتوماتيكي — راجع §13 بند ❹)
 ❌ لا تضيف migration بدون التحقق من alembic heads
 ❌ لا تُرجع list endpoint بدون pagination
 ❌ لا تكسر أي test موجود

@@ -122,6 +122,12 @@ celery_app.conf.beat_schedule = {
         "schedule": crontab(hour=1, minute=0),           # كل يوم 01:00 بعد Night Audit
     },
 
+    # ─── Fraud Detection (Operations & Control Layer plan §3.5) ──────
+    "fraud-detection-scan": {
+        "task": "app.tasks.fraud_tasks.scan_for_fraud_signals",
+        "schedule": crontab(minute="*/15"),          # كل 15 دقيقة — نوافذ الفحص دقايق/ساعات مش أيام
+    },
+
     # ─── Hub ──────────────────────────────────────────────────────────
     "sitemap-refresh": {
         "task": "app.tasks.hub_tasks.refresh_sitemap",

@@ -23,7 +23,8 @@ from app.modules.finance.schemas import (
     BankAccountCreate, BankAccountRead, BankAccountUpdate, BankReconciliationSummary,
     BankStatementImportRequest, BankStatementLineRead, BankStatementMatchRequest,
     CashierShiftClose, CashierShiftOpen,
-    CashierShiftRead, CheckCreate, CheckMoveStatus, CheckRead, ClosePeriodRequest,
+    CashierShiftRead, CashMovementCreate, CashMovementRead, CheckCreate, CheckMoveStatus, CheckRead,
+    ClosePeriodRequest,
     ConditionalDiscountCreate, ConditionalDiscountRead, ConditionalDiscountUpdate,
     CostCenterCreate, CostCenterRead, CostCenterReport,
     DepreciationRunRequest, DepreciationRunResult,
@@ -182,19 +183,25 @@ def list_shifts(
 
 
 @router.get("/finance/shifts/{shift_id}/report", response_model=ShiftEndReport)
-def shift_end_report(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def shift_end_report(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
+    """راجع Batch 4 (Operations & Control Layer) — كاشير يشوف تقرير وردية
+    نفسه بس، مدير+ يشوف أي وردية (services.build_shift_end_report)."""
     try:
-        return services.build_shift_end_report(db, shift_id)
+        return services.build_shift_end_report(db, shift_id, requesting_user=user)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
 @router.get("/finance/shifts/{shift_id}/report/pdf")
-def download_shift_end_report_pdf(shift_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def download_shift_end_report_pdf(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
     try:
-        pdf = services.generate_shift_end_report_pdf(db, shift_id)
+        pdf = services.generate_shift_end_report_pdf(db, shift_id, requesting_user=user)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return Response(
         content=pdf,
         media_type="application/pdf",
@@ -249,6 +256,36 @@ def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(
         pass
 
     return result
+
+
+# ── Cash Control ledger (Operations & Control Layer plan §3.2) ─────────
+# كل حركة يدوية على درج الوردية (إيداع/سحب/عهدة نثرية/تنزيل خزنة/فتح الدرج
+# بدون بيع/تصحيح) — منفصلة عن أي حركة بيع (Payment). راجع
+# finance.services.record_cash_movement لمنطق موافقة PIN الكامل.
+
+@router.post("/finance/shifts/{shift_id}/cash-movements", response_model=CashMovementRead,
+             status_code=status.HTTP_201_CREATED)
+def create_cash_movement(shift_id: int, data: CashMovementCreate, db: DbDep, user=Depends(get_cashier_user)):
+    """تسجيل حركة كاش يدوية (كاشير+) — كل الأنواع الستة (بما فيها
+    drawer_open بدون أي بيع مرتبط) بتمر من هنا. موافقة PIN مدير+ إجبارية
+    لأي منفّذ أقل من مدير، بغض النظر عن النوع أو المبلغ (راجع services)."""
+    try:
+        return services.record_cash_movement(
+            db, shift_id, data, performed_by=user.id, acting_user_level=user_level(user),
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/finance/shifts/{shift_id}/cash-movements", response_model=list[CashMovementRead])
+def list_cash_movements(shift_id: int, db: DbDep, _=Depends(get_manager_user)):
+    """سجل حركات الكاش اليدوية على وردية — مدير+ فقط (نفس مستوى `/audit-logs`،
+    ده تفصيل من سجل التدقيق يخص مين نفّذ/وافق على إيه، مش بيانات معاملة
+    عادية يشوفها الكاشير عن نفسه)."""
+    try:
+        return services.list_cash_movements(db, shift_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 # ── Discounts ─────────────────────────────────────────────────────────

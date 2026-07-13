@@ -266,6 +266,35 @@ class CashierShiftRead(BaseModel):
     counted_cash_egp:       Optional[Decimal] = None
 
 
+class CashMovementCreate(BaseModel):
+    """حركة نقدية يدوية على درج وردية مفتوحة — راجع
+    finance.models.CashMovement/finance.services.record_cash_movement.
+    ``branch_id`` مش موجود هنا عمدًا — بيتحسب من الوردية نفسها server-side
+    (مفيش ثقة في أي حاجة قادمة من العميل، راجع CLAUDE.md §5.5)."""
+    movement_type: str = Field(
+        ..., pattern=r"^(cash_in|cash_out|petty_cash|safe_drop|drawer_open|correction)$",
+    )
+    amount: Decimal = Field(Decimal("0"), ge=0)
+    reason: str = Field(..., min_length=3, max_length=500)
+    # موافقة PIN مدير+ — إجبارية لأي منفّذ أقل من مدير، بغض النظر عن نوع
+    # الحركة (راجع core.services.resolve_pin_approval، نفس نمط void/discount).
+    approver_user_id: Optional[int] = None
+    approver_pin:      Optional[str] = Field(None, pattern=r"^\d{4,6}$")
+
+
+class CashMovementRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:            int
+    branch_id:     int
+    shift_id:      int
+    movement_type: str
+    amount:        Decimal
+    reason:        str
+    performed_by:  int
+    approved_by:   Optional[int]
+    created_at:    datetime
+
+
 class ShiftEndReport(BaseModel):
     """تقرير نهاية الوردية — لكل كاشير: كاش + كارت + آجل، عدد الفواتير،
     المرتجع/الملغي، ومقارنة بالوردية السابقة لنفس الكاشير."""

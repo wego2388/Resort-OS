@@ -18,7 +18,8 @@ from app.modules.finance.schemas import (
     AssetDepreciationEntryRead,
     BalanceSheetLine, BalanceSheetReport,
     BankAccountCreate, BankAccountUpdate, BankReconciliationSummary, BankStatementImportRequest,
-    CashCountLineRead, CashierShiftClose, CashierShiftOpen, CheckCreate, ConditionalDiscountCreate,
+    CashCountLineRead, CashierShiftClose, CashierShiftOpen, CashMovementCreate, CheckCreate,
+    ConditionalDiscountCreate,
     ForeignCurrencySummary,
     CostCenterCreate,
     CostCenterReport, CostCenterReportLine, DepreciationRunResult, ExchangeRateCreate, FolioChargeCreate,
@@ -360,10 +361,75 @@ def open_shift(db: Session, cashier_id: int, opened_by: int, data: CashierShiftO
     return shift
 
 
-def build_shift_end_report(db: Session, shift_id: int) -> ShiftEndReport:
+def record_cash_movement(
+    db: Session, shift_id: int, data: CashMovementCreate, performed_by: int,
+    acting_user_level: int = 100,
+):
+    """راجع Operations & Control Layer plan §3.2 (Cash Control ledger). كل
+    حركة يدوية على الدرج (إيداع/سحب/عهدة نثرية/تنزيل خزنة/فتح الدرج بدون
+    بيع/تصحيح) بتتسجّل هنا — قرار Mohamed 2026-07-13: "التصحيح" (correction)
+    محتاج موافقة PIN مدير+ دايمًا؛ اتوسّع هنا ليشمل بقية الأنواع الستة كلها
+    (نفس فئة الخطر — كل حركة كاش يدوية تستاهل نفس الإشراف، مش بس التصحيح)،
+    قرار محافظ صريح مذكور في تقرير الدفعة دي لو Mohamed حابب يضيّق النطاق.
+
+    زي void_order_item/apply_order_discount بالظبط: الموافقة مطلوبة على
+    *محاولة* التسجيل نفسها، بغض النظر عن قيمة المبلغ (حتى drawer_open
+    بمبلغ صفر — فتح الدرج نفسه فعل حسّاس يستاهل إشراف)."""
     shift = crud.get_shift(db, shift_id)
     if not shift:
         raise ValueError(f"الوردية {shift_id} غير موجودة")
+    if shift.status == "closed":
+        raise ValueError("الوردية مقفولة — لا يمكن تسجيل حركة كاش عليها")
+
+    from app.modules.core import crud as core_crud, services as core_services  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+    approved_by = core_services.resolve_pin_approval(
+        db, acting_user_level, data.approver_user_id, data.approver_pin, min_approver_level=60,
+    )
+
+    movement = crud.create_cash_movement(
+        db, shift.branch_id, shift_id, data.movement_type, data.amount, data.reason, performed_by,
+        approved_by=approved_by,
+    )
+    core_crud.create_audit_log(db, AuditLogCreate(
+        user_id=performed_by, approved_by=approved_by, branch_id=shift.branch_id,
+        action=f"cash_movement_{data.movement_type}", entity_type="cash_movement", entity_id=movement.id,
+        new_data=json.dumps({
+            "shift_id": shift_id, "movement_type": data.movement_type,
+            "amount": str(data.amount), "reason": data.reason,
+        }),
+    ))
+    db.commit()
+    db.refresh(movement)
+    return movement
+
+
+def list_cash_movements(db: Session, shift_id: int):
+    shift = crud.get_shift(db, shift_id)
+    if not shift:
+        raise ValueError(f"الوردية {shift_id} غير موجودة")
+    return crud.list_cash_movements(db, shift_id)
+
+
+def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> ShiftEndReport:
+    """راجع Operations & Control Layer Batch 4 (2026-07-13، سد فجوة أمنية
+    حقيقية اتكشفت أثناء مراجعة رؤية سجل التدقيق): ``requesting_user``
+    اختياري (``None`` = نداء داخلي موثوق، زي close_shift بينادي عليها
+    لملخّص العملات الأجنبية بعد ما هو نفسه أصلاً تأكد من الصلاحية) — لو
+    اتبعت، بيفرض نفس قيد list_shift_invoices بالظبط: كاشير (level < مدير)
+    يشوف وردية نفسه بس. قبل الإصلاح ده، `GET /finance/shifts/{id}/report`
+    كان مقفول على get_cashier_user بس من غير أي تحقق ملكية خالص — أي كاشير
+    كان يقدر يشوف تقرير وردية كاشير تاني (مبيعات/فرق كاش/هويته) بمجرد
+    تخمين الـ shift_id."""
+    shift = crud.get_shift(db, shift_id)
+    if not shift:
+        raise ValueError(f"الوردية {shift_id} غير موجودة")
+
+    if requesting_user is not None:
+        from app.core.deps import user_level  # noqa: PLC0415
+        if user_level(requesting_user) < 60 and shift.cashier_id != requesting_user.id:
+            raise PermissionError("لا يمكنك عرض تقرير وردية غيرك")
 
     payments = crud.payments_for_shift(db, shift_id)
     active = [p for p in payments if p.voided_at is None]
@@ -441,11 +507,12 @@ def build_shift_end_report(db: Session, shift_id: int) -> ShiftEndReport:
     )
 
 
-def generate_shift_end_report_pdf(db: Session, shift_id: int) -> bytes:
-    """تقرير نهاية الوردية جاهز للطباعة (يقابل rpt_shift_end في الأنظمة التجارية)."""
+def generate_shift_end_report_pdf(db: Session, shift_id: int, requesting_user=None) -> bytes:
+    """تقرير نهاية الوردية جاهز للطباعة (يقابل rpt_shift_end في الأنظمة التجارية).
+    راجع build_shift_end_report — نفس قيد الملكية بالظبط (Batch 4)."""
     from app.resort_os.report_builder import builder  # noqa: PLC0415
 
-    r = build_shift_end_report(db, shift_id)
+    r = build_shift_end_report(db, shift_id, requesting_user)
 
     headers = ["طريقة الدفع", "الإجمالي (EGP)"]
     rows = [

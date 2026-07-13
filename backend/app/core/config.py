@@ -34,6 +34,25 @@ class Settings(CoreSettings):
     CASH_VARIANCE_REJECT_PCT: float = 10.0      # % من إجمالي مبيعات الوردية
     CASH_VARIANCE_REJECT_FLOOR: float = 200.0   # ج — الحد الأدنى المطلق (ورديات صغيرة/بلا مبيعات)
 
+    # ── Fraud Detection (Operations & Control Layer plan §3.5) ────────
+    # عتبات حقيقية (مش أرقام توضيحية) لكشف نشاط كاشير مشبوه — كل عتبة "عدد
+    # حركات خلال نافذة زمنية دوّارة" per-cashier، مش نسبة مئوية (حساب نسبة
+    # حقيقية محتاج مقام "إجمالي الطلبات" وده يفتح افتراضات إضافية Mohamed
+    # ما حددهاش — قرار محافظ مبسّط، موثّق في PROJECT_STATUS.md). القيم
+    # الافتراضية مبنية على أرقام الخطة نفسها (15 مرتجع/ساعة، 20 فتح درج/يوم)
+    # زائد قيم مقابلة معقولة للخصم/الإلغاء بنفس رتبة الحجم — راجع
+    # app/tasks/fraud_tasks.py للمنطق الكامل. كل رقم هنا قابل للتعديل من
+    # غير أي تغيير كود.
+    FRAUD_REFUND_COUNT_THRESHOLD: int = 15        # مرتجع
+    FRAUD_REFUND_WINDOW_MINUTES: int = 60
+    FRAUD_VOID_COUNT_THRESHOLD: int = 15          # إلغاء صنف
+    FRAUD_VOID_WINDOW_MINUTES: int = 60
+    FRAUD_DISCOUNT_COUNT_THRESHOLD: int = 10      # محاولة تطبيق خصم (كل مستوى — الكاشير صفر صلاحية أصلاً بعد Batch 1)
+    FRAUD_DISCOUNT_WINDOW_MINUTES: int = 60
+    FRAUD_DRAWER_OPEN_COUNT_THRESHOLD: int = 20   # فتح الدرج بدون بيع
+    FRAUD_DRAWER_OPEN_WINDOW_MINUTES: int = 1440  # 24 ساعة ("في اليوم")
+    FRAUD_ALERT_DEDUP_HOURS: int = 24             # ما نبعتش نفس التنبيه (نفس كاشير+قاعدة) أكتر من مرة كل كام ساعة
+
     # ── API ───────────────────────────────────────────────────────────
     API_PREFIX: str = "/api/v1"
 
