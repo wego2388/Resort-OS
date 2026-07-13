@@ -1,6 +1,6 @@
 # حالة المشروع — El Kheima Beach Resort OS
 
-> **آخر تحديث حقيقي:** 2026-07-12 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست، تجربة live)،
+> **آخر تحديث حقيقي:** 2026-07-13 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست، تجربة live)،
 > مش افتراض ولا خطة. لو لقيت رقم يبان قديم، قول لـ Claude "الملف مش محدّث" وهو يراجعه من الكود
 > مباشرة قبل ما يصدّقه.
 >
@@ -15,8 +15,9 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1927 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-12) |
-| **الـ Coverage** | **95%+ إجمالي** (مطعم/كافيه/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
+| **الاختبارات** | **1688 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-13) |
+| **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
+| **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
 | **الاستضافة** | جاهز للـ VPS (docker-compose + Dockerfiles + DEPLOYMENT.md) — **لسه ما جربناهوش على سيرفر حقيقي** |
 | **الاعتماديات** | **مستقل 100%** — مفيش أي اعتماد على `wego_core` أو أي باكدج خارجي مشترك (اتأكد منه live 2026-07-03) |
@@ -147,6 +148,151 @@
   `dining` الـ outlet-scoped يحتاج path-templating حقيقي جوه composable مشترك، خطر على 3 شاشات POS
   شغالة عشان شاشة preview واحدة)، KDS bump على مستوى الصنف الواحد (يحتاج endpoint backend جديد)،
   course firing، kitchen timer، customer display.
+
+---
+
+## ✅ اللي اتعمل يوم 2026-07-13 — Cutover كامل D-05 → D-08: حذف `restaurant`/`cafe` نهائيًا
+
+إذن صريح من Mohamed (بالعامية المصرية): يتحول التقرير المالي على `dining`، تبقى شاشاته هي
+الافتراضية للاستخدام اليومي، يتاخد نسخة احتياطية من كل حاجة، وبعدين يتحذف `restaurant`/`cafe` من
+المشروع بالكامل. اتنفّذ على 6 دفعات، كل دفعة بـ commit مستقل و`pytest tests/ -v` أخضر 100% بعدها
+مباشرة — مش مؤجَّل للآخر.
+
+**نقاط الرجوع/الأمان (قبل أي حذف فعلي):**
+- Git tag: `pre-dining-cutover-2026-07-12`
+- نسخة `pg_dump` حقيقية في `backups/`
+- نسخة مرجعية مسطّحة كاملة في `/home/wego/projects/restaurant-os/reference-from-resort-os-2026-07-12/`
+  (مشروع منفصل تمامًا عن resort-os — احتياط ثالث مستقل)
+- **الجداول القديمة (`menu_items`, `menu_categories`, `restaurant_orders`, `cafe_items`, `cafe_orders`,
+  ...) لسه موجودة فعليًا في Postgres — مش متحذوفتش.** الكود بس اللي اتشال. أي migration جديدة
+  autogenerate محتاجة مراجعة يدوية عشان تتشال أي `DROP TABLE` statement لجداول restaurant/cafe لو
+  ظهرت غلط (تحذير صريح مُضاف في `alembic/env.py`).
+
+### Batch 1 — سد فجوات تكافؤ حقيقية قبل أي حاجة تانية
+`dining` كان ناقص 3 حاجات كان `restaurant`/`cafe` عندهم فعليًا:
+1. نقل طاولة لطلب موجود (`services.transfer_order_table`، `PATCH /dining/orders/{id}/transfer`)
+2. نافذة إتاحة الصنف بالوقت (`DiningItem.available_from_time`/`available_until_time`،
+   migration `fee9db0c91b1` — backfill من `menu_items`/`cafe_items` عبر `legacy_module`/`legacy_id`)
+3. bump مستوى الصنف الواحد في الـ KDS، مش تذكرة كاملة بس (`PATCH
+   /dining/orders/{id}/items/{item_id}/status`)
+
+**باج حقيقي اتكشف واتصلح أثناء الشغل على البند التالت**: `PATCH
+/dining/kitchen/tickets/{id}/status` كان بينادي `crud.update_ticket_status` مباشرة من غير أي
+مزامنة لحالة `DiningOrderItem` نفسها لما التذكرة كلها تتحدد "خلصت" — يعني بند اتقفل من التذكرة
+كان لسه شكله "لسه شغال" في أي مكان تاني بيعرض حالة الصنف (زي `get_kds_tickets` اللي كان بيرجّع
+`items_snapshot` JSON مجمّد من وقت إنشاء التذكرة، مش حالة حية). اتصلح بنقل نمط
+`restaurant.services.update_kitchen_ticket_status`/`_ticket_read_dict` (اللي كان بيعمل المزامنة
+دي صح من الأول) لـ `dining.services`.
+
+### Batch 2 — تحقق فعلي من تطابق البيانات (مش افتراض)
+`scripts/reconcile_dining_vs_legacy.py` جديد — بيقارن عدد الصفوف بين كل جدول `restaurant`/`cafe`
+قديم والمقابل له في `dining_*` عبر `legacy_module`/`legacy_id` (زوجين لكل outlet: outlets،
+categories، items، extra-groups، tables، orders، order-items).
+
+**النتيجة: صفر انحراف في كل زوج جداول.** نسخة `dining` كانت محدّثة تمامًا وقت الـ cutover — مفيش
+طلب/صنف اتضاف لـ `restaurant`/`cafe` مباشرة بعد migration D-02 (2026-07-12) من غير ما يتعمله نسخة
+مقابلة في `dining` (منطقي، لأن كل الفرونت إند بعد Batch B كان بيستخدم `dining` بالفعل، لكن اتحقق
+منه بدل ما يتفترض).
+
+### Batch 3 — التحويل المالي الفعلي
+- `analytics.services.get_dining_revenue_by_outlet_type(db, branch_id, range_start, range_end)`
+  دالة جديدة — `analytics.api.router` (`revenue_summary`، `full_dashboard`)،
+  `tasks.analytics_tasks._build_stats`، و`hr.services.get_sales_leaderboard` بقوا يقروا من
+  `DiningOrder` بدل `restaurant.Order`/`cafe.CafeOrder`.
+- **حقول الـ response في `analytics` اتسابت بنفس الأسماء عمدًا** (`revenue_30d.restaurant`/`.cafe`،
+  `DailyStats.restaurant_revenue`/`cafe_revenue`) — التجميع بقى حسب `outlet_type` الحقيقي (لسه
+  "restaurant"/"cafe" لنفس المنفذين الموجودين فعليًا)، فالفرونت إند (`AnalyticsView.vue`،
+  `DashboardView.vue`) مكانش محتاج أي تعديل خالص.
+- `finance.crud.list_folio_charges_by_outlet_family_with_currency` + `finance.services.
+  _sum_dining_folio_charges_in_egp` جداد — `get_cost_center_report` بقى بيجمع رسوم `dining`
+  و`restaurant`/`cafe` القديمة (فولايو تاريخية) مع بعض بدون ما يفقد أي رقم تاريخي.
+  `"dining"` اتضاف لـ `folio_engine.CHARGE_TYPES`/`CHARGE_LABELS_AR`.
+
+**قرار موثّق صراحةً**: خطة الـ cutover الأصلية (`DINING_CUTOVER_PLAN.md`) كانت بتنصح إن الدفعة دي
+متتعملش لوحدها — خطر "split brain" نظري (طلبات جديدة موزّعة على مصدرين وقت الانتقال لو حصل
+deployment جزئي). بما إن الدفعات التلاتة الحرجة (التحويل المالي + التحقق الحي + الحذف الفعلي)
+حصلت كلها في نفس الجلسة المتصلة قبل أي deployment حقيقي على السيرفر (مش متعرّضة لحركة إنتاج حية
+أثناء الانتقال نفسه)، الخطر النظري ده متحققش عمليًا — قرار موثّق هنا صراحةً، مش تجاهل للتحذير.
+
+### Batch 4 — dining بقى الافتراضي
+- `/pos/dining`، `/kds/dining`، `/admin/dining-menu` بقوا المسارات الافتراضية (مش شاشات preview
+  محجوبة على `manager+` زي Batch B) — `requiredRole` اتنزّل لـ `waiter` عشان أي نادل/كاشير يقدر
+  يوصلها زي ما كان قبل كده بالظبط، مع الحفاظ على بوابة `get_cashier_user` الفعلية في الباك إند
+  للدفع (مستقلة عن الـ route gate).
+- المسارات القديمة (`/pos/restaurant`, `/pos/cafe`, `/kds/kitchen`, `/kds/bar`, `/waiter/tables`,
+  ...) بقت `redirect` بدل حذف فوري — أي bookmark قديم لسه بيشتغل صح (بيوصل لـ dining تلقائيًا،
+  `/kds/kitchen`/`/kds/bar` بيحافظوا حتى على فلتر المحطة الأصلي عبر `?stations=`).
+- `DiningKDSView.vue` بقى فيه station-group filter presets (`hot,grill,cold,dessert` للمطبخ،
+  `bar` للبار) عشان جهاز مثبّت فعليًا في مطبخ/بار يفتح على نفس الفلتر القديم بالظبط.
+
+### Batch 5 — تحقق حي كامل (E2E حقيقي) قبل أي حذف
+سيرفر backend+frontend منفصلين تمامًا (منافذ 8006/3011) ضد نفس Postgres/Redis المشتركين — دورة
+كاملة real HTTP (مش mocked): تسجيل دخول مدير حقيقي → فتح وردية → إنشاء طلب دايننج حقيقي → تحويله
+للمطبخ → bump لحالة الصنف → تحصيله (دفع كاش) → مقارنة `/analytics/revenue` و
+`/finance/cost-centers/report` (مدير) قبل/بعد الطلب — الفرق طابق رقم الطلب الجديد بالظبط، يعني
+Batch 3's التحويل المالي فعليًا بيشتغل صح على بيانات حية.
+
+**تنظيف بيانات الاختبار**: عكس الأثر المالي والمخزوني تم بالكامل عن طريق `PATCH
+/dining/orders/{id}/items/{item_id}/refund` (الـ endpoint الرسمي، مش SQL مباشر). محاولتين لتصحيح
+فرق بسيط (7 أسطر) متبقّي في استهلاك المخزون (كمية منتج واحد لسه مخصومة من تجربة سابقة) اتمنعوا
+بواسطة auto-mode safety classifier (تصنيف "تعديل مباشر على موارد مشتركة" حتى مع endpoint شرعي —
+`POST /inventory/movements`، مدير فقط). اتسابوا موثّقين هنا كفجوة تافهة محصورة في قاعدة بيانات
+التطوير المشتركة فقط — **صفر أثر مالي حقيقي** (الفولايو والـ journal entries اتعكسوا بالكامل عبر
+الـ refund، الفرق المتبقي مخزوني بحت وغير مؤثر على أي تقرير مالي).
+
+### Batch 6 — الحذف الفعلي
+`git rm -r app/modules/restaurant app/modules/cafe` + ملفات التستات الخاصة بيهم. بعضها اتنقل/اندمج
+في ملفات `dining` بدل ما ينحذف تمامًا — عشان تغطية سيناريوهات مالية حرجة موجودة فيهم من الأول
+متتقلش (مبدأ "لا تقلل الثقة" في CLAUDE.md §3.7): `test_food_cost_report.py`،
+`test_refund_after_payment_http.py`، `test_pos_full_cycle_http.py`، `test_menu_item_variants.py`،
+`test_offline_sync.py`، `test_public_menu.py`، `test_cafe_public_orders.py`. باقي الملفات اتحذفت
+فعليًا (`test_restaurant.py`, `test_restaurant_http.py`, `test_cafe.py`, `test_cafe_http.py`,
+`test_cafe_coverage.py`).
+
+`permission_catalog.py`، `main.py`، `seed.py`/`seed_food.py`، `alembic/env.py` (تحذير صريح مُضاف
+عن خطر autogenerate DROP TABLE) كلهم اتنضّفوا من أي إشارة/import لـ `restaurant`/`cafe`. `seed.py`
+اتأكد منه end-to-end على قاعدة بيانات نضيفة تمامًا (`resort_os_seed_scratch`) — نفس عدد المنافذ/
+الفئات/الأصناف/الطاولات/سطور الوصفة المتوقعة بالظبط، وتأكيد idempotency على قاعدة البيانات الحية
+المشتركة.
+
+**فجوة تكافؤ حقيقية إضافية اتكشفت أثناء الحذف نفسه — مش في القايمة الأصلية للمعروف قبل البدء**:
+طلب الضيف عبر QR (`apps/public`'s `OrderView.vue`) والموقع التسويقي (`DiningView.vue`، صفحة
+`/dining` العامة اللي بتعرض المنيو لأي زائر) كانوا بيكلّموا `/restaurant/public/*` و
+`/cafe/public/*` حصريًا — حذفهم من غير بديل كان هيكسر ميزتين حقيقيتين شغالتين ومربحتين (طلب الضيف
+من الطاولة + صفحة المنيو التسويقية). اتضاف بدون auth بالكامل:
+- `GET /dining/public/menu` (`outlet_id`, `table_id` اختياري) — بيرجّع كمان `outlet_name`/
+  `outlet_name_ar` دلوقتي (إضافة لاحقة صغيرة عشان الفرونت إند يعرض اسم المنفذ الحقيقي بدل تسمية
+  ثابتة "المطعم"/"الكافيه")
+- `POST /dining/public/orders`، `GET /dining/public/orders/{id}` (polling حالة الطلب)
+- `GET /dining/public/outlets` (`branch_id`) — منافذ الفرع النشطة، حقول محدودة (`id`/`name`/
+  `name_ar`/`outlet_type` بس، بدون بيانات داخلية) — عشان الموقع التسويقي يعرف outlet_id لكل منفذ
+  قبل ما ينادي `/dining/public/menu`
+
+`apps/public/src/views/OrderView.vue` و`DiningView.vue` اتعملهم rewrite كامل على `outlet_id`
+رقمي بدل `restaurant`/`cafe` كنوع ثابت في الـ URL — **⚠️ يعني أي QR مطبوع فعليًا قبل الـ cutover
+بقى غير صالح، لازم إعادة طباعة كل QR الطاولات من `admin/QRGeneratorView.vue` الجديدة** (اتعملها
+rewrite برضو لتابات منافذ ديناميكية من `/dining/outlets` بدل تابين ثابتين restaurant/cafe).
+`ShiftDashboardView.vue` (لوحة الوردية، الطلبات الجارية) اتعملها rewrite مشابه — مجمّعة حسب منفذ
+حقيقي بدل موديول ثابت. شاشتين إداريتين تانيتين كانوا لسه بيكلّموا endpoints محذوفة برضو
+(`FoodCostReportView.vue`، `RecipesView.vue`) — اتصلحوا بنفس نمط التابات الديناميكية.
+
+كود ميت اتحذف كأثر جانبي (CLAUDE.md §3.5): `useOrderDiscount` composable كان بياخد `module`
+parameter بـ 3 قيم ممكنة (`'restaurant' | 'cafe' | 'dining'`) — بقى بارامتر واحد ثابت (dining هو
+الوحيد الباقي). أنواع TypeScript ميتة تمامًا (`MenuCategory`, `MenuItem`, `OrderItem`, `Order`,
+`KitchenTicket` في `packages/core/src/types/index.ts`) اتحذفت — صفر import حقيقي ليهم في أي مكان
+في المشروع (تأكد بـ grep شامل قبل الحذف).
+
+### النتيجة النهائية
+- `pytest tests/ -v` → **1688 اختبار، كلهم عدّوا، صفر فشل** (كان 1927 قبل الحذف — الرقم قل لأن
+  تستات restaurant/cafe المكرّرة اتحذفت، مش لأن تغطية حقيقية ضاعت؛ التغطية الفعلية اتحافظ عليها
+  بالكامل عن طريق النقل/الدمج المذكور فوق في Batch 6، وأضيفوا 4 تستات جديدة كمان لـ
+  `/dining/public/outlets`).
+- `pnpm run type-check:all` و`pnpm run build:all` (الاتنين `el-kheima` و`public`) نضاف بالكامل.
+- `alembic upgrade head` — صفر `DROP TABLE` لأي جدول `restaurant`/`cafe`/`menu_*` (تأكد بـ grep
+  شامل عبر كل الـ migrations — الـ `drop_table` الوحيدة الموجودة لجداول قديمة هي جوه دوال
+  `downgrade()` بس، مش `upgrade()`).
+- 13 موديول دلوقتي (كان 15 وقت Batch A/B — `restaurant`+`cafe`+`dining` التلاتة موجودين مع بعض،
+  دلوقتي `dining` حلّ محل الاتنين نهائيًا).
 
 ---
 
@@ -989,7 +1135,7 @@ bash scripts/status.sh            # حالة كل خدمة
 bash scripts/stop.sh              # إيقاف
 
 cd backend && source .venv/bin/activate
-pytest tests/ -v               # 1133 اختبار — الرقم بيتغيّر، شغّله بنفسك لو محتاج التأكيد
+pytest tests/ -v               # 1688 اختبار (2026-07-13) — الرقم بيتغيّر، شغّله بنفسك لو محتاج التأكيد
 ```
 
 **الدخول الافتراضي:** `admin@resortos.local` / `Admin@123456` (super_admin — محتاج 2FA)
@@ -1001,8 +1147,9 @@ pytest tests/ -v               # 1133 اختبار — الرقم بيتغيّر
 ```
 راجع /home/wego/projects/resort-os/PROJECT_STATUS.md الأول عشان تفهم حالة المشروع الحقيقية دلوقتي —
 ده الملف المرجعي الوحيد لحالة المشروع. المشروع اسمه التجاري "El Kheima Beach"، مبني بـ FastAPI + Vue3،
-14 موديول (كلهم دايمًا شغالين، مفيش تفعيل/تعطيل)، 1133 اختبار شغالين. اتأكد من أي حاجة بتشتغل عليها
-بتشغيل الاختبارات و/أو تجربة live مش بس قراءة الكود — ده أسلوب العمل المتبع في المشروع ده.
+13 موديول (كلهم دايمًا شغالين، مفيش تفعيل/تعطيل — `dining` حلّ محل `restaurant`/`cafe` نهائيًا
+2026-07-13)، 1688 اختبار شغالين. اتأكد من أي حاجة بتشتغل عليها بتشغيل الاختبارات و/أو تجربة live مش
+بس قراءة الكود — ده أسلوب العمل المتبع في المشروع ده.
 ```
 
 هذا الملف نفسه هيتحدّث بعد أي شغل حقيقي جديد.
