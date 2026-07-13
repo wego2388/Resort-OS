@@ -48,7 +48,16 @@ class BeachTransaction(Base, TimestampMixin):
     # entry|entry_towel|towel_rent|towel_return
     quantity:        Mapped[int]          = mapped_column(Integer, default=1)
     unit_price:      Mapped[Decimal]      = mapped_column(Numeric(10, 2))
+    # total_amount: صافي بعد الخصم (net) — هو المبلغ الفعلي المُحمَّل/المُحصَّل
+    # ومصدر الحقيقة لكل ترحيل مالي (folio charge/journal/إحصائية CRM). سعر
+    # الوحدة (unit_price) بيفضل السعر المعلن الأصلي زي ما هو، من غير خصم.
     total_amount:    Mapped[Decimal]      = mapped_column(Numeric(10, 2))
+    # خصم مجموعة العميل الدائم (crm.CustomerGroup.discount_percentage) —
+    # تلقائي بالكامل لو customer_id مرتبط بمجموعة نشطة، بيتحسب على
+    # unit_price × quantity قبل الـ VAT (راجع services.sell_ticket).
+    # صفر لبيع عادي/بدون عميل مسجّل — لا يوجد مفهوم خصم شرطي (Happy Hour)
+    # على الشاطئ حاليًا، فده أول وأوحد نوع خصم هنا.
+    discount_amount: Mapped[Decimal]      = mapped_column(Numeric(10, 2), default=Decimal("0"))
     vat_amount:      Mapped[Decimal]      = mapped_column(Numeric(10, 2), default=Decimal("0"))
     surge_applied:   Mapped[bool]         = mapped_column(Boolean, default=False)
     tx_date:         Mapped[date]         = mapped_column(Date, index=True)
