@@ -242,6 +242,8 @@ def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(
         shift = services.close_shift(db, shift_id, user.id, data, acting_user_level=user_level(user))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
     result = CashierShiftRead.model_validate(shift)
     result.reconciliation_ok = getattr(shift, "reconciliation_ok", None)

@@ -221,7 +221,9 @@ class TestPurchaseRequestWorkflow:
 
 
 class TestStockCountWorkflow:
-    def test_create_list_submit_and_approve(self, client: TestClient, db, waiter_headers, manager_headers):
+    def test_create_list_submit_and_approve(
+        self, client: TestClient, db, waiter_headers, manager_headers, accountant_headers,
+    ):
         branch = make_branch_committed(db)
         product = create_product(client, branch.id, manager_headers, current_stock="100")
 
@@ -249,11 +251,37 @@ class TestStockCountWorkflow:
         assert submit_resp.status_code == 200, submit_resp.text
         assert submit_resp.json()["status"] == "submitted"
 
+        # اعتماد الجرد وظيفة محاسبية حصرًا (2026-07-13، Operations & Control
+        # Layer — قرار محمد صراحةً: "الموافقة على الجرد المحاسب") — مدير
+        # عادي (بدون دور محاسب) مرفوض هنا، راجع test_approve_denied_for_manager_without_accountant_role تحت.
         approve_resp = client.patch(
-            f"/api/v1/inventory/stock-counts/{count['id']}/approve", headers=manager_headers,
+            f"/api/v1/inventory/stock-counts/{count['id']}/approve", headers=accountant_headers,
         )
         assert approve_resp.status_code == 200, approve_resp.text
         assert approve_resp.json()["status"] == "adjustment_posted"
+
+    def test_approve_denied_for_manager_without_accountant_role(
+        self, client: TestClient, db, waiter_headers, manager_headers,
+    ):
+        """راجع Operations & Control Layer (2026-07-13): اعتماد الجرد يقتصر
+        على accountant/admin/super_admin — مدير عادي (level 60، كان مؤهّلًا
+        قبل هذا التعديل عبر require_permission min_role_level=60) بقى مرفوض
+        صراحةً بـ 403، مش مجرد نظري."""
+        branch = make_branch_committed(db)
+        product = create_product(client, branch.id, manager_headers, current_stock="10")
+        count = client.post(
+            "/api/v1/inventory/stock-counts",
+            json={"branch_id": branch.id, "count_date": str(date.today()), "counted_by": 1, "product_ids": [product["id"]]},
+            headers=manager_headers,
+        ).json()
+        line_id = count["lines"][0]["id"]
+        client.patch(
+            f"/api/v1/inventory/stock-counts/{count['id']}/submit",
+            json={"lines": [{"line_id": line_id, "counted_quantity": "10"}]},
+            headers=waiter_headers,
+        )
+        resp = client.patch(f"/api/v1/inventory/stock-counts/{count['id']}/approve", headers=manager_headers)
+        assert resp.status_code == 403
 
     def test_approve_denied_for_waiter_without_explicit_grant(self, client: TestClient, db, waiter_headers, manager_headers):
         branch = make_branch_committed(db)

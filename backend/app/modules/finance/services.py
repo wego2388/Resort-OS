@@ -591,12 +591,20 @@ def close_shift(
     المستوى الفعلي دايمًا. راجع wagdy.md بند S-06: فرق كاش أكبر من الحد
     المسموح بيترفض القفل (تحت) — إلا لو ``data.force_close=True`` مع موافقة
     PIN من مدير+ (أو المنفّذ نفسه مدير+، راجع core.services.resolve_pin_approval).
+
+    ملكية الوردية (2026-07-13، Operations & Control Layer): كاشير (level <
+    مدير) يقفل وردية نفسه بس — لو حاول يقفل وردية كاشير تاني بـ shift_id
+    مخمّن، ``PermissionError``. مدير+ مؤهّل يقفل أي وردية (force-close نيابة
+    عن كاشير غائب/عطلان — قرار محمد صراحةً: "من صلاحيات المدير إنه يعمل
+    كده")، نفس نمط ``build_shift_end_report``/``list_shift_invoices``.
     """
     shift = crud.get_shift(db, shift_id)
     if not shift:
         raise ValueError(f"الوردية {shift_id} غير موجودة")
     if shift.status == "closed":
         raise ValueError("الوردية مقفولة بالفعل")
+    if acting_user_level < 60 and shift.cashier_id != closed_by:
+        raise PermissionError("لا يمكنك قفل وردية غيرك")
 
     # نحسب الكاش المتوقع (expected_cash) الأول — قبل أي تعديل فعلي على
     # الداتابيز، بنفس مبدأ فحص حد الائتمان في beach.services.checkin_b2b:

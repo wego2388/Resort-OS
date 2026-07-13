@@ -287,6 +287,14 @@ def manager_headers(setup_db) -> dict[str, str]:
 
 
 @pytest.fixture
+def accountant_headers(setup_db) -> dict[str, str]:
+    # accountant ضمن MANDATORY_2FA_ROLES — لازم two_factor_enabled=True هنا
+    # بنفس سبب super_admin_headers فوق، وإلا get_current_active_user يرفض.
+    _create_test_user("accountant@test.local", "accountant", two_factor_enabled=True)
+    return {"Authorization": f"Bearer {_make_token('accountant@test.local')}"}
+
+
+@pytest.fixture
 def cashier_headers(setup_db) -> dict[str, str]:
     _create_test_user("cashier@test.local", "cashier")
     return {"Authorization": f"Bearer {_make_token('cashier@test.local')}"}

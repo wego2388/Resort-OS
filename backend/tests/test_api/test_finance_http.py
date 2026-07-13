@@ -1045,6 +1045,49 @@ class TestShiftInvoicesHTTP:
         report_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report", headers=manager_headers)
         assert report_resp.status_code == 200
 
+    def test_cashier_cannot_close_other_cashiers_shift(
+        self, client: TestClient, db, cashier_headers,
+    ):
+        """راجع Operations & Control Layer (2026-07-13، قرار محمد صراحةً):
+        كاشير يقفل وردية نفسه بس — لو خمّن shift_id لكاشير تاني، 403 مش قفل
+        فعلي. نفس نمط test_cashier_cannot_view_other_cashiers_shift_report."""
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "100.00"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+
+        other_headers = _second_cashier_headers(db)
+        close_resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "100.00"},
+            headers=other_headers,
+        )
+        assert close_resp.status_code == 403
+
+    def test_manager_can_force_close_other_cashiers_shift(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        """مدير+ مؤهّل يقفل وردية أي كاشير نيابة عنه (كاشير غائب/عطلان) —
+        قرار محمد صراحةً: "من صلاحيات المدير إنه يعمل كده"."""
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "100.00"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+
+        close_resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "100.00"},
+            headers=manager_headers,
+        )
+        assert close_resp.status_code == 200, close_resp.text
+        assert close_resp.json()["status"] == "closed"
+
     def test_invoices_404_for_missing_shift(self, client: TestClient, db, manager_headers):
         resp = client.get("/api/v1/finance/shifts/999999/invoices", headers=manager_headers)
         assert resp.status_code == 400

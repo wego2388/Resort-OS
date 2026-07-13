@@ -266,6 +266,13 @@ def submit_stock_count(count_id: int, req: SubmitStockCountRequest, db: DbDep,
               response_model=StockCountRead,
               dependencies=[Depends(require_permission("inventory.approve_stock_count", "approve", min_role_level=60))])
 def approve_stock_count(count_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    # اعتماد الجرد وظيفة محاسبية (2026-07-13، Operations & Control Layer —
+    # قرار محمد صراحةً: "الموافقة على الجرد المحاسب") — مقصود أضيق من
+    # require_permission فوق (اللي بيسمح لأي مدير+ بمستوى 60): هنا حصرًا
+    # accountant، أو admin/super_admin كصلاحية إشرافية عليا (نفس نمط
+    # الاستثناء الموجود في كل مكان تاني بالمشروع).
+    if user.role not in ("accountant", "admin", "super_admin"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "اعتماد الجرد يقتصر على المحاسب")
     try:
         return services.approve_stock_count(db, count_id, approved_by=user.id)
     except services.InventoryConcurrencyError as exc:
