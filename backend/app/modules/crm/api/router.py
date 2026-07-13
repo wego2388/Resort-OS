@@ -7,16 +7,18 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import (
-    DbDep, get_cashier_user, get_current_active_user,
+    DbDep, get_admin_user, get_cashier_user, get_current_active_user,
     get_manager_user, require_permission,
 )
 from app.modules.crm import crud, services
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityRead, ActivityUpdate,
+    AssignCustomerGroupRequest,
     BlacklistRequest,
     CallNoteCreate, CallNoteRead,
     CampaignCreate, CampaignRead, CampaignUpdate,
-    CustomerCreate, CustomerRead, CustomerUpdate,
+    CustomerCreate, CustomerGroupCreate, CustomerGroupRead, CustomerGroupUpdate,
+    CustomerRead, CustomerUpdate,
     GuestProfileRead,
     InteractionCreate, InteractionRead,
     LeadConvertRequest, LeadConvertResponse,
@@ -26,6 +28,33 @@ from app.modules.crm.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["crm"])
+
+
+# ── Customer Groups (standing discount) ─────────────────────────────────
+# نفس نمط /finance/discounts بالظبط (مرجع صريح): قراءة لمدير+، إنشاء/تعديل
+# لـ admin+ فقط — تعيين مجموعة لعميل بيمنحه خصم دائم تلقائي على مبيعاته
+# القادمة، فمفيش داعي يبقى مقيّد أوسع من إدارة الخصومات الشرطية نفسها.
+
+@router.get("/crm/customer-groups", response_model=list[CustomerGroupRead])
+def list_customer_groups(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...), active_only: bool = Query(True),
+):
+    return crud.list_customer_groups(db, branch_id, active_only)
+
+
+@router.post("/crm/customer-groups", response_model=CustomerGroupRead,
+             status_code=status.HTTP_201_CREATED)
+def create_customer_group(data: CustomerGroupCreate, db: DbDep, _=Depends(get_admin_user)):
+    return services.create_customer_group(db, data)
+
+
+@router.patch("/crm/customer-groups/{group_id}", response_model=CustomerGroupRead)
+def update_customer_group(group_id: int, data: CustomerGroupUpdate, db: DbDep, _=Depends(get_admin_user)):
+    try:
+        return services.update_customer_group(db, group_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 # ── Customers ─────────────────────────────────────────────────────────
@@ -71,6 +100,17 @@ def update_customer(customer_id: int, data: CustomerUpdate, db: DbDep,
         return services.update_customer(db, customer_id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.patch("/crm/customers/{customer_id}/group", response_model=CustomerRead)
+def assign_customer_group(customer_id: int, req: AssignCustomerGroupRequest, db: DbDep,
+                          _=Depends(get_manager_user)):
+    """مقفول على مدير+ عمدًا (مش get_current_active_user زي PATCH العادي) —
+    راجع تعليق AssignCustomerGroupRequest في schemas.py."""
+    try:
+        return services.assign_customer_group(db, customer_id, req.customer_group_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 @router.post("/crm/customers/{customer_id}/blacklist",

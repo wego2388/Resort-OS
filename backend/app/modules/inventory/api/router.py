@@ -11,9 +11,10 @@ from app.modules.inventory import crud, services
 from app.modules.inventory.schemas import (
     CategoryCreate, CategoryRead, ProductCreate, ProductRead, ProductUpdate,
     PurchaseOrderCreate, PurchaseOrderRead, ReceiveItemsRequest,
-    StockMovementCreate, StockMovementRead, WarehouseCreate, WarehouseRead,
+    StockMovementCreate, StockMovementRead, SupplierCreate, SupplierRead, SupplierUpdate,
+    WarehouseCreate, WarehouseRead,
     PurchaseRequestCreate, PurchaseRequestRead,
-    ApproveRequest, RejectRequest,
+    ApproveRequest, ConvertToPurchaseOrderRequest, RejectRequest,
     StockCountCreate, StockCountRead, SubmitStockCountRequest,
 )
 from app.modules.core.schemas import PaginatedResponse
@@ -129,6 +130,44 @@ def record_movement(data: StockMovementCreate, db: DbDep, user=Depends(get_manag
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+# ── Supplier ─────────────────────────────────────────────────────────
+
+@router.get("/inventory/suppliers", response_model=PaginatedResponse)
+def list_suppliers(
+    db: DbDep, _=Depends(get_current_active_user),
+    branch_id: int = Query(...),
+    active_only: bool = Query(True),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
+):
+    items, total = crud.list_suppliers(db, branch_id, active_only, search,
+                                       skip=(page - 1) * size, limit=size)
+    return PaginatedResponse(total=total, page=page, size=size,
+                             items=[SupplierRead.model_validate(s) for s in items])
+
+
+@router.post("/inventory/suppliers", response_model=SupplierRead,
+             status_code=status.HTTP_201_CREATED)
+def create_supplier(data: SupplierCreate, db: DbDep, _=Depends(get_manager_user)):
+    return services.create_supplier(db, data)
+
+
+@router.get("/inventory/suppliers/{supplier_id}", response_model=SupplierRead)
+def get_supplier(supplier_id: int, db: DbDep, _=Depends(get_current_active_user)):
+    supplier = crud.get_supplier(db, supplier_id)
+    if not supplier:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "المورد غير موجود")
+    return SupplierRead.model_validate(supplier)
+
+
+@router.patch("/inventory/suppliers/{supplier_id}", response_model=SupplierRead)
+def update_supplier(supplier_id: int, data: SupplierUpdate, db: DbDep, _=Depends(get_manager_user)):
+    try:
+        return services.update_supplier(db, supplier_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
 @router.get("/inventory/purchase-orders", response_model=PaginatedResponse)
 def list_purchase_orders(
     db: DbDep, _=Depends(get_manager_user),
@@ -224,9 +263,10 @@ def reject_purchase_request(request_id: int, body: RejectRequest, db: DbDep,
 
 @router.post("/inventory/purchase-requests/{request_id}/convert",
              response_model=PurchaseOrderRead)
-def convert_purchase_request(request_id: int, db: DbDep, _=Depends(get_manager_user)):
+def convert_purchase_request(request_id: int, body: ConvertToPurchaseOrderRequest, db: DbDep,
+                              _=Depends(get_manager_user)):
     try:
-        return services.convert_to_purchase_order(db, request_id)
+        return services.convert_to_purchase_order(db, request_id, body.supplier_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

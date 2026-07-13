@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.modules.crm.schemas import (
-    ActivityCreate, BlacklistRequest, CustomerCreate,
+    ActivityCreate, BlacklistRequest, CustomerCreate, CustomerGroupCreate, CustomerGroupUpdate,
     InteractionCreate, OpportunityCreate, OpportunityUpdate,
 )
 from app.modules.crm import services, crud
@@ -68,6 +68,50 @@ class TestCustomer:
     def test_customer_not_found(self, db):
         with pytest.raises(ValueError):
             services.get_customer_or_404(db, 9999)
+
+
+class TestCustomerGroup:
+    """خصم دائم (standing discount) لمجموعة عملاء — راجع
+    get_customer_group_discount_percentage المستخدمة من dining/beach.services."""
+
+    def test_discount_percentage_zero_for_customer_without_group(self, db, customer):
+        pct = services.get_customer_group_discount_percentage(db, customer.id)
+        assert pct == Decimal("0")
+
+    def test_discount_percentage_zero_for_none_customer_id(self, db):
+        assert services.get_customer_group_discount_percentage(db, None) == Decimal("0")
+
+    def test_discount_percentage_from_active_group(self, db, branch, customer):
+        group = services.create_customer_group(
+            db, CustomerGroupCreate(branch_id=branch.id, name="VIP Staff", discount_percentage=Decimal("12.5")),
+        )
+        services.assign_customer_group(db, customer.id, group.id)
+        pct = services.get_customer_group_discount_percentage(db, customer.id)
+        assert pct == Decimal("12.5")
+
+    def test_discount_percentage_zero_when_group_inactive(self, db, branch, customer):
+        group = services.create_customer_group(
+            db, CustomerGroupCreate(branch_id=branch.id, name="Old Promo", discount_percentage=Decimal("30")),
+        )
+        services.assign_customer_group(db, customer.id, group.id)
+        services.update_customer_group(db, group.id, CustomerGroupUpdate(is_active=False))
+        assert services.get_customer_group_discount_percentage(db, customer.id) == Decimal("0")
+
+    def test_assign_rejects_group_from_other_branch(self, db, branch, customer):
+        import uuid
+        from app.modules.core.models import Branch
+
+        other_branch = Branch(name="Other", name_ar="فرع آخر", code=f"OTH-{uuid.uuid4().hex[:6].upper()}")
+        db.add(other_branch); db.flush()
+        other_group = services.create_customer_group(
+            db, CustomerGroupCreate(branch_id=other_branch.id, name="X", discount_percentage=Decimal("5")),
+        )
+        with pytest.raises(ValueError, match="فرع"):
+            services.assign_customer_group(db, customer.id, other_group.id)
+
+    def test_assign_unknown_group_raises(self, db, customer):
+        with pytest.raises(ValueError):
+            services.assign_customer_group(db, customer.id, 999999)
 
 
 class TestInteraction:

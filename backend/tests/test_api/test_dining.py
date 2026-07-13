@@ -635,6 +635,161 @@ class TestDiscount:
             )
 
 
+class TestCustomerGroupDiscount:
+    """خصم مجموعة العميل الدائم (crm.CustomerGroup) — تلقائي بالكامل، من
+    غير أي موافقة PIN (مختلف عن apply_order_discount اللي بيطبّق قاعدة
+    خصم شرطية يدويًا). راجع services._resolve_order_discount/
+    _customer_group_discount_amount لقرار "الأفضل يفوز، مش تراكم"."""
+
+    def _make_customer_with_group(self, db, branch, pct=Decimal("10")):
+        from app.modules.crm import services as crm_services
+        from app.modules.crm.schemas import CustomerCreate, CustomerGroupCreate
+
+        group = crm_services.create_customer_group(
+            db, CustomerGroupCreate(branch_id=branch.id, name="Staff", discount_percentage=pct),
+        )
+        customer = crm_services.create_customer(
+            db, CustomerCreate(branch_id=branch.id, full_name="Staff Member"),
+        )
+        crm_services.assign_customer_group(db, customer.id, group.id)
+        return customer, group
+
+    def test_order_creation_applies_group_discount_automatically(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        customer, _group = self._make_customer_with_group(db, branch, pct=Decimal("10"))
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(outlet_id=outlet.id, order_type="takeaway", customer_id=customer.id,
+                        items=[OrderItemCreate(item_id=item.id, quantity=1)]),
+            waiter_id=1,
+        )
+        # subtotal=100 → discount 10% = 10.00 — تلقائي، مفيش أي نداء لـ
+        # apply_order_discount ولا موافقة PIN هنا خالص.
+        assert order.discount_amount == Decimal("10.00")
+        assert order.total == order.subtotal + order.vat_amount + order.service_charge - Decimal("10.00")
+
+    def test_no_customer_no_discount(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        order = make_order(db, branch, outlet, item, quantity=1)
+        assert order.discount_amount == Decimal("0")
+
+    def test_add_items_recomputes_group_discount(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        customer, _group = self._make_customer_with_group(db, branch, pct=Decimal("10"))
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(outlet_id=outlet.id, order_type="takeaway", customer_id=customer.id,
+                        items=[OrderItemCreate(item_id=item.id, quantity=1)]),
+            waiter_id=1,
+        )
+        assert order.discount_amount == Decimal("10.00")  # 10% of 100
+
+        updated = services.add_items_to_order(db, order.id, [OrderItemCreate(item_id=item.id, quantity=1)])
+        # subtotal دلوقتي 200 — الخصم لازم يتحسب تاني (باج حقيقي كان هنا:
+        # add_items_to_order كان بيسيب discount_amount زي ما هو من غير أي
+        # إعادة حساب خالص).
+        assert updated.discount_amount == Decimal("20.00")  # 10% of 200
+
+    def test_void_item_recomputes_group_discount(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        customer, _group = self._make_customer_with_group(db, branch, pct=Decimal("10"))
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(outlet_id=outlet.id, order_type="takeaway", customer_id=customer.id,
+                        items=[OrderItemCreate(item_id=item.id, quantity=2)]),
+            waiter_id=1,
+        )
+        assert order.discount_amount == Decimal("20.00")  # 10% of 200
+        item_id = order.items[0].id
+
+        updated = services.void_order_item(db, order.id, item_id, "غلط طلب", voided_by=1, acting_user_level=60)
+        assert updated.discount_amount == Decimal("0")  # كل الأصناف اتلغت — subtotal=0
+
+    def test_manual_conditional_discount_loses_to_bigger_group_discount(self, db):
+        """قرار سياسة تجارية (Batch 2): أفضل خصم للضيف يفوز، مش تراكم. لو
+        خصم مجموعة العميل (هنا 20%) أكبر من القاعدة الشرطية المُطبَّقة يدويًا
+        (هنا 10%)، خصم المجموعة هو اللي يتطبّق فعليًا — القاعدة الشرطية
+        مبتتحسبش مستخدمة (uses_count متتزودش)."""
+        from datetime import date
+
+        from app.modules.finance.models import ConditionalDiscount
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        customer, _group = self._make_customer_with_group(db, branch, pct=Decimal("20"))
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id,
+            condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("10"),
+            max_uses=-1, valid_from=date(2020, 1, 1), valid_until=date(2030, 1, 1),
+            priority=1, is_active=True,
+        )
+        db.add(rule); db.commit()
+        uses_before = rule.uses_count
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(outlet_id=outlet.id, order_type="takeaway", customer_id=customer.id,
+                        items=[OrderItemCreate(item_id=item.id, quantity=1)]),
+            waiter_id=1,
+        )
+        assert order.discount_amount == Decimal("20.00")  # خصم المجموعة التلقائي بس لحد دلوقتي
+
+        updated = services.apply_order_discount(db, order.id, acting_user_level=60)
+        assert updated.discount_amount == Decimal("20.00")  # لسه خصم المجموعة فايز (20 > 10)
+        assert updated.applied_discount_rule_id is None  # القاعدة الشرطية معدتش "اتطبّقت"
+
+        db.refresh(rule)
+        assert rule.uses_count == uses_before  # مبتزيدش — معملتش فرق فعلي
+
+    def test_manual_conditional_discount_wins_when_bigger_than_group(self, db):
+        """نفس السيناريو، بس مقلوب: القاعدة الشرطية (30%) أكبر من خصم
+        المجموعة (10%) — هي اللي تفوز، وrule_id بيتسجّل واستخدامها بيتزود."""
+        from datetime import date
+
+        from app.modules.finance.models import ConditionalDiscount
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        customer, _group = self._make_customer_with_group(db, branch, pct=Decimal("10"))
+
+        rule = ConditionalDiscount(
+            branch_id=branch.id,
+            condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("30"),
+            max_uses=-1, valid_from=date(2020, 1, 1), valid_until=date(2030, 1, 1),
+            priority=1, is_active=True,
+        )
+        db.add(rule); db.commit()
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(outlet_id=outlet.id, order_type="takeaway", customer_id=customer.id,
+                        items=[OrderItemCreate(item_id=item.id, quantity=1)]),
+            waiter_id=1,
+        )
+        updated = services.apply_order_discount(db, order.id, acting_user_level=60)
+        assert updated.discount_amount == Decimal("30.00")
+        assert updated.applied_discount_rule_id == rule.id
+
+        db.refresh(rule)
+        assert rule.uses_count == 1
+
+
 class TestFoodCostReport:
 
     def test_report_excludes_items_without_recipe(self, db):

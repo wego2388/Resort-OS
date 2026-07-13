@@ -8,6 +8,37 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# ── Customer Group (standing discount) ──────────────────────────────────
+
+class CustomerGroupCreate(BaseModel):
+    branch_id:           int
+    name:                str = Field(..., max_length=100)
+    name_ar:             Optional[str] = Field(None, max_length=100)
+    discount_percentage: Decimal = Field(Decimal("0"), ge=0, le=100)
+
+
+class CustomerGroupUpdate(BaseModel):
+    name:                Optional[str]     = Field(None, max_length=100)
+    name_ar:             Optional[str]     = Field(None, max_length=100)
+    discount_percentage: Optional[Decimal] = Field(None, ge=0, le=100)
+    is_active:           Optional[bool]    = None
+
+
+class CustomerGroupRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; name: str; name_ar: Optional[str]
+    discount_percentage: Decimal; is_active: bool
+    created_at: datetime; updated_at: datetime
+
+
+class AssignCustomerGroupRequest(BaseModel):
+    """PATCH /crm/customers/{id}/group — منفصل عمدًا عن CustomerUpdate العادي
+    (مفتوح لأي مستخدم مسجّل level ≥ 20) لأن تعيين مجموعة = خصم دائم تلقائي
+    فعلي على مبيعات العميل القادمة — لازم يبقى مقفول على مدير+ فقط، وإلا أي
+    موظف كان يقدر يمنح نفسه/أصحابه خصم دائم بمجرد تعديل بيانات عميل عادي."""
+    customer_group_id: Optional[int] = None  # None = إزالة العميل من أي مجموعة
+
+
 # ── Customer ──────────────────────────────────────────────────────────
 
 class CustomerCreate(BaseModel):
@@ -32,6 +63,9 @@ class CustomerUpdate(BaseModel):
     birthday:    Optional[date] = None
     notes:       Optional[str] = None
     is_active:   Optional[bool] = None
+    # ⚠️ customer_group_id عمدًا مش هنا — راجع AssignCustomerGroupRequest
+    # فوق. هذا الـ endpoint (PATCH /crm/customers/{id}) مفتوح لأي مستخدم
+    # نشط (get_current_active_user)، وتعيين مجموعة بيمنح خصم تلقائي حقيقي.
 
 
 class CustomerRead(BaseModel):
@@ -45,6 +79,7 @@ class CustomerRead(BaseModel):
     nationality:     Optional[str]
     segment:         str
     source:          str
+    customer_group_id: Optional[int]
     total_spent:     Decimal
     visits_count:    int
     last_visit:      Optional[date]

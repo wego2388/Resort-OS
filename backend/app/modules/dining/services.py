@@ -64,6 +64,19 @@ def _service_charge_pct(outlet: Optional[Outlet]) -> Decimal:
     return Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
 
 
+# مركز التكلفة (finance.CostCenter.code — Batch 3) المقابل لـ outlet_type —
+# مبني على نفس ROOM/REST/CAFE/BEACH/TS اللي finance.services.DEFAULT_COST_CENTERS
+# بتستخدمها كمصدر حقيقة وحيد. outlet_type غير معروف (مش "restaurant"/"cafe")
+# → None عمدًا (مفيش مركز تكلفة رابع/خامس مخترع هنا، نفس الـ 5 الموجودين بس).
+_OUTLET_TYPE_TO_COST_CENTER = {"restaurant": "REST", "cafe": "CAFE"}
+
+
+def _outlet_cost_center_code(outlet: Optional[Outlet]) -> Optional[str]:
+    if outlet is None:
+        return None
+    return _OUTLET_TYPE_TO_COST_CENTER.get(outlet.outlet_type)
+
+
 def _resolve_extras(
     db: Session, item: DiningItem, extra_ids: list[int],
     extra_texts: Optional[dict[int, str]] = None,
@@ -390,7 +403,14 @@ def create_order(
     svc_pct    = _service_charge_pct(outlet)
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
-    total      = subtotal + vat_amount + svc_charge
+
+    # خصم مجموعة العميل الدائم (standing discount) — تلقائي بالكامل لو
+    # الطلب مرتبط بعميل عنده مجموعة نشطة، من غير أي تدخّل يدوي أو موافقة
+    # PIN (مختلف عن apply_order_discount اللي بيطبّق قاعدة خصم شرطية —
+    # راجع _resolve_order_discount تحت لقرار "الأفضل يفوز، مش تراكم" لما
+    # الاتنين يتقابلوا لاحقًا على نفس الطلب).
+    discount_amount = _customer_group_discount_amount(db, data.customer_id, subtotal)
+    total = max(Decimal("0"), subtotal + vat_amount + svc_charge - discount_amount)
 
     order_number = crud.generate_order_number(db, branch_id)
 
@@ -411,6 +431,7 @@ def create_order(
         items_data=items_data,
         status="held" if hold else "open",
         customer_id=data.customer_id,
+        discount_amount=discount_amount,
     )
 
     if data.table_id and data.order_type == "dine_in":
@@ -475,12 +496,24 @@ def add_items_to_order(db: Session, order_id: int, items: list) -> DiningOrder:
     new_sub   = order.subtotal + added_subtotal
     new_vat   = (new_sub * vat_pct).quantize(Decimal("0.01"))
     new_svc   = (new_sub * svc_pct).quantize(Decimal("0.01"))
-    new_total = new_sub + new_vat + new_svc - order.discount_amount
 
-    order.subtotal       = new_sub
-    order.vat_amount     = new_vat
-    order.service_charge = new_svc
-    order.total          = new_total
+    # ⚠️ باج حقيقي كان هنا (اتصلح أثناء ربط خصم مجموعة العميل): الخصم
+    # القديم (discount_amount) كان بيتطبّق زي ما هو على subtotal الجديد
+    # الأكبر من غير أي إعادة حساب — لو الطلب كان عليه خصم نسبة مئوية شرطية
+    # مطبّق قبل إضافة الأصناف دي، القيمة كانت بتفضل مجمّدة عند رقم قديم
+    # أصغر من المفروض (نفس فئة الباج اللي void_order_item كان بيتفاداه
+    # بـ _recompute_discount_for_rule بالفعل، بس add_items_to_order ماكانش
+    # بيعمل كده خالص). دلوقتي بيعيد حساب أفضل خصم (مجموعة أو قاعدة شرطية)
+    # زي void_order_item بالظبط.
+    discount_amount, applied_rule_id = _resolve_order_discount(db, order, new_sub)
+    new_total = max(Decimal("0"), new_sub + new_vat + new_svc - discount_amount)
+
+    order.subtotal                 = new_sub
+    order.vat_amount               = new_vat
+    order.service_charge           = new_svc
+    order.discount_amount          = discount_amount
+    order.applied_discount_rule_id = applied_rule_id
+    order.total                    = new_total
 
     db.commit()
     db.refresh(order)
@@ -672,6 +705,9 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
     from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
     from app.modules.inventory import services as inventory_services  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
+    cost_center_code = _outlet_cost_center_code(outlet)
+
     for order_item in order.items:
         if order_item.status == "cancelled":
             continue
@@ -696,6 +732,7 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
                         reference_id=order.id,
                         moved_by=0,
                         allow_negative=True,
+                        cost_center_code=cost_center_code,
                     )
                 continue
             if not item.linked_product_id:
@@ -712,6 +749,7 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
                 reference_type="dining_order",
                 reference_id=order.id,
                 moved_by=0,
+                cost_center_code=cost_center_code,
             )
         except Exception:
             continue
@@ -722,6 +760,7 @@ def _post_order_revenue_journal(db: Session, order: DiningOrder, revenue_account
     دفع كاش/كارت فوري."""
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
     post_simple_revenue_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="1100", credit_account_code=revenue_account_code,
@@ -729,6 +768,7 @@ def _post_order_revenue_journal(db: Session, order: DiningOrder, revenue_account
         reference=f"ORD-{order.order_number}",
         description=f"إيرادات دايننج — {order.order_number}",
         source="dining", source_id=order.id,
+        cost_center_code=_outlet_cost_center_code(outlet),
     )
 
 
@@ -737,6 +777,7 @@ def _post_order_folio_charge_journal(db: Session, order: DiningOrder, revenue_ac
     غرفة. راجع restaurant.services._post_order_folio_charge_journal."""
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
     post_simple_revenue_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code="1150", credit_account_code=revenue_account_code,
@@ -744,6 +785,7 @@ def _post_order_folio_charge_journal(db: Session, order: DiningOrder, revenue_ac
         reference=f"ORD-{order.order_number}",
         description=f"إيرادات دايننج (محمّل على الغرفة) — {order.order_number}",
         source="dining_folio_charge", source_id=order.id,
+        cost_center_code=_outlet_cost_center_code(outlet),
     )
 
 
@@ -792,12 +834,12 @@ def void_order_item(
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
 
-    discount_amount = order.discount_amount
-    applied_rule_id = order.applied_discount_rule_id
-    if applied_rule_id:
-        discount_amount, applied_rule_id = _recompute_discount_for_rule(
-            db, applied_rule_id, subtotal, order,
-        )
+    # راجع _resolve_order_discount — بيعيد حساب أفضل خصم (مجموعة العميل
+    # الدائمة أو القاعدة الشرطية المطبّقة يدويًا لو موجودة) على subtotal
+    # الجديد بعد الإلغاء، مش بس القاعدة الشرطية زي قبل كده (باج مشابه
+    # لـ add_items_to_order كان ممكن يسيب خصم مجموعة العميل مجمّد على رقم
+    # قديم بعد إلغاء صنف).
+    discount_amount, applied_rule_id = _resolve_order_discount(db, order, subtotal)
 
     total = max(Decimal("0"), subtotal + vat_amount + svc_charge - discount_amount)
 
@@ -963,6 +1005,43 @@ def _recompute_discount_for_rule(
     return result.amount_saved, result.rule_id
 
 
+def _customer_group_discount_amount(db: Session, customer_id: Optional[int], subtotal: Decimal) -> Decimal:
+    """خصم مجموعة العميل الدائم (crm.CustomerGroup.discount_percentage) على
+    الـ subtotal — صفر لو مفيش عميل مرتبط أو مجموعته موقوفة/غير موجودة.
+    راجع crm.services.get_customer_group_discount_percentage للمنطق الكامل."""
+    from app.modules.crm.services import get_customer_group_discount_percentage  # noqa: PLC0415
+
+    pct = get_customer_group_discount_percentage(db, customer_id)
+    if pct <= 0:
+        return Decimal("0")
+    return (subtotal * pct / Decimal("100")).quantize(Decimal("0.01"))
+
+
+def _resolve_order_discount(db: Session, order: DiningOrder, subtotal: Decimal) -> tuple[Decimal, Optional[int]]:
+    """أفضل خصم للطلب على الـ subtotal الحالي — بيقارن بين نوعين مختلفين
+    تمامًا ومستقلين عن بعض: (أ) خصم مجموعة العميل الدائم (تلقائي، بلا أي
+    إجراء يدوي — _customer_group_discount_amount فوق) و(ب) قاعدة خصم شرطية
+    (happy hour/بروموشن) اتطبّقت يدويًا من قبل على الطلب ده (لو موجودة،
+    بإعادة حسابها على subtotal الجديد عبر _recompute_discount_for_rule).
+
+    **قرار سياسة تجارية (Batch 2، customer groups)**: الاتنين ميتجمعوش
+    (لا stacking) — الأعلى قيمة بس هو اللي يتطبّق فعليًا، نفس فلسفة "أفضل
+    عرض للضيف الواحد" المتّبعة في discount_engine.calculate_discount نفسها
+    (بتاخد أعلى priority بين القواعد الشرطية، مش تجمعهم). لو الفايز خصم
+    المجموعة، بيرجّع rule_id=None — يعني القاعدة الشرطية (لو كانت مطبّقة)
+    بتتنحّى بدون ما تُحسب مستخدمة (uses_count متتزودش)، لأنها فعليًا ملهاش
+    أثر على المبلغ النهائي في اللحظة دي."""
+    group_amount = _customer_group_discount_amount(db, order.customer_id, subtotal)
+
+    rule_amount, rule_id = Decimal("0"), None
+    if order.applied_discount_rule_id:
+        rule_amount, rule_id = _recompute_discount_for_rule(db, order.applied_discount_rule_id, subtotal, order)
+
+    if rule_amount >= group_amount:
+        return rule_amount, rule_id
+    return group_amount, None
+
+
 def refund_order_item(db: Session, order_id: int, item_id: int, reason: str, refunded_by: int) -> DiningOrder:
     """راجع restaurant.services.refund_order_item — نفس المنطق بالظبط."""
     order = _get_order_or_404(db, order_id)
@@ -1038,6 +1117,7 @@ def _reduce_folio_charge_for_refund(db: Session, order: DiningOrder, refund_amou
 def _post_order_folio_refund_reversal_journal(db: Session, order: DiningOrder, refund_amount: Decimal, revenue_account_code: str) -> None:
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
     post_simple_revenue_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code=revenue_account_code, credit_account_code="1150",
@@ -1045,12 +1125,14 @@ def _post_order_folio_refund_reversal_journal(db: Session, order: DiningOrder, r
         reference=f"ORD-REFUND-{order.order_number}",
         description=f"مرتجع بعد الدفع (محمّل على الغرفة) — {order.order_number}",
         source="dining_folio_refund", source_id=order.id,
+        cost_center_code=_outlet_cost_center_code(outlet),
     )
 
 
 def _post_order_refund_reversal_journal(db: Session, order: DiningOrder, refund_amount: Decimal, revenue_account_code: str) -> None:
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    outlet = crud.get_outlet(db, order.outlet_id)
     post_simple_revenue_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
         debit_account_code=revenue_account_code, credit_account_code="1100",
@@ -1058,6 +1140,7 @@ def _post_order_refund_reversal_journal(db: Session, order: DiningOrder, refund_
         reference=f"ORD-REFUND-{order.order_number}",
         description=f"مرتجع بعد الدفع — {order.order_number}",
         source="dining_refund", source_id=order.id,
+        cost_center_code=_outlet_cost_center_code(outlet),
     )
 
 
@@ -1231,10 +1314,20 @@ def apply_order_discount(
     )
 
     result = calculate_discount(order.subtotal, rules, ctx)
+
+    # الأفضل للضيف يفوز — مش تراكم (راجع _resolve_order_discount للتبرير
+    # الكامل). لو خصم مجموعة العميل الدائم أكبر من القاعدة الشرطية المُقيَّمة
+    # هنا، هو اللي بيتطبّق فعليًا بدل نتيجة الزرار، وrule_id بيتسجّل None
+    # (القاعدة الشرطية معدتش "استخدمت" فعليًا في اللحظة دي).
+    group_amount = _customer_group_discount_amount(db, order.customer_id, order.subtotal)
+    conditional_wins = result.amount_saved >= group_amount
+    final_amount = result.amount_saved if conditional_wins else group_amount
+    final_rule_id = result.rule_id if conditional_wins else None
+
     order = crud.update_order_discount(
         db, order,
-        discount_amount=result.amount_saved,
-        rule_id=result.rule_id,
+        discount_amount=final_amount,
+        rule_id=final_rule_id,
     )
 
     core_crud.create_audit_log(db, AuditLogCreate(
@@ -1242,12 +1335,15 @@ def apply_order_discount(
         action="apply_discount", entity_type="dining_order", entity_id=order.id,
         new_data=json.dumps({
             "applied": result.applied,
-            "discount_amount": str(result.amount_saved),
-            "rule_id": result.rule_id,
+            "conditional_discount_amount": str(result.amount_saved),
+            "conditional_rule_id": result.rule_id,
+            "customer_group_discount_amount": str(group_amount),
+            "final_discount_amount": str(final_amount),
+            "final_rule_id": final_rule_id,
         }),
     ))
 
-    if result.applied and result.rule_id:
+    if conditional_wins and result.applied and result.rule_id:
         try:
             from app.modules.finance.crud import increment_discount_uses  # noqa: PLC0415
             increment_discount_uses(db, result.rule_id)

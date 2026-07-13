@@ -158,6 +158,22 @@ def _vat(amount: Decimal) -> Decimal:
     return (amount * Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")).quantize(Decimal("0.01"))
 
 
+def _customer_group_discount_amount(db: Session, customer_id: Optional[int], gross_amount: Decimal) -> Decimal:
+    """خصم مجموعة العميل الدائم (crm.CustomerGroup.discount_percentage) —
+    راجع dining.services._customer_group_discount_amount (نفس المنطق
+    بالظبط). الشاطئ مفيهوش أي مفهوم خصم شرطي (Happy Hour/بروموشن) زي
+    dining، فده أول وأوحد نوع خصم على معاملة شاطئ حاليًا — لا يوجد تعارض
+    "أفضل خصم يفوز" هنا لأن مفيش نوع تاني يتنافس معاه."""
+    if not customer_id:
+        return Decimal("0")
+    from app.modules.crm.services import get_customer_group_discount_percentage  # noqa: PLC0415
+
+    pct = get_customer_group_discount_percentage(db, customer_id)
+    if pct <= 0:
+        return Decimal("0")
+    return (gross_amount * pct / Decimal("100")).quantize(Decimal("0.01"))
+
+
 def sell_ticket(
     db: Session,
     branch_id: int,
@@ -222,8 +238,14 @@ def _sell_ticket_no_commit(
     base_prices = _get_base_prices(db, branch_id)
     surge_pct   = float(inv_row.surge_pct)
     unit_price  = calculate_tx_price(data.tx_type, base_prices, surge_pct)
-    total       = unit_price * data.quantity
-    vat         = _vat(total)
+    gross_total = unit_price * data.quantity
+    # خصم مجموعة العميل الدائم — تلقائي بالكامل، بيتحسب على السعر الأصلي
+    # قبل الـ VAT (نفس اتفاقية dining._customer_group_discount_amount).
+    # الـ VAT بيتحسب على gross_total من غير خصم (زي dining بالظبط — الخصم
+    # بيقلل الصافي المُحصَّل، مش بيغيّر الإقرار الضريبي على السعر المعلن).
+    discount = _customer_group_discount_amount(db, data.customer_id, gross_total)
+    vat      = _vat(gross_total)
+    total    = max(Decimal("0"), gross_total - discount)
 
     # تحديث inventory
     cap_delta, towel_delta = calculate_inventory_delta(data.tx_type, data.quantity)
@@ -245,6 +267,7 @@ def _sell_ticket_no_commit(
         "quantity":        data.quantity,
         "unit_price":      unit_price,
         "total_amount":    total,
+        "discount_amount": discount,
         "vat_amount":      vat,
         "surge_applied":   surge_pct > 0,
         "tx_date":         tx_date,
@@ -307,6 +330,7 @@ def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
         reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
         description=f"إيرادات شاطئ — {tx.tx_type}",
         source="beach", source_id=tx.id,
+        cost_center_code="BEACH",
     )
 
 
@@ -323,6 +347,7 @@ def _post_beach_folio_charge_journal(db: Session, tx: "BeachTransaction") -> Non
         reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
         description=f"إيرادات شاطئ (محمّل على الغرفة) — {tx.tx_type}",
         source="beach_folio_charge", source_id=tx.id,
+        cost_center_code="BEACH",
     )
 
 
@@ -506,6 +531,7 @@ def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") ->
         reference=f"BCH-VOID-{tx.id:06d}",
         description=f"إلغاء عملية شاطئ — {tx.tx_type}",
         source="beach_void", source_id=tx.id,
+        cost_center_code="BEACH",
     )
 
 
@@ -521,6 +547,7 @@ def _post_beach_folio_charge_reversal_journal(db: Session, tx: "BeachTransaction
         reference=f"BCH-VOID-{tx.id:06d}",
         description=f"إلغاء عملية شاطئ (محمّل على الغرفة) — {tx.tx_type}",
         source="beach_folio_void", source_id=tx.id,
+        cost_center_code="BEACH",
     )
 
 

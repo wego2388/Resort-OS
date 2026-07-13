@@ -382,6 +382,7 @@ def create_order_with_items(
     status: str = "open",
     customer_id: Optional[int] = None,
     payment_method: Optional[str] = None,
+    discount_amount: "Decimal | None" = None,
 ) -> DiningOrder:
     order = DiningOrder(
         branch_id=branch_id,
@@ -400,6 +401,7 @@ def create_order_with_items(
         status=status,
         customer_id=customer_id,
         payment_method=payment_method,
+        discount_amount=discount_amount if discount_amount is not None else Decimal("0"),
     )
     db.add(order)
     db.flush()

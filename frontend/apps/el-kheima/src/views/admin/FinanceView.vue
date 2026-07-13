@@ -10,7 +10,7 @@ const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'depreciat
 
 interface Check { id: number; check_number: string; amount: number; drawer_name: string; due_date: string; status: string; bank_name: string }
 interface Account { id: number; code: string; name: string; account_type: string; balance: number }
-interface CostCenterLine { code: string; name: string; revenue: number; source: 'ledger' | 'direct' }
+interface CostCenterLine { code: string; name: string; revenue: number; expense: number; net: number; source: 'ledger' | 'direct' }
 interface DepreciationEntry { id: number; asset_id: number; year: number; month: number; amount: number; accumulated_after: number }
 interface Asset { id: number; code: string; name: string }
 interface ShiftItem {
@@ -243,7 +243,9 @@ const firstOfMonth = new Date(new Date().getFullYear(), new Date().getMonth(), 1
 const ccDateFrom = ref(firstOfMonth)
 const ccDateTo = ref(today)
 const ccLines = ref<CostCenterLine[]>([])
-const ccTotal = ref(0)
+const ccTotalRevenue = ref(0)
+const ccTotalExpense = ref(0)
+const ccTotalNet = ref(0)
 
 async function loadCostCenters() {
   loading.value = true
@@ -252,7 +254,9 @@ async function loadCostCenters() {
       params: { branch_id: branchId, date_from: ccDateFrom.value, date_to: ccDateTo.value },
     })
     ccLines.value = res.data.lines ?? []
-    ccTotal.value = res.data.total_revenue ?? 0
+    ccTotalRevenue.value = res.data.total_revenue ?? 0
+    ccTotalExpense.value = res.data.total_expense ?? 0
+    ccTotalNet.value = res.data.total_net ?? 0
   } catch { toast.error('تعذّر تحميل مراكز التكلفة — حاول تاني') }
   finally { loading.value = false }
 }
@@ -478,22 +482,21 @@ onMounted(() => loadTab('overview'))
                 <tr>
                   <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">مركز التكلفة</th>
                   <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الإيراد</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المصدر</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المصروف</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الصافي</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="line in ccLines" :key="line.code" class="border-t border-stone-100 hover:bg-stone-50">
                   <td class="px-4 py-3 text-sm font-bold text-gray-900">{{ line.name }}</td>
                   <td class="px-4 py-3 text-sm font-bold text-green-600">{{ line.revenue.toLocaleString('ar-EG') }} ج</td>
-                  <td class="px-4 py-3">
-                    <span :class="['px-2 py-0.5 rounded-full text-[10px] font-bold',
-                                   line.source === 'ledger' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700']">
-                      {{ line.source === 'ledger' ? 'دفتر اليومية' : 'مباشر' }}
-                    </span>
+                  <td class="px-4 py-3 text-sm font-bold text-red-600">{{ line.expense.toLocaleString('ar-EG') }} ج</td>
+                  <td class="px-4 py-3 text-sm font-bold" :class="line.net >= 0 ? 'text-gray-900' : 'text-red-700'">
+                    {{ line.net.toLocaleString('ar-EG') }} ج
                   </td>
                 </tr>
                 <tr v-if="ccLines.length === 0">
-                  <td colspan="3" class="px-4 py-8">
+                  <td colspan="4" class="px-4 py-8">
                     <EmptyState icon="📈" title="لا توجد بيانات في هذه الفترة" />
                   </td>
                 </tr>
@@ -501,16 +504,18 @@ onMounted(() => loadTab('overview'))
               <tfoot v-if="ccLines.length">
                 <tr class="border-t-2 border-stone-200 bg-stone-50">
                   <td class="px-4 py-3 text-sm font-black text-gray-900">الإجمالي</td>
-                  <td class="px-4 py-3 text-sm font-black text-gray-900">{{ ccTotal.toLocaleString('ar-EG') }} ج</td>
-                  <td></td>
+                  <td class="px-4 py-3 text-sm font-black text-green-700">{{ ccTotalRevenue.toLocaleString('ar-EG') }} ج</td>
+                  <td class="px-4 py-3 text-sm font-black text-red-700">{{ ccTotalExpense.toLocaleString('ar-EG') }} ج</td>
+                  <td class="px-4 py-3 text-sm font-black text-gray-900">{{ ccTotalNet.toLocaleString('ar-EG') }} ج</td>
                 </tr>
               </tfoot>
             </table>
           </div>
         </AppCard>
         <p class="text-[11px] text-gray-400">
-          "دفتر اليومية" = محسوب من القيود المحاسبية الفعلية. "مباشر" = محسوب من جداول العمليات
-          لأن الموديول ده لسه ميرحّلش لدفتر اليومية.
+          الأرقام محسوبة من القيود المحاسبية الفعلية (journal_lines) الموسومة بمركز التكلفة وقت
+          الترحيل — الإيراد والمصروف (تكلفة البضاعة المباعة) الاتنين، مش الإيراد بس. قيود اتُرحّلت
+          قبل هذا التحديث مالهاش وسم مركز تكلفة، فمش هتظهر هنا.
         </p>
       </template>
     </div>

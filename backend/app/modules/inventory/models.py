@@ -97,6 +97,41 @@ class StockMovement(Base, TimestampMixin):
     warehouse: Mapped["Warehouse"] = relationship("Warehouse", back_populates="stock_movements")
 
 
+class Supplier(Base, TimestampMixin):
+    """مورّد حقيقي — كيان مستقل مرتبط بأوامر الشراء (بديل النص الحر
+    supplier_name/supplier_phone القديم على PurchaseOrder). الشكل مبني على
+    نمط `Supplier` في نظام elkheima-beach-resort القديم (name/name_ar/phone/
+    email/category/notes/is_active) + حقول موسّعة (contact_person/address/
+    tax_number/payment_terms_days/credit_limit) — مفيدة فعليًا لإدارة موردين
+    حقيقية (مين بيرد على التليفون، الرقم الضريبي للفاتورة، مهلة السداد)،
+    من غير ما نستنسخ تصميم Click القديم اللي كان بيدمج الموردين والعملاء في
+    جدول Party واحد (قرار متعمد إن المورد والعميل كيانين مختلفين تمامًا هنا).
+
+    لا PII حقيقي هنا (تليفون/إيميل/رقم ضريبي شركة، مش بيانات شخصية لفرد —
+    نفس المنطق اللي خلّى B2BContract.contact_phone وCRM.Customer.phone/email
+    غير مشفّرين، عكس national_id/passport الفعليين)."""
+    __tablename__ = "suppliers"
+
+    id:                  Mapped[int]           = mapped_column(primary_key=True)
+    branch_id:           Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    name:                Mapped[str]           = mapped_column(String(200))
+    name_ar:             Mapped[str | None]    = mapped_column(String(200), nullable=True)
+    contact_person:      Mapped[str | None]    = mapped_column(String(150), nullable=True)
+    phone:               Mapped[str | None]    = mapped_column(String(20), nullable=True)
+    email:               Mapped[str | None]    = mapped_column(String(150), nullable=True)
+    address:             Mapped[str | None]    = mapped_column(String(300), nullable=True)
+    tax_number:          Mapped[str | None]    = mapped_column(String(50), nullable=True)
+    category:            Mapped[str | None]    = mapped_column(String(100), nullable=True)
+    payment_terms_days:  Mapped[int]           = mapped_column(Integer, default=0)
+    credit_limit:        Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    notes:               Mapped[str | None]    = mapped_column(Text, nullable=True)
+    is_active:           Mapped[bool]          = mapped_column(Boolean, default=True)
+
+    purchase_orders: Mapped[list["PurchaseOrder"]] = relationship(
+        "PurchaseOrder", back_populates="supplier", lazy="select"
+    )
+
+
 class PurchaseOrder(Base, TimestampMixin):
     """أمر شراء."""
     __tablename__ = "purchase_orders"
@@ -104,7 +139,15 @@ class PurchaseOrder(Base, TimestampMixin):
     id:            Mapped[int]             = mapped_column(primary_key=True)
     branch_id:     Mapped[int]             = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
     order_number:  Mapped[str]             = mapped_column(String(30), unique=True)  # PO-20260630-0001
-    supplier_name: Mapped[str]             = mapped_column(String(200))
+    supplier_id:   Mapped[int | None]      = mapped_column(ForeignKey("suppliers.id", ondelete="SET NULL"), nullable=True, index=True)
+    # supplier_name/supplier_phone: لقطة (snapshot) وقت إنشاء الأمر — بتتعبّى
+    # تلقائيًا من Supplier لو supplier_id متحدد (راجع crud.create_purchase_order)،
+    # أو نص حر لأمر قديم/بدون مورد مسجّل بعد. nullable=True هنا عمدًا (كان
+    # إجباري قبل كده) عشان توافق الأوامر القديمة والجديدة اللي supplier_id
+    # بتاعتها هو المصدر الأساسي — لازم يتوفر واحد على الأقل من
+    # (supplier_id, supplier_name)، مفروض على مستوى الـ schema
+    # (PurchaseOrderCreate) مش قيد على الداتابيز نفسها.
+    supplier_name: Mapped[str | None]      = mapped_column(String(200), nullable=True)
     supplier_phone: Mapped[str | None]     = mapped_column(String(20), nullable=True)
     status:        Mapped[str]             = mapped_column(String(20), default="draft")
     # draft|sent|partial|received|cancelled
@@ -114,6 +157,7 @@ class PurchaseOrder(Base, TimestampMixin):
     total_amount:  Mapped[Decimal]         = mapped_column(Numeric(12, 2), default=Decimal("0"))
     notes:         Mapped[str | None]      = mapped_column(Text, nullable=True)
 
+    supplier: Mapped["Supplier | None"] = relationship("Supplier", back_populates="purchase_orders")
     items: Mapped[list["PurchaseOrderItem"]] = relationship(
         "PurchaseOrderItem", back_populates="purchase_order", lazy="select"
     )

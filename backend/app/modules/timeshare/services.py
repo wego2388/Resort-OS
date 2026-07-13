@@ -81,6 +81,7 @@ def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract")
         description=f"دفعة أولى تايم شير — {contract.contract_number}",
         source="timeshare", source_id=contract.id,
         created_by=contract.signed_by or 0,
+        cost_center_code="TS",
     )
 
 
@@ -162,6 +163,7 @@ def _post_installment_payment_journal(
         description=f"تحصيل قسط رقم {inst.installment_no} — {contract.contract_number}",
         source="timeshare", source_id=contract.id,
         created_by=0,
+        cost_center_code="TS",
     )
 
 

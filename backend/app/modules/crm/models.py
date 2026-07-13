@@ -19,6 +19,25 @@ from app.core.database import Base
 from app.core.encryption import EncryptedString
 
 
+class CustomerGroup(Base, TimestampMixin):
+    """مجموعة عملاء بخصم دائم ثابت (standing discount) — مثال: "موظفين"،
+    "شركاء B2B صغار"، "أصدقاء المنتجع". مختلفة تمامًا عن
+    finance.ConditionalDiscount (شروط/حالات مؤقتة زي Happy Hour أو
+    بروموشن) — دي عضوية دائمة مرتبطة بهوية العميل نفسه، مش شرط على الطلب.
+    الاتنين يتعايشوا بدون تراكم — راجع dining.services._resolve_order_discount
+    وbeach.services.sell_ticket لقرار "الأفضل للضيف يفوز، مش تراكم"."""
+    __tablename__ = "crm_customer_groups"
+
+    id:                  Mapped[int]      = mapped_column(primary_key=True)
+    branch_id:           Mapped[int]      = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    name:                Mapped[str]      = mapped_column(String(100))
+    name_ar:             Mapped[str | None] = mapped_column(String(100), nullable=True)
+    discount_percentage: Mapped[Decimal]  = mapped_column(Numeric(5, 2), default=Decimal("0"))
+    is_active:           Mapped[bool]     = mapped_column(Boolean, default=True)
+
+    customers: Mapped[list["Customer"]] = relationship("Customer", back_populates="customer_group", lazy="select")
+
+
 class Customer(Base, TimestampMixin):
     """عميل — قد يكون ضيف فندق، مستأجر، أو عميل مطعم VIP."""
     __tablename__ = "crm_customers"
@@ -34,6 +53,7 @@ class Customer(Base, TimestampMixin):
     # regular|vip|corporate|travel_agent
     source:         Mapped[str]           = mapped_column(String(30), default="walk_in")
     # walk_in|online|referral|corporate|social_media
+    customer_group_id: Mapped[int | None] = mapped_column(ForeignKey("crm_customer_groups.id", ondelete="SET NULL"), nullable=True, index=True)
     total_spent:    Mapped[Decimal]       = mapped_column(Numeric(14, 2), default=Decimal("0"))
     visits_count:   Mapped[int]           = mapped_column(Integer, default=0)
     last_visit:     Mapped[date | None]   = mapped_column(Date, nullable=True)
@@ -43,6 +63,7 @@ class Customer(Base, TimestampMixin):
     blacklisted:    Mapped[bool]          = mapped_column(Boolean, default=False)
     blacklist_reason: Mapped[str | None]  = mapped_column(String(300), nullable=True)
 
+    customer_group: Mapped["CustomerGroup | None"]     = relationship("CustomerGroup", back_populates="customers")
     interactions:  Mapped[list["CustomerInteraction"]] = relationship("CustomerInteraction", back_populates="customer", lazy="select")
     opportunities: Mapped[list["Opportunity"]]         = relationship("Opportunity",         back_populates="customer", lazy="select")
     activities:    Mapped[list["Activity"]]            = relationship("Activity",            back_populates="customer", lazy="select")

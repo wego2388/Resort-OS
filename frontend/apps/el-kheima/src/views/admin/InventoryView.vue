@@ -18,11 +18,18 @@ interface Product {
   notes?: string | null; is_active: boolean
 }
 interface Warehouse { id: number; name: string; name_ar: string | null; code: string }
+interface Supplier {
+  id: number; name: string; name_ar?: string | null; contact_person?: string | null
+  phone?: string | null; email?: string | null; address?: string | null; tax_number?: string | null
+  category?: string | null; payment_terms_days: number; credit_limit?: number | null
+  notes?: string | null; is_active: boolean
+}
 
 const UNIT_OPTIONS = ['piece', 'kg', 'liter', 'box', 'pack', 'dozen']
 
 const products = ref<Product[]>([])
 const warehouses = ref<Warehouse[]>([])
+const suppliers = ref<Supplier[]>([])
 const categoryNames = ref<Record<number, string>>({})
 const categories = ref<{ id: number; name: string; name_ar: string | null }[]>([])
 const loading = ref(false)
@@ -107,18 +114,31 @@ async function saveProduct() {
 const poModal = ref(false)
 const savingPO = ref(false)
 const poForm = ref({
-  supplier_name: '', supplier_phone: '', warehouse_id: '' as number | '',
+  supplier_id: '' as number | '', supplier_name: '', supplier_phone: '', warehouse_id: '' as number | '',
   lines: [] as { product_id: number | ''; quantity: string; unit_cost: string }[],
 })
 function openReceivePO() {
-  poForm.value = { supplier_name: '', supplier_phone: '', warehouse_id: '', lines: [{ product_id: '', quantity: '', unit_cost: '' }] }
+  poForm.value = { supplier_id: '', supplier_name: '', supplier_phone: '', warehouse_id: '', lines: [{ product_id: '', quantity: '', unit_cost: '' }] }
   poModal.value = true
 }
 function addPOLine() { poForm.value.lines.push({ product_id: '', quantity: '', unit_cost: '' }) }
 function removePOLine(i: number) { poForm.value.lines.splice(i, 1) }
 
+// اختيار مورد مسجّل بيعبّي الاسم/التليفون تلقائيًا (لقطة قابلة للتعديل) —
+// لسه ممكن تكتب اسم حر لمورد مش مسجّل لو مفيش وقت/داعي لإضافته الآن
+// (الباك إند بيقبل الاتنين، راجع PurchaseOrderCreate._require_a_supplier).
+function onSelectSupplier() {
+  const s = suppliers.value.find(x => x.id === poForm.value.supplier_id)
+  if (s) {
+    poForm.value.supplier_name = s.name_ar || s.name
+    poForm.value.supplier_phone = s.phone || ''
+  }
+}
+
 async function saveReceivePO() {
-  if (!poForm.value.supplier_name.trim()) { toast.error('اسم المورد مطلوب'); return }
+  if (!poForm.value.supplier_id && !poForm.value.supplier_name.trim()) {
+    toast.error('اختر مورد مسجّل أو أدخل اسم مورد'); return
+  }
   if (!poForm.value.warehouse_id) { toast.error('اختر المخزن'); return }
   const validLines = poForm.value.lines.filter(l => l.product_id && Number(l.quantity) > 0)
   if (validLines.length === 0) { toast.error('أضف صنف واحد على الأقل بكمية أكبر من صفر'); return }
@@ -127,7 +147,8 @@ async function saveReceivePO() {
   try {
     const { data: po } = await api.post('/api/v1/inventory/purchase-orders', {
       branch_id: branchId,
-      supplier_name: poForm.value.supplier_name,
+      supplier_id: poForm.value.supplier_id || undefined,
+      supplier_name: poForm.value.supplier_name || undefined,
       supplier_phone: poForm.value.supplier_phone || undefined,
       ordered_at: new Date().toISOString().slice(0, 10),
       items: validLines.map(l => ({ product_id: l.product_id, ordered_qty: l.quantity, unit_cost: l.unit_cost || '0' })),
@@ -216,6 +237,84 @@ async function fetchWarehouses() {
   }
 }
 
+async function fetchSuppliers() {
+  try {
+    const res = await api.get('/api/v1/inventory/suppliers', { params: { branch_id: branchId, active_only: false, size: 100 } })
+    suppliers.value = res.data.items ?? []
+  } catch {
+    // غير حرج لعرض المنتجات — بس هيمنع اختيار مورد مسجّل وقت تسجيل استلام
+  }
+}
+
+// ── الموردون — CRUD كامل (شاشة مصغّرة داخل نفس مودال المخزون) ──────────
+const supplierListModal = ref(false)
+const supplierModal = ref(false)
+const editingSupplier = ref<Supplier | null>(null)
+const savingSupplier = ref(false)
+const supplierForm = ref({
+  name: '', name_ar: '', contact_person: '', phone: '', email: '', address: '',
+  tax_number: '', category: '', payment_terms_days: '0', credit_limit: '', notes: '',
+})
+
+function openCreateSupplier() {
+  editingSupplier.value = null
+  supplierForm.value = { name: '', name_ar: '', contact_person: '', phone: '', email: '', address: '', tax_number: '', category: '', payment_terms_days: '0', credit_limit: '', notes: '' }
+  supplierModal.value = true
+}
+function openEditSupplier(s: Supplier) {
+  editingSupplier.value = s
+  supplierForm.value = {
+    name: s.name, name_ar: s.name_ar ?? '', contact_person: s.contact_person ?? '',
+    phone: s.phone ?? '', email: s.email ?? '', address: s.address ?? '',
+    tax_number: s.tax_number ?? '', category: s.category ?? '',
+    payment_terms_days: String(s.payment_terms_days ?? 0),
+    credit_limit: s.credit_limit != null ? String(s.credit_limit) : '', notes: s.notes ?? '',
+  }
+  supplierModal.value = true
+}
+
+async function saveSupplier() {
+  if (!supplierForm.value.name.trim()) { toast.error('اسم المورد مطلوب'); return }
+  savingSupplier.value = true
+  try {
+    const payload = {
+      name: supplierForm.value.name,
+      name_ar: supplierForm.value.name_ar || undefined,
+      contact_person: supplierForm.value.contact_person || undefined,
+      phone: supplierForm.value.phone || undefined,
+      email: supplierForm.value.email || undefined,
+      address: supplierForm.value.address || undefined,
+      tax_number: supplierForm.value.tax_number || undefined,
+      category: supplierForm.value.category || undefined,
+      payment_terms_days: Number(supplierForm.value.payment_terms_days || 0),
+      credit_limit: supplierForm.value.credit_limit || undefined,
+      notes: supplierForm.value.notes || undefined,
+    }
+    if (editingSupplier.value) {
+      await api.patch(`/api/v1/inventory/suppliers/${editingSupplier.value.id}`, payload)
+      toast.success('تم تعديل المورد')
+    } else {
+      await api.post('/api/v1/inventory/suppliers', { branch_id: branchId, ...payload })
+      toast.success('تم إضافة المورد')
+    }
+    supplierModal.value = false
+    await fetchSuppliers()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ المورد')
+  } finally {
+    savingSupplier.value = false
+  }
+}
+
+async function toggleSupplierActive(s: Supplier) {
+  try {
+    await api.patch(`/api/v1/inventory/suppliers/${s.id}`, { is_active: !s.is_active })
+    await fetchSuppliers()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة المورد')
+  }
+}
+
 async function fetchProducts() {
   loading.value = true
   try {
@@ -237,7 +336,7 @@ async function fetchProducts() {
   finally { loading.value = false }
 }
 
-onMounted(() => { fetchCategories(); fetchWarehouses(); fetchProducts() })
+onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchProducts() })
 </script>
 
 <template>
@@ -249,6 +348,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchProducts() })
           :class="['px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-colors', showLowStock ? 'border-red-500 bg-red-50 text-red-700' : 'border-stone-200 text-gray-600 hover:border-red-300']">
           ⚠️ منخفض ({{ lowStockCount() }})
         </button>
+        <AppButton variant="secondary" size="sm" @click="supplierListModal = true">🚚 الموردون</AppButton>
         <AppButton variant="secondary" size="sm" @click="openAdjustStock">⚖️ تعديل يدوي</AppButton>
         <AppButton variant="secondary" size="sm" @click="openReceivePO">📦 تسجيل استلام بضاعة</AppButton>
         <AppButton size="sm" @click="openCreateProduct">+ منتج جديد</AppButton>
@@ -351,6 +451,16 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchProducts() })
     <!-- #6: تسجيل استلام بضاعة -->
     <AppModal :open="poModal" title="تسجيل استلام بضاعة" size="lg" @close="poModal = false">
       <div class="space-y-3">
+        <div>
+          <label class="text-xs font-semibold text-gray-500 uppercase">المورد</label>
+          <select v-model="poForm.supplier_id" @change="onSelectSupplier"
+            class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm mt-1">
+            <option value="">— مورد غير مسجّل (اكتب الاسم يدويًا تحت) —</option>
+            <option v-for="s in suppliers.filter(x => x.is_active)" :key="s.id" :value="s.id">
+              {{ s.name_ar || s.name }}
+            </option>
+          </select>
+        </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <input v-model="poForm.supplier_name" type="text" placeholder="اسم المورد *"
             class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
@@ -398,6 +508,84 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchProducts() })
         <input v-model="adjustForm.notes" type="text" placeholder="سبب التعديل (جرد، تلف، غلط عدّ...)"
           class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
         <AppButton class="mt-1" size="sm" :loading="savingAdjust" @click="saveAdjustStock">تسجيل التعديل</AppButton>
+      </div>
+    </AppModal>
+
+    <!-- الموردون — قائمة كاملة -->
+    <AppModal :open="supplierListModal" title="الموردون" size="lg" @close="supplierListModal = false">
+      <div class="space-y-3">
+        <AppButton size="sm" @click="openCreateSupplier">+ مورد جديد</AppButton>
+        <div class="overflow-x-auto border border-stone-100 rounded-xl">
+          <table class="w-full">
+            <thead class="bg-stone-50">
+              <tr>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">الاسم</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">جهة الاتصال</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">التليفون</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">مهلة السداد</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase"></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="s in suppliers" :key="s.id" class="border-t border-stone-100">
+                <td class="px-3 py-2 text-sm font-medium text-gray-900">{{ s.name_ar || s.name }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600">{{ s.contact_person || '—' }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600" dir="ltr">{{ s.phone || '—' }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600">{{ s.payment_terms_days }} يوم</td>
+                <td class="px-3 py-2">
+                  <AppBadge size="sm" :variant="s.is_active ? 'success' : 'neutral'">
+                    {{ s.is_active ? 'نشط' : 'موقوف' }}
+                  </AppBadge>
+                </td>
+                <td class="px-3 py-2 text-left whitespace-nowrap">
+                  <button @click="openEditSupplier(s)" class="text-xs font-semibold text-primary-700 hover:underline ml-3">تعديل</button>
+                  <button @click="toggleSupplierActive(s)" class="text-xs font-semibold text-gray-500 hover:underline">
+                    {{ s.is_active ? 'إيقاف' : 'تفعيل' }}
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="suppliers.length === 0">
+                <td colspan="6" class="px-4 py-8">
+                  <EmptyState icon="🚚" title="لا يوجد موردون بعد" subtitle="ابدأ بإضافة أول مورد" />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </AppModal>
+
+    <!-- الموردون — إضافة/تعديل -->
+    <AppModal :open="supplierModal" :title="editingSupplier ? 'تعديل مورد' : 'مورد جديد'" @close="supplierModal = false">
+      <div class="space-y-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <input v-model="supplierForm.name" type="text" placeholder="الاسم (إنجليزي) *"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="supplierForm.name_ar" type="text" placeholder="الاسم (عربي)"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="supplierForm.contact_person" type="text" placeholder="جهة الاتصال"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="supplierForm.phone" type="text" placeholder="التليفون"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" dir="ltr" />
+          <input v-model="supplierForm.email" type="email" placeholder="البريد الإلكتروني"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" dir="ltr" />
+          <input v-model="supplierForm.tax_number" type="text" placeholder="الرقم الضريبي"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="supplierForm.category" type="text" placeholder="التصنيف (مثال: خضروات، مشروبات)"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="supplierForm.payment_terms_days" type="number" min="0" placeholder="مهلة السداد (يوم)"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="supplierForm.credit_limit" type="number" min="0" step="0.01" placeholder="حد الائتمان (اختياري)"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <input v-model="supplierForm.address" type="text" placeholder="العنوان"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+          <input v-model="supplierForm.notes" type="text" placeholder="ملاحظات"
+            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+        </div>
+        <AppButton class="mt-1" size="sm" :loading="savingSupplier" @click="saveSupplier">
+          {{ editingSupplier ? 'حفظ التعديلات' : 'إضافة المورد' }}
+        </AppButton>
       </div>
     </AppModal>
   </div>

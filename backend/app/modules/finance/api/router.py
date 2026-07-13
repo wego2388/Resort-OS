@@ -606,10 +606,11 @@ def trial_balance_report(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
     as_of: date = Query(...),
+    group_by_parent: bool = Query(False, description="جمّع الحسابات تحت رؤوس المجموعات (Account.parent_id) بدل سطر لكل حساب فردي"),
 ):
     """ميزان المراجعة — كل حساب برصيده حتى تاريخ as_of، إجمالي المدين
     لازم يساوي إجمالي الدائن (is_balanced)."""
-    return services.get_trial_balance(db, branch_id, as_of)
+    return services.get_trial_balance(db, branch_id, as_of, group_by_parent)
 
 
 @router.get("/finance/reports/income-statement", response_model=IncomeStatementReport)

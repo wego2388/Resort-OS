@@ -12,17 +12,72 @@ logger = logging.getLogger(__name__)
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
 
+from decimal import Decimal
+from typing import Optional
+
 from app.modules.crm import crud
-from app.modules.crm.models import Activity, Campaign, Customer, CustomerInteraction, Lead, Opportunity
+from app.modules.crm.models import Activity, Campaign, Customer, CustomerGroup, CustomerInteraction, Lead, Opportunity
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityUpdate,
     BlacklistRequest,
     CampaignCreate, CampaignUpdate,
-    CustomerCreate, CustomerUpdate,
+    CustomerCreate, CustomerGroupCreate, CustomerGroupUpdate, CustomerUpdate,
     InteractionCreate,
     LeadConvertRequest, LeadCreate, LeadStageUpdate,
     OpportunityCreate, OpportunityUpdate,
 )
+
+
+# ── CustomerGroup (standing discount) ───────────────────────────────────
+
+def get_customer_group_or_404(db: Session, group_id: int) -> CustomerGroup:
+    g = crud.get_customer_group(db, group_id)
+    if not g:
+        raise ValueError(f"مجموعة العملاء {group_id} غير موجودة")
+    return g
+
+
+def create_customer_group(db: Session, data: CustomerGroupCreate) -> CustomerGroup:
+    obj = crud.create_customer_group(db, data)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def update_customer_group(db: Session, group_id: int, data: CustomerGroupUpdate) -> CustomerGroup:
+    group = get_customer_group_or_404(db, group_id)
+    obj = crud.update_customer_group(db, group, data)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def assign_customer_group(db: Session, customer_id: int, customer_group_id: Optional[int]) -> Customer:
+    customer = get_customer_or_404(db, customer_id)
+    if customer_group_id is not None:
+        group = get_customer_group_or_404(db, customer_group_id)
+        if group.branch_id != customer.branch_id:
+            raise ValueError("مجموعة العملاء المحدّدة لا تتبع نفس فرع العميل")
+    obj = crud.assign_customer_group(db, customer, customer_group_id)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def get_customer_group_discount_percentage(db: Session, customer_id: Optional[int]) -> Decimal:
+    """نسبة الخصم الدائم (standing discount) للعميل حسب مجموعته — صفر لو
+    العميل من غير مجموعة، أو مجموعته موقوفة (is_active=False). دالة قراءة
+    نقية بتُستدعى من dining/beach.services وقت حساب خصم الطلب — مش بتعمل
+    أي كتابة، فآمنة تُنادى من أي مسار من غير قلق على transaction state."""
+    if not customer_id:
+        return Decimal("0")
+    customer = crud.get_customer(db, customer_id)
+    if not customer or not customer.customer_group_id:
+        return Decimal("0")
+    group = crud.get_customer_group(db, customer.customer_group_id)
+    if not group or not group.is_active:
+        return Decimal("0")
+    return group.discount_percentage
 
 
 # ── Customer ──────────────────────────────────────────────────────────

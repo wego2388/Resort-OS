@@ -9,15 +9,45 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
-from app.modules.crm.models import Activity, CallNote, Campaign, Customer, CustomerInteraction, Opportunity, Lead, LeadSource, GuestProfile
+from app.modules.crm.models import (
+    Activity, CallNote, Campaign, Customer, CustomerGroup, CustomerInteraction,
+    Opportunity, Lead, LeadSource, GuestProfile,
+)
 from app.modules.crm.schemas import (
     ActivityCreate, ActivityUpdate,
     CallNoteCreate,
     CampaignCreate, CampaignUpdate,
-    CustomerCreate, CustomerUpdate,
+    CustomerCreate, CustomerGroupCreate, CustomerGroupUpdate, CustomerUpdate,
     InteractionCreate,
     OpportunityCreate, OpportunityUpdate,
 )
+
+
+# ── CustomerGroup ─────────────────────────────────────────────────────
+
+def get_customer_group(db: Session, group_id: int) -> Optional[CustomerGroup]:
+    return db.query(CustomerGroup).filter(CustomerGroup.id == group_id).first()
+
+
+def list_customer_groups(db: Session, branch_id: int, active_only: bool = True) -> list[CustomerGroup]:
+    q = db.query(CustomerGroup).filter(CustomerGroup.branch_id == branch_id)
+    if active_only:
+        q = q.filter(CustomerGroup.is_active.is_(True))
+    return q.order_by(CustomerGroup.name).all()
+
+
+def create_customer_group(db: Session, data: CustomerGroupCreate) -> CustomerGroup:
+    obj = CustomerGroup(**data.model_dump())
+    db.add(obj)
+    db.flush()
+    return obj
+
+
+def update_customer_group(db: Session, group: CustomerGroup, data: CustomerGroupUpdate) -> CustomerGroup:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(group, field, value)
+    db.flush()
+    return group
 
 
 # ── Customer ──────────────────────────────────────────────────────────
@@ -74,6 +104,12 @@ def create_customer(db: Session, data: CustomerCreate) -> Customer:
 def update_customer(db: Session, customer: Customer, data: CustomerUpdate) -> Customer:
     for field, value in data.model_dump(exclude_unset=True).items():
         setattr(customer, field, value)
+    db.flush()
+    return customer
+
+
+def assign_customer_group(db: Session, customer: Customer, customer_group_id: Optional[int]) -> Customer:
+    customer.customer_group_id = customer_group_id
     db.flush()
     return customer
 
