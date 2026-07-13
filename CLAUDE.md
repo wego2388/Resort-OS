@@ -834,6 +834,15 @@ migrations) في `PROJECT_STATUS.md`.
   (كان 15 وقت Batch A/B، `dining` كان إضافي جنب `restaurant`/`cafe` — دلوقتي حلّ محلهم نهائيًا).
   الشاشات القديمة المذكورة في مدخل Batch B فوق ("الشاشات دي مش الـ POS الافتراضي") **بقت الافتراضي
   فعليًا دلوقتي** — الجملة دي باقية كسجل تاريخي لوقتها، مش وصف للوضع الحالي.
+- **Operations & Control Layer — Batch 1: موافقة PIN على الخصم** (2026-07-13، راجع
+  `OPERATIONS_CONTROL_LAYER_PLAN.md`) — قرار Mohamed: الكاشير صفر صلاحية خصم خالص (مفيش جدول درجات
+  نسب مئوية)، أي محاولة تطبيق خصم من مستوى أقل من مدير محتاجة `core.services.resolve_pin_approval
+  (min_approver_level=60)` بغض النظر عن نتيجة القاعدة، بالظبط زي `void_order_item`. `POST
+  /dining/orders/{id}/discount` بقى ياخد `ApplyDiscountRequest` (`approver_user_id`/`approver_pin`)،
+  `dining.services.apply_order_discount` بينادي `resolve_pin_approval` قبل حساب القاعدة ويكتب
+  `AuditLog(action="apply_discount")`. الفرونت إند (`DiningOrderDetailModal.vue`،
+  `UnifiedPOSView.vue`) بيفتح `PinGuardModal.vue` (`min-level={60}`) عند الضغط على "تطبيق خصم" —
+  نفس المكوّن المستخدم للإلغاء، مفيش نظام موافقة موازي. 9 اختبار جديد = 1697 اختبار إجمالي.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش

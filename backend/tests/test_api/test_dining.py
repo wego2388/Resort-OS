@@ -533,6 +533,107 @@ class TestDiscount:
         updated = services.apply_order_discount(db, order.id)
         assert updated.discount_amount == Decimal("10.00")
 
+    def test_apply_discount_below_manager_needs_pin(self, db):
+        """قرار Mohamed 2026-07-13: الكاشير (level 40) صفر صلاحية خصم خالص —
+        محتاج موافقة PIN مدير+ حتى لما فيه قاعدة خصم سارية هتنطبق فعليًا."""
+        from datetime import date
+        from app.modules.finance.models import ConditionalDiscount
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        rule = ConditionalDiscount(
+            branch_id=branch.id,
+            condition_type="total_amount", condition_value=">=0",
+            discount_type="percentage", discount_value=Decimal("10"),
+            max_uses=-1, valid_from=date(2020, 1, 1), valid_until=date(2030, 1, 1),
+            priority=1, is_active=True,
+        )
+        db.add(rule); db.commit()
+        order = make_order(db, branch, outlet, item, quantity=1)
+
+        with pytest.raises(ValueError, match="موافقة مدير"):
+            services.apply_order_discount(db, order.id, acting_user_level=40)
+
+    def test_apply_discount_needs_pin_even_with_no_matching_rule(self, db):
+        """نفس الحماية حتى لو مفيش قاعدة خصم سارية أصلاً هتنطبق — الموافقة
+        على *محاولة* التطبيق نفسها، مش بس على نتيجة إيجابية."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        order = make_order(db, branch, outlet, item, quantity=1)
+
+        with pytest.raises(ValueError, match="موافقة مدير"):
+            services.apply_order_discount(db, order.id, acting_user_level=40)
+
+    def test_apply_discount_manager_self_qualified_boundary(self, db):
+        """حد الصلاحية بالظبط (level=60 = manager) مؤهّل بنفسه من غير أي
+        موافقة PIN — راجع core.services.resolve_pin_approval."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        order = make_order(db, branch, outlet, item, quantity=1)
+
+        updated = services.apply_order_discount(db, order.id, acting_user_level=60)
+        assert updated.discount_amount == Decimal("0")  # مفيش قاعدة — بس اتنفذ من غير رفض
+
+    def test_apply_discount_with_valid_manager_pin_succeeds_and_audits(self, db):
+        """كاشير بموافقة PIN مدير صحيحة — الخصم بيتطبق، و AuditLog بيتسجّل
+        بـ approved_by=مين وافق، user_id=مين نفّذ (منفصلين)."""
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
+        from app.modules.core import services as core_services
+        from app.modules.core.models import AuditLog
+
+        manager = User(email="disc-mgr@test.local", password_hash=get_password_hash("Test@12345"),
+                        full_name="Discount Manager", role="manager", is_active=True)
+        db.add(manager); db.commit()
+        core_services.set_pin(db, manager.id, "9876", created_by=manager.id)
+        db.commit()
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        order = make_order(db, branch, outlet, item, quantity=1)
+
+        updated = services.apply_order_discount(
+            db, order.id, applied_by=1, acting_user_level=40,
+            approver_user_id=manager.id, approver_pin="9876",
+        )
+        assert updated.id == order.id
+
+        log = (
+            db.query(AuditLog)
+            .filter(AuditLog.entity_type == "dining_order", AuditLog.entity_id == order.id,
+                    AuditLog.action == "apply_discount")
+            .first()
+        )
+        assert log is not None
+        assert log.approved_by == manager.id
+        assert log.user_id == 1
+
+    def test_apply_discount_wrong_pin_rejected(self, db):
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
+        from app.modules.core import services as core_services
+
+        manager = User(email="disc-mgr2@test.local", password_hash=get_password_hash("Test@12345"),
+                        full_name="Discount Manager 2", role="manager", is_active=True)
+        db.add(manager); db.commit()
+        core_services.set_pin(db, manager.id, "1234", created_by=manager.id)
+        db.commit()
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"))
+        order = make_order(db, branch, outlet, item, quantity=1)
+
+        with pytest.raises(ValueError):
+            services.apply_order_discount(
+                db, order.id, acting_user_level=40,
+                approver_user_id=manager.id, approver_pin="0000",
+            )
+
 
 class TestFoodCostReport:
 

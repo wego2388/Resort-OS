@@ -22,6 +22,7 @@ from app.core.deps import (
 )
 from app.modules.dining import crud, services
 from app.modules.dining.schemas import (
+    ApplyDiscountRequest,
     DiningCategoryCreate, DiningCategoryRead, DiningCategoryUpdate,
     DiningItemCreate, DiningItemExtraGroupCreate, DiningItemExtraGroupRead,
     DiningItemRead, DiningItemUpdate,
@@ -599,9 +600,18 @@ def download_receipt(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
 
 
 @router.post("/dining/orders/{order_id}/discount", response_model=OrderRead)
-def apply_discount(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def apply_discount(
+    order_id: int, data: ApplyDiscountRequest, db: DbDep, user=Depends(get_cashier_user),
+):
+    """تطبيق أفضل قاعدة خصم سارية (كاشير+) — الكاشير صفر صلاحية خصم فعليًا،
+    فالطلب محتاج موافقة PIN مدير/محاسب حاضر (resolve_pin_approval، مدير+
+    مؤهّل بنفسه من غير موافقة). راجع services.apply_order_discount."""
     try:
-        return services.apply_order_discount(db, order_id)
+        return services.apply_order_discount(
+            db, order_id, applied_by=user.id,
+            acting_user_level=user_level(user),
+            approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

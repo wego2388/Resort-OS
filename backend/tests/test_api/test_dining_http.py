@@ -54,6 +54,18 @@ def make_table_committed(db, branch, outlet):
     return table
 
 
+def _set_shift_pin(db, email: str, pin: str) -> int:
+    """نفس نمط _set_shift_pin في test_finance_http.py — يضبط PIN حقيقي عبر
+    core.services (مش تلاعب مباشر بالداتابيز) ويرجّع user.id."""
+    from app.core.kernel.models.user import User
+    from app.modules.core import services as core_services
+
+    user = db.query(User).filter(User.email == email).first()
+    core_services.set_pin(db, user.id, pin, created_by=user.id)
+    db.commit()
+    return user.id
+
+
 class TestOutletHTTP:
     def test_create_outlet_requires_manager(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
@@ -274,6 +286,81 @@ class TestDiningOrderHTTP:
         assert len(tickets) == 1
         assert tickets[0]["station"] == "grill"
         assert tickets[0]["outlet_id"] == outlet.id
+
+
+class TestDiningDiscountHTTP:
+    """قرار Mohamed 2026-07-13: الكاشير صفر صلاحية خصم خالص — أي محاولة
+    تطبيق خصم من مستوى أقل من مدير محتاجة موافقة PIN مدير/محاسب حاضر عبر
+    core.services.resolve_pin_approval (نفس نمط void، مفيش نظام موافقة
+    موازي). راجع services.apply_order_discount."""
+
+    def _order_id(self, client, db, waiter_headers, branch, outlet, item):
+        order_resp = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway",
+                  "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=waiter_headers,
+        )
+        return order_resp.json()["id"]
+
+    def test_cashier_apply_discount_without_pin_rejected(
+        self, client: TestClient, db, waiter_headers, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
+
+        resp = client.post(
+            f"/api/v1/dining/orders/{order_id}/discount", json={}, headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+        assert "موافقة" in resp.json()["detail"]
+
+    def test_manager_apply_discount_self_qualified(
+        self, client: TestClient, db, waiter_headers, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
+
+        resp = client.post(
+            f"/api/v1/dining/orders/{order_id}/discount", json={}, headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_cashier_apply_discount_with_valid_manager_pin_succeeds(
+        self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers,
+    ):
+        manager_id = _set_shift_pin(db, "manager@test.local", "5566")
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
+
+        resp = client.post(
+            f"/api/v1/dining/orders/{order_id}/discount",
+            json={"approver_user_id": manager_id, "approver_pin": "5566"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_cashier_apply_discount_wrong_pin_rejected(
+        self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers,
+    ):
+        manager_id = _set_shift_pin(db, "manager@test.local", "5566")
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
+
+        resp = client.post(
+            f"/api/v1/dining/orders/{order_id}/discount",
+            json={"approver_user_id": manager_id, "approver_pin": "0000"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
 
 
 class TestDiningKitchenItemBumpHTTP:

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 /**
- * UnifiedPOSView — first real screen against the unified `dining` API
- * (app/modules/dining/, additive next to restaurant/cafe — see
- * DINING_CUTOVER_PLAN.md). NOT wired into any nav a waiter/cashier sees by
- * default; reachable today only from the manager-only "Dining موحّد
- * (تجريبي)" section in BackOfficeLayout, for deliberate review before this
- * ever becomes the default POS path (task scope — no cutover here).
+ * UnifiedPOSView — the default POS screen against the unified `dining` API
+ * (app/modules/dining/, restaurant/cafe deleted entirely 2026-07-13 — see
+ * DINING_CUTOVER_PLAN.md Batch 4/6). Reachable by any waiter/cashier at
+ * `/pos/dining` like the rest of daily POS use — this was originally a
+ * manager-only preview screen, but that gate was lifted once restaurant/
+ * cafe's old POS views were removed and this became the sole POS path.
  *
  * Design points asked for explicitly:
  *  - order-type as a first-class concept (dine_in/takeaway/delivery/
@@ -15,8 +15,11 @@
  *  - a visual table/zone map grouped by VenueTable.section for dine-in,
  *    not just a flat <select> (wagdy.md zone/section research).
  *  - extras modal supports the new free-text group_type (DiningExtrasModal).
- *  - void/refund reuse the existing PIN-approval pattern via
- *    DiningOrderDetailModal (no parallel approval flow invented).
+ *  - void/discount reuse the existing PIN-approval pattern via
+ *    PinGuardModal.vue + core.services.resolve_pin_approval (no parallel
+ *    approval flow invented) — the cashier has zero discount authority at
+ *    all (Mohamed, 2026-07-13), so applyDiscountToCart always gates on
+ *    PinGuardModal first, same as DiningOrderDetailModal's void flow.
  *  - built entirely from @resort-os/ui — no ad-hoc buttons/inputs/badges.
  *  - offline queue parity with restaurant/cafe (DINING_CUTOVER_PLAN.md
  *    Batch 1): useOfflineQueue('dining') — same IndexedDB queue/FIFO/
@@ -38,6 +41,7 @@ import type { TabItem } from '@resort-os/ui'
 import type { SelectOption } from '@resort-os/ui'
 import DiningExtrasModal, { type DiningExtrasItem } from '../../components/DiningExtrasModal.vue'
 import DiningOrderDetailModal from '../../components/DiningOrderDetailModal.vue'
+import PinGuardModal from '../../components/PinGuardModal.vue'
 
 const toast = useToast()
 const { printBlob } = usePrintDocument()
@@ -92,13 +96,16 @@ const extraNote = ref('')
 const cart = ref<CartLine[]>([])
 const paymentMethod = ref<'cash' | 'card' | 'room' | 'wallet'>('cash')
 
-// Order-in-progress locked by an applied discount (server-side "held" order) —
-// same pattern as RestaurantPOSView.applyDiscountToCart.
+// Order-in-progress locked by an applied discount (server-side "held" order).
 const pendingOrderId = ref<number | null>(null)
 const pendingOrderNumber = ref('')
 const pendingOrderSummary = ref<{ discount_amount: number | string; total: number | string } | null>(null)
 const cartLocked = computed(() => pendingOrderId.value !== null)
 const { applyingDiscount, discountError, applyDiscount: applyDiscountRule } = useOrderDiscount()
+// الكاشير صفر صلاحية خصم خالص (Mohamed، 2026-07-13) — applyDiscountToCart
+// دايمًا بيعرض PinGuardModal الأول (min-level=60)، بيتأهّل بنفسه بصمت
+// لمدير+ وإلا بياخد موافقة PIN، زي void بالظبط.
+const showDiscountPinGuard = ref(false)
 
 const extrasModalItem = ref<DiningItemRow | null>(null)
 
@@ -343,8 +350,16 @@ async function applyDiscountToCart() {
       return
     }
   }
+  showDiscountPinGuard.value = true
+}
+function onDiscountPinApproved(payload: { approverUserId: number | null; approverPin: string | null }) {
+  showDiscountPinGuard.value = false
+  performDiscount(payload)
+}
+async function performDiscount(approver: { approverUserId: number | null; approverPin: string | null }) {
+  if (pendingOrderId.value === null) return
   try {
-    const data = await applyDiscountRule(pendingOrderId.value!)
+    const data = await applyDiscountRule(pendingOrderId.value, approver)
     pendingOrderSummary.value = { discount_amount: data.discount_amount, total: data.total }
     toast.success(Number(data.discount_amount) > 0 ? `تم تطبيق خصم ${data.discount_amount} ج ✓` : 'مفيش قاعدة خصم سارية حاليًا')
   } catch { /* discountError shown inline */ }
@@ -617,6 +632,18 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 
     <!-- ── Active orders drawer ── -->
     <DiningOrderDetailModal :order-id="selectedOrderId" :tables="tables" @close="onOrderDetailClosed" @changed="loadActiveOrders" />
+
+    <!-- ── Discount PIN approval — الكاشير صفر صلاحية خصم، راجع applyDiscountToCart ── -->
+    <PinGuardModal
+      v-if="showDiscountPinGuard"
+      :min-level="60"
+      title="موافقة تطبيق خصم"
+      message="الكاشير مالوش صلاحية خصم — محتاج موافقة مدير/محاسب بالـ PIN"
+      :loading="applyingDiscount"
+      :error-message="discountError"
+      @approved="onDiscountPinApproved"
+      @cancel="showDiscountPinGuard = false"
+    />
 
     <Teleport to="body">
       <Transition name="fade">

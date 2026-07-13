@@ -1176,14 +1176,31 @@ def generate_receipt_pdf(db: Session, order_id: int) -> bytes:
     )
 
 
-def apply_order_discount(db: Session, order_id: int) -> DiningOrder:
+def apply_order_discount(
+    db: Session, order_id: int, applied_by: Optional[int] = None,
+    acting_user_level: int = 100, approver_user_id: Optional[int] = None,
+    approver_pin: Optional[str] = None,
+) -> DiningOrder:
     """راجع restaurant.services.apply_order_discount — نفس المنطق بالظبط،
     بس outlet=outlet.outlet_type ديناميكي بدل نص ثابت "restaurant"/"cafe"،
-    فقواعد scope_type="outlet" تفرّق فعليًا بين أي عدد من الـ outlets."""
+    فقواعد scope_type="outlet" تفرّق فعليًا بين أي عدد من الـ outlets.
+
+    قرار Mohamed (2026-07-13): الكاشير صفر صلاحية خصم خالص — أي محاولة
+    تطبيق خصم من مستوى أقل من مدير (level < 60) محتاجة موافقة PIN مدير/
+    محاسب حاضر فعليًا، عبر core.services.resolve_pin_approval بالظبط زي
+    void_order_item، بغض النظر عن نتيجة قاعدة الخصم (حتى لو مفيش قاعدة
+    سارية أصلاً والنتيجة صفر — الموافقة على *محاولة* التطبيق نفسها)."""
     order = _get_order_or_404(db, order_id)
 
     if order.status in ("paid", "cancelled"):
         raise ValueError("لا يمكن تطبيق خصم على طلب مغلق")
+
+    from app.modules.core import crud as core_crud, services as core_services  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+    approved_by = core_services.resolve_pin_approval(
+        db, acting_user_level, approver_user_id, approver_pin, min_approver_level=60,
+    )
 
     rules: list[DiscountRule] = []
     try:
@@ -1219,6 +1236,16 @@ def apply_order_discount(db: Session, order_id: int) -> DiningOrder:
         discount_amount=result.amount_saved,
         rule_id=result.rule_id,
     )
+
+    core_crud.create_audit_log(db, AuditLogCreate(
+        user_id=applied_by, approved_by=approved_by, branch_id=order.branch_id,
+        action="apply_discount", entity_type="dining_order", entity_id=order.id,
+        new_data=json.dumps({
+            "applied": result.applied,
+            "discount_amount": str(result.amount_saved),
+            "rule_id": result.rule_id,
+        }),
+    ))
 
     if result.applied and result.rule_id:
         try:

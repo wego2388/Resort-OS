@@ -332,6 +332,17 @@ class OrderItemVoidRequest(BaseModel):
     approver_pin:      Optional[str] = Field(None, pattern=r"^\d{4,6}$")
 
 
+class ApplyDiscountRequest(BaseModel):
+    """راجع core.services.resolve_pin_approval — الكاشير صفر صلاحية خصم
+    خالص (level 40 < min_approver_level=60 بتاع الخصم)، فأي محاولة تطبيق
+    خصم من كاشير أو أوطى محتاجة PIN مدير/محاسب حاضر فعليًا، بغض النظر عن
+    نتيجة قاعدة الخصم نفسها — الموافقة مطلوبة على *محاولة* التطبيق نفسها
+    مش بس على نتيجتها (زي OrderItemVoidRequest بالظبط، مفيش نظام موافقة
+    موازي)."""
+    approver_user_id: Optional[int] = None
+    approver_pin:      Optional[str] = Field(None, pattern=r"^\d{4,6}$")
+
+
 class OrderItemExtraRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:             int
