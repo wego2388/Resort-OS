@@ -309,7 +309,7 @@ resort-os/
 │   │   │   ├── food_cost_engine.py← تكلفة نظرية/فعلية، food cost %، gross margin (Decimal بالكامل)
 │   │   │   └── report_builder.py
 │   │   │
-│   │   ├── tasks/                 ← Celery tasks (كل module جديد → سجّله في celery_app.py)
+│   │   ├── tasks/                 ← Celery tasks (auto-registered — راجع §13 بند ❹؛ periodic؟ ضيفه في celery_app.py's beat_schedule)
 │   │   ├── main.py
 │   │   ├── celery_app.py
 │   │   └── seed.py                ← Idempotent
@@ -387,8 +387,16 @@ value or default                          # ❌ يفشل مع 0/False/""
 national_id: Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
 # مُطبَّقة على: employees، bookings، timeshare_contracts، crm_customers، guest_profiles
 
-# ❹ Celery task module جديد → سجّله في celery_app.py
-import app.tasks.<new_module>  # في آخر الملف — وإلا beat يفشل بـ "unregistered task"
+# ❹ Celery task module جديد — التسجيل نفسه أوتوماتيكي (مش يدوي زي ما كان
+# موثّق هنا قديمًا): app/tasks/__init__.py بيعمل pkgutil.iter_modules على
+# أي ملف *.py جوه app/tasks/ ويستورده، فأي @celery_app.task بيتسجّل لوحده
+# (اتأكد من الكود فعليًا 2026-07-13 وقت بناء fraud_tasks.py — الملاحظة
+# القديمة هنا كانت غلط/قديمة). **اللي لازم تضيفه يدويًا فعليًا** هو سطر في
+# celery_app.py's beat_schedule لو الـ task دوري (crontab)، مش استيراد.
+
+# ❹-ب alembic/env.py برضو محتاج import صريح لأي app.modules.<x>.models
+# جديد (عكس tasks/، الـ models بتتحمّل يدويًا هنا) — وإلا autogenerate
+# مايشوفش الجداول الجديدة خالص.
 
 # ❺ role جديد → ROLE_LEVELS في deps.py + useAuthStore.ts (نفس الأرقام)
 
@@ -858,6 +866,19 @@ migrations) في `PROJECT_STATUS.md`.
   `created_at.desc()` بس مش حتمي لحركتين في نفس المللي ثانية (اتصلح بـ `id.desc()` tiebreak).
   الفرونت إند: `CashControlPanel.vue` جديد داخل `ShiftDashboardView.vue` (نموذج + `PinGuardModal.vue`
   دايمًا قبل الإرسال)، سجل الحركات بيظهر لمدير+ بس. 10 اختبار جديد = 1707 اختبار إجمالي.
+- **Operations & Control Layer — Batch 3: كشف الاحتيال (Fraud Detection)** (2026-07-13) —
+  `app/tasks/fraud_tasks.py` جديد، `scan_for_fraud_signals` (كل 15 دقيقة عبر `celery_app.py`
+  beat_schedule). بيفحص `AuditLog` (مرتجع/إلغاء صنف/محاولة خصم — Batch 1/2 كتبوها بالفعل) +
+  `CashMovement` (فتح الدرج — Batch 2) لكل كاشير خلال نافذة دوّارة، وبيبعت واتساب حقيقي
+  (`core.kernel.whatsapp.notify_admin`) لما عتبة تتخطى، مع dedup عبر Redis (24 ساعة). **قرار Mohamed
+  "اعمل حقيقي" بدون أرقام محددة — مفوَّض هندسيًا بالكامل**: العتبات كلها `Settings` قابلة للتعديل في
+  `app/core/config.py` (`FRAUD_REFUND_COUNT_THRESHOLD=15/60min`،
+  `FRAUD_VOID_COUNT_THRESHOLD=15/60min`، `FRAUD_DISCOUNT_COUNT_THRESHOLD=10/60min` [أقل عمدًا — بعد
+  Batch 1 الكاشير صفر صلاحية خصم أصلاً]، `FRAUD_DRAWER_OPEN_COUNT_THRESHOLD=20/24h`). **قرار تصميمي
+  محافظ صريح**: عدّ مطلق خلال نافذة، مش نسبة مئوية حقيقية (حساب نسبة محتاج مقام Mohamed ما حددهوش
+  صراحةً) — موثّق في كود `fraud_tasks.py` وPROJECT_STATUS.md، سهل التوسيع لاحقًا. `find_fraud_signals()`
+  هي المنطق القابل للاختبار (استعلامات + عتبات، مفيش Celery/Redis هنا). 8 اختبار جديد = 1715 اختبار
+  إجمالي.
 
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش
@@ -983,7 +1004,7 @@ ETA_ENABLED=false
 ❌ لا تستخدم float للأموال
 ❌ لا تخزّن PII بدون EncryptedString
 ❌ لا تغيّر role/is_active بدون revoke_user_tokens()
-❌ لا تضيف Celery task بدون تسجيله في celery_app.py
+❌ لا تنسى تضيف Celery task دوري في celery_app.py's beat_schedule (التسجيل نفسه أوتوماتيكي — راجع §13 بند ❹)
 ❌ لا تضيف migration بدون التحقق من alembic heads
 ❌ لا تُرجع list endpoint بدون pagination
 ❌ لا تكسر أي test موجود
