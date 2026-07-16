@@ -163,6 +163,69 @@ class TestDiningOrderHTTP:
         assert len(body["items"]) == 1
         assert Decimal(str(body["subtotal"])) == Decimal("160.00")
 
+    def test_takeaway_service_charge_override_applies(self, client: TestClient, db, waiter_headers):
+        """2026-07-16، بحث مقارنة Click القديم: takeaway_service_charge_pct
+        override على المنفذ — لو صفر، مفيش رسم خدمة على طلبات التيك أواي
+        بس، النسبة العامة (12%) تفضل سارية على dine_in/باقي القنوات."""
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        outlet.takeaway_service_charge_pct = Decimal("0")
+        db.commit()
+        item = make_item_committed(db, branch, outlet)
+
+        resp = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway",
+                  "items": [{"item_id": item.id, "quantity": 2}]},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert Decimal(str(body["subtotal"])) == Decimal("160.00")
+        assert Decimal(str(body["service_charge"])) == Decimal("0.00")
+        assert Decimal(str(body["vat_amount"])) == Decimal("22.40")
+        assert Decimal(str(body["total"])) == Decimal("182.40")
+
+    def test_delivery_fee_added_to_total_and_survives_item_void(
+        self, client: TestClient, db, waiter_headers, manager_headers,
+    ):
+        """رسم توصيل ثابت (delivery_fee) بيتضاف للـ total — ولازم يفضل زي
+        ما هو حتى بعد إلغاء صنف (رسم ثابت مش نسبة، مش لازم يتصفّر)."""
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        outlet.delivery_fee = Decimal("15.00")
+        db.commit()
+        item = make_item_committed(db, branch, outlet)
+
+        order_resp = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "delivery",
+                  "items": [{"item_id": item.id, "quantity": 2}]},
+            headers=waiter_headers,
+        )
+        assert order_resp.status_code == 201, order_resp.text
+        order = order_resp.json()
+        # subtotal=160 → vat=22.40، svc=19.20 (12% عام، مفيش override
+        # delivery)، delivery_fee=15 → total=216.60
+        assert Decimal(str(order["delivery_fee"])) == Decimal("15.00")
+        assert Decimal(str(order["total"])) == Decimal("216.60")
+
+        # الصنف سطر واحد بكمية 2 — إلغاؤه بيلغي السطر كله (مش وحدة واحدة
+        # بس)، فـ subtotal/vat/svc كلهم بيرجعوا صفر. delivery_fee لازم
+        # يفضل 15 بالظبط رغم كده (رسم ثابت، مش نسبة من الأصناف) — إثبات
+        # أقوى إنه مش بيتصفّر مع باقي الحسابات.
+        item_id = order["items"][0]["id"]
+        void_resp = client.patch(
+            f"/api/v1/dining/orders/{order['id']}/items/{item_id}/void",
+            json={"reason": "إلغاء السطر بالكامل"},
+            headers=manager_headers,
+        )
+        assert void_resp.status_code == 200, void_resp.text
+        after = void_resp.json()
+        assert Decimal(str(after["subtotal"])) == Decimal("0.00")
+        assert Decimal(str(after["delivery_fee"])) == Decimal("15.00")
+        assert Decimal(str(after["total"])) == Decimal("15.00")
+
     def test_create_order_outlet_id_mismatch_rejected(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)

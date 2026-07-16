@@ -877,6 +877,54 @@ class TestCashMovementHTTP:
         assert resp.status_code == 201, resp.text
         assert resp.json()["approved_by"] == manager_id
 
+    def test_safe_drop_with_destination_stored(self, client: TestClient, db, manager_headers):
+        """2026-07-16، بحث مقارنة Click القديم: safe_drop بيقدر يسجّل فين
+        رايح الكاش (خزنة رئيسية/بنك/صندوق عهدة)."""
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift(client, manager_headers, branch.id)
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/cash-movements",
+            json={
+                "movement_type": "safe_drop", "amount": "300.00", "reason": "تنزيل خزنة نهاية اليوم",
+                "destination": "main_safe",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["destination"] == "main_safe"
+
+    def test_destination_rejected_for_non_safe_drop(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift(client, manager_headers, branch.id)
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/cash-movements",
+            json={
+                "movement_type": "cash_in", "amount": "100.00", "reason": "عهدة",
+                "destination": "main_safe",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "destination" in resp.json()["detail"]
+
+    def test_cash_movement_with_cost_center_stored(self, client: TestClient, db, manager_headers):
+        from app.modules.finance.models import CostCenter
+        branch = make_branch_committed(db)
+        cc = CostCenter(branch_id=branch.id, code="REST", name="Restaurant")
+        db.add(cc)
+        db.commit()
+        shift_id = self._open_shift(client, manager_headers, branch.id)
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/cash-movements",
+            json={
+                "movement_type": "petty_cash", "amount": "50.00", "reason": "عهدة نثرية",
+                "cost_center_id": cc.id,
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["cost_center_id"] == cc.id
+
     def test_cashier_cannot_list_cash_movements(self, client: TestClient, db, cashier_headers, manager_headers):
         """راجع Batch 4 — سجل حركات الكاش تفصيل من سجل التدقيق (مين نفّذ/
         وافق)، زي /audit-logs بالظبط: مدير+ فقط، كاشير يترفض بـ 403."""

@@ -43,9 +43,20 @@ const MOVEMENT_TYPES: SelectOption[] = [
 ]
 const MOVEMENT_LABEL: Record<string, string> = Object.fromEntries(MOVEMENT_TYPES.map(o => [o.value, o.label]))
 
+// فين رايح الكاش — بس لـ safe_drop (2026-07-16، بحث مقارنة Click القديم:
+// الخزنة الرئيسية/البنك كانوا مواقع مستقلة، مش مجرد "خرج من الدرج").
+const DESTINATIONS: SelectOption[] = [
+  { value: 'main_safe', label: '🏦 الخزنة الرئيسية' },
+  { value: 'bank', label: '🏛️ تسليم بنكي' },
+  { value: 'petty_cash_box', label: '🧾 صندوق العهدة' },
+]
+const DESTINATION_LABEL: Record<string, string> = Object.fromEntries(DESTINATIONS.map(o => [o.value, o.label]))
+
 const movementType = ref<string>('cash_in')
 const amount = ref('')
 const reason = ref('')
+const destination = ref<string>('')
+const costCenterId = ref<string>('')
 const formError = ref('')
 const submitting = ref(false)
 const showPinGuard = ref(false)
@@ -53,6 +64,20 @@ const showPinGuard = ref(false)
 // drawer_open بدون أي بيع مرتبط — منطقيًا مبلغ صفر مقبول (فتح الدرج للفحص
 // بس)، بقية الأنواع محتاجة مبلغ حقيقي > 0.
 const amountRequired = computed(() => movementType.value !== 'drawer_open')
+const showDestination = computed(() => movementType.value === 'safe_drop')
+
+interface CostCenter { id: number; code: string; name: string }
+const costCenters = ref<CostCenter[]>([])
+const costCenterOptions = computed<SelectOption[]>(() => [
+  { value: '', label: '— بدون مركز تكلفة —' },
+  ...costCenters.value.map(c => ({ value: String(c.id), label: `${c.code} — ${c.name}` })),
+])
+async function loadCostCenters() {
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.costCenters)
+    costCenters.value = data
+  } catch { /* اختياري — فشل التحميل مش لازم يوقف الفورم */ }
+}
 
 function requestRecordMovement() {
   formError.value = ''
@@ -78,11 +103,15 @@ async function performRecordMovement(approverUserId: number | null, approverPin:
       movement_type: movementType.value,
       amount: amount.value || '0',
       reason: reason.value.trim(),
+      ...(showDestination.value && destination.value ? { destination: destination.value } : {}),
+      ...(costCenterId.value ? { cost_center_id: Number(costCenterId.value) } : {}),
       ...(approverUserId ? { approver_user_id: approverUserId, approver_pin: approverPin } : {}),
     })
     showPinGuard.value = false
     amount.value = ''
     reason.value = ''
+    destination.value = ''
+    costCenterId.value = ''
     toast.success('تم تسجيل الحركة ✓')
     if (canViewLedger.value) await loadLedger()
   } catch (e: any) {
@@ -95,6 +124,7 @@ async function performRecordMovement(approverUserId: number | null, approverPin:
 interface CashMovement {
   id: number; movement_type: string; amount: number | string; reason: string
   performed_by: number; approved_by: number | null; created_at: string
+  destination: string | null; cost_center_id: number | null
 }
 const ledger = ref<CashMovement[]>([])
 const loadingLedger = ref(false)
@@ -111,7 +141,10 @@ async function loadLedger() {
     loadingLedger.value = false
   }
 }
-onMounted(loadLedger)
+onMounted(() => {
+  loadLedger()
+  loadCostCenters()
+})
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
@@ -125,6 +158,10 @@ function fmtTime(iso: string): string {
         <AppSelect v-model="movementType" label="نوع الحركة" :options="MOVEMENT_TYPES" class="col-span-2 sm:col-span-1" />
         <MoneyInput v-model="amount" :label="amountRequired ? 'المبلغ' : 'المبلغ (اختياري)'" />
       </div>
+      <div v-if="showDestination" class="grid grid-cols-2 gap-2">
+        <AppSelect v-model="destination" label="فين رايح الكاش؟" :options="DESTINATIONS" class="col-span-2 sm:col-span-1" />
+      </div>
+      <AppSelect v-if="costCenters.length" v-model="costCenterId" label="مركز التكلفة (اختياري)" :options="costCenterOptions" />
       <AppTextarea v-model="reason" :rows="2" placeholder="السبب (إجباري)..." />
       <p v-if="formError" class="text-xs text-danger">{{ formError }}</p>
       <AppButton variant="secondary" block :loading="submitting" @click="requestRecordMovement">
@@ -139,7 +176,10 @@ function fmtTime(iso: string): string {
           <div v-else class="divide-y divide-stone-100 max-h-64 overflow-y-auto">
             <div v-for="m in ledger" :key="m.id" class="py-2 flex items-center justify-between gap-2">
               <div>
-                <div class="text-sm font-semibold text-gray-800">{{ MOVEMENT_LABEL[m.movement_type] ?? m.movement_type }}</div>
+                <div class="text-sm font-semibold text-gray-800">
+                  {{ MOVEMENT_LABEL[m.movement_type] ?? m.movement_type }}
+                  <span v-if="m.destination" class="text-xs font-normal text-gray-500">← {{ DESTINATION_LABEL[m.destination] ?? m.destination }}</span>
+                </div>
                 <div class="text-xs text-gray-400">
                   {{ m.reason }} — {{ fmtTime(m.created_at) }}
                   <span v-if="m.approved_by" class="text-emerald-600">— بموافقة مدير</span>

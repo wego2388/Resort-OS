@@ -54,12 +54,32 @@ def _get_outlet_or_404(db: Session, outlet_id: int) -> Outlet:
     return outlet
 
 
-def _service_charge_pct(outlet: Optional[Outlet]) -> Decimal:
-    """نسبة رسم الخدمة الفعلية للمنفذ — override بتاع الـ outlet لو موجود،
-    وإلا settings.SERVICE_CHARGE_PERCENTAGE العام (نفس سلوك restaurant/cafe
-    الحالي بالظبط، الاتنين كانوا بيستخدموا نفس القيمة العامة)."""
-    if outlet is not None and outlet.default_service_charge_pct is not None:
-        return outlet.default_service_charge_pct / Decimal("100")
+_ORDER_TYPE_SVC_OVERRIDE_ATTR = {
+    "takeaway":     "takeaway_service_charge_pct",
+    "delivery":     "delivery_service_charge_pct",
+    "room_service": "room_service_service_charge_pct",
+}
+
+
+def _service_charge_pct(outlet: Optional[Outlet], order_type: str = "dine_in") -> Decimal:
+    """نسبة رسم الخدمة الفعلية للمنفذ + قناة الطلب — override بتاع القناة
+    (takeaway/delivery/room_service) لو موجود، وإلا override عام للمنفذ لو
+    موجود، وإلا settings.SERVICE_CHARGE_PERCENTAGE العام.
+
+    2026-07-16 (بحث مقارنة Click القديم): Click كان بيفرّق فعليًا في
+    التسعير حسب القناة — عادة takeaway/delivery من غير رسم خدمة (مفيش
+    خدمة طاولة فعلية) وroom_service أحيانًا أعلى. **القيم دي كلها NULL
+    افتراضيًا** — صفر تغيير سلوك على أي منفذ موجود لحد ما مدير يفعّلها
+    صراحةً من إعدادات المنفذ (قرار تسعير حي يستاهل موافقة Mohamed، مش
+    افتراض تلقائي)."""
+    if outlet is not None:
+        override_attr = _ORDER_TYPE_SVC_OVERRIDE_ATTR.get(order_type)
+        if override_attr is not None:
+            override = getattr(outlet, override_attr, None)
+            if override is not None:
+                return override / Decimal("100")
+        if outlet.default_service_charge_pct is not None:
+            return outlet.default_service_charge_pct / Decimal("100")
     return Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
 
 
@@ -399,9 +419,16 @@ def create_order(
         })
 
     vat_pct    = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
-    svc_pct    = _service_charge_pct(outlet)
+    svc_pct    = _service_charge_pct(outlet, data.order_type)
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
+
+    # رسم توصيل ثابت — بس delivery، ولقطة وقت الإنشاء (رسم ثابت مش نسبة،
+    # فمش محتاج إعادة حساب لما الأصناف تتغيّر بعدين، راجع add_items_to_order
+    # وvoid_order_item تحت).
+    delivery_fee = Decimal("0")
+    if data.order_type == "delivery" and outlet is not None and outlet.delivery_fee:
+        delivery_fee = outlet.delivery_fee
 
     # خصم مجموعة العميل الدائم (standing discount) — تلقائي بالكامل لو
     # الطلب مرتبط بعميل عنده مجموعة نشطة، من غير أي تدخّل يدوي أو موافقة
@@ -409,7 +436,7 @@ def create_order(
     # راجع _resolve_order_discount تحت لقرار "الأفضل يفوز، مش تراكم" لما
     # الاتنين يتقابلوا لاحقًا على نفس الطلب).
     discount_amount = _customer_group_discount_amount(db, data.customer_id, subtotal)
-    total = max(Decimal("0"), subtotal + vat_amount + svc_charge - discount_amount)
+    total = max(Decimal("0"), subtotal + vat_amount + svc_charge + delivery_fee - discount_amount)
 
     order_number = crud.generate_order_number(db, branch_id)
 
@@ -431,6 +458,7 @@ def create_order(
         status="held" if hold else "open",
         customer_id=data.customer_id,
         discount_amount=discount_amount,
+        delivery_fee=delivery_fee,
     )
 
     if data.table_id and data.order_type == "dine_in":
@@ -491,7 +519,7 @@ def add_items_to_order(db: Session, order_id: int, items: list) -> DiningOrder:
         added_subtotal += (base_price + extra_price) * item_req.quantity
 
     vat_pct   = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
-    svc_pct   = _service_charge_pct(outlet)
+    svc_pct   = _service_charge_pct(outlet, order.order_type)
     new_sub   = order.subtotal + added_subtotal
     new_vat   = (new_sub * vat_pct).quantize(Decimal("0.01"))
     new_svc   = (new_sub * svc_pct).quantize(Decimal("0.01"))
@@ -505,7 +533,9 @@ def add_items_to_order(db: Session, order_id: int, items: list) -> DiningOrder:
     # بيعمل كده خالص). دلوقتي بيعيد حساب أفضل خصم (مجموعة أو قاعدة شرطية)
     # زي void_order_item بالظبط.
     discount_amount, applied_rule_id = _resolve_order_discount(db, order, new_sub)
-    new_total = max(Decimal("0"), new_sub + new_vat + new_svc - discount_amount)
+    # order.delivery_fee رسم ثابت اتحدد وقت الإنشاء — بيفضل زي ما هو هنا،
+    # مش بيتصفّر ولا بيتعاد حسابه (راجع تعليق DiningOrder.delivery_fee).
+    new_total = max(Decimal("0"), new_sub + new_vat + new_svc + order.delivery_fee - discount_amount)
 
     order.subtotal                 = new_sub
     order.vat_amount               = new_vat
@@ -840,7 +870,7 @@ def void_order_item(
 
     outlet = crud.get_outlet(db, order.outlet_id)
     vat_pct    = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
-    svc_pct    = _service_charge_pct(outlet)
+    svc_pct    = _service_charge_pct(outlet, order.order_type)
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
 
@@ -851,7 +881,9 @@ def void_order_item(
     # قديم بعد إلغاء صنف).
     discount_amount, applied_rule_id = _resolve_order_discount(db, order, subtotal)
 
-    total = max(Decimal("0"), subtotal + vat_amount + svc_charge - discount_amount)
+    # order.delivery_fee رسم ثابت اتحدد وقت الإنشاء — بيفضل زي ما هو (نفس
+    # منطق add_items_to_order بالظبط).
+    total = max(Decimal("0"), subtotal + vat_amount + svc_charge + order.delivery_fee - discount_amount)
 
     order.subtotal                 = subtotal
     order.vat_amount               = vat_amount

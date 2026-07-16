@@ -175,7 +175,18 @@ class CashMovement(Base, TimestampMixin):
     كل حركة (بغض النظر عن نوعها) من مستوى أقل من مدير محتاجة موافقة PIN —
     راجع finance.services.record_cash_movement و core.services.resolve_pin_approval
     (نفس الدالة المركزية المستخدمة في void/discount/close_shift variance،
-    مفيش نظام موافقة موازي)."""
+    مفيش نظام موافقة موازي).
+
+    ``destination`` (2026-07-16، بحث مقارنة Click القديم): Click كان بيمثّل
+    الخزنة الرئيسية/البنك/الفيزا كمواقع مستقلة كل واحدة ليها حساب GL خاص —
+    قرار متعمد إننا *مانبنيش* ledger موازي كامل بأرصدة تراكمية لكل موقع في
+    الدفعة دي (ده تحسين تاني أكبر، مش استخراج). اللي فعليًا مفيد ومنخفض
+    المخاطرة: تسجيل *فين رايح* الكاش لما يسيب الدرج (``safe_drop`` بس —
+    باقي الأنواع تبادل جوه الدرج نفسه، مفيش "وجهة" منطقية ليها). ``None``
+    لأي نوع حركة تاني، أو لـ safe_drop قديم اتسجّل قبل الحقل ده.
+    ``cost_center_id``: تاجّ اختياري، مفيش اشتقاق تلقائي زي outlet_type→
+    cost_center في dining/beach (مفيش "منفذ" واضح لحركة كاش يدوية عامة) —
+    الكاشير/المحاسب بيختاره وقت التسجيل لو حابب."""
     __tablename__ = "cash_movements"
 
     id:            Mapped[int]           = mapped_column(primary_key=True)
@@ -185,6 +196,11 @@ class CashMovement(Base, TimestampMixin):
     # cash_in | cash_out | petty_cash | safe_drop | drawer_open | correction
     amount:        Mapped[Decimal]       = mapped_column(Numeric(10, 2), default=Decimal("0"))
     reason:        Mapped[str]           = mapped_column(String(500))
+    destination:    Mapped[str | None]   = mapped_column(String(20), nullable=True)
+    # main_safe | bank | petty_cash_box — بس لـ movement_type="safe_drop"
+    cost_center_id: Mapped[int | None]   = mapped_column(
+        ForeignKey("cost_centers.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
     performed_by:  Mapped[int]           = mapped_column(Integer)
     approved_by:   Mapped[int | None]    = mapped_column(Integer, nullable=True)
 

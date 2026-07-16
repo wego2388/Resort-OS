@@ -322,10 +322,12 @@ def list_shifts(
 def create_cash_movement(
     db: Session, branch_id: int, shift_id: int, movement_type: str,
     amount: Decimal, reason: str, performed_by: int, approved_by: Optional[int] = None,
+    destination: Optional[str] = None, cost_center_id: Optional[int] = None,
 ) -> CashMovement:
     row = CashMovement(
         branch_id=branch_id, shift_id=shift_id, movement_type=movement_type,
         amount=amount, reason=reason, performed_by=performed_by, approved_by=approved_by,
+        destination=destination, cost_center_id=cost_center_id,
     )
     db.add(row)
     db.flush()
