@@ -10,7 +10,7 @@ import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToas
 const auth = useAuthStore()
 const toast = useToast()
 const { confirm } = useConfirm()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const branchId = auth.branchId
 
 interface Payment {
   id: number; contract_id: number; due_date: string; amount: number
@@ -261,7 +261,7 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
 <template>
   <div dir="rtl">
     <div class="flex items-center justify-between mb-6">
-      <h2 class="text-2xl font-black text-gray-900">عقود الإيجار التجاري</h2>
+      <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">عقود الإيجار التجاري</h2>
       <AppButton v-if="auth.hasRole('manager')" size="sm" @click="openCreateContract">+ عقد جديد</AppButton>
     </div>
 
@@ -271,14 +271,14 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
       <p class="text-xs font-bold text-amber-800 mb-2">⏰ عقود قرب انتهائها ({{ expiringSoonContracts.length }})</p>
       <div class="flex flex-wrap gap-2">
         <span v-for="c in expiringSoonContracts" :key="c.id"
-          class="text-xs bg-white border border-amber-200 rounded-full px-2.5 py-1 text-amber-700">
+          class="text-xs bg-white dark:bg-surface border border-amber-200 rounded-full px-2.5 py-1 text-amber-700">
           {{ c.tenant_name }} — {{ c.days_until_expiry === 0 ? 'ينتهي اليوم' : `${c.days_until_expiry} يوم` }}
         </span>
       </div>
     </div>
 
     <div class="flex gap-2 mb-4">
-      <select v-model="statusFilter" @change="loadContracts" class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm">
+      <select v-model="statusFilter" @change="loadContracts" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm">
         <option value="">كل الحالات</option>
         <option v-for="(cfg, key) in statusConfig" :key="key" :value="key">{{ cfg.label }}</option>
       </select>
@@ -291,18 +291,18 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
           <div class="flex items-center justify-between">
             <div>
               <div class="flex items-center gap-2 mb-1">
-                <span class="font-mono text-xs text-gray-400">{{ c.contract_number }}</span>
-                <span class="font-bold text-gray-900">{{ c.tenant_name }}</span>
+                <span class="font-mono text-xs text-gray-400 dark:text-gray-500">{{ c.contract_number }}</span>
+                <span class="font-bold text-gray-900 dark:text-gray-100">{{ c.tenant_name }}</span>
               </div>
-              <div class="text-sm text-gray-500">{{ c.unit_description }}</div>
-              <div class="text-xs text-gray-400 mt-1">
+              <div class="text-sm text-gray-500 dark:text-gray-500">{{ c.unit_description }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">
                 {{ c.start_date }} → {{ c.end_date }} · {{ paymentPeriodLabels[c.payment_period] }}
               </div>
             </div>
             <div class="flex items-center gap-3">
               <div class="text-left">
                 <div class="font-bold text-blue-700">{{ Number(c.base_rent).toLocaleString('ar-EG') }} ج</div>
-                <div class="text-[10px] text-gray-400">الإيجار الأساسي</div>
+                <div class="text-[10px] text-gray-400 dark:text-gray-500">الإيجار الأساسي</div>
               </div>
               <AppBadge size="sm" :variant="statusConfig[c.status]?.variant ?? 'neutral'">
                 {{ statusConfig[c.status]?.label ?? c.status }}
@@ -311,9 +311,9 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
           </div>
         </div>
 
-        <div v-if="expandedId === c.id" class="border-t border-stone-100 p-4 bg-stone-50">
+        <div v-if="expandedId === c.id" class="border-t border-stone-100 dark:border-border/50 p-4 bg-stone-50 dark:bg-gray-800/60">
           <div class="flex items-center justify-between mb-3">
-            <h4 class="font-bold text-sm text-gray-700">الدفعات</h4>
+            <h4 class="font-bold text-sm text-gray-700 dark:text-gray-300">الدفعات</h4>
             <div class="flex gap-2" v-if="auth.hasRole('manager')">
               <AppButton size="sm" variant="secondary" @click="openEditContract(c)">تعديل العقد</AppButton>
               <AppButton size="sm" variant="secondary" @click="applyPenalties(c)">تطبيق غرامات التأخير</AppButton>
@@ -324,7 +324,7 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
           <div class="overflow-x-auto mb-4">
             <table class="w-full text-sm">
               <thead>
-                <tr class="text-xs text-gray-400">
+                <tr class="text-xs text-gray-400 dark:text-gray-500">
                   <th class="text-right py-1">الاستحقاق</th>
                   <th class="text-right py-1">المبلغ</th>
                   <th class="text-right py-1">غرامة</th>
@@ -334,7 +334,7 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="p in c.payments" :key="p.id" class="border-t border-stone-100">
+                <tr v-for="p in c.payments" :key="p.id" class="border-t border-stone-100 dark:border-border/50">
                   <td class="py-2">{{ p.due_date }}</td>
                   <td class="py-2 font-medium">{{ Number(p.amount).toLocaleString('ar-EG') }} ج</td>
                   <td class="py-2 text-red-500">{{ Number(p.penalty).toLocaleString('ar-EG') }} ج</td>
@@ -352,19 +352,19 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
                   </td>
                 </tr>
                 <tr v-if="c.payments.length === 0">
-                  <td colspan="6" class="py-6 text-center text-gray-400 text-xs">لا توجد دفعات مجدولة</td>
+                  <td colspan="6" class="py-6 text-center text-gray-400 dark:text-gray-500 text-xs">لا توجد دفعات مجدولة</td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <h4 class="font-bold text-sm text-gray-700 mb-2">سجل كاش المستأجر</h4>
+          <h4 class="font-bold text-sm text-gray-700 dark:text-gray-300 mb-2">سجل كاش المستأجر</h4>
           <div class="space-y-1">
             <div v-for="log in (cashLogsByContract[c.id] ?? [])" :key="log.id"
-              class="flex items-center justify-between text-sm bg-white rounded-lg px-3 py-2 border border-stone-100">
+              class="flex items-center justify-between text-sm bg-white dark:bg-surface rounded-lg px-3 py-2 border border-stone-100 dark:border-border/50">
               <span>{{ activityTypeLabels[log.activity_type] ?? log.activity_type }}</span>
               <span class="font-bold">{{ Number(log.amount).toLocaleString('ar-EG') }} ج</span>
-              <span class="text-xs text-gray-400">{{ new Date(log.created_at).toLocaleDateString('ar-EG') }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-500">{{ new Date(log.created_at).toLocaleDateString('ar-EG') }}</span>
             </div>
             <EmptyState v-if="(cashLogsByContract[c.id] ?? []).length === 0" icon="💵" title="لا توجد حركات كاش" />
           </div>
@@ -378,40 +378,40 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <template v-if="!contractModal.editingId">
           <input v-model="contractForm.tenant_name" type="text" placeholder="اسم المستأجر"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
           <input v-model="contractForm.unit_description" type="text" placeholder="وصف الوحدة"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
           <input v-model="contractForm.tenant_phone" type="text" placeholder="هاتف المستأجر"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="contractForm.tenant_national_id" type="text" placeholder="الرقم القومي"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
-          <div><label class="block text-xs text-gray-400 mb-1">تاريخ البداية</label>
-            <input v-model="contractForm.start_date" type="date" class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-full" /></div>
-          <div><label class="block text-xs text-gray-400 mb-1">تاريخ النهاية</label>
-            <input v-model="contractForm.end_date" type="date" class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-full" /></div>
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+          <div><label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">تاريخ البداية</label>
+            <input v-model="contractForm.start_date" type="date" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full" /></div>
+          <div><label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">تاريخ النهاية</label>
+            <input v-model="contractForm.end_date" type="date" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full" /></div>
           <input v-model="contractForm.base_rent" type="number" step="0.01" placeholder="الإيجار الأساسي"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="contractForm.increase_rate" type="number" step="0.01" placeholder="نسبة الزيادة السنوية %"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
-          <select v-model="contractForm.payment_period" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+          <select v-model="contractForm.payment_period" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option v-for="(label, val) in paymentPeriodLabels" :key="val" :value="val">{{ label }}</option>
           </select>
           <input v-model="contractForm.security_deposit" type="number" step="0.01" placeholder="التأمين"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="contractForm.billing_day" type="number" min="1" max="28" placeholder="يوم الاستحقاق الشهري"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="contractForm.grace_months" type="number" min="0" placeholder="أشهر السماح"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </template>
         <template v-else>
           <input v-model="contractForm.tenant_phone" type="text" placeholder="هاتف المستأجر"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
-          <select v-model="contractForm.status" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+          <select v-model="contractForm.status" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option v-for="(cfg, key) in statusConfig" :key="key" :value="key">{{ cfg.label }}</option>
           </select>
         </template>
         <textarea v-model="contractForm.notes" placeholder="ملاحظات" rows="2"
-          class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+          class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
       </div>
       <template #footer>
         <AppButton :loading="savingContract" @click="saveContract">حفظ</AppButton>
@@ -422,15 +422,15 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
     <AppModal :open="payModal.open" title="تسجيل دفعة إيجار" size="sm" @close="payModal.open = false">
       <div class="space-y-3">
         <input v-model="payForm.paid_amount" type="number" step="0.01" placeholder="المبلغ المدفوع"
-          class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-full" />
-        <select v-model="payForm.payment_method" class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-full">
+          class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full" />
+        <select v-model="payForm.payment_method" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full">
           <option value="cash">كاش</option>
           <option value="card">بطاقة</option>
           <option value="bank_transfer">تحويل بنكي</option>
           <option value="other">أخرى</option>
         </select>
         <input v-model="payForm.receipt_number" type="text" placeholder="رقم الإيصال (اختياري)"
-          class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-full" />
+          class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full" />
       </div>
       <template #footer>
         <AppButton :loading="payingInProgress" @click="submitPayment">تأكيد الدفع</AppButton>
@@ -441,12 +441,12 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
     <AppModal :open="cashLogModal.open" title="حركة كاش جديدة" size="sm" @close="cashLogModal.open = false">
       <div class="space-y-3">
         <input v-model="cashLogForm.amount" type="number" step="0.01" placeholder="المبلغ"
-          class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-full" />
-        <select v-model="cashLogForm.activity_type" class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-full">
+          class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full" />
+        <select v-model="cashLogForm.activity_type" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full">
           <option v-for="(label, val) in activityTypeLabels" :key="val" :value="val">{{ label }}</option>
         </select>
         <input v-model="cashLogForm.reference" type="text" placeholder="مرجع (اختياري)"
-          class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-full" />
+          class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full" />
       </div>
       <template #footer>
         <AppButton :loading="savingCashLog" @click="saveCashLog">حفظ</AppButton>

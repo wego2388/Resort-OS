@@ -31,7 +31,7 @@ def list_assets(
     category: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    size: int = Query(20, ge=1, le=200),
 ):
     items, total = crud.list_assets(db, branch_id, category, status,
                                     skip=(page - 1) * size, limit=size)

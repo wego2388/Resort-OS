@@ -119,7 +119,7 @@ fi
 info "Starting backend (port 8005)..."
 cd "$BACKEND"
 : > "$LOG_DIR/api.log"   # truncate — avoids reading a stale bind-error from a previous run below
-nohup python -m uvicorn app.main:app --reload --port 8005 --host 127.0.0.1 \
+nohup python -m uvicorn app.main:app --reload --port 8005 --host 0.0.0.0 \
   > "$LOG_DIR/api.log" 2>&1 &
 BACKEND_PID=$!
 echo "$BACKEND_PID" > "$PID_DIR/backend.pid"

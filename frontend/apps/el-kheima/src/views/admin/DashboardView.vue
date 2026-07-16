@@ -6,10 +6,12 @@
 // both calls always 404'd and every card silently fell back to 0 — an admin
 // opening the dashboard for the first time had no way to tell "no data yet"
 // apart from "this is broken". Rewired to the real endpoints below.
-import { ref, onMounted, onUnmounted } from 'vue'
-import { api, ENDPOINTS } from '@resort-os/core'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { api, useAuthStore, useResortWebSocket, ENDPOINTS } from '@resort-os/core'
+import { StatCard } from '@resort-os/ui'
 
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 interface DashboardData {
   today_revenue: number; yesterday_revenue: number
@@ -34,9 +36,9 @@ async function fetchUrgentAlerts() {
   const today = isoDate(new Date())
   const [stockRes, maintOpenRes, maintInProgressRes, tsRes, checksRes] = await Promise.allSettled([
     api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId, low_stock_only: true, size: 1 } }),
-    api.get('/api/v1/maintenance/work-orders', { params: { branch_id: branchId, status: 'open', size: 100 } }),
-    api.get('/api/v1/maintenance/work-orders', { params: { branch_id: branchId, status: 'in_progress', size: 100 } }),
-    api.get('/api/v1/timeshare/cs-summary', { params: { branch_id: branchId } }),
+    api.get(ENDPOINTS.maintenance.workOrders, { params: { branch_id: branchId, status: 'open', size: 100 } }),
+    api.get(ENDPOINTS.maintenance.workOrders, { params: { branch_id: branchId, status: 'in_progress', size: 100 } }),
+    api.get(ENDPOINTS.timeshare.csSummary, { params: { branch_id: branchId } }),
     api.get(ENDPOINTS.finance.checks, { params: { branch_id: branchId, status: 'bounced' } }),
   ])
 
@@ -123,6 +125,8 @@ async function fetchDashboard() {
     loadError.value = true
   } finally {
     loading.value = false
+    lastUpdatedAt.value = new Date()
+    updateLastUpdatedLabel()
   }
 }
 
@@ -132,10 +136,40 @@ function revenueChange(current: number, previous: number) {
   return { pct: Math.abs(pct), up: pct >= 0 }
 }
 
+// computed trend للـ StatCard — موجب = ↑ أخضر, سالب = ↓ أحمر
+const revenueTrend = computed(() => {
+  if (!data.value || !data.value.yesterday_revenue) return undefined
+  const { pct, up } = revenueChange(data.value.today_revenue, data.value.yesterday_revenue)
+  return up ? pct : -pct
+})
+
 // #6: إيقاف refresh لما الـ tab في الخلفية — بيوفر API calls غير ضرورية
 // ويمنع تحديث البيانات لما المستخدم مش شايف الشاشة
 const REFRESH_INTERVAL_MS = 60_000
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+// آخر تحديث
+const lastUpdatedAt = ref<Date | null>(null)
+const lastUpdatedLabel = ref('')
+let labelTimer: ReturnType<typeof setInterval> | null = null
+
+function updateLastUpdatedLabel() {
+  if (!lastUpdatedAt.value) { lastUpdatedLabel.value = ''; return }
+  const secs = Math.floor((Date.now() - lastUpdatedAt.value.getTime()) / 1000)
+  if (secs < 10) lastUpdatedLabel.value = 'الآن'
+  else if (secs < 60) lastUpdatedLabel.value = `منذ ${secs} ثانية`
+  else lastUpdatedLabel.value = `منذ ${Math.floor(secs / 60)} دقيقة`
+}
+
+// ── WebSocket — تحديثات لحظية للإيرادات عبر قناة KDS ────────────────────
+// tickets_updated يُبث عند كل أوردر جديد/دفع — فرصة لإعادة تحميل KPIs
+// (الباكند مالوش WS مخصص للـ dashboard — نفس القناة الوحيدة المتاحة هي KDS)
+const { onMessage: onKdsMessage } = useResortWebSocket(ENDPOINTS.dining.kdsWs(branchId))
+onKdsMessage((data: any) => {
+  if (data?.type === 'tickets_updated') {
+    fetchDashboard()
+  }
+})
 
 function handleVisibilityChange() {
   if (document.hidden) {
@@ -148,15 +182,70 @@ function handleVisibilityChange() {
   }
 }
 
+// ── Analytics sub-cards (HR / Maintenance / CRM / Inventory) ──────────────
+interface AnalyticsSummary {
+  hr: { active_employees: number; last_payroll_month: string | null } | null
+  maintenance: { open_orders: number; critical_orders: number } | null
+  crm: { total_customers: number; open_opportunities: number } | null
+  inventory: { low_stock_count: number; out_of_stock_count: number } | null
+}
+const analyticsSummary = ref<AnalyticsSummary>({ hr: null, maintenance: null, crm: null, inventory: null })
+
+async function fetchAnalyticsSummary() {
+  const [hrRes, maintRes, crmRes, invRes] = await Promise.allSettled([
+    api.get(ENDPOINTS.analytics.hr, { params: { branch_id: branchId } }),
+    api.get(ENDPOINTS.analytics.maintenance, { params: { branch_id: branchId } }),
+    api.get(ENDPOINTS.analytics.crm, { params: { branch_id: branchId } }),
+    api.get(ENDPOINTS.analytics.inventory, { params: { branch_id: branchId } }),
+  ])
+  analyticsSummary.value = {
+    hr:          hrRes.status === 'fulfilled'   ? hrRes.value.data   : null,
+    maintenance: maintRes.status === 'fulfilled' ? maintRes.value.data : null,
+    crm:         crmRes.status === 'fulfilled'   ? crmRes.value.data   : null,
+    inventory:   invRes.status === 'fulfilled'   ? invRes.value.data   : null,
+  }
+}
+
+// ── Timeshare Upcoming Visits widget ──────────────────────────────────
+interface UpcomingVisit {
+  id: number; contract_id: number; guest_name: string
+  visit_start: string; visit_end: string; unit_name?: string | null; status: string
+}
+const upcomingVisits = ref<UpcomingVisit[]>([])
+
+async function fetchUpcomingVisits() {
+  try {
+    const { data } = await api.get(ENDPOINTS.timeshare.upcomingVisits, { params: { branch_id: branchId, size: 5 } })
+    upcomingVisits.value = data.items ?? data ?? []
+  } catch { /* non-critical widget */ }
+}
+
+const todayLabel = new Date().toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+
+// Quick links
+const quickLinks = [  { path: '/admin/hr',        label: 'الموارد البشرية', icon: '👥', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
+  { path: '/admin/finance',   label: 'التقارير المالية', icon: '📊', color: 'bg-green-50 border-green-200 hover:bg-green-100' },
+  { path: '/admin/inventory', label: 'المخزون',          icon: '📦', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
+  { path: '/admin/crm',       label: 'إدارة العملاء',    icon: '🤝', color: 'bg-purple-50 border-purple-200 hover:bg-purple-100' },
+  { path: '/admin/analytics', label: 'التحليلات',        icon: '📈', color: 'bg-pink-50 border-pink-200 hover:bg-pink-100' },
+  { path: '/admin/dining-menu', label: 'إدارة الدايننج', icon: '🍽️', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
+  { path: '/admin/maintenance', label: 'الصيانة',        icon: '🔧', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
+  { path: '/admin/settings',  label: 'الإعدادات',        icon: '⚙️', color: 'bg-gray-50 border-gray-200 hover:bg-gray-100' },
+]
+
 onMounted(() => {
   fetchDashboard()
   fetchUrgentAlerts()
+  fetchAnalyticsSummary()
+  fetchUpcomingVisits()
   refreshTimer = setInterval(() => { fetchDashboard(); fetchUrgentAlerts() }, REFRESH_INTERVAL_MS)
+  labelTimer = setInterval(updateLastUpdatedLabel, 10_000)
   document.addEventListener('visibilitychange', handleVisibilityChange)
 })
 
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
+  if (labelTimer) clearInterval(labelTimer)
   document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 </script>
@@ -165,12 +254,15 @@ onUnmounted(() => {
   <div dir="rtl">
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h2 class="text-2xl font-black text-gray-900">لوحة التحكم</h2>
-        <p class="text-sm text-gray-500 mt-0.5">{{ new Date().toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) }}</p>
+        <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">لوحة التحكم</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-500 mt-0.5">{{ todayLabel }}</p>
       </div>
-      <button @click="fetchDashboard" :class="['px-4 py-2 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors', loading ? 'opacity-70' : '']">
-        {{ loading ? 'جاري التحديث...' : '🔄 تحديث' }}
-      </button>
+      <div class="flex items-center gap-3">
+        <span v-if="lastUpdatedLabel" class="text-xs text-gray-400 dark:text-gray-500">آخر تحديث: {{ lastUpdatedLabel }}</span>
+        <button @click="fetchDashboard" :class="[`px-4 py-2 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors`, loading ? `opacity-70` : ``]">
+          {{ loading ? 'جاري التحديث...' : '🔄 تحديث' }}
+        </button>
+      </div>
     </div>
 
     <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between mb-5">
@@ -183,23 +275,23 @@ onUnmounted(() => {
       <p class="text-sm font-black text-red-800 mb-3">🚨 تنبيهات عاجلة ({{ alertsTotal() }})</p>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <router-link v-if="alerts.lowStock" to="/admin/inventory"
-          class="bg-white rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500">📦 مخزون منخفض</div>
+          class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
+          <div class="text-xs text-gray-500 dark:text-gray-500">📦 مخزون منخفض</div>
           <div class="text-lg font-black text-red-600">{{ alerts.lowStock }}</div>
         </router-link>
         <router-link v-if="alerts.overdueMaintenance" to="/admin/maintenance"
-          class="bg-white rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500">🔧 صيانة متأخرة</div>
+          class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
+          <div class="text-xs text-gray-500 dark:text-gray-500">🔧 صيانة متأخرة</div>
           <div class="text-lg font-black text-red-600">{{ alerts.overdueMaintenance }}</div>
         </router-link>
         <router-link v-if="alerts.overdueInstallments" to="/admin/timeshare"
-          class="bg-white rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500">🏨 أقساط متأخرة</div>
+          class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
+          <div class="text-xs text-gray-500 dark:text-gray-500">🏨 أقساط متأخرة</div>
           <div class="text-lg font-black text-red-600">{{ alerts.overdueInstallments }}</div>
         </router-link>
         <router-link v-if="alerts.bouncedChecks" to="/admin/finance"
-          class="bg-white rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500">🏦 شيكات مرتجعة</div>
+          class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
+          <div class="text-xs text-gray-500 dark:text-gray-500">🏦 شيكات مرتجعة</div>
           <div class="text-lg font-black text-red-600">{{ alerts.bouncedChecks }}</div>
         </router-link>
       </div>
@@ -207,77 +299,162 @@ onUnmounted(() => {
 
     <!-- KPI Cards -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-      <!-- Revenue Today -->
-      <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 bg-green-100 rounded-xl flex items-center justify-center text-lg">💰</div>
-          <span class="text-sm font-medium text-gray-500">إيراد اليوم</span>
-        </div>
-        <div class="text-3xl font-black text-gray-900">
-          {{ loading ? '...' : (data?.today_revenue ?? 0).toLocaleString('ar-EG') }}
-        </div>
-        <div class="text-xs text-gray-400 mt-1">جنيه مصري</div>
-        <div v-if="data && data.yesterday_revenue" class="flex items-center gap-1 mt-2 text-xs">
-          <span :class="revenueChange(data.today_revenue, data.yesterday_revenue).up ? 'text-green-600' : 'text-red-500'">
-            {{ revenueChange(data.today_revenue, data.yesterday_revenue).up ? '↑' : '↓' }}
-            {{ revenueChange(data.today_revenue, data.yesterday_revenue).pct }}%
-          </span>
-          <span class="text-gray-400">مقارنة بالأمس</span>
+      <StatCard
+        label="إيراد اليوم"
+        :value="loading ? '...' : (data?.today_revenue ?? 0).toLocaleString('ar-EG') + ' ج'"
+        icon="currency"
+        variant="success"
+        :trend="revenueTrend"
+        trend-label="مقارنة بالأمس"
+        :loading="loading"
+      />
+
+      <!-- Occupancy — يحتفظ بالـ progress bar اليدوي داخل slot لأن StatCard مافيهاش progress bar -->
+      <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border shadow-elevation-1 p-5">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <p class="text-sm text-muted font-medium">إشغال الأوضة</p>
+            <div v-if="loading" class="h-8 w-24 mt-2 rounded bg-background animate-pulse" />
+            <p v-else class="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1 tabular-nums">
+              {{ data?.occupancy_rate ?? 0 }}<span class="text-base font-normal text-muted">%</span>
+            </p>
+            <div class="mt-2">
+              <div class="w-full bg-gray-200 rounded-full h-1.5">
+                <div class="bg-primary-600 h-1.5 rounded-full transition-all" :style="{ width: (data?.occupancy_rate ?? 0) + '%' }" />
+              </div>
+            </div>
+            <p class="text-xs text-muted mt-1">{{ data?.active_bookings ?? 0 }} حجز نشط</p>
+          </div>
+          <div class="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 bg-primary-50 text-primary-700 text-lg">🏨</div>
         </div>
       </div>
 
-      <!-- Occupancy -->
-      <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-lg">🏨</div>
-          <span class="text-sm font-medium text-gray-500">إشغال الأوضة</span>
+      <StatCard
+        label="الشاطئ اليوم"
+        :value="loading ? '...' : (data?.beach_sold_today ?? 0)"
+        icon="cart"
+        variant="warning"
+        trend-label="تذكرة مباعة"
+        :loading="loading"
+      />
+
+      <StatCard
+        label="مهام التنظيف"
+        :value="loading ? '...' : (data?.pending_hk_tasks ?? 0)"
+        icon="clipboard"
+        :variant="(data?.pending_hk_tasks ?? 0) > 10 ? 'warning' : 'neutral'"
+        trend-label="مهمة معلقة"
+        :loading="loading"
+      />
+    </div>
+
+    <!-- Analytics Sub-cards: HR / Maintenance / CRM / Inventory -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+
+      <!-- HR -->
+      <router-link to="/admin/hr" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-base">👥</div>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">الموارد البشرية</span>
         </div>
-        <div class="text-3xl font-black text-gray-900">{{ loading ? '...' : (data?.occupancy_rate ?? 0) }}<span class="text-base font-normal text-gray-400">%</span></div>
-        <div class="mt-2">
-          <div class="w-full bg-gray-200 rounded-full h-1.5">
-            <div class="bg-blue-600 h-1.5 rounded-full transition-all" :style="{ width: (data?.occupancy_rate ?? 0) + '%' }"/>
+        <div v-if="analyticsSummary.hr">
+          <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ analyticsSummary.hr.active_employees }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">موظف نشط</div>
+          <div v-if="analyticsSummary.hr.last_payroll_month" class="text-xs text-blue-600 mt-1">
+            آخر رواتب: {{ analyticsSummary.hr.last_payroll_month }}
           </div>
         </div>
-        <div class="text-xs text-gray-400 mt-1">{{ data?.active_bookings ?? 0 }} حجز نشط</div>
-      </div>
+        <div v-else class="text-xs text-gray-300 mt-2">— لا بيانات</div>
+      </router-link>
 
-      <!-- Beach -->
-      <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center text-lg">🏖️</div>
-          <span class="text-sm font-medium text-gray-500">الشاطئ اليوم</span>
+      <!-- Maintenance -->
+      <router-link to="/admin/maintenance" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center text-base">🔧</div>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">الصيانة</span>
         </div>
-        <div class="text-3xl font-black text-gray-900">{{ loading ? '...' : (data?.beach_sold_today ?? 0) }}</div>
-        <div class="text-xs text-gray-400 mt-1">تذكرة مباعة</div>
-      </div>
+        <div v-if="analyticsSummary.maintenance">
+          <div class="text-2xl font-black"
+            :class="analyticsSummary.maintenance.critical_orders > 0 ? 'text-red-600' : 'text-gray-900 dark:text-gray-100'">
+            {{ analyticsSummary.maintenance.open_orders }}
+          </div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">أمر مفتوح</div>
+          <div v-if="analyticsSummary.maintenance.critical_orders > 0" class="text-xs text-red-500 font-bold mt-1">
+            {{ analyticsSummary.maintenance.critical_orders }} حرج 🔴
+          </div>
+        </div>
+        <div v-else class="text-xs text-gray-300 mt-2">— لا بيانات</div>
+      </router-link>
 
-      <!-- HK Tasks -->
-      <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
-        <div class="flex items-center gap-3 mb-3">
-          <div class="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center text-lg">🧹</div>
-          <span class="text-sm font-medium text-gray-500">مهام التنظيف</span>
+      <!-- CRM -->
+      <router-link to="/admin/crm" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center text-base">🤝</div>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">إدارة العملاء</span>
         </div>
-        <div class="text-3xl font-black text-gray-900">{{ loading ? '...' : (data?.pending_hk_tasks ?? 0) }}</div>
-        <div class="text-xs text-gray-400 mt-1">مهمة معلقة</div>
+        <div v-if="analyticsSummary.crm">
+          <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ analyticsSummary.crm.total_customers }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">عميل مسجّل</div>
+          <div v-if="analyticsSummary.crm.open_opportunities > 0" class="text-xs text-purple-600 mt-1">
+            {{ analyticsSummary.crm.open_opportunities }} فرصة مفتوحة
+          </div>
+        </div>
+        <div v-else class="text-xs text-gray-300 mt-2">— لا بيانات</div>
+      </router-link>
+
+      <!-- Inventory -->
+      <router-link to="/admin/inventory" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center text-base">📦</div>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">المخزون</span>
+        </div>
+        <div v-if="analyticsSummary.inventory">
+          <div class="text-2xl font-black"
+            :class="analyticsSummary.inventory.out_of_stock_count > 0 ? 'text-red-600' : analyticsSummary.inventory.low_stock_count > 0 ? 'text-amber-600' : 'text-green-600'">
+            {{ analyticsSummary.inventory.low_stock_count + analyticsSummary.inventory.out_of_stock_count }}
+          </div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">صنف يحتاج طلباً</div>
+          <div v-if="analyticsSummary.inventory.out_of_stock_count > 0" class="text-xs text-red-500 font-bold mt-1">
+            {{ analyticsSummary.inventory.out_of_stock_count }} نفذ تماماً 🔴
+          </div>
+        </div>
+        <div v-else class="text-xs text-gray-300 mt-2">— لا بيانات</div>
+      </router-link>
+
+    </div>
+
+    <!-- Timeshare Upcoming Visits -->
+    <div v-if="upcomingVisits.length" class="mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300">🏨 زيارات التايم شير القادمة</h3>
+        <router-link to="/admin/timeshare" class="text-xs text-primary-700 hover:underline">عرض الكل</router-link>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div v-for="v in upcomingVisits" :key="v.id"
+          class="bg-white dark:bg-surface border border-stone-200 dark:border-border rounded-xl p-3 flex items-start gap-3 shadow-sm">
+          <div class="w-9 h-9 bg-primary-100 rounded-xl flex items-center justify-center text-primary-700 font-black text-sm shrink-0">
+            {{ new Date(v.visit_start).getDate() }}
+          </div>
+          <div class="min-w-0">
+            <div class="font-semibold text-gray-900 dark:text-gray-100 text-sm truncate">{{ v.guest_name }}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
+              {{ new Date(v.visit_start).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' }) }}
+              →
+              {{ new Date(v.visit_end).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' }) }}
+            </div>
+            <div v-if="v.unit_name" class="text-xs text-primary-600 mt-0.5">{{ v.unit_name }}</div>
+          </div>
+        </div>
       </div>
     </div>
 
     <!-- Quick links -->
     <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-      <router-link v-for="link in [
-        { path: '/admin/hr',        label: 'الموارد البشرية', icon: '👥', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
-        { path: '/admin/finance',   label: 'التقارير المالية', icon: '📊', color: 'bg-green-50 border-green-200 hover:bg-green-100' },
-        { path: '/admin/inventory', label: 'المخزون',          icon: '📦', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
-        { path: '/admin/crm',       label: 'إدارة العملاء',    icon: '🤝', color: 'bg-purple-50 border-purple-200 hover:bg-purple-100' },
-        { path: '/admin/analytics', label: 'التحليلات',        icon: '📈', color: 'bg-pink-50 border-pink-200 hover:bg-pink-100' },
-        { path: '/admin/cafe-sales', label: 'مبيعات الكافيه',  icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
-        { path: '/admin/tables',    label: 'إدارة الطاولات',   icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
-        { path: '/admin/settings',  label: 'الإعدادات',        icon: '⚙️', color: 'bg-gray-50 border-gray-200 hover:bg-gray-100' },
-      ]" :key="link.path" :to="link.path"
-        :class="['flex items-center gap-3 p-4 rounded-xl border-2 transition-colors', link.color]"
+      <router-link v-for="link in quickLinks" :key="link.path" :to="link.path"
+        :class="[`flex items-center gap-3 p-4 rounded-xl border-2 transition-colors`, link.color]"
       >
         <span class="text-2xl">{{ link.icon }}</span>
-        <span class="font-semibold text-gray-800">{{ link.label }}</span>
+        <span class="font-semibold text-gray-800 dark:text-gray-200">{{ link.label }}</span>
       </router-link>
     </div>
   </div>

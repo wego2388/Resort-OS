@@ -26,7 +26,6 @@ async function fetchProfile() {
     const { data } = await api.get('/api/v1/hr/me/profile')
     profile.value = data
   } catch(e: any) {
-    console.error(e)
     profileError.value = e?.response?.data?.detail ?? 'تعذّر تحميل بيانات الملف الشخصي'
     toast.error(profileError.value)
   } finally { loading.value = false }
@@ -61,47 +60,47 @@ onMounted(fetchProfile)
 
 <template>
   <div dir="rtl" class="space-y-4">
-    <h2 class="font-bold text-gray-900 text-lg">ملفي الشخصي</h2>
+    <h2 class="font-bold text-gray-900 dark:text-gray-100 text-lg">ملفي الشخصي</h2>
 
-    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
       <p>جاري التحميل...</p>
     </div>
 
-    <div v-else-if="profileError && !profile" class="text-center py-12 text-red-500 bg-white rounded-2xl border border-stone-200">
+    <div v-else-if="profileError && !profile" class="text-center py-12 text-red-500 bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border">
       <div class="text-4xl mb-3">⚠️</div>
       <p class="font-medium">{{ profileError }}</p>
     </div>
 
     <template v-else-if="profile">
       <!-- Profile card -->
-      <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
+      <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-6 shadow-sm">
         <div class="flex items-center gap-4 mb-5">
           <div class="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center text-2xl font-black text-blue-700 flex-shrink-0">
             {{ profile.full_name.charAt(0) }}
           </div>
           <div>
-            <div class="font-bold text-xl text-gray-900">{{ profile.full_name }}</div>
-            <div class="text-gray-500 text-sm">
+            <div class="font-bold text-xl text-gray-900 dark:text-gray-100">{{ profile.full_name }}</div>
+            <div class="text-gray-500 dark:text-gray-500 text-sm">
               {{ profile.position }}
               <span v-if="profile.department"> — {{ profile.department }}</span>
             </div>
-            <div class="text-xs text-gray-400 mt-0.5">{{ profile.employee_code }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ profile.employee_code }}</div>
           </div>
         </div>
 
-        <div class="space-y-3 border-t border-stone-100 pt-4">
+        <div class="space-y-3 border-t border-stone-100 dark:border-border/50 pt-4">
           <div v-if="profile.email" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 flex items-center gap-1.5">📧 البريد الإلكتروني</span>
-            <span class="font-medium text-gray-900">{{ profile.email }}</span>
+            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📧 البريد الإلكتروني</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">{{ profile.email }}</span>
           </div>
           <div v-if="profile.phone" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 flex items-center gap-1.5">📞 الهاتف</span>
-            <span class="font-medium text-gray-900">{{ profile.phone }}</span>
+            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📞 الهاتف</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">{{ profile.phone }}</span>
           </div>
           <div v-if="profile.hire_date" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 flex items-center gap-1.5">📅 تاريخ التعيين</span>
-            <span class="font-medium text-gray-900">
+            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📅 تاريخ التعيين</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">
               {{ new Date(profile.hire_date).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' }) }}
             </span>
           </div>
@@ -109,23 +108,23 @@ onMounted(fetchProfile)
       </div>
 
       <!-- Change password -->
-      <div class="bg-white rounded-2xl border border-stone-200 p-6 shadow-sm">
-        <h3 class="font-bold text-gray-900 mb-4">تغيير كلمة المرور</h3>
+      <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-6 shadow-sm">
+        <h3 class="font-bold text-gray-900 dark:text-gray-100 mb-4">تغيير كلمة المرور</h3>
         <div class="space-y-3">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">كلمة المرور الحالية</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كلمة المرور الحالية</label>
             <input v-model="pwForm.current_password" type="password" placeholder="••••••••"
-              class="w-full border border-stone-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+              class="w-full border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">كلمة المرور الجديدة</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كلمة المرور الجديدة</label>
             <input v-model="pwForm.new_password" type="password" placeholder="8 أحرف على الأقل"
-              class="w-full border border-stone-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+              class="w-full border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">تأكيد كلمة المرور</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">تأكيد كلمة المرور</label>
             <input v-model="pwForm.confirm_password" type="password" placeholder="••••••••"
-              class="w-full border border-stone-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+              class="w-full border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
           </div>
           <div v-if="pwMsg" class="bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium">{{ pwMsg }}</div>
           <div v-if="pwError" class="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-sm">{{ pwError }}</div>

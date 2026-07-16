@@ -8,7 +8,7 @@ import { AppCard, AppBadge, AppButton, useToast, useConfirm } from '@resort-os/u
 const toast = useToast()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const branchId = auth.branchId
 
 interface B2BStatus {
   contract_id: number; hotel_name: string; daily_quota: number
@@ -183,9 +183,9 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
   <div dir="rtl" class="p-6 max-w-6xl mx-auto">
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h1 class="text-xl font-black text-gray-900">🏖️ لوحة الشاطئ الحيّة</h1>
+        <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">🏖️ لوحة الشاطئ الحيّة</h1>
         <div class="flex items-center gap-3 mt-1">
-          <p class="text-xs text-gray-400">تتحدّث تلقائياً كل 15 ثانية</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500">تتحدّث تلقائياً كل 15 ثانية</p>
           <div class="flex items-center gap-1.5">
             <div :class="['w-2 h-2 rounded-full', isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400']" />
             <span :class="['text-xs font-semibold', isConnected ? 'text-green-600' : 'text-red-500']">
@@ -194,7 +194,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
           </div>
         </div>
       </div>
-      <button @click="load" class="px-4 py-2 rounded-xl bg-white border border-stone-200 text-sm font-bold text-gray-600 hover:bg-stone-50">
+      <button @click="load" class="px-4 py-2 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-sm font-bold text-gray-600 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60">
         🔄 تحديث
       </button>
     </div>
@@ -231,7 +231,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
         <!-- Capacity gauge -->
         <AppCard padding="md" class="flex flex-col items-center justify-center">
-          <p class="text-xs text-gray-400 font-bold uppercase tracking-wide mb-3">السعة الحالية</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-3">السعة الحالية</p>
           <div class="relative w-32 h-32">
             <svg class="w-32 h-32 -rotate-90" viewBox="0 0 100 100">
               <circle cx="50" cy="50" r="42" fill="none" stroke="#F1F0EC" stroke-width="10" />
@@ -241,7 +241,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             </svg>
             <div class="absolute inset-0 flex flex-col items-center justify-center">
               <span :class="['text-2xl font-black', gaugeColor]">{{ dash.capacity_pct }}%</span>
-              <span class="text-[10px] text-gray-400">{{ dash.capacity_used }}/{{ dash.capacity_max }}</span>
+              <span class="text-[10px] text-gray-400 dark:text-gray-500">{{ dash.capacity_used }}/{{ dash.capacity_max }}</span>
             </div>
           </div>
           <AppBadge v-if="dash.surge_active" variant="warning" size="sm" class="mt-3">
@@ -251,10 +251,10 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
         <!-- Towels -->
         <AppCard padding="md">
-          <p class="text-xs text-gray-400 font-bold uppercase tracking-wide mb-3">الفوط</p>
-          <p class="text-3xl font-black text-gray-900">{{ dash.towels_available }}</p>
-          <p class="text-xs text-gray-400 mt-1">متاحة من إجمالي {{ dash.towels_available + dash.towels_used }}</p>
-          <div class="w-full h-2 rounded-full bg-stone-100 overflow-hidden mt-3">
+          <p class="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-3">الفوط</p>
+          <p class="text-3xl font-black text-gray-900 dark:text-gray-100">{{ dash.towels_available }}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">متاحة من إجمالي {{ dash.towels_available + dash.towels_used }}</p>
+          <div class="w-full h-2 rounded-full bg-stone-100 dark:bg-gray-700 overflow-hidden mt-3">
             <div class="h-full bg-sky-400"
                  :style="{ width: `${dash.towels_used + dash.towels_available > 0 ? (dash.towels_used / (dash.towels_used + dash.towels_available)) * 100 : 0}%` }" />
           </div>
@@ -262,25 +262,25 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
         <!-- B2B partners overview -->
         <AppCard padding="md">
-          <p class="text-xs text-gray-400 font-bold uppercase tracking-wide mb-3">فنادق B2B نشطة</p>
-          <p class="text-3xl font-black text-gray-900">{{ dash.b2b_contracts.length }}</p>
-          <p class="text-xs text-gray-400 mt-1">{{ dash.quota_alerts.length }} في حالة تنبيه</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-3">فنادق B2B نشطة</p>
+          <p class="text-3xl font-black text-gray-900 dark:text-gray-100">{{ dash.b2b_contracts.length }}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ dash.quota_alerts.length }} في حالة تنبيه</p>
         </AppCard>
       </div>
 
       <!-- B2B partners table -->
       <AppCard padding="md">
-        <p class="font-black text-sm text-gray-900 mb-4">🏨 شركاء B2B — الحصة اليومية</p>
+        <p class="font-black text-sm text-gray-900 dark:text-gray-100 mb-4">🏨 شركاء B2B — الحصة اليومية</p>
         <div v-if="!dash.b2b_contracts.length" class="text-center py-6 text-gray-300 text-xs">لا يوجد عقود B2B نشطة</div>
         <div v-else class="space-y-2">
           <div v-for="c in dash.b2b_contracts" :key="c.contract_id"
                :class="['p-3 rounded-xl border',
                         !c.is_valid_today ? 'bg-gray-100 border-gray-200 opacity-70' :
                         c.is_overdue ? 'bg-amber-50 border-amber-300' :
-                        c.quota_warning ? 'bg-red-50 border-red-200' : 'bg-stone-50 border-stone-100']">
+                        c.quota_warning ? 'bg-red-50 border-red-200' : 'bg-stone-50 dark:bg-gray-800/60 border-stone-100 dark:border-border/50']">
             <div class="flex items-center justify-between gap-3">
               <div class="flex-1 min-w-0">
-                <div class="font-bold text-sm text-gray-900 flex items-center gap-2 flex-wrap">
+                <div class="font-bold text-sm text-gray-900 dark:text-gray-100 flex items-center gap-2 flex-wrap">
                   {{ c.hotel_name }}
                   <span v-if="!c.is_valid_today"
                         class="px-1.5 py-0.5 rounded-full bg-gray-400 text-white text-[9px] font-bold">
@@ -295,7 +295,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
                     تخطّى حد الائتمان
                   </span>
                 </div>
-                <div class="text-[11px] text-gray-400 mt-0.5">{{ c.checked_in_today }} / {{ c.daily_quota }} دخلوا اليوم</div>
+                <div class="text-[11px] text-gray-400 dark:text-gray-500 mt-0.5">{{ c.checked_in_today }} / {{ c.daily_quota }} دخلوا اليوم</div>
               </div>
               <div class="w-32 flex-shrink-0">
                 <div class="w-full h-2 rounded-full bg-stone-200 overflow-hidden">
@@ -304,23 +304,23 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
                 </div>
               </div>
               <div class="text-left flex-shrink-0 w-20">
-                <div :class="['text-sm font-black', !c.is_valid_today ? 'text-gray-400' : c.is_quota_exhausted ? 'text-red-500' : c.quota_warning ? 'text-amber-500' : 'text-green-600']">
+                <div :class="['text-sm font-black', !c.is_valid_today ? 'text-gray-400 dark:text-gray-500' : c.is_quota_exhausted ? 'text-red-500' : c.quota_warning ? 'text-amber-500' : 'text-green-600']">
                   {{ c.remaining_quota }}
                 </div>
-                <div class="text-[10px] text-gray-400">متبقي</div>
+                <div class="text-[10px] text-gray-400 dark:text-gray-500">متبقي</div>
               </div>
             </div>
 
             <!-- الائتمان: الرصيد المستحق + حد الائتمان (قابل للتعديل — admin
                  فقط) + زر تسوية (manager فقط). -->
-            <div class="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-stone-200/60 text-[11px]">
-              <div class="text-gray-500">
+            <div class="flex items-center justify-between gap-3 mt-2 pt-2 border-t border-stone-200 dark:border-border/60 text-[11px]">
+              <div class="text-gray-500 dark:text-gray-500">
                 رصيد مستحق:
-                <span :class="['font-bold', c.credit_exceeded ? 'text-red-600' : 'text-gray-700']">
+                <span :class="['font-bold', c.credit_exceeded ? 'text-red-600' : 'text-gray-700 dark:text-gray-300']">
                   {{ c.outstanding_balance.toLocaleString() }} ج.م
                 </span>
                 <template v-if="editingCreditId !== c.contract_id">
-                  <span class="text-gray-400"> / حد: {{ c.credit_limit !== null ? c.credit_limit.toLocaleString() + ' ج.م' : 'بلا حد' }}</span>
+                  <span class="text-gray-400 dark:text-gray-500"> / حد: {{ c.credit_limit !== null ? c.credit_limit.toLocaleString() + ' ج.م' : 'بلا حد' }}</span>
                   <button v-if="auth.hasRole('admin')" @click="openCreditEdit(c)"
                           class="mr-1 text-primary-700 hover:underline">✏️ تعديل</button>
                 </template>
@@ -330,7 +330,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
                   <button :disabled="savingCredit" @click="saveCreditLimit(c)"
                           class="text-green-700 font-bold hover:underline">حفظ</button>
                   <button :disabled="savingCredit" @click="editingCreditId = null"
-                          class="text-gray-400 hover:underline">إلغاء</button>
+                          class="text-gray-400 dark:text-gray-500 hover:underline">إلغاء</button>
                 </span>
               </div>
               <AppButton v-if="auth.hasRole('manager') && c.outstanding_balance > 0"
@@ -346,7 +346,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
       <!-- Daily EOD Report -->
       <AppCard padding="md" class="mt-5">
         <div class="flex items-center justify-between mb-4">
-          <p class="font-black text-sm text-gray-900">📋 تقرير نهاية اليوم</p>
+          <p class="font-black text-sm text-gray-900 dark:text-gray-100">📋 تقرير نهاية اليوم</p>
           <AppButton variant="primary" size="sm" :loading="downloadingPdf" :disabled="!eod" @click="downloadEodPdf">
             🖨️ طباعة PDF
           </AppButton>
@@ -355,22 +355,22 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
         <div v-if="eodLoading" class="text-center py-6 text-gray-300 text-xs">جاري التحميل...</div>
         <template v-else-if="eod">
           <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-            <div class="bg-stone-50 rounded-xl p-3">
-              <p class="text-[10px] text-gray-400 mb-1">إجمالي الدخول</p>
-              <p class="text-lg font-black text-gray-900">{{ eod.total_entries }}</p>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <p class="text-[10px] text-gray-400 dark:text-gray-500 mb-1">إجمالي الدخول</p>
+              <p class="text-lg font-black text-gray-900 dark:text-gray-100">{{ eod.total_entries }}</p>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3">
-              <p class="text-[10px] text-gray-400 mb-1">إيرادات الفوط</p>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <p class="text-[10px] text-gray-400 dark:text-gray-500 mb-1">إيرادات الفوط</p>
               <p class="text-lg font-black text-sky-600">{{ eod.towel_revenue }} ج</p>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3">
-              <p class="text-[10px] text-gray-400 mb-1">مقارنة بالأمس</p>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <p class="text-[10px] text-gray-400 dark:text-gray-500 mb-1">مقارنة بالأمس</p>
               <p :class="['text-lg font-black', (eod.vs_yesterday_pct ?? 0) >= 0 ? 'text-green-600' : 'text-red-500']">
                 {{ pctLabel(eod.vs_yesterday_pct) }}
               </p>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3">
-              <p class="text-[10px] text-gray-400 mb-1">مقارنة بالأسبوع الماضي</p>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <p class="text-[10px] text-gray-400 dark:text-gray-500 mb-1">مقارنة بالأسبوع الماضي</p>
               <p :class="['text-lg font-black', (eod.vs_last_week_pct ?? 0) >= 0 ? 'text-green-600' : 'text-red-500']">
                 {{ pctLabel(eod.vs_last_week_pct) }}
               </p>
@@ -379,7 +379,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 
           <table class="w-full text-xs">
             <thead>
-              <tr class="text-gray-400 border-b border-stone-100">
+              <tr class="text-gray-400 dark:text-gray-500 border-b border-stone-100 dark:border-border/50">
                 <th class="text-right font-bold py-2">نوع العملية</th>
                 <th class="text-center font-bold py-2">الكمية</th>
                 <th class="text-left font-bold py-2">الإجمالي</th>
@@ -387,9 +387,9 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
             </thead>
             <tbody>
               <tr v-for="t in eod.by_type" :key="t.tx_type" class="border-b border-stone-50">
-                <td class="py-2 text-gray-800">{{ t.label }}</td>
-                <td class="py-2 text-center text-gray-600">{{ t.quantity }}</td>
-                <td class="py-2 text-left font-bold text-gray-900">{{ t.total_amount }} ج</td>
+                <td class="py-2 text-gray-800 dark:text-gray-200">{{ t.label }}</td>
+                <td class="py-2 text-center text-gray-600 dark:text-gray-500">{{ t.quantity }}</td>
+                <td class="py-2 text-left font-bold text-gray-900 dark:text-gray-100">{{ t.total_amount }} ج</td>
               </tr>
               <tr v-if="!eod.by_type.length">
                 <td colspan="3" class="text-center py-6 text-gray-300">لا توجد عمليات اليوم</td>

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { usePrintDocument, useOfflineQueue } from '@resort-os/core/composables'
 import { useToast } from '@resort-os/ui'
 
@@ -38,7 +38,8 @@ interface BeachInventory {
   surge_multiplier: number
 }
 
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 const inventory = ref<BeachInventory | null>(null)
 const loading = ref(false)
 const submitting = ref(false)
@@ -115,10 +116,9 @@ async function fetchInventory() {
     // بياخد branch_id كـ query param، مش path segment، فالطلب كان بيرجع 404
     // بصمت (console.error بس، من غير toast) في كل مرة الكاشير يفتح شاشة
     // الشاطئ — يعني سعة/إشغال الشاطئ ما كانتش بتظهر أبداً.
-    const { data } = await api.get('/api/v1/beach/inventory', { params: { branch_id: branchId } })
+    const { data } = await api.get(ENDPOINTS.beach.inventory, { params: { branch_id: branchId } })
     inventory.value = data
   } catch (e) {
-    console.error('Failed to fetch beach inventory', e)
     toast.error('تعذّر تحميل بيانات سعة الشاطئ — الأسعار/الإشغال قد لا تكون محدّثة')
   } finally {
     loading.value = false
@@ -145,7 +145,7 @@ function buildCartLineItems(): BeachSaleLineItem[] {
 
 async function printTicket(txId: number) {
   try {
-    const ticketRes = await api.get(`/api/v1/beach/transactions/${txId}/ticket`, { responseType: 'blob' })
+    const ticketRes = await api.get(ENDPOINTS.beach.ticket(txId), { responseType: 'blob' })
     const outcome = printBlob(ticketRes.data, `ticket-${txId}.pdf`)
     if (outcome.downloadedInstead) {
       toast.error('التذكرة اتحمّلت كملف (المتصفح منع نافذة الطباعة) — افتحها واطبعها يدويًا')
@@ -248,9 +248,9 @@ onUnmounted(() => {
       <div class="space-y-4 overflow-y-auto">
 
         <!-- Beach status card -->
-        <div class="bg-white rounded-xl border border-stone-200 p-4 shadow-sm">
+        <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
           <div class="flex items-center justify-between mb-3">
-            <h2 class="font-bold text-gray-900 text-base">حالة الشاطئ</h2>
+            <h2 class="font-bold text-gray-900 dark:text-gray-100 text-base">حالة الشاطئ</h2>
             <div class="flex items-center gap-2">
               <span
                 v-if="inventory.surge_active"
@@ -299,10 +299,10 @@ onUnmounted(() => {
         <div class="grid grid-cols-2 gap-3">
 
           <!-- Adult -->
-          <div class="bg-white rounded-xl border border-stone-200 p-4 shadow-sm">
+          <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">👤</div>
-              <div class="font-bold text-gray-900 text-sm">بالغ</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">بالغ</div>
               <div class="text-2xl font-black text-blue-700 mt-1">
                 {{ prices.adult }}<span class="text-xs font-normal text-gray-500 mr-1">ج</span>
               </div>
@@ -316,7 +316,7 @@ onUnmounted(() => {
                 :disabled="adultQty === 0"
                 class="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 font-bold text-lg transition-colors leading-none"
               >−</button>
-              <span class="text-xl font-black w-8 text-center text-gray-900">{{ adultQty }}</span>
+              <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ adultQty }}</span>
               <button
                 ref="firstButtonRef"
                 @click="adjust('adult', 1)"
@@ -326,10 +326,10 @@ onUnmounted(() => {
           </div>
 
           <!-- Child -->
-          <div class="bg-white rounded-xl border border-stone-200 p-4 shadow-sm">
+          <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🧒</div>
-              <div class="font-bold text-gray-900 text-sm">طفل</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">طفل</div>
               <div class="text-2xl font-black text-green-700 mt-1">
                 {{ prices.child }}<span class="text-xs font-normal text-gray-500 mr-1">ج</span>
               </div>
@@ -343,7 +343,7 @@ onUnmounted(() => {
                 :disabled="childQty === 0"
                 class="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 font-bold text-lg transition-colors leading-none"
               >−</button>
-              <span class="text-xl font-black w-8 text-center text-gray-900">{{ childQty }}</span>
+              <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ childQty }}</span>
               <button
                 @click="adjust('child', 1)"
                 class="w-9 h-9 rounded-lg bg-green-600 hover:bg-green-700 text-white font-bold text-lg transition-colors leading-none"
@@ -352,10 +352,10 @@ onUnmounted(() => {
           </div>
 
           <!-- Resident -->
-          <div class="bg-white rounded-xl border border-stone-200 p-4 shadow-sm">
+          <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🏠</div>
-              <div class="font-bold text-gray-900 text-sm">مقيم</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">مقيم</div>
               <div class="text-2xl font-black text-purple-700 mt-1">
                 {{ prices.resident }}<span class="text-xs font-normal text-gray-500 mr-1">ج</span>
               </div>
@@ -369,7 +369,7 @@ onUnmounted(() => {
                 :disabled="residentQty === 0"
                 class="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 font-bold text-lg transition-colors leading-none"
               >−</button>
-              <span class="text-xl font-black w-8 text-center text-gray-900">{{ residentQty }}</span>
+              <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ residentQty }}</span>
               <button
                 @click="adjust('resident', 1)"
                 class="w-9 h-9 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-lg transition-colors leading-none"
@@ -378,10 +378,10 @@ onUnmounted(() => {
           </div>
 
           <!-- Towel -->
-          <div class="bg-white rounded-xl border border-stone-200 p-4 shadow-sm">
+          <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🏊</div>
-              <div class="font-bold text-gray-900 text-sm">فوطة</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">فوطة</div>
               <div class="text-2xl font-black text-amber-700 mt-1">
                 {{ prices.towel }}<span class="text-xs font-normal text-gray-500 mr-1">ج</span>
               </div>
@@ -393,7 +393,7 @@ onUnmounted(() => {
                 :disabled="towelQty === 0"
                 class="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 font-bold text-lg transition-colors leading-none"
               >−</button>
-              <span class="text-xl font-black w-8 text-center text-gray-900">{{ towelQty }}</span>
+              <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ towelQty }}</span>
               <button
                 @click="adjust('towel', 1)"
                 class="w-9 h-9 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-lg transition-colors leading-none"
@@ -405,42 +405,42 @@ onUnmounted(() => {
       </div>
 
       <!-- ═══ RIGHT: Order Summary ═══ -->
-      <div class="bg-white rounded-xl border border-stone-200 shadow-sm flex flex-col min-h-[480px]">
+      <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border shadow-sm flex flex-col min-h-[480px]">
 
         <!-- Header -->
         <div class="p-4 border-b border-stone-100">
-          <h2 class="font-bold text-gray-900">ملخص الطلب</h2>
+          <h2 class="font-bold text-gray-900 dark:text-gray-100">ملخص الطلب</h2>
         </div>
 
         <!-- Cart items list -->
         <div class="flex-1 p-4 space-y-2 overflow-y-auto">
           <div
             v-if="adultQty > 0"
-            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200"
+            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
           >
-            <span class="text-gray-700">👤 بالغ × {{ adultQty }}</span>
-            <span class="font-semibold text-gray-900">{{ adultQty * prices.adult }} ج</span>
+            <span class="text-gray-700 dark:text-gray-300">👤 بالغ × {{ adultQty }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ adultQty * prices.adult }} ج</span>
           </div>
           <div
             v-if="childQty > 0"
-            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200"
+            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
           >
-            <span class="text-gray-700">🧒 طفل × {{ childQty }}</span>
-            <span class="font-semibold text-gray-900">{{ childQty * prices.child }} ج</span>
+            <span class="text-gray-700 dark:text-gray-300">🧒 طفل × {{ childQty }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ childQty * prices.child }} ج</span>
           </div>
           <div
             v-if="residentQty > 0"
-            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200"
+            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
           >
-            <span class="text-gray-700">🏠 مقيم × {{ residentQty }}</span>
-            <span class="font-semibold text-gray-900">{{ residentQty * prices.resident }} ج</span>
+            <span class="text-gray-700 dark:text-gray-300">🏠 مقيم × {{ residentQty }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ residentQty * prices.resident }} ج</span>
           </div>
           <div
             v-if="towelQty > 0"
-            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200"
+            class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
           >
-            <span class="text-gray-700">🏊 فوطة × {{ towelQty }}</span>
-            <span class="font-semibold text-gray-900">{{ towelQty * prices.towel }} ج</span>
+            <span class="text-gray-700 dark:text-gray-300">🏊 فوطة × {{ towelQty }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ towelQty * prices.towel }} ج</span>
           </div>
 
           <!-- Empty state -->
@@ -452,11 +452,11 @@ onUnmounted(() => {
         </div>
 
         <!-- Footer: total + payment + buttons -->
-        <div class="p-4 border-t border-stone-200 space-y-3">
+        <div class="p-4 border-t border-stone-200 dark:border-border space-y-3">
 
           <!-- Total -->
           <div class="flex items-center justify-between">
-            <span class="text-lg font-bold text-gray-900">المجموع</span>
+            <span class="text-lg font-bold text-gray-900 dark:text-gray-100">المجموع</span>
             <span class="text-2xl font-black text-blue-700">{{ total }} <span class="text-sm font-normal">ج</span></span>
           </div>
 
@@ -474,7 +474,7 @@ onUnmounted(() => {
                 'py-2 rounded-lg text-sm font-medium transition-all border-2',
                 paymentMethod === m.val
                   ? 'border-blue-600 bg-blue-50 text-blue-700'
-                  : 'border-stone-200 text-gray-600 hover:border-blue-300 hover:bg-gray-50',
+                  : 'border-stone-200 dark:border-border text-gray-600 hover:border-blue-300 hover:bg-gray-50',
               ]"
             >{{ m.icon }} {{ m.label }}</button>
           </div>
@@ -498,7 +498,7 @@ onUnmounted(() => {
             <button
               @click="clearCart"
               :disabled="!hasItems"
-              class="py-3 rounded-xl border-2 border-stone-200 text-gray-600 font-semibold hover:bg-gray-50 disabled:opacity-40 transition-colors"
+              class="py-3 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50 disabled:opacity-40 transition-colors"
             >مسح الطلب</button>
             <button
               @click="completeSale"

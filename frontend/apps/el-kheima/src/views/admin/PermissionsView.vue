@@ -189,8 +189,8 @@ onMounted(() => {
 <template>
   <div dir="rtl" class="space-y-5">
     <div>
-      <h1 class="text-2xl font-black text-gray-800">الصلاحيات التفصيلية</h1>
-      <p class="text-sm text-gray-500 mt-1">
+      <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">الصلاحيات التفصيلية</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
         امنح استثناء لموظف معيّن فوق صلاحيات دوره العادية، أو امنعه من إجراء
         عادةً مسموح له بيه — بيسري فورًا من غير ما تغيّر دوره الأساسي.
       </p>
@@ -220,13 +220,13 @@ onMounted(() => {
     <div v-if="!needs2FA" class="grid grid-cols-1 lg:grid-cols-[320px_1fr] gap-5">
       <!-- قائمة الموظفين -->
       <AppCard title="الموظفون" padding="none">
-        <div class="p-3 border-b border-stone-100">
+        <div class="p-3 border-b border-stone-100 dark:border-border/50">
           <AppInput v-model="search" placeholder="ابحث بالاسم أو الإيميل..." />
         </div>
         <div v-if="loadingUsers" class="p-8 flex justify-center">
           <AppSpinner />
         </div>
-        <div v-else-if="filteredUsers.length === 0" class="p-8 text-center text-gray-400 text-sm">
+        <div v-else-if="filteredUsers.length === 0" class="p-8 text-center text-gray-400 dark:text-gray-500 text-sm">
           <div class="text-3xl mb-2">🔍</div>
           لا يوجد موظفون مطابقون
         </div>
@@ -237,12 +237,12 @@ onMounted(() => {
             @click="selectUser(u.id)"
             :class="[
               'px-4 py-3 cursor-pointer transition-colors',
-              selectedUserId === u.id ? 'bg-blue-50' : 'hover:bg-stone-50',
+              selectedUserId === u.id ? 'bg-blue-50' : 'hover:bg-stone-50 dark:bg-gray-800/60',
             ]"
           >
-            <div class="font-medium text-gray-800 text-sm">{{ u.full_name }}</div>
+            <div class="font-medium text-gray-800 dark:text-gray-200 text-sm">{{ u.full_name }}</div>
             <div class="flex items-center gap-2 mt-1">
-              <span class="text-xs text-gray-400">{{ u.email }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-500">{{ u.email }}</span>
               <AppBadge size="sm" :variant="u.is_active ? 'info' : 'neutral'">
                 {{ roleLabels[u.role] ?? u.role }}
               </AppBadge>
@@ -253,7 +253,7 @@ onMounted(() => {
 
       <!-- مصفوفة الصلاحيات -->
       <AppCard :title="selectedUser ? `صلاحيات ${selectedUser.full_name}` : 'اختر موظف'" padding="sm">
-        <div v-if="!selectedUserId" class="p-10 text-center text-gray-400">
+        <div v-if="!selectedUserId" class="p-10 text-center text-gray-400 dark:text-gray-500">
           <div class="text-4xl mb-3">👈</div>
           اختر موظف من القائمة عشان تشوف وتعدّل صلاحياته
         </div>
@@ -264,18 +264,18 @@ onMounted(() => {
 
         <div v-else class="space-y-5">
           <div v-for="(entries, module) in catalogByModule" :key="module">
-            <div class="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 px-1">
+            <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-2 px-1">
               {{ moduleLabel(module) }}
             </div>
             <div class="space-y-1.5">
               <div
                 v-for="entry in entries"
                 :key="`${entry.resource}:${entry.action}`"
-                class="flex items-center justify-between bg-stone-50 rounded-xl px-4 py-3"
+                class="flex items-center justify-between bg-stone-50 dark:bg-gray-800/60 rounded-xl px-4 py-3"
               >
                 <div>
-                  <div class="text-sm font-medium text-gray-800">{{ entry.label_ar }}</div>
-                  <div class="text-xs text-gray-400 font-mono mt-0.5">{{ entry.endpoint }}</div>
+                  <div class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ entry.label_ar }}</div>
+                  <div class="text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5">{{ entry.endpoint }}</div>
                 </div>
 
                 <div class="flex items-center gap-1.5 flex-shrink-0">
@@ -287,7 +287,7 @@ onMounted(() => {
                         'px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
                         stateFor(entry) === 'granted'
                           ? 'bg-green-600 text-white'
-                          : 'bg-white text-green-700 border border-green-200 hover:bg-green-50',
+                          : 'bg-white dark:bg-surface text-green-700 border border-green-200 hover:bg-green-50',
                       ]"
                     >✓ منح</button>
                     <button
@@ -296,7 +296,7 @@ onMounted(() => {
                         'px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
                         stateFor(entry) === 'default'
                           ? 'bg-gray-600 text-white'
-                          : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50',
+                          : 'bg-white dark:bg-surface text-gray-600 border border-gray-200 hover:bg-gray-50',
                       ]"
                     >افتراضي</button>
                     <button
@@ -305,7 +305,7 @@ onMounted(() => {
                         'px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
                         stateFor(entry) === 'denied'
                           ? 'bg-red-600 text-white'
-                          : 'bg-white text-red-700 border border-red-200 hover:bg-red-50',
+                          : 'bg-white dark:bg-surface text-red-700 border border-red-200 hover:bg-red-50',
                       ]"
                     >✕ منع</button>
                   </template>

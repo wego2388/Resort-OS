@@ -23,7 +23,7 @@ import { AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
 const auth = useAuthStore()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const branchId = auth.branchId
 
 interface Room {
   id: number
@@ -81,8 +81,8 @@ async function fetchRoomTypes() {
     const res = await api.get('/api/v1/pms/room-types', { params: { branch_id: branchId } })
     const list: RoomTypeOption[] = res.data.items ?? res.data
     roomTypesById.value = Object.fromEntries(list.map((rt) => [rt.id, rt]))
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل أنواع الغرف')
   }
 }
 
@@ -103,8 +103,8 @@ async function fetchCurrentBookings() {
       }
     }
     currentBookingByRoomId.value = map
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل الحجوزات الحالية')
   }
 }
 
@@ -115,7 +115,6 @@ async function fetchRooms() {
     rooms.value = res.data.rooms ?? res.data.items ?? res.data
     await fetchCurrentBookings()
   } catch(e) {
-    console.error(e)
     toast.error('تعذّر تحميل خريطة الغرف')
   } finally { loading.value = false }
 }
@@ -201,7 +200,7 @@ onUnmounted(() => clearInterval(refreshInterval))
   <div class="p-4" dir="rtl">
     <!-- Page title + refresh -->
     <div class="flex items-center justify-between mb-4">
-      <h1 class="text-xl font-bold text-gray-900">خريطة الغرف</h1>
+      <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">خريطة الغرف</h1>
       <div class="flex items-center gap-2">
         <button
           v-if="auth.hasRole('admin')"
@@ -218,15 +217,15 @@ onUnmounted(() => clearInterval(refreshInterval))
     <AppModal :open="nightAuditOpen" title="🌙 التدقيق الليلي (Night Audit)" @close="nightAuditOpen = false">
       <div class="space-y-4" dir="rtl">
         <template v-if="!nightAuditResult">
-          <p class="text-sm text-gray-600">
+          <p class="text-sm text-gray-600 dark:text-gray-500">
             بيقفل يوم التشغيل، يحسب نسبة الإشغال والإيراد، ويسجّل حالات عدم الحضور
             (no-show) لليوم المحدد. شغّله بعد منتصف الليل لليوم اللي خلص.
           </p>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">تاريخ التدقيق</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">تاريخ التدقيق</label>
             <input
               v-model="nightAuditDate" type="date"
-              class="w-full px-3 py-2 rounded-lg border border-stone-200 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              class="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
           <p v-if="nightAuditError" class="text-red-600 text-sm">{{ nightAuditError }}</p>
@@ -238,34 +237,34 @@ onUnmounted(() => clearInterval(refreshInterval))
 
         <template v-else>
           <div class="grid grid-cols-2 gap-3">
-            <div class="bg-stone-50 rounded-xl p-3">
-              <div class="text-xs text-gray-500">نسبة الإشغال</div>
-              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.occupancy_pct }}%</div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500">نسبة الإشغال</div>
+              <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.occupancy_pct }}%</div>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3">
-              <div class="text-xs text-gray-500">إيراد الغرف</div>
-              <div class="text-lg font-black text-gray-900">{{ Number(nightAuditResult.room_revenue).toLocaleString('ar-EG') }} ج</div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500">إيراد الغرف</div>
+              <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ Number(nightAuditResult.room_revenue).toLocaleString('ar-EG') }} ج</div>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3">
-              <div class="text-xs text-gray-500">غرف مشغولة</div>
-              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.occupied_rooms }} / {{ nightAuditResult.total_rooms }}</div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500">غرف مشغولة</div>
+              <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.occupied_rooms }} / {{ nightAuditResult.total_rooms }}</div>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3">
-              <div class="text-xs text-gray-500">عدم حضور (No-show)</div>
-              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.no_shows }}</div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500">عدم حضور (No-show)</div>
+              <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.no_shows }}</div>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3">
-              <div class="text-xs text-gray-500">تسجيل دخول اليوم</div>
-              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.checkins_today }}</div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500">تسجيل دخول اليوم</div>
+              <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.checkins_today }}</div>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3">
-              <div class="text-xs text-gray-500">تسجيل خروج اليوم</div>
-              <div class="text-lg font-black text-gray-900">{{ nightAuditResult.checkouts_today }}</div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500">تسجيل خروج اليوم</div>
+              <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.checkouts_today }}</div>
             </div>
           </div>
           <button
             @click="nightAuditOpen = false"
-            class="w-full bg-stone-100 text-gray-700 py-2.5 rounded-xl font-semibold hover:bg-stone-200 transition-colors"
+            class="w-full bg-stone-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 py-2.5 rounded-xl font-semibold hover:bg-stone-200 transition-colors"
           >إغلاق</button>
         </template>
       </div>
@@ -284,13 +283,13 @@ onUnmounted(() => clearInterval(refreshInterval))
         @click="filterStatus = filterStatus === status ? null : status"
       >
         <div :class="['text-2xl font-black', cfg.color]">{{ counts[status] ?? 0 }}</div>
-        <div class="text-xs font-medium text-gray-600 mt-0.5">{{ cfg.label }}</div>
+        <div class="text-xs font-medium text-gray-600 dark:text-gray-500 mt-0.5">{{ cfg.label }}</div>
       </div>
     </div>
 
     <!-- Active filter banner -->
     <div v-if="filterStatus" class="mb-3 flex items-center gap-2">
-      <span class="text-sm text-gray-600">
+      <span class="text-sm text-gray-600 dark:text-gray-500">
         عرض: <strong>{{ statusConfig[filterStatus]?.label }}</strong> ({{ filteredRooms.length }} غرفة)
       </span>
       <button
@@ -300,7 +299,7 @@ onUnmounted(() => clearInterval(refreshInterval))
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
       <p>جاري التحميل...</p>
     </div>
@@ -313,16 +312,16 @@ onUnmounted(() => clearInterval(refreshInterval))
         :class="[
           'rounded-xl border-2 p-3 cursor-pointer transition-all hover:shadow-md select-none',
           statusConfig[room.status]?.border ?? 'border-gray-300',
-          statusConfig[room.status]?.bg ?? 'bg-white'
+          statusConfig[room.status]?.bg ?? 'bg-white dark:bg-surface'
         ]"
         @click="selectedRoom = room"
       >
-        <div class="font-black text-lg text-gray-900">{{ room.name }}</div>
-        <div class="text-xs text-gray-500 truncate">{{ roomTypeName(room) }}</div>
+        <div class="font-black text-lg text-gray-900 dark:text-gray-100">{{ room.name }}</div>
+        <div class="text-xs text-gray-500 dark:text-gray-500 truncate">{{ roomTypeName(room) }}</div>
         <div :class="['text-xs font-semibold mt-1', statusConfig[room.status]?.color]">
           {{ statusConfig[room.status]?.label ?? room.status }}
         </div>
-        <div v-if="currentBookingByRoomId[room.id]" class="text-xs text-gray-500 mt-1 truncate">
+        <div v-if="currentBookingByRoomId[room.id]" class="text-xs text-gray-500 dark:text-gray-500 mt-1 truncate">
           {{ currentBookingByRoomId[room.id].guest_name }}
         </div>
       </div>
@@ -337,35 +336,35 @@ onUnmounted(() => clearInterval(refreshInterval))
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         @click.self="selectedRoom = null"
       >
-        <div class="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl" dir="rtl">
+        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl" dir="rtl">
           <div class="flex items-center justify-between mb-5">
-            <h2 class="text-xl font-black text-gray-900">أوضة {{ selectedRoom.name }}</h2>
+            <h2 class="text-xl font-black text-gray-900 dark:text-gray-100">أوضة {{ selectedRoom.name }}</h2>
             <button
               @click="selectedRoom = null"
-              class="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+              class="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
             >×</button>
           </div>
 
           <div class="space-y-3 text-sm">
-            <div class="flex justify-between border-b border-stone-100 pb-2">
-              <span class="text-gray-500">النوع</span>
-              <span class="font-medium text-gray-900">{{ roomTypeName(selectedRoom) }}</span>
+            <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
+              <span class="text-gray-500 dark:text-gray-500">النوع</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{{ roomTypeName(selectedRoom) }}</span>
             </div>
-            <div class="flex justify-between border-b border-stone-100 pb-2">
-              <span class="text-gray-500">الدور</span>
-              <span class="font-medium text-gray-900">{{ selectedRoom.floor }}</span>
+            <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
+              <span class="text-gray-500 dark:text-gray-500">الدور</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{{ selectedRoom.floor }}</span>
             </div>
-            <div class="flex justify-between border-b border-stone-100 pb-2">
-              <span class="text-gray-500">الحالة</span>
+            <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
+              <span class="text-gray-500 dark:text-gray-500">الحالة</span>
               <span :class="['font-bold', statusConfig[selectedRoom.status]?.color]">
                 {{ statusConfig[selectedRoom.status]?.label ?? selectedRoom.status }}
               </span>
             </div>
             <div v-if="currentBookingByRoomId[selectedRoom.id]" class="pt-1">
-              <p class="text-xs text-gray-400 font-semibold uppercase tracking-wide mb-2">الحجز الحالي</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 font-semibold uppercase tracking-wide mb-2">الحجز الحالي</p>
               <div class="bg-blue-50 rounded-xl p-3 border border-blue-100">
-                <div class="font-bold text-gray-900 mb-1">{{ currentBookingByRoomId[selectedRoom.id].guest_name }}</div>
-                <div class="text-gray-500 text-xs">
+                <div class="font-bold text-gray-900 dark:text-gray-100 mb-1">{{ currentBookingByRoomId[selectedRoom.id].guest_name }}</div>
+                <div class="text-gray-500 dark:text-gray-500 text-xs">
                   مغادرة:
                   {{ new Date(currentBookingByRoomId[selectedRoom.id].check_out).toLocaleDateString('ar-EG') }}
                 </div>
@@ -375,7 +374,7 @@ onUnmounted(() => clearInterval(refreshInterval))
 
           <button
             @click="selectedRoom = null"
-            class="mt-5 w-full py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700 transition-colors"
+            class="mt-5 w-full py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors"
           >إغلاق</button>
         </div>
       </div>

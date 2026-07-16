@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, useAuthStore } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 // أسماء الحقول لازم تطابق ProductRead في الباك إند بالظبط:
 // cost_price / reorder_point / category_id — قبل كده كانت الشاشة بتقرأ
@@ -342,10 +343,10 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
 <template>
   <div dir="rtl">
     <div class="flex items-center justify-between mb-6">
-      <h2 class="text-2xl font-black text-gray-900">المخزون</h2>
+      <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">المخزون</h2>
       <div class="flex items-center gap-2">
         <button @click="showLowStock = !showLowStock"
-          :class="['px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-colors', showLowStock ? 'border-red-500 bg-red-50 text-red-700' : 'border-stone-200 text-gray-600 hover:border-red-300']">
+          :class="['px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-colors', showLowStock ? 'border-red-500 bg-red-50 text-red-700' : 'border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 hover:border-red-300']">
           ⚠️ منخفض ({{ lowStockCount() }})
         </button>
         <AppButton variant="secondary" size="sm" @click="supplierListModal = true">🚚 الموردون</AppButton>
@@ -359,7 +360,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
     <!-- Search -->
     <div class="mb-4">
       <input v-model="search" type="text" placeholder="ابحث عن منتج أو SKU..."
-        class="w-full max-w-sm border border-stone-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
+        class="w-full max-w-sm border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
     </div>
 
     <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
@@ -367,30 +368,30 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
     <AppCard v-else padding="none">
       <div class="overflow-x-auto">
         <table class="w-full">
-          <thead class="bg-stone-50">
+          <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المنتج</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">SKU</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الفئة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المخزون</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">حد الطلب</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">تكلفة الوحدة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase"></th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المنتج</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">SKU</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الفئة</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المخزون</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">حد الطلب</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تكلفة الوحدة</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="p in filtered()" :key="p.id" class="border-t border-stone-100 hover:bg-stone-50">
-              <td class="px-4 py-3 font-medium text-gray-900 text-sm">{{ p.name }}</td>
-              <td class="px-4 py-3 font-mono text-xs text-gray-500">{{ p.sku }}</td>
-              <td class="px-4 py-3 text-sm text-gray-600">{{ categoryLabel(p) }}</td>
+            <tr v-for="p in filtered()" :key="p.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+              <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-sm">{{ p.name }}</td>
+              <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-gray-500">{{ p.sku }}</td>
+              <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ categoryLabel(p) }}</td>
               <td class="px-4 py-3">
-                <span :class="['text-sm font-bold', p.current_stock <= p.reorder_point ? 'text-red-600' : 'text-gray-900']">
+                <span :class="['text-sm font-bold', p.current_stock <= p.reorder_point ? 'text-red-600' : 'text-gray-900 dark:text-gray-100']">
                   {{ p.current_stock }} {{ p.unit }}
                 </span>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-500">{{ p.reorder_point }} {{ p.unit }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ (p.cost_price ?? 0).toLocaleString('ar-EG') }} ج</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ p.reorder_point }} {{ p.unit }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ (p.cost_price ?? 0).toLocaleString('ar-EG') }} ج</td>
               <td class="px-4 py-3">
                 <AppBadge size="sm" :variant="p.current_stock <= 0 ? 'danger' : p.current_stock <= p.reorder_point ? 'warning' : 'success'">
                   {{ p.current_stock <= 0 ? 'نفد' : p.current_stock <= p.reorder_point ? 'منخفض' : 'متاح' }}
@@ -415,32 +416,32 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
       <div class="space-y-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input v-model="productForm.name" type="text" placeholder="الاسم (إنجليزي) *"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.name_ar" type="text" placeholder="الاسم (عربي)"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.sku" type="text" placeholder="SKU *" :disabled="!!editingProduct"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400" />
-          <select v-model="productForm.unit" :disabled="!!editingProduct" class="border border-stone-200 rounded-xl px-3 py-2 text-sm disabled:bg-gray-50">
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400 dark:text-gray-500" />
+          <select v-model="productForm.unit" :disabled="!!editingProduct" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm disabled:bg-gray-50">
             <option v-for="u in UNIT_OPTIONS" :key="u" :value="u">{{ u }}</option>
           </select>
-          <select v-model="productForm.category_id" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+          <select v-model="productForm.category_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option value="">بدون فئة</option>
             <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name_ar || c.name }}</option>
           </select>
-          <select v-model="productForm.warehouse_id" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+          <select v-model="productForm.warehouse_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option value="">بدون مخزن محدد</option>
             <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.name_ar || w.name }}</option>
           </select>
           <input v-model="productForm.cost_price" type="number" min="0" step="0.01" placeholder="تكلفة الوحدة"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.reorder_point" type="number" min="0" step="0.01" placeholder="حد إعادة الطلب"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.min_stock" type="number" min="0" step="0.01" placeholder="الحد الأدنى"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.max_stock" type="number" min="0" step="0.01" placeholder="الحد الأقصى (اختياري)"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.notes" type="text" placeholder="ملاحظات"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
         </div>
         <AppButton class="mt-1" size="sm" :loading="savingProduct" @click="saveProduct">
           {{ editingProduct ? 'حفظ التعديلات' : 'إضافة المنتج' }}
@@ -452,9 +453,9 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
     <AppModal :open="poModal" title="تسجيل استلام بضاعة" size="lg" @close="poModal = false">
       <div class="space-y-3">
         <div>
-          <label class="text-xs font-semibold text-gray-500 uppercase">المورد</label>
+          <label class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المورد</label>
           <select v-model="poForm.supplier_id" @change="onSelectSupplier"
-            class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm mt-1">
+            class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm mt-1">
             <option value="">— مورد غير مسجّل (اكتب الاسم يدويًا تحت) —</option>
             <option v-for="s in suppliers.filter(x => x.is_active)" :key="s.id" :value="s.id">
               {{ s.name_ar || s.name }}
@@ -463,26 +464,26 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <input v-model="poForm.supplier_name" type="text" placeholder="اسم المورد *"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
           <input v-model="poForm.supplier_phone" type="text" placeholder="تليفون المورد"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
-        <select v-model="poForm.warehouse_id" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm">
+        <select v-model="poForm.warehouse_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
           <option value="">اختر المخزن المستلم إليه *</option>
           <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.name_ar || w.name }}</option>
         </select>
 
-        <div class="border-t border-stone-100 pt-3 space-y-2">
-          <div class="text-xs font-semibold text-gray-500 uppercase">الأصناف المستلمة</div>
+        <div class="border-t border-stone-100 dark:border-border/50 pt-3 space-y-2">
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الأصناف المستلمة</div>
           <div v-for="(line, i) in poForm.lines" :key="i" class="grid grid-cols-12 gap-2 items-center">
-            <select v-model="line.product_id" class="col-span-6 border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            <select v-model="line.product_id" class="col-span-6 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
               <option value="">اختر منتج</option>
               <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name_ar || p.name }} ({{ p.sku }})</option>
             </select>
             <input v-model="line.quantity" type="number" min="0" step="0.01" placeholder="الكمية"
-              class="col-span-3 border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="col-span-3 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <input v-model="line.unit_cost" type="number" min="0" step="0.01" placeholder="سعر الوحدة"
-              class="col-span-2 border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="col-span-2 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <button @click="removePOLine(i)" class="col-span-1 text-red-400 hover:text-red-600 text-lg">×</button>
           </div>
           <button @click="addPOLine" class="text-xs font-semibold text-primary-700 hover:underline">+ إضافة صنف</button>
@@ -495,18 +496,18 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
     <!-- #6: تعديل مخزون يدوي -->
     <AppModal :open="adjustModal" title="تعديل مخزون يدوي" @close="adjustModal = false">
       <div class="space-y-3">
-        <select v-model="adjustForm.product_id" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm">
+        <select v-model="adjustForm.product_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
           <option value="">اختر المنتج *</option>
           <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name_ar || p.name }} ({{ p.sku }}) — الحالي: {{ p.current_stock }} {{ p.unit }}</option>
         </select>
-        <select v-model="adjustForm.warehouse_id" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm">
+        <select v-model="adjustForm.warehouse_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
           <option value="">اختر المخزن *</option>
           <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.name_ar || w.name }}</option>
         </select>
         <input v-model="adjustForm.quantity" type="number" step="0.01" placeholder="كمية التعديل (موجب = إضافة، سالب = خصم) *"
-          class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         <input v-model="adjustForm.notes" type="text" placeholder="سبب التعديل (جرد، تلف، غلط عدّ...)"
-          class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         <AppButton class="mt-1" size="sm" :loading="savingAdjust" @click="saveAdjustStock">تسجيل التعديل</AppButton>
       </div>
     </AppModal>
@@ -515,24 +516,24 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
     <AppModal :open="supplierListModal" title="الموردون" size="lg" @close="supplierListModal = false">
       <div class="space-y-3">
         <AppButton size="sm" @click="openCreateSupplier">+ مورد جديد</AppButton>
-        <div class="overflow-x-auto border border-stone-100 rounded-xl">
+        <div class="overflow-x-auto border border-stone-100 dark:border-border/50 rounded-xl">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">الاسم</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">جهة الاتصال</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">التليفون</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">مهلة السداد</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 uppercase"></th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الاسم</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">جهة الاتصال</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التليفون</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">مهلة السداد</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
+                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="s in suppliers" :key="s.id" class="border-t border-stone-100">
-                <td class="px-3 py-2 text-sm font-medium text-gray-900">{{ s.name_ar || s.name }}</td>
-                <td class="px-3 py-2 text-sm text-gray-600">{{ s.contact_person || '—' }}</td>
-                <td class="px-3 py-2 text-sm text-gray-600" dir="ltr">{{ s.phone || '—' }}</td>
-                <td class="px-3 py-2 text-sm text-gray-600">{{ s.payment_terms_days }} يوم</td>
+              <tr v-for="s in suppliers" :key="s.id" class="border-t border-stone-100 dark:border-border/50">
+                <td class="px-3 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ s.name_ar || s.name }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500">{{ s.contact_person || '—' }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500" dir="ltr">{{ s.phone || '—' }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500">{{ s.payment_terms_days }} يوم</td>
                 <td class="px-3 py-2">
                   <AppBadge size="sm" :variant="s.is_active ? 'success' : 'neutral'">
                     {{ s.is_active ? 'نشط' : 'موقوف' }}
@@ -540,7 +541,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
                 </td>
                 <td class="px-3 py-2 text-left whitespace-nowrap">
                   <button @click="openEditSupplier(s)" class="text-xs font-semibold text-primary-700 hover:underline ml-3">تعديل</button>
-                  <button @click="toggleSupplierActive(s)" class="text-xs font-semibold text-gray-500 hover:underline">
+                  <button @click="toggleSupplierActive(s)" class="text-xs font-semibold text-gray-500 dark:text-gray-500 hover:underline">
                     {{ s.is_active ? 'إيقاف' : 'تفعيل' }}
                   </button>
                 </td>
@@ -561,27 +562,27 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
       <div class="space-y-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input v-model="supplierForm.name" type="text" placeholder="الاسم (إنجليزي) *"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="supplierForm.name_ar" type="text" placeholder="الاسم (عربي)"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="supplierForm.contact_person" type="text" placeholder="جهة الاتصال"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="supplierForm.phone" type="text" placeholder="التليفون"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" dir="ltr" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" dir="ltr" />
           <input v-model="supplierForm.email" type="email" placeholder="البريد الإلكتروني"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" dir="ltr" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" dir="ltr" />
           <input v-model="supplierForm.tax_number" type="text" placeholder="الرقم الضريبي"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="supplierForm.category" type="text" placeholder="التصنيف (مثال: خضروات، مشروبات)"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="supplierForm.payment_terms_days" type="number" min="0" placeholder="مهلة السداد (يوم)"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="supplierForm.credit_limit" type="number" min="0" step="0.01" placeholder="حد الائتمان (اختياري)"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="supplierForm.address" type="text" placeholder="العنوان"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
           <input v-model="supplierForm.notes" type="text" placeholder="ملاحظات"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
         </div>
         <AppButton class="mt-1" size="sm" :loading="savingSupplier" @click="saveSupplier">
           {{ editingSupplier ? 'حفظ التعديلات' : 'إضافة المورد' }}

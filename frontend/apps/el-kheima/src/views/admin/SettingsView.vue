@@ -9,11 +9,12 @@
 // كل الإعدادات هنا مربوطة بالفرع الحالي (نفس نمط باقي شاشات admin) — إعداد
 // "عام" (branch_id=null) مش هيظهر في القايمة إلا لو اتعمله PUT بدون branch_id.
 import { ref, reactive, onMounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { AppCard, AppButton, AppInput, AppBadge, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 // شرح كل مفتاح إعداد معروف — اتبنى بقراءة الكود فعليًا (مش تخمين)، راجع مين
 // بيقرا كل key بالظبط قبل ما تضيف/تعدّل سطر هنا:
@@ -111,7 +112,7 @@ async function loadSettings() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await api.get('/api/v1/settings', { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.settings.get, { params: { branch_id: branchId } })
     settings.value = res.data
     for (const row of res.data as SettingRow[]) {
       edited[row.key] = row.value
@@ -128,7 +129,7 @@ async function saveSetting(row: SettingRow) {
   savingKey.value = row.key
   try {
     const res = await api.put(
-      `/api/v1/settings/${encodeURIComponent(row.key)}`,
+      ENDPOINTS.settings.set(row.key),
       { value },
       { params: { branch_id: branchId } },
     )
@@ -157,7 +158,7 @@ async function createSetting() {
   creating.value = true
   try {
     const res = await api.put(
-      `/api/v1/settings/${encodeURIComponent(key)}`,
+      ENDPOINTS.settings.set(key),
       { value: newValue.value },
       { params: { branch_id: branchId } },
     )
@@ -179,8 +180,8 @@ onMounted(loadSettings)
 <template>
   <div dir="rtl" class="space-y-5">
     <div>
-      <h1 class="text-2xl font-black text-gray-800">الإعدادات</h1>
-      <p class="text-sm text-gray-500 mt-1">إعدادات الفرع الحالي — تعديل القيم يُحفظ فورًا عند الضغط على "حفظ"</p>
+      <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">الإعدادات</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">إعدادات الفرع الحالي — تعديل القيم يُحفظ فورًا عند الضغط على "حفظ"</p>
     </div>
 
     <!-- روابط سريعة لأقسام الإدارة ذات الصلة -->
@@ -191,7 +192,7 @@ onMounted(loadSettings)
         { path: '/admin/menu',      label: 'قائمة المطعم',   icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
         { path: '/admin/qr',        label: 'QR Codes',       icon: '📱', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
       ]" :key="link.path" :to="link.path"
-        :class="['flex items-center gap-2 p-3 rounded-xl border-2 transition-colors text-sm font-semibold text-gray-700', link.color]"
+        :class="['flex items-center gap-2 p-3 rounded-xl border-2 transition-colors text-sm font-semibold text-gray-700 dark:text-gray-300', link.color]"
       >
         <span class="text-xl">{{ link.icon }}</span>
         {{ link.label }}
@@ -229,34 +230,34 @@ onMounted(loadSettings)
       />
       <div v-else class="overflow-x-auto">
         <table class="w-full">
-          <thead class="bg-stone-50">
+          <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المفتاح</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">القيمة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">آخر تحديث</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">إجراء</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المفتاح</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">القيمة</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">آخر تحديث</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">إجراء</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in settings" :key="row.id" class="border-t border-stone-100 hover:bg-stone-50">
+            <tr v-for="row in settings" :key="row.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
               <td class="px-4 py-3 align-top pt-4 max-w-[320px]">
                 <div class="flex items-center gap-2 flex-wrap">
-                  <span class="font-mono text-sm text-gray-800">{{ row.key }}</span>
+                  <span class="font-mono text-sm text-gray-800 dark:text-gray-200">{{ row.key }}</span>
                   <AppBadge v-if="settingMeta(row.key)" size="sm" :variant="settingMeta(row.key)!.live ? 'success' : 'neutral'">
                     {{ settingMeta(row.key)!.live ? 'فعّال' : 'بدون أثر حاليًا' }}
                   </AppBadge>
                 </div>
-                <p v-if="settingMeta(row.key)" class="text-xs text-gray-400 mt-1">
+                <p v-if="settingMeta(row.key)" class="text-xs text-gray-400 dark:text-gray-500 mt-1">
                   {{ settingMeta(row.key)!.description }}
                 </p>
-                <p v-else class="text-xs text-gray-400 mt-1">
+                <p v-else class="text-xs text-gray-400 dark:text-gray-500 mt-1">
                   إعداد مخصّص — لا يوجد توضيح مسجّل له في هذه الشاشة.
                 </p>
               </td>
               <td class="px-4 py-3 min-w-[240px]">
                 <AppInput v-model="edited[row.key]" :disabled="savingKey === row.key" />
               </td>
-              <td class="px-4 py-3 text-sm text-gray-500 align-top pt-4">
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500 align-top pt-4">
                 {{ new Date(row.updated_at).toLocaleString('ar-EG') }}
               </td>
               <td class="px-4 py-3 align-top">

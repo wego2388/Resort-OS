@@ -16,11 +16,12 @@
 // معروفة" مش صفر — مُستبعدة من الملخص والاتجاه اليومي عمدًا (راجع تعليقات
 // services.get_food_cost_report) عشان ما تضخّمش هامش الربح الظاهر بالغلط.
 import { ref, computed, onMounted } from 'vue'
-import { api, ENDPOINTS } from '@resort-os/core'
+import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppInput, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 interface Outlet { id: number; name: string; name_ar: string | null; is_active: boolean }
 const outlets = ref<Outlet[]>([])
@@ -181,8 +182,8 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
   <div dir="rtl" class="space-y-5">
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-black text-gray-800">تقرير تكلفة الطعام (Food Cost)</h1>
-        <p class="text-sm text-gray-500 mt-1">
+        <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">تقرير تكلفة الطعام (Food Cost)</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
           التكلفة النظرية (وصفة × كمية مباعة فعليًا) مقابل الإيراد الفعلي — لكشف الأصناف اللي تكلفتها أعلى من المسموح.
         </p>
       </div>
@@ -200,7 +201,7 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
         v-for="o in outlets" :key="o.id"
         @click="switchOutlet(o.id)"
         :class="['px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors',
-                 activeOutletId === o.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 text-gray-600 hover:border-blue-300']"
+                 activeOutletId === o.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 dark:border-border text-gray-600 hover:border-blue-300']"
       >
         {{ outletLabel(o) }}
       </button>
@@ -224,33 +225,33 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
       <!-- Summary KPIs -->
       <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 mb-2">إجمالي الإيراد (مدى محسوب)</div>
-          <div class="text-2xl font-black text-gray-900">{{ money(report.summary.total_revenue) }}</div>
-          <div class="text-xs text-gray-400 mt-1">جنيه</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إجمالي الإيراد (مدى محسوب)</div>
+          <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ money(report.summary.total_revenue) }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 mb-2">التكلفة النظرية</div>
-          <div class="text-2xl font-black text-gray-900">{{ money(report.summary.total_theoretical_cost) }}</div>
-          <div class="text-xs text-gray-400 mt-1">جنيه</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">التكلفة النظرية</div>
+          <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ money(report.summary.total_theoretical_cost) }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 mb-2">نسبة تكلفة الطعام</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">نسبة تكلفة الطعام</div>
           <div :class="['text-2xl font-black', report.summary.food_cost_pct != null && Number(report.summary.food_cost_pct) > Number(report.summary.threshold_pct) ? 'text-red-600' : 'text-green-700']">
             {{ pct(report.summary.food_cost_pct) }}
           </div>
-          <div class="text-xs text-gray-400 mt-1">الحد: {{ report.summary.threshold_pct }}%</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">الحد: {{ report.summary.threshold_pct }}%</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 mb-2">هامش الربح الإجمالي</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">هامش الربح الإجمالي</div>
           <div class="text-2xl font-black text-blue-700">{{ pct(report.summary.gross_margin_pct) }}</div>
-          <div class="text-xs text-gray-400 mt-1">{{ money(report.summary.gross_margin_amount) }} جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ money(report.summary.gross_margin_amount) }} جنيه</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 mb-2">أصناف بدون وصفة</div>
-          <div :class="['text-2xl font-black', report.summary.items_missing_recipe > 0 ? 'text-amber-600' : 'text-gray-800']">
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">أصناف بدون وصفة</div>
+          <div :class="['text-2xl font-black', report.summary.items_missing_recipe > 0 ? 'text-amber-600' : 'text-gray-800 dark:text-gray-200']">
             {{ report.summary.items_missing_recipe }}
           </div>
-          <div class="text-xs text-gray-400 mt-1">
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">
             {{ report.summary.items_missing_recipe > 0 ? `${money(report.summary.items_missing_recipe_revenue)} ج إيراد مُستبعد من الحساب` : 'كل المبيعات تكلفتها معروفة' }}
           </div>
         </AppCard>
@@ -271,7 +272,7 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
         <EmptyState v-if="report.trend.every((t) => t.food_cost_pct == null)" icon="📉"
           title="لا توجد بيانات كافية لرسم الاتجاه" subtitle="مفيش مبيعات لأصناف معاها وصفة في المدى ده" />
         <div v-else>
-          <div class="flex items-end gap-1 h-32 border-b border-stone-200">
+          <div class="flex items-end gap-1 h-32 border-b border-stone-200 dark:border-border">
             <div v-for="point in report.trend" :key="point.date" class="flex-1 flex flex-col items-center justify-end h-full group relative"
               :title="`${shortDay(point.date)}: ${pct(point.food_cost_pct)} — إيراد ${money(point.revenue)} ج / تكلفة ${money(point.theoretical_cost)} ج`">
               <div
@@ -282,11 +283,11 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
             </div>
           </div>
           <div class="flex gap-1 mt-1">
-            <div v-for="point in report.trend" :key="point.date" class="flex-1 text-center text-[10px] text-gray-400 truncate">
+            <div v-for="point in report.trend" :key="point.date" class="flex-1 text-center text-[10px] text-gray-400 dark:text-gray-500 truncate">
               {{ shortDay(point.date) }}
             </div>
           </div>
-          <div class="flex items-center gap-4 mt-3 text-xs text-gray-500">
+          <div class="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-500">
             <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-green-500 inline-block" /> ضمن الحد</span>
             <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> تخطّى الحد ({{ report.summary.threshold_pct }}%)</span>
             <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-stone-200 inline-block" /> بدون مبيعات معروفة التكلفة</span>
@@ -298,38 +299,38 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
       <AppCard title="تفصيل الأصناف" padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الصنف</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الوصفة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الكمية المباعة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الإيراد</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">تكلفة الوحدة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">التكلفة الإجمالية</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">نسبة تكلفة الطعام</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">هامش الربح</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الصنف</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الوصفة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الكمية المباعة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الإيراد</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تكلفة الوحدة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التكلفة الإجمالية</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">نسبة تكلفة الطعام</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">هامش الربح</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="line in report.lines" :key="itemKey(line)"
-                :class="['border-t border-stone-100 hover:bg-stone-50', line.exceeds_threshold ? 'bg-red-50/60' : '']">
-                <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ itemName(line) }}</td>
+                :class="['border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60', line.exceeds_threshold ? 'bg-red-50/60' : '']">
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ itemName(line) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="line.has_recipe ? 'neutral' : 'warning'">
                     {{ line.has_recipe ? 'موجودة' : 'ناقصة' }}
                   </AppBadge>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ line.quantity_sold }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ money(line.revenue) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-500">{{ money(line.theoretical_unit_cost) }}</td>
-                <td class="px-4 py-3 text-sm font-bold text-gray-900">{{ money(line.theoretical_total_cost) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ line.quantity_sold }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ money(line.revenue) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ money(line.theoretical_unit_cost) }}</td>
+                <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ money(line.theoretical_total_cost) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge v-if="line.food_cost_pct != null" size="sm" :variant="line.exceeds_threshold ? 'danger' : 'success'">
                     {{ pct(line.food_cost_pct) }}
                   </AppBadge>
-                  <span v-else class="text-xs text-gray-400">غير معروفة</span>
+                  <span v-else class="text-xs text-gray-400 dark:text-gray-500">غير معروفة</span>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ pct(line.gross_margin_pct) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ pct(line.gross_margin_pct) }}</td>
               </tr>
               <tr v-if="report.lines.length === 0">
                 <td colspan="8" class="px-4 py-8">

@@ -10,12 +10,13 @@
 // ديناميكية من /dining/outlets (DINING_CUTOVER_PLAN.md Batch 6 — كانت
 // restaurant/cafe تابين ثابتين، دلوقتي أي عدد منافذ).
 import { ref, computed, onMounted } from 'vue'
-import { api, ENDPOINTS } from '@resort-os/core'
+import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 interface Outlet { id: number; name: string; name_ar: string | null; is_active: boolean }
 const outlets = ref<Outlet[]>([])
@@ -72,12 +73,12 @@ const editingVariantLineQty = ref('')
 // ── مسارات API — outlet_id-scoped (DINING_CUTOVER_PLAN.md Batch 6: كانت
 // جداول منفصلة تمامًا لمطعم/كافيه، دلوقتي جدول dining واحد، فرق المنفذ
 // بس رقم في المسار بدل موديول تاني بالكامل) ────────────────────────────
-const recipeLinesPath = (itemId: number) => `/api/v1/dining/items/${itemId}/recipe-lines`
-const recipeLinePath = (lineId: number) => `/api/v1/dining/recipe-lines/${lineId}`
-const variantsPath = (itemId: number) => `/api/v1/dining/items/${itemId}/variants`
-const variantPath = (variantId: number) => `/api/v1/dining/variants/${variantId}`
-const variantLinesPath = (variantId: number) => `/api/v1/dining/variants/${variantId}/recipe-lines`
-const variantLinePath = (lineId: number) => `/api/v1/dining/variant-recipe-lines/${lineId}`
+const recipeLinesPath = (itemId: number) => ENDPOINTS.dining.recipeLines(itemId)
+const recipeLinePath  = (lineId: number)  => ENDPOINTS.dining.recipeLine(lineId)
+const variantsPath    = (itemId: number)  => ENDPOINTS.dining.variants(itemId)
+const variantPath     = (variantId: number) => ENDPOINTS.dining.variant(variantId)
+const variantLinesPath = (variantId: number) => ENDPOINTS.dining.variantRecipeLines(variantId)
+const variantLinePath  = (lineId: number)   => ENDPOINTS.dining.variantRecipeLine(lineId)
 
 async function loadOutlets() {
   try {
@@ -104,7 +105,7 @@ async function fetchItems() {
 
 async function fetchProducts() {
   try {
-    const res = await api.get('/api/v1/inventory/products', { params: { branch_id: branchId, limit: 200 } })
+    const res = await api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId, limit: 200 } })
     products.value = res.data.products ?? res.data.items ?? res.data
   } catch {
     // غير حرج للعرض — بس هيفضل الاختيار في فورم الإضافة فاضي
@@ -336,8 +337,8 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
   <div dir="rtl">
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h2 class="text-2xl font-black text-gray-900">وصفات الأصناف (Recipe / BOM)</h2>
-        <p class="text-sm text-gray-500 mt-1">
+        <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">وصفات الأصناف (Recipe / BOM)</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
           اربط كل صنف بمكوّناته المخزنية — البيع بيخصم المخزون تلقائيًا وبيحسب التكلفة الحقيقية.
         </p>
       </div>
@@ -350,18 +351,18 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
         v-for="o in outlets" :key="o.id"
         @click="switchOutlet(o.id)"
         :class="['px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors',
-                 activeOutletId === o.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 text-gray-600 hover:border-blue-300']"
+                 activeOutletId === o.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 dark:border-border text-gray-600 hover:border-blue-300']"
       >
         {{ outletLabel(o) }}
       </button>
-      <span class="self-center text-xs text-gray-400 mr-2">
+      <span class="self-center text-xs text-gray-400 dark:text-gray-500 mr-2">
         {{ recipeCount }} صنف من أصل {{ items.length }} معاه وصفة حقيقية
       </span>
     </div>
 
     <div class="mb-4">
       <input v-model="search" type="text" placeholder="ابحث عن صنف..."
-        class="w-full max-w-sm border border-stone-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
+        class="w-full max-w-sm border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
     </div>
 
     <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
@@ -369,23 +370,23 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
     <AppCard v-else padding="none">
       <div class="overflow-x-auto">
         <table class="w-full">
-          <thead class="bg-stone-50">
+          <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الصنف</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">السعر</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">التكلفة اليدوية</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">التكلفة المحسوبة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الوصفة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المتغيّرات</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase"></th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الصنف</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">السعر</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التكلفة اليدوية</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التكلفة المحسوبة</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الوصفة</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المتغيّرات</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="item in filtered" :key="item.id" class="border-t border-stone-100 hover:bg-stone-50">
-              <td class="px-4 py-3 font-medium text-gray-900 text-sm">{{ item.name_ar || item.name }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700">{{ item.price.toLocaleString('ar-EG') }} ج</td>
-              <td class="px-4 py-3 text-sm text-gray-500">{{ item.cost != null ? item.cost.toLocaleString('ar-EG') + ' ج' : '—' }}</td>
-              <td class="px-4 py-3 text-sm font-bold text-gray-900">{{ item.computed_cost.toLocaleString('ar-EG') }} ج</td>
+            <tr v-for="item in filtered" :key="item.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+              <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-sm">{{ item.name_ar || item.name }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.price.toLocaleString('ar-EG') }} ج</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ item.cost != null ? item.cost.toLocaleString('ar-EG') + ' ج' : '—' }}</td>
+              <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ item.computed_cost.toLocaleString('ar-EG') }} ج</td>
               <td class="px-4 py-3">
                 <AppBadge size="sm" :variant="item.recipe_lines.length > 0 ? 'success' : 'neutral'">
                   {{ item.recipe_lines.length > 0 ? `${item.recipe_lines.length} مكوّن` : 'بدون وصفة' }}
@@ -414,30 +415,30 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
     <AppModal :open="showRecipeModal" :title="`وصفة: ${selectedItem?.name_ar || selectedItem?.name || ''}`"
       size="lg" @close="showRecipeModal = false">
       <div v-if="selectedItem" class="space-y-5">
-        <div class="flex items-center justify-between bg-stone-50 rounded-xl p-3 text-sm">
-          <span class="text-gray-500">التكلفة المحسوبة من الوصفة</span>
-          <span class="font-black text-lg text-gray-900">{{ selectedItem.computed_cost.toLocaleString('ar-EG') }} ج</span>
+        <div class="flex items-center justify-between bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3 text-sm">
+          <span class="text-gray-500 dark:text-gray-500">التكلفة المحسوبة من الوصفة</span>
+          <span class="font-black text-lg text-gray-900 dark:text-gray-100">{{ selectedItem.computed_cost.toLocaleString('ar-EG') }} ج</span>
         </div>
 
         <!-- Existing lines -->
         <div>
-          <h4 class="text-sm font-bold text-gray-700 mb-2">المكوّنات الحالية</h4>
-          <div v-if="selectedItem.recipe_lines.length === 0" class="text-sm text-gray-400 py-4 text-center">
+          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">المكوّنات الحالية</h4>
+          <div v-if="selectedItem.recipe_lines.length === 0" class="text-sm text-gray-400 dark:text-gray-500 py-4 text-center">
             مفيش مكوّنات مضافة — الصنف بيستخدم التكلفة اليدوية بس.
           </div>
           <div v-else class="space-y-2">
             <div v-for="line in selectedItem.recipe_lines" :key="line.id"
-              class="flex items-center justify-between border border-stone-200 rounded-xl px-3 py-2">
+              class="flex items-center justify-between border border-stone-200 dark:border-border rounded-xl px-3 py-2">
               <div class="flex-1">
-                <div class="font-medium text-sm text-gray-900">{{ line.product_name }}</div>
-                <div class="text-xs text-gray-500">
+                <div class="font-medium text-sm text-gray-900 dark:text-gray-100">{{ line.product_name }}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-500">
                   {{ line.quantity_per_unit }} {{ line.product_unit }} × {{ line.unit_cost.toLocaleString('ar-EG') }} ج
-                  = <span class="font-bold text-gray-700">{{ line.line_cost.toLocaleString('ar-EG') }} ج</span>
+                  = <span class="font-bold text-gray-700 dark:text-gray-300">{{ line.line_cost.toLocaleString('ar-EG') }} ج</span>
                 </div>
               </div>
               <div v-if="editingLineId === line.id" class="flex items-center gap-2">
                 <input v-model="editingQty" type="number" step="0.001" min="0.001"
-                  class="w-24 border border-stone-200 rounded-lg px-2 py-1 text-sm"/>
+                  class="w-24 border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-sm"/>
                 <AppButton variant="primary" size="sm" @click="saveEdit(line)">حفظ</AppButton>
                 <AppButton variant="ghost" size="sm" @click="cancelEdit">إلغاء</AppButton>
               </div>
@@ -450,20 +451,20 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
         </div>
 
         <!-- Add new line -->
-        <div class="border-t border-stone-200 pt-4">
-          <h4 class="text-sm font-bold text-gray-700 mb-2">إضافة مكوّن جديد</h4>
+        <div class="border-t border-stone-200 dark:border-border pt-4">
+          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">إضافة مكوّن جديد</h4>
           <div class="flex items-end gap-2">
             <div class="flex-1">
-              <label class="block text-xs text-gray-500 mb-1">المنتج المخزني</label>
-              <select v-model="newLineProductId" class="w-full border border-stone-200 rounded-lg px-2 py-2 text-sm">
+              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">المنتج المخزني</label>
+              <select v-model="newLineProductId" class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm">
                 <option value="" disabled>اختر منتج...</option>
                 <option v-for="p in products" :key="p.id" :value="p.id">{{ productLabel(p) }}</option>
               </select>
             </div>
             <div class="w-32">
-              <label class="block text-xs text-gray-500 mb-1">الكمية / وحدة</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">الكمية / وحدة</label>
               <input v-model="newLineQty" type="number" step="0.001" min="0.001" placeholder="0.150"
-                class="w-full border border-stone-200 rounded-lg px-2 py-2 text-sm"/>
+                class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>
             <AppButton variant="primary" size="sm" :disabled="savingLine" @click="addLine">
               {{ savingLine ? '...' : 'إضافة' }}
@@ -474,26 +475,26 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
         <!-- المتغيّرات (حجم/نوع) — سعر ووصفة مستقلين تمامًا عن الصنف الأساسي،
              مختلف عن مكوّنات الوصفة فوق (بتاعت الصنف الأساسي بس). مثال:
              كابتشينو صغير/كبير — سعر مختلف واستهلاك حليب مختلف فعليًا. -->
-        <div class="border-t border-stone-200 pt-4">
-          <h4 class="text-sm font-bold text-gray-700 mb-1">المتغيّرات (أحجام/أنواع مختلفة — اختياري)</h4>
-          <p class="text-xs text-gray-400 mb-3">
+        <div class="border-t border-stone-200 dark:border-border pt-4">
+          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">المتغيّرات (أحجام/أنواع مختلفة — اختياري)</h4>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">
             لو الصنف بيتباع بأكتر من حجم/نوع بسعر ووصفة مختلفين (زي كابتشينو صغير/كبير)، أضف متغيّر لكل واحد.
             لو مفيش متغيّرات، الصنف بيتباع بسعره ووصفته الأساسية زي ما هو.
           </p>
 
-          <div v-if="selectedItem.variants.length === 0" class="text-sm text-gray-400 py-3 text-center">
+          <div v-if="selectedItem.variants.length === 0" class="text-sm text-gray-400 dark:text-gray-500 py-3 text-center">
             مفيش متغيّرات — الصنف بيتباع بسعر واحد ثابت.
           </div>
           <div v-else class="space-y-2 mb-3">
             <div v-for="variant in selectedItem.variants" :key="variant.id"
-              class="border border-stone-200 rounded-xl overflow-hidden">
-              <div class="flex items-center justify-between px-3 py-2 bg-stone-50">
+              class="border border-stone-200 dark:border-border rounded-xl overflow-hidden">
+              <div class="flex items-center justify-between px-3 py-2 bg-stone-50 dark:bg-gray-800/60">
                 <div class="flex-1 cursor-pointer" @click="toggleVariantExpand(variant)">
-                  <div class="font-medium text-sm text-gray-900">
+                  <div class="font-medium text-sm text-gray-900 dark:text-gray-100">
                     {{ variant.name_ar || variant.name }}
                     <span v-if="!variant.is_available" class="text-xs text-red-500 mr-1">(غير متاح)</span>
                   </div>
-                  <div class="text-xs text-gray-500">
+                  <div class="text-xs text-gray-500 dark:text-gray-500">
                     {{ variant.price.toLocaleString('ar-EG') }} ج · تكلفة {{ variant.computed_cost.toLocaleString('ar-EG') }} ج ·
                     {{ variant.recipe_lines.length > 0 ? `${variant.recipe_lines.length} مكوّن` : 'بدون وصفة (fallback لوصفة الصنف الأساسي)' }}
                   </div>
@@ -507,22 +508,22 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
               </div>
 
               <!-- وصفة المتغيّر — نفس نمط وصفة الصنف الأساسي فوق بالظبط -->
-              <div v-if="expandedVariantId === variant.id" class="p-3 space-y-2 bg-white">
-                <div v-if="variant.recipe_lines.length === 0" class="text-xs text-gray-400 py-2 text-center">
+              <div v-if="expandedVariantId === variant.id" class="p-3 space-y-2 bg-white dark:bg-surface">
+                <div v-if="variant.recipe_lines.length === 0" class="text-xs text-gray-400 dark:text-gray-500 py-2 text-center">
                   مفيش مكوّنات مضافة لهذا المتغيّر — هيستخدم وصفة الصنف الأساسي (لو موجودة) عند البيع.
                 </div>
                 <div v-for="line in variant.recipe_lines" :key="line.id"
-                  class="flex items-center justify-between border border-stone-100 rounded-lg px-2 py-1.5">
+                  class="flex items-center justify-between border border-stone-100 dark:border-border/50 rounded-lg px-2 py-1.5">
                   <div class="flex-1">
-                    <div class="text-sm text-gray-900">{{ line.product_name }}</div>
-                    <div class="text-xs text-gray-500">
+                    <div class="text-sm text-gray-900 dark:text-gray-100">{{ line.product_name }}</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-500">
                       {{ line.quantity_per_unit }} {{ line.product_unit }} × {{ line.unit_cost.toLocaleString('ar-EG') }} ج
-                      = <span class="font-bold text-gray-700">{{ line.line_cost.toLocaleString('ar-EG') }} ج</span>
+                      = <span class="font-bold text-gray-700 dark:text-gray-300">{{ line.line_cost.toLocaleString('ar-EG') }} ج</span>
                     </div>
                   </div>
                   <div v-if="editingVariantLineId === line.id" class="flex items-center gap-2">
                     <input v-model="editingVariantLineQty" type="number" step="0.001" min="0.001"
-                      class="w-20 border border-stone-200 rounded-lg px-2 py-1 text-sm"/>
+                      class="w-20 border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-sm"/>
                     <AppButton variant="primary" size="sm" @click="saveEditVariantLine(line)">حفظ</AppButton>
                     <AppButton variant="ghost" size="sm" @click="cancelEditVariantLine">إلغاء</AppButton>
                   </div>
@@ -534,14 +535,14 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
 
                 <div class="flex items-end gap-2 pt-1">
                   <div class="flex-1">
-                    <select v-model="newVariantLineProductId" class="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm">
+                    <select v-model="newVariantLineProductId" class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-sm">
                       <option value="" disabled>اختر منتج...</option>
                       <option v-for="p in products" :key="p.id" :value="p.id">{{ productLabel(p) }}</option>
                     </select>
                   </div>
                   <div class="w-24">
                     <input v-model="newVariantLineQty" type="number" step="0.001" min="0.001" placeholder="0.200"
-                      class="w-full border border-stone-200 rounded-lg px-2 py-1.5 text-sm"/>
+                      class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-sm"/>
                   </div>
                   <AppButton variant="primary" size="sm" :disabled="savingVariantLine" @click="addVariantLine(variant)">
                     {{ savingVariantLine ? '...' : 'إضافة' }}
@@ -553,14 +554,14 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
 
           <div class="flex items-end gap-2">
             <div class="flex-1">
-              <label class="block text-xs text-gray-500 mb-1">اسم المتغيّر</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">اسم المتغيّر</label>
               <input v-model="newVariantName" type="text" placeholder="كبير"
-                class="w-full border border-stone-200 rounded-lg px-2 py-2 text-sm"/>
+                class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>
             <div class="w-28">
-              <label class="block text-xs text-gray-500 mb-1">السعر</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">السعر</label>
               <input v-model="newVariantPrice" type="number" step="0.01" min="0.01" placeholder="35.00"
-                class="w-full border border-stone-200 rounded-lg px-2 py-2 text-sm"/>
+                class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>
             <AppButton variant="primary" size="sm" :disabled="savingVariant" @click="addVariant">
               {{ savingVariant ? '...' : 'إضافة متغيّر' }}

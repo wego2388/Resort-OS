@@ -77,7 +77,6 @@ async function fetchLocations() {
     const { data } = await api.get(ENDPOINTS.beach.locations, { params: { branch_id: branchId.value } })
     locations.value = data
   } catch (e) {
-    console.error('Failed to load beach locations', e)
     toast.error('تعذّر تحميل خريطة الشاطئ')
   } finally {
     loading.value = false
@@ -287,7 +286,7 @@ onMounted(fetchLocations)
         <button
           @click="openBulkReduce"
           :disabled="locations.length === 0"
-          class="px-4 py-2 bg-white border-2 border-red-300 text-red-700 rounded-xl font-bold text-sm hover:bg-red-50 active:scale-95 transition-all shadow-sm disabled:opacity-40"
+          class="px-4 py-2 bg-white dark:bg-surface border-2 border-red-300 text-red-700 rounded-xl font-bold text-sm hover:bg-red-50 active:scale-95 transition-all shadow-sm disabled:opacity-40"
         >➖ حذف مواقع</button>
       </div>
     </div>
@@ -353,24 +352,24 @@ onMounted(fetchLocations)
         </p>
         <div>
           <label class="block text-xs font-bold text-gray-600 mb-1">اسم الضيف (اختياري)</label>
-          <input v-model="checkinForm.guest_name" type="text" class="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm" />
+          <input v-model="checkinForm.guest_name" type="text" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
         <div>
           <label class="block text-xs font-bold text-gray-600 mb-1">رقم التليفون (اختياري)</label>
-          <input v-model="checkinForm.guest_phone" type="text" class="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm" dir="ltr" />
+          <input v-model="checkinForm.guest_phone" type="text" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" dir="ltr" />
         </div>
         <div>
           <label class="block text-xs font-bold text-gray-600 mb-1">عدد الأفراد</label>
-          <input v-model.number="checkinForm.guests_count" type="number" min="1" class="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm" />
+          <input v-model.number="checkinForm.guests_count" type="number" min="1" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
-        <label class="flex items-center gap-2 text-sm text-gray-700">
+        <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
           <input v-model="checkinForm.with_towel" type="checkbox" class="rounded border-stone-300" />
           مع فوطة
         </label>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="checkinModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
+          <button @click="checkinModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
           <button
             @click="submitCheckin" :disabled="checkinSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-50"
@@ -382,7 +381,7 @@ onMounted(fetchLocations)
     <!-- ── Occupied detail / checkout modal ── -->
     <AppModal :open="detailModalOpen" title="بيانات الموقع" size="sm" @close="detailModalOpen = false">
       <div v-if="detailTarget" class="space-y-2 text-sm">
-        <p class="font-bold text-gray-900">
+        <p class="font-bold text-gray-900 dark:text-gray-100">
           {{ typeIcon(detailTarget.location_type) }} {{ typeLabel(detailTarget.location_type) }} {{ detailTarget.number }}
         </p>
         <p v-if="detailTarget.guest_name"><span class="text-gray-500">الضيف:</span> {{ detailTarget.guest_name }}</p>
@@ -406,17 +405,17 @@ onMounted(fetchLocations)
           <label class="block text-xs font-bold text-gray-600 mb-1">نوع الموقع</label>
           <input
             v-model="bulkAddForm.location_type" type="text" placeholder="umbrella / pergola / sunbed / cabana"
-            class="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm" dir="ltr"
+            class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" dir="ltr"
           />
         </div>
         <div>
           <label class="block text-xs font-bold text-gray-600 mb-1">العدد</label>
-          <input v-model.number="bulkAddForm.count" type="number" min="1" max="200" class="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm" />
+          <input v-model.number="bulkAddForm.count" type="number" min="1" max="200" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="bulkAddModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
+          <button @click="bulkAddModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
           <button
             @click="submitBulkAdd" :disabled="bulkAddSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-50"
@@ -430,19 +429,19 @@ onMounted(fetchLocations)
       <div class="space-y-3">
         <div>
           <label class="block text-xs font-bold text-gray-600 mb-1">نوع الموقع</label>
-          <select v-model="bulkReduceForm.location_type" class="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm">
+          <select v-model="bulkReduceForm.location_type" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm">
             <option v-for="t in existingTypes" :key="t" :value="t">{{ typeLabel(t) }}</option>
           </select>
         </div>
         <div>
           <label class="block text-xs font-bold text-gray-600 mb-1">العدد</label>
-          <input v-model.number="bulkReduceForm.count" type="number" min="1" class="w-full px-3 py-2 border border-stone-200 rounded-lg text-sm" />
+          <input v-model.number="bulkReduceForm.count" type="number" min="1" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
         <p class="text-xs text-amber-600">⚠️ بيحذف آخر المواقع المتاحة فقط — المواقع المشغولة لازم تتعمل لها checkout الأول.</p>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="bulkReduceModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
+          <button @click="bulkReduceModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
           <button
             @click="submitBulkReduce" :disabled="bulkReduceSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 disabled:opacity-50"

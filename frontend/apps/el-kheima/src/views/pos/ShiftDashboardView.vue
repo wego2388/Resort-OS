@@ -176,7 +176,7 @@ onMounted(fetchShift)
            في هيدر FieldLayout بالظبط، من غير أي تكرار لمنطق القفل/عدّ الكاش -->
       <AppCard class="mb-4" padding="sm">
         <div class="flex items-center justify-between px-1">
-          <span class="text-sm font-bold text-gray-700">وردية #{{ shift.id }}</span>
+          <span class="text-sm font-bold text-gray-700 dark:text-gray-300">وردية #{{ shift.id }}</span>
           <ShiftPanel @shift-changed="refreshAll" />
         </div>
       </AppCard>
@@ -203,8 +203,8 @@ onMounted(fetchShift)
               <div class="text-lg font-black text-purple-700">{{ Number(report.total_card).toFixed(2) }}</div>
               <div class="text-xs text-purple-600 mt-0.5">كارت</div>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3 text-center border border-stone-200">
-              <div class="text-lg font-black text-gray-700">{{ report.invoice_count }}</div>
+            <div class="bg-stone-50 rounded-xl p-3 text-center border border-stone-200 dark:border-border">
+              <div class="text-lg font-black text-gray-700 dark:text-gray-300">{{ report.invoice_count }}</div>
               <div class="text-xs text-gray-500 mt-0.5">عدد الفواتير</div>
             </div>
           </div>
@@ -219,7 +219,7 @@ onMounted(fetchShift)
             <a
               :href="ENDPOINTS.finance.shiftReportPdf(shift.id)"
               target="_blank"
-              class="flex-1 py-2 text-xs font-bold text-gray-600 bg-stone-50 border border-stone-200 rounded-lg text-center hover:bg-stone-100"
+              class="flex-1 py-2 text-xs font-bold text-gray-600 bg-stone-50 border border-stone-200 dark:border-border rounded-lg text-center hover:bg-stone-100"
             >📄 تحميل PDF</a>
           </div>
         </template>
@@ -239,7 +239,7 @@ onMounted(fetchShift)
             <div class="divide-y divide-stone-100">
               <div v-for="o in group.orders" :key="o.id" class="py-2 flex items-center justify-between gap-2">
                 <div>
-                  <span class="text-sm font-semibold text-gray-800">{{ o.order_number }}</span>
+                  <span class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ o.order_number }}</span>
                   <span class="text-xs text-gray-400 mr-2">{{ orderLabel(o) }}</span>
                 </div>
                 <div class="flex items-center gap-2">

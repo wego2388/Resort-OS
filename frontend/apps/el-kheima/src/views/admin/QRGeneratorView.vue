@@ -13,12 +13,13 @@
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, ENDPOINTS } from '@resort-os/core'
+import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
 
 const toast    = useToast()
 const route    = useRoute()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 // ── استخرج base URL من location الحالي عشان QR يشاور على العنوان الصحيح ──
 const PUBLIC_BASE = computed(() => {
@@ -282,17 +283,17 @@ const grouped = computed(() => {
     <!-- Header -->
     <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
       <div>
-        <h1 class="text-xl font-black text-gray-900">📱 توليد QR Codes</h1>
-        <p class="text-xs text-gray-400 mt-1">اختر الطاولات وطبع QR codes جاهزة للتعليق</p>
+        <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">📱 توليد QR Codes</h1>
+        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">اختر الطاولات وطبع QR codes جاهزة للتعليق</p>
       </div>
       <div class="flex gap-2">
         <button
           @click="selectAll"
-          class="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-gray-700 rounded-lg text-sm font-semibold transition-colors"
+          class="px-3 py-2 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold transition-colors"
         >تحديد الكل</button>
         <button
           @click="clearAll"
-          class="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-gray-700 rounded-lg text-sm font-semibold transition-colors"
+          class="px-3 py-2 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold transition-colors"
         >إلغاء التحديد</button>
         <button
           @click="printSelected"
@@ -303,18 +304,18 @@ const grouped = computed(() => {
     </div>
 
     <!-- Outlet tabs — ديناميكية من /dining/outlets (أي عدد منافذ، مش بس اتنين) -->
-    <div v-if="outlets.length" class="flex gap-2 mb-6 bg-stone-100 p-1 rounded-xl w-fit flex-wrap">
+    <div v-if="outlets.length" class="flex gap-2 mb-6 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl w-fit flex-wrap">
       <button
         v-for="o in outlets"
         :key="o.id"
         @click="activeOutletId = o.id; loadTables()"
         :class="[
           'px-5 py-2 rounded-lg text-sm font-bold transition-all',
-          activeOutletId === o.id ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700',
+          activeOutletId === o.id ? 'bg-white dark:bg-surface text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700',
         ]"
       >{{ outletLabel(o) }}</button>
     </div>
-    <div v-else-if="!loading" class="text-sm text-gray-400 mb-6">لا توجد منافذ دايننج مفعّلة</div>
+    <div v-else-if="!loading" class="text-sm text-gray-400 dark:text-gray-500 mb-6">لا توجد منافذ دايننج مفعّلة</div>
 
     <!-- Loading -->
     <div v-if="loading" class="flex justify-center py-16">
@@ -322,19 +323,19 @@ const grouped = computed(() => {
     </div>
 
     <!-- Empty -->
-    <div v-else-if="tables.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400">
+    <div v-else-if="tables.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-500">
       <div class="text-5xl mb-4">📱</div>
-      <p class="font-medium text-gray-600">لا توجد طاولات مضافة</p>
+      <p class="font-medium text-gray-600 dark:text-gray-500">لا توجد طاولات مضافة</p>
       <p class="text-sm mt-1">اذهب لإدارة الطاولات وأضف طاولات أولاً</p>
     </div>
 
     <!-- Tables grid grouped by section -->
     <div v-else class="space-y-8">
       <div v-for="[section, sectionTables] in grouped" :key="section">
-        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-2">
-          <span class="flex-1 border-b border-stone-200" />
+        <h2 class="text-sm font-bold text-gray-500 dark:text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-2">
+          <span class="flex-1 border-b border-stone-200 dark:border-border" />
           <span>{{ section }}</span>
-          <span class="flex-1 border-b border-stone-200" />
+          <span class="flex-1 border-b border-stone-200 dark:border-border" />
         </h2>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <div
@@ -343,8 +344,8 @@ const grouped = computed(() => {
             :id="`table-card-${table.id}`"
             @click="toggleSelect(table.id)"
             :class="[
-              'relative bg-white rounded-2xl border-2 p-4 flex flex-col items-center gap-3 cursor-pointer transition-all hover:shadow-md',
-              selectedIds.has(table.id) ? 'border-blue-600 shadow-md bg-blue-50' : 'border-stone-200',
+              'relative bg-white dark:bg-surface rounded-2xl border-2 p-4 flex flex-col items-center gap-3 cursor-pointer transition-all hover:shadow-md',
+              selectedIds.has(table.id) ? 'border-blue-600 shadow-md bg-blue-50' : 'border-stone-200 dark:border-border',
             ]"
           >
             <!-- Checkmark -->
@@ -358,7 +359,7 @@ const grouped = computed(() => {
             </div>
 
             <!-- QR Image — fallback to canvas if external API unreachable -->
-            <div class="w-24 h-24 rounded-lg overflow-hidden flex items-center justify-center bg-stone-50">
+            <div class="w-24 h-24 rounded-lg overflow-hidden flex items-center justify-center bg-stone-50 dark:bg-gray-800/60">
               <img
                 :src="qrUrl(table.id)"
                 :alt="`QR طاولة ${table.table_number}`"
@@ -375,14 +376,14 @@ const grouped = computed(() => {
 
             <!-- Label -->
             <div class="text-center">
-              <div class="font-black text-gray-900">طاولة {{ table.table_number }}</div>
-              <div v-if="table.section" class="text-xs text-gray-500">{{ table.section }}</div>
+              <div class="font-black text-gray-900 dark:text-gray-100">طاولة {{ table.table_number }}</div>
+              <div v-if="table.section" class="text-xs text-gray-500 dark:text-gray-500">{{ table.section }}</div>
             </div>
 
             <!-- Download btn -->
             <button
               @click.stop="downloadQr(table)"
-              class="w-full py-1.5 bg-stone-100 hover:bg-stone-200 text-gray-600 text-xs font-semibold rounded-lg transition-colors"
+              class="w-full py-1.5 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-600 dark:text-gray-500 text-xs font-semibold rounded-lg transition-colors"
             >⬇️ تحميل</button>
           </div>
         </div>

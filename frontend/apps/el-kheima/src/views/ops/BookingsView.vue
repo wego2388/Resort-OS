@@ -18,12 +18,13 @@
 //      permanently empty regardless of the (also fixed, see
 //      app/modules/pms/crud.py::get_available_rooms) backend availability bug.
 import { ref, computed, watch, onMounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 interface Booking {
   id: number
@@ -76,7 +77,7 @@ const statusConfig: Record<string, { label: string; color: string; bg: string }>
   pending:     { label: 'معلق',       color: 'text-amber-700',  bg: 'bg-amber-100' },
   confirmed:   { label: 'مؤكد',       color: 'text-blue-700',   bg: 'bg-blue-100' },
   checked_in:  { label: 'داخل',       color: 'text-green-700',  bg: 'bg-green-100' },
-  checked_out: { label: 'خارج',       color: 'text-gray-600',   bg: 'bg-gray-100' },
+  checked_out: { label: 'خارج',       color: 'text-gray-600 dark:text-gray-500',   bg: 'bg-gray-100' },
   cancelled:   { label: 'ملغي',       color: 'text-red-700',    bg: 'bg-red-100' },
 }
 
@@ -118,12 +119,12 @@ const applicableRatePlans = computed(() => {
 
 async function fetchRatePlans() {
   try {
-    const res = await api.get('/api/v1/pms/rate-plans', {
+    const res = await api.get(ENDPOINTS.pms_extra.ratePlans, {
       params: { branch_id: branchId, active_only: true },
     })
     ratePlans.value = res.data.items ?? res.data
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل خطط الأسعار')
   }
 }
 
@@ -142,12 +143,11 @@ function openCreateModal() {
 async function fetchBookings() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/pms/bookings', {
+    const res = await api.get(ENDPOINTS.pms.bookings, {
       params: { branch_id: branchId, page: 1, size: 100 }
     })
     bookings.value = res.data.items ?? res.data
   } catch(e) {
-    console.error(e)
     toast.error('تعذّر تحميل الحجوزات')
   } finally { loading.value = false }
 }
@@ -158,11 +158,11 @@ const allRoomsById = ref<Record<number, RoomOption>>({})
 
 async function fetchAllRooms() {
   try {
-    const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.pms.rooms, { params: { branch_id: branchId } })
     const list: RoomOption[] = res.data.items ?? res.data
     allRoomsById.value = Object.fromEntries(list.map((r) => [r.id, r]))
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل بيانات الغرف')
   }
 }
 
@@ -182,7 +182,7 @@ async function fetchAvailableRooms() {
   }
   roomsLoading.value = true
   try {
-    const res = await api.get('/api/v1/pms/rooms/available', {
+    const res = await api.get(ENDPOINTS.pms.roomsAvailable, {
       params: { branch_id: branchId, check_in: form.value.check_in, check_out: form.value.check_out },
     })
     rooms.value = res.data
@@ -193,7 +193,6 @@ async function fetchAvailableRooms() {
       form.value.rate_plan_id = null
     }
   } catch(e) {
-    console.error(e)
     toast.error('تعذّر تحميل قائمة الغرف المتاحة')
   } finally {
     roomsLoading.value = false
@@ -218,7 +217,7 @@ async function createBooking() {
   submitting.value = true
   createError.value = ''
   try {
-    await api.post('/api/v1/pms/bookings', {
+    await api.post(ENDPOINTS.pms.bookings, {
       guest_name:   form.value.guest_name,
       guest_phone:  form.value.guest_phone || undefined,
       check_in:     form.value.check_in,
@@ -243,23 +242,38 @@ async function checkOut(booking: Booking) {
   const ok = await confirm({ message: `تأكيد مغادرة ${booking.guest_name}؟`, danger: true })
   if (!ok) return
   try {
-    const res = await api.post(`/api/v1/pms/bookings/${booking.id}/checkout`)
+    const res = await api.post(ENDPOINTS.pms.bookingCheckout(booking.id))
     booking.status = res.data.status
     toast.success('تم تسجيل مغادرة الضيف')
   } catch(e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل مغادرة الضيف')
   }
 }
 
 async function checkIn(booking: Booking) {
   try {
-    const res = await api.post(`/api/v1/pms/bookings/${booking.id}/checkin`)
+    const res = await api.post(ENDPOINTS.pms.bookingCheckin(booking.id))
     booking.status = res.data.status
     toast.success('تم تسجيل دخول الضيف')
   } catch(e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل دخول الضيف')
+  }
+}
+
+async function cancelBooking(booking: Booking) {
+  const ok = await confirm({
+    message: `إلغاء حجز ${booking.guest_name}؟ لا يمكن التراجع عن هذا الإجراء.`,
+    danger: true,
+    confirmText: 'نعم، إلغاء الحجز',
+    cancelText: 'تراجع',
+  })
+  if (!ok) return
+  try {
+    const res = await api.post(ENDPOINTS.pms.bookingCancel(booking.id))
+    booking.status = res.data.status ?? 'cancelled'
+    toast.success('تم إلغاء الحجز')
+  } catch(e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر إلغاء الحجز')
   }
 }
 
@@ -293,7 +307,7 @@ async function submitEarlyLate() {
     if (earlyCheckinAt.value)  payload.early_checkin_at  = new Date(earlyCheckinAt.value).toISOString()
     if (lateCheckoutAt.value)  payload.late_checkout_at  = new Date(lateCheckoutAt.value).toISOString()
     if (earlyLateNotes.value)  payload.notes             = earlyLateNotes.value
-    const res = await api.post(`/api/v1/pms/bookings/${earlyLateBooking.value.id}/early-late`, payload)
+    const res = await api.post(ENDPOINTS.pms.bookingEarlyLate(earlyLateBooking.value.id), payload)
     const b = bookings.value.find(x => x.id === earlyLateBooking.value!.id)
     if (b) {
       b.early_checkin_at = res.data.early_checkin_at
@@ -323,11 +337,11 @@ onMounted(() => {
   <div class="p-4" dir="rtl">
     <!-- Header -->
     <div class="flex items-center justify-between mb-4">
-      <h1 class="text-xl font-bold text-gray-900">الحجوزات</h1>
+      <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">الحجوزات</h1>
       <div class="flex gap-2">
         <button
           @click="fetchBookings"
-          class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition-colors"
+          class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors"
         >🔄</button>
         <button
           @click="openCreateModal"
@@ -342,7 +356,7 @@ onMounted(() => {
         @click="filterStatus = null"
         :class="[
           'flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
-          !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
         ]"
       >الكل ({{ bookings.length }})</button>
       <button
@@ -351,28 +365,28 @@ onMounted(() => {
         @click="filterStatus = filterStatus === status ? null : status"
         :class="[
           'flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
-          filterStatus === status ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          filterStatus === status ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
         ]"
       >{{ cfg.label }} ({{ statusCounts[status] ?? 0 }})</button>
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
       <p>جاري التحميل...</p>
     </div>
 
     <!-- Desktop table -->
-    <div v-else class="hidden md:block bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+    <div v-else class="hidden md:block bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border shadow-sm overflow-hidden">
       <table class="w-full text-sm">
-        <thead class="bg-gray-50 border-b border-stone-200">
+        <thead class="bg-gray-50 border-b border-stone-200 dark:border-border">
           <tr>
-            <th class="text-right px-4 py-3 font-semibold text-gray-600">#</th>
-            <th class="text-right px-4 py-3 font-semibold text-gray-600">الضيف</th>
-            <th class="text-right px-4 py-3 font-semibold text-gray-600">الغرفة</th>
-            <th class="text-right px-4 py-3 font-semibold text-gray-600">الوصول</th>
-            <th class="text-right px-4 py-3 font-semibold text-gray-600">المغادرة</th>
-            <th class="text-right px-4 py-3 font-semibold text-gray-600">الحالة</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">#</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">الضيف</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">الغرفة</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">الوصول</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">المغادرة</th>
+            <th class="text-right px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">الحالة</th>
             <th class="px-4 py-3"></th>
           </tr>
         </thead>
@@ -380,16 +394,16 @@ onMounted(() => {
           <tr
             v-for="b in filteredBookings"
             :key="b.id"
-            class="border-b border-stone-100 hover:bg-gray-50 transition-colors"
+            class="border-b border-stone-100 dark:border-border/50 hover:bg-gray-50 transition-colors"
           >
-            <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ b.id }}</td>
+            <td class="px-4 py-3 text-gray-400 dark:text-gray-500 font-mono text-xs">{{ b.id }}</td>
             <td class="px-4 py-3">
-              <div class="font-semibold text-gray-900">{{ b.guest_name }}</div>
-              <div v-if="b.guest_phone" class="text-xs text-gray-400 dir-ltr">{{ b.guest_phone }}</div>
+              <div class="font-semibold text-gray-900 dark:text-gray-100">{{ b.guest_name }}</div>
+              <div v-if="b.guest_phone" class="text-xs text-gray-400 dark:text-gray-500 dir-ltr">{{ b.guest_phone }}</div>
             </td>
-            <td class="px-4 py-3 font-medium text-gray-700">{{ roomLabel(b) }}</td>
-            <td class="px-4 py-3 text-gray-600">{{ formatDate(b.check_in) }}</td>
-            <td class="px-4 py-3 text-gray-600">{{ formatDate(b.check_out) }}</td>
+            <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">{{ roomLabel(b) }}</td>
+            <td class="px-4 py-3 text-gray-600 dark:text-gray-500">{{ formatDate(b.check_in) }}</td>
+            <td class="px-4 py-3 text-gray-600 dark:text-gray-500">{{ formatDate(b.check_out) }}</td>
             <td class="px-4 py-3">
               <span :class="['px-2 py-0.5 rounded-full text-xs font-bold', statusConfig[b.status]?.bg, statusConfig[b.status]?.color]">
                 {{ statusConfig[b.status]?.label ?? b.status }}
@@ -412,10 +426,16 @@ onMounted(() => {
                 class="mr-1 px-2 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded-lg hover:bg-purple-200 transition-colors"
                 title="وصول مبكر / مغادرة متأخرة"
               >🕐</button>
+              <button
+                v-if="b.status === 'pending' || b.status === 'confirmed'"
+                @click="cancelBooking(b)"
+                class="mr-1 px-2 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-lg hover:bg-red-200 transition-colors"
+                title="إلغاء الحجز"
+              >إلغاء</button>
             </td>
           </tr>
           <tr v-if="filteredBookings.length === 0">
-            <td colspan="7" class="px-4 py-16 text-center text-gray-400">
+            <td colspan="7" class="px-4 py-16 text-center text-gray-400 dark:text-gray-500">
               لا توجد حجوزات
             </td>
           </tr>
@@ -428,21 +448,21 @@ onMounted(() => {
       <div
         v-for="b in filteredBookings"
         :key="b.id"
-        class="bg-white rounded-xl border border-stone-200 p-4 shadow-sm"
+        class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm"
       >
         <div class="flex items-start justify-between mb-2">
           <div>
-            <div class="font-bold text-gray-900">{{ b.guest_name }}</div>
-            <div v-if="b.guest_phone" class="text-xs text-gray-400">{{ b.guest_phone }}</div>
+            <div class="font-bold text-gray-900 dark:text-gray-100">{{ b.guest_name }}</div>
+            <div v-if="b.guest_phone" class="text-xs text-gray-400 dark:text-gray-500">{{ b.guest_phone }}</div>
           </div>
           <span :class="['px-2 py-0.5 rounded-full text-xs font-bold', statusConfig[b.status]?.bg, statusConfig[b.status]?.color]">
             {{ statusConfig[b.status]?.label ?? b.status }}
           </span>
         </div>
-        <div class="grid grid-cols-3 gap-2 text-xs text-gray-600 mb-3">
-          <div><span class="text-gray-400">غرفة: </span><strong>{{ roomLabel(b) }}</strong></div>
-          <div><span class="text-gray-400">وصول: </span>{{ formatDate(b.check_in) }}</div>
-          <div><span class="text-gray-400">خروج: </span>{{ formatDate(b.check_out) }}</div>
+        <div class="grid grid-cols-3 gap-2 text-xs text-gray-600 dark:text-gray-500 mb-3">
+          <div><span class="text-gray-400 dark:text-gray-500">غرفة: </span><strong>{{ roomLabel(b) }}</strong></div>
+          <div><span class="text-gray-400 dark:text-gray-500">وصول: </span>{{ formatDate(b.check_in) }}</div>
+          <div><span class="text-gray-400 dark:text-gray-500">خروج: </span>{{ formatDate(b.check_out) }}</div>
         </div>
         <div class="flex gap-2">
           <button
@@ -460,6 +480,11 @@ onMounted(() => {
             @click="openEarlyLate(b)"
             class="px-3 py-1.5 bg-purple-100 text-purple-700 text-xs font-bold rounded-lg"
           >🕐 وصول/خروج خاص</button>
+          <button
+            v-if="b.status === 'pending' || b.status === 'confirmed'"
+            @click="cancelBooking(b)"
+            class="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded-lg hover:bg-red-200 transition-colors"
+          >إلغاء</button>
         </div>
       </div>
 
@@ -473,35 +498,35 @@ onMounted(() => {
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         @click.self="showEarlyLateModal = false"
       >
-        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-          <h3 class="text-lg font-bold text-gray-900">🕐 وصول مبكر / مغادرة متأخرة</h3>
-          <p class="text-sm text-gray-500">{{ earlyLateBooking?.guest_name }}</p>
+        <div class="bg-white dark:bg-surface rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
+          <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">🕐 وصول مبكر / مغادرة متأخرة</h3>
+          <p class="text-sm text-gray-500 dark:text-gray-500">{{ earlyLateBooking?.guest_name }}</p>
           <div class="space-y-3">
             <div>
-              <label class="block text-xs font-medium text-gray-600 mb-1">وقت الوصول المبكر (اختياري)</label>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-500 mb-1">وقت الوصول المبكر (اختياري)</label>
               <input type="datetime-local" v-model="earlyCheckinAt"
-                class="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
+                class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-600 mb-1">وقت المغادرة المتأخرة (اختياري)</label>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-500 mb-1">وقت المغادرة المتأخرة (اختياري)</label>
               <input type="datetime-local" v-model="lateCheckoutAt"
-                class="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
+                class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-600 mb-1">رسوم إضافية (ج)</label>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-500 mb-1">رسوم إضافية (ج)</label>
               <input type="number" min="0" step="50" v-model="earlyLateCharge"
-                class="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
-              <p class="text-xs text-gray-400 mt-0.5">0 = مجاني، أي مبلغ يُضاف لحساب الضيف</p>
+                class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
+              <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">0 = مجاني، أي مبلغ يُضاف لحساب الضيف</p>
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-600 mb-1">ملاحظات (اختياري)</label>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-500 mb-1">ملاحظات (اختياري)</label>
               <input type="text" v-model="earlyLateNotes" placeholder="—"
-                class="w-full rounded-lg border border-stone-200 px-3 py-2 text-sm" />
+                class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
             </div>
           </div>
           <div class="flex justify-end gap-2 pt-2">
             <button @click="showEarlyLateModal = false"
-              class="px-4 py-2 text-sm rounded-lg border border-stone-200 hover:bg-stone-50">
+              class="px-4 py-2 text-sm rounded-lg border border-stone-200 dark:border-border hover:bg-stone-50 dark:bg-gray-800/60">
               إلغاء
             </button>
             <button @click="submitEarlyLate" :disabled="earlyLateSubmitting"
@@ -520,19 +545,19 @@ onMounted(() => {
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         @click.self="showCreateModal = false"
       >
-        <div class="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl" dir="rtl">
+        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-md shadow-2xl" dir="rtl">
           <div class="flex items-center justify-between mb-5">
-            <h2 class="text-lg font-black text-gray-900">حجز جديد</h2>
+            <h2 class="text-lg font-black text-gray-900 dark:text-gray-100">حجز جديد</h2>
             <button
               @click="showCreateModal = false"
-              class="text-gray-400 hover:text-gray-700 text-2xl leading-none"
+              class="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
             >×</button>
           </div>
 
           <div class="space-y-4">
             <!-- Guest name -->
             <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1">اسم الضيف *</label>
+              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">اسم الضيف *</label>
               <input
                 v-model="form.guest_name"
                 type="text"
@@ -543,7 +568,7 @@ onMounted(() => {
 
             <!-- Phone -->
             <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1">رقم الهاتف</label>
+              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">رقم الهاتف</label>
               <input
                 v-model="form.guest_phone"
                 type="tel"
@@ -556,7 +581,7 @@ onMounted(() => {
             <!-- Dates (first — the room list below depends on this range) -->
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-1">تاريخ الوصول *</label>
+                <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">تاريخ الوصول *</label>
                 <input
                   v-model="form.check_in"
                   type="date"
@@ -565,7 +590,7 @@ onMounted(() => {
                 />
               </div>
               <div>
-                <label class="block text-sm font-semibold text-gray-700 mb-1">تاريخ المغادرة *</label>
+                <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">تاريخ المغادرة *</label>
                 <input
                   v-model="form.check_out"
                   type="date"
@@ -579,7 +604,7 @@ onMounted(() => {
                  several rooms at once (e.g. a suite + an adjacent room). Depends
                  on the dates above. -->
             <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1">
+              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 الغرف *
                 <span v-if="form.room_ids.length" class="font-normal text-blue-600">({{ form.room_ids.length }} مختارة)</span>
               </label>
@@ -590,7 +615,7 @@ onMounted(() => {
                 <label
                   v-for="room in rooms"
                   :key="room.id"
-                  class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-stone-50"
+                  class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-stone-50 dark:bg-gray-800/60"
                 >
                   <input
                     type="checkbox"
@@ -601,18 +626,18 @@ onMounted(() => {
                   <span>{{ room.name }}</span>
                 </label>
               </div>
-              <p v-if="!form.check_in || !form.check_out" class="text-xs text-gray-400 mt-1">اختر تاريخ الوصول والمغادرة أولاً لعرض الغرف المتاحة</p>
-              <p v-else-if="roomsLoading" class="text-xs text-gray-400 mt-1">جاري تحميل الغرف المتاحة...</p>
+              <p v-if="!form.check_in || !form.check_out" class="text-xs text-gray-400 dark:text-gray-500 mt-1">اختر تاريخ الوصول والمغادرة أولاً لعرض الغرف المتاحة</p>
+              <p v-else-if="roomsLoading" class="text-xs text-gray-400 dark:text-gray-500 mt-1">جاري تحميل الغرف المتاحة...</p>
               <p v-else-if="rooms.length === 0" class="text-xs text-amber-600 mt-1">لا توجد غرف متاحة في هذه الفترة</p>
             </div>
 
             <!-- Rate plan — optional, only plans that actually apply to the
                  chosen rooms' types show up (see applicableRatePlans above) -->
             <div v-if="form.room_ids.length > 0">
-              <label class="block text-sm font-semibold text-gray-700 mb-1">خطة الأسعار (اختياري)</label>
+              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">خطة الأسعار (اختياري)</label>
               <select
                 v-model="form.rate_plan_id"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white"
+                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-surface"
               >
                 <option :value="null">السعر الأساسي (بدون خطة)</option>
                 <option
@@ -621,12 +646,12 @@ onMounted(() => {
                   :value="plan.id"
                 >{{ plan.name }}</option>
               </select>
-              <p v-if="applicableRatePlans.length === 0" class="text-xs text-gray-400 mt-1">لا توجد خطط أسعار سارية لنوع هذه الغرفة</p>
+              <p v-if="applicableRatePlans.length === 0" class="text-xs text-gray-400 dark:text-gray-500 mt-1">لا توجد خطط أسعار سارية لنوع هذه الغرفة</p>
             </div>
 
             <!-- Notes -->
             <div>
-              <label class="block text-sm font-semibold text-gray-700 mb-1">ملاحظات</label>
+              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">ملاحظات</label>
               <textarea
                 v-model="form.notes"
                 rows="2"
@@ -645,7 +670,7 @@ onMounted(() => {
           <div class="flex gap-3 mt-6">
             <button
               @click="showCreateModal = false"
-              class="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700 transition-colors"
+              class="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors"
             >إلغاء</button>
             <button
               @click="createBooking"

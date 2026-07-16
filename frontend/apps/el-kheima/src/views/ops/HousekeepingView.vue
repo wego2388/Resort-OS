@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 interface HKTask {
   id: number
@@ -81,11 +82,11 @@ const statusCounts = computed(() =>
 
 async function fetchRoomNames() {
   try {
-    const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.pms.rooms, { params: { branch_id: branchId } })
     const list: { id: number; name: string }[] = res.data.items ?? res.data
     roomNameById.value = Object.fromEntries(list.map((r) => [r.id, r.name]))
-  } catch (e) {
-    console.error(e)
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل أسماء الغرف')
   }
 }
 
@@ -97,14 +98,13 @@ const assigningTaskId = ref<number | null>(null)
 
 async function fetchEmployees() {
   try {
-    const res = await api.get('/api/v1/hr/employees', {
+    const res = await api.get(ENDPOINTS.hr.employees, {
       params: { branch_id: branchId, status: 'active', size: 100 },
     })
     employees.value = res.data.items ?? []
     employeeNameById.value = Object.fromEntries(employees.value.map((e) => [e.id, e.full_name]))
-  } catch (e) {
-    console.error(e)
-    // غير حرج لعرض المهام — بس هيمنع التعيين لو فشل
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل قائمة الموظفين')
   }
 }
 
@@ -112,13 +112,12 @@ async function assignTask(task: HKTask, employeeId: number | null) {
   const previous = task.assigned_to
   task.assigned_to = employeeId
   try {
-    await api.patch(`/api/v1/pms/housekeeping/tasks/${task.id}`, {
+    await api.patch(ENDPOINTS.pms_extra.housekeepingTask(task.id), {
       status: task.status, assigned_to: employeeId,
     })
     toast.success(employeeId ? 'تم تعيين الموظف' : 'تم إلغاء التعيين')
   } catch (e: any) {
     task.assigned_to = previous
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'تعذّر تعيين الموظف')
   } finally {
     assigningTaskId.value = null
@@ -128,12 +127,11 @@ async function assignTask(task: HKTask, employeeId: number | null) {
 async function fetchTasks() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/pms/housekeeping/tasks', {
+    const res = await api.get(ENDPOINTS.pms.housekeeping, {
       params: { branch_id: branchId }
     })
     tasks.value = res.data.tasks ?? res.data.items ?? res.data
   } catch(e) {
-    console.error(e)
     toast.error('تعذّر تحميل مهام التدبير المنزلي')
   } finally { loading.value = false }
 }
@@ -142,7 +140,7 @@ async function advanceStatus(task: HKTask) {
   const next = statusFlow[task.status]
   if (!next) return
   try {
-    await api.patch(`/api/v1/pms/housekeeping/tasks/${task.id}`, { status: next })
+    await api.patch(ENDPOINTS.pms_extra.housekeepingTask(task.id), { status: next })
     task.status = next
     if (next === 'available') {
       setTimeout(() => {
@@ -150,7 +148,6 @@ async function advanceStatus(task: HKTask) {
       }, 1500)
     }
   } catch(e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة الغرفة')
   }
 }
@@ -166,7 +163,7 @@ onMounted(() => {
   <div class="p-4" dir="rtl">
     <!-- Header -->
     <div class="flex items-center justify-between mb-4">
-      <h1 class="text-xl font-bold text-gray-900">مهام التدبير المنزلي</h1>
+      <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">مهام التدبير المنزلي</h1>
       <button
         @click="fetchTasks"
         class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
@@ -178,7 +175,7 @@ onMounted(() => {
       <div
         v-for="(label, status) in statusLabels"
         :key="status"
-        class="px-3 py-1.5 bg-white rounded-xl border border-stone-200 text-sm font-medium text-gray-700 shadow-sm"
+        class="px-3 py-1.5 bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border text-sm font-medium text-gray-700 dark:text-gray-300 shadow-sm"
       >
         {{ label }}: <strong>{{ statusCounts[status] ?? 0 }}</strong>
       </div>
@@ -190,7 +187,7 @@ onMounted(() => {
         @click="filterStatus = null"
         :class="[
           'px-3 py-1 rounded-lg text-sm font-medium transition-colors',
-          !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
         ]"
       >الكل ({{ tasks.length }})</button>
       <button
@@ -199,13 +196,13 @@ onMounted(() => {
         @click="filterStatus = filterStatus === status ? null : status"
         :class="[
           'px-3 py-1 rounded-lg text-sm font-medium transition-colors',
-          filterStatus === status ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          filterStatus === status ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
         ]"
       >{{ label }} ({{ statusCounts[status] ?? 0 }})</button>
     </div>
 
     <!-- Loading state -->
-    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
       <p>جاري التحميل...</p>
     </div>
@@ -216,16 +213,16 @@ onMounted(() => {
         v-for="task in filteredTasks"
         :key="task.id"
         :class="[
-          'bg-white rounded-xl border border-stone-200 p-4 flex items-center justify-between shadow-sm',
+          'bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 flex items-center justify-between shadow-sm',
           priorityBorder[task.priority] ?? ''
         ]"
       >
         <div class="flex-1 min-w-0 ml-4">
           <div class="flex items-center gap-2 mb-1 flex-wrap">
-            <span class="font-bold text-gray-900 text-base">
+            <span class="font-bold text-gray-900 dark:text-gray-100 text-base">
               أوضة {{ roomLabel(task) }}
             </span>
-            <span class="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-600 font-medium">
+            <span class="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-600 dark:text-gray-500 font-medium">
               {{ taskTypeLabel[task.task_type] ?? task.task_type }}
             </span>
             <span
@@ -233,13 +230,13 @@ onMounted(() => {
               class="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full font-bold"
             >عاجل</span>
           </div>
-          <div class="text-sm text-gray-500 mb-0.5">{{ statusLabels[task.status] ?? task.status }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-0.5">{{ statusLabels[task.status] ?? task.status }}</div>
 
           <!-- تعيين موظف — عرض عادي بيتحول لـ select عند الضغط -->
           <div v-if="assigningTaskId !== task.id" class="text-xs mt-0.5">
             <button
               @click="assigningTaskId = task.id"
-              class="text-gray-400 hover:text-blue-600 underline decoration-dotted"
+              class="text-gray-400 dark:text-gray-500 hover:text-blue-600 underline decoration-dotted"
             >
               👤 {{ task.assigned_to ? (employeeNameById[task.assigned_to] ?? `موظف #${task.assigned_to}`) : 'تعيين موظف...' }}
             </button>
@@ -249,7 +246,7 @@ onMounted(() => {
             :value="task.assigned_to ?? ''"
             @change="assignTask(task, ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : null)"
             @blur="assigningTaskId = null"
-            class="text-xs border border-stone-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
+            class="text-xs border border-stone-200 dark:border-border rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
           >
             <option value="">بدون تعيين</option>
             <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.full_name }}</option>

@@ -17,7 +17,9 @@ import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToas
 const toast = useToast()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+// استخدام computed ref مش snapshot — عشان لو الـ store اتحمل بعد التعريف
+// القيمة تتحدث تلقائياً ومش بنبعت branch_id=undefined فبنجيب 422
+const branchId = computed(() => auth.branchId)
 
 const tab = ref<'assets' | 'work-orders' | 'schedules'>('assets')
 const loading = ref(false)
@@ -111,7 +113,7 @@ async function loadAssets() {
   try {
     const res = await api.get('/api/v1/maintenance/assets', {
       params: {
-        branch_id: branchId, size: 100,
+        branch_id: branchId.value, size: 100,
         category: assetCategoryFilter.value || undefined,
         status: assetStatusFilter.value || undefined,
       },
@@ -126,7 +128,7 @@ async function loadWorkOrders() {
   try {
     const res = await api.get('/api/v1/maintenance/work-orders', {
       params: {
-        branch_id: branchId, size: 100,
+        branch_id: branchId.value, size: 100,
         status: woStatusFilter.value || undefined,
         priority: woPriorityFilter.value || undefined,
       },
@@ -140,7 +142,7 @@ async function loadSchedules() {
   loading.value = true
   try {
     const res = await api.get('/api/v1/maintenance/preventive-schedules', {
-      params: { branch_id: branchId, size: 100, active_only: scheduleActiveOnly.value },
+      params: { branch_id: branchId.value, size: 100, active_only: scheduleActiveOnly.value },
     })
     schedules.value = res.data.items ?? []
   } catch { toast.error('تعذّر تحميل الجداول الوقائية — حاول تاني') }
@@ -224,7 +226,7 @@ async function submitAsset() {
       toast.success('تم تحديث الأصل')
     } else {
       await api.post('/api/v1/maintenance/assets', {
-        branch_id: branchId,
+        branch_id: branchId.value,
         name: assetForm.value.name,
         code: assetForm.value.code,
         category: assetForm.value.category,
@@ -314,7 +316,7 @@ async function submitWorkOrder() {
       toast.success('تم تحديث أمر الصيانة')
     } else {
       await api.post('/api/v1/maintenance/work-orders', {
-        branch_id: branchId,
+        branch_id: branchId.value,
         asset_id: woForm.value.asset_id ? Number(woForm.value.asset_id) : undefined,
         title: woForm.value.title,
         description: woForm.value.description || undefined,
@@ -422,7 +424,7 @@ async function submitSchedule() {
       toast.success('تم تحديث الجدولة')
     } else {
       await api.post('/api/v1/maintenance/preventive-schedules', {
-        branch_id: branchId,
+        branch_id: branchId.value,
         asset_id: Number(scheduleForm.value.asset_id),
         title: scheduleForm.value.title,
         frequency_days: Number(scheduleForm.value.frequency_days),
@@ -447,14 +449,14 @@ onMounted(() => loadTab('assets'))
 <template>
   <div dir="rtl">
     <div class="flex items-center justify-between flex-wrap gap-3 mb-6">
-      <h2 class="text-2xl font-black text-gray-900">🔧 الصيانة</h2>
+      <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">🔧 الصيانة</h2>
     </div>
 
-    <div class="flex gap-1 bg-stone-100 p-1 rounded-xl mb-6 w-fit">
+    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
       <button
         v-for="t in [{ val: 'assets', label: 'الأصول' }, { val: 'work-orders', label: 'أوامر الصيانة' }, { val: 'schedules', label: 'الصيانة الوقائية' }]"
         :key="t.val" @click="loadTab(t.val as any)"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700']"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
       >{{ t.label }}</button>
     </div>
 
@@ -462,15 +464,15 @@ onMounted(() => loadTab('assets'))
     <div v-if="tab === 'assets'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 mb-1">الفئة</label>
-          <select v-model="assetCategoryFilter" @change="loadAssets" class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm bg-white">
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الفئة</label>
+          <select v-model="assetCategoryFilter" @change="loadAssets" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-surface">
             <option value="">الكل</option>
             <option v-for="(label, val) in categoryLabels" :key="val" :value="val">{{ label }}</option>
           </select>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 mb-1">الحالة</label>
-          <select v-model="assetStatusFilter" @change="loadAssets" class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm bg-white">
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الحالة</label>
+          <select v-model="assetStatusFilter" @change="loadAssets" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-surface">
             <option value="">الكل</option>
             <option v-for="(cfg, val) in assetStatusConfig" :key="val" :value="val">{{ cfg.label }}</option>
           </select>
@@ -483,17 +485,17 @@ onMounted(() => loadTab('assets'))
         <AppCard v-for="a in assets" :key="a.id" padding="md">
           <div class="flex items-start justify-between mb-2">
             <div>
-              <div class="font-bold text-gray-900">{{ a.name }}</div>
-              <div class="text-xs text-gray-400 font-mono">{{ a.code }}</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100">{{ a.name }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ a.code }}</div>
             </div>
             <AppBadge size="sm" :variant="assetStatusConfig[a.status]?.variant ?? 'neutral'">
               {{ assetStatusConfig[a.status]?.label ?? a.status }}
             </AppBadge>
           </div>
-          <div class="text-xs text-gray-500 space-y-1 mb-3">
-            <div>الفئة: <span class="font-medium text-gray-700">{{ categoryLabels[a.category] ?? a.category }}</span></div>
-            <div v-if="a.location">الموقع: <span class="font-medium text-gray-700">{{ a.location }}</span></div>
-            <div v-if="a.purchase_cost != null">تكلفة الشراء: <span class="font-medium text-gray-700">{{ fmtMoney(a.purchase_cost) }}</span></div>
+          <div class="text-xs text-gray-500 dark:text-gray-500 space-y-1 mb-3">
+            <div>الفئة: <span class="font-medium text-gray-700 dark:text-gray-300">{{ categoryLabels[a.category] ?? a.category }}</span></div>
+            <div v-if="a.location">الموقع: <span class="font-medium text-gray-700 dark:text-gray-300">{{ a.location }}</span></div>
+            <div v-if="a.purchase_cost != null">تكلفة الشراء: <span class="font-medium text-gray-700 dark:text-gray-300">{{ fmtMoney(a.purchase_cost) }}</span></div>
             <div v-if="a.purchase_cost != null">إهلاك متراكم: <span class="font-medium text-amber-600">{{ fmtMoney(a.accumulated_depreciation) }}</span></div>
             <div v-if="a.warranty_until">الضمان حتى: {{ fmtDate(a.warranty_until) }}</div>
           </div>
@@ -512,15 +514,15 @@ onMounted(() => loadTab('assets'))
     <div v-if="tab === 'work-orders'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 mb-1">الحالة</label>
-          <select v-model="woStatusFilter" @change="loadWorkOrders" class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm bg-white">
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الحالة</label>
+          <select v-model="woStatusFilter" @change="loadWorkOrders" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-surface">
             <option value="">الكل</option>
             <option v-for="(cfg, val) in woStatusConfig" :key="val" :value="val">{{ cfg.label }}</option>
           </select>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 mb-1">الأولوية</label>
-          <select v-model="woPriorityFilter" @change="loadWorkOrders" class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm bg-white">
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الأولوية</label>
+          <select v-model="woPriorityFilter" @change="loadWorkOrders" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-surface">
             <option value="">الكل</option>
             <option v-for="(cfg, val) in priorityConfig" :key="val" :value="val">{{ cfg.label }}</option>
           </select>
@@ -530,14 +532,14 @@ onMounted(() => loadTab('assets'))
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else class="space-y-3">
-        <div v-for="wo in workOrders" :key="wo.id" class="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden">
+        <div v-for="wo in workOrders" :key="wo.id" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border shadow-sm overflow-hidden">
           <div class="p-4 cursor-pointer flex items-start justify-between gap-3" @click="expandedWorkOrder = expandedWorkOrder === wo.id ? null : wo.id">
             <div class="min-w-0">
               <div class="flex items-center gap-2 flex-wrap mb-1">
-                <span class="font-bold text-gray-900">{{ wo.title }}</span>
-                <span class="text-xs text-gray-400 font-mono">{{ wo.order_number }}</span>
+                <span class="font-bold text-gray-900 dark:text-gray-100">{{ wo.title }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ wo.order_number }}</span>
               </div>
-              <div class="flex items-center gap-2 text-xs text-gray-500 flex-wrap">
+              <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-500 flex-wrap">
                 <span>{{ orderTypeLabels[wo.order_type] ?? wo.order_type }}</span>
                 <span v-if="wo.asset_id">· {{ assetLabel(wo.asset_id) }}</span>
                 <span v-if="wo.scheduled_date">· موعد: {{ fmtDate(wo.scheduled_date) }}</span>
@@ -549,19 +551,19 @@ onMounted(() => loadTab('assets'))
             </div>
           </div>
 
-          <div v-if="expandedWorkOrder === wo.id" class="border-t border-stone-100 p-4 space-y-3">
-            <p v-if="wo.description" class="text-sm text-gray-600">{{ wo.description }}</p>
+          <div v-if="expandedWorkOrder === wo.id" class="border-t border-stone-100 dark:border-border/50 p-4 space-y-3">
+            <p v-if="wo.description" class="text-sm text-gray-600 dark:text-gray-500">{{ wo.description }}</p>
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div><span class="text-gray-400 block">ساعات العمل</span><span class="font-bold">{{ wo.labour_hours }}</span></div>
-              <div><span class="text-gray-400 block">تكلفة العمالة</span><span class="font-bold">{{ fmtMoney(wo.labour_cost) }}</span></div>
-              <div><span class="text-gray-400 block">تكلفة القطع</span><span class="font-bold">{{ fmtMoney(wo.parts_cost) }}</span></div>
-              <div><span class="text-gray-400 block">مكتمل في</span><span class="font-bold">{{ wo.completed_at ? fmtDate(wo.completed_at) : '—' }}</span></div>
+              <div><span class="text-gray-400 dark:text-gray-500 block">ساعات العمل</span><span class="font-bold">{{ wo.labour_hours }}</span></div>
+              <div><span class="text-gray-400 dark:text-gray-500 block">تكلفة العمالة</span><span class="font-bold">{{ fmtMoney(wo.labour_cost) }}</span></div>
+              <div><span class="text-gray-400 dark:text-gray-500 block">تكلفة القطع</span><span class="font-bold">{{ fmtMoney(wo.parts_cost) }}</span></div>
+              <div><span class="text-gray-400 dark:text-gray-500 block">مكتمل في</span><span class="font-bold">{{ wo.completed_at ? fmtDate(wo.completed_at) : '—' }}</span></div>
             </div>
 
             <div v-if="wo.parts.length">
-              <p class="text-xs font-bold text-gray-500 mb-2">القطع المستخدمة</p>
+              <p class="text-xs font-bold text-gray-500 dark:text-gray-500 mb-2">القطع المستخدمة</p>
               <table class="w-full text-xs">
-                <thead class="text-gray-400"><tr><th class="text-right py-1">القطعة</th><th class="text-right py-1">الكمية</th><th class="text-right py-1">التكلفة</th></tr></thead>
+                <thead class="text-gray-400 dark:text-gray-500"><tr><th class="text-right py-1">القطعة</th><th class="text-right py-1">الكمية</th><th class="text-right py-1">التكلفة</th></tr></thead>
                 <tbody class="divide-y divide-stone-100">
                   <tr v-for="p in wo.parts" :key="p.id">
                     <td class="py-1">{{ p.part_name }}</td>
@@ -572,7 +574,7 @@ onMounted(() => loadTab('assets'))
               </table>
             </div>
 
-            <div class="flex flex-wrap gap-2 pt-2 border-t border-stone-100">
+            <div class="flex flex-wrap gap-2 pt-2 border-t border-stone-100 dark:border-border/50">
               <AppButton size="sm" variant="secondary" @click="openEditWorkOrder(wo)">تعديل</AppButton>
               <AppButton size="sm" variant="outline" @click="openAddPart(wo)">+ إضافة قطعة</AppButton>
               <AppButton v-if="auth.hasRole('manager') && !['completed', 'cancelled'].includes(wo.status)" size="sm" @click="completeWorkOrder(wo)">✅ إغلاق كمكتمل</AppButton>
@@ -586,7 +588,7 @@ onMounted(() => loadTab('assets'))
     <!-- ══ PREVENTIVE SCHEDULES ══ -->
     <div v-if="tab === 'schedules'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
-        <label class="flex items-center gap-2 text-sm text-gray-600">
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-500">
           <input type="checkbox" v-model="scheduleActiveOnly" @change="loadSchedules" />
           النشطة فقط
         </label>
@@ -597,24 +599,24 @@ onMounted(() => loadTab('assets'))
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">العنوان</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الأصل</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">كل (أيام)</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">آخر تنفيذ</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الاستحقاق التالي</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">العنوان</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الأصل</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">كل (أيام)</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">آخر تنفيذ</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الاستحقاق التالي</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
                 <th class="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="s in schedules" :key="s.id" class="border-t border-stone-100 hover:bg-stone-50">
-                <td class="px-4 py-3 font-medium text-gray-900 text-sm">{{ s.title }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{{ assetLabel(s.asset_id) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{{ s.frequency_days }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{{ fmtDate(s.last_done) }}</td>
-                <td class="px-4 py-3 text-sm font-bold" :class="new Date(s.next_due) < new Date() ? 'text-red-600' : 'text-gray-900'">{{ fmtDate(s.next_due) }}</td>
+              <tr v-for="s in schedules" :key="s.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+                <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-sm">{{ s.title }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ assetLabel(s.asset_id) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ s.frequency_days }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ fmtDate(s.last_done) }}</td>
+                <td class="px-4 py-3 text-sm font-bold" :class="new Date(s.next_due) < new Date() ? 'text-red-600' : 'text-gray-900 dark:text-gray-100'">{{ fmtDate(s.next_due) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="s.is_active ? 'success' : 'neutral'">{{ s.is_active ? 'نشطة' : 'موقوفة' }}</AppBadge>
                 </td>
@@ -638,69 +640,69 @@ onMounted(() => loadTab('assets'))
       <div class="space-y-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الاسم *</label>
-            <input v-model="assetForm.name" type="text" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الاسم *</label>
+            <input v-model="assetForm.name" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الكود *</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الكود *</label>
             <input v-model="assetForm.code" type="text" :disabled="!!assetModal.editingId"
-              class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400" />
+              class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400 dark:text-gray-500" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الفئة</label>
-            <select v-model="assetForm.category" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm bg-white">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الفئة</label>
+            <select v-model="assetForm.category" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(label, val) in categoryLabels" :key="val" :value="val">{{ label }}</option>
             </select>
           </div>
           <div v-if="assetModal.editingId">
-            <label class="block text-xs text-gray-400 mb-1">الحالة</label>
-            <select v-model="assetForm.status" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm bg-white">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الحالة</label>
+            <select v-model="assetForm.status" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(cfg, val) in assetStatusConfig" :key="val" :value="val" :disabled="val === 'disposed'">{{ cfg.label }}</option>
             </select>
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الموقع</label>
-            <input v-model="assetForm.location" type="text" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الموقع</label>
+            <input v-model="assetForm.location" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الرقم التسلسلي</label>
-            <input v-model="assetForm.serial_number" type="text" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الرقم التسلسلي</label>
+            <input v-model="assetForm.serial_number" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div v-if="!assetModal.editingId">
-            <label class="block text-xs text-gray-400 mb-1">تاريخ الشراء</label>
-            <input v-model="assetForm.purchase_date" type="date" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">تاريخ الشراء</label>
+            <input v-model="assetForm.purchase_date" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الضمان حتى</label>
-            <input v-model="assetForm.warranty_until" type="date" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الضمان حتى</label>
+            <input v-model="assetForm.warranty_until" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
 
-        <div class="border-t border-stone-100 pt-3">
-          <p class="text-xs font-bold text-gray-500 mb-2">بيانات الإهلاك (اختيارية)</p>
+        <div class="border-t border-stone-100 dark:border-border/50 pt-3">
+          <p class="text-xs font-bold text-gray-500 dark:text-gray-500 mb-2">بيانات الإهلاك (اختيارية)</p>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs text-gray-400 mb-1">تكلفة الشراء</label>
-              <input v-model="assetForm.purchase_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">تكلفة الشراء</label>
+              <input v-model="assetForm.purchase_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-gray-400 mb-1">القيمة التخريدية</label>
-              <input v-model="assetForm.salvage_value" type="number" min="0" step="0.01" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">القيمة التخريدية</label>
+              <input v-model="assetForm.salvage_value" type="number" min="0" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-gray-400 mb-1">العمر الإنتاجي (سنوات)</label>
-              <input v-model="assetForm.useful_life_years" type="number" min="1" max="100" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">العمر الإنتاجي (سنوات)</label>
+              <input v-model="assetForm.useful_life_years" type="number" min="1" max="100" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-gray-400 mb-1">بداية الإهلاك</label>
-              <input v-model="assetForm.depreciation_start_date" type="date" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">بداية الإهلاك</label>
+              <input v-model="assetForm.depreciation_start_date" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
           </div>
         </div>
 
         <div>
-          <label class="block text-xs text-gray-400 mb-1">ملاحظات</label>
-          <textarea v-model="assetForm.notes" rows="2" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm resize-none" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">ملاحظات</label>
+          <textarea v-model="assetForm.notes" rows="2" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm resize-none" />
         </div>
       </div>
       <template #footer>
@@ -715,59 +717,59 @@ onMounted(() => loadTab('assets'))
     <AppModal :open="woModal.open" :title="woModal.editingId ? 'تعديل أمر الصيانة' : 'أمر صيانة جديد'" @close="woModal.open = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs text-gray-400 mb-1">العنوان *</label>
-          <input v-model="woForm.title" type="text" placeholder="مثال: تسريب مياه في الحمام" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">العنوان *</label>
+          <input v-model="woForm.title" type="text" placeholder="مثال: تسريب مياه في الحمام" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 mb-1">الوصف</label>
-          <textarea v-model="woForm.description" rows="2" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm resize-none" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الوصف</label>
+          <textarea v-model="woForm.description" rows="2" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm resize-none" />
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div v-if="!woModal.editingId">
-            <label class="block text-xs text-gray-400 mb-1">الأصل (اختياري)</label>
-            <select v-model="woForm.asset_id" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm bg-white">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الأصل (اختياري)</label>
+            <select v-model="woForm.asset_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option value="">بدون أصل محدد</option>
               <option v-for="a in assets" :key="a.id" :value="a.id">{{ a.name }} ({{ a.code }})</option>
             </select>
           </div>
           <div v-if="!woModal.editingId">
-            <label class="block text-xs text-gray-400 mb-1">نوع الأمر</label>
-            <select v-model="woForm.order_type" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm bg-white">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">نوع الأمر</label>
+            <select v-model="woForm.order_type" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(label, val) in orderTypeLabels" :key="val" :value="val">{{ label }}</option>
             </select>
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الأولوية</label>
-            <select v-model="woForm.priority" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm bg-white">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الأولوية</label>
+            <select v-model="woForm.priority" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(cfg, val) in priorityConfig" :key="val" :value="val">{{ cfg.label }}</option>
             </select>
           </div>
           <div v-if="woModal.editingId">
-            <label class="block text-xs text-gray-400 mb-1">الحالة</label>
-            <select v-model="woForm.status" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm bg-white">
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الحالة</label>
+            <select v-model="woForm.status" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(cfg, val) in woStatusConfig" :key="val" :value="val">{{ cfg.label }}</option>
             </select>
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">رقم الموظف المكلّف (اختياري)</label>
-            <input v-model="woForm.assigned_to" type="number" min="1" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">رقم الموظف المكلّف (اختياري)</label>
+            <input v-model="woForm.assigned_to" type="number" min="1" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الموعد المجدول</label>
-            <input v-model="woForm.scheduled_date" type="date" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الموعد المجدول</label>
+            <input v-model="woForm.scheduled_date" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div v-if="woModal.editingId">
-            <label class="block text-xs text-gray-400 mb-1">ساعات العمل</label>
-            <input v-model="woForm.labour_hours" type="number" min="0" step="0.5" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">ساعات العمل</label>
+            <input v-model="woForm.labour_hours" type="number" min="0" step="0.5" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div v-if="woModal.editingId">
-            <label class="block text-xs text-gray-400 mb-1">تكلفة العمالة</label>
-            <input v-model="woForm.labour_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">تكلفة العمالة</label>
+            <input v-model="woForm.labour_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 mb-1">ملاحظات</label>
-          <textarea v-model="woForm.notes" rows="2" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm resize-none" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">ملاحظات</label>
+          <textarea v-model="woForm.notes" rows="2" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm resize-none" />
         </div>
       </div>
       <template #footer>
@@ -782,21 +784,21 @@ onMounted(() => loadTab('assets'))
     <AppModal :open="partModal.open" title="إضافة قطعة/تكلفة" size="sm" @close="partModal.open = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs text-gray-400 mb-1">اسم القطعة *</label>
-          <input v-model="partForm.part_name" type="text" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">اسم القطعة *</label>
+          <input v-model="partForm.part_name" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 mb-1">رقم القطعة (اختياري)</label>
-          <input v-model="partForm.part_number" type="text" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">رقم القطعة (اختياري)</label>
+          <input v-model="partForm.part_number" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الكمية</label>
-            <input v-model="partForm.quantity" type="number" min="0.01" step="0.01" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الكمية</label>
+            <input v-model="partForm.quantity" type="number" min="0.01" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">تكلفة الوحدة</label>
-            <input v-model="partForm.unit_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">تكلفة الوحدة</label>
+            <input v-model="partForm.unit_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
       </div>
@@ -812,35 +814,35 @@ onMounted(() => loadTab('assets'))
     <AppModal :open="scheduleModal.open" :title="scheduleModal.editingId ? 'تعديل الجدولة' : 'جدولة صيانة وقائية جديدة'" @close="scheduleModal.open = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs text-gray-400 mb-1">العنوان *</label>
-          <input v-model="scheduleForm.title" type="text" placeholder="مثال: صيانة دورية شهرية" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">العنوان *</label>
+          <input v-model="scheduleForm.title" type="text" placeholder="مثال: صيانة دورية شهرية" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div v-if="!scheduleModal.editingId">
-          <label class="block text-xs text-gray-400 mb-1">الأصل *</label>
-          <select v-model="scheduleForm.asset_id" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm bg-white">
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الأصل *</label>
+          <select v-model="scheduleForm.asset_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
             <option value="">اختر أصلاً...</option>
             <option v-for="a in assets" :key="a.id" :value="a.id">{{ a.name }} ({{ a.code }})</option>
           </select>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-gray-400 mb-1">كل كام يوم *</label>
-            <input v-model="scheduleForm.frequency_days" type="number" min="1" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">كل كام يوم *</label>
+            <input v-model="scheduleForm.frequency_days" type="number" min="1" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الاستحقاق التالي *</label>
-            <input v-model="scheduleForm.next_due" type="date" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الاستحقاق التالي *</label>
+            <input v-model="scheduleForm.next_due" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 mb-1">رقم الموظف المكلّف (اختياري)</label>
-          <input v-model="scheduleForm.assigned_to" type="number" min="1" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">رقم الموظف المكلّف (اختياري)</label>
+          <input v-model="scheduleForm.assigned_to" type="number" min="1" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 mb-1">قائمة الفحص (نص/JSON اختياري)</label>
-          <textarea v-model="scheduleForm.checklist" rows="2" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm resize-none" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">قائمة الفحص (نص/JSON اختياري)</label>
+          <textarea v-model="scheduleForm.checklist" rows="2" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm resize-none" />
         </div>
-        <label v-if="scheduleModal.editingId" class="flex items-center gap-2 text-sm text-gray-600">
+        <label v-if="scheduleModal.editingId" class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-500">
           <input type="checkbox" v-model="scheduleForm.is_active" /> نشطة
         </label>
       </div>
