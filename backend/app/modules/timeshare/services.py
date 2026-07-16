@@ -131,6 +131,9 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
     obj = crud.pay_installment(db, inst, req)
     _post_installment_payment_journal(db, contract, req.paid_amount, inst)
 
+    # سجل تدقيق — تاريخ التحصيل قابل للمراجعة والتصحيح لاحقاً
+    _audit_installment_payment(db, contract, inst, req)
+
     # إلغاء تجميد الحجز إن كانت كل الأقساط المتأخرة سُدِّدت
     if contract.booking_frozen:
         overdue_count = sum(
@@ -167,6 +170,45 @@ def _post_installment_payment_journal(
     )
 
 
+def _audit_installment_payment(
+    db: "Session",
+    contract: "TimeshareContract",
+    inst: "TimeshareInstallment",
+    req: "PayInstallmentRequest",
+) -> None:
+    """يسجّل AuditLog لكل تحصيل قسط — يتيح مراجعة تاريخ التحصيل الكامل
+    وتصحيح أي خطأ لاحقاً (تاريخ، طريقة دفع، مبلغ). `transfer_unit` عنده
+    نفس السجل — الأقساط كانت الاستثناء الوحيد."""
+    import json as _json  # noqa: PLC0415
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+    old_data = _json.dumps({
+        "status": "pending" if inst.status == "partial" else inst.status,
+        "paid_amount": float(inst.paid_amount - req.paid_amount),
+    }, ensure_ascii=False)
+    new_data = _json.dumps({
+        "status": inst.status,
+        "paid_amount": float(inst.paid_amount),
+        "payment_method": req.payment_method,
+        "receipt_number": req.receipt_number,
+        "amount_paid_now": float(req.paid_amount),
+    }, ensure_ascii=False)
+
+    try:
+        create_audit_log(db, AuditLogCreate(
+            branch_id=contract.branch_id,
+            action="pay_installment",
+            entity_type="timeshare_installment",
+            entity_id=inst.id,
+            old_data=old_data,
+            new_data=new_data,
+        ))
+    except ValueError:
+        # لو AuditLog فشل (branch مش موجود مثلاً في test env) — لا يوقف العملية
+        pass
+
+
 def add_to_waitlist(db: Session, data: WaitlistCreate) -> object:
     get_contract_or_404(db, data.contract_id)
     if data.requested_end <= data.requested_start:
@@ -175,6 +217,124 @@ def add_to_waitlist(db: Session, data: WaitlistCreate) -> object:
     db.commit()
     db.refresh(obj)
     return obj
+
+
+def generate_monthly_collection_report(
+    db: Session, branch_id: int, month: str,
+) -> bytes:
+    """تقرير التحصيل الشهري — Excel مُنسَّق للإدارة.
+
+    `month` بصيغة "YYYY-MM".
+
+    الشيت الأول: تفاصيل الأقساط (مدفوعة + متأخرة + معلقة) للشهر.
+    الشيت الثاني: ملخص تنفيذي (المطلوب / المحصَّل / المتأخر / نسبة التحصيل).
+
+    يستخدم `crud.list_all_installments` الموجود مع فلتر month — نفس البيانات
+    التي يعرضها تاب الأقساط في الـ UI، لكن في تقرير Excel مُنسَّق بشكل أفضل
+    للاجتماعات الشهرية وبريد الإدارة."""
+    from decimal import Decimal as _D  # noqa: PLC0415
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    installments = crud.list_all_installments(
+        db, branch_id, month=month, limit=10000,
+    )
+
+    # ── حساب ملخص التحصيل ──────────────────────────────────────────
+    total_due = _D("0")
+    total_collected = _D("0")
+    total_overdue = _D("0")
+    total_pending = _D("0")
+
+    detail_rows = []
+    for i in installments:
+        c = i.contract
+        customer_name = c.customer_name if c else "—"
+        customer_phone = c.customer_phone if c else "—"
+        room_type = c.room_type if c else "—"
+        contract_number = c.contract_number if c else "—"
+
+        total_due += i.amount
+        if i.status == "paid":
+            total_collected += i.paid_amount
+        elif i.status == "overdue":
+            total_overdue += i.amount - i.paid_amount
+        elif i.status in ("pending", "partial"):
+            total_pending += i.amount - i.paid_amount
+
+        status_label = {
+            "paid": "مدفوع", "pending": "معلق",
+            "overdue": "متأخر", "partial": "جزئي",
+        }.get(i.status, i.status)
+
+        detail_rows.append([
+            customer_name,
+            customer_phone or "—",
+            contract_number,
+            room_type,
+            i.installment_no,
+            str(i.due_date),
+            float(i.amount),
+            float(i.paid_amount),
+            float(i.amount - i.paid_amount),
+            status_label,
+            i.payment_method or "—",
+            i.receipt_number or "—",
+        ])
+
+    # ترتيب: متأخر أولاً ثم معلق ثم مدفوع
+    status_order = {"متأخر": 0, "جزئي": 1, "معلق": 2, "مدفوع": 3}
+    detail_rows.sort(key=lambda r: status_order.get(r[9], 9))
+
+    collection_rate = (
+        round(float(total_collected) / float(total_due) * 100, 1)
+        if total_due > 0 else 0.0
+    )
+
+    summary_rows = [
+        ["إجمالي المطلوب للشهر",  float(total_due)],
+        ["إجمالي المحصَّل",        float(total_collected)],
+        ["إجمالي المتأخر",         float(total_overdue)],
+        ["إجمالي المعلق",          float(total_pending)],
+        ["نسبة التحصيل %",         collection_rate],
+        ["عدد الأقساط",            len(installments)],
+    ]
+
+    year, month_num = month.split("-")
+    month_label = f"{month_num}-{year}"  # بدون / لأن openpyxl لا يقبله في اسم الشيت
+
+    return builder.excel(
+        title=f"تقرير التحصيل الشهري — {month_label}",
+        sheets=[
+            {
+                "name": f"تفاصيل {month_label}",
+                "headers": [
+                    "العميل", "الهاتف", "رقم العقد", "نوع الوحدة",
+                    "القسط #", "تاريخ الاستحقاق",
+                    "المبلغ", "المدفوع", "المتبقي",
+                    "الحالة", "طريقة الدفع", "رقم الإيصال",
+                ],
+                "rows": detail_rows,
+                "col_types": [
+                    "text", "text", "text", "text",
+                    "number", "text",
+                    "currency", "currency", "currency",
+                    "text", "text", "text",
+                ],
+                "summary": {
+                    "إجمالي المطلوب": float(total_due),
+                    "المحصَّل": float(total_collected),
+                    "المتأخر": float(total_overdue),
+                },
+            },
+            {
+                "name": "ملخص تنفيذي",
+                "headers": ["البيان", "القيمة"],
+                "rows": summary_rows,
+                "col_types": ["text", "currency"],
+                "summary": {"نسبة التحصيل %": collection_rate},
+            },
+        ],
+    )
 
 
 def generate_contract_pdf(db: Session, contract_id: int) -> bytes:
@@ -330,7 +490,17 @@ def generate_sales_dashboard_excel(db: Session, branch_id: int) -> bytes:
 
 
 def get_calendar(db: Session, branch_id: int, year: Optional[int] = None) -> dict:
-    """تقويم 52 أسبوع ISO — كل أسبوع وعقوده."""
+    """تقويم 52 أسبوع ISO — كل أسبوع وعقوده وزياراته الفعلية.
+
+    المصادر التي تُبنى منها بيانات كل أسبوع:
+    ① عقود ثابتة (week_number محدد) — النافذة محسوبة رياضياً من timeshare_engine.
+    ② زيارات فعلية من جدول timeshare_visits (سواء لعقود ثابتة أو عائمة) —
+       check_in.isocalendar()[1] يحدّد الأسبوع الفعلي.
+
+    يتم التمييز في الـ response بـ `source: "contract" | "visit"`:
+    - `source=contract` → نافذة محسوبة (عقد ثابت لم يُجدَّل بعد بزيارة فعلية)
+    - `source=visit`    → زيارة مسجّلة فعلاً في قاعدة البيانات
+    """
     from datetime import date as _date, timedelta as _timedelta  # noqa: PLC0415
 
     from app.core.config import settings  # noqa: PLC0415
@@ -339,14 +509,15 @@ def get_calendar(db: Session, branch_id: int, year: Optional[int] = None) -> dic
 
     today = business_today(settings.TIMEZONE)
     year = year or today.year
-    contracts = crud.list_contracts_with_week(db, branch_id)
 
     MONTH_AR = ["يناير", "فبراير", "مارس", "إبريل", "مايو", "يونيو",
                 "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
     cur_week = today.isocalendar()[1] if today.year == year else -1
 
     week_map: dict[int, list[dict]] = {}
-    for c in contracts:
+
+    # ① عقود ثابتة — النافذة المحسوبة رياضياً
+    for c in crud.list_contracts_with_week(db, branch_id):
         window = calculate_visit_window(c.week_number, c.nights_per_year, year, today)
         if not window:
             continue
@@ -356,6 +527,28 @@ def get_calendar(db: Session, branch_id: int, year: Optional[int] = None) -> dic
             "room_type": c.room_type, "season": c.season,
             "rci_included": c.rci_included, "nights_per_year": c.nights_per_year,
             "visit_start": window.visit_start.isoformat(), "visit_end": window.visit_end.isoformat(),
+            "booking_frozen": c.booking_frozen,
+            "source": "contract",
+            "visit_id": None,
+            "visit_status": None,
+        })
+
+    # ② زيارات فعلية — تُضاف بجانب/بدل النافذة المحسوبة (المستخدم يرى كلاهما)
+    for v in crud.list_visits_for_calendar(db, branch_id, year):
+        week_num = v.check_in.isocalendar()[1]
+        contract = v.contract  # lazy="select" — محمّل عند الوصول (OK: حجم صغير)
+        if contract is None:
+            continue
+        week_map.setdefault(week_num, []).append({
+            "id": contract.id, "contract_number": contract.contract_number,
+            "customer_name": contract.customer_name, "customer_phone": contract.customer_phone,
+            "room_type": contract.room_type, "season": contract.season,
+            "rci_included": contract.rci_included, "nights_per_year": contract.nights_per_year,
+            "visit_start": v.check_in.isoformat(), "visit_end": v.check_out.isoformat(),
+            "booking_frozen": contract.booking_frozen,
+            "source": "visit",
+            "visit_id": v.id,
+            "visit_status": v.status,
         })
 
     months: dict[int, list[dict]] = {}
@@ -378,6 +571,40 @@ def get_calendar(db: Session, branch_id: int, year: Optional[int] = None) -> dic
             {"month": m, "month_name": MONTH_AR[m - 1], "weeks": months[m]}
             for m in sorted(months)
         ],
+    }
+
+
+def get_available_weeks(
+    db: Session, branch_id: int, year: int, room_type: Optional[str] = None,
+) -> dict:
+    """الأسابيع المتاحة للبيع في سنة بعينها — لفريق المبيعات.
+
+    المنطق: (52 أسبوع ISO) - (أسابيع محجوزة بعقود ثابتة) - (أسابيع محجوزة
+    بزيارات فعلية من عقود عائمة).
+    يدعم فلتر room_type اختياري (2R/4R/6R)."""
+    from datetime import date as _date, timedelta as _timedelta  # noqa: PLC0415
+
+    booked = crud.get_booked_week_numbers(db, branch_id, year, room_type)
+
+    available_weeks: list[dict] = []
+    for w in range(1, 53):
+        try:
+            ws = _date.fromisocalendar(year, w, 1)
+        except ValueError:
+            continue
+        if w not in booked:
+            available_weeks.append({
+                "week": w,
+                "start_date": ws.isoformat(),
+                "end_date": (ws + _timedelta(days=6)).isoformat(),
+            })
+
+    return {
+        "year": year,
+        "room_type": room_type,
+        "total_available": len(available_weeks),
+        "total_booked": 52 - len(available_weeks),
+        "available_weeks": available_weeks,
     }
 
 

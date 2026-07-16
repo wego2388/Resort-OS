@@ -87,31 +87,39 @@ def _mark_overdue(db, today: date) -> int:
 def send_visit_reminders(self):
     """
     كل يوم 9 صباحاً — يُرسل تذكير للزيارات القادمة خلال 3 أيام.
+
+    مصدران للزيارات:
+    ① عقود ثابتة (week_number محدد) — النافذة محسوبة رياضياً من timeshare_engine.
+    ② عقود عائمة — زيارات مسجّلة فعلاً في timeshare_visits بـ status="scheduled"
+       وcheck_in بعد 3 أيام بالضبط. كانت مستبعدة قبلاً بفلتر week_number.isnot(None)
+       رغم إنها هي الأكثر احتياجاً للتذكير (موعدها مش ثابت كل سنة).
     """
     try:
         from app.core.database import SessionLocal  # noqa: PLC0415
+        from datetime import timedelta              # noqa: PLC0415
         today = business_today(settings.TIMEZONE)
+        reminder_day = today + timedelta(days=3)
 
         with SessionLocal() as db:
             try:
-                from app.modules.timeshare.models import TimeshareContract  # noqa: PLC0415
+                from app.modules.timeshare.models import TimeshareContract, TimeshareVisit  # noqa: PLC0415
                 from app.resort_os.timeshare_engine import (  # noqa: PLC0415
                     find_next_visit, should_send_visit_reminder,
                 )
-
-                contracts = db.query(TimeshareContract).filter(
-                    TimeshareContract.status == "active",
-                    TimeshareContract.week_number.isnot(None),
-                ).all()
-
                 from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
 
                 reminders_sent = 0
-                for c in contracts:
+
+                # ① عقود ثابتة — النافذة المحسوبة رياضياً
+                fixed_contracts = db.query(TimeshareContract).filter(
+                    TimeshareContract.status == "active",
+                    TimeshareContract.week_number.isnot(None),
+                ).all()
+                for c in fixed_contracts:
                     visit = find_next_visit(c.week_number, c.nights_per_year, today)
                     if visit and should_send_visit_reminder(visit):
                         logger.info(
-                            "Visit reminder: contract=%s guest=%s visit_start=%s",
+                            "Visit reminder (fixed): contract=%s guest=%s visit_start=%s",
                             c.id, c.customer_name, visit.visit_start,
                         )
                         if c.customer_phone:
@@ -121,7 +129,35 @@ def send_visit_reminders(self):
                             )
                         reminders_sent += 1
 
-                logger.info("Visit reminders sent: %s", reminders_sent)
+                # ② عقود عائمة — زيارات مسجّلة في قاعدة البيانات
+                floating_visits = (
+                    db.query(TimeshareVisit)
+                    .join(TimeshareContract, TimeshareContract.id == TimeshareVisit.contract_id)
+                    .filter(
+                        TimeshareContract.status == "active",
+                        TimeshareContract.week_number.is_(None),  # عائمة فقط
+                        TimeshareVisit.status == "scheduled",
+                        TimeshareVisit.check_in == reminder_day,
+                    )
+                    .all()
+                )
+                for v in floating_visits:
+                    contract = v.contract
+                    if contract is None:
+                        continue
+                    logger.info(
+                        "Visit reminder (floating): visit=%s contract=%s guest=%s check_in=%s",
+                        v.id, contract.id, contract.customer_name, v.check_in,
+                    )
+                    if contract.customer_phone:
+                        send_whatsapp_message(
+                            contract.customer_phone,
+                            f"تذكير: زيارتك القادمة في الخيمة بيتش تبدأ يوم {v.check_in:%Y-%m-%d} — نتشرف باستقبالك.",
+                        )
+                    reminders_sent += 1
+
+                logger.info("Visit reminders sent: fixed=%s floating=%s total=%s",
+                            len(fixed_contracts), len(floating_visits), reminders_sent)
 
             except ImportError:
                 logger.debug("Timeshare module not yet built — skipped")

@@ -6,7 +6,7 @@ import { AppCard, AppBadge, AppButton, AppModal, useToast, useConfirm } from '@r
 const toast = useToast()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const branchId = auth.branchId
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Installment {
@@ -133,7 +133,7 @@ async function openProfile(c: Contract) {
       )
       profileModal.reviews = reviewLists.flat()
     }
-  } catch (e) { console.error(e); toast.error('فشل تحميل ملف العميل الشامل') }
+  } catch (e) { toast.error('فشل تحميل ملف العميل الشامل') }
   finally { profileModal.loading = false }
 }
 
@@ -209,7 +209,7 @@ const filteredClients = computed(() => {
 // ── Loaders ──────────────────────────────────────────────────────────────
 async function loadSummary() {
   try { const r = await api.get('/api/v1/timeshare/cs-summary', { params: { branch_id: branchId } }); summary.value = r.data }
-  catch (e) { console.error(e); toast.error('فشل تحميل ملخص التايم شير') }
+  catch (e) { toast.error('فشل تحميل ملخص التايم شير') }
 }
 
 async function loadCalendar() {
@@ -217,7 +217,7 @@ async function loadCalendar() {
   try {
     const r = await api.get('/api/v1/timeshare/calendar', { params: { branch_id: branchId, year: calYear.value } })
     calendar.value = r.data
-  } catch (e) { console.error(e); toast.error('فشل تحميل الكالندر') } finally { calLoading.value = false }
+  } catch (e) { toast.error('فشل تحميل الكالندر') } finally { calLoading.value = false }
 }
 
 // ── Print calendar (لعرض تقديمي في اجتماعات المبيعات) ──────────────────────
@@ -329,7 +329,7 @@ async function loadClients() {
   try {
     const r = await api.get('/api/v1/timeshare/contracts', { params: { branch_id: branchId, size: 100 } })
     allClients.value = r.data.items ?? []
-  } catch (e) { console.error(e); toast.error('فشل تحميل بيانات العملاء') } finally { clientsLoading.value = false }
+  } catch (e) { toast.error('فشل تحميل بيانات العملاء') } finally { clientsLoading.value = false }
 }
 
 async function loadInstallments() {
@@ -342,7 +342,7 @@ async function loadInstallments() {
     const r = await api.get('/api/v1/timeshare/installments', { params })
     installments.value = r.data.installments ?? []
     installSummary.value = r.data.summary ?? { overdue_total: 0, pending_total: 0 }
-  } catch (e) { console.error(e); toast.error('فشل تحميل الأقساط') } finally { installLoading.value = false }
+  } catch (e) { toast.error('فشل تحميل الأقساط') } finally { installLoading.value = false }
 }
 
 async function refreshAll() {
@@ -480,7 +480,7 @@ function roomTypeBadge(type: string) {
   const m: Record<string, string> = {
     '2R': 'bg-sky-100 text-sky-700', '4R': 'bg-amber-100 text-amber-700', '6R': 'bg-emerald-100 text-emerald-700',
   }
-  return `text-[10px] px-1.5 py-0.5 rounded-full font-bold ${m[type] || 'bg-stone-100 text-stone-500'}`
+  return `text-[10px] px-1.5 py-0.5 rounded-full font-bold ${m[type] || 'bg-stone-100 dark:bg-gray-700 text-stone-500'}`
 }
 const contractStatusVariant: Record<string, BadgeVariant> = {
   active: 'success', suspended: 'warning', cancelled: 'danger', expired: 'neutral',
@@ -500,7 +500,7 @@ function calContractClass(c: any) {
     '2R': 'bg-sky-100 text-sky-700 border-sky-200', '4R': 'bg-amber-100 text-amber-700 border-amber-200',
     '6R': 'bg-emerald-100 text-emerald-700 border-emerald-200',
   }
-  return m[c.room_type] || 'bg-stone-100 text-stone-500 border-stone-200'
+  return m[c.room_type] || 'bg-stone-100 dark:bg-gray-700 text-stone-500 border-stone-200 dark:border-border'
 }
 
 onMounted(refreshAll)
@@ -509,23 +509,23 @@ onMounted(refreshAll)
 <template>
   <div dir="rtl">
     <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
-      <h2 class="text-2xl font-black text-gray-900">🏨 التايم شير</h2>
+      <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">🏨 التايم شير</h2>
       <div class="flex items-center gap-2">
         <button v-if="auth.hasRole('manager')" @click="importModal.open = true; importModal.result = null"
-          class="px-3 py-1.5 rounded-xl bg-white border border-stone-200 text-gray-600 text-xs font-bold hover:bg-stone-50 transition-all">
+          class="px-3 py-1.5 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs font-bold hover:bg-stone-50 dark:bg-gray-800/60 transition-all">
           📥 استيراد Excel
         </button>
         <button @click="refreshAll" :disabled="loading"
-          class="px-3 py-1.5 rounded-xl bg-white border border-stone-200 text-gray-600 text-xs font-bold hover:bg-stone-50 transition-all">
+          class="px-3 py-1.5 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs font-bold hover:bg-stone-50 dark:bg-gray-800/60 transition-all">
           {{ loading ? '⏳' : '🔄' }} تحديث
         </button>
       </div>
     </div>
 
     <!-- Tabs -->
-    <div class="flex gap-1 bg-stone-100 p-1 rounded-xl mb-6 w-fit">
+    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
       <button v-for="t in TABS" :key="t.id" @click="activeTab = t.id"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', activeTab === t.id ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700']">
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', activeTab === t.id ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']">
         {{ t.icon }} {{ t.label }}
       </button>
     </div>
@@ -534,23 +534,23 @@ onMounted(refreshAll)
     <div v-if="activeTab === 'dashboard'" class="space-y-5">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <AppCard padding="md">
-          <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">عقود نشطة</p>
-          <p class="text-2xl font-black text-gray-900">{{ summary.active_contracts || 0 }}</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">عقود نشطة</p>
+          <p class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ summary.active_contracts || 0 }}</p>
         </AppCard>
         <AppCard padding="md">
-          <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">نسبة التحصيل</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">نسبة التحصيل</p>
           <p :class="['text-2xl font-black', (summary.collection_rate_pct||0) >= 50 ? 'text-green-600' : 'text-amber-500']">
             {{ summary.collection_rate_pct || 0 }}%
           </p>
-          <p class="text-[10px] text-gray-400 mt-1">{{ fmt(summary.total_collected) }} من {{ fmt(summary.total_value) }}</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-1">{{ fmt(summary.total_collected) }} من {{ fmt(summary.total_value) }}</p>
         </AppCard>
         <AppCard padding="md">
-          <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">متأخرات</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">متأخرات</p>
           <p class="text-2xl font-black text-red-500">{{ fmt(summary.total_overdue) }}</p>
-          <p class="text-[10px] text-gray-400 mt-1">{{ summary.overdue_contracts_count || 0 }} عقد متأخر</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-1">{{ summary.overdue_contracts_count || 0 }} عقد متأخر</p>
         </AppCard>
         <AppCard padding="md">
-          <p class="text-[10px] text-gray-400 font-bold uppercase tracking-wide mb-2">مستحق هذا الشهر</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">مستحق هذا الشهر</p>
           <p class="text-2xl font-black text-amber-500">{{ fmt(summary.this_month_due) }}</p>
         </AppCard>
       </div>
@@ -558,24 +558,24 @@ onMounted(refreshAll)
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <AppCard padding="md">
           <div class="flex items-center justify-between mb-4">
-            <p class="font-black text-sm text-gray-900">📅 زيارات قادمة — خلال 30 يوم</p>
+            <p class="font-black text-sm text-gray-900 dark:text-gray-100">📅 زيارات قادمة — خلال 30 يوم</p>
             <span class="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 font-bold">{{ summary.upcoming_visits?.length || 0 }}</span>
           </div>
           <div v-if="!summary.upcoming_visits?.length" class="text-center py-6 text-gray-300 text-xs">لا توجد زيارات قادمة</div>
           <div v-else class="space-y-2">
-            <div v-for="v in summary.upcoming_visits" :key="v.id" class="flex items-center justify-between gap-3 p-3 rounded-xl bg-stone-50 border border-stone-100">
+            <div v-for="v in summary.upcoming_visits" :key="v.id" class="flex items-center justify-between gap-3 p-3 rounded-xl bg-stone-50 dark:bg-gray-800/60 border border-stone-100 dark:border-border/50">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1 flex-wrap">
-                  <span class="font-bold text-xs text-gray-900">{{ v.customer_name }}</span>
+                  <span class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ v.customer_name }}</span>
                   <span :class="roomTypeBadge(v.room_type)">{{ v.room_type }}</span>
                 </div>
-                <div class="text-[10px] text-gray-400">أسبوع {{ v.week_number }} · {{ formatDateAr(v.visit_start) }}</div>
+                <div class="text-[10px] text-gray-400 dark:text-gray-500">أسبوع {{ v.week_number }} · {{ formatDateAr(v.visit_start) }}</div>
               </div>
               <div class="text-left flex-shrink-0">
                 <div :class="['text-sm font-black', v.days_until === 0 ? 'text-red-500' : v.days_until <= 7 ? 'text-amber-500' : 'text-green-600']">
                   {{ v.days_until === 0 ? 'اليوم!' : v.days_until === 1 ? 'غداً' : `${v.days_until} يوم` }}
                 </div>
-                <div v-if="v.customer_phone" class="text-[10px] text-gray-400 mt-0.5">{{ v.customer_phone }}</div>
+                <div v-if="v.customer_phone" class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">{{ v.customer_phone }}</div>
               </div>
             </div>
           </div>
@@ -583,7 +583,7 @@ onMounted(refreshAll)
 
         <AppCard padding="md">
           <div class="flex items-center justify-between mb-4">
-            <p class="font-black text-sm text-gray-900">🔴 عملاء متأخرون</p>
+            <p class="font-black text-sm text-gray-900 dark:text-gray-100">🔴 عملاء متأخرون</p>
             <span class="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">{{ summary.overdue_clients?.length || 0 }}</span>
           </div>
           <div v-if="!summary.overdue_clients?.length" class="text-center py-6 text-gray-300 text-xs">🎉 لا توجد متأخرات</div>
@@ -591,14 +591,14 @@ onMounted(refreshAll)
             <div v-for="c in summary.overdue_clients" :key="c.id" class="flex items-center justify-between gap-3 p-3 rounded-xl bg-red-50 border border-red-100">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1 flex-wrap">
-                  <span class="font-bold text-xs text-gray-900">{{ c.customer_name }}</span>
+                  <span class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ c.customer_name }}</span>
                   <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
                 </div>
-                <div class="text-[10px] text-gray-400">{{ c.pending_count }} قسط معلق<span v-if="c.next_due"> · استحق {{ formatDateAr(c.next_due) }}</span></div>
+                <div class="text-[10px] text-gray-400 dark:text-gray-500">{{ c.pending_count }} قسط معلق<span v-if="c.next_due"> · استحق {{ formatDateAr(c.next_due) }}</span></div>
               </div>
               <div class="text-left flex-shrink-0">
                 <div class="text-sm font-black text-red-500">{{ fmt(c.overdue_amount) }}</div>
-                <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="text-[10px] text-gray-400 hover:text-amber-500">📞 {{ c.customer_phone }}</a>
+                <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="text-[10px] text-gray-400 dark:text-gray-500 hover:text-amber-500">📞 {{ c.customer_phone }}</a>
               </div>
             </div>
           </div>
@@ -610,12 +610,12 @@ onMounted(refreshAll)
     <div v-if="activeTab === 'calendar'" class="space-y-4">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
-          <button @click="calYear--; loadCalendar()" class="w-8 h-8 rounded-xl bg-white border border-stone-200 text-gray-500 hover:bg-stone-50 text-sm font-bold">›</button>
-          <h3 class="text-lg font-black text-gray-900">{{ calYear }}</h3>
-          <button @click="calYear++; loadCalendar()" class="w-8 h-8 rounded-xl bg-white border border-stone-200 text-gray-500 hover:bg-stone-50 text-sm font-bold">‹</button>
+          <button @click="calYear--; loadCalendar()" class="w-8 h-8 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-500 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 text-sm font-bold">›</button>
+          <h3 class="text-lg font-black text-gray-900 dark:text-gray-100">{{ calYear }}</h3>
+          <button @click="calYear++; loadCalendar()" class="w-8 h-8 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-500 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 text-sm font-bold">‹</button>
         </div>
         <div class="flex items-center gap-3">
-          <span class="text-xs text-gray-400">أسابيع محجوزة: <span class="text-amber-500 font-bold">{{ calendar.total_booked_weeks || 0 }}</span></span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">أسابيع محجوزة: <span class="text-amber-500 font-bold">{{ calendar.total_booked_weeks || 0 }}</span></span>
           <button @click="printCalendarView"
             class="px-2.5 py-1.5 rounded-xl bg-primary-50 text-primary-700 text-[10px] font-bold border border-primary-200 hover:bg-primary-100"
             title="طباعة الكالندر أو حفظه كـ PDF لعرضه في اجتماع مبيعات">
@@ -628,9 +628,9 @@ onMounted(refreshAll)
         <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
       </div>
       <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <div v-for="month in calendar.calendar" :key="month.month" class="bg-white rounded-2xl border border-stone-200 overflow-hidden shadow-sm">
-          <div class="px-4 py-2.5 border-b border-stone-100 bg-stone-50">
-            <p class="font-bold text-xs text-gray-700">{{ month.month_name }} {{ calYear }}</p>
+        <div v-for="month in calendar.calendar" :key="month.month" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border overflow-hidden shadow-sm">
+          <div class="px-4 py-2.5 border-b border-stone-100 dark:border-border/50 bg-stone-50 dark:bg-gray-800/60">
+            <p class="font-bold text-xs text-gray-700 dark:text-gray-300">{{ month.month_name }} {{ calYear }}</p>
           </div>
           <div class="divide-y divide-stone-100">
             <div v-for="week in month.weeks" :key="week.week"
@@ -656,14 +656,14 @@ onMounted(refreshAll)
     <div v-if="activeTab === 'clients'" class="space-y-4">
       <div class="flex flex-wrap gap-3">
         <input v-model="clientSearch" placeholder="🔍 ابحث بالاسم أو الهاتف أو رقم العقد..."
-          class="flex-1 min-w-48 bg-white border border-stone-200 text-gray-900 text-xs rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
-        <select v-model="clientStatusFilter" class="bg-white border border-stone-200 text-gray-600 text-xs rounded-xl px-3 py-2.5 outline-none">
+          class="flex-1 min-w-48 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-xs rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
+        <select v-model="clientStatusFilter" class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs rounded-xl px-3 py-2.5 outline-none">
           <option value="">كل الحالات</option>
           <option value="active">نشط</option>
           <option value="suspended">موقوف</option>
           <option value="cancelled">ملغي</option>
         </select>
-        <select v-model="clientRoomFilter" class="bg-white border border-stone-200 text-gray-600 text-xs rounded-xl px-3 py-2.5 outline-none">
+        <select v-model="clientRoomFilter" class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs rounded-xl px-3 py-2.5 outline-none">
           <option value="">كل الأنواع</option>
           <option value="2R">2R</option><option value="4R">4R</option><option value="6R">6R</option>
         </select>
@@ -675,8 +675,8 @@ onMounted(refreshAll)
       <div v-else class="space-y-2">
         <div v-if="!filteredClients.length" class="text-center py-10 text-gray-300 text-xs">لا توجد نتائج</div>
         <div v-for="c in filteredClients" :key="c.id"
-          class="bg-white rounded-2xl border overflow-hidden transition-all shadow-sm"
-          :class="expandedClient === c.id ? 'border-primary-300' : 'border-stone-200 hover:border-stone-300'">
+          class="bg-white dark:bg-surface rounded-2xl border overflow-hidden transition-all shadow-sm"
+          :class="expandedClient === c.id ? 'border-primary-300' : 'border-stone-200 dark:border-border hover:border-stone-300'">
 
           <div class="p-4 cursor-pointer flex items-center gap-4" @click="expandedClient = expandedClient === c.id ? null : c.id">
             <div class="w-9 h-9 rounded-xl flex-shrink-0 flex items-center justify-center text-sm font-black" :class="roomTypeBadge(c.room_type)">
@@ -684,12 +684,12 @@ onMounted(refreshAll)
             </div>
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-bold text-sm text-gray-900">{{ c.customer_name }}</span>
+                <span class="font-bold text-sm text-gray-900 dark:text-gray-100">{{ c.customer_name }}</span>
                 <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
                 <span v-if="c.rci_included" class="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold">RCI</span>
                 <AppBadge size="sm" :variant="contractStatusVariant[c.status] ?? 'neutral'">{{ statusLabel(c.status) }}</AppBadge>
               </div>
-              <div class="text-[10px] text-gray-400 mt-0.5 flex flex-wrap gap-3">
+              <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 flex flex-wrap gap-3">
                 <span v-if="c.customer_phone">📞 {{ c.customer_phone }}</span>
                 <span>أسبوع {{ c.week_number || '—' }}</span>
                 <span>{{ c.contract_number }}</span>
@@ -705,35 +705,35 @@ onMounted(refreshAll)
             <div class="text-gray-300 text-xs flex-shrink-0">{{ expandedClient === c.id ? '▲' : '▼' }}</div>
           </div>
 
-          <div v-if="expandedClient === c.id" class="border-t border-stone-100 p-4 space-y-4">
+          <div v-if="expandedClient === c.id" class="border-t border-stone-100 dark:border-border/50 p-4 space-y-4">
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[11px]">
               <div class="space-y-1.5">
-                <p class="text-[10px] text-gray-400 font-bold uppercase mb-1">بيانات العقد</p>
-                <div class="flex justify-between"><span class="text-gray-400">مدة العقد</span><span>{{ c.start_date }} — {{ c.end_date || '—' }}</span></div>
-                <div class="flex justify-between"><span class="text-gray-400">ليالٍ/سنة</span><span class="font-bold text-amber-600">{{ c.nights_per_year }}</span></div>
-                <div v-if="c.nationality" class="flex justify-between"><span class="text-gray-400">الجنسية</span><span>{{ c.nationality }}</span></div>
-                <div v-if="c.maintenance_fee > 0" class="flex justify-between"><span class="text-gray-400">صيانة سنوية</span><span class="text-amber-600">{{ fmt(c.maintenance_fee) }}</span></div>
+                <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">بيانات العقد</p>
+                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">مدة العقد</span><span>{{ c.start_date }} — {{ c.end_date || '—' }}</span></div>
+                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">ليالٍ/سنة</span><span class="font-bold text-amber-600">{{ c.nights_per_year }}</span></div>
+                <div v-if="c.nationality" class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">الجنسية</span><span>{{ c.nationality }}</span></div>
+                <div v-if="c.maintenance_fee > 0" class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">صيانة سنوية</span><span class="text-amber-600">{{ fmt(c.maintenance_fee) }}</span></div>
               </div>
               <div class="space-y-1.5">
-                <p class="text-[10px] text-gray-400 font-bold uppercase mb-1">الوضع المالي</p>
-                <div class="flex justify-between"><span class="text-gray-400">قيمة العقد</span><span class="font-bold text-green-600">{{ fmt(c.total_value) }}</span></div>
-                <div class="flex justify-between"><span class="text-gray-400">دفعة أولى</span><span>{{ fmt(c.down_payment) }}</span></div>
-                <div class="flex justify-between"><span class="text-gray-400">عدد الأقساط</span><span>{{ c.installments }}</span></div>
+                <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">الوضع المالي</p>
+                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">قيمة العقد</span><span class="font-bold text-green-600">{{ fmt(c.total_value) }}</span></div>
+                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">دفعة أولى</span><span>{{ fmt(c.down_payment) }}</span></div>
+                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">عدد الأقساط</span><span>{{ c.installments }}</span></div>
               </div>
             </div>
 
             <div>
-              <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">جدول الأقساط</p>
+              <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">جدول الأقساط</p>
               <div v-if="c.installments_list?.length" class="overflow-x-auto">
                 <table class="w-full text-[10px]">
-                  <thead><tr class="text-gray-400 border-b border-stone-100">
+                  <thead><tr class="text-gray-400 dark:text-gray-500 border-b border-stone-100 dark:border-border/50">
                     <th class="text-right py-1.5 pr-1">#</th><th class="text-right py-1.5">الاستحقاق</th>
                     <th class="text-right py-1.5">المبلغ</th><th class="text-right py-1.5">الحالة</th><th></th>
                   </tr></thead>
                   <tbody class="divide-y divide-stone-100">
                     <tr v-for="(p, i) in c.installments_list" :key="p.id">
                       <td class="py-1.5 pr-1 text-gray-300">{{ i + 1 }}</td>
-                      <td class="py-1.5 text-gray-500">{{ formatDateAr(p.due_date) }}</td>
+                      <td class="py-1.5 text-gray-500 dark:text-gray-500">{{ formatDateAr(p.due_date) }}</td>
                       <td class="py-1.5 font-bold">{{ fmt(p.amount) }}</td>
                       <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
                       <td class="py-1.5">
@@ -746,7 +746,7 @@ onMounted(refreshAll)
               </div>
             </div>
 
-            <div class="flex flex-wrap gap-2 pt-2 border-t border-stone-100">
+            <div class="flex flex-wrap gap-2 pt-2 border-t border-stone-100 dark:border-border/50">
               <button @click="openPayModalForContract(c)" class="px-4 py-2 rounded-xl bg-green-50 text-green-700 text-xs font-bold border border-green-200 hover:bg-green-100">💰 تسجيل دفعة</button>
               <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="px-4 py-2 rounded-xl bg-sky-50 text-sky-700 text-xs font-bold border border-sky-200 hover:bg-sky-100">📞 اتصال</a>
               <button v-if="auth.hasRole('manager') && c.status === 'active'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
@@ -770,12 +770,12 @@ onMounted(refreshAll)
       </div>
       <div class="flex flex-wrap gap-3">
         <input v-model="installSearch" @keyup.enter="loadInstallments" placeholder="🔍 ابحث باسم العميل..."
-          class="flex-1 min-w-40 bg-white border border-stone-200 text-gray-900 text-xs rounded-xl px-4 py-2 outline-none" />
-        <select v-model="installStatus" @change="loadInstallments" class="bg-white border border-stone-200 text-gray-600 text-xs rounded-xl px-3 py-2">
+          class="flex-1 min-w-40 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-xs rounded-xl px-4 py-2 outline-none" />
+        <select v-model="installStatus" @change="loadInstallments" class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs rounded-xl px-3 py-2">
           <option value="">كل الحالات</option><option value="overdue">🔴 متأخر</option>
           <option value="pending">⏳ معلق</option><option value="paid">✅ مدفوع</option><option value="partial">🔵 جزئي</option>
         </select>
-        <input v-model="installMonth" @change="loadInstallments" type="month" class="bg-white border border-stone-200 text-gray-600 text-xs rounded-xl px-3 py-2" />
+        <input v-model="installMonth" @change="loadInstallments" type="month" class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs rounded-xl px-3 py-2" />
       </div>
 
       <div v-if="installLoading" class="flex justify-center py-12">
@@ -784,20 +784,20 @@ onMounted(refreshAll)
       <AppCard v-else padding="none">
         <div v-if="!installments.length" class="text-center py-10 text-gray-300 text-xs">لا توجد نتائج</div>
         <table v-else class="w-full text-xs">
-          <thead class="bg-stone-50"><tr>
-            <th class="text-right px-4 py-3 text-gray-400 font-bold">العميل</th>
-            <th class="text-right px-4 py-3 text-gray-400 font-bold">الاستحقاق</th>
-            <th class="text-right px-4 py-3 text-gray-400 font-bold">المبلغ</th>
-            <th class="text-right px-4 py-3 text-gray-400 font-bold">الحالة</th>
+          <thead class="bg-stone-50 dark:bg-gray-800/60"><tr>
+            <th class="text-right px-4 py-3 text-gray-400 dark:text-gray-500 font-bold">العميل</th>
+            <th class="text-right px-4 py-3 text-gray-400 dark:text-gray-500 font-bold">الاستحقاق</th>
+            <th class="text-right px-4 py-3 text-gray-400 dark:text-gray-500 font-bold">المبلغ</th>
+            <th class="text-right px-4 py-3 text-gray-400 dark:text-gray-500 font-bold">الحالة</th>
             <th class="px-4 py-3"></th>
           </tr></thead>
           <tbody class="divide-y divide-stone-100">
             <tr v-for="p in installments" :key="p.id" :class="p.status === 'overdue' ? 'bg-red-50/30' : ''">
               <td class="px-4 py-3">
-                <div class="font-bold text-gray-900">{{ p.customer_name }}</div>
-                <div class="text-[10px] text-gray-400">{{ p.customer_phone }}</div>
+                <div class="font-bold text-gray-900 dark:text-gray-100">{{ p.customer_name }}</div>
+                <div class="text-[10px] text-gray-400 dark:text-gray-500">{{ p.customer_phone }}</div>
               </td>
-              <td class="px-4 py-3"><span :class="p.status === 'overdue' ? 'text-red-500 font-bold' : 'text-gray-500'">{{ formatDateAr(p.due_date) }}</span></td>
+              <td class="px-4 py-3"><span :class="p.status === 'overdue' ? 'text-red-500 font-bold' : 'text-gray-500 dark:text-gray-500'">{{ formatDateAr(p.due_date) }}</span></td>
               <td class="px-4 py-3 font-bold">{{ fmt(p.amount) }}</td>
               <td class="px-4 py-3"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
               <td class="px-4 py-3">
@@ -813,11 +813,11 @@ onMounted(refreshAll)
     <!-- ══ TRANSFER UNIT MODAL (#10) ══ -->
     <AppModal :open="transferModal.open" title="🔑 نقل الوحدة" size="sm" @close="transferModal.open = false">
       <div v-if="transferModal.contract" class="space-y-3">
-        <p class="text-xs text-gray-500">
+        <p class="text-xs text-gray-500 dark:text-gray-500">
           {{ transferModal.contract.customer_name }} — الوحدة الحالية:
           <span class="font-bold">{{ transferModal.contract.unit_id ? (unitNumberById[transferModal.contract.unit_id] ?? `#${transferModal.contract.unit_id}`) : '—' }}</span>
         </p>
-        <select v-model="transferModal.new_unit_id" class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm">
+        <select v-model="transferModal.new_unit_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
           <option value="">اختر الوحدة الجديدة (نفس نوع {{ transferModal.contract.room_type }}) *</option>
           <option v-for="u in transferCandidateUnits" :key="u.id" :value="u.id" :disabled="u.status === 'maintenance'">
             {{ u.unit_number }}{{ u.status === 'maintenance' ? ' (تحت الصيانة)' : '' }}
@@ -825,30 +825,30 @@ onMounted(refreshAll)
         </select>
         <p v-if="transferCandidateUnits.length === 0" class="text-xs text-amber-600">لا توجد وحدات أخرى متاحة من نفس النوع حاليًا</p>
         <input v-model="transferModal.reason" type="text" placeholder="سبب النقل (مطلوب) *"
-          class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+          class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         <AppButton class="w-full" :loading="transferModal.saving" @click="saveTransfer">تأكيد النقل</AppButton>
       </div>
     </AppModal>
 
     <!-- ══ PAY MODAL ══ -->
     <AppModal :open="payModal.open" title="💰 تسجيل دفعة" size="sm" @close="payModal.open = false">
-      <p class="text-xs text-gray-400 mb-4">{{ payModal.customer_name }}</p>
+      <p class="text-xs text-gray-400 dark:text-gray-500 mb-4">{{ payModal.customer_name }}</p>
       <div class="space-y-3">
         <div>
-          <label class="text-[10px] text-gray-400 block mb-1">المبلغ المدفوع</label>
+          <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">المبلغ المدفوع</label>
           <input v-model.number="payModal.amount" type="number" min="1" :placeholder="`المستحق: ${fmt(payModal.due_amount)}`"
-            class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-sm rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
+            class="w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
         </div>
         <div>
-          <label class="text-[10px] text-gray-400 block mb-1">طريقة الدفع</label>
-          <select v-model="payModal.method" class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-xs rounded-xl px-4 py-2.5 outline-none">
+          <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">طريقة الدفع</label>
+          <select v-model="payModal.method" class="w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-xs rounded-xl px-4 py-2.5 outline-none">
             <option value="cash">نقدي</option><option value="card">بطاقة</option>
             <option value="bank_transfer">تحويل بنكي</option><option value="other">أخرى</option>
           </select>
         </div>
         <div>
-          <label class="text-[10px] text-gray-400 block mb-1">رقم الإيصال (اختياري)</label>
-          <input v-model="payModal.receipt_number" class="w-full bg-stone-50 border border-stone-200 text-gray-900 text-xs rounded-xl px-4 py-2.5 outline-none" />
+          <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">رقم الإيصال (اختياري)</label>
+          <input v-model="payModal.receipt_number" class="w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-xs rounded-xl px-4 py-2.5 outline-none" />
         </div>
       </div>
       <template #footer>
@@ -863,11 +863,11 @@ onMounted(refreshAll)
 
     <!-- ══ IMPORT MODAL ══ -->
     <AppModal v-if="auth.hasRole('manager')" :open="importModal.open" title="📥 استيراد عقود من Excel" @close="importModal.open = false">
-      <p class="text-xs text-gray-400 mb-4">
+      <p class="text-xs text-gray-400 dark:text-gray-500 mb-4">
         الصف الأول = أسماء الأعمدة (customer_name, room_type, total_value, down_payment, installments, start_date, first_installment_date إلزامية).
       </p>
       <input type="file" accept=".xlsx,.xls" @change="onFilePicked"
-        class="w-full text-xs text-gray-600 file:ml-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
+        class="w-full text-xs text-gray-600 dark:text-gray-500 file:ml-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
       <div v-if="importModal.result" class="mt-4 p-3 rounded-xl text-xs" :class="importModal.result.error ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'">
         <div v-if="importModal.result.error">{{ importModal.result.error }}</div>
         <div v-else>
@@ -896,31 +896,31 @@ onMounted(refreshAll)
       <div v-else class="space-y-5 text-xs">
         <!-- Totals -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div class="bg-stone-50 rounded-xl p-3">
-            <p class="text-[9px] text-gray-400 font-bold uppercase mb-1">عدد العقود</p>
-            <p class="font-black text-gray-900">{{ profileModal.contracts.length }}</p>
+          <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+            <p class="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">عدد العقود</p>
+            <p class="font-black text-gray-900 dark:text-gray-100">{{ profileModal.contracts.length }}</p>
           </div>
           <div class="bg-green-50 rounded-xl p-3">
-            <p class="text-[9px] text-gray-400 font-bold uppercase mb-1">محصّل</p>
+            <p class="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">محصّل</p>
             <p class="font-black text-green-600">{{ fmt(profileTotals.collected) }}</p>
           </div>
           <div class="bg-red-50 rounded-xl p-3">
-            <p class="text-[9px] text-gray-400 font-bold uppercase mb-1">متأخر</p>
+            <p class="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">متأخر</p>
             <p class="font-black text-red-500">{{ fmt(profileTotals.overdue) }}</p>
           </div>
           <div class="bg-amber-50 rounded-xl p-3">
-            <p class="text-[9px] text-gray-400 font-bold uppercase mb-1">معلّق</p>
+            <p class="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">معلّق</p>
             <p class="font-black text-amber-600">{{ fmt(profileTotals.pending) }}</p>
           </div>
         </div>
 
         <!-- Contracts -->
         <div>
-          <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">العقود ({{ profileModal.contracts.length }})</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">العقود ({{ profileModal.contracts.length }})</p>
           <div class="space-y-1.5">
-            <div v-for="c in profileModal.contracts" :key="c.id" class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-stone-50 border border-stone-100">
+            <div v-for="c in profileModal.contracts" :key="c.id" class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-stone-50 dark:bg-gray-800/60 border border-stone-100 dark:border-border/50">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-bold text-gray-900">{{ c.contract_number }}</span>
+                <span class="font-bold text-gray-900 dark:text-gray-100">{{ c.contract_number }}</span>
                 <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
                 <AppBadge size="sm" :variant="contractStatusVariant[c.status] ?? 'neutral'">{{ statusLabel(c.status) }}</AppBadge>
               </div>
@@ -931,13 +931,13 @@ onMounted(refreshAll)
 
         <!-- Visits (وحدة فعلية مخصَّصة + تواريخ + حالة) -->
         <div>
-          <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">الزيارات ({{ profileModal.visits.length }})</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">الزيارات ({{ profileModal.visits.length }})</p>
           <div v-if="!profileModal.visits.length" class="text-center py-4 text-gray-300">لا توجد زيارات مسجّلة</div>
           <div v-else class="space-y-1.5">
             <div v-for="v in profileModal.visits" :key="v.id" class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-sky-50 border border-sky-100">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-bold text-gray-900">🔑 {{ v.unit_id ? (unitNumberById[v.unit_id] ?? `وحدة #${v.unit_id}`) : '—' }}</span>
-                <span class="text-gray-400">{{ formatDateAr(v.check_in) }} → {{ formatDateAr(v.check_out) }}</span>
+                <span class="font-bold text-gray-900 dark:text-gray-100">🔑 {{ v.unit_id ? (unitNumberById[v.unit_id] ?? `وحدة #${v.unit_id}`) : '—' }}</span>
+                <span class="text-gray-400 dark:text-gray-500">{{ formatDateAr(v.check_in) }} → {{ formatDateAr(v.check_out) }}</span>
               </div>
               <div class="flex items-center gap-2">
                 <AppButton
@@ -954,17 +954,17 @@ onMounted(refreshAll)
 
         <!-- Installments across all contracts -->
         <div>
-          <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">الأقساط ({{ profileAllInstallments.length }})</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">الأقساط ({{ profileAllInstallments.length }})</p>
           <div v-if="!profileAllInstallments.length" class="text-center py-4 text-gray-300">لا توجد أقساط</div>
           <table v-else class="w-full text-[10px]">
-            <thead><tr class="text-gray-400 border-b border-stone-100">
+            <thead><tr class="text-gray-400 dark:text-gray-500 border-b border-stone-100 dark:border-border/50">
               <th class="text-right py-1.5 pr-1">العقد</th><th class="text-right py-1.5">الاستحقاق</th>
               <th class="text-right py-1.5">المبلغ</th><th class="text-right py-1.5">الحالة</th>
             </tr></thead>
             <tbody class="divide-y divide-stone-100">
               <tr v-for="p in profileAllInstallments" :key="p.id">
-                <td class="py-1.5 pr-1 text-gray-400">{{ p.contract_number }}</td>
-                <td class="py-1.5 text-gray-500">{{ formatDateAr(p.due_date) }}</td>
+                <td class="py-1.5 pr-1 text-gray-400 dark:text-gray-500">{{ p.contract_number }}</td>
+                <td class="py-1.5 text-gray-500 dark:text-gray-500">{{ formatDateAr(p.due_date) }}</td>
                 <td class="py-1.5 font-bold">{{ fmt(p.amount) }}</td>
                 <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
               </tr>
@@ -974,15 +974,15 @@ onMounted(refreshAll)
 
         <!-- Reviews (manager فقط — GET /analytics/reviews محتاج صلاحية manager) -->
         <div v-if="auth.hasRole('manager')">
-          <p class="text-[10px] text-gray-400 font-bold uppercase mb-2">التقييمات ({{ profileModal.reviews.length }})</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">التقييمات ({{ profileModal.reviews.length }})</p>
           <div v-if="!profileModal.reviews.length" class="text-center py-4 text-gray-300">لا توجد تقييمات مسجّلة</div>
           <div v-else class="space-y-1.5">
             <div v-for="r in profileModal.reviews" :key="r.id" class="p-2.5 rounded-xl bg-amber-50 border border-amber-100">
               <div class="flex items-center justify-between mb-1">
                 <span class="font-bold text-amber-600">{{ '⭐'.repeat(r.overall_rating) }}</span>
-                <span class="text-gray-400 text-[9px]">{{ formatDateAr(r.reviewed_at) }}</span>
+                <span class="text-gray-400 dark:text-gray-500 text-[9px]">{{ formatDateAr(r.reviewed_at) }}</span>
               </div>
-              <p v-if="r.comment" class="text-gray-600">{{ r.comment }}</p>
+              <p v-if="r.comment" class="text-gray-600 dark:text-gray-500">{{ r.comment }}</p>
             </div>
           </div>
         </div>

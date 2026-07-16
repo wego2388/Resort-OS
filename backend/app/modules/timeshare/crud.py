@@ -187,6 +187,67 @@ def list_contracts_with_week(db: Session, branch_id: int) -> list[TimeshareContr
     )
 
 
+def list_visits_for_calendar(
+    db: Session, branch_id: int, year: int,
+) -> list[TimeshareVisit]:
+    """زيارات فعلية مسجّلة (scheduled/active/completed) لسنة بعينها —
+    لإدراجها في الكالندر بجانب العقود الثابتة المحسوبة رياضياً.
+
+    نستخدم تحقق عام بدل فلتر ISO-week مباشر في SQL (PostgreSQL عنده
+    date_part/extract، SQLite عندها strftime) — بنجيب كل زيارة تبدأ أو
+    تنتهي في نفس السنة، ونترك حساب رقم الأسبوع للـ Python (isocalendar).
+    الحجم صغير جداً (مئات الزيارات/سنة كحد أقصى) فلا مشكلة أداء."""
+    return (
+        db.query(TimeshareVisit)
+        .filter(
+            TimeshareVisit.branch_id == branch_id,
+            TimeshareVisit.status.in_(["scheduled", "active", "completed"]),
+            TimeshareVisit.check_in >= date(year, 1, 1),
+            TimeshareVisit.check_in <= date(year, 12, 31),
+        )
+        .order_by(TimeshareVisit.check_in)
+        .all()
+    )
+
+
+def get_booked_week_numbers(
+    db: Session, branch_id: int, year: int, room_type: Optional[str] = None,
+) -> set[int]:
+    """أرقام الأسابيع المحجوزة فعلاً (عقود ثابتة + زيارات مجدولة/جارية) —
+    لحساب الأسابيع المتاحة للبيع (`GET /timeshare/available-weeks`).
+
+    العقود الثابتة: نعدّ أسبوعها بشكل مباشر من week_number.
+    الزيارات الفعلية: نستخرج رقم الأسبوع ISO من check_in."""
+    booked: set[int] = set()
+
+    # ① عقود ثابتة (نشطة + موقوفة) — نفس منطق list_contracts_with_week
+    q_contracts = db.query(TimeshareContract.week_number).filter(
+        TimeshareContract.branch_id == branch_id,
+        TimeshareContract.status.in_(["active", "suspended"]),
+        TimeshareContract.week_number.isnot(None),
+    )
+    if room_type:
+        q_contracts = q_contracts.filter(TimeshareContract.room_type == room_type)
+    for (wn,) in q_contracts:
+        booked.add(wn)
+
+    # ② زيارات مجدولة/جارية (عقود عائمة أو ثابتة لسنة بعينها)
+    q_visits = db.query(TimeshareVisit.check_in).filter(
+        TimeshareVisit.branch_id == branch_id,
+        TimeshareVisit.status.in_(["scheduled", "active"]),
+        TimeshareVisit.check_in >= date(year, 1, 1),
+        TimeshareVisit.check_in <= date(year, 12, 31),
+    )
+    if room_type:
+        q_visits = q_visits.join(
+            TimeshareContract, TimeshareContract.id == TimeshareVisit.contract_id
+        ).filter(TimeshareContract.room_type == room_type)
+    for (check_in,) in q_visits:
+        booked.add(check_in.isocalendar()[1])
+
+    return booked
+
+
 def list_all_installments(
     db: Session, branch_id: int,
     status: Optional[str] = None,

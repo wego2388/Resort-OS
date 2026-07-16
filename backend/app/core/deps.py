@@ -35,6 +35,10 @@ ROLE_LEVELS: dict[str, int] = {
     "waiter":       30,
     "chef":         30,
     "kitchen":      30,
+    # timeshare_agent: موظف تايم شير متخصص — صلاحيات عامة محدودة جداً (level 25)
+    # لكن بيحصل على UserPermission صريح على timeshare.* عند إنشاء الحساب.
+    # مفيش أي وصول لـ endpoints تانية تتطلب > 25 من غير منح صريح.
+    "timeshare_agent": 25,
     "employee":     20,
     "customer":      0,
     "guest":         0,
@@ -190,6 +194,26 @@ def get_cashier_user(user=Depends(get_current_active_user)):
     if user_level(user) < 40:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية كاشير")
     return user
+
+
+def get_timeshare_user(user=Depends(get_current_active_user), db: Session = Depends(get_db)):
+    """بوابة التايم شير — يقبل:
+      • أي مستخدم level >= 40 (cashier وفوق) بشكل تلقائي.
+      • timeshare_agent (level=25) لو عنده UserPermission صريح
+        على resource='timeshare.access' action='view' (ممنوح بشكل
+        أوتوماتيكي عند إنشاء حساب بـ role=timeshare_agent).
+    يمنع أي حساب آخر (employee/customer/guest) حتى لو حاول.
+    """
+    from app.modules.core.services import has_permission  # noqa: PLC0415
+
+    lvl = user_level(user)
+    if lvl >= 40:
+        return user
+    if lvl >= 25:
+        # timeshare_agent: يلزم permission صريح
+        if has_permission(db, user, "timeshare.access", "view", role_fallback=False):
+            return user
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "لا تملك صلاحية الوصول لوحدة التايم شير")
 
 
 def get_waiter_user(user=Depends(get_current_active_user)):
