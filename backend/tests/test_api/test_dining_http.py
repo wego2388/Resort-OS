@@ -560,3 +560,96 @@ class TestDiningTableTransferHTTP:
         assert resp.status_code == 401
 
 
+
+
+class TestSplitBillHTTP:
+    """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع."""
+
+    def _create_paid_order(self, client, db, cashier_headers):
+        """Helper — ينشئ order ويرجعه جاهزاً للاختبار (status=open)."""
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet, price=Decimal("100.00"))
+        resp = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "branch_id": branch.id,
+                  "order_type": "dine_in", "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    def test_split_bill_two_methods(self, client: TestClient, db, cashier_headers):
+        """كاش 60 + بطاقة 40 لطلب إجماليه 100 (مع VAT يساوي الـ total بالظبط)."""
+        order = self._create_paid_order(client, db, cashier_headers)
+        order_total = Decimal(str(order["total"]))
+
+        # تقسيم بنسب عشوائية تساوي الإجمالي بالظبط
+        amt1 = (order_total / 2).quantize(Decimal("0.01"))
+        amt2 = order_total - amt1
+
+        resp = client.post(
+            f"/api/v1/dining/orders/{order['id']}/split-bill",
+            json={"payments": [
+                {"amount": float(amt1), "payment_method": "cash"},
+                {"amount": float(amt2), "payment_method": "card"},
+            ]},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["status"] == "paid"
+        assert "split" in data["payment_method"]
+
+    def test_split_bill_total_mismatch_rejected(self, client: TestClient, db, cashier_headers):
+        """مجموع الدفعات أقل من الإجمالي → 400."""
+        order = self._create_paid_order(client, db, cashier_headers)
+        order_total = float(order["total"])
+
+        resp = client.post(
+            f"/api/v1/dining/orders/{order['id']}/split-bill",
+            json={"payments": [
+                {"amount": round(order_total * 0.4, 2), "payment_method": "cash"},
+                {"amount": round(order_total * 0.4, 2), "payment_method": "card"},
+            ]},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 400
+        assert "لا يساوي" in resp.json()["detail"]
+
+    def test_split_bill_already_paid_rejected(self, client: TestClient, db, cashier_headers):
+        """فاتورة مدفوعة بالفعل → 400."""
+        order = self._create_paid_order(client, db, cashier_headers)
+        order_total = float(order["total"])
+        amt1 = round(order_total / 2, 2)
+        amt2 = round(order_total - amt1, 2)
+        payload = {"payments": [
+            {"amount": amt1, "payment_method": "cash"},
+            {"amount": amt2, "payment_method": "card"},
+        ]}
+        # الدفعة الأولى تنجح
+        resp1 = client.post(f"/api/v1/dining/orders/{order['id']}/split-bill",
+                            json=payload, headers=cashier_headers)
+        assert resp1.status_code == 200
+        # الدفعة الثانية ترفض
+        resp2 = client.post(f"/api/v1/dining/orders/{order['id']}/split-bill",
+                            json=payload, headers=cashier_headers)
+        assert resp2.status_code == 400
+        assert "paid" in resp2.json()["detail"]
+
+    def test_split_bill_requires_cashier_auth(self, client: TestClient, db):
+        """بدون auth → 401."""
+        resp = client.post("/api/v1/dining/orders/1/split-bill",
+                           json={"payments": [{"amount": 50, "payment_method": "cash"},
+                                              {"amount": 50, "payment_method": "card"}]})
+        assert resp.status_code == 401
+
+    def test_split_bill_single_payment_schema_rejected(self, client: TestClient, db, cashier_headers):
+        """SplitBillRequest يشترط min_length=2 — دفعة واحدة → 422."""
+        order = self._create_paid_order(client, db, cashier_headers)
+        resp = client.post(
+            f"/api/v1/dining/orders/{order['id']}/split-bill",
+            json={"payments": [{"amount": float(order["total"]), "payment_method": "cash"}]},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 422

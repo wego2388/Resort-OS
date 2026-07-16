@@ -259,6 +259,127 @@ def list_tables(db: Session, outlet_id: int) -> list[VenueTable]:
     )
 
 
+def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
+    """نفس list_tables لكن تضيف معلومات الأوردر النشط لكل طاولة.
+
+    ترجع list[dict] بدل list[VenueTable] عشان الحقول الإضافية مش mapped
+    على ORM model — بيتحوّل لـ DiningTableRead في الـ router.
+    جلب دفعة واحدة (مش N+1 queries).
+    """
+    from sqlalchemy import and_
+
+    tables = (
+        db.query(VenueTable)
+        .filter(VenueTable.outlet_id == outlet_id)
+        .order_by(VenueTable.table_number)
+        .all()
+    )
+
+    active_statuses = ("open", "in_kitchen", "served")
+    active_orders = (
+        db.query(DiningOrder)
+        .filter(
+            and_(
+                DiningOrder.outlet_id == outlet_id,
+                DiningOrder.status.in_(active_statuses),
+                DiningOrder.table_id.isnot(None),
+            )
+        )
+        .all()
+    )
+    # مؤشر: table_id → أحدث أوردر نشط
+    order_by_table: dict[int, DiningOrder] = {}
+    for o in active_orders:
+        if o.table_id not in order_by_table:
+            order_by_table[o.table_id] = o
+
+    result = []
+    for t in tables:
+        o = order_by_table.get(t.id)
+        result.append({
+            "id":                  t.id,
+            "branch_id":           t.branch_id,
+            "outlet_id":           t.outlet_id,
+            "table_number":        t.table_number,
+            "capacity":            t.capacity,
+            "status":              t.status,
+            "section":             t.section,
+            "occupied_at":         t.occupied_at,
+            "grid_row":            t.grid_row,
+            "grid_col":            t.grid_col,
+            "active_order_id":     o.id            if o else None,
+            "active_order_number": o.order_number  if o else None,
+            "active_order_total":  float(o.total)  if o and o.total is not None else None,
+            "active_covers":       o.guests_count  if o else None,
+            "order_status":        o.status        if o else None,
+        })
+    return result
+
+
+def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
+    """نفس list_tables لكن تُضيف معلومات الأوردر النشط لكل طاولة.
+
+    تُعيد list[dict] بدل list[VenueTable] عشان الحقول الإضافية مش mapped
+    على الـ ORM model — بيتحوّل لـ DiningTableRead في الـ router.
+    """
+    from sqlalchemy import and_
+
+    tables = (
+        db.query(VenueTable)
+        .filter(VenueTable.outlet_id == outlet_id)
+        .order_by(VenueTable.table_number)
+        .all()
+    )
+
+    # جلب كل الأوردرات النشطة لهذا الـ outlet دفعة واحدة (مش N+1)
+    active_statuses = ("open", "in_kitchen", "served")
+    active_orders = (
+        db.query(DiningOrder)
+        .filter(
+            and_(
+                DiningOrder.outlet_id == outlet_id,
+                DiningOrder.status.in_(active_statuses),
+                DiningOrder.table_id.isnot(None),
+            )
+        )
+        .all()
+    )
+    # مؤشر: table_id → أحدث أوردر نشط
+    order_by_table: dict[int, DiningOrder] = {}
+    for o in active_orders:
+        if o.table_id not in order_by_table:
+            order_by_table[o.table_id] = o
+
+    result = []
+    for t in tables:
+        row = {
+            "id":           t.id,
+            "branch_id":    t.branch_id,
+            "outlet_id":    t.outlet_id,
+            "table_number": t.table_number,
+            "capacity":     t.capacity,
+            "status":       t.status,
+            "section":      t.section,
+            "occupied_at":  t.occupied_at,
+            "grid_row":     t.grid_row,
+            "grid_col":     t.grid_col,
+            "active_order_id":     None,
+            "active_order_number": None,
+            "active_order_total":  None,
+            "active_covers":       None,
+            "order_status":        None,
+        }
+        o = order_by_table.get(t.id)
+        if o:
+            row["active_order_id"]     = o.id
+            row["active_order_number"] = o.order_number
+            row["active_order_total"]  = float(o.total) if o.total is not None else None
+            row["active_covers"]       = o.guests_count
+            row["order_status"]        = o.status
+        result.append(row)
+    return result
+
+
 def get_table(db: Session, table_id: int) -> Optional[VenueTable]:
     return db.query(VenueTable).filter(VenueTable.id == table_id).first()
 
@@ -348,18 +469,24 @@ def list_orders(
 
 
 def generate_order_number(db: Session, branch_id: int) -> str:
-    """رقم الطلب بتوقيت المنتجع (Africa/Cairo) — نفس منطق
-    restaurant.crud.generate_order_number بالظبط، مشترك بين كل الـ outlets
-    في الفرع (نفس sequence، زي ما كان restaurant/cafe منفصلين قبل كده بس
-    ORD- prefix واحد الآن)."""
+    """رقم الطلب بتوقيت المنتجع (Africa/Cairo) — مقفول بـ SELECT FOR UPDATE
+    عشان يمنع تصادم رقمين في نفس الوقت تحت ضغط حقيقي (T-02 من wagdy.md).
+    اللوك بيتحرر تلقائياً مع نهاية الـ transaction.
+
+    ⚠️ PostgreSQL لا يسمح بـ COUNT(*) مع FOR UPDATE مباشرة — نحل ذلك بـ
+    subquery: نجيب الـ IDs المقفولة أولاً، ثم نحسب عددها في Python.
+    """
     from app.resort_os.timezone_utils import local_now  # noqa: PLC0415
     today_str = local_now(settings.TIMEZONE).strftime("%Y%m%d")
     prefix = f"ORD-{today_str}-"
-    count = (
-        db.query(DiningOrder)
+    # نجيب الـ IDs بـ FOR UPDATE (يقفل الصفوف)، ثم نحسبها في Python
+    locked_ids = (
+        db.query(DiningOrder.id)
         .filter(DiningOrder.order_number.like(f"{prefix}%"))
-        .count()
+        .with_for_update()
+        .all()
     )
+    count = len(locked_ids)
     return f"{prefix}{count + 1:04d}"
 
 

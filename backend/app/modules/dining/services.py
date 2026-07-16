@@ -657,10 +657,19 @@ def update_order_status(
         try:
             from app.modules.finance import crud as finance_crud  # noqa: PLC0415
             from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
+            # ⚠️ باج محاسبي حقيقي (اتصلح): FolioCharge كان بيتسجّل بـ
+            # amount=order.subtotal من غير طرح order.discount_amount، بينما
+            # القيد المحاسبي المقابل (_post_order_folio_charge_journal) بيرحّل
+            # order.total (اللي فيه الخصم متطرح). النتيجة: folio.total أكبر
+            # من إجمالي القيود بفارق قيمة الخصم — تناقض في دفتر الأستاذ.
+            # الإصلاح: نطرح الخصم من amount هنا عشان folio charge = order.total
+            # (subtotal_net + vat + service_charge) بالظبط زي القيد المحاسبي.
+            discount = order.discount_amount or Decimal("0")
+            net_subtotal = max(Decimal("0"), order.subtotal - discount)
             charge_data = FolioChargeCreate(
                 charge_type="dining",
                 description=f"طلب {order.order_number}",
-                amount=order.subtotal,
+                amount=net_subtotal,
                 vat_amount=order.vat_amount,
                 service_charge=order.service_charge,
                 posted_at=datetime.utcnow(),
@@ -886,6 +895,137 @@ def transfer_order_table(db: Session, order_id: int, table_id: int) -> DiningOrd
         old_table = crud.get_table(db, old_table_id)
         if old_table:
             crud.update_table_status(db, old_table, "available")
+
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def merge_orders(db: Session, source_id: int, target_id: int, merged_by: int) -> DiningOrder:
+    """P-08 — دمج أوردرين مفتوحَين: ينقل كل أصناف source لـ target ثم يلغيه.
+    الشرط: كلا الأوردرين في نفس الفرع، وكلاهما open/in_kitchen."""
+    from app.modules.dining.models import DiningOrderItem  # noqa: PLC0415
+
+    source = _get_order_or_404(db, source_id)
+    target = _get_order_or_404(db, target_id)
+
+    if source.branch_id != target.branch_id:
+        raise ValueError("الأوردران في فرعَين مختلفَين")
+    if source.status in ("paid", "cancelled"):
+        raise ValueError(f"لا يمكن دمج أوردر بحالة '{source.status}'")
+    if target.status in ("paid", "cancelled"):
+        raise ValueError(f"لا يمكن الدمج في أوردر بحالة '{target.status}'")
+    if source_id == target_id:
+        raise ValueError("لا يمكن دمج أوردر مع نفسه")
+
+    # نقل الأصناف
+    db.query(DiningOrderItem).filter(
+        DiningOrderItem.order_id == source_id
+    ).update({"order_id": target_id})
+
+    # تحديث total الهدف
+    target.total = (target.total or 0) + (source.total or 0)
+
+    # تحرير طاولة الـ source لو اتفرّغت
+    if source.table_id:
+        src_table = crud.get_table(db, source.table_id)
+        if src_table:
+            crud.update_table_status(db, src_table, "available")
+
+    # إلغاء الـ source
+    source.status = "cancelled"
+    source.notes = (source.notes or "") + f" | مدموج في #{target.order_number} بواسطة user#{merged_by}"
+
+    db.commit()
+    db.refresh(target)
+    return target
+
+
+def split_bill(
+    db: Session,
+    order_id: int,
+    payments: list[dict],
+) -> DiningOrder:
+    """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع.
+    كل payment له amount + payment_method + charge_to_room_id (اختياري).
+    المجموع لازم يساوي order.total بفارق ≤ 0.01 جنيه.
+    يُرحَّل قيد إيراد واحد مجمّع بعد التحقق من المجموع."""
+    order = _get_order_or_404(db, order_id)
+    if order.status in ("paid", "cancelled", "refunded"):
+        raise ValueError(f"لا يمكن تقسيم فاتورة بحالة '{order.status}'")
+    if not payments:
+        raise ValueError("لازم فيه دفعة واحدة على الأقل")
+
+    total_paid = sum(Decimal(str(p["amount"])) for p in payments)
+    if abs(total_paid - order.total) > Decimal("0.01"):
+        raise ValueError(
+            f"مجموع الدفعات ({total_paid:.2f}) لا يساوي إجمالي الطلب ({order.total:.2f})"
+        )
+
+    # التحقق من room charges
+    for p in payments:
+        if p.get("payment_method") == "room" and p.get("charge_to_room_id"):
+            from app.modules.pms.services import find_active_folio_for_room  # noqa: PLC0415
+            folio_id = find_active_folio_for_room(db, order.branch_id, p["charge_to_room_id"])
+            if not folio_id:
+                raise ValueError(f"مفيش ضيف مسجّل دخول في الغرفة {p['charge_to_room_id']} حاليًا")
+            p["_folio_id"] = folio_id
+
+    # تسجيل بيانات الدفع على الطلب — نستخدم أول طريقة دفع كـ primary
+    primary = payments[0]
+    order.payment_method = f"split:{','.join(p['payment_method'] for p in payments)}"
+    if primary.get("_folio_id"):
+        order.folio_id = primary["_folio_id"]
+
+    order = crud.update_order_status(db, order, "paid")
+
+    # معالجة room charges لكل دفعة
+    for p in payments:
+        if p.get("_folio_id"):
+            from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+            from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
+            # نسبة هذه الدفعة من إجمالي الطلب
+            ratio = Decimal(str(p["amount"])) / order.total
+            # ⚠️ باج محاسبي (اتصلح): نفس مشكلة update_order_status —
+            # المبلغ المرحَّل للفوليو لازم يساوي حصة هذه الدفعة من order.total
+            # (بعد الخصم)، مش من order.subtotal (قبل الخصم). الإصلاح: نحسب
+            # net_subtotal (subtotal - discount) ونضرب في نسبة الدفعة.
+            discount = order.discount_amount or Decimal("0")
+            net_subtotal = max(Decimal("0"), order.subtotal - discount)
+            charge_data = FolioChargeCreate(
+                charge_type="dining",
+                description=f"طلب {order.order_number} (split)",
+                amount=(net_subtotal * ratio).quantize(Decimal("0.01")),
+                vat_amount=(order.vat_amount * ratio).quantize(Decimal("0.01")),
+                service_charge=(order.service_charge * ratio).quantize(Decimal("0.01")),
+                posted_at=datetime.utcnow(),
+                ref_order_id=order.id,
+            )
+            try:
+                finance_crud.add_charge(db, p["_folio_id"], charge_data)
+                folio = finance_crud.get_folio(db, p["_folio_id"])
+                if folio:
+                    finance_crud.recalculate_folio_total(db, folio)
+            except Exception:
+                pass
+
+    if order.table_id:
+        table = crud.get_table(db, order.table_id)
+        if table:
+            crud.update_table_status(db, table, "available")
+
+    _deduct_inventory_for_order(db, order)
+    outlet = crud.get_outlet(db, order.outlet_id)
+    revenue_account = outlet.revenue_account_code if outlet else "4200"
+    _post_order_revenue_journal(db, order, revenue_account)
+
+    if order.customer_id:
+        from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
+        visit_date = (
+            utc_naive_to_local_date(order.created_at, settings.TIMEZONE)
+            if order.created_at else local_today(settings.TIMEZONE)
+        )
+        record_customer_visit(db, order.customer_id, order.total, visit_date)
 
     db.commit()
     db.refresh(order)

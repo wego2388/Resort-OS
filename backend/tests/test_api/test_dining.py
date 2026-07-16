@@ -978,3 +978,124 @@ class TestExtraGroups:
         )
         new_item = [i for i in updated.items if i.extras and i.extras[0].text_value == "سمكتين"][0]
         assert new_item.extras[0].text_value == "سمكتين"
+
+
+class TestFolioChargeDiscountConsistency:
+    """التحقق من أن FolioCharge يطرح الخصم — يضمن توافق folio.total مع
+    القيود المحاسبية عند تحميل طلب دايننج على غرفة (charge to room).
+
+    الباج القديم: FolioCharge.amount كان = order.subtotal (قبل الخصم)،
+    بينما القيد المحاسبي يرحّل order.total (بعد الخصم) — تناقض بفارق
+    قيمة order.discount_amount.
+
+    الإصلاح: amount = max(0, order.subtotal - order.discount_amount)
+    حتى يكون (amount + vat + svc) = order.total بالظبط.
+    """
+
+    def _make_folio(self, db, branch):
+        from datetime import datetime, timedelta
+        from app.modules.finance.models import Folio
+        folio = Folio(
+            branch_id=branch.id,
+            guest_name="ضيف اختبار",
+            check_in=datetime.utcnow(),
+            check_out=datetime.utcnow() + timedelta(days=2),
+            status="open",
+        )
+        db.add(folio)
+        db.commit()
+        db.refresh(folio)
+        return folio
+
+    def _make_discount_rule(self, db, branch):
+        from app.modules.finance.models import ConditionalDiscount
+        from datetime import date, timedelta
+        rule = ConditionalDiscount(
+            branch_id=branch.id,
+            condition_type="total_amount",
+            condition_value="0",
+            discount_type="percentage",
+            discount_value=Decimal("10"),
+            valid_from=date.today() - timedelta(days=1),
+            valid_until=date.today() + timedelta(days=30),
+            is_active=True,
+        )
+        db.add(rule)
+        db.commit()
+        db.refresh(rule)
+        return rule
+
+    def test_folio_charge_equals_order_total_no_discount(self, db):
+        """بدون خصم: folio charge = subtotal + vat + svc = order.total."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, revenue_account_code="4200")
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        make_finance_accounts(db, branch, revenue_code="4200")
+        folio = self._make_folio(db, branch)
+
+        order = make_order(db, branch, outlet, item, quantity=1)
+        order.folio_id = folio.id
+        db.commit()
+        db.refresh(order)
+
+        # لا خصم — الإجمالي = subtotal + vat + service
+        assert order.discount_amount == Decimal("0.00")
+
+        services.update_order_status(db, order.id, "paid", charge_to_room_id=None)
+        db.refresh(folio)
+
+        # folio.total يجب أن يساوي order.total بالظبط
+        from app.modules.finance.models import FolioCharge
+        charges = db.query(FolioCharge).filter_by(folio_id=folio.id).all()
+        assert len(charges) == 1
+        charge = charges[0]
+        charge_total = charge.amount + charge.vat_amount + (charge.service_charge or Decimal("0"))
+        db.refresh(order)
+        assert charge_total == order.total, (
+            f"FolioCharge total {charge_total} ≠ order.total {order.total} — تناقض محاسبي"
+        )
+
+    def test_folio_charge_amount_excludes_discount(self, db):
+        """مع خصم: FolioCharge.amount = subtotal - discount (بعد الخصم)،
+        وإجمالي الـ charge = order.total بالظبط."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, revenue_account_code="4200")
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        make_finance_accounts(db, branch, revenue_code="4200")
+        folio = self._make_folio(db, branch)
+
+        order = make_order(db, branch, outlet, item, quantity=1)
+        order.folio_id = folio.id
+        db.commit()
+        db.refresh(order)
+
+        # نطبّق الخصم مباشرة على الأوردر (10 ج ثابت) بدون PIN لتجنب التعقيد
+        discount_amount = Decimal("10.00")
+        order.discount_amount = discount_amount
+        order.total = max(Decimal("0"), order.subtotal + order.vat_amount + order.service_charge - discount_amount)
+        db.commit()
+        db.refresh(order)
+
+        assert order.discount_amount == discount_amount, "الخصم لم يُطبّق — مراجعة الـ setup"
+
+        # الآن ندفع الطلب كـ charge to room
+        services.update_order_status(db, order.id, "paid", charge_to_room_id=None)
+        db.refresh(folio)
+        db.refresh(order)
+
+        from app.modules.finance.models import FolioCharge
+        charges = db.query(FolioCharge).filter_by(folio_id=folio.id).all()
+        assert len(charges) == 1
+        charge = charges[0]
+
+        # المبلغ الأساسي في الـ charge يجب أن يكون بعد طرح الخصم
+        expected_net_subtotal = max(Decimal("0"), order.subtotal - order.discount_amount)
+        assert charge.amount == expected_net_subtotal, (
+            f"charge.amount={charge.amount} ≠ net_subtotal={expected_net_subtotal} — الخصم لم يُطرح"
+        )
+
+        # الإجمالي الكلي للـ charge يجب أن يساوي order.total
+        charge_total = charge.amount + charge.vat_amount + (charge.service_charge or Decimal("0"))
+        assert charge_total == order.total, (
+            f"FolioCharge total {charge_total} ≠ order.total {order.total} — تناقض محاسبي"
+        )

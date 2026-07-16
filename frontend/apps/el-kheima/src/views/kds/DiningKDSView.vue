@@ -26,10 +26,11 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { api, useResortWebSocket, parseApiTimestamp, ENDPOINTS } from '@resort-os/core'
+import { api, useResortWebSocket, parseApiTimestamp, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
 
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 const toast = useToast()
 const route = useRoute()
 
@@ -39,6 +40,12 @@ interface TicketItem { order_item_id: number; name: string; quantity: number; no
 interface Ticket {
   id: number; order_id: number; outlet_id: number; station: string
   items_snapshot: TicketItem[]; status: TicketStatus; created_at: string
+  // حقول إضافية من list_kitchen_tickets المحدّث
+  order_number:  string | null   // رقم الأوردر للعرض
+  table_number:  string | null   // رقم الطاولة (dine_in)، null لو takeaway/delivery/room_service
+  order_type:    string | null   // dine_in | takeaway | delivery | room_service
+  order_notes:   string | null   // ملاحظة الأوردر الكلية
+  outlet_name:   string | null   // اسم المنفذ — لو أكثر من منفذ في نفس المطبخ
 }
 const ITEM_DONE_STATUSES: ItemStatus[] = ['ready', 'served']
 
@@ -76,8 +83,31 @@ const isConnected = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
 let clockInterval: ReturnType<typeof setInterval>
 
-const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-const { status: wsStatus, onMessage } = useResortWebSocket(`${wsProtocol}//${location.host}${ENDPOINTS.dining.kdsWs(branchId)}`)
+// ── صوت التنبيه للتذاكر الجديدة ─────────────────────────────────────
+// نولّد صوت beep بسيط بـ Web Audio API (مش محتاج ملف صوت خارجي)
+let audioCtx: AudioContext | null = null
+function playNewTicketSound() {
+  try {
+    if (!audioCtx) audioCtx = new AudioContext()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain)
+    gain.connect(audioCtx.destination)
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(880, audioCtx.currentTime)
+    osc.frequency.setValueAtTime(660, audioCtx.currentTime + 0.1)
+    gain.gain.setValueAtTime(0.3, audioCtx.currentTime)
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4)
+    osc.start(audioCtx.currentTime)
+    osc.stop(audioCtx.currentTime + 0.4)
+  } catch { /* صامت لو المتصفح مش بيدعم AudioContext */ }
+}
+const soundEnabled = ref(true)
+let knownTicketIds = new Set<number>()
+
+// relative path — useResortWebSocket بيبني الـ full WS URL داخلياً
+// (ws://host + path) عشان يشتغل صح مع vite proxy في dev ونginx في production
+const { status: wsStatus, onMessage } = useResortWebSocket(ENDPOINTS.dining.kdsWs(branchId))
 onMessage((data: any) => { if (data?.type === 'tickets_updated') fetchTickets() })
 
 const filteredTickets = computed(() =>
@@ -113,7 +143,14 @@ const stationLabel: Record<string, string> = { hot: 'ساخن', grill: 'شواي
 async function fetchTickets() {
   try {
     const res = await api.get(ENDPOINTS.dining.kitchenTickets, { params: { branch_id: branchId } })
-    tickets.value = res.data
+    const newTickets: Ticket[] = res.data
+    // تحقق من تذاكر جديدة (pending فقط) وشغّل الصوت
+    if (soundEnabled.value && knownTicketIds.size > 0) {
+      const hasNew = newTickets.some(t => t.status === 'pending' && !knownTicketIds.has(t.id))
+      if (hasNew) playNewTicketSound()
+    }
+    knownTicketIds = new Set(newTickets.map(t => t.id))
+    tickets.value = newTickets
     isConnected.value = true
   } catch {
     isConnected.value = false
@@ -179,6 +216,12 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
         </div>
       </div>
       <span class="text-2xl font-mono font-bold text-amber-300">{{ currentTime }}</span>
+      <!-- زرار تشغيل/إيقاف الصوت -->
+      <button @click="soundEnabled = !soundEnabled"
+        :class="['px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors', soundEnabled ? 'bg-slate-700 text-green-400 hover:bg-slate-600' : 'bg-slate-700 text-slate-400 hover:bg-slate-600']"
+        :title="soundEnabled ? 'إيقاف صوت التنبيه' : 'تشغيل صوت التنبيه'">
+        {{ soundEnabled ? '🔔' : '🔕' }}
+      </button>
     </header>
 
     <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 flex flex-wrap items-center gap-2">
@@ -215,18 +258,32 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
 
       <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         <div v-for="ticket in filteredTickets" :key="ticket.id" :class="['rounded-2xl border-2 p-4 flex flex-col transition-all', ticketClasses(ticket)]">
-          <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center justify-between mb-2">
             <div>
-              <div class="text-2xl font-black">#{{ ticket.order_id }}</div>
-              <div class="text-xs text-slate-400">{{ stationLabel[ticket.station] ?? ticket.station }}</div>
+              <!-- رقم الطاولة أو نوع الأوردر — أهم معلومة للمطبخ -->
+              <div class="text-2xl font-black leading-none">
+                {{ ticket.table_number ? `طاولة ${ticket.table_number}` : (ticket.order_number ?? `#${ticket.order_id}`) }}
+              </div>
+              <div class="text-xs text-slate-400 mt-0.5">
+                {{ stationLabel[ticket.station] ?? ticket.station }}
+                <span v-if="!ticket.table_number && ticket.order_type" class="ms-1 opacity-70">
+                  · {{ ticket.order_type === 'takeaway' ? 'تيك أواي' : ticket.order_type === 'delivery' ? 'توصيل' : ticket.order_type === 'room_service' ? 'خدمة غرف' : ticket.order_type }}
+                </span>
+              </div>
             </div>
             <div class="text-left">
+              <div class="text-xs text-slate-500 font-semibold mb-1 text-right" v-if="ticket.outlet_name">{{ ticket.outlet_name }}</div>
               <div :class="['text-xs px-2 py-0.5 rounded-full font-bold text-white mb-1', statusLabel(ticket.status).color]">{{ statusLabel(ticket.status).label }}</div>
               <div :class="[
                 'text-lg font-black text-center',
                 ticketAge(ticket.created_at) === 'urgent' ? 'text-red-400' : ticketAge(ticket.created_at) === 'warning' ? 'text-amber-400' : 'text-green-400',
               ]">{{ minutesElapsed(ticket.created_at) }}د</div>
             </div>
+          </div>
+
+          <!-- ملاحظة الأوردر الكلية — تظهر بلون واضح قبل قائمة الأصناف -->
+          <div v-if="ticket.order_notes" class="mb-2 px-2 py-1.5 rounded-lg bg-amber-500/20 border border-amber-500/40 text-xs text-amber-200 font-medium">
+            📋 {{ ticket.order_notes }}
           </div>
 
           <ul class="flex-1 space-y-1.5 mb-3">

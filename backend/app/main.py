@@ -43,6 +43,13 @@ def _register_all_routes(app: FastAPI) -> None:
         except ModuleNotFoundError:
             logger.debug("Router not yet implemented: %s — skipped", key)
 
+    # ── Static files: رفع صور قائمة الطعام (4-D) ──────────────────────
+    import os  # noqa: PLC0415
+    from fastapi.staticfiles import StaticFiles  # noqa: PLC0415
+    uploads_dir = os.path.join(os.path.dirname(__file__), "..", "uploads")
+    os.makedirs(uploads_dir, exist_ok=True)
+    app.mount("/uploads", StaticFiles(directory=uploads_dir), name="uploads")
+
 
 # ── Lifespan ──────────────────────────────────────────────────────────────────
 

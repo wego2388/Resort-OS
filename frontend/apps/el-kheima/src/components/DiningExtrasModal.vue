@@ -33,6 +33,7 @@ interface DiningVariant {
 export interface DiningExtrasItem {
   id: number; name: string; name_ar: string | null
   price: number | string
+  image_url?: string | null
   variants?: DiningVariant[]
   extra_groups?: DiningExtraGroup[]
 }

@@ -53,7 +53,10 @@ interface OrderDetail {
   refunded_amount: number | string; total: number | string
   items: OrderItem[]
 }
-interface TableOption { id: number; table_number: string; status: string }
+interface TableOption {
+  id: number; table_number: string; status: string
+  active_order_id?: number | null; active_order_number?: string | null
+}
 
 const props = defineProps<{ orderId: number | null; tables?: TableOption[] }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
@@ -78,6 +81,43 @@ const transferOpen = ref(false)
 const transferTableId = ref<number | null>(null)
 const transferError = ref('')
 const otherTables = computed(() => (props.tables ?? []).filter(t => t.id !== order.value?.table_id))
+
+// ── دمج مع طاولة (P-08) ──────────────────────────────────────────────────
+const mergeOpen = ref(false)
+const mergeTargetOrderId = ref<number | null>(null)
+const mergeError = ref('')
+const canMerge = computed(() =>
+  auth.hasRole('waiter') &&
+  order.value?.order_type === 'dine_in' &&
+  !['paid', 'cancelled'].includes(order.value?.status ?? '')
+)
+const occupiedTablesWithOrders = computed(() =>
+  (props.tables ?? []).filter(t =>
+    t.status === 'occupied' &&
+    t.active_order_id &&
+    t.active_order_id !== order.value?.id
+  )
+)
+function openMergePrompt() { mergeOpen.value = true; mergeTargetOrderId.value = null; mergeError.value = '' }
+function cancelMergePrompt() { mergeOpen.value = false; mergeTargetOrderId.value = null; mergeError.value = '' }
+async function confirmMerge() {
+  if (!order.value || !mergeTargetOrderId.value) { mergeError.value = 'اختر الطاولة الهدف'; return }
+  busy.value = true
+  try {
+    const { data } = await api.post(
+      ENDPOINTS.dining.orderMerge(order.value.id),
+      null,
+      { params: { target_order_id: mergeTargetOrderId.value } }
+    )
+    order.value = data
+    cancelMergePrompt()
+    successMsg.value = 'تم دمج الطلبين ✓'
+    emit('changed')
+    setTimeout(() => { successMsg.value = '' }, 2500)
+  } catch (e: any) {
+    mergeError.value = e?.response?.data?.detail ?? 'فشل الدمج'
+  } finally { busy.value = false }
+}
 
 const ORDER_TYPE_LABELS: Record<string, string> = {
   dine_in: '🍽️ صالة', takeaway: '🥡 تيك أواي', delivery: '🛵 توصيل', room_service: '🛎️ خدمة الغرف',
@@ -372,6 +412,31 @@ function lineTotal(item: OrderItem): number {
             <div class="flex gap-2">
               <button @click="cancelTransferPrompt" class="flex-1 py-1.5 text-xs font-semibold text-gray-600 border border-stone-200 rounded-lg bg-white">إلغاء</button>
               <button :disabled="busy" @click="confirmTransfer" class="flex-1 py-1.5 text-xs font-bold text-white bg-blue-600 rounded-lg disabled:opacity-50">تأكيد النقل</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── دمج مع طاولة (P-08) — نادل+، dine_in فقط ── -->
+        <div v-if="canMerge">
+          <button
+            v-if="!mergeOpen"
+            @click="openMergePrompt"
+            class="text-xs text-purple-600 hover:text-purple-800 font-semibold flex items-center gap-1"
+          >🔗 دمج مع طاولة</button>
+
+          <div v-else class="mt-2 space-y-2 bg-purple-50 border border-purple-200 rounded-lg p-2.5">
+            <div class="text-xs font-bold text-purple-800 mb-1">اختر الطاولة الهدف (أصناف هذا الأوردر ستُنقل إليها)</div>
+            <select v-model="mergeTargetOrderId" class="w-full border border-stone-300 rounded-lg p-1.5 text-xs">
+              <option :value="null" disabled>اختر الطاولة...</option>
+              <option v-for="t in occupiedTablesWithOrders" :key="t.id" :value="t.active_order_id">
+                طاولة {{ t.table_number }} (أوردر #{{ t.active_order_number }})
+              </option>
+            </select>
+            <p v-if="occupiedTablesWithOrders.length === 0" class="text-xs text-gray-500">لا توجد طاولات مشغولة أخرى للدمج معها</p>
+            <p v-if="mergeError" class="text-xs text-red-600">{{ mergeError }}</p>
+            <div class="flex gap-2">
+              <button @click="cancelMergePrompt" class="flex-1 py-1.5 text-xs font-semibold text-gray-600 border border-stone-200 rounded-lg bg-white">إلغاء</button>
+              <button :disabled="busy || !mergeTargetOrderId" @click="confirmMerge" class="flex-1 py-1.5 text-xs font-bold text-white bg-purple-600 rounded-lg disabled:opacity-50">تأكيد الدمج</button>
             </div>
           </div>
         </div>

@@ -34,6 +34,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
 
+# نستورد Product صراحةً عشان SQLAlchemy mapper يقدر يحلّ relationship("Product")
+# في DiningItemRecipeLine و DiningItemVariantRecipeLine — لو اتحطّ تحت
+# TYPE_CHECKING بس، الـ mapper بيفشل بـ InvalidRequestError عند أول query
+# (KeyError: 'Product' في clsregistry).
+from app.modules.inventory.models import Product as _ProductImport  # noqa: F401
+
 if TYPE_CHECKING:
     from app.modules.inventory.models import Product
 

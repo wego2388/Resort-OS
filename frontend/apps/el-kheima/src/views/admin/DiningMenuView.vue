@@ -11,7 +11,7 @@
  * MenuView.vue/CafeMenuView.vue/TablesAdminView.vue (DINING_CUTOVER_PLAN.md).
  */
 import { ref, computed, onMounted, watch } from 'vue'
-import { api, ENDPOINTS } from '@resort-os/core'
+import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import {
   AppButton, AppInput, AppTextarea, AppSelect, MoneyInput, AppTabs,
   AppBadge, StatusBadge, AppDrawer, DataTable, SearchInput, IconButton,
@@ -21,7 +21,8 @@ import type { TabItem, SelectOption, DataTableColumn } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = auth.branchId
 
 // ── Types ────────────────────────────────────────────────────────────────
 interface Outlet {
@@ -37,6 +38,7 @@ interface DiningItemRow {
   name: string; name_ar: string | null; price: number | string; cost: number | string | null
   is_available: boolean; station: string; preparation_minutes: number
   available_from_time: string | null; available_until_time: string | null
+  image_url: string | null
   extra_groups: ExtraGroup[]
 }
 interface VenueTable { id: number; outlet_id: number; table_number: string; capacity: number; section: string | null; status: string }
@@ -45,6 +47,7 @@ const MAIN_TABS: TabItem[] = [
   { value: 'outlets', label: 'المنافذ' },
   { value: 'menu', label: 'القائمة' },
   { value: 'tables', label: 'الطاولات' },
+  { value: 'kds', label: '📺 شاشات KDS' },
 ]
 const activeTab = ref('outlets')
 
@@ -264,6 +267,47 @@ async function deleteItem(item: DiningItemRow) {
   }
 }
 
+// ── Item image upload (T-05) ─────────────────────────────────────────────
+const imageUploading = ref(false)
+
+async function uploadItemImage(event: Event) {
+  if (!itemEdit.value) return
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
+  if (!ALLOWED.includes(file.type)) {
+    toast.error('نوع الملف غير مسموح — فقط jpeg/png/webp')
+    input.value = ''
+    return
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    toast.error('حجم الصورة أكبر من 2 ميجابايت')
+    input.value = ''
+    return
+  }
+
+  imageUploading.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    const { data } = await api.post(ENDPOINTS.dining.itemImage(itemEdit.value.id), formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    // update in-memory list + current edit reference
+    const idx = items.value.findIndex(i => i.id === itemEdit.value!.id)
+    if (idx >= 0) items.value[idx] = { ...items.value[idx], image_url: data.image_url }
+    itemEdit.value = { ...itemEdit.value, image_url: data.image_url }
+    toast.success('تم رفع الصورة')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر رفع الصورة')
+  } finally {
+    imageUploading.value = false
+    input.value = ''
+  }
+}
+
 // ── Extra groups (within item drawer — free-text group_type showcase) ────
 const extraGroupForm = ref({ name: '', name_ar: '', group_type: 'pick_list' as 'pick_list' | 'text', min_select: 0, max_select: 1 })
 const extraOptionsDraft = ref<{ name: string; price_addition: string }[]>([])
@@ -367,6 +411,91 @@ async function deleteTable(t: VenueTable) {
   }
 }
 
+// ── KDS Screens ──────────────────────────────────────────────────────────
+interface KdsScreen {
+  id: number; branch_id: number; outlet_id: number | null; name: string
+  stations: string[]; display_seconds: number; is_active: boolean
+}
+const kdsScreens = ref<KdsScreen[]>([])
+const kdsLoading = ref(false)
+const showKdsModal = ref(false)
+const editingKds = ref<KdsScreen | null>(null)
+const savingKds = ref(false)
+const kdsForm = ref({
+  name: '', outlet_id: '' as string | number,
+  stations: [] as string[], display_seconds: 30, is_active: true,
+})
+
+async function loadKdsScreens() {
+  kdsLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.dining.kdsScreens, { params: { branch_id: branchId } })
+    kdsScreens.value = data.items ?? data ?? []
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل شاشات KDS')
+  } finally { kdsLoading.value = false }
+}
+
+function openKdsCreate() {
+  editingKds.value = null
+  kdsForm.value = { name: '', outlet_id: '', stations: [], display_seconds: 30, is_active: true }
+  showKdsModal.value = true
+}
+
+function openKdsEdit(s: KdsScreen) {
+  editingKds.value = s
+  kdsForm.value = {
+    name: s.name, outlet_id: s.outlet_id ?? '',
+    stations: [...s.stations], display_seconds: s.display_seconds, is_active: s.is_active,
+  }
+  showKdsModal.value = true
+}
+
+function toggleKdsStation(st: string) {
+  const idx = kdsForm.value.stations.indexOf(st)
+  if (idx >= 0) kdsForm.value.stations.splice(idx, 1)
+  else kdsForm.value.stations.push(st)
+}
+
+async function saveKdsScreen() {
+  if (!kdsForm.value.name.trim()) { toast.error('اسم الشاشة مطلوب'); return }
+  savingKds.value = true
+  try {
+    const payload = {
+      branch_id: branchId,
+      outlet_id: kdsForm.value.outlet_id !== '' ? Number(kdsForm.value.outlet_id) : null,
+      name: kdsForm.value.name.trim(),
+      stations: kdsForm.value.stations,
+      display_seconds: Number(kdsForm.value.display_seconds) || 30,
+      is_active: kdsForm.value.is_active,
+    }
+    if (editingKds.value) {
+      const { data } = await api.patch(ENDPOINTS.dining.kdsScreen(editingKds.value.id), payload)
+      kdsScreens.value = kdsScreens.value.map(s => s.id === editingKds.value!.id ? data : s)
+      toast.success('تم تحديث الشاشة')
+    } else {
+      const { data } = await api.post(ENDPOINTS.dining.kdsScreens, payload)
+      kdsScreens.value = [data, ...kdsScreens.value]
+      toast.success('تم إنشاء الشاشة')
+    }
+    showKdsModal.value = false
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ الشاشة')
+  } finally { savingKds.value = false }
+}
+
+async function deleteKdsScreen(s: KdsScreen) {
+  const ok = await confirm({ message: `حذف شاشة "${s.name}"؟`, danger: true, confirmText: 'حذف' })
+  if (!ok) return
+  try {
+    await api.delete(ENDPOINTS.dining.kdsScreen(s.id))
+    kdsScreens.value = kdsScreens.value.filter(x => x.id !== s.id)
+    toast.success('تم الحذف')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+  }
+}
+
 // ── Data loading ─────────────────────────────────────────────────────────
 async function loadOutletScopedData() {
   if (!selectedOutletId.value) return
@@ -393,7 +522,7 @@ watch(selectedOutletId, loadOutletScopedData)
 onMounted(async () => {
   loading.value = true
   try {
-    await loadOutlets()
+    await Promise.all([loadOutlets(), loadKdsScreens()])
     await loadOutletScopedData()
   } finally {
     loading.value = false
@@ -425,10 +554,10 @@ onMounted(async () => {
         </div>
         <EmptyState v-if="outlets.length === 0" icon="🏪" title="لا توجد منافذ بعد" />
         <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div v-for="o in outlets" :key="o.id" class="bg-white rounded-xl border border-stone-200 p-4 flex flex-col gap-2">
+          <div v-for="o in outlets" :key="o.id" class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 flex flex-col gap-2">
             <div class="flex items-start justify-between">
               <div>
-                <div class="font-bold text-gray-900">{{ o.name_ar || o.name }}</div>
+                <div class="font-bold text-gray-900 dark:text-gray-100">{{ o.name_ar || o.name }}</div>
                 <div class="text-xs text-muted">{{ OUTLET_TYPES.find(t => t.value === o.outlet_type)?.label ?? o.outlet_type }}</div>
               </div>
               <AppBadge :variant="o.is_active ? 'success' : 'neutral'" size="sm">{{ o.is_active ? 'مفعّل' : 'موقوف' }}</AppBadge>
@@ -451,12 +580,12 @@ onMounted(async () => {
             type="button"
             @click="selectedCategoryId = null"
             :class="['w-full text-start px-3 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px]',
-              selectedCategoryId === null ? 'bg-primary-600 text-white' : 'bg-white hover:bg-background text-gray-700 border border-stone-200']"
+              selectedCategoryId === null ? 'bg-primary-600 text-white' : 'bg-white dark:bg-surface hover:bg-background text-gray-700 border border-stone-200 dark:border-border']"
           >الكل ({{ items.length }})</button>
           <div
             v-for="cat in categories" :key="cat.id"
             :class="['group flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors',
-              selectedCategoryId === cat.id ? 'bg-primary-600 text-white' : 'bg-white hover:bg-background text-gray-700 border border-stone-200',
+              selectedCategoryId === cat.id ? 'bg-primary-600 text-white' : 'bg-white dark:bg-surface hover:bg-background text-gray-700 border border-stone-200 dark:border-border',
               !cat.is_active ? 'opacity-50' : '']"
           >
             <button type="button" class="flex-1 text-start font-medium min-h-[44px]" @click="selectedCategoryId = cat.id">
@@ -485,10 +614,18 @@ onMounted(async () => {
             @row-click="openItemForm"
           >
             <template #cell-name="{ item }">
-              <div class="font-semibold text-gray-900">{{ item.name_ar || item.name }}</div>
-              <div v-if="item.extra_groups.length" class="text-xs text-muted mt-0.5">
-                {{ item.extra_groups.length }} مجموعة إضافات
-                <AppBadge v-if="item.extra_groups.some((g: ExtraGroup) => g.group_type === 'text')" variant="info" size="sm" class="ms-1">نص حر</AppBadge>
+              <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-lg overflow-hidden bg-gray-100 border border-stone-200 dark:border-border flex-shrink-0 flex items-center justify-center text-lg">
+                  <img v-if="item.image_url" :src="item.image_url" :alt="item.name_ar || item.name" class="w-full h-full object-cover" />
+                  <span v-else>🍽️</span>
+                </div>
+                <div>
+                  <div class="font-semibold text-gray-900 dark:text-gray-100">{{ item.name_ar || item.name }}</div>
+                  <div v-if="item.extra_groups.length" class="text-xs text-muted mt-0.5">
+                    {{ item.extra_groups.length }} مجموعة إضافات
+                    <AppBadge v-if="item.extra_groups.some((g: ExtraGroup) => g.group_type === 'text')" variant="info" size="sm" class="ms-1">نص حر</AppBadge>
+                  </div>
+                </div>
               </div>
             </template>
             <template #cell-category="{ item }">{{ categoryName(item.category_id) }}</template>
@@ -506,15 +643,15 @@ onMounted(async () => {
       </div>
 
       <!-- ══════════════════ Tables tab ══════════════════ -->
-      <div v-else class="space-y-3">
+      <div v-else-if="activeTab === 'tables'" class="space-y-3">
         <div class="flex justify-end">
           <AppButton variant="primary" @click="openTableForm()">+ طاولة جديدة</AppButton>
         </div>
         <EmptyState v-if="tables.length === 0" icon="🪑" title="لا توجد طاولات لهذا المنفذ بعد" />
         <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <div v-for="t in tables" :key="t.id" class="bg-white rounded-xl border border-stone-200 p-3 flex flex-col gap-1.5">
+          <div v-for="t in tables" :key="t.id" class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-3 flex flex-col gap-1.5">
             <div class="flex items-center justify-between">
-              <span class="font-bold text-gray-900">{{ t.table_number }}</span>
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ t.table_number }}</span>
               <StatusBadge :status="t.status" :map="{ available: { label: 'فارغة', variant: 'success' }, occupied: { label: 'مشغولة', variant: 'danger' }, reserved: { label: 'محجوزة', variant: 'warning' }, out_of_service: { label: 'خارج الخدمة', variant: 'neutral' } }" size="sm" />
             </div>
             <div class="text-xs text-muted">{{ t.section || 'بدون قسم' }} · {{ t.capacity }} أشخاص</div>
@@ -524,6 +661,86 @@ onMounted(async () => {
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- ══════════════════ KDS Screens tab ══════════════════ -->
+      <div v-else-if="activeTab === 'kds'" class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <p class="text-sm text-muted">شاشات KDS (Kitchen Display System) — بتعرض التذاكر للمطبخ حسب المحطة.</p>
+          </div>
+          <AppButton variant="primary" @click="openKdsCreate">+ شاشة جديدة</AppButton>
+        </div>
+
+        <div v-if="kdsLoading" class="flex justify-center py-12">
+          <div class="w-8 h-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+        <EmptyState v-else-if="kdsScreens.length === 0"
+          icon="📺" title="لا توجد شاشات KDS"
+          subtitle="أنشئ شاشة لكل محطة في المطبخ (ساخن، شواية، بارد...)" />
+        <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div v-for="s in kdsScreens" :key="s.id"
+            class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 flex flex-col gap-3">
+            <div class="flex items-start justify-between gap-2">
+              <div>
+                <div class="font-bold text-gray-900 dark:text-gray-100">{{ s.name }}</div>
+                <div v-if="s.outlet_id" class="text-xs text-muted mt-0.5">
+                  {{ outlets.find(o => o.id === s.outlet_id)?.name_ar || outlets.find(o => o.id === s.outlet_id)?.name || `منفذ #${s.outlet_id}` }}
+                </div>
+                <div v-else class="text-xs text-muted mt-0.5">كل المنافذ</div>
+              </div>
+              <StatusBadge :status="s.is_active ? 'active' : 'closed'"
+                :map="{ active: { label: 'نشطة', variant: 'success' }, closed: { label: 'موقوفة', variant: 'neutral' } }" />
+            </div>
+            <div class="flex flex-wrap gap-1">
+              <span v-if="s.stations.length === 0" class="text-xs text-muted">كل المحطات</span>
+              <AppBadge v-for="st in s.stations" :key="st" variant="info" size="sm">
+                {{ STATIONS.find(x => x.value === st)?.label ?? st }}
+              </AppBadge>
+            </div>
+            <div class="text-xs text-muted">مدة العرض: {{ s.display_seconds }}ث لكل تذكرة</div>
+            <div class="flex justify-end gap-2">
+              <IconButton icon="edit" label="تعديل" size="sm" @click="openKdsEdit(s)" />
+              <IconButton icon="delete" label="حذف" size="sm" variant="danger" @click="deleteKdsScreen(s)" />
+            </div>
+          </div>
+        </div>
+
+        <!-- KDS Modal -->
+        <AppModal :open="showKdsModal" :title="editingKds ? 'تعديل شاشة KDS' : 'شاشة KDS جديدة'" @close="showKdsModal = false">
+          <div class="space-y-3">
+            <AppInput v-model="kdsForm.name" label="اسم الشاشة *" placeholder="مثال: شاشة المطبخ الساخن" />
+            <AppSelect
+              :model-value="kdsForm.outlet_id !== '' ? String(kdsForm.outlet_id) : ''"
+              @update:model-value="kdsForm.outlet_id = $event"
+              :options="[{ value: '', label: 'كل المنافذ' }, ...outletOptions.map(o => ({ value: String(o.value), label: String(o.label) }))]"
+              label="المنفذ (اختياري)" />
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">المحطات (فاضي = كل المحطات)</label>
+              <div class="flex flex-wrap gap-2">
+                <button v-for="st in STATIONS" :key="String(st.value)"
+                  type="button"
+                  @click="toggleKdsStation(String(st.value))"
+                  :class="['px-3 py-1.5 rounded-lg text-sm border transition-colors',
+                    kdsForm.stations.includes(String(st.value))
+                      ? 'bg-primary-600 text-white border-primary-600'
+                      : 'bg-white dark:bg-surface text-gray-700 border-stone-200 dark:border-border hover:border-primary-400']">
+                  {{ st.label }}
+                </button>
+              </div>
+            </div>
+            <AppInput v-model.number="kdsForm.display_seconds" type="number" label="مدة العرض (ثانية لكل تذكرة)" />
+            <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+              <input type="checkbox" v-model="kdsForm.is_active" class="rounded" /> نشطة
+            </label>
+            <div class="flex gap-2 justify-end pt-2">
+              <AppButton variant="ghost" @click="showKdsModal = false">إلغاء</AppButton>
+              <AppButton variant="primary" :loading="savingKds" @click="saveKdsScreen">
+                {{ editingKds ? 'تحديث' : 'إنشاء' }}
+              </AppButton>
+            </div>
+          </div>
+        </AppModal>
       </div>
     </template>
 
@@ -535,7 +752,7 @@ onMounted(async () => {
         <AppSelect v-model="outletForm.outlet_type" :options="OUTLET_TYPES" label="نوع المنفذ" />
         <AppInput v-model="outletForm.revenue_account_code" label="حساب الإيراد (Chart of Accounts)" />
         <AppInput v-model="outletForm.default_service_charge_pct" type="number" label="نسبة رسم الخدمة (اختياري — فاضي = الإعداد العام)" />
-        <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
           <input type="checkbox" v-model="outletForm.is_active" class="rounded" /> مفعّل
         </label>
       </div>
@@ -553,7 +770,7 @@ onMounted(async () => {
         <AppInput v-model="catForm.name" label="الاسم (EN)" required />
         <AppInput v-model="catForm.name_ar" label="الاسم (AR)" />
         <AppInput v-model.number="catForm.sort_order" type="number" label="الترتيب" />
-        <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
           <input type="checkbox" v-model="catForm.is_active" class="rounded" /> مفعّلة
         </label>
       </div>
@@ -588,22 +805,47 @@ onMounted(async () => {
           <AppInput v-model="itemForm.available_from_time" type="time" label="متاح من (اختياري)" />
           <AppInput v-model="itemForm.available_until_time" type="time" label="متاح حتى (اختياري)" />
         </div>
-        <p v-if="itemForm.available_from_time || itemForm.available_until_time" class="text-[11px] text-gray-400 -mt-2">
+        <p v-if="itemForm.available_from_time || itemForm.available_until_time" class="text-[11px] text-gray-400 dark:text-gray-500 -mt-2">
           الصنف هيبقى غير متاح للطلب برّه النافذة دي — سيب الحقلين فاضيين لإتاحته طول اليوم.
         </p>
 
-        <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
+        <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
           <input type="checkbox" v-model="itemForm.is_available" class="rounded" /> متاح للطلب
         </label>
 
-        <!-- ── Extra groups — showcase of the new free-text group_type ── -->
-        <div v-if="itemEdit" class="border-t border-stone-200 pt-4 space-y-3">
-          <h3 class="text-sm font-bold text-gray-800">مجموعات الإضافات</h3>
+        <!-- ── صورة الصنف (T-05) — متاح فقط لو الصنف محفوظ ── -->
+        <div v-if="itemEdit" class="border border-stone-200 dark:border-border rounded-xl p-3 space-y-2">
+          <div class="text-xs font-bold text-gray-700 dark:text-gray-300">صورة الصنف</div>
+          <div class="flex items-center gap-3">
+            <!-- preview -->
+            <div class="w-16 h-16 rounded-lg overflow-hidden bg-gray-100 border border-stone-200 dark:border-border flex-shrink-0 flex items-center justify-center">
+              <img v-if="itemEdit.image_url" :src="itemEdit.image_url" :alt="itemEdit.name_ar || itemEdit.name" class="w-full h-full object-cover" />
+              <span v-else class="text-2xl">🍽️</span>
+            </div>
+            <!-- upload button -->
+            <div class="flex-1 min-w-0">
+              <label class="cursor-pointer">
+                <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" @change="uploadItemImage" :disabled="imageUploading" />
+                <AppButton as="span" variant="secondary" size="sm" :loading="imageUploading">
+                  {{ imageUploading ? 'جارٍ الرفع...' : itemEdit.image_url ? 'تغيير الصورة' : 'رفع صورة' }}
+                </AppButton>
+              </label>
+              <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1">jpeg / png / webp — حد أقصى 2 ميجابايت</p>
+            </div>
+          </div>
+        </div>
+        <p v-else class="text-xs text-muted border border-dashed border-stone-200 dark:border-border rounded-xl px-3 py-2">
+          احفظ الصنف أولاً لرفع صورة له.
+        </p>
+
+
+        <div v-if="itemEdit" class="border-t border-stone-200 dark:border-border pt-4 space-y-3">
+          <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">مجموعات الإضافات</h3>
 
           <div v-for="g in itemEdit.extra_groups" :key="g.id" class="bg-background rounded-xl p-3 space-y-1.5">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <span class="font-semibold text-sm text-gray-900">{{ g.name_ar || g.name }}</span>
+                <span class="font-semibold text-sm text-gray-900 dark:text-gray-100">{{ g.name_ar || g.name }}</span>
                 <AppBadge :variant="g.group_type === 'text' ? 'info' : 'neutral'" size="sm">{{ g.group_type === 'text' ? 'نص حر' : 'قائمة اختيارات' }}</AppBadge>
                 <AppBadge v-if="g.min_select >= 1" variant="warning" size="sm">إجباري</AppBadge>
               </div>
@@ -614,7 +856,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="bg-white border-2 border-dashed border-stone-200 rounded-xl p-3 space-y-2.5">
+          <div class="bg-white dark:bg-surface border-2 border-dashed border-stone-200 dark:border-border rounded-xl p-3 space-y-2.5">
             <div class="text-xs font-bold text-muted uppercase tracking-wide">مجموعة جديدة</div>
             <div class="grid grid-cols-2 gap-2">
               <AppInput v-model="extraGroupForm.name" label="الاسم (EN)" />
@@ -642,7 +884,7 @@ onMounted(async () => {
             <AppButton variant="secondary" size="sm" block :loading="saving" @click="addExtraGroup">إضافة المجموعة</AppButton>
           </div>
         </div>
-        <p v-else class="text-xs text-muted border-t border-stone-200 pt-3">احفظ الصنف الأول عشان تقدر تضيف مجموعات إضافات.</p>
+        <p v-else class="text-xs text-muted border-t border-stone-200 dark:border-border pt-3">احفظ الصنف الأول عشان تقدر تضيف مجموعات إضافات.</p>
       </div>
       <template #footer>
         <div class="flex gap-2">

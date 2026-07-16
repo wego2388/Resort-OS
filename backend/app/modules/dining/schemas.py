@@ -277,6 +277,12 @@ class DiningTableRead(BaseModel):
     occupied_at:  Optional[datetime] = None
     grid_row:     Optional[int] = None
     grid_col:     Optional[int] = None
+    # ── Active order info — computed in list_tables_with_orders (not a DB field) ──
+    active_order_id:     Optional[int]   = None
+    active_order_number: Optional[str]   = None
+    active_order_total:  Optional[float] = None
+    active_covers:       Optional[int]   = None
+    order_status:        Optional[str]   = None  # open | in_kitchen | served
 
 
 class DiningTableCreate(BaseModel):
@@ -408,6 +414,20 @@ class OrderTransferRequest(BaseModel):
     table_id: int
 
 
+class SplitBillPayment(BaseModel):
+    """جزء دفعة واحدة في تقسيم الفاتورة."""
+    amount: Decimal = Field(..., gt=0)
+    payment_method: str = Field(..., pattern=r"^(cash|card|room|wallet)$")
+    charge_to_room_id: Optional[int] = None  # لو payment_method = room
+
+
+class SplitBillRequest(BaseModel):
+    """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع.
+    المجموع لازم يساوي order.total بفارق ≤ 0.01 جنيه (floating-point tolerance).
+    مثال: فاتورة 300ج → كاش 200 + بطاقة 100."""
+    payments: list[SplitBillPayment] = Field(..., min_length=2, max_length=10)
+
+
 class OrderItemStatusUpdate(BaseModel):
     """تأكيد صنف واحد داخل تذكرة مطبخ (bump فردي) — بدل تأكيد التذكرة كلها
     دفعة واحدة عبر TicketStatusUpdate. راجع restaurant.schemas.OrderItemStatusUpdate
@@ -457,6 +477,12 @@ class KitchenTicketRead(BaseModel):
     items_snapshot: list
     status:         str
     created_at:     datetime
+    # ── حقول إضافية للعرض في KDS — computed في router ──
+    order_number:   Optional[str] = None   # رقم الأوردر للعرض في بطاقة KDS
+    table_number:   Optional[str] = None   # رقم الطاولة (dine_in فقط)
+    order_type:     Optional[str] = None   # dine_in|takeaway|delivery|room_service
+    order_notes:    Optional[str] = None   # ملاحظة الأوردر الكلية
+    outlet_name:    Optional[str] = None   # اسم المنفذ — لو أكثر من منفذ في نفس المطبخ
 
 
 class TicketStatusUpdate(BaseModel):

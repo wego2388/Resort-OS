@@ -12,7 +12,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status, UploadFile
 from fastapi.responses import Response
 
 from app.core.config import settings
@@ -21,6 +21,7 @@ from app.core.deps import (
     get_manager_user, get_waiter_user, require_permission, user_level,
 )
 from app.modules.dining import crud, services
+from app.modules.dining.models import DiningOrder, VenueTable
 from app.modules.dining.schemas import (
     ApplyDiscountRequest,
     DiningCategoryCreate, DiningCategoryRead, DiningCategoryUpdate,
@@ -34,7 +35,7 @@ from app.modules.dining.schemas import (
     KDSScreenCreate, KDSScreenRead,
     KitchenTicketRead, TicketStatusUpdate,
     OrderCreate, OrderItemCreate, OrderItemRead, OrderItemStatusUpdate, OrderItemVoidRequest,
-    OrderRead, OrderStatusUpdate, OrderTransferRequest,
+    OrderRead, OrderStatusUpdate, OrderTransferRequest, SplitBillRequest,
     OrderSyncRequest, OrderSyncResponse,
     OutletCreate, OutletRead, OutletUpdate,
     GuestOrderCreate, GuestOrderRead, PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
@@ -208,6 +209,47 @@ def delete_item(item_id: int, db: DbDep, _=Depends(get_manager_user)):
     db.commit()
 
 
+@router.post("/dining/items/{item_id}/image", response_model=DiningItemRead)
+async def upload_item_image(
+    item_id: int,
+    file: "UploadFile",
+    db: DbDep,
+    _=Depends(get_manager_user),
+):
+    """T-05 — رفع صورة لصنف في قائمة الطعام (مدير+).
+    يقبل: image/jpeg, image/png, image/webp — حد أقصى 2 ميجابايت."""
+    import os, uuid  # noqa: PLC0415
+    from fastapi import UploadFile  # noqa: PLC0415
+
+    item = crud.get_item(db, item_id)
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الصنف غير موجود")
+
+    ALLOWED = {"image/jpeg", "image/png", "image/webp"}
+    MAX_SIZE = 2 * 1024 * 1024  # 2 MB
+
+    if file.content_type not in ALLOWED:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"نوع الملف غير مسموح: {file.content_type}. المقبول: jpeg/png/webp")
+
+    contents = await file.read()
+    if len(contents) > MAX_SIZE:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "حجم الصورة أكبر من 2 ميجابايت")
+
+    ext = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}[file.content_type]
+    filename = f"{item_id}_{uuid.uuid4().hex[:8]}.{ext}"
+    uploads_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "uploads", "menu_items")
+    os.makedirs(uploads_dir, exist_ok=True)
+    filepath = os.path.join(uploads_dir, filename)
+
+    with open(filepath, "wb") as f:
+        f.write(contents)
+
+    item.image_url = f"/uploads/menu_items/{filename}"
+    db.commit()
+    db.refresh(item)
+    return DiningItemRead.model_validate(item)
+
+
 @router.post("/dining/items/{item_id}/extra-groups", response_model=DiningItemExtraGroupRead,
              status_code=status.HTTP_201_CREATED)
 def create_extra_group(item_id: int, data: DiningItemExtraGroupCreate, db: DbDep, _=Depends(get_manager_user)):
@@ -368,7 +410,7 @@ def get_branch_food_cost_report(
 
 @router.get("/dining/outlets/{outlet_id}/tables", response_model=list[DiningTableRead])
 def list_tables(outlet_id: int, db: DbDep, _=Depends(get_current_active_user)):
-    return [DiningTableRead.model_validate(t) for t in crud.list_tables(db, outlet_id)]
+    return [DiningTableRead.model_validate(t) for t in crud.list_tables_with_orders(db, outlet_id)]
 
 
 @router.post("/dining/outlets/{outlet_id}/tables", response_model=DiningTableRead,
@@ -434,16 +476,21 @@ def list_orders(
 
 @router.post("/dining/outlets/{outlet_id}/orders", response_model=OrderRead,
              status_code=status.HTTP_201_CREATED)
-def create_order(outlet_id: int, data: OrderCreate, db: DbDep, user=Depends(get_waiter_user)):
+async def create_order(outlet_id: int, data: OrderCreate, db: DbDep, user=Depends(get_waiter_user)):
     if data.outlet_id != outlet_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "outlet_id في الجسم لازم يطابق المسار")
     outlet = crud.get_outlet(db, outlet_id)
     if not outlet:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
     try:
-        return services.create_order(db, outlet.branch_id, data, waiter_id=user.id)
+        order = services.create_order(db, outlet.branch_id, data, waiter_id=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if order.table_id:
+        await dining_manager.broadcast(f"tables-{order.branch_id}", {
+            "type": "table_updated", "table_id": order.table_id,
+        })
+    return order
 
 
 @router.post("/dining/outlets/{outlet_id}/orders/hold", response_model=OrderRead,
@@ -616,6 +663,47 @@ def apply_discount(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
+@router.post("/dining/orders/{order_id}/split-bill", response_model=OrderRead)
+def split_bill(
+    order_id: int, data: SplitBillRequest, db: DbDep, _=Depends(get_cashier_user),
+):
+    """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع (كاشير+).
+    يتحقق أن مجموع الدفعات = order.total ± 0.01 ج،
+    يُرحّل room charges للـ folio لو payment_method=room،
+    ويُسجّل قيد إيراد مجمّع واحد في النهاية.
+    راجع services.split_bill للمنطق الكامل."""
+    try:
+        return services.split_bill(
+            db,
+            order_id,
+            [p.model_dump() for p in data.payments],
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/dining/orders/{order_id}/merge", response_model=OrderRead)
+async def merge_orders(
+    order_id: int,
+    target_order_id: int = Query(..., description="ID الأوردر الهدف — أصناف source تُنقل إليه"),
+    db: DbDep = ...,
+    user=Depends(get_waiter_user),
+):
+    """P-08 — دمج أوردرين مفتوحين في أوردر واحد (waiter+).
+    يُنقل كل أصناف order_id لـ target_order_id ثم يُلغى order_id.
+    الشرط: كلا الأوردرين مفتوحَين (open/in_kitchen) في نفس الـ branch."""
+    try:
+        merged = services.merge_orders(db, order_id, target_order_id, merged_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    # broadcast تحديث الطاولتين
+    for tbl_id in {merged.table_id} - {None}:
+        await dining_manager.broadcast(f"tables-{merged.branch_id}", {
+            "type": "table_updated", "table_id": tbl_id,
+        })
+    return merged
+
+
 # ── Kitchen / KDS ────────────────────────────────────────────────────
 
 @router.get("/dining/kitchen/tickets", response_model=list[KitchenTicketRead])
@@ -625,11 +713,52 @@ def list_kitchen_tickets(
     stations: Optional[str] = Query(None, description="Comma-separated list of stations"),
 ):
     """قائمة تذاكر الـ KDS المعلقة — outlet_id اختياري (None = كل الـ
-    outlets في الفرع، الرؤية الموحّدة اللي بررتها مذكرة Mohamed المعمارية:
-    "نفس المطبخ (KDS)" لكل الـ outlets)."""
+    outlets في الفرع). كل تذكرة بتيجي معاها table_number + order_type +
+    order_notes للعرض في شاشة المطبخ بدون ما المطبخ يعمل call تاني."""
     station_list = [s.strip() for s in stations.split(",")] if stations else None
     tickets = services.get_kds_tickets(db, branch_id, outlet_id=outlet_id, stations=station_list)
-    return [KitchenTicketRead.model_validate(t) for t in tickets]
+
+    # tickets ممكن تكون list[dict] أو list[ORM] حسب تنفيذ services
+    # نستخرج order_id بطريقة تعمل مع الاتنين
+    def get_field(obj, key):
+        return obj[key] if isinstance(obj, dict) else getattr(obj, key)
+
+    order_ids = list({get_field(t, 'order_id') for t in tickets})
+    if order_ids:
+        orders_map: dict[int, DiningOrder] = {
+            o.id: o for o in db.query(DiningOrder).filter(DiningOrder.id.in_(order_ids)).all()
+        }
+        table_ids = {o.table_id for o in orders_map.values() if o.table_id}
+        tables_map: dict[int, VenueTable] = (
+            {t.id: t for t in db.query(VenueTable).filter(VenueTable.id.in_(table_ids)).all()}
+            if table_ids else {}
+        )
+        outlet_ids = {get_field(t, 'outlet_id') for t in tickets}
+        from app.modules.dining.models import Outlet as DiningOutlet
+        outlets_map: dict[int, DiningOutlet] = {
+            o.id: o for o in db.query(DiningOutlet).filter(DiningOutlet.id.in_(outlet_ids)).all()
+        }
+    else:
+        orders_map = {}
+        tables_map = {}
+        outlets_map = {}
+
+    result = []
+    for t in tickets:
+        read = KitchenTicketRead.model_validate(t)
+        order = orders_map.get(get_field(t, 'order_id'))
+        if order:
+            read.order_number = order.order_number
+            read.order_type  = order.order_type
+            read.order_notes = order.notes
+            if order.table_id:
+                tbl = tables_map.get(order.table_id)
+                read.table_number = tbl.table_number if tbl else str(order.table_id)
+        outlet = outlets_map.get(get_field(t, 'outlet_id'))
+        if outlet:
+            read.outlet_name = outlet.name_ar or outlet.name
+        result.append(read)
+    return result
 
 
 @router.patch("/dining/kitchen/tickets/{ticket_id}/status", response_model=KitchenTicketRead)

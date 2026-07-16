@@ -31,7 +31,7 @@
  * course firing, kitchen timer, customer display.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
+import { api, useAuthStore, useResortWebSocket, ENDPOINTS } from '@resort-os/core'
 import { useOfflineQueue, useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
 import {
   AppButton, AppBadge, AppTabs, AppSelect, SearchInput, AppTextarea,
@@ -49,10 +49,30 @@ const auth = useAuthStore()
 const branchId = auth.branchId
 const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue, lastPartialRejection } = useOfflineQueue('dining')
 
+// ── WebSocket — تحديثات لحظية لخريطة الطاولات ────────────────────────────
+const { status: wsStatus, onMessage: onWsMessage } = useResortWebSocket(ENDPOINTS.dining.tablesWs(branchId))
+onWsMessage((data: any) => {
+  if (data?.type === 'table_updated' || data?.type === 'tables_updated') {
+    loadOutletData()
+  }
+})
+
 // ── Types ────────────────────────────────────────────────────────────────
 interface Outlet { id: number; name: string; name_ar: string | null; outlet_type: string; is_active: boolean }
 interface Category { id: number; name: string; name_ar: string | null; sort_order: number }
-interface VenueTable { id: number; table_number: string; status: string; capacity: number; section: string | null }
+interface VenueTable {
+  id: number
+  table_number: string
+  status: string
+  capacity: number
+  section: string | null
+  active_order_id:     number | null
+  active_order_number: string | null
+  active_order_total:  number | null
+  active_covers:       number | null
+  occupied_at:         string | null
+  order_status:        string | null  // open | in_kitchen | served
+}
 interface DiningItemRow extends DiningExtrasItem {
   is_available: boolean; category_id: number | null; station: string
 }
@@ -112,6 +132,12 @@ const extrasModalItem = ref<DiningItemRow | null>(null)
 const activeOrdersOpen = ref(false)
 const activeOrders = ref<ActiveOrder[]>([])
 const activeOrdersLoading = ref(false)
+const activeOrdersTableFilter = ref<number | null>(null)
+
+const filteredActiveOrders = computed(() => {
+  if (!activeOrdersTableFilter.value) return activeOrders.value
+  return activeOrders.value.filter(o => o.table_id === activeOrdersTableFilter.value)
+})
 const selectedOrderId = ref<number | null>(null)
 const searchInputEl = ref<InstanceType<typeof SearchInput> | null>(null)
 
@@ -157,6 +183,29 @@ const tablesBySection = computed(() => {
   }
   return [...groups.entries()].map(([section, list]) => ({ section, tables: list }))
 })
+
+// ── Summary bar للطاولات ──────────────────────────────────────────────────
+const tableSummary = computed(() => {
+  const all = tables.value
+  return {
+    total:    all.length,
+    available: all.filter(t => t.status === 'available').length,
+    occupied:  all.filter(t => t.status === 'occupied').length,
+    served:    all.filter(t => t.status === 'served').length,
+    reserved:  all.filter(t => t.status === 'reserved').length,
+  }
+})
+
+// ── مدة الإشغال — من occupied_at حتى الآن ──────────────────────────────
+function elapsedSince(isoStr: string | null): string {
+  if (!isoStr) return ''
+  const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000)
+  if (diff < 60) return `${diff}ث`
+  if (diff < 3600) return `${Math.floor(diff / 60)}د`
+  const h = Math.floor(diff / 3600)
+  const m = Math.floor((diff % 3600) / 60)
+  return m > 0 ? `${h}س ${m}د` : `${h}س`
+}
 
 const hasItems = computed(() => cart.value.length > 0)
 const cartTotal = computed(() => cart.value.reduce((s, l) => s + l.unitPrice * l.quantity, 0))
@@ -240,7 +289,44 @@ function onOrderDetailClosed() {
   loadActiveOrders()
 }
 
-// ── Cart building ────────────────────────────────────────────────────────
+// ── منطق tap على الطاولة ─────────────────────────────────────────────────
+// occupied/served → افتح الأوردر مباشرة
+// available       → اختر الطاولة لأوردر جديد
+function onTableClick(t: VenueTable) {
+  if (cartLocked.value || t.status === 'out_of_service') return
+  if ((t.status === 'occupied' || t.status === 'served') && t.active_order_id) {
+    openOrder(t.active_order_id)
+  } else {
+    selectedTableId.value = selectedTableId.value === t.id ? null : t.id
+  }
+}
+
+// ── Loyalty redeem in POS ─────────────────────────────────────────────────
+const loyaltyRedeemOpen    = ref(false)
+const loyaltyCustomerIdPos = ref('')
+const loyaltyPointsToRedeem = ref('')
+const loyaltyRedeemLoading = ref(false)
+
+async function redeemLoyaltyInPOS() {
+  const customerId = parseInt(loyaltyCustomerIdPos.value)
+  const points     = parseInt(loyaltyPointsToRedeem.value)
+  if (!customerId || !points || points < 1) { toast.error('أدخل ID العميل وعدد النقاط'); return }
+  loyaltyRedeemLoading.value = true
+  try {
+    await api.post(ENDPOINTS.crm.loyaltyRedeem, {
+      branch_id:   branchId,
+      customer_id: customerId,
+      points,
+      reference:   `POS-order`,
+    })
+    toast.success(`تم استرداد ${points} نقطة ✓`)
+    loyaltyRedeemOpen.value     = false
+    loyaltyCustomerIdPos.value  = ''
+    loyaltyPointsToRedeem.value = ''
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'فشل استرداد النقاط')
+  } finally { loyaltyRedeemLoading.value = false }
+}
 function onItemClick(item: DiningItemRow) {
   if (cartLocked.value) return
   const hasVariants = (item.variants ?? []).some(v => v.is_available)
@@ -467,7 +553,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
     </div>
 
     <!-- ── Top bar ── -->
-    <div class="bg-white border-b border-stone-200 px-4 py-3 flex flex-wrap gap-3 items-center shadow-sm flex-shrink-0">
+    <div class="bg-white dark:bg-surface border-b border-stone-200 dark:border-border px-4 py-3 flex flex-wrap gap-3 items-center shadow-sm flex-shrink-0">
       <div class="w-48">
         <AppSelect v-model="selectedOutletIdOption" :options="outletOptions" placeholder="اختر المنفذ" @update:model-value="loadOutletData(); loadActiveOrders()" />
       </div>
@@ -477,7 +563,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       <button
         type="button"
         @click="openActiveOrders"
-        class="relative px-3 py-2 bg-white border-2 border-primary-400 text-primary-700 rounded-lg font-bold text-sm hover:bg-primary-50 transition-colors min-h-[48px]"
+        class="relative px-3 py-2 bg-white dark:bg-surface border-2 border-primary-400 text-primary-700 rounded-lg font-bold text-sm hover:bg-primary-50 transition-colors min-h-[48px]"
       >
         🧾 الطلبات الجارية
         <AppBadge v-if="activeOrders.length" variant="info" size="sm" class="ms-1.5">{{ activeOrders.length }}</AppBadge>
@@ -491,33 +577,72 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
         class="text-gray-300 hover:text-gray-500 cursor-help text-sm select-none transition-colors"
         title="⌨️ /  — تركيز على البحث · Enter — إرسال الطلب · Esc — إغلاق/مسح"
       >⌨️</span>
+
+      <!-- مؤشر حالة الـ WebSocket -->
+      <span
+        :title="wsStatus === 'connected' ? 'تحديثات لحظية — متصل' : wsStatus === 'connecting' ? 'جاري الاتصال...' : 'لا يوجد اتصال لحظي'"
+        :class="['w-2 h-2 rounded-full flex-shrink-0 transition-colors', wsStatus === 'connected' ? 'bg-green-500' : wsStatus === 'connecting' ? 'bg-amber-400 animate-pulse' : 'bg-gray-300']"
+      />
     </div>
 
     <!-- ── Order-type-specific fields ── -->
-    <div class="bg-stone-50 border-b border-stone-200 px-4 py-3 flex-shrink-0">
+    <div class="bg-stone-50 border-b border-stone-200 dark:border-border px-4 py-3 flex-shrink-0">
       <template v-if="orderType === 'dine_in'">
         <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">اختر الطاولة</div>
         <div v-if="tables.length === 0" class="text-sm text-gray-400">لا توجد طاولات لهذا المنفذ</div>
-        <div v-for="group in tablesBySection" :key="group.section" class="mb-2 last:mb-0">
-          <div class="text-xs font-semibold text-gray-400 mb-1">{{ group.section }}</div>
-          <div class="flex flex-wrap gap-1.5">
+
+        <!-- Summary Bar -->
+        <div v-if="tables.length > 0" class="flex flex-wrap gap-1.5 mb-3 text-[11px] font-semibold">
+          <span class="px-2 py-0.5 rounded-full bg-stone-100 text-gray-500">الكل: {{ tableSummary.total }}</span>
+          <span class="px-2 py-0.5 rounded-full bg-green-50 text-green-700">🟢 فاضي: {{ tableSummary.available }}</span>
+          <span class="px-2 py-0.5 rounded-full bg-red-50 text-red-700">🔴 مشغول: {{ tableSummary.occupied }}</span>
+          <span v-if="tableSummary.served > 0" class="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">🟠 انتظار دفع: {{ tableSummary.served }}</span>
+          <span v-if="tableSummary.reserved > 0" class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">🔵 محجوز: {{ tableSummary.reserved }}</span>
+        </div>
+
+        <div v-for="group in tablesBySection" :key="group.section" class="mb-3 last:mb-0">
+          <div class="text-xs font-semibold text-gray-400 mb-1.5">{{ group.section }}</div>
+          <div class="flex flex-wrap gap-2">
             <button
               v-for="t in group.tables"
               :key="t.id"
               type="button"
               :disabled="cartLocked || t.status === 'out_of_service'"
-              @click="selectedTableId = t.id"
+              @click="onTableClick(t)"
               :class="[
-                'min-w-[64px] min-h-[48px] px-3 py-2 rounded-xl border-2 text-sm font-bold transition-all flex flex-col items-center justify-center gap-0.5',
-                selectedTableId === t.id ? 'border-primary-600 bg-primary-50 text-primary-800' : 'border-stone-200 bg-white hover:border-primary-300',
-                t.status === 'occupied' ? 'ring-2 ring-danger/40' : '',
-                t.status === 'out_of_service' ? 'opacity-40 cursor-not-allowed' : '',
+                'min-w-[110px] min-h-[90px] px-3 py-2 rounded-xl border-2 text-sm font-bold transition-all flex flex-col items-start justify-between gap-0.5',
+                t.status === 'out_of_service' ? 'opacity-40 cursor-not-allowed bg-gray-100 border-gray-300' :
+                  selectedTableId === t.id ? 'border-primary-600 bg-primary-50 text-primary-800 ring-2 ring-primary-200' :
+                  t.status === 'available' ? 'bg-green-50 border-green-400 hover:border-green-500' :
+                  t.status === 'occupied'  ? 'bg-red-50 border-red-400 ring-2 ring-red-200 hover:border-red-500' :
+                  t.status === 'served'    ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-200 hover:border-amber-500' :
+                  t.status === 'reserved'  ? 'bg-blue-50 border-blue-400 hover:border-blue-500' :
+                  'bg-white dark:bg-surface border-stone-200 dark:border-border hover:border-primary-300',
               ]"
             >
-              <span>{{ t.table_number }}</span>
-              <span class="text-[10px] font-normal text-gray-400">{{
-                t.status === 'available' ? 'فارغة' : t.status === 'occupied' ? 'مشغولة' : t.status === 'reserved' ? 'محجوزة' : 'خارج الخدمة'
-              }}</span>
+              <!-- السطر 1: رقم الطاولة -->
+              <div class="text-base font-black leading-tight">{{ t.table_number }}</div>
+
+              <!-- السطر 2-4: بيانات الأوردر النشط -->
+              <div v-if="t.status === 'occupied' || t.status === 'served'" class="w-full space-y-0.5 mt-0.5">
+                <div v-if="t.active_covers" class="text-[10px] text-gray-600">👥 {{ t.active_covers }} ضيوف</div>
+                <div v-if="t.active_order_total" class="text-[10px] text-gray-700 dark:text-gray-300 font-semibold">💰 {{ t.active_order_total }} ج</div>
+                <div v-if="t.occupied_at" class="text-[10px] text-gray-500">⏱ {{ elapsedSince(t.occupied_at) }}</div>
+              </div>
+
+              <!-- السطر 5: حالة -->
+              <div :class="[
+                'text-[10px] font-semibold mt-0.5',
+                t.status === 'available' ? 'text-green-600' :
+                t.status === 'occupied'  ? 'text-red-600' :
+                t.status === 'served'    ? 'text-amber-600' :
+                t.status === 'reserved'  ? 'text-blue-600' : 'text-gray-400',
+              ]">{{
+                t.status === 'available' ? 'فارغة' :
+                t.status === 'occupied'  ? 'مشغولة' :
+                t.status === 'served'    ? 'انتظار دفع' :
+                t.status === 'reserved'  ? 'محجوزة' : 'خارج الخدمة'
+              }}</div>
             </button>
           </div>
         </div>
@@ -554,23 +679,29 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             type="button"
             :disabled="cartLocked"
             @click="onItemClick(item)"
-            class="relative bg-white rounded-xl border border-stone-200 p-4 text-start hover:border-primary-400 hover:shadow-elevation-2 transition-all active:scale-95 flex flex-col justify-between min-h-[90px] disabled:opacity-50 disabled:cursor-not-allowed"
+            class="relative bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border text-start hover:border-primary-400 hover:shadow-elevation-2 transition-all active:scale-95 flex flex-col justify-between min-h-[90px] disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden"
           >
-            <div class="font-semibold text-gray-900 text-sm leading-tight mb-2">{{ item.name_ar || item.name }}</div>
-            <div v-if="(item.variants ?? []).some(v => v.is_available)" class="text-sm font-bold text-primary-700">
-              من {{ Math.min(...item.variants!.filter(v => v.is_available).map(v => Number(v.price))) }}
-              <span class="text-xs font-normal text-gray-400 ms-0.5">ج · اختر الحجم</span>
+            <!-- صورة الصنف لو موجودة -->
+            <div v-if="item.image_url" class="w-full h-24 overflow-hidden bg-gray-100 flex-shrink-0">
+              <img :src="item.image_url" :alt="item.name_ar || item.name" class="w-full h-full object-cover" />
             </div>
-            <div v-else class="text-lg font-black text-primary-700">{{ item.price }}<span class="text-xs font-normal text-gray-400 ms-0.5">ج</span></div>
+            <div class="p-3 flex flex-col flex-1 justify-between">
+              <div class="font-semibold text-gray-900 dark:text-gray-100 text-sm leading-tight mb-2">{{ item.name_ar || item.name }}</div>
+              <div v-if="(item.variants ?? []).some(v => v.is_available)" class="text-sm font-bold text-primary-700">
+                من {{ Math.min(...item.variants!.filter(v => v.is_available).map(v => Number(v.price))) }}
+                <span class="text-xs font-normal text-gray-400 ms-0.5">ج · اختر الحجم</span>
+              </div>
+              <div v-else class="text-lg font-black text-primary-700">{{ item.price }}<span class="text-xs font-normal text-gray-400 ms-0.5">ج</span></div>
+            </div>
             <AppBadge v-if="(item.extra_groups ?? []).length > 0" variant="info" size="sm" class="absolute top-1.5 start-1.5">إضافات</AppBadge>
           </button>
         </div>
       </div>
 
       <!-- ── Cart sidebar ── -->
-      <div class="w-80 bg-white border-s border-stone-200 flex flex-col flex-shrink-0 shadow-elevation-3">
+      <div class="w-80 bg-white dark:bg-surface border-s border-stone-200 dark:border-border flex flex-col flex-shrink-0 shadow-elevation-3">
         <div class="p-4 border-b border-stone-100 bg-stone-50">
-          <div class="font-bold text-gray-900">
+          <div class="font-bold text-gray-900 dark:text-gray-100">
             {{ orderType === 'dine_in' && selectedTableId ? `طاولة ${tables.find(t => t.id === selectedTableId)?.table_number}` : ORDER_TYPE_TABS.find(t => t.value === orderType)?.label }}
           </div>
         </div>
@@ -582,9 +713,9 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             🔒 الطلب #{{ pendingOrderNumber }} اتسجّل وطُبّق عليه خصم — امسح الطلب لو عايز تعدّل
           </div>
 
-          <div v-for="line in cart" :key="line.key" class="bg-stone-50 rounded-lg p-3 border border-stone-200">
+          <div v-for="line in cart" :key="line.key" class="bg-stone-50 rounded-lg p-3 border border-stone-200 dark:border-border">
             <div class="flex items-start justify-between mb-2 gap-1">
-              <span class="text-sm font-semibold text-gray-900 leading-tight flex-1">
+              <span class="text-sm font-semibold text-gray-900 dark:text-gray-100 leading-tight flex-1">
                 {{ line.nameAr || line.name }}
                 <span v-if="line.variantLabel" class="text-xs font-normal text-primary-600">— {{ line.variantLabel }}</span>
               </span>
@@ -602,9 +733,9 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           </div>
         </div>
 
-        <div class="border-t border-stone-200 p-3 space-y-3 bg-white">
+        <div class="border-t border-stone-200 dark:border-border p-3 space-y-3 bg-white dark:bg-surface">
           <div class="flex justify-between items-center">
-            <span class="text-base font-bold text-gray-900">المجموع</span>
+            <span class="text-base font-bold text-gray-900 dark:text-gray-100">المجموع</span>
             <span class="text-xl font-black text-primary-700">{{ displayTotal }} ج</span>
           </div>
 
@@ -618,6 +749,20 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
               <span v-if="pendingOrderSummary && Number(pendingOrderSummary.discount_amount) > 0">−{{ pendingOrderSummary.discount_amount }} ج</span>
             </div>
           </div>
+
+          <!-- استرداد نقاط ولاء -->
+          <div v-if="loyaltyRedeemOpen" class="rounded-lg border border-amber-200 bg-amber-50 p-2 space-y-1.5">
+            <div class="text-xs font-bold text-amber-800">🎁 استرداد نقاط</div>
+            <div class="flex gap-1.5">
+              <input v-model="loyaltyCustomerIdPos" type="number" placeholder="ID العميل"
+                class="border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-xs w-24" />
+              <input v-model="loyaltyPointsToRedeem" type="number" min="1" placeholder="نقاط"
+                class="border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-xs w-20" />
+              <AppButton size="sm" :loading="loyaltyRedeemLoading" @click="redeemLoyaltyInPOS">تأكيد</AppButton>
+            </div>
+            <button @click="loyaltyRedeemOpen = false" class="text-[10px] text-gray-400 hover:underline">إلغاء</button>
+          </div>
+          <AppButton v-else variant="outline" size="sm" block @click="loyaltyRedeemOpen = true">🎁 استرداد نقاط ولاء</AppButton>
 
           <div class="grid grid-cols-2 gap-2">
             <AppButton variant="ghost" :disabled="!hasItems" @click="clearOrder">مسح</AppButton>
@@ -649,23 +794,38 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       <Transition name="fade">
         <div v-if="activeOrdersOpen" class="fixed inset-0 z-40 flex items-center justify-center p-4">
           <div class="absolute inset-0 bg-black/50" @click="activeOrdersOpen = false" />
-          <div class="relative bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[80vh] flex flex-col">
+          <div class="relative bg-white dark:bg-surface rounded-2xl shadow-2xl w-full max-w-sm max-h-[80vh] flex flex-col">
             <div class="flex items-center justify-between px-5 py-4 border-b border-stone-100">
-              <h2 class="text-lg font-bold text-gray-900">الطلبات الجارية</h2>
-              <IconButton icon="close" label="إغلاق" size="sm" @click="activeOrdersOpen = false" />
+              <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">الطلبات الجارية</h2>
+              <div class="flex items-center gap-2">
+                <!-- فلتر بالطاولة المحددة -->
+                <button
+                  v-if="selectedTableId"
+                  @click="activeOrdersTableFilter = activeOrdersTableFilter ? null : selectedTableId"
+                  :class="[
+                    'text-xs font-semibold px-2 py-1 rounded-lg border transition-colors',
+                    activeOrdersTableFilter
+                      ? 'bg-primary-600 text-white border-primary-600'
+                      : 'bg-white dark:bg-surface text-primary-700 border-primary-300 hover:bg-primary-50'
+                  ]"
+                >
+                  طاولة {{ tables.find(t => t.id === selectedTableId)?.table_number }} فقط
+                </button>
+                <IconButton icon="close" label="إغلاق" size="sm" @click="activeOrdersOpen = false" />
+              </div>
             </div>
             <div class="overflow-y-auto p-4 space-y-2">
               <LoadingState v-if="activeOrdersLoading" />
-              <EmptyState v-else-if="activeOrders.length === 0" icon="🧾" title="مفيش طلبات جارية دلوقتي" />
+              <EmptyState v-else-if="filteredActiveOrders.length === 0" icon="🧾" title="مفيش طلبات جارية دلوقتي" />
               <button
-                v-for="o in activeOrders"
+                v-for="o in filteredActiveOrders"
                 :key="o.id"
                 type="button"
                 @click="openOrder(o.id)"
                 class="w-full flex items-center gap-2 p-3 rounded-xl border-2 border-primary-100 bg-primary-50/50 hover:border-primary-300 transition-all text-start min-h-[48px]"
               >
                 <div class="flex-1">
-                  <div class="font-bold text-gray-900 text-sm">{{ o.order_number }}</div>
+                  <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ o.order_number }}</div>
                   <div class="text-xs text-gray-500">{{ tableLabelFor(o) }} · {{ o.status }}</div>
                 </div>
                 <div class="font-bold text-primary-700 text-sm">{{ o.total }} ج</div>
