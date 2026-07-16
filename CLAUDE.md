@@ -1052,5 +1052,5 @@ ETA_ENABLED=false
 
 ---
 
-*آخر تحديث: 2026-07-14*
+*آخر تحديث: 2026-07-16*
 *المشروع يستخدم: github.com/wego2388/Resort-OS · FastAPI 0.115 · SQLAlchemy 2.0 · Pydantic v2 · Vue 3.4 · pnpm*
