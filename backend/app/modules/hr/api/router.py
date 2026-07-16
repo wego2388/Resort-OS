@@ -851,6 +851,20 @@ def download_payroll_excel(run_id: int, db: DbDep, _=Depends(get_manager_user)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
+@router.get("/hr/payroll/{run_id}/pdf")
+def download_payroll_bulk_pdf(run_id: int, db: DbDep, _=Depends(get_manager_user)):
+    """H-06 — PDF كشف مرتبات جماعي لطباعة الكشف الرسمي."""
+    try:
+        pdf = services.generate_bulk_payroll_pdf(db, run_id)
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"attachment; filename=payroll-{run_id}.pdf"},
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
 @router.post("/hr/rota/assignments", response_model=RotaAssignmentRead,
              status_code=status.HTTP_201_CREATED)
 def create_rota_assignment(data: RotaAssignmentCreate, db: DbDep, _=Depends(get_manager_user)):

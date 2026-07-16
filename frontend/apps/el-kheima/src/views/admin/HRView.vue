@@ -6,7 +6,7 @@ import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, AppInput, EmptyStat
 const toast = useToast()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const branchId = auth.branchId
 const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard'>('employees')
 
 interface Employee {
@@ -101,7 +101,6 @@ async function fetchAttendancePolicy() {
       attendancePolicy.value = { ...DEFAULT_POLICY }
       policyConfigured.value = false
     } else {
-      console.error(e)
       toast.error('فشل تحميل سياسة الحضور')
     }
   } finally { policyLoading.value = false }
@@ -115,7 +114,6 @@ async function saveAttendancePolicy() {
     policyConfigured.value = true
     toast.success('تم حفظ سياسة الحضور')
   } catch (e) {
-    console.error(e)
     toast.error('فشل حفظ سياسة الحضور')
   } finally { policySaving.value = false }
 }
@@ -137,7 +135,6 @@ async function fetchEmployees() {
     const res = await api.get('/api/v1/hr/employees', { params: { branch_id: branchId, size: 100 } })
     employees.value = res.data.employees ?? res.data.items ?? res.data
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل بيانات الموظفين')
   } finally { loading.value = false }
 }
@@ -148,7 +145,6 @@ async function fetchLeaveTypes() {
     leaveTypes.value = res.data ?? []
   } catch (e) {
     // غير حرج: أسماء أنواع الإجازات مجرد تسمية للعرض، بترجع لرقم النوع لو فشلت
-    console.error(e)
   }
 }
 
@@ -159,7 +155,6 @@ async function fetchPayroll() {
     payrollRuns.value = res.data.runs ?? res.data.items ?? res.data
     if (!employees.value.length) await fetchEmployees()
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل بيانات الرواتب')
   } finally { loading.value = false }
 }
@@ -178,7 +173,6 @@ async function togglePayrollRunDetails(run: PayrollRun) {
     const res = await api.get(`/api/v1/hr/payroll-runs/${run.id}/lines`)
     payrollLinesByRun.value = { ...payrollLinesByRun.value, [run.id]: res.data ?? [] }
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل قسائم الرواتب')
   } finally { payrollLinesLoading.value = false }
 }
@@ -204,7 +198,6 @@ async function approvePayrollRun(run: PayrollRun) {
     payrollRuns.value = payrollRuns.value.map(r => (r.id === run.id ? { ...r, ...updated } : r))
     toast.success('تم اعتماد رواتب كل الموظفين في الدفعة')
   } catch (e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'فشل اعتماد الرواتب')
   } finally { approvingRunId.value = null }
 }
@@ -217,7 +210,6 @@ async function fetchLeaves() {
     if (!employees.value.length) await fetchEmployees()
     if (!leaveTypes.value.length) await fetchLeaveTypes()
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل طلبات الإجازات')
   } finally { loading.value = false }
 }
@@ -236,7 +228,6 @@ async function fetchAttendance() {
     attendanceRecords.value = res.data.items ?? res.data
     if (!employees.value.length) await fetchEmployees()
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل سجلات الحضور')
   } finally { attendanceLoading.value = false }
   await fetchAttendancePolicy()
@@ -265,7 +256,6 @@ async function openAllowanceModal(emp: Employee) {
     const res = await api.get(`/api/v1/hr/employees/${emp.id}/allowances`, { params: { active_only: true } })
     employeeAllowances.value = res.data ?? []
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل بدلات الموظف')
   } finally { allowancesLoading.value = false }
 }
@@ -290,7 +280,6 @@ async function submitAllowance() {
     allowanceForm.value = { name: '', amount: 0, is_taxable: true, is_pensionable: false }
     toast.success('تمت إضافة البدل — سيدخل في حساب الراتب القادم')
   } catch (e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'فشل حفظ البدل')
   } finally { savingAllowance.value = false }
 }
@@ -302,7 +291,6 @@ async function openPenaltyModal(emp: Employee) {
     const res = await api.get('/api/v1/hr/penalty-types', { params: { branch_id: branchId } })
     penaltyTypes.value = res.data ?? []
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل أنواع الجزاءات')
   }
 }
@@ -333,7 +321,6 @@ async function submitPenalty() {
     toast.success('تم تسجيل الجزاء')
     penaltyModalEmployee.value = null
   } catch (e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'فشل حفظ الجزاء')
   } finally { savingPenalty.value = false }
 }
@@ -379,7 +366,6 @@ async function submitComp() {
     toast.success('تم تحديث بيانات الراتب')
     compModalEmployee.value = null
   } catch (e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'فشل حفظ بيانات الراتب')
   } finally { savingComp.value = false }
 }
@@ -404,7 +390,6 @@ async function openAdvanceModal(emp: Employee) {
     const res = await api.get('/api/v1/hr/salary-advances', { params: { employee_id: emp.id } })
     employeeAdvances.value = res.data ?? []
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل سلف الموظف')
   } finally { advancesLoading.value = false }
 }
@@ -430,7 +415,6 @@ async function submitAdvance() {
     advanceForm.value = { amount: 0, disbursed_date: localDateStr(new Date()), monthly_deduction_amount: 0, notes: '' }
     toast.success('تم تسجيل السلفة — سيبدأ خصمها من كشف الرواتب القادم')
   } catch (e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'فشل حفظ السلفة')
   } finally { savingAdvance.value = false }
 }
@@ -447,7 +431,6 @@ async function cancelAdvance(advance: SalaryAdvance) {
     employeeAdvances.value = employeeAdvances.value.map(a => (a.id === advance.id ? { ...a, status: 'cancelled' } : a))
     toast.success('تم إلغاء السلفة')
   } catch (e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'فشل إلغاء السلفة — ربما تم خصم قسط منها بالفعل')
   }
 }
@@ -471,7 +454,6 @@ async function openPaymentModal(emp: Employee) {
     const res = await api.get('/api/v1/hr/advance-payments', { params: { employee_id: emp.id } })
     employeePayments.value = res.data ?? []
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل دفعات الموظف')
   } finally { paymentsLoading.value = false }
 }
@@ -495,7 +477,6 @@ async function submitPayment() {
     paymentForm.value = { amount: 0, payment_date: localDateStr(new Date()), notes: '' }
     toast.success('تم تسجيل الدفعة — سيتم خصمها من صافي راتب نفس الشهر')
   } catch (e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'فشل حفظ الدفعة')
   } finally { savingPayment.value = false }
 }
@@ -517,7 +498,6 @@ async function openBalanceModal(emp: Employee) {
     const res = await api.get('/api/v1/hr/leave-balance-monthly', { params: { employee_id: emp.id } })
     employeeLeaveBalances.value = res.data ?? []
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل رصيد الإجازة')
   } finally { balancesLoading.value = false }
 }
@@ -555,7 +535,6 @@ async function fetchLeaderboard() {
     })
     leaderboard.value = res.data
   } catch (e) {
-    console.error(e)
     toast.error('تعذّر تحميل لوحة الأداء')
   } finally { leaderboardLoading.value = false }
 }
@@ -568,7 +547,6 @@ async function approveLeave(id: number) {
     leaveRequests.value = leaveRequests.value.filter(l => l.id !== id)
     toast.success('تم اعتماد الإجازة')
   } catch (e) {
-    console.error(e)
     toast.error('فشل في اعتماد الإجازة')
   }
 }
@@ -579,7 +557,6 @@ async function rejectLeave(id: number) {
     leaveRequests.value = leaveRequests.value.filter(l => l.id !== id)
     toast.success('تم رفض الإجازة')
   } catch (e) {
-    console.error(e)
     toast.error('فشل في رفض الإجازة')
   }
 }
@@ -718,10 +695,10 @@ onMounted(fetchEmployees)
 
 <template>
   <div dir="rtl">
-    <h2 class="text-2xl font-black text-gray-900 mb-6">الموارد البشرية</h2>
+    <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">الموارد البشرية</h2>
 
     <!-- Tabs -->
-    <div class="flex gap-1 bg-stone-100 p-1 rounded-xl mb-6 w-fit">
+    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
       <button v-for="t in [
         { val: 'employees',   label: 'الموظفون' },
         { val: 'attendance',  label: 'الحضور' },
@@ -730,7 +707,7 @@ onMounted(fetchEmployees)
         { val: 'leaderboard', label: '🏆 لوحة الأداء' },
       ]" :key="t.val"
         @click="loadTab(t.val as any)"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700']"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
       >{{ t.label }}</button>
     </div>
 
@@ -738,37 +715,37 @@ onMounted(fetchEmployees)
     <div v-if="tab === 'employees'">
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
-        <span class="text-sm text-gray-400">جاري التحميل...</span>
+        <span class="text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</span>
       </div>
       <AppCard v-else :title="`الموظفون (${employees.length})`" padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الاسم</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الوظيفة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">القسم</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الراتب</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">إجراءات</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الاسم</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الوظيفة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">القسم</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الراتب</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">إجراءات</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="emp in employees" :key="emp.id" class="border-t border-stone-100 hover:bg-stone-50">
+              <tr v-for="emp in employees" :key="emp.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-3">
                     <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-sm">
                       {{ emp.full_name.charAt(0) }}
                     </div>
                     <div>
-                      <div class="font-semibold text-gray-900 text-sm">{{ emp.full_name }}</div>
-                      <div v-if="emp.phone" class="text-xs text-gray-400">{{ emp.phone }}</div>
+                      <div class="font-semibold text-gray-900 dark:text-gray-100 text-sm">{{ emp.full_name }}</div>
+                      <div v-if="emp.phone" class="text-xs text-gray-400 dark:text-gray-500">{{ emp.phone }}</div>
                     </div>
                   </div>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ emp.position }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ emp.department ?? '—' }}</td>
-                <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ (emp.basic_salary ?? 0).toLocaleString('ar-EG') }} ج</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ emp.position }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ emp.department ?? '—' }}</td>
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ (emp.basic_salary ?? 0).toLocaleString('ar-EG') }} ج</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="statusVariant[emp.status] ?? 'neutral'">{{ statusLabel(emp.status) }}</AppBadge>
                 </td>
@@ -779,12 +756,12 @@ onMounted(fetchEmployees)
                     <button v-if="auth.hasRole('admin')" @click="openAdvanceModal(emp)" class="text-xs font-semibold text-amber-600 hover:text-amber-800">💰 سلفة</button>
                     <button @click="openPaymentModal(emp)" class="text-xs font-semibold text-teal-600 hover:text-teal-800">📅 دفعة</button>
                     <button @click="openBalanceModal(emp)" class="text-xs font-semibold text-purple-600 hover:text-purple-800">📊 رصيد إجازة</button>
-                    <button v-if="auth.hasRole('admin')" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 hover:text-gray-900">✏️ الراتب</button>
+                    <button v-if="auth.hasRole('admin')" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 dark:text-gray-500 hover:text-gray-900 dark:text-gray-100">✏️ الراتب</button>
                   </div>
                 </td>
               </tr>
               <tr v-if="employees.length === 0">
-                <td colspan="6" class="px-4 py-12 text-center text-gray-400">لا يوجد موظفون</td>
+                <td colspan="6" class="px-4 py-12 text-center text-gray-400 dark:text-gray-500">لا يوجد موظفون</td>
               </tr>
             </tbody>
           </table>
@@ -796,20 +773,20 @@ onMounted(fetchEmployees)
     <AppModal :open="!!allowanceModalEmployee" :title="`بدلات — ${allowanceModalEmployee?.full_name ?? ''}`"
       @close="allowanceModalEmployee = null">
       <div class="space-y-4">
-        <div v-if="allowancesLoading" class="text-center py-4 text-sm text-gray-400">جاري التحميل...</div>
+        <div v-if="allowancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</div>
         <div v-else-if="employeeAllowances.length" class="space-y-2">
-          <div v-for="a in employeeAllowances" :key="a.id" class="flex items-center justify-between text-sm bg-stone-50 rounded-lg px-3 py-2">
-            <span class="font-medium text-gray-800">{{ a.name }}</span>
-            <span class="text-gray-600">{{ a.amount.toLocaleString('ar-EG') }} ج{{ a.is_taxable ? '' : ' (غير خاضع للضريبة)' }}</span>
+          <div v-for="a in employeeAllowances" :key="a.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-2">
+            <span class="font-medium text-gray-800 dark:text-gray-200">{{ a.name }}</span>
+            <span class="text-gray-600 dark:text-gray-500">{{ a.amount.toLocaleString('ar-EG') }} ج{{ a.is_taxable ? '' : ' (غير خاضع للضريبة)' }}</span>
           </div>
         </div>
         <EmptyState v-else icon="💵" title="لا يوجد بدلات مسجّلة" />
 
-        <div class="border-t border-stone-100 pt-4 space-y-3">
-          <div class="text-xs font-semibold text-gray-500 uppercase">إضافة بدل جديد</div>
+        <div class="border-t border-stone-100 dark:border-border/50 pt-4 space-y-3">
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">إضافة بدل جديد</div>
           <AppInput v-model="allowanceForm.name" placeholder="اسم البدل (بدل سكن، انتقالات...)" />
           <AppInput v-model.number="allowanceForm.amount" type="number" placeholder="المبلغ (جنيه)" />
-          <div class="flex items-center gap-4 text-sm text-gray-700">
+          <div class="flex items-center gap-4 text-sm text-gray-700 dark:text-gray-300">
             <label class="flex items-center gap-1.5"><input type="checkbox" v-model="allowanceForm.is_taxable" /> خاضع للضريبة</label>
             <label class="flex items-center gap-1.5"><input type="checkbox" v-model="allowanceForm.is_pensionable" /> خاضع للتأمينات</label>
           </div>
@@ -828,11 +805,11 @@ onMounted(fetchEmployees)
         <div>
           <AppInput label="وعاء التأمينات الاجتماعية (اختياري)" v-model.number="compForm.insurance_base_salary" type="number"
             placeholder="اتركه فاضي لاستخدام الراتب الأساسي" />
-          <p class="text-xs text-gray-400 mt-1">لو مختلف عن الراتب الأساسي (بعض الموظفين وعاءهم التأميني المسجّل أقل) — لو فاضي، الراتب الأساسي هو المستخدَم.</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">لو مختلف عن الراتب الأساسي (بعض الموظفين وعاءهم التأميني المسجّل أقل) — لو فاضي، الراتب الأساسي هو المستخدَم.</p>
         </div>
         <div>
           <AppInput label="مكافأة الأعياد الرسمية" v-model.number="compForm.holiday_bonus" type="number" />
-          <p class="text-xs text-gray-400 mt-1">بند ثابت بيدخل الصافي تلقائيًا في كل كشف رواتب — صفّره بعد شهر العيد لو مش عايزه يتكرر.</p>
+          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">بند ثابت بيدخل الصافي تلقائيًا في كل كشف رواتب — صفّره بعد شهر العيد لو مش عايزه يتكرر.</p>
         </div>
         <AppButton :disabled="savingComp" @click="submitComp" variant="primary" size="sm">
           {{ savingComp ? 'جاري الحفظ...' : 'حفظ' }}
@@ -845,7 +822,7 @@ onMounted(fetchEmployees)
       @close="penaltyModalEmployee = null">
       <div class="space-y-3">
         <select v-model="penaltyForm.penalty_type_id" @change="onPenaltyTypeChange"
-          class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500">
+          class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500">
           <option :value="null">نوع الجزاء (اختياري)</option>
           <option v-for="pt in penaltyTypes" :key="pt.id" :value="pt.id">{{ pt.name_ar || pt.name }} ({{ pt.penalty_days }} يوم)</option>
         </select>
@@ -861,16 +838,16 @@ onMounted(fetchEmployees)
     <AppModal :open="!!advanceModalEmployee" :title="`سلف — ${advanceModalEmployee?.full_name ?? ''}`"
       @close="advanceModalEmployee = null">
       <div class="space-y-4">
-        <div v-if="advancesLoading" class="text-center py-4 text-sm text-gray-400">جاري التحميل...</div>
+        <div v-if="advancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</div>
         <div v-else-if="employeeAdvances.length" class="space-y-2">
-          <div v-for="a in employeeAdvances" :key="a.id" class="text-sm bg-stone-50 rounded-lg px-3 py-2">
+          <div v-for="a in employeeAdvances" :key="a.id" class="text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-2">
             <div class="flex items-center justify-between">
-              <span class="font-medium text-gray-800">{{ a.amount.toLocaleString('ar-EG') }} ج — قسط {{ a.monthly_deduction_amount.toLocaleString('ar-EG') }} ج/شهر</span>
+              <span class="font-medium text-gray-800 dark:text-gray-200">{{ a.amount.toLocaleString('ar-EG') }} ج — قسط {{ a.monthly_deduction_amount.toLocaleString('ar-EG') }} ج/شهر</span>
               <AppBadge size="sm" :variant="a.status === 'active' ? 'info' : a.status === 'settled' ? 'success' : 'neutral'">
                 {{ a.status === 'active' ? 'نشطة' : a.status === 'settled' ? 'مسدّدة' : 'ملغاة' }}
               </AppBadge>
             </div>
-            <div class="text-xs text-gray-500 mt-1">
+            <div class="text-xs text-gray-500 dark:text-gray-500 mt-1">
               المتبقي: {{ a.remaining_balance.toLocaleString('ar-EG') }} ج — صرفت في {{ formatDate(a.disbursed_date) }}
             </div>
             <button v-if="a.status === 'active' && a.remaining_balance == a.amount"
@@ -879,12 +856,12 @@ onMounted(fetchEmployees)
         </div>
         <EmptyState v-else icon="💰" title="لا يوجد سلف مسجّلة" />
 
-        <div class="border-t border-stone-100 pt-4 space-y-3">
-          <div class="text-xs font-semibold text-gray-500 uppercase">تسجيل سلفة جديدة</div>
+        <div class="border-t border-stone-100 dark:border-border/50 pt-4 space-y-3">
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تسجيل سلفة جديدة</div>
           <AppInput v-model.number="advanceForm.amount" type="number" placeholder="المبلغ (جنيه)" />
-          <label class="block text-xs font-semibold text-gray-500">تاريخ الصرف</label>
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">تاريخ الصرف</label>
           <input v-model="advanceForm.disbursed_date" type="date"
-            class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+            class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
           <AppInput v-model.number="advanceForm.monthly_deduction_amount" type="number" placeholder="القسط الشهري (جنيه)" />
           <AppInput v-model="advanceForm.notes" placeholder="ملاحظات (اختياري)" />
           <AppButton :disabled="savingAdvance" @click="submitAdvance" variant="primary" size="sm">
@@ -898,24 +875,24 @@ onMounted(fetchEmployees)
     <AppModal :open="!!paymentModalEmployee" :title="`دفعات — ${paymentModalEmployee?.full_name ?? ''}`"
       @close="paymentModalEmployee = null">
       <div class="space-y-4">
-        <div v-if="paymentsLoading" class="text-center py-4 text-sm text-gray-400">جاري التحميل...</div>
+        <div v-if="paymentsLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</div>
         <div v-else-if="employeePayments.length" class="space-y-2">
-          <div v-for="p in employeePayments" :key="p.id" class="flex items-center justify-between text-sm bg-stone-50 rounded-lg px-3 py-2">
+          <div v-for="p in employeePayments" :key="p.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-2">
             <div>
-              <span class="font-medium text-gray-800">{{ p.amount.toLocaleString('ar-EG') }} ج</span>
-              <span class="text-xs text-gray-400 mr-2">{{ formatDate(p.payment_date) }}</span>
+              <span class="font-medium text-gray-800 dark:text-gray-200">{{ p.amount.toLocaleString('ar-EG') }} ج</span>
+              <span class="text-xs text-gray-400 dark:text-gray-500 mr-2">{{ formatDate(p.payment_date) }}</span>
             </div>
             <AppBadge size="sm" :variant="p.deducted ? 'success' : 'warning'">{{ p.deducted ? 'اتخصمت' : 'لسه' }}</AppBadge>
           </div>
         </div>
         <EmptyState v-else icon="📅" title="لا يوجد دفعات مسجّلة" />
 
-        <div class="border-t border-stone-100 pt-4 space-y-3">
-          <div class="text-xs font-semibold text-gray-500 uppercase">تسجيل دفعة جديدة</div>
+        <div class="border-t border-stone-100 dark:border-border/50 pt-4 space-y-3">
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تسجيل دفعة جديدة</div>
           <AppInput v-model.number="paymentForm.amount" type="number" placeholder="المبلغ (جنيه)" />
-          <label class="block text-xs font-semibold text-gray-500">تاريخ الدفعة</label>
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">تاريخ الدفعة</label>
           <input v-model="paymentForm.payment_date" type="date"
-            class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+            class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
           <AppInput v-model="paymentForm.notes" placeholder="ملاحظات (اختياري)" />
           <AppButton :disabled="savingPayment" @click="submitPayment" variant="primary" size="sm">
             {{ savingPayment ? 'جاري الحفظ...' : 'تسجيل الدفعة' }}
@@ -927,22 +904,22 @@ onMounted(fetchEmployees)
     <!-- wagdy.md H-07: استيراد حضور من Excel -->
     <AppModal :open="showImportModal" title="📥 استيراد حضور من Excel" @close="showImportModal = false">
       <div class="space-y-3">
-        <p class="text-xs text-gray-400">
+        <p class="text-xs text-gray-400 dark:text-gray-500">
           العمود الأول = كود الموظف أو اسمه الكامل زي المسجّل في النظام بالظبط، وباقي الأعمدة = أيام
           الشهر (1، 2، 3...) أو تواريخ كاملة. قيمة الخلية: p = حاضر، u = غائب، v = إجازة.
         </p>
         <div class="grid grid-cols-2 gap-2">
           <div>
-            <label class="block text-xs font-semibold text-gray-500 mb-1">السنة</label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500 mb-1">السنة</label>
             <AppInput v-model.number="importPeriodYear" type="number" />
           </div>
           <div>
-            <label class="block text-xs font-semibold text-gray-500 mb-1">الشهر</label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500 mb-1">الشهر</label>
             <AppInput v-model.number="importPeriodMonth" type="number" />
           </div>
         </div>
         <input type="file" accept=".xlsx,.xls" @change="onImportFilePicked"
-          class="w-full text-xs text-gray-600 file:ml-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
+          class="w-full text-xs text-gray-600 dark:text-gray-500 file:ml-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
 
         <div v-if="importResult" class="p-3 rounded-xl text-xs"
           :class="'error' in importResult ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'">
@@ -968,15 +945,15 @@ onMounted(fetchEmployees)
     <!-- wagdy.md H-03: رصيد الإجازة الشهري -->
     <AppModal :open="!!balanceModalEmployee" :title="`رصيد الإجازة — ${balanceModalEmployee?.full_name ?? ''}`"
       @close="balanceModalEmployee = null">
-      <div v-if="balancesLoading" class="text-center py-4 text-sm text-gray-400">جاري التحميل...</div>
+      <div v-if="balancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</div>
       <EmptyState v-else-if="!employeeLeaveBalances.length" icon="📊" title="لا يوجد رصيد إجازة مسجّل بعد"
         subtitle="يُحسب تلقائيًا أول كل شهر (7.5 يوم يُستحق شهريًا)" />
       <div v-else class="space-y-2">
-        <div v-for="b in employeeLeaveBalances" :key="b.id" class="flex items-center justify-between text-sm bg-stone-50 rounded-lg px-3 py-2">
-          <span class="text-gray-700">{{ monthLabel(b.period_year, b.period_month) }}</span>
+        <div v-for="b in employeeLeaveBalances" :key="b.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-2">
+          <span class="text-gray-700 dark:text-gray-300">{{ monthLabel(b.period_year, b.period_month) }}</span>
           <div class="text-left">
-            <div class="font-bold text-gray-900">{{ b.closing_balance }} يوم</div>
-            <div class="text-xs text-gray-400">+{{ b.accrued }} − {{ b.consumed }}</div>
+            <div class="font-bold text-gray-900 dark:text-gray-100">{{ b.closing_balance }} يوم</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500">+{{ b.accrued }} − {{ b.consumed }}</div>
           </div>
         </div>
       </div>
@@ -987,15 +964,15 @@ onMounted(fetchEmployees)
       :title="`تصحيح حضور — ${editingAttendance ? (employeeNameById[editingAttendance.employee_id] ?? `موظف #${editingAttendance.employee_id}`) : ''}`"
       @close="editingAttendance = null">
       <div class="space-y-3">
-        <label class="block text-xs font-semibold text-gray-500">وقت الحضور</label>
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">وقت الحضور</label>
         <input v-model="editForm.check_in" type="datetime-local"
-          class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
-        <label class="block text-xs font-semibold text-gray-500">وقت الانصراف</label>
+          class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">وقت الانصراف</label>
         <input v-model="editForm.check_out" type="datetime-local"
-          class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
-        <label class="block text-xs font-semibold text-gray-500">الحالة</label>
+          class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">الحالة</label>
         <select v-model="editForm.status"
-          class="w-full bg-white border border-stone-200 text-gray-700 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500">
+          class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500">
           <option value="present">حاضر</option>
           <option value="absent">غائب</option>
           <option value="late">متأخر</option>
@@ -1013,7 +990,7 @@ onMounted(fetchEmployees)
     <div v-if="tab === 'payroll'">
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
-        <span class="text-sm text-gray-400">جاري التحميل...</span>
+        <span class="text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</span>
       </div>
       <div v-else-if="!payrollRuns.length">
         <EmptyState icon="💰" title="لا توجد دفعات رواتب" />
@@ -1022,16 +999,16 @@ onMounted(fetchEmployees)
         <AppCard v-for="run in payrollRuns" :key="run.id" padding="md">
           <div class="flex items-center justify-between">
             <div>
-              <div class="font-bold text-gray-900">{{ monthLabel(run.period_year, run.period_month) }}</div>
-              <div class="text-sm text-gray-500 mt-0.5">إجمالي قبل الاستقطاعات: {{ (run.total_gross ?? 0).toLocaleString('ar-EG') }} ج</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100">{{ monthLabel(run.period_year, run.period_month) }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-500 mt-0.5">إجمالي قبل الاستقطاعات: {{ (run.total_gross ?? 0).toLocaleString('ar-EG') }} ج</div>
             </div>
             <div class="text-left">
-              <div class="text-xl font-black text-gray-900">{{ (run.total_net ?? 0).toLocaleString('ar-EG') }} ج</div>
+              <div class="text-xl font-black text-gray-900 dark:text-gray-100">{{ (run.total_net ?? 0).toLocaleString('ar-EG') }} ج</div>
               <AppBadge size="sm" :variant="statusVariant[run.status] ?? 'neutral'">{{ statusLabel(run.status) }}</AppBadge>
             </div>
           </div>
 
-          <div class="flex items-center justify-between mt-3 pt-3 border-t border-stone-100">
+          <div class="flex items-center justify-between mt-3 pt-3 border-t border-stone-100 dark:border-border/50">
             <AppButton size="sm" variant="secondary" @click="togglePayrollRunDetails(run)">
               {{ expandedRunId === run.id ? 'إخفاء القسائم' : 'عرض القسائم' }}
             </AppButton>
@@ -1044,19 +1021,19 @@ onMounted(fetchEmployees)
             </AppButton>
           </div>
 
-          <div v-if="expandedRunId === run.id" class="mt-3 pt-3 border-t border-stone-100">
+          <div v-if="expandedRunId === run.id" class="mt-3 pt-3 border-t border-stone-100 dark:border-border/50">
             <div v-if="payrollLinesLoading" class="flex items-center gap-2 py-2">
               <AppSpinner size="sm" />
-              <span class="text-xs text-gray-400">جاري تحميل القسائم...</span>
+              <span class="text-xs text-gray-400 dark:text-gray-500">جاري تحميل القسائم...</span>
             </div>
-            <div v-else-if="!payrollLinesByRun[run.id]?.length" class="text-xs text-gray-400 py-2">
+            <div v-else-if="!payrollLinesByRun[run.id]?.length" class="text-xs text-gray-400 dark:text-gray-500 py-2">
               لا توجد قسائم في هذه الدفعة
             </div>
             <div v-else class="space-y-1.5">
               <div v-for="line in payrollLinesByRun[run.id]" :key="line.id"
                 class="flex items-center justify-between text-sm">
-                <span class="text-gray-700">{{ employeeNameById[line.employee_id] ?? `موظف #${line.employee_id}` }}</span>
-                <span class="text-gray-900 font-semibold">{{ (line.net_salary ?? 0).toLocaleString('ar-EG') }} ج</span>
+                <span class="text-gray-700 dark:text-gray-300">{{ employeeNameById[line.employee_id] ?? `موظف #${line.employee_id}` }}</span>
+                <span class="text-gray-900 dark:text-gray-100 font-semibold">{{ (line.net_salary ?? 0).toLocaleString('ar-EG') }} ج</span>
               </div>
             </div>
           </div>
@@ -1068,7 +1045,7 @@ onMounted(fetchEmployees)
     <div v-if="tab === 'leaves'">
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
-        <span class="text-sm text-gray-400">جاري التحميل...</span>
+        <span class="text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</span>
       </div>
       <div v-else-if="!leaveRequests.length">
         <EmptyState icon="🌴" title="لا توجد طلبات إجازات معلقة" />
@@ -1077,9 +1054,9 @@ onMounted(fetchEmployees)
         <AppCard v-for="leave in leaveRequests" :key="leave.id" padding="md">
           <div class="flex items-start justify-between">
             <div>
-              <div class="font-bold text-gray-900">{{ employeeNameById[leave.employee_id] ?? `موظف #${leave.employee_id}` }}</div>
-              <div class="text-sm text-gray-500">{{ leaveTypeNameById[leave.leave_type_id] ?? 'إجازة' }} — {{ leave.days_requested }} أيام</div>
-              <div class="text-xs text-gray-400 mt-1">
+              <div class="font-bold text-gray-900 dark:text-gray-100">{{ employeeNameById[leave.employee_id] ?? `موظف #${leave.employee_id}` }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-500">{{ leaveTypeNameById[leave.leave_type_id] ?? 'إجازة' }} — {{ leave.days_requested }} أيام</div>
+              <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">
                 {{ formatDate(leave.start_date) }} → {{ formatDate(leave.end_date) }}
               </div>
             </div>
@@ -1096,12 +1073,12 @@ onMounted(fetchEmployees)
     <!-- Attendance Tab -->
     <div v-if="tab === 'attendance'" class="space-y-4">
       <div class="flex flex-wrap items-center gap-3">
-        <label class="text-xs font-semibold text-gray-500">من</label>
+        <label class="text-xs font-semibold text-gray-500 dark:text-gray-500">من</label>
         <input v-model="attendanceDateFrom" @change="fetchAttendance" type="date"
-          class="bg-white border border-stone-200 text-gray-700 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
-        <label class="text-xs font-semibold text-gray-500">إلى</label>
+          class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+        <label class="text-xs font-semibold text-gray-500 dark:text-gray-500">إلى</label>
         <input v-model="attendanceDateTo" @change="fetchAttendance" type="date"
-          class="bg-white border border-stone-200 text-gray-700 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
+          class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
         <AppButton v-if="auth.hasRole('manager')" size="sm" variant="secondary" @click="openImportModal">
           📥 استيراد من Excel
         </AppButton>
@@ -1112,7 +1089,7 @@ onMounted(fetchEmployees)
       <AppCard title="سياسة الحضور والانصراف" padding="md">
         <div v-if="policyLoading" class="flex items-center gap-3 py-4">
           <AppSpinner size="sm" />
-          <span class="text-sm text-gray-400">جاري التحميل...</span>
+          <span class="text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</span>
         </div>
         <div v-else class="space-y-4">
           <p v-if="!policyConfigured" class="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
@@ -1136,33 +1113,33 @@ onMounted(fetchEmployees)
 
       <div v-if="attendanceLoading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
-        <span class="text-sm text-gray-400">جاري التحميل...</span>
+        <span class="text-sm text-gray-400 dark:text-gray-500">جاري التحميل...</span>
       </div>
       <EmptyState v-else-if="!attendanceRecords.length" icon="⏰" title="لا توجد سجلات حضور"
         subtitle="لم يتم تسجيل أي حضور خلال الفترة المحددة" />
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الموظف</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">التاريخ</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحضور</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الانصراف</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">ساعات العمل</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase"></th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الموظف</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التاريخ</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحضور</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الانصراف</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">ساعات العمل</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="rec in attendanceRecords" :key="rec.id" class="border-t border-stone-100 hover:bg-stone-50">
-                <td class="px-4 py-3 text-sm font-semibold text-gray-900">
+              <tr v-for="rec in attendanceRecords" :key="rec.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+                <td class="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100">
                   {{ employeeNameById[rec.employee_id] ?? `موظف #${rec.employee_id}` }}
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ formatDate(rec.record_date) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ formatTime(rec.check_in) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ formatTime(rec.check_out) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ rec.hours_worked != null ? rec.hours_worked.toFixed(2) : '—' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatDate(rec.record_date) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTime(rec.check_in) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatTime(rec.check_out) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ rec.hours_worked != null ? rec.hours_worked.toFixed(2) : '—' }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="statusVariant[rec.status] ?? 'neutral'">{{ statusLabel(rec.status) }}</AppBadge>
                 </td>
@@ -1180,14 +1157,14 @@ onMounted(fetchEmployees)
     <div v-if="tab === 'leaderboard'" class="space-y-4">
       <div class="flex flex-wrap items-end gap-3">
         <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">من تاريخ</label>
+          <label class="block text-xs font-medium text-gray-500 dark:text-gray-500 mb-1">من تاريخ</label>
           <input v-model="leaderboardFrom" type="date"
-            class="px-3 py-1.5 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            class="px-3 py-1.5 rounded-lg border border-stone-200 dark:border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
         </div>
         <div>
-          <label class="block text-xs font-medium text-gray-500 mb-1">إلى تاريخ</label>
+          <label class="block text-xs font-medium text-gray-500 dark:text-gray-500 mb-1">إلى تاريخ</label>
           <input v-model="leaderboardTo" type="date"
-            class="px-3 py-1.5 rounded-lg border border-stone-200 text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
+            class="px-3 py-1.5 rounded-lg border border-stone-200 dark:border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
         </div>
         <AppButton size="sm" @click="fetchLeaderboard">تحديث</AppButton>
       </div>
@@ -1198,23 +1175,23 @@ onMounted(fetchEmployees)
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الترتيب</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الموظف</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">إجمالي المبيعات</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">عدد الطلبات</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الترتيب</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الموظف</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">إجمالي المبيعات</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">عدد الطلبات</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="(entry, i) in leaderboard" :key="entry.user_id" class="border-t border-stone-100 hover:bg-stone-50">
+              <tr v-for="(entry, i) in leaderboard" :key="entry.user_id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3 text-lg font-black">{{ leaderboardMedal(i) }}</td>
-                <td class="px-4 py-3 text-sm font-semibold text-gray-900">
+                <td class="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100">
                   {{ entry.employee_name ?? `موظف #${entry.user_id}` }}
-                  <span v-if="entry.employee_code" class="text-gray-400 font-normal">({{ entry.employee_code }})</span>
+                  <span v-if="entry.employee_code" class="text-gray-400 dark:text-gray-500 font-normal">({{ entry.employee_code }})</span>
                 </td>
                 <td class="px-4 py-3 text-sm font-bold text-green-700">{{ Number(entry.total_sales).toLocaleString('ar-EG') }} ج</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ entry.order_count }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ entry.order_count }}</td>
               </tr>
             </tbody>
           </table>

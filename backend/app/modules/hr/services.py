@@ -831,6 +831,43 @@ def generate_payslip_pdf(db: Session, run_id: int, employee_id: int) -> bytes:
     )
 
 
+def generate_bulk_payroll_pdf(db: Session, run_id: int) -> bytes:
+    """PDF كشف مرتبات جماعي — جدول بكل الموظفين في صفحة واحدة أو أكثر.
+    H-06 من wagdy.md — للمحاسب لطباعة الكشف الرسمي بدل Excel."""
+    from app.resort_os.report_builder import builder  # noqa: PLC0415
+
+    run = crud.get_payroll_run(db, run_id)
+    if not run:
+        raise ValueError(f"كشف الرواتب {run_id} غير موجود")
+
+    lines = crud.list_lines_for_run(db, run_id)
+    employees = {e.id: e for e in crud.list_employees(db, run.branch_id, limit=10000)[0]}
+
+    period_str = f"{run.period_year}-{run.period_month:02d}"
+    rows = []
+    for ln in lines:
+        emp = employees.get(ln.employee_id)
+        rows.append([
+            emp.full_name if emp else f"#{ln.employee_id}",
+            f"{ln.basic_salary:,.0f}",
+            f"{ln.gross_salary:,.0f}",
+            f"{ln.employee_si:,.0f}",
+            f"{ln.monthly_tax:,.0f}",
+            f"{(ln.penalty_deduction or 0) + (ln.late_penalty_deduction or 0):,.0f}",
+            f"{ln.advance_deduction or 0:,.0f}",
+            f"{ln.net_salary:,.2f}",
+        ])
+
+    headers = ["الموظف", "الأساسي", "الإجمالي", "تأمينات", "ضريبة", "جزاءات", "سلف", "الصافي"]
+
+    return builder.table_pdf(
+        title=f"كشف مرتبات — {period_str}",
+        subtitle=f"إجمالي صافي: {float(run.total_net or 0):,.2f} EGP  |  عدد الموظفين: {len(rows)}",
+        headers=headers,
+        rows=rows,
+    )
+
+
 def generate_payroll_excel(db: Session, run_id: int) -> bytes:
     """Excel كشف رواتب كامل."""
     from app.resort_os.report_builder import builder  # noqa: PLC0415
