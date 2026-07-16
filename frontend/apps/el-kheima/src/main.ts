@@ -39,14 +39,10 @@ async function main() {
 
   const auth = useAuthStore()
 
-  if (auth.token) {
-    try {
-      await auth.fetchUser()
-    } catch {
-      // token invalid/expired — clear it, the router guard will bounce to /login
-      auth.logout()
-    }
-  }
+  // T-01: access_token مش في localStorage تاني — نجدّده من httpOnly cookie
+  // عبر POST /auth/refresh عند كل reload. لو ما فيش cookie صالح (جلسة منتهية
+  // أو أول مرة) يرجع false والـ router guard بيودّي /login.
+  await auth.initAuth()
 
   app.use(router)
   app.mount('#app')

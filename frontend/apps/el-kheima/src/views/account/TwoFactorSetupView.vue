@@ -107,7 +107,7 @@ onMounted(() => {
         </p>
       </div>
 
-      <div class="bg-white rounded-2xl p-8 shadow-2xl">
+      <div class="bg-white dark:bg-surface rounded-2xl p-8 shadow-2xl">
         <!-- Already enabled -->
         <template v-if="isEnabled">
           <div class="flex items-center gap-3 bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3 mb-5">
@@ -125,14 +125,14 @@ onMounted(() => {
             </button>
 
             <div v-else class="space-y-3 border-t border-stone-100 pt-4 mt-1">
-              <label class="block text-sm font-medium text-gray-700">أدخل كود المصادقة الحالي لتأكيد التعطيل</label>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">أدخل كود المصادقة الحالي لتأكيد التعطيل</label>
               <input
                 v-model="disableCode"
                 type="text"
                 inputmode="numeric"
                 maxlength="6"
                 placeholder="000000"
-                class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-red-500 text-center tracking-widest text-lg font-mono"
+                class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-red-500 text-center tracking-widest text-lg font-mono"
               />
               <p v-if="disableError" class="text-red-600 text-sm">{{ disableError }}</p>
               <div class="flex gap-2">
@@ -173,7 +173,7 @@ onMounted(() => {
               <img
                 :src="qrUrl"
                 alt="امسح هذا الكود بتطبيق المصادقة"
-                class="w-40 h-40 rounded-xl border border-stone-200"
+                class="w-40 h-40 rounded-xl border border-stone-200 dark:border-border"
                 @error="qrFailed = true"
               />
             </div>
@@ -181,12 +181,12 @@ onMounted(() => {
               تعذّر تحميل صورة الكود (يحتاج اتصال بالإنترنت) — أدخل المفتاح يدويًا في تطبيق المصادقة بدل المسح.
             </p>
 
-            <div class="bg-stone-50 border border-stone-200 rounded-xl px-4 py-3 mb-5 text-center">
+            <div class="bg-stone-50 border border-stone-200 dark:border-border rounded-xl px-4 py-3 mb-5 text-center">
               <div class="text-xs text-gray-500 mb-1">المفتاح اليدوي</div>
               <div class="font-mono text-sm tracking-widest text-gray-800 select-all">{{ secret }}</div>
             </div>
 
-            <label class="block text-sm font-medium text-gray-700 mb-1">كود التحقق</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كود التحقق</label>
             <input
               v-model="code"
               type="text"
@@ -194,7 +194,7 @@ onMounted(() => {
               maxlength="6"
               placeholder="000000"
               autocomplete="one-time-code"
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono mb-2"
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono mb-2"
               @keyup.enter="submitEnable"
             />
             <p v-if="enableError" class="text-red-600 text-sm mb-3">{{ enableError }}</p>

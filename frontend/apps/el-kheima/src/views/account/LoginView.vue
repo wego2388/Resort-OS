@@ -51,7 +51,7 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center p-4">
+  <div class="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 dark:from-gray-950 dark:via-gray-900 dark:to-gray-900 flex items-center justify-center p-4">
     <div class="w-full max-w-md">
       <!-- Logo -->
       <div class="text-center mb-8">
@@ -65,32 +65,32 @@ async function handleLogin() {
       </div>
 
       <!-- Form card -->
-      <div class="bg-white rounded-2xl p-8 shadow-2xl">
+      <div class="bg-white dark:bg-surface dark:border dark:border-border rounded-2xl p-8 shadow-2xl">
         <!-- Language switcher — top of card so user can pick language before entering credentials -->
         <div class="flex justify-end mb-4">
           <LanguageSwitcher variant="compact" />
         </div>
 
-        <h2 class="text-xl font-bold text-gray-900 mb-6 text-center">{{ t('backoffice.login.title') }}</h2>
+        <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-6 text-center">{{ t('backoffice.login.title') }}</h2>
         <form @submit.prevent="handleLogin" class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('backoffice.login.username') }}</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.login.username') }}</label>
             <input
               v-model="username"
               type="text"
               placeholder="username"
               autocomplete="username"
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('backoffice.login.password') }}</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.login.password') }}</label>
             <input
               v-model="password"
               type="password"
               placeholder="••••••••"
               autocomplete="current-password"
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:placeholder-gray-500"
             />
           </div>
           <div v-if="!needsOtp" class="text-center -mt-2">
@@ -99,7 +99,7 @@ async function handleLogin() {
             </router-link>
           </div>
           <div v-if="needsOtp">
-            <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('backoffice.login.twoFaCode') }}</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.login.twoFaCode') }}</label>
             <input
               v-model="otpCode"
               type="text"
@@ -108,9 +108,9 @@ async function handleLogin() {
               :placeholder="t('backoffice.login.twoFaPlaceholder')"
               autocomplete="one-time-code"
               autofocus
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900"
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900"
             />
-            <p class="text-xs text-gray-400 mt-1">{{ t('backoffice.login.twoFaHint') }}</p>
+            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.login.twoFaHint') }}</p>
           </div>
           <button
             type="submit"
@@ -124,7 +124,7 @@ async function handleLogin() {
             {{ loading ? t('backoffice.login.signingIn') : t('backoffice.login.signIn') }}
           </button>
         </form>
-        <p class="text-center text-xs text-gray-400 mt-6">{{ t('backoffice.login.footer') }}</p>
+        <p class="text-center text-xs text-gray-400 dark:text-gray-500 mt-6">{{ t('backoffice.login.footer') }}</p>
       </div>
     </div>
   </div>

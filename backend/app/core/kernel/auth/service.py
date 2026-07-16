@@ -80,6 +80,10 @@ class AuthService(BaseService):
         max_attempts = getattr(self.settings, "MAX_LOGIN_ATTEMPTS", 5)
         lockout_minutes = getattr(self.settings, "LOCKOUT_MINUTES", 30)
 
+        # trim whitespace — يمنع فشل الـ login بسبب space زيادة من autofill أو paste
+        email = email.strip()
+        password = password.strip()
+
         user = self.repo.get_by_email(email)
         if not user:
             # Equalize timing with the wrong-password path (bcrypt ~300ms) and

@@ -84,7 +84,7 @@ async function handleSubmit() {
         <p class="text-blue-200 text-sm">{{ t('backoffice.resetPassword.subtitle') }}</p>
       </div>
 
-      <div class="bg-white rounded-2xl p-8 shadow-2xl">
+      <div class="bg-white dark:bg-surface rounded-2xl p-8 shadow-2xl">
         <div class="flex justify-end mb-4">
           <LanguageSwitcher variant="compact" />
         </div>
@@ -114,24 +114,24 @@ async function handleSubmit() {
         <template v-else>
           <form @submit.prevent="handleSubmit" class="space-y-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('backoffice.resetPassword.newPassword') }}</label>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.resetPassword.newPassword') }}</label>
               <input
                 v-model="newPassword"
                 type="password"
                 placeholder="••••••••"
                 autocomplete="new-password"
                 autofocus
-                class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
               />
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">{{ t('backoffice.resetPassword.confirmPassword') }}</label>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.resetPassword.confirmPassword') }}</label>
               <input
                 v-model="confirmPassword"
                 type="password"
                 placeholder="••••••••"
                 autocomplete="new-password"
-                class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
               />
             </div>
             <p v-if="error" class="text-red-600 text-sm">{{ error }}</p>

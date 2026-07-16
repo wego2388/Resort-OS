@@ -30,13 +30,16 @@ class CoreSettings(BaseSettings):
     SECURITY_FRAME_OPTIONS: str = "DENY"
     SECURITY_REFERRER_POLICY: str = "strict-origin-when-cross-origin"
     SECURITY_PERMISSIONS_POLICY: str = "geolocation=(), microphone=(), camera=(), payment=()"
+    # dev: CSP مخففة — تسمح بـ Google Fonts + WebSocket + أي origin محلي
+    # production: يُعاد تعريفها في .env.prod بـ CSP صارمة
     SECURITY_CSP: str = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "img-src 'self' data: https:; "
-        "font-src 'self' data:; "
-        "connect-src 'self'"
+        "font-src 'self' data: https://fonts.gstatic.com; "
+        "connect-src 'self' ws: wss:; "
+        "worker-src 'self' blob:"
     )
     SECURITY_HSTS_MAX_AGE: int = 31536000
     SECURITY_HSTS_PRELOAD: bool = False

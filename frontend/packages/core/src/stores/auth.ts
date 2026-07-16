@@ -1,22 +1,29 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { api } from '../api/client'
+import { api, setApiToken, registerAuthClearHandler } from '../api/client'
 import { ENDPOINTS } from '../api/endpoints'
 import type { User } from '../types'
 
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
-  const token = ref<string | null>(localStorage.getItem('access_token'))
+  // T-01: access_token في memory فقط (مش localStorage) — يتجدّد من httpOnly
+  // cookie عبر /auth/refresh عند كل reload. المهاجمة بـ XSS تقدر تسرق
+  // localStorage بس مش httpOnly cookie.
+  const token = ref<string | null>(null)
   const isLoading = ref(false)
+
+  // client.ts's 401→refresh-fails path calls this to clear our state without
+  // importing this store back (that would be circular — see client.ts).
+  registerAuthClearHandler(() => {
+    user.value = null
+    token.value = null
+  })
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
   const role = computed(() => user.value?.role ?? '')
   const branchId = computed(() => user.value?.branch_id ?? 1)
 
-  // Mirrors backend ROLE_LEVELS (app/core/deps.py) — numeric so roles that share
-  // a level (e.g. cashier/receptionist, waiter/chef/kitchen) compare correctly.
-  // An array-indexOf hierarchy can't express two roles at the same level, which
-  // is exactly what broke silently before this was ever exercised by a router guard.
+  // Mirrors backend ROLE_LEVELS (app/core/deps.py)
   const ROLE_LEVELS: Record<string, number> = {
     super_admin: 100,
     admin: 80,
@@ -40,47 +47,22 @@ export const useAuthStore = defineStore('auth', () => {
     return userLevel >= minLevel
   }
 
-  // Numeric level of the current user — for components that gate on a raw
-  // threshold (e.g. PinGuardModal's `minLevel` prop, mirroring backend
-  // core.services.resolve_pin_approval's `min_approver_level`) instead of a
-  // named role. hasRole() above stays the primary API for router guards/
-  // v-if checks against a known role name.
   const roleLevel = computed(() => ROLE_LEVELS[role.value] ?? 0)
 
-  // Mirrors backend app/core/deps.py::MANDATORY_2FA_ROLES exactly (same
-  // duplication pattern as ROLE_LEVELS above — see CLAUDE.md § 14 rule 5).
-  // Every request from these roles gets a 403 `2FA_REQUIRED` from the backend
-  // until two_factor_enabled is true; before this the frontend had zero
-  // awareness of that gate, so a super_admin/accountant without 2FA set up
-  // just saw every screen silently render empty/zeroed data.
+  // Mirrors backend app/core/deps.py::MANDATORY_2FA_ROLES
   const MANDATORY_2FA_ROLES = new Set(['super_admin', 'accountant'])
 
   const needsTwoFactorSetup = computed(
     () => !!user.value && MANDATORY_2FA_ROLES.has(role.value) && !user.value.two_factor_enabled,
   )
 
-  // otpCode: only relevant once the backend has LOGIN_2FA_ENFORCED=true — a
-  // 2FA-enabled account then gets a 401 `2FA_CODE_REQUIRED`/`2FA_CODE_INVALID`
-  // from POST /login until the current TOTP code is submitted alongside the
-  // password (see LoginView.vue). Harmless to always send the param: the
-  // backend only reads it when LOGIN_2FA_ENFORCED is on and the account has
-  // 2FA enabled, so this is a no-op for every other account/config.
-  async function login(username: string, password: string, otpCode?: string) {
-    isLoading.value = true
-    try {
-      const form = new URLSearchParams()
-      form.append('username', username)
-      form.append('password', password)
-      if (otpCode) form.append('otp_code', otpCode)
-      const res = await api.post(ENDPOINTS.auth.login, form, {
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      })
-      token.value = res.data.access_token
-      localStorage.setItem('access_token', token.value!)
-      await fetchUser()
-    } finally {
-      isLoading.value = false
-    }
+  // ── helpers ─────────────────────────────────────────────────────────────
+
+  // نقطة واحدة لتغيير الـ token — يحدّث Pinia + axios.defaults في نفس الوقت
+  // عشان كل request تاني (REST + WebSocket) يلاقي الـ token جاهز فوراً.
+  function _setToken(t: string | null) {
+    token.value = t
+    setApiToken(t)
   }
 
   async function fetchUser() {
@@ -89,16 +71,47 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = res.data
   }
 
-  // تبديل هوية المشغّل على جهاز كاشير واحد (نفس الـ terminal session) —
-  // راجع core.services.pin_switch_login. مش login جديد فعليًا (نفس الجهاز،
-  // نفس الشاشة)، بس التوكن بيتغيّر فعليًا عشان كل عملية بعد كده تتسجل باسم
-  // المشغّل الحقيقي (cashier_id/voided_by/...) مش أي حد سجّل دخول الأول مرة.
+  // ── Public actions ───────────────────────────────────────────────────────
+
+  async function login(username: string, password: string, otpCode?: string) {
+    isLoading.value = true
+    try {
+      const form = new URLSearchParams()
+      form.append('username', username.trim())
+      form.append('password', password.trim())
+      if (otpCode) form.append('otp_code', otpCode.trim())
+      const res = await api.post(ENDPOINTS.auth.login, form, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        withCredentials: true,
+      })
+      _setToken(res.data.access_token)
+      await fetchUser()
+    } finally {
+      isLoading.value = false
+    }
+  }
+
+  // T-01: يُستدعى عند app init (main.ts) — يجدّد access_token من httpOnly cookie.
+  // لو ما فيش cookie صالح يرجع false والـ router guard بيودّي /login.
+  async function initAuth(): Promise<boolean> {
+    try {
+      const res = await api.post(ENDPOINTS.auth.refresh, {}, { withCredentials: true })
+      _setToken(res.data.access_token)
+      await fetchUser()
+      return true
+    } catch {
+      _setToken(null)
+      user.value = null
+      return false
+    }
+  }
+
+  // تبديل هوية المشغّل على جهاز كاشير (pin switch)
   async function pinSwitch(targetUserId: number, pin: string) {
     isLoading.value = true
     try {
       const res = await api.post(ENDPOINTS.core.pinSwitch, { user_id: targetUserId, pin })
-      token.value = res.data.access_token
-      localStorage.setItem('access_token', token.value!)
+      _setToken(res.data.access_token)
       user.value = res.data.user
     } finally {
       isLoading.value = false
@@ -106,10 +119,16 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   function logout() {
+    // نبلّغ الـ backend يمسح الـ refresh_token cookie — fire and forget
+    api.post(ENDPOINTS.auth.logout, { token: token.value ?? '' }, { withCredentials: true }).catch(() => {})
+    _setToken(null)
     user.value = null
-    token.value = null
-    localStorage.removeItem('access_token')
+    window.location.replace('/login')
   }
 
-  return { user, token, isAuthenticated, role, branchId, isLoading, login, logout, fetchUser, hasRole, roleLevel, needsTwoFactorSetup, pinSwitch }
+  return {
+    user, token, isAuthenticated, role, branchId, isLoading,
+    login, logout, fetchUser, initAuth, hasRole, roleLevel,
+    needsTwoFactorSetup, pinSwitch,
+  }
 })

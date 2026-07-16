@@ -17,7 +17,7 @@ Endpoints:
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Body, Form
+from fastapi import APIRouter, Depends, Body, Form, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
@@ -25,6 +25,43 @@ from typing import Callable, Optional
 
 from app.core.kernel.auth.service import AuthService
 from app.core.kernel.database import get_db
+
+# ── Cookie helpers ────────────────────────────────────────────────────────────
+# refresh_token يُخزَّن في httpOnly SameSite=Strict cookie (T-01).
+# access_token يبقى قصير العمر في memory الفرونت إند (Pinia store) فقط.
+#
+# Dev vs Production:
+#   production: SameSite=Strict + Secure=True  (HTTPS + same domain)
+#   development: SameSite=Lax  + Secure=False  (HTTP + cross-origin dev access
+#                via IP أو localhost من جهاز تاني على الشبكة المحلية)
+_REFRESH_COOKIE_NAME = "refresh_token"
+
+import os as _os
+_IS_DEV = _os.environ.get("ENVIRONMENT", "development") != "production"
+
+
+def _set_refresh_cookie(response: Response, token: str, max_age_days: int) -> None:
+    """يحط refresh_token في httpOnly cookie — Strict+Secure في production، Lax في dev."""
+    response.set_cookie(
+        key=_REFRESH_COOKIE_NAME,
+        value=token,
+        max_age=max_age_days * 86_400,
+        httponly=True,
+        samesite="lax" if _IS_DEV else "strict",
+        secure=not _IS_DEV,   # False في dev (HTTP) — True في production (HTTPS)
+        path="/api/v1/auth",  # مش /api/v1/ كاملة — الـ cookie ميتبعتش مع كل request
+    )
+
+
+def _clear_refresh_cookie(response: Response) -> None:
+    """يمسح refresh_token cookie عند logout."""
+    response.delete_cookie(
+        key=_REFRESH_COOKIE_NAME,
+        path="/api/v1/auth",
+        httponly=True,
+        samesite="lax" if _IS_DEV else "strict",
+        secure=not _IS_DEV,
+    )
 
 
 class _PublicUserOut(BaseModel):
@@ -69,6 +106,7 @@ def build_auth_router(
 
     @router.post("/login")
     def login(
+        response: Response,
         form_data: OAuth2PasswordRequestForm = Depends(),
         otp_code: Optional[str] = Form(None),
         auth: AuthService = Depends(get_auth_service),
@@ -76,7 +114,10 @@ def build_auth_router(
         result = auth.login(form_data.username, form_data.password, otp_code=otp_code)
         user = result.pop("_user", None)
         if user:
-            result["refresh_token"] = auth.create_refresh_token(user.id)
+            refresh = auth.create_refresh_token(user.id)
+            _set_refresh_cookie(response, refresh, auth.settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        # refresh_token لا يرجع في الـ body — في httpOnly cookie فقط (T-01)
+        result.pop("refresh_token", None)
         return result
 
     @router.post("/register", response_model=_PublicUserOut)
@@ -97,14 +138,20 @@ def build_auth_router(
 
     @router.post("/refresh")
     def refresh(
-        payload: dict = Body(...),
+        response: Response,
+        request: Request,
+        payload: dict = Body(default={}),
         auth: AuthService = Depends(get_auth_service),
     ):
-        """Exchange a refresh token for a new access + refresh token (rotation)."""
-        from fastapi import HTTPException
-        from datetime import timedelta
-        from app.core.kernel.security import create_access_token
-        token = payload.get("refresh_token", "")
+        """يستبدل refresh_token بـ access_token جديد (rotation).
+        الـ refresh_token يُقرأ من httpOnly cookie أولاً (T-01)؛
+        fallback لـ body للتوافق مع clients قديمة."""
+        from fastapi import HTTPException  # noqa: PLC0415
+        from datetime import timedelta  # noqa: PLC0415
+        from app.core.kernel.security import create_access_token  # noqa: PLC0415
+
+        # httpOnly cookie هو المصدر الأساسي (T-01) — body كـ fallback
+        token = request.cookies.get(_REFRESH_COOKIE_NAME) or payload.get("refresh_token", "")
         fingerprint = payload.get("device_fingerprint")
         result = auth.rotate_refresh_token(token, fingerprint)
         if not result:
@@ -116,9 +163,10 @@ def build_auth_router(
             algorithm=settings.ALGORITHM,
             expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         )
+        # refresh_token الجديد في cookie (T-01) — لا يُعاد في body
+        _set_refresh_cookie(response, new_refresh_token, settings.REFRESH_TOKEN_EXPIRE_DAYS)
         return {
             "access_token": access,
-            "refresh_token": new_refresh_token,
             "token_type": "bearer",
         }
 
@@ -150,12 +198,16 @@ def build_auth_router(
 
     @router.post("/logout")
     def logout(
-        payload: dict = Body(...),
+        response: Response,
+        request: Request,
+        payload: dict = Body(default={}),
         current_user=Depends(_get_current_user),
         auth: AuthService = Depends(get_auth_service),
     ):
         token = payload.get("token", "")
         auth.revoke_token(token, current_user.id)
+        # امسح الـ refresh_token cookie (T-01)
+        _clear_refresh_cookie(response)
         return {"message": "Logged out successfully."}
 
     @router.post("/change-password")
