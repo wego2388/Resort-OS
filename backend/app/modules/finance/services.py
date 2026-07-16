@@ -657,64 +657,24 @@ def close_shift(
     variance = counted_cash - expected_cash
     abs_variance = abs(variance)
 
-    # حد الرفض (reject) = أكبر قيمة بين نسبة مئوية من إجمالي مبيعات الوردية
-    # (CASH_VARIANCE_REJECT_PCT) أو مبلغ ثابت (CASH_VARIANCE_REJECT_FLOOR) —
-    # النسبة المئوية عشان الورديات الكبيرة (مبيعات ضخمة) تستاهل هامش أكبر
-    # بالجنيه من وردية صغيرة، والمبلغ الثابت عشان الورديات الصغيرة/بلا مبيعات
-    # برضو تتحمي من عجز كاش حقيقي بغض النظر عن حجم المبيعات.
-    reject_pct = Decimal(str(settings.CASH_VARIANCE_REJECT_PCT)) / Decimal("100")
-    reject_floor = Decimal(str(settings.CASH_VARIANCE_REJECT_FLOOR))
-    reject_threshold = max(reject_floor, (report.total_sales * reject_pct).quantize(Decimal("0.01")))
-    variance_override_approved_by: Optional[int] = None
-    if abs_variance > reject_threshold:
-        direction = "زيادة" if variance > 0 else "عجز"
-        if not data.force_close:
-            raise ValueError(
-                f"فرق الكاش ({direction} {abs_variance:,.2f} ج) يتخطى الحد المسموح لهذه "
-                f"الوردية ({reject_threshold:,.2f} ج، بناءً على إجمالي مبيعات "
-                f"{report.total_sales:,.2f} ج) — لا يمكن قفل الوردية. راجع العدّ مرة "
-                f"تانية أو استدعِ المدير لمراجعة الدرج قبل القفل، أو اطلب موافقة "
-                f"مدير بالـ PIN لتخطي الحد (force_close)."
-            )
-        # مدير حاضر فعليًا وموافق يعتمد الفرق ده رغم تخطّيه الحد — نفس بوابة
-        # موافقة PIN المستخدمة في إلغاء صنف الطلب (wagdy.md بند S-06)، مش
-        # منطق مصادقة موازٍ. لو المنفّذ نفسه مدير+، مفيش داعي لموافقة منفصلة.
-        from app.modules.core import crud as core_crud, services as core_services  # noqa: PLC0415
-        from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
-
-        variance_override_approved_by = core_services.resolve_pin_approval(
-            db, acting_user_level, data.approver_user_id, data.approver_pin,
-            min_approver_level=60,
-        )
-        core_crud.create_audit_log(db, AuditLogCreate(
-            user_id=closed_by, approved_by=variance_override_approved_by,
-            branch_id=shift.branch_id, action="close_shift_variance_override",
-            entity_type="cashier_shift", entity_id=shift.id,
-            new_data=json.dumps({
-                "direction": direction,
-                "variance": str(abs_variance),
-                "expected_cash": str(expected_cash),
-                "counted_cash": str(counted_cash),
-                "reject_threshold": str(reject_threshold),
-                "total_sales": str(report.total_sales),
-            }),
-        ))
+    # قرار Mohamed (2026-07-14): الوردية تُقفل دايماً بغض النظر عن حجم الفرق.
+    # الكاشير مش مسؤوليته الاحتجاز — مسؤوليته العدّ الصح.
+    # المحاسب هو اللي يراجع الفروقات في تفاصيل الوردية ويتابع.
+    # آلية الرفض (reject_threshold + force_close + PIN) أُلغيت بالكامل.
+    # كل الفروقات بتظهر كـ warning للمحاسب في CashierShiftRead.
 
     if lines_for_db is not None:
         crud.create_cash_count_lines(db, shift_id, lines_for_db)
 
-    # تحذير تشغيلي (مش رفض) — فرق صغير أعلى من التفكة الطبيعية لكن لسه أقل
-    # من حد الرفض، بيتسجّل عشان المدير يراجعه بعدين من غير ما يمنع الكاشير
-    # من إنهاء ورديته والمغادرة (راجع reconciliation_ok/warning في CashierShiftRead).
+    # warning تشغيلي — الوردية تُقفل دايماً، الفرق يُسجَّل ويظهر للمحاسب.
     warning_threshold = Decimal(str(settings.CASH_VARIANCE_WARNING_ABS))
     reconciliation_ok = abs_variance <= warning_threshold
     reconciliation_warning = None
     if not reconciliation_ok:
         direction = "زيادة" if variance > 0 else "عجز"
         reconciliation_warning = (
-            f"⚠️ فرق كاش غير معتاد: {direction} {abs_variance:,.2f} ج "
-            f"(متوقع {expected_cash:,.2f} ج — معدود {counted_cash:,.2f} ج) — "
-            f"يُنصح بمراجعة المدير."
+            f"⚠️ فرق كاش: {direction} {abs_variance:,.2f} ج "
+            f"(متوقع {expected_cash:,.2f} ج — معدود {counted_cash:,.2f} ج)"
         )
 
     shift.expected_cash = expected_cash

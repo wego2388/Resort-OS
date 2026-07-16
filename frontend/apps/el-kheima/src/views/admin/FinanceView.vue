@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api, ENDPOINTS } from '@resort-os/core'
+import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
+const auth = useAuthStore()
+const branchId = computed(() => auth.branchId ?? 1)
 const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'depreciation' | 'bank-reconciliation' | 'shifts'>('overview')
 
 interface Check { id: number; check_number: string; amount: number; drawer_name: string; due_date: string; status: string; bank_name: string }
@@ -22,10 +23,9 @@ interface ShiftItem {
 const shifts      = ref<ShiftItem[]>([])
 const shiftsTotal = ref(0)
 const shiftStatus = ref<'all' | 'open' | 'closed'>('all')
-// فلتر "فرق > 0" (S-05) — الورديات اللي فيها فرق كاش حقيقي (زيادة أو عجز)
-// بس، بدل ما تتوه وسط ورديات مطابقة تمامًا (variance=0) أو لسه مفتوحة
-// (variance=null).
+// فلتر "فرق > 0" (S-05)
 const shiftVarianceOnly = ref(false)
+const loadingShifts = ref(false)
 
 const filteredShifts = computed(() =>
   shiftVarianceOnly.value
@@ -33,14 +33,29 @@ const filteredShifts = computed(() =>
     : shifts.value,
 )
 
+function parseShift(s: any): ShiftItem {
+  return {
+    ...s,
+    opening_float:  s.opening_float  != null ? Number(s.opening_float)  : 0,
+    expected_cash:  s.expected_cash  != null ? Number(s.expected_cash)  : null,
+    counted_cash:   s.counted_cash   != null ? Number(s.counted_cash)   : null,
+    variance:       s.variance       != null ? Number(s.variance)       : null,
+  }
+}
+
 async function loadShifts() {
+  loadingShifts.value = true
   try {
-    const params: Record<string, unknown> = { branch_id: branchId, page: 1, size: 30 }
+    const params: Record<string, unknown> = { branch_id: branchId.value, page: 1, size: 30 }
     if (shiftStatus.value !== 'all') params.status = shiftStatus.value
     const { data } = await api.get('/api/v1/finance/shifts', { params })
-    shifts.value      = data.items ?? []
+    shifts.value      = (data.items ?? []).map(parseShift)
     shiftsTotal.value = data.total ?? 0
-  } catch(e) { console.error(e) }
+  } catch(e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل الورديات')
+  } finally {
+    loadingShifts.value = false
+  }
 }
 
 // تدرّج لوني حسب حجم الفرق — مش ثنائي (مقبول/مرفوض) زي قبل كده: مطابق تمامًا
@@ -61,10 +76,12 @@ function shiftVarianceClass(v?: number | null): string {
 interface ShiftDetailReport {
   total_cash: number; total_card: number; total_credit: number; total_other: number
   total_sales: number; invoice_count: number; voided_count: number; voided_amount: number
-  cash_count: { denomination: number; currency: string; quantity: number; subtotal: number; egp_equivalent: number }[]
+  cash_count: { denomination: number; currency: string; quantity: number; subtotal: number; fx_rate: number; egp_equivalent: number }[]
+  foreign_currency_summary: { currency: string; total_foreign: number; fx_rate: number; egp_equivalent: number }[]
+  counted_cash_egp?: number | null
 }
 interface ShiftInvoiceLine {
-  payment_id: number; guest_name: string; amount: number; method: string
+  payment_id: number; folio_id: number; guest_name: string; amount: number; method: string
   posted_at: string; is_voided: boolean
 }
 const detailShift    = ref<ShiftItem | null>(null)
@@ -82,8 +99,37 @@ async function openShiftDetail(s: ShiftItem) {
       api.get(ENDPOINTS.finance.shiftReport(s.id)),
       api.get(ENDPOINTS.finance.shiftInvoices(s.id)),
     ])
-    detailReport.value = reportRes.data
-    detailInvoices.value = invoicesRes.data
+    // نحوّل Decimal strings لـ numbers
+    const r = reportRes.data
+    detailReport.value = {
+      ...r,
+      total_cash:    Number(r.total_cash    ?? 0),
+      total_card:    Number(r.total_card    ?? 0),
+      total_credit:  Number(r.total_credit  ?? 0),
+      total_other:   Number(r.total_other   ?? 0),
+      total_sales:   Number(r.total_sales   ?? 0),
+      voided_amount: Number(r.voided_amount ?? 0),
+      // cash_count: الـ backend بيرجّع Decimal كـ string — نحوّل كل الحقول العددية
+      cash_count: (r.cash_count ?? []).map((line: any) => ({
+        denomination:   Number(line.denomination   ?? 0),
+        currency:       line.currency ?? 'EGP',
+        quantity:       Number(line.quantity       ?? 0),
+        subtotal:       Number(line.subtotal       ?? 0),
+        fx_rate:        Number(line.fx_rate        ?? 1),
+        egp_equivalent: Number(line.egp_equivalent ?? 0),
+      })),
+      foreign_currency_summary: (r.foreign_currency_summary ?? []).map((fc: any) => ({
+        currency:       fc.currency,
+        total_foreign:  Number(fc.total_foreign  ?? 0),
+        fx_rate:        Number(fc.fx_rate        ?? 1),
+        egp_equivalent: Number(fc.egp_equivalent ?? 0),
+      })),
+      counted_cash_egp: r.counted_cash_egp != null ? Number(r.counted_cash_egp) : null,
+    }
+    detailInvoices.value = (invoicesRes.data ?? []).map((inv: any) => ({
+      ...inv,
+      amount: Number(inv.amount ?? 0),
+    }))
   } catch (e: any) {
     toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل تفاصيل الوردية')
   } finally {
@@ -127,8 +173,8 @@ async function loadDepreciation() {
   loading.value = true
   try {
     const [entriesRes, assetsRes] = await Promise.all([
-      api.get('/api/v1/finance/depreciation/entries', { params: { branch_id: branchId, size: 100 } }),
-      api.get('/api/v1/maintenance/assets', { params: { branch_id: branchId, size: 200 } }),
+      api.get('/api/v1/finance/depreciation/entries', { params: { branch_id: branchId.value, size: 100 } }),
+      api.get('/api/v1/maintenance/assets', { params: { branch_id: branchId.value, size: 100 } }),
     ])
     depreciationEntries.value = entriesRes.data.items ?? []
     const map: Record<number, string> = {}
@@ -143,7 +189,7 @@ async function runDepreciation() {
   lastRunResult.value = null
   try {
     const { data } = await api.post('/api/v1/finance/depreciation/run', {
-      branch_id: branchId, year: depYear.value, month: depMonth.value,
+      branch_id: branchId.value, year: depYear.value, month: depMonth.value,
     })
     lastRunResult.value = {
       total_amount: Number(data.total_amount),
@@ -171,7 +217,7 @@ const matchingInProgress = ref(false)
 async function loadBankAccounts() {
   loading.value = true
   try {
-    const { data } = await api.get('/api/v1/finance/bank-accounts', { params: { branch_id: branchId } })
+    const { data } = await api.get('/api/v1/finance/bank-accounts', { params: { branch_id: branchId.value } })
     bankAccounts.value = data
     if (!selectedBankAccountId.value && data.length) {
       selectedBankAccountId.value = data[0].id
@@ -203,7 +249,7 @@ async function createBankAccount() {
   }
   try {
     await api.post('/api/v1/finance/bank-accounts', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       bank_name: bankAccountForm.value.bank_name,
       account_name: bankAccountForm.value.account_name || bankAccountForm.value.bank_name,
       account_number: bankAccountForm.value.account_number,
@@ -251,7 +297,7 @@ async function loadCostCenters() {
   loading.value = true
   try {
     const res = await api.get('/api/v1/finance/cost-centers/report', {
-      params: { branch_id: branchId, date_from: ccDateFrom.value, date_to: ccDateTo.value },
+      params: { branch_id: branchId.value, date_from: ccDateFrom.value, date_to: ccDateTo.value },
     })
     ccLines.value = res.data.lines ?? []
     ccTotalRevenue.value = res.data.total_revenue ?? 0
@@ -270,7 +316,7 @@ const checkStatusConfig: Record<string, { label: string; variant: 'success' | 'w
 
 async function loadTab(t: typeof tab.value) {
   tab.value = t
-  if (t === 'shifts') await loadShifts()
+  if (t === 'shifts') { await loadShifts(); return }
   if (t === 'depreciation') { await loadDepreciation(); return }
   if (t === 'bank-reconciliation') { await loadBankAccounts(); return }
 
@@ -278,7 +324,7 @@ async function loadTab(t: typeof tab.value) {
   try {
     if (t === 'overview') {
       const res = await api.get('/api/v1/finance/reports/income-statement', {
-        params: { branch_id: branchId, date_from: firstOfMonth, date_to: today },
+        params: { branch_id: branchId.value, date_from: firstOfMonth, date_to: today },
       })
       financeData.value = {
         total_revenue: Number(res.data.total_revenue),
@@ -286,10 +332,10 @@ async function loadTab(t: typeof tab.value) {
         net_income: Number(res.data.net_income),
       }
     } else if (t === 'checks') {
-      const res = await api.get('/api/v1/finance/checks', { params: { branch_id: branchId } })
+      const res = await api.get('/api/v1/finance/checks', { params: { branch_id: branchId.value } })
       checks.value = res.data.checks ?? res.data.items ?? res.data
     } else if (t === 'accounts') {
-      const res = await api.get('/api/v1/finance/accounts', { params: { branch_id: branchId } })
+      const res = await api.get('/api/v1/finance/accounts', { params: { branch_id: branchId.value } })
       accounts.value = res.data.accounts ?? res.data.items ?? res.data
     } else if (t === 'cost-centers') {
       await loadCostCenters()
@@ -340,12 +386,12 @@ onMounted(() => loadTab('overview'))
 
 <template>
   <div dir="rtl">
-    <h2 class="text-2xl font-black text-gray-900 mb-6">المالية</h2>
+    <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">المالية</h2>
 
-    <div class="flex gap-1 bg-stone-100 p-1 rounded-xl mb-6 w-fit">
+    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
       <button v-for="t in [{ val: 'overview', label: 'نظرة عامة' }, { val: 'checks', label: 'الشيكات' }, { val: 'accounts', label: 'الحسابات' }, { val: 'cost-centers', label: 'مراكز التكلفة' }, { val: 'depreciation', label: 'إهلاك الأصول' }, { val: 'bank-reconciliation', label: 'التسوية البنكية' }, { val: 'shifts', label: 'الورديات' }]"
         :key="t.val" @click="loadTab(t.val as any)"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700']"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
       >{{ t.label }}</button>
     </div>
 
@@ -354,21 +400,21 @@ onMounted(() => loadTab('overview'))
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else-if="financeData" class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 mb-2">إجمالي الإيرادات</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إجمالي الإيرادات</div>
           <div class="text-3xl font-black text-green-600">{{ financeData.total_revenue.toLocaleString('ar-EG') }}</div>
-          <div class="text-xs text-gray-400 mt-1">جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
         </AppCard>
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 mb-2">إجمالي المصروفات</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إجمالي المصروفات</div>
           <div class="text-3xl font-black text-red-500">{{ financeData.total_expense.toLocaleString('ar-EG') }}</div>
-          <div class="text-xs text-gray-400 mt-1">جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
         </AppCard>
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 mb-2">صافي الربح</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">صافي الربح</div>
           <div :class="['text-3xl font-black', financeData.net_income >= 0 ? 'text-blue-700' : 'text-red-500']">
             {{ financeData.net_income.toLocaleString('ar-EG') }}
           </div>
-          <div class="text-xs text-gray-400 mt-1">جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
         </AppCard>
       </div>
       <AppCard v-else padding="lg">
@@ -382,22 +428,22 @@ onMounted(() => loadTab('overview'))
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">رقم الشيك</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الساحب</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المبلغ</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">تاريخ الاستحقاق</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">إجراء</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">رقم الشيك</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الساحب</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المبلغ</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تاريخ الاستحقاق</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">إجراء</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="check in checks" :key="check.id" class="border-t border-stone-100 hover:bg-stone-50">
-                <td class="px-4 py-3 font-mono text-sm text-gray-900">{{ check.check_number }}</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ check.drawer_name }}</td>
-                <td class="px-4 py-3 text-sm font-bold text-gray-900">{{ check.amount.toLocaleString('ar-EG') }} ج</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{{ new Date(check.due_date).toLocaleDateString('ar-EG') }}</td>
+              <tr v-for="check in checks" :key="check.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+                <td class="px-4 py-3 font-mono text-sm text-gray-900 dark:text-gray-100">{{ check.check_number }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ check.drawer_name }}</td>
+                <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ check.amount.toLocaleString('ar-EG') }} ج</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ new Date(check.due_date).toLocaleDateString('ar-EG') }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="checkStatusConfig[check.status]?.variant ?? 'neutral'">
                     {{ checkStatusConfig[check.status]?.label ?? check.status }}
@@ -431,19 +477,19 @@ onMounted(() => loadTab('overview'))
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الكود</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">اسم الحساب</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">النوع</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الرصيد</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الكود</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">اسم الحساب</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">النوع</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الرصيد</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="acc in accounts" :key="acc.id" class="border-t border-stone-100 hover:bg-stone-50">
-                <td class="px-4 py-3 font-mono text-sm text-gray-600">{{ acc.code }}</td>
-                <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ acc.name }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{{ acc.account_type }}</td>
+              <tr v-for="acc in accounts" :key="acc.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+                <td class="px-4 py-3 font-mono text-sm text-gray-600 dark:text-gray-500">{{ acc.code }}</td>
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ acc.name }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ acc.account_type }}</td>
                 <td class="px-4 py-3 text-sm font-bold" :class="acc.balance >= 0 ? 'text-green-600' : 'text-red-500'">
                   {{ acc.balance.toLocaleString('ar-EG') }} ج
                 </td>
@@ -463,12 +509,12 @@ onMounted(() => loadTab('overview'))
     <div v-if="tab === 'cost-centers'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 mb-1">من تاريخ</label>
-          <input v-model="ccDateFrom" type="date" class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">من تاريخ</label>
+          <input v-model="ccDateFrom" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 mb-1">إلى تاريخ</label>
-          <input v-model="ccDateTo" type="date" class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm" />
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">إلى تاريخ</label>
+          <input v-model="ccDateTo" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
         </div>
         <AppButton size="sm" @click="loadCostCenters">تطبيق</AppButton>
       </div>
@@ -478,20 +524,20 @@ onMounted(() => loadTab('overview'))
         <AppCard padding="none" class="mb-4">
           <div class="overflow-x-auto">
             <table class="w-full">
-              <thead class="bg-stone-50">
+              <thead class="bg-stone-50 dark:bg-gray-800/60">
                 <tr>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">مركز التكلفة</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الإيراد</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المصروف</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الصافي</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">مركز التكلفة</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الإيراد</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المصروف</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الصافي</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="line in ccLines" :key="line.code" class="border-t border-stone-100 hover:bg-stone-50">
-                  <td class="px-4 py-3 text-sm font-bold text-gray-900">{{ line.name }}</td>
+                <tr v-for="line in ccLines" :key="line.code" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+                  <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ line.name }}</td>
                   <td class="px-4 py-3 text-sm font-bold text-green-600">{{ line.revenue.toLocaleString('ar-EG') }} ج</td>
                   <td class="px-4 py-3 text-sm font-bold text-red-600">{{ line.expense.toLocaleString('ar-EG') }} ج</td>
-                  <td class="px-4 py-3 text-sm font-bold" :class="line.net >= 0 ? 'text-gray-900' : 'text-red-700'">
+                  <td class="px-4 py-3 text-sm font-bold" :class="line.net >= 0 ? 'text-gray-900 dark:text-gray-100' : 'text-red-700'">
                     {{ line.net.toLocaleString('ar-EG') }} ج
                   </td>
                 </tr>
@@ -502,17 +548,17 @@ onMounted(() => loadTab('overview'))
                 </tr>
               </tbody>
               <tfoot v-if="ccLines.length">
-                <tr class="border-t-2 border-stone-200 bg-stone-50">
-                  <td class="px-4 py-3 text-sm font-black text-gray-900">الإجمالي</td>
+                <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
+                  <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">الإجمالي</td>
                   <td class="px-4 py-3 text-sm font-black text-green-700">{{ ccTotalRevenue.toLocaleString('ar-EG') }} ج</td>
                   <td class="px-4 py-3 text-sm font-black text-red-700">{{ ccTotalExpense.toLocaleString('ar-EG') }} ج</td>
-                  <td class="px-4 py-3 text-sm font-black text-gray-900">{{ ccTotalNet.toLocaleString('ar-EG') }} ج</td>
+                  <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ ccTotalNet.toLocaleString('ar-EG') }} ج</td>
                 </tr>
               </tfoot>
             </table>
           </div>
         </AppCard>
-        <p class="text-[11px] text-gray-400">
+        <p class="text-[11px] text-gray-400 dark:text-gray-500">
           الأرقام محسوبة من القيود المحاسبية الفعلية (journal_lines) الموسومة بمركز التكلفة وقت
           الترحيل — الإيراد والمصروف (تكلفة البضاعة المباعة) الاتنين، مش الإيراد بس. قيود اتُرحّلت
           قبل هذا التحديث مالهاش وسم مركز تكلفة، فمش هتظهر هنا.
@@ -525,14 +571,14 @@ onMounted(() => loadTab('overview'))
       <AppCard class="mb-4">
         <div class="flex flex-wrap items-end gap-3">
           <div>
-            <label class="block text-xs text-gray-400 mb-1">السنة</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">السنة</label>
             <input v-model.number="depYear" type="number" min="2020" max="2100"
-              class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm w-28" />
+              class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm w-28" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 mb-1">الشهر</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الشهر</label>
             <input v-model.number="depMonth" type="number" min="1" max="12"
-              class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm w-20" />
+              class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm w-20" />
           </div>
           <AppButton size="sm" :loading="runningDepreciation" @click="runDepreciation">
             شغّل دورة الإهلاك
@@ -542,7 +588,7 @@ onMounted(() => loadTab('overview'))
           <p class="text-green-700 font-semibold">
             ترحّل إهلاك {{ lastRunResult.entries_count }} أصل — إجمالي {{ lastRunResult.total_amount.toLocaleString('ar-EG') }} ج
           </p>
-          <p v-if="lastRunResult.skipped.length" class="text-gray-400 text-xs mt-1">
+          <p v-if="lastRunResult.skipped.length" class="text-gray-400 dark:text-gray-500 text-xs mt-1">
             اتخطّى: {{ lastRunResult.skipped.join('، ') }}
           </p>
         </div>
@@ -552,20 +598,20 @@ onMounted(() => loadTab('overview'))
       <AppCard v-else padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
-            <thead class="bg-stone-50">
+            <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الأصل</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الشهر</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">قيمة الإهلاك</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">مجمّع الإهلاك بعدها</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الأصل</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الشهر</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">قيمة الإهلاك</th>
+                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">مجمّع الإهلاك بعدها</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="e in depreciationEntries" :key="e.id" class="border-t border-stone-100 hover:bg-stone-50">
-                <td class="px-4 py-3 text-sm font-medium text-gray-900">{{ assetsById[e.asset_id] ?? `أصل #${e.asset_id}` }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600">{{ e.month }}/{{ e.year }}</td>
+              <tr v-for="e in depreciationEntries" :key="e.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ assetsById[e.asset_id] ?? `أصل #${e.asset_id}` }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ e.month }}/{{ e.year }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-red-500">{{ Number(e.amount).toLocaleString('ar-EG') }} ج</td>
-                <td class="px-4 py-3 text-sm text-gray-700">{{ Number(e.accumulated_after).toLocaleString('ar-EG') }} ج</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ Number(e.accumulated_after).toLocaleString('ar-EG') }} ج</td>
               </tr>
               <tr v-if="depreciationEntries.length === 0">
                 <td colspan="4" class="px-4 py-8">
@@ -582,7 +628,7 @@ onMounted(() => loadTab('overview'))
     <div v-if="tab === 'bank-reconciliation'">
       <div class="flex justify-between items-center mb-4">
         <select v-if="bankAccounts.length" v-model.number="selectedBankAccountId" @change="loadStatementLinesAndSummary"
-          class="border border-stone-200 rounded-lg px-3 py-1.5 text-sm">
+          class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm">
           <option v-for="ba in bankAccounts" :key="ba.id" :value="ba.id">
             {{ ba.bank_name }} — {{ ba.account_number }}
           </option>
@@ -596,13 +642,13 @@ onMounted(() => loadTab('overview'))
       <AppCard v-if="showBankAccountForm" class="mb-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input v-model="bankAccountForm.bank_name" type="text" placeholder="اسم البنك"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="bankAccountForm.account_name" type="text" placeholder="اسم الحساب (اختياري)"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="bankAccountForm.account_number" type="text" placeholder="رقم الحساب"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="bankAccountForm.opening_balance" type="number" step="0.01" placeholder="الرصيد الافتتاحي"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <AppButton class="mt-3" size="sm" @click="createBankAccount">حفظ الحساب</AppButton>
       </AppCard>
@@ -612,21 +658,21 @@ onMounted(() => loadTab('overview'))
       <template v-else>
         <div v-if="reconciliationSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 mb-1">رصيد الدفاتر</div>
-            <div class="text-lg font-black text-gray-900">{{ reconciliationSummary.book_balance.toLocaleString('ar-EG') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">رصيد الدفاتر</div>
+            <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ reconciliationSummary.book_balance.toLocaleString('ar-EG') }}</div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 mb-1">رصيد كشف الحساب</div>
-            <div class="text-lg font-black text-gray-900">{{ reconciliationSummary.statement_balance.toLocaleString('ar-EG') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">رصيد كشف الحساب</div>
+            <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ reconciliationSummary.statement_balance.toLocaleString('ar-EG') }}</div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 mb-1">الفرق</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">الفرق</div>
             <div :class="['text-lg font-black', reconciliationSummary.is_reconciled ? 'text-green-600' : 'text-amber-600']">
               {{ reconciliationSummary.difference.toLocaleString('ar-EG') }}
             </div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 mb-1">الحالة</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">الحالة</div>
             <AppBadge :variant="reconciliationSummary.is_reconciled ? 'success' : 'warning'">
               {{ reconciliationSummary.is_reconciled ? 'متطابقة ✓' : 'غير متطابقة' }}
             </AppBadge>
@@ -642,18 +688,18 @@ onMounted(() => loadTab('overview'))
         <AppCard padding="none">
           <div class="overflow-x-auto">
             <table class="w-full">
-              <thead class="bg-stone-50">
+              <thead class="bg-stone-50 dark:bg-gray-800/60">
                 <tr>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">التاريخ</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الوصف</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">المبلغ</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الحالة</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التاريخ</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الوصف</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المبلغ</th>
+                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="line in statementLines" :key="line.id" class="border-t border-stone-100 hover:bg-stone-50">
-                  <td class="px-4 py-3 text-sm text-gray-600">{{ line.line_date }}</td>
-                  <td class="px-4 py-3 text-sm text-gray-900">{{ line.description }}</td>
+                <tr v-for="line in statementLines" :key="line.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
+                  <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ line.line_date }}</td>
+                  <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{{ line.description }}</td>
                   <td class="px-4 py-3 text-sm font-bold" :class="line.amount >= 0 ? 'text-green-600' : 'text-red-500'">
                     {{ Number(line.amount).toLocaleString('ar-EG') }}
                   </td>
@@ -678,10 +724,10 @@ onMounted(() => loadTab('overview'))
     <!-- Shifts tab -->
     <div v-if="tab === 'shifts'" class="space-y-4">
       <div class="flex items-center gap-3 flex-wrap">
-        <div class="flex gap-1 bg-stone-100 p-1 rounded-xl">
+        <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl">
           <button v-for="s in [{ v: 'all', l: 'الكل' }, { v: 'open', l: 'مفتوحة' }, { v: 'closed', l: 'مقفولة' }]"
             :key="s.v" @click="shiftStatus = s.v as any; loadShifts()"
-            :class="['px-3 py-1 rounded-lg text-xs font-semibold transition-all', shiftStatus === s.v ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500']">
+            :class="['px-3 py-1 rounded-lg text-xs font-semibold transition-all', shiftStatus === s.v ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500']">
             {{ s.l }}
           </button>
         </div>
@@ -689,13 +735,16 @@ onMounted(() => loadTab('overview'))
         <button
           @click="shiftVarianceOnly = !shiftVarianceOnly"
           :class="['px-3 py-1 rounded-lg text-xs font-semibold border transition-all',
-            shiftVarianceOnly ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white border-stone-200 text-gray-500']"
+            shiftVarianceOnly ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white dark:bg-surface border-stone-200 dark:border-border text-gray-500']"
         >⚠️ فرق &gt; 0 فقط</button>
-        <span class="text-xs text-gray-400">إجمالي: {{ shiftsTotal }} — معروض: {{ filteredShifts.length }}</span>
+        <!-- spinner أثناء التحميل -->
+        <AppSpinner v-if="loadingShifts" size="sm" />
+        <span class="text-xs text-gray-400 dark:text-gray-500">إجمالي: {{ shiftsTotal }} — معروض: {{ filteredShifts.length }}</span>
+        <button @click="loadShifts()" class="ms-auto px-3 py-1 rounded-lg text-xs font-semibold border border-stone-200 dark:border-border bg-white dark:bg-surface text-gray-500 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 transition-all">🔄 تحديث</button>
       </div>
-      <div class="overflow-x-auto rounded-xl border border-stone-200">
+      <div class="overflow-x-auto rounded-xl border border-stone-200 dark:border-border">
         <table class="w-full text-sm">
-          <thead class="bg-stone-50 text-xs text-gray-500 uppercase">
+          <thead class="bg-stone-50 dark:bg-gray-800/60 text-xs text-gray-500 dark:text-gray-500 uppercase">
             <tr>
               <th class="px-4 py-3 text-right">#</th>
               <th class="px-4 py-3 text-right">كاشير</th>
@@ -711,15 +760,15 @@ onMounted(() => loadTab('overview'))
           <tbody class="divide-y divide-stone-100">
             <tr
               v-for="s in filteredShifts" :key="s.id"
-              class="hover:bg-stone-50 transition-colors cursor-pointer"
+              class="hover:bg-stone-50 dark:bg-gray-800/60 transition-colors cursor-pointer"
               @click="openShiftDetail(s)"
             >
-              <td class="px-4 py-3 font-mono text-gray-500">#{{ s.id }}</td>
+              <td class="px-4 py-3 font-mono text-gray-500 dark:text-gray-500">#{{ s.id }}</td>
               <td class="px-4 py-3 font-semibold">{{ s.cashier_id }}</td>
-              <td class="px-4 py-3 text-gray-600 text-xs">
+              <td class="px-4 py-3 text-gray-600 dark:text-gray-500 text-xs">
                 {{ new Date(s.opened_at).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) }}
               </td>
-              <td class="px-4 py-3 text-gray-500 text-xs">
+              <td class="px-4 py-3 text-gray-500 dark:text-gray-500 text-xs">
                 {{ s.closed_at ? new Date(s.closed_at).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) : '—' }}
               </td>
               <td class="px-4 py-3">
@@ -730,8 +779,8 @@ onMounted(() => loadTab('overview'))
                 <span v-if="s.reconciliation_warning" class="mr-1 text-red-500 cursor-help"
                   :title="s.reconciliation_warning">⚠️</span>
               </td>
-              <td class="px-4 py-3 text-gray-700">{{ s.expected_cash?.toFixed(2) ?? '—' }}</td>
-              <td class="px-4 py-3 text-gray-700">{{ s.counted_cash?.toFixed(2) ?? '—' }}</td>
+              <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ s.expected_cash?.toFixed(2) ?? '—' }}</td>
+              <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ s.counted_cash?.toFixed(2) ?? '—' }}</td>
               <td class="px-4 py-3" :class="shiftVarianceClass(s.variance)">
                 {{ s.variance != null ? (s.variance > 0 ? '+' : '') + s.variance.toFixed(2) : '—' }}
               </td>
@@ -745,7 +794,7 @@ onMounted(() => loadTab('overview'))
               </td>
             </tr>
             <tr v-if="!filteredShifts.length">
-              <td colspan="9" class="px-4 py-12 text-center text-gray-400">لا توجد ورديات</td>
+              <td colspan="9" class="px-4 py-12 text-center text-gray-400 dark:text-gray-500">لا توجد ورديات</td>
             </tr>
           </tbody>
         </table>
@@ -756,57 +805,106 @@ onMounted(() => loadTab('overview'))
     <AppModal :open="!!detailShift" :title="`تفاصيل وردية #${detailShift?.id ?? ''}`" size="lg" @close="closeShiftDetail">
       <div v-if="detailLoading" class="flex justify-center py-10"><AppSpinner size="lg" /></div>
       <div v-else-if="detailReport" dir="rtl" class="space-y-4">
+
+        <!-- KPIs رئيسية -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div class="bg-emerald-50 rounded-xl p-3 text-center border border-emerald-100">
-            <div class="text-lg font-black text-emerald-700">{{ detailReport.total_sales.toFixed(2) }}</div>
-            <div class="text-xs text-emerald-600 mt-0.5">إجمالي المبيعات</div>
+          <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 text-center border border-emerald-100 dark:border-emerald-800/40">
+            <div class="text-lg font-black text-emerald-700 dark:text-emerald-400">{{ detailReport.total_sales.toFixed(2) }}</div>
+            <div class="text-xs text-emerald-600 dark:text-emerald-500 mt-0.5">إجمالي المبيعات</div>
           </div>
-          <div class="bg-blue-50 rounded-xl p-3 text-center border border-blue-100">
-            <div class="text-lg font-black text-blue-700">{{ detailReport.total_cash.toFixed(2) }}</div>
-            <div class="text-xs text-blue-600 mt-0.5">كاش</div>
+          <div class="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 text-center border border-blue-100 dark:border-blue-800/40">
+            <div class="text-lg font-black text-blue-700 dark:text-blue-400">{{ detailReport.total_cash.toFixed(2) }}</div>
+            <div class="text-xs text-blue-600 dark:text-blue-500 mt-0.5">كاش</div>
           </div>
-          <div class="bg-purple-50 rounded-xl p-3 text-center border border-purple-100">
-            <div class="text-lg font-black text-purple-700">{{ detailReport.total_card.toFixed(2) }}</div>
-            <div class="text-xs text-purple-600 mt-0.5">كارت</div>
+          <div class="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-3 text-center border border-purple-100 dark:border-purple-800/40">
+            <div class="text-lg font-black text-purple-700 dark:text-purple-400">{{ detailReport.total_card.toFixed(2) }}</div>
+            <div class="text-xs text-purple-600 dark:text-purple-500 mt-0.5">كارت</div>
           </div>
-          <div class="rounded-xl p-3 text-center border" :class="shiftVarianceClass(detailShift?.variance).includes('red') ? 'bg-red-50 border-red-100' : 'bg-stone-50 border-stone-200'">
+          <div class="rounded-xl p-3 text-center border" :class="shiftVarianceClass(detailShift?.variance).includes('red') ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/40' : 'bg-stone-50 dark:bg-gray-800/60 border-stone-200 dark:border-border'">
             <div class="text-lg font-black" :class="shiftVarianceClass(detailShift?.variance)">
               {{ detailShift?.variance != null ? (detailShift.variance > 0 ? '+' : '') + detailShift.variance.toFixed(2) : '—' }}
             </div>
-            <div class="text-xs text-gray-500 mt-0.5">الفرق</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">الفرق</div>
+          </div>
+        </div>
+
+        <!-- KPIs إضافية — آجل + أخرى + ملغاة -->
+        <div v-if="detailReport.total_credit > 0 || detailReport.total_other > 0 || detailReport.voided_count > 0"
+          class="grid grid-cols-3 gap-2">
+          <div v-if="detailReport.total_credit > 0" class="bg-stone-50 dark:bg-gray-800/60 rounded-lg p-2.5 text-center border border-stone-200 dark:border-border">
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-300">{{ detailReport.total_credit.toFixed(2) }} ج</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">📝 آجل</div>
+          </div>
+          <div v-if="detailReport.total_other > 0" class="bg-stone-50 dark:bg-gray-800/60 rounded-lg p-2.5 text-center border border-stone-200 dark:border-border">
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-300">{{ detailReport.total_other.toFixed(2) }} ج</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">🔄 أخرى</div>
+          </div>
+          <div v-if="detailReport.voided_count > 0" class="bg-red-50 dark:bg-red-900/20 rounded-lg p-2.5 text-center border border-red-100 dark:border-red-800/40">
+            <div class="text-sm font-bold text-red-600 dark:text-red-400">
+              {{ detailReport.voided_count }} ({{ detailReport.voided_amount.toFixed(2) }} ج)
+            </div>
+            <div class="text-xs text-red-500 dark:text-red-400 mt-0.5">❌ ملغاة</div>
+          </div>
+        </div>
+
+        <!-- ملخص العملات الأجنبية -->
+        <div v-if="detailReport.foreign_currency_summary?.length">
+          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">🌍 عملات أجنبية</h3>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
+            <div v-for="fc in detailReport.foreign_currency_summary" :key="fc.currency"
+              class="bg-amber-50 dark:bg-amber-900/20 rounded-lg px-2 py-1.5 border border-amber-100 dark:border-amber-800/40 flex justify-between">
+              <span class="text-gray-600 dark:text-gray-400">
+                {{ fc.total_foreign.toFixed(2) }} {{ fc.currency }}
+                <span class="text-gray-400 dark:text-gray-500"> × {{ fc.fx_rate }}</span>
+              </span>
+              <span class="font-semibold text-amber-700 dark:text-amber-400">{{ fc.egp_equivalent.toFixed(2) }} ج</span>
+            </div>
+          </div>
+          <div v-if="detailReport.counted_cash_egp != null" class="mt-1.5 text-xs text-end text-gray-500 dark:text-gray-400">
+            إجمالي العدّ بالجنيه: <span class="font-bold text-gray-700 dark:text-gray-300">{{ detailReport.counted_cash_egp.toFixed(2) }} ج</span>
           </div>
         </div>
 
         <!-- عدّ الكاش بالفئة -->
         <div v-if="detailReport.cash_count.length">
-          <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">عدّ الكاش بالفئة</h3>
+          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">عدّ الكاش بالفئة</h3>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
-            <div v-for="(line, i) in detailReport.cash_count" :key="i" class="bg-stone-50 rounded-lg px-2 py-1.5 flex justify-between">
-              <span>{{ line.denomination }} {{ line.currency }} × {{ line.quantity }}</span>
-              <span class="font-semibold">{{ line.egp_equivalent.toFixed(2) }} ج</span>
+            <div v-for="(line, i) in detailReport.cash_count" :key="i"
+              class="bg-stone-50 dark:bg-gray-800/60 rounded-lg px-2 py-1.5 flex justify-between">
+              <span class="text-gray-600 dark:text-gray-400">{{ line.denomination }} {{ line.currency }} × {{ line.quantity }}</span>
+              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ line.egp_equivalent.toFixed(2) }} ج</span>
             </div>
           </div>
         </div>
 
         <!-- سجل الفواتير -->
         <div>
-          <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">
+          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">
             الفواتير ({{ detailInvoices.length }})
           </h3>
           <EmptyState v-if="!detailInvoices.length" title="مفيش فواتير في الوردية دي" />
-          <div v-else class="divide-y divide-stone-100 max-h-64 overflow-y-auto">
-            <div v-for="inv in detailInvoices" :key="inv.payment_id" class="py-2 flex items-center justify-between gap-2" :class="inv.is_voided && 'opacity-50'">
+          <div v-else class="divide-y divide-stone-100 dark:divide-border/50 max-h-64 overflow-y-auto">
+            <div v-for="inv in detailInvoices" :key="inv.payment_id"
+              class="py-2 flex items-center justify-between gap-2" :class="inv.is_voided && 'opacity-50'">
               <div>
-                <span class="text-sm font-semibold text-gray-800" :class="inv.is_voided && 'line-through'">{{ inv.guest_name }}</span>
-                <span class="text-xs text-gray-400 mr-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
+                <span class="text-sm font-semibold text-gray-800 dark:text-gray-200" :class="inv.is_voided && 'line-through'">{{ inv.guest_name }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500 mr-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
               </div>
-              <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 line-through' : 'text-blue-700'">{{ inv.amount }} ج</span>
+              <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 dark:text-gray-500 line-through' : 'text-blue-700 dark:text-blue-400'">{{ inv.amount.toFixed(2) }} ج</span>
             </div>
           </div>
         </div>
       </div>
       <template #footer>
-        <AppButton variant="ghost" block @click="closeShiftDetail">إغلاق</AppButton>
+        <div class="flex gap-2">
+          <a v-if="detailShift?.status === 'closed'"
+            :href="`/api/v1/finance/shifts/${detailShift.id}/report/pdf`"
+            target="_blank"
+            class="flex-1">
+            <AppButton variant="outline" block>📄 تحميل PDF</AppButton>
+          </a>
+          <AppButton variant="ghost" :block="detailShift?.status !== 'closed'" @click="closeShiftDetail">إغلاق</AppButton>
+        </div>
       </template>
     </AppModal>
 

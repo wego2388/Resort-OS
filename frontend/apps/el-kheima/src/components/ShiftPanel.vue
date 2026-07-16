@@ -94,7 +94,7 @@ async function fetchCurrentShift() {
     shift.value = data
   } catch (e: any) {
     if (e?.response?.status === 404) shift.value = null
-    else { console.error(e); toast.error('تعذّر تحميل حالة الوردية') }
+    else { toast.error('تعذّر تحميل حالة الوردية') }
   } finally { loading.value = false }
 }
 

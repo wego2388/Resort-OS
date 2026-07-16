@@ -695,13 +695,12 @@ class TestCashierShiftHTTPFlow:
         assert body["variance"] == "150.00"
         assert body["reconciliation_ok"] is False
         assert body["reconciliation_warning"] is not None
-        assert "مراجعة المدير" in body["reconciliation_warning"]
+        assert "فرق كاش" in body["reconciliation_warning"]
 
-    def test_close_shift_rejects_large_cash_variance_against_sales(self, client: TestClient, db, cashier_headers):
-        """فجوة #14 الحرجة (wagdy.md): فرق كاش ضخم نسبةً لمبيعات الوردية
-        (4000ج فرق على 1000ج مبيعات فقط) لازم يترفض بـ 400 — مش يتسجل بصمت.
-        الوردية لازم تفضل مفتوحة (status='open') بعد الرفض، مش مقفولة بفرق
-        غير مراجَع."""
+    def test_close_shift_large_cash_variance_closes_with_warning(self, client: TestClient, db, cashier_headers):
+        """قرار Mohamed (2026-07-14): الوردية تُقفل دائمًا بغض النظر عن حجم
+        الفرق — آلية الرفض أُلغيت بالكامل. فرق +4000ج على 1000ج مبيعات يُسجَّل
+        كـ reconciliation_warning للمحاسب، مش 400. الكاشير مش مسؤوليته الاحتجاز."""
         branch = make_branch_committed(db)
         shift_id = self._open_shift_with_cash_sale(
             client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
@@ -709,20 +708,16 @@ class TestCashierShiftHTTPFlow:
 
         close_resp = client.post(
             f"/api/v1/finance/shifts/{shift_id}/close",
-            json={"counted_cash": "5000.00"},  # فرق +4000ج — غير معقول إطلاقًا
+            json={"counted_cash": "5000.00"},  # فرق +4000ج — ضخم لكن تُقفل عادي
             headers=cashier_headers,
         )
-        assert close_resp.status_code == 400, close_resp.text
-        assert "يتخطى الحد المسموح" in close_resp.json()["detail"]
-
-        # الوردية لازم تفضل مفتوحة — الرفض ما كسرش حالتها ولا كتب أي بيانات جزئية
-        current_resp = client.get(
-            "/api/v1/finance/shifts/current", params={"branch_id": branch.id}, headers=cashier_headers,
-        )
-        assert current_resp.status_code == 200
-        assert current_resp.json()["id"] == shift_id
-        assert current_resp.json()["status"] == "open"
-        assert current_resp.json()["counted_cash"] is None
+        assert close_resp.status_code == 200, close_resp.text
+        body = close_resp.json()
+        assert body["status"] == "closed"
+        assert body["variance"] == "4000.00"
+        assert body["reconciliation_ok"] is False
+        assert body["reconciliation_warning"] is not None
+        assert "فرق كاش" in body["reconciliation_warning"]
 
     def test_blind_cash_count_never_reveals_expected_cash_before_close(
         self, client: TestClient, db, cashier_headers,
@@ -1165,9 +1160,10 @@ class TestShiftInvoicesHTTP:
 
 
 class TestCloseShiftVarianceOverrideHTTP:
-    """POST /finance/shifts/{shift_id}/close مع force_close — wagdy.md بند
-    S-06: فرق كاش أكبر من الحد المسموح بيترفض القفل افتراضيًا (400)، إلا لو
-    force_close=true مع موافقة PIN مدير+ (أو المنفّذ نفسه مدير+)."""
+    """قرار Mohamed (2026-07-14): آلية رفض القفل بسبب فرق كاش أُلغيت بالكامل.
+    force_close + PIN لم تعد مطلوبة — الوردية تُقفل دائماً، الفرق يُسجَّل
+    كـ reconciliation_warning للمحاسب بغض النظر عن حجمه.
+    راجع wagdy.md بند S-06 (محدّث) وservices.close_shift السطر ~663."""
 
     def _open_shift_with_cash_sale(
         self, client: TestClient, headers, branch_id: int, opening_float: str, sale_amount: str,
@@ -1203,9 +1199,9 @@ class TestCloseShiftVarianceOverrideHTTP:
         assert pay_resp.status_code == 201, pay_resp.text
         return shift_id
 
-    def test_force_close_without_pin_still_rejected(self, client: TestClient, db, cashier_headers):
-        """force_close=true من غير approver_user_id/approver_pin — لازم
-        يترفض برضو (كاشير مش مؤهّل يعتمد نفسه)."""
+    def test_large_variance_closes_and_warns_cashier(self, client: TestClient, db, cashier_headers):
+        """فرق +4000ج على 1000ج مبيعات — تُقفل بـ 200، reconciliation_ok=False،
+        reconciliation_warning موجودة. لا 400، لا PIN مطلوب."""
         branch = make_branch_committed(db)
         shift_id = self._open_shift_with_cash_sale(
             client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
@@ -1213,74 +1209,19 @@ class TestCloseShiftVarianceOverrideHTTP:
 
         resp = client.post(
             f"/api/v1/finance/shifts/{shift_id}/close",
-            json={"counted_cash": "5000.00", "force_close": True},
-            headers=cashier_headers,
-        )
-        assert resp.status_code == 400
-        assert "PIN" in resp.json()["detail"] or "موافقة" in resp.json()["detail"]
-
-        # الوردية لازم تفضل مفتوحة — نفس ضمان test_close_shift_rejects_large_cash_variance_against_sales
-        current_resp = client.get(
-            "/api/v1/finance/shifts/current", params={"branch_id": branch.id}, headers=cashier_headers,
-        )
-        assert current_resp.json()["status"] == "open"
-
-    def test_force_close_with_wrong_pin_rejected(self, client: TestClient, db, cashier_headers, manager_headers):
-        manager_id = _set_shift_pin(db, "manager@test.local", "7777")
-        branch = make_branch_committed(db)
-        shift_id = self._open_shift_with_cash_sale(
-            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
-        )
-
-        resp = client.post(
-            f"/api/v1/finance/shifts/{shift_id}/close",
-            json={
-                "counted_cash": "5000.00", "force_close": True,
-                "approver_user_id": manager_id, "approver_pin": "0000",
-            },
-            headers=cashier_headers,
-        )
-        assert resp.status_code == 400
-
-    def test_force_close_with_correct_manager_pin_succeeds_and_audits(
-        self, client: TestClient, db, cashier_headers, manager_headers,
-    ):
-        manager_id = _set_shift_pin(db, "manager@test.local", "7777")
-        branch = make_branch_committed(db)
-        shift_id = self._open_shift_with_cash_sale(
-            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
-        )
-
-        resp = client.post(
-            f"/api/v1/finance/shifts/{shift_id}/close",
-            json={
-                "counted_cash": "5000.00", "force_close": True,
-                "approver_user_id": manager_id, "approver_pin": "7777",
-            },
+            json={"counted_cash": "5000.00"},
             headers=cashier_headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["status"] == "closed"
         assert body["variance"] == "4000.00"
+        assert body["reconciliation_ok"] is False
+        assert body["reconciliation_warning"] is not None
+        assert "فرق كاش" in body["reconciliation_warning"]
 
-        # AuditLog إجباري يوثّق مين وافق على تخطي الحد (راجع services.close_shift)
-        logs_resp = client.get(
-            "/api/v1/audit-logs",
-            params={"branch_id": branch.id, "entity_type": "cashier_shift", "entity_id": shift_id},
-            headers=manager_headers,
-        )
-        assert logs_resp.status_code == 200
-        items = logs_resp.json()["items"]
-        assert len(items) == 1
-        assert items[0]["action"] == "close_shift_variance_override"
-        assert items[0]["approved_by"] == manager_id
-
-    def test_manager_closing_own_shift_self_qualifies_no_pin_needed(
-        self, client: TestClient, db, manager_headers,
-    ):
-        """مدير (level 60) بيقفل ورديته هو نفسه بفرق كبير — مؤهّل بنفسه من
-        غير موافقة PIN منفصلة (نفس مبدأ resolve_pin_approval للأدوار الأعلى)."""
+    def test_large_variance_manager_closes_same_result(self, client: TestClient, db, manager_headers):
+        """مدير+ بيقفل ورديته بفرق كبير — نفس السلوك: 200 + warning، لا PIN."""
         branch = make_branch_committed(db)
         shift_id = self._open_shift_with_cash_sale(
             client, manager_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
@@ -1288,15 +1229,18 @@ class TestCloseShiftVarianceOverrideHTTP:
 
         resp = client.post(
             f"/api/v1/finance/shifts/{shift_id}/close",
-            json={"counted_cash": "5000.00", "force_close": True},
+            json={"counted_cash": "5000.00"},
             headers=manager_headers,
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["status"] == "closed"
+        body = resp.json()
+        assert body["status"] == "closed"
+        assert body["variance"] == "4000.00"
+        assert body["reconciliation_ok"] is False
 
-    def test_force_close_ignored_when_variance_within_threshold(self, client: TestClient, db, cashier_headers):
-        """force_close=true لكن الفرق أصلاً داخل الحد المسموح — قفل عادي، من
-        غير أي حاجة لموافقة PIN (مفيش تجاوز لازم يعتمد أصلاً)."""
+    def test_force_close_flag_ignored_large_variance(self, client: TestClient, db, cashier_headers):
+        """force_close=true مع فرق ضخم — يتجاهل الفلاج (deprecated) وتُقفل عادي.
+        لا رفض، لا PIN، لا أي فرق في السلوك."""
         branch = make_branch_committed(db)
         shift_id = self._open_shift_with_cash_sale(
             client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
@@ -1304,12 +1248,30 @@ class TestCloseShiftVarianceOverrideHTTP:
 
         resp = client.post(
             f"/api/v1/finance/shifts/{shift_id}/close",
-            json={"counted_cash": "1000.00", "force_close": True},
+            json={"counted_cash": "5000.00", "force_close": True},
             headers=cashier_headers,
         )
         assert resp.status_code == 200, resp.text
-        assert resp.json()["variance"] == "0.00"
+        assert resp.json()["status"] == "closed"
+        assert resp.json()["variance"] == "4000.00"
 
+    def test_zero_variance_closes_clean(self, client: TestClient, db, cashier_headers):
+        """فرق صفري — reconciliation_ok=True، لا warning."""
+        branch = make_branch_committed(db)
+        shift_id = self._open_shift_with_cash_sale(
+            client, cashier_headers, branch.id, opening_float="0.00", sale_amount="1000.00",
+        )
+
+        resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "1000.00"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["variance"] == "0.00"
+        assert body["reconciliation_ok"] is True
+        assert body["reconciliation_warning"] is None
 
 class TestDiscountHTTPFlow:
     def test_create_list_update_delete_discount(self, client: TestClient, db, manager_headers, super_admin_headers):
