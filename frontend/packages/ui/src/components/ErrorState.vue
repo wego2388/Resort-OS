@@ -29,7 +29,7 @@ defineEmits<{ retry: [] }>()
     <div class="w-12 h-12 mx-auto rounded-full bg-danger/10 text-danger flex items-center justify-center mb-3">
       <AppIcon name="warning" size="lg" />
     </div>
-    <p class="text-base font-semibold text-gray-800">{{ title }}</p>
+    <p class="text-base font-semibold text-gray-800 dark:text-gray-200">{{ title }}</p>
     <p class="text-sm text-muted mt-1 max-w-sm mx-auto">{{ message }}</p>
     <AppButton v-if="retryable" variant="outline" size="sm" class="mt-4" @click="$emit('retry')">
       <AppIcon name="refresh" size="sm" />

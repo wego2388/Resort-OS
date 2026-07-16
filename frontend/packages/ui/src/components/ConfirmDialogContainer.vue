@@ -9,7 +9,7 @@ const { isOpen, options, handleConfirm, handleCancel } = useConfirm()
 
 <template>
   <AppModal :open="isOpen" :title="options.title ?? 'تأكيد'" size="sm" z-index="z-[60]" @close="handleCancel">
-    <p class="text-gray-700 text-sm leading-relaxed">{{ options.message }}</p>
+    <p class="text-gray-700 dark:text-gray-300 text-sm leading-relaxed">{{ options.message }}</p>
     <template #footer>
       <div class="flex items-center justify-end gap-2">
         <AppButton variant="ghost" size="sm" @click="handleCancel">

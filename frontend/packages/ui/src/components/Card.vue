@@ -6,9 +6,9 @@ defineProps<{
 }>()
 </script>
 <template>
-  <div :class="['bg-white rounded-xl border border-stone-200', shadow !== false && 'shadow-sm']">
-    <div v-if="title" class="px-5 py-4 border-b border-stone-100">
-      <h3 class="font-semibold text-gray-800 text-base">{{ title }}</h3>
+  <div :class="['bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border', shadow !== false && 'shadow-sm']">
+    <div v-if="title" class="px-5 py-4 border-b border-stone-100 dark:border-border">
+      <h3 class="font-semibold text-gray-800 dark:text-gray-100 text-base">{{ title }}</h3>
     </div>
     <div :class="[
       padding === 'none' ? '' : '',

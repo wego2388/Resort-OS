@@ -32,11 +32,11 @@ const trendIcon = computed<IconName>(() => (props.trend ?? 0) > 0 ? 'chevron-up'
 </script>
 
 <template>
-  <div class="bg-white rounded-xl border border-stone-200 shadow-elevation-1 p-5 flex items-start justify-between gap-3">
+  <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border shadow-elevation-1 p-5 flex items-start justify-between gap-3">
     <div class="min-w-0 flex-1">
       <p class="text-sm text-muted font-medium truncate">{{ label }}</p>
       <div v-if="loading" class="h-8 w-24 mt-2 rounded bg-background animate-pulse" />
-      <p v-else class="text-2xl font-bold text-gray-900 mt-1 tabular-nums">{{ value }}</p>
+      <p v-else class="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1 tabular-nums">{{ value }}</p>
       <p v-if="trend !== undefined && !loading" :class="['flex items-center gap-1 text-xs font-medium mt-2', trendClass]">
         <AppIcon :name="trendIcon" size="xs" />
         <span>{{ Math.abs(trend) }}%</span>

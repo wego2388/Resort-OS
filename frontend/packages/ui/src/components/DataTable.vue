@@ -71,29 +71,29 @@ const showPaginator = computed(() => !!props.totalPages && props.totalPages > 1 
 </script>
 
 <template>
-  <div class="bg-white rounded-xl border border-stone-200 overflow-hidden">
+  <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border overflow-hidden">
     <div class="overflow-x-auto">
       <table class="w-full border-collapse">
         <thead :class="stickyHeader ? 'sticky top-0 z-10' : ''">
-          <tr class="bg-stone-50 border-b border-stone-200">
+          <tr class="bg-stone-50 dark:bg-gray-800/60 border-b border-stone-200 dark:border-border">
             <th
               v-for="col in columns"
               :key="col.key"
               scope="col"
               :style="col.width ? { width: col.width } : undefined"
-              :class="['px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider', alignClass(col.align)]"
+              :class="['px-4 py-3 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider', alignClass(col.align)]"
             >
               <button
                 v-if="col.sortable"
                 type="button"
-                class="inline-flex items-center gap-1 hover:text-gray-800 focus:outline-none focus-visible:shadow-focus-ring rounded"
+                class="inline-flex items-center gap-1 hover:text-gray-800 dark:hover:text-gray-200 focus:outline-none focus-visible:shadow-focus-ring rounded"
                 @click="emit('sort', col.key)"
               >
                 {{ col.label }}
                 <AppIcon
                   :name="sortKey === col.key ? (sortDir === 'asc' ? 'chevron-up' : 'chevron-down') : 'chevron-down'"
                   size="xs"
-                  :class="sortKey === col.key ? 'text-gray-700' : 'text-stone-300'"
+                  :class="sortKey === col.key ? 'text-gray-700 dark:text-gray-300' : 'text-stone-300 dark:text-gray-600'"
                 />
               </button>
               <span v-else>{{ col.label }}</span>
@@ -102,7 +102,7 @@ const showPaginator = computed(() => !!props.totalPages && props.totalPages > 1 
         </thead>
         <tbody>
           <template v-if="loading">
-            <tr v-for="i in 5" :key="`skeleton-${i}`" class="border-b border-stone-100">
+            <tr v-for="i in 5" :key="`skeleton-${i}`" class="border-b border-stone-100 dark:border-border/50">
               <td v-for="col in columns" :key="col.key" class="px-4 py-3">
                 <Skeleton />
               </td>
@@ -123,10 +123,10 @@ const showPaginator = computed(() => !!props.totalPages && props.totalPages > 1 
           <tr
             v-for="item in (loading || error ? [] : items)"
             :key="rowKey(item)"
-            class="border-b border-stone-100 last:border-0 hover:bg-primary-50/30 transition-colors duration-fast cursor-pointer"
+            class="border-b border-stone-100 dark:border-border/50 last:border-0 hover:bg-primary-50/30 dark:hover:bg-primary-900/20 transition-colors duration-fast cursor-pointer"
             @click="emit('row-click', item)"
           >
-            <td v-for="col in columns" :key="col.key" :class="['px-4 py-3 text-sm text-gray-800', alignClass(col.align)]">
+            <td v-for="col in columns" :key="col.key" :class="['px-4 py-3 text-sm text-gray-800 dark:text-gray-200', alignClass(col.align)]">
               <slot :name="`cell-${col.key}`" :item="item" :value="item[col.key]">
                 {{ item[col.key] }}
               </slot>
@@ -135,7 +135,7 @@ const showPaginator = computed(() => !!props.totalPages && props.totalPages > 1 
         </tbody>
       </table>
     </div>
-    <div v-if="showPaginator" class="px-4 py-3 border-t border-stone-100">
+    <div v-if="showPaginator" class="px-4 py-3 border-t border-stone-100 dark:border-border/50">
       <Paginator :page="page!" :total-pages="totalPages!" :total-items="totalItems" :page-size="pageSize" @update:page="emit('update:page', $event)" />
     </div>
   </div>

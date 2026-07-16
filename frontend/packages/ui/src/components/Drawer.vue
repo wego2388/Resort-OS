@@ -35,23 +35,23 @@ const emit = defineEmits<{ close: [] }>()
           <div
             v-if="open"
             :class="[
-              'absolute top-0 bottom-0 bg-white shadow-elevation-5 flex flex-col w-full',
+              'absolute top-0 bottom-0 bg-white dark:bg-surface shadow-elevation-5 flex flex-col w-full',
               side === 'end' ? 'end-0' : 'start-0',
               width === 'sm' ? 'max-w-sm' : width === 'lg' ? 'max-w-2xl' : 'max-w-md',
             ]"
             role="dialog"
             aria-modal="true"
           >
-            <div v-if="title || $slots.header" class="flex items-center justify-between px-6 py-4 border-b border-stone-100 flex-shrink-0">
-              <slot name="header"><h2 class="text-lg font-bold text-gray-900">{{ title }}</h2></slot>
-              <button @click="emit('close')" class="p-1 rounded-lg hover:bg-gray-100 transition-colors duration-base" aria-label="إغلاق">
-                <AppIcon name="close" class="text-gray-500" />
+            <div v-if="title || $slots.header" class="flex items-center justify-between px-6 py-4 border-b border-stone-100 dark:border-border flex-shrink-0">
+              <slot name="header"><h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ title }}</h2></slot>
+              <button @click="emit('close')" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors duration-base" aria-label="إغلاق">
+                <AppIcon name="close" class="text-gray-500 dark:text-gray-400" />
               </button>
             </div>
             <div class="overflow-y-auto flex-1 p-6">
               <slot />
             </div>
-            <div v-if="$slots.footer" class="px-6 py-4 border-t border-stone-100 flex-shrink-0">
+            <div v-if="$slots.footer" class="px-6 py-4 border-t border-stone-100 dark:border-border flex-shrink-0">
               <slot name="footer" />
             </div>
           </div>

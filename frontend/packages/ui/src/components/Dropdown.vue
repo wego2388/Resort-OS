@@ -52,7 +52,7 @@ watch(open, async (v) => {
         v-if="open"
         role="menu"
         :class="[
-          'absolute top-full mt-1 min-w-[12rem] rounded-xl border border-stone-200 bg-white shadow-elevation-3 py-1 z-30',
+          'absolute top-full mt-1 min-w-[12rem] rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface shadow-elevation-3 py-1 z-30',
           align === 'end' ? 'end-0' : 'start-0',
         ]"
         @click="close"

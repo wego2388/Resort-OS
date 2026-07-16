@@ -19,7 +19,7 @@ const label = computed(() => isDark.value ? 'التبديل للوضع الفا�
     :aria-label="label"
     :title="label"
     @click="toggleTheme"
-    class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-600 hover:bg-background transition-colors duration-base focus:outline-none focus-visible:shadow-focus-ring"
+    class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-600 dark:text-gray-400 hover:bg-background transition-colors duration-base focus:outline-none focus-visible:shadow-focus-ring"
   >
     <AppIcon :name="isDark ? 'sun' : 'moon'" size="sm" />
   </button>

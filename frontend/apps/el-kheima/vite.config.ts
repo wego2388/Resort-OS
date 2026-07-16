@@ -90,6 +90,7 @@ export default defineConfig({
     alias: { '@': resolve(__dirname, 'src') },
   },
   server: {
+    host: true,
     proxy: {
       // ws: true هنا مهم — الـ WebSocket الحقيقي (KDS) مسجّل تحت نفس مسار
       // /api/v1/... زي أي endpoint تاني، مش تحت /ws منفصل. الإعداد القديم

@@ -28,8 +28,8 @@ const iconSize = computed(() => ({ sm: 'sm', md: 'md', lg: 'lg' }[props.size] as
 const variantClass = computed(() => ({
   primary: 'bg-primary text-white hover:bg-primary-800',
   danger: 'bg-danger text-white hover:opacity-90',
-  outline: 'border border-border text-gray-700 hover:bg-background',
-  ghost: 'text-gray-600 hover:bg-background hover:text-gray-900',
+  outline: 'border border-border text-gray-700 dark:text-gray-300 hover:bg-background',
+  ghost: 'text-gray-600 dark:text-gray-400 hover:bg-background hover:text-gray-900 dark:hover:text-gray-100',
 }[props.variant]))
 </script>
 

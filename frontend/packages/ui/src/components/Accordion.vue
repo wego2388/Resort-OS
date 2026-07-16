@@ -22,10 +22,10 @@ const isOpen = computed({
 </script>
 
 <template>
-  <div class="border border-stone-200 rounded-xl overflow-hidden">
+  <div class="border border-stone-200 dark:border-border rounded-xl overflow-hidden">
     <button
       type="button"
-      class="w-full flex items-center justify-between gap-3 px-4 py-3 text-start font-medium text-gray-800 hover:bg-background transition-colors duration-base focus:outline-none focus-visible:shadow-focus-ring"
+      class="w-full flex items-center justify-between gap-3 px-4 py-3 text-start font-medium text-gray-800 dark:text-gray-200 hover:bg-background transition-colors duration-base focus:outline-none focus-visible:shadow-focus-ring"
       :aria-expanded="isOpen"
       @click="isOpen = !isOpen"
     >
@@ -40,7 +40,7 @@ const isOpen = computed({
       leave-from-class="grid-rows-[1fr] opacity-100"
       leave-to-class="grid-rows-[0fr] opacity-0"
     >
-      <div v-if="isOpen" class="grid grid-rows-[1fr] px-4 pb-4 pt-1 text-sm text-gray-700">
+      <div v-if="isOpen" class="grid grid-rows-[1fr] px-4 pb-4 pt-1 text-sm text-gray-700 dark:text-gray-300">
         <div class="overflow-hidden">
           <slot />
         </div>

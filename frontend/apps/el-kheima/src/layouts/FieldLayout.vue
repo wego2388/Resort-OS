@@ -13,6 +13,7 @@ import ShiftPanel from '../components/ShiftPanel.vue'
 import GuestAlertsBell from '../components/GuestAlertsBell.vue'
 import OperatorSwitchModal from '../components/OperatorSwitchModal.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
+import { ThemeToggle } from '@resort-os/ui'
 
 const router = useRouter()
 const route = useRoute()
@@ -36,23 +37,17 @@ let clockInterval: ReturnType<typeof setInterval> | null = null
 onMounted(() => { updateClock(); clockInterval = setInterval(updateClock, 1000) })
 onUnmounted(() => { if (clockInterval) clearInterval(clockInterval) })
 
-// DINING_CUTOVER_PLAN.md Batch 4 — role-based بدل path-based (كان
-// route.path.startsWith('/waiter') قبل كده). /waiter/tables|order|order/:id
-// اتحوّلوا كلهم لـ redirect على /pos/dining (نفس شاشة UnifiedPOSView
-// الموحّدة، بتغطي dine_in بخريطة طاولات حقيقية) — يعني مفيش /waiter/* مسار
-// حي تاني نميّز بيه، والدور نفسه (waiter) هو مصدر الحقيقة الأصح أصلاً.
+// DINING_CUTOVER_PLAN.md Batch 4 — role-based بدل path-based
 const isWaiter = computed(() => auth.role === 'waiter')
 
-// كل تاب وأقل صلاحية تقدر توصله — نادل بس /pos/dining (تاخد طلبات، مش
-// إجراء مالي)، كاشير+ يشوف كل التابات (بيتش/دايننج/وردية).
 const allNavItems = computed(() => [
-  { path: '/pos/beach',       label: t('backoffice.nav.beachPos'),   icon: '🏖️', minRole: 'cashier' },
-  { path: '/pos/beach-map',   label: t('backoffice.nav.beachMap'),   icon: '🗺️', minRole: 'cashier' },
-  { path: '/pos/dining',      label: t('backoffice.nav.diningPos'),  icon: '🍽️', minRole: 'waiter' },
-  { path: '/pos/shift',       label: t('backoffice.nav.shift'),      icon: '🧾', minRole: 'cashier' },
+  { path: '/pos/beach',     label: t('backoffice.nav.beachPos'),  icon: '🏖️', minRole: 'cashier' },
+  { path: '/pos/beach-map', label: t('backoffice.nav.beachMap'),  icon: '🗺️', minRole: 'cashier' },
+  { path: '/pos/dining',    label: t('backoffice.nav.diningPos'), icon: '🍽️', minRole: 'waiter' },
+  { path: '/pos/shift',     label: t('backoffice.nav.shift'),     icon: '🧾', minRole: 'cashier' },
 ])
 
-const navItems = computed(() => allNavItems.value.filter((item) => auth.hasRole(item.minRole)))
+const navItems = computed(() => allNavItems.value.filter(item => auth.hasRole(item.minRole)))
 
 function logout() {
   auth.logout()
@@ -61,74 +56,106 @@ function logout() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-resort-bg flex flex-col" :dir="locale === 'ar' ? 'rtl' : 'ltr'">
-
-    <header class="bg-white border-b border-resort-border shadow-sm flex-shrink-0">
+  <!--
+    POS dark theme — warm dark navy (#1E2530) بيقلل إرهاق العين للكاشير
+    اللي بيشتغل 8+ ساعات على الشاشة في الشمس.
+    CSS vars محدّدة هنا تنتقل تلقائياً لكل الـ POS views عبر CSS inheritance.
+  -->
+  <div
+    class="min-h-screen flex flex-col"
+    :dir="locale === 'ar' ? 'rtl' : 'ltr'"
+    style="
+      background: #1E2530;
+      --pos-bg: #1E2530;
+      --pos-surface: #252D3A;
+      --pos-surface-2: #2E3748;
+      --pos-border: #374151;
+      --pos-text: #F9FAFB;
+      --pos-text-muted: #9CA3AF;
+      --pos-accent: #C9963C;
+      --pos-accent-bg: rgba(201,150,60,0.15);
+      --pos-success: #10B981;
+      --pos-danger: #F87171;
+    "
+  >
+    <!-- ── Header ── -->
+    <header style="background:#252D3A; border-bottom:1px solid #374151;" class="flex-shrink-0 shadow-elevation-2">
       <div class="flex items-center justify-between px-4 py-2.5">
 
+        <!-- Logo + title -->
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 bg-blue-700 rounded-lg flex items-center justify-center flex-shrink-0">
-            <span class="text-white text-xs font-black">{{ isWaiter ? '🧑‍🍳' : 'POS' }}</span>
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 shadow-elevation-1"
+            style="background:#C9963C;">
+            <span class="text-white text-xs font-black">{{ isWaiter ? '🧑🍳' : 'POS' }}</span>
           </div>
           <div>
-            <div class="font-bold text-gray-900 text-sm leading-tight">
+            <div class="font-bold text-sm leading-tight" style="color:#F9FAFB;">
               {{ isWaiter ? t('backoffice.layout.orderTaker') : t('backoffice.layout.pos') }}
             </div>
-            <div class="text-xs text-gray-400 leading-tight">{{ branchName }}</div>
+            <div class="text-xs leading-tight" style="color:#9CA3AF;">{{ branchName }}</div>
           </div>
         </div>
 
-        <div class="flex items-center gap-4">
-          <!-- Cashier shift open/close + cash count — كاشير+ بس (نادل مالوش
-               وردية كاش يقفلها). راجع components/ShiftPanel.vue للسبب الكامل:
-               الباك إند كان عنده دورة وردية كاملة من غير أي واجهة تستخدمها. -->
+        <!-- Actions -->
+        <div class="flex items-center gap-3">
+          <!-- Shift panel — كاشير+ فقط -->
           <ShiftPanel v-if="auth.hasRole('cashier')" />
 
-          <!-- تنبيهات الضيوف (نادِ الجرسون / هات الفاتورة) — ظاهرة لأي حد
-               بيشتغل على الأرض (نادل أو كاشير)، مش بس النادل. -->
+          <!-- Guest alerts bell -->
           <GuestAlertsBell />
 
-          <!-- Connectivity dot (offline order queue) -->
-          <div class="flex items-center gap-1.5" :title="isOnline ? t('backoffice.nav.operations') : ''">
-            <span class="w-2 h-2 rounded-full" :class="isOnline ? 'bg-green-500' : 'bg-amber-500 animate-pulse'" />
-            <span v-if="pendingCount > 0" class="text-xs font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">
+          <!-- Connectivity dot -->
+          <div class="flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full"
+              :class="isOnline ? 'bg-[#10B981]' : 'bg-amber-500 animate-pulse'" />
+            <span v-if="pendingCount > 0"
+              class="text-xs font-bold px-1.5 py-0.5 rounded-full"
+              style="color:#FBBF24; background:rgba(120,80,0,0.3);">
               {{ pendingCount }}
             </span>
           </div>
 
-          <div class="text-sm font-mono font-semibold text-gray-700 bg-gray-100 px-3 py-1 rounded-lg tabular-nums" dir="ltr">
+          <!-- Clock — gold لجذب الانتباه -->
+          <div class="text-sm font-mono font-bold tabular-nums px-3 py-1 rounded-lg border"
+            style="color:#C9963C; background:#2E3748; border-color:#374151;"
+            dir="ltr">
             {{ currentTime }}
           </div>
 
+          <!-- User info -->
           <button
             @click="showOperatorSwitch = true"
-            class="hidden sm:flex flex-col items-end hover:bg-gray-50 rounded-lg px-1.5 py-0.5 transition-colors"
+            class="hidden sm:flex flex-col items-end rounded-lg px-1.5 py-0.5 transition-colors"
+            style="hover:background:#2E3748;"
           >
-            <span class="text-sm font-medium text-gray-700">{{ auth.user?.full_name }}</span>
-            <span class="text-xs text-blue-600">{{ auth.role }}</span>
+            <span class="text-sm font-medium" style="color:#F9FAFB;">{{ auth.user?.full_name }}</span>
+            <span class="text-xs" style="color:#C9963C;">{{ auth.role }}</span>
           </button>
 
-          <!-- Language switcher — compact mode for the tight field header -->
           <LanguageSwitcher variant="compact" />
+          <ThemeToggle />
 
           <button
             @click="logout"
-            class="text-sm text-red-600 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50 transition-colors"
+            class="text-sm font-medium px-2 py-1 rounded transition-colors"
+            style="color:#F87171;"
           >{{ t('backoffice.layout.logout') }}</button>
         </div>
       </div>
 
       <OperatorSwitchModal v-if="showOperatorSwitch" @close="showOperatorSwitch = false" />
 
-      <nav v-if="navItems.length" class="flex border-t border-resort-border overflow-x-auto">
+      <!-- ── Nav tabs ── -->
+      <nav v-if="navItems.length" class="flex overflow-x-auto"
+        style="border-top:1px solid #374151;">
         <RouterLink
           v-for="item in navItems"
           :key="item.path"
           :to="item.path"
-          class="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-medium transition-colors"
-          :class="route.path === item.path
-            ? 'bg-blue-700 text-white'
-            : 'text-gray-600 hover:bg-gray-50'"
+          class="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors min-w-[80px]"
+          :style="route.path === item.path
+            ? 'background:#C9963C; color:#FFFFFF;'
+            : 'color:#9CA3AF;'"
         >
           <span>{{ item.icon }}</span>
           <span>{{ item.label }}</span>
@@ -136,6 +163,7 @@ function logout() {
       </nav>
     </header>
 
+    <!-- ── Content ── -->
     <main class="flex-1 overflow-auto">
       <RouterView />
     </main>

@@ -20,8 +20,8 @@ export function fieldClasses(opts: { error?: boolean; disabled?: boolean; withSt
     'w-full rounded-lg border bg-white dark:bg-surface text-gray-900 dark:text-gray-100 placeholder-gray-400 transition-colors',
     'focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500',
     opts.withStartSlot ? 'ps-9 pe-3 py-2' : opts.withEndSlot ? 'ps-3 pe-9 py-2' : 'px-3 py-2',
-    opts.error ? 'border-red-400 bg-red-50' : 'border-stone-200',
-    opts.disabled ? 'opacity-50 cursor-not-allowed bg-gray-50' : '',
+    opts.error ? 'border-red-400 bg-red-50 dark:bg-red-900/20' : 'border-stone-200 dark:border-border',
+    opts.disabled ? 'opacity-50 cursor-not-allowed bg-gray-50 dark:bg-gray-800' : '',
   ]
 }
 

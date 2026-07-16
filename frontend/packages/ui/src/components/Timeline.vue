@@ -43,7 +43,7 @@ const dotClass = (variant: TimelineItem['variant'] = 'neutral') => ({
       </div>
       <div class="flex-1 min-w-0 pt-1">
         <div class="flex items-baseline justify-between gap-2">
-          <p class="text-sm font-medium text-gray-900">{{ item.title }}</p>
+          <p class="text-sm font-medium text-gray-900 dark:text-gray-100">{{ item.title }}</p>
           <time class="text-xs text-muted whitespace-nowrap">{{ item.timestamp }}</time>
         </div>
         <p v-if="item.description" class="text-sm text-muted mt-0.5">{{ item.description }}</p>

@@ -1,27 +1,16 @@
 /* Design System tokens (colors/focus-ring/reduced-motion CSS vars) — must
    load before the @tailwind directives below so the vars exist by the time
-   any Tailwind-generated rule references them. Purely additive: see
-   packages/ui/src/styles/tokens.css for why importing this changes nothing
-   visually until a component actually opts into the new tokens. */
+   any Tailwind-generated rule references them. */
 @import '@resort-os/ui/src/styles/tokens.css';
+
+/* Shared layout helpers + data-table + scrollbar (dark-mode aware).
+   Replaces the duplicate @layer components block that used to live here. */
+@import '@resort-os/ui/src/styles/base.css';
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
-  * { box-sizing: border-box; }
   body { font-family: 'Cairo', sans-serif; direction: rtl; }
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: #F9F7F4; }
-  ::-webkit-scrollbar-thumb { background: #C9963C; border-radius: 3px; }
-}
-
-@layer components {
-  .page-container { @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6; }
-  .section-title   { @apply text-xl font-bold text-gray-900 mb-4; }
-  .data-table      { @apply w-full border-collapse bg-white rounded-xl overflow-hidden shadow-sm; }
-  .data-table th   { @apply px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider bg-stone-50 border-b border-stone-200; }
-  .data-table td   { @apply px-4 py-3 text-sm text-gray-800 border-b border-stone-100; }
-  .data-table tr:hover td { @apply bg-blue-50/30; }
 }

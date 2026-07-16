@@ -30,14 +30,15 @@ const SIZE_CLASSES: Record<string, string> = {
   xl: 'px-8 py-4 text-xl',
 }
 const VARIANT_CLASSES: Record<string, string> = {
-  secondary: 'bg-amber-500 text-white hover:bg-amber-600 focus:ring-amber-400',
-  danger: 'bg-red-600 text-white hover:bg-red-700 focus:ring-red-500',
-  ghost: 'bg-transparent text-gray-700 hover:bg-gray-100',
-  outline: 'border-2 border-blue-700 text-blue-700 hover:bg-blue-50',
+  primary:   'bg-primary-700 text-white hover:bg-primary-800 focus:ring-primary-500',
+  secondary: 'bg-secondary text-white hover:bg-gold-dark focus:ring-secondary',
+  danger:    'bg-danger text-white hover:bg-red-700 focus:ring-danger',
+  ghost:     'bg-transparent text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 focus:ring-gray-300',
+  outline:   'border-2 border-primary-700 text-primary-700 dark:border-primary-400 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 focus:ring-primary-500',
 }
 
 const sizeClass = computed(() => SIZE_CLASSES[props.size ?? 'md'] ?? 'px-4 py-2 text-base')
-const variantClass = computed(() => VARIANT_CLASSES[props.variant ?? 'primary'] ?? 'bg-blue-700 text-white hover:bg-blue-800 focus:ring-blue-500')
+const variantClass = computed(() => VARIANT_CLASSES[props.variant ?? 'primary'] ?? VARIANT_CLASSES.primary)
 </script>
 
 <template>

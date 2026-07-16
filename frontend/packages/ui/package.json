@@ -4,12 +4,14 @@
   "type": "module",
   "main": "./src/index.ts",
   "dependencies": {
-    "@heroicons/vue": "^2.1.5"
+    "@heroicons/vue": "^2.1.5",
+    "chart.js": "^4.5.1",
+    "vue-chartjs": "^5.3.4"
   },
   "peerDependencies": {
-    "vue": "^3.4.0",
     "@resort-os/core": "workspace:*",
-    "vue-router": "^4.3.0",
-    "pinia": "^2.1.0"
+    "pinia": "^2.1.0",
+    "vue": "^3.4.0",
+    "vue-router": "^4.3.0"
   }
 }

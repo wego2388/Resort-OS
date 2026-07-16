@@ -44,7 +44,7 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 flex items-center justify-center p-4">
+  <div class="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 dark:from-gray-950 dark:via-gray-900 dark:to-gray-900 flex items-center justify-center p-4">
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
         <div class="w-20 h-20 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur">
@@ -53,30 +53,30 @@ async function handleLogin() {
           </svg>
         </div>
         <h1 class="text-3xl font-bold text-white mb-1">Resort OS</h1>
-        <p class="text-blue-200 text-sm">نظام إدارة المنتجع المتكامل</p>
+        <p class="text-blue-200 dark:text-gray-400 text-sm">نظام إدارة المنتجع المتكامل</p>
       </div>
-      <div class="bg-white rounded-2xl p-8 shadow-2xl">
-        <h2 class="text-xl font-bold text-gray-900 mb-6 text-center">تسجيل الدخول</h2>
+      <div class="bg-white dark:bg-gray-900 dark:border dark:border-gray-700 rounded-2xl p-8 shadow-2xl">
+        <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-6 text-center">تسجيل الدخول</h2>
         <form @submit.prevent="handleLogin" class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">اسم المستخدم</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">اسم المستخدم</label>
             <input v-model="username" type="text" placeholder="username" autocomplete="username"
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900" />
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900" />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">كلمة المرور</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كلمة المرور</label>
             <input v-model="password" type="password" placeholder="••••••••" autocomplete="current-password"
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900" />
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900" />
           </div>
           <div v-if="!needsOtp" class="text-center -mt-2">
-            <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline">نسيت كلمة السر؟</router-link>
+            <router-link to="/forgot-password" class="text-sm text-blue-700 dark:text-blue-400 hover:underline">نسيت كلمة السر؟</router-link>
           </div>
           <div v-if="needsOtp">
-            <label class="block text-sm font-medium text-gray-700 mb-1">كود التحقق بخطوتين</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كود التحقق بخطوتين</label>
             <input v-model="otpCode" type="text" inputmode="numeric" maxlength="6" placeholder="000000"
               autocomplete="one-time-code" autofocus
-              class="w-full px-4 py-3 rounded-xl border border-stone-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900" />
-            <p class="text-xs text-gray-400 mt-1">أدخل الكود من تطبيق المصادقة (Google Authenticator أو Authy)</p>
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900" />
+            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">أدخل الكود من تطبيق المصادقة (Google Authenticator أو Authy)</p>
           </div>
           <button type="submit" :disabled="loading"
             class="w-full bg-blue-700 text-white py-3 rounded-xl font-semibold hover:bg-blue-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
@@ -87,7 +87,7 @@ async function handleLogin() {
             {{ loading ? 'جاري الدخول...' : 'دخول' }}
           </button>
         </form>
-        <p class="text-center text-xs text-gray-400 mt-6">El Kheima Beach — Resort OS v1.0</p>
+        <p class="text-center text-xs text-gray-400 dark:text-gray-600 mt-6">El Kheima Beach — Resort OS v1.0</p>
       </div>
     </div>
   </div>

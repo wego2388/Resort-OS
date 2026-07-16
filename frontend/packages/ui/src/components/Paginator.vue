@@ -39,7 +39,7 @@ const rangeLabel = computed(() => {
     <div class="flex items-center gap-1">
       <button
         type="button"
-        class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-600 hover:bg-background disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:shadow-focus-ring"
+        class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-600 dark:text-gray-400 hover:bg-background disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:shadow-focus-ring"
         :disabled="page <= 1"
         aria-label="الصفحة السابقة"
         @click="emit('update:page', page - 1)"
@@ -52,7 +52,7 @@ const rangeLabel = computed(() => {
           v-else
           type="button"
           class="w-8 h-8 flex items-center justify-center rounded-lg text-sm font-medium transition-colors duration-base focus:outline-none focus-visible:shadow-focus-ring"
-          :class="p === page ? 'bg-primary-700 text-white' : 'text-gray-700 hover:bg-background'"
+          :class="p === page ? 'bg-primary-700 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-background'"
           :aria-current="p === page ? 'page' : undefined"
           @click="emit('update:page', p)"
         >
@@ -61,7 +61,7 @@ const rangeLabel = computed(() => {
       </template>
       <button
         type="button"
-        class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-600 hover:bg-background disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:shadow-focus-ring"
+        class="w-8 h-8 flex items-center justify-center rounded-lg text-gray-600 dark:text-gray-400 hover:bg-background disabled:opacity-40 disabled:cursor-not-allowed focus:outline-none focus-visible:shadow-focus-ring"
         :disabled="page >= totalPages"
         aria-label="الصفحة التالية"
         @click="emit('update:page', page + 1)"
