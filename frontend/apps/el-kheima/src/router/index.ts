@@ -29,8 +29,9 @@ export function homeRouteFor(role: string): string {
     case 'kitchen':
       return '/kds/dining'
     case 'cashier':
-    case 'receptionist':
       return '/pos/beach'
+    case 'receptionist':
+      return '/ops/reception'
     case 'manager':
     case 'admin':
     case 'super_admin':
@@ -128,7 +129,8 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../layouts/BackOfficeLayout.vue'),
     meta: { requiresAuth: true },
     children: [
-      { path: '', redirect: '/ops/rooms' },
+      { path: '', redirect: '/ops/reception' },
+      { path: 'reception', name: 'ops-reception', component: () => import('../views/ops/ReceptionView.vue'), meta: { title: 'الاستقبال' } },
       { path: 'rooms', name: 'ops-rooms', component: () => import('../views/ops/RoomsView.vue'), meta: { title: 'الغرف' } },
       { path: 'bookings', name: 'ops-bookings', component: () => import('../views/ops/BookingsView.vue'), meta: { title: 'الحجوزات' } },
       { path: 'housekeeping', name: 'ops-housekeeping', component: () => import('../views/ops/HousekeepingView.vue'), meta: { title: 'التنظيف' } },
@@ -156,6 +158,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { requiredRole: 'cashier', title: 'التايم شير' } },
       { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { title: 'لوحة المبيعات' } },
       { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { title: 'لوحة الشاطئ الحيّة' } },
+      { path: 'beach-admin', name: 'admin-beach-admin', component: () => import('../views/admin/BeachAdminView.vue'), meta: { title: 'إدارة الشاطئ' } },
       { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { title: 'الفاتورة الإلكترونية' } },
       { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { title: 'المخزون' } },
       { path: 'recipes', name: 'admin-recipes', component: () => import('../views/admin/RecipesView.vue'), meta: { title: 'وصفات الأصناف' } },
@@ -177,6 +180,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'tables',      redirect: '/admin/dining-menu' },
       { path: 'cafe-sales',  redirect: '/admin/analytics' },
       { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
+      { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { title: 'الموقع والحجوزات الأونلاين' } },
     ],
   },
 
