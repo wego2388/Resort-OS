@@ -27,6 +27,32 @@
 
 ---
 
+## ⚖️ اللي اتعمل يوم 2026-07-16 — Policy Engine v1 (سجل مركزي للموافقات)
+
+Mohamed طلب "Policy Engine: طبقة مستقلة لإدارة الموافقات، حدود الخصومات، صلاحيات
+الورديات، وسياسات التشغيل". قبل التنفيذ اتعمل تدقيق فعلي (مش تخمين) لمكان كل حاجة
+دلوقتي، وطلع إن الصورة مختلطة: منطق الموافقة نفسه (PIN + lockout) كان أصلاً مركزي
+في `core.services.resolve_pin_approval` — الفعلي المتكرر كان "مين المستوى المطلوب
+للموافقة" (`min_approver_level=60` مقفول inline في 4 أماكن) و"كتابة AuditLog" (كل
+موضع بيبنيها يدوي بشكله الخاص). حدود الخصومات (`CustomerGroup.discount_percentage`،
+`ConditionalDiscount`) طلعت أصلاً في الداتابيز مش الكود — **اتأكد مع Mohamed مباشرة
+(2026-07-16) إنها تفضل كده عمدًا** عشان تتغيّر من غير نشر كود جديد.
+
+**الناتج:** `app/modules/core/policy_engine.py` جديد — كتالوج `SENSITIVE_ACTIONS`
+(زي `permission_catalog.py` بالظبط بس لسياسات العمل مش RBAC) + `require_approval()`
+(بيقرا الحد من الكتالوج بدل ما يتقفل inline) + `record_policy_audit()` (كتابة
+AuditLog بشكل موحّد). مبني *فوق* `resolve_pin_approval` مش بديل له. عمدًا مش جوه
+`app/resort_os/` — الملفات هناك "pure domain engines" بدون DB (راجع header
+`discount_engine.py`)، والملف ده بيكتب AuditLog فعليًا فمكانه جوه `core/`.
+
+4 مواضع اتنقلت (استخراج، مش إعادة تصميم — نفس السلوك بالظبط): `dining.services.
+void_order_item`، `dining.services.apply_order_discount`، `finance.services.
+record_cash_movement`، `finance.services.list_shift_invoices` (المُشاهدة بدون
+audit log — نفس ما كان). اتأكد إنه behavior-preserving 100%: **1786 اختبار قبل
+وبعد، نفس الرقم بالظبط، صفر فشل**.
+
+---
+
 ## 🔎 اللي اتعمل يوم 2026-07-16 — مراجعة ودمج جلسة Kiro CLI (2026-07-15)
 
 Mohamed استخدم أداة تانية (Kiro CLI، شوف `.kiro/AGENT.md`) في جلسة منفصلة عملت 122 ملف

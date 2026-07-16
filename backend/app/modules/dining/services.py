@@ -10,7 +10,6 @@ docstrings models.py لتبرير القرارات المعمارية (Variants�
 """
 from __future__ import annotations
 
-import json
 import logging
 from collections import defaultdict
 from datetime import date, datetime, time, timedelta
@@ -816,19 +815,21 @@ def void_order_item(
     if item.status == "cancelled":
         raise ValueError("الصنف ده ملغي بالفعل")
 
-    from app.modules.core import crud as core_crud, services as core_services  # noqa: PLC0415
-    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    from app.modules.core import policy_engine  # noqa: PLC0415
 
-    approved_by = core_services.resolve_pin_approval(
-        db, acting_user_level, approver_user_id, approver_pin, min_approver_level=60,
+    approved_by = policy_engine.require_approval(
+        db, "void_order_item",
+        acting_user_level=acting_user_level,
+        approver_user_id=approver_user_id, approver_pin=approver_pin,
     )
 
     crud.void_order_item(db, item, reason, voided_by)
-    core_crud.create_audit_log(db, AuditLogCreate(
+    policy_engine.record_policy_audit(
+        db, "void_order_item",
         user_id=voided_by, approved_by=approved_by, branch_id=order.branch_id,
-        action="void_order_item", entity_type="dining_order_item", entity_id=item.id,
-        new_data=json.dumps({"reason": reason}),
-    ))
+        entity_type="dining_order_item", entity_id=item.id,
+        data={"reason": reason},
+    )
 
     subtotal = Decimal("0")
     for i in order.items:
@@ -1418,11 +1419,12 @@ def apply_order_discount(
     if order.status in ("paid", "cancelled"):
         raise ValueError("لا يمكن تطبيق خصم على طلب مغلق")
 
-    from app.modules.core import crud as core_crud, services as core_services  # noqa: PLC0415
-    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    from app.modules.core import policy_engine  # noqa: PLC0415
 
-    approved_by = core_services.resolve_pin_approval(
-        db, acting_user_level, approver_user_id, approver_pin, min_approver_level=60,
+    approved_by = policy_engine.require_approval(
+        db, "apply_order_discount",
+        acting_user_level=acting_user_level,
+        approver_user_id=approver_user_id, approver_pin=approver_pin,
     )
 
     rules: list[DiscountRule] = []
@@ -1470,18 +1472,19 @@ def apply_order_discount(
         rule_id=final_rule_id,
     )
 
-    core_crud.create_audit_log(db, AuditLogCreate(
+    policy_engine.record_policy_audit(
+        db, "apply_discount",
         user_id=applied_by, approved_by=approved_by, branch_id=order.branch_id,
-        action="apply_discount", entity_type="dining_order", entity_id=order.id,
-        new_data=json.dumps({
+        entity_type="dining_order", entity_id=order.id,
+        data={
             "applied": result.applied,
             "conditional_discount_amount": str(result.amount_saved),
             "conditional_rule_id": result.rule_id,
             "customer_group_discount_amount": str(group_amount),
             "final_discount_amount": str(final_amount),
             "final_rule_id": final_rule_id,
-        }),
-    ))
+        },
+    )
 
     if conditional_wins and result.applied and result.rule_id:
         try:

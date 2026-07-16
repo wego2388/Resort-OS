@@ -381,25 +381,27 @@ def record_cash_movement(
     if shift.status == "closed":
         raise ValueError("الوردية مقفولة — لا يمكن تسجيل حركة كاش عليها")
 
-    from app.modules.core import crud as core_crud, services as core_services  # noqa: PLC0415
-    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    from app.modules.core import policy_engine  # noqa: PLC0415
 
-    approved_by = core_services.resolve_pin_approval(
-        db, acting_user_level, data.approver_user_id, data.approver_pin, min_approver_level=60,
+    approved_by = policy_engine.require_approval(
+        db, "cash_movement",
+        acting_user_level=acting_user_level,
+        approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
     )
 
     movement = crud.create_cash_movement(
         db, shift.branch_id, shift_id, data.movement_type, data.amount, data.reason, performed_by,
         approved_by=approved_by,
     )
-    core_crud.create_audit_log(db, AuditLogCreate(
+    policy_engine.record_policy_audit(
+        db, f"cash_movement_{data.movement_type}",
         user_id=performed_by, approved_by=approved_by, branch_id=shift.branch_id,
-        action=f"cash_movement_{data.movement_type}", entity_type="cash_movement", entity_id=movement.id,
-        new_data=json.dumps({
+        entity_type="cash_movement", entity_id=movement.id,
+        data={
             "shift_id": shift_id, "movement_type": data.movement_type,
             "amount": str(data.amount), "reason": data.reason,
-        }),
-    ))
+        },
+    )
     db.commit()
     db.refresh(movement)
     return movement
@@ -722,14 +724,16 @@ def list_shift_invoices(
         raise ValueError(f"الوردية {shift_id} غير موجودة")
 
     from app.core.deps import user_level  # noqa: PLC0415
-    from app.modules.core import services as core_services  # noqa: PLC0415
+    from app.modules.core import policy_engine  # noqa: PLC0415
 
     acting_level = user_level(requesting_user)
     if acting_level < 60 and shift.cashier_id != requesting_user.id:
         raise PermissionError("لا يمكنك عرض فواتير وردية غيرك")
 
-    core_services.resolve_pin_approval(
-        db, acting_level, approver_user_id, approver_pin, min_approver_level=60,
+    policy_engine.require_approval(
+        db, "view_other_cashier_shift_invoices",
+        acting_user_level=acting_level,
+        approver_user_id=approver_user_id, approver_pin=approver_pin,
     )
 
     payments = crud.list_shift_payments_with_folio(db, shift_id)
