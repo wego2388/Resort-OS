@@ -24,6 +24,7 @@ from app.modules.crm.schemas import (
     CustomerCreate, CustomerGroupCreate, CustomerGroupUpdate, CustomerUpdate,
     InteractionCreate,
     LeadConvertRequest, LeadCreate, LeadStageUpdate,
+    LoyaltyAdjustRequest, LoyaltyProgramCreate, LoyaltyProgramUpdate, LoyaltyRedeemRequest,
     OpportunityCreate, OpportunityUpdate,
 )
 
@@ -372,3 +373,136 @@ def get_overdue_activities(db: Session, branch_id: int) -> list[Activity]:
         limit=500,
     )
     return items
+
+
+# ── Loyalty Program Services ─────────────────────────────────────────────────
+
+def get_or_create_loyalty_program(db: Session, branch_id: int) -> "LoyaltyProgram | None":
+    """يجيب برنامج النقاط للفرع. لو مش موجود يرجع None (مش نشط بعد)."""
+    from app.modules.crm.models import LoyaltyProgram  # noqa: PLC0415
+    return crud.get_loyalty_program(db, branch_id)
+
+
+def setup_loyalty_program(db: Session, data: LoyaltyProgramCreate) -> "LoyaltyProgram":
+    """ينشئ برنامج نقاط للفرع — مرة واحدة فقط."""
+    existing = crud.get_loyalty_program(db, data.branch_id)
+    if existing:
+        raise ValueError("برنامج النقاط موجود بالفعل لهذا الفرع — استخدم التعديل")
+    obj = crud.create_loyalty_program(db, data)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def update_loyalty_program(db: Session, branch_id: int, data: LoyaltyProgramUpdate) -> "LoyaltyProgram":
+    program = crud.get_loyalty_program(db, branch_id)
+    if not program:
+        raise ValueError("لا يوجد برنامج نقاط لهذا الفرع")
+    obj = crud.update_loyalty_program(db, program, data)
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def get_customer_loyalty_account(db: Session, branch_id: int, customer_id: int) -> "LoyaltyAccount | None":
+    """يجيب حساب النقاط للعميل مع الرصيد الحالي."""
+    return crud.get_loyalty_account_by_customer(db, branch_id, customer_id)
+
+
+def earn_loyalty_points(
+    db: Session,
+    branch_id: int,
+    customer_id: int,
+    paid_amount: "Decimal",
+    source: str,
+    source_id: int | None = None,
+    reference: str | None = None,
+    created_by: int | None = None,
+) -> int:
+    """يحسب النقاط المكتسبة من مبلغ الدفع ويضيفها للحساب.
+    يرجع عدد النقاط المضافة (0 لو البرنامج مش نشط أو مش موجود)."""
+    program = crud.get_loyalty_program(db, branch_id)
+    if not program or not program.is_active:
+        return 0
+    if paid_amount <= 0:
+        return 0
+
+    points = int(paid_amount / program.earn_rate)
+    if points <= 0:
+        return 0
+
+    account = crud.get_or_create_loyalty_account(db, program, customer_id)
+    if account.is_frozen:
+        return 0
+
+    crud.earn_points(db, account, points, source, source_id, reference, created_by)
+    db.commit()
+    return points
+
+
+def redeem_loyalty_points(
+    db: Session,
+    data: LoyaltyRedeemRequest,
+    created_by: int | None = None,
+) -> "LoyaltyRedeemResponse":
+    """يسترد نقاط عميل ويرجع قيمة الخصم.
+    تتحقق من: البرنامج نشط، رصيد كافي، حد الاسترداد الأقصى من الفاتورة."""
+    from app.modules.crm.schemas import LoyaltyRedeemResponse  # noqa: PLC0415
+
+    program = crud.get_loyalty_program(db, data.branch_id)
+    if not program or not program.is_active:
+        raise ValueError("برنامج النقاط غير مفعّل لهذا الفرع")
+
+    account = crud.get_loyalty_account_by_customer(db, data.branch_id, data.customer_id)
+    if not account:
+        raise ValueError("العميل لا يملك حساب نقاط")
+    if account.is_frozen:
+        raise ValueError("حساب النقاط مجمّد — تواصل مع الإدارة")
+    if account.points < program.min_redeem:
+        raise ValueError(f"الرصيد الحالي ({account.points} نقطة) أقل من الحد الأدنى للاسترداد ({program.min_redeem})")
+    if account.points < data.points:
+        raise ValueError(f"رصيد النقاط غير كافٍ ({account.points} متاح، {data.points} مطلوب)")
+
+    discount = Decimal(data.points) * program.redeem_rate
+    txn = crud.redeem_points(
+        db, account, data.points,
+        data.source, data.source_id,
+        reference=f"استرداد {data.points} نقطة",
+        created_by=created_by,
+    )
+    db.commit()
+
+    return LoyaltyRedeemResponse(
+        points_redeemed=data.points,
+        discount_amount=discount,
+        new_balance=account.points,
+        transaction_id=txn.id,
+    )
+
+
+def adjust_loyalty_points(
+    db: Session,
+    data: LoyaltyAdjustRequest,
+    created_by: int | None = None,
+) -> "LoyaltyAccount":
+    """تعديل يدوي على رصيد النقاط (مدير+ فقط)."""
+    program = crud.get_loyalty_program(db, data.branch_id)
+    if not program:
+        raise ValueError("لا يوجد برنامج نقاط لهذا الفرع")
+
+    account = crud.get_or_create_loyalty_account(db, program, data.customer_id)
+    new_balance = account.points + data.points
+    if new_balance < 0:
+        raise ValueError(f"لا يمكن خصم {abs(data.points)} نقطة — الرصيد الحالي {account.points}")
+
+    crud.adjust_points(db, account, data, created_by)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+def get_loyalty_transactions(db: Session, branch_id: int, customer_id: int, limit: int = 50) -> list:
+    account = crud.get_loyalty_account_by_customer(db, branch_id, customer_id)
+    if not account:
+        return []
+    return crud.list_loyalty_transactions(db, account.id, limit=limit)

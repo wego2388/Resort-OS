@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api, parseApiTimestamp, useAuthStore } from '@resort-os/core'
+import { api, parseApiTimestamp, useAuthStore, ENDPOINTS } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
 const authStore = useAuthStore()
-const branchId = parseInt(localStorage.getItem('branch_id') ?? '1')
-const tab = ref<'leads' | 'customers' | 'opportunities' | 'activities' | 'campaigns' | 'guests'>('leads')
+const auth = useAuthStore()
+const branchId = auth.branchId
+const tab = ref<'leads' | 'customers' | 'opportunities' | 'activities' | 'campaigns' | 'guests' | 'loyalty'>('leads')
 
 interface LeadSource { id: number; name: string; is_active: boolean }
 interface Lead {
@@ -323,6 +324,95 @@ async function loadTab(t: typeof tab.value) {
   if (t === 'activities') await loadActivities()
   if (t === 'campaigns') await loadCampaigns()
   if (t === 'guests') await loadGuestProfiles()
+  if (t === 'loyalty') await loadLoyaltyProgram()
+}
+
+// ── Loyalty (C-01) ────────────────────────────────────────────────────────
+interface LoyaltyProgram {
+  id: number; branch_id: number; points_per_egp: number
+  redeem_rate: number; min_redeem_points: number; is_active: boolean
+}
+interface LoyaltyAccount {
+  id: number; customer_id: number; balance: number; lifetime_earned: number; lifetime_redeemed: number
+}
+interface LoyaltyTransaction {
+  id: number; points: number; transaction_type: string; reference: string | null; created_at: string
+}
+interface LoyaltyRedeemForm { customer_id: string; points: string; reference: string }
+
+const loyaltyProgram = ref<LoyaltyProgram | null>(null)
+const loyaltyLoading = ref(false)
+const loyaltyCustomerId = ref('')
+const loyaltyAccount = ref<LoyaltyAccount | null>(null)
+const loyaltyTransactions = ref<LoyaltyTransaction[]>([])
+const loyaltyAccountLoading = ref(false)
+const redeemForm = ref<LoyaltyRedeemForm>({ customer_id: '', points: '', reference: '' })
+const redeemLoading = ref(false)
+const showLoyaltySetup = ref(false)
+const loyaltySetupForm = ref({ points_per_egp: '1', redeem_rate: '0.5', min_redeem_points: '100', is_active: true })
+
+async function loadLoyaltyProgram() {
+  loyaltyLoading.value = true
+  try {
+    const res = await api.get(ENDPOINTS.crm.loyaltyProgram, { params: { branch_id: branchId } })
+    loyaltyProgram.value = res.data
+  } catch { loyaltyProgram.value = null }
+  finally { loyaltyLoading.value = false }
+}
+
+async function saveLoyaltyProgram() {
+  try {
+    const payload = {
+      branch_id: branchId,
+      points_per_egp: parseFloat(loyaltySetupForm.value.points_per_egp),
+      redeem_rate: parseFloat(loyaltySetupForm.value.redeem_rate),
+      min_redeem_points: parseInt(loyaltySetupForm.value.min_redeem_points),
+      is_active: loyaltySetupForm.value.is_active,
+    }
+    if (loyaltyProgram.value) {
+      const res = await api.patch(ENDPOINTS.crm.loyaltyProgram, payload, { params: { branch_id: branchId } })
+      loyaltyProgram.value = res.data
+    } else {
+      const res = await api.post(ENDPOINTS.crm.loyaltyProgram, payload)
+      loyaltyProgram.value = res.data
+    }
+    showLoyaltySetup.value = false
+    toast.success('تم حفظ إعدادات برنامج الولاء')
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'فشل الحفظ')
+  }
+}
+
+async function lookupLoyaltyAccount() {
+  const id = parseInt(loyaltyCustomerId.value)
+  if (!id) return
+  loyaltyAccountLoading.value = true
+  try {
+    const [accRes, txRes] = await Promise.all([
+      api.get(ENDPOINTS.crm.loyaltyAccount, { params: { branch_id: branchId, customer_id: id } }),
+      api.get(ENDPOINTS.crm.loyaltyTransactions, { params: { branch_id: branchId, customer_id: id, limit: 20 } }),
+    ])
+    loyaltyAccount.value = accRes.data
+    loyaltyTransactions.value = txRes.data ?? []
+  } catch { toast.error('لم يُعثر على حساب نقاط لهذا العميل') }
+  finally { loyaltyAccountLoading.value = false }
+}
+
+async function redeemPoints() {
+  redeemLoading.value = true
+  try {
+    await api.post(ENDPOINTS.crm.loyaltyRedeem, {
+      branch_id: branchId,
+      customer_id: parseInt(redeemForm.value.customer_id),
+      points: parseInt(redeemForm.value.points),
+      reference: redeemForm.value.reference || null,
+    })
+    toast.success('تم استرداد النقاط بنجاح')
+    redeemForm.value = { customer_id: '', points: '', reference: '' }
+    if (loyaltyAccount.value) await lookupLoyaltyAccount()
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'فشل استرداد النقاط')
+  } finally { redeemLoading.value = false }
 }
 
 // ── Leads: create ────────────────────────────────────────────────────────
@@ -473,7 +563,6 @@ async function loadAvailableRoomsForConvert() {
     })
     availableRoomsForConvert.value = res.data ?? []
   } catch (e) {
-    console.error(e)
     toast.error('فشل تحميل الغرف المتاحة')
   } finally {
     loadingAvailableRooms.value = false
@@ -500,7 +589,6 @@ async function convertLeadToBooking() {
     convertForm.value = { check_in: '', check_out: '', room_id: '' }
     availableRoomsForConvert.value = []
   } catch (e: any) {
-    console.error(e)
     toast.error(e?.response?.data?.detail ?? 'فشل تحويل العميل المحتمل لحجز')
   } finally {
     convertingLead.value = false
@@ -666,13 +754,13 @@ onMounted(loadLeads)
 
 <template>
   <div dir="rtl">
-    <h2 class="text-2xl font-black text-gray-900 mb-6">إدارة العملاء — CRM</h2>
+    <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">إدارة العملاء — CRM</h2>
 
     <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
-      <div class="flex gap-1 bg-stone-100 p-1 rounded-xl w-fit">
-        <button v-for="t in [{ val: 'leads', label: 'العملاء المحتملون' }, { val: 'customers', label: 'العملاء' }, { val: 'opportunities', label: 'الفرص البيعية' }, { val: 'activities', label: 'الأنشطة' }, { val: 'campaigns', label: 'الحملات' }, { val: 'guests', label: 'ملفات الضيوف' }]"
+      <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl w-fit">
+        <button v-for="t in [{ val: 'leads', label: 'العملاء المحتملون' }, { val: 'customers', label: 'العملاء' }, { val: 'opportunities', label: 'الفرص البيعية' }, { val: 'activities', label: 'الأنشطة' }, { val: 'campaigns', label: 'الحملات' }, { val: 'guests', label: 'ملفات الضيوف' }, { val: 'loyalty', label: '🎁 نقاط الولاء' }]"
           :key="t.val" @click="loadTab(t.val as any)"
-          :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700']"
+          :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
         >{{ t.label }}</button>
       </div>
       <AppButton v-if="tab === 'leads'" size="sm" @click="showLeadForm = !showLeadForm">
@@ -702,22 +790,22 @@ onMounted(loadLeads)
       <AppCard v-if="showLeadForm" class="mb-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input v-model="leadForm.full_name" type="text" placeholder="الاسم الكامل *"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
           <input v-model="leadForm.phone" type="text" placeholder="رقم الهاتف"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="leadForm.email" type="email" placeholder="البريد الإلكتروني"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
-          <select v-model="leadForm.source_id" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+          <select v-model="leadForm.source_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option value="">مصدر العميل المحتمل (اختياري)</option>
             <option v-for="s in leadSources" :key="s.id" :value="s.id">{{ s.name }}{{ !s.is_active ? ' (متوقف)' : '' }}</option>
           </select>
-          <select v-model="leadForm.interest" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+          <select v-model="leadForm.interest" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option v-for="(label, val) in interestLabels" :key="val" :value="val">{{ label }}</option>
           </select>
           <input v-model="leadForm.expected_value" type="number" min="0" step="0.01" placeholder="القيمة المتوقعة"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="leadForm.notes" type="text" placeholder="ملاحظات"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
         </div>
         <AppButton class="mt-3" size="sm" :loading="savingLead" @click="createLead">حفظ العميل المحتمل</AppButton>
       </AppCard>
@@ -725,18 +813,18 @@ onMounted(loadLeads)
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else class="space-y-3">
         <div v-for="lead in leads" :key="lead.id"
-          class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-300"
+          class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-300"
           @click="openLeadDetail(lead)">
           <div>
             <div class="flex items-center gap-2 mb-1">
-              <span class="font-bold text-gray-900">{{ lead.full_name }}</span>
-              <span v-if="lead.phone" class="text-xs text-gray-400">{{ lead.phone }}</span>
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ lead.full_name }}</span>
+              <span v-if="lead.phone" class="text-xs text-gray-400 dark:text-gray-500">{{ lead.phone }}</span>
             </div>
             <div class="flex items-center gap-2 text-xs flex-wrap">
               <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">{{ interestLabels[lead.interest] ?? lead.interest }}</span>
-              <span v-if="lead.source_id" class="px-2 py-0.5 bg-stone-100 text-gray-600 rounded-full">{{ sourceNameById[lead.source_id] ?? `مصدر #${lead.source_id}` }}</span>
-              <span v-else class="px-2 py-0.5 bg-stone-100 text-gray-400 rounded-full">بدون مصدر</span>
-              <span class="text-gray-400">{{ fmtDate(lead.created_at) }}</span>
+              <span v-if="lead.source_id" class="px-2 py-0.5 bg-stone-100 dark:bg-gray-700 text-gray-600 dark:text-gray-500 rounded-full">{{ sourceNameById[lead.source_id] ?? `مصدر #${lead.source_id}` }}</span>
+              <span v-else class="px-2 py-0.5 bg-stone-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 rounded-full">بدون مصدر</span>
+              <span class="text-gray-400 dark:text-gray-500">{{ fmtDate(lead.created_at) }}</span>
             </div>
           </div>
           <div class="flex items-center gap-2" @click.stop>
@@ -758,21 +846,21 @@ onMounted(loadLeads)
       <AppCard v-if="showCustomerForm" class="mb-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input v-model="customerForm.full_name" type="text" placeholder="الاسم الكامل *"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
           <input v-model="customerForm.phone" type="text" placeholder="رقم الهاتف"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="customerForm.email" type="email" placeholder="البريد الإلكتروني"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
-          <select v-model="customerForm.segment" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+          <select v-model="customerForm.segment" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option value="regular">عادي</option>
             <option value="vip">VIP</option>
             <option value="corporate">شركة</option>
             <option value="travel_agent">وكيل سفر</option>
           </select>
           <input v-model="customerForm.nationality" type="text" placeholder="الجنسية"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="customerForm.notes" type="text" placeholder="ملاحظات"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
         </div>
         <AppButton class="mt-3" size="sm" :loading="savingCustomer" @click="createCustomer">حفظ العميل</AppButton>
       </AppCard>
@@ -780,26 +868,26 @@ onMounted(loadLeads)
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <AppCard v-else padding="none">
         <table class="w-full">
-          <thead class="bg-stone-50">
+          <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">العميل</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الشريحة</th>
-              <th v-if="authStore.roleLevel >= 60" class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">مجموعة الخصم</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الزيارات</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">إجمالي الإنفاق</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">العميل</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الشريحة</th>
+              <th v-if="authStore.roleLevel >= 60" class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">مجموعة الخصم</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الزيارات</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">إجمالي الإنفاق</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="c in customers" :key="c.id" class="border-t border-stone-100 hover:bg-stone-50">
+            <tr v-for="c in customers" :key="c.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
               <td class="px-4 py-3">
                 <div class="flex items-center gap-2">
                   <span v-if="c.vip_flag" class="text-amber-500 text-sm">⭐</span>
                   <div>
-                    <div class="font-medium text-gray-900 text-sm flex items-center gap-1">
+                    <div class="font-medium text-gray-900 dark:text-gray-100 text-sm flex items-center gap-1">
                       {{ c.full_name }}
                       <AppBadge v-if="c.blacklisted" size="sm" variant="danger">قائمة سوداء</AppBadge>
                     </div>
-                    <div v-if="c.phone" class="text-xs text-gray-400">{{ c.phone }}</div>
+                    <div v-if="c.phone" class="text-xs text-gray-400 dark:text-gray-500">{{ c.phone }}</div>
                   </div>
                 </div>
               </td>
@@ -810,12 +898,12 @@ onMounted(loadLeads)
               </td>
               <td v-if="authStore.roleLevel >= 60" class="px-4 py-3">
                 <select :value="c.customer_group_id ?? ''" @change="assignGroup(c, ($event.target as HTMLSelectElement).value ? Number(($event.target as HTMLSelectElement).value) : '')"
-                  class="border border-stone-200 rounded-lg px-2 py-1 text-xs">
+                  class="border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-xs">
                   <option value="">بدون مجموعة</option>
                   <option v-for="g in groups" :key="g.id" :value="g.id">{{ g.name_ar || g.name }} ({{ g.discount_percentage }}%)</option>
                 </select>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-700 font-medium">{{ c.visits_count }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 font-medium">{{ c.visits_count }}</td>
               <td class="px-4 py-3 text-sm font-bold text-blue-700">{{ Number(c.total_spent).toLocaleString('ar-EG') }} ج</td>
             </tr>
             <tr v-if="customers.length === 0">
@@ -832,40 +920,40 @@ onMounted(loadLeads)
     <div v-if="tab === 'opportunities'">
       <AppCard v-if="showOpportunityForm" class="mb-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <select v-model="opportunityForm.customer_id" class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2">
+          <select v-model="opportunityForm.customer_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2">
             <option value="">اختر العميل *</option>
             <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.full_name }}</option>
           </select>
           <input v-model="opportunityForm.title" type="text" placeholder="عنوان الفرصة *"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
-          <select v-model="opportunityForm.product_type" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+          <select v-model="opportunityForm.product_type" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option v-for="(label, val) in productTypeLabels" :key="val" :value="val">{{ label }}</option>
           </select>
           <input v-model="opportunityForm.expected_value" type="number" min="0" step="0.01" placeholder="القيمة المتوقعة"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="opportunityForm.probability" type="number" min="0" max="100" placeholder="نسبة الترجيح %"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="opportunityForm.expected_close" type="date" placeholder="تاريخ الإغلاق المتوقع"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="opportunityForm.notes" type="text" placeholder="ملاحظات"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
         </div>
         <AppButton class="mt-3" size="sm" :loading="savingOpportunity" @click="createOpportunity">حفظ الفرصة البيعية</AppButton>
       </AppCard>
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else class="space-y-3">
-        <div v-for="opp in opportunities" :key="opp.id" class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
+        <div v-for="opp in opportunities" :key="opp.id" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm">
           <div class="flex items-center justify-between mb-2">
             <div>
-              <span class="font-bold text-gray-900">{{ opp.title }}</span>
-              <span class="text-xs text-gray-400 mr-2">{{ customerNameById[opp.customer_id] ?? `عميل #${opp.customer_id}` }}</span>
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ opp.title }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-500 mr-2">{{ customerNameById[opp.customer_id] ?? `عميل #${opp.customer_id}` }}</span>
             </div>
             <AppBadge size="sm" :variant="oppStageConfig[opp.stage]?.variant ?? 'neutral'">
               {{ oppStageConfig[opp.stage]?.label ?? opp.stage }}
             </AppBadge>
           </div>
-          <div class="flex items-center gap-4 text-xs text-gray-500 mb-3 flex-wrap">
+          <div class="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-500 mb-3 flex-wrap">
             <span>{{ productTypeLabels[opp.product_type] ?? opp.product_type }}</span>
             <span>قيمة متوقعة: {{ Number(opp.expected_value).toLocaleString('ar-EG') }} ج</span>
             <span>ترجيح: {{ opp.probability }}%</span>
@@ -879,9 +967,9 @@ onMounted(loadLeads)
             <AppButton v-if="['proposal','negotiation'].includes(opp.stage)" size="sm" @click="setOpportunityStage(opp, 'won')">إغلاق كصفقة رابحة</AppButton>
             <AppButton size="sm" variant="secondary" @click="openLostOpportunity(opp)">خسارة</AppButton>
           </div>
-          <div v-if="lostOpportunityId === opp.id" class="flex gap-2 mt-2 pt-2 border-t border-stone-100">
+          <div v-if="lostOpportunityId === opp.id" class="flex gap-2 mt-2 pt-2 border-t border-stone-100 dark:border-border/50">
             <input v-model="lostOpportunityReason" type="text" placeholder="سبب الخسارة (مطلوب) *"
-              class="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="flex-1 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <AppButton size="sm" variant="secondary" @click="confirmOpportunityLost">تأكيد</AppButton>
             <AppButton size="sm" variant="secondary" @click="lostOpportunityId = null">إلغاء</AppButton>
           </div>
@@ -894,34 +982,34 @@ onMounted(loadLeads)
     <div v-if="tab === 'activities'">
       <AppCard v-if="showActivityForm" class="mb-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <select v-model="activityForm.customer_id" class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2">
+          <select v-model="activityForm.customer_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2">
             <option value="">اختر العميل *</option>
             <option v-for="c in customers" :key="c.id" :value="c.id">{{ c.full_name }}</option>
           </select>
-          <select v-model="activityForm.activity_type" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+          <select v-model="activityForm.activity_type" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option v-for="(label, val) in activityTypeLabels" :key="val" :value="val">{{ label }}</option>
           </select>
           <input v-model="activityForm.title" type="text" placeholder="عنوان النشاط *"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
-          <input v-model="activityForm.due_date" type="date" class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
-          <input v-model="activityForm.due_time" type="time" class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+          <input v-model="activityForm.due_date" type="date" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+          <input v-model="activityForm.due_time" type="time" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="activityForm.notes" type="text" placeholder="ملاحظات"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
         </div>
         <AppButton class="mt-3" size="sm" :loading="savingActivity" @click="createActivity">حفظ النشاط</AppButton>
       </AppCard>
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else class="space-y-3">
-        <div v-for="act in activities" :key="act.id" class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm flex items-center justify-between">
+        <div v-for="act in activities" :key="act.id" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm flex items-center justify-between">
           <div>
             <div class="flex items-center gap-2 mb-1">
-              <span class="font-bold text-gray-900">{{ act.title }}</span>
-              <span class="text-xs text-gray-400">{{ customerNameById[act.customer_id] ?? `عميل #${act.customer_id}` }}</span>
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ act.title }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-500">{{ customerNameById[act.customer_id] ?? `عميل #${act.customer_id}` }}</span>
             </div>
             <div class="flex items-center gap-2 text-xs flex-wrap">
               <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">{{ activityTypeLabels[act.activity_type] ?? act.activity_type }}</span>
-              <span class="text-gray-400">استحقاق {{ fmtDate(act.due_date) }}<span v-if="act.due_time"> — {{ act.due_time }}</span></span>
+              <span class="text-gray-400 dark:text-gray-500">استحقاق {{ fmtDate(act.due_date) }}<span v-if="act.due_time"> — {{ act.due_time }}</span></span>
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -938,11 +1026,11 @@ onMounted(loadLeads)
 
     <!-- Guest Profiles (PMS checkout integration — read-only) -->
     <div v-if="tab === 'guests'">
-      <p class="text-xs text-gray-500 mb-3">
+      <p class="text-xs text-gray-500 dark:text-gray-500 mb-3">
         بتتحدّث أوتوماتيك من عملية تسجيل مغادرة (checkout) حقيقية في الفندق — مفيش إدخال يدوي هنا.
       </p>
       <div class="flex justify-end mb-3">
-        <label class="flex items-center gap-2 text-sm text-gray-600">
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-500">
           <input type="checkbox" v-model="guestVipOnly" @change="loadGuestProfiles" />
           VIP فقط
         </label>
@@ -950,28 +1038,28 @@ onMounted(loadLeads)
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <AppCard v-else padding="none">
         <table class="w-full">
-          <thead class="bg-stone-50">
+          <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">الضيف</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">عدد الزيارات</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">متوسط الإنفاق</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 uppercase">آخر إقامة</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الضيف</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">عدد الزيارات</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">متوسط الإنفاق</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">آخر إقامة</th>
             </tr>
           </thead>
           <tbody>
-            <tr v-for="g in guestProfiles" :key="g.id" class="border-t border-stone-100 hover:bg-stone-50">
+            <tr v-for="g in guestProfiles" :key="g.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
               <td class="px-4 py-3">
                 <div class="flex items-center gap-2">
                   <span v-if="g.vip_flag" class="text-amber-500 text-sm">⭐</span>
                   <div>
-                    <div class="font-medium text-gray-900 text-sm">{{ g.full_name }}</div>
-                    <div class="text-xs text-gray-400">{{ g.phone }}</div>
+                    <div class="font-medium text-gray-900 dark:text-gray-100 text-sm">{{ g.full_name }}</div>
+                    <div class="text-xs text-gray-400 dark:text-gray-500">{{ g.phone }}</div>
                   </div>
                 </div>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-700 font-medium">{{ g.total_visits }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 font-medium">{{ g.total_visits }}</td>
               <td class="px-4 py-3 text-sm font-bold text-blue-700">{{ Number(g.avg_spend).toLocaleString('ar-EG') }} ج</td>
-              <td class="px-4 py-3 text-sm text-gray-600">{{ fmtDate(g.last_stay) }}</td>
+              <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ fmtDate(g.last_stay) }}</td>
             </tr>
             <tr v-if="guestProfiles.length === 0">
               <td colspan="4" class="px-4 py-8">
@@ -988,16 +1076,16 @@ onMounted(loadLeads)
       <AppCard v-if="showCampaignForm" class="mb-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input v-model="campaignForm.name" type="text" placeholder="اسم الحملة"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
-          <select v-model="campaignForm.campaign_type" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+          <select v-model="campaignForm.campaign_type" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
             <option v-for="(label, val) in campaignTypeLabels" :key="val" :value="val">{{ label }}</option>
           </select>
           <input v-model="campaignForm.budget" type="number" min="0" step="0.01" placeholder="الميزانية"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="campaignForm.start_date" type="date"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="campaignForm.end_date" type="date"
-            class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <AppButton class="mt-3" size="sm" :loading="savingCampaign" @click="createCampaign">حفظ الحملة</AppButton>
       </AppCard>
@@ -1005,17 +1093,17 @@ onMounted(loadLeads)
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else class="space-y-3">
         <div v-for="c in campaigns" :key="c.id"
-          class="bg-white rounded-2xl border border-stone-200 p-4 shadow-sm">
+          class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm">
           <div class="flex items-center justify-between mb-2">
             <div>
-              <span class="font-bold text-gray-900">{{ c.name }}</span>
-              <span class="text-xs text-gray-400 mr-2">{{ campaignTypeLabels[c.campaign_type] ?? c.campaign_type }}</span>
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ c.name }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-500 mr-2">{{ campaignTypeLabels[c.campaign_type] ?? c.campaign_type }}</span>
             </div>
             <AppBadge size="sm" :variant="campaignStatusConfig[c.status]?.variant ?? 'neutral'">
               {{ campaignStatusConfig[c.status]?.label ?? c.status }}
             </AppBadge>
           </div>
-          <div class="flex items-center gap-4 text-xs text-gray-500 mb-3">
+          <div class="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-500 mb-3">
             <span>{{ c.start_date }} → {{ c.end_date }}</span>
             <span>ميزانية: {{ Number(c.budget).toLocaleString('ar-EG') }} ج</span>
             <span>إيراد منسوب: {{ Number(c.revenue_attributed).toLocaleString('ar-EG') }} ج</span>
@@ -1038,22 +1126,22 @@ onMounted(loadLeads)
           <AppBadge size="sm" :variant="stageConfig[selectedLead.stage]?.variant ?? 'neutral'">
             {{ stageConfig[selectedLead.stage]?.label ?? selectedLead.stage }}
           </AppBadge>
-          <span class="text-xs text-gray-400">أُنشئ في {{ fmtDate(selectedLead.created_at) }}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">أُنشئ في {{ fmtDate(selectedLead.created_at) }}</span>
           <span v-if="selectedLead.lost_reason" class="text-xs text-red-600">سبب الخسارة: {{ selectedLead.lost_reason }}</span>
         </div>
 
         <!-- تعديل بيانات أساسية -->
         <div>
-          <h3 class="text-sm font-bold text-gray-700 mb-2">تعديل بيانات العميل المحتمل</h3>
+          <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">تعديل بيانات العميل المحتمل</h3>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input v-model="editLeadForm.phone" type="text" placeholder="رقم الهاتف"
-              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
-            <select v-model="editLeadForm.source_id" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+              class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+            <select v-model="editLeadForm.source_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
               <option value="">بدون مصدر</option>
               <option v-for="s in leadSources" :key="s.id" :value="s.id">{{ s.name }}</option>
             </select>
             <input v-model="editLeadForm.notes" type="text" placeholder="ملاحظات"
-              class="border border-stone-200 rounded-xl px-3 py-2 text-sm sm:col-span-2" />
+              class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
           </div>
           <AppButton class="mt-2" size="sm" variant="secondary" :loading="savingLeadEdit" @click="saveLeadDetails">
             حفظ التعديلات
@@ -1062,52 +1150,52 @@ onMounted(loadLeads)
 
         <!-- سجل المكالمات -->
         <div>
-          <h3 class="text-sm font-bold text-gray-700 mb-2">سجل المكالمات</h3>
+          <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">سجل المكالمات</h3>
           <div v-if="loadingNotes" class="flex justify-center py-6"><AppSpinner /></div>
           <div v-else class="space-y-2 mb-3">
-            <div v-for="n in callNotes" :key="n.id" class="bg-stone-50 rounded-xl p-3 text-sm">
+            <div v-for="n in callNotes" :key="n.id" class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3 text-sm">
               <div class="flex items-center justify-between mb-1">
-                <span class="font-medium text-gray-800">{{ n.direction === 'inbound' ? 'مكالمة واردة' : 'مكالمة صادرة' }}</span>
-                <span class="text-xs text-gray-400">{{ fmtDateTime(n.called_at) }}</span>
+                <span class="font-medium text-gray-800 dark:text-gray-200">{{ n.direction === 'inbound' ? 'مكالمة واردة' : 'مكالمة صادرة' }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500">{{ fmtDateTime(n.called_at) }}</span>
               </div>
-              <p class="text-gray-600">{{ n.summary }}</p>
+              <p class="text-gray-600 dark:text-gray-500">{{ n.summary }}</p>
               <div class="flex items-center gap-2 mt-1">
                 <AppBadge size="sm" variant="info">{{ outcomeLabels[n.outcome] ?? n.outcome }}</AppBadge>
-                <span v-if="n.duration_min" class="text-xs text-gray-400">{{ n.duration_min }} دقيقة</span>
+                <span v-if="n.duration_min" class="text-xs text-gray-400 dark:text-gray-500">{{ n.duration_min }} دقيقة</span>
               </div>
             </div>
             <EmptyState v-if="callNotes.length === 0" icon="📞" title="لا توجد مكالمات مسجّلة بعد" />
           </div>
 
-          <div class="border-t border-stone-100 pt-3 space-y-2">
+          <div class="border-t border-stone-100 dark:border-border/50 pt-3 space-y-2">
             <div class="grid grid-cols-2 gap-2">
-              <select v-model="callNoteForm.direction" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+              <select v-model="callNoteForm.direction" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
                 <option value="outbound">مكالمة صادرة</option>
                 <option value="inbound">مكالمة واردة</option>
               </select>
-              <select v-model="callNoteForm.outcome" class="border border-stone-200 rounded-xl px-3 py-2 text-sm">
+              <select v-model="callNoteForm.outcome" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
                 <option v-for="(label, val) in outcomeLabels" :key="val" :value="val">{{ label }}</option>
               </select>
             </div>
             <textarea v-model="callNoteForm.summary" rows="2" placeholder="ملخص المكالمة (3 أحرف على الأقل) *"
-              class="w-full border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <input v-model="callNoteForm.duration_min" type="number" min="0" placeholder="مدة المكالمة (دقيقة)"
-              class="border border-stone-200 rounded-xl px-3 py-2 text-sm w-40" />
+              class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-40" />
             <AppButton size="sm" :loading="savingCallNote" @click="addCallNote">+ تسجيل ملاحظة مكالمة</AppButton>
           </div>
         </div>
 
         <!-- wagdy.md C-03: تحويل مباشر لحجز -->
-        <div v-if="!['won','lost'].includes(selectedLead.stage)" class="border-t border-stone-100 pt-4">
-          <h3 class="text-sm font-bold text-gray-700 mb-2">🏨 تحويل لحجز مباشرة</h3>
+        <div v-if="!['won','lost'].includes(selectedLead.stage)" class="border-t border-stone-100 dark:border-border/50 pt-4">
+          <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">🏨 تحويل لحجز مباشرة</h3>
           <div class="grid grid-cols-2 gap-2 mb-2">
             <input v-model="convertForm.check_in" @change="loadAvailableRoomsForConvert" type="date"
-              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <input v-model="convertForm.check_out" @change="loadAvailableRoomsForConvert" type="date"
-              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div class="flex gap-2">
-            <select v-model="convertForm.room_id" class="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm">
+            <select v-model="convertForm.room_id" class="flex-1 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
               <option value="" disabled>{{ loadingAvailableRooms ? 'جاري التحميل...' : 'اختر غرفة متاحة' }}</option>
               <option v-for="r in availableRoomsForConvert" :key="r.id" :value="r.id">{{ r.name }}</option>
             </select>
@@ -1118,11 +1206,11 @@ onMounted(loadLeads)
         </div>
 
         <!-- وسم كخسارة -->
-        <div v-if="!['won','lost'].includes(selectedLead.stage)" class="border-t border-stone-100 pt-4">
-          <h3 class="text-sm font-bold text-gray-700 mb-2">وسم كخسارة</h3>
+        <div v-if="!['won','lost'].includes(selectedLead.stage)" class="border-t border-stone-100 dark:border-border/50 pt-4">
+          <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">وسم كخسارة</h3>
           <div class="flex gap-2">
             <input v-model="lostReason" type="text" placeholder="سبب الخسارة (مطلوب)"
-              class="flex-1 border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="flex-1 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <AppButton size="sm" variant="secondary" :loading="savingLost" @click="markLeadLost">خسارة</AppButton>
           </div>
         </div>
@@ -1132,7 +1220,7 @@ onMounted(loadLeads)
     <!-- مجموعات العملاء (خصم دائم) -->
     <AppModal :open="groupModal" title="مجموعات العملاء" size="lg" @close="groupModal = false">
       <div class="space-y-4">
-        <p class="text-xs text-gray-500">
+        <p class="text-xs text-gray-500 dark:text-gray-500">
           خصم دائم يتطبّق تلقائيًا على مبيعات أي عميل عضو في المجموعة (مطعم/كافيه/شاطئ) — منفصل
           تمامًا عن خصومات Happy Hour/البروموشن المؤقتة. لو الاتنين انطبقوا على نفس الطلب، الأعلى
           قيمة بس هو اللي يتطبّق (مش تراكم).
@@ -1141,11 +1229,11 @@ onMounted(loadLeads)
         <AppCard v-if="authStore.roleLevel >= 80" padding="sm">
           <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <input v-model="groupForm.name" type="text" placeholder="الاسم (إنجليزي) *"
-              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <input v-model="groupForm.name_ar" type="text" placeholder="الاسم (عربي)"
-              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <input v-model="groupForm.discount_percentage" type="number" min="0" max="100" step="0.01" placeholder="نسبة الخصم %"
-              class="border border-stone-200 rounded-xl px-3 py-2 text-sm" />
+              class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div class="flex gap-2 mt-2">
             <AppButton size="sm" :loading="savingGroup" @click="saveGroup">
@@ -1156,17 +1244,17 @@ onMounted(loadLeads)
         </AppCard>
         <p v-else class="text-xs text-amber-600">إنشاء/تعديل المجموعات يقتصر على المدير العام (admin+).</p>
 
-        <div class="border-t border-stone-100 pt-3 space-y-2">
-          <div v-for="g in groups" :key="g.id" class="flex items-center justify-between bg-stone-50 rounded-xl px-3 py-2">
+        <div class="border-t border-stone-100 dark:border-border/50 pt-3 space-y-2">
+          <div v-for="g in groups" :key="g.id" class="flex items-center justify-between bg-stone-50 dark:bg-gray-800/60 rounded-xl px-3 py-2">
             <div>
-              <span class="font-medium text-sm text-gray-900">{{ g.name_ar || g.name }}</span>
-              <span class="text-xs text-gray-500 ml-2">خصم {{ g.discount_percentage }}%</span>
+              <span class="font-medium text-sm text-gray-900 dark:text-gray-100">{{ g.name_ar || g.name }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-500 ml-2">خصم {{ g.discount_percentage }}%</span>
             </div>
             <div class="flex items-center gap-2">
               <AppBadge size="sm" :variant="g.is_active ? 'success' : 'neutral'">{{ g.is_active ? 'نشطة' : 'موقوفة' }}</AppBadge>
               <template v-if="authStore.roleLevel >= 80">
                 <button @click="openEditGroup(g)" class="text-xs font-semibold text-primary-700 hover:underline">تعديل</button>
-                <button @click="toggleGroupActive(g)" class="text-xs font-semibold text-gray-500 hover:underline">
+                <button @click="toggleGroupActive(g)" class="text-xs font-semibold text-gray-500 dark:text-gray-500 hover:underline">
                   {{ g.is_active ? 'إيقاف' : 'تفعيل' }}
                 </button>
               </template>
@@ -1176,5 +1264,140 @@ onMounted(loadLeads)
         </div>
       </div>
     </AppModal>
+
+    <!-- ══ TAB: LOYALTY ══ -->
+    <div v-if="tab === 'loyalty'" class="space-y-5">
+      <!-- إعدادات البرنامج -->
+      <AppCard title="برنامج نقاط الولاء">
+        <div v-if="loyaltyLoading" class="flex justify-center py-6"><AppSpinner /></div>
+        <div v-else-if="loyaltyProgram" class="space-y-3">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">نقطة لكل</div>
+              <div class="text-xl font-black text-gray-800 dark:text-gray-200">{{ loyaltyProgram.points_per_egp }} ج</div>
+            </div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">قيمة النقطة</div>
+              <div class="text-xl font-black text-gray-800 dark:text-gray-200">{{ loyaltyProgram.redeem_rate }} ج</div>
+            </div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">الحد الأدنى للاسترداد</div>
+              <div class="text-xl font-black text-gray-800 dark:text-gray-200">{{ loyaltyProgram.min_redeem_points }}</div>
+            </div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">الحالة</div>
+              <AppBadge :variant="loyaltyProgram.is_active ? 'success' : 'neutral'">
+                {{ loyaltyProgram.is_active ? 'نشط' : 'موقوف' }}
+              </AppBadge>
+            </div>
+          </div>
+          <AppButton v-if="authStore.roleLevel >= 80" size="sm" variant="outline" @click="showLoyaltySetup = !showLoyaltySetup">
+            ✏️ تعديل الإعدادات
+          </AppButton>
+        </div>
+        <EmptyState v-else icon="🎁" title="لا يوجد برنامج ولاء" subtitle="أنشئ برنامجاً لبدء منح النقاط">
+          <AppButton size="sm" @click="showLoyaltySetup = true">إنشاء برنامج</AppButton>
+        </EmptyState>
+
+        <!-- فورم الإعدادات -->
+        <div v-if="showLoyaltySetup" class="mt-4 border-t border-stone-200 dark:border-border pt-4 space-y-3">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div>
+              <label class="text-xs font-semibold text-gray-600 dark:text-gray-500 block mb-1">نقطة لكل (ج)</label>
+              <input v-model="loyaltySetupForm.points_per_egp" type="number" min="0.01" step="0.01"
+                class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-gray-600 dark:text-gray-500 block mb-1">قيمة النقطة (ج)</label>
+              <input v-model="loyaltySetupForm.redeem_rate" type="number" min="0.01" step="0.01"
+                class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="text-xs font-semibold text-gray-600 dark:text-gray-500 block mb-1">الحد الأدنى للاسترداد</label>
+              <input v-model="loyaltySetupForm.min_redeem_points" type="number" min="1"
+                class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+            </div>
+            <div class="flex flex-col justify-end">
+              <label class="flex items-center gap-2 text-sm cursor-pointer">
+                <input v-model="loyaltySetupForm.is_active" type="checkbox" class="rounded" />
+                تفعيل البرنامج
+              </label>
+            </div>
+          </div>
+          <div class="flex gap-2">
+            <AppButton size="sm" @click="saveLoyaltyProgram">حفظ</AppButton>
+            <AppButton size="sm" variant="ghost" @click="showLoyaltySetup = false">إلغاء</AppButton>
+          </div>
+        </div>
+      </AppCard>
+
+      <!-- بحث عن عميل -->
+      <AppCard title="نقاط عميل">
+        <div class="flex gap-2 mb-4">
+          <input v-model="loyaltyCustomerId" type="number" placeholder="رقم ID العميل"
+            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-40"
+            @keyup.enter="lookupLoyaltyAccount" />
+          <AppButton size="sm" :loading="loyaltyAccountLoading" @click="lookupLoyaltyAccount">بحث</AppButton>
+        </div>
+
+        <div v-if="loyaltyAccount" class="space-y-4">
+          <!-- ملخص الرصيد -->
+          <div class="grid grid-cols-3 gap-3 text-center">
+            <div class="bg-green-50 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">الرصيد الحالي</div>
+              <div class="text-2xl font-black text-green-700">{{ loyaltyAccount.balance }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-500">نقطة</div>
+            </div>
+            <div class="bg-blue-50 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">إجمالي المكتسب</div>
+              <div class="text-xl font-black text-blue-700">{{ loyaltyAccount.lifetime_earned }}</div>
+            </div>
+            <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
+              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">إجمالي المُسترد</div>
+              <div class="text-xl font-black text-gray-700 dark:text-gray-300">{{ loyaltyAccount.lifetime_redeemed }}</div>
+            </div>
+          </div>
+
+          <!-- فورم الاسترداد -->
+          <div class="border border-amber-200 bg-amber-50 rounded-xl p-4 space-y-2">
+            <div class="text-sm font-bold text-amber-800">🎁 استرداد نقاط</div>
+            <div class="flex gap-2 flex-wrap">
+              <input v-model="redeemForm.customer_id" type="number" placeholder="ID العميل"
+                :value="loyaltyCustomerId"
+                class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-32" />
+              <input v-model="redeemForm.points" type="number" min="1" placeholder="عدد النقاط"
+                class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-32" />
+              <input v-model="redeemForm.reference" type="text" placeholder="مرجع (اختياري)"
+                class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm flex-1 min-w-[120px]" />
+              <AppButton size="sm" variant="primary" :loading="redeemLoading" @click="redeemPoints">استرداد</AppButton>
+            </div>
+            <div v-if="loyaltyProgram" class="text-xs text-amber-700">
+              القيمة: {{ redeemForm.points ? (parseFloat(redeemForm.points) * loyaltyProgram.redeem_rate).toFixed(2) : '0' }} ج
+              · الحد الأدنى: {{ loyaltyProgram.min_redeem_points }} نقطة
+            </div>
+          </div>
+
+          <!-- سجل المعاملات -->
+          <div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">آخر المعاملات</div>
+            <div v-if="loyaltyTransactions.length === 0" class="text-sm text-gray-400 dark:text-gray-500">لا توجد معاملات</div>
+            <div v-for="tx in loyaltyTransactions" :key="tx.id"
+              class="flex items-center justify-between py-2 border-b border-stone-100 dark:border-border/50 last:border-0 text-sm">
+              <div>
+                <span :class="tx.points > 0 ? 'text-green-600 font-bold' : 'text-red-600 font-bold'">
+                  {{ tx.points > 0 ? '+' : '' }}{{ tx.points }} نقطة
+                </span>
+                <span class="text-gray-500 dark:text-gray-500 ms-2 text-xs">{{ tx.transaction_type }}</span>
+                <span v-if="tx.reference" class="text-gray-400 dark:text-gray-500 ms-1 text-xs">· {{ tx.reference }}</span>
+              </div>
+              <div class="text-xs text-gray-400 dark:text-gray-500">{{ new Date(tx.created_at).toLocaleDateString('ar-EG') }}</div>
+            </div>
+          </div>
+        </div>
+
+        <EmptyState v-else-if="!loyaltyAccountLoading" icon="🔍" title="ابحث بـ ID العميل لعرض نقاطه" />
+      </AppCard>
+    </div>
+
   </div>
 </template>

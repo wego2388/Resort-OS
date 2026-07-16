@@ -23,6 +23,8 @@ from app.modules.crm.schemas import (
     InteractionCreate, InteractionRead,
     LeadConvertRequest, LeadConvertResponse,
     LeadCreate, LeadRead, LeadSourceCreate, LeadSourceRead, LeadStageUpdate, LeadUpdate,
+    LoyaltyAccountRead, LoyaltyAdjustRequest, LoyaltyProgramCreate, LoyaltyProgramRead,
+    LoyaltyProgramUpdate, LoyaltyRedeemRequest, LoyaltyRedeemResponse, LoyaltyTransactionRead,
     OpportunityCreate, OpportunityRead, OpportunityUpdate,
 )
 from app.modules.core.schemas import PaginatedResponse
@@ -427,5 +429,86 @@ def update_activity(activity_id: int, data: ActivityUpdate, db: DbDep,
                     _=Depends(get_current_active_user)):
     try:
         return services.update_activity(db, activity_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Loyalty Program ───────────────────────────────────────────────────────────
+
+@router.get("/crm/loyalty/program", response_model=Optional[LoyaltyProgramRead])
+def get_loyalty_program(branch_id: int = Query(...), db: DbDep = ...,
+                        _=Depends(get_manager_user)):
+    return services.get_or_create_loyalty_program(db, branch_id)
+
+
+@router.post("/crm/loyalty/program", response_model=LoyaltyProgramRead,
+             status_code=status.HTTP_201_CREATED)
+def create_loyalty_program(data: LoyaltyProgramCreate, db: DbDep,
+                           _=Depends(get_admin_user)):
+    try:
+        return services.setup_loyalty_program(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.patch("/crm/loyalty/program", response_model=LoyaltyProgramRead)
+def update_loyalty_program(branch_id: int = Query(...),
+                           data: LoyaltyProgramUpdate = ...,
+                           db: DbDep = ...,
+                           _=Depends(get_admin_user)):
+    try:
+        return services.update_loyalty_program(db, branch_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Loyalty Account (per customer) ───────────────────────────────────────────
+
+@router.get("/crm/loyalty/account", response_model=Optional[LoyaltyAccountRead])
+def get_customer_loyalty(
+    customer_id: int = Query(...),
+    branch_id: int = Query(...),
+    db: DbDep = ...,
+    _=Depends(get_cashier_user),
+):
+    return services.get_customer_loyalty_account(db, branch_id, customer_id)
+
+
+@router.get("/crm/loyalty/account/transactions", response_model=list[LoyaltyTransactionRead])
+def get_loyalty_transactions(
+    customer_id: int = Query(...),
+    branch_id: int = Query(...),
+    limit: int = Query(50, ge=1, le=200),
+    db: DbDep = ...,
+    _=Depends(get_cashier_user),
+):
+    return services.get_loyalty_transactions(db, branch_id, customer_id, limit)
+
+
+# ── Loyalty Operations ────────────────────────────────────────────────────────
+
+@router.post("/crm/loyalty/redeem", response_model=LoyaltyRedeemResponse)
+def redeem_loyalty_points(
+    data: LoyaltyRedeemRequest,
+    db: DbDep,
+    user=Depends(get_cashier_user),
+):
+    """يسترد نقاط عميل ويرجع قيمة الخصم — كاشير+."""
+    try:
+        return services.redeem_loyalty_points(db, data, created_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/crm/loyalty/adjust")
+def adjust_loyalty_points(
+    data: LoyaltyAdjustRequest,
+    db: DbDep,
+    user=Depends(get_manager_user),
+):
+    """تعديل يدوي على رصيد النقاط — مدير+."""
+    try:
+        account = services.adjust_loyalty_points(db, data, created_by=user.id)
+        return LoyaltyAccountRead.model_validate(account)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))

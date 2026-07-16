@@ -407,3 +407,78 @@ class GuestProfileRead(BaseModel):
     preferences:  Optional[str]
     notes:        Optional[str]
     created_at:   datetime
+
+
+# ── Loyalty Program ──────────────────────────────────────────────────────────
+
+class LoyaltyProgramCreate(BaseModel):
+    branch_id:      int
+    name:           str = Field("برنامج النقاط", max_length=100)
+    description:    Optional[str] = Field(None, max_length=300)
+    earn_rate:      Decimal = Field(Decimal("10"), gt=0)       # نقطة لكل X جنيه
+    redeem_rate:    Decimal = Field(Decimal("0.5"), gt=0)      # جنيه لكل نقطة
+    min_redeem:     int = Field(50, ge=1)
+    max_redeem_pct: Decimal = Field(Decimal("50"), ge=0, le=100)
+
+
+class LoyaltyProgramUpdate(BaseModel):
+    name:           Optional[str]     = Field(None, max_length=100)
+    description:    Optional[str]     = Field(None, max_length=300)
+    earn_rate:      Optional[Decimal] = Field(None, gt=0)
+    redeem_rate:    Optional[Decimal] = Field(None, gt=0)
+    min_redeem:     Optional[int]     = Field(None, ge=1)
+    max_redeem_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+    is_active:      Optional[bool]    = None
+
+
+class LoyaltyProgramRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; name: str; description: Optional[str]
+    earn_rate: Decimal; redeem_rate: Decimal; min_redeem: int
+    max_redeem_pct: Decimal; is_active: bool
+    created_at: datetime
+
+
+# ── Loyalty Account ──────────────────────────────────────────────────────────
+
+class LoyaltyAccountRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; program_id: int; customer_id: int; branch_id: int
+    points: int; total_earned: int; total_redeemed: int
+    tier: str; is_frozen: bool
+    created_at: datetime
+
+
+# ── Loyalty Transaction ──────────────────────────────────────────────────────
+
+class LoyaltyAdjustRequest(BaseModel):
+    """تعديل يدوي على رصيد نقاط (مدير+)."""
+    customer_id: int
+    branch_id:   int
+    points:      int = Field(..., description="موجب = إضافة، سالب = خصم")
+    notes:       Optional[str] = Field(None, max_length=300)
+
+
+class LoyaltyRedeemRequest(BaseModel):
+    """استرداد نقاط مقابل خصم على الفاتورة (كاشير)."""
+    customer_id: int
+    branch_id:   int
+    points:      int = Field(..., gt=0)
+    source:      str = Field("manual", max_length=30)    # dining|beach|manual
+    source_id:   Optional[int] = None                    # order_id أو invoice_id
+
+
+class LoyaltyTransactionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; account_id: int; branch_id: int
+    txn_type: str; points: int; balance_after: int
+    source: str; source_id: Optional[int]; reference: Optional[str]
+    notes: Optional[str]; created_at: datetime
+
+
+class LoyaltyRedeemResponse(BaseModel):
+    """ناتج عملية الاسترداد — يُعاد للـ POS عشان يطبّق الخصم."""
+    points_redeemed:   int
+    discount_amount:   Decimal    # بالجنيه
+    new_balance:       int
+    transaction_id:    int

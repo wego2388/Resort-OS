@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
 from app.modules.crm.models import (
     Activity, CallNote, Campaign, Customer, CustomerGroup, CustomerInteraction,
+    LoyaltyAccount, LoyaltyProgram, LoyaltyTransaction,
     Opportunity, Lead, LeadSource, GuestProfile,
 )
 from app.modules.crm.schemas import (
@@ -19,6 +20,7 @@ from app.modules.crm.schemas import (
     CampaignCreate, CampaignUpdate,
     CustomerCreate, CustomerGroupCreate, CustomerGroupUpdate, CustomerUpdate,
     InteractionCreate,
+    LoyaltyAdjustRequest, LoyaltyProgramCreate, LoyaltyProgramUpdate, LoyaltyRedeemRequest,
     OpportunityCreate, OpportunityUpdate,
 )
 
@@ -398,3 +400,161 @@ def list_guest_profiles(
     if vip_only:
         q = q.filter(GuestProfile.vip_flag.is_(True))
     return q.order_by(GuestProfile.last_stay.desc().nullslast()).limit(limit).all()
+
+
+# ── LoyaltyProgram ────────────────────────────────────────────────────────────
+
+def get_loyalty_program(db: Session, branch_id: int) -> Optional[LoyaltyProgram]:
+    return db.query(LoyaltyProgram).filter(LoyaltyProgram.branch_id == branch_id).first()
+
+
+def create_loyalty_program(db: Session, data: LoyaltyProgramCreate) -> LoyaltyProgram:
+    obj = LoyaltyProgram(**data.model_dump())
+    db.add(obj)
+    return obj
+
+
+def update_loyalty_program(db: Session, program: LoyaltyProgram, data: LoyaltyProgramUpdate) -> LoyaltyProgram:
+    for k, v in data.model_dump(exclude_none=True).items():
+        setattr(program, k, v)
+    return program
+
+
+# ── LoyaltyAccount ────────────────────────────────────────────────────────────
+
+def get_or_create_loyalty_account(db: Session, program: LoyaltyProgram, customer_id: int) -> LoyaltyAccount:
+    """يجيب حساب النقاط أو يخلقه لو مش موجود."""
+    account = (
+        db.query(LoyaltyAccount)
+        .filter(LoyaltyAccount.program_id == program.id, LoyaltyAccount.customer_id == customer_id)
+        .with_for_update()
+        .first()
+    )
+    if not account:
+        account = LoyaltyAccount(
+            program_id=program.id,
+            customer_id=customer_id,
+            branch_id=program.branch_id,
+        )
+        db.add(account)
+        db.flush()
+    return account
+
+
+def get_loyalty_account_by_customer(db: Session, branch_id: int, customer_id: int) -> Optional[LoyaltyAccount]:
+    return (
+        db.query(LoyaltyAccount)
+        .filter(LoyaltyAccount.branch_id == branch_id, LoyaltyAccount.customer_id == customer_id)
+        .first()
+    )
+
+
+def list_loyalty_transactions(
+    db: Session, account_id: int, limit: int = 50, offset: int = 0
+) -> list[LoyaltyTransaction]:
+    return (
+        db.query(LoyaltyTransaction)
+        .filter(LoyaltyTransaction.account_id == account_id)
+        .order_by(LoyaltyTransaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+
+def earn_points(
+    db: Session,
+    account: LoyaltyAccount,
+    points: int,
+    source: str,
+    source_id: Optional[int],
+    reference: Optional[str],
+    created_by: Optional[int],
+) -> LoyaltyTransaction:
+    """يضيف نقاط لحساب العميل ويسجّل العملية."""
+    account.points += points
+    account.total_earned += points
+    _update_tier(account)
+    txn = LoyaltyTransaction(
+        account_id=account.id,
+        branch_id=account.branch_id,
+        txn_type="earn",
+        points=points,
+        balance_after=account.points,
+        source=source,
+        source_id=source_id,
+        reference=reference,
+        created_by=created_by,
+    )
+    db.add(txn)
+    return txn
+
+
+def redeem_points(
+    db: Session,
+    account: LoyaltyAccount,
+    points: int,
+    source: str,
+    source_id: Optional[int],
+    reference: Optional[str],
+    created_by: Optional[int],
+    notes: Optional[str] = None,
+) -> LoyaltyTransaction:
+    """يخصم نقاط من حساب العميل ويسجّل العملية."""
+    account.points -= points
+    account.total_redeemed += points
+    _update_tier(account)
+    txn = LoyaltyTransaction(
+        account_id=account.id,
+        branch_id=account.branch_id,
+        txn_type="redeem",
+        points=-points,
+        balance_after=account.points,
+        source=source,
+        source_id=source_id,
+        reference=reference,
+        notes=notes,
+        created_by=created_by,
+    )
+    db.add(txn)
+    return txn
+
+
+def adjust_points(
+    db: Session,
+    account: LoyaltyAccount,
+    data: LoyaltyAdjustRequest,
+    created_by: Optional[int],
+) -> LoyaltyTransaction:
+    """تعديل يدوي (مدير+) — موجب = إضافة، سالب = خصم."""
+    account.points += data.points
+    if data.points > 0:
+        account.total_earned += data.points
+    else:
+        account.total_redeemed += abs(data.points)
+    _update_tier(account)
+    txn = LoyaltyTransaction(
+        account_id=account.id,
+        branch_id=account.branch_id,
+        txn_type="adjust",
+        points=data.points,
+        balance_after=account.points,
+        source="manual",
+        notes=data.notes,
+        created_by=created_by,
+    )
+    db.add(txn)
+    return txn
+
+
+def _update_tier(account: LoyaltyAccount) -> None:
+    """يحدّث الـ tier تلقائياً بناءً على إجمالي النقاط المكتسبة."""
+    total = account.total_earned
+    if total >= 10_000:
+        account.tier = "platinum"
+    elif total >= 5_000:
+        account.tier = "gold"
+    elif total >= 1_000:
+        account.tier = "silver"
+    else:
+        account.tier = "bronze"

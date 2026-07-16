@@ -67,6 +67,7 @@ class Customer(Base, TimestampMixin):
     interactions:  Mapped[list["CustomerInteraction"]] = relationship("CustomerInteraction", back_populates="customer", lazy="select")
     opportunities: Mapped[list["Opportunity"]]         = relationship("Opportunity",         back_populates="customer", lazy="select")
     activities:    Mapped[list["Activity"]]            = relationship("Activity",            back_populates="customer", lazy="select")
+    loyalty_accounts: Mapped[list["LoyaltyAccount"]]  = relationship("LoyaltyAccount",      back_populates="customer", lazy="select")
 
 
 class CustomerInteraction(Base, TimestampMixin):
@@ -231,3 +232,70 @@ class GuestProfile(Base, TimestampMixin):
     preferences:  Mapped[str | None]   = mapped_column(Text, nullable=True)
     # JSON: {"pillow_type":"soft","floor_preference":"high","allergies":["nuts"]}
     notes:        Mapped[str | None]   = mapped_column(Text, nullable=True)
+
+
+# ── Loyalty Points (C-01) ───────────────────────────────────────────────────
+
+class LoyaltyProgram(Base, TimestampMixin):
+    """إعدادات برنامج النقاط للفرع — واحد لكل فرع.
+    earn_rate:  نقطة لكل X جنيه مدفوع (افتراضي: نقطة لكل 10 جنيه)
+    redeem_rate: قيمة النقطة الواحدة بالجنيه عند الاسترداد (افتراضي: 0.50 جنيه)
+    min_redeem:  الحد الأدنى للنقاط المطلوبة لبدء الاسترداد
+    max_redeem_pct: أقصى نسبة من الفاتورة يُسمح بتغطيتها بنقاط (% من 0 لـ 100)
+    is_active: إيقاف/تشغيل البرنامج كاملاً
+    """
+    __tablename__ = "loyalty_programs"
+    __table_args__ = (UniqueConstraint("branch_id", name="uq_loyalty_program_branch"),)
+
+    id:              Mapped[int]     = mapped_column(primary_key=True)
+    branch_id:       Mapped[int]     = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    earn_rate:       Mapped[Decimal] = mapped_column(Numeric(8, 2), default=Decimal("10"))   # نقطة / X جنيه
+    redeem_rate:     Mapped[Decimal] = mapped_column(Numeric(8, 4), default=Decimal("0.5"))  # جنيه / نقطة
+    min_redeem:      Mapped[int]     = mapped_column(Integer, default=50)                    # أقل نقطة للاسترداد
+    max_redeem_pct:  Mapped[Decimal] = mapped_column(Numeric(5, 2), default=Decimal("50"))  # % من الفاتورة
+    is_active:       Mapped[bool]    = mapped_column(Boolean, default=True)
+    name:            Mapped[str]     = mapped_column(String(100), default="برنامج النقاط")
+    description:     Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    accounts: Mapped[list["LoyaltyAccount"]] = relationship("LoyaltyAccount", back_populates="program", lazy="select")
+
+
+class LoyaltyAccount(Base, TimestampMixin):
+    """رصيد نقاط عميل محدد — one per (program × customer)."""
+    __tablename__ = "loyalty_accounts"
+    __table_args__ = (UniqueConstraint("program_id", "customer_id", name="uq_loyalty_account_program_customer"),)
+
+    id:           Mapped[int]     = mapped_column(primary_key=True)
+    program_id:   Mapped[int]     = mapped_column(ForeignKey("loyalty_programs.id", ondelete="CASCADE"), index=True)
+    customer_id:  Mapped[int]     = mapped_column(ForeignKey("crm_customers.id", ondelete="CASCADE"), index=True)
+    branch_id:    Mapped[int]     = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    points:       Mapped[int]     = mapped_column(Integer, default=0)           # الرصيد الحالي
+    total_earned: Mapped[int]     = mapped_column(Integer, default=0)           # إجمالي ما كُسب
+    total_redeemed: Mapped[int]   = mapped_column(Integer, default=0)           # إجمالي ما استُرد
+    tier:         Mapped[str]     = mapped_column(String(20), default="bronze") # bronze|silver|gold|platinum
+    is_frozen:    Mapped[bool]    = mapped_column(Boolean, default=False)       # تجميد الحساب
+
+    program:       Mapped["LoyaltyProgram"]         = relationship("LoyaltyProgram", back_populates="accounts")
+    customer:      Mapped["Customer"]               = relationship("Customer", back_populates="loyalty_accounts")
+    transactions:  Mapped[list["LoyaltyTransaction"]] = relationship("LoyaltyTransaction", back_populates="account", lazy="select")
+
+
+class LoyaltyTransaction(Base, TimestampMixin):
+    """سجل كل عملية كسب أو استرداد أو تعديل يدوي على حساب النقاط."""
+    __tablename__ = "loyalty_transactions"
+
+    id:            Mapped[int]         = mapped_column(primary_key=True)
+    account_id:    Mapped[int]         = mapped_column(ForeignKey("loyalty_accounts.id", ondelete="CASCADE"), index=True)
+    branch_id:     Mapped[int]         = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
+    txn_type:      Mapped[str]         = mapped_column(String(20))
+    # earn|redeem|adjust|expire|void
+    points:        Mapped[int]         = mapped_column(Integer)        # موجب = كسب، سالب = استرداد/انتهاء
+    balance_after: Mapped[int]         = mapped_column(Integer)        # snapshot بعد العملية
+    source:        Mapped[str]         = mapped_column(String(30), default="manual")
+    # dining|beach|pms|timeshare|manual
+    source_id:     Mapped[int | None]  = mapped_column(Integer, nullable=True)   # FK للطلب/الفاتورة
+    reference:     Mapped[str | None]  = mapped_column(String(100), nullable=True)
+    notes:         Mapped[str | None]  = mapped_column(String(300), nullable=True)
+    created_by:    Mapped[int | None]  = mapped_column(Integer, nullable=True)   # user_id
+
+    account: Mapped["LoyaltyAccount"] = relationship("LoyaltyAccount", back_populates="transactions")
