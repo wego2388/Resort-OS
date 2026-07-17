@@ -3386,7 +3386,9 @@
       "beachPos": "الشاطئ",
       "beachMap": "خريطة الشاطئ",
       "shift": "الوردية",
-      "qrCodes": "QR Codes"
+      "qrCodes": "QR Codes",
+      "development": "التطوير",
+      "projectCockpit": "غرفة قيادة المشروع"
     },
     "login": {
       "title": "تسجيل الدخول",

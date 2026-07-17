@@ -8,6 +8,7 @@ declare module 'vue-router' {
     // @resort-os/core's useAuthStore (mirrors backend app/core/deps.py).
     requiredRole?: string
     title?: string
+    titleKey?: string
   }
 }
 
@@ -181,6 +182,18 @@ const routes: RouteRecordRaw[] = [
       { path: 'cafe-sales',  redirect: '/admin/analytics' },
       { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
       { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { title: 'الموقع والحجوزات الأونلاين' } },
+      // Mohamed's temporary project control room. The route is compiled into
+      // development only and remains role-gated even there. Production builds
+      // contain neither the route nor its lazy-loaded snapshot chunk.
+      ...(import.meta.env.DEV ? [{
+        path: 'project-cockpit',
+        name: 'dev-project-cockpit',
+        component: () => import('../views/dev/ProjectCockpitView.vue'),
+        meta: {
+          requiredRole: 'super_admin',
+          titleKey: 'backoffice.nav.projectCockpit',
+        },
+      }] : []),
     ],
   },
 

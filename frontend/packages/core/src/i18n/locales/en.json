@@ -3389,7 +3389,9 @@
       "beachPos": "Beach",
       "beachMap": "Beach Map",
       "shift": "Shift",
-      "qrCodes": "QR Codes"
+      "qrCodes": "QR Codes",
+      "development": "Development",
+      "projectCockpit": "Project Cockpit"
     },
     "login": {
       "title": "Sign In",

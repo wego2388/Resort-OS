@@ -96,6 +96,17 @@ const allSections = computed<NavSection[]>(() => [
       { path: '/admin/hub', label: t('backoffice.nav.hubManagement'), icon: '🌐', requiredRole: 'manager' },
     ],
   },
+  ...(import.meta.env.DEV ? [{
+    label: t('backoffice.nav.development'),
+    items: [
+      {
+        path: '/admin/project-cockpit',
+        label: t('backoffice.nav.projectCockpit'),
+        icon: '🧭',
+        requiredRole: 'super_admin',
+      },
+    ],
+  }] : []),
   {
     label: t('backoffice.nav.settings'),
     items: [
@@ -141,6 +152,10 @@ const breadcrumb = computed(() => {
   }
   return null
 })
+
+const pageTitle = computed(() => (
+  route.meta.titleKey ? t(route.meta.titleKey) : (route.meta.title ?? 'Resort OS')
+))
 
 function logout() {
   auth.logout()
@@ -261,7 +276,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
               <span>/</span>
               <span class="text-gray-500 dark:text-gray-400 font-medium">{{ breadcrumb.page }}</span>
             </nav>
-            <h1 class="font-bold text-gray-900 dark:text-gray-100 text-base">{{ route.meta.title ?? 'Resort OS' }}</h1>
+            <h1 class="font-bold text-gray-900 dark:text-gray-100 text-base">{{ pageTitle }}</h1>
           </div>
         </div>
 

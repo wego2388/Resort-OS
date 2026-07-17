@@ -10,10 +10,11 @@ import { fieldClasses } from '../utils/inputClasses'
 const props = withDefaults(defineProps<{
   modelValue?: string
   placeholder?: string
+  clearLabel?: string
   disabled?: boolean
   /** ms to wait after the user stops typing before emitting `search` (0 = emit immediately, same as `update:modelValue`). */
   debounceMs?: number
-}>(), { placeholder: 'بحث...', debounceMs: 300 })
+}>(), { placeholder: 'بحث...', clearLabel: 'مسح البحث', debounceMs: 300 })
 
 const emit = defineEmits<{ 'update:modelValue': [v: string]; search: [v: string] }>()
 
@@ -55,7 +56,7 @@ const classes = fieldClasses({ withStartSlot: true, withEndSlot: true })
       v-if="modelValue"
       type="button"
       class="absolute end-2 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-background text-muted"
-      aria-label="مسح البحث"
+      :aria-label="clearLabel"
       @click="clear"
     >
       <AppIcon name="close" size="xs" />
