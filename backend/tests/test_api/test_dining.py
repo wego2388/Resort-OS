@@ -454,6 +454,61 @@ class TestVoidAndRefund:
         assert updated.refunded_amount > Decimal("0")
         assert updated.status == "refunded"
 
+    def test_refund_item_on_discounted_order_allocates_discount_share(self, db):
+        """⚠️ باج محاسبي حقيقي اتصلح: مرتجع صنف واحد من طلب عليه خصم (مجموعة
+        عميل أو قاعدة شرطية) كان بيتحسب على item_gross + نصيب VAT/service_
+        charge بس — من غير أي نصيب من order.discount_amount. القيد الأصلي
+        وقت الدفع بيرحّل order.total (صافي بعد الخصم)، فده كان بيخلي مرتجع
+        صنف واحد يعكس إيراد أكتر مما اترحّل فعليًا لنفس الصنف، ويسيب باقي
+        الطلب برصيد أقل من الصح في دفتر الأستاذ.
+
+        طلب صنفين منفصلين (100 ج لكل واحد، subtotal=200)، خصم مجموعة عميل
+        10% (=20 ج)، VAT 14% (=28)، خدمة 12% (=24) → order.total = 232.
+        مرتجع صنف واحد (نصيب 50%): نصيب الخصم = 10، فالمرتجع الصح =
+        100 - 10 + 14 + 12 = 116 (مش 126 كان قبل الإصلاح). ورصيد إيراد
+        المنفذ المتبقي في الدفتر بعد المرتجع لازم يبقى 232 - 116 = 116
+        بالظبط — نفس قيمة الصنف التاني المتبقي فعليًا."""
+        from app.modules.crm import services as crm_services
+        from app.modules.crm.schemas import CustomerCreate, CustomerGroupCreate
+        from app.modules.finance import crud as finance_crud
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        make_finance_accounts(db, branch)
+
+        group = crm_services.create_customer_group(
+            db, CustomerGroupCreate(branch_id=branch.id, name="Staff", discount_percentage=Decimal("10")),
+        )
+        customer = crm_services.create_customer(db, CustomerCreate(branch_id=branch.id, full_name="Staff"))
+        crm_services.assign_customer_group(db, customer.id, group.id)
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(
+                outlet_id=outlet.id, order_type="takeaway", customer_id=customer.id,
+                items=[
+                    OrderItemCreate(item_id=item.id, quantity=1),
+                    OrderItemCreate(item_id=item.id, quantity=1),
+                ],
+            ),
+            waiter_id=1,
+        )
+        assert order.discount_amount == Decimal("20.00")
+        assert order.total == Decimal("232.00")
+
+        services.update_order_status(db, order.id, "paid")
+        target_item = order.items[0]
+
+        updated = services.refund_order_item(db, order.id, target_item.id, "سبب", refunded_by=1)
+        assert updated.refunded_amount == Decimal("116.00")
+
+        revenue_acc = finance_crud.get_account_by_code(db, branch.id, "4200")
+        sums = finance_crud.sum_journal_lines_by_account(db, branch.id, None, datetime.now().date())
+        debit_sum, credit_sum = sums.get(revenue_acc.id, (Decimal("0"), Decimal("0")))
+        net_revenue_remaining = credit_sum - debit_sum
+        assert net_revenue_remaining == Decimal("116.00")
+
 
 class TestVariants:
 

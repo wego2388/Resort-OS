@@ -1184,7 +1184,8 @@ def _resolve_order_discount(db: Session, order: DiningOrder, subtotal: Decimal) 
 
 
 def refund_order_item(db: Session, order_id: int, item_id: int, reason: str, refunded_by: int) -> DiningOrder:
-    """راجع restaurant.services.refund_order_item — نفس المنطق بالظبط."""
+    """راجع restaurant.services.refund_order_item — نفس المنطق الأساسي، مع
+    إصلاح باج محاسبي حقيقي حول تناسب الخصم (راجع تعليق item_gross تحت)."""
     order = _get_order_or_404(db, order_id)
     if order.status != "paid":
         raise ValueError(f"المرتجع بعد الدفع متاح بس للطلبات المدفوعة — الطلب ده حالته '{order.status}'")
@@ -1200,7 +1201,17 @@ def refund_order_item(db: Session, order_id: int, item_id: int, reason: str, ref
     share_ratio = (item_gross / order.subtotal) if order.subtotal > 0 else Decimal("0")
     refund_vat = (order.vat_amount * share_ratio).quantize(Decimal("0.01"))
     refund_svc = (order.service_charge * share_ratio).quantize(Decimal("0.01"))
-    refund_amount = item_gross + refund_vat + refund_svc
+    # ⚠️ باج محاسبي حقيقي اتصلح: كان بيحسب refund_amount = item_gross + نصيب
+    # الـ VAT/service_charge بس — من غير أي نصيب من order.discount_amount.
+    # القيد الأصلي وقت الدفع بيرحّل order.total (صافي بعد الخصم —
+    # _post_order_revenue_journal)، فمرتجع صنف واحد من طلب عليه خصم كان بيعكس
+    # إيراد أكتر مما اترحّل فعليًا لنفس الصنف ده، وبيسيب باقي الطلب بقيمة أقل
+    # من الصح في دفتر الأستاذ (ولنفس السبب في رصيد شحنة الفوليو). النصيب من
+    # الخصم لازم يتناسب بنفس share_ratio (الخصم بيتحسب على subtotal زي الـ
+    # VAT/service_charge بالظبط)، عشان مجموع مرتجعات كل الأصناف يرجع بالظبط
+    # لـ order.total الأصلي.
+    refund_discount = (order.discount_amount * share_ratio).quantize(Decimal("0.01")) if order.discount_amount else Decimal("0")
+    refund_amount = max(Decimal("0"), item_gross - refund_discount + refund_vat + refund_svc)
 
     crud.refund_order_item(db, item, reason, refunded_by)
     order.refunded_amount = (order.refunded_amount or Decimal("0")) + refund_amount
