@@ -101,6 +101,10 @@ export const ENDPOINTS = {
     foodCostReportAll: '/api/v1/dining/reports/food-cost',
   },
   finance: {
+    // WebSocket — بث لحظي لمدير+ لما دفعة ترتبط بوردية مفتوحة (بيع شاطئ
+    // مباشر أو تسوية فوليو)، نفس نمط kdsWs/alertsWs — إشارة "أعد تحميل
+    // تفاصيل الوردية"، مفيش بيانات مالية جوه رسالة الـ WS نفسها.
+    shiftsWs: (branchId: number) => `/api/v1/finance/ws/shifts/${branchId}`,
     accounts: '/api/v1/finance/accounts',
     checks: '/api/v1/finance/checks',
     checkStatus: (id: number) => `/api/v1/finance/checks/${id}/status`,

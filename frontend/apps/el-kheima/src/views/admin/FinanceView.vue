@@ -1,17 +1,25 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
+import { api, ENDPOINTS, useAuthStore, useResortWebSocket } from '@resort-os/core'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId ?? 1)
-const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'depreciation' | 'bank-reconciliation' | 'shifts'>('overview')
+const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts'>('overview')
 
 interface Check { id: number; check_number: string; amount: number; drawer_name: string; due_date: string; status: string; bank_name: string }
 interface Account { id: number; code: string; name: string; account_type: string; balance: number }
 interface CostCenterLine { code: string; name: string; revenue: number; expense: number; net: number; source: 'ledger' | 'direct' }
+interface BalanceSheetLine { account_code: string; account_name: string; amount: number }
+interface BalanceSheetData {
+  as_of: string
+  asset_lines: BalanceSheetLine[]; liability_lines: BalanceSheetLine[]; equity_lines: BalanceSheetLine[]
+  retained_earnings: number
+  total_assets: number; total_liabilities: number; total_equity: number; total_liabilities_and_equity: number
+  is_balanced: boolean
+}
 interface DepreciationEntry { id: number; asset_id: number; year: number; month: number; amount: number; accumulated_after: number }
 interface Asset { id: number; code: string; name: string }
 interface ShiftItem {
@@ -48,7 +56,7 @@ async function loadShifts() {
   try {
     const params: Record<string, unknown> = { branch_id: branchId.value, page: 1, size: 30 }
     if (shiftStatus.value !== 'all') params.status = shiftStatus.value
-    const { data } = await api.get('/api/v1/finance/shifts', { params })
+    const { data } = await api.get(ENDPOINTS.finance.shifts, { params })
     shifts.value      = (data.items ?? []).map(parseShift)
     shiftsTotal.value = data.total ?? 0
   } catch(e: any) {
@@ -81,7 +89,7 @@ interface ShiftDetailReport {
   counted_cash_egp?: number | null
 }
 interface ShiftInvoiceLine {
-  payment_id: number; folio_id: number; guest_name: string; amount: number; method: string
+  payment_id: number; folio_id: number | null; guest_name: string; amount: number; method: string
   posted_at: string; is_voided: boolean
 }
 const detailShift    = ref<ShiftItem | null>(null)
@@ -138,6 +146,20 @@ async function openShiftDetail(s: ShiftItem) {
 }
 function closeShiftDetail() { detailShift.value = null }
 
+// ── بث لحظي (S-01 live monitoring) — إشارة "دفعة جديدة اترحّلت لوردية X"
+// (finance.add_payment/beach.sell_ticket، راجع finance/api/router.py
+// shift_manager) — لو الوردية المفتوحة حاليًا في الـ modal هي نفسها، نعيد
+// تحميل التقرير/سجل الفواتير تلقائيًا من غير أي polling. مقفول مدير+ من
+// الباك إند نفسه (get_websocket_user min_level=60)، متسق مع باقي شاشة
+// الحسابات دي كلها.
+const { onMessage: onShiftWsMessage } = useResortWebSocket(ENDPOINTS.finance.shiftsWs(branchId.value))
+onShiftWsMessage((data: any) => {
+  const openShift = detailShift.value
+  if (data?.type === 'shift_sale' && openShift && openShift.id === data.shift_id) {
+    openShiftDetail(openShift)
+  }
+})
+
 const METHOD_LABEL: Record<string, string> = {
   cash: '💵 كاش', card: '💳 كارت', bank_transfer: '🏦 تحويل بنكي',
   credit: '📝 آجل', room_charge: '🛏️ حساب الغرفة', other: 'أخرى',
@@ -173,8 +195,8 @@ async function loadDepreciation() {
   loading.value = true
   try {
     const [entriesRes, assetsRes] = await Promise.all([
-      api.get('/api/v1/finance/depreciation/entries', { params: { branch_id: branchId.value, size: 100 } }),
-      api.get('/api/v1/maintenance/assets', { params: { branch_id: branchId.value, size: 100 } }),
+      api.get(ENDPOINTS.finance.depreciationEntries, { params: { branch_id: branchId.value, size: 100 } }),
+      api.get(ENDPOINTS.maintenance.assets, { params: { branch_id: branchId.value, size: 100 } }),
     ])
     depreciationEntries.value = entriesRes.data.items ?? []
     const map: Record<number, string> = {}
@@ -188,7 +210,7 @@ async function runDepreciation() {
   runningDepreciation.value = true
   lastRunResult.value = null
   try {
-    const { data } = await api.post('/api/v1/finance/depreciation/run', {
+    const { data } = await api.post(ENDPOINTS.finance.depreciationRun, {
       branch_id: branchId.value, year: depYear.value, month: depMonth.value,
     })
     lastRunResult.value = {
@@ -217,7 +239,7 @@ const matchingInProgress = ref(false)
 async function loadBankAccounts() {
   loading.value = true
   try {
-    const { data } = await api.get('/api/v1/finance/bank-accounts', { params: { branch_id: branchId.value } })
+    const { data } = await api.get(ENDPOINTS.finance.bankAccounts, { params: { branch_id: branchId.value } })
     bankAccounts.value = data
     if (!selectedBankAccountId.value && data.length) {
       selectedBankAccountId.value = data[0].id
@@ -231,10 +253,10 @@ async function loadStatementLinesAndSummary() {
   if (!selectedBankAccountId.value) return
   try {
     const [linesRes, summaryRes] = await Promise.all([
-      api.get(`/api/v1/finance/bank-accounts/${selectedBankAccountId.value}/statement-lines`, {
+      api.get(ENDPOINTS.finance.bankAccountStatementLines(selectedBankAccountId.value), {
         params: { size: 100 },
       }),
-      api.get(`/api/v1/finance/bank-accounts/${selectedBankAccountId.value}/reconciliation-summary`, {
+      api.get(ENDPOINTS.finance.bankAccountReconciliationSummary(selectedBankAccountId.value), {
         params: { as_of: new Date().toISOString().slice(0, 10) },
       }),
     ])
@@ -248,7 +270,7 @@ async function createBankAccount() {
     toast.error('املأ اسم البنك ورقم الحساب'); return
   }
   try {
-    await api.post('/api/v1/finance/bank-accounts', {
+    await api.post(ENDPOINTS.finance.bankAccounts, {
       branch_id: branchId.value,
       bank_name: bankAccountForm.value.bank_name,
       account_name: bankAccountForm.value.account_name || bankAccountForm.value.bank_name,
@@ -269,7 +291,7 @@ async function runAutoMatch() {
   matchingInProgress.value = true
   try {
     const { data } = await api.post(
-      `/api/v1/finance/bank-accounts/${selectedBankAccountId.value}/statement-lines/auto-match`,
+      ENDPOINTS.finance.bankAccountAutoMatch(selectedBankAccountId.value),
     )
     toast.success(`اتطابق ${data.matched_count} سطر تلقائيًا`)
     await loadStatementLinesAndSummary()
@@ -296,7 +318,7 @@ const ccTotalNet = ref(0)
 async function loadCostCenters() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/finance/cost-centers/report', {
+    const res = await api.get(ENDPOINTS.finance.costCenterReport, {
       params: { branch_id: branchId.value, date_from: ccDateFrom.value, date_to: ccDateTo.value },
     })
     ccLines.value = res.data.lines ?? []
@@ -305,6 +327,40 @@ async function loadCostCenters() {
     ccTotalNet.value = res.data.total_net ?? 0
   } catch { toast.error('تعذّر تحميل مراكز التكلفة — حاول تاني') }
   finally { loading.value = false }
+}
+
+// ── Balance Sheet (الميزانية العمومية) ────────────────────────────────
+// Assets = Liabilities + Equity + Retained Earnings — من نفس مصدر بيانات
+// ميزان المراجعة/قائمة الدخل (أرصدة journal_lines الفعلية لكل حساب حتى
+// as_of)، مش حساب موازٍ منفصل. راجع finance.services.get_balance_sheet.
+const bsAsOf = ref(today)
+const bsData = ref<BalanceSheetData | null>(null)
+
+async function loadBalanceSheet() {
+  loading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.finance.reportsBalanceSheet, {
+      params: { branch_id: branchId.value, as_of: bsAsOf.value },
+    })
+    const toLines = (lines: any[]): BalanceSheetLine[] =>
+      (lines ?? []).map((l: any) => ({ ...l, amount: Number(l.amount) }))
+    bsData.value = {
+      as_of: data.as_of,
+      asset_lines: toLines(data.asset_lines),
+      liability_lines: toLines(data.liability_lines),
+      equity_lines: toLines(data.equity_lines),
+      retained_earnings: Number(data.retained_earnings),
+      total_assets: Number(data.total_assets),
+      total_liabilities: Number(data.total_liabilities),
+      total_equity: Number(data.total_equity),
+      total_liabilities_and_equity: Number(data.total_liabilities_and_equity),
+      is_balanced: Boolean(data.is_balanced),
+    }
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل الميزانية العمومية')
+  } finally {
+    loading.value = false
+  }
 }
 
 const checkStatusConfig: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
@@ -319,11 +375,12 @@ async function loadTab(t: typeof tab.value) {
   if (t === 'shifts') { await loadShifts(); return }
   if (t === 'depreciation') { await loadDepreciation(); return }
   if (t === 'bank-reconciliation') { await loadBankAccounts(); return }
+  if (t === 'balance-sheet') { await loadBalanceSheet(); return }
 
   loading.value = true
   try {
     if (t === 'overview') {
-      const res = await api.get('/api/v1/finance/reports/income-statement', {
+      const res = await api.get(ENDPOINTS.finance.reportsIncomeStatement, {
         params: { branch_id: branchId.value, date_from: firstOfMonth, date_to: today },
       })
       financeData.value = {
@@ -332,10 +389,10 @@ async function loadTab(t: typeof tab.value) {
         net_income: Number(res.data.net_income),
       }
     } else if (t === 'checks') {
-      const res = await api.get('/api/v1/finance/checks', { params: { branch_id: branchId.value } })
+      const res = await api.get(ENDPOINTS.finance.checks, { params: { branch_id: branchId.value } })
       checks.value = res.data.checks ?? res.data.items ?? res.data
     } else if (t === 'accounts') {
-      const res = await api.get('/api/v1/finance/accounts', { params: { branch_id: branchId.value } })
+      const res = await api.get(ENDPOINTS.finance.accounts, { params: { branch_id: branchId.value } })
       accounts.value = res.data.accounts ?? res.data.items ?? res.data
     } else if (t === 'cost-centers') {
       await loadCostCenters()
@@ -356,7 +413,7 @@ async function advanceCheck(check: Check) {
   const next = flow[check.status]
   if (!next) return
   try {
-    await api.patch(`/api/v1/finance/checks/${check.id}/status`, { to_status: next })
+    await api.patch(ENDPOINTS.finance.checkStatus(check.id), { to_status: next })
     check.status = next
   } catch { toast.error('تعذّر تحديث حالة الشيك — حاول تاني') }
 }
@@ -373,7 +430,7 @@ async function markCheckBounced(check: Check) {
   })
   if (!ok) return
   try {
-    await api.patch(`/api/v1/finance/checks/${check.id}/status`, {
+    await api.patch(ENDPOINTS.finance.checkStatus(check.id), {
       to_status: 'bounced', notes: 'رصيد غير كافٍ — سُجّل من شاشة الحسابات',
     })
     check.status = 'bounced'
@@ -389,7 +446,7 @@ onMounted(() => loadTab('overview'))
     <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">المالية</h2>
 
     <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
-      <button v-for="t in [{ val: 'overview', label: 'نظرة عامة' }, { val: 'checks', label: 'الشيكات' }, { val: 'accounts', label: 'الحسابات' }, { val: 'cost-centers', label: 'مراكز التكلفة' }, { val: 'depreciation', label: 'إهلاك الأصول' }, { val: 'bank-reconciliation', label: 'التسوية البنكية' }, { val: 'shifts', label: 'الورديات' }]"
+      <button v-for="t in [{ val: 'overview', label: 'نظرة عامة' }, { val: 'checks', label: 'الشيكات' }, { val: 'accounts', label: 'الحسابات' }, { val: 'cost-centers', label: 'مراكز التكلفة' }, { val: 'balance-sheet', label: 'الميزانية العمومية' }, { val: 'depreciation', label: 'إهلاك الأصول' }, { val: 'bank-reconciliation', label: 'التسوية البنكية' }, { val: 'shifts', label: 'الورديات' }]"
         :key="t.val" @click="loadTab(t.val as any)"
         :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
       >{{ t.label }}</button>
@@ -564,6 +621,108 @@ onMounted(() => loadTab('overview'))
           قبل هذا التحديث مالهاش وسم مركز تكلفة، فمش هتظهر هنا.
         </p>
       </template>
+    </div>
+
+    <!-- Balance Sheet (الميزانية العمومية) -->
+    <div v-if="tab === 'balance-sheet'">
+      <div class="flex flex-wrap items-end gap-3 mb-4">
+        <div>
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">كما في تاريخ</label>
+          <input v-model="bsAsOf" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
+        </div>
+        <AppButton size="sm" @click="loadBalanceSheet">تطبيق</AppButton>
+        <AppBadge v-if="bsData" size="sm" :variant="bsData.is_balanced ? 'success' : 'danger'">
+          {{ bsData.is_balanced ? '✅ متوازنة (الأصول = الخصوم + حقوق الملكية)' : '⚠️ غير متوازنة — راجع القيود' }}
+        </AppBadge>
+      </div>
+
+      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <template v-else-if="bsData">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <AppCard padding="none">
+            <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">الأصول</div>
+            <div class="overflow-x-auto">
+              <table class="w-full">
+                <tbody>
+                  <tr v-for="l in bsData.asset_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
+                    <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
+                    <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
+                    <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ l.amount.toLocaleString('ar-EG') }} ج</td>
+                  </tr>
+                  <tr v-if="bsData.asset_lines.length === 0">
+                    <td colspan="3" class="px-4 py-6"><EmptyState icon="🏦" title="لا توجد أصول مسجّلة حتى هذا التاريخ" /></td>
+                  </tr>
+                </tbody>
+                <tfoot v-if="bsData.asset_lines.length">
+                  <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
+                    <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">إجمالي الأصول</td>
+                    <td class="px-4 py-3 text-sm font-black text-green-700">{{ bsData.total_assets.toLocaleString('ar-EG') }} ج</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </AppCard>
+
+          <div class="space-y-4">
+            <AppCard padding="none">
+              <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">الخصوم</div>
+              <div class="overflow-x-auto">
+                <table class="w-full">
+                  <tbody>
+                    <tr v-for="l in bsData.liability_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
+                      <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
+                      <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
+                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ l.amount.toLocaleString('ar-EG') }} ج</td>
+                    </tr>
+                    <tr v-if="bsData.liability_lines.length === 0">
+                      <td colspan="3" class="px-4 py-6"><EmptyState icon="📋" title="لا توجد خصوم مسجّلة حتى هذا التاريخ" /></td>
+                    </tr>
+                  </tbody>
+                  <tfoot v-if="bsData.liability_lines.length">
+                    <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
+                      <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">إجمالي الخصوم</td>
+                      <td class="px-4 py-3 text-sm font-black text-red-700">{{ bsData.total_liabilities.toLocaleString('ar-EG') }} ج</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </AppCard>
+
+            <AppCard padding="none">
+              <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">حقوق الملكية</div>
+              <div class="overflow-x-auto">
+                <table class="w-full">
+                  <tbody>
+                    <tr v-for="l in bsData.equity_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
+                      <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
+                      <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
+                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ l.amount.toLocaleString('ar-EG') }} ج</td>
+                    </tr>
+                    <tr class="border-t border-stone-100 dark:border-border/50">
+                      <td colspan="2" class="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">أرباح محتجزة (صافي الإيراد − المصروف تراكميًا)</td>
+                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ bsData.retained_earnings.toLocaleString('ar-EG') }} ج</td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
+                      <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">إجمالي الخصوم + حقوق الملكية</td>
+                      <td class="px-4 py-3 text-sm font-black text-blue-700">{{ bsData.total_liabilities_and_equity.toLocaleString('ar-EG') }} ج</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </AppCard>
+          </div>
+        </div>
+        <p class="text-[11px] text-gray-400 dark:text-gray-500">
+          الأرقام محسوبة من أرصدة القيود المحاسبية الفعلية (journal_lines) لكل حساب حتى تاريخ "كما في"
+          — نفس مصدر بيانات الحسابات ومراكز التكلفة، مش حساب موازٍ منفصل. الأرباح المحتجزة = صافي
+          الإيرادات ناقص المصروفات تراكميًا (المشروع مفيهوش قيد إقفال سنوي فعلي لسه).
+        </p>
+      </template>
+      <AppCard v-else padding="lg">
+        <EmptyState icon="⚖️" title="لا تتوفر بيانات ميزانية عمومية" />
+      </AppCard>
     </div>
 
     <!-- Depreciation -->
@@ -786,7 +945,7 @@ onMounted(() => loadTab('overview'))
               </td>
               <td class="px-4 py-3">
                 <a v-if="s.status === 'closed'"
-                  :href="`/api/v1/finance/shifts/${s.id}/report/pdf`"
+                  :href="ENDPOINTS.finance.shiftReportPdf(s.id)"
                   target="_blank"
                   @click.stop
                   class="text-xs text-blue-600 hover:underline font-semibold">📄 PDF</a>
@@ -898,7 +1057,7 @@ onMounted(() => loadTab('overview'))
       <template #footer>
         <div class="flex gap-2">
           <a v-if="detailShift?.status === 'closed'"
-            :href="`/api/v1/finance/shifts/${detailShift.id}/report/pdf`"
+            :href="ENDPOINTS.finance.shiftReportPdf(detailShift.id)"
             target="_blank"
             class="flex-1">
             <AppButton variant="outline" block>📄 تحميل PDF</AppButton>

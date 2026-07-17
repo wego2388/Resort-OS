@@ -219,10 +219,54 @@ def list_payments(db: Session, folio_id: int) -> list[Payment]:
     )
 
 
+def get_direct_payment_by_reference(db: Session, branch_id: int, reference: str) -> Optional[Payment]:
+    """يلاقي دفعة POS مباشرة (folio_id=None، راجع create_direct_payment) بالـ
+    reference الفريد بتاعها (زي "BCH-000123") — مستخدمة وقت إلغاء بيع مباشر
+    عشان نعكس/نلغي الدفعة المقابلة، مش القيد المحاسبي بس."""
+    return (
+        db.query(Payment)
+        .filter(
+            Payment.branch_id == branch_id,
+            Payment.folio_id.is_(None),
+            Payment.reference == reference,
+            Payment.voided_at.is_(None),
+        )
+        .first()
+    )
+
+
 def create_payment(
     db: Session, data: PaymentCreate, shift_id: Optional[int] = None, currency: str = "EGP",
 ) -> Payment:
     payment = Payment(**data.model_dump(), shift_id=shift_id, currency=currency)
+    db.add(payment)
+    db.flush()
+    return payment
+
+
+def create_direct_payment(
+    db: Session,
+    branch_id: int,
+    amount: Decimal,
+    method: str,
+    posted_at: datetime,
+    shift_id: Optional[int] = None,
+    cashier_id: Optional[int] = None,
+    reference: Optional[str] = None,
+    ref_order_id: Optional[int] = None,
+    currency: str = "EGP",
+) -> Payment:
+    """يسجّل دفعة POS مباشرة (folio_id=None) — بيع نقدي/كارت فوري من موديول
+    عمل تاني (شاطئ/دايننج) مش محمّل على فوليو غرفة، عشان يظهر في تقرير نهاية
+    الوردية (build_shift_end_report بيقرا Payment.shift_id بس — راجع تعليق
+    Payment في models.py). دالة داخلية (مش عبر PaymentCreate العامة اللي
+    folio_id فيها إجباري لمسار تسوية الفوليو)، مفيش HTTPException هنا زي
+    باقي crud.py."""
+    payment = Payment(
+        folio_id=None, branch_id=branch_id, amount=amount, currency=currency,
+        method=method, reference=reference, posted_at=posted_at,
+        cashier_id=cashier_id, shift_id=shift_id, ref_order_id=ref_order_id,
+    )
     db.add(payment)
     db.flush()
     return payment

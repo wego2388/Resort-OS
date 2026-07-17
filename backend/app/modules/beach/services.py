@@ -312,6 +312,7 @@ def _sell_ticket_no_commit(
             pass  # ميمنعش إتمام البيع لو فشل نشر الـ charge على الفوليو
     else:
         _post_beach_revenue_journal(db, tx)
+        _record_shift_payment(db, tx)
     if tx.customer_id:
         from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
         record_customer_visit(db, tx.customer_id, tx.total_amount + tx.vat_amount, tx.tx_date)
@@ -331,6 +332,34 @@ def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
         description=f"إيرادات شاطئ — {tx.tx_type}",
         source="beach", source_id=tx.id,
         cost_center_code="BEACH",
+    )
+
+
+def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
+    """⚠️ باج حقيقي اتصلح: migration 504f42d2c755 (2026-07-15) جهّزت
+    Payment.folio_id nullable/ref_order_id صراحةً "عشان مبيعات الشاطئ/
+    الدايننج المباشرة تظهر في تقرير نهاية الوردية" — بس عمرها ما كان فيه
+    كود بيكتب Payment فعليًا لبيع شاطئ مباشر. النتيجة: tx.shift_id كان
+    بيتسجّل على BeachTransaction نفسها (تعليقه فوق في sell_ticket بيقول
+    نفس النية بالظبط)، لكن build_shift_end_report/list_shift_invoices
+    (finance.services) بيقروا Payment.shift_id بس — يعني مبيعات الشاطئ
+    المباشرة (كاش/كارت فوري، مش محمّلة على غرفة) كانت غايبة تمامًا عن
+    تقرير X/Z الوردية رغم كل البنية التحتية الجاهزة ليها. الحل: نسجّل
+    Payment حقيقي (folio_id=None) هنا — نفس نمط finance.services.add_payment
+    بالظبط، بس بدون فوليو. الشاطئ مالوش تمييز كاش/كارت حقيقي في البيانات
+    (نفس القيد المحاسبي فوق بيعامل كل بيع مباشر كـ"كاش" دايمًا)، فـ method
+    ثابتة "cash" هنا — نفس الافتراض المحاسبي الموجود بالفعل، مش افتراض جديد."""
+    if not tx.shift_id and not tx.cashier_id:
+        return  # مفيش وردية ولا كاشير مرتبط — مفيش حاجة تتسجّل (تسجيل يدوي/API مباشر)
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+
+    finance_crud.create_direct_payment(
+        db, branch_id=tx.branch_id,
+        amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
+        method="cash",
+        posted_at=datetime.combine(tx.tx_date, datetime.min.time()),
+        shift_id=tx.shift_id, cashier_id=tx.cashier_id,
+        reference=f"BCH-{tx.id:06d}" if tx.id else None,
     )
 
 
@@ -506,6 +535,7 @@ def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> Be
             _post_beach_folio_charge_reversal_journal(db, tx)
     else:
         _post_beach_revenue_reversal_journal(db, tx)
+        _void_shift_payment(db, tx, voided_by)
 
     # عكس رصيد B2B المستحق لو العملية كانت تشيك-إن فندق شريك — راجع تعليق
     # crud.decrement_b2b_checkins: باج حقيقي كان هنا قبل إضافة حد الائتمان
@@ -517,6 +547,20 @@ def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> Be
     db.commit()
     db.refresh(tx)
     return tx
+
+
+def _void_shift_payment(db: Session, tx: "BeachTransaction", voided_by: int) -> None:
+    """يعكس الـ Payment اللي _record_shift_payment سجّله وقت البيع (لو
+    موجود) — وإلا تقرير نهاية الوردية هيفضل يحسب بيع اتلغى ضمن total_sales
+    رغم إن القيد المحاسبي نفسه اتعكس بالفعل فوق (_post_beach_revenue_
+    reversal_journal). راجع _record_shift_payment للتفاصيل الكاملة."""
+    if not tx.id:
+        return
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+
+    payment = finance_crud.get_direct_payment_by_reference(db, tx.branch_id, f"BCH-{tx.id:06d}")
+    if payment:
+        finance_crud.void_payment(db, payment, voided_by)
 
 
 def _post_beach_revenue_reversal_journal(db: Session, tx: "BeachTransaction") -> None:

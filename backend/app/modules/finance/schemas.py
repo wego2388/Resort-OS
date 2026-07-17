@@ -162,7 +162,7 @@ class VoidPaymentRequest(BaseModel):
 class PaymentRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:        int
-    folio_id:  int
+    folio_id:  Optional[int]  # None لدفعة POS مباشرة (بيع شاطئ/دايننج كاش فوري)
     branch_id: int
     amount:    Decimal
     currency:  str
@@ -334,9 +334,11 @@ class ShiftInvoiceLine(BaseModel):
     """سطر واحد في سجل فواتير الوردية (InvoiceLogModal، wagdy.md بند S-02) —
     دفعة حقيقية مربوطة بالوردية عبر Payment.shift_id، مع اسم الضيف من
     الفوليو المرتبط. مختلف عن ``invoice_count`` الإجمالي في ShiftEndReport:
-    هنا كل فاتورة سطر مستقل بتفاصيلها، مش رقم مجمّع بس."""
+    هنا كل فاتورة سطر مستقل بتفاصيلها، مش رقم مجمّع بس. ``folio_id``
+    اختياري — دفعة POS مباشرة (بيع شاطئ/دايننج كاش فوري، مش محمّل على
+    غرفة، راجع finance.crud.create_direct_payment) مالهاش فوليو خالص."""
     payment_id: int
-    folio_id:   int
+    folio_id:   Optional[int]
     guest_name: str
     amount:     Decimal
     method:     str

@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
-    get_current_active_user, get_db, get_manager_user, rate_limit_dep, require_permission, user_level,
+    get_current_active_user, get_db, get_manager_user, get_websocket_user,
+    rate_limit_dep, require_permission, user_level,
 )
 from app.modules.finance import crud, services
 from app.resort_os.timezone_utils import business_today
@@ -39,6 +40,60 @@ from app.modules.finance.schemas import (
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["finance"])
+
+
+# ── WebSocket Live Shift Monitor ─────────────────────────────────────────
+# نفس نمط BeachMapConnectionManager/dining_manager/alerts_manager بالظبط —
+# بث بسيط بالفرع (broadcast-only، من غير أي بروتوكول ثنائي الاتجاه حقيقي)،
+# auth عبر get_websocket_user (?token= JWT). مقصود مدير+ بس (min_level=60)
+# — عكس KDS/خريطة الشاطئ (كاشير+)، ده بيانات مالية لوردية ممكن تكون كاشير
+# تاني، زي باقي endpoints المالية الحساسة (راجع Operations & Control Layer
+# Batch 4). بيتنادى من finance.add_payment (تسوية فوليو) وbeach.sell_ticket
+# (بيع مباشر — راجع finance.crud.create_direct_payment) بعد أي دفعة
+# بترتبط بوردية مفتوحة فعليًا، عشان لوحة "الميزانية → الورديات" في
+# FinanceView.vue تقدر تحدّث تفاصيل الوردية المفتوحة لحظيًا من غير polling.
+
+class ShiftConnectionManager:
+    def __init__(self):
+        self.active: dict[str, list[WebSocket]] = {}  # branch_id → قائمة اتصالات WS
+
+    async def connect(self, ws: WebSocket, branch_id: str):
+        await ws.accept()
+        self.active.setdefault(branch_id, []).append(ws)
+
+    def disconnect(self, ws: WebSocket, branch_id: str):
+        connections = self.active.get(branch_id, [])
+        if ws in connections:
+            connections.remove(ws)
+
+    async def broadcast(self, branch_id: str, data: dict):
+        for ws in list(self.active.get(branch_id, [])):
+            try:
+                await ws.send_json(data)
+            except Exception:
+                pass
+
+
+shift_manager = ShiftConnectionManager()
+
+
+@router.websocket("/finance/ws/shifts/{branch_id}")
+async def shifts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
+    """بث لحظي لمدير+ بس — حدث خفيف {"type": "shift_sale", "shift_id": N}
+    كل ما دفعة حقيقية ترتبط بوردية مفتوحة (راجع add_payment/beach.sell_ticket
+    تحت). الـ frontend بيستخدمه كإشارة "أعد تحميل تفاصيل الوردية دي" —
+    مفيش بيانات مالية بتتبعت في رسالة الـ WS نفسها، القراءة الحقيقية لسه
+    عبر GET /finance/shifts/{id}/report العادي (نفس فلسفة KDS: WS = إشارة
+    تحديث، مش قناة نقل بيانات)."""
+    if not await get_websocket_user(ws, db, min_level=60):
+        return
+    await shift_manager.connect(ws, str(branch_id))
+    try:
+        while True:
+            await ws.receive_text()
+            await ws.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        shift_manager.disconnect(ws, str(branch_id))
 
 
 # ── Folios ────────────────────────────────────────────────────────────
@@ -96,11 +151,16 @@ def settle_folio(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
 @router.post("/finance/folios/{folio_id}/payments",
              response_model=PaymentRead,
              status_code=status.HTTP_201_CREATED)
-def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depends(get_cashier_user)):
+async def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depends(get_cashier_user)):
     try:
-        return services.add_payment(db, folio_id, data, cashier_id=user.id)
+        payment = services.add_payment(db, folio_id, data, cashier_id=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if payment.shift_id:
+        await shift_manager.broadcast(str(payment.branch_id), {
+            "type": "shift_sale", "shift_id": payment.shift_id,
+        })
+    return payment
 
 
 @router.post("/finance/payments/{payment_id}/void", response_model=PaymentRead,

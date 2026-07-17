@@ -89,15 +89,27 @@ class FolioCharge(Base, TimestampMixin):
 
 
 class Payment(Base, TimestampMixin):
+    # ⚠️ باج حقيقي اتصلح: migration 504f42d2c755 (2026-07-15) عمل
+    # folio_id nullable + ضاف عمود ref_order_id على جدول payments فعليًا
+    # (alter_column + add_column على الداتابيز حقيقي)، بس الموديول SQLAlchemy
+    # هنا عمره ما اتحدّث ليطابق — folio_id فضل Mapped[int] (غير nullable في
+    # الـ ORM رغم إن العمود nullable فعليًا في الداتابيز)، وref_order_id
+    # عمره ما كان موجود كـ attribute خالص. نفس فئة الباج "الموديل موجود
+    # بس مش مطابق للداتابيز" (راجع migration نفسها: docstring بتقول صراحةً
+    # "Direct POS sales (dining/beach) don't go through a Folio... Making
+    # folio_id nullable lets us record a Payment with a shift_id so
+    # cashier-shift reports see real totals" — نية واضحة اتسجّلت في
+    # الـ migration بس عمرها ما اتنفّذت في كود حقيقي حتى اللحظة دي).
     __tablename__ = "payments"
 
     id:        Mapped[int]            = mapped_column(primary_key=True)
-    folio_id:  Mapped[int]            = mapped_column(ForeignKey("folios.id", ondelete="RESTRICT"))
+    folio_id:  Mapped[int | None]     = mapped_column(ForeignKey("folios.id", ondelete="RESTRICT"), nullable=True)
     branch_id: Mapped[int]            = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
     amount:    Mapped[Decimal]        = mapped_column(Numeric(10, 2))
     currency:  Mapped[str]            = mapped_column(String(3), default="EGP")
     # موروثة من folio.currency وقت إنشاء الدفعة (مش قابلة للتحديد من العميل
-    # مباشرة) — عشان نضمن اتساق عملة الفوليو مع كل دفعاته.
+    # مباشرة) — عشان نضمن اتساق عملة الفوليو مع كل دفعاته. لدفعة POS مباشرة
+    # (folio_id=None) العملة الافتراضية EGP.
     method:    Mapped[str]            = mapped_column(String(30))
     reference: Mapped[str | None]     = mapped_column(String(100), nullable=True)
     notes:     Mapped[str | None]     = mapped_column(String(500), nullable=True)
@@ -106,8 +118,14 @@ class Payment(Base, TimestampMixin):
     voided_by: Mapped[int | None]      = mapped_column(Integer, nullable=True)
     cashier_id: Mapped[int | None]     = mapped_column(Integer, nullable=True, index=True)
     shift_id:  Mapped[int | None]      = mapped_column(ForeignKey("cashier_shifts.id", ondelete="SET NULL"), nullable=True, index=True)
+    # مرجع اختياري لمصدر البيع المباشر (مثلاً DiningOrder.id) — بدون FK
+    # حقيقي عمدًا (زي FolioCharge.ref_order_id بالظبط) لأن Payment مش بيتربط
+    # بموديول عمل معيّن دايمًا (finance مش بيستورد dining/beach — راجع
+    # طبقات المعمارية §4). المصدر الحقيقي القابل للقراءة دايمًا هو `reference`
+    # (نص حر زي "BCH-000123").
+    ref_order_id: Mapped[int | None]   = mapped_column(Integer, nullable=True)
 
-    folio: Mapped["Folio"] = relationship("Folio", back_populates="payments")
+    folio: Mapped["Folio | None"] = relationship("Folio", back_populates="payments")
     shift: Mapped["CashierShift"] = relationship("CashierShift", back_populates="payments")
 
 

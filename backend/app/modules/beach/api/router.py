@@ -134,7 +134,7 @@ def set_surge(
 
 @router.post("/beach/sell", response_model=BeachTransactionRead,
              status_code=status.HTTP_201_CREATED)
-def sell_ticket(
+async def sell_ticket(
     data: BeachSellRequest, db: DbDep,
     user=Depends(get_cashier_user),
     branch_id: int = Query(...),
@@ -142,11 +142,17 @@ def sell_ticket(
     if not data.cashier_id:
         data = data.model_copy(update={"cashier_id": user.id})
     try:
-        return services.sell_ticket(db, branch_id, data)
+        tx = services.sell_ticket(db, branch_id, data)
     except services.BeachConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    if tx.shift_id:
+        from app.modules.finance.api.router import shift_manager  # noqa: PLC0415
+        await shift_manager.broadcast(str(tx.branch_id), {
+            "type": "shift_sale", "shift_id": tx.shift_id,
+        })
+    return tx
 
 
 @router.post("/beach/b2b-checkin", response_model=BeachTransactionRead,

@@ -450,6 +450,47 @@ class TestShiftAttachment:
         tx = services.sell_ticket(db, branch.id, req)
         assert tx.shift_id is None
 
+    def test_direct_sale_appears_in_shift_end_report(self, db):
+        """⚠️ باج حقيقي اتصلح: BeachTransaction.shift_id كان بيتسجّل (التست
+        فوق)، بس finance.services.build_shift_end_report/list_shift_invoices
+        (تقرير X/Z نهاية الوردية) بيقروا Payment.shift_id بس — مفيش أي كود
+        كان بيكتب Payment فعليًا لبيع شاطئ مباشر (migration 504f42d2c755
+        جهّزت folio_id nullable لنفس السبب ده بالظبط، بس عمرها ما اتنفّذت).
+        يعني مبيعات الشاطئ المباشرة (كاش فوري، مش محمّلة على غرفة) كانت
+        غايبة تمامًا عن تقرير نهاية وردية الكاشير رغم ظهورها صح في
+        BeachTransaction نفسها."""
+        from app.modules.finance import services as finance_services
+        from app.modules.finance.schemas import CashierShiftOpen
+
+        branch = make_branch(db)
+        shift = finance_services.open_shift(
+            db, cashier_id=43, opened_by=43,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        req = BeachSellRequest(tx_type="entry", quantity=2, cashier_id=43)
+        tx = services.sell_ticket(db, branch.id, req)
+
+        report = finance_services.build_shift_end_report(db, shift.id)
+        assert report.invoice_count == 1
+        assert report.total_cash == tx.total_amount + tx.vat_amount
+        assert report.total_sales == tx.total_amount + tx.vat_amount
+
+        invoices = finance_services.list_shift_invoices(db, shift.id, requesting_user=_FakeManager())
+        assert len(invoices) == 1
+        assert invoices[0].folio_id is None
+        assert invoices[0].amount == tx.total_amount + tx.vat_amount
+
+        # إلغاء البيع لازم يعكس الدفعة من تقرير الوردية برضو، مش بس القيد المحاسبي
+        services.void_transaction(db, tx.id, voided_by=43, reason="اختبار")
+        report_after_void = finance_services.build_shift_end_report(db, shift.id)
+        assert report_after_void.total_sales == Decimal("0")
+        assert report_after_void.voided_count == 1
+
+
+class _FakeManager:
+    id = 999
+    role = "manager"
+
 
 class TestSurgeToggle:
 
