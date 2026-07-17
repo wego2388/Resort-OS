@@ -115,6 +115,19 @@ class PayrollRun(Base, TimestampMixin):
     # لكن لازم يُحتسب في القيد المحاسبي المجمّع (_post_payroll_journal) عشان
     # المدين يفضل متوازن مع صافي الرواتب المستحقة اللي بيشمل المكافأة.
     total_holiday_bonus: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
+    # ⚠️ باج محاسبي حقيقي اتصلح: hr_engine.calculate_payroll بيحسب net_salary
+    # شامل non_taxable_allowances (بدلات غير خاضعة لضريبة/تأمينات — مواصلات/
+    # سكن)، وده بيوصل لـ "صافي رواتب مستحقة" (دائن) في _post_payroll_journal.
+    # لكن run.total_gross بيجمّع result.gross_salary بس (مستبعد منه
+    # non_taxable_allowances عمدًا، زي holiday_bonus بالظبط)، وعمود مجمّع
+    # زي total_holiday_bonus مكانش موجود لـ non_taxable_allowances خالص —
+    # يعني القيد المرحّل كان دايمًا غير متوازن (دائن > مدين) بالظبط بقيمة
+    # إجمالي البدلات الغير خاضعة في أي كشف فيه موظف عنده بدل زي ده. اتأكد
+    # حي على Postgres حقيقي (seed data واقعية): فرق 500.00 ج بالظبط بين
+    # مصروف الرواتب (5100) وإجمالي الدائن (2100+2110+2120) — نفس قيمة
+    # البدلات الغير خاضعة المزروعة. الحل: عمود مجمّع هنا (نفس نمط
+    # total_holiday_bonus بالظبط) يتضاف للمدين في _post_payroll_journal.
+    total_non_taxable_allowances: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0"))
     # إجمالي خصومات السلف/الدفعات (H-01+H-02) المطبَّقة في الكشف ده — جزء من
     # total_net (مخصوم منه فعلاً في hr_engine.calculate_payroll) فمش محتاج
     # سطر قيد محاسبي منفصل في _post_payroll_journal (خصومات الصافي الأخرى
@@ -142,6 +155,7 @@ class PayrollLine(Base, TimestampMixin):
     late_penalty_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # خصم تأخير محسوب تلقائيًا من الحضور — منفصل عن penalty_deduction (جزاءات تأديبية يدوية بالأيام)
     unpaid_leave_deduction:Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))
     holiday_bonus:          Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # مكافأة العيد المُطبَّقة على هذا الموظف لهذا الكشف — راجع Employee.holiday_bonus
+    non_taxable_allowances: Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # بدلات غير خاضعة لضريبة/تأمينات (مواصلات/سكن) — راجع تعليق PayrollRun.total_non_taxable_allowances
     advance_deduction:      Mapped[Decimal] = mapped_column(Numeric(10, 2), default=Decimal("0"))  # إجمالي أقساط سلف (H-01) + دفعات (H-02) المخصومة لهذا الموظف لهذا الكشف
     journal_entry:         Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON
 

@@ -438,6 +438,7 @@ def run_payroll_for_branch(
     total_si    = Decimal("0")
     total_holiday_bonus = Decimal("0")
     total_advance_deduction = Decimal("0")
+    total_non_taxable_allowances = Decimal("0")
 
     period_str = f"{period_year}-{period_month:02d}"
 
@@ -488,6 +489,7 @@ def run_payroll_for_branch(
             "unpaid_leave_deduction": result.unpaid_leave_deduction,
             "holiday_bonus":          result.holiday_bonus,
             "advance_deduction":      result.advance_deduction,
+            "non_taxable_allowances": result.non_taxable_allowances,
             "journal_entry":          json.dumps(result.journal_entry, ensure_ascii=False),
         })
         # الرصيد الفعلي (SalaryAdvance.remaining_balance/AdvancePayment.deducted)
@@ -500,6 +502,7 @@ def run_payroll_for_branch(
         total_si    += result.employee_si
         total_holiday_bonus += result.holiday_bonus
         total_advance_deduction += result.advance_deduction
+        total_non_taxable_allowances += result.non_taxable_allowances
 
     run.total_gross = total_gross
     run.total_net   = total_net
@@ -507,6 +510,7 @@ def run_payroll_for_branch(
     run.total_si    = total_si
     run.total_holiday_bonus = total_holiday_bonus
     run.total_advance_deduction = total_advance_deduction
+    run.total_non_taxable_allowances = total_non_taxable_allowances
 
     db.commit()
     db.refresh(run)
@@ -575,11 +579,28 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
     # run.total_si (SI الموظف) تحت مسمى "مصروف صاحب العمل" بدون أي قيد دائن
     # مقابل — ده كان بيكسر توازن القيد (مدين ≠ دائن) في أي مرة الحساب يكون
     # موجود فعلاً. اتشال لحد ما يُضاف عمود total_employer_si حقيقي (migration).
-    # مكافآت الأعياد (total_holiday_bonus) مضافة هنا لنفس حساب "مصروف رواتب"
-    # — مش خاضعة لضريبة/تأمينات فمستبعدة من total_gross نفسه (راجع
-    # hr_engine.calculate_payroll)، لكن لازم تدخل المدين هنا عشان يفضل متوازن
-    # مع "صافي رواتب مستحقة" تحت (اللي total_net بتاعه بيشملها فعليًا).
-    gross_debit = (run.total_gross or Decimal("0")) + (run.total_holiday_bonus or Decimal("0"))
+    # مكافآت الأعياد (total_holiday_bonus) وnon_taxable_allowances (بدلات
+    # مواصلات/سكن) مضافين هنا لنفس حساب "مصروف رواتب" — الاتنين مستبعدين من
+    # total_gross نفسه (راجع hr_engine.calculate_payroll: gross_salary =
+    # basic + taxable_allowances + overtime بس)، لكن لازم يدخلوا المدين هنا
+    # عشان يفضلوا متوازنين مع "صافي رواتب مستحقة" تحت (اللي total_net
+    # بتاعه بيشملهم الاتنين فعليًا — راجع صيغة `net` في hr_engine.calculate_
+    # employee_payroll). ⚠️ باج محاسبي حقيقي كان هنا اتصلح: non_taxable_
+    # allowances مكانش بيتضاف هنا خالص (وعمود total_non_taxable_allowances
+    # نفسه مكانش موجود على PayrollRun) — يعني أي كشف فيه موظف عنده بدل غير
+    # خاضع (مواصلات/سكن) كان بيرحّل قيد غير متوازن فعليًا (دائن > مدين
+    # بالظبط بقيمة إجمالي البدلات)، اتأكد حي على Postgres حقيقي بفرق 500
+    # جنيه في seed data واقعية. hr_engine.calculate_employee_payroll نفسه
+    # كان بالفعل بيبني journal_entry مرجعي صح (Dr "مصروف رواتب" = gross +
+    # non_taxable_allowances، مخزّن في PayrollLine.journal_entry) — بس
+    # _post_payroll_journal هنا (القيد المجمّع الفعلي اللي بيترحّل للدفتر)
+    # كان بيعيد حساب المدين من عمودين run-level بس (total_gross/total_
+    # holiday_bonus) من غير ما يشوف الـ non_taxable_allowances خالص.
+    gross_debit = (
+        (run.total_gross or Decimal("0"))
+        + (run.total_holiday_bonus or Decimal("0"))
+        + (run.total_non_taxable_allowances or Decimal("0"))
+    )
     if "5100" in accs and gross_debit:
         lines.append(JournalLineCreate(
             account_id=accs["5100"],

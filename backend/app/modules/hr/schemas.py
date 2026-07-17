@@ -171,6 +171,7 @@ class PayrollLineRead(BaseModel):
     unpaid_leave_deduction: Decimal
     advance_deduction:      Decimal
     holiday_bonus:          Decimal
+    non_taxable_allowances: Decimal
 
 
 class PayrollRunRead(BaseModel):
@@ -186,6 +187,7 @@ class PayrollRunRead(BaseModel):
     total_si:     Decimal
     total_holiday_bonus: Decimal
     total_advance_deduction: Decimal
+    total_non_taxable_allowances: Decimal
     approved_by:  Optional[int]
     approved_at:  Optional[datetime]
     created_at:   datetime

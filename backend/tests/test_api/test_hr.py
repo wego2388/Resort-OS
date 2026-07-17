@@ -382,6 +382,57 @@ class TestPayroll:
         total_credit = sum(l.credit for l in lines)
         assert total_debit == total_credit, "القيد لازم يتوازن حتى مع مكافأة العيد"
 
+    def test_approve_payroll_run_with_non_taxable_allowance_posts_balanced_journal(
+        self, db, branch, si_config, tax_brackets,
+    ):
+        """⚠️ باج محاسبي حقيقي اتصلح (اتأكد منه حي على Postgres حقيقي عبر
+        seed data واقعية — فرق 500 ج بالظبط بين مصروف الرواتب والدائن
+        المجمّع): hr_engine.calculate_employee_payroll بيحسب net_salary
+        شامل non_taxable_allowances (بدل مواصلات/سكن غير خاضع لضريبة/
+        تأمينات)، فحساب "صافي رواتب مستحقة" (دائن) في _post_payroll_journal
+        كان بيشملها فعليًا — لكن المدين (run.total_gross) كان مستبعدها
+        تمامًا، وعمود مجمّع زي total_holiday_bonus (اللي بيتضاف صح في
+        المدين) مكانش موجود لـ non_taxable_allowances خالص. النتيجة: أي
+        كشف فيه موظف عنده بدل غير خاضع كان بيرحّل قيد غير متوازن حقيقي.
+        ده regression test مباشر لإصلاح PayrollRun.total_non_taxable_
+        allowances + _post_payroll_journal."""
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
+        from app.modules.hr.schemas import EmployeeAllowanceCreate
+
+        for code, acc_type in [
+            ("5100", "expense"),
+            ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        emp = services.create_employee(db, EmployeeCreate(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="موظف ببدل مواصلات", position="نادل", basic_salary=Decimal("4000.00"),
+            hire_date=date(2020, 1, 1),
+        ))
+        crud.create_allowance(db, EmployeeAllowanceCreate(
+            employee_id=emp.id, name="بدل مواصلات", amount=Decimal("500.00"), is_taxable=False,
+        ))
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2027, 1)
+        assert run.total_non_taxable_allowances == Decimal("500.00")
+        # non_taxable_allowances مستبعد من total_gross عمدًا (زي holiday_bonus)
+        assert run.total_gross == Decimal("4000.00")
+
+        services.approve_payroll_run(db, run.id, approved_by=1)
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll", JournalEntry.source_id == run.id)
+            .first()
+        )
+        assert entry is not None
+        lines = db.query(JournalLine).filter(JournalLine.entry_id == entry.id).all()
+        total_debit  = sum(l.debit for l in lines)
+        total_credit = sum(l.credit for l in lines)
+        assert total_debit == total_credit, "القيد لازم يتوازن حتى مع بدل غير خاضع للضريبة"
+
     def test_new_tax_bracket_version_does_not_corrupt_current_period(
         self, db, employee, si_config, tax_brackets,
     ):
