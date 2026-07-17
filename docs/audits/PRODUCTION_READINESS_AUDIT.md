@@ -103,6 +103,24 @@ rollback/idempotency.
 guest session + dedupe/rate limit. إذا ثبت أن النظام محلي فقط، تظل البوابة
 مطلوبة قبل أي نشر أو طباعة QR.
 
+**✅ حالة الإغلاق (Gate 1A، 2026-07-17 — النتائج فوق سجل تاريخي، مش مُعاد
+كتابته):** الخطوة الأولى (حصر/تعطيل) اكتملت ومراجَعة من Codex على 5 جولات
+مستقلة. الطلب الذاتي وguest alerts مقفولون افتراضيًا خلف بوابتين معًا (typed
+deployment switch + branch-scoped setting)، `GET
+/dining/public/orders/{order_id}` مقفول تمامًا بدل الاعتماد على إعداد واحد،
+outlet_id/table_id/item_id بقوا يتحققوا فعليًا من الانتماء لنفس الفرع/المنفذ،
+خريطة rate limiting بقت تغطي مسارات Dining الحقيقية، وrate-limit key بقى
+مقاومًا لتزوير `X-Forwarded-For` (كان اكتُشف في المراجعة الأمنية النهائية، مش
+جزء من C-02 الأصلي). التفاصيل الكاملة والملفات المتأثرة في commit
+`fix(security): contain unsafe public guest workflows`.
+
+**لسه مفتوح عمدًا (Gate 8، مش جزء من هذا الإغلاق):** Service Location
+الحقيقية، QR token عشوائي/قابل للدوران، guest session، dedupe/idempotency
+لطلبات الخدمة، وworkflow `view_and_call` الكامل. **النظام ما زال غير جاهز
+للإنتاج بشكل عام** — Gate 1A أغلق خطر تعرض عام واحد محدد، ولا يعني اكتمال
+باقي البوابات (C-01 فشل مالي fail-open لسه مفتوح بالكامل — Gate 1B، Super
+Admin لسه Gate 2، إلخ).
+
 ## مخاطر مرتفعة
 
 | الرمز | المجال | الدليل الحالي | البوابة المطلوبة |
@@ -174,9 +192,25 @@ guest session + dedupe/rate limit. إذا ثبت أن النظام محلي فق
 | Frontend automated tests/a11y/E2E | غير موجودة في scripts الحالية |
 | Real VPS / production restore drill | لم يُشغّل في هذه الجلسة؛ يحتاج بيئة وصلاحية منفصلة |
 
+## أدلة إغلاق Gate 1A (2026-07-17 — إضافة، مش تعديل للقطة الأصلية فوق)
+
+مراجعة مستقلة نهائية من Codex (5 جولات: 4 تصحيح + جولة أمان) اعتمدت الإغلاق:
+
+| الفحص | النتيجة |
+|---|---|
+| اختبارات الباك إند الكاملة | **1,826 اختبارًا مُجمَّعًا — 1,823 ناجح، 3 skipped (PostgreSQL-only migration tests، `DINING_MIGRATION_TEST_ADMIN_URL` غير متاح)، صفر فشل** |
+| اختبارات مقاومة تزوير rate-limit proxy | 7/7 ناجحة |
+| `alembic heads` | head واحد: `9989c0432ccc` — لا migration جديدة |
+| TypeScript (`type-check:all`) | ناجح للتطبيقين |
+| Production build (`build:all`) | ناجح للتطبيقين، مع تحذيرات bundle/i18n غير حاجبة موجودة من قبل |
+| Docker Compose (base + prod + prod+ip-only overlay) | نجحت الثلاثة |
+| `git diff --check` | نظيف |
+| نشر VPS حقيقي | **لم يحدث** — لم تُبنَ أو تُنشَر أي صورة Docker على السيرفر الفعلي في هذه الدفعة |
+
 ## القرار قبل التنفيذ
 
-لا نعلن النظام production-ready. نبدأ من
+لا نعلن النظام production-ready — Gate 1A أغلق خطر تعرّض عام محدد فقط. نبدأ من
 [`SMART_EXECUTION_ROADMAP.md`](./SMART_EXECUTION_ROADMAP.md)، ونختار في كل مرة
-أصغر مرحلة تعالج أعلى خطر مثبت بعد التحقق من تعرض البيئة واعتمادياتها. أي
-نتيجة جديدة تغيّر ترتيب المخاطر تُحدّث هذه الوثيقة و`wagdy.md` قبل التنفيذ.
+أصغر مرحلة تعالج أعلى خطر مثبت بعد التحقق من تعرض البيئة واعتمادياتها. Gate 1B
+(Financial Atomicity — C-01 فوق) هي التالية ولم تبدأ. أي نتيجة جديدة تغيّر
+ترتيب المخاطر تُحدّث هذه الوثيقة و`wagdy.md` قبل التنفيذ.

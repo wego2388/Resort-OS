@@ -8,10 +8,11 @@
 
 | المرحلة | الحالة الآن | المسؤول التنفيذي | المخرج الذي نراجعه قبل الانتقال |
 |---|---|---|---|
-| Gate 0: baseline وCockpit | قيد الإغلاق والتحقق النهائي | Codex/ChatGPT | audit + roadmap + UI/UX cockpit + checks |
-| Public Phase 0 المرجعية | معتمدة للبدء بالتوازي | Claude | route/state/assets/content/API/Keep-Adapt-Remove evidence |
-| Gate 1: احتواء Critical | التالية في مسار الكود بعد حسم exposure | Claude | أصغر diff آمن + regression/failure tests |
-| Gate 2: Super Admin safeguards | مغلقة على Gate 1 | Claude | server-side policy/concurrency/session/audit tests |
+| Gate 0: baseline وCockpit | **مكتملة** | Codex/ChatGPT | audit + roadmap + UI/UX cockpit + checks |
+| Public Phase 0 المرجعية | **مكتملة** (راجعتها Codex على 4 جولات) | Claude | `docs/audits/public-phase-0/` — route/state/assets/content/API/Keep-Adapt-Remove evidence |
+| Gate 1A: احتواء Public/QR | **مكتملة (2026-07-17)** — راجع `docs/audits/PRODUCTION_READINESS_AUDIT.md`'s قسم الإغلاق | Claude | commit `fix(security): contain unsafe public guest workflows` — أصغر diff آمن + regression/failure tests، اعتمدتها Codex |
+| Gate 1B: Financial Atomicity | **التالية — لم تبدأ بعد** (تخطيط قراءة فقط بدأ على branch `gate-1b-financial-atomicity`) | Claude | عقد atomic/outbox/reconciliation لكل call site + failure-injection tests |
+| Gate 2: Super Admin safeguards | **مغلقة على مراجعة Gate 1B** (لم تبدأ) | Claude | server-side policy/concurrency/session/audit tests |
 | Gate 3: i18n/design/test foundation | مغلقة على عقد Gate 2 الحساس | Claude | bilingual shell + reference screens + quality harness |
 | Gate 4: Dining financial integrity | مغلقة على Gate 1B وGate 2 | Claude | transactional payment/shift/order invariants |
 | Gate 5: Staff UX batches | مغلقة على Gates 3 و4 حسب الشاشة | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
@@ -69,22 +70,33 @@
 
 ### Gate 1 — احتواء الأخطار الحرجة
 
-Gate 1 له مساران؛ يُحدد الأول بعد سؤال exposure واحد:
+Gate 1 له مساران؛ endpoints عامة فعليًا على VPS حقيقي (`187.124.170.249`)
+جعلت 1A الأول:
 
-- **1A — Public/QR containment:** إذا كانت endpoints متاحة خارج جهاز التطوير،
-  يأتي هذا أولًا: إغلاق self-order افتراضيًا، منع IDs غير الموثوقة، وتصحيح
-  rate limiting بشكل متوافق. لا نبني Service Location كاملة داخل containment.
-- **1B — Financial atomicity contract:** إذا كانت البيئة محلية فقط، يبدأ هذا
-  أولًا: تصنيف كل side effect مالي إلى atomic أو outbox/reconciliation، ثم
-  إصلاح call site واحد عالي الخطورة باختبارات فشل حقيقية قبل التعميم.
+- **1A — Public/QR containment: ✅ مكتملة (2026-07-17).** إغلاق self-order
+  وguest alerts افتراضيًا خلف بوابتين معًا (typed deployment switch +
+  branch-scoped setting)، branch-scoped authorization حقيقي على beach
+  check-in وGuest Alert REST/WebSocket، إغلاق تام لـ`GET
+  /dining/public/orders/{id}` لحد Gate 8، تحقق outlet/table/item الكامل في
+  `create_order`، تصحيح خريطة rate limiting، وrate-limit key مقاوم لتزوير
+  `X-Forwarded-For`. راجعتها Codex على 5 جولات مستقلة (4 تصحيح + جولة أمان
+  نهائية)، commit: `fix(security): contain unsafe public guest workflows`.
+  Service Location الكاملة/QR token/guest session **لسه Gate 8**، مش جزء
+  من الإغلاق ده.
+- **1B — Financial atomicity contract: التالية، لم تبدأ بعد.** تصنيف كل
+  side effect مالي في Dining/Beach/Inventory/HR/PMS/Finance إلى atomic أو
+  outbox/reconciliation، ثم إصلاح call site واحد عالي الخطورة باختبارات
+  فشل حقيقية قبل التعميم. التخطيط (قراءة فقط) بدأ على
+  `gate-1b-financial-atomicity`.
 
 **اعتماديات الخروج:** لا مرحلة مالية أو QR أو Public migration تتجاوز هذه
-البوابة. كل rollback واضح ولا migration مدمرة.
+البوابة. Gate 2 (Super Admin) مغلقة حتى تُراجَع وتُعتمد خطة Gate 1B. كل
+rollback واضح ولا migration مدمرة.
 
 ### Gate 2 — أمان مركز التحكم
 
 **النطاق:** Super Admin backend safeguards.  
-**يعتمد على:** Gate 1؛ ويمكن تحضيره بالتوازي قراءة فقط.  
+**يعتمد على:** Gate 1 كامل (1A مكتملة ✅، 1B لم تبدأ) — مغلقة فعليًا حتى تُراجَع وتُعتمد خطة Gate 1B، مش بس تحضير قراءة.
 **الناتج:** حماية آخر super_admin نشط، self-demotion/deactivation، explicit
 deny policy، منع privilege escalation، invalidation للجلسات، TOTP login-time،
 step-up للأفعال الحساسة، وتدقيق.  

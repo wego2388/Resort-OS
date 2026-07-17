@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1796 اختبار، كلهم شغالين** ✅ (+3 اختبار Postgres-only اختياري لـ migration الدايننج، skip افتراضيًا) (2026-07-17، دمج مراجعة محاسبية شاملة + Click ERP batch) |
+| **الاختبارات** | **1,826 اختبارًا مُجمَّعًا — 1,823 ناجح، 3 skipped** ✅ (Postgres-only، `DINING_MIGRATION_TEST_ADMIN_URL` غير متاح — شرط موثّق) (2026-07-17، بعد إغلاق Gate 1A — راجع القسم المخصص تحت) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
@@ -86,11 +86,108 @@ Desktop وMobile بعد طي القائمة، مع صفر أخطاء JavaScript.
 
 مراجعة الجاهزية وخطة التنفيذ الجديدة في
 `docs/audits/PRODUCTION_READINESS_AUDIT.md` و
-`docs/audits/SMART_EXECUTION_ROADMAP.md`. هما baseline قبل الإصلاح، ولا تعنيان
-أن مخاطر fail-open أو Public/QR قد حُلّت.
+`docs/audits/SMART_EXECUTION_ROADMAP.md`. هما baseline قبل الإصلاح.
+**تحديث (2026-07-17، بعد إغلاق Gate 1A تحت):** خطر Public/QR (C-02) اتقفل
+فعليًا ومراجَع من Codex. خطر fail-open المالي (C-01، Gate 1B) **لسه غير
+محلول بالكامل** — راجع القسم الجديد تحت.
 
 **مهم:** الصفحة Snapshot وليست telemetry. الكود والاختبارات وGit يظلون مصدر
 الحقيقة، ويجب تحديث تاريخ snapshot عند أي قرار أو إغلاق مرحلة موثق.
+
+---
+
+## 🔒 Gate 1A — احتواء Public/QR: مكتملة ومُعتمَدة (2026-07-17)
+
+راجعتها Codex كمراجع مستقل على 5 جولات (4 تصحيح + جولة أمان نهائية مخصصة)،
+كل جولة اتحقق فيها من الكود الفعلي قبل أي تعديل — مش تصديق أعمى للملاحظات.
+Commit: `fix(security): contain unsafe public guest workflows` على فرع
+`gate-1-critical-containment` (**لم يُدمَج على `main`، لم يُرفَع لـorigin**).
+
+**السياق:** هذا هو تنفيذ Gate 1A من `docs/audits/SMART_EXECUTION_ROADMAP.md`،
+مبني مباشرة على اكتشافات تدقيق Public Phase 0
+(`docs/audits/public-phase-0/08_OPEN_QUESTIONS_AND_RISKS.md`) وC-02 في
+`docs/audits/PRODUCTION_READINESS_AUDIT.md`. الـVPS الحقيقي
+(`187.124.170.249`) كان بيعرّض هذه الـendpoints فعليًا خارج جهاز التطوير،
+فده حدد 1A (Public/QR) كأولوية قبل 1B (Financial Atomicity).
+
+**التغييرات الفعلية (كل واحدة مذكورة كـfile-level fact، للتفاصيل الكاملة
+راجع الـcommit نفسه):**
+
+1. **الطلب الذاتي (`POST /dining/public/orders`) وnداء الضيف (`POST
+   /public/alerts`)** — مقفولون افتراضيًا خلف بوابتين لازم الاتنين معًا:
+   `DINING_SELF_ORDER_ENABLED`/`GUEST_ALERTS_ENABLED` (typed settings في
+   `app/core/config.py`، مش قاعدة بيانات) + `core.Setting` خاص بالفرع
+   (`dining.self_order_enabled`/`core.guest_alerts_enabled`). production
+   ترفض الإقلاع صراحةً لو أي واحد `true` وقيمة `ENVIRONMENT` مش ضمن
+   allow-list صريح (`development`/`test`/`testing`، بعد `strip().lower()`).
+2. **`POST /beach/reservations/{id}/checkin` (BOLA/IDOR)** — كان أهم اكتشاف
+   في تدقيق Public Phase 0: كاشير أي فرع يقدر يسجّل دخول حجز فرع تاني بمجرد
+   تخمين رقم الحجز، لأن `User` معندوش عمود `branch_id` خالص و`get_cashier_user`
+   بيتحقق من مستوى الصلاحية بس. الإصلاح: `core.services.assert_branch_access`
+   (فحص عبر `HR.Employee.branch_id`)، مع استثناء واحد بس: `super_admin`
+   (Decision 0003) — **مش** أي level>=60 (تصحيح جولة مراجعة لاحقة، كان
+   Manager/Accountant/HR Manager بياخدوا bypass زيادة عن قرار السوبر أدمن
+   الفعلي).
+3. **نفس فحص الفرع** بقى على `GET /alerts`، `PATCH /alerts/{id}/status`،
+   وWebSocket `/ws/alerts/{branch_id}` — التلاتة كانوا بيسمحوا لموظف من فرع
+   يشوف/يتحكم في تنبيهات فرع تاني تمامًا.
+4. **`GET /beach/reservations/{id}/public`** — كان بيرجّع `guest_name`،
+   `guests_count`، `with_towel`، `reservation_date`، `total_amount` لأي حد
+   بيخمّن رقم حجز، بدون تسجيل دخول خالص. بقى يرجّع `{id, status}` بس.
+   `BeachCheckinView.vue` بقى يعرض التفاصيل الكاملة بعد تسجيل الدخول
+   الفعلي بس.
+5. **`GET /dining/public/orders/{order_id}`** — **مقفول تمامًا لحد Gate 8**،
+   مش مربوط بإعداد الطلب الذاتي (تصحيح جولة مراجعة لاحقة) — لأن `order_id`
+   متسلسل وبيقرا من نفس جدول طلبات الكاشير/POS العادية، فتفعيل الطلب الذاتي
+   وحده مش كافي حماية.
+6. **`dining.services.create_order`** — بقى يتحقق إن `outlet.branch_id`
+   يطابق الفرع، والطاولة تتبع نفس المنفذ والفرع، **وكل صنف في الطلب** يتبع
+   نفس المنفذ والفرع (كانت فجوة حقيقية غير مغطاة — ضيف كان يقدر يطلب صنف
+   من منفذ/فرع تاني تمامًا). `table_id` بقى `Field(ge=1)` في كل الـschemas
+   المعنية (بما فيها `OrderSyncRequest` الخاص بالمزامنة offline).
+7. **خريطة `app.core.rate_limit._LIMITED_ROUTES`** — كانت لسه بتسجّل مسارات
+   `restaurant`/`cafe` المحذوفة من 2026-07-13 كـdead entries، بينما مسارات
+   `dining/public/*` الحقيقية (بما فيها `POST /orders` القادر ينشئ طلب
+   حقيقي) عمرها ما كانت مسجّلة — يعني بدون أي حد أقصى فعلي من يوم الـcutover.
+8. **اكتشاف أمني إضافي من المراجعة النهائية** (مش من التدقيق الأصلي):
+   `_client_ip` كان بيثق في أول قيمة (leftmost) في هيدر `X-Forwarded-For` —
+   القيمة دي بيتحكم فيها العميل بالكامل وبتعدّي زي ما هي عبر edge nginx
+   وfrontend nginx (الاتنين بيستخدموا `$proxy_add_x_forwarded_for` اللي
+   بيضيف مش يستبدل)، يعني أي عميل يقدر يزوّر مفتاح حد الطلبات في Redis
+   ويهرب من أي rate limit تمامًا. الإصلاح: `RATE_LIMIT_TRUSTED_PROXY_HOPS`
+   (افتراضي 0 = تجاهل الهيدر كليًا، 2 في `docker-compose.prod.yml` لسلسلة
+   edge nginx → frontend nginx → backend)، بيقرا القيمة الصح من اليمين
+   ويتحقق منها كـIP صالح، وfail-closed لـ`request.client.host` لو السلسلة
+   قصيرة أو القيمة غير صالحة.
+
+**التحقق (مراجعة Codex المستقلة النهائية):**
+
+- **1,826 اختبارًا مُجمَّعًا — 1,823 ناجح، 3 skipped (اختبارات migration
+  خاصة بـPostgreSQL فقط، `DINING_MIGRATION_TEST_ADMIN_URL` غير متاح — شرط
+  موثّق، مش فشل)، صفر فشل.**
+- 7/7 اختبارات مقاومة تزوير rate-limit proxy ناجحة.
+- `alembic heads`: head واحد `9989c0432ccc` — **مفيش أي migration جديدة
+  في هذه الدفعة**.
+- TypeScript وProduction build ناجحين لتطبيقي `el-kheima` وpublic.
+- Docker Compose (الأساسي + الإنتاج + overlay الـip-only) صالحة الثلاثة.
+- `git diff --check` نظيف.
+- **لم تُبنَ أو تُنشَر أي صورة Docker على السيرفر الفعلي (`187.124.170.249`)
+  في هذه الدفعة.**
+
+**لسه مفتوح عمدًا، مش جزء من هذا الإغلاق:**
+
+- **Gate 1B (Financial Atomicity)** — خطر fail-open المالي (C-01) **لسه
+  غير محلول بالكامل**. بدأ تخطيط قراءة فقط على فرع منفصل
+  `gate-1b-financial-atomicity`، لم يبدأ أي تنفيذ فعلي.
+- **Gate 2 (Super Admin backend safeguards)** — مغلقة حتى تُراجَع وتُعتمَد
+  خطة Gate 1B.
+- **Gate 8 (Service Location الكاملة)** — QR token عشوائي/قابل للدوران،
+  guest session حقيقية، dedupe/idempotency، وworkflow `view_and_call`
+  الكامل. `POST /public/alerts`'s `context_type` mismatch **لم يُصلَح
+  عمدًا** — إصلاحه بدون بناء الحماية الكاملة كان سيجعل endpoint غير آمن
+  يعمل، فبقى مقفول بدل كده.
+- **النظام ما زال غير جاهز للإنتاج بشكل عام.** هذا احتواء لخطر تعرض عام
+  واحد ومحدد، مش اكتمال كل بوابات الجاهزية.
 
 ---
 
