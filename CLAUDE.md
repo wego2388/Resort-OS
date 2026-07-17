@@ -314,7 +314,7 @@ resort-os/
 │   │   ├── celery_app.py
 │   │   └── seed.py                ← Idempotent
 │   │
-│   ├── tests/                     ← 1748 tests (آخر رقم مؤكد 2026-07-14 — بيتغيّر، شغّل بنفسك)
+│   ├── tests/                     ← 1791 tests (آخر رقم مؤكد 2026-07-17 — بيتغيّر، شغّل بنفسك)
 │   ├── alembic/
 │   └── requirements.txt           ← كل الاعتماديات pinned، مفيش أي editable local path
 │
@@ -1052,5 +1052,5 @@ ETA_ENABLED=false
 
 ---
 
-*آخر تحديث: 2026-07-16*
+*آخر تحديث: 2026-07-17*
 *المشروع يستخدم: github.com/wego2388/Resort-OS · FastAPI 0.115 · SQLAlchemy 2.0 · Pydantic v2 · Vue 3.4 · pnpm*
