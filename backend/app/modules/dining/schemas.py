@@ -22,6 +22,12 @@ class OutletCreate(BaseModel):
     outlet_type:          str = Field("restaurant", max_length=30)
     revenue_account_code: str = Field("4200", max_length=10)
     default_service_charge_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+    # تسعير حسب قناة الطلب — NULL افتراضيًا = صفر تغيير (راجع
+    # services._service_charge_pct). كلهم اختياريين، مفيش أي حد إجباري.
+    takeaway_service_charge_pct:     Optional[Decimal] = Field(None, ge=0, le=100)
+    delivery_service_charge_pct:     Optional[Decimal] = Field(None, ge=0, le=100)
+    room_service_service_charge_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+    delivery_fee: Optional[Decimal] = Field(None, ge=0)
     is_active:            bool = True
 
 
@@ -31,6 +37,10 @@ class OutletUpdate(BaseModel):
     outlet_type:          Optional[str] = Field(None, max_length=30)
     revenue_account_code: Optional[str] = Field(None, max_length=10)
     default_service_charge_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+    takeaway_service_charge_pct:     Optional[Decimal] = Field(None, ge=0, le=100)
+    delivery_service_charge_pct:     Optional[Decimal] = Field(None, ge=0, le=100)
+    room_service_service_charge_pct: Optional[Decimal] = Field(None, ge=0, le=100)
+    delivery_fee: Optional[Decimal] = Field(None, ge=0)
     is_active:            Optional[bool] = None
 
 
@@ -43,6 +53,10 @@ class OutletRead(BaseModel):
     outlet_type:           str
     revenue_account_code:  str
     default_service_charge_pct: Optional[Decimal]
+    takeaway_service_charge_pct:     Optional[Decimal] = None
+    delivery_service_charge_pct:     Optional[Decimal] = None
+    room_service_service_charge_pct: Optional[Decimal] = None
+    delivery_fee: Optional[Decimal] = None
     is_active:              bool
     legacy_module:           Optional[str] = None
     created_at:              datetime
@@ -387,6 +401,7 @@ class OrderRead(BaseModel):
     subtotal:                 Decimal
     vat_amount:                Decimal
     service_charge:            Decimal
+    delivery_fee:               Decimal = Decimal("0")
     discount_amount:           Decimal
     total:                     Decimal
     refunded_amount:           Decimal

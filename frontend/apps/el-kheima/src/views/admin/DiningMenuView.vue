@@ -28,6 +28,10 @@ const branchId = auth.branchId
 interface Outlet {
   id: number; name: string; name_ar: string | null; outlet_type: string
   revenue_account_code: string; default_service_charge_pct: number | string | null
+  takeaway_service_charge_pct: number | string | null
+  delivery_service_charge_pct: number | string | null
+  room_service_service_charge_pct: number | string | null
+  delivery_fee: number | string | null
   is_active: boolean
 }
 interface Category { id: number; outlet_id: number; name: string; name_ar: string | null; sort_order: number; is_active: boolean }
@@ -71,7 +75,11 @@ const outlets = ref<Outlet[]>([])
 const selectedOutletId = ref<number | null>(null)
 const outletDrawerOpen = ref(false)
 const outletEdit = ref<Outlet | null>(null)
-const outletForm = ref({ name: '', name_ar: '', outlet_type: 'restaurant', revenue_account_code: '4200', default_service_charge_pct: '', is_active: true })
+const outletForm = ref({
+  name: '', name_ar: '', outlet_type: 'restaurant', revenue_account_code: '4200',
+  default_service_charge_pct: '', takeaway_service_charge_pct: '', delivery_service_charge_pct: '',
+  room_service_service_charge_pct: '', delivery_fee: '', is_active: true,
+})
 const saving = ref(false)
 const loading = ref(false)
 
@@ -87,9 +95,22 @@ const selectedOutletIdOption = computed<string | number | undefined>({
 
 function openOutletForm(o?: Outlet) {
   outletEdit.value = o ?? null
+  const pctStr = (v: number | string | null | undefined) => v != null ? String(v) : ''
   outletForm.value = o
-    ? { name: o.name, name_ar: o.name_ar ?? '', outlet_type: o.outlet_type, revenue_account_code: o.revenue_account_code, default_service_charge_pct: o.default_service_charge_pct != null ? String(o.default_service_charge_pct) : '', is_active: o.is_active }
-    : { name: '', name_ar: '', outlet_type: 'restaurant', revenue_account_code: '4200', default_service_charge_pct: '', is_active: true }
+    ? {
+        name: o.name, name_ar: o.name_ar ?? '', outlet_type: o.outlet_type, revenue_account_code: o.revenue_account_code,
+        default_service_charge_pct: pctStr(o.default_service_charge_pct),
+        takeaway_service_charge_pct: pctStr(o.takeaway_service_charge_pct),
+        delivery_service_charge_pct: pctStr(o.delivery_service_charge_pct),
+        room_service_service_charge_pct: pctStr(o.room_service_service_charge_pct),
+        delivery_fee: pctStr(o.delivery_fee),
+        is_active: o.is_active,
+      }
+    : {
+        name: '', name_ar: '', outlet_type: 'restaurant', revenue_account_code: '4200',
+        default_service_charge_pct: '', takeaway_service_charge_pct: '', delivery_service_charge_pct: '',
+        room_service_service_charge_pct: '', delivery_fee: '', is_active: true,
+      }
   outletDrawerOpen.value = true
 }
 
@@ -97,12 +118,17 @@ async function saveOutlet() {
   if (!outletForm.value.name.trim()) { toast.error('اسم المنفذ مطلوب'); return }
   saving.value = true
   try {
+    const num = (v: string) => v !== '' ? Number(v) : null
     const payload: Record<string, unknown> = {
       name: outletForm.value.name.trim(),
       name_ar: outletForm.value.name_ar.trim() || null,
       outlet_type: outletForm.value.outlet_type,
       revenue_account_code: outletForm.value.revenue_account_code.trim(),
-      default_service_charge_pct: outletForm.value.default_service_charge_pct !== '' ? Number(outletForm.value.default_service_charge_pct) : null,
+      default_service_charge_pct: num(outletForm.value.default_service_charge_pct),
+      takeaway_service_charge_pct: num(outletForm.value.takeaway_service_charge_pct),
+      delivery_service_charge_pct: num(outletForm.value.delivery_service_charge_pct),
+      room_service_service_charge_pct: num(outletForm.value.room_service_service_charge_pct),
+      delivery_fee: num(outletForm.value.delivery_fee),
       is_active: outletForm.value.is_active,
     }
     if (outletEdit.value) {
@@ -752,6 +778,19 @@ onMounted(async () => {
         <AppSelect v-model="outletForm.outlet_type" :options="OUTLET_TYPES" label="نوع المنفذ" />
         <AppInput v-model="outletForm.revenue_account_code" label="حساب الإيراد (Chart of Accounts)" />
         <AppInput v-model="outletForm.default_service_charge_pct" type="number" label="نسبة رسم الخدمة (اختياري — فاضي = الإعداد العام)" />
+
+        <!-- تسعير حسب قناة الطلب (2026-07-16، بحث Click) — كلها اختيارية،
+             فاضي = بتاخد نفس نسبة رسم الخدمة العامة فوق دي. -->
+        <div class="border-t border-stone-200 dark:border-border pt-3 mt-1">
+          <h4 class="text-xs font-bold text-gray-400 uppercase mb-2">تسعير حسب قناة الطلب (اختياري)</h4>
+          <div class="grid grid-cols-2 gap-2">
+            <AppInput v-model="outletForm.takeaway_service_charge_pct" type="number" label="رسم خدمة تيك أواي %" />
+            <AppInput v-model="outletForm.delivery_service_charge_pct" type="number" label="رسم خدمة توصيل %" />
+            <AppInput v-model="outletForm.room_service_service_charge_pct" type="number" label="رسم خدمة الغرف %" />
+            <AppInput v-model="outletForm.delivery_fee" type="number" label="رسم توصيل ثابت (ج)" />
+          </div>
+        </div>
+
         <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
           <input type="checkbox" v-model="outletForm.is_active" class="rounded" /> مفعّل
         </label>

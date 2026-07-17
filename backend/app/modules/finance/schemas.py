@@ -280,6 +280,10 @@ class CashMovementCreate(BaseModel):
     # الحركة (راجع core.services.resolve_pin_approval، نفس نمط void/discount).
     approver_user_id: Optional[int] = None
     approver_pin:      Optional[str] = Field(None, pattern=r"^\d{4,6}$")
+    # بس لـ movement_type="safe_drop" — فين رايح الكاش لما يسيب الدرج
+    # (راجع CashMovement.destination). اختياري حتى وقت safe_drop نفسها.
+    destination:    Optional[str] = Field(None, pattern=r"^(main_safe|bank|petty_cash_box)$")
+    cost_center_id: Optional[int] = None
 
 
 class CashMovementRead(BaseModel):
@@ -292,6 +296,8 @@ class CashMovementRead(BaseModel):
     reason:        str
     performed_by:  int
     approved_by:   Optional[int]
+    destination:    Optional[str] = None
+    cost_center_id: Optional[int] = None
     created_at:    datetime
 
 

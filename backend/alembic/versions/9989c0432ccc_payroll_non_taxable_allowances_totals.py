@@ -20,8 +20,13 @@ holiday_bonus pair. hr.services._post_payroll_journal now includes the new
 run-level total in its debit calculation.
 
 Revision ID: 9989c0432ccc
-Revises: 504f42d2c755
+Revises: 9f3c1a7e5b02
 Create Date: 2026-07-17 00:00:00.000000
+
+Rebased onto 9f3c1a7e5b02 (cash_movement_destination_cost_center_channel_
+pricing) at merge time — both this migration and 9f3c1a7e5b02 were authored
+in parallel worktrees against the same down_revision (504f42d2c755),
+creating two branch heads. 9f3c1a7e5b02 landed on main first.
 """
 from __future__ import annotations
 
@@ -32,7 +37,7 @@ import sqlalchemy as sa
 
 
 revision: str = '9989c0432ccc'
-down_revision: Union[str, None] = '504f42d2c755'
+down_revision: Union[str, None] = '9f3c1a7e5b02'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

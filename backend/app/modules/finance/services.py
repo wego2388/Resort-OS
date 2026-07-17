@@ -380,6 +380,8 @@ def record_cash_movement(
         raise ValueError(f"الوردية {shift_id} غير موجودة")
     if shift.status == "closed":
         raise ValueError("الوردية مقفولة — لا يمكن تسجيل حركة كاش عليها")
+    if data.destination and data.movement_type != "safe_drop":
+        raise ValueError("الوجهة (destination) بتتحدد بس لحركة 'تنزيل خزنة' (safe_drop)")
 
     from app.modules.core import policy_engine  # noqa: PLC0415
 
@@ -391,7 +393,7 @@ def record_cash_movement(
 
     movement = crud.create_cash_movement(
         db, shift.branch_id, shift_id, data.movement_type, data.amount, data.reason, performed_by,
-        approved_by=approved_by,
+        approved_by=approved_by, destination=data.destination, cost_center_id=data.cost_center_id,
     )
     policy_engine.record_policy_audit(
         db, f"cash_movement_{data.movement_type}",
@@ -400,6 +402,7 @@ def record_cash_movement(
         data={
             "shift_id": shift_id, "movement_type": data.movement_type,
             "amount": str(data.amount), "reason": data.reason,
+            "destination": data.destination, "cost_center_id": data.cost_center_id,
         },
     )
     db.commit()

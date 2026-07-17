@@ -49,7 +49,8 @@ interface OrderDetail {
   table_id: number | null; created_at: string
   guests_count: number; payment_method: string | null
   subtotal: number | string; vat_amount: number | string
-  service_charge: number | string; discount_amount: number | string
+  service_charge: number | string; delivery_fee?: number | string
+  discount_amount: number | string
   refunded_amount: number | string; total: number | string
   items: OrderItem[]
 }
@@ -505,6 +506,7 @@ function lineTotal(item: OrderItem): number {
           <div class="flex justify-between text-gray-500"><span>المجموع الفرعي</span><span>{{ order.subtotal }} ج</span></div>
           <div class="flex justify-between text-gray-500"><span>ضريبة</span><span>{{ order.vat_amount }} ج</span></div>
           <div class="flex justify-between text-gray-500"><span>خدمة</span><span>{{ order.service_charge }} ج</span></div>
+          <div v-if="Number(order.delivery_fee) > 0" class="flex justify-between text-gray-500"><span>رسم توصيل</span><span>{{ order.delivery_fee }} ج</span></div>
           <div v-if="Number(order.discount_amount) > 0" class="flex justify-between text-success font-medium">
             <span>خصم</span><span>−{{ order.discount_amount }} ج</span>
           </div>

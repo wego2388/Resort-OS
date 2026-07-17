@@ -83,6 +83,22 @@ class Outlet(Base, TimestampMixin):
     # NULL = استخدم settings.SERVICE_CHARGE_PERCENTAGE العام (نفس سلوك
     # restaurant/cafe الحالي بالظبط) — override اختياري لكل منفذ (مثلاً بار
     # مسبح من غير رسم خدمة).
+
+    # ── تسعير حسب قناة الطلب (2026-07-16، بحث مقارنة Click القديم) ──────
+    # Click كان بيفرّق فعليًا بين dine_in/takeaway/delivery/room_service في
+    # التسعير، مش بس شاشة POS. كل الحقول دي NULL افتراضيًا = **صفر تغيير
+    # سلوك على أي منفذ موجود** لحد ما مدير يفعّلها يدويًا من إعدادات المنفذ
+    # — قرار متعمد إن معيار الصناعة الشائع (takeaway/delivery من غير رسم
+    # خدمة، لأنه مفيش خدمة طاولة فعلية) *مش* مطبّق تلقائيًا هنا، لأنه قرار
+    # تسعير حي على المنتجع الحقيقي يستاهل موافقة Mohamed الصريحة أولاً، مش
+    # افتراض بيتفعّل لوحده. راجع _service_charge_pct(outlet, order_type).
+    takeaway_service_charge_pct:     Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    delivery_service_charge_pct:     Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    room_service_service_charge_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    delivery_fee: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), nullable=True)
+    # رسم توصيل ثابت لكل طلب delivery — NULL/غير موجود = صفر (نفس منطق
+    # default_service_charge_pct: مفيش رسم لحد ما يتحدد صراحةً).
+
     is_active:    Mapped[bool]       = mapped_column(Boolean, default=True)
     legacy_module: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # "restaurant" | "cafe" | None — الـ outlet ده اتعمل من هجرة D-02 وﻻ
@@ -379,6 +395,11 @@ class DiningOrder(Base, TimestampMixin):
     subtotal:                 Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
     vat_amount:                Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
     service_charge:            Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    delivery_fee:              Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    # لقطة من outlet.delivery_fee وقت الإنشاء (order_type="delivery" بس،
+    # وإلا 0) — نفس منطق subtotal/vat_amount، رسم ثابت مش نسبة فمش محتاج
+    # إعادة حساب لما الأصناف تتغيّر (add_items/void_order_item بيسيبوه زي
+    # ما هو، مش بيصفّروه).
     discount_amount:           Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
     total:                     Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
     refunded_amount:           Mapped[Decimal]     = mapped_column(Numeric(10, 2), default=Decimal("0"))
