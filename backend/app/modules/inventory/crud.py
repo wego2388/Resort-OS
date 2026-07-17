@@ -293,7 +293,7 @@ def receive_purchase_order(
     warehouse_id: int,
     received_at,
     received_by: int,
-) -> PurchaseOrder:
+) -> tuple[PurchaseOrder, Decimal]:
     """يُسجّل استلام البضاعة ويُحدّث المخزون.
 
     ⚠️ يقفل صف كل Product (SELECT FOR UPDATE NOWAIT، راجع lock_product_for_update)
@@ -302,7 +302,13 @@ def receive_purchase_order(
     تصاعدي (مش ترتيب العناصر في الـ request) عشان أي استلامين متزامنين فيهم
     نفس مجموعة الأصناف ياخدوا القفل بنفس الترتيب دايمًا — مايهمش هنا مع
     NOWAIT (بيرفض فورًا مش بيستنى، فمفيش deadlock حقيقي ممكن يحصل)، بس بيقلل
-    تضارب الأقفال غير الضروري ونفس الممارسة المتبعة."""
+    تضارب الأقفال غير الضروري ونفس الممارسة المتبعة.
+
+    بيرجّع (po, received_value) — received_value هي قيمة **دفعة الاستلام دي
+    بس** (qty × unit_cost لكل صنف اتسلّم دلوقتي، مش إجمالي أمر الشراء كله —
+    مهم للاستلام الجزئي/partial)، عشان services.receive_purchase_order يقدر
+    يرحّل قيد محاسبي حقيقي بنفس المبلغ الصح (راجع services._post_purchase_
+    receipt_journal)."""
     resolved: list[tuple[PurchaseOrderItem, Decimal]] = []
     for item_data in received_items:
         item = db.query(PurchaseOrderItem).filter(
@@ -314,6 +320,8 @@ def receive_purchase_order(
         resolved.append((item, Decimal(str(item_data["received_qty"]))))
 
     resolved.sort(key=lambda pair: pair[0].product_id)
+
+    received_value = sum((item.unit_cost * qty for item, qty in resolved), Decimal("0"))
 
     all_received = True
     for item, qty in resolved:
@@ -353,7 +361,7 @@ def receive_purchase_order(
     po.status = "received" if all_received else "partial"
     po.received_at = received_at
     db.flush()
-    return po
+    return po, received_value
 
 
 # ── PurchaseRequest ───────────────────────────────────────────────────

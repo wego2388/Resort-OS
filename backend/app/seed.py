@@ -68,6 +68,7 @@ def seed_all(db: Session, *, reset: bool = False) -> None:
     _seed_inventory_products_full(db)
     _seed_restaurant_recipes(db)
     _seed_cafe_recipes(db)
+    _seed_suppliers_and_purchase_orders(db)
 
     db.commit()
     print("✅ Seed complete.")
@@ -496,6 +497,7 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "1110", "name": "حساب بنكي",                     "account_type": "asset"},
         {"code": "5500", "name": "مصروف إهلاك الأصول الثابتة",     "account_type": "expense"},
         {"code": "1590", "name": "مجمّع إهلاك الأصول الثابتة",     "account_type": "asset"},
+        {"code": "2200", "name": "موردون — ذمم دائنة",            "account_type": "liability"},
     ]
 
     existing = {
@@ -1973,6 +1975,107 @@ def _seed_rate_plans(db: Session) -> None:
         ))
     db.flush()
     print(f"  ✓ Rate plans seeded ({len(plans)})")
+
+
+def _seed_suppliers_and_purchase_orders(db: Session) -> None:
+    """⚠️ الموردين وأوامر الشراء (inventory.Supplier/PurchaseOrder، اتضافوا
+    2026-07-14) كان مفيهمش أي بيانات seed خالص — يعني شاشة "الموردين"
+    وتاب "أوامر الشراء" في InventoryView.vue كانت هتفتح فاضية 100% بأول
+    تشغيل، نفس فئة فجوة الـ seed الموثّقة قبل كده (rooms/dining_tables/
+    b2b/beach_locations). 4 موردين مصريين واقعيين (توزيع أغذية/مشروبات/
+    مستلزمات نظافة/قطع صيانة) + 5 أوامر شراء عبر كل الحالات (draft/sent/
+    partial/received/cancelled) — مش صفوف مُدرَجة مباشرة، بل عن طريق
+    services.create_purchase_order/receive_purchase_order الحقيقيين عشان
+    (أ) StockMovement حقيقي يترحّل زي ما هيحصل في التشغيل الفعلي، و(ب)
+    قيد محاسبي حقيقي Dr مخزون/Cr موردين يترحّل (services._post_purchase_
+    receipt_journal، إصلاح باج حقيقي كان هنا — راجع تعليقه) — عشان
+    الميزانية العمومية/ميزان المراجعة يبقى فيهم عمق حقيقي بدل ما يفضلوا
+    شبه فاضيين، نفس فلسفة _seed_beach_locations (بيع حقيقي بقيد محاسبي)
+    مش فلسفة _seed_timeshare_contracts/_seed_lease_contracts (عمدًا من
+    غير قيد — عقود كبيرة مُلفَّقة لعملاء وهميين هتشوّه التقارير المالية
+    بمبالغ كبيرة، مختلف تمامًا عن أمر شراء تشغيلي عادي بمبالغ واقعية)."""
+    from datetime import timedelta
+    from app.modules.inventory.models import Product, Supplier, Warehouse
+    from app.modules.inventory.schemas import (
+        PurchaseOrderCreate, PurchaseOrderItemCreate, ReceiveItemsRequest, SupplierCreate,
+    )
+    from app.modules.inventory.services import (
+        create_purchase_order, create_supplier, receive_purchase_order,
+    )
+    from app.modules.core.models import Branch
+
+    branch = db.query(Branch).first()
+    if not branch:
+        return
+    if db.query(Supplier).filter(Supplier.branch_id == branch.id).first():
+        return
+
+    warehouse = db.query(Warehouse).filter(Warehouse.branch_id == branch.id).first()
+    products = db.query(Product).filter(Product.branch_id == branch.id).order_by(Product.id).all()
+    if not warehouse or len(products) < 4:
+        return  # لازم _seed_inventory_products_full يشتغل قبل كده (مسجّل قبله في seed_all)
+
+    supplier_specs = [
+        ("توريدات المائدة الذهبية", "Golden Table Supplies", "أحمد فتحي", "0693456789",
+         "sales@goldentable-eg.com", "طريق الأنبا شنودة، شرم الشيخ", "food", 30, Decimal("50000")),
+        ("مشروبات البحر الأحمر", "Red Sea Beverages Co.", "منى سامي", "0693567890",
+         "orders@redseabeverages.com", "المنطقة الصناعية، شرم الشيخ", "beverage", 15, Decimal("30000")),
+        ("النظافة المتكاملة للفنادق", "Integrated Hotel Cleaning", "كريم عادل", "01123456780",
+         "info@ihc-eg.com", "القاهرة الجديدة، القاهرة", "cleaning", 0, None),
+        ("قطع غيار المعدات الفندقية", "Hospitality Parts Egypt", "سامح رفعت", "01098765430",
+         None, "مدينة نصر، القاهرة", "maintenance", 45, Decimal("20000")),
+    ]
+    suppliers: list[Supplier] = []
+    for name, name_en, contact, phone, email, address, category, terms, credit in supplier_specs:
+        s = create_supplier(db, SupplierCreate(
+            branch_id=branch.id, name=name_en, name_ar=name,
+            contact_person=contact, phone=phone, email=email, address=address,
+            category=category, payment_terms_days=terms, credit_limit=credit,
+        ))
+        suppliers.append(s)
+    db.flush()
+
+    today = date.today()
+
+    def _po(supplier: Supplier, items: list[tuple], ordered_days_ago: int) -> "object":
+        return create_purchase_order(db, PurchaseOrderCreate(
+            branch_id=branch.id, supplier_id=supplier.id,
+            ordered_at=today - timedelta(days=ordered_days_ago),
+            expected_at=today - timedelta(days=ordered_days_ago - 5),
+            items=[PurchaseOrderItemCreate(product_id=p.id, ordered_qty=qty, unit_cost=p.cost_price or Decimal("10"))
+                   for p, qty in items],
+        ))
+
+    # (1) draft — لسه ما اترسلش للمورد، مفيش أي أثر على المخزون/الدفاتر
+    _po(suppliers[0], [(products[0], Decimal("30")), (products[1], Decimal("200"))], ordered_days_ago=1)
+
+    # (2) sent — اترسل للمورد، لسه منتظر التسليم (مفيش حالة "sent" service-level
+    # فعلية في النظام، بس الـ status نفسه معرّف في الموديل — نفس نمط seed
+    # بيانات تايم شير "suspended" اللي اتحطّت مباشرة برضو)
+    po_sent = _po(suppliers[1], [(products[2], Decimal("20"))], ordered_days_ago=3)
+    po_sent.status = "sent"
+
+    # (3) partial — نص الكمية المطلوبة اتسلّمت بس (StockMovement + قيد محاسبي حقيقي)
+    po_partial = _po(suppliers[0], [(products[3], Decimal("40")), (products[4], Decimal("15"))], ordered_days_ago=7)
+    receive_purchase_order(db, po_partial.id, ReceiveItemsRequest(
+        items=[{"item_id": po_partial.items[0].id, "received_qty": "20.00"}],
+        warehouse_id=warehouse.id, received_at=today - timedelta(days=5),
+    ), received_by=1)
+
+    # (4) received — استلام كامل (كل الأصناف)، أقدم أمر عشان يبان في تاريخ الحركات
+    po_received = _po(suppliers[1], [(products[5], Decimal("10")), (products[0], Decimal("15"))], ordered_days_ago=14)
+    receive_purchase_order(db, po_received.id, ReceiveItemsRequest(
+        items=[{"item_id": item.id, "received_qty": str(item.ordered_qty)} for item in po_received.items],
+        warehouse_id=warehouse.id, received_at=today - timedelta(days=12),
+    ), received_by=1)
+
+    # (5) cancelled — اتلغى قبل أي استلام
+    po_cancelled = _po(suppliers[2], [(products[1], Decimal("500"))], ordered_days_ago=2)
+    po_cancelled.status = "cancelled"
+
+    db.flush()
+    print(f"  ✓ Suppliers & purchase orders seeded ({len(suppliers)} suppliers, "
+          f"5 POs across draft/sent/partial/received/cancelled — real StockMovement + AP journal entries)")
 
 
 # ── CLI Entry Point ───────────────────────────────────────────────────────────

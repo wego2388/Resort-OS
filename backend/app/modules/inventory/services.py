@@ -299,14 +299,47 @@ def receive_purchase_order(
     if po.status in ("received", "cancelled"):
         raise ValueError(f"أمر الشراء في حالة '{po.status}' ولا يمكن استلامه")
     try:
-        po = crud.receive_purchase_order(db, po, req.items, req.warehouse_id, req.received_at, received_by)
+        po, received_value = crud.receive_purchase_order(
+            db, po, req.items, req.warehouse_id, req.received_at, received_by,
+        )
     except OperationalError as exc:
         db.rollback()
         raise InventoryConcurrencyError(
             "أحد الأصناف في أمر الشراء ده مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
         ) from exc
+    _post_purchase_receipt_journal(db, po, received_value, received_by)
     db.commit(); db.refresh(po)
     return po
+
+
+def _post_purchase_receipt_journal(
+    db: Session, po: PurchaseOrder, received_value: Decimal, user_id: int,
+) -> None:
+    """Dr. مخزون البضاعة (1200) / Cr. موردون - ذمم دائنة (2200).
+
+    ⚠️ باج محاسبي حقيقي كان هنا (اتصلح): استلام أمر شراء كان بيحدّث
+    current_stock/cost_price ويسجّل StockMovement حقيقي (المتطلب الصريح من
+    Mohamed 2026-07-14 — كان شغال بالفعل)، بس عمره ما كان بيرحّل أي قيد
+    يومية خالص — لا Dr على حساب المخزون (1200)، لا Cr على أي حساب موردين
+    (ماكانش موجود أصلاً في دليل الحسابات). النتيجة: حساب 1200 كان بيتقيّد
+    عليه Cr بس (استهلاك COGS، راجع _post_cogs_journal) من غير أي Dr مقابل
+    من المشتريات — رصيده كان هيتجه سالب دايمًا مع الوقت، ومفيش أي أثر
+    لالتزام المنتجع تجاه مورّديه في الميزانية العمومية أو دفتر اليومية،
+    مخالفة مباشرة لـ CLAUDE.md §5.2 (Finance First — حركة المخزون لازم
+    تفضل قابلة للتتبّع محاسبيًا). المبلغ = قيمة **دفعة الاستلام دي بس**
+    (مش إجمالي أمر الشراء) عشان الاستلام الجزئي يترحّل صح على مراحل."""
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, po.branch_id, po.received_at or local_today(settings.TIMEZONE),
+        debit_account_code="1200", credit_account_code="2200",
+        amount=received_value,
+        reference=f"PO-{po.order_number}",
+        description=f"استلام بضاعة — أمر شراء {po.order_number}"
+                    + (f" ({po.supplier.name})" if po.supplier else ""),
+        source="inventory_purchase", source_id=po.id,
+        created_by=user_id,
+    )
 
 
 def get_low_stock_products(db: Session, branch_id: int) -> list[Product]:
