@@ -1,7 +1,7 @@
 # Resort OS — Makefile
 # الاستخدام: make <command>
 
-.PHONY: help up down dev migrate seed shell test lint
+.PHONY: help up down dev migrate seed shell test lint agent-check agent-check-full frontend-type-check frontend-build docker-config
 
 BACKEND_DIR = backend
 # ⚠️ بدون $(BACKEND_DIR)/ بادئة — كل استخدام بييجي بعد "cd $(BACKEND_DIR) &&"،
@@ -69,6 +69,22 @@ test-engines:  ## Engine tests فقط (سريع — بدون DB)
 
 test-cov:  ## اختبارات مع coverage report
 	cd $(BACKEND_DIR) && $(PYTEST) tests/ --cov=app --cov-report=term-missing -q
+
+agent-check:  ## baseline سريع وآمن للوكلاء (بدون تعديل بيانات)
+	bash scripts/agent-check.sh --quick
+
+agent-check-full:  ## تحقق كامل: tests + frontend type-check/build + configs
+	bash scripts/agent-check.sh --full
+
+frontend-type-check:  ## فحص TypeScript لكل تطبيقات الفرونت إند
+	cd frontend && pnpm run type-check:all
+
+frontend-build:  ## production build لكل تطبيقات الفرونت إند
+	cd frontend && pnpm run build:all
+
+docker-config:  ## تحقق من ملفات Docker Compose للتطوير والإنتاج
+	docker compose config --quiet
+	docker compose -f docker-compose.prod.yml config --quiet
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
 
