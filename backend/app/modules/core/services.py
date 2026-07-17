@@ -414,6 +414,59 @@ def get_effective_permissions(db: Session, user) -> list[EffectivePermission]:
     return result
 
 
+# ─────────────────────── Branch Access (Gate 1 containment) ───────────
+# جذر المشكلة (اتأكد منه بالبحث قبل الكتابة): User (app.core.kernel.
+# models.user) معندوش عمود branch_id خالص — الطريق الوحيد الموجود فعليًا
+# لمعرفة فرع المستخدم هو HR.Employee.branch_id عبر Employee.user_id
+# (اختياري/nullable، ومش مستخدم في app.core.deps خالص لحد دلوقتي).
+# نمط المقارنة (fetch resource → قارن owner/branch field → PermissionError
+# يترجمها الـ router لـ 403) مستوحى من finance.services.build_shift_end_report،
+# لكن التخطي الكامل هنا مقصور على super_admin فقط (Decision 0003) — راجع
+# تصحيح assert_branch_access تحت لسبب الاختلاف عن سابقة build_shift_end_report.
+
+def get_user_branch_id(db: Session, user) -> Optional[int]:
+    """فرع المستخدم الفعلي عبر HR.Employee.user_id — None لو مفيش سجل
+    Employee مرتبط (حسابات super_admin/admin التجريبية مثلاً)."""
+    from app.modules.hr.models import Employee  # noqa: PLC0415
+
+    employee = db.query(Employee).filter(Employee.user_id == user.id).first()
+    return employee.branch_id if employee else None
+
+
+def assert_branch_access(db: Session, user, target_branch_id: int, action_desc: str) -> None:
+    """يمنع مستخدم من فرع تنفيذ إجراء حسّاس على مورد فرع تاني.
+
+    **تصحيح (جولة مراجعة Codex الثانية، 2026-07-17):** النسخة الأولى كانت
+    بتدّي أي level>=60 (manager/accountant/hr_manager) تخطي الفحص كامل،
+    بالقياس الخاطئ على build_shift_end_report's owner-check bypass — ده
+    فحص ملكية سجل (مين الكاشير) مالوش أي بعد فرع أصلًا، مش سابقة لثقة
+    عبر الفروع. القرار المعتمد الوحيد لتخطي كامل عبر الفروع هو
+    super_admin حصريًا (docs/decisions/0003-super-admin-control-plane.md).
+    أي دور تاني (بما فيه manager) لازم يطابق Employee.branch_id فعليًا،
+    أو صلاحية صريحة موثّقة عبر has_permission/UserPermission لاحقًا — مفيش
+    استثناء ضمني لمستوى الدور بس. حساب بلا Employee مرتبط بيتمنع صراحةً
+    (fail-closed) بدل ما يتسمحله ضمنيًا."""
+    from app.core.deps import user_level  # noqa: PLC0415
+
+    if user_level(user) >= 100:  # super_admin حصريًا — Decision 0003
+        return
+    acting_branch_id = get_user_branch_id(db, user)
+    if acting_branch_id is None:
+        raise PermissionError(f"حسابك غير مرتبط بفرع — تواصل مع الإدارة قبل {action_desc}")
+    if acting_branch_id != target_branch_id:
+        raise PermissionError(f"لا يمكنك {action_desc} في فرع آخر")
+
+
+def list_guest_alerts(
+    db: Session, branch_id: int, requesting_user, skip: int = 0, limit: int = 20,
+) -> tuple[list[GuestAlert], int]:
+    """راجع docstring GET /alerts (core/api/router.py) — كانت بتنادي
+    crud.list_active_alerts مباشرة من الـ router (تجاوز طبقة service)، وكانت
+    بتثق في branch_id من العميل من غير أي تحقق ملكية. اتصلح الاتنين مع بعض."""
+    assert_branch_access(db, requesting_user, branch_id, "عرض تنبيهات")
+    return crud.list_active_alerts(db, branch_id, skip=skip, limit=limit)
+
+
 def grant_permission(
     db: Session,
     user_id: int,
@@ -515,9 +568,37 @@ def mark_all_read(
 # بدون auth (نادِ الجرسون/هات الفاتورة)، وطاقم الخدمة بيتابعها لحظيًا عبر
 # WebSocket (app/modules/core/api/router.py::alerts_manager).
 
+def assert_guest_alerts_enabled(db: Session, branch_id: int) -> None:
+    """Gate 1 containment (جولة مراجعة Codex الثانية، 2026-07-17): هذا
+    الـ endpoint عام تمامًا بدون auth، context_id مش FK حقيقي (راجع
+    GuestAlert docstring)، ومفيش أي تحقق إن context_id ينتمي فعليًا
+    لـbranch_id. الـcontext_type mismatch (`dining_table` مش ضمن الـenum
+    الحالي) بيوقف مسار المطعم/الكافيه بالصدفة بس — context_type زي
+    `room`/`beach_location`/`other` لسه شغالين اليوم بلا أي تحقق حقيقي.
+    عمدًا **لا نصلح** الـenum mismatch هنا (ده يفتح باب Gate 8 قبل وقته)
+    — بدل كده نقفل الـendpoint كله.
+
+    **تصحيح (جولة مراجعة Codex الثالثة):** AGENTS.md بيمنع الاعتماد على
+    core.Setting (حر، قابل للتعديل عبر API الإعدادات) كبوابة أمان لوحدها.
+    لازم الاتنين معًا: settings.GUEST_ALERTS_ENABLED (typed،
+    deployment-level) + core.Setting الخاص بالفرع (core.guest_alerts_enabled)."""
+    from app.core.config import settings  # noqa: PLC0415
+
+    if not settings.GUEST_ALERTS_ENABLED:
+        raise ValueError("نداء الضيف غير متاح حاليًا")
+
+    raw_value = get_setting_value(
+        db, "core.guest_alerts_enabled", branch_id=branch_id, default="false",
+    )
+    enabled = str(raw_value).strip().lower() in ("1", "true", "yes", "y", "نعم")
+    if not enabled:
+        raise ValueError("نداء الضيف غير متاح حاليًا")
+
+
 def create_guest_alert(db: Session, data: GuestAlertCreate) -> GuestAlert:
     if not crud.get_branch(db, data.branch_id):
         raise ValueError(f"الفرع {data.branch_id} غير موجود")
+    assert_guest_alerts_enabled(db, data.branch_id)
 
     alert = crud.create_guest_alert(db, data)
     db.commit()
@@ -530,10 +611,19 @@ def update_alert_status(
     alert_id: int,
     new_status: str,
     resolved_by: int,
+    requesting_user,
 ) -> GuestAlert:
+    """Gate 1 containment (جولة تصحيح ثانية، 2026-07-17): كان بيقبل
+    alert_id من أي نادل+ من غير أي تحقق فرع، تمامًا زي باج GET /alerts
+    الأصلي — نادل من فرع تاني كان يقدر يقفل/يأكد تنبيه فرع مختلف تمامًا.
+    requesting_user إجباري (مش Optional) عمدًا — الـ caller الوحيد هو
+    الـ router ومعاه دايمًا مستخدم مصادَق عليه حقيقي؛ مفيش سبب مشروع
+    يسمح بتخطي الفحص هنا (نفس نمط check_in_reservation بعد جولة مراجعة
+    Codex الثالثة، اللي شالت أي باب تخطٍ اختباري منها بالكامل برضو)."""
     alert = crud.get_guest_alert(db, alert_id)
     if not alert:
         raise ValueError(f"التنبيه {alert_id} غير موجود")
+    assert_branch_access(db, requesting_user, alert.branch_id, "تحديث حالة تنبيه")
     if alert.status == "resolved":
         raise ValueError("التنبيه مُتعامَل معه بالفعل")
 

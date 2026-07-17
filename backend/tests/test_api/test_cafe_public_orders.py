@@ -57,10 +57,21 @@ def make_table(db, branch, outlet):
     return table
 
 
+def enable_self_order(db, branch):
+    """Gate 1 containment: الطلب الذاتي مقفول افتراضيًا خلف بوابتين معًا —
+    راجع نفس الدالة في test_public_menu.py."""
+    from app.core.config import settings
+    from app.modules.core.crud import upsert_setting
+    settings.DINING_SELF_ORDER_ENABLED = True
+    upsert_setting(db, "dining.self_order_enabled", "true", branch_id=branch.id)
+    db.commit()
+
+
 class TestCafePublicOrderEndpoint:
     def test_create_guest_order_no_auth(self, client: TestClient, db):
         """POST /dining/public/orders (outlet_type=cafe) يشتغل بدون token."""
         branch = make_branch(db)
+        enable_self_order(db, branch)
         outlet = make_cafe_outlet(db, branch)
         item   = make_item(db, branch, outlet)
         table  = make_table(db, branch, outlet)
@@ -83,6 +94,7 @@ class TestCafePublicOrderEndpoint:
     def test_create_guest_order_unavailable_item(self, client: TestClient, db):
         """صنف is_available=False → 400."""
         branch = make_branch(db)
+        enable_self_order(db, branch)
         outlet = make_cafe_outlet(db, branch)
         item   = make_item(db, branch, outlet, available=False)
 
@@ -113,6 +125,7 @@ class TestCafePublicOrderStatusEndpoint:
         سوا من غير أي موديل/endpoint إضافي، على نفس الـ endpoint الموحّد.
         """
         branch = make_branch(db)
+        enable_self_order(db, branch)
         outlet = make_cafe_outlet(db, branch)
         item   = make_item(db, branch, outlet)
         sunbed = make_table(db, branch, outlet)
@@ -130,6 +143,7 @@ class TestCafePublicOrderStatusEndpoint:
         assert order_resp.status_code == 201
         order_id = order_resp.json()["order_id"]
 
+        # Gate 1 containment (جولة مراجعة Codex الثالثة): متابعة حالة
+        # الطلب مقفولة تمامًا لحد Gate 8 — راجع get_guest_order_status.
         poll_resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
-        assert poll_resp.status_code == 200
-        assert poll_resp.json()["order_id"] == order_id
+        assert poll_resp.status_code == 404, poll_resp.text

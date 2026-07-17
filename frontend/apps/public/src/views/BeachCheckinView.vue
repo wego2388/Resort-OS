@@ -9,14 +9,19 @@ const route = useRoute()
 const reservationId = computed(() => Number(route.params.reservationId))
 const auth = useAuthStore()
 
+// Gate 1 containment (2026-07-17): GET /beach/reservations/{id}/public لم
+// يعد يرجع بيانات ضيف/مبلغ حقيقية بدون مصادقة (كان تسريب PII حقيقي —
+// راجع backend/app/modules/beach/schemas.py's BeachReservationPublic).
+// الحقول الكاملة بترجع فقط من استجابة الـcheckin المصادَق عليها بعد تسجيل
+// دخول الكاشير (BeachReservationRead)، فبقت اختيارية هنا.
 interface ReservationPublic {
   id: number
-  guest_name: string
-  guests_count: number
-  with_towel: boolean
-  reservation_date: string
   status: string
-  total_amount: string | number
+  guest_name?: string
+  guests_count?: number
+  with_towel?: boolean
+  reservation_date?: string
+  total_amount?: string | number
 }
 
 const reservation = ref<ReservationPublic | null>(null)
@@ -107,12 +112,18 @@ onMounted(fetchReservation)
         </div>
 
         <div class="bg-resort-bg rounded-xl p-4 mb-5 space-y-2 text-sm">
-          <div class="flex justify-between"><span class="text-gray-500">الاسم</span><span class="font-bold text-gray-900">{{ reservation.guest_name }}</span></div>
-          <div class="flex justify-between"><span class="text-gray-500">عدد الأفراد</span><span class="font-bold text-gray-900">{{ reservation.guests_count }}</span></div>
-          <div class="flex justify-between"><span class="text-gray-500">فوطة</span><span class="font-bold text-gray-900">{{ reservation.with_towel ? 'نعم' : 'لا' }}</span></div>
-          <div class="flex justify-between"><span class="text-gray-500">التاريخ</span><span class="font-bold text-gray-900">{{ reservation.reservation_date }}</span></div>
-          <div class="flex justify-between"><span class="text-gray-500">الإجمالي</span><span class="font-bold text-gray-900">{{ reservation.total_amount }} EGP</span></div>
-          <div class="flex justify-between pt-2 border-t border-resort-border">
+          <!-- بيانات الضيف الكاملة بتظهر بس بعد تسجيل دخول الكاشير وتأكيد
+               الدخول فعليًا (مصدرها استجابة /checkin المصادَق عليها) — قبل
+               كده الشاشة العامة بتعرض حالة الحجز بس، بدون تسريب بيانات ضيف
+               حقيقية لأي حد بيخمّن رقم حجز. -->
+          <template v-if="checkedIn">
+            <div class="flex justify-between"><span class="text-gray-500">الاسم</span><span class="font-bold text-gray-900">{{ reservation.guest_name }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">عدد الأفراد</span><span class="font-bold text-gray-900">{{ reservation.guests_count }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">فوطة</span><span class="font-bold text-gray-900">{{ reservation.with_towel ? 'نعم' : 'لا' }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">التاريخ</span><span class="font-bold text-gray-900">{{ reservation.reservation_date }}</span></div>
+            <div class="flex justify-between"><span class="text-gray-500">الإجمالي</span><span class="font-bold text-gray-900">{{ reservation.total_amount }} EGP</span></div>
+          </template>
+          <div class="flex justify-between" :class="checkedIn ? 'pt-2 border-t border-resort-border' : ''">
             <span class="text-gray-500">الحالة</span>
             <span class="font-bold" :class="reservation.status === 'checked_in' ? 'text-green-600' : 'text-amber-600'">
               {{ statusLabel[reservation.status] ?? reservation.status }}

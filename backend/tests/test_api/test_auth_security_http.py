@@ -247,6 +247,97 @@ class TestSecretKeyValidation:
         assert s.ENVIRONMENT == "production"
 
 
+# ── 7b: Gate 1 containment kill switches rejected in production (جولة
+#        مراجعة Codex الثالثة) — نفس نمط TestSecretKeyValidation بالظبط ────
+
+_STRONG_SECRET = "Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz"
+
+
+class TestContainmentSwitchValidation:
+    def test_dining_self_order_enabled_rejected_in_production(self):
+        from pydantic import ValidationError
+        from app.core.config import Settings
+        with pytest.raises(ValidationError, match="DINING_SELF_ORDER_ENABLED"):
+            Settings(
+                ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
+                DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
+            )
+
+    def test_guest_alerts_enabled_rejected_in_production(self):
+        from pydantic import ValidationError
+        from app.core.config import Settings
+        with pytest.raises(ValidationError, match="GUEST_ALERTS_ENABLED"):
+            Settings(
+                ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
+                DATABASE_URL="sqlite://", GUEST_ALERTS_ENABLED=True,
+            )
+
+    def test_dining_self_order_enabled_rejected_with_capitalized_production(self):
+        """تصحيح (جولة مراجعة Codex الرابعة): fail-closed حقيقي — 'Production'
+        بحرف كبير كان بيعدّي من غير فحص مع المطابقة الحرفية القديمة
+        (ENVIRONMENT == "production"). دلوقتي allow-list صريح بعد
+        strip().lower()، فأي شكل تاني لـ"production" بيترفض برضو."""
+        from pydantic import ValidationError
+        from app.core.config import Settings
+        with pytest.raises(ValidationError, match="DINING_SELF_ORDER_ENABLED"):
+            Settings(
+                ENVIRONMENT="Production", SECRET_KEY=_STRONG_SECRET,
+                DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
+            )
+
+    def test_guest_alerts_enabled_rejected_in_staging(self):
+        from pydantic import ValidationError
+        from app.core.config import Settings
+        with pytest.raises(ValidationError, match="GUEST_ALERTS_ENABLED"):
+            Settings(
+                ENVIRONMENT="staging", SECRET_KEY=_STRONG_SECRET,
+                DATABASE_URL="sqlite://", GUEST_ALERTS_ENABLED=True,
+            )
+
+    def test_dining_self_order_enabled_rejected_in_unknown_environment(self):
+        """fail-closed: قيمة ENVIRONMENT غير معروفة خالص (typo، بيئة جديدة
+        محدش عرّفها هنا) لازم تترفض برضو — مش تعدّي بالصدفة لأنها مش
+        "production" حرفيًا."""
+        from pydantic import ValidationError
+        from app.core.config import Settings
+        with pytest.raises(ValidationError, match="DINING_SELF_ORDER_ENABLED"):
+            Settings(
+                ENVIRONMENT="some-typo-env", SECRET_KEY=_STRONG_SECRET,
+                DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
+            )
+
+    def test_both_switches_default_false_and_accepted_in_production(self):
+        from app.core.config import Settings
+        s = Settings(
+            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://",
+        )
+        assert s.DINING_SELF_ORDER_ENABLED is False
+        assert s.GUEST_ALERTS_ENABLED is False
+
+    def test_switches_enabled_accepted_outside_production(self):
+        """development مسموح فيه تفعّل الاثنين عمدًا لتجربة المسار —
+        allow-list صريح."""
+        from app.core.config import Settings
+        s = Settings(
+            ENVIRONMENT="development", SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
+            GUEST_ALERTS_ENABLED=True,
+        )
+        assert s.DINING_SELF_ORDER_ENABLED is True
+        assert s.GUEST_ALERTS_ENABLED is True
+
+    def test_switches_enabled_accepted_with_mixed_case_and_whitespace_test_env(self):
+        """strip().lower() بيطبّع " Test "/"TESTING" وغيرها لنفس القيمة
+        الآمنة — الـallow-list بيتطابق بالمعنى مش بالحروف الحرفية."""
+        from app.core.config import Settings
+        s = Settings(
+            ENVIRONMENT=" Test ", SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
+        )
+        assert s.DINING_SELF_ORDER_ENABLED is True
+
+
 # ── 8: login stays wired to the IP rate limiter ────────────────────────────
 
 class TestRateLimitWiring:
@@ -268,8 +359,139 @@ class TestRateLimitWiring:
         """باج حقيقي اتصلح (2026-07-07): طلب/قائمة المطعم والكافيه كانت
         موثّقة في تعليقات restaurant/cafe كـ "rate limited بالـ middleware"
         بس عمرها ما كانت مسجّلة في _LIMITED_ROUTES فعليًا — يعني إسبام طلبات
-        ضيف وهمية عبر QR كان ممكن يحصل بدون أي حد أقصى خالص."""
+        ضيف وهمية عبر QR كان ممكن يحصل بدون أي حد أقصى خالص.
+
+        باج تاني اتصلح (Gate 1 containment، 2026-07-17): بعد حذف restaurant/
+        cafe نهائيًا (dining cutover، 2026-07-13) فضلت المسارات القديمة دي
+        مسجّلة هنا كخريطة ميتة، بينما مسارات dining/public/* الجديدة (اللي
+        حلّت محلهم فعليًا) عمرها ما اتسجّلت — يعني /dining/public/orders كان
+        بدون أي حد أقصى فعلي من يوم الـcutover لحد الإصلاح ده."""
         from app.core.rate_limit import _LIMITED_ROUTES
-        assert ("GET", "/api/v1/restaurant/public/menu") in _LIMITED_ROUTES
-        assert ("POST", "/api/v1/restaurant/public/orders") in _LIMITED_ROUTES
-        assert ("POST", "/api/v1/cafe/public/orders") in _LIMITED_ROUTES
+        assert ("GET", "/api/v1/dining/public/outlets") in _LIMITED_ROUTES
+        assert ("GET", "/api/v1/dining/public/menu") in _LIMITED_ROUTES
+        assert ("POST", "/api/v1/dining/public/orders") in _LIMITED_ROUTES
+        # المسارات القديمة المحذوفة ماينفعش تفضل في الخريطة — dead entries.
+        assert ("GET", "/api/v1/restaurant/public/menu") not in _LIMITED_ROUTES
+        assert ("POST", "/api/v1/restaurant/public/orders") not in _LIMITED_ROUTES
+        assert ("GET", "/api/v1/cafe/public/menu") not in _LIMITED_ROUTES
+        assert ("POST", "/api/v1/cafe/public/orders") not in _LIMITED_ROUTES
+
+    def test_dining_public_outlets_actually_returns_429(self, client, db):
+        """اختبار وظيفي حقيقي (مش بس فحص وجود المسار في dictionary) — يثبت
+        إن الطلب الحادي والثلاثين خلال 60 ثانية بيرجع 429 فعليًا، مش بس إن
+        الإعداد مسجّل. الحد المسجّل لـ dining/public/outlets هو 30/60s.
+        branch_id عشوائي كافٍ (list_outlets بترجع [] لو مش موجود، 200
+        برضو) — الهدف هنا الحد نفسه مش محتوى الاستجابة."""
+        statuses = [
+            client.get("/api/v1/dining/public/outlets", params={"branch_id": 999999}).status_code
+            for _ in range(31)
+        ]
+        assert statuses[:30] == [200] * 30, statuses
+        assert statuses[30] == 429, statuses
+
+
+# ── 8b: rate-limit identity resists X-Forwarded-For spoofing (Codex security
+#        review، 2026-07-17) ────────────────────────────────────────────────
+
+class TestClientIPProxySpoofResistance:
+    """_client_ip الوحدة نفسها — راجع app.core.rate_limit._client_ip's
+    docstring للتفاصيل الكاملة عن الباج والإصلاح."""
+
+    @staticmethod
+    def _make_request(headers: dict[str, str] | None = None, client_host: str = "203.0.113.9"):
+        from starlette.requests import Request
+        scope = {
+            "type": "http",
+            "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+            "client": (client_host, 54321),
+        }
+        return Request(scope)
+
+    def test_zero_trusted_hops_ignores_forwarded_header_entirely(self):
+        """الإعداد الافتراضي (0) — X-Forwarded-For بيتجاهل كليًا، حتى لو
+        العميل بعت واحد، ومهما كانت قيمته."""
+        from app.core.config import settings
+        from app.core.rate_limit import _client_ip
+        settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 0
+        req = self._make_request({"x-forwarded-for": "9.9.9.9"}, client_host="203.0.113.9")
+        assert _client_ip(req) == "203.0.113.9"
+
+    def test_two_trusted_hops_selects_second_from_right_regardless_of_spoofed_prefix(self):
+        """مع 2 hops موثوقين، القيمة المُختارة هي التانية من اليمين
+        (اللي edge nginx فعليًا شافها كـpeer له) — مش أول قيمة (اللي
+        العميل بيتحكم فيها بالكامل). تدوير قيمة الشمال المزوّرة عبر
+        محاولات مختلفة **ملهوش أي تأثير** على الاختيار."""
+        from app.core.config import settings
+        from app.core.rate_limit import _client_ip
+        settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 2
+        real_client, edge_nginx_ip = "198.51.100.7", "172.18.0.3"
+        for spoofed_prefix in ("9.9.9.9", "1.1.1.1", "not-even-an-ip", "127.0.0.1"):
+            req = self._make_request({
+                "x-forwarded-for": f"{spoofed_prefix}, {real_client}, {edge_nginx_ip}",
+            })
+            assert _client_ip(req) == real_client, spoofed_prefix
+
+    def test_too_short_chain_falls_back_to_direct_peer(self):
+        """مع 2 hops موثوقين، سلسلة بقيمة واحدة بس (أقصر من المتوقع —
+        proxy وسيط فشل يضيف قيمته، أو تلاعب) لازم fail-closed لـ
+        request.client.host، مش قبول القيمة الوحيدة الموجودة كأنها موثوقة."""
+        from app.core.config import settings
+        from app.core.rate_limit import _client_ip
+        settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 2
+        req = self._make_request({"x-forwarded-for": "9.9.9.9"}, client_host="203.0.113.9")
+        assert _client_ip(req) == "203.0.113.9"
+
+    def test_missing_header_falls_back_to_direct_peer(self):
+        from app.core.config import settings
+        from app.core.rate_limit import _client_ip
+        settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 2
+        req = self._make_request(client_host="203.0.113.9")
+        assert _client_ip(req) == "203.0.113.9"
+
+    def test_malformed_ip_in_trusted_position_falls_back_to_direct_peer(self):
+        """القيمة في المكان المتوقع (2nd-from-right) نفسها مش IP صالح —
+        fail-closed، مش قبولها كأنها عنوان حقيقي."""
+        from app.core.config import settings
+        from app.core.rate_limit import _client_ip
+        settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 2
+        req = self._make_request(
+            {"x-forwarded-for": "9.9.9.9, not-an-ip-at-all, 172.18.0.3"},
+            client_host="203.0.113.9",
+        )
+        assert _client_ip(req) == "203.0.113.9"
+
+    def test_direct_request_cannot_change_rate_limit_identity_via_header(self, client, db):
+        """اختبار وظيفي حقيقي عبر HTTP — hops=0 (الافتراضي)، كل طلب من الـ31
+        ببعت X-Forwarded-For مختلف تمامًا. لو الهيدر كان بيتقبل، كل طلب
+        كان هيتحسب كـ"IP" مختلف فيتهرّب من الحد تمامًا. بما إن كل الـ31
+        فعليًا نفس الـTestClient (نفس request.client.host الحقيقي)، لازم
+        الطلب رقم 31 يرجع 429 برضو — يعني تزوير الهيدر متغيّرش الهوية."""
+        from app.core.config import settings
+        settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 0
+        statuses = [
+            client.get(
+                "/api/v1/dining/public/outlets", params={"branch_id": 999999},
+                headers={"X-Forwarded-For": f"10.0.{i}.{i}"},
+            ).status_code
+            for i in range(31)
+        ]
+        assert statuses[:30] == [200] * 30, statuses
+        assert statuses[30] == 429, statuses
+
+    def test_two_trusted_hops_rotating_spoofed_prefix_still_hits_429(self, client, db):
+        """نفس الفكرة، بس hops=2 وXFF بشكل الإنتاج الحقيقي (3 قيم) — قيمة
+        الشمال (المزوّرة) بتتغيّر كل طلب، القيمتين التانيتين (الممثّلتين
+        لـedge/frontend nginx) ثابتتين. لازم برضو يوصل 429 عند الطلب 31،
+        لأن الاختيار الفعلي (2nd-from-right) ثابت رغم التزوير."""
+        from app.core.config import settings
+        settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 2
+        stable_suffix = "198.51.100.7, 172.18.0.3"
+        statuses = [
+            client.get(
+                "/api/v1/dining/public/outlets", params={"branch_id": 999999},
+                headers={"X-Forwarded-For": f"10.0.{i}.{i}, {stable_suffix}"},
+            ).status_code
+            for i in range(31)
+        ]
+        assert statuses[:30] == [200] * 30, statuses
+        assert statuses[30] == 429, statuses

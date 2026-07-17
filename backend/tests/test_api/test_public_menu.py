@@ -8,8 +8,11 @@ Public (Guest QR) endpoints — بدون auth
 
 يتحقق من:
 1. GET /dining/public/menu → 200 بدون token
-2. POST /dining/public/orders → 201 بدون token
-3. GET /dining/public/orders/{id} → 200 بدون token
+2. POST /dining/public/orders → 201 بدون token (بعد تفعيل الطلب الذاتي
+   صراحةً — مقفول افتراضيًا خلف بوابتين، راجع Gate 1 containment تحت)
+3. GET /dining/public/orders/{id} → **مقفول تمامًا الآن (404 دايمًا)**،
+   بغض النظر عن حالة الطلب الذاتي — راجع Codex round 3 (BOLA على طلبات
+   POS/الكاشير عبر order_id متسلسل) وget_guest_order_status's docstring
 4. GET /dining/outlets/{id}/items → 401 بدون token (internal endpoint مازال محمي)
 5. POST /dining/public/orders → 400 لو item غير متاح
 6. GET /dining/public/outlets → 200 بدون token (Batch 6 frontend: موقع الحجز
@@ -33,11 +36,11 @@ def make_branch(db):
     return b
 
 
-def make_outlet(db, branch):
+def make_outlet(db, branch, name="مطعم QR"):
     from app.modules.dining import services as dining_services
     from app.modules.dining.schemas import OutletCreate
     return dining_services.create_outlet(db, OutletCreate(
-        branch_id=branch.id, name="مطعم QR", outlet_type="restaurant",
+        branch_id=branch.id, name=name, outlet_type="restaurant",
         revenue_account_code="4200",
     ))
 
@@ -75,6 +78,19 @@ def make_table(db, branch, outlet):
     return t
 
 
+def enable_self_order(db, branch):
+    """Gate 1 containment: الطلب الذاتي مقفول افتراضيًا خلف بوابتين معًا
+    (جولة مراجعة Codex الثالثة) — settings.DINING_SELF_ORDER_ENABLED
+    (typed، deployment-level) + core.Setting "dining.self_order_enabled"
+    (الفرع). التستات اللي بتختبر مسار الطلب الفعلي (مش سلوك القفل نفسه)
+    لازم تفعّل الاتنين صراحةً."""
+    from app.core.config import settings
+    from app.modules.core.crud import upsert_setting
+    settings.DINING_SELF_ORDER_ENABLED = True
+    upsert_setting(db, "dining.self_order_enabled", "true", branch_id=branch.id)
+    db.commit()
+
+
 class TestPublicMenuEndpoint:
     def test_public_menu_no_auth_required(self, client: TestClient, db):
         """GET /dining/public/menu يشتغل بدون token."""
@@ -90,9 +106,10 @@ class TestPublicMenuEndpoint:
         outlet   = make_outlet(db, branch)
         category = make_category(db, branch, outlet)
         item     = make_item(db, branch, outlet, category)
+        table    = make_table(db, branch, outlet)
 
         resp = client.get("/api/v1/dining/public/menu",
-                          params={"outlet_id": outlet.id, "table_id": 1})
+                          params={"outlet_id": outlet.id, "table_id": table.id})
         assert resp.status_code == 200
 
         data = resp.json()
@@ -117,9 +134,31 @@ class TestPublicMenuEndpoint:
             assert "cost"    not in items[0]
             assert "station" not in items[0]
 
+    def test_public_menu_table_id_zero_returns_422_not_500(self, client: TestClient, db):
+        """Gate 1 containment (جولة مراجعة Codex الثالثة): table_id=0 لازم
+        يترفض 422 (Field(ge=1)) — مش يوصل لأي كود بيتعامل معاه كـ"مفيش
+        طاولة" (truthiness bug) ولا يسبب 500."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        resp = client.get("/api/v1/dining/public/menu",
+                          params={"outlet_id": outlet.id, "table_id": 0})
+        assert resp.status_code == 422, resp.text
+
     def test_public_menu_unknown_outlet_returns_404(self, client: TestClient, db):
         resp = client.get("/api/v1/dining/public/menu", params={"outlet_id": 999999})
         assert resp.status_code == 404
+
+    def test_public_menu_table_from_different_outlet_rejected(self, client: TestClient, db):
+        """Gate 1 containment: table_id في الـQR لازم يتبع نفس outlet_id —
+        فشل سريع وواضح لو الضيف مسح/خمّن مجموعة outlet/table غير متطابقة."""
+        branch       = make_branch(db)
+        outlet       = make_outlet(db, branch)
+        other_outlet = make_outlet(db, branch, name="مطعم QR الآخر")
+        foreign_table = make_table(db, branch, other_outlet)
+
+        resp = client.get("/api/v1/dining/public/menu",
+                          params={"outlet_id": outlet.id, "table_id": foreign_table.id})
+        assert resp.status_code == 400
 
     def test_internal_menu_still_requires_auth(self, client: TestClient, db):
         """الـ internal endpoint لازم يفضل محمي — Public مش فتح كل حاجة."""
@@ -174,9 +213,99 @@ class TestPublicOutletsEndpoint:
 
 
 class TestPublicOrderEndpoint:
-    def test_create_guest_order_no_auth(self, client: TestClient, db):
-        """POST /dining/public/orders يشتغل بدون token."""
+    def test_order_table_id_zero_returns_422_not_500(self, client: TestClient, db):
+        """Gate 1 containment (جولة مراجعة Codex الثالثة): table_id=0 لازم
+        يترفض 422 (Field(ge=1) على GuestOrderCreate/OrderCreate) — مش
+        يتفهم كـ"مفيش طاولة" (كان ممكن يحصل ده مع truthiness check قديمة:
+        `if data.table_id:` بتتجاهل 0 بدل ما تتحقق منه)، ولا يسبب 500."""
         branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "table_id":  0,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        })
+        assert resp.status_code == 422, resp.text
+
+    def test_self_order_disabled_by_default(self, client: TestClient, db):
+        """Gate 1 containment (Decision 0001 / PRODUCTION_READINESS_AUDIT
+        C-02): الطلب الذاتي غير المُشرَف عليه مقفول افتراضيًا — لا إعداد
+        صريح = 400، مش 201. هذا هو السلوك الافتراضي الجديد؛ باقي تستات
+        الكلاس دي بتفعّل الإعداد صراحةً عشان تختبر مسار الطلب نفسه."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        })
+        assert resp.status_code == 400, resp.text
+
+    def test_table_from_different_outlet_rejected(self, client: TestClient, db):
+        """Gate 1 containment: table_id لازم يتبع نفس outlet_id — منع ضيف
+        يخمّن table_id تابع لمنفذ/فرع تاني تمامًا."""
+        branch        = make_branch(db)
+        enable_self_order(db, branch)
+        outlet        = make_outlet(db, branch)
+        other_outlet  = make_outlet(db, branch, name="مطعم QR الآخر")
+        cat           = make_category(db, branch, outlet)
+        item          = make_item(db, branch, outlet, cat)
+        foreign_table = make_table(db, branch, other_outlet)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "table_id":  foreign_table.id,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        })
+        assert resp.status_code == 400, resp.text
+
+    def test_item_from_different_outlet_rejected(self, client: TestClient, db):
+        """Gate 1 containment (جولة مراجعة Codex الثانية): item_id لازم
+        يتبع نفس outlet_id — منع ضيف يطلب صنف من منفذ تاني (بنفس الفرع)
+        عن طريق تمرير item_id مش تابع للـoutlet المُعلَن في الطلب."""
+        branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet       = make_outlet(db, branch)
+        other_outlet = make_outlet(db, branch, name="مطعم QR الآخر")
+        cat          = make_category(db, branch, outlet)
+        other_cat    = make_category(db, branch, other_outlet)
+        foreign_item = make_item(db, branch, other_outlet, other_cat)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "items": [{"item_id": foreign_item.id, "quantity": 1}],
+        })
+        assert resp.status_code == 400, resp.text
+
+    def test_item_from_different_branch_rejected(self, client: TestClient, db):
+        """Gate 1 containment (جولة مراجعة Codex الثانية): item_id لازم
+        يتبع نفس branch_id — منع ضيف يطلب صنف من فرع مختلف تمامًا."""
+        branch       = make_branch(db)
+        other_branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet       = make_outlet(db, branch)
+        other_outlet = make_outlet(db, other_branch)
+        cat          = make_category(db, branch, outlet)
+        other_cat    = make_category(db, other_branch, other_outlet)
+        foreign_item = make_item(db, other_branch, other_outlet, other_cat)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "items": [{"item_id": foreign_item.id, "quantity": 1}],
+        })
+        assert resp.status_code == 400, resp.text
+
+    def test_create_guest_order_no_auth(self, client: TestClient, db):
+        """POST /dining/public/orders يشتغل بدون token (بعد تفعيل الطلب
+        الذاتي صراحةً — مقفول افتراضيًا، راجع test_self_order_disabled_by_default)."""
+        branch = make_branch(db)
+        enable_self_order(db, branch)
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
@@ -201,6 +330,7 @@ class TestPublicOrderEndpoint:
     def test_create_guest_order_unavailable_item(self, client: TestClient, db):
         """صنف is_available=False → 400."""
         branch = make_branch(db)
+        enable_self_order(db, branch)
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat, available=False)
@@ -223,6 +353,7 @@ class TestPublicOrderEndpoint:
     def test_create_guest_order_without_table(self, client: TestClient, db):
         """table_id=None مسموح (takeaway من الـ lobby مثلاً)."""
         branch = make_branch(db)
+        enable_self_order(db, branch)
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
@@ -244,45 +375,43 @@ class TestPublicOrderEndpoint:
 
 
 class TestPublicOrderStatusEndpoint:
-    def test_get_order_status_no_auth(self, client: TestClient, db):
-        """GET /dining/public/orders/{id} يشتغل بدون token."""
+    def test_get_order_status_always_closed(self, client: TestClient, db):
+        """Gate 1 containment (جولة مراجعة Codex الثالثة): الـendpoint ده
+        مقفول تمامًا لحد Gate 8، بغض النظر عن dining.self_order_enabled —
+        order_id رقم متسلسل قابل للتخمين بلا أي token، وبيقرا من نفس
+        جدول الطلبات اللي فيه طلبات POS/الكاشير العادية كمان (ملهاش
+        علاقة بالطلب الذاتي)، فتفعيل الطلب الذاتي لوحده مش كافي حماية."""
         branch = make_branch(db)
+        enable_self_order(db, branch)
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
 
         create_resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
-            "items": [{"item_id": item.id, "quantity": 2}],
+            "items": [{"item_id": item.id, "quantity": 1}],
         })
-        assert create_resp.status_code == 201
+        assert create_resp.status_code == 201, create_resp.text
         order_id = create_resp.json()["order_id"]
 
-        status_resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
-        assert status_resp.status_code == 200
-
-        data = status_resp.json()
-        assert data["order_id"]    == order_id
-        assert data["items_count"] == 2
-        assert "message" in data
-        assert "total"   in data
-        # لا يوجد waiter_id أو بيانات داخلية
-        assert "waiter_id"  not in data
-        assert "branch_id"  not in data
+        resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
+        assert resp.status_code == 404, resp.text
 
     def test_get_nonexistent_order_returns_404(self, client: TestClient, db):
-        """Order غير موجود → 404."""
+        """Order غير موجود (أو أي order_id تاني — الـendpoint مقفول
+        بالكامل) → 404."""
         resp = client.get("/api/v1/dining/public/orders/999999")
         assert resp.status_code == 404
 
-    def test_full_qr_flow(self, client: TestClient, db):
+    def test_full_qr_flow_order_status_unavailable(self, client: TestClient, db):
         """
-        Flow كامل:
+        Flow كامل — بس متابعة حالة الطلب بقت مقفولة عمدًا لحد Gate 8:
         1. اجلب القائمة بدون auth
         2. قدّم طلب بدون auth
-        3. تابع حالة الطلب بدون auth
+        3. متابعة الحالة ترجع 404 (مش 200) — القفل مقصود، مش باج.
         """
         branch = make_branch(db)
+        enable_self_order(db, branch)
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
@@ -304,7 +433,6 @@ class TestPublicOrderStatusEndpoint:
         assert order_resp.status_code == 201
         order_id = order_resp.json()["order_id"]
 
-        # Step 3: poll status
+        # Step 3: status polling مقفول عمدًا
         poll_resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
-        assert poll_resp.status_code == 200
-        assert poll_resp.json()["order_id"] == order_id
+        assert poll_resp.status_code == 404, poll_resp.text

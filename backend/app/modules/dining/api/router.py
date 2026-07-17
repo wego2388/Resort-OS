@@ -872,23 +872,36 @@ def get_outlet_sales_report(
 # و/cafe/public/* حصريًا، بدون أي بديل هنا، فحذفهم من غير الإضافة دي كان
 # هيكسر طلب الضيف عبر QR بالكامل (ميزة حقيقية شغالة، مش تجريبية).
 #
-# أمان: rate limited بالـ middleware (30 req/60s per IP)
-#        order_type ثابت "dine_in" — نفس تقييد restaurant/cafe الأصليين
-#        لا يوجد تعديل أو حذف من هنا — read + create فقط
+# أمان (Gate 1 containment، 2026-07-17، آخر تحديث جولة مراجعة Codex الثالثة):
+#   - outlets/menu/orders فعليًا مسجّلين في app.core.rate_limit._LIMITED_ROUTES
+#     (30 req/60s per IP) — الادعاء ده كان غلط لمدة كام يوم بعد الـcutover
+#     (المسارات القديمة اتشالت من الكود بس فضلت هي المسجّلة في الخريطة).
+#   - POST /orders محجوب افتراضيًا خلف بوابتين معًا (settings.
+#     DINING_SELF_ORDER_ENABLED الـtyped + core.Setting
+#     "dining.self_order_enabled" الخاص بالفرع — الاتنين لازم يبقوا true،
+#     راجع services.assert_guest_self_order_enabled) — Decision 0001 / C-02.
+#     AGENTS.md بيمنع الاعتماد على core.Setting لوحده كبوابة أمان.
+#   - table_id/item_id بيتحققوا فعليًا إنهم يتبعوا نفس outlet_id وbranch_id
+#     (services.create_order + get_public_menu) قبل أي قراءة/كتابة — منع
+#     طلب طاولة/صنف من منفذ أو فرع تاني تمامًا. table_id لازم يكون رقم
+#     موجب (Field(ge=1)) — صفر أو سالب يترفض 422 قبل ما يوصل لأي منطق.
+#   - GET /orders/{order_id} **مقفول بالكامل الآن**، بغض النظر عن حالة
+#     dining.self_order_enabled — order_id بيقرا من نفس جدول الطلبات اللي
+#     فيه طلبات POS/الكاشير العادية كمان (staff orders تقدر توجد بغض النظر
+#     عن حالة الطلب الذاتي)، فتفعيل الطلب الذاتي مش كافي حماية لمنع تخمين
+#     order_id يخص طلب POS داخلي. مقفول لحد Gate 8 الحقيقي (راجع
+#     get_guest_order_status).
+#   - order_type ثابت "dine_in" — نفس تقييد restaurant/cafe الأصليين
+#   - لا يوجد تعديل أو حذف من هنا — read + create فقط
+#
+# ⚠️ ما زال خارج نطاق هذه الدفعة (Gate 8، مش Gate 1 containment):
+#   POST /public/alerts's context_type mismatch لسه مش مصلّح — بقى
+#   مقفول افتراضيًا خلف بوابتين (settings.GUEST_ALERTS_ENABLED الـtyped +
+#   core.Setting "core.guest_alerts_enabled" الخاص بالفرع، راجع
+#   core.services.assert_guest_alerts_enabled) بدل ما يتصلح بلا حماية
+#   حقيقية. Service Location/QR token/guest session كلهم لسه Gate 8،
+#   وview_and_call لسه مش implementation كامل — راجع docs/decisions/0001.
 # ══════════════════════════════════════════════════════════════════════
-
-
-def _guest_status_message(order_status: str) -> str:
-    # نُرجع مفتاح i18n — الـ frontend (OrderView.vue) بيترجمه عبر statusMessage().
-    return {
-        "open":       "status_pending",
-        "held":       "status_pending",
-        "in_kitchen": "status_in_kitchen",
-        "served":     "status_served",
-        "paid":       "status_paid",
-        "cancelled":  "status_cancelled",
-        "refunded":   "status_cancelled",
-    }.get(order_status, "status_pending")
 
 
 @router.get(
@@ -915,13 +928,18 @@ def list_public_outlets(db: DbDep, branch_id: int = Query(...)):
 def get_public_menu(
     db: DbDep,
     outlet_id: int = Query(..., description="رقم المنفذ (مطعم/كافيه/...) — مضمّن في الـ QR"),
-    table_id: Optional[int] = Query(None, description="رقم الطاولة — مضمّن في الـ QR"),
+    table_id: Optional[int] = Query(None, ge=1, description="رقم الطاولة — مضمّن في الـ QR"),
 ):
     """Public endpoint — لا يحتاج login. يُستدعى من apps/public's OrderView
     عند مسح QR الطاولة. يُرجع categories + items في طلب واحد لتقليل round trips."""
     outlet = crud.get_outlet(db, outlet_id)
     if not outlet:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+
+    if table_id is not None:
+        table = crud.get_table(db, table_id)
+        if not table or table.outlet_id != outlet_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "الطاولة لا تتبع هذا المنفذ")
 
     categories = crud.list_categories(db, outlet_id)
     items = crud.list_items(db, outlet_id, available_only=True)
@@ -961,6 +979,7 @@ def create_guest_order(data: GuestOrderCreate, db: DbDep):
         outlet = crud.get_outlet(db, data.outlet_id)
         if not outlet:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
+        services.assert_guest_self_order_enabled(db, outlet.branch_id)
         order = services.create_order(db, branch_id=outlet.branch_id, data=order_data, waiter_id=None)
         return GuestOrderRead(
             order_id=order.id,
@@ -981,16 +1000,15 @@ def create_guest_order(data: GuestOrderCreate, db: DbDep):
     summary="حالة الطلب للضيف (QR) — بدون auth",
 )
 def get_guest_order_status(order_id: int, db: DbDep):
-    """Public endpoint — لا يحتاج login. الضيف يتابع حالة طلبه بعد التقديم
-    (polling كل 10 ثواني). لا يُظهر بيانات مالية داخلية — status فقط."""
-    order = crud.get_order(db, order_id)
-    if not order:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "الطلب غير موجود")
-    return GuestOrderRead(
-        order_id=order.id,
-        order_number=order.order_number,
-        status=order.status,
-        total=order.total,
-        items_count=sum(i.quantity for i in order.items if i.status != "cancelled"),
-        message=_guest_status_message(order.status),
-    )
+    """Public endpoint — كان مقصود للضيف يتابع حالة طلبه (polling)، لكنه
+    **مقفول بالكامل الآن**، بغض النظر عن dining.self_order_enabled.
+
+    Gate 1 containment (جولة مراجعة Codex الثالثة): order_id رقم متسلسل
+    قابل للتخمين بلا أي token، وبيقرا من نفس جدول DiningOrder اللي فيه
+    طلبات الكاشير/النادل العادية (POS) كمان — حتى لو الطلب الذاتي مفعّل
+    لفرع معيّن، ده مايمنعش ضيف من تخمين order_id يخص طلب POS داخلي (مش
+    طلب ذاتي أصلًا) ويشوف order_number/total بتاعه. الجولة التانية كانت
+    قفلته بشرط self_order_enabled بس — مش كافي، الخطر مستقل عن الإعداد ده.
+    مقفول تمامًا لحد Gate 8 (Service Location/QR token/guest session
+    حقيقي، مش قبل كده) — لا نبني بديل توكن هنا الآن."""
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "الطلب غير موجود")

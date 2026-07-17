@@ -119,8 +119,16 @@ alerts_manager = AlertConnectionManager()
 async def guest_alerts_websocket(ws: WebSocket, branch_id: int, db: DbDep):
     """اتصال WebSocket لطاقم الخدمة (نادل/كاشير) — بث تنبيهات الضيوف الجديدة
     وتحديثات حالتها لحظيًا. بيرد بـ pong كـ heartbeat فقط، زي restaurant KDS.
-    محتاج ?token= JWT صالح بمستوى نادل+."""
-    if not await get_websocket_user(ws, db, min_level=30):
+    محتاج ?token= JWT صالح بمستوى نادل+، وبقى (Gate 1 containment، جولة
+    تصحيح ثانية) بيتحقق كمان إن الفرع ده فرع المستخدم نفسه — نفس باج
+    GET/PATCH /alerts الأصلي، كان أي نادل يقدر يشترك في بث فرع تاني تمامًا."""
+    user = await get_websocket_user(ws, db, min_level=30)
+    if not user:
+        return
+    try:
+        services.assert_branch_access(db, user, branch_id, "الاشتراك في تنبيهات فرع")
+    except PermissionError:
+        await ws.close(code=4403)
         return
     await alerts_manager.connect(ws, str(branch_id))
     try:
@@ -545,15 +553,21 @@ async def create_guest_alert(data: GuestAlertCreate, db: DbDep):
 )
 def list_guest_alerts(
     db: DbDep,
-    _user=Depends(get_waiter_user),
+    user=Depends(get_waiter_user),
     branch_id: int = Query(...),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
     """التنبيهات اللي لسه محتاجة رد فعل (open أو acknowledged) — طاقم الخدمة
-    بيتابعها لحظيًا عبر WebSocket، الـ endpoint ده fallback/تحميل أولي."""
+    بيتابعها لحظيًا عبر WebSocket، الـ endpoint ده fallback/تحميل أولي.
+    Gate 1 containment (2026-07-17): branch_id كان بيتقبل من العميل بلا أي
+    تحقق ملكية — services.list_guest_alerts بقى بيفرض إن الفرع ده فرع
+    المستخدم نفسه (أو super_admin حصريًا)، راجع services.assert_branch_access."""
     skip = (page - 1) * size
-    items, total = crud.list_active_alerts(db, branch_id, skip=skip, limit=size)
+    try:
+        items, total = services.list_guest_alerts(db, branch_id, user, skip=skip, limit=size)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return PaginatedResponse(
         total=total, page=page, size=size,
         items=[GuestAlertRead.model_validate(a) for a in items],
@@ -570,9 +584,14 @@ async def update_guest_alert_status(
     db: DbDep,
     user=Depends(get_waiter_user),
 ):
-    """طاقم الخدمة يأكد استلامه (acknowledged) أو يقفله بعد التنفيذ (resolved)."""
+    """طاقم الخدمة يأكد استلامه (acknowledged) أو يقفله بعد التنفيذ (resolved).
+    Gate 1 containment (جولة تصحيح ثانية): بقى بيفرض تطابق فرع المستخدم."""
     try:
-        alert = services.update_alert_status(db, alert_id, data.status, resolved_by=user.id)
+        alert = services.update_alert_status(
+            db, alert_id, data.status, resolved_by=user.id, requesting_user=user,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

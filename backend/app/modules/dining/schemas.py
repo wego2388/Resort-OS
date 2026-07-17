@@ -338,7 +338,7 @@ class OrderItemCreate(BaseModel):
 
 class OrderCreate(BaseModel):
     outlet_id:    int
-    table_id:     Optional[int] = None
+    table_id:     Optional[int] = Field(None, ge=1)
     order_type:   str = Field("dine_in", pattern=r"^(dine_in|takeaway|delivery|room_service)$")
     guests_count: int = Field(1, ge=1)
     notes:        Optional[str] = Field(None, max_length=500)
@@ -456,7 +456,7 @@ class OrderItemStatusUpdate(BaseModel):
 class OrderSyncRequest(BaseModel):
     local_id:     str = Field(..., max_length=60)
     outlet_id:    int
-    table_id:     Optional[int] = None
+    table_id:     Optional[int] = Field(None, ge=1)
     order_type:   str = Field("dine_in", pattern=r"^(dine_in|takeaway|delivery|room_service)$")
     guests_count: int = Field(1, ge=1)
     notes:        Optional[str] = Field(None, max_length=500)
@@ -662,14 +662,21 @@ class GuestOrderItemCreate(BaseModel):
 class GuestOrderCreate(BaseModel):
     """الطلب من الضيف عبر QR."""
     outlet_id:    int
-    table_id:     Optional[int] = None
+    table_id:     Optional[int] = Field(None, ge=1)
     guests_count: int = Field(1, ge=1)
     notes:        Optional[str] = Field(None, max_length=300)
     items:        list[GuestOrderItemCreate] = Field(..., min_length=1)
 
 
 class GuestOrderRead(BaseModel):
-    """ما يشوفه الضيف بعد تقديم الطلب — بدون بيانات مالية داخلية."""
+    """استجابة تقديم الطلب فورًا (POST /dining/public/orders) — **تصحيح
+    (جولة مراجعة Codex الثالثة):** الوصف القديم "بدون بيانات مالية داخلية"
+    غير دقيق — total (المبلغ الفعلي) موجود هنا فعليًا. الاستخدام الوحيد
+    المتبقي لهذا الـschema هو استجابة الإنشاء نفسها (نفس الطلب اللي الضيف
+    عمله للتو، مش تخمين order_id تاني) — مسار متابعة الحالة بعد الإنشاء
+    (GET /orders/{id}) مقفول بالكامل لحد Gate 8 (راجع
+    get_guest_order_status)، فمفيش خطر تسريب لطلبات تانية من هذا الـschema
+    نفسه، بس الادعاء "بدون بيانات مالية" كان غلط من الأساس."""
     order_id:     int
     order_number: str
     status:       str

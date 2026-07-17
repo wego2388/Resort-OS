@@ -25,10 +25,36 @@ def make_branch_committed(db):
     return b
 
 
+def make_branch_linked_cashier_headers(db, branch) -> dict[str, str]:
+    """Gate 1 containment: تسجيل دخول حجز الشاطئ بقى بيفرض تطابق فرع
+    الكاشير (core.services.assert_branch_access عبر HR.Employee) — الـ
+    cashier_headers المشترك (conftest.py) بلا Employee/فرع خالص، فبيترفض
+    دلوقتي (403) لو استُخدم مباشرة على /checkin. نفس نمط
+    test_hr_me_http.py's make_linked_user_headers/link بالظبط."""
+    from datetime import date, timedelta
+    from decimal import Decimal
+
+    from tests.conftest import _create_test_user, _make_token
+    from app.modules.hr.models import Employee
+
+    email = f"cashier-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, "cashier")
+    emp = Employee(
+        branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name="كاشير اختبار الشاطئ", national_id="29001011234568",
+        position="Cashier", department="Beach", basic_salary=Decimal("4000.00"),
+        hire_date=date.today() - timedelta(days=365), user_id=user_id,
+    )
+    db.add(emp)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email)}"}
+
+
 class TestBeachReservationFlow:
     def test_reservation_checkin_consumes_inventory(self, client: TestClient, db, fake_redis, cashier_headers):
         """Full round-trip: create reservation -> checkin -> capacity_used goes up."""
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
 
         before = client.get(
             "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=cashier_headers,
@@ -54,7 +80,7 @@ class TestBeachReservationFlow:
 
         checkin_resp = client.post(
             f"/api/v1/beach/reservations/{reservation['id']}/checkin",
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert checkin_resp.status_code == 200, checkin_resp.text
         checked_in = checkin_resp.json()
@@ -68,6 +94,7 @@ class TestBeachReservationFlow:
 
     def test_double_checkin_rejected(self, client: TestClient, db, fake_redis, cashier_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         reservation = client.post(
             "/api/v1/beach/reservations",
             json={
@@ -77,12 +104,100 @@ class TestBeachReservationFlow:
             headers=cashier_headers,
         ).json()
 
-        client.post(f"/api/v1/beach/reservations/{reservation['id']}/checkin", headers=cashier_headers)
-        second = client.post(f"/api/v1/beach/reservations/{reservation['id']}/checkin", headers=cashier_headers)
+        client.post(f"/api/v1/beach/reservations/{reservation['id']}/checkin", headers=branch_cashier_headers)
+        second = client.post(f"/api/v1/beach/reservations/{reservation['id']}/checkin", headers=branch_cashier_headers)
         assert second.status_code == 400
 
+    def test_checkin_cross_branch_cashier_rejected(self, client: TestClient, db, fake_redis, cashier_headers):
+        """Gate 1 containment (BOLA/IDOR fix): كاشير مرتبط بفرع تاني (عبر
+        Employee.branch_id) لازم يترفض 403 لما يحاول يسجّل دخول حجز فرع
+        مختلف — ده هو الباج الأصلي اللي Codex اكتشفه في تدقيق Public Phase 0."""
+        home_branch  = make_branch_committed(db)
+        other_branch = make_branch_committed(db)
+        other_branch_cashier_headers = make_branch_linked_cashier_headers(db, other_branch)
+
+        reservation = client.post(
+            "/api/v1/beach/reservations",
+            json={
+                "branch_id": home_branch.id, "guest_name": "ضيف الفرع الأصلي",
+                "reservation_date": str(date.today()), "guests_count": 1,
+            },
+            headers=cashier_headers,
+        ).json()
+
+        resp = client.post(
+            f"/api/v1/beach/reservations/{reservation['id']}/checkin",
+            headers=other_branch_cashier_headers,
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_checkin_manager_without_matching_branch_rejected(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers):
+        """تصحيح (جولة مراجعة Codex الثانية): manager (level=60) **لا**
+        يتخطى فحص الفرع — الاستثناء الوحيد المعتمد هو super_admin
+        (Decision 0003). manager_headers المشترك بلا Employee/فرع، فيترفض
+        403 زي أي دور تاني بدون فرع مطابق."""
+        branch = make_branch_committed(db)
+        reservation = client.post(
+            "/api/v1/beach/reservations",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف",
+                "reservation_date": str(date.today()), "guests_count": 1,
+            },
+            headers=cashier_headers,
+        ).json()
+
+        resp = client.post(
+            f"/api/v1/beach/reservations/{reservation['id']}/checkin",
+            headers=manager_headers,
+        )
+        assert resp.status_code == 403, resp.text
+
+    def test_checkin_super_admin_bypasses_branch_check(self, client: TestClient, db, fake_redis, cashier_headers, super_admin_headers):
+        """super_admin (level=100) هو الاستثناء المعتمد الوحيد للتخطي
+        الكامل عبر الفروع (Decision 0003) — يفضل 200 حتى بلا Employee مرتبط."""
+        branch = make_branch_committed(db)
+        reservation = client.post(
+            "/api/v1/beach/reservations",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف",
+                "reservation_date": str(date.today()), "guests_count": 1,
+            },
+            headers=cashier_headers,
+        ).json()
+
+        resp = client.post(
+            f"/api/v1/beach/reservations/{reservation['id']}/checkin",
+            headers=super_admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_checkin_cashier_without_employee_link_rejected(self, client: TestClient, db, fake_redis, cashier_headers):
+        """Gate 1 containment: حساب برتبة كاشير بلا سجل Employee مرتبط
+        (فجوة بيانات حقيقية، مش نظرية — نفس حالة حسابي admin/super_admin
+        التجريبيين) لازم يتمنع صراحةً (fail-closed) بدل ما يتسمحله ضمنيًا."""
+        branch = make_branch_committed(db)
+        reservation = client.post(
+            "/api/v1/beach/reservations",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف",
+                "reservation_date": str(date.today()), "guests_count": 1,
+            },
+            headers=cashier_headers,
+        ).json()
+
+        # cashier_headers نفسه بلا Employee مرتبط (راجع docstring
+        # make_branch_linked_cashier_headers) — استخدامه المباشر هنا كافٍ.
+        resp = client.post(
+            f"/api/v1/beach/reservations/{reservation['id']}/checkin",
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403, resp.text
+
     def test_reservation_public_view_no_auth(self, client: TestClient, db, fake_redis):
-        """QR page reads reservation info without login."""
+        """QR page reads reservation status without login — بدون بيانات ضيف
+        حقيقية (Gate 1 containment: BeachReservationPublic كان بيسرّب
+        guest_name/guests_count/with_towel/reservation_date/total_amount
+        لأي رقم متسلسل بلا مصادقة، اتصلح لـ{id, status} بس)."""
         branch = make_branch_committed(db)
         from app.modules.beach.models import BeachReservation
         res = BeachReservation(
@@ -94,7 +209,10 @@ class TestBeachReservationFlow:
 
         resp = client.get(f"/api/v1/beach/reservations/{res.id}/public")
         assert resp.status_code == 200
-        assert resp.json()["guest_name"] == "ضيف QR"
+        body = resp.json()
+        assert body == {"id": res.id, "status": "pending"}
+        assert "guest_name" not in body
+        assert "total_amount" not in body
 
 
 class TestBeachInventoryPricing:

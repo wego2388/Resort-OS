@@ -81,6 +81,13 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     env_file: ./backend/.env.prod
+    # RATE_LIMIT_TRUSTED_PROXY_HOPS معرّف هنا صراحةً (مش جوه .env.prod
+    # المتجاهَل من git) — حقيقة بنية النشر (public client -> edge nginx ->
+    # frontend nginx -> backend، حتى في overlay الـip-only)، مش سر. القيمة
+    # هنا بتغلب أي قيمة في .env.prod لنفس المتغيّر (Compose environment:
+    # بتفوز على env_file:). راجع backend/app/core/rate_limit.py.
+    environment:
+      RATE_LIMIT_TRUSTED_PROXY_HOPS: "2"
     ports: ["127.0.0.1:8005:8005"]
     depends_on:
       db_postgres:

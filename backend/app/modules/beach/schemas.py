@@ -162,15 +162,16 @@ class BeachReservationRead(BeachReservationCreate):
 
 
 class BeachReservationPublic(BaseModel):
-    """معلومات عامة عن الحجز — تُعرض في صفحة QR قبل تأكيد الدخول، بدون تسجيل دخول."""
+    """معلومات عامة عن الحجز — تُعرض في صفحة QR قبل تأكيد الدخول، بدون تسجيل
+    دخول. Gate 1 containment (2026-07-17): كانت بترجع guest_name/
+    guests_count/with_towel/reservation_date/total_amount لأي رقم متسلسل
+    يتم تخمينه، بدون أي مصادقة — تسريب PII ومبلغ مالي حقيقي. الحقول دي
+    مش لازمة فعليًا للشاشة العامة (البيانات الكاملة بترجع من endpoint
+    الـcheckin المصادَق عليه بعد تسجيل دخول الكاشير). لا نبني توكن/جلسة ضيف
+    كاملة هنا — ده Gate 8، مش احتواء."""
     model_config = ConfigDict(from_attributes=True)
-    id:               int
-    guest_name:       str
-    guests_count:     int
-    with_towel:       bool
-    reservation_date: date
-    status:           str
-    total_amount:     Decimal
+    id:     int
+    status: str
 
 
 class BeachSurgeSet(BaseModel):

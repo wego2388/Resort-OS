@@ -13,6 +13,9 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+import pytest
+from pydantic import ValidationError
+
 from app.modules.dining import services
 from app.modules.dining.schemas import OrderItemCreate, OrderSyncRequest, OutletCreate
 
@@ -106,3 +109,18 @@ class TestOfflineSync:
         from app.modules.dining.models import DiningOrder
         count = db.query(DiningOrder).filter(DiningOrder.client_local_id == local_id).count()
         assert count == 1
+
+    def test_table_id_zero_rejected_at_schema_validation(self, db):
+        """Gate 1 containment (جولة مراجعة Codex الرابعة): OrderSyncRequest.
+        table_id كان بلا Field(ge=1) — table_id=0 كان يعدّي هنا بنجاح
+        وبعدين ينفجر داخل sync_offline_order وقت بناء OrderCreate(table_id=0,
+        ...) (اللي عنده Field(ge=1) فعلًا من round 3) بـpydantic.ValidationError
+        غير متوقعة جوه الـservice layer — 500 حقيقي، مش 422 نظيف عند حدود
+        الطلب. اتصلح بإضافة نفس القيد هنا. الاختبار ده بيثبت الرفض بيحصل
+        وقت بناء الـrequest/schema نفسه (قبل ما يوصل service.sync_offline_order
+        خالص)، فمستحيل يتحول لـ500 سيرفر."""
+        with pytest.raises(ValidationError):
+            OrderSyncRequest(
+                local_id=str(uuid.uuid4()), outlet_id=1, table_id=0,
+                items=[OrderItemCreate(item_id=1, quantity=1)],
+            )

@@ -177,6 +177,23 @@ def _reset_rate_limit_state():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_gate1_containment_switches():
+    """Gate 1 containment (جولة مراجعة Codex الثالثة/الأمنية النهائية):
+    DINING_SELF_ORDER_ENABLED/GUEST_ALERTS_ENABLED/RATE_LIMIT_TRUSTED_PROXY_HOPS
+    دلوقتي typed settings على الـsingleton `settings` (مش env var لكل تست) —
+    لازم يرجعوا لقيمتهم الافتراضية قبل كل تست وبعده، وإلا تست فعّلهم بيسرّب
+    الحالة للي بعده. نفس نمط _reset_rate_limit_state فوق بالظبط."""
+    from app.core.config import settings
+    settings.DINING_SELF_ORDER_ENABLED = False
+    settings.GUEST_ALERTS_ENABLED = False
+    settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 0
+    yield
+    settings.DINING_SELF_ORDER_ENABLED = False
+    settings.GUEST_ALERTS_ENABLED = False
+    settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 0
+
+
 # ─── DB Fixture ───────────────────────────────────────────────────────
 
 @pytest.fixture(scope="session", autouse=True)

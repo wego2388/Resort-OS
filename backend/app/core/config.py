@@ -5,7 +5,7 @@ Settings للمشروع — يرث WegoSettings ويضيف حقول Resort OS
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from app.core.kernel.config import CoreSettings
 
@@ -65,6 +65,19 @@ class Settings(CoreSettings):
     # ── Field Encryption (national_id, passport) ──────────────────────
     FIELD_ENCRYPTION_KEY: Optional[str] = None
 
+    # ── Gate 1 containment kill switches (جولة مراجعة Codex الثالثة) ───
+    # AGENTS.md بيمنع صراحةً الاعتماد على core.Setting (key/value حر في
+    # الداتابيز) كبوابة أمان لوحدها. الطلب الذاتي وتنبيهات الضيف كلاهما
+    # مسارات غير آمنة قبل Gate 8 (Service Location/QR token/guest session
+    # — راجع docs/decisions/0001-qr-guest-service-mode.md) — لازم الاتنين
+    # معًا: الـflag المكتوب هنا (deployment-level، مش قابل للتغيير من
+    # الـAPI) + core.Setting الخاص بالفرع (dining.self_order_enabled /
+    # core.guest_alerts_enabled). أي واحد بس متفعّل مش كافي. راجع
+    # _validate_containment_switches تحت — production ترفض تشغّل لو أي
+    # واحد منهم True، مش تحذير بس.
+    DINING_SELF_ORDER_ENABLED: bool = False
+    GUEST_ALERTS_ENABLED: bool = False
+
     # ── E-Invoice Egypt (ETA) ─────────────────────────────────────────
     ETA_ENABLED: bool = False
     ETA_CLIENT_ID: Optional[str] = None
@@ -80,6 +93,20 @@ class Settings(CoreSettings):
     # (كل حساب = محاولة تسجيل دخول منفصلة على نفس الـ IP).
     LOGIN_RATE_LIMIT_MAX: int = 5
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300
+
+    # ── Rate limiting: trusted reverse-proxy hop count (Codex security
+    # review، 2026-07-17) ───────────────────────────────────────────────
+    # app.core.rate_limit._client_ip كان بيثق في أول قيمة (leftmost) في
+    # X-Forwarded-For بلا أي تحقق — قيمة العميل نفسه بتتقدّم بدون تعديل
+    # عبر كل الطبقتين (edge nginx وfrontend nginx، الاتنين بيستخدموا
+    # $proxy_add_x_forwarded_for اللي بيضيف على القيمة الجاية مش يستبدلها،
+    # راجع deploy/nginx/edge.conf وfrontend/nginx.spa.conf)، يعني أي عميل
+    # يقدر يزوّر مفتاح الـrate-limit في Redis ويهرب من أي حد فعليًا.
+    # الافتراضي 0 = محلي/بدون reverse proxy، يتجاهل X-Forwarded-For كليًا
+    # ويستخدم request.client.host مباشرة. production خلف edge+frontend
+    # nginx لازم 2 (راجع docker-compose.prod.yml). حد أقصى 10 دفاعي — مفيش
+    # سيناريو حقيقي في المشروع ده محتاج سلسلة reverse proxy أطول من كده.
+    RATE_LIMIT_TRUSTED_PROXY_HOPS: int = Field(0, ge=0, le=10)
 
     # ── Infrastructure ports (for reference) ──────────────────────────
     # Backend: 8005 | Frontend: 5175 | PostgreSQL: 5436 | Redis: 6381
@@ -109,6 +136,38 @@ class Settings(CoreSettings):
                 raise ValueError(msg)
             import warnings  # noqa: PLC0415
             warnings.warn(f"[config] {msg}", stacklevel=2)
+        return self
+
+    @model_validator(mode="after")
+    def _validate_containment_switches(self) -> "Settings":
+        """Gate 1 containment: DINING_SELF_ORDER_ENABLED/GUEST_ALERTS_ENABLED
+        لازم يفضلوا False في أي بيئة غير معروفة صراحةً كآمنة — فشل صريح
+        وقت الإقلاع، مش قبول صامت.
+
+        **تصحيح (جولة مراجعة Codex الرابعة): fail-closed حقيقي، مش
+        blacklist.** النسخة الأولى كانت بترفض `ENVIRONMENT == "production"`
+        بس (مطابقة حرفية) — يعني "Production" بحرف كبير، "staging"، أو أي
+        قيمة تانية غير متوقعة (typo، بيئة جديدة محدش عرّفها هنا) كانت
+        بتعدّي من غير أي فحص خالص. دلوقتي allow-list صريح
+        (development/test/testing بعد strip().lower()) هو الوحيد المسموح
+        فيه تفعيل أي من الاثنين — أي حاجة تانية (بما فيها production بأي
+        حروف، staging، أو قيمة غير معروفة) بترفض لو أي واحد منهم True."""
+        _SAFE_ENVIRONMENTS = {"development", "test", "testing"}
+        normalized_env = (self.ENVIRONMENT or "").strip().lower()
+        if normalized_env not in _SAFE_ENVIRONMENTS:
+            unsafe = [
+                name for name, value in (
+                    ("DINING_SELF_ORDER_ENABLED", self.DINING_SELF_ORDER_ENABLED),
+                    ("GUEST_ALERTS_ENABLED", self.GUEST_ALERTS_ENABLED),
+                ) if value
+            ]
+            if unsafe:
+                raise ValueError(
+                    "لا يجوز تفعيل " + "، ".join(unsafe) + f" في بيئة '{self.ENVIRONMENT}' "
+                    "قبل اكتمال Gate 8 (Service Location/QR token/guest session) — "
+                    "مسموح فقط في development/test/testing. راجع "
+                    "docs/decisions/0001-qr-guest-service-mode.md"
+                )
         return self
 
 

@@ -840,13 +840,26 @@ def mark_b2b_contracts_overdue(db: Session, today: Optional[date] = None) -> int
 
 
 def check_in_reservation(
-    db: Session, reservation_id: int, cashier_id: Optional[int] = None,
+    db: Session, reservation_id: int, requesting_user, cashier_id: Optional[int] = None,
 ) -> "BeachReservation":
     """تسجيل دخول فوري لحجز شاطئ عبر مسح QR — يحوّل الحجز لعملية بيع حقيقية
-    (يستهلك capacity/فوط زي أي تذكرة عادية) ويحدّث حالة الحجز لـ checked_in."""
+    (يستهلك capacity/فوط زي أي تذكرة عادية) ويحدّث حالة الحجز لـ checked_in.
+
+    Gate 1 containment (2026-07-17، BOLA/IDOR اتصلحت): get_cashier_user كان
+    بيتحقق من مستوى الصلاحية بس، مش من الفرع — أي كاشير من أي فرع كان يقدر
+    يسجّل دخول حجز فرع تاني بمجرد معرفة/تخمين رقمه.
+
+    **تصحيح (جولة مراجعة Codex الثالثة):** requesting_user إجباري بلا أي
+    default أو باب تخطٍ (internal_call اتشال بالكامل — مفيش أي caller
+    إنتاجي حقيقي كان محتاجه، كان بس تسهيل لتستات الوحدة). تستات
+    test_beach.py's TestQRCheckin بقت بتستخدم كاشير حقيقي مرتبط بالفرع
+    (make_branch_linked_cashier) بدل أي bypass."""
     res = crud.get_reservation(db, reservation_id)
     if not res:
         raise ValueError(f"الحجز {reservation_id} غير موجود")
+    from app.modules.core import services as core_services  # noqa: PLC0415
+
+    core_services.assert_branch_access(db, requesting_user, res.branch_id, "تسجيل دخول حجز")
     if res.status == "checked_in":
         raise ValueError("تم تسجيل الدخول لهذا الحجز بالفعل")
     if res.status in ("cancelled", "no_show"):

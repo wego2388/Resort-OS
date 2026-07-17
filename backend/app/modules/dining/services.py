@@ -373,6 +373,29 @@ def remove_variant_recipe_line(db: Session, line_id: int) -> None:
 
 # ─────────────────────── Orders ────────────────────────────────────────
 
+def assert_guest_self_order_enabled(db: Session, branch_id: int) -> None:
+    """Gate 1 containment (Decision 0001 point 3 / PRODUCTION_READINESS_AUDIT
+    C-02): unauthenticated guest self-ordering is closed by default.
+
+    **تصحيح (جولة مراجعة Codex الثالثة):** AGENTS.md بيمنع الاعتماد على
+    core.Setting (حر، قابل للتعديل عبر API الإعدادات) كبوابة أمان لوحدها.
+    لازم الاتنين معًا: settings.DINING_SELF_ORDER_ENABLED (typed،
+    deployment-level، مش قابل للتغيير من غير deploy/restart) + core.Setting
+    الخاص بالفرع (dining.self_order_enabled). أي واحد بس متفعّل مش كافي."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.core import services as core_services  # noqa: PLC0415
+
+    if not settings.DINING_SELF_ORDER_ENABLED:
+        raise ValueError("الطلب الذاتي غير متاح حاليًا — نادِ الجرسون لطلب الطلب أو الحساب")
+
+    raw_value = core_services.get_setting_value(
+        db, "dining.self_order_enabled", branch_id=branch_id, default="false",
+    )
+    enabled = str(raw_value).strip().lower() in ("1", "true", "yes", "y", "نعم")
+    if not enabled:
+        raise ValueError("الطلب الذاتي غير متاح حاليًا — نادِ الجرسون لطلب الطلب أو الحساب")
+
+
 def create_order(
     db: Session,
     branch_id: int,
@@ -381,11 +404,19 @@ def create_order(
     hold: bool = False,
 ) -> DiningOrder:
     outlet = _get_outlet_or_404(db, data.outlet_id)
+    if outlet.branch_id != branch_id:
+        # Gate 1 containment (جولة تصحيح ثانية): دايمًا صحيح للمسار
+        # العام/الداخلي الحاليين (branch_id بيتحسب من outlet.branch_id
+        # نفسه في الـ3 callers الموجودين) — دفاع عن أي caller مستقبلي
+        # يبعت branch_id تاني بالغلط أو عمدًا.
+        raise ValueError(f"المنفذ {data.outlet_id} لا يتبع هذا الفرع")
 
-    if data.table_id:
+    if data.table_id is not None:
         table = crud.get_table(db, data.table_id)
         if not table:
             raise ValueError(f"الطاولة {data.table_id} غير موجودة")
+        if table.outlet_id != data.outlet_id or table.branch_id != branch_id:
+            raise ValueError(f"الطاولة {data.table_id} لا تتبع هذا المنفذ")
         if table.status == "out_of_service":
             raise ValueError(f"الطاولة {table.table_number} خارج الخدمة")
 
@@ -396,6 +427,8 @@ def create_order(
         item = crud.get_item(db, item_req.item_id)
         if not item:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
+        if item.outlet_id != data.outlet_id or item.branch_id != branch_id:
+            raise ValueError(f"الصنف {item_req.item_id} لا يتبع هذا المنفذ")
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
         _check_item_available_now(item)

@@ -391,9 +391,13 @@ def get_reservation_public(reservation_id: int, db: DbDep):
              response_model=BeachReservationRead)
 def checkin_reservation(reservation_id: int, db: DbDep, user=Depends(get_cashier_user)):
     try:
-        return services.check_in_reservation(db, reservation_id, cashier_id=user.id)
+        return services.check_in_reservation(
+            db, reservation_id, cashier_id=user.id, requesting_user=user,
+        )
     except services.BeachConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

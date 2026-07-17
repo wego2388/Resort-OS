@@ -32,6 +32,31 @@ def make_branch(db):
     return b
 
 
+def make_branch_linked_cashier(db, branch):
+    """Gate 1 containment (جولة مراجعة Codex الثالثة): check_in_reservation
+    بقى بيطلب requesting_user حقيقي دايمًا (اتشال internal_call — مفيش أي
+    caller إنتاجي حقيقي كان محتاجه، كان بس باب اختبارات). تستات الوحدة هنا
+    لازم تستخدم كاشير حقيقي مرتبط بالفرع بدل أي bypass، حتى وهي بتختبر
+    قواعد تجارية تانية غير الصلاحيات نفسها."""
+    from app.core.kernel.models.user import User
+    from app.modules.hr.models import Employee
+    from tests.conftest import _create_test_user
+
+    email = f"cashier-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, "cashier")
+    user = db.query(User).get(user_id)
+    emp = Employee(
+        branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name="كاشير اختبار الوحدة", position="Cashier", department="Beach",
+        basic_salary=Decimal("4000.00"), hire_date=date.today() - timedelta(days=365),
+        user_id=user_id,
+    )
+    db.add(emp)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
 def make_contract(
     db, branch, quota=10, entry_price=Decimal("80"), towel_price=Decimal("30"),
     valid_from=None, valid_until=None, is_active=True,
@@ -912,6 +937,7 @@ class TestQRCheckin:
 
     def test_checkin_creates_transaction_and_consumes_capacity(self, db):
         branch = make_branch(db)
+        cashier = make_branch_linked_cashier(db, branch)
         today = date.today()
         data = BeachReservationCreate(
             branch_id=branch.id, guest_name="Ahmed", guest_phone="01001234567",
@@ -920,7 +946,7 @@ class TestQRCheckin:
         res = services.create_reservation(db, data)
         assert res.status == "pending"
 
-        checked_in = services.check_in_reservation(db, res.id, cashier_id=1)
+        checked_in = services.check_in_reservation(db, res.id, requesting_user=cashier, cashier_id=cashier.id)
         assert checked_in.status == "checked_in"
         assert checked_in.tx_id is not None
 
@@ -935,32 +961,37 @@ class TestQRCheckin:
 
     def test_checkin_without_towel(self, db):
         branch = make_branch(db)
+        cashier = make_branch_linked_cashier(db, branch)
         data = BeachReservationCreate(
             branch_id=branch.id, guest_name="Sara", reservation_date=date.today(),
             guests_count=2, with_towel=False,
         )
         res = services.create_reservation(db, data)
-        checked_in = services.check_in_reservation(db, res.id)
+        checked_in = services.check_in_reservation(db, res.id, requesting_user=cashier)
         tx = crud.get_transaction(db, checked_in.tx_id)
         assert tx.tx_type == "entry"
 
     def test_double_checkin_raises(self, db):
         branch = make_branch(db)
+        cashier = make_branch_linked_cashier(db, branch)
         data = BeachReservationCreate(
             branch_id=branch.id, guest_name="Omar", reservation_date=date.today(),
             guests_count=1,
         )
         res = services.create_reservation(db, data)
-        services.check_in_reservation(db, res.id)
+        services.check_in_reservation(db, res.id, requesting_user=cashier)
         with pytest.raises(ValueError, match="بالفعل"):
-            services.check_in_reservation(db, res.id)
+            services.check_in_reservation(db, res.id, requesting_user=cashier)
 
     def test_checkin_nonexistent_reservation_raises(self, db):
+        branch = make_branch(db)
+        cashier = make_branch_linked_cashier(db, branch)
         with pytest.raises(ValueError):
-            services.check_in_reservation(db, 999999)
+            services.check_in_reservation(db, 999999, requesting_user=cashier)
 
     def test_checkin_cancelled_reservation_raises(self, db):
         branch = make_branch(db)
+        cashier = make_branch_linked_cashier(db, branch)
         data = BeachReservationCreate(
             branch_id=branch.id, guest_name="Laila", reservation_date=date.today(),
             guests_count=1,
@@ -969,10 +1000,11 @@ class TestQRCheckin:
         res = crud.update_reservation_status(db, res, "cancelled")
         db.commit()
         with pytest.raises(ValueError, match="ملغى"):
-            services.check_in_reservation(db, res.id)
+            services.check_in_reservation(db, res.id, requesting_user=cashier)
 
     def test_checkin_respects_capacity_limit(self, db):
         branch = make_branch(db)
+        cashier = make_branch_linked_cashier(db, branch)
         today = date.today()
         # عمّر السعة تقريباً بالكامل
         inv = crud.get_or_create_inventory(db, branch.id, today, capacity_max=5)
@@ -983,7 +1015,7 @@ class TestQRCheckin:
         )
         res = services.create_reservation(db, data)
         with pytest.raises(ValueError, match="ممتلئ"):
-            services.check_in_reservation(db, res.id)
+            services.check_in_reservation(db, res.id, requesting_user=cashier)
 
 
 class TestDailySummary:
