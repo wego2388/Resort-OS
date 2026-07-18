@@ -426,9 +426,11 @@ heads` رأس واحد، `pnpm --filter el-kheima type-check`/`build` نجحا،
 
 **الحالة: Gate 2B3A مُعتمَدة نهائيًا.** المراجعة النهائية أعادت فحص
 الـdiff واختبارات Postgres والبناء، وشدّدت عقود intent وربط labels بمدخلات
-`AppInput` قبل الاعتماد. لا push. Gate 2B3B
-(تدقيق فشل الدخول الموحّد) وGate finance step-up وregistry الإعدادات
-الـtyped لسه مؤجَّلة عمدًا، ولم تبدأ. التفاصيل الكاملة:
+`AppInput` قبل الاعتماد. لا push. تم فتح فرع Gate 2B3B وتجهيز عقد تنفيذ
+كبير لكلودي يجمع تدقيق المصادقة، refresh-token families وكشف replay،
+وإدارة المستخدم لجلساته؛ لم يُنفَّذ كود هذه الدفعة بعد. Gate finance
+step-up وregistry الإعدادات الـtyped ما زالا مؤجَّلين عمدًا. التفاصيل
+الكاملة لـGate 2B3A:
 `docs/audits/gate-2b3a-step-up-control-plane.md`.
 
 ---
