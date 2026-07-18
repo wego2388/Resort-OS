@@ -41,7 +41,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import (
-    APIRouter, Depends, HTTPException, Query, Request, WebSocket,
+    APIRouter, Depends, Header, HTTPException, Query, Request, WebSocket,
     WebSocketDisconnect, status,
 )
 
@@ -54,6 +54,7 @@ from app.core.deps import (
     get_super_admin_user,
     get_waiter_user,
     get_websocket_user,
+    user_level,
 )
 from app.modules.core import crud, services
 from app.modules.core.permission_catalog import PERMISSION_CATALOG
@@ -71,6 +72,7 @@ from app.modules.core.schemas import (
     NotificationRead,
     PaginatedResponse,
     PermissionCatalogEntryRead,
+    PermissionRevokeRequest,
     PinCredentialRead,
     PinSetRequest,
     PinSwitchRequest,
@@ -84,6 +86,94 @@ from app.modules.core.schemas import (
 )
 
 router = APIRouter(tags=["core"])
+
+
+# ── Gate 2B3A — step-up consumption helper ──────────────────────────────
+# مشترك بين الأربعة endpoints المحمية (PATCH /users/{id}/role، POST
+# /permissions، DELETE /permissions/{id}، PUT /settings/{key}). كل endpoint
+# لسه هو المسؤول عن بناء الـscope_hash من الـpayload الفعلي بتاعه (مش
+# dependency عامة بتعرف الـpurpose بس زي ما طلب محمد صراحة) — الدالة دي
+# بس بتستهلك الـtoken وتترجم النتيجة لأكواد HTTP، بعد ما الـendpoint يجهّز
+# كل حاجة.
+
+def _consume_step_up_or_raise(
+    db,
+    user,
+    request: Request,
+    *,
+    purpose: str,
+    scope_hash: str,
+    x_step_up_token: Optional[str],
+) -> dict:
+    if not x_step_up_token:
+        raise HTTPException(
+            status.HTTP_428_PRECONDITION_REQUIRED,
+            {
+                "error_code": "STEP_UP_REQUIRED",
+                "message": "يلزم إثبات هوية حديث (كلمة السر + التحقق بخطوتين) قبل تنفيذ هذا الإجراء",
+            },
+        )
+
+    from app.core.config import settings as app_settings  # noqa: PLC0415
+    from app.core.kernel.auth.service import AuthService  # noqa: PLC0415
+    from app.core.kernel.auth.step_up import access_token_hash_from_request  # noqa: PLC0415
+    from app.core.kernel.models.user import User as _KernelUser  # noqa: PLC0415
+
+    auth_service = AuthService(db, _KernelUser, app_settings)
+    result = auth_service.consume_step_up(
+        user_id=user.id,
+        purpose=purpose,
+        scope_hash=scope_hash,
+        access_token_hash=access_token_hash_from_request(request),
+        token=x_step_up_token,
+    )
+    if result is None:
+        # Deliberately generic — a missing/expired/replayed/wrong-user/
+        # wrong-session/wrong-purpose/wrong-scope grant all look identical
+        # to the caller, matching consume_step_up's own design.
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {
+                "error_code": "STEP_UP_INVALID",
+                "message": "إثبات الهوية غير صالح أو منتهي أو مُستخدَم بالفعل — أعد التأكيد وحاول تاني",
+            },
+        )
+    return result
+
+
+def _require_branch_or_global_read(db, user, branch_id: Optional[int], action_desc: str) -> None:
+    """Gate 2B3A: قراءة إعدادات فرع تحتاج manager+ وعزل فرع حقيقي server-
+    side؛ قراءة الإعدادات العامة (branch_id غير مُرسَل خالص) تحتاج
+    super_admin فقط. لا تثق في branch_id القادم من الواجهة — دايمًا
+    assert_branch_access بدل مقارنة مباشرة."""
+    if branch_id is None:
+        if user_level(user) < 100:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "الإعدادات العامة (Global) متاحة فقط لحساب super_admin",
+            )
+        return
+    try:
+        services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+
+def _require_branch_or_global_write(db, user, branch_id: Optional[int], action_desc: str) -> None:
+    """نفس فحص القراءة، لكن الكتابة أصلًا محمية بـget_admin_user على
+    مستوى الـrouter dependency — الفحص هنا لعزل الفرع نفسه بس، مش تكرار
+    فحص الـrole."""
+    if branch_id is None:
+        if user_level(user) < 100:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "الإعدادات العامة (Global) قابلة للتعديل فقط من super_admin",
+            )
+        return
+    try:
+        services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
 # ── WebSocket Guest-Alerts Manager ─────────────────────────────────────
@@ -237,6 +327,12 @@ def list_settings(
     user=Depends(get_manager_user),
     branch_id: Optional[int] = Query(None),
 ):
+    """Gate 2B3A: عزل فرع حقيقي server-side بدل الثقة في branch_id القادم
+    من الواجهة. branch_id مُرسَل → يطابق فرع المنفّذ الفعلي (Employee
+    link) أو super_admin. branch_id مش مُرسَل خالص → الإعدادات العامة
+    (Global)، متاحة لـsuper_admin فقط — راجع
+    docs/audits/gate-2b3a-step-up-control-plane.md."""
+    _require_branch_or_global_read(db, user, branch_id, "عرض إعدادات هذا الفرع")
     rows = crud.list_settings(db, branch_id=branch_id)
     return [SettingRead.model_validate(r) for r in rows]
 
@@ -248,10 +344,22 @@ def list_settings(
 def get_setting(
     key: str,
     db: DbDep,
-    _user=Depends(get_current_active_user),
+    user=Depends(get_manager_user),
     branch_id: Optional[int] = Query(None),
 ):
-    row = crud.get_setting(db, key, branch_id)
+    """كانت مفتوحة لأي مستخدم نشط (get_current_active_user) — بقت
+    manager+ زي القائمة، بنفس عزل الفرع.
+
+    **تصحيح (مراجعة Codex المستقلة، 2026-07-18):** النسخة الأولى كانت
+    بتستخدم crud.get_setting() (بتعمل fallback ضمني للإعداد العام لو
+    مفيش صف خاص بالفرع) — يعني مدير فرع حقيقي بيسأل عن مفتاح مش موجود
+    لفرعه كان بياخد صف الإعداد العام (branch_id=null) بصمت، رغم إن فحص
+    عزل الفرع فوق كان بيتحقق من الفرع المطلوب مش من مصدر الصف الراجع.
+    دلوقتي بتستخدم get_setting_exact() (بدون أي fallback) — مطابقة تامة
+    على (key, branch_id) بس. الـfallback الداخلي (تسعير الشاطئ وغيره)
+    لسه موجود في get_setting_value()/crud.get_setting() العادية، مش هنا."""
+    _require_branch_or_global_read(db, user, branch_id, "عرض إعداد هذا الفرع")
+    row = crud.get_setting_exact(db, key, branch_id)
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Setting '{key}' غير موجود")
     return SettingRead.model_validate(row)
@@ -265,10 +373,38 @@ def upsert_setting(
     key: str,
     data: SettingUpdate,
     db: DbDep,
+    request: Request,
     user=Depends(get_admin_user),
     branch_id: Optional[int] = Query(None),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
 ):
-    return services.upsert_setting(db, key, data.value, branch_id, updated_by=user.id)
+    """Gate 2B3A: عزل فرع حقيقي (زي القراءة) + step-up إجباري + reason
+    إجباري (SettingUpdate.reason). الكتابة على الإعدادات العامة
+    (branch_id=None) لسه تحتاج super_admin تحديدًا، فوق get_admin_user
+    الأساسية."""
+    _require_branch_or_global_write(db, user, branch_id, "تعديل إعدادات هذا الفرع")
+
+    from app.core.kernel.auth.step_up import setting_upsert_scope  # noqa: PLC0415
+
+    scope_hash = setting_upsert_scope(
+        key=key, branch_id=branch_id, value=data.value, reason=data.reason,
+    )
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="setting_upsert", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        return services.upsert_setting(
+            db, key, data.value, branch_id, updated_by=user.id,
+            reason=data.reason,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
+        )
+    except services.ActorAuthorizationChangedError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "ACTOR_AUTHORIZATION_CHANGED", "message": str(exc)},
+        )
 
 
 # ─────────────────────── Notifications ───────────────────────────────
@@ -414,14 +550,31 @@ def update_user_role(
     user_id: int,
     data: UserRoleUpdate,
     db: DbDep,
+    request: Request,
     user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
 ):
     """كود الأخطاء الدقيق (Gate 2A، Decision 0003 invariants) موثّق في
     docs/audits/gate-2a-super-admin-invariants.md — كل حالة مربوطة بـ
-    exception class مخصصة، مش ValueError عام بيتحول لـ404 بالغلط."""
+    exception class مخصصة، مش ValueError عام بيتحول لـ404 بالغلط.
+
+    Gate 2B3A: step-up إجباري (تغيير role/is_active من أخطر عمليات
+    التحكم في النظام) + reason إجباري (UserRoleUpdate.reason)."""
+    from app.core.kernel.auth.step_up import user_role_update_scope  # noqa: PLC0415
+
+    scope_hash = user_role_update_scope(
+        user_id=user_id, role=data.role, is_active=data.is_active, reason=data.reason,
+    )
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="user_role_update", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
     try:
         updated = services.update_user_role(
             db, user_id, role=data.role, is_active=data.is_active, updated_by=user.id,
+            reason=data.reason,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
         )
         return UserRead.model_validate(updated)
     except services.UserNotFoundError as exc:
@@ -481,12 +634,18 @@ def list_user_permissions(
 def grant_user_permission(
     data: UserPermissionGrantRequest,
     db: DbDep,
+    request: Request,
     user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
 ):
     """Gate 2A: كانت هذه الدالة من غير أي try/except خالص — أي ValueError
     مستقبلي كان هيوصل لـSecureErrorMiddleware ويترجم 500 غامض بدل كود HTTP
     دقيق. دلوقتي بتمسك exceptions محددة (راجع
-    docs/audits/gate-2a-super-admin-invariants.md)."""
+    docs/audits/gate-2a-super-admin-invariants.md).
+
+    Gate 2B3A: step-up إجباري + reason إجباري
+    (UserPermissionGrantRequest.reason)."""
+    from app.core.kernel.auth.step_up import permission_override_upsert_scope  # noqa: PLC0415
     from app.modules.core.schemas import UserPermissionCreate  # noqa: PLC0415
 
     perm_data = UserPermissionCreate(
@@ -495,8 +654,22 @@ def grant_user_permission(
         allowed=data.allowed,
         branch_id=data.branch_id,
     )
+    scope_hash = permission_override_upsert_scope(
+        user_id=data.user_id, resource=data.resource, action=data.action,
+        allowed=data.allowed, branch_id=data.branch_id, reason=data.reason,
+    )
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="permission_override_upsert", scope_hash=scope_hash,
+        x_step_up_token=x_step_up_token,
+    )
     try:
-        perm = services.grant_permission(db, data.user_id, perm_data, granted_by=user.id)
+        perm = services.grant_permission(
+            db, data.user_id, perm_data, granted_by=user.id,
+            reason=data.reason,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
+        )
     except services.UserNotFoundError as exc:
         # ملحوظة: الـkernel's global @app.exception_handler(404) (راجع
         # app/core/kernel/errors.py) بيفلطح أي 404 في المشروع كله لـ
@@ -509,6 +682,11 @@ def grant_user_permission(
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             {"error_code": "SUPER_ADMIN_PERMISSION_OVERRIDE_FORBIDDEN", "message": str(exc)},
+        )
+    except services.ActorAuthorizationChangedError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "ACTOR_AUTHORIZATION_CHANGED", "message": str(exc)},
         )
     return UserPermissionRead.model_validate(perm)
 
@@ -540,13 +718,38 @@ def get_my_effective_permissions(db: DbDep, user=Depends(get_current_active_user
 )
 def revoke_user_permission(
     permission_id: int,
+    data: PermissionRevokeRequest,
     db: DbDep,
+    request: Request,
     user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
 ):
+    """Gate 2B3A: DELETE بجسم طلب (مش شائع لكن أنضف مع Axios من custom
+    header لـreason حر — راجع PermissionRevokeRequest) + step-up إجباري."""
+    from app.core.kernel.auth.step_up import permission_override_revoke_scope  # noqa: PLC0415
+
+    scope_hash = permission_override_revoke_scope(
+        permission_id=permission_id, reason=data.reason,
+    )
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="permission_override_revoke", scope_hash=scope_hash,
+        x_step_up_token=x_step_up_token,
+    )
     try:
-        services.revoke_permission(db, permission_id, revoked_by=user.id)
+        services.revoke_permission(
+            db, permission_id, revoked_by=user.id,
+            reason=data.reason,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except services.ActorAuthorizationChangedError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "ACTOR_AUTHORIZATION_CHANGED", "message": str(exc)},
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════

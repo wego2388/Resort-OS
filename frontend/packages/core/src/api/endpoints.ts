@@ -12,6 +12,8 @@ export const ENDPOINTS = {
     regenerateRecoveryCodes: '/api/v1/auth/2fa/recovery-codes/regenerate',
     passwordResetRequest: '/api/v1/auth/password-reset/request',
     passwordResetConfirm: '/api/v1/auth/password-reset/confirm',
+    // Gate 2B3A — step-up control plane (docs/decisions/0003-super-admin-control-plane.md)
+    stepUp: '/api/v1/auth/step-up',
   },
   core: {
     branches: '/api/v1/branches',

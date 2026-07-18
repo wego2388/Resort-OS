@@ -18,6 +18,23 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+# ─────────────────────── Gate 2B3A — mandatory reason ──────────────────
+# مشترك بين كل mutation محمي بـstep-up (role update، permission grant/
+# revoke، setting upsert) — نفس القاعدة، مكان واحد.
+
+_REASON_MIN_LENGTH = 3
+_REASON_MAX_LENGTH = 500
+
+
+def _validate_reason(value: str) -> str:
+    trimmed = (value or "").strip()
+    if len(trimmed) < _REASON_MIN_LENGTH:
+        raise ValueError(
+            f"السبب مطلوب ({_REASON_MIN_LENGTH} أحرف على الأقل بعد إزالة المسافات الزائدة)"
+        )
+    return trimmed
+
+
 # ─────────────────────── Branch ──────────────────────────────────────
 
 class BranchBase(BaseModel):
@@ -69,8 +86,15 @@ class SettingRead(BaseModel):
 
 
 class SettingUpdate(BaseModel):
-    """تحديث قيمة setting — يُنشئ إذا لم يكن موجوداً (upsert)"""
-    value: str = Field(..., min_length=0)
+    """تحديث قيمة setting — يُنشئ إذا لم يكن موجوداً (upsert). Gate 2B3A:
+    reason إجباري ومحمي بـstep-up (راجع core/api/router.py::upsert_setting)."""
+    value:  str = Field(..., min_length=0)
+    reason: str = Field(..., max_length=_REASON_MAX_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_must_be_real_text(cls, v: str) -> str:
+        return _validate_reason(v)
 
 
 # ─────────────────────── Notification ────────────────────────────────
@@ -159,9 +183,17 @@ class UserRead(BaseModel):
 
 
 class UserRoleUpdate(BaseModel):
-    """super_admin فقط — تغيير role و/أو is_active لمستخدم."""
+    """super_admin فقط — تغيير role و/أو is_active لمستخدم. Gate 2B3A:
+    reason إجباري ومحمي بـstep-up (راجع
+    docs/audits/gate-2b3a-step-up-control-plane.md)."""
     role:      Optional[str] = Field(None, max_length=30)
     is_active: Optional[bool] = None
+    reason:    str = Field(..., max_length=_REASON_MAX_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_must_be_real_text(cls, v: str) -> str:
+        return _validate_reason(v)
 
     @field_validator("role")
     @classmethod
@@ -209,8 +241,29 @@ class UserPermissionRead(UserPermissionBase):
 
 
 class UserPermissionGrantRequest(UserPermissionBase):
-    """للاستخدام من POST /core/permissions — بيحدد المستخدم المستهدف صراحةً."""
+    """للاستخدام من POST /core/permissions — بيحدد المستخدم المستهدف صراحةً.
+    Gate 2B3A: reason إجباري ومحمي بـstep-up."""
     user_id: int
+    reason:  str = Field(..., max_length=_REASON_MAX_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_must_be_real_text(cls, v: str) -> str:
+        return _validate_reason(v)
+
+
+class PermissionRevokeRequest(BaseModel):
+    """جسم اختياري لـDELETE /permissions/{id} — DELETE بجسم مش شائع، لكن
+    Gate 2B3A محتاج reason إجباري لأي حذف override، وaxios بيدعم body مع
+    DELETE عبر {data: {...}}."""
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(..., max_length=_REASON_MAX_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_must_be_real_text(cls, v: str) -> str:
+        return _validate_reason(v)
 
 
 class PermissionCatalogEntryRead(BaseModel):
@@ -218,6 +271,7 @@ class PermissionCatalogEntryRead(BaseModel):
     resource:       str
     action:         str
     label_ar:       str
+    label_en:       str
     module:         str
     min_role_level: int
     endpoint:       str

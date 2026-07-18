@@ -188,18 +188,27 @@ class TestCredentialChangesRevokeSessions:
         assert response.status_code == 200, response.text
 
     def test_role_change_revokes_every_refresh_token(self, client: TestClient, setup_db):
+        from tests.conftest import _fresh_super_admin, _issue_step_up
+
         target_id, _target_email = _create_user(role="manager")
-        _actor_id, actor_email = _create_user(role="super_admin")
+        _actor_id, actor_headers, actor_secret = _fresh_super_admin("session-revoke-actor")
         db = TestingSessionLocal()
         try:
             refresh_token = _service(db).create_refresh_token(target_id)
         finally:
             db.close()
 
+        # Gate 2B3A: PATCH /users/{id}/role بقت محتاجة reason + step-up token
+        reason = "تخفيض دور مدير لمشرف بعد إعادة هيكلة الفريق"
+        token = _issue_step_up(
+            client, actor_headers, purpose="user_role_update",
+            intent={"user_id": target_id, "role": "supervisor", "is_active": None, "reason": reason},
+            totp_secret=actor_secret,
+        )
         response = client.patch(
             f"/api/v1/users/{target_id}/role",
-            json={"role": "supervisor"},
-            headers=_auth_headers(actor_email),
+            json={"role": "supervisor", "reason": reason},
+            headers={**actor_headers, "X-Step-Up-Token": token},
         )
         assert response.status_code == 200, response.text
 

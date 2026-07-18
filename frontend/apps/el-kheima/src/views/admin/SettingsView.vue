@@ -8,13 +8,35 @@
 //
 // كل الإعدادات هنا مربوطة بالفرع الحالي (نفس نمط باقي شاشات admin) — إعداد
 // "عام" (branch_id=null) مش هيظهر في القايمة إلا لو اتعمله PUT بدون branch_id.
-import { ref, reactive, onMounted } from 'vue'
-import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
+//
+// Gate 2B3A: الكتابة (PUT) بقت محتاجة step-up token صالح (X-Step-Up-Token) +
+// reason إجباري — راجع StepUpConfirmModal.vue وdocs/audits/
+// gate-2b3a-step-up-control-plane.md. auth.branchId العام لسه بيرجع 1
+// افتراضيًا لأي حساب (مفيش عمود branch_id حقيقي على User خالص — قرار
+// معماري أكبر مؤجَّل، راجع CLAUDE.md §18) — هنا بس بنعرض تحذير واضح بدل
+// ما نفترض بصمت إن branch=1 صح دايمًا؛ مفيش تغيير على auth.branchId نفسه
+// ولا على أي شاشة تانية بتستخدمه (خارج نطاق Gate 2B3A).
+import { ref, reactive, computed, onMounted } from 'vue'
+import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { AppCard, AppButton, AppInput, AppBadge, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
+import { useI18n } from 'vue-i18n'
+import StepUpConfirmModal from '../../components/StepUpConfirmModal.vue'
 
+const { t, locale } = useI18n()
 const toast = useToast()
 const auth = useAuthStore()
 const branchId = auth.branchId
+// حساب بلا branch_id حقيقي في استجابة /auth/me — تحذير بس، مش حظر (نفس
+// السلوك القديم فعليًا لسه شغال، بدون ادّعاء إنه صحيح 100%).
+const hasRealBranchContext = computed(() => auth.user?.branch_id != null)
+
+// روابط سريعة لأقسام الإدارة ذات الصلة
+const QUICK_LINKS = [
+  { path: '/admin/tables',    labelKey: 'backoffice.settings.quickLinkTables', icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
+  { path: '/admin/cafe-menu', labelKey: 'backoffice.settings.quickLinkCafeMenu', icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
+  { path: '/admin/menu',      labelKey: 'backoffice.settings.quickLinkRestaurantMenu', icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
+  { path: '/admin/qr',        labelKey: 'backoffice.nav.qrCodes', icon: '📱', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
+]
 
 // شرح كل مفتاح إعداد معروف — اتبنى بقراءة الكود فعليًا (مش تخمين)، راجع مين
 // بيقرا كل key بالظبط قبل ما تضيف/تعدّل سطر هنا:
@@ -26,64 +48,112 @@ const branchId = auth.branchId
 //     بيئة السيرفر (.env) أو من عمود تاني في الداتابيز، مش من الصف ده — تعديله
 //     من هنا مالوش أي أثر تشغيلي حاليًا (اتأكد بالبحث في الكود كله، مش افتراض).
 interface SettingMeta {
-  description: string
+  description: { ar: string; en: string }
   /** live = القيمة دي فعلاً بتتقرا وبتأثر على سلوك النظام فورًا عند الحفظ */
   live: boolean
 }
 
 const SETTINGS_META: Record<string, SettingMeta> = {
   'beach.price.adult': {
-    description: 'سعر تذكرة دخول الشاطئ للبالغ (جنيه) — يُستخدم فعليًا في تسعير كل عملية بيع بشاشة كاشير الشاطئ، فوق أي نسبة ذروة (surge) على المكان.',
+    description: {
+      ar: 'سعر تذكرة دخول الشاطئ للبالغ (جنيه) — يُستخدم فعليًا في تسعير كل عملية بيع بشاشة كاشير الشاطئ، فوق أي نسبة ذروة (surge) على المكان.',
+      en: 'Adult beach-entry ticket price (EGP) — actually used to price every sale at the beach cashier screen, on top of any location surge rate.',
+    },
     live: true,
   },
   'beach.price.child': {
-    description: 'سعر تذكرة دخول الشاطئ للطفل (جنيه) — يُستخدم فعليًا عند بيع تذكرة طفل بكاشير الشاطئ.',
+    description: {
+      ar: 'سعر تذكرة دخول الشاطئ للطفل (جنيه) — يُستخدم فعليًا عند بيع تذكرة طفل بكاشير الشاطئ.',
+      en: "Child beach-entry ticket price (EGP) — actually used when selling a child's ticket at the beach cashier.",
+    },
     live: true,
   },
   'beach.price.resident': {
-    description: 'سعر تذكرة دخول الشاطئ للمقيم/صاحب الاشتراك (جنيه) — يُستخدم فعليًا عند اختيار نوع تذكرة "مقيم" بكاشير الشاطئ.',
+    description: {
+      ar: 'سعر تذكرة دخول الشاطئ للمقيم/صاحب الاشتراك (جنيه) — يُستخدم فعليًا عند اختيار نوع تذكرة "مقيم" بكاشير الشاطئ.',
+      en: 'Resident/subscriber beach-entry ticket price (EGP) — actually used when selecting a "resident" ticket type at the beach cashier.',
+    },
     live: true,
   },
   'beach.price.towel': {
-    description: 'سعر إيجار المنشفة (جنيه) — يُضاف على سعر تذكرة الكبير فعليًا عند اختيار "دخول + منشفة" بكاشير الشاطئ.',
+    description: {
+      ar: 'سعر إيجار المنشفة (جنيه) — يُضاف على سعر تذكرة الكبير فعليًا عند اختيار "دخول + منشفة" بكاشير الشاطئ.',
+      en: 'Towel rental price (EGP) — actually added to the adult ticket price when "entry + towel" is selected at the beach cashier.',
+    },
     live: true,
   },
   no_show_deadline_hour: {
-    description: 'الساعة (بتوقيت المنتجع، بالأرقام فقط من 0 لـ23 — مثلاً 18 يعني 6 مساءً) اللي بعدها الحجوزات المؤكدة اللي محدش وصلها بتتحول تلقائيًا لـ"لم يحضر". بتتفحص كل ساعة عبر مهمة مجدولة فعلية.',
+    description: {
+      ar: 'الساعة (بتوقيت المنتجع، بالأرقام فقط من 0 لـ23 — مثلاً 18 يعني 6 مساءً) اللي بعدها الحجوزات المؤكدة اللي محدش وصلها بتتحول تلقائيًا لـ"لم يحضر". بتتفحص كل ساعة عبر مهمة مجدولة فعلية.',
+      en: 'The hour (resort time, 0–23 — e.g. 18 means 6 PM) after which confirmed bookings nobody arrived for are automatically marked "no-show". Checked hourly by a real scheduled task.',
+    },
     live: true,
   },
   vat_percentage: {
-    description: 'نسبة ضريبة القيمة المضافة. تنبيه: النسبة الفعلية المُطبَّقة على كل الفواتير بتتحدد من إعداد سيرفر منفصل (متغير بيئة)، مش من هنا — تعديل القيمة دي حاليًا بلا أي أثر على الحسابات الفعلية.',
+    description: {
+      ar: 'نسبة ضريبة القيمة المضافة. تنبيه: النسبة الفعلية المُطبَّقة على كل الفواتير بتتحدد من إعداد سيرفر منفصل (متغير بيئة)، مش من هنا — تعديل القيمة دي حاليًا بلا أي أثر على الحسابات الفعلية.',
+      en: 'VAT percentage. Note: the rate actually applied to every invoice is set by a separate server-side (environment variable) setting, not this one — editing this value currently has no effect on real calculations.',
+    },
     live: false,
   },
   service_charge_percentage: {
-    description: 'نسبة رسم الخدمة. تنبيه: النسبة الفعلية المُطبَّقة بتتحدد من إعداد سيرفر منفصل (متغير بيئة)، مش من هنا — تعديل القيمة دي حاليًا بلا أي أثر على الحسابات الفعلية.',
+    description: {
+      ar: 'نسبة رسم الخدمة. تنبيه: النسبة الفعلية المُطبَّقة بتتحدد من إعداد سيرفر منفصل (متغير بيئة)، مش من هنا — تعديل القيمة دي حاليًا بلا أي أثر على الحسابات الفعلية.',
+      en: 'Service charge percentage. Note: the rate actually applied is set by a separate server-side (environment variable) setting, not this one — editing this value currently has no effect on real calculations.',
+    },
     live: false,
   },
   default_currency: {
-    description: 'رمز العملة الافتراضية (مثل EGP). تنبيه: العملة الفعلية المستخدمة في النظام بتتحدد من إعداد سيرفر منفصل (متغير بيئة)، مش من هنا.',
+    description: {
+      ar: 'رمز العملة الافتراضية (مثل EGP). تنبيه: العملة الفعلية المستخدمة في النظام بتتحدد من إعداد سيرفر منفصل (متغير بيئة)، مش من هنا.',
+      en: 'Default currency code (e.g. EGP). Note: the currency actually used by the system is set by a separate server-side (environment variable) setting, not this one.',
+    },
     live: false,
   },
   timezone: {
-    description: 'المنطقة الزمنية للمنتجع (مثل Africa/Cairo). تنبيه: كل حسابات "النهاردة/دلوقتي" في النظام بتستخدم إعداد سيرفر منفصل (متغير بيئة)، مش القيمة دي — تعديلها من هنا بلا أثر.',
+    description: {
+      ar: 'المنطقة الزمنية للمنتجع (مثل Africa/Cairo). تنبيه: كل حسابات "النهاردة/دلوقتي" في النظام بتستخدم إعداد سيرفر منفصل (متغير بيئة)، مش القيمة دي — تعديلها من هنا بلا أثر.',
+      en: 'The resort\'s timezone (e.g. Africa/Cairo). Note: every "today/now" calculation in the system uses a separate server-side (environment variable) setting, not this value — editing it here has no effect.',
+    },
     live: false,
   },
   'beach.capacity_max': {
-    description: 'أقصى سعة استيعابية للشاطئ. تنبيه: السعة الفعلية المُستخدمة في التشغيل بتتحدد من بيانات مخزون الشاطئ في الداتابيز، مش من هنا — تعديل القيمة دي حاليًا بلا أثر.',
+    description: {
+      ar: 'أقصى سعة استيعابية للشاطئ. تنبيه: السعة الفعلية المُستخدمة في التشغيل بتتحدد من بيانات مخزون الشاطئ في الداتابيز، مش من هنا — تعديل القيمة دي حاليًا بلا أثر.',
+      en: 'Maximum beach capacity. Note: the capacity actually used in operations comes from the beach inventory data in the database, not this — editing this value currently has no effect.',
+    },
     live: false,
   },
   no_show_policy: {
-    description: 'سياسة التعامل مع عدم الحضور (نص وصفي فقط). تنبيه: مفيش كود حاليًا بيقرأ القيمة دي أو يغيّر سلوكه بناءً عليها — كل حجز يتأخر عن الموعد بيتحول لـ"لم يحضر" بنفس الطريقة بغض النظر عن القيمة هنا.',
+    description: {
+      ar: 'سياسة التعامل مع عدم الحضور (نص وصفي فقط). تنبيه: مفيش كود حاليًا بيقرأ القيمة دي أو يغيّر سلوكه بناءً عليها — كل حجز يتأخر عن الموعد بيتحول لـ"لم يحضر" بنفس الطريقة بغض النظر عن القيمة هنا.',
+      en: 'No-show handling policy (descriptive text only). Note: no code currently reads this value or changes behavior based on it — every late booking is marked "no-show" the same way regardless of this value.',
+    },
     live: false,
   },
   discount_approval_threshold: {
-    description: 'حد قيمة الخصم اللي (نظريًا) محتاج موافقة إضافية. تنبيه: مفيش كود حاليًا في محرك الخصومات بيقرأ أو يُفعّل هذا الحد — القيمة معلوماتية فقط دلوقتي.',
+    description: {
+      ar: 'حد قيمة الخصم اللي (نظريًا) محتاج موافقة إضافية. تنبيه: مفيش كود حاليًا في محرك الخصومات بيقرأ أو يُفعّل هذا الحد — القيمة معلوماتية فقط دلوقتي.',
+      en: 'The discount value threshold that (theoretically) requires extra approval. Note: no code in the discount engine currently reads or enforces this threshold — informational only for now.',
+    },
     live: false,
   },
 }
 
-function settingMeta(key: string): SettingMeta | null {
+function settingMeta(key: string) {
   return SETTINGS_META[key] ?? null
+}
+
+function settingDescription(key: string): string {
+  const meta = settingMeta(key)
+  if (!meta) return ''
+  return locale.value === 'ar' ? meta.description.ar : meta.description.en
+}
+
+// مراجعة Codex المستقلة (2026-07-18): كان تاريخ آخر تحديث بيتنسّق بـ'ar-EG'
+// ثابتة بغض النظر عن اللغة الحالية للواجهة.
+function formatUpdatedAt(iso: string): string {
+  return new Date(iso).toLocaleString(locale.value === 'ar' ? 'ar-EG' : 'en-US')
 }
 
 interface SettingRow {
@@ -104,6 +174,18 @@ const newKey    = ref('')
 const newValue  = ref('')
 const creating  = ref(false)
 
+// Gate 2B3A — step-up state لعملية الحفظ/الإنشاء الجارية دلوقتي (واحدة بس
+// ممكن تكون مفتوحة في نفس اللحظة، زي PinGuardModal بالظبط)
+interface PendingStepUp {
+  kind: 'save' | 'create'
+  key: string
+  value: string
+  row?: SettingRow
+}
+const pendingStepUp = ref<PendingStepUp | null>(null)
+const stepUpError = ref('')
+const stepUpBusy = ref(false)
+
 function isDirty(row: SettingRow) {
   return edited[row.key] !== undefined && edited[row.key] !== row.value
 }
@@ -118,124 +200,158 @@ async function loadSettings() {
       edited[row.key] = row.value
     }
   } catch {
-    loadError.value = 'تعذّر تحميل الإعدادات — تأكد من اتصالك وحاول تاني'
+    loadError.value = t('backoffice.settings.loadError')
   } finally {
     loading.value = false
   }
 }
 
-async function saveSetting(row: SettingRow) {
+function requestSave(row: SettingRow) {
   const value = edited[row.key] ?? row.value
-  savingKey.value = row.key
-  try {
-    const res = await api.put(
-      ENDPOINTS.settings.set(row.key),
-      { value },
-      { params: { branch_id: branchId } },
-    )
-    const updated: SettingRow = res.data
-    const idx = settings.value.findIndex((s) => s.key === row.key)
-    if (idx !== -1) settings.value[idx] = updated
-    edited[row.key] = updated.value
-    toast.success(`تم حفظ "${row.key}" بنجاح`)
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail?.message ?? `تعذّر حفظ "${row.key}" — حاول تاني`)
-  } finally {
-    savingKey.value = null
-  }
+  stepUpError.value = ''
+  pendingStepUp.value = { kind: 'save', key: row.key, value, row }
 }
 
-async function createSetting() {
+function requestCreate() {
   const key = newKey.value.trim()
   if (!key) {
-    toast.error('لازم تدخل اسم المفتاح (key) أولاً')
+    toast.error(t('backoffice.settings.keyRequired'))
     return
   }
   if (settings.value.some((s) => s.key === key)) {
-    toast.error(`المفتاح "${key}" موجود بالفعل — عدّله من الجدول تحت`)
+    toast.error(t('backoffice.settings.keyExists', { key }))
     return
   }
-  creating.value = true
+  stepUpError.value = ''
+  pendingStepUp.value = { kind: 'create', key, value: newValue.value }
+}
+
+async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string; reason: string }) {
+  const pending = pendingStepUp.value
+  if (!pending) return
+  stepUpBusy.value = true
+  if (pending.kind === 'save') savingKey.value = pending.key
+  else creating.value = true
+
   try {
     const res = await api.put(
-      ENDPOINTS.settings.set(key),
-      { value: newValue.value },
-      { params: { branch_id: branchId } },
+      ENDPOINTS.settings.set(pending.key),
+      { value: pending.value, reason },
+      { params: { branch_id: branchId }, headers: { 'X-Step-Up-Token': stepUpToken } },
     )
-    settings.value = [...settings.value, res.data].sort((a, b) => a.key.localeCompare(b.key))
-    edited[res.data.key] = res.data.value
-    toast.success(`تم إنشاء الإعداد "${key}" بنجاح`)
-    newKey.value = ''
-    newValue.value = ''
+    const updated: SettingRow = res.data
+    const idx = settings.value.findIndex((s) => s.key === updated.key)
+    if (idx !== -1) settings.value[idx] = updated
+    else settings.value = [...settings.value, updated].sort((a, b) => a.key.localeCompare(b.key))
+    edited[updated.key] = updated.value
+
+    if (pending.kind === 'save') {
+      toast.success(t('backoffice.settings.toastSaved', { key: pending.key }))
+    } else {
+      toast.success(t('backoffice.settings.toastCreated', { key: pending.key }))
+      newKey.value = ''
+      newValue.value = ''
+    }
+    pendingStepUp.value = null
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail?.message ?? 'تعذّر إنشاء الإعداد الجديد — حاول تاني')
+    const code = e?.response?.data?.detail?.error_code
+    if (code === 'STEP_UP_INVALID') {
+      // Gate 2B3A: الإثبات اتستخدم/انتهى — تبدأ دورة إثبات جديدة، مفيش
+      // إعادة إرسال تلقائي للطلب الفعلي.
+      stepUpError.value = t('backoffice.stepUp.errorInvalidRestart')
+    } else {
+      const message = pending.kind === 'save'
+        ? t('backoffice.settings.toastErrorSave', { key: pending.key })
+        : t('backoffice.settings.toastErrorCreate')
+      toast.error(e?.response?.data?.detail?.message ?? message)
+      pendingStepUp.value = null
+    }
   } finally {
+    stepUpBusy.value = false
+    savingKey.value = null
     creating.value = false
   }
 }
+
+function cancelStepUp() {
+  pendingStepUp.value = null
+  stepUpError.value = ''
+}
+
+const stepUpDescription = computed(() => {
+  const pending = pendingStepUp.value
+  if (!pending) return ''
+  return pending.kind === 'save'
+    ? t('backoffice.settings.reasonPromptSave', { key: pending.key })
+    : t('backoffice.settings.reasonPromptCreate', { key: pending.key })
+})
+const stepUpIntent = computed(() => {
+  const pending = pendingStepUp.value
+  if (!pending) return {}
+  return { key: pending.key, branch_id: branchId, value: pending.value }
+})
 
 onMounted(loadSettings)
 </script>
 
 <template>
-  <div dir="rtl" class="space-y-5">
+  <div class="space-y-5">
     <div>
-      <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">الإعدادات</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">إعدادات الفرع الحالي — تعديل القيم يُحفظ فورًا عند الضغط على "حفظ"</p>
+      <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.settings.title') }}</h1>
+      <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">{{ t('backoffice.settings.subtitle') }}</p>
+    </div>
+
+    <div v-if="!hasRealBranchContext" class="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-sm">
+      ⚠️ {{ t('backoffice.settings.branchContextWarning') }}
     </div>
 
     <!-- روابط سريعة لأقسام الإدارة ذات الصلة -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-      <router-link v-for="link in [
-        { path: '/admin/tables',    label: 'إدارة الطاولات', icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
-        { path: '/admin/cafe-menu', label: 'قائمة الكافيه',  icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
-        { path: '/admin/menu',      label: 'قائمة المطعم',   icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
-        { path: '/admin/qr',        label: 'QR Codes',       icon: '📱', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
-      ]" :key="link.path" :to="link.path"
+      <router-link v-for="link in QUICK_LINKS" :key="link.path" :to="link.path"
         :class="['flex items-center gap-2 p-3 rounded-xl border-2 transition-colors text-sm font-semibold text-gray-700 dark:text-gray-300', link.color]"
       >
         <span class="text-xl">{{ link.icon }}</span>
-        {{ link.label }}
+        {{ t(link.labelKey) }}
       </router-link>
     </div>
 
     <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between">
       <span>⚠️ {{ loadError }}</span>
-      <button @click="loadSettings" class="font-semibold underline hover:no-underline">إعادة المحاولة</button>
+      <button @click="loadSettings" class="font-semibold underline hover:no-underline">{{ t('backoffice.settings.retry') }}</button>
     </div>
 
     <!-- إضافة إعداد جديد -->
-    <AppCard title="إضافة إعداد جديد">
+    <AppCard :title="t('backoffice.settings.addNewTitle')">
       <div class="flex flex-col md:flex-row md:items-end gap-3">
         <div class="flex-1">
-          <AppInput v-model="newKey" label="المفتاح (key)" placeholder="مثال: check_in_time" :disabled="creating" />
+          <AppInput v-model="newKey" :label="t('backoffice.settings.keyLabel')" :placeholder="t('backoffice.settings.keyPlaceholder')" :disabled="creating" />
         </div>
         <div class="flex-1">
-          <AppInput v-model="newValue" label="القيمة" placeholder="مثال: 14:00" :disabled="creating" />
+          <AppInput v-model="newValue" :label="t('backoffice.settings.valueLabel')" :placeholder="t('backoffice.settings.valuePlaceholder')" :disabled="creating" />
         </div>
-        <AppButton variant="primary" :loading="creating" @click="createSetting">إضافة</AppButton>
+        <AppButton variant="primary" :loading="creating" @click="requestCreate">{{ t('backoffice.settings.addButton') }}</AppButton>
       </div>
     </AppCard>
 
     <!-- قائمة الإعدادات -->
-    <AppCard title="الإعدادات الحالية" padding="none">
+    <AppCard :title="t('backoffice.settings.currentSettingsTitle')" padding="none">
       <div v-if="loading" class="p-10 flex justify-center">
         <AppSpinner size="lg" />
       </div>
       <EmptyState
         v-else-if="settings.length === 0"
         icon="⚙️"
-        title="لا توجد إعدادات لهذا الفرع بعد"
-        subtitle="أضف أول إعداد من النموذج أعلاه"
+        :title="t('backoffice.settings.noSettingsTitle')"
+        :subtitle="t('backoffice.settings.noSettingsSubtitle')"
       />
       <div v-else class="overflow-x-auto">
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المفتاح</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">القيمة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">آخر تحديث</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">إجراء</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colKey') }}</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colValue') }}</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colUpdatedAt') }}</th>
+              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colAction') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -244,21 +360,21 @@ onMounted(loadSettings)
                 <div class="flex items-center gap-2 flex-wrap">
                   <span class="font-mono text-sm text-gray-800 dark:text-gray-200">{{ row.key }}</span>
                   <AppBadge v-if="settingMeta(row.key)" size="sm" :variant="settingMeta(row.key)!.live ? 'success' : 'neutral'">
-                    {{ settingMeta(row.key)!.live ? 'فعّال' : 'بدون أثر حاليًا' }}
+                    {{ settingMeta(row.key)!.live ? t('backoffice.settings.live') : t('backoffice.settings.noEffect') }}
                   </AppBadge>
                 </div>
                 <p v-if="settingMeta(row.key)" class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                  {{ settingMeta(row.key)!.description }}
+                  {{ settingDescription(row.key) }}
                 </p>
                 <p v-else class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                  إعداد مخصّص — لا يوجد توضيح مسجّل له في هذه الشاشة.
+                  {{ t('backoffice.settings.customSettingNote') }}
                 </p>
               </td>
               <td class="px-4 py-3 min-w-[240px]">
                 <AppInput v-model="edited[row.key]" :disabled="savingKey === row.key" />
               </td>
               <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500 align-top pt-4">
-                {{ new Date(row.updated_at).toLocaleString('ar-EG') }}
+                {{ formatUpdatedAt(row.updated_at) }}
               </td>
               <td class="px-4 py-3 align-top">
                 <AppButton
@@ -266,9 +382,9 @@ onMounted(loadSettings)
                   size="sm"
                   :loading="savingKey === row.key"
                   :disabled="!isDirty(row) || savingKey === row.key"
-                  @click="saveSetting(row)"
+                  @click="requestSave(row)"
                 >
-                  حفظ
+                  {{ t('backoffice.settings.save') }}
                 </AppButton>
               </td>
             </tr>
@@ -276,5 +392,16 @@ onMounted(loadSettings)
         </table>
       </div>
     </AppCard>
+
+    <StepUpConfirmModal
+      v-if="pendingStepUp"
+      :purpose="'setting_upsert'"
+      :intent="stepUpIntent"
+      :description="stepUpDescription"
+      :loading="stepUpBusy"
+      :error-message="stepUpError"
+      @confirmed="onStepUpConfirmed"
+      @cancel="cancelStepUp"
+    />
   </div>
 </template>

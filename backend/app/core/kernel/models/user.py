@@ -165,6 +165,45 @@ class TwoFactorRecoveryCode(Base):
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
 
+class StepUpGrant(Base):
+    """Gate 2B3A — a short-lived, one-time, hashed proof of recent
+    reauthentication for one specific mutation.
+
+    This is not an authorization cache: it proves "this session holder
+    recently re-proved their password (and TOTP/recovery code where 2FA is
+    on) for exactly this operation", nothing about whether they are still
+    allowed to perform it right now — the protected endpoint re-derives
+    that from live role/is_active state at consumption time, same as every
+    other request. Carries no business data itself (no setting value, no
+    free-text reason) — only non-secret identifiers and SHA-256 digests.
+    """
+
+    __tablename__ = "step_up_grants"
+
+    id = Column(Integer, primary_key=True)
+    # Non-secret, safe to surface in AuditLog/support conversations for
+    # correlation — cannot be used to consume the grant (needs token_hash).
+    public_reference = Column(String(32), nullable=False)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    purpose = Column(String(64), nullable=False)
+    # SHA-256 of the canonical (deterministic JSON) operation scope — binds
+    # the grant to the exact mutation it was issued for.
+    scope_hash = Column(String(64), nullable=False)
+    # SHA-256 of the opaque bearer token shown to the caller once.
+    token_hash = Column(String(64), unique=True, nullable=False)
+    # SHA-256 of the access token that requested the grant — binds the
+    # grant to that browser session, not just to the user_id.
+    access_token_hash = Column(String(64), nullable=False)
+    assurance_method = Column(String(32), nullable=False)
+    expires_at = Column(TIMESTAMP(timezone=True), nullable=False, index=True)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+
 class TokenBlacklist(Base):
     __tablename__ = "token_blacklist"
 

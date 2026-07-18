@@ -72,6 +72,21 @@ class ActorSuperAdminPrivilegesChangedError(Exception):
     ويحاول تاني، مش مجرد إعادة إرسال نفس الطلب."""
 
 
+class ActorAuthorizationChangedError(Exception):
+    """المنفّذ (actor) بقى مش مؤهّل لتنفيذ العملية دي لحظة التنفيذ الفعلي
+    تحت القفل — تغيّر دوره أو حالة نشاطه أو فرعه في نفس اللحظة (سباق
+    حقيقي بين مُنفّذين). 409 ACTOR_AUTHORIZATION_CHANGED — العميل لازم
+    يعيد تحميل حالته ويحاول تاني، مش مجرد إعادة إرسال نفس الطلب.
+
+    Gate 2B3A TOCTOU fix (مراجعة Codex المستقلة، 2026-07-18): step-up
+    بيضيف رحلة شبكة/commit كاملة (POST /auth/step-up) بين لحظة ما
+    FastAPI dependency يتحقق من دور المنفّذ ولحظة تنفيذ الـmutation
+    الفعلي — بيوسّع نافذة السباق اللي كانت أضيق قبل الشريحة دي. نفس
+    المشكلة اللي ActorSuperAdminPrivilegesChangedError بتحلّها لـ
+    update_user_role (Gate 2A)، لكن أعم (بتشمل admin مش super_admin
+    بس، لعمليات زي تعديل إعدادات الفرع)."""
+
+
 class MandatoryTwoFactorEnrollmentRequiredError(Exception):
     """An active account cannot enter a mandatory-2FA role before enrollment.
 
@@ -79,6 +94,33 @@ class MandatoryTwoFactorEnrollmentRequiredError(Exception):
     account after Gate 2B2. The user may enroll voluntarily first, then be
     promoted through the normal Gate 2A control plane.
     """
+
+
+# ─────────────────────── Gate 2B3A — step-up audit context ─────────────
+# مشترك بين الأربعة mutations المحمية بـstep-up (role update، permission
+# grant/revoke، setting upsert) — نفس شكل new_data الإضافي، مكان واحد.
+# مفيش عمود جديد على AuditLog (Gate 2B3A ممنوع تنشئ جدول/schema تدقيق
+# موازٍ) — كل حاجة إضافية بتتحط جوه new_data JSON الموجود بالفعل.
+
+def _step_up_audit_context(
+    *,
+    reason: Optional[str] = None,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
+) -> dict:
+    from app.core.kernel.correlation import get_request_id  # noqa: PLC0415
+
+    context: dict = {}
+    if reason is not None:
+        context["reason"] = reason
+    if step_up_public_reference is not None:
+        context["step_up_public_reference"] = step_up_public_reference
+    if assurance_method is not None:
+        context["assurance_method"] = assurance_method
+    request_id = get_request_id()
+    if request_id:
+        context["request_id"] = request_id
+    return context
 
 
 # ─────────────────────── PIN Credentials ──────────────────────────────
@@ -317,6 +359,9 @@ def update_user_role(
     role: Optional[str],
     is_active: Optional[bool],
     updated_by: int,
+    reason: Optional[str] = None,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
 ):
     """super_admin فقط. أي تغيير فعلي في role أو is_active يُبطل التوكنات
     الحالية للمستخدم فوراً (revoke_user_tokens) — وإلا يستمر بصلاحياته
@@ -418,7 +463,15 @@ def update_user_role(
             entity_id=user.id,
             action="update_role",
             old_data=json.dumps(old_data),
-            new_data=json.dumps({"role": final_role, "is_active": final_is_active}),
+            new_data=json.dumps({
+                "role": final_role,
+                "is_active": final_is_active,
+                **_step_up_audit_context(
+                    reason=reason,
+                    step_up_public_reference=step_up_public_reference,
+                    assurance_method=assurance_method,
+                ),
+            }),
         ))
         # Refresh sessions are database state and therefore belong to the same
         # transaction as the role/status mutation. The access-token cutoff is
@@ -451,8 +504,36 @@ def upsert_setting(
     value: str,
     branch_id: Optional[int] = None,
     updated_by: Optional[int] = None,
+    reason: Optional[str] = None,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
 ) -> SettingRead:
-    old_row = crud.get_setting(db, key, branch_id)
+    """**تصحيحان (مراجعة Codex المستقلة لـGate 2B3A، 2026-07-18):**
+
+    1. TOCTOU: نفس نمط grant_permission/revoke_permission — لو updated_by
+       متوفر (المسار الحقيقي عبر HTTP دايمًا بيوفّره)، بنقفل صف المنفّذ
+       ونتأكد إنه لسه نشط وبمستوى الدور المطلوب (super_admin للإعدادات
+       العامة، admin+ للفرعية) + عزل الفرع الحقيقي، قبل أي تعديل. مسارات
+       داخلية/seed بدون updated_by (None) بتتخطى الفحص ده زي ما كانت.
+    2. تسريب القيمة العامة في سجل التدقيق: old_value كان بيُحسب عبر
+       crud.get_setting() اللي بترجع fallback للعام لو مفيش صف للفرع —
+       يعني "القيمة القديمة" في AuditLog كانت ممكن تظهر قيمة إعداد عام
+       لمدير فرع مالوش صف أصلاً، بدل ما توضح إنه إنشاء جديد فعليًا.
+       get_setting_exact() (بدون fallback) هي المصدر الصحيح هنا.
+    """
+    if updated_by is not None:
+        from app.core.deps import user_level  # noqa: PLC0415
+
+        actor = crud.lock_user_for_update(db, updated_by)
+        required_level = 100 if branch_id is None else 80
+        if not actor or not actor.is_active or user_level(actor) < required_level:
+            raise ActorAuthorizationChangedError(
+                "صلاحيتك تغيّرت في نفس اللحظة من عملية أخرى — أعد تحميل حالتك وحاول تاني"
+            )
+        if branch_id is not None and user_level(actor) < 100:
+            assert_branch_access(db, actor, branch_id, "تعديل إعدادات هذا الفرع")
+
+    old_row = crud.get_setting_exact(db, key, branch_id)
     old_value = old_row.value if old_row else None
 
     row = crud.upsert_setting(db, key, value, branch_id)
@@ -464,7 +545,14 @@ def upsert_setting(
         entity_type="setting",
         entity_id=row.id,
         old_data=json.dumps({"value": old_value}),
-        new_data=json.dumps({"value": value}),
+        new_data=json.dumps({
+            "value": value,
+            **_step_up_audit_context(
+                reason=reason,
+                step_up_public_reference=step_up_public_reference,
+                assurance_method=assurance_method,
+            ),
+        }),
     ))
 
     db.commit()
@@ -640,6 +728,9 @@ def grant_permission(
     user_id: int,
     data: UserPermissionCreate,
     granted_by: int,
+    reason: Optional[str] = None,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
 ) -> UserPermission:
     """منح أو منع صريح — upsert على نفس resource+action+branch.
 
@@ -648,8 +739,24 @@ def grant_permission(
     حساب role="super_admin" — نشط أو غير نشط، Decision 0003 invariant #2.
     الرفض بيسجّل تحذير أمني منظم (بدون كتابة AuditLog لمحاولة مرفوضة —
     ده مؤجَّل عمدًا لمرحلة audit/step-up القادمة، راجع خطة Gate 2A) ولا
-    يعدّل أي صف في الداتابيز."""
-    target = crud.get_user(db, user_id)
+    يعدّل أي صف في الداتابيز.
+
+    **تصحيح TOCTOU (مراجعة Codex المستقلة لـGate 2B3A، 2026-07-18):**
+    الراوتر بيتحقق من دور المنفّذ (granted_by) عبر get_super_admin_user
+    قبل استهلاك step-up token — بينهم رحلة شبكة/commit كاملة. من غير
+    إعادة قفل وفحص هنا، معاملة متزامنة تقدر تخفّض المنفّذ (أو ترقّي
+    الهدف لـsuper_admin) في نفس اللحظة والعملية دي تكمل وكأن حالته وقت
+    بداية الطلب لسه صحيحة. نفس نمط lock_active_super_admins/
+    lock_user_for_update اللي update_user_role بيستخدمه بالظبط (ترتيب
+    قفل ثابت يمنع deadlock: مجموعة super_admin النشطين أولاً، بعدين
+    الهدف)."""
+    active_super_admins = crud.lock_active_super_admins(db)
+    if granted_by not in {u.id for u in active_super_admins}:
+        raise ActorAuthorizationChangedError(
+            "صلاحيتك تغيّرت في نفس اللحظة من عملية أخرى — أعد تحميل حالتك وحاول تاني"
+        )
+
+    target = crud.lock_user_for_update(db, user_id)
     if not target:
         raise UserNotFoundError(f"المستخدم {user_id} غير موجود")
     if target.role == "super_admin":
@@ -676,6 +783,11 @@ def grant_permission(
             "resource": data.resource,
             "action": data.action,
             "allowed": data.allowed,
+            **_step_up_audit_context(
+                reason=reason,
+                step_up_public_reference=step_up_public_reference,
+                assurance_method=assurance_method,
+            ),
         }),
     ))
 
@@ -688,8 +800,21 @@ def revoke_permission(
     db: Session,
     permission_id: int,
     revoked_by: int,
+    reason: Optional[str] = None,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
 ) -> None:
-    """يحذف الاستثناء الصريح تماماً — المستخدم يرجع لسلوك role fallback."""
+    """يحذف الاستثناء الصريح تماماً — المستخدم يرجع لسلوك role fallback.
+
+    **تصحيح TOCTOU (مراجعة Codex المستقلة لـGate 2B3A، 2026-07-18):**
+    نفس السبب الموثّق في grant_permission — إعادة قفل مجموعة super_admin
+    النشطين والتأكد إن المنفّذ (revoked_by) لسه فيها، قبل أي تعديل."""
+    active_super_admins = crud.lock_active_super_admins(db)
+    if revoked_by not in {u.id for u in active_super_admins}:
+        raise ActorAuthorizationChangedError(
+            "صلاحيتك تغيّرت في نفس اللحظة من عملية أخرى — أعد تحميل حالتك وحاول تاني"
+        )
+
     perm = crud.get_user_permission(db, permission_id)
     if not perm:
         raise ValueError(f"الصلاحية {permission_id} غير موجودة")
@@ -706,6 +831,11 @@ def revoke_permission(
             "action": perm.action,
             "allowed": perm.allowed,
         }),
+        new_data=json.dumps(_step_up_audit_context(
+            reason=reason,
+            step_up_public_reference=step_up_public_reference,
+            assurance_method=assurance_method,
+        )) if reason is not None else None,
     ))
 
     crud.delete_user_permission(db, perm)

@@ -19,6 +19,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from app.modules.core.permission_catalog import PERMISSION_CATALOG
+from tests.conftest import _fresh_super_admin, _issue_step_up
 
 
 def _branch_committed(db):
@@ -78,8 +79,11 @@ class TestPermissionCatalog:
         resources = {e["resource"] for e in body}
         assert "dining.void_order_item" in resources
         assert "hr.approve_payroll_run" in resources
-        # كل صف لازم يكون فيه label_ar حقيقي مش فاضي
+        # كل صف لازم يكون فيه label_ar وlabel_en حقيقيين مش فاضيين (مراجعة
+        # Codex المستقلة، 2026-07-18: كانت الشاشة بتعرض label_ar حتى في
+        # الوضع الإنجليزي لعدم وجود label_en أصلاً في الكتالوج)
         assert all(e["label_ar"] for e in body)
+        assert all(e["label_en"] for e in body)
 
     def test_catalog_requires_manager_level(self, client: TestClient, waiter_headers):
         resp = client.get("/api/v1/permissions/catalog", headers=waiter_headers)
@@ -112,19 +116,24 @@ class TestExplicitOverrideEndToEnd:
     """يثبت إن الاستثناء الصريح (UserPermission) فعليًا بيغيّر سلوك endpoint حقيقي
     مربوط بيه require_permission — مش مجرد جدول في الداتابيز من غير أي أثر."""
 
-    def test_grant_lets_waiter_void_despite_role(self, client: TestClient, db, super_admin_headers, manager_headers):
+    def test_grant_lets_waiter_void_despite_role(self, client: TestClient, db, manager_headers):
         """⚠️ ملحوظة مهمة (2026-07-07): منح استثناء صريح (UserPermission) بيغيّر
         "مين مسموح له يحاول العملية" (require_permission gate) — ده مفهوم
         منفصل تمامًا عن موافقة PIN (core.services.resolve_pin_approval)، اللي
         بتتحقق من "فيه مدير حاضر وموافق فعليًا على العملية دي بالذات دلوقتي".
         استثناء صريح من super_admin لواتر واحد مش بديل عن إشراف مدير لحظي —
         لو حصل العكس (استثناء يلغي احتياج PIN كمان) كان هيبقى ثغرة: أي واتر
-        معاه استثناء واحد قديم يقدر يلغي أي حاجة للأبد من غير أي إشراف فعلي."""
+        معاه استثناء واحد قديم يقدر يلغي أي حاجة للأبد من غير أي إشراف فعلي.
+
+        Gate 2B3A: super_admin هنا حساب منعزل بسرّ TOTP خاص بيه (مش
+        super_admin_headers المشترك) — يصدر step-up token واحد بس هنا،
+        فمفيش خطر تصادم إعادة استخدام كود مع اختبار تاني."""
         from tests.conftest import _create_test_user, _make_token
         email = f"perm-waiter-{uuid.uuid4().hex[:6]}@test.local"
         waiter_id = _create_test_user(email, "waiter")
         custom_headers = {"Authorization": f"Bearer {_make_token(email)}"}
         manager_id = _set_manager_pin(db, "1234")
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin("grant-actor")
 
         branch = _branch_committed(db)
         outlet, item = _outlet_and_item_committed(db, branch)
@@ -138,12 +147,19 @@ class TestExplicitOverrideEndToEnd:
         )
         assert resp.status_code == 403
 
-        # منح استثناء صريح من super_admin
+        # منح استثناء صريح من super_admin (Gate 2B3A: reason + step-up إجباريان)
+        reason = "منح استثناء صريح لواتر يقدر يلغي صنف"
+        token = _issue_step_up(
+            client, sa_headers, purpose="permission_override_upsert",
+            intent={"user_id": waiter_id, "resource": "dining.void_order_item",
+                    "action": "execute", "allowed": True, "branch_id": None, "reason": reason},
+            totp_secret=sa_secret,
+        )
         grant = client.post(
             "/api/v1/permissions",
             json={"user_id": waiter_id, "resource": "dining.void_order_item",
-                  "action": "execute", "allowed": True},
-            headers=super_admin_headers,
+                  "action": "execute", "allowed": True, "reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
         )
         assert grant.status_code == 201, grant.text
 
@@ -163,22 +179,30 @@ class TestExplicitOverrideEndToEnd:
         assert resp2.status_code == 200, resp2.text
         assert resp2.json()["items"][0]["status"] == "cancelled"
 
-    def test_explicit_deny_blocks_manager_despite_role(self, client: TestClient, db, super_admin_headers):
+    def test_explicit_deny_blocks_manager_despite_role(self, client: TestClient, db):
         from tests.conftest import _create_test_user, _make_token
         email = f"perm-mgr-{uuid.uuid4().hex[:6]}@test.local"
         mgr_id = _create_test_user(email, "manager")
         custom_headers = {"Authorization": f"Bearer {_make_token(email)}"}
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin("deny-actor")
 
         branch = _branch_committed(db)
         outlet, item = _outlet_and_item_committed(db, branch)
         order = _create_order(client, outlet.id, item.id, custom_headers)
         order_item_id = order["items"][0]["id"]
 
+        reason = "منع صريح لمدير بسبب سوء استخدام سابق لإلغاء الأصناف"
+        token = _issue_step_up(
+            client, sa_headers, purpose="permission_override_upsert",
+            intent={"user_id": mgr_id, "resource": "dining.void_order_item",
+                    "action": "execute", "allowed": False, "branch_id": None, "reason": reason},
+            totp_secret=sa_secret,
+        )
         deny = client.post(
             "/api/v1/permissions",
             json={"user_id": mgr_id, "resource": "dining.void_order_item",
-                  "action": "execute", "allowed": False},
-            headers=super_admin_headers,
+                  "action": "execute", "allowed": False, "reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
         )
         assert deny.status_code == 201, deny.text
 
@@ -189,12 +213,13 @@ class TestExplicitOverrideEndToEnd:
         )
         assert resp.status_code == 403
 
-    def test_revoke_restores_role_fallback(self, client: TestClient, db, super_admin_headers, manager_headers):
+    def test_revoke_restores_role_fallback(self, client: TestClient, db, manager_headers):
         from tests.conftest import _create_test_user, _make_token
         email = f"perm-revoke-{uuid.uuid4().hex[:6]}@test.local"
         waiter_id = _create_test_user(email, "waiter")
         custom_headers = {"Authorization": f"Bearer {_make_token(email)}"}
         manager_id = _set_manager_pin(db, "1234")
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin("revoke-actor")
 
         branch = _branch_committed(db)
         outlet, item = _outlet_and_item_committed(db, branch)
@@ -202,11 +227,18 @@ class TestExplicitOverrideEndToEnd:
         order1 = _create_order(client, outlet.id, item.id, custom_headers)
         order1_item_id = order1["items"][0]["id"]
 
+        grant_reason = "منح استثناء صريح مؤقت لواتر"
+        grant_token = _issue_step_up(
+            client, sa_headers, purpose="permission_override_upsert",
+            intent={"user_id": waiter_id, "resource": "dining.void_order_item",
+                    "action": "execute", "allowed": True, "branch_id": None, "reason": grant_reason},
+            totp_secret=sa_secret,
+        )
         grant = client.post(
             "/api/v1/permissions",
             json={"user_id": waiter_id, "resource": "dining.void_order_item",
-                  "action": "execute", "allowed": True},
-            headers=super_admin_headers,
+                  "action": "execute", "allowed": True, "reason": grant_reason},
+            headers={**sa_headers, "X-Step-Up-Token": grant_token},
         ).json()
 
         # الاستثناء شغال فعلاً — بس لسه محتاج موافقة PIN (راجع تعليق
@@ -217,9 +249,21 @@ class TestExplicitOverrideEndToEnd:
             headers=custom_headers,
         ).status_code == 200
 
-        # يلغي الاستثناء
-        revoke = client.delete(f"/api/v1/permissions/{grant['id']}", headers=super_admin_headers)
-        assert revoke.status_code == 204
+        # يلغي الاستثناء (Gate 2B3A: reason + step-up إجباريان هنا كمان —
+        # totp_offset_steps=1 عشان الكود التاني في نفس نافذة الـ30 ثانية
+        # اللي فوق ميتترفضش كـreplay)
+        revoke_reason = "إلغاء الاستثناء المؤقت بعد انتهاء الغرض منه"
+        revoke_token = _issue_step_up(
+            client, sa_headers, purpose="permission_override_revoke",
+            intent={"permission_id": grant["id"], "reason": revoke_reason},
+            totp_secret=sa_secret, totp_offset_steps=1,
+        )
+        revoke = client.request(
+            "DELETE", f"/api/v1/permissions/{grant['id']}",
+            json={"reason": revoke_reason},
+            headers={**sa_headers, "X-Step-Up-Token": revoke_token},
+        )
+        assert revoke.status_code == 204, revoke.text
 
         # طلب تاني، بعد الإلغاء، لازم يرجع لسلوك الـ role الافتراضي (ممنوع)
         order2 = _create_order(client, outlet.id, item.id, custom_headers)

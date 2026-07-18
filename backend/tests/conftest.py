@@ -295,8 +295,17 @@ def ws_url(path: str, headers: dict[str, str]) -> str:
     return f"{path}{sep}token={token}"
 
 
-def _create_test_user(email: str, role: str, two_factor_enabled: bool = False):
-    """ينشئ (أو يرجّع الموجود) صف User حقيقي — يُستخدم من fixtures الـ headers."""
+def _create_test_user(
+    email: str, role: str, two_factor_enabled: bool = False,
+    two_factor_secret: str | None = None,
+):
+    """ينشئ (أو يرجّع الموجود) صف User حقيقي — يُستخدم من fixtures الـ headers.
+
+    ``two_factor_secret``: سرّ TOTP حقيقي (base32، عادة ``pyotp.random_base32()``)
+    — لازم لأي اختبار Gate 2B3A محتاج يصدر step-up token فعلي لحساب مفروض
+    عليه 2FA (مجرد ``two_factor_enabled=True`` من غير سرّ حقيقي كافي لتخطي
+    get_current_active_user's mandatory-2FA gate، لكن مش كافي لتوليد كود
+    TOTP صالح فعليًا)."""
     from app.core.kernel.models.user import User  # noqa: PLC0415
     from app.core.kernel.security import get_password_hash  # noqa: PLC0415
 
@@ -307,7 +316,8 @@ def _create_test_user(email: str, role: str, two_factor_enabled: bool = False):
             user = User(
                 email=email, password_hash=get_password_hash("Test@12345"),
                 full_name=f"Test {role}", role=role, is_active=True,
-                two_factor_enabled=two_factor_enabled,
+                two_factor_enabled=two_factor_enabled or bool(two_factor_secret),
+                two_factor_secret=two_factor_secret,
             )
             db.add(user)
             db.commit()
@@ -317,10 +327,69 @@ def _create_test_user(email: str, role: str, two_factor_enabled: bool = False):
         db.close()
 
 
+def _issue_step_up(
+    client, headers: dict[str, str], *,
+    purpose: str, intent: dict, password: str = "Test@12345",
+    totp_secret: str | None = None, recovery_code: str | None = None,
+    totp_offset_steps: int = 0,
+) -> str:
+    """Gate 2B3A: يصدر step_up_token حقيقي عبر POST /auth/step-up — تُستخدم
+    من كل اختبار HTTP لأي من الأربعة endpoints المحمية بدل تكرار نفس منطق
+    الطلب في كل ملف. ``intent`` لازم يحتوي نفس الحقول بالظبط اللي الـ
+    endpoint المُستهلِك هيبنيها منها (راجع app.core.kernel.auth.step_up)،
+    وإلا الـscope_hash هيختلف والاستهلاك هيترفض بـSTEP_UP_INVALID.
+
+    ``totp_offset_steps``: لازم قيمة غير صفرية (مثلاً 1) لو الاختبار محتاج
+    يصدر أكتر من step-up token لنفس الحساب خلال نفس نافذة الـ30 ثانية —
+    نفس كود TOTP بيتحسب بنفس step_up_token counter، فإعادة استخدامه
+    بترفض عمدًا (حماية من إعادة استخدام كود 2FA، راجع
+    AuthService._consume_totp_code). الإزاحة لازم تفضل جوه نافذة التفاوت
+    المقبولة (±1 خطوة، راجع _matching_totp_step)."""
+    import pyotp  # noqa: PLC0415
+    from datetime import datetime, timedelta, timezone  # noqa: PLC0415
+
+    payload: dict = {"current_password": password, "purpose": purpose, "intent": intent}
+    if totp_secret:
+        totp = pyotp.TOTP(totp_secret)
+        at_time = datetime.now(timezone.utc) + timedelta(seconds=totp_offset_steps * totp.interval)
+        payload["totp_code"] = totp.at(at_time)
+    if recovery_code:
+        payload["recovery_code"] = recovery_code
+    resp = client.post("/api/v1/auth/step-up", json=payload, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["step_up_token"]
+
+
+# Gate 2B3A: سرّ TOTP حقيقي وثابت (مش مجرد two_factor_enabled=True) —
+# super_admin@test.local/accountant@test.local مشتركين بين ملفات تستات
+# كتير (scope=function لكن الصف نفسه بيتعمله get-or-create مرة واحدة فعليًا
+# طول الـsession، راجع setup_db أعلاه)، فالسرّ لازم يبقى ثابت عبر كل
+# الاختبارات اللي بتستخدم _issue_step_up مع الحسابين دول.
+SUPER_ADMIN_TOTP_SECRET = "JBSWY3DPEHPK3PXP"
+ACCOUNTANT_TOTP_SECRET = "KRSXG5CTMVRXEZLU"
+
+
+def _fresh_super_admin(email_prefix: str = "sa") -> tuple[int, dict[str, str], str]:
+    """super_admin جديد ومعزول (uuid عشوائي، سرّ TOTP خاص بيه) — لازم لأي
+    اختبار Gate 2B3A محتاج يصدر أكتر من step-up token واحد خلال نفس نافذة
+    الـ30 ثانية (شارك حساب super_admin@test.local الثابت هيصطدم بحماية
+    إعادة استخدام كود TOTP، راجع AuthService._consume_totp_code — لكل
+    حساب counter منفصل، فحساب جديد = نافذة جديدة تمامًا). بيرجع
+    (user_id, headers, totp_secret)."""
+    import uuid  # noqa: PLC0415
+    import pyotp  # noqa: PLC0415
+
+    email = f"{email_prefix}-{uuid.uuid4().hex[:8]}@test.local"
+    secret = pyotp.random_base32()
+    user_id = _create_test_user(email, "super_admin", two_factor_secret=secret)
+    headers = {"Authorization": f"Bearer {_make_token(email)}"}
+    return user_id, headers, secret
+
+
 @pytest.fixture
 def super_admin_headers(setup_db) -> dict[str, str]:
     # super_admin لازم 2FA (MANDATORY_2FA_ROLES) — نعتبره مفعّل مسبقاً للاختبار
-    _create_test_user("super_admin@test.local", "super_admin", two_factor_enabled=True)
+    _create_test_user("super_admin@test.local", "super_admin", two_factor_secret=SUPER_ADMIN_TOTP_SECRET)
     return {"Authorization": f"Bearer {_make_token('super_admin@test.local')}"}
 
 
@@ -334,7 +403,7 @@ def manager_headers(setup_db) -> dict[str, str]:
 def accountant_headers(setup_db) -> dict[str, str]:
     # accountant ضمن MANDATORY_2FA_ROLES — لازم two_factor_enabled=True هنا
     # بنفس سبب super_admin_headers فوق، وإلا get_current_active_user يرفض.
-    _create_test_user("accountant@test.local", "accountant", two_factor_enabled=True)
+    _create_test_user("accountant@test.local", "accountant", two_factor_secret=ACCOUNTANT_TOTP_SECRET)
     return {"Authorization": f"Bearer {_make_token('accountant@test.local')}"}
 
 

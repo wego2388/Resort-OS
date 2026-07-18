@@ -181,6 +181,30 @@ class AuthService(BaseService):
             new_data=json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
         ))
 
+    def _log_step_up_issuance_rejected(self, user, purpose: str, reason_code: str) -> None:
+        """مراجعة Codex المستقلة (2026-07-18، Medium): كانت issue_step_up
+        بترفض باسورد/TOTP غلط من غير أي أثر في AuditLog خالص — بعكس
+        consume_step_up اللي بتسجّل كل محاولة استهلاك (ناجحة أو مرفوضة).
+        دي دورة الإثبات نفسها لمستخدم معروف بالفعل (JWT صالح)، مش تدقيق
+        دخول عام لإيميلات مجهولة (ده لسه مؤجَّل لـGate 2B3B عمدًا). بدون
+        أي سر (باسورد/TOTP/recovery) — reason_code بس، ومحدودة بنفس
+        rate_limit() المستخدمة في الاستهلاك المرفوض، عشان جلسة موثّقة
+        خبيثة ميقدرش تضخّم AuditLog بمحاولات فاشلة متكررة عمدًا. يعمل
+        commit فوري — الاستدعاء دايمًا قبل `raise` مباشرة، فمفيش commit
+        تاني هيحصل بعده في نفس المسار."""
+        from app.core.kernel.cache import rate_limit  # noqa: PLC0415
+
+        if not rate_limit(f"stepup-issue-reject-audit:{user.id}", max_requests=20, window_seconds=300):
+            return
+        self._add_auth_audit(user, "step_up_issuance_rejected", details={
+            "purpose": purpose, "reason_code": reason_code,
+        })
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+
     def _verify_enrollment_token(self, user, token: Optional[str]) -> None:
         expected_hash = getattr(user, "two_factor_enrollment_token_hash", None)
         expires_at = getattr(user, "two_factor_enrollment_expires_at", None)
@@ -766,6 +790,237 @@ class AuthService(BaseService):
             "recovery_codes": recovery_codes,
             "reauthentication_required": True,
         }
+
+    # ── Step-up grants (Gate 2B3A) ──────────────────────────────────────
+    # A DB-backed, hashed, one-time proof of recent reauthentication for one
+    # exact operation. See app.core.kernel.auth.step_up for the scope-hash
+    # contract shared between issuance (here) and every consuming endpoint.
+
+    def issue_step_up(
+        self,
+        user,
+        *,
+        current_password: str,
+        purpose: str,
+        scope_hash: str,
+        access_token_hash: str,
+        totp_code: Optional[str] = None,
+        recovery_code: Optional[str] = None,
+    ) -> dict:
+        """Verify identity fresh, then issue a single-use grant for exactly
+        one hashed operation scope.
+
+        Every role must re-prove its current password — there is no
+        password-only shortcut that skips this. A mandatory-2FA role
+        (super_admin/accountant) can never fall back to password-only: if
+        it somehow reaches this method without two_factor_enabled, that is
+        refused outright rather than silently downgrading assurance (in
+        practice get_current_active_user already blocks such an account
+        from every non-/auth/* route, so this is defense in depth, not the
+        primary gate). An account with 2FA enabled must present exactly one
+        of a fresh TOTP code or one recovery code — never both, and never
+        neither.
+        """
+        from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+
+        self._require_active_user(user)
+        if not verify_password(current_password, user.password_hash):
+            self._log_step_up_issuance_rejected(user, purpose, "CURRENT_PASSWORD_REQUIRED")
+            raise self._auth_error(
+                "CURRENT_PASSWORD_REQUIRED",
+                "Enter the current password to confirm this action.",
+                status_code=403,
+            )
+        if totp_code and recovery_code:
+            self._log_step_up_issuance_rejected(user, purpose, "STEP_UP_PROOF_AMBIGUOUS")
+            raise self._auth_error(
+                "STEP_UP_PROOF_AMBIGUOUS",
+                "Provide either an authenticator code or a recovery code, not both.",
+                status_code=400,
+            )
+
+        mandatory_role = user.role in MANDATORY_2FA_ROLES
+        if user.two_factor_enabled:
+            if not totp_code and not recovery_code:
+                self._log_step_up_issuance_rejected(user, purpose, "2FA_CODE_REQUIRED")
+                raise self._auth_error(
+                    "2FA_CODE_REQUIRED",
+                    "التحقق بخطوتين مطلوب — أدخل الرمز أو كود استرداد",
+                )
+            recovery_used = False
+            valid_totp = False
+            if totp_code:
+                valid_totp = self._consume_totp_code(user, totp_code)
+            elif recovery_code:
+                recovery_used = self._consume_recovery_code(user.id, recovery_code)
+            if not valid_totp and not recovery_used:
+                self._log_step_up_issuance_rejected(user, purpose, "2FA_CODE_INVALID")
+                raise self._auth_error(
+                    "2FA_CODE_INVALID",
+                    "رمز التحقق بخطوتين غير صحيح",
+                )
+            assurance_method = "recovery_code" if recovery_used else "totp"
+        else:
+            if mandatory_role:
+                # Not reachable through the normal HTTP chain (see docstring
+                # above) — kept as an explicit, fail-closed statement rather
+                # than an implicit password-only fallback for this role.
+                self._log_step_up_issuance_rejected(user, purpose, "MANDATORY_2FA_REQUIRED")
+                raise self._auth_error(
+                    "MANDATORY_2FA_REQUIRED",
+                    "This role requires two-factor authentication before confirming sensitive actions.",
+                    status_code=403,
+                )
+            assurance_method = "password_only"
+
+        from app.core.kernel.models.user import StepUpGrant  # noqa: PLC0415
+
+        now = datetime.now(timezone.utc)
+        token = secrets.token_urlsafe(32)
+        public_reference = secrets.token_hex(8)
+        expires_at = now + timedelta(seconds=self.settings.STEP_UP_TOKEN_TTL_SECONDS)
+
+        # Bounded cleanup: only this user's own expired grants, not a global
+        # sweep — cheap, and avoids lock contention with unrelated users.
+        self.db.query(StepUpGrant).filter(
+            StepUpGrant.user_id == user.id,
+            StepUpGrant.expires_at <= now,
+        ).delete(synchronize_session=False)
+
+        self.db.add(StepUpGrant(
+            public_reference=public_reference,
+            user_id=user.id,
+            purpose=purpose,
+            scope_hash=scope_hash,
+            token_hash=self._hash_token(token),
+            access_token_hash=access_token_hash,
+            assurance_method=assurance_method,
+            expires_at=expires_at,
+        ))
+        self._add_auth_audit(user, "step_up_issued", details={
+            "purpose": purpose,
+            "assurance_method": assurance_method,
+            "public_reference": public_reference,
+        })
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return {
+            "step_up_token": token,
+            "public_reference": public_reference,
+            "expires_at": expires_at,
+            "assurance_method": assurance_method,
+        }
+
+    def consume_step_up(
+        self,
+        *,
+        user_id: int,
+        purpose: str,
+        scope_hash: str,
+        access_token_hash: str,
+        token: Optional[str],
+    ) -> Optional[dict]:
+        """Atomically consume exactly one grant matching every binding
+        dimension at once (user, purpose, scope, session, not expired).
+        Returns the grant's non-secret metadata (for the caller's audit
+        entry) on success, or ``None`` on any failure.
+
+        A single conditional DELETE is the concurrency boundary — two
+        concurrent requests presenting the same token can both attempt this
+        delete, but only one can affect a row; the other observes a
+        zero-row-count and is rejected. The preceding SELECT below is only
+        to read the metadata of *our own* row before deleting it — it does
+        not weaken the atomicity guarantee, since "did our own DELETE
+        affect exactly one row" is the only thing that decides success, not
+        whether a matching row was visible a moment earlier. It is also,
+        deliberately, the only source of "why did this fail" information:
+        user/purpose/scope/session/expiry mismatches all produce the same
+        zero-row outcome, so the caller cannot distinguish them
+        (STEP_UP_INVALID is intentionally generic — see the consuming
+        router endpoints).
+
+        This method commits its own transaction immediately. It is a
+        separate commit from whatever business mutation the caller performs
+        next on the same session — not one atomic transaction spanning both
+        (the existing services already commit internally, so there is no
+        clean way to nest this inside their transaction without a broader
+        refactor out of scope for Gate 2B3A). If the business mutation
+        fails afterward, the grant is already gone; the UI must request a
+        fresh step-up rather than silently retrying with a token that is
+        now guaranteed to fail.
+        """
+        if not token:
+            return None
+        token_hash = self._hash_token(token)
+        now = datetime.now(timezone.utc)
+
+        from app.core.kernel.models.user import StepUpGrant  # noqa: PLC0415
+
+        match = (
+            StepUpGrant.token_hash == token_hash,
+            StepUpGrant.user_id == user_id,
+            StepUpGrant.purpose == purpose,
+            StepUpGrant.scope_hash == scope_hash,
+            StepUpGrant.access_token_hash == access_token_hash,
+            StepUpGrant.expires_at > now,
+        )
+        candidate = self.db.query(StepUpGrant).filter(*match).first()
+        # اقرأ الحقول المطلوبة للـaudit *قبل* الـcommit تحت — commit
+        # بيمسح (expire) كل objects الـsession بالافتراضي، والصف بقى محذوف
+        # فعليًا وقت الـDELETE تحت، فأي وصول لـcandidate.<attr> بعد الـcommit
+        # كان بيطلع ObjectDeletedError (باج حقيقي اتكشف واتصلح هنا).
+        candidate_public_reference = candidate.public_reference if candidate else None
+        candidate_assurance_method = candidate.assurance_method if candidate else None
+        consumed = self.db.query(StepUpGrant).filter(*match).delete(synchronize_session=False)
+
+        if consumed == 1:
+            # Bounded cleanup of this user's other expired grants only on
+            # the success path — same reasoning as issue_step_up, and kept
+            # out of the rejection path so a replay/mismatch attempt cannot
+            # be used to quietly sweep away unrelated still-valid grants.
+            self.db.query(StepUpGrant).filter(
+                StepUpGrant.user_id == user_id,
+                StepUpGrant.expires_at <= now,
+            ).delete(synchronize_session=False)
+        else:
+            self.db.rollback()
+
+        from app.modules.core.models import AuditLog  # noqa: PLC0415
+
+        # مراجعة Codex المستقلة (2026-07-18، Medium): نجاح الاستهلاك بيتسجّل
+        # دايمًا (حدث واحد لكل proof، محدود بطبيعته — proof وحيد الاستخدام).
+        # الرفض (توكن مفقود/منتهي/مُعاد استخدامه/غلط) كان بيتسجّل بلا حد —
+        # جلسة موثّقة (super_admin/admin) خبيثة تقدر تضخّم AuditLog بتكرار
+        # محاولات استهلاك وهمية على أي من الأربعة endpoints المحمية (مفيش
+        # rate limit على دي، بعكس POST /auth/step-up نفسها). rate_limit()
+        # هنا بيحد عدد صفوف step_up_rejected لكل مستخدم خلال نافذة زمنية —
+        # الرفض الفعلي للطلب (STEP_UP_INVALID) بيفضل يحصل دايمًا، بس السجل
+        # بس اللي بيتحد. مش تدقيق دخول عام مجهول (ده لسه Gate 2B3B).
+        should_log = consumed == 1
+        if not should_log:
+            from app.core.kernel.cache import rate_limit  # noqa: PLC0415
+            should_log = rate_limit(f"stepup-reject-audit:{user_id}", max_requests=20, window_seconds=300)
+
+        if should_log:
+            self.db.add(AuditLog(
+                user_id=user_id,
+                branch_id=None,
+                action="step_up_consumed" if consumed == 1 else "step_up_rejected",
+                entity_type="user_authentication",
+                entity_id=user_id,
+                old_data=None,
+                new_data=json.dumps({"purpose": purpose}, ensure_ascii=False, sort_keys=True),
+            ))
+        self.db.commit()
+        if consumed == 1 and candidate_public_reference is not None:
+            return {
+                "public_reference": candidate_public_reference,
+                "assurance_method": candidate_assurance_method,
+            }
+        return None
 
     # ── Out-of-band privileged bootstrap ────────────────────────────────
 

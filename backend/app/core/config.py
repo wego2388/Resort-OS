@@ -103,6 +103,11 @@ class Settings(CoreSettings):
     PASSWORD_RESET_ACCOUNT_RATE_LIMIT_MAX: int = 3
     PASSWORD_RESET_ACCOUNT_RATE_LIMIT_WINDOW_SECONDS: int = 900
     TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES: int = Field(30, ge=5, le=1440)
+    # Gate 2B3A — deliberately much shorter than ACCESS_TOKEN_EXPIRE_MINUTES
+    # (30 in production): a step-up grant proves the session holder recently
+    # re-entered their password (and TOTP/recovery code where 2FA is on),
+    # not just that their access token hasn't expired yet.
+    STEP_UP_TOKEN_TTL_SECONDS: int = Field(180, ge=60, le=300)
 
     # ── Rate limiting: trusted reverse-proxy hop count (Codex security
     # review، 2026-07-17) ───────────────────────────────────────────────

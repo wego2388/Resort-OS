@@ -20,7 +20,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Body, Form, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from sqlalchemy.orm import Session
 from typing import Callable, Optional
 
@@ -181,6 +181,135 @@ class _RecoveryCodesRegenerateRequest(BaseModel):
 
     code: str = Field(min_length=6, max_length=8)
     current_password: str = Field(min_length=1, max_length=1024)
+
+
+# Gate 2B3A — purposes the control plane currently issues step-up grants
+# for. Each one has a matching scope-builder function in
+# app.core.kernel.auth.step_up that both this endpoint and the consuming
+# endpoint call, so the two sides can never define "same operation"
+# differently.
+_STEP_UP_PURPOSES = frozenset({
+    "user_role_update",
+    "permission_override_upsert",
+    "permission_override_revoke",
+    "setting_upsert",
+})
+
+
+class _StepUpRequest(BaseModel):
+    """``intent`` carries only the non-secret identifiers of the operation
+    the caller is about to perform (e.g. target user_id, new role, setting
+    key) — never a password/TOTP/recovery code, and never the full setting
+    value or reason in the clear beyond what the scope builder hashes.
+    Exactly one of totp_code/recovery_code may be supplied, and only when
+    the account has 2FA enabled.
+
+    ``intent`` stays an untyped dict at this outer layer only because its
+    real shape depends on ``purpose``, which isn't known until this model
+    is already parsed — the endpoint immediately re-validates it against
+    one of the purpose-specific typed models below before touching
+    anything else. Never read ``payload.intent`` directly for a field
+    value; go through the typed model instead."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: str = Field(min_length=1, max_length=1024)
+    purpose: str = Field(min_length=1, max_length=64)
+    intent: dict = Field(default_factory=dict)
+    totp_code: Optional[str] = Field(default=None, min_length=6, max_length=8)
+    recovery_code: Optional[str] = Field(default=None, min_length=1, max_length=64)
+
+
+# Gate 2B3A — purpose-specific typed intent contracts (مراجعة Codex
+# المستقلة، 2026-07-18، Medium): كانت `intent` بتتقرا كـdict حر عبر
+# .get()/[] وbool()/int()/str() يدوي — يعني قيمة زي "allowed": "false"
+# (نص، مش JSON boolean) كانت بتعدّي bool("false") == True بصمت، وأي
+# حقل زيادة غير متوقع كان بيتقبل من غير أي رفض. كل عقد هنا extra="forbid"
+# ونفس نوع الحقل المطلوب فعليًا في العملية الأصلية (مش تحويل يدوي)."""
+
+class _UserRoleUpdateIntent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: int = Field(gt=0, strict=True)
+    role: Optional[str] = Field(default=None, max_length=30)
+    is_active: Optional[bool] = Field(default=None, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("role")
+    @classmethod
+    def _role_must_be_known(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            from app.core.deps import ROLE_LEVELS  # noqa: PLC0415
+
+            if value not in ROLE_LEVELS:
+                raise ValueError(f"Unknown role: {value}")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+class _PermissionOverrideUpsertIntent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: int = Field(gt=0, strict=True)
+    resource: str = Field(min_length=1, max_length=100)
+    action: str = Field(
+        pattern=r"^(view|create|edit|delete|void|approve|execute)$",
+        max_length=30,
+    )
+    allowed: bool = Field(strict=True)
+    branch_id: Optional[int] = Field(default=None, gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+class _PermissionOverrideRevokeIntent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    permission_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+class _SettingUpsertIntent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    key: str = Field(min_length=1, max_length=100)
+    branch_id: Optional[int] = Field(default=None, gt=0, strict=True)
+    value: str
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+_STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
+    "user_role_update": _UserRoleUpdateIntent,
+    "permission_override_upsert": _PermissionOverrideUpsertIntent,
+    "permission_override_revoke": _PermissionOverrideRevokeIntent,
+    "setting_upsert": _SettingUpsertIntent,
+}
 
 
 def build_auth_router(
@@ -432,5 +561,72 @@ def build_auth_router(
         )
         _clear_refresh_cookie(response, environment=settings.ENVIRONMENT)
         return {"message": "Recovery codes regenerated successfully.", **result}
+
+    @router.post("/step-up")
+    def issue_step_up(
+        response: Response,
+        request: Request,
+        payload: _StepUpRequest,
+        current_user=Depends(_get_current_user),
+        auth: AuthService = Depends(get_auth_service),
+    ):
+        """Gate 2B3A — issue a short-lived, one-time, hashed proof that the
+        current session holder just re-confirmed their password (and TOTP/
+        recovery code where 2FA is enabled) for one exact operation. This
+        is not itself an authorization decision; the consuming endpoint
+        still enforces its own role/ownership checks independently."""
+        from fastapi import HTTPException  # noqa: PLC0415
+        from app.core.kernel.auth import step_up as step_up_scopes  # noqa: PLC0415
+
+        _mark_sensitive_response(response)
+
+        if payload.purpose not in _STEP_UP_PURPOSES:
+            raise HTTPException(422, f"Unknown step-up purpose: {payload.purpose}")
+
+        # Gate 2B3A (مراجعة Codex المستقلة، 2026-07-18): intent بيتحقق منه
+        # عبر عقد Pydantic مخصص لنفس الـpurpose قبل أي حاجة تانية — بما
+        # فيها استهلاك TOTP/recovery code تحت. intent مشوّه = 422 فورًا،
+        # قبل ما نلمس أي سر خالص. extra="forbid" بيرفض أي حقل زيادة، ونوع
+        # كل حقل (زي allowed: bool) بيتفرض فعليًا بدل تحويل يدوي بـbool()/
+        # int()/str() كان بيقبل قيم غلط بصمت (مثال حقيقي: "allowed":
+        # "false" كنص كان بيعدّي bool("false") == True).
+        try:
+            intent = _STEP_UP_INTENT_MODELS[payload.purpose].model_validate(payload.intent)
+        except ValidationError as exc:
+            raise HTTPException(422, f"Invalid intent for purpose '{payload.purpose}': {exc}")
+
+        if payload.purpose == "user_role_update":
+            scope_hash = step_up_scopes.user_role_update_scope(
+                user_id=intent.user_id, role=intent.role, is_active=intent.is_active, reason=intent.reason,
+            )
+        elif payload.purpose == "permission_override_upsert":
+            scope_hash = step_up_scopes.permission_override_upsert_scope(
+                user_id=intent.user_id, resource=intent.resource, action=intent.action,
+                allowed=intent.allowed, branch_id=intent.branch_id, reason=intent.reason,
+            )
+        elif payload.purpose == "permission_override_revoke":
+            scope_hash = step_up_scopes.permission_override_revoke_scope(
+                permission_id=intent.permission_id, reason=intent.reason,
+            )
+        else:  # setting_upsert
+            scope_hash = step_up_scopes.setting_upsert_scope(
+                key=intent.key, branch_id=intent.branch_id, value=intent.value, reason=intent.reason,
+            )
+
+        access_token_hash = step_up_scopes.access_token_hash_from_request(request)
+        result = auth.issue_step_up(
+            current_user,
+            current_password=payload.current_password,
+            purpose=payload.purpose,
+            scope_hash=scope_hash,
+            access_token_hash=access_token_hash,
+            totp_code=payload.totp_code,
+            recovery_code=payload.recovery_code,
+        )
+        return {
+            "step_up_token": result["step_up_token"],
+            "expires_at": result["expires_at"],
+            "assurance_method": result["assurance_method"],
+        }
 
     return router

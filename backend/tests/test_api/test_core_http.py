@@ -74,32 +74,42 @@ class TestSettingsEndpoints:
         resp = client.put("/api/v1/settings/vat_percentage", json={"value": "14"}, headers=manager_headers)
         assert resp.status_code == 403
 
-    def test_upsert_then_get_and_list(self, client: TestClient, waiter_headers):
-        from tests.conftest import _create_test_user, _make_token
-        email = f"core-admin2-{uuid.uuid4().hex[:6]}@test.local"
-        _create_test_user(email, "admin")
-        admin_headers = {"Authorization": f"Bearer {_make_token(email)}"}
+    def test_upsert_then_get_and_list(self, client: TestClient):
+        """Gate 2B3A: الإعدادات العامة (Global، branch_id غير مُرسَل) بقت
+        قراءة وكتابة لـsuper_admin فقط، والكتابة بقت محتاجة reason +
+        step-up token صالح — راجع docs/audits/gate-2b3a-step-up-control-plane.md.
+        حساب super_admin معزول (مش super_admin_headers المشترك) عشان مفيش
+        خطر تصادم إعادة استخدام كود TOTP مع اختبار تاني."""
+        from tests.conftest import _fresh_super_admin, _issue_step_up
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin("settings-crud")
 
         key = f"test_setting_{uuid.uuid4().hex[:6]}"
-        upsert_resp = client.put(f"/api/v1/settings/{key}", json={"value": "hello"}, headers=admin_headers)
+        reason = "تعديل إعداد عام لاختبار CRUD الأساسي"
+        token = _issue_step_up(
+            client, sa_headers, purpose="setting_upsert",
+            intent={"key": key, "branch_id": None, "value": "hello", "reason": reason},
+            totp_secret=sa_secret,
+        )
+        upsert_resp = client.put(
+            f"/api/v1/settings/{key}", json={"value": "hello", "reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
         assert upsert_resp.status_code == 200, upsert_resp.text
         assert upsert_resp.json()["value"] == "hello"
 
-        get_resp = client.get(f"/api/v1/settings/{key}", headers=waiter_headers)
+        get_resp = client.get(f"/api/v1/settings/{key}", headers=sa_headers)
         assert get_resp.status_code == 200
         assert get_resp.json()["value"] == "hello"
 
-        # list يحتاج manager+ مش أي مستخدم نشط
-        from tests.conftest import _create_test_user as _ctu, _make_token as _mt
-        mgr_email = f"core-mgr-{uuid.uuid4().hex[:6]}@test.local"
-        _ctu(mgr_email, "manager")
-        mgr_headers = {"Authorization": f"Bearer {_mt(mgr_email)}"}
-        list_resp = client.get("/api/v1/settings", headers=mgr_headers)
+        list_resp = client.get("/api/v1/settings", headers=sa_headers)
         assert list_resp.status_code == 200
         assert any(s["key"] == key for s in list_resp.json())
 
-    def test_get_missing_setting_404(self, client: TestClient, waiter_headers):
-        resp = client.get(f"/api/v1/settings/does-not-exist-{uuid.uuid4().hex[:6]}", headers=waiter_headers)
+    def test_get_missing_setting_404(self, client: TestClient, super_admin_headers):
+        """Gate 2B3A: قراءة إعداد عام (branch_id غير مُرسَل) بقت
+        super_admin فقط — waiter_headers كانت بترجع 404 قبل كده، دلوقتي
+        403 قبل ما توصل للتحقق من الوجود أصلاً."""
+        resp = client.get(f"/api/v1/settings/does-not-exist-{uuid.uuid4().hex[:6]}", headers=super_admin_headers)
         assert resp.status_code == 404
 
     def test_list_requires_manager(self, client: TestClient, waiter_headers):
@@ -179,8 +189,19 @@ class TestUsersEndpoints:
         assert get_resp.status_code == 200
         assert get_resp.json()["role"] == "waiter"
 
+        # Gate 2B3A: reason + step-up إجباريان — حساب super_admin معزول
+        # (مش super_admin_headers المشترك) لتفادي تصادم إعادة استخدام TOTP
+        from tests.conftest import _fresh_super_admin, _issue_step_up
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin("role-update-actor")
+        reason = "ترقية نادل لكاشير بعد تدريب ناجح"
+        token = _issue_step_up(
+            client, sa_headers, purpose="user_role_update",
+            intent={"user_id": user_id, "role": "cashier", "is_active": None, "reason": reason},
+            totp_secret=sa_secret,
+        )
         update_resp = client.patch(
-            f"/api/v1/users/{user_id}/role", json={"role": "cashier"}, headers=super_admin_headers,
+            f"/api/v1/users/{user_id}/role", json={"role": "cashier", "reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
         )
         assert update_resp.status_code == 200
         assert update_resp.json()["role"] == "cashier"

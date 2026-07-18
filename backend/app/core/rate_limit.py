@@ -118,6 +118,10 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
         "two-factor-recovery", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
         settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
     ),
+    ("POST", "/api/v1/auth/step-up"): (
+        "step-up-issue", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+        settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+    ),
     ("POST", "/api/v1/hub/contact"):   ("public", 30, 60),
     ("GET",  "/api/v1/hub/blog/posts"): ("public", 30, 60),
     ("GET",  "/api/v1/pms/public/room-types"): ("public", 30, 60),

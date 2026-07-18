@@ -85,6 +85,27 @@ def delete_branch(db: Session, branch: Branch) -> None:
 
 # ─────────────────────── Setting ─────────────────────────────────────
 
+def get_setting_exact(
+    db: Session,
+    key: str,
+    branch_id: Optional[int] = None,
+) -> Optional[Setting]:
+    """مطابقة تامة على (key, branch_id) — بدون أي fallback للعام. هي
+    المصدر الوحيد المسموح له الـHTTP admin path (core/api/router.py::
+    get_setting) يستخدمه: مراجعة Codex المستقلة لـGate 2B3A (2026-07-18)
+    اكتشفت إن get_setting() القديمة (تحت) كانت بترجع صف الإعداد العام
+    ضمنيًا لمدير فرع طلب مفتاح مش موجود لفرعه — تسريب قيمة إعداد عام
+    لغير super_admin رغم فحص عزل الفرع في الراوتر، لأن الفحص كان بيتحقق
+    من الفرع المطلوب (صحيح) لكن مش من مصدر الصف الراجع فعليًا (fallback
+    ضمني). لا تستخدمها بدل get_setting() للاستخدام الداخلي (تسعير الشاطئ
+    وغيره) — دي بتحتاج fallback القيمة العامة فعليًا."""
+    return (
+        db.query(Setting)
+        .filter(Setting.key == key, Setting.branch_id == branch_id)
+        .first()
+    )
+
+
 def get_setting(
     db: Session,
     key: str,
@@ -93,6 +114,11 @@ def get_setting(
     """
     يبحث بالـ key + branch_id.
     لو branch_id محدد ولم يجد → يبحث عن global (branch_id=None).
+
+    ⚠️ الاستخدام الداخلي فقط (get_setting_value() وما شابه) — الـHTTP
+    admin path (GET /settings/{key}) لازم يستخدم get_setting_exact()
+    فوق بدل الدالة دي، عشان مايرجعش صف عام ضمنيًا لطلب فرع صريح. راجع
+    docstring get_setting_exact() للسياق الكامل.
     """
     row = (
         db.query(Setting)
