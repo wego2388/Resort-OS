@@ -447,6 +447,11 @@ def update_user_role(
             status.HTTP_409_CONFLICT,
             {"error_code": "ACTOR_SUPER_ADMIN_PRIVILEGES_CHANGED", "message": str(exc)},
         )
+    except services.MandatoryTwoFactorEnrollmentRequiredError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "MANDATORY_2FA_ENROLLMENT_REQUIRED", "message": str(exc)},
+        )
 
 
 # ─────────────────────── Permission Matrix ───────────────────────────

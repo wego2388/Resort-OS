@@ -14,6 +14,8 @@ export interface User {
   // router can send the user straight to /2fa-setup instead of letting every
   // other API call in the app silently 403 with no explanation.
   two_factor_enabled?: boolean
+  must_change_password?: boolean
+  two_factor_bootstrap_required?: boolean
 }
 
 export interface Branch {
@@ -69,4 +71,3 @@ export interface Booking {
   status: 'confirmed' | 'checked_in' | 'checked_out' | 'cancelled' | 'no_show'
   total_amount: number
 }
-

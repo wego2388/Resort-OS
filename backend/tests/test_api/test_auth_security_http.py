@@ -119,7 +119,7 @@ class TestTotpSecretAtRest:
         _mk_user(email, role="manager")
         auth = _svc()
         user = auth.repo.get_by_email(email)
-        result = auth.setup_2fa(user)
+        result = auth.setup_2fa(user, current_password="Correct@12345")
         plaintext_secret = result["secret"]
 
         # raw column bypasses the EncryptedString TypeDecorator
@@ -168,6 +168,18 @@ class TestLoginTime2FA:
         monkeypatch.setattr(settings, "LOGIN_2FA_ENFORCED", False)
         out = _svc().login(email, "Correct@12345")  # no code needed (back-compat)
         assert out["access_token"]
+
+    def test_same_totp_step_cannot_be_replayed(self, setup_db, monkeypatch):
+        email = f"l2fa-replay-{uuid.uuid4().hex}@test.local"
+        secret = pyotp.random_base32()
+        _mk_user(email, role="manager", two_factor_enabled=True, two_factor_secret=secret)
+        monkeypatch.setattr(settings, "LOGIN_2FA_ENFORCED", True)
+        code = pyotp.TOTP(secret).now()
+
+        assert _svc().login(email, "Correct@12345", otp_code=code)["access_token"]
+        with pytest.raises(Exception) as replay:
+            _svc().login(email, "Correct@12345", otp_code=code)
+        assert replay.value.detail["code"] == "2FA_CODE_INVALID"
 
 
 # ── 6: registration can't self-assign an elevated role ─────────────────────
@@ -327,6 +339,8 @@ class TestSecretKeyValidation:
             ENVIRONMENT="production",
             SECRET_KEY="Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz",
             DATABASE_URL="sqlite://",
+            LOGIN_2FA_ENFORCED=True,
+            FIELD_ENCRYPTION_KEY="9g2Hqbw0QQod3CiEaA9MMrWBpXmb3J3Hb6MEdwv2FeQ=",
         )
         assert s.ENVIRONMENT == "production"
 
@@ -335,6 +349,7 @@ class TestSecretKeyValidation:
 #        مراجعة Codex الثالثة) — نفس نمط TestSecretKeyValidation بالظبط ────
 
 _STRONG_SECRET = "Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz"
+_FERNET_KEY = "9g2Hqbw0QQod3CiEaA9MMrWBpXmb3J3Hb6MEdwv2FeQ="
 
 
 class TestContainmentSwitchValidation:
@@ -394,7 +409,8 @@ class TestContainmentSwitchValidation:
         from app.core.config import Settings
         s = Settings(
             ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
-            DATABASE_URL="sqlite://",
+            DATABASE_URL="sqlite://", LOGIN_2FA_ENFORCED=True,
+            FIELD_ENCRYPTION_KEY=_FERNET_KEY,
         )
         assert s.DINING_SELF_ORDER_ENABLED is False
         assert s.GUEST_ALERTS_ENABLED is False
@@ -422,6 +438,74 @@ class TestContainmentSwitchValidation:
         assert s.DINING_SELF_ORDER_ENABLED is True
 
 
+class TestProductionAuthenticationValidation:
+    @pytest.mark.parametrize("environment", ["production", "Production", "staging", "typo-env"])
+    def test_non_safe_environment_rejects_password_only_login(self, environment):
+        from pydantic import ValidationError
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError, match="LOGIN_2FA_ENFORCED"):
+            Settings(
+                ENVIRONMENT=environment,
+                SECRET_KEY=_STRONG_SECRET,
+                DATABASE_URL="sqlite://",
+                FIELD_ENCRYPTION_KEY=_FERNET_KEY,
+                LOGIN_2FA_ENFORCED=False,
+            )
+
+    def test_non_safe_environment_requires_valid_fernet_key(self):
+        from pydantic import ValidationError
+        from app.core.config import Settings
+
+        with pytest.raises(ValidationError, match="FIELD_ENCRYPTION_KEY"):
+            Settings(
+                ENVIRONMENT="production",
+                SECRET_KEY=_STRONG_SECRET,
+                DATABASE_URL="sqlite://",
+                LOGIN_2FA_ENFORCED=True,
+                FIELD_ENCRYPTION_KEY="not-a-fernet-key",
+            )
+
+    def test_production_accepts_enforced_totp_and_valid_encryption(self):
+        from app.core.config import Settings
+
+        configured = Settings(
+            ENVIRONMENT="production",
+            SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://",
+            LOGIN_2FA_ENFORCED=True,
+            FIELD_ENCRYPTION_KEY=_FERNET_KEY,
+        )
+        assert configured.LOGIN_2FA_ENFORCED is True
+
+    def test_refresh_cookie_security_uses_the_same_safe_environment_allowlist(self):
+        from fastapi import Response
+        from app.core.kernel.auth.router import _set_refresh_cookie
+
+        for environment in ("production", "staging", "typo-env"):
+            response = Response()
+            _set_refresh_cookie(
+                response,
+                "opaque-value",
+                7,
+                environment=environment,
+            )
+            cookie = response.headers["set-cookie"].lower()
+            assert "secure" in cookie
+            assert "samesite=strict" in cookie
+            assert "httponly" in cookie
+
+        response = Response()
+        _set_refresh_cookie(
+            response,
+            "opaque-value",
+            7,
+            environment=" Test ",
+        )
+        cookie = response.headers["set-cookie"].lower()
+        assert "secure" not in cookie
+        assert "samesite=lax" in cookie
+
 # ── 8: login stays wired to the IP rate limiter ────────────────────────────
 
 class TestRateLimitWiring:
@@ -438,6 +522,17 @@ class TestRateLimitWiring:
         assert prefix == "login"
         assert max_req == settings.LOGIN_RATE_LIMIT_MAX
         assert window == settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS
+
+    def test_two_factor_binding_and_recovery_routes_are_rate_limited(self):
+        from app.core.rate_limit import _LIMITED_ROUTES
+
+        for path in (
+            "/api/v1/auth/2fa/setup",
+            "/api/v1/auth/2fa/enable",
+            "/api/v1/auth/2fa/disable",
+            "/api/v1/auth/2fa/recovery-codes/regenerate",
+        ):
+            assert ("POST", path) in _LIMITED_ROUTES
 
     def test_guest_ordering_endpoints_are_rate_limited(self):
         """باج حقيقي اتصلح (2026-07-07): طلب/قائمة المطعم والكافيه كانت

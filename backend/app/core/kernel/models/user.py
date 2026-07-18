@@ -1,15 +1,24 @@
 """
 app/core/kernel/models/user.py
-User, RefreshToken, TokenBlacklist — owned by resort-os.
+User, RefreshToken, TokenBlacklist, TwoFactorRecoveryCode — owned by resort-os.
 
-Column layout is unchanged from the previous wego_core-backed models (this
-maps onto the existing `users` / `refresh_tokens` / `token_blacklist` tables
-— no migration needed, this is the same schema, just no longer imported
-from an external package).
+The original columns still map onto the former wego_core-backed tables. Gate
+2B2 adds explicit bootstrap state and hashed one-time recovery codes through
+the forward Alembic migration ``a7c2e91f4b6d``.
 """
 
 import enum
-from sqlalchemy import Column, Integer, String, Boolean, TIMESTAMP, Numeric, ForeignKey
+from sqlalchemy import (
+    Boolean,
+    BigInteger,
+    Column,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    TIMESTAMP,
+    UniqueConstraint,
+)
 from sqlalchemy.sql import func
 
 from app.core.kernel.database import Base
@@ -56,6 +65,31 @@ class UserMixin:
     # InvalidToken, so this is transparent with no migration/backfill required.
     two_factor_enabled = Column(Boolean, default=False)
     two_factor_secret = Column(EncryptedString(255), nullable=True)
+    # Gate 2B2: privileged/bootstrap accounts cannot be claimed by whoever
+    # happens to know a seeded or temporary password first.  The operator
+    # must also present a separate, short-lived enrollment token issued by
+    # the local bootstrap command.  Only its SHA-256 hash is persisted.
+    two_factor_bootstrap_required = Column(
+        Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
+    )
+    two_factor_enrollment_token_hash = Column(String(64), nullable=True)
+    two_factor_enrollment_expires_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # Highest accepted TOTP counter. Conditional updates make a six-digit code
+    # one-time even when two login requests race inside the same 30s window.
+    two_factor_last_used_step = Column(BigInteger, nullable=True)
+
+    # A temporary/bootstrap credential is not considered an operational
+    # password.  get_current_active_user keeps the account inside /auth/*
+    # until the user replaces it successfully.
+    must_change_password = Column(
+        Boolean,
+        default=False,
+        server_default="0",
+        nullable=False,
+    )
 
     # Profile
     email_verified = Column(Boolean, default=False)
@@ -105,6 +139,30 @@ class RefreshToken(Base):
     device_fingerprint = Column(String(255), nullable=True)
     expires_at = Column(TIMESTAMP, nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.now())
+
+
+class TwoFactorRecoveryCode(Base):
+    """One-time, high-entropy recovery codes for an enrolled 2FA account.
+
+    The plaintext code is returned once at enrollment/regeneration time.  A
+    SHA-256 digest is sufficient here because generated codes carry 120 bits
+    of entropy; the database never stores a reusable bearer secret.
+    """
+
+    __tablename__ = "two_factor_recovery_codes"
+    __table_args__ = (
+        UniqueConstraint("user_id", "code_hash", name="uq_2fa_recovery_user_code"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    code_hash = Column(String(64), nullable=False)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
 
 class TokenBlacklist(Base):

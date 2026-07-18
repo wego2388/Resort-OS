@@ -19,6 +19,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Body, Form, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
+from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 from typing import Callable, Optional
@@ -35,33 +36,49 @@ from app.core.kernel.database import get_db
 #   development: SameSite=Lax  + Secure=False  (HTTP + cross-origin dev access
 #                via IP أو localhost من جهاز تاني على الشبكة المحلية)
 _REFRESH_COOKIE_NAME = "refresh_token"
-
-import os as _os
-_IS_DEV = _os.environ.get("ENVIRONMENT", "development") != "production"
+_SAFE_ENVIRONMENTS = {"development", "test", "testing"}
 
 
-def _set_refresh_cookie(response: Response, token: str, max_age_days: int) -> None:
+def _is_safe_environment(environment: str) -> bool:
+    return (environment or "").strip().lower() in _SAFE_ENVIRONMENTS
+
+
+def _set_refresh_cookie(
+    response: Response,
+    token: str,
+    max_age_days: int,
+    *,
+    environment: str,
+) -> None:
     """يحط refresh_token في httpOnly cookie — Strict+Secure في production، Lax في dev."""
+    is_safe_environment = _is_safe_environment(environment)
     response.set_cookie(
         key=_REFRESH_COOKIE_NAME,
         value=token,
         max_age=max_age_days * 86_400,
         httponly=True,
-        samesite="lax" if _IS_DEV else "strict",
-        secure=not _IS_DEV,   # False في dev (HTTP) — True في production (HTTPS)
+        samesite="lax" if is_safe_environment else "strict",
+        secure=not is_safe_environment,
         path="/api/v1/auth",  # مش /api/v1/ كاملة — الـ cookie ميتبعتش مع كل request
     )
 
 
-def _clear_refresh_cookie(response: Response) -> None:
+def _clear_refresh_cookie(response: Response, *, environment: str) -> None:
     """يمسح refresh_token cookie عند logout."""
+    is_safe_environment = _is_safe_environment(environment)
     response.delete_cookie(
         key=_REFRESH_COOKIE_NAME,
         path="/api/v1/auth",
         httponly=True,
-        samesite="lax" if _IS_DEV else "strict",
-        secure=not _IS_DEV,
+        samesite="lax" if is_safe_environment else "strict",
+        secure=not is_safe_environment,
     )
+
+
+def _mark_sensitive_response(response: Response) -> None:
+    """Prevent browser/proxy caching of credentials, TOTP seeds, or codes."""
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
 
 
 class _PublicUserOut(BaseModel):
@@ -122,6 +139,7 @@ class _ChangePasswordRequest(BaseModel):
     current_password: Optional[str] = Field(default=None, min_length=1, max_length=1024)
     old_password: Optional[str] = Field(default=None, min_length=1, max_length=1024)
     new_password: str = Field(min_length=1, max_length=1024)
+    enrollment_token: Optional[str] = Field(default=None, min_length=20, max_length=512)
 
     @model_validator(mode="after")
     def _validate_current_password_fields(self) -> "_ChangePasswordRequest":
@@ -135,6 +153,34 @@ class _ChangePasswordRequest(BaseModel):
     def verified_current_password(self) -> str:
         # The validator above guarantees one of these values is present.
         return self.current_password or self.old_password or ""
+
+
+class _TwoFactorSetupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: Optional[str] = Field(default=None, min_length=1, max_length=1024)
+    enrollment_token: Optional[str] = Field(default=None, min_length=20, max_length=512)
+
+
+class _TwoFactorEnableRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=6, max_length=8)
+    enrollment_token: Optional[str] = Field(default=None, min_length=20, max_length=512)
+
+
+class _TwoFactorDisableRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=6, max_length=8)
+    current_password: str = Field(min_length=1, max_length=1024)
+
+
+class _RecoveryCodesRegenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str = Field(min_length=6, max_length=8)
+    current_password: str = Field(min_length=1, max_length=1024)
 
 
 def build_auth_router(
@@ -160,13 +206,30 @@ def build_auth_router(
         response: Response,
         form_data: OAuth2PasswordRequestForm = Depends(),
         otp_code: Optional[str] = Form(None),
+        recovery_code: Optional[str] = Form(None),
+        enrollment_token: Optional[str] = Form(None),
         auth: AuthService = Depends(get_auth_service),
     ):
-        result = auth.login(form_data.username, form_data.password, otp_code=otp_code)
+        _mark_sensitive_response(response)
+        result = auth.login(
+            form_data.username,
+            form_data.password,
+            otp_code=otp_code,
+            recovery_code=recovery_code,
+            enrollment_token=enrollment_token,
+        )
         user = result.pop("_user", None)
-        if user:
+        allow_refresh = result.pop("_allow_refresh", True)
+        if user and allow_refresh:
             refresh = auth.create_refresh_token(user.id)
-            _set_refresh_cookie(response, refresh, auth.settings.REFRESH_TOKEN_EXPIRE_DAYS)
+            _set_refresh_cookie(
+                response,
+                refresh,
+                auth.settings.REFRESH_TOKEN_EXPIRE_DAYS,
+                environment=auth.settings.ENVIRONMENT,
+            )
+        else:
+            _clear_refresh_cookie(response, environment=auth.settings.ENVIRONMENT)
         # refresh_token لا يرجع في الـ body — في httpOnly cookie فقط (T-01)
         result.pop("refresh_token", None)
         return result
@@ -201,6 +264,8 @@ def build_auth_router(
         from datetime import timedelta  # noqa: PLC0415
         from app.core.kernel.security import create_access_token  # noqa: PLC0415
 
+        _mark_sensitive_response(response)
+
         # httpOnly cookie هو المصدر الأساسي (T-01) — body كـ fallback
         token = request.cookies.get(_REFRESH_COOKIE_NAME) or (
             payload.refresh_token if payload else ""
@@ -217,7 +282,12 @@ def build_auth_router(
             expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         )
         # refresh_token الجديد في cookie (T-01) — لا يُعاد في body
-        _set_refresh_cookie(response, new_refresh_token, settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        _set_refresh_cookie(
+            response,
+            new_refresh_token,
+            settings.REFRESH_TOKEN_EXPIRE_DAYS,
+            environment=settings.ENVIRONMENT,
+        )
         return {
             "access_token": access,
             "token_type": "bearer",
@@ -236,7 +306,10 @@ def build_auth_router(
                 from app.core.kernel.email_service import send_password_reset_email
                 await send_password_reset_email(email, token, app_name=getattr(settings, "APP_NAME", "Resort OS"))
             except Exception:
-                pass
+                # Keep the public response enumeration-safe, but never hide
+                # an operational delivery failure from internal logs. Do not
+                # include the address or bearer reset token in the message.
+                logger.exception("Password-reset email delivery failed")
         return {"message": "If that email exists, a reset link has been sent."}
 
     @router.post("/password-reset/confirm")
@@ -245,8 +318,9 @@ def build_auth_router(
         payload: _PasswordResetConfirm,
         auth: AuthService = Depends(get_auth_service),
     ):
+        _mark_sensitive_response(response)
         auth.confirm_password_reset(payload.token, payload.new_password)
-        _clear_refresh_cookie(response)
+        _clear_refresh_cookie(response, environment=settings.ENVIRONMENT)
         return {
             "message": "Password updated successfully.",
             "reauthentication_required": True,
@@ -274,7 +348,7 @@ def build_auth_router(
             user_id=current_user.id,
         )
         # امسح الـ refresh_token cookie (T-01)
-        _clear_refresh_cookie(response)
+        _clear_refresh_cookie(response, environment=settings.ENVIRONMENT)
         return {"message": "Logged out successfully."}
 
     @router.post("/change-password")
@@ -284,12 +358,14 @@ def build_auth_router(
         current_user=Depends(_get_current_user),
         auth: AuthService = Depends(get_auth_service),
     ):
+        _mark_sensitive_response(response)
         auth.change_password(
             current_user,
             payload.verified_current_password,
             payload.new_password,
+            enrollment_token=payload.enrollment_token,
         )
-        _clear_refresh_cookie(response)
+        _clear_refresh_cookie(response, environment=settings.ENVIRONMENT)
         return {
             "message": "Password changed successfully.",
             "reauthentication_required": True,
@@ -297,27 +373,64 @@ def build_auth_router(
 
     @router.post("/2fa/setup")
     def setup_2fa(
+        response: Response,
+        payload: Optional[_TwoFactorSetupRequest] = Body(default=None),
         current_user=Depends(_get_current_user),
         auth: AuthService = Depends(get_auth_service),
     ):
-        return auth.setup_2fa(current_user)
+        _mark_sensitive_response(response)
+        return auth.setup_2fa(
+            current_user,
+            current_password=payload.current_password if payload else None,
+            enrollment_token=payload.enrollment_token if payload else None,
+        )
 
     @router.post("/2fa/enable")
     def enable_2fa(
-        payload: dict = Body(...),
+        response: Response,
+        payload: _TwoFactorEnableRequest,
         current_user=Depends(_get_current_user),
         auth: AuthService = Depends(get_auth_service),
     ):
-        auth.enable_2fa(current_user, payload["code"])
-        return {"message": "2FA enabled successfully."}
+        _mark_sensitive_response(response)
+        result = auth.enable_2fa(
+            current_user,
+            payload.code,
+            enrollment_token=payload.enrollment_token,
+        )
+        _clear_refresh_cookie(response, environment=settings.ENVIRONMENT)
+        return {"message": "2FA enabled successfully.", **result}
 
     @router.post("/2fa/disable")
     def disable_2fa(
-        payload: dict = Body(...),
+        response: Response,
+        payload: _TwoFactorDisableRequest,
         current_user=Depends(_get_current_user),
         auth: AuthService = Depends(get_auth_service),
     ):
-        auth.disable_2fa(current_user, payload["code"])
-        return {"message": "2FA disabled successfully."}
+        _mark_sensitive_response(response)
+        auth.disable_2fa(
+            current_user,
+            payload.code,
+            current_password=payload.current_password,
+        )
+        _clear_refresh_cookie(response, environment=settings.ENVIRONMENT)
+        return {"message": "2FA disabled successfully.", "reauthentication_required": True}
+
+    @router.post("/2fa/recovery-codes/regenerate")
+    def regenerate_recovery_codes(
+        response: Response,
+        payload: _RecoveryCodesRegenerateRequest,
+        current_user=Depends(_get_current_user),
+        auth: AuthService = Depends(get_auth_service),
+    ):
+        _mark_sensitive_response(response)
+        result = auth.regenerate_recovery_codes(
+            current_user,
+            current_password=payload.current_password,
+            code=payload.code,
+        )
+        _clear_refresh_cookie(response, environment=settings.ENVIRONMENT)
+        return {"message": "Recovery codes regenerated successfully.", **result}
 
     return router

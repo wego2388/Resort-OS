@@ -69,6 +69,13 @@ const routes: RouteRecordRaw[] = [
   { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue') },
   { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue') },
 
+  {
+    path: '/change-temporary-password',
+    name: 'change-temporary-password',
+    component: () => import('../views/account/ForcePasswordChangeView.vue'),
+    meta: { requiresAuth: true },
+  },
+
   // Standalone (no layout) — same tier as /login. Reached either by force
   // (router guard below, for MANDATORY_2FA_ROLES with two_factor_enabled=false)
   // or voluntarily by any authenticated user who wants to turn 2FA on/off.
@@ -253,9 +260,14 @@ router.beforeEach((to) => {
     return homeRouteFor(auth.role)
   }
 
-  // 2. Role gate — redirect to the user's own home, not a raw 403 page.
-  if (to.meta.requiredRole && !auth.hasRole(to.meta.requiredRole)) {
-    return homeRouteFor(auth.role)
+  // 2. Temporary/bootstrap credentials may only reach the dedicated password
+  // replacement screen. This mirrors get_current_active_user server-side.
+  if (
+    auth.isAuthenticated
+    && auth.needsPasswordChange
+    && to.path !== '/change-temporary-password'
+  ) {
+    return '/change-temporary-password'
   }
 
   // 3. Mandatory 2FA gate — mirrors backend app/core/deps.py's
@@ -263,8 +275,18 @@ router.beforeEach((to) => {
   // hasn't finished 2FA setup lands on their normal home route and every
   // API call there silently 403s (dashboards render all-zero, lists render
   // empty) with no indication why. Force them to /2fa-setup first.
-  if (auth.isAuthenticated && auth.needsTwoFactorSetup && to.path !== '/2fa-setup') {
+  if (
+    auth.isAuthenticated
+    && !auth.needsPasswordChange
+    && auth.needsTwoFactorSetup
+    && to.path !== '/2fa-setup'
+  ) {
     return '/2fa-setup'
+  }
+
+  // 4. Role gate — redirect to the user's own home, not a raw 403 page.
+  if (to.meta.requiredRole && !auth.hasRole(to.meta.requiredRole)) {
+    return homeRouteFor(auth.role)
   }
 
   return true

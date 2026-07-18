@@ -23,9 +23,21 @@ from app.core.config import settings
 
 
 def seed_all(db: Session, *, reset: bool = False) -> None:
-    """نقطة الدخول الرئيسية."""
-    if reset and settings.ENVIRONMENT == "production":
-        raise RuntimeError("❌ لا يمكن reset في production")
+    """نقطة الدخول الرئيسية لبيانات التطوير/الاختبار فقط.
+
+    This module creates known demo identities and a full synthetic operating
+    dataset.  It is not a production bootstrap mechanism.  Production and
+    unknown environments must use Alembic plus ``python -m
+    app.admin_bootstrap`` so a typo cannot silently install public demo
+    credentials or financial sample data.
+    """
+    normalized_environment = (settings.ENVIRONMENT or "").strip().lower()
+    if normalized_environment not in {"development", "test", "testing"}:
+        raise RuntimeError(
+            "app.seed is restricted to development/test/testing. "
+            "Run Alembic migrations, then use `python -m app.admin_bootstrap create` "
+            "for a named production super-admin."
+        )
 
     if reset:
         print("⚠️  Dropping all tables...")
@@ -116,7 +128,7 @@ def _seed_branch(db: Session) -> None:
 
 
 def _seed_super_admin(db: Session) -> None:
-    """يُنشئ super_admin إذا لم يوجد — password من .env أو default."""
+    """Create the development-only demo super-admin."""
     from app.core.kernel.auth.repository import UserRepository
     from app.core.kernel.models.user import User
     from app.core.kernel.security import get_password_hash
@@ -132,7 +144,7 @@ def _seed_super_admin(db: Session) -> None:
         "role": "super_admin",
         "is_active": True,
     })
-    print("  ✓ Super admin created (admin@resortos.local / change password immediately!)")
+    print("  ✓ Development super admin created")
 
 
 def _seed_demo_accounts(db: Session) -> None:
@@ -170,7 +182,7 @@ def _seed_demo_accounts(db: Session) -> None:
         })
         created += 1
     if created:
-        print(f"  ✓ Demo accounts seeded ({created} roles, password: Demo@123456)")
+        print(f"  ✓ Development demo accounts seeded ({created} roles)")
 
 
 def _seed_social_insurance(db: Session) -> None:

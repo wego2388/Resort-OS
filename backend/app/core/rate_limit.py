@@ -102,6 +102,22 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
         "password-change", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
         settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
     ),
+    ("POST", "/api/v1/auth/2fa/setup"): (
+        "two-factor-setup", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+        settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+    ),
+    ("POST", "/api/v1/auth/2fa/enable"): (
+        "two-factor-enable", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+        settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+    ),
+    ("POST", "/api/v1/auth/2fa/disable"): (
+        "two-factor-disable", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+        settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+    ),
+    ("POST", "/api/v1/auth/2fa/recovery-codes/regenerate"): (
+        "two-factor-recovery", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+        settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+    ),
     ("POST", "/api/v1/hub/contact"):   ("public", 30, 60),
     ("GET",  "/api/v1/hub/blog/posts"): ("public", 30, 60),
     ("GET",  "/api/v1/pms/public/room-types"): ("public", 30, 60),

@@ -72,6 +72,15 @@ class ActorSuperAdminPrivilegesChangedError(Exception):
     ويحاول تاني، مش مجرد إعادة إرسال نفس الطلب."""
 
 
+class MandatoryTwoFactorEnrollmentRequiredError(Exception):
+    """An active account cannot enter a mandatory-2FA role before enrollment.
+
+    This keeps role promotion from manufacturing a password-only privileged
+    account after Gate 2B2. The user may enroll voluntarily first, then be
+    promoted through the normal Gate 2A control plane.
+    """
+
+
 # ─────────────────────── PIN Credentials ──────────────────────────────
 # راجع PinCredential (models.py) للسياق الكامل — PIN تشغيلي منفصل عن
 # JWT، مُستخدم لموافقة مدير سريعة على إجراء حسّاس (إلغاء/مرتجع) لما
@@ -358,6 +367,18 @@ def update_user_role(
     role_changing = role is not None and role != user.role
     is_active_changing = is_active is not None and is_active != user.is_active
     self_deactivating = is_active_changing and is_active is False
+
+    from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+
+    if (
+        final_is_active
+        and final_role in MANDATORY_2FA_ROLES
+        and not user.two_factor_enabled
+    ):
+        raise MandatoryTwoFactorEnrollmentRequiredError(
+            "يجب تفعيل التحقق بخطوتين على الحساب قبل منحه أو إعادة تفعيل "
+            "دور super_admin/accountant"
+        )
 
     if updated_by == user_id and (role_changing or self_deactivating):
         logger.warning(

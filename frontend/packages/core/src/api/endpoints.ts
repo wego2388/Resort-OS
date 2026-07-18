@@ -9,6 +9,7 @@ export const ENDPOINTS = {
     setup2fa: '/api/v1/auth/2fa/setup',
     enable2fa: '/api/v1/auth/2fa/enable',
     disable2fa: '/api/v1/auth/2fa/disable',
+    regenerateRecoveryCodes: '/api/v1/auth/2fa/recovery-codes/regenerate',
     passwordResetRequest: '/api/v1/auth/password-reset/request',
     passwordResetConfirm: '/api/v1/auth/password-reset/confirm',
   },

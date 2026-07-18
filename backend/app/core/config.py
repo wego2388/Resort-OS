@@ -6,6 +6,7 @@ from functools import lru_cache
 from typing import Optional
 
 from pydantic import Field, model_validator
+from cryptography.fernet import Fernet
 
 from app.core.kernel.config import CoreSettings
 
@@ -101,6 +102,7 @@ class Settings(CoreSettings):
     PASSWORD_RESET_REQUEST_RATE_LIMIT_WINDOW_SECONDS: int = 900
     PASSWORD_RESET_ACCOUNT_RATE_LIMIT_MAX: int = 3
     PASSWORD_RESET_ACCOUNT_RATE_LIMIT_WINDOW_SECONDS: int = 900
+    TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES: int = Field(30, ge=5, le=1440)
 
     # ── Rate limiting: trusted reverse-proxy hop count (Codex security
     # review، 2026-07-17) ───────────────────────────────────────────────
@@ -176,6 +178,38 @@ class Settings(CoreSettings):
                     "مسموح فقط في development/test/testing. راجع "
                     "docs/decisions/0001-qr-guest-service-mode.md"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_production_authentication(self) -> "Settings":
+        """Fail closed anywhere that is not an explicitly safe local/test env.
+
+        TOTP login enforcement without a valid field-encryption key is not a
+        usable production configuration: the application either accepts a
+        password-only privileged login or cannot safely persist/read the TOTP
+        seed.  Unknown environment names are treated like production rather
+        than silently weakening authentication because of a typo.
+        """
+        normalized_env = (self.ENVIRONMENT or "").strip().lower()
+        if normalized_env in {"development", "test", "testing"}:
+            return self
+        if not self.LOGIN_2FA_ENFORCED:
+            raise ValueError(
+                "LOGIN_2FA_ENFORCED must be true outside development/test/testing; "
+                "privileged accounts may not use password-only login."
+            )
+        if not self.FIELD_ENCRYPTION_KEY:
+            raise ValueError(
+                "FIELD_ENCRYPTION_KEY is required outside development/test/testing "
+                "to encrypt TOTP secrets at rest."
+            )
+        try:
+            Fernet(self.FIELD_ENCRYPTION_KEY.encode("ascii"))
+        except (ValueError, TypeError) as exc:
+            raise ValueError(
+                "FIELD_ENCRYPTION_KEY must be a valid Fernet key outside "
+                "development/test/testing."
+            ) from exc
         return self
 
 

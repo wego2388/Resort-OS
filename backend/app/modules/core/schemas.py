@@ -153,6 +153,8 @@ class UserRead(BaseModel):
     role:               str
     is_active:          bool
     two_factor_enabled: bool
+    must_change_password: bool
+    two_factor_bootstrap_required: bool
     created_at:          datetime
 
 

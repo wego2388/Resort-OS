@@ -1,4 +1,4 @@
-"""PostgreSQL proof that one refresh token can be consumed only once.
+"""PostgreSQL proof that authentication bearer secrets are consumed once.
 
 SQLite cannot prove the conditional-DELETE behavior under real concurrent
 transactions. This test creates a disposable PostgreSQL database and installs
@@ -65,6 +65,20 @@ def pg_engine():
             CREATE TRIGGER gate2b_slow_refresh_delete_trigger
             BEFORE DELETE ON refresh_tokens
             FOR EACH ROW EXECUTE FUNCTION gate2b_slow_refresh_delete()
+        """))
+        connection.execute(sa.text("""
+            CREATE FUNCTION gate2b_slow_recovery_delete()
+            RETURNS trigger AS $$
+            BEGIN
+                PERFORM pg_sleep(0.25);
+                RETURN OLD;
+            END;
+            $$ LANGUAGE plpgsql
+        """))
+        connection.execute(sa.text("""
+            CREATE TRIGGER gate2b_slow_recovery_delete_trigger
+            BEFORE DELETE ON two_factor_recovery_codes
+            FOR EACH ROW EXECUTE FUNCTION gate2b_slow_recovery_delete()
         """))
 
     try:
@@ -150,3 +164,126 @@ def test_concurrent_rotation_mints_exactly_one_replacement(Session):
         assert rows[0].token_hash != AuthService._hash_token(old_token)
     finally:
         verify_db.close()
+
+
+def test_concurrent_recovery_code_use_succeeds_exactly_once(Session):
+    from app.core.config import settings
+    from app.core.kernel.auth.service import AuthService
+    from app.core.kernel.models.user import TwoFactorRecoveryCode, User
+    from app.core.kernel.security import get_password_hash
+
+    setup_db = Session()
+    try:
+        user = User(
+            email=f"recovery-race-{uuid.uuid4().hex}@test.local",
+            password_hash=get_password_hash("Current@12345"),
+            full_name="Recovery Code Race",
+            role="manager",
+            is_active=True,
+            two_factor_enabled=True,
+        )
+        setup_db.add(user)
+        setup_db.flush()
+        auth = AuthService(setup_db, User, settings)
+        recovery_code = auth._replace_recovery_codes(user.id)[0]
+        user_id = user.id
+        setup_db.commit()
+    finally:
+        setup_db.close()
+
+    barrier = threading.Barrier(2)
+    outcomes: dict[str, object] = {}
+
+    def consume(key: str) -> None:
+        db = Session()
+        try:
+            barrier.wait(timeout=5)
+            consumed = AuthService(db, User, settings)._consume_recovery_code(
+                user_id,
+                recovery_code,
+            )
+            db.commit()
+            outcomes[key] = consumed
+        except Exception as exc:  # noqa: BLE001 — asserted after both threads finish
+            db.rollback()
+            outcomes[key] = exc
+        finally:
+            db.close()
+
+    first = threading.Thread(target=consume, args=("first",))
+    second = threading.Thread(target=consume, args=("second",))
+    first.start()
+    second.start()
+    first.join(timeout=15)
+    second.join(timeout=15)
+
+    assert not first.is_alive() and not second.is_alive(), "recovery-code use deadlocked"
+    assert set(outcomes) == {"first", "second"}
+    assert not any(isinstance(value, Exception) for value in outcomes.values()), outcomes
+    assert sorted(outcomes.values()) == [False, True]
+
+    verify_db = Session()
+    try:
+        assert verify_db.query(TwoFactorRecoveryCode).filter(
+            TwoFactorRecoveryCode.user_id == user_id,
+        ).count() == 7
+    finally:
+        verify_db.close()
+
+
+def test_concurrent_totp_use_succeeds_exactly_once(Session):
+    import pyotp
+
+    from app.core.config import settings
+    from app.core.kernel.auth.service import AuthService
+    from app.core.kernel.models.user import User
+    from app.core.kernel.security import get_password_hash
+
+    secret = pyotp.random_base32()
+    setup_db = Session()
+    try:
+        user = User(
+            email=f"totp-race-{uuid.uuid4().hex}@test.local",
+            password_hash=get_password_hash("Current@12345"),
+            full_name="TOTP Race",
+            role="manager",
+            is_active=True,
+            two_factor_enabled=True,
+            two_factor_secret=secret,
+        )
+        setup_db.add(user)
+        setup_db.commit()
+        setup_db.refresh(user)
+        user_id = user.id
+    finally:
+        setup_db.close()
+
+    code = pyotp.TOTP(secret).now()
+    barrier = threading.Barrier(2)
+    outcomes: dict[str, object] = {}
+
+    def consume(key: str) -> None:
+        db = Session()
+        try:
+            user = db.query(User).filter(User.id == user_id).one()
+            barrier.wait(timeout=5)
+            consumed = AuthService(db, User, settings)._consume_totp_code(user, code)
+            db.commit()
+            outcomes[key] = consumed
+        except Exception as exc:  # noqa: BLE001 — asserted after both threads finish
+            db.rollback()
+            outcomes[key] = exc
+        finally:
+            db.close()
+
+    first = threading.Thread(target=consume, args=("first",))
+    second = threading.Thread(target=consume, args=("second",))
+    first.start()
+    second.start()
+    first.join(timeout=15)
+    second.join(timeout=15)
+
+    assert not first.is_alive() and not second.is_alive(), "TOTP use deadlocked"
+    assert set(outcomes) == {"first", "second"}
+    assert not any(isinstance(value, Exception) for value in outcomes.values()), outcomes
+    assert sorted(outcomes.values()) == [False, True]

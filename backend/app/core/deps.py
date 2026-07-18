@@ -145,6 +145,14 @@ async def get_websocket_user(websocket, db: Session, min_level: int = 0):
         await websocket.close(code=4401)
         return None
 
+    if getattr(user, "must_change_password", False):
+        await websocket.close(code=4403)
+        return None
+
+    if user.role in MANDATORY_2FA_ROLES and not user.two_factor_enabled:
+        await websocket.close(code=4403)
+        return None
+
     if user_level(user) < min_level:
         await websocket.close(code=4403)
         return None
@@ -155,6 +163,18 @@ async def get_websocket_user(websocket, db: Session, min_level: int = 0):
 def get_current_active_user(request: Request, user=Depends(get_current_user)):
     if not user.is_active:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "حساب غير نشط")
+
+    if (
+        getattr(user, "must_change_password", False)
+        and not request.url.path.startswith(f"{get_settings().API_PREFIX}/auth")
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {
+                "code": "PASSWORD_CHANGE_REQUIRED",
+                "message": "يجب استبدال كلمة المرور المؤقتة قبل استخدام النظام",
+            },
+        )
 
     if (
         user.role in MANDATORY_2FA_ROLES

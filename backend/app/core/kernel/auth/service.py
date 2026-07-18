@@ -6,7 +6,9 @@ refresh token rotation, 2FA, password reset, token revocation).
 
 import base64
 import hashlib
+import json
 import secrets
+import string
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -39,6 +41,9 @@ _DUMMY_PASSWORD_HASH = get_password_hash("timing-equalizer-not-a-real-password")
 # are post-authentication states a legitimate user needs to see.
 _GENERIC_AUTH_ERROR = "Incorrect email or password"
 _RESET_TOKEN_PREFIX = "reset_"
+_SAFE_ENVIRONMENTS = {"development", "test", "testing"}
+_RECOVERY_CODE_BYTES = 15  # 120 bits; rendered as 24 base32 characters.
+_RECOVERY_CODE_COUNT = 8
 
 
 class BaseService:
@@ -82,7 +87,170 @@ class AuthService(BaseService):
 
     # ── Login (with lockout) ──────────────────────────────────────────────
 
-    def login(self, email: str, password: str, otp_code: Optional[str] = None) -> dict:
+    def _is_safe_environment(self) -> bool:
+        return (
+            (getattr(self.settings, "ENVIRONMENT", "") or "").strip().lower()
+            in _SAFE_ENVIRONMENTS
+        )
+
+    @staticmethod
+    def _auth_error(code: str, message: str, *, status_code: int = 401) -> HTTPException:
+        return HTTPException(status_code, {"code": code, "message": message})
+
+    @staticmethod
+    def _normalize_recovery_code(code: str) -> str:
+        return "".join(character for character in (code or "").upper() if character.isalnum())
+
+    @classmethod
+    def _recovery_code_hash(cls, code: str) -> str:
+        normalized = cls._normalize_recovery_code(code)
+        return hashlib.sha256(normalized.encode("ascii", errors="ignore")).hexdigest()
+
+    @staticmethod
+    def _new_recovery_code() -> str:
+        raw = base64.b32encode(secrets.token_bytes(_RECOVERY_CODE_BYTES)).decode("ascii").rstrip("=")
+        return "-".join(raw[index:index + 4] for index in range(0, len(raw), 4))
+
+    def _replace_recovery_codes(self, user_id: int) -> list[str]:
+        from app.core.kernel.models.user import TwoFactorRecoveryCode  # noqa: PLC0415
+
+        codes = [self._new_recovery_code() for _ in range(_RECOVERY_CODE_COUNT)]
+        self.db.query(TwoFactorRecoveryCode).filter(
+            TwoFactorRecoveryCode.user_id == user_id,
+        ).delete(synchronize_session=False)
+        self.db.add_all([
+            TwoFactorRecoveryCode(user_id=user_id, code_hash=self._recovery_code_hash(code))
+            for code in codes
+        ])
+        return codes
+
+    def _consume_recovery_code(self, user_id: int, code: str) -> bool:
+        from app.core.kernel.models.user import TwoFactorRecoveryCode  # noqa: PLC0415
+
+        normalized = self._normalize_recovery_code(code)
+        if len(normalized) != 24:
+            return False
+        consumed = self.db.query(TwoFactorRecoveryCode).filter(
+            TwoFactorRecoveryCode.user_id == user_id,
+            TwoFactorRecoveryCode.code_hash == self._recovery_code_hash(normalized),
+        ).delete(synchronize_session=False)
+        return consumed == 1
+
+    @staticmethod
+    def _matching_totp_step(secret: Optional[str], code: Optional[str]) -> Optional[int]:
+        if not secret or not code:
+            return None
+        totp = pyotp.TOTP(secret)
+        now = datetime.now(timezone.utc)
+        for offset in (-1, 0, 1):
+            candidate_time = now + timedelta(seconds=offset * totp.interval)
+            if secrets.compare_digest(totp.at(candidate_time), str(code).strip()):
+                return int(totp.timecode(candidate_time))
+        return None
+
+    def _consume_totp_code(self, user, code: Optional[str]) -> bool:
+        """Accept a valid TOTP counter once, atomically across requests."""
+        from sqlalchemy import or_  # noqa: PLC0415
+
+        step = self._matching_totp_step(user.two_factor_secret, code)
+        if step is None:
+            return False
+        consumed = self.db.query(self.repo.model).filter(
+            self.repo.model.id == user.id,
+            or_(
+                self.repo.model.two_factor_last_used_step.is_(None),
+                self.repo.model.two_factor_last_used_step < step,
+            ),
+        ).update(
+            {self.repo.model.two_factor_last_used_step: step},
+            synchronize_session=False,
+        )
+        return consumed == 1
+
+    def _add_auth_audit(self, user, action: str, *, details: Optional[dict] = None) -> None:
+        """Append a secret-free event to the existing unified AuditLog."""
+        from app.modules.core.models import AuditLog  # noqa: PLC0415
+
+        self.db.add(AuditLog(
+            user_id=user.id,
+            branch_id=None,
+            action=action,
+            entity_type="user_authentication",
+            entity_id=user.id,
+            old_data=None,
+            new_data=json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
+        ))
+
+    def _verify_enrollment_token(self, user, token: Optional[str]) -> None:
+        expected_hash = getattr(user, "two_factor_enrollment_token_hash", None)
+        expires_at = getattr(user, "two_factor_enrollment_expires_at", None)
+        if not expected_hash or not expires_at:
+            raise self._auth_error(
+                "2FA_ENROLLMENT_NOT_PROVISIONED",
+                "Secure enrollment has not been provisioned. Ask an authorized operator to run the bootstrap recovery command.",
+                status_code=403,
+            )
+        if not token:
+            raise self._auth_error(
+                "2FA_ENROLLMENT_TOKEN_REQUIRED",
+                "Enter the one-time enrollment token issued by the authorized operator.",
+            )
+        if self._as_utc(expires_at) <= datetime.now(timezone.utc):
+            raise self._auth_error(
+                "2FA_ENROLLMENT_TOKEN_EXPIRED",
+                "The enrollment token expired. Ask an authorized operator to issue a replacement.",
+                status_code=403,
+            )
+        supplied_hash = self._hash_token(token.strip())
+        if not secrets.compare_digest(expected_hash, supplied_hash):
+            raise self._auth_error(
+                "2FA_ENROLLMENT_TOKEN_INVALID",
+                "The enrollment token is invalid.",
+            )
+
+    def _login_requires_enrollment_token(self, user) -> bool:
+        # A CLI-created/recovered temporary credential always needs the
+        # independent token, including in development.  Legacy seed flags are
+        # enforced in every non-safe environment so a copied dev database
+        # cannot become a production password-only backdoor.
+        if self._bootstrap_proof_required(user):
+            return True
+        from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+
+        return bool(
+            getattr(self.settings, "LOGIN_2FA_ENFORCED", False)
+            and user.role in MANDATORY_2FA_ROLES
+            and not user.two_factor_enabled
+        )
+
+    def _bootstrap_proof_required(self, user) -> bool:
+        """Require the out-of-band token for real bootstrap sessions.
+
+        The data migration also marks known demo identities so a copied
+        development database fails closed after it reaches staging or
+        production. Inside an explicitly safe environment that marker alone
+        must not strand an otherwise normal demo account. A temporary
+        credential or a still-provisioned enrollment token from the local
+        bootstrap command continues to require the independent proof there,
+        including after password replacement but before TOTP binding.
+        """
+        return bool(
+            getattr(user, "two_factor_bootstrap_required", False)
+            and (
+                getattr(user, "must_change_password", False)
+                or bool(getattr(user, "two_factor_enrollment_token_hash", None))
+                or not self._is_safe_environment()
+            )
+        )
+
+    def login(
+        self,
+        email: str,
+        password: str,
+        otp_code: Optional[str] = None,
+        recovery_code: Optional[str] = None,
+        enrollment_token: Optional[str] = None,
+    ) -> dict:
         max_attempts = getattr(self.settings, "MAX_LOGIN_ATTEMPTS", 5)
         lockout_minutes = getattr(self.settings, "LOCKOUT_MINUTES", 30)
 
@@ -129,19 +297,26 @@ class AuthService(BaseService):
             # hands the attacker the lockout threshold. Same message as unknown email.
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, _GENERIC_AUTH_ERROR)
 
+        if self._login_requires_enrollment_token(user):
+            self._verify_enrollment_token(user, enrollment_token)
+
         # ── Second factor (TOTP) ──────────────────────────────────────────
         # Password alone is not enough for a 2FA-enabled account: verify the
         # TOTP code here so 2FA is a real login-time second factor, not just an
         # enrollment flag. Gated by LOGIN_2FA_ENFORCED so it can be switched on
         # in lockstep with the frontend collecting the code (default off keeps
         # the current password-only client working).
+        recovery_code_used = False
         if getattr(self.settings, "LOGIN_2FA_ENFORCED", False) and user.two_factor_enabled:
-            if not otp_code:
+            if not otp_code and not recovery_code:
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
                     {"code": "2FA_CODE_REQUIRED", "message": "التحقق بخطوتين مطلوب — أدخل الرمز"},
                 )
-            if not pyotp.TOTP(user.two_factor_secret).verify(otp_code, valid_window=1):
+            valid_totp = self._consume_totp_code(user, otp_code)
+            if recovery_code and not otp_code:
+                recovery_code_used = self._consume_recovery_code(user.id, recovery_code)
+            if not valid_totp and not recovery_code_used:
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
                     {"code": "2FA_CODE_INVALID", "message": "رمز التحقق بخطوتين غير صحيح"},
@@ -157,8 +332,18 @@ class AuthService(BaseService):
             algorithm=self.settings.ALGORITHM,
             expires_delta=timedelta(minutes=self.settings.ACCESS_TOKEN_EXPIRE_MINUTES),
         )
+        if recovery_code_used:
+            self._add_auth_audit(user, "two_factor_recovery_code_used")
         self.db.commit()
-        return {"access_token": token, "token_type": "bearer", "_user": user}
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "_user": user,
+            # Bootstrap/restricted sessions are deliberately access-token
+            # only.  A browser cannot silently extend a temporary credential
+            # for seven days through the refresh cookie.
+            "_allow_refresh": self._refresh_allowed_for_user(user),
+        }
 
     @staticmethod
     def _require_active_user(user) -> None:
@@ -177,7 +362,13 @@ class AuthService(BaseService):
 
         revoke_user_tokens(user_id)
 
-    def change_password(self, user, current_password: str, new_password: str) -> bool:
+    def change_password(
+        self,
+        user,
+        current_password: str,
+        new_password: str,
+        enrollment_token: Optional[str] = None,
+    ) -> bool:
         """Change the current user's password and terminate every session.
 
         Every role follows the same current-password verification rule. The
@@ -187,6 +378,8 @@ class AuthService(BaseService):
         after that transaction succeeds.
         """
         self._require_active_user(user)
+        if self._bootstrap_proof_required(user):
+            self._verify_enrollment_token(user, enrollment_token)
         valid, msg = validate_password_strength(new_password)
         if not valid:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, msg)
@@ -199,7 +392,18 @@ class AuthService(BaseService):
             )
 
         user.password_hash = get_password_hash(new_password)
+        user.must_change_password = False
+        from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+
+        # Optional-role seed/recovery accounts finish bootstrap when their
+        # password is rotated. Mandatory roles keep the token until a TOTP
+        # factor is bound successfully.
+        if user.role not in MANDATORY_2FA_ROLES:
+            user.two_factor_bootstrap_required = False
+            user.two_factor_enrollment_token_hash = None
+            user.two_factor_enrollment_expires_at = None
         delete_refresh_tokens_for_user(self.db, user.id)
+        self._add_auth_audit(user, "password_changed")
         try:
             self.db.commit()
         except Exception:
@@ -250,6 +454,8 @@ class AuthService(BaseService):
         from app.core.kernel.models.user import RefreshToken
         user = self.repo.get(user_id)
         self._require_active_user(user)
+        if not self._refresh_allowed_for_user(user):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Account onboarding is not complete")
         token = secrets.token_urlsafe(32)
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS)
@@ -266,6 +472,19 @@ class AuthService(BaseService):
     @staticmethod
     def _as_utc(value: datetime) -> datetime:
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    def _refresh_allowed_for_user(self, user) -> bool:
+        if (
+            getattr(user, "must_change_password", False)
+            or self._bootstrap_proof_required(user)
+        ):
+            return False
+        if getattr(self.settings, "LOGIN_2FA_ENFORCED", False):
+            from app.core.deps import MANDATORY_2FA_ROLES  # noqa: PLC0415
+
+            if user.role in MANDATORY_2FA_ROLES and not user.two_factor_enabled:
+                return False
+        return True
 
     def _refresh_token_predates_revocation(self, refresh_token) -> bool:
         """Honor the existing access-token cutoff for legacy refresh rows.
@@ -303,6 +522,7 @@ class AuthService(BaseService):
             not user
             or not user.is_active
             or getattr(user, "deleted_at", None) is not None
+            or not self._refresh_allowed_for_user(user)
             or self._refresh_token_predates_revocation(rt)
         ):
             return None
@@ -338,6 +558,7 @@ class AuthService(BaseService):
             not user
             or not user.is_active
             or getattr(user, "deleted_at", None) is not None
+            or not self._refresh_allowed_for_user(user)
             or self._refresh_token_predates_revocation(rt)
         ):
             delete_refresh_tokens_for_user(self.db, rt.user_id)
@@ -375,13 +596,49 @@ class AuthService(BaseService):
 
     # ── 2FA ───────────────────────────────────────────────────────────────
 
-    def setup_2fa(self, user) -> dict:
+    def _lock_user_for_update(self, user_id: int):
+        return (
+            self.db.query(self.repo.model)
+            .filter(self.repo.model.id == user_id)
+            .with_for_update()
+            .populate_existing()
+            .one()
+        )
+
+    def setup_2fa(
+        self,
+        user,
+        *,
+        current_password: Optional[str] = None,
+        enrollment_token: Optional[str] = None,
+    ) -> dict:
         self._require_active_user(user)
         if user.two_factor_enabled:
             raise HTTPException(400, "2FA already enabled")
-        secret = pyotp.random_base32()
-        user.two_factor_secret = secret
-        self.db.commit()
+        if getattr(user, "must_change_password", False):
+            raise self._auth_error(
+                "PASSWORD_CHANGE_REQUIRED",
+                "Replace the temporary password before enrolling two-factor authentication.",
+                status_code=409,
+            )
+
+        if self._bootstrap_proof_required(user):
+            self._verify_enrollment_token(user, enrollment_token)
+        elif not current_password or not verify_password(current_password, user.password_hash):
+            raise self._auth_error(
+                "CURRENT_PASSWORD_REQUIRED",
+                "Enter the current password before binding a new authenticator.",
+                status_code=403,
+            )
+
+        # Preserve an in-progress enrollment secret across retry/reload. A
+        # fresh secret on every setup request invalidates the QR the user may
+        # already be scanning on another device.
+        secret = user.two_factor_secret or pyotp.random_base32()
+        if not user.two_factor_secret:
+            user.two_factor_secret = secret
+            self._add_auth_audit(user, "two_factor_setup_started")
+            self.db.commit()
         uri = pyotp.TOTP(secret).provisioning_uri(
             name=user.email,
             issuer_name=getattr(self.settings, "APP_NAME", "Resort OS"),
@@ -402,23 +659,52 @@ class AuthService(BaseService):
             "qr_url": qr_data_url,
         }
 
-    def enable_2fa(self, user, code: str) -> bool:
+    def enable_2fa(
+        self,
+        user,
+        code: str,
+        *,
+        enrollment_token: Optional[str] = None,
+    ) -> dict:
         self._require_active_user(user)
-        if user.two_factor_enabled:
+        locked_user = self._lock_user_for_update(user.id)
+        if locked_user.two_factor_enabled:
             raise HTTPException(400, "2FA already enabled")
-        if not user.two_factor_secret:
+        if not locked_user.two_factor_secret:
             raise HTTPException(400, "Setup 2FA first")
-        if not pyotp.TOTP(user.two_factor_secret).verify(code, valid_window=1):
+        if self._bootstrap_proof_required(locked_user):
+            self._verify_enrollment_token(locked_user, enrollment_token)
+        if not self._consume_totp_code(locked_user, code):
             raise HTTPException(400, "Invalid 2FA code")
-        user.two_factor_enabled = True
-        self.db.commit()
-        return True
+        recovery_codes = self._replace_recovery_codes(locked_user.id)
+        locked_user.two_factor_enabled = True
+        locked_user.two_factor_bootstrap_required = False
+        locked_user.two_factor_enrollment_token_hash = None
+        locked_user.two_factor_enrollment_expires_at = None
+        delete_refresh_tokens_for_user(self.db, locked_user.id)
+        self._add_auth_audit(
+            locked_user,
+            "two_factor_enabled",
+            details={"recovery_code_count": len(recovery_codes)},
+        )
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self._revoke_access_tokens(locked_user.id)
+        return {
+            "recovery_codes": recovery_codes,
+            "reauthentication_required": True,
+        }
 
-    def disable_2fa(self, user, code: str) -> bool:
+    def disable_2fa(self, user, code: str, *, current_password: str) -> bool:
         self._require_active_user(user)
         if not user.two_factor_enabled:
             raise HTTPException(400, "2FA not enabled")
-        if not pyotp.TOTP(user.two_factor_secret).verify(code, valid_window=1):
+        if not verify_password(current_password, user.password_hash):
+            raise HTTPException(400, "Current password is incorrect")
+        if not self._consume_totp_code(user, code):
             raise HTTPException(400, "Invalid 2FA code")
         # app.core.deps.get_current_active_user blocks *access* for
         # MANDATORY_2FA_ROLES (super_admin/accountant) while 2FA is off, but
@@ -431,8 +717,180 @@ class AuthService(BaseService):
             raise HTTPException(400, "التحقق بخطوتين إجباري لهذا الدور — لا يمكن تعطيله")
         user.two_factor_enabled = False
         user.two_factor_secret = None
-        self.db.commit()
+        user.two_factor_last_used_step = None
+        from app.core.kernel.models.user import TwoFactorRecoveryCode  # noqa: PLC0415
+
+        self.db.query(TwoFactorRecoveryCode).filter(
+            TwoFactorRecoveryCode.user_id == user.id,
+        ).delete(synchronize_session=False)
+        delete_refresh_tokens_for_user(self.db, user.id)
+        self._add_auth_audit(user, "two_factor_disabled")
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self._revoke_access_tokens(user.id)
         return True
+
+    def regenerate_recovery_codes(
+        self,
+        user,
+        *,
+        current_password: str,
+        code: str,
+    ) -> dict:
+        self._require_active_user(user)
+        locked_user = self._lock_user_for_update(user.id)
+        if not locked_user.two_factor_enabled or not locked_user.two_factor_secret:
+            raise HTTPException(400, "2FA not enabled")
+        if not verify_password(current_password, locked_user.password_hash):
+            raise HTTPException(400, "Current password is incorrect")
+        if not self._consume_totp_code(locked_user, code):
+            raise HTTPException(400, "Invalid 2FA code")
+
+        recovery_codes = self._replace_recovery_codes(locked_user.id)
+        delete_refresh_tokens_for_user(self.db, locked_user.id)
+        self._add_auth_audit(
+            locked_user,
+            "two_factor_recovery_codes_regenerated",
+            details={"recovery_code_count": len(recovery_codes)},
+        )
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self._revoke_access_tokens(locked_user.id)
+        return {
+            "recovery_codes": recovery_codes,
+            "reauthentication_required": True,
+        }
+
+    # ── Out-of-band privileged bootstrap ────────────────────────────────
+
+    @staticmethod
+    def _new_temporary_password(length: int = 24) -> str:
+        """Generate a password that always satisfies validate_password_strength."""
+        special = "!@#$%^&*"
+        characters = [
+            secrets.choice(string.ascii_uppercase),
+            secrets.choice(string.ascii_lowercase),
+            secrets.choice(string.digits),
+            secrets.choice(special),
+        ]
+        alphabet = string.ascii_letters + string.digits + special
+        characters.extend(secrets.choice(alphabet) for _ in range(length - len(characters)))
+        secrets.SystemRandom().shuffle(characters)
+        return "".join(characters)
+
+    def provision_account_bootstrap(
+        self,
+        *,
+        email: str,
+        full_name: Optional[str],
+        create: bool,
+    ) -> dict:
+        """Create a named super-admin or securely recover an existing account.
+
+        This method is intentionally not exposed through HTTP.  The local CLI
+        is the control plane, so a compromised web super-admin session cannot
+        mint another super-admin or bypass Gate 2A.
+        """
+        from app.core.kernel.models.user import (  # noqa: PLC0415
+            RefreshToken,
+            TwoFactorRecoveryCode,
+        )
+        from app.modules.core.models import AuditLog  # noqa: PLC0415
+
+        normalized_email = (email or "").strip().casefold()
+        normalized_name = (full_name or "").strip()
+        if not validate_email_format(normalized_email):
+            raise ValueError("A valid email address is required")
+
+        user = self.db.query(self.repo.model).filter(
+            self.repo.model.email == normalized_email,
+        ).with_for_update().first()
+        if create:
+            if user:
+                raise ValueError("An account with this email already exists")
+            if len(normalized_name) < 3:
+                raise ValueError("A named super-admin requires a full name")
+            user = self.repo.model(
+                email=normalized_email,
+                password_hash="pending-bootstrap-hash",
+                full_name=normalized_name,
+                role="super_admin",
+                is_active=True,
+            )
+            self.db.add(user)
+            self.db.flush()
+            action = "super_admin_bootstrap_created"
+        else:
+            if not user or getattr(user, "deleted_at", None) is not None:
+                raise ValueError("Super-admin account not found")
+            # Recovery preserves the existing role exactly.  It may repair an
+            # old accountant or other seeded staff identity, but it can never
+            # turn that identity into a super-admin. Role changes remain owned
+            # by the Gate 2A HTTP control plane and its concurrency invariants.
+            action = "account_bootstrap_recovered"
+
+        temporary_password = self._new_temporary_password()
+        enrollment_token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=self.settings.TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES,
+        )
+
+        user.password_hash = get_password_hash(temporary_password)
+        user.is_active = True
+        user.failed_login_attempts = 0
+        user.account_locked_until = None
+        user.must_change_password = True
+        user.two_factor_enabled = False
+        user.two_factor_secret = None
+        user.two_factor_last_used_step = None
+        user.two_factor_bootstrap_required = True
+        user.two_factor_enrollment_token_hash = self._hash_token(enrollment_token)
+        user.two_factor_enrollment_expires_at = expires_at
+
+        self.db.query(RefreshToken).filter(RefreshToken.user_id == user.id).delete(
+            synchronize_session=False,
+        )
+        self.db.query(TwoFactorRecoveryCode).filter(
+            TwoFactorRecoveryCode.user_id == user.id,
+        ).delete(synchronize_session=False)
+        self.db.add(AuditLog(
+            user_id=None,
+            branch_id=None,
+            action=action,
+            entity_type="user_authentication",
+            entity_id=user.id,
+            old_data=None,
+            new_data=json.dumps(
+                {
+                    "email": normalized_email,
+                    "full_name": user.full_name,
+                    "enrollment_expires_at": expires_at.isoformat(),
+                    "requires_password_change": True,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            ),
+        ))
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self._revoke_access_tokens(user.id)
+        return {
+            "user_id": user.id,
+            "email": normalized_email,
+            "full_name": user.full_name,
+            "temporary_password": temporary_password,
+            "enrollment_token": enrollment_token,
+            "enrollment_expires_at": expires_at,
+        }
 
     # ── Token blacklist / revocation ────────────────────────────────────
 
@@ -560,11 +1018,13 @@ class AuthService(BaseService):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Token expired or invalid")
 
         user.password_hash = get_password_hash(new_password)
+        user.must_change_password = False
         self.db.query(TokenBlacklist).filter(
             TokenBlacklist.user_id == user.id,
             TokenBlacklist.token_hash.startswith(_RESET_TOKEN_PREFIX, autoescape=True),
         ).delete(synchronize_session=False)
         delete_refresh_tokens_for_user(self.db, user.id)
+        self._add_auth_audit(user, "password_reset_completed")
         try:
             self.db.commit()
         except Exception:

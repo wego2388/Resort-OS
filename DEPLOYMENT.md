@@ -80,6 +80,11 @@ CELERY_RESULT_BACKEND=redis://redis_cache:6379/2
 CORS_ORIGINS=https://app.yourdomain.com,https://yourdomain.com
 RESORT_NAME=El Kheima Beach
 
+# Mandatory outside development/test/testing. Startup fails closed if either
+# this flag or a valid FIELD_ENCRYPTION_KEY is missing.
+LOGIN_2FA_ENFORCED=true
+TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES=30
+
 # Optional but recommended for production — see §9 and §10
 SENTRY_DSN=https://xxxx@oXXXXXX.ingest.sentry.io/XXXXXXX
 ```
@@ -97,11 +102,39 @@ Also set a real `DB_PASSWORD` (used by both `docker-compose.prod.yml`'s
 your shell before `docker compose up`, or put `DB_PASSWORD=...` in a
 `.env` file at the repo root (Compose reads that automatically).
 
-## 4. Build and start the stack
+## 4. Build and initialize the stack
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml up -d db_postgres redis_cache
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
+docker compose -f docker-compose.prod.yml run --rm backend python -m app.admin_bootstrap create
 ```
+
+The bootstrap command is interactive. It asks for a named operator and email,
+then prints a random temporary password plus a separate enrollment token once.
+Keep them separately and deliver them out-of-band. Neither secret can be
+provided as a command-line argument or stored in deployment configuration.
+
+For operational resilience, create a second named super-admin owned by a
+different person and complete both onboarding journeys before go-live:
+
+```bash
+docker compose -f docker-compose.prod.yml run --rm backend python -m app.admin_bootstrap create
+```
+
+Then start the complete stack:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+`app.seed` is deliberately unavailable here, so migrations and the privileged
+bootstrap do **not** create a resort branch, outlets, taxes, payment methods,
+or other operational reference data. Configure and verify that reference data
+through approved administrative/data-migration procedures before serving real
+traffic. A dedicated production reference-data initializer remains an open
+deployment gate; do not copy the demo seed as a shortcut.
 
 This builds, in order as dependencies require:
 - `db_postgres`, `redis_cache` — same images as local dev
@@ -119,19 +152,35 @@ Check everything came up healthy:
 docker compose -f docker-compose.prod.yml ps
 ```
 
-## 5. Run migrations and seed data
+## 5. Existing-account recovery and first login
 
-Once `backend` is up and healthy:
+Never run `app.seed` in production. It creates a complete synthetic business
+dataset and known development identities, and now fails explicitly outside
+`development`, `test`, or `testing`.
+
+To recover an existing account (including a legacy seeded super-admin or
+accountant) without changing its role:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
-docker compose -f docker-compose.prod.yml exec backend python -m app.seed
+docker compose -f docker-compose.prod.yml exec backend python -m app.admin_bootstrap recover
 ```
 
-`app.seed` is idempotent — safe to re-run; it only creates the super admin,
-default branch, modules, and chart of accounts if they don't already exist.
-Immediately change the seeded admin password (`admin@resortos.local` /
-`Admin@123456`) after first login — it's a well-known default.
+Recovery preserves the existing role, rotates the password, disables the old
+factor, clears refresh/recovery sessions, and issues a new short-lived
+enrollment token. It cannot promote an ordinary account.
+
+The user-visible onboarding sequence is:
+
+1. Sign in with the temporary password and enrollment token.
+2. Replace the temporary password (all prior sessions are revoked).
+3. Sign in again with the new password and the same unexpired token.
+4. Bind an authenticator, verify the six-digit code, and save all eight
+   one-time recovery codes separately from the phone.
+5. Sign in again with a fresh TOTP code. A bootstrap session never receives a
+   seven-day refresh cookie.
+
+If the enrollment token expires, run `recover` again. Do not disable
+`LOGIN_2FA_ENFORCED` as a recovery shortcut.
 
 ## 6. DNS
 

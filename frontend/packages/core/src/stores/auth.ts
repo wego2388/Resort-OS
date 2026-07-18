@@ -10,6 +10,10 @@ export const useAuthStore = defineStore('auth', () => {
   // cookie عبر /auth/refresh عند كل reload. المهاجمة بـ XSS تقدر تسرق
   // localStorage بس مش httpOnly cookie.
   const token = ref<string | null>(null)
+  // Short-lived bootstrap proof lives in memory only. Never persist it in
+  // localStorage/sessionStorage: a copied development identity must still
+  // require the out-of-band token on a new browser session.
+  const pendingEnrollmentToken = ref('')
   const isLoading = ref(false)
 
   // client.ts's 401→refresh-fails path calls this to clear our state without
@@ -17,6 +21,7 @@ export const useAuthStore = defineStore('auth', () => {
   registerAuthClearHandler(() => {
     user.value = null
     token.value = null
+    pendingEnrollmentToken.value = ''
   })
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
@@ -55,6 +60,7 @@ export const useAuthStore = defineStore('auth', () => {
   const needsTwoFactorSetup = computed(
     () => !!user.value && MANDATORY_2FA_ROLES.has(role.value) && !user.value.two_factor_enabled,
   )
+  const needsPasswordChange = computed(() => !!user.value?.must_change_password)
 
   // ── helpers ─────────────────────────────────────────────────────────────
 
@@ -73,18 +79,27 @@ export const useAuthStore = defineStore('auth', () => {
 
   // ── Public actions ───────────────────────────────────────────────────────
 
-  async function login(username: string, password: string, otpCode?: string) {
+  async function login(
+    username: string,
+    password: string,
+    otpCode?: string,
+    recoveryCode?: string,
+    enrollmentToken?: string,
+  ) {
     isLoading.value = true
     try {
       const form = new URLSearchParams()
       form.append('username', username.trim())
       form.append('password', password.trim())
       if (otpCode) form.append('otp_code', otpCode.trim())
+      if (recoveryCode) form.append('recovery_code', recoveryCode.trim())
+      if (enrollmentToken) form.append('enrollment_token', enrollmentToken.trim())
       const res = await api.post(ENDPOINTS.auth.login, form, {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         withCredentials: true,
       })
       _setToken(res.data.access_token)
+      pendingEnrollmentToken.value = enrollmentToken?.trim() ?? ''
       await fetchUser()
     } finally {
       isLoading.value = false
@@ -102,6 +117,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {
       _setToken(null)
       user.value = null
+      pendingEnrollmentToken.value = ''
       return false
     }
   }
@@ -134,13 +150,15 @@ export const useAuthStore = defineStore('auth', () => {
     } finally {
       _setToken(null)
       user.value = null
+      pendingEnrollmentToken.value = ''
       window.location.replace('/login')
     }
   }
 
   return {
     user, token, isAuthenticated, role, branchId, isLoading,
+    pendingEnrollmentToken,
     login, logout, fetchUser, initAuth, hasRole, roleLevel,
-    needsTwoFactorSetup, pinSwitch,
+    needsTwoFactorSetup, needsPasswordChange, pinSwitch,
   }
 })

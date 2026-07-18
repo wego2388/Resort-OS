@@ -264,6 +264,8 @@ class TestRefreshTokenSafety:
                 "/api/v1/auth/refresh", json={"refresh_token": old_token},
             )
             assert response.status_code == 200, response.text
+            assert response.headers["cache-control"] == "no-store"
+            assert response.headers["pragma"] == "no-cache"
             replacement = isolated_client.cookies.get("refresh_token")
             assert replacement and replacement != old_token
 

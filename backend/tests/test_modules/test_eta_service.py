@@ -71,6 +71,10 @@ def _settings(**overrides) -> Settings:
         # strong key so ENVIRONMENT="production" cases pass the SECRET_KEY
         # validator (this test exercises ETA URL selection, not key policy)
         "SECRET_KEY": "Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz",
+        # Gate 2B2 production auth prerequisites. These are test-only values;
+        # ETA URL selection is intentionally independent from auth policy.
+        "LOGIN_2FA_ENFORCED": True,
+        "FIELD_ENCRYPTION_KEY": "9g2Hqbw0QQod3CiEaA9MMrWBpXmb3J3Hb6MEdwv2FeQ=",
     }
     base.update(overrides)
     return Settings(**base)

@@ -107,6 +107,12 @@ api.interceptors.response.use(
       }
     }
 
+    if (status === 403 && err.response?.data?.detail?.code === 'PASSWORD_CHANGE_REQUIRED') {
+      if (window.location.pathname !== '/change-temporary-password') {
+        window.location.href = '/change-temporary-password'
+      }
+    }
+
     return Promise.reject(err)
   }
 )

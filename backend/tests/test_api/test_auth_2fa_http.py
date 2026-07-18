@@ -56,7 +56,11 @@ class TestTwoFactorSetupFlow:
     def test_setup_returns_secret_and_provisioning_uri(self, client, setup_db):
         _create_user_with_secret("2fa-setup@test.local", "manager", enabled=False)
         headers = {"Authorization": f"Bearer {_make_token('2fa-setup@test.local')}"}
-        res = client.post("/api/v1/auth/2fa/setup", headers=headers)
+        res = client.post(
+            "/api/v1/auth/2fa/setup",
+            json={"current_password": "Test@12345"},
+            headers=headers,
+        )
         assert res.status_code == 200
         body = res.json()
         assert "secret" in body and len(body["secret"]) > 0
@@ -79,6 +83,8 @@ class TestTwoFactorSetupFlow:
         code = pyotp.TOTP(secret).now()
         res = client.post("/api/v1/auth/2fa/enable", json={"code": code}, headers=headers)
         assert res.status_code == 200
+        assert len(res.json()["recovery_codes"]) == 8
+        assert res.headers["cache-control"] == "no-store"
 
     def test_enable_with_invalid_code_rejected(self, client, setup_db):
         _create_user_with_secret("2fa-enable-bad@test.local", "manager", enabled=False)
@@ -91,7 +97,11 @@ class TestTwoFactorSetupFlow:
         secret = _create_user_with_secret("2fa-disable-mgr@test.local", "manager", enabled=True)
         headers = {"Authorization": f"Bearer {_make_token('2fa-disable-mgr@test.local')}"}
         code = pyotp.TOTP(secret).now()
-        res = client.post("/api/v1/auth/2fa/disable", json={"code": code}, headers=headers)
+        res = client.post(
+            "/api/v1/auth/2fa/disable",
+            json={"code": code, "current_password": "Test@12345"},
+            headers=headers,
+        )
         assert res.status_code == 200
 
     def test_super_admin_cannot_disable_mandatory_2fa(self, client, setup_db):
@@ -100,7 +110,11 @@ class TestTwoFactorSetupFlow:
         secret = _create_user_with_secret("2fa-disable-sa@test.local", "super_admin", enabled=True)
         headers = {"Authorization": f"Bearer {_make_token('2fa-disable-sa@test.local')}"}
         code = pyotp.TOTP(secret).now()
-        res = client.post("/api/v1/auth/2fa/disable", json={"code": code}, headers=headers)
+        res = client.post(
+            "/api/v1/auth/2fa/disable",
+            json={"code": code, "current_password": "Test@12345"},
+            headers=headers,
+        )
         assert res.status_code == 400
 
         # تأكيد إضافي: لسه مفعّل فعليًا في الداتابيز بعد المحاولة.
@@ -117,5 +131,9 @@ class TestTwoFactorSetupFlow:
         secret = _create_user_with_secret("2fa-disable-acc@test.local", "accountant", enabled=True)
         headers = {"Authorization": f"Bearer {_make_token('2fa-disable-acc@test.local')}"}
         code = pyotp.TOTP(secret).now()
-        res = client.post("/api/v1/auth/2fa/disable", json={"code": code}, headers=headers)
+        res = client.post(
+            "/api/v1/auth/2fa/disable",
+            json={"code": code, "current_password": "Test@12345"},
+            headers=headers,
+        )
         assert res.status_code == 400

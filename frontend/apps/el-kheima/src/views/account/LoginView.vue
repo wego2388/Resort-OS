@@ -22,17 +22,43 @@ const loading = ref(false)
 // collect it; every other account/config never sees this branch at all.
 const needsOtp = ref(false)
 const otpCode = ref('')
+const useRecoveryCode = ref(false)
+const recoveryCode = ref('')
+const needsEnrollmentToken = ref(false)
+const enrollmentToken = ref('')
 
 async function handleLogin() {
   if (!username.value || !password.value) return
-  if (needsOtp.value && otpCode.value.trim().length !== 6) {
-    toast.error(t('backoffice.login.twoFaHint'))
+  if (needsOtp.value) {
+    if (useRecoveryCode.value && recoveryCode.value.replace(/[^a-z0-9]/gi, '').length !== 24) {
+      toast.error(t('backoffice.login.recoveryCodeHint'))
+      return
+    }
+    if (!useRecoveryCode.value && otpCode.value.trim().length !== 6) {
+      toast.error(t('backoffice.login.twoFaHint'))
+      return
+    }
+  }
+  if (needsEnrollmentToken.value && enrollmentToken.value.trim().length < 20) {
+    toast.error(t('backoffice.login.enrollmentTokenHint'))
     return
   }
   loading.value = true
   try {
-    await auth.login(username.value, password.value, otpCode.value.trim() || undefined)
-    router.push('/')
+    await auth.login(
+      username.value,
+      password.value,
+      !useRecoveryCode.value ? otpCode.value.trim() || undefined : undefined,
+      useRecoveryCode.value ? recoveryCode.value.trim() || undefined : undefined,
+      enrollmentToken.value.trim() || undefined,
+    )
+    if (auth.needsPasswordChange) {
+      router.push('/change-temporary-password')
+    } else if (auth.needsTwoFactorSetup) {
+      router.push('/2fa-setup')
+    } else {
+      router.push('/')
+    }
   } catch (e: any) {
     const code = e?.response?.data?.detail?.code
     if (code === '2FA_CODE_REQUIRED') {
@@ -40,7 +66,19 @@ async function handleLogin() {
       if (!otpCode.value) toast.error(t('backoffice.login.twoFaHint'))
     } else if (code === '2FA_CODE_INVALID') {
       needsOtp.value = true
-      toast.error(t('backoffice.login.twoFaHint'))
+      toast.error(t(useRecoveryCode.value ? 'backoffice.login.recoveryCodeInvalid' : 'backoffice.login.twoFaInvalid'))
+    } else if (
+      code === '2FA_ENROLLMENT_TOKEN_REQUIRED'
+      || code === '2FA_ENROLLMENT_TOKEN_INVALID'
+      || code === '2FA_ENROLLMENT_TOKEN_EXPIRED'
+      || code === '2FA_ENROLLMENT_NOT_PROVISIONED'
+    ) {
+      needsEnrollmentToken.value = true
+      toast.error(
+        code === '2FA_ENROLLMENT_NOT_PROVISIONED'
+          ? t('backoffice.login.enrollmentNotProvisioned')
+          : t('backoffice.login.enrollmentTokenInvalid'),
+      )
     } else {
       toast.error(t('auth.loginError'))
     }
@@ -74,8 +112,9 @@ async function handleLogin() {
         <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-6 text-center">{{ t('backoffice.login.title') }}</h2>
         <form @submit.prevent="handleLogin" class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.login.username') }}</label>
+            <label for="login-username" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.login.username') }}</label>
             <input
+              id="login-username"
               v-model="username"
               type="text"
               placeholder="username"
@@ -84,8 +123,9 @@ async function handleLogin() {
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.login.password') }}</label>
+            <label for="login-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.login.password') }}</label>
             <input
+              id="login-password"
               v-model="password"
               type="password"
               placeholder="••••••••"
@@ -93,14 +133,32 @@ async function handleLogin() {
               class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:placeholder-gray-500"
             />
           </div>
-          <div v-if="!needsOtp" class="text-center -mt-2">
+          <div v-if="!needsOtp && !needsEnrollmentToken" class="text-center -mt-2">
             <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline">
               {{ t('backoffice.login.forgotPassword') }}
             </router-link>
           </div>
-          <div v-if="needsOtp">
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.login.twoFaCode') }}</label>
+          <div v-if="needsEnrollmentToken">
+            <label for="login-enrollment-token" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              {{ t('backoffice.login.enrollmentToken') }}
+            </label>
             <input
+              id="login-enrollment-token"
+              v-model="enrollmentToken"
+              type="password"
+              :placeholder="t('backoffice.login.enrollmentTokenPlaceholder')"
+              autocomplete="off"
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-gray-900"
+            />
+            <p class="text-xs text-gray-500 mt-1">{{ t('backoffice.login.enrollmentTokenHint') }}</p>
+          </div>
+          <div v-if="needsOtp">
+            <label :for="useRecoveryCode ? 'login-recovery-code' : 'login-totp-code'" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              {{ t(useRecoveryCode ? 'backoffice.login.recoveryCode' : 'backoffice.login.twoFaCode') }}
+            </label>
+            <input
+              v-if="!useRecoveryCode"
+              id="login-totp-code"
               v-model="otpCode"
               type="text"
               inputmode="numeric"
@@ -110,7 +168,27 @@ async function handleLogin() {
               autofocus
               class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900"
             />
-            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.login.twoFaHint') }}</p>
+            <input
+              v-else
+              id="login-recovery-code"
+              v-model="recoveryCode"
+              type="text"
+              maxlength="29"
+              :placeholder="t('backoffice.login.recoveryCodePlaceholder')"
+              autocomplete="one-time-code"
+              autofocus
+              class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-wider font-mono text-gray-900 uppercase"
+            />
+            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              {{ t(useRecoveryCode ? 'backoffice.login.recoveryCodeHint' : 'backoffice.login.twoFaHint') }}
+            </p>
+            <button
+              type="button"
+              class="mt-2 text-sm text-blue-700 hover:underline"
+              @click="useRecoveryCode = !useRecoveryCode"
+            >
+              {{ t(useRecoveryCode ? 'backoffice.login.useAuthenticator' : 'backoffice.login.useRecoveryCode') }}
+            </button>
           </div>
           <button
             type="submit"
