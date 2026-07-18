@@ -12,6 +12,7 @@ Business Logic للـ Core Module
 from __future__ import annotations
 
 import json
+import logging
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -29,6 +30,47 @@ from app.modules.core.schemas import (
     SettingRead,
     UserPermissionCreate,
 )
+
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────── Super Admin invariants (Gate 2A) ─────────────
+# راجع docs/decisions/0003-super-admin-control-plane.md وGate 2 report —
+# نفس نمط الـ Exception classes البسيطة (مش ValueError) المستخدمة في
+# dining.services لـ Gate 1B: الراوتر بيمسكهم صراحةً بأكواد HTTP دقيقة
+# قبل أي `except ValueError` عام، عشان ميتحولوش لـ404/500 مضللين.
+
+class UserNotFoundError(Exception):
+    """المستخدم المستهدف غير موجود (أو محذوف) — 404 USER_NOT_FOUND."""
+
+
+class SuperAdminPermissionOverrideForbiddenError(Exception):
+    """محاولة إنشاء/تعديل UserPermission صريح يستهدف حساب super_admin — 409
+    SUPER_ADMIN_PERMISSION_OVERRIDE_FORBIDDEN. صلاحية super_admin الكاملة
+    محمية دايمًا (Decision 0003 invariants #1/#2) ومش قابلة للتقييد بمنح/
+    منع فردي، بصرف النظر عن حالة is_active للحساب المستهدف — حتى super_
+    admin غير نشط برضو محمي من إنشاء override جديد عليه (الحذف/التنظيف
+    لـoverrides قديمة يفضل مسموح، راجع revoke_permission تحت)."""
+
+
+class SuperAdminSelfLockoutForbiddenError(Exception):
+    """super_admin بيحاول يخفّض دوره أو يعطّل حسابه هو نفسه عبر هذا الـ
+    endpoint الروتيني — 409 SUPER_ADMIN_SELF_LOCKOUT_FORBIDDEN (Decision
+    0003 invariant #3). تغيير بلا أثر فعلي (no-op) مش مرفوض."""
+
+
+class LastActiveSuperAdminRequiredError(Exception):
+    """التعديل المطلوب هيسيب النظام بدون أي super_admin نشط — 409
+    LAST_ACTIVE_SUPER_ADMIN_REQUIRED (Decision 0003 invariant #4)."""
+
+
+class ActorSuperAdminPrivilegesChangedError(Exception):
+    """المنفّذ نفسه (updated_by) بقى مش super_admin نشط لحظة التنفيذ
+    الفعلي تحت القفل — حصل تغيير متزامن على حسابه في نفس اللحظة (سباق
+    حقيقي بين مُنفّذين، اتحقق منه بـPostgres حي). 409
+    ACTOR_SUPER_ADMIN_PRIVILEGES_CHANGED — العميل لازم يعيد تحميل حالته
+    ويحاول تاني، مش مجرد إعادة إرسال نفس الطلب."""
+
 
 # ─────────────────────── PIN Credentials ──────────────────────────────
 # راجع PinCredential (models.py) للسياق الكامل — PIN تشغيلي منفصل عن
@@ -267,33 +309,92 @@ def update_user_role(
     is_active: Optional[bool],
     updated_by: int,
 ):
-    """super_admin فقط. أي تغيير في role أو is_active يُبطل التوكنات الحالية
-    للمستخدم فوراً (revoke_user_tokens) — وإلا يستمر بصلاحياته القديمة حتى
-    انتهاء التوكن طبيعياً."""
+    """super_admin فقط. أي تغيير فعلي في role أو is_active يُبطل التوكنات
+    الحالية للمستخدم فوراً (revoke_user_tokens) — وإلا يستمر بصلاحياته
+    القديمة حتى انتهاء التوكن طبيعياً.
+
+    Gate 2A — يحمي 3 ثوابت من Decision 0003 تحت تزامن حقيقي، بترتيب قفل
+    ثابت يمنع deadlock (اتأكد بـPostgres حي، راجع
+    tests/test_super_admin_concurrency.py):
+      1) يقفل كل super_admin النشطين (ORDER BY id) أولاً.
+      2) يعيد التحقق إن المنفّذ (updated_by) لسه ضمنهم — مش بس وقت مرور
+         get_super_admin_user في بداية الـrequest، لأن حالته ممكن تتغيّر
+         في نفس اللحظة من معاملة متزامنة تانية.
+      3) يقفل/يجيب المستخدم الهدف بقيمة طازة (بعد قفل المجموعة، مش قبلها
+         — نفس الترتيب في كل استدعاء).
+      4) يحسب الحالة النهائية الفعلية (role/is_active) من الحالة الحالية
+         + الـpayload، لا من الـpayload وحده.
+      5) يرفض self-demotion/self-deactivation الفعليين فقط (no-op مسموح)،
+         وأي تغيير هيسيب النظام بدون super_admin نشط.
+      6) التنفيذ + AuditLog + commit كوحدة واحدة.
+    كل رفض بيسجّل تحذير أمني منظم (structured log، بدون أسرار) — كتابة
+    AuditLog لمحاولة *مرفوضة* مؤجَّلة عمدًا لمرحلة audit/step-up القادمة
+    (Gate 2B+)، عشان معاملة الرفض تفضل قراءة فقط بدون commit مستقل."""
     from app.core.deps import revoke_user_tokens  # noqa: PLC0415
 
-    user = crud.get_user(db, user_id)
+    active_super_admins = crud.lock_active_super_admins(db)
+    active_super_admin_ids = {u.id for u in active_super_admins}
+
+    if updated_by not in active_super_admin_ids:
+        logger.warning(
+            "gate2a.role_update_rejected actor_not_active_super_admin "
+            "updated_by=%s target_user_id=%s",
+            updated_by, user_id,
+        )
+        raise ActorSuperAdminPrivilegesChangedError(
+            "صلاحيتك تغيّرت في نفس اللحظة من عملية أخرى — أعد تحميل حالتك وحاول تاني"
+        )
+
+    user = crud.lock_user_for_update(db, user_id)
     if not user:
-        raise ValueError(f"المستخدم {user_id} غير موجود")
+        raise UserNotFoundError(f"المستخدم {user_id} غير موجود")
+
+    final_role = role if role is not None else user.role
+    final_is_active = is_active if is_active is not None else user.is_active
+
+    role_changing = role is not None and role != user.role
+    is_active_changing = is_active is not None and is_active != user.is_active
+    self_deactivating = is_active_changing and is_active is False
+
+    if updated_by == user_id and (role_changing or self_deactivating):
+        logger.warning(
+            "gate2a.role_update_rejected self_lockout_attempt "
+            "user_id=%s requested_role=%s requested_is_active=%s",
+            user_id, role, is_active,
+        )
+        raise SuperAdminSelfLockoutForbiddenError(
+            "لا يمكنك تعديل دورك أو تعطيل حسابك بنفسك عبر هذا المسار — "
+            "اطلب من super_admin آخر تنفيذ هذا التغيير"
+        )
+
+    target_is_active_super_admin = user_id in active_super_admin_ids
+    target_leaving_active_super_admin_set = target_is_active_super_admin and (
+        final_role != "super_admin" or not final_is_active
+    )
+    if target_leaving_active_super_admin_set and len(active_super_admin_ids) <= 1:
+        logger.warning(
+            "gate2a.role_update_rejected last_active_super_admin "
+            "updated_by=%s target_user_id=%s",
+            updated_by, user_id,
+        )
+        raise LastActiveSuperAdminRequiredError(
+            "لازم يفضل يوجد super_admin نشط واحد على الأقل — "
+            "فعّل أو رقّي حساب super_admin تاني قبل تنفيذ هذا التغيير"
+        )
 
     old_data = {"role": user.role, "is_active": user.is_active}
-    changed = False
-
-    if role is not None and role != user.role:
-        user.role = role
-        changed = True
-    if is_active is not None and is_active != user.is_active:
-        user.is_active = is_active
-        changed = True
+    changed = role_changing or is_active_changing
 
     if changed:
+        user.role = final_role
+        user.is_active = final_is_active
         crud.create_audit_log(db, AuditLogCreate(
             user_id=updated_by,
             entity_type="user",
             entity_id=user.id,
             action="update_role",
             old_data=json.dumps(old_data),
-            new_data=json.dumps({"role": role, "is_active": is_active}),
+            new_data=json.dumps({"role": final_role, "is_active": final_is_active}),
         ))
         revoke_user_tokens(user.id)
 
@@ -345,13 +446,60 @@ def upsert_setting(
 # ─────────────────────── Permission Matrix ───────────────────────────
 # طبقة إضافية فوق ROLE_LEVELS (app/core/deps.py) — لا تكسرها.
 #
-# القاعدة:
+# القاعدة (بعد Gate 2A — راجع _resolve_permission تحت للتفصيل الكامل):
+#   0. super_admin نشط ينجح دايمًا، بصرف النظر عن أي صف UserPermission —
+#      باقي كل المستخدمين التانيين (بما فيهم super_admin غير نشط) بيحكمهم
+#      الاستثناء الصريح لو موجود.
 #   1. لو فيه صف UserPermission صريح لـ user+resource+action (branch-scoped
 #      أو global) → هو الحاكم. سواء منح (allowed=True) أو منع (allowed=False)
 #      — بيكسب الـ role level تماماً.
 #   2. لو مفيش صف صريح → يرجع لسلوك الـ role القديم (fallback) بدون تغيير.
 #      الـ caller هو المسؤول عن تمرير الـ role fallback (عادة "المستخدم
 #      يحقق الحد الأدنى من role level للـ endpoint ده أصلاً").
+
+def _resolve_permission(
+    db: Session,
+    user,
+    resource: str,
+    action: str,
+    branch_id: Optional[int] = None,
+    *,
+    role_fallback: bool = True,
+) -> tuple[bool, str]:
+    """
+    القرار المركزي الوحيد لصلاحية resource+action لمستخدم معيّن — has_
+    permission() وget_effective_permissions() بينادوا عليه بدل ما كل واحد
+    يعيد بناء نفس شجرة القرار (كان ده الوضع قبل Gate 2A: get_effective_
+    permissions كانت بتكرر منطق explicit override بنفسها من غير المرور
+    على has_permission، فأي إصلاح كان لازم يتكرر مرتين ويقدر يتفوت في
+    واحدة منهم — بالظبط زي ما حصل مع استثناء super_admin أول مرة).
+
+    الترتيب:
+      1. super_admin **نشط** (is_active=True) ينجح دايمًا، بصرف النظر عن
+         أي UserPermission صريح — أي منع مسجّل يفضل موجود في الداتابيز
+         (مش بيتحذف تلقائيًا) لكنه "inert" (بلا أثر) طول ما الحساب
+         super_admin ونشط. Decision 0003 invariant #1. super_admin غير
+         نشط **ما بياخدش** الاستثناء ده — المفروض أصلاً يترفض قبل كده من
+         get_current_active_user's is_active check، لكن الفحص هنا صريح
+         دفاعًا في العمق (defense in depth) مش اعتمادًا على طبقة واحدة.
+      2. استثناء صريح موجود (منح أو منع) → هو الحاكم.
+      3. مفيش استثناء → role_fallback.
+
+    بيرجع (allowed, source) — source بتاخد "super_admin"/"explicit"/"role"
+    لعرضها في /permissions/me.
+    """
+    if user.role == "super_admin" and user.is_active:
+        return True, "super_admin"
+
+    effective_branch_id = branch_id if branch_id is not None else getattr(user, "branch_id", None)
+    explicit = crud.find_explicit_permission(
+        db, user.id, resource, action, effective_branch_id,
+    )
+    if explicit is not None:
+        return explicit.allowed, "explicit"
+
+    return role_fallback, "role"
+
 
 def has_permission(
     db: Session,
@@ -363,24 +511,16 @@ def has_permission(
     role_fallback: bool = True,
 ) -> bool:
     """
-    القرار:
-      1. استثناء صريح موجود (منح أو منع) → هو الحاكم، يكسب أي حاجة تانية.
-      2. مفيش استثناء → يرجع role_fallback كما هو.
-
     role_fallback هي نتيجة تقييم الـ role القديم (مرّرها الـ caller —
     عادة app.core.deps.require_permission بيحسبها من user_level(user) مقابل
     حد أدنى معيّن لل resource/action ده). القيمة الافتراضية True فقط
     للاستخدام المباشر بدون role context (مثلاً من داخل service tests).
+    راجع _resolve_permission() فوق لشجرة القرار الكاملة.
     """
-    effective_branch_id = branch_id if branch_id is not None else getattr(user, "branch_id", None)
-
-    explicit = crud.find_explicit_permission(
-        db, user.id, resource, action, effective_branch_id,
+    allowed, _source = _resolve_permission(
+        db, user, resource, action, branch_id, role_fallback=role_fallback,
     )
-    if explicit is not None:
-        return explicit.allowed
-
-    return role_fallback
+    return allowed
 
 
 def list_user_permissions(db: Session, user_id: int) -> list[UserPermission]:
@@ -390,22 +530,21 @@ def list_user_permissions(db: Session, user_id: int) -> list[UserPermission]:
 def get_effective_permissions(db: Session, user) -> list[EffectivePermission]:
     """
     يحسب كل صف من كتالوج الصلاحيات (PERMISSION_CATALOG) للمستخدم الحالي —
-    دمج role fallback (user_level >= min_role_level) مع أي استثناء صريح.
+    عبر _resolve_permission() المركزية (نفس القرار اللي has_permission()
+    بيستخدمه بالظبط، بدل ما تعيد بناء شجرة القرار بنفسها زي قبل Gate 2A).
     الفرونت إند بيستخدمها لإخفاء/إظهار أزرار من غير ما يكرر منطق role level.
+    super_admin نشط بيظهر هنا كـallowed=True/source="super_admin" على كل
+    صف في الكتالوج، حتى لو فيه UserPermission صريح بمنع مسجّل له.
     """
     from app.core.deps import user_level  # noqa: PLC0415
 
     result: list[EffectivePermission] = []
     for entry in PERMISSION_CATALOG:
         role_fallback = user_level(user) >= entry["min_role_level"]
-        explicit = crud.find_explicit_permission(
-            db, user.id, entry["resource"], entry["action"],
-            getattr(user, "branch_id", None),
+        allowed, source = _resolve_permission(
+            db, user, entry["resource"], entry["action"],
+            getattr(user, "branch_id", None), role_fallback=role_fallback,
         )
-        if explicit is not None:
-            allowed, source = explicit.allowed, "explicit"
-        else:
-            allowed, source = role_fallback, "role"
         result.append(EffectivePermission(
             resource=entry["resource"], action=entry["action"],
             label_ar=entry["label_ar"], module=entry["module"],
@@ -473,7 +612,28 @@ def grant_permission(
     data: UserPermissionCreate,
     granted_by: int,
 ) -> UserPermission:
-    """منح أو منع صريح — upsert على نفس resource+action+branch."""
+    """منح أو منع صريح — upsert على نفس resource+action+branch.
+
+    Gate 2A: بيجيب المستخدم المستهدف أولاً (404 صريح لو مش موجود، بدل ما
+    الـFK constraint يفشل بغموض وقت الـinsert)، ويرفض أي محاولة تستهدف
+    حساب role="super_admin" — نشط أو غير نشط، Decision 0003 invariant #2.
+    الرفض بيسجّل تحذير أمني منظم (بدون كتابة AuditLog لمحاولة مرفوضة —
+    ده مؤجَّل عمدًا لمرحلة audit/step-up القادمة، راجع خطة Gate 2A) ولا
+    يعدّل أي صف في الداتابيز."""
+    target = crud.get_user(db, user_id)
+    if not target:
+        raise UserNotFoundError(f"المستخدم {user_id} غير موجود")
+    if target.role == "super_admin":
+        logger.warning(
+            "gate2a.permission_override_rejected target_super_admin "
+            "target_user_id=%s resource=%s action=%s granted_by=%s",
+            user_id, data.resource, data.action, granted_by,
+        )
+        raise SuperAdminPermissionOverrideForbiddenError(
+            "لا يمكن إنشاء أو تعديل صلاحية صريحة تستهدف حساب super_admin — "
+            "صلاحيته الكاملة محمية دايمًا ولا تُقيَّد بمنح/منع فردي"
+        )
+
     perm = crud.upsert_user_permission(db, user_id, data, granted_by=granted_by)
 
     crud.create_audit_log(db, AuditLogCreate(

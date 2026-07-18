@@ -416,13 +416,37 @@ def update_user_role(
     db: DbDep,
     user=Depends(get_super_admin_user),
 ):
+    """كود الأخطاء الدقيق (Gate 2A، Decision 0003 invariants) موثّق في
+    docs/audits/gate-2a-super-admin-invariants.md — كل حالة مربوطة بـ
+    exception class مخصصة، مش ValueError عام بيتحول لـ404 بالغلط."""
     try:
         updated = services.update_user_role(
             db, user_id, role=data.role, is_active=data.is_active, updated_by=user.id,
         )
         return UserRead.model_validate(updated)
-    except ValueError as exc:
+    except services.UserNotFoundError as exc:
+        # ملحوظة: الـkernel's global @app.exception_handler(404) (راجع
+        # app/core/kernel/errors.py) بيفلطح أي 404 في المشروع كله لـ
+        # {"error_code": "not_found", "message": <detail>} — مفيش أي طريقة
+        # لعرض error_code مخصص على 404 تحديدًا من غير تعديل هندلر عام يأثر
+        # على كل endpoint في التطبيق (خارج نطاق Gate 2A). detail هنا لازم
+        # يفضل نص عادي (نفس نمط كل 404 تاني في المشروع)، مش dict.
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except services.SuperAdminSelfLockoutForbiddenError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "SUPER_ADMIN_SELF_LOCKOUT_FORBIDDEN", "message": str(exc)},
+        )
+    except services.LastActiveSuperAdminRequiredError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "LAST_ACTIVE_SUPER_ADMIN_REQUIRED", "message": str(exc)},
+        )
+    except services.ActorSuperAdminPrivilegesChangedError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "ACTOR_SUPER_ADMIN_PRIVILEGES_CHANGED", "message": str(exc)},
+        )
 
 
 # ─────────────────────── Permission Matrix ───────────────────────────
@@ -454,6 +478,10 @@ def grant_user_permission(
     db: DbDep,
     user=Depends(get_super_admin_user),
 ):
+    """Gate 2A: كانت هذه الدالة من غير أي try/except خالص — أي ValueError
+    مستقبلي كان هيوصل لـSecureErrorMiddleware ويترجم 500 غامض بدل كود HTTP
+    دقيق. دلوقتي بتمسك exceptions محددة (راجع
+    docs/audits/gate-2a-super-admin-invariants.md)."""
     from app.modules.core.schemas import UserPermissionCreate  # noqa: PLC0415
 
     perm_data = UserPermissionCreate(
@@ -462,7 +490,21 @@ def grant_user_permission(
         allowed=data.allowed,
         branch_id=data.branch_id,
     )
-    perm = services.grant_permission(db, data.user_id, perm_data, granted_by=user.id)
+    try:
+        perm = services.grant_permission(db, data.user_id, perm_data, granted_by=user.id)
+    except services.UserNotFoundError as exc:
+        # ملحوظة: الـkernel's global @app.exception_handler(404) (راجع
+        # app/core/kernel/errors.py) بيفلطح أي 404 في المشروع كله لـ
+        # {"error_code": "not_found", "message": <detail>} — مفيش أي طريقة
+        # لعرض error_code مخصص على 404 تحديدًا من غير تعديل هندلر عام يأثر
+        # على كل endpoint في التطبيق (خارج نطاق Gate 2A). detail هنا لازم
+        # يفضل نص عادي (نفس نمط كل 404 تاني في المشروع)، مش dict.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    except services.SuperAdminPermissionOverrideForbiddenError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "SUPER_ADMIN_PERMISSION_OVERRIDE_FORBIDDEN", "message": str(exc)},
+        )
     return UserPermissionRead.model_validate(perm)
 
 

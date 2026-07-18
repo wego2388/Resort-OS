@@ -256,10 +256,13 @@ def require_permission(resource: str, action: str, min_role_level: int = 60):
     """
     Dependency للـ permission matrix — يُستخدم جنب role dependency الأساسية.
 
-    المنطق:
-        1. لو فيه UserPermission صريح (منح/منع) لهذا الـ user+resource+action
+    المنطق (راجع app.modules.core.services._resolve_permission للتفصيل
+    الكامل — هي المصدر الوحيد لهذا القرار، مش تكرار هنا):
+        1. super_admin نشط ينجح دايمًا — أي منع صريح مسجّل يفضل "inert"
+           بلا أثر (Gate 2A، Decision 0003 invariant #1).
+        2. لو فيه UserPermission صريح (منح/منع) لهذا الـ user+resource+action
            → هو الحاكم، بغض النظر عن الـ role.
-        2. لو مفيش استثناء صريح → fallback لـ role level العادي
+        3. لو مفيش استثناء صريح → fallback لـ role level العادي
            (user_level(user) >= min_role_level).
     """
     def _check(

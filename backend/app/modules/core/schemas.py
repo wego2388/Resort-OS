@@ -222,13 +222,14 @@ class PermissionCatalogEntryRead(BaseModel):
 
 
 class EffectivePermission(BaseModel):
-    """صلاحية واحدة فعلية للمستخدم الحالي — دمج role fallback + أي استثناء صريح."""
+    """صلاحية واحدة فعلية للمستخدم الحالي — دمج role fallback + أي استثناء
+    صريح + استثناء super_admin النشط (Gate 2A، لا يُسقطه أي منع صريح)."""
     resource:       str
     action:         str
     label_ar:       str
     module:         str
     allowed:        bool
-    source:         str  # "role" (سلوك افتراضي) أو "explicit" (فيه استثناء صريح)
+    source:         str  # "role" | "explicit" (فيه استثناء صريح) | "super_admin" (نشط، يعدّي أي منع)
 
 
 # ─────────────────────── GuestAlert ──────────────────────────────────

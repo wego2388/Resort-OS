@@ -226,6 +226,43 @@ def get_user(db: Session, user_id: int):
     return db.query(User).filter(User.id == user_id, User.deleted_at.is_(None)).first()
 
 
+def lock_active_super_admins(db: Session) -> list:
+    """يقفل كل صفوف super_admin النشطين بترتيب ثابت (ORDER BY id) —
+    SELECT ... FOR UPDATE بلوكينج، عمدًا مش NOWAIT (زي finance.
+    lock_folio_for_update: طلبين متزامنين على حسابين super_admin مختلفين
+    المفروض يتسلسلوا ويعاد تقييم الحالة تحت كل واحد فيهم بدل ما يترفضوا
+    فورًا بتضارب قفل). الترتيب الثابت (ORDER BY id) بيمنع deadlock لو
+    معاملتين مختلفتين حاولوا يقفلوا نفس المجموعة في نفس اللحظة — كل
+    الاستدعاءات (services.update_user_role) بتقفل المجموعة دي أولاً قبل
+    أي قفل تاني على جدول users (Gate 2A، تصحيح محمد بعد تقرير Claude
+    الأول). populate_existing() إجباري (راجع CLAUDE.md §13 بند ⓫)."""
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+    return (
+        db.query(User)
+        .filter(User.role == "super_admin", User.is_active.is_(True), User.deleted_at.is_(None))
+        .order_by(User.id)
+        .populate_existing()
+        .with_for_update()
+        .all()
+    )
+
+
+def lock_user_for_update(db: Session, user_id: int):
+    """يقفل صف مستخدم هدف واحد — لازم يُنادى **بعد** lock_active_super_
+    admins() في كل الاستدعاءات (ترتيب ثابت يمنع deadlock، راجع docstring
+    فوق). آمن حتى لو الهدف أصلاً جزء من المجموعة المقفولة فوق — نفس الصف
+    في نفس الـtransaction، Postgres مايرفضش إعادة قفل صف مقفول بالفعل من
+    نفس المعاملة. populate_existing() إجباري (CLAUDE.md §13 بند ⓫)."""
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+    return (
+        db.query(User)
+        .filter(User.id == user_id, User.deleted_at.is_(None))
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+
+
 def list_users_by_roles(db: Session, roles: list[str]):
     """يجيب مستخدمين نشطين من أدوار معيّنة — مُستخدم لقائمة "المعتمِدين
     المؤهّلين" (PIN approval picker)، مش endpoint إدارة مستخدمين كامل، فمفيش

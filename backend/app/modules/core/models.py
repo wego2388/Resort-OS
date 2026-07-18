@@ -101,7 +101,11 @@ class AuditLog(Base, TimestampMixin):
 # (app/core/deps.py). الفكرة:
 #   - النظام الافتراضي يبقى role level (waiter=30, cashier=40, ...)
 #   - أي مستخدم ممكن ياخد استثناء صريح: منح (allowed=True) أو منع
-#     (allowed=False) لـ resource.action معيّن — بيكسب الـ role تماماً
+#     (allowed=False) لـ resource.action معيّن — بيكسب الـ role تماماً،
+#     **إلا super_admin نشط** (Gate 2A، Decision 0003 invariant #1):
+#     صلاحيته الكاملة لا يُسقطها أي منع صريح، ومحاولة إنشاء/تعديل صف هنا
+#     يستهدفه (نشط أو غير نشط) مرفوضة من الأساس عبر
+#     services.grant_permission — راجع services.py::_resolve_permission
 #   - resource = "<module_key>.<sub_area>" (زي "finance.void_payment"،
 #     "restaurant.void_item") — نفس أسماء الموديولات المستخدمة في
 #     app/main.py::_MODULE_KEYS عشان يفضل introspectable ومتسق

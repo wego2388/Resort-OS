@@ -166,25 +166,36 @@ class AuthService(BaseService):
         return True
 
     def update_user(self, user_id: int, data: dict, actor) -> object:
+        """Gate 2A (2026-07-18): role/is_active mutations are refused
+        unconditionally here, not gated by actor.role like the old code did.
+        This generic repo.update() path bypasses every super_admin invariant
+        in app.modules.core.services.update_user_role() — no row locking
+        (ordered or otherwise), no self-lockout check, no last-active-
+        super-admin check, and no AuditLog entry, just a bare
+        revoke_user_tokens() call. No confirmed caller exists in this
+        codebase today (grep found none), but the reason to keep it
+        fail-closed is exactly that: an unreachable path that silently does
+        the wrong thing is a backdoor waiting for its first caller, not a
+        safe no-op. Any client that needs to change role/is_active must go
+        through PATCH /users/{id}/role, which enforces those invariants."""
         user = self.repo.get(user_id)
         if not user:
             raise HTTPException(404, "User not found")
-        if "role" in data and actor.role != "super_admin":
-            raise HTTPException(403, "Only super_admin can change roles")
+        if "role" in data or "is_active" in data:
+            raise HTTPException(
+                403,
+                {
+                    "error_code": "USE_SUPER_ADMIN_CONTROL_PLANE",
+                    "message": (
+                        "Changing role or is_active through this path is not allowed. "
+                        "Use PATCH /users/{id}/role, which enforces the super_admin "
+                        "safeguards (Gate 2A)."
+                    ),
+                },
+            )
         if "password" in data and data["password"]:
             data["password_hash"] = get_password_hash(data.pop("password"))
-        # Any role/is_active change must invalidate already-issued tokens, or a
-        # demoted/deactivated user keeps their old privileges until token expiry
-        # (charter §8). Same rule services.update_user_role() follows.
-        privilege_change = (
-            ("role" in data and data["role"] != user.role)
-            or ("is_active" in data and data["is_active"] != user.is_active)
-        )
-        updated = self.repo.update(user_id, data)
-        if privilege_change:
-            from app.core.deps import revoke_user_tokens  # noqa: PLC0415
-            revoke_user_tokens(user_id)
-        return updated
+        return self.repo.update(user_id, data)
 
     # ── Refresh tokens ────────────────────────────────────────────────────
 

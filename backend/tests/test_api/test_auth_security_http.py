@@ -220,6 +220,90 @@ class TestRegistrationPrivilegeEscalation:
             assert body["email"] == email
 
 
+# ── 6b: Gate 2A — AuthService.update_user() can't bypass the super_admin
+#        control-plane invariants (Codex review, 2026-07-18) ───────────────
+
+class TestUpdateUserCannotBypassSuperAdminSafeguards:
+    """AuthService.update_user() is a generic repo.update() path with none of
+    app.modules.core.services.update_user_role()'s Gate 2A protections
+    (ordered row locking, self-lockout, last-active-super-admin, full
+    AuditLog). No caller currently reaches it, but it must fail closed on
+    any role/is_active payload rather than silently demoting/deactivating
+    a super_admin if something calls it later.
+
+    Uses one shared session per test (not _svc()'s fresh session) so the
+    ORM objects returned by _mk_user() stay attached — TestingSessionLocal
+    has the default expire_on_commit=True, so touching an attribute on an
+    object returned from a function that already closed its own session
+    raises DetachedInstanceError, not the exception under test."""
+
+    def test_role_change_rejected_even_for_super_admin_actor(self, setup_db):
+        target_email = f"g2a-bypass-target-{uuid.uuid4().hex}@test.local"
+        actor_email = f"g2a-bypass-actor-{uuid.uuid4().hex}@test.local"
+        _mk_user(target_email, role="super_admin", is_active=True)
+        _mk_user(actor_email, role="super_admin", is_active=True)
+
+        db = TestingSessionLocal()
+        try:
+            target = db.query(User).filter(User.email == target_email).first()
+            actor = db.query(User).filter(User.email == actor_email).first()
+            auth = AuthService(db, User, settings)
+
+            with pytest.raises(Exception) as exc:
+                auth.update_user(target.id, {"role": "manager"}, actor)
+            assert exc.value.status_code == 403
+            assert exc.value.detail["error_code"] == "USE_SUPER_ADMIN_CONTROL_PLANE"
+
+            db.expire_all()
+            reloaded = db.query(User).filter(User.email == target_email).first()
+            assert reloaded.role == "super_admin"
+        finally:
+            db.close()
+
+    def test_deactivation_rejected_even_for_super_admin_actor(self, setup_db):
+        target_email = f"g2a-bypass-target2-{uuid.uuid4().hex}@test.local"
+        actor_email = f"g2a-bypass-actor2-{uuid.uuid4().hex}@test.local"
+        _mk_user(target_email, role="super_admin", is_active=True)
+        _mk_user(actor_email, role="super_admin", is_active=True)
+
+        db = TestingSessionLocal()
+        try:
+            target = db.query(User).filter(User.email == target_email).first()
+            actor = db.query(User).filter(User.email == actor_email).first()
+            auth = AuthService(db, User, settings)
+
+            with pytest.raises(Exception) as exc:
+                auth.update_user(target.id, {"is_active": False}, actor)
+            assert exc.value.status_code == 403
+            assert exc.value.detail["error_code"] == "USE_SUPER_ADMIN_CONTROL_PLANE"
+
+            db.expire_all()
+            reloaded = db.query(User).filter(User.email == target_email).first()
+            assert reloaded.is_active is True
+        finally:
+            db.close()
+
+    def test_non_privilege_fields_still_update_normally(self, setup_db):
+        """Regression guard: the fail-closed check must be scoped to role/
+        is_active only — ordinary profile fields (and password hashing)
+        still have to work through this path."""
+        target_email = f"g2a-bypass-normal-{uuid.uuid4().hex}@test.local"
+        actor_email = f"g2a-bypass-actor3-{uuid.uuid4().hex}@test.local"
+        _mk_user(target_email, role="cashier", is_active=True)
+        _mk_user(actor_email, role="super_admin", is_active=True)
+
+        db = TestingSessionLocal()
+        try:
+            target = db.query(User).filter(User.email == target_email).first()
+            actor = db.query(User).filter(User.email == actor_email).first()
+            auth = AuthService(db, User, settings)
+
+            updated = auth.update_user(target.id, {"full_name": "New Name"}, actor)
+            assert updated.full_name == "New Name"
+        finally:
+            db.close()
+
+
 # ── 7: weak SECRET_KEY rejected in production ──────────────────────────────
 
 class TestSecretKeyValidation:
