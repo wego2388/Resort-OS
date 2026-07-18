@@ -54,6 +54,31 @@ def make_table_committed(db, branch, outlet):
     return table
 
 
+def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
+    """Gate 1B: PATCH /dining/orders/{id}/status بقى بيفرض
+    core.services.assert_branch_access على كل تحويل حالة (مش "مدفوع" بس) —
+    الـ headers fixtures المشتركة (conftest.py) بلا Employee/فرع خالص، فأي
+    تحويل حالة عبرها هيترفض 403 دلوقتي. نفس نمط
+    test_guest_alerts.py's make_branch_linked_waiter_headers بالظبط
+    (مستخدم Employee-linked جديد لكل تست بدل الـ fixture المشترك)."""
+    from datetime import date, timedelta
+    from decimal import Decimal as _D
+    from tests.conftest import _create_test_user, _make_token
+    from app.modules.hr.models import Employee
+
+    email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, role)
+    emp = Employee(
+        branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name=f"{role} اختبار دايننج", national_id="29001011234567",
+        position=role, department="F&B", basic_salary=_D("4000.00"),
+        hire_date=date.today() - timedelta(days=365), user_id=user_id,
+    )
+    db.add(emp)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email)}"}
+
+
 def _set_shift_pin(db, email: str, pin: str) -> int:
     """نفس نمط _set_shift_pin في test_finance_http.py — يضبط PIN حقيقي عبر
     core.services (مش تلاعب مباشر بالداتابيز) ويرجّع user.id."""
@@ -277,6 +302,7 @@ class TestDiningOrderHTTP:
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet, station="grill")
+        linked_headers = make_branch_linked_headers(db, branch)
 
         order_resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
@@ -293,7 +319,7 @@ class TestDiningOrderHTTP:
             resp = client.patch(
                 f"/api/v1/dining/orders/{order_id}/status",
                 json={"status": "in_kitchen"},
-                headers=waiter_headers,
+                headers=linked_headers,
             )
         assert resp.status_code == 200, resp.text
         mock_broadcast.assert_called_once()
@@ -305,6 +331,7 @@ class TestDiningOrderHTTP:
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet, station="grill")
+        linked_headers = make_branch_linked_headers(db, branch)
 
         order_resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
@@ -317,7 +344,7 @@ class TestDiningOrderHTTP:
         with client.websocket_connect(ws_url(f"/api/v1/dining/ws/kds/{branch.id}", waiter_headers)) as ws:
             status_resp = client.patch(
                 f"/api/v1/dining/orders/{order_id}/status",
-                json={"status": "in_kitchen"}, headers=waiter_headers,
+                json={"status": "in_kitchen"}, headers=linked_headers,
             )
             assert status_resp.status_code == 200, status_resp.text
             message = ws.receive_json()
@@ -328,6 +355,7 @@ class TestDiningOrderHTTP:
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet, station="grill")
+        linked_headers = make_branch_linked_headers(db, branch)
 
         order_resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
@@ -337,7 +365,7 @@ class TestDiningOrderHTTP:
         )
         order_id = order_resp.json()["id"]
         client.patch(f"/api/v1/dining/orders/{order_id}/status",
-                      json={"status": "in_kitchen"}, headers=waiter_headers)
+                      json={"status": "in_kitchen"}, headers=linked_headers)
 
         tickets_resp = client.get(
             "/api/v1/dining/kitchen/tickets",
@@ -438,8 +466,12 @@ class TestDiningKitchenItemBumpHTTP:
                   "items": [{"item_id": i.id, "quantity": 1} for i in items]},
             headers=waiter_headers,
         ).json()
-        client.patch(f"/api/v1/dining/orders/{order['id']}/status",
-                     json={"status": "in_kitchen"}, headers=waiter_headers)
+        # Gate 1B: PATCH .../status بقى بيفرض assert_branch_access — waiter_headers
+        # المشترك بلا Employee/فرع، فمحتاج مستخدم Employee-linked للفرع ده تحديدًا.
+        linked_headers = make_branch_linked_headers(db, branch)
+        resp = client.patch(f"/api/v1/dining/orders/{order['id']}/status",
+                             json={"status": "in_kitchen"}, headers=linked_headers)
+        assert resp.status_code == 200, resp.text
         return order
 
     def test_bump_single_item_updates_status_and_ticket(self, client: TestClient, db, waiter_headers, manager_headers):

@@ -10,6 +10,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.db_errors import is_lock_not_available
 from app.resort_os.timezone_utils import local_today
 
 from app.modules.inventory import crud
@@ -29,6 +30,12 @@ logger = logging.getLogger(__name__)
 class InventoryConcurrencyError(Exception):
     """عملية مخزون تانية ماسكة صف الصنف دلوقتي (SELECT FOR UPDATE NOWAIT فشل) —
     409، مش 400 (زي beach.services.BeachConcurrencyError بالظبط)."""
+
+
+class InventoryConfigurationError(Exception):
+    """إعداد مخزون ناقص/غير متسق بيمنع خصم فعلي — منتج/مخزن مش موجود،
+    مخزن بلا فرع، أو منتج بيخص فرع تاني عن فرع الطلب (Gate 1B، مراجعة
+    Codex الثانية). 503 — مش 409 (مش تعارض تزامن، إعداد بيانات ناقص)."""
 
 
 def create_warehouse(db: Session, data: WarehouseCreate):
@@ -146,6 +153,8 @@ def record_movement(
     data: StockMovementCreate,
     moved_by: int,
     allow_negative: bool = False,
+    *,
+    commit: bool = True,
 ):
     """يُسجّل حركة مخزون ويُحدّث الرصيد.
 
@@ -158,8 +167,29 @@ def record_movement(
     consume_stock عبر _deduct_inventory_for_order): بيسمح بالرصيد يبقى
     سالب مع تسجيل تحذير، بدل ما يرفض الخصم بصمت أو يمنع إتمام البيع. غرفة
     طعام حقيقية، مش مخزن — إيقاف بيع صنف بسبب فرق جرد بسيط في مكوّن واحد
-    أسوأ تشغيليًا من رصيد سالب مؤقت لحد ما يتصحّح بالجرد التالي."""
-    product = get_product_or_404(db, data.product_id)
+    أسوأ تشغيليًا من رصيد سالب مؤقت لحد ما يتصحّح بالجرد التالي.
+
+    commit=True (افتراضي، بنفس سلوك كل النداءات القديمة): يعمل commit واحد
+    في نهاية الدالة. commit=False (Gate 1B — يُستخدم من consume_stock جوه
+    معاملة دفع دايننج الصارمة): يعمل flush بس، ويسيب الـ commit لصاحب
+    المعاملة الخارجية عشان يفضل فيه commit واحد بس للـ unit of work كله.
+
+    فحص الرصيد السالب اتنقل (Gate 1B) عشان يتحقق من صف المنتج **بعد** قفله
+    مباشرة (lock_product_for_update)، مش من قراءة سابقة غير مقفولة — وإلا
+    الفحص ممكن يبني على قيمة current_stock قديمة لو عملية تانية خصمت من
+    نفس الصنف في نفس اللحظة بالظبط (نفس فئة باج CLAUDE.md §13 بند ⓫)."""
+    try:
+        product = crud.lock_product_for_update(db, data.product_id)
+    except OperationalError as exc:
+        if not is_lock_not_available(exc):
+            raise
+        db.rollback()
+        raise InventoryConcurrencyError(
+            f"الصنف {data.product_id} مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    if not product:
+        raise ValueError(f"الصنف {data.product_id} غير موجود")
+
     would_go_negative = data.quantity < 0 and abs(data.quantity) > product.current_stock
     if would_go_negative and not allow_negative:
         raise ValueError(
@@ -174,13 +204,21 @@ def record_movement(
         )
     mov = crud.create_movement(db, data, moved_by)
     try:
+        # crud.adjust_stock بيعيد قفل نفس الصف تاني — إعادة قفل صف ماسكه
+        # نفس الـ transaction فعلاً في Postgres مأمونة (reentrant)، مش
+        # deadlock، فمفيش داعي نكرر منطق تعديل الرصيد هنا بدل ما ننادي
+        # الدالة الموجودة.
         crud.adjust_stock(db, product, data.quantity, allow_negative=allow_negative)
     except OperationalError as exc:
+        if not is_lock_not_available(exc):
+            raise
         db.rollback()
         raise InventoryConcurrencyError(
             f"الصنف {product.id} مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
         ) from exc
-    db.commit(); db.refresh(mov)
+    if commit:
+        db.commit()
+        db.refresh(mov)
     return mov
 
 
@@ -195,14 +233,45 @@ def consume_stock(
     moved_by: int = 0,
     allow_negative: bool = False,
     cost_center_code: Optional[str] = None,
+    *,
+    commit: bool = True,
+    strict: bool = False,
 ):
     """اختصار لخصم من المخزون — يُستدعى من Dining (ربط 1:1 قديم أو استهلاك
     وصفة). راجع توثيق allow_negative في record_movement.
 
     cost_center_code (Batch 3): مركز التكلفة (REST/CAFE...) اللي الاستهلاك
     ده بيخصه — بيتوسم على قيد الـ COGS (راجع _post_cogs_journal)، عشان
-    تقرير مركز التكلفة يقدر يحسب المصروف مش الإيراد بس."""
-    product = get_product_or_404(db, product_id)
+    تقرير مركز التكلفة يقدر يحسب المصروف مش الإيراد بس.
+
+    commit/strict (Gate 1B): زي record_movement بالظبط — الافتراضي (True/
+    False) يحافظ على السلوك القديم 100%. النداء الصارم الوحيد (دفع طلب
+    دايننج) بيمرّر commit=False, strict=True عشان فشل خصم المخزون أو ترحيل
+    COGS يوقف معاملة الدفع كلها بدل ما يكمل بصمت من غير أثر محاسبي حقيقي.
+
+    ⚠️ مراجعة Codex الثانية: cost_price كان بيتقرا من get_product_or_404 —
+    قراءة غير مقفولة — قبل ما record_movement يقفل نفس الصف. يعني
+    StockMovement.unit_cost وقيمة COGS كانوا ممكن يُبنوا على cost_price
+    قديم لو منتج تاني عدّل السعر في نفس اللحظة بالظبط. دلوقتي بنقفل الصف
+    هنا أولًا (crud.lock_product_for_update — نفس القفل اللي record_movement
+    هيعيده تاني، آمن/reentrant جوه نفس الـtransaction) ونقرا cost_price من
+    النسخة المقفولة الطازة، مش من قراءة سابقة."""
+    try:
+        product = crud.lock_product_for_update(db, product_id)
+    except OperationalError as exc:
+        if not is_lock_not_available(exc):
+            raise
+        # ⚠️ مراجعة Codex الثالثة: db.rollback() كان ناقص هنا — PostgreSQL
+        # بيسيب الـtransaction في حالة "aborted" بعد فشل قفل NOWAIT، وأي
+        # استخدام تاني للـ session (حتى قراءة) بيفشل بخطأ InFailedSqlTransaction
+        # لحد ما rollback حقيقي يحصل. المسارات المباشرة/non-strict (اللي
+        # بتفضل تستخدم نفس الـ session بعد التقاط الخطأ) كانت بتنكسر.
+        db.rollback()
+        raise InventoryConcurrencyError(
+            f"الصنف {product_id} مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    if not product:
+        raise ValueError(f"الصنف {product_id} غير موجود")
     avg_cost = product.cost_price or Decimal("0")
 
     data = StockMovementCreate(
@@ -216,12 +285,15 @@ def consume_stock(
         reference_id=reference_id,
         moved_at=datetime.utcnow(),
     )
-    mov = record_movement(db, data, moved_by, allow_negative=allow_negative)
+    mov = record_movement(db, data, moved_by, allow_negative=allow_negative, commit=commit)
 
     # COGS Journal Entry
     cogs_amount = avg_cost * abs(quantity)
     if cogs_amount > 0:
-        _post_cogs_journal(db, branch_id, cogs_amount, reference_type, reference_id, moved_by, cost_center_code)
+        _post_cogs_journal(
+            db, branch_id, cogs_amount, reference_type, reference_id, moved_by, cost_center_code,
+            commit_cost_centers=commit, strict=strict,
+        )
 
     return mov
 
@@ -234,8 +306,19 @@ def _post_cogs_journal(
     ref_id: Optional[int],
     user_id: int,
     cost_center_code: Optional[str] = None,
+    *,
+    commit_cost_centers: bool = True,
+    strict: bool = False,
 ) -> None:
-    """يُنشئ قيد COGS إذا كانت الحسابات مُعرَّفة."""
+    """يُنشئ قيد COGS إذا كانت الحسابات مُعرَّفة.
+
+    commit_cost_centers/strict (Gate 1B): زي finance.post_simple_revenue_journal
+    بالظبط. الافتراضي (True/False) يحافظ على السلوك القديم — بيبتلع أي فشل
+    (حساب/مركز تكلفة غير معرّف) ويرجع من غير ما يوقف استهلاك المخزون.
+    strict=True بيرفع FinancialConfigurationError بدل ما يبتلع، وcommit_
+    cost_centers=False بيخلي تجهيز مركز التكلفة (لو محتاج يتزرع) flush-only
+    جوه نفس معاملة الدفع الصارمة بدل commit مستقل يفتح نافذة partial-durability."""
+    from app.modules.finance.services import FinancialConfigurationError  # noqa: PLC0415
     try:
         from app.modules.finance.crud import get_account_by_code, create_journal_entry, get_cost_center_by_code  # noqa: PLC0415
         from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
@@ -244,14 +327,19 @@ def _post_cogs_journal(
         cogs_acc  = get_account_by_code(db, branch_id, "5200")
         inv_acc   = get_account_by_code(db, branch_id, "1200")
         if not cogs_acc or not inv_acc:
+            if strict:
+                missing = "5200" if not cogs_acc else "1200"
+                raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {missing}")
             return
 
         cost_center_id = None
         if cost_center_code:
             cc = get_cost_center_by_code(db, branch_id, cost_center_code)
             if not cc:
-                ensure_default_cost_centers(db, branch_id)
+                ensure_default_cost_centers(db, branch_id, commit=commit_cost_centers)
                 cc = get_cost_center_by_code(db, branch_id, cost_center_code)
+            if not cc and strict:
+                raise FinancialConfigurationError(f"تعذّر تجهيز مركز التكلفة: {cost_center_code}")
             cost_center_id = cc.id if cc else None
 
         entry_data = JournalEntryCreate(
@@ -272,8 +360,12 @@ def _post_cogs_journal(
             ],
         )
         create_journal_entry(db, entry_data, user_id)
+    except FinancialConfigurationError:
+        raise
     except Exception:
-        pass  # لا نوقف استهلاك المخزون إذا فشل القيد
+        if strict:
+            raise
+        # لا نوقف استهلاك المخزون إذا فشل القيد (سلوك قديم — non-strict فقط)
 
 
 def get_po_or_404(db: Session, po_id: int) -> PurchaseOrder:
@@ -303,6 +395,8 @@ def receive_purchase_order(
             db, po, req.items, req.warehouse_id, req.received_at, received_by,
         )
     except OperationalError as exc:
+        if not is_lock_not_available(exc):
+            raise
         db.rollback()
         raise InventoryConcurrencyError(
             "أحد الأصناف في أمر الشراء ده مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"
@@ -582,6 +676,8 @@ def approve_stock_count(db: Session, count_id: int, approved_by: int) -> StockCo
         try:
             product = crud.lock_product_for_update(db, line.product_id)
         except OperationalError as exc:
+            if not is_lock_not_available(exc):
+                raise
             db.rollback()
             raise InventoryConcurrencyError(
                 f"الصنف {line.product_id} مشغول الآن بعملية مخزون أخرى — حاول تاني خلال لحظات"

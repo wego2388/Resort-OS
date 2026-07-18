@@ -52,6 +52,25 @@ def make_outlet(db, branch, outlet_type="restaurant", revenue_account_code="4200
     ))
 
 
+def ensure_finance_accounts(db, branch, revenue_code="4200"):
+    """كل حسابات الأستاذ اللي معاملة الدفع الصارمة (Gate 1B) محتاجاها فعليًا
+    (Cash/فوليو/مخزون/COGS/إيراد المنفذ) — من غيرها post_simple_revenue_journal/
+    _post_cogs_journal بيرفعوا FinancialConfigurationError (503) بدل ما
+    يبتلعوا الفشل بصمت زي قبل. idempotent (query-or-create)."""
+    from app.modules.finance.models import Account
+    wanted = {
+        "1100": ("Cash", "asset"),
+        "1150": ("ذمم الفوليو", "asset"),
+        "1200": ("مخزون البضاعة", "asset"),
+        "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
+        revenue_code: ("إيراد المنفذ", "revenue"),
+    }
+    for code, (name, acc_type) in wanted.items():
+        if not db.query(Account).filter_by(branch_id=branch.id, code=code).first():
+            db.add(Account(branch_id=branch.id, code=code, name=name, account_type=acc_type))
+    db.commit()
+
+
 def make_item(db, branch, outlet, price=Decimal("25.00"), name="كابتشينو"):
     from app.modules.dining.models import DiningItem
     item = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name=name, price=price, is_available=True)
@@ -217,6 +236,7 @@ class TestDiningOrderWithVariant:
     def test_order_uses_variant_price_and_deducts_variant_recipe(self, db):
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        ensure_finance_accounts(db, branch)
         item, milk, small, large = self._setup_item_with_two_variants(db, branch, outlet)
         stock_before = inventory_crud.get_product(db, milk.id).current_stock
 
@@ -239,6 +259,7 @@ class TestDiningOrderWithVariant:
     def test_small_variant_deducts_its_own_smaller_recipe(self, db):
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        ensure_finance_accounts(db, branch)
         item, milk, small, large = self._setup_item_with_two_variants(db, branch, outlet)
         stock_before = inventory_crud.get_product(db, milk.id).current_stock
 
@@ -271,6 +292,7 @@ class TestFoodCostReportWithVariants:
     def test_variants_reported_as_separate_non_double_counted_lines(self, db):
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        ensure_finance_accounts(db, branch)
         item = make_item(db, branch, outlet, price=Decimal("25.00"), name="كابتشينو")
         milk = make_product(db, branch, name="حليب", cost_price=Decimal("0.05"))
 
@@ -330,6 +352,7 @@ class TestFoodCostReportWithVariants:
         هيختلفوا في "إيه الوصفة اللي فعليًا بتحكم الاستهلاك"."""
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        ensure_finance_accounts(db, branch)
         item = make_item(db, branch, outlet, price=Decimal("25.00"))
         beans = make_product(db, branch, name="بن", cost_price=Decimal("2"))
         dining_services.add_recipe_line(
@@ -362,6 +385,7 @@ class TestCafeOutletVariants:
     def test_add_variant_and_order_uses_variant_price(self, db):
         branch = make_branch(db)
         outlet = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        ensure_finance_accounts(db, branch, revenue_code="4400")
         item = make_item(db, branch, outlet, price=Decimal("25.00"), name="كابتشينو")
         milk = make_product(db, branch, name="حليب", cost_price=Decimal("0.05"))
 

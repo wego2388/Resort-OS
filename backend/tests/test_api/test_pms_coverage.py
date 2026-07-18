@@ -100,7 +100,14 @@ def test_pms_early_late_free(client: TestClient, cashier_headers, db):
 
 
 def test_pms_late_checkout_with_charge(client: TestClient, cashier_headers, db):
-    """late_checkout مع رسوم — total_rate بتزيد + folio charge"""
+    """late_checkout مع رسوم — total_rate بتزيد + folio charge حقيقية.
+
+    مراجعة Codex الثالثة: التست القديم كان بيتأكد من HTTP 200 وtotal_rate
+    بس — مفيش أي إثبات إيجابي إن الـFolioCharge اتسجّلت فعليًا. ده بالظبط
+    اللي كان بيغطي باج posted_at الحقيقي (راجع pms/services.py) — لأن
+    الـexcept القديم كان بيبتلع فشل الـFolioChargeCreate validation بعد ما
+    يسجّله بس، فالـHTTP response كان برضو 200 وtotal_rate برضو صح (الحقل
+    ده بيتحدّث قبل try block الشحنة) رغم إن الفوليو عمره ما اتحمّل فعليًا."""
     br = _branch(db)
     rt = _room_type(db, br.id)
     room = _room(db, br.id, rt.id, "301")
@@ -116,10 +123,28 @@ def test_pms_late_checkout_with_charge(client: TestClient, cashier_headers, db):
         "notes": "Late +4h",
     }
     resp = client.post(f"/api/v1/pms/bookings/{bk.id}/early-late", json=payload, headers=cashier_headers)
-    assert resp.status_code == 200
+    assert resp.status_code == 200, resp.text
     data = resp.json()
     assert data["late_checkout_at"] is not None
     assert Decimal(data["total_rate"]) == Decimal("750")  # 600 + 150
+
+    # إثبات إيجابي إن الشحنة اتسجّلت فعليًا (باج posted_at كان بيمنع ده تمامًا)
+    from datetime import datetime, timedelta as _td
+    from app.modules.finance.models import FolioCharge
+
+    db.refresh(folio)
+    charges = db.query(FolioCharge).filter(FolioCharge.folio_id == folio.id).all()
+    assert len(charges) == 1, f"متوقع شحنة فوليو واحدة بالظبط، لقينا {len(charges)}"
+    charge = charges[0]
+    assert charge.charge_type == "room_extra"
+    assert charge.amount == Decimal("150")
+    assert charge.posted_at is not None
+    assert abs(charge.posted_at - datetime.utcnow()) < _td(minutes=5), (
+        f"posted_at={charge.posted_at} بعيد جدًا عن وقت التنفيذ الفعلي"
+    )
+    assert folio.total == Decimal("150"), (
+        f"folio.total={folio.total} — متوقع 150 (نفس قيمة الشحنة، الفوليو كان فاضي قبل كده)"
+    )
 
 
 def test_pms_early_late_both_with_charge(client: TestClient, cashier_headers, db):

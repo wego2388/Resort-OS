@@ -305,27 +305,44 @@ def request_early_late(db: Session, booking_id: int, data: "EarlyLateRequest") -
 
         # أضف شحنة على الفوليو لو مفتوح
         if booking.folio_id:
+            from app.modules.finance import services as finance_services  # noqa: PLC0415
+            from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
+            label_parts = []
+            if data.early_checkin_at:
+                label_parts.append(f"وصول مبكر {data.early_checkin_at.strftime('%H:%M')}")
+            if data.late_checkout_at:
+                label_parts.append(f"مغادرة متأخرة {data.late_checkout_at.strftime('%H:%M')}")
+            label = " + ".join(label_parts) or "رسوم إضافية"
+            # add_folio_charge بتقفل صف الفوليو (blocking) قبل الإدخال
+            # وتعيد حساب الإجمالي من قراءة طازة — راجع Gate 1B.
+            # ⚠️ مراجعة Codex الثانية: كان فيه except Exception يبتلع الفشل
+            # بعد ما يسجّله بس — يعني تعديل الحجز (extra_charge/total_rate)
+            # كان بيتسجّل ويتقفل بـcommit حتى لو الفوليو مقفول/فشلت الشحنة،
+            # يعني رسوم إضافية على الحجز من غير أي شحنة فوليو مقابلة. دلوقتي
+            # fail-closed **مع rollback صريح**: مجرد عدم عمل commit مش كافي
+            # (الصفوف المعدّلة/flushed بتفضل مرئية على أي جلسة تانية على
+            # نفس الـconnection لحد rollback حقيقي — اتكشف فعليًا وقت كتابة
+            # اختبار الأثر الجانبي)، فلازم rollback صريح هنا.
             try:
-                from app.modules.finance import crud as fcrud  # noqa: PLC0415
-                from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
-                label_parts = []
-                if data.early_checkin_at:
-                    label_parts.append(f"وصول مبكر {data.early_checkin_at.strftime('%H:%M')}")
-                if data.late_checkout_at:
-                    label_parts.append(f"مغادرة متأخرة {data.late_checkout_at.strftime('%H:%M')}")
-                label = " + ".join(label_parts) or "رسوم إضافية"
-                fcrud.add_charge(db, booking.folio_id, FolioChargeCreate(
+                # ⚠️ باج حقيقي مستقل اتكشف هنا (مراجعة Codex الثانية، Gate
+                # 1B): posted_at كان غايب تمامًا من النداء ده — يعني
+                # FolioChargeCreate كانت بترفض بـ ValidationError في **كل**
+                # مرة، بس الـexcept القديم (اللي كان بيبتلع الفشل بعد
+                # التسجيل بس) كان بيغطي الفشل ده تمامًا. النتيجة: مفيش أي
+                # رسوم وصول مبكر/مغادرة متأخرة اتسجّلت كـFolioCharge حقيقية
+                # في الإنتاج من أول ما الميزة دي اتعملت — الحجز كان بيتحدّث
+                # (extra_charge/total_rate) لكن الفوليو نفسه كان يفضل زي ما
+                # هو. اتصلح بإضافة posted_at (نفس نمط beach/dining).
+                finance_services.add_folio_charge(db, booking.folio_id, FolioChargeCreate(
                     description=label,
                     amount=data.charge,
                     charge_type="room_extra",
+                    posted_at=datetime.utcnow(),
                     ref_order_id=None,
                 ))
-                fcrud.recalculate_folio_total(db, fcrud.get_folio(db, booking.folio_id))
             except Exception:
-                logger.error(
-                    "request_early_late: فشل إضافة folio charge — booking %s charge %.2f",
-                    booking_id, float(data.charge), exc_info=True,
-                )
+                db.rollback()
+                raise
 
     if data.notes and booking.notes:
         booking.notes = booking.notes + "\n" + data.notes

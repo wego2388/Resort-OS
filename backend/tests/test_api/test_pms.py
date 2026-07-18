@@ -268,6 +268,51 @@ class TestCheckinCheckout:
         # room moves to checkout_pending, awaiting housekeeping
         assert room.status == "checkout_pending"
 
+    def test_request_early_late_on_closed_folio_leaves_zero_trace(self, db):
+        """مراجعة Codex الثانية (Gate 1B): كان فيه except Exception يبتلع
+        فشل add_folio_charge بعد ما يسجّله بس — يعني تعديل الحجز (extra_
+        charge/total_rate/early_checkin_at) كان بيتسجّل ويتقفل بـcommit
+        حتى لو الفوليو مقفول، يعني رسوم إضافية على الحجز من غير أي شحنة
+        فوليو مقابلة. دلوقتي لازم يفشل بالكامل من غير أي تعديل جزئي
+        متسجّل على الحجز."""
+        from datetime import datetime, timedelta as _td
+        from app.modules.pms.schemas import EarlyLateRequest
+        from tests.conftest import TestingSessionLocal
+
+        branch = make_branch(db)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        checked_in = services.checkin_booking(db, booking.id)
+        assert checked_in.folio_id is not None
+
+        from app.modules.finance import crud as finance_crud
+        folio = finance_crud.get_folio(db, checked_in.folio_id)
+        folio.status = "closed"
+        db.commit()
+
+        original_total_rate = checked_in.total_rate
+        booking_id = booking.id
+
+        with pytest.raises(ValueError):
+            services.request_early_late(db, booking_id, EarlyLateRequest(
+                early_checkin_at=datetime.utcnow() + _td(hours=2),
+                charge=Decimal("150.00"),
+            ))
+
+        fresh = TestingSessionLocal()
+        try:
+            from app.modules.pms.models import Booking
+            fresh_booking = fresh.query(Booking).filter(Booking.id == booking_id).first()
+            assert fresh_booking.early_checkin_at is None, (
+                "early_checkin_at اتسجّل رغم فشل شحنة الفوليو — تعديل جزئي ممنوع"
+            )
+            assert fresh_booking.total_rate == original_total_rate, (
+                "total_rate اتغيّر رغم فشل شحنة الفوليو بالكامل — تعديل جزئي ممنوع"
+            )
+        finally:
+            fresh.close()
+
     def test_checkout_updates_linked_customer_stats(self, db):
         from app.modules.crm import services as crm_services
         from app.modules.crm.schemas import CustomerCreate

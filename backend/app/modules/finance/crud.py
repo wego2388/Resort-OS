@@ -164,6 +164,23 @@ def close_folio(db: Session, folio: Folio) -> Folio:
     return folio
 
 
+def lock_folio_for_update(db: Session, folio_id: int) -> Optional[Folio]:
+    """SELECT ... FOR UPDATE (بلوكينج، من غير NOWAIT عمدًا — على عكس قفل
+    الطلب/المنتج اللي بيترفض فورًا، شحنة فوليو المفروض تنتظر لحظات بدل ما
+    تترفض، راجع خطة Gate 1B الجزء الخاص بقفل الفوليو). بيستخدم
+    populate_existing() زي lock_inventory_for_update بالظبط — لو الـ Folio
+    كان معروف بالفعل في identity map الـ Session (قراءة سابقة غير مقفولة،
+    زي get_folio_or_404 قبل القفل) فالقفل يرجّع أحدث قيم فعلية مش النسخة
+    المخزّنة القديمة (راجع CLAUDE.md §13 بند ⓫)."""
+    return (
+        db.query(Folio)
+        .filter(Folio.id == folio_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+
+
 # ── FolioCharge ───────────────────────────────────────────────────────
 
 def add_charge(db: Session, folio_id: int, data: FolioChargeCreate) -> FolioCharge:
@@ -192,11 +209,22 @@ def settle_all_charges(db: Session, folio: Folio) -> None:
 
 
 def recalculate_folio_total(db: Session, folio: Folio) -> Folio:
-    db.expire(folio, ["charges"])
+    """بيعيد حساب folio.total من مجموع الشحنات — لازم قراءة طازة حقيقية مش
+    بس تفريغ الكوليكشن (db.expire(folio, ["charges"]) القديمة كانت بتجبر
+    إعادة تحميل الكوليكشن، لكن أي FolioCharge موجود مسبقًا في identity map
+    الـ Session (زي شحنة اتقرأت قبل قفل الفوليو) كانت بترجع بقيمها القديمة
+    المخزّنة بدل القيم الفعلية تحت القفل — نفس فئة باج CLAUDE.md §13 بند ⓫).
+    populate_existing() هنا يضمن كل شحنة ترجع بأحدث قيمها الملتزمة فعليًا."""
+    charges = (
+        db.query(FolioCharge)
+        .filter(FolioCharge.folio_id == folio.id)
+        .populate_existing()
+        .all()
+    )
     folio.total = sum(
         (
             c.amount + (c.vat_amount or Decimal("0")) + (c.service_charge or Decimal("0"))
-            for c in folio.charges
+            for c in charges
         ),
         Decimal("0"),
     )

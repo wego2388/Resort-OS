@@ -126,10 +126,11 @@ class TestBuildStats:
         from app.modules.analytics.models import DailyStats
         from app.modules.dining import services
         from app.modules.dining.models import DiningOrder
-        from tests.test_api.test_dining import make_branch, make_item, make_order, make_outlet
+        from tests.test_api.test_dining import make_branch, make_finance_accounts, make_item, make_order, make_outlet
 
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        make_finance_accounts(db, branch)
         item = make_item(db, branch, outlet)
         order = make_order(db, branch, outlet, item)
         services.update_order_status(db, order.id, "in_kitchen")
@@ -173,10 +174,11 @@ class TestBuildStats:
         from app.core.config import settings
         from app.resort_os.timezone_utils import local_today
         from app.modules.dining import services
-        from tests.test_api.test_dining import make_branch, make_item, make_order, make_outlet
+        from tests.test_api.test_dining import make_branch, make_finance_accounts, make_item, make_order, make_outlet
 
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        make_finance_accounts(db, branch)
         item = make_item(db, branch, outlet)
 
         order1 = make_order(db, branch, outlet, item)  # guests_count=2 (helper default)

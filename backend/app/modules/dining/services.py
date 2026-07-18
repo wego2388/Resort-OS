@@ -16,9 +16,11 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.db_errors import is_lock_not_available
 from app.modules.dining import crud
 from app.modules.dining.models import (
     DiningItem, DiningItemVariant, DiningItemVariantRecipeLine,
@@ -38,6 +40,29 @@ from app.resort_os.timezone_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class OrderPaymentConcurrencyError(Exception):
+    """صف الطلب مشغول بعملية دفع أخرى (SELECT FOR UPDATE NOWAIT فشل) — 409
+    ORDER_PAYMENT_IN_PROGRESS (راجع خطة Gate 1B)."""
+
+
+class OrderAlreadyPaidError(Exception):
+    """الطلب اتدفع بالفعل — اتكشف تحت قفل صف الطلب نفسه، مش من قراءة سابقة
+    غير مقفولة — 409 ORDER_ALREADY_PAID (راجع خطة Gate 1B)."""
+
+
+class InvalidOrderTotalError(Exception):
+    """إجمالي الطلب صفر أو سالب وقت محاولة تحويله لـ "مدفوع" — 400
+    INVALID_ORDER_TOTAL (راجع خطة Gate 1B)."""
+
+
+class InvalidPaymentMethodError(Exception):
+    """تناقض بين payment_method وحالة الفوليو (Gate 1B، مراجعة Codex
+    الثانية) — 400 INVALID_PAYMENT_METHOD. القاعدة: order.folio_id
+    (تحويل فعلي على فوليو ضيف) وpayment_method="room" لازم يتطابقوا
+    دايمًا، مينفعش نرحّل قيد فوليو بينما payment_method بيدّعي كاش/بطاقة/
+    محفظة، ولا العكس (طلب "room" من غير فوليو حقيقي أصلاً)."""
 
 
 def _get_order_or_404(db: Session, order_id: int) -> DiningOrder:
@@ -660,22 +685,23 @@ def update_order_status(
     charge_to_room_id: Optional[int] = None,
     payment_method: Optional[str] = None,
 ) -> DiningOrder:
+    """يغيّر حالة الطلب. التحويل لـ "مدفوع" وحده بقى وحدة عمل صارمة منفصلة
+    (_mark_order_paid — Gate 1B: قفل صف الطلب، فحص فوري لحالة "مدفوع
+    بالفعل" تحت القفل، شحنة فوليو/خصم مخزون/قيد محاسبي من غير أي بلع أخطاء
+    صامت، وcommit واحد بس في نهاية المعاملة). باقي التحويلات (إلغاء، تحويل
+    لمطبخ، جاهز...) سلوكها القديم زي ما هو بالظبط — خارج نطاق الذرّية
+    المالية بتاعة Gate 1B (مفيش أثر مالي فيهم أصلاً غير تحرير الطاولة)."""
+    if new_status == "paid":
+        return _mark_order_paid(
+            db, order_id,
+            charge_to_room_id=charge_to_room_id,
+            payment_method=payment_method,
+        )
+
     order = _get_order_or_404(db, order_id)
 
     if order.status in ("paid", "cancelled"):
         raise ValueError(f"لا يمكن تغيير حالة طلب '{order.status}'")
-
-    if new_status == "paid" and payment_method:
-        order.payment_method = payment_method
-    elif new_status == "paid" and not order.payment_method:
-        order.payment_method = "cash"
-
-    if new_status == "paid" and charge_to_room_id and not order.folio_id:
-        from app.modules.pms.services import find_active_folio_for_room  # noqa: PLC0415
-        folio_id = find_active_folio_for_room(db, order.branch_id, charge_to_room_id)
-        if not folio_id:
-            raise ValueError(f"مفيش ضيف مسجّل دخول في الغرفة {charge_to_room_id} حاليًا")
-        order.folio_id = folio_id
 
     order = crud.update_order_status(db, order, new_status)
 
@@ -710,22 +736,108 @@ def update_order_status(
                 items_snapshot=items_snapshot,
             )
 
-    if new_status in ("paid", "cancelled") and order.table_id:
+    if new_status == "cancelled" and order.table_id:
         table = crud.get_table(db, order.table_id)
         if table:
             crud.update_table_status(db, table, "available")
 
-    if new_status == "paid" and order.folio_id:
+    db.commit()
+    db.refresh(order)
+    return order
+
+
+def _mark_order_paid(
+    db: Session,
+    order_id: int,
+    *,
+    charge_to_room_id: Optional[int],
+    payment_method: Optional[str],
+) -> DiningOrder:
+    """وحدة عمل صارمة (Gate 1B) لتحويل طلب دايننج لحالة "مدفوع" — commit
+    واحد بس في نهاية الدالة كلها. أي فشل (قفل مشغول، طلب مدفوع بالفعل،
+    إجمالي غير صالح، فوليو مقفول، فشل قفل/خصم مخزون، فشل ترحيل قيد محاسبي)
+    بيعمل rollback كامل صريح (except Exception الخارجي) قبل ما يرفع
+    الاستثناء الأصلي زي ما هو — يعني إما الطلب اتدفع بكل آثاره المالية
+    (فوليو/مخزون/قيد) مرة واحدة صح، أو معملش حاجة خالص، مفيش حالة نص-متوسطة
+    تتسجل في قاعدة البيانات أبدًا (راجع docs/audits/gate-1b-financial-atomicity-plan.md)."""
+    try:
         try:
-            from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+            order = crud.get_order_for_update(db, order_id)
+        except OperationalError as exc:
+            if not is_lock_not_available(exc):
+                raise
+            raise OrderPaymentConcurrencyError(
+                f"الطلب #{order_id} مشغول الآن بعملية دفع أخرى — حاول تاني خلال لحظات"
+            ) from exc
+        if not order:
+            raise ValueError(f"الطلب {order_id} غير موجود")
+
+        if order.status == "paid":
+            raise OrderAlreadyPaidError(f"الطلب #{order_id} مدفوع بالفعل")
+        if order.status == "cancelled":
+            raise ValueError(f"لا يمكن تغيير حالة طلب '{order.status}'")
+
+        if (order.total or Decimal("0")) <= 0:
+            raise InvalidOrderTotalError(f"إجمالي الطلب #{order_id} غير صالح (صفر أو سالب)")
+
+        # عقد payment_method/فوليو (Gate 1B، مراجعة Codex الثانية) — لازم
+        # يتحقق قبل أي تعديل، عشان أي تناقض يترفض 400 من غير أي أثر جانبي.
+        if charge_to_room_id and payment_method and payment_method != "room":
+            raise InvalidPaymentMethodError(
+                f"مينفعش تحدد charge_to_room_id مع payment_method='{payment_method}' "
+                "— لازم يبقى 'room' لو الدفع محمّل على غرفة"
+            )
+        if payment_method == "room" and not charge_to_room_id and not order.folio_id:
+            raise InvalidPaymentMethodError(
+                "payment_method='room' محتاج charge_to_room_id أو فوليو مرتبط "
+                "بالطلب بالفعل"
+            )
+
+        if payment_method:
+            order.payment_method = payment_method
+        elif order.folio_id or charge_to_room_id:
+            # فوليو موجود بالفعل أو هيتحدد حالًا — الطريقة الحقيقية "room"،
+            # مش "cash" الافتراضية القديمة (كانت بتناقض القيد المحاسبي
+            # الفعلي لو الطلب هيترحّل على ذمم الفوليو).
+            order.payment_method = "room"
+        elif not order.payment_method:
+            order.payment_method = "cash"
+
+        if charge_to_room_id and not order.folio_id:
+            from app.modules.pms.services import find_active_folio_for_room  # noqa: PLC0415
+            folio_id = find_active_folio_for_room(db, order.branch_id, charge_to_room_id)
+            if not folio_id:
+                raise ValueError(f"مفيش ضيف مسجّل دخول في الغرفة {charge_to_room_id} حاليًا")
+            order.folio_id = folio_id
+
+        # فحص أخير على الحالة النهائية المحلولة — شبكة أمان إضافية تمنع أي
+        # مسار منسي يسيب order.folio_id وorder.payment_method متناقضين
+        # (قيد فوليو يترحّل بينما payment_method بيدّعي كاش، أو العكس).
+        is_room_charge = order.payment_method == "room"
+        if bool(order.folio_id) != is_room_charge:
+            raise InvalidPaymentMethodError(
+                f"تناقض بين payment_method='{order.payment_method}' وfolio_id="
+                f"{order.folio_id} — القيد المحاسبي لازم يتطابق مع طريقة الدفع"
+            )
+
+        order = crud.update_order_status(db, order, "paid")
+
+        if order.table_id:
+            table = crud.get_table(db, order.table_id)
+            if table:
+                crud.update_table_status(db, table, "available")
+
+        if order.folio_id:
+            from app.modules.finance import services as finance_services  # noqa: PLC0415
             from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
-            # ⚠️ باج محاسبي حقيقي (اتصلح): FolioCharge كان بيتسجّل بـ
-            # amount=order.subtotal من غير طرح order.discount_amount، بينما
-            # القيد المحاسبي المقابل (_post_order_folio_charge_journal) بيرحّل
-            # order.total (اللي فيه الخصم متطرح). النتيجة: folio.total أكبر
-            # من إجمالي القيود بفارق قيمة الخصم — تناقض في دفتر الأستاذ.
-            # الإصلاح: نطرح الخصم من amount هنا عشان folio charge = order.total
-            # (subtotal_net + vat + service_charge) بالظبط زي القيد المحاسبي.
+            # ⚠️ باج محاسبي حقيقي (اتصلح قبل Gate 1B): FolioCharge كان بيتسجّل
+            # بـ amount=order.subtotal من غير طرح order.discount_amount، بينما
+            # القيد المحاسبي المقابل بيرحّل order.total (اللي فيه الخصم
+            # متطرح). الإصلاح: نطرح الخصم من amount هنا عشان folio charge
+            # = order.total (subtotal_net + vat + service_charge) بالظبط.
+            # add_folio_charge (Gate 1B) بتقفل صف الفوليو وتعيد التحقق من
+            # حالته تحت القفل — أي فشل (فوليو مقفول/ملغي) بيوقف المعاملة
+            # كلها، مش بلع صامت زي السلوك القديم.
             discount = order.discount_amount or Decimal("0")
             net_subtotal = max(Decimal("0"), order.subtotal - discount)
             charge_data = FolioChargeCreate(
@@ -737,26 +849,25 @@ def update_order_status(
                 posted_at=datetime.utcnow(),
                 ref_order_id=order.id,
             )
-            finance_crud.add_charge(db, order.folio_id, charge_data)
-            folio = finance_crud.get_folio(db, order.folio_id)
-            if folio:
-                finance_crud.recalculate_folio_total(db, folio)
-        except Exception:
-            pass  # ميمنعش إتمام الدفع لو فشل نشر الـ charge على الفوليو
+            finance_services.add_folio_charge(db, order.folio_id, charge_data)
 
-    # قيد إيراد المنفذ — بيترحّل فورًا في الحالتين (كاش/محمّل على فوليو
-    # غرفة)، بس لحساب مختلف حسب طريقة الدفع (راجع
-    # restaurant.services._post_order_folio_charge_journal للتبرير الكامل).
-    # الحساب نفسه بقى outlet.revenue_account_code (wagdy.md D-03) بدل
-    # 4200/4400 الثابتين في restaurant/cafe الأصليين.
-    if new_status == "paid":
-        _deduct_inventory_for_order(db, order)
+        # خصم المخزون جوه المعاملة الصارمة — أي فشل (قفل منتج مشغول، خطأ
+        # تاني) بيوقف الدفع كله بدل البلع الصامت القديم (continue لكل بند).
+        _deduct_inventory_for_order(db, order, commit=False, strict=True)
+
+        # قيد إيراد المنفذ — بيترحّل فورًا في الحالتين (كاش/محمّل على فوليو
+        # غرفة)، بس لحساب مختلف حسب طريقة الدفع. الحساب نفسه
+        # outlet.revenue_account_code (wagdy.md D-03) بدل 4200/4400 الثابتين
+        # في restaurant/cafe الأصليين. commit_cost_centers=False, strict=True:
+        # لو الحساب المحاسبي أو مركز التكلفة مش متجهّز، الدفع كله يفشل بوضوح
+        # (503) بدل ما يكمل من غير أثر محاسبي حقيقي بصمت.
         outlet = crud.get_outlet(db, order.outlet_id)
         revenue_account = outlet.revenue_account_code if outlet else "4200"
         if order.folio_id:
-            _post_order_folio_charge_journal(db, order, revenue_account)
+            _post_order_folio_charge_journal(db, order, revenue_account, commit_cost_centers=False, strict=True)
         else:
-            _post_order_revenue_journal(db, order, revenue_account)
+            _post_order_revenue_journal(db, order, revenue_account, commit_cost_centers=False, strict=True)
+
         if order.customer_id:
             from app.modules.crm.services import record_customer_visit  # noqa: PLC0415
             visit_date = (
@@ -765,19 +876,42 @@ def update_order_status(
             )
             record_customer_visit(db, order.customer_id, order.total, visit_date)
 
-    db.commit()
-    db.refresh(order)
-    return order
+        db.commit()
+        db.refresh(order)
+        return order
+    except Exception:
+        db.rollback()
+        raise
 
 
-def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
+def _deduct_inventory_for_order(
+    db: Session, order: DiningOrder, *, commit: bool = True, strict: bool = False,
+) -> None:
     """راجع restaurant.services._deduct_inventory_for_order — نفس أولوية
-    الخصم بالظبط (وصفة حقيقية → ربط 1:1 قديم → تجاوز صامت)."""
+    الخصم بالظبط (وصفة حقيقية → ربط 1:1 قديم → تجاوز صامت).
+
+    commit/strict (Gate 1B): زي consume_stock بالظبط. الافتراضي (True/False)
+    يحافظ على السلوك القديم — بيتجاوز (continue) أي بند فشل خصمه بصمت عشان
+    فشل مكوّن واحد ميوقفش تحصيل الطلب كله (استخدام split_bill/التوافق
+    الخلفي). strict=True (دفع طلب دايننج فقط) بيوقف عند أول فشل ويرفعه —
+    استهلاك المخزون بقى جزء من معاملة الدفع الصارمة اللي لازم تفشل كلها أو
+    تنجح كلها، مش تكمل من غير أثر مخزون حقيقي بصمت."""
     from app.modules.inventory import crud as inventory_crud  # noqa: PLC0415
     from app.modules.inventory import services as inventory_services  # noqa: PLC0415
+    from app.modules.inventory.services import InventoryConfigurationError  # noqa: PLC0415
 
     outlet = crud.get_outlet(db, order.outlet_id)
     cost_center_code = _outlet_cost_center_code(outlet)
+
+    def _skip_or_raise(strict_message: str) -> None:
+        """مراجعة Codex الثانية (Gate 1B): كل "تجاوز صامت" هنا كان بيتحول
+        continue بدون تمييز — يعني إعداد ناقص حقيقي (منتج/مخزن محذوف، منتج
+        من فرع تاني) كان بيتجاوز بصمت زي بالظبط "الصنف مفهوش وصفة ولا منتج
+        مرتبط" (الحالة الوحيدة المقصودة فعلاً تتجاوز). strict=True بقى يفشل
+        بوضوح لأي حالة غير الحالة المقصودة دي، مش يكمل من غير خصم مخزون
+        حقيقي بصمت."""
+        if strict:
+            raise InventoryConfigurationError(strict_message)
 
     for order_item in order.items:
         if order_item.status == "cancelled":
@@ -785,13 +919,45 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
         try:
             item = crud.get_item(db, order_item.item_id)
             if not item:
+                _skip_or_raise(
+                    f"صنف الطلب #{order_item.id} بيشير لـDiningItem #{order_item.item_id} غير موجود"
+                )
                 continue
             variant = crud.get_variant(db, order_item.variant_id) if order_item.variant_id else None
             recipe_lines = _effective_recipe(item, variant)
             if recipe_lines:
                 for line in recipe_lines:
                     product = inventory_crud.get_product(db, line.product_id)
-                    if not product or not product.warehouse_id:
+                    if not product:
+                        _skip_or_raise(
+                            f"منتج الوصفة #{line.product_id} (لصنف #{item.id}) غير موجود"
+                        )
+                        continue
+                    if product.branch_id != order.branch_id:
+                        _skip_or_raise(
+                            f"منتج الوصفة #{product.id} يخص فرع #{product.branch_id}، "
+                            f"مش فرع الطلب #{order.branch_id}"
+                        )
+                        continue
+                    if not product.warehouse_id:
+                        _skip_or_raise(f"منتج الوصفة #{product.id} من غير مخزن مرتبط")
+                        continue
+                    # مراجعة Codex الثالثة: التحقق السابق كان بيتأكد من فرع
+                    # المنتج بس — منتج فرع A ممكن يتربط بمخزن فرع B فعليًا
+                    # (create_product مافيهاش أي تحقق إن warehouse_id بتاعه
+                    # نفس فرع المنتج). لازم نتأكد المخزن نفسه موجود وتابع
+                    # لفرع الطلب فعلاً قبل الخصم.
+                    warehouse = inventory_crud.get_warehouse(db, product.warehouse_id)
+                    if not warehouse:
+                        _skip_or_raise(
+                            f"مخزن منتج الوصفة #{product.id} (#{product.warehouse_id}) غير موجود"
+                        )
+                        continue
+                    if warehouse.branch_id != order.branch_id:
+                        _skip_or_raise(
+                            f"مخزن منتج الوصفة #{product.id} يخص فرع #{warehouse.branch_id}، "
+                            f"مش فرع الطلب #{order.branch_id}"
+                        )
                         continue
                     inventory_services.consume_stock(
                         db,
@@ -804,12 +970,41 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
                         moved_by=0,
                         allow_negative=True,
                         cost_center_code=cost_center_code,
+                        commit=commit,
+                        strict=strict,
                     )
                 continue
             if not item.linked_product_id:
+                # الحالة الوحيدة المقصودة عمدًا تتجاوز حتى في strict=True —
+                # الصنف مفهوش وصفة ولا منتج مرتبط أصلاً (مش إعداد ناقص).
                 continue
             product = inventory_crud.get_product(db, item.linked_product_id)
-            if not product or not product.warehouse_id:
+            if not product:
+                _skip_or_raise(f"المنتج المرتبط #{item.linked_product_id} (لصنف #{item.id}) غير موجود")
+                continue
+            if product.branch_id != order.branch_id:
+                _skip_or_raise(
+                    f"المنتج المرتبط #{product.id} يخص فرع #{product.branch_id}، "
+                    f"مش فرع الطلب #{order.branch_id}"
+                )
+                continue
+            if not product.warehouse_id:
+                _skip_or_raise(f"المنتج المرتبط #{product.id} من غير مخزن مرتبط")
+                continue
+            # مراجعة Codex الثالثة: نفس تحقق المخزن اللي اتضاف لفرع الوصفة
+            # فوق — منتج فرع A ممكن يتربط بمخزن فرع B فعليًا (create_product
+            # مافيهاش أي تحقق إن warehouse_id بتاعه نفس فرع المنتج).
+            warehouse = inventory_crud.get_warehouse(db, product.warehouse_id)
+            if not warehouse:
+                _skip_or_raise(
+                    f"مخزن المنتج المرتبط #{product.id} (#{product.warehouse_id}) غير موجود"
+                )
+                continue
+            if warehouse.branch_id != order.branch_id:
+                _skip_or_raise(
+                    f"مخزن المنتج المرتبط #{product.id} يخص فرع #{warehouse.branch_id}، "
+                    f"مش فرع الطلب #{order.branch_id}"
+                )
                 continue
             inventory_services.consume_stock(
                 db,
@@ -821,14 +1016,26 @@ def _deduct_inventory_for_order(db: Session, order: DiningOrder) -> None:
                 reference_id=order.id,
                 moved_by=0,
                 cost_center_code=cost_center_code,
+                commit=commit,
+                strict=strict,
             )
+        except InventoryConfigurationError:
+            raise
         except Exception:
+            if strict:
+                raise
             continue
 
 
-def _post_order_revenue_journal(db: Session, order: DiningOrder, revenue_account_code: str) -> None:
+def _post_order_revenue_journal(
+    db: Session, order: DiningOrder, revenue_account_code: str,
+    *, commit_cost_centers: bool = True, strict: bool = False,
+) -> None:
     """Dr. Cash (1100) / Cr. إيراد المنفذ (outlet.revenue_account_code) —
-    دفع كاش/كارت فوري."""
+    دفع كاش/كارت فوري. commit_cost_centers/strict: راجع
+    finance.post_simple_revenue_journal — الافتراضي بيحافظ على السلوك
+    القديم (بيبتلع الفشل)، والنداء الصارم (دفع طلب دايننج) بيرفع
+    FinancialConfigurationError بدل ما يبتلع."""
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
     outlet = crud.get_outlet(db, order.outlet_id)
@@ -840,12 +1047,17 @@ def _post_order_revenue_journal(db: Session, order: DiningOrder, revenue_account
         description=f"إيرادات دايننج — {order.order_number}",
         source="dining", source_id=order.id,
         cost_center_code=_outlet_cost_center_code(outlet),
+        commit_cost_centers=commit_cost_centers, strict=strict,
     )
 
 
-def _post_order_folio_charge_journal(db: Session, order: DiningOrder, revenue_account_code: str) -> None:
+def _post_order_folio_charge_journal(
+    db: Session, order: DiningOrder, revenue_account_code: str,
+    *, commit_cost_centers: bool = True, strict: bool = False,
+) -> None:
     """Dr. ذمم الفوليو (1150) / Cr. إيراد المنفذ — طلب محمّل على فوليو
-    غرفة. راجع restaurant.services._post_order_folio_charge_journal."""
+    غرفة. راجع restaurant.services._post_order_folio_charge_journal.
+    commit_cost_centers/strict: نفس _post_order_revenue_journal بالظبط."""
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
     outlet = crud.get_outlet(db, order.outlet_id)
@@ -856,6 +1068,7 @@ def _post_order_folio_charge_journal(db: Session, order: DiningOrder, revenue_ac
         reference=f"ORD-{order.order_number}",
         description=f"إيرادات دايننج (محمّل على الغرفة) — {order.order_number}",
         source="dining_folio_charge", source_id=order.id,
+        commit_cost_centers=commit_cost_centers, strict=strict,
         cost_center_code=_outlet_cost_center_code(outlet),
     )
 
@@ -1048,7 +1261,7 @@ def split_bill(
     # معالجة room charges لكل دفعة
     for p in payments:
         if p.get("_folio_id"):
-            from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+            from app.modules.finance import services as finance_services  # noqa: PLC0415
             from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
             # نسبة هذه الدفعة من إجمالي الطلب
             ratio = Decimal(str(p["amount"])) / order.total
@@ -1067,13 +1280,25 @@ def split_bill(
                 posted_at=datetime.utcnow(),
                 ref_order_id=order.id,
             )
+            # add_folio_charge بتقفل صف الفوليو (blocking) قبل الإدخال وتعيد
+            # حساب الإجمالي من قراءة طازة — راجع Gate 1B.
+            # ⚠️ مراجعة Codex الثانية: كان فيه except Exception: pass هنا —
+            # يعني طلب دايننج مقسّم على أكتر من طريقة دفع كان ممكن "يتدفع"
+            # بالكامل (order.status = paid، خصم مخزون، قيد إيراد) من غير أي
+            # شحنة فوليو حقيقية لحصة "الغرفة" منه لو الفوليو مقفول/فشلت
+            # الشحنة. دلوقتي fail-closed **مع rollback صريح**: مجرد عدم
+            # الوصول للـcommit الوحيد بآخر الدالة مش كافي — الصفوف المعدّلة/
+            # flushed قبل كده (order.status، خصم مخزون سابق لو وُجد) بتفضل
+            # مرئية لأي جلسة تانية على نفس الـconnection لحد rollback حقيقي
+            # (اتكشف فعليًا وقت كتابة اختبار الأثر الجانبي). split_bill لسه
+            # مش وحدة عمل صارمة كاملة زي _mark_order_paid (تصميمها الكامل
+            # ده باقي موثّق كمهمة منفصلة في خطة Gate 1B الأصلية) — هنا بس
+            # بنضمن إن فشل شحنة الفوليو تحديدًا مايسيبش أثر جزئي.
             try:
-                finance_crud.add_charge(db, p["_folio_id"], charge_data)
-                folio = finance_crud.get_folio(db, p["_folio_id"])
-                if folio:
-                    finance_crud.recalculate_folio_total(db, folio)
+                finance_services.add_folio_charge(db, p["_folio_id"], charge_data)
             except Exception:
-                pass
+                db.rollback()
+                raise
 
     if order.table_id:
         table = crud.get_table(db, order.table_id)

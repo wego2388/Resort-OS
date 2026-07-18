@@ -67,7 +67,27 @@ def make_product(db, branch, name="لحم مفروم", unit="kg", cost_price=Dec
     return product
 
 
+def ensure_finance_accounts(db, branch, revenue_code="4200"):
+    """كل حسابات الأستاذ اللي معاملة الدفع الصارمة (Gate 1B) محتاجاها فعليًا
+    (Cash/فوليو/مخزون/COGS/إيراد المنفذ) — من غيرها post_simple_revenue_journal/
+    _post_cogs_journal بيرفعوا FinancialConfigurationError (503) بدل ما
+    يبتلعوا الفشل بصمت زي قبل. idempotent (query-or-create)."""
+    from app.modules.finance.models import Account
+    wanted = {
+        "1100": ("Cash", "asset"),
+        "1150": ("ذمم الفوليو", "asset"),
+        "1200": ("مخزون البضاعة", "asset"),
+        "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
+        revenue_code: ("إيراد المنفذ", "revenue"),
+    }
+    for code, (name, acc_type) in wanted.items():
+        if not db.query(Account).filter_by(branch_id=branch.id, code=code).first():
+            db.add(Account(branch_id=branch.id, code=code, name=name, account_type=acc_type))
+    db.commit()
+
+
 def make_paid_order(db, branch, outlet, item, quantity=2):
+    ensure_finance_accounts(db, branch, revenue_code=outlet.revenue_account_code)
     data = OrderCreate(
         outlet_id=outlet.id, order_type="takeaway", guests_count=1,
         items=[OrderItemCreate(item_id=item.id, quantity=quantity)],
@@ -108,11 +128,21 @@ class TestDiningFoodCostReport:
         assert line in report.alerts
 
     def test_cancelled_item_excluded_from_sales(self, db):
+        """(Gate 1B) طلب فيه صنفين — واحد بيتلغى بالكامل والتاني يفضل شغال،
+        عشان الطلب يفضل بإجمالي موجب وقت الدفع (زي
+        test_refunded_item_still_counted_towards_theoretical_cost بالظبط) —
+        قبل Gate 1B كان ممكن ندفع طلب بإجمالي صفر (لو الصنف الوحيد اتلغى)،
+        لكن دلوقتي INVALID_ORDER_TOTAL بيرفض ده عمدًا (راجع خطة Gate 1B)."""
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        ensure_finance_accounts(db, branch)
         item = make_item(db, branch, outlet)
+        other_item = make_item(db, branch, outlet, name="عصير", price=Decimal("20.00"))
         data = OrderCreate(outlet_id=outlet.id, order_type="takeaway", guests_count=1,
-                           items=[OrderItemCreate(item_id=item.id, quantity=2)])
+                           items=[
+                               OrderItemCreate(item_id=item.id, quantity=2),
+                               OrderItemCreate(item_id=other_item.id, quantity=1),
+                           ])
         order = dining_services.create_order(db, branch.id, data, waiter_id=1)
         dining_services.void_order_item(db, order.id, order.items[0].id, "غلط", voided_by=1)
         dining_services.update_order_status(db, order.id, "paid")
@@ -130,6 +160,7 @@ class TestDiningFoodCostReport:
         (مش كل الأصناف اترجعت)، عشان نعزل سلوك الصنف عن سلوك الطلب."""
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        ensure_finance_accounts(db, branch)
         item = make_item(db, branch, outlet)
         other_item = make_item(db, branch, outlet, name="عصير", price=Decimal("20.00"))
         data = OrderCreate(
@@ -333,6 +364,28 @@ def make_item_committed(db, branch, outlet, price=Decimal("55.00"), name="برج
     return item
 
 
+def make_branch_linked_headers(db, branch, role="manager") -> dict[str, str]:
+    """Gate 1B: PATCH /dining/orders/{id}/status بقى بيفرض assert_branch_access
+    (super_admin بس بيتخطاه — manager مش استثناء) — manager_headers المشترك
+    (conftest.py) بلا Employee/فرع خالص، فمحتاج مستخدم Employee-linked جديد."""
+    from datetime import date, timedelta
+    from decimal import Decimal as _D
+    from tests.conftest import _create_test_user, _make_token
+    from app.modules.hr.models import Employee
+
+    email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, role)
+    emp = Employee(
+        branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name=f"{role} اختبار تكلفة الطعام", national_id="29001011234567",
+        position=role, department="F&B", basic_salary=_D("4000.00"),
+        hire_date=date.today() - timedelta(days=365), user_id=user_id,
+    )
+    db.add(emp)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email)}"}
+
+
 class TestFoodCostReportHTTP:
 
     def test_requires_auth(self, client: TestClient, db):
@@ -352,18 +405,21 @@ class TestFoodCostReportHTTP:
     def test_manager_gets_report_with_defaults(self, client: TestClient, db, manager_headers, waiter_headers):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
+        ensure_finance_accounts(db, branch)
         item = make_item_committed(db, branch, outlet)
 
+        manager_linked = make_branch_linked_headers(db, branch)
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
                   "items": [{"item_id": item.id, "quantity": 2}]},
             headers=waiter_headers,
         ).json()
-        client.patch(
+        paid = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "paid"}, headers=manager_headers,
+            json={"status": "paid"}, headers=manager_linked,
         )
+        assert paid.status_code == 200, paid.text
 
         resp = client.get(
             "/api/v1/dining/reports/food-cost",
@@ -438,18 +494,21 @@ class TestFoodCostReportHTTP:
     def test_cafe_outlet_manager_gets_report(self, client: TestClient, db, manager_headers, waiter_headers):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        ensure_finance_accounts(db, branch, revenue_code="4400")
         item = make_item_committed(db, branch, outlet, price=Decimal("25.00"), name="قهوة اختبار")
 
+        manager_linked = make_branch_linked_headers(db, branch)
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway",
                   "items": [{"item_id": item.id, "quantity": 2}]},
             headers=waiter_headers,
         ).json()
-        client.patch(
+        paid = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "paid"}, headers=manager_headers,
+            json={"status": "paid"}, headers=manager_linked,
         )
+        assert paid.status_code == 200, paid.text
 
         resp = client.get(
             f"/api/v1/dining/outlets/{outlet.id}/reports/food-cost",

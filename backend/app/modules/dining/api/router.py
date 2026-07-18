@@ -41,7 +41,10 @@ from app.modules.dining.schemas import (
     GuestOrderCreate, GuestOrderRead, PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
     PublicOutletRead,
 )
+from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
+from app.modules.finance import services as finance_services
+from app.modules.inventory import services as inventory_services
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
 from app.resort_os.timezone_utils import business_today
 
@@ -546,6 +549,18 @@ def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 @router.patch("/dining/orders/{order_id}/status", response_model=OrderRead)
 async def update_order_status(order_id: int, data: OrderStatusUpdate, db: DbDep, user=Depends(get_waiter_user)):
+    """Gate 1B: التحقق من صلاحية الفرع بقى مطبّق على كل تحويلات الحالة (مش
+    "مدفوع" بس) قبل أي تعديل — راجع core.services.assert_branch_access
+    (bypass كامل لـ super_admin، fail-closed لو المستخدم مش مرتبط بفرع).
+    كود الأخطاء الدقيق لتحويل "مدفوع" (409/400/503) موثّق في خطة Gate 1B."""
+    order_for_access_check = crud.get_order(db, order_id)
+    if not order_for_access_check:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الطلب {order_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, order_for_access_check.branch_id, "تعديل حالة هذا الطلب")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
     if data.status == "paid" and user_level(user) < 40:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "إتمام الدفع يتطلب صلاحية كاشير على الأقل")
     try:
@@ -554,6 +569,28 @@ async def update_order_status(order_id: int, data: OrderStatusUpdate, db: DbDep,
             charge_to_room_id=data.charge_to_room_id,
             payment_method=data.payment_method,
         )
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
+    except services.OrderAlreadyPaidError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_ALREADY_PAID", "message": str(exc)})
+    except services.InvalidOrderTotalError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "INVALID_ORDER_TOTAL", "message": str(exc)})
+    except services.InvalidPaymentMethodError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "INVALID_PAYMENT_METHOD", "message": str(exc)})
+    except inventory_services.InventoryConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "INVENTORY_BUSY", "message": str(exc)})
+    except inventory_services.InventoryConfigurationError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            {"error_code": "INVENTORY_CONFIGURATION_ERROR", "message": str(exc)},
+        )
+    except finance_services.FinancialConfigurationError as exc:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            {"error_code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc)},
+        )
+    except finance_services.FolioClosedError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if data.status == "in_kitchen":

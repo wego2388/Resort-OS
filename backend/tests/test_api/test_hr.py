@@ -782,6 +782,15 @@ class TestLeaderboard:
         from app.modules.dining import services as dining_services
         from app.modules.dining.models import DiningItem
         from app.modules.dining.schemas import OrderCreate, OrderItemCreate, OutletCreate
+        from app.modules.finance.models import Account
+
+        # حسابات الأستاذ اللي معاملة الدفع الصارمة (Gate 1B) محتاجاها فعليًا
+        # — idempotent (query-or-create) عشان الدالة دي بتتنادى أكتر من مرة
+        # بنفس الـ branch fixture.
+        for code, acc_type in [("1100", "asset"), ("4200", "revenue")]:
+            if not db.query(Account).filter_by(branch_id=branch.id, code=code).first():
+                db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
 
         outlet = dining_services.create_outlet(db, OutletCreate(
             branch_id=branch.id, name=f"Outlet {_uuid.uuid4().hex[:4]}",

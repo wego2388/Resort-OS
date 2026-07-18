@@ -442,6 +442,28 @@ def get_order(db: Session, order_id: int) -> Optional[DiningOrder]:
     return db.query(DiningOrder).filter(DiningOrder.id == order_id).first()
 
 
+def get_order_for_update(db: Session, order_id: int) -> Optional[DiningOrder]:
+    """SELECT ... FOR UPDATE NOWAIT — يقفل صف الطلب طوال معاملة الدفع الصارمة
+    (راجع Gate 1B: dining.services._mark_order_paid) عشان يمنع دفعتين
+    متزامنتين لنفس الطلب. NOWAIT عمدًا (يترفض فورًا 409 مش ينتظر) — عكس قفل
+    الفوليو البلوكينج، دفع نفس الطلب مرتين في نفس اللحظة استثناء نادر
+    المفروض يترفض بوضوح، مش ينتظر. نفس نمط beach.crud.lock_inventory_for_update
+    بالظبط.
+
+    populate_existing() ضروري لأن الـ router بيتحقق من صلاحية الفرع
+    (assert_branch_access) بقراءة الطلب أولاً من غير قفل، فالطلب ممكن يكون
+    موجود بالفعل في identity map الـ Session وقت القفل هنا — من غيرها كان
+    ممكن نرجّع نسخة قديمة رغم إن القفل نفسه اتاخد صح (نفس فئة باج CLAUDE.md
+    §13 بند ⓫)."""
+    return (
+        db.query(DiningOrder)
+        .filter(DiningOrder.id == order_id)
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def get_order_by_local_id(db: Session, local_id: str) -> Optional[DiningOrder]:
     return db.query(DiningOrder).filter(DiningOrder.client_local_id == local_id).first()
 

@@ -258,6 +258,33 @@ def _make_token(email: str) -> str:
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
+class _FakeLockNotAvailable(Exception):
+    """يحاكي psycopg.errors.LockNotAvailable — بس السمة اللي
+    app.core.db_errors.is_lock_not_available فعليًا بتتحقق منها
+    (``sqlstate``), مش الكلاس نفسه. راجع Gate 1B مراجعة Codex الثانية:
+    الكود بقى يميّز PostgreSQL SQLSTATE 55P03 الحقيقي (قفل NOWAIT مشغول)
+    عن أي OperationalError تاني (فقدان اتصال، مشكلة سيرفر...) قبل ما
+    يحوّله لخطأ تزامن — أي monkeypatch بيحاكي "الصف مشغول" لازم يبني
+    OperationalError بنفس الشكل ده، وإلا هيتصعّد كخطأ حقيقي مش يتحول 409."""
+    sqlstate = "55P03"
+
+
+def make_lock_not_available_error(context: str = "SELECT ... FOR UPDATE NOWAIT") -> "OperationalError":
+    """OperationalError حقيقي الشكل بيمثّل PostgreSQL lock_not_available —
+    استخدمها في monkeypatch بدل ``OperationalError(..., Exception(...))``
+    الخام عشان تمر من فحص is_lock_not_available صح."""
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+    return OperationalError(context, {}, _FakeLockNotAvailable("could not obtain lock"))
+
+
+def make_unrelated_operational_error(context: str = "connection lost") -> "OperationalError":
+    """OperationalError حقيقي الشكل بيمثّل مشكلة قاعدة بيانات **مش** متعلقة
+    بقفل صف (فقدان اتصال، مشكلة سيرفر...) — لازم يفضل يتصعّد كخطأ حقيقي،
+    مش يتحول لخطأ تزامن 409 مضلّل."""
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+    return OperationalError(context, {}, Exception("server closed the connection unexpectedly"))
+
+
 def ws_url(path: str, headers: dict[str, str]) -> str:
     """يحوّل مسار WebSocket + fixture headers (زي waiter_headers) لرابط فيه
     ?token=... — كل WebSocket endpoint بقى يتطلبه (wagdy.md A-01،

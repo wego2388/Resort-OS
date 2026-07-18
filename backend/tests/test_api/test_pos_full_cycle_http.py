@@ -60,15 +60,58 @@ def make_table(db, branch, outlet):
     return t
 
 
+def make_finance_accounts(db, branch, revenue_code="4200"):
+    """حسابات الأستاذ اللي معاملة الدفع الصارمة (Gate 1B) محتاجاها فعليًا —
+    زي seed.py الحقيقي بالظبط. من غيرها post_simple_revenue_journal بيرفع
+    FinancialConfigurationError (503) بدل ما يبتلع الفشل بصمت زي قبل."""
+    from app.modules.finance.models import Account
+    wanted = {
+        "1100": ("Cash", "asset"),
+        "1150": ("ذمم الفوليو", "asset"),
+        "1200": ("مخزون البضاعة", "asset"),
+        "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
+        revenue_code: ("Dining Revenue", "revenue"),
+    }
+    for code, (name, acc_type) in wanted.items():
+        if not db.query(Account).filter_by(branch_id=branch.id, code=code).first():
+            db.add(Account(branch_id=branch.id, code=code, name=name, account_type=acc_type))
+    db.commit()
+
+
+def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
+    """Gate 1B: PATCH /dining/orders/{id}/status بقى بيفرض assert_branch_access
+    على كل تحويل حالة — waiter_headers/cashier_headers المشتركة (conftest.py)
+    بلا Employee/فرع خالص، فمحتاجين مستخدم Employee-linked جديد لكل تست."""
+    from datetime import date, timedelta
+    from decimal import Decimal as _D
+    from tests.conftest import _create_test_user, _make_token
+    from app.modules.hr.models import Employee
+
+    email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, role)
+    emp = Employee(
+        branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name=f"{role} اختبار POS", national_id="29001011234567",
+        position=role, department="F&B", basic_salary=_D("4000.00"),
+        hire_date=date.today() - timedelta(days=365), user_id=user_id,
+    )
+    db.add(emp)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email)}"}
+
+
 class TestDiningFullCycle:
     def test_order_to_payment_cycle_with_real_vat_and_service_charge(
-        self, client: TestClient, db, waiter_headers, cashier_headers,
+        self, client: TestClient, db, waiter_headers,
     ):
         from app.modules.dining.models import DiningItem
 
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        make_finance_accounts(db, branch)
         table = make_table(db, branch, outlet)
+        waiter_linked = make_branch_linked_headers(db, branch, "waiter")
+        cashier_linked = make_branch_linked_headers(db, branch, "cashier")
         fish = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name="Grilled Sea Bass",
                           price=Decimal("85.00"), station="grill")
         pasta = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name="Seafood Pasta",
@@ -100,7 +143,7 @@ class TestDiningFullCycle:
         # 2) يتبعت للمطبخ — لازم تذكرتين منفصلتين (grill + hot)
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "in_kitchen"}, headers=waiter_headers,
+            json={"status": "in_kitchen"}, headers=waiter_linked,
         )
         assert resp.status_code == 200, resp.text
 
@@ -131,14 +174,14 @@ class TestDiningFullCycle:
         # 4) نادل ملوش صلاحية يقفل الحساب
         denied = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "paid"}, headers=waiter_headers,
+            json={"status": "paid"}, headers=waiter_linked,
         )
         assert denied.status_code == 403
 
         # 5) الكاشير بيقفل الحساب فعليًا
         paid = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "paid"}, headers=cashier_headers,
+            json={"status": "paid"}, headers=cashier_linked,
         )
         assert paid.status_code == 200, paid.text
         assert paid.json()["status"] == "paid"
@@ -152,7 +195,7 @@ class TestDiningFullCycle:
         assert found["status"] == "available"
 
     def test_dining_full_cycle_matches_frontend_payload(
-        self, client: TestClient, db, waiter_headers, cashier_headers,
+        self, client: TestClient, db, waiter_headers,
     ):
         """نفس الـ shape اللي UnifiedPOSView.vue بيبعته فعليًا —
         item_id (مش menu_item_id)، outlet_id، من غير unit_price/payment_method."""
@@ -160,6 +203,9 @@ class TestDiningFullCycle:
 
         branch = make_branch(db)
         outlet = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        make_finance_accounts(db, branch, revenue_code="4400")
+        waiter_linked = make_branch_linked_headers(db, branch, "waiter")
+        cashier_linked = make_branch_linked_headers(db, branch, "cashier")
         pizza = DiningItem(branch_id=branch.id, outlet_id=outlet.id, name="Margherita",
                            price=Decimal("220.00"), is_available=True)
         db.add(pizza)
@@ -178,20 +224,20 @@ class TestDiningFullCycle:
         # in_kitchen (بار) — نفس اللي UnifiedPOSView.submitOrder() بيعمله فعليًا
         r1 = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "in_kitchen"}, headers=waiter_headers,
+            json={"status": "in_kitchen"}, headers=waiter_linked,
         )
         assert r1.status_code == 200, r1.text
 
         # الدفع فوري عند الكاونتر — كاشير بس
         denied = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "paid"}, headers=waiter_headers,
+            json={"status": "paid"}, headers=waiter_linked,
         )
         assert denied.status_code == 403
 
         paid = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
-            json={"status": "paid"}, headers=cashier_headers,
+            json={"status": "paid"}, headers=cashier_linked,
         )
         assert paid.status_code == 200, paid.text
         assert paid.json()["status"] == "paid"

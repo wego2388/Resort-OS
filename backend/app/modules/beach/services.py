@@ -291,10 +291,21 @@ def _sell_ticket_no_commit(
     # قيد خالص، يعني إيراد الشاطئ الحقيقي من كل عملية بيع محمّلة على غرفة
     # كان غايب تمامًا عن دفتر الأستاذ، نفس فئة الباج بالظبط في restaurant/cafe.
     if tx.folio_id:
+        from app.modules.finance import services as finance_services  # noqa: PLC0415
+        from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
+        # add_folio_charge بتقفل صف الفوليو (blocking) قبل الإدخال وتعيد
+        # حساب الإجمالي من قراءة طازة — راجع Gate 1B (finance/services.py).
+        # ⚠️ مراجعة Codex الثانية: كان فيه except Exception: pass هنا —
+        # يعني بيع شاطئ محمّل على غرفة كان ممكن "ينجح" ويتسجّل تمامًا
+        # (خصم سعة + تذكرة) من غير أي FolioCharge حقيقي لو الفوليو مقفول/
+        # ملغي أو أي فشل تاني حصل. دلوقتي fail-closed **مع rollback صريح**:
+        # مجرد عدم عمل commit مش كافي — الصفوف اللي اتعملها flush قبل كده
+        # (التذكرة، تحديث السعة) بتفضل مرئية على أي جلسة تانية على نفس
+        # الـconnection لحد ما rollback حقيقي يحصل (اتكشف فعليًا وقت كتابة
+        # اختبار الأثر الجانبي لهذا الإصلاح)، فمينفعش نعتمد على "مفيش commit"
+        # بس زي ما كنا فاكرين — لازم rollback صريح هنا.
         try:
-            from app.modules.finance import crud as finance_crud  # noqa: PLC0415
-            from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
-            finance_crud.add_charge(db, tx.folio_id, FolioChargeCreate(
+            finance_services.add_folio_charge(db, tx.folio_id, FolioChargeCreate(
                 charge_type="beach",
                 description=f"شاطئ — {tx.tx_type} × {tx.quantity}",
                 amount=tx.total_amount,
@@ -302,14 +313,10 @@ def _sell_ticket_no_commit(
                 posted_at=datetime.combine(tx.tx_date, datetime.min.time()),
                 ref_beach_tx_id=tx.id,
             ))
-            # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-04): نفس باج restaurant/cafe —
-            # add_charge لوحدها بتضيف الصف بس مبتحدّثش Folio.total المخزّن.
-            folio = finance_crud.get_folio(db, tx.folio_id)
-            if folio:
-                finance_crud.recalculate_folio_total(db, folio)
             _post_beach_folio_charge_journal(db, tx)
         except Exception:
-            pass  # ميمنعش إتمام البيع لو فشل نشر الـ charge على الفوليو
+            db.rollback()
+            raise
     else:
         _post_beach_revenue_journal(db, tx)
         _record_shift_payment(db, tx)

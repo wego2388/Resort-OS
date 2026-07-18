@@ -114,10 +114,17 @@ def lock_product_for_update(db: Session, product_id: int) -> Optional[Product]:
     مخزون حصلوا في نفس اللحظة بالظبط على نفس الصنف (استهلاك مطعم/كافيه،
     استلام أمر شراء، اعتماد جرد مخزون — كل واحدة فيهم بتلمس current_stock).
     نفس نمط beach.crud.lock_inventory_for_update و pms.crud.lock_room_for_booking
-    بالضبط (Postgres فقط — على SQLite بيتجاهله الـ driver من غير error)."""
+    بالضبط (Postgres فقط — على SQLite بيتجاهله الـ driver من غير error).
+
+    populate_existing() ضروري هنا (كان ناقص — باج حقيقي اتكشف واتصلح Gate
+    1B): لو المنتج كان معروف بالفعل في identity map الـ Session (قراءة
+    سابقة غير مقفولة لنفس الصف)، القفل من غيرها كان بيرجّع نفس الـ object
+    المخزّن بقيمه القديمة رغم إن القفل نفسه اتاخد صح على مستوى قاعدة
+    البيانات — نفس فئة الباج الموثّقة في CLAUDE.md §13 بند ⓫."""
     return (
         db.query(Product)
         .filter(Product.id == product_id)
+        .populate_existing()
         .with_for_update(nowait=True)
         .first()
     )

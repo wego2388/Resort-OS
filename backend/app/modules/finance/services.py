@@ -43,13 +43,48 @@ if TYPE_CHECKING:
     from app.modules.finance.models import ConditionalDiscount
 
 
+class FinancialConfigurationError(Exception):
+    """Gate 1B (Financial Atomicity): حساب GL أو مركز تكلفة مطلوب غير معرَّف
+    للفرع، حتى بعد محاولة التجهيز التلقائي (ensure_default_cost_centers) —
+    503، مش خطأ عميل (400) ولا database error عشوائي (500): إعداد ناقص
+    محتاج محاسب/مدير يظبطه، مش غلطة في الطلب نفسه. تُرفع فقط من مسارات
+    strict=True الصريحة (post_simple_revenue_journal، inventory._post_cogs_
+    journal) — كل الاستدعاءات الحالية التانية (strict=False الافتراضي)
+    تحافظ على سلوكها القديم تمامًا (ابتلاع صامت، ترجع None)."""
+
+
 # ── Folio ─────────────────────────────────────────────────────────────
+
+class FolioClosedError(ValueError):
+    """محاولة إضافة شحنة لفوليو مقفول/ملغي — بتترفض تحت قفل الفوليو نفسه
+    عشان تمنع سباق حقيقي بين إضافة شحنة وتسوية/إقفال نفس الفوليو في نفس
+    اللحظة (راجع خطة Gate 1B، بند قفل الفوليو). يرث من ValueError (مراجعة
+    Codex الثانية) عشان أي router قديم بيعمل ``except ValueError`` عام
+    يفضل يمسكها ويترجمها 400 بدل ما تتسرب كـ 500 غير متوقع."""
+
 
 def get_folio_or_404(db: Session, folio_id: int) -> Folio:
     folio = crud.get_folio(db, folio_id)
     if not folio:
         raise ValueError(f"الفوليو {folio_id} غير موجود")
     return folio
+
+
+def add_folio_charge(db: Session, folio_id: int, data: FolioChargeCreate) -> FolioCharge:
+    """نقطة الإدخال المركزية الوحيدة لإضافة شحنة فوليو (Gate 1B) — بتقفل صف
+    الـ Folio (blocking FOR UPDATE) قبل إدخال الشحنة وإعادة حساب الإجمالي،
+    وتعيد التحقق من حالته تحت القفل. كل نداءات crud.add_charge المباشرة
+    القديمة (شاطئ/PMS/finance.post_charge) اتنقلت هنا عشان ترث القفل من غير
+    تكرار منطقه في كل موديول — دايننج بيستخدمها كمان جوه معاملة الدفع
+    الصارمة (نفس القفل، معاد الدخول عليه بأمان جوه نفس المعاملة)."""
+    folio = crud.lock_folio_for_update(db, folio_id)
+    if not folio:
+        raise ValueError(f"الفوليو {folio_id} غير موجود")
+    if folio.status in ("closed", "cancelled"):
+        raise FolioClosedError(f"لا يمكن إضافة شحنة لفوليو {folio.status} (#{folio_id})")
+    charge = crud.add_charge(db, folio_id, data)
+    crud.recalculate_folio_total(db, folio)
+    return charge
 
 
 def _to_folio_summary(folio: Folio) -> FolioSummary:
@@ -96,15 +131,21 @@ def post_charge(db: Session, folio_id: int, data: FolioChargeCreate) -> FolioCha
     if not validation.valid:
         raise ValueError(validation.error)
 
-    charge = crud.add_charge(db, folio_id, data)
-    crud.recalculate_folio_total(db, folio)
+    charge = add_folio_charge(db, folio_id, data)
     db.commit()
     db.refresh(charge)
     return charge
 
 
 def settle_folio(db: Session, folio_id: int) -> Folio:
-    folio = get_folio_or_404(db, folio_id)
+    """بتقفل صف الفوليو (نفس قفل add_folio_charge) قبل can_checkout/التسوية/
+    الإقفال — عشان تمنع سباق حقيقي: شحنة جديدة بتتضاف في نفس اللحظة اللي
+    فيها تسوية شغالة على نفس الفوليو (راجع خطة Gate 1B). النتيجة المضمونة:
+    إما شحنة جديدة على فوليو لسه مفتوح، أو فوليو مقفول من غير أي شحنة
+    فاتت التسوية — مستحيل تحصل الحالتين مع بعض."""
+    folio = crud.lock_folio_for_update(db, folio_id)
+    if not folio:
+        raise ValueError(f"الفوليو {folio_id} غير موجود")
     summary = _to_folio_summary(folio)
 
     validation = can_checkout(summary)
@@ -848,6 +889,9 @@ def post_simple_revenue_journal(
     created_by: int = 0,
     currency: str = "EGP",
     cost_center_code: Optional[str] = None,
+    *,
+    commit_cost_centers: bool = True,
+    strict: bool = False,
 ) -> Optional[JournalEntry]:
     """يرحّل قيد بسيط بسطرين (Dr. حساب / Cr. حساب) — النمط المتكرر اللي كان
     منسوخ في 6 موديولات (مطعم/كافيه/شاطئ/PMS/تايم شير/إيجارات) كل واحد بنسخته
@@ -867,21 +911,37 @@ def post_simple_revenue_journal(
     الحساب الإيرادي/المصروفي بس، السطر المقابل كمان — تبسيط متعمد، والتقرير
     بيفلتر بالفعل حسب account_type فمش بيتأثر). لو مركز التكلفة مش موجود
     بعد لفرع ده (أول قيد يترحّل قبل أي نداء لـ ensure_default_cost_centers)،
-    بيتزرع هنا تلقائيًا (idempotent) بدل ما التوسيم يفشل بصمت."""
+    بيتزرع هنا تلقائيًا (idempotent) بدل ما التوسيم يفشل بصمت.
+
+    commit_cost_centers/strict (Gate 1B): لكل الاستدعاءات الحالية، السلوك
+    الافتراضي (commit_cost_centers=True, strict=False) **زي ما هو بالظبط
+    قبل الجولة دي** — أي فشل بيتبلع ويرجع None. الاستدعاء الجديد الوحيد
+    strict=True (دفع طلب دايننج) بيمرّر commit_cost_centers=False عشان
+    ensure_default_cost_centers يعمل flush بس مش commit مستقل جوه معاملة
+    الدفع، وبيخلي أي فشل تجهيز حساب/مركز تكلفة/تحويل عملة يرفع
+    FinancialConfigurationError بدل ما يرجع None بصمت — عشان معاملة الدفع
+    تقدر تفشل بوضوح (503) بدل ما تكمل من غير قيد محاسبي حقيقي."""
     try:
         if amount <= 0:
+            if strict:
+                raise FinancialConfigurationError("مبلغ القيد المحاسبي غير صالح (صفر أو سالب)")
             return None
         debit_acc = crud.get_account_by_code(db, branch_id, debit_account_code)
         credit_acc = crud.get_account_by_code(db, branch_id, credit_account_code)
         if not debit_acc or not credit_acc:
+            if strict:
+                missing = debit_account_code if not debit_acc else credit_account_code
+                raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {missing}")
             return None
 
         cost_center_id = None
         if cost_center_code:
             cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
             if not cc:
-                ensure_default_cost_centers(db, branch_id)
+                ensure_default_cost_centers(db, branch_id, commit=commit_cost_centers)
                 cc = crud.get_cost_center_by_code(db, branch_id, cost_center_code)
+            if not cc and strict:
+                raise FinancialConfigurationError(f"تعذّر تجهيز مركز التكلفة: {cost_center_code}")
             cost_center_id = cc.id if cc else None
 
         currency = (currency or "EGP").upper()
@@ -890,6 +950,8 @@ def post_simple_revenue_journal(
         else:
             egp_amount = convert_to_egp(db, amount, currency, entry_date)
             if egp_amount <= 0:
+                if strict:
+                    raise FinancialConfigurationError("فشل تحويل العملة لقيمة موجبة")
                 return None
             fx_rate = (egp_amount / amount).quantize(Decimal("0.000001"))
 
@@ -910,7 +972,11 @@ def post_simple_revenue_journal(
             ],
         )
         return crud.create_journal_entry(db, entry_data, created_by)
+    except FinancialConfigurationError:
+        raise
     except Exception:
+        if strict:
+            raise
         return None
 
 
@@ -1108,8 +1174,14 @@ DEFAULT_COST_CENTERS = [
 ]
 
 
-def ensure_default_cost_centers(db: Session, branch_id: int) -> list[CostCenter]:
-    """يزرع مراكز التكلفة الافتراضية أول مرة بس — idempotent زي seed.py."""
+def ensure_default_cost_centers(db: Session, branch_id: int, *, commit: bool = True) -> list[CostCenter]:
+    """يزرع مراكز التكلفة الافتراضية أول مرة بس — idempotent زي seed.py.
+
+    commit=False (Gate 1B، مسارات strict الصارمة زي دفع طلبات الدايننج):
+    الزرع بيحصل بـflush بس، من غير commit مستقل — عشان مسار الدفع الصارم
+    يفضل بـcommit واحد بس لكل الـtransaction، بدل ما تجهيز مركز تكلفة
+    ناقص يعمل commit نص-الطريق قبل ما باقي القيد يترحّل. commit=True
+    (الافتراضي) هو نفس السلوك القديم تمامًا لكل الاستدعاءات الحالية."""
     existing_codes = {c.code for c in crud.list_cost_centers(db, branch_id, active_only=False)}
     created_any = False
     for defn in DEFAULT_COST_CENTERS:
@@ -1117,7 +1189,10 @@ def ensure_default_cost_centers(db: Session, branch_id: int) -> list[CostCenter]
             crud.create_cost_center(db, CostCenterCreate(branch_id=branch_id, **defn))
             created_any = True
     if created_any:
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     return crud.list_cost_centers(db, branch_id, active_only=False)
 
 

@@ -1341,6 +1341,45 @@ class TestBeachVoidReversesFinancials:
         with pytest.raises(ValueError, match="مقفولة"):
             services.void_transaction(db, tx.id, voided_by=1, reason="اختبار")
 
+    def test_sell_ticket_on_closed_folio_leaves_zero_trace(self, db):
+        """مراجعة Codex الثانية (Gate 1B): كان فيه except Exception: pass
+        حوالين add_folio_charge هنا — يعني بيع محمّل على فوليو مقفول كان
+        "ينجح" فعليًا (خصم سعة + صف BeachTransaction) من غير أي FolioCharge
+        مقابلة. دلوقتي لازم يفشل بالكامل — مفيش تذكرة، مفيش خصم سعة، مفيش
+        قيد محاسبي، من غير أي أثر جزئي."""
+        from app.modules.finance.models import Folio
+        from datetime import datetime, timedelta
+        from tests.conftest import TestingSessionLocal
+
+        branch = make_branch(db)
+        make_finance_accounts(db, branch)
+        folio = Folio(
+            branch_id=branch.id, guest_name="نزيل شاطئ", status="closed",
+            check_in=datetime.utcnow(), check_out=datetime.utcnow() + timedelta(days=2),
+        )
+        db.add(folio)
+        db.commit()
+        folio_id = folio.id
+
+        with pytest.raises(ValueError):
+            services.sell_ticket(
+                db, branch.id, BeachSellRequest(tx_type="entry", quantity=1, folio_id=folio_id),
+            )
+
+        fresh = TestingSessionLocal()
+        try:
+            from app.modules.beach.models import BeachTransaction, BeachInventory
+            tx_count = fresh.query(BeachTransaction).filter(
+                BeachTransaction.branch_id == branch.id,
+            ).count()
+            assert tx_count == 0, "معاملة شاطئ اتسجّلت رغم فشل شحنة الفوليو بالكامل"
+            inv = fresh.query(BeachInventory).filter(BeachInventory.branch_id == branch.id).first()
+            assert inv is None or inv.capacity_used == 0, (
+                "سعة الشاطئ اتخصمت رغم فشل شحنة الفوليو — أثر جانبي جزئي ممنوع"
+            )
+        finally:
+            fresh.close()
+
 
 class TestTimezoneBugFixes:
     """باج توقيت حقيقي: نفس فئة الباج اللي اتكشفت واتصلحت قبل كده في

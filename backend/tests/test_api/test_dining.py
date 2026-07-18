@@ -77,13 +77,29 @@ def make_order(db, branch, outlet, item, table=None, quantity=2):
 
 
 def make_finance_accounts(db, branch, revenue_code="4200"):
+    """كل حسابات الأستاذ اللي معاملة الدفع الصارمة (Gate 1B) محتاجاها —
+    Cash/فوليو/إيراد المنفذ زي ما كان، زائد المخزون/COGS (1200/5200) اللي
+    بقت مطلوبة فعليًا دلوقتي لأن post_simple_revenue_journal/_post_cogs_journal
+    بيرفعوا FinancialConfigurationError (503) بدل ما يبتلعوا الفشل بصمت
+    وقت الدفع الصارم — idempotent (query-or-create) عشان النداء المتكرر
+    بنفس الفرع/الكود آمن."""
     from app.modules.finance.models import Account
-    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
-    revenue = Account(branch_id=branch.id, code=revenue_code, name="Dining Revenue", account_type="revenue")
-    guest_ledger = Account(branch_id=branch.id, code="1150", name="ذمم الفوليو", account_type="asset")
-    db.add_all([cash, revenue, guest_ledger])
+    wanted = {
+        "1100": ("Cash", "asset"),
+        "1150": ("ذمم الفوليو", "asset"),
+        "1200": ("مخزون البضاعة", "asset"),
+        "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
+        revenue_code: ("Dining Revenue", "revenue"),
+    }
+    accounts = {}
+    for code, (name, acc_type) in wanted.items():
+        acc = db.query(Account).filter_by(branch_id=branch.id, code=code).first()
+        if not acc:
+            acc = Account(branch_id=branch.id, code=code, name=name, account_type=acc_type)
+            db.add(acc)
+        accounts[code] = acc
     db.commit()
-    return cash, revenue
+    return accounts["1100"], accounts[revenue_code]
 
 
 class TestOutlet:
@@ -211,6 +227,7 @@ class TestOrder:
     def test_add_items_to_paid_order_raises(self, db):
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        make_finance_accounts(db, branch)
         item = make_item(db, branch, outlet)
         order = make_order(db, branch, outlet, item)
         services.update_order_status(db, order.id, "paid")
@@ -1154,3 +1171,60 @@ class TestFolioChargeDiscountConsistency:
         assert charge_total == order.total, (
             f"FolioCharge total {charge_total} ≠ order.total {order.total} — تناقض محاسبي"
         )
+
+
+class TestSplitBillFolioFailClosed:
+    """مراجعة Codex الثانية (Gate 1B): split_bill كان فيه except Exception:
+    pass حوالين add_folio_charge لحصة "الغرفة" — يعني طلب مقسّم كان ممكن
+    "يتدفع" بالكامل (status=paid، خصم مخزون، قيد إيراد) من غير أي شحنة
+    فوليو حقيقية لحصة الغرفة لو الفوليو مقفول. دلوقتي لازم يفشل بالكامل."""
+
+    def _make_folio(self, db, branch, status="open"):
+        from datetime import datetime, timedelta
+        from app.modules.finance.models import Folio
+        folio = Folio(
+            branch_id=branch.id, guest_name="ضيف اختبار split_bill",
+            check_in=datetime.utcnow(), check_out=datetime.utcnow() + timedelta(days=2),
+            status=status,
+        )
+        db.add(folio)
+        db.commit()
+        db.refresh(folio)
+        return folio
+
+    def test_split_bill_room_portion_on_closed_folio_leaves_zero_trace(self, db, monkeypatch):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, revenue_account_code="4200")
+        make_finance_accounts(db, branch, revenue_code="4200")
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        folio = self._make_folio(db, branch, status="closed")
+        order = make_order(db, branch, outlet, item, quantity=1)
+        order_total = order.total
+        order_id = order.id
+
+        import app.modules.pms.services as pms_services
+        monkeypatch.setattr(pms_services, "find_active_folio_for_room", lambda *_a, **_k: folio.id)
+
+        amt_room = (order_total / 2).quantize(Decimal("0.01"))
+        amt_cash = order_total - amt_room
+        payments = [
+            {"amount": float(amt_room), "payment_method": "room", "charge_to_room_id": 1},
+            {"amount": float(amt_cash), "payment_method": "cash"},
+        ]
+
+        with pytest.raises(ValueError):
+            services.split_bill(db, order_id, payments)
+
+        from tests.conftest import TestingSessionLocal
+        fresh = TestingSessionLocal()
+        try:
+            from app.modules.dining.models import DiningOrder
+            from app.modules.finance.models import FolioCharge
+            fresh_order = fresh.query(DiningOrder).filter(DiningOrder.id == order_id).first()
+            assert fresh_order.status != "paid", (
+                "الطلب اتسجّل paid رغم فشل شحنة الفوليو لحصة الغرفة بالكامل"
+            )
+            charge_count = fresh.query(FolioCharge).filter(FolioCharge.folio_id == folio.id).count()
+            assert charge_count == 0, "شحنة فوليو اتسجّلت رغم إن الفوليو مقفول"
+        finally:
+            fresh.close()

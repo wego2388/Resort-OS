@@ -8,6 +8,7 @@ from datetime import datetime, date
 from decimal import Decimal
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.modules.inventory.schemas import (
@@ -162,10 +163,10 @@ class TestStockMovement:
         بقفل صف Product (SELECT FOR UPDATE NOWAIT) قبل أي تعديل — هنا بنحاكي
         عملية تانية ماسكة الصف بمحاكاة OperationalError من القفل نفسه (نفس
         أسلوب test_concurrent_sale_raises_concurrency_error في test_beach.py)."""
-        from sqlalchemy.exc import OperationalError
+        from tests.conftest import make_lock_not_available_error
 
         def _raise_locked(*_args, **_kwargs):
-            raise OperationalError("SELECT ... FOR UPDATE NOWAIT", {}, Exception("could not obtain lock"))
+            raise make_lock_not_available_error()
 
         monkeypatch.setattr(crud, "lock_product_for_update", _raise_locked)
 
@@ -177,6 +178,130 @@ class TestStockMovement:
         )
         with pytest.raises(services.InventoryConcurrencyError, match="مشغول"):
             services.record_movement(db, data, moved_by=1)
+
+    def test_unrelated_operational_error_is_not_masked_as_concurrency(
+        self, db, branch, product, warehouse, monkeypatch,
+    ):
+        """مراجعة Codex الثانية (Gate 1B): مش كل OperationalError معناها
+        "الصف مشغول" — لازم يتحول لخطأ تزامن (409) بس لو SQLSTATE فعليًا
+        55P03 (lock_not_available). أي مشكلة قاعدة بيانات تانية (هنا: فقدان
+        اتصال) لازم تتصعّد كخطأ حقيقي، مش تتغطى بـ"الصنف مشغول" مضلّلة."""
+        from tests.conftest import make_unrelated_operational_error
+
+        def _raise_unrelated(*_args, **_kwargs):
+            raise make_unrelated_operational_error()
+
+        monkeypatch.setattr(crud, "lock_product_for_update", _raise_unrelated)
+
+        data = StockMovementCreate(
+            branch_id=branch.id, product_id=product.id,
+            warehouse_id=warehouse.id, movement_type="purchase_in",
+            quantity=Decimal("10"), unit_cost=Decimal("20"),
+            moved_at=datetime.utcnow(),
+        )
+        with pytest.raises(OperationalError) as exc_info:
+            services.record_movement(db, data, moved_by=1)
+        assert not isinstance(exc_info.value, services.InventoryConcurrencyError)
+
+    def test_consume_stock_lock_failure_rolls_back_and_session_stays_usable(
+        self, db, branch, product, warehouse, monkeypatch,
+    ):
+        """مراجعة Codex الثالثة (Gate 1B): consume_stock's أول قفل (على
+        product.cost_price الطازة) كان بيرفع InventoryConcurrencyError من
+        غير db.rollback() — على PostgreSQL الحقيقي ده بيسيب الـtransaction
+        في حالة "aborted"، وأي استخدام تاني لنفس الـsession (حتى قراءة
+        عادية) بيفشل بـInFailedSqlTransaction لحد ما rollback حقيقي يحصل.
+        هنا بنثبت: (أ) الاستثناء الصح اتاخد، (ب) الـsession نفسها تفضل
+        قابلة للاستخدام فعليًا بعد كده (عملية تانية على نفس الـdb تنجح)."""
+        from tests.conftest import make_lock_not_available_error
+
+        def _raise_locked(*_args, **_kwargs):
+            raise make_lock_not_available_error()
+
+        monkeypatch.setattr(crud, "lock_product_for_update", _raise_locked)
+
+        with pytest.raises(services.InventoryConcurrencyError, match="مشغول"):
+            services.consume_stock(
+                db, branch_id=branch.id, product_id=product.id,
+                warehouse_id=warehouse.id, quantity=Decimal("1"),
+                allow_negative=True,
+            )
+
+        # الـsession لازم تفضل قابلة للاستخدام فعليًا — لا InFailedSqlTransaction
+        # ولا أي حالة "poisoned" — نثبت ده بعملية DB حقيقية تانية بعد التقاط
+        # الخطأ مباشرة، من غير أي rollback/close يدوي من التست نفسه.
+        monkeypatch.undo()
+        fresh_read = crud.get_product(db, product.id)
+        assert fresh_read is not None
+        assert fresh_read.id == product.id
+
+        result = services.consume_stock(
+            db, branch_id=branch.id, product_id=product.id,
+            warehouse_id=warehouse.id, quantity=Decimal("1"),
+            allow_negative=True,
+        )
+        assert result is not None
+
+    def test_consume_stock_uses_freshly_locked_cost_price_not_stale_read(
+        self, db, branch, product, warehouse,
+    ):
+        """مراجعة Codex الثانية (Gate 1B): consume_stock كان بيقرا
+        product.cost_price عبر get_product_or_404 (قراءة غير مقفولة) قبل
+        ما record_movement يقفل نفس الصف — يعني StockMovement.unit_cost
+        وقيمة COGS كانوا ممكن يُبنوا على cost_price قديم. نفس نمط
+        test_beach.py's dbA/dbB (السطور ~270-314): جلستين حقيقيتين منفصلتين
+        على نفس الـStaticPool engine — A تعدّل cost_price وتعتمد (commit)،
+        وB (اللي عندها قراءة أقدم لنفس المنتج في identity map بتاعتها)
+        لازم تستخدم القيمة الجديدة المُعتمَدة، مش القديمة المخزّنة."""
+        from tests.conftest import TestingSessionLocal
+        from app.modules.finance.models import Account
+
+        db.add_all([
+            Account(branch_id=branch.id, code="1200", name="Inventory", account_type="asset"),
+            Account(branch_id=branch.id, code="5200", name="COGS", account_type="expense"),
+        ])
+        db.commit()
+
+        dbA = TestingSessionLocal()
+        dbB = TestingSessionLocal()
+        try:
+            # الاتنين بيعملوا قراءة أولى غير مقفولة لنفس المنتج — زي
+            # get_product_or_404 القديمة قبل الإصلاح — فيشوفوا cost_price
+            # الأصلي (20) في identity map كل جلسة.
+            productA = crud.get_product(dbA, product.id)
+            productB = crud.get_product(dbB, product.id)
+            assert productA.cost_price == Decimal("20")
+            assert productB.cost_price == Decimal("20")
+
+            # A تقفل، تغيّر cost_price، تعتمد — القيمة الحقيقية بقت 35 دلوقتي.
+            lockedA = crud.lock_product_for_update(dbA, productA.id)
+            lockedA.cost_price = Decimal("35")
+            dbA.commit()
+
+            # B تستهلك مخزون بعد كده — لازم unit_cost/COGS تتبني على 35
+            # (القيمة الحقيقية المُعتمَدة)، مش 20 (القيمة القديمة في
+            # identity map جلسة B من القراءة الأولى).
+            mov = services.consume_stock(
+                dbB, branch_id=branch.id, product_id=product.id,
+                warehouse_id=warehouse.id, quantity=Decimal("2"),
+                allow_negative=True,
+            )
+            assert mov.unit_cost == Decimal("35"), (
+                f"unit_cost={mov.unit_cost} — لسه بيستخدم cost_price قديم "
+                "(20) من identity map بدل القيمة الحقيقية المُعتمَدة حديثًا (35)"
+            )
+
+            from app.modules.finance import crud as finance_crud
+            entries, total = finance_crud.list_journal_entries(dbB, branch.id, source="inventory")
+            assert total == 1
+            cogs_line = next(l for l in entries[0].lines if l.debit > 0)
+            assert cogs_line.debit == Decimal("70.00"), (
+                f"قيد COGS = {cogs_line.debit}, متوقع 70.00 (2 × 35) — مبني "
+                "على cost_price قديم"
+            )
+        finally:
+            dbB.rollback()
+            dbA.close()
 
 
 class TestPurchaseOrder:

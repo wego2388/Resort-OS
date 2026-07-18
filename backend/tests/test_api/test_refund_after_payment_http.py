@@ -52,13 +52,50 @@ def make_item_committed(db, branch, outlet, price=Decimal("100.00")):
     return item
 
 
-def make_finance_accounts(db, branch):
+def make_finance_accounts(db, branch, revenue_code="4200"):
+    """كل حسابات الأستاذ اللي معاملة الدفع الصارمة (Gate 1B) محتاجاها فعليًا
+    (زائد 1150/1200/5200 اللي بقوا مطلوبين بعد ما post_simple_revenue_journal/
+    _post_cogs_journal بقوا يرفعوا FinancialConfigurationError بدل ما
+    يبتلعوا الفشل بصمت وقت الدفع الصارم) — idempotent."""
     from app.modules.finance.models import Account
-    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
-    rest_rev = Account(branch_id=branch.id, code="4200", name="Restaurant Revenue", account_type="revenue")
-    db.add_all([cash, rest_rev])
+    wanted = {
+        "1100": ("Cash", "asset"),
+        "1150": ("ذمم الفوليو", "asset"),
+        "1200": ("مخزون البضاعة", "asset"),
+        "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
+        revenue_code: ("Restaurant Revenue", "revenue"),
+    }
+    accounts = {}
+    for code, (name, acc_type) in wanted.items():
+        acc = db.query(Account).filter_by(branch_id=branch.id, code=code).first()
+        if not acc:
+            acc = Account(branch_id=branch.id, code=code, name=name, account_type=acc_type)
+            db.add(acc)
+        accounts[code] = acc
     db.commit()
-    return cash, rest_rev
+    return accounts["1100"], accounts[revenue_code]
+
+
+def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
+    """Gate 1B: PATCH /dining/orders/{id}/status بقى بيفرض assert_branch_access
+    على كل تحويل حالة — waiter_headers/cashier_headers/manager_headers المشتركة
+    (conftest.py) بلا Employee/فرع خالص، فمحتاجين مستخدم Employee-linked جديد."""
+    from datetime import date, timedelta
+    from decimal import Decimal as _D
+    from tests.conftest import _create_test_user, _make_token
+    from app.modules.hr.models import Employee
+
+    email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, role)
+    emp = Employee(
+        branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name=f"{role} اختبار مرتجع", national_id="29001011234567",
+        position=role, department="F&B", basic_salary=_D("4000.00"),
+        hire_date=date.today() - timedelta(days=365), user_id=user_id,
+    )
+    db.add(emp)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email)}"}
 
 
 def make_room_and_folio(db, branch):
@@ -90,6 +127,11 @@ def make_room_and_folio(db, branch):
 
 class TestDiningRefundAfterPayment:
     def _create_paid_order(self, client, db, branch, outlet, item, headers_waiter, headers_cashier, qty=1):
+        # Gate 1B: PATCH .../status بقى بيفرض assert_branch_access — الـ headers
+        # المشتركة (conftest.py) بلا Employee/فرع، فمحتاجين نسخة Employee-linked
+        # لهذا الفرع تحديدًا للتحويلين (in_kitchen/paid).
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
+        linked_cashier = make_branch_linked_headers(db, branch, "cashier")
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
@@ -97,14 +139,16 @@ class TestDiningRefundAfterPayment:
             headers=headers_waiter,
         ).json()
         client.patch(f"/api/v1/dining/orders/{order['id']}/status",
-                     json={"status": "in_kitchen"}, headers=headers_waiter)
+                     json={"status": "in_kitchen"}, headers=linked_waiter)
         paid = client.patch(f"/api/v1/dining/orders/{order['id']}/status",
-                            json={"status": "paid"}, headers=headers_cashier)
+                            json={"status": "paid"}, headers=linked_cashier)
+        assert paid.status_code == 200, paid.text
         return paid.json()
 
     def test_refund_requires_manager_level_not_cashier(self, client: TestClient, db, waiter_headers, cashier_headers):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
+        make_finance_accounts(db, branch)
         item = make_item_committed(db, branch, outlet)
         order = self._create_paid_order(client, db, branch, outlet, item, waiter_headers, cashier_headers)
         item_id = order["items"][0]["id"]
@@ -213,8 +257,11 @@ class TestDiningRefundAfterPayment:
     def test_refund_reduces_room_folio_charge(self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
+        make_finance_accounts(db, branch)
         room, folio = make_room_and_folio(db, branch)
         item = make_item_committed(db, branch, outlet)
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
+        linked_cashier = make_branch_linked_headers(db, branch, "cashier")
 
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
@@ -223,11 +270,11 @@ class TestDiningRefundAfterPayment:
             headers=waiter_headers,
         ).json()
         client.patch(f"/api/v1/dining/orders/{order['id']}/status",
-                     json={"status": "in_kitchen"}, headers=waiter_headers)
+                     json={"status": "in_kitchen"}, headers=linked_waiter)
         paid = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "paid", "charge_to_room_id": room.id},
-            headers=cashier_headers,
+            headers=linked_cashier,
         ).json()
         item_id = paid["items"][0]["id"]
 
@@ -253,8 +300,10 @@ class TestDiningRefundAfterPayment:
         إن الفلترة دي لسه شغالة صح."""
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
+        make_finance_accounts(db, branch)
         room, folio = make_room_and_folio(db, branch)
         item = make_item_committed(db, branch, outlet)
+        linked_cashier = make_branch_linked_headers(db, branch, "cashier")
 
         order = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
@@ -287,7 +336,7 @@ class TestDiningRefundAfterPayment:
         paid = client.patch(
             f"/api/v1/dining/orders/{order['id']}/status",
             json={"status": "paid", "charge_to_room_id": room.id},
-            headers=cashier_headers,
+            headers=linked_cashier,
         ).json()
         item_id = paid["items"][0]["id"]
 
