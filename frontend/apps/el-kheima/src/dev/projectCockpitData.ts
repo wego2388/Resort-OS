@@ -65,8 +65,8 @@ export const PROJECT_SNAPSHOT = {
   product: 'El Kheima Beach Resort OS',
   updatedAt: '2026-07-19',
   sourcePath: 'wagdy.md',
-  sourceRevision: 'Gate 2B3B accepted locally — no push',
-  branchAtSnapshot: 'gate-2b3b-auth-audit-session-defense',
+  sourceRevision: 'f8f357f docs: record Gate 2B3B acceptance',
+  branchAtSnapshot: 'gate-3-ui-i18n-quality-foundation',
   baseline: {
     modules: 13,
     backendTestsPassed: 1975,
@@ -561,8 +561,8 @@ export const PROMPT_SUGGESTIONS: PromptSuggestion[] = [
     scope: 'frontend',
     phase: 'staff-i18n-foundation',
     objective: {
-      ar: 'اقرأ قرار bilingual وSMART_EXECUTION_ROADMAP وواجهة el-kheima والـDesign System الحالي أولًا. نفّذ Gate 3 بثلاث شرائح مترابطة: i18n runtime وحفظ preferred_language بأمان، تبنّي مرجعي للمكونات/tokens في Shell وAdmin وPOS/KDS دون mass rewrite، ثم minimal lint/component/a11y/smoke harness باستخدام أقل أدوات لازمة. افصل اللغة عن العملة وpublic locales، شغّل التحقق الكامل، لا push، ثم توقف لمراجعة Codex واحدة في النهاية.',
-      en: 'Read the bilingual decision, SMART_EXECUTION_ROADMAP, the el-kheima shell, and the existing design system first. Implement Gate 3 as three connected slices: a secure preferred_language/i18n runtime, reference component/token adoption in Shell, Admin, and POS/KDS without a mass rewrite, then a minimal lint/component/a11y/smoke harness using the fewest justified tools. Keep locale separate from currency and public locales, run full validation, do not push, then stop for one final Codex review.',
+      ar: 'اقرأ docs/audits/gate-3-execution-brief.md كاملًا مع قرار bilingual وSMART_EXECUTION_ROADMAP وواجهة el-kheima والـDesign System الحالي. نفّذ الشرائح 3A/3B/3C كلها، بدون mass rewrite أو تغيير المال/Public/QR، شغّل backend وStaff/Public frontend quality gates، لا commit ولا push، ثم توقف لمراجعة Codex واحدة في النهاية.',
+      en: 'Read docs/audits/gate-3-execution-brief.md in full with the bilingual decision, SMART_EXECUTION_ROADMAP, the el-kheima shell, and the current design system. Implement all 3A/3B/3C slices without a mass rewrite or changing finance/Public/QR, run backend plus Staff/Public frontend quality gates, do not commit or push, then stop for one final Codex review.',
     },
     decisionIds: ['brand', 'superadmin-safe', 'audit-before-phases', 'staged-review', 'finance-first'],
   },

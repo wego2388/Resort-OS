@@ -494,6 +494,11 @@ push.**
 الآخرين، QR. التفاصيل الكاملة:
 `docs/audits/gate-2b3b-auth-audit-session-defense.md`.
 
+**المرحلة التالية مفتوحة:** فرع `gate-3-ui-i18n-quality-foundation` وعقد
+`docs/audits/gate-3-execution-brief.md` جاهزان لتنفيذ i18n runtime للموظفين،
+Design-System reference adoption وminimal frontend quality harness. لم يبدأ
+كود Gate 3 بعد.
+
 ---
 
 ## 💰 اللي اتعمل يوم 2026-07-17 — مراجعة محاسبية شاملة (Finance Deep Audit)
