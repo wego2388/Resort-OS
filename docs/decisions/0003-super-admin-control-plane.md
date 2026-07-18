@@ -180,12 +180,28 @@ gates:
   token, temporary credentials are restricted, and TOTP/recovery codes are
   single-use. Independently re-verified: full backend suite, 3 real-Postgres
   concurrency proofs, and a full migration upgrade/downgrade/upgrade cycle.
-- Reusable recent-auth/step-up for role, permission, and global-setting changes
-  plus the typed settings control center remain Gate 2B3/later work. Gate 2B3
-  began as a read-only design analysis on `gate-2b3-step-up-control-plane`
-  after Gate 2B2's acceptance, with no implementation yet.
+- Gate 2B3A: **مُنفَّذة ومُعتمَدة نهائيًا** (implemented and finally
+  accepted after two independent Codex review rounds): reusable,
+  purpose-bound, single-use step-up proofs
+  now gate `PATCH /users/{id}/role`, `POST /permissions`, `DELETE
+  /permissions/{id}`, and `PUT /settings/{key}`, each requiring a
+  mandatory `reason`. Settings branch/global isolation was also fixed in
+  the same slice (real branch ownership checks, global settings restricted
+  to `super_admin`). An independent Codex review of the initial
+  implementation returned Changes Requested (2 High + 3 Medium findings —
+  a settings-fallback branch leak, a TOCTOU actor/target re-authorization
+  race, an untyped intent contract, unbounded/missing step-up audit
+  logging, and an overstated bilingual-completeness claim); all five were
+  confirmed against the code and fixed, with new regression and real-
+  Postgres concurrency tests. The corrected diff then passed final
+  independent review: 1,959 backend tests, 3/3 live-Postgres step-up
+  concurrency tests, frontend type-check/build, and a clean diff check.
+- Gate 2B3B (unified login-failure/lockout audit logging) and the typed
+  settings control center remain unstarted future work — deliberately
+  deferred out of Gate 2B3A's scope.
 
 See `docs/audits/gate-2a-super-admin-invariants.md`,
-`docs/audits/gate-2b1-auth-session-lifecycle.md`, and
-`docs/audits/gate-2b2-totp-bootstrap-recovery.md`. None of these gates alone is
-a claim that the complete platform is production-ready.
+`docs/audits/gate-2b1-auth-session-lifecycle.md`,
+`docs/audits/gate-2b2-totp-bootstrap-recovery.md`, and
+`docs/audits/gate-2b3a-step-up-control-plane.md`. None of these gates alone
+is a claim that the complete platform is production-ready.

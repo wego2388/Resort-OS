@@ -87,8 +87,8 @@ export const PROJECT_MODULES: ProjectModule[] = [
     },
     health: 'attention',
     note: {
-      ar: 'Gate 2A وGate 2B1 وGate 2B2 مُعتمَدة كلها: bootstrap آمن وTOTP إجباري وأكواد استرداد وواجهة ثنائية اللغة شغّالين فعليًا. recent-auth/step-up العام والتدقيق الشامل باقيان لـGate 2B3 (تحليل قراءة فقط جارٍ).',
-      en: 'Gates 2A, 2B1, and 2B2 are all accepted: secure bootstrap, enforced TOTP, recovery codes, and bilingual onboarding are live. Reusable recent-auth/step-up and complete audit coverage remain for Gate 2B3 (read-only design analysis in progress).',
+      ar: 'Gate 2A وGate 2B1 وGate 2B2 وGate 2B3A مُعتمَدة كلها: bootstrap آمن وTOTP إجباري وأكواد استرداد وstep-up أحادي الاستخدام للعمليات الحساسة. التدقيق الشامل للمصادقة ودورة الجلسات هو Gate 2B3B التالية.',
+      en: 'Gates 2A, 2B1, 2B2, and 2B3A are accepted: secure bootstrap, enforced TOTP, recovery codes, and single-use step-up for sensitive control-plane actions. Unified authentication and session auditing is next in Gate 2B3B.',
     },
   },
   {
@@ -379,7 +379,7 @@ export const PROJECT_ROADMAP: RoadmapStep[] = [
     order: 2,
     status: 'ready',
     title: { ar: 'أمان السوبر أدمن في الباك إند', en: 'Super Admin backend safeguards' },
-    outcome: { ar: 'Gate 2A وGate 2B1 وGate 2B2 مُعتمَدة كلها: لا seed إنتاجي، إنشاء/استرداد محلي باسم شخص، كلمة مؤقتة ورمز enrollment منفصل، TOTP إلزامي، وأكواد استرداد أحادية الاستخدام. المتبقي Gate 2B3 للـstep-up العام والتدقيق الشامل — تحليل قراءة فقط جارٍ الآن.', en: 'Gates 2A, 2B1, and 2B2 are all accepted: no production demo seed, named local create/recovery, separate temporary password and enrollment token, enforced TOTP, and single-use recovery codes. Gate 2B3 remains for reusable step-up and complete audit coverage — a read-only design analysis is underway now.' },
+    outcome: { ar: 'Gate 2A وGate 2B1 وGate 2B2 وGate 2B3A مُعتمَدة: لا seed إنتاجي، bootstrap واسترداد آمنان، TOTP إلزامي، وأكواد استرداد وstep-up أحاديا الاستخدام. لا push. المتبقي Gate 2B3B لتدقيق المصادقة ودورة الجلسات.', en: 'Gates 2A, 2B1, 2B2, and 2B3A are accepted: no production demo seed, secure bootstrap/recovery, enforced TOTP, and single-use recovery codes and step-up grants. Nothing has been pushed. Gate 2B3B remains for authentication and session lifecycle auditing.' },
     gate: { ar: 'مراجعة Claude المستقلة أعادت إنتاج 1,924 اختبارًا و3 سباقات استهلاك على PostgreSQL ودورة migration كاملة وfrontend type-check/build بنفسها؛ صفر ملاحظة Critical/High/Medium — مُعتمَدة.', en: 'Claude\'s independent review reproduced 1,924 tests, three PostgreSQL consumption races, a full migration cycle, and frontend type-check/build itself; zero Critical/High/Medium findings — accepted.' },
   },
   {
@@ -473,8 +473,8 @@ export const PROJECT_RISKS: ProjectRisk[] = [
     id: 'superadmin-lockout',
     severity: 'high',
     area: 'core',
-    title: { ar: 'أمان الهوية — الأساسيات مُعتمَدة، step-up العام باقٍ', en: 'Identity security — core layers accepted, general step-up remains' },
-    detail: { ar: 'Gate 2B2 مُعتمَدة: bootstrap الافتراضي مقفول، TOTP مفروض، الاسترداد آمن، وإعادة استخدام الأكواد ممنوعة. المتبقي: recent-auth/step-up عام لتعديل الأدوار والصلاحيات والإعدادات، وتغطية audit الكاملة — Gate 2B3 (تحليل قراءة فقط جارٍ).', en: 'Gate 2B2 is accepted: default bootstrap is closed, TOTP is enforced, recovery is secure, and code replay is blocked. Remaining: reusable recent-auth/step-up for role, permission, and settings changes, plus complete audit coverage — Gate 2B3 (read-only analysis underway).' },
+    title: { ar: 'أمان الهوية — step-up مُعتمَد، تدقيق المصادقة والجلسات باقٍ', en: 'Identity security — step-up accepted, authentication/session audit remains' },
+    detail: { ar: 'Gate 2B2 وGate 2B3A مُعتمَدتان: step-up لتعديل الأدوار والصلاحيات والإعدادات وعزل الفروع اجتازا المراجعة النهائية. لا push. المتبقي Gate 2B3B لتدقيق المصادقة ودورة الجلسات.', en: 'Gates 2B2 and 2B3A are accepted: step-up for role, permission, and settings changes plus settings branch isolation passed final review. Nothing has been pushed. Gate 2B3B remains for authentication and session lifecycle auditing.' },
   },
   {
     id: 'staff-localization',
@@ -555,14 +555,14 @@ export const PROMPT_SUGGESTIONS: PromptSuggestion[] = [
   },
   {
     id: 'superadmin-audit',
-    title: { ar: 'صمّم Gate 2B3 — step-up عام للتحكم', en: 'Design Gate 2B3 — general control-plane step-up' },
-    description: { ar: 'Gate 2A/2B1/2B2 مُعتمَدة. حلّل تصميم step-up قابل لإعادة الاستخدام لتعديل الأدوار والصلاحيات والإعدادات، قراءة فقط.', en: 'Gates 2A/2B1/2B2 are accepted. Analyze a reusable step-up design for role, permission, and settings mutations — read-only.' },
-    mode: 'plan',
+    title: { ar: 'نفّذ Gate 2B3B — تدقيق المصادقة ودورة الجلسات', en: 'Implement Gate 2B3B — authentication audit and session lifecycle' },
+    description: { ar: 'Gate 2A/2B1/2B2/2B3A مُعتمَدة. نفّذ على فرع مستقل تدقيقًا secret-free ومحدودًا لأحداث المصادقة، مع refresh-token families وكشف replay، ثم شاشة نشاط وجلسات ثنائية اللغة. لا push.', en: 'Gates 2A/2B1/2B2/2B3A are accepted. On a separate branch, implement bounded secret-free authentication auditing, refresh-token families with replay detection, and a bilingual security activity/session UI. Do not push.' },
+    mode: 'implement',
     scope: 'core',
     phase: 'superadmin-backend',
     objective: {
-      ar: 'راجع JWT claims وسلسلة get_current_user وAuthService وupdate_user_role ومسارات الصلاحيات والإعدادات وAuditLog وPermissionsView وrate limiting وسلوك Redis وأنماط تزامن Postgres. اعمل inventory لكل عملية حساسة تحتاج step-up، وحلّل threat model (توكن مسروق، replay، proof لمستخدم/غرض/target مختلف، انتهاء صلاحية، طلبان متزامنان، تغيّر role بعد إصدار الـproof، عدة instances، Redis غير متاح). قارن JWT قصير العمر مقابل Redis one-time proof مقابل DB hashed one-time grant مقابل إرسال كلمة السر/TOTP مباشرة، واختر التصميم الأنسب مع binding/expiry/rate-limit/audit/HTTP contract. قسّم لـGate 2B3A (البنية التحتية + role/permission)، 2B3B (تدقيق موحّد)، و2B3C لو ظهر نطاق مستقل. صنّف Critical/High/Medium/Low بملف وسطر ودليل. لا تعدّل أي ملف ولا تعمل migration أو commit — توقف بتقرير وانتظر القرار.',
-      en: 'Review JWT claims, the get_current_user chain, AuthService, update_user_role, permission/settings endpoints, AuditLog, PermissionsView, rate limiting, Redis behavior, and PostgreSQL concurrency patterns. Inventory every sensitive operation needing step-up, and analyze the threat model (stolen token, replay, wrong user/purpose/target proof, expiry, concurrent consumption, role change after proof issuance, multiple instances, Redis unavailable). Compare short-lived JWT vs. Redis one-time proof vs. DB-backed hashed one-time grant vs. sending password/TOTP directly, and choose the best fit with binding/expiry/rate-limit/audit/HTTP contract. Split into Gate 2B3A (infrastructure + role/permission), 2B3B (unified audit), and 2B3C only if a genuinely separate scope appears. Rank Critical/High/Medium/Low with file, line, and evidence. Do not edit any file, create a migration, or commit — stop with a report and wait for the decision.',
+      ar: 'اقرأ auth وAuditLog والاختبارات أولًا، ثم نفّذ Gate 2B3B كدفعة واحدة ذات شرائح داخلية: (1) مسجل أحداث أمني موحّد secret-free ومحدود ضد التضخّم، (2) refresh-token family وreuse detection ذري على PostgreSQL مع migration آمنة، (3) API وواجهة عربية/إنجليزية لعرض جلسات المستخدم وإلغائها ونشاطه الأمني. حافظ على عدم كشف وجود الحساب في المسارات العامة، لا تسجل email/password/token/TOTP خام، ولا push. شغّل full suite والتزامن ودورة migration والبناء، ثم توقف لمراجعة Codex.',
+      en: 'Read auth, AuditLog, and related tests first, then implement Gate 2B3B as one package with internal slices: (1) a unified bounded secret-free security-event recorder, (2) refresh-token families and atomic reuse detection on PostgreSQL with a safe migration, and (3) bilingual APIs/UI for a user to view/revoke sessions and inspect security activity. Preserve anti-enumeration, never log raw email/password/token/TOTP data, do not push, run the full suite/concurrency/migration cycle/build, then stop for Codex review.',
     },
     decisionIds: ['brand', 'superadmin-safe', 'audit-before-phases', 'staged-review', 'finance-first'],
   },
