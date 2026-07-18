@@ -1,6 +1,7 @@
 # خارطة التنفيذ الذكية المعتمدة على المخاطر والاعتماديات
 
-**الحالة:** خطة قرار قبل التنفيذ — لا تعني أن أي مرحلة بدأت.  
+**الحالة:** خارطة حية؛ Gate 1A مكتملة، وشريحة Dining-paid من Gate 1B
+مُنفَّذة ومُعتمَدة فنيًا في 2026-07-18 (ما زالت بلا commit/push).
 **المصدر:** مراجعة 360° بتاريخ 2026-07-17 + القرارات الموجودة في
 `docs/decisions/` + `wagdy.md`.
 
@@ -11,8 +12,8 @@
 | Gate 0: baseline وCockpit | **مكتملة** | Codex/ChatGPT | audit + roadmap + UI/UX cockpit + checks |
 | Public Phase 0 المرجعية | **مكتملة** (راجعتها Codex على 4 جولات) | Claude | `docs/audits/public-phase-0/` — route/state/assets/content/API/Keep-Adapt-Remove evidence |
 | Gate 1A: احتواء Public/QR | **مكتملة (2026-07-17)** — راجع `docs/audits/PRODUCTION_READINESS_AUDIT.md`'s قسم الإغلاق | Claude | commit `fix(security): contain unsafe public guest workflows` — أصغر diff آمن + regression/failure tests، اعتمدتها Codex |
-| Gate 1B: Financial Atomicity | **التالية — لم تبدأ بعد** (تخطيط قراءة فقط بدأ على branch `gate-1b-financial-atomicity`) | Claude | عقد atomic/outbox/reconciliation لكل call site + failure-injection tests |
-| Gate 2: Super Admin safeguards | **مغلقة على مراجعة Gate 1B** (لم تبدأ) | Claude | server-side policy/concurrency/session/audit tests |
+| Gate 1B: Financial Atomicity | **شريحة Dining-paid مكتملة ومُعتمَدة (2026-07-18)**؛ بقية call sites لاحقة | Claude | اجتازت failure/concurrency/full-suite gates؛ لا commit/push بعد |
+| Gate 2: Super Admin safeguards | **التالية — جاهزة لتخطيط bounded بعد checkpoint لـGate 1B** | Claude | server-side policy/concurrency/session/audit tests |
 | Gate 3: i18n/design/test foundation | مغلقة على عقد Gate 2 الحساس | Claude | bilingual shell + reference screens + quality harness |
 | Gate 4: Dining financial integrity | مغلقة على Gate 1B وGate 2 | Claude | transactional payment/shift/order invariants |
 | Gate 5: Staff UX batches | مغلقة على Gates 3 و4 حسب الشاشة | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
@@ -83,20 +84,23 @@ Gate 1 له مساران؛ endpoints عامة فعليًا على VPS حقيقي
   نهائية)، commit: `fix(security): contain unsafe public guest workflows`.
   Service Location الكاملة/QR token/guest session **لسه Gate 8**، مش جزء
   من الإغلاق ده.
-- **1B — Financial atomicity contract: التالية، لم تبدأ بعد.** تصنيف كل
-  side effect مالي في Dining/Beach/Inventory/HR/PMS/Finance إلى atomic أو
-  outbox/reconciliation، ثم إصلاح call site واحد عالي الخطورة باختبارات
-  فشل حقيقية قبل التعميم. التخطيط (قراءة فقط) بدأ على
-  `gate-1b-financial-atomicity`.
+- **1B — Financial atomicity contract: أول شريحة مكتملة ومُعتمَدة.** تم
+  تصنيف call sites واختيار تحويل طلب Dining إلى `paid` كأعلى مسار محدود؛
+  أصبح commit واحدًا fail-closed مع أقفال طلب/فوليو/مخزون واختبارات فشل
+  وتزامن حقيقية. التفاصيل والأدلة في
+  `docs/audits/gate-1b-financial-atomicity-plan.md`. بقية call sites المالية
+  ما زالت backlog صريحًا، لا تُعتبر مغلقة ضمن هذا الاعتماد.
 
-**اعتماديات الخروج:** لا مرحلة مالية أو QR أو Public migration تتجاوز هذه
-البوابة. Gate 2 (Super Admin) مغلقة حتى تُراجَع وتُعتمد خطة Gate 1B. كل
-rollback واضح ولا migration مدمرة.
+**اعتماديات الخروج:** الشريحة المطلوبة لفتح Gate 2 اجتازت المراجعة؛ يلزم
+checkpoint/commit مستقل ونظيف قبل أي تعديل Gate 2. لا مرحلة مالية أو QR أو
+Public migration تعتبر بقية Gate 1B مكتملة، وكل rollback يظل واضحًا ولا
+migration مدمرة.
 
 ### Gate 2 — أمان مركز التحكم
 
 **النطاق:** Super Admin backend safeguards.  
-**يعتمد على:** Gate 1 كامل (1A مكتملة ✅، 1B لم تبدأ) — مغلقة فعليًا حتى تُراجَع وتُعتمد خطة Gate 1B، مش بس تحضير قراءة.
+**يعتمد على:** Gate 1A مكتملة ✅ وشريحة Gate 1B المطلوبة اتعمدت ✅. المرحلة
+جاهزة الآن لتدقيق وخطة صغيرة؛ التنفيذ يبدأ بعد checkpoint نظيف للـdiff السابق.
 **الناتج:** حماية آخر super_admin نشط، self-demotion/deactivation، explicit
 deny policy، منع privilege escalation، invalidation للجلسات، TOTP login-time،
 step-up للأفعال الحساسة، وتدقيق.  

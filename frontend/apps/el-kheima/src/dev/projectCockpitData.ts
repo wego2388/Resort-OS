@@ -63,14 +63,14 @@ export interface PromptSuggestion {
  */
 export const PROJECT_SNAPSHOT = {
   product: 'El Kheima Beach Resort OS',
-  updatedAt: '2026-07-17',
+  updatedAt: '2026-07-18',
   sourcePath: 'wagdy.md',
-  sourceRevision: 'b26a2e3',
-  branchAtSnapshot: 'chore/agent-workflow-foundation',
+  sourceRevision: '725394b + uncommitted Gate 1B working tree',
+  branchAtSnapshot: 'gate-1b-financial-atomicity',
   baseline: {
     modules: 13,
-    backendTestsPassed: 1796,
-    postgresOnlySkipped: 3,
+    backendTestsPassed: 1867,
+    postgresOnlySkipped: 8,
     alembicHeads: 1,
     alembicHead: '9989c0432ccc',
     productionVpsValidated: false,
@@ -113,8 +113,8 @@ export const PROJECT_MODULES: ProjectModule[] = [
     },
     health: 'attention',
     note: {
-      ar: 'الدفتر المزدوج أساس قوي، لكن بعض call sites تبتلع فشل القيد وتتجاوز قفل الفترة؛ الذرّية هي أول بوابة مالية.',
-      en: 'The double-entry foundation is strong, but some call sites swallow posting failures and bypass period locks; atomicity is the first finance gate.',
+      ar: 'شريحة دفع Dining أصبحت ذرّية ومُعتمَدة؛ call sites المالية الأخرى وتجاوز قفل الفترة ما زالت تحتاج دفعات مستقلة.',
+      en: 'The Dining-paid slice is now atomic and accepted; other financial call sites and period-lock bypasses still need separate batches.',
     },
   },
   {
@@ -126,8 +126,8 @@ export const PROJECT_MODULES: ProjectModule[] = [
     },
     health: 'attention',
     note: {
-      ar: 'الاستلام مربوط بالمخزون والموردين؛ فشل قيد COGS أثناء الاستهلاك يُبتلع حاليًا ويحتاج عقد ذرّية أو reconciliation.',
-      en: 'Receiving links stock and payables; COGS posting failure during consumption is currently swallowed and needs an atomicity or reconciliation contract.',
+      ar: 'خصم مخزون Dining داخل الدفع صار مقفولًا وstrict داخل نفس المعاملة؛ الاستدعاءات الأخرى ما زالت تحتاج تدقيقًا.',
+      en: 'Dining-paid stock deduction is now locked and strict in one transaction; other callers still need targeted review.',
     },
   },
   {
@@ -516,14 +516,14 @@ export const PROJECT_RISKS: ProjectRisk[] = [
 export const PROMPT_SUGGESTIONS: PromptSuggestion[] = [
   {
     id: 'public-trust-audit',
-    title: { ar: 'تحقق من تعرض Public/QR', en: 'Verify Public/QR exposure' },
-    description: { ar: 'قراءة فقط: هل المسارات مكشوفة وما أصغر containment آمن؟', en: 'Read-only: are the routes exposed, and what is the smallest safe containment?' },
-    mode: 'plan',
+    title: { ar: 'راجع ثبات احتواء Public/QR', en: 'Review Public/QR containment' },
+    description: { ar: 'قراءة فقط: تأكد إن Gate 1A لم تتراجع قبل بناء Gate 8.', en: 'Read-only: confirm Gate 1A has not regressed before Gate 8.' },
+    mode: 'review',
     scope: 'dining',
-    phase: 'public-exposure-containment',
+    phase: 'qr-guest-service',
     objective: {
-      ar: 'تحقق أولًا هل مسارات dining/public وpublic/alerts متاحة خارج بيئة التطوير. راجع sequential IDs وself-ordering وثقة branch/outlet/table/order IDs وتغطية rate limiting. اعرض أصغر containment متوافق مع view_and_call ويحافظ على التوافق، ثم توقف قبل التعديل.',
-      en: 'First verify whether dining/public and public/alerts are reachable outside development. Review sequential IDs, self-ordering, trusted branch/outlet/table/order IDs, and rate-limit coverage. Present the smallest backward-compatible containment aligned with view_and_call, then stop before editing.',
+      ar: 'راجع Gate 1A قراءة فقط: تأكد إن self-order وguest alerts ما زالوا مقفولين افتراضيًا، وإن متابعة الطلب العامة مغلقة، وفحص الفرع وrate limiting لم يتراجعا. لا تبنِ QR أو Service Location الآن؛ اعرض النتائج فقط.',
+      en: 'Review Gate 1A read-only: confirm self-order and guest alerts remain disabled by default, public order tracking remains closed, and branch/rate-limit protections have not regressed. Do not build QR or Service Location now; report findings only.',
     },
     decisionIds: ['brand', 'dining-unified', 'qr-view-call', 'qr-experimental', 'audit-before-phases', 'staged-review'],
   },

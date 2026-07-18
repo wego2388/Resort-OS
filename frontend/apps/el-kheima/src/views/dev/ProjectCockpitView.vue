@@ -82,12 +82,12 @@ const COPY = {
     roadmapTab: 'خارطة الطريق',
     decisionsTab: 'القرارات والمخاطر',
     instructionTab: 'أعطِ تعليمة',
-    nextTitle: 'أول سؤال قبل التنفيذ',
-    nextPrimary: 'هل Public/QR مكشوف خارج التطوير؟',
-    nextPrimaryText: 'لو نعم يبدأ containment صغير فورًا؛ لو محلي فقط تبدأ مراجعة الذرّية المالية. لا نبني QR كامل داخل الاحتواء.',
-    parallelTitle: 'الخطر الحرج المثبت',
-    parallelPrimary: 'العملية قد تنجح والقيد يفشل بصمت',
-    parallelText: 'نصمم عقد atomic أو reconciliation ونختبر الفشل قبل تعديل أول call site مالي.',
+    nextTitle: 'المرحلة التالية بعد checkpoint نظيف',
+    nextPrimary: 'ابدأ تدقيق أمان السوبر أدمن',
+    nextPrimaryText: 'Gate 1A وشريحة دفع Dining من Gate 1B اتعمدوا. التالي audit محدود لـlast-admin وself-lockout وTOTP وstep-up، ثم خطة مرحلة واحدة قبل التعديل.',
+    parallelTitle: 'خطر مالي متبقٍ ومُسجَّل',
+    parallelPrimary: 'مسارات مالية أخرى ما زالت تحتاج نفس عقد الذرّية',
+    parallelText: 'شريحة دفع Dining اتقفلت؛ نراجع call site ماليًا واحدًا فقط في كل دفعة مع failure injection وreconciliation واضح.',
     smartStarts: 'بدايات ذكية جاهزة',
     smartStartsText: 'اختَر واحدة فتنتقل لصانع التعليمات ومعها النطاق والقرارات المناسبة.',
     useSuggestion: 'استخدم هذه البداية',
@@ -235,12 +235,12 @@ const COPY = {
     roadmapTab: 'Roadmap',
     decisionsTab: 'Decisions & risks',
     instructionTab: 'Give instruction',
-    nextTitle: 'First question before execution',
-    nextPrimary: 'Is Public/QR exposed beyond development?',
-    nextPrimaryText: 'If yes, perform bounded containment first; if local only, begin financial atomicity review. Full QR is not part of containment.',
-    parallelTitle: 'Code-proven critical risk',
-    parallelPrimary: 'The operation can succeed while posting fails silently',
-    parallelText: 'Design an atomic or reconciliation contract and test failure before changing the first financial call site.',
+    nextTitle: 'Next phase after a clean checkpoint',
+    nextPrimary: 'Begin the Super Admin safety audit',
+    nextPrimaryText: 'Gate 1A and the Gate 1B Dining-paid slice are accepted. Next, run a bounded audit of last-admin, self-lockout, TOTP, and step-up safeguards, then plan one phase before editing.',
+    parallelTitle: 'Documented residual financial risk',
+    parallelPrimary: 'Other financial paths still need the same atomicity contract',
+    parallelText: 'The Dining-paid slice is closed; review one financial call site per batch with failure injection and explicit reconciliation.',
     smartStarts: 'Smart starting points',
     smartStartsText: 'Choose one to prefill the composer with the right scope and decisions.',
     useSuggestion: 'Use this starting point',
@@ -489,7 +489,7 @@ const riskVariant = (severity: ProjectRisk['severity']): 'danger' | 'warning' | 
 
 const mode = ref<WorkMode>('plan')
 const selectedScope = ref('core')
-const selectedPhase = ref('public-exposure-containment')
+const selectedPhase = ref('superadmin-backend')
 const objective = ref('')
 const activeSuggestionId = ref<string | null>(null)
 const selectedDecisionIds = ref(
@@ -802,7 +802,7 @@ async function selectLanguage(nextLanguage: CockpitLanguage) {
               <p class="text-xs font-bold uppercase tracking-wide text-info">{{ c.nextTitle }}</p>
               <h2 class="mt-1 text-xl font-black">{{ c.nextPrimary }}</h2>
               <p class="mt-2 text-sm leading-6 text-muted">{{ c.nextPrimaryText }}</p>
-              <button type="button" class="mt-4 text-sm font-bold text-primary-700 hover:underline" @click="useSuggestion('public-trust-audit')">
+              <button type="button" class="mt-4 text-sm font-bold text-primary-700 hover:underline" @click="useSuggestion('superadmin-audit')">
                 {{ c.useSuggestion }}
               </button>
             </div>
