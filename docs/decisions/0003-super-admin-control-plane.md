@@ -196,12 +196,21 @@ gates:
   Postgres concurrency tests. The corrected diff then passed final
   independent review: 1,959 backend tests, 3/3 live-Postgres step-up
   concurrency tests, frontend type-check/build, and a clean diff check.
-- Gate 2B3B (unified login-failure/lockout audit logging) and the typed
-  settings control center remain unstarted future work — deliberately
-  deferred out of Gate 2B3A's scope.
+- Gate 2B3B is **implemented and finally accepted**: bounded secret-free auth
+  auditing, refresh-token families with atomic replay detection, immediate
+  session-bound access revocation (`sid`), and bilingual self-service session
+  management all passed independent review. The review also closed mixed-user
+  cookie ownership, family revoke/rotation serialization, distinct-family
+  counting, and rejected control-plane audit gaps. Final evidence: 1,975
+  backend tests, 4/4 live-Postgres refresh-family concurrency tests, 3/3
+  step-up and 2/2 Super Admin concurrency regressions, migration cycle, and
+  frontend type-check/build.
+- The typed settings control center remains future work. It was deliberately
+  excluded from the identity/session gate and must not be treated as complete.
 
 See `docs/audits/gate-2a-super-admin-invariants.md`,
 `docs/audits/gate-2b1-auth-session-lifecycle.md`,
 `docs/audits/gate-2b2-totp-bootstrap-recovery.md`, and
-`docs/audits/gate-2b3a-step-up-control-plane.md`. None of these gates alone
+`docs/audits/gate-2b3a-step-up-control-plane.md`, plus
+`docs/audits/gate-2b3b-auth-audit-session-defense.md`. None of these gates alone
 is a claim that the complete platform is production-ready.

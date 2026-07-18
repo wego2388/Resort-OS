@@ -1,7 +1,7 @@
 # خارطة التنفيذ الذكية المعتمدة على المخاطر والاعتماديات
 
-**الحالة:** خارطة حية؛ Gate 1A مكتملة، وشريحة Dining-paid من Gate 1B
-مُنفَّذة ومُعتمَدة فنيًا في 2026-07-18 (ما زالت بلا commit/push).
+**الحالة:** خارطة حية؛ Gate 1A وشريحة Dining-paid من Gate 1B وGate 2
+مُعتمَدة. Gate 3 هي البوابة التالية الجاهزة للتنفيذ (2026-07-19).
 **المصدر:** مراجعة 360° بتاريخ 2026-07-17 + القرارات الموجودة في
 `docs/decisions/` + `wagdy.md`.
 
@@ -13,8 +13,8 @@
 | Public Phase 0 المرجعية | **مكتملة** (راجعتها Codex على 4 جولات) | Claude | `docs/audits/public-phase-0/` — route/state/assets/content/API/Keep-Adapt-Remove evidence |
 | Gate 1A: احتواء Public/QR | **مكتملة (2026-07-17)** — راجع `docs/audits/PRODUCTION_READINESS_AUDIT.md`'s قسم الإغلاق | Claude | commit `fix(security): contain unsafe public guest workflows` — أصغر diff آمن + regression/failure tests، اعتمدتها Codex |
 | Gate 1B: Financial Atomicity | **شريحة Dining-paid مكتملة ومُعتمَدة (2026-07-18)**؛ بقية call sites لاحقة | Claude | اجتازت failure/concurrency/full-suite gates؛ لا commit/push بعد |
-| Gate 2: Super Admin safeguards | **التالية — جاهزة لتخطيط bounded بعد checkpoint لـGate 1B** | Claude | server-side policy/concurrency/session/audit tests |
-| Gate 3: i18n/design/test foundation | مغلقة على عقد Gate 2 الحساس | Claude | bilingual shell + reference screens + quality harness |
+| Gate 2: Super Admin safeguards | **مكتملة ومُعتمَدة (2A→2B3B)** | Claude/Codex | server-side policy/concurrency/session/audit tests |
+| Gate 3: i18n/design/test foundation | **التالية — جاهزة بعد checkpoint Gate 2B3B** | Claude | bilingual shell + reference screens + quality harness |
 | Gate 4: Dining financial integrity | مغلقة على Gate 1B وGate 2 | Claude | transactional payment/shift/order invariants |
 | Gate 5: Staff UX batches | مغلقة على Gates 3 و4 حسب الشاشة | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
 | Gate 7: Public migration batches | مغلقة على Gates 2 و3 واعتماد Phase 0 | Claude | visual/API diff لكل batch بلا legacy backend |
@@ -99,8 +99,8 @@ migration مدمرة.
 ### Gate 2 — أمان مركز التحكم
 
 **النطاق:** Super Admin backend safeguards.  
-**يعتمد على:** Gate 1A مكتملة ✅ وشريحة Gate 1B المطلوبة اتعمدت ✅. المرحلة
-جاهزة الآن لتدقيق وخطة صغيرة؛ التنفيذ يبدأ بعد checkpoint نظيف للـdiff السابق.
+**الحالة:** مكتملة ومُعتمَدة عبر Gate 2A و2B1 و2B2 و2B3A و2B3B.
+**يعتمد على:** Gate 1A مكتملة ✅ وشريحة Gate 1B المطلوبة اتعمدت ✅.
 **الناتج:** حماية آخر super_admin نشط، self-demotion/deactivation، explicit
 deny policy، منع privilege escalation، invalidation للجلسات، TOTP login-time،
 step-up للأفعال الحساسة، وتدقيق.  
@@ -117,6 +117,7 @@ Modal جديدة.
 بعد تبرير الأدوات، لا stack متداخل.
 
 **يعتمد على:** Gate 2 قبل واجهات التحكم الحساسة.  
+**الحالة:** جاهزة للتنفيذ بعد checkpoint Gate 2B3B النظيف.
 **الخروج:** shell واحد صحيح عربي RTL وإنجليزي LTR، وشاشة مرجعية لكل POS،
 KDS، Admin، Public قبل الهجرة على دفعات.
 

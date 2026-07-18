@@ -1,6 +1,6 @@
 # حالة المشروع — El Kheima Beach Resort OS
 
-> **آخر تحديث حقيقي:** 2026-07-18 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست، تجربة live)،
+> **آخر تحديث حقيقي:** 2026-07-19 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست، تجربة live)،
 > مش افتراض ولا خطة. لو لقيت رقم يبان قديم، قول لـ Claude "الملف مش محدّث" وهو يراجعه من الكود
 > مباشرة قبل ما يصدّقه.
 >
@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1,959 ناجح، 16 skipped، صفر فشل** ✅ + **5/5 Dining** + **2/2 Super Admin** + **3/3 Auth consume** + **3/3 Step-Up consume** concurrency حقيقية على PostgreSQL (2026-07-18؛ Gate 2B3A مُعتمَدة نهائيًا بعد مراجعتين مستقلتين) |
+| **الاختبارات** | **1,975 ناجح، 20 skipped، صفر فشل** ✅ + **5/5 Dining** + **2/2 Super Admin** + **3/3 Step-Up** + **4/4 Refresh-Family** concurrency حقيقية على PostgreSQL (2026-07-19؛ Gate 2B3B مُعتمَدة نهائيًا بعد مراجعة مستقلة) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
@@ -432,6 +432,67 @@ heads` رأس واحد، `pnpm --filter el-kheima type-check`/`build` نجحا،
 step-up وregistry الإعدادات الـtyped ما زالا مؤجَّلين عمدًا. التفاصيل
 الكاملة لـGate 2B3A:
 `docs/audits/gate-2b3a-step-up-control-plane.md`.
+
+---
+
+## 🔒 Gate 2B3B — تدقيق المصادقة ودفاع الجلسات: مُعتمَدة نهائيًا (2026-07-19)
+
+حزمة واحدة متماسكة بثلاث شرائح فوق Gate 2B3A المُعتمَدة:
+
+**الشريحة A — سجل مصادقة موحّد، محدود، بلا أسرار.** كل أحداث المصادقة
+(نجاح/فشل الدخول، القفل، الدخول على حساب مقفول/غير نشط، طلب/إتمام إعادة
+تعيين كلمة السر، تفعيل/تعطيل 2FA، استخدام/تجديد recovery code، logout،
+إلغاء جلسة/كل الجلسات، اكتشاف replay) بتتكتب في `AuditLog` **الموجود**
+(مفيش جدول موازٍ)، مع IP موثوق (نفس سياسة البروكسي الموجودة، مش
+X-Forwarded-For خام)، User-Agent منظّف ومحدود، وrequest_id. **قرار
+مضادّ للتضخّم**: إيميل غير موجود = **صفر صف في القاعدة** (بس سطر log
+منظّم ببصمة HMAC غير قابلة للعكس + IP)؛ وأحداث الفشل المتكرر محدودة
+بـ`rate_limit`. anti-enumeration محفوظة بالكامل (نفس الرسالة/التوقيت/
+الحالة)، والسجل سيرفر-سايد فقط مش side channel.
+
+**الشريحة B — عائلات refresh token + كشف replay ذرّي.** الدوران بقى
+يبصم `consumed_at` (tombstone) عبر UPDATE شرطي بدل الحذف النهائي —
+طلبان متزامنان مايصدروش successorين أبدًا. تقديم توكن مستهلَك تاني =
+**replay مؤكد** → إلغاء العائلة كلها ذرّيًا + قطع access token فوري +
+تسجيل `refresh_token_replayed` بلا سر. أعمدة جديدة على `refresh_tokens`
+(migration `b8f4d2a19c07`): `family_id` داخلي عشوائي، `family_public_id`
+مرجع عام منفصل للواجهة، `family_started_at`، `consumed_at`, `revoked_at`,
+`successor_token_hash`, `user_agent`. backfill بيدّي كل صف قديم عائلته
+المستقلة (مش عائلة واحدة مشتركة).
+
+**الشريحة C — API وواجهة إدارة الجلسات (عربي/إنجليزي).** المستخدم يشوف
+جلساته الفعلية (`GET /auth/sessions`، مراجع عامة بس، مفيش token/hash/
+family_id داخلي)، يلغي جلسة واحدة (`DELETE /auth/sessions/{ref}`) أو كل
+الجلسات الأخرى (`POST /auth/sessions/revoke-others`) — الاتنين محميين
+بـ**step-up بتاع Gate 2B3A نفسه** (purpose جديد scope-bound، مفيش نافذة
+تأكيد موازية)، ويشوف نشاطه الأمني (`GET /auth/security-activity`،
+allow-list + صفحات). شاشة `SessionsView.vue` جديدة (`/account/sessions`)
+بتعيد استخدام `StepUpConfirmModal.vue` (اتوسّع بـ`requireReason` مش
+اتكرّر)، عربي/إنجليزي كامل بدون فرض RTL، مفيش سر في التخزين المحلي.
+
+**باج اتصلح:** تست Gate 2B1 كان بيفترض إن successor بيفضل شغّال بعد
+replay للأب — دي بالظبط الثغرة اللي الجيت ده بيقفلها؛ اتحدّث التست
+ليؤكّد السلوك الأقوى الصحيح (replay بيقتل العائلة كلها).
+
+**مراجعة Codex النهائية:** أغلقت خمس فجوات قبل الاعتماد: access token بقى
+مربوطًا بالجلسة عبر `sid` ويتوقف فور إلغائها؛ refresh cookie لازم يخص نفس
+مستخدم الـBearer؛ عدّاد الإلغاء بقى يعد عائلات لا صفوف؛ قفل user ثابت يمنع
+سباق revoke مع successor جديد؛ ومحاولات self-lockout/استهداف super_admin
+المرفوضة دخلت `AuditLog`. مرجع الجلسة العام أصبح 128-bit.
+
+**التحقق:** `bash scripts/agent-check.sh` نجح (1995 تست مجموع)، **full
+suite: 1975 ناجح، 20 skipped، صفر فشل**، **4/4** تست تزامن Postgres
+حقيقي لعائلات refresh + **3/3** step-up + **2/2** super-admin regression،
+دورة migration كاملة `upgrade→downgrade→upgrade` على قاعدة معزولة +
+تأكيد backfill بصفوف قديمة حقيقية (3 صفوف → 3 عائلات مميّزة)، `alembic
+heads` رأس واحد (`b8f4d2a19c07`)، `pnpm --filter el-kheima
+type-check`/`build` نجحا، `git diff --check` نظيف. **مفيش commit ولا
+push.**
+
+**الحالة: مُعتمَدة نهائيًا، بدون push.** خارج النطاق عمدًا ومتلمسش: registry
+إعدادات typed، step-up مالي، ربط user→branch، إدارة super_admin لجلسات
+الآخرين، QR. التفاصيل الكاملة:
+`docs/audits/gate-2b3b-auth-audit-session-defense.md`.
 
 ---
 
