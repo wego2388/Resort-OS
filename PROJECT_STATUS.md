@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1,903 ناجح، 11 skipped، صفر فشل** ✅ + **5/5 Dining** + **2/2 Super Admin** + **1/1 Refresh rotation** concurrency حقيقية على PostgreSQL (2026-07-18؛ Gate 2B1 منفذة وتنتظر مراجعة مستقلة) |
+| **الاختبارات** | **1,903 ناجح، 11 skipped، صفر فشل** ✅ + **5/5 Dining** + **2/2 Super Admin** + **1/1 Refresh rotation** concurrency حقيقية على PostgreSQL (2026-07-18؛ Gate 2B1 مُعتمَدة نهائيًا) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
@@ -262,7 +262,7 @@ gate-2a-super-admin-invariants.md`. **تم عمل checkpoint** (commitين
 
 ---
 
-## 🔑 Gate 2B1 — كلمة السر ودورة الجلسة: منفذة وتنتظر مراجعة Claude (2026-07-18)
+## 🔑 Gate 2B1 — كلمة السر ودورة الجلسة: مُنفَّذة ومُعتمَدة (2026-07-18)
 
 الفحص العملي وجد أن تغيير كلمة السر من شاشة البروفايل كان معطّلًا لكل
 الأدوار بسبب اختلاف `current_password` في الفرونت عن `old_password` غير
@@ -288,11 +288,16 @@ refresh race جديد نجح **1/1 على PostgreSQL حي**، وfrontend type-ch
 ناجحان. التفاصيل في
 `docs/audits/gate-2b1-auth-session-lifecycle.md`.
 
-**الحالة:** تغييرات غير committed على `gate-2b-authentication-step-up`؛
-بانتظار مراجعة Claude المستقلة، وليست Acceptance بعد. لا يبدأ Gate 2B2
-قبل إغلاق هذه الشريحة. المؤجل عمدًا: auth audit، bootstrap آمن بدل كلمة
-السر الافتراضية، فرض TOTP في production، recent-auth/step-up، recovery
-codes، وrefresh-token family reuse detection.
+**المراجعة والاعتماد:** Claude راجع الـ18 ملفًا سطرًا بسطر كمراجع مستقل،
+ولم يجد أي Critical/High/Medium ولم يعدّل الكود. أعاد بنجاح repository
+check و78 اختبارًا مستهدفًا والـfull suite واختبار PostgreSQL والـfrontend
+type-check/build. implementation checkpoint:
+`3f3f52e fix(security): harden authentication session lifecycle`، بدون push.
+
+**الحالة:** Gate 2B1 مقفولة ومُعتمَدة. المؤجل عمدًا: auth audit، bootstrap
+آمن بدل كلمة السر الافتراضية، فرض TOTP في production، recent-auth/step-up،
+recovery codes، وrefresh-token family reuse detection. تبدأ Gate 2B2 في
+فرع/checkpoint مستقل بعد تحليل rollout يمنع lockout أو استحواذ أول enrollment.
 
 ---
 

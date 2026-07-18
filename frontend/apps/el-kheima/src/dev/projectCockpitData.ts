@@ -65,7 +65,7 @@ export const PROJECT_SNAPSHOT = {
   product: 'El Kheima Beach Resort OS',
   updatedAt: '2026-07-18',
   sourcePath: 'wagdy.md',
-  sourceRevision: '45aeec1 + uncommitted Gate 2B1 working tree',
+  sourceRevision: '3f3f52e + Gate 2B1 acceptance record',
   branchAtSnapshot: 'gate-2b-authentication-step-up',
   baseline: {
     modules: 13,
@@ -87,8 +87,8 @@ export const PROJECT_MODULES: ProjectModule[] = [
     },
     health: 'attention',
     note: {
-      ar: 'Gate 2A مُعتمَدة. Gate 2B1 أمّنت كلمة السر والجلسة وQR الخاص بـTOTP، واجتازت الاختبارات لكنها تنتظر مراجعة Claude قبل الاعتماد. bootstrap وفرض TOTP وstep-up لسه مفتوحين.',
-      en: 'Gate 2A is accepted. Gate 2B1 secured passwords, sessions, and TOTP QR confidentiality and passed validation, but awaits Claude review. Bootstrap, TOTP enforcement, and step-up remain open.',
+      ar: 'Gate 2A وGate 2B1 مُعتمَدتان: ثوابت السوبر أدمن ودورة كلمة السر والجلسة وQR الخاص بـTOTP اتأمّنوا. bootstrap وفرض TOTP وstep-up والتدقيق لسه مفتوحين.',
+      en: 'Gates 2A and 2B1 are accepted: Super Admin invariants, password/session lifecycle, and TOTP QR confidentiality are secured. Bootstrap, TOTP enforcement, step-up, and audit remain open.',
     },
   },
   {
@@ -379,8 +379,8 @@ export const PROJECT_ROADMAP: RoadmapStep[] = [
     order: 2,
     status: 'ready',
     title: { ar: 'أمان السوبر أدمن في الباك إند', en: 'Super Admin backend safeguards' },
-    outcome: { ar: 'Gate 2A مُعتمَدة. Gate 2B1 منفذة وتنتظر مراجعة Claude: عقد تغيير/reset كلمة السر، إبطال access/refresh sessions، refresh rotation ذرّية، تخزين reset tokens كبصمة hash، ومنع إرسال سر TOTP لطرف ثالث. باقي: bootstrap آمن، فرض TOTP، step-up، والتدقيق.', en: 'Gate 2A is accepted. Gate 2B1 is implemented and pending Claude review: password change/reset contract, access/refresh revocation, atomic refresh rotation, hashed reset tokens, and removal of third-party TOTP-secret disclosure. Safe bootstrap, TOTP enforcement, step-up, and audit remain.' },
-    gate: { ar: 'Gate 2B1 اجتازت 1,903 اختبارًا وrefresh race على PostgreSQL، لكنها لا تُعتمد قبل المراجعة المستقلة والـcheckpoint.', en: 'Gate 2B1 passed 1,903 tests and a PostgreSQL refresh race, but is not accepted before independent review and its checkpoint.' },
+    outcome: { ar: 'Gate 2A وGate 2B1 مُعتمَدتان: عقد تغيير/reset كلمة السر، إبطال access/refresh sessions، refresh rotation ذرّية، تخزين reset tokens كبصمة hash، ومنع إرسال سر TOTP لطرف ثالث. باقي: bootstrap آمن، فرض TOTP، step-up، والتدقيق.', en: 'Gates 2A and 2B1 are accepted: password change/reset contract, access/refresh revocation, atomic refresh rotation, hashed reset tokens, and removal of third-party TOTP-secret disclosure. Safe bootstrap, TOTP enforcement, step-up, and audit remain.' },
+    gate: { ar: 'Gate 2B1 اجتازت مراجعة Claude المستقلة: 1,903 اختبارًا وrefresh race على PostgreSQL وfrontend build، ثم checkpoint مستقل.', en: 'Gate 2B1 passed independent Claude review: 1,903 tests, a PostgreSQL refresh race, frontend build, and a separate checkpoint.' },
   },
   {
     id: 'staff-i18n-foundation',
@@ -473,8 +473,8 @@ export const PROJECT_RISKS: ProjectRisk[] = [
     id: 'superadmin-lockout',
     severity: 'high',
     area: 'core',
-    title: { ar: 'أمان الهوية — Gate 2B1 تنتظر الاعتماد', en: 'Identity security — Gate 2B1 awaits acceptance' },
-    detail: { ar: 'Gate 2A مُعتمَدة، وGate 2B1 أصلحت كلمة السر والجلسات وrefresh race وتسريب سر TOTP لطرف ثالث. ما زال bootstrap الافتراضي وفرض TOTP وstep-up والتدقيق مفتوحين، ولا تُعتبر 2B1 مقفولة قبل مراجعة Claude.', en: 'Gate 2A is accepted; Gate 2B1 fixed passwords, sessions, the refresh race, and third-party TOTP-secret disclosure. Default bootstrap, TOTP enforcement, step-up, and audit remain open, and 2B1 is not closed before Claude review.' },
+    title: { ar: 'أمان الهوية — Gate 2B1 مُعتمَدة والباقي محدد', en: 'Identity security — Gate 2B1 accepted, remaining scope defined' },
+    detail: { ar: 'Gate 2A وGate 2B1 أصلحتا ثوابت السوبر أدمن وكلمة السر والجلسات وrefresh race وتسريب سر TOTP لطرف ثالث. ما زال bootstrap الافتراضي وفرض TOTP وstep-up والتدقيق مفتوحين.', en: 'Gates 2A and 2B1 fixed Super Admin invariants, passwords, sessions, the refresh race, and third-party TOTP-secret disclosure. Default bootstrap, TOTP enforcement, step-up, and audit remain open.' },
   },
   {
     id: 'staff-localization',
@@ -555,14 +555,14 @@ export const PROMPT_SUGGESTIONS: PromptSuggestion[] = [
   },
   {
     id: 'superadmin-audit',
-    title: { ar: 'راجع Gate 2B1 قبل اعتمادها', en: 'Review Gate 2B1 before acceptance' },
-    description: { ar: 'راجع التنفيذ غير الملتزم لكلمة السر والجلسات وTOTP QR كمراجع مستقل، ثم أصلح المؤكد فقط وتوقف قبل 2B2.', en: 'Independently review the uncommitted password, session, and TOTP QR changes, fix only confirmed defects, and stop before 2B2.' },
-    mode: 'review',
+    title: { ar: 'خطط لـGate 2B2 — bootstrap وTOTP الآمن', en: 'Plan Gate 2B2 — safe bootstrap and TOTP' },
+    description: { ar: 'حلّل كلمة السر الافتراضية وأول enrollment والاسترداد وrollout الإنتاج قبل أي validator أو migration.', en: 'Analyze the default password, first enrollment, recovery, and production rollout before any validator or migration.' },
+    mode: 'plan',
     scope: 'core',
     phase: 'superadmin-backend',
     objective: {
-      ar: 'راجع الـdiff الحالي لـGate 2B1 من الكود والاختبارات، خصوصًا سر TOTP، إبطال access/refresh، atomic rotation، logout، reset token hashing، rate limits، وتوافق API. شغّل اختبار PostgreSQL الحقيقي، أصلح العيوب المؤكدة فقط، وحدّث التوثيق ثم توقف من غير commit أو بدء Gate 2B2.',
-      en: 'Review the current Gate 2B1 diff and tests, especially TOTP-secret confidentiality, access/refresh revocation, atomic rotation, logout, reset-token hashing, rate limits, and API compatibility. Run the real PostgreSQL test, fix only confirmed defects, update documentation, then stop without committing or starting Gate 2B2.',
+      ar: 'اعمل تحليل قراءة فقط لـGate 2B2. افحص seed والـdeployment وlogin/setup/enable/disable وفرض TOTP والاسترداد. صمّم rollout يمنع استخدام كلمة سر افتراضية معروفة، استحواذ أول شخص على enrollment، وقفل آخر super_admin. قارن خيارات bootstrap وmust-change-password وone-time enrollment/recovery codes وتأثير migration والتوافق. اعرض توصية وشريحة واحدة ومعايير قبول ثم توقف بلا تعديل.',
+      en: 'Perform a read-only Gate 2B2 analysis. Inspect seed, deployment, login/setup/enable/disable, TOTP enforcement, and recovery. Design a rollout that prevents known default credentials, first-enroller takeover, and last-super-admin lockout. Compare bootstrap, must-change-password, one-time enrollment/recovery-code options, migration impact, and compatibility. Recommend one bounded slice with acceptance criteria, then stop without editing.',
     },
     decisionIds: ['brand', 'superadmin-safe', 'audit-before-phases', 'staged-review', 'finance-first'],
   },

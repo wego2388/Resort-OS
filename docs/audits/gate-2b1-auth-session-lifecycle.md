@@ -1,7 +1,8 @@
 # Gate 2B1 — Authentication and Session Lifecycle
 
-**Status:** Implemented by Codex on `gate-2b-authentication-step-up`; pending
-independent Claude review and acceptance. No commit or push has been made.
+**Status:** Accepted after independent Claude review on
+`gate-2b-authentication-step-up`. Implementation checkpoint:
+`3f3f52e` (`fix(security): harden authentication session lifecycle`). No push.
 
 **Date:** 2026-07-18
 
@@ -137,10 +138,25 @@ These are explicitly outside Gate 2B1 and must remain visible:
 7. Recovery codes, explicit trusted-device policy, and reset-delivery audit or
    observability are not implemented.
 
-## Independent review gate
+## Independent review and acceptance
 
-Before acceptance, Claude must review the complete uncommitted diff rather than
-trust this report, reproduce the targeted/full checks, run the PostgreSQL race
-test, fix only confirmed defects, and stop before Gate 2B2. Gate 2B1 must then
-receive a separate checkpoint so later TOTP/step-up work cannot be mixed into
-this security boundary.
+Claude independently reviewed all 15 modified and three new files line by line
+without relying on the Codex report. It found no Critical, High, or Medium
+defect and made no code change. The only Low observations were pre-existing
+dead code in `verify_refresh_token()` and a small defensive duplicate user
+lookup in `create_refresh_token()`; neither belongs in this security slice.
+
+Claude reproduced every acceptance gate:
+
+- repository check: 1,914 tests collected; Alembic, Compose, and whitespace
+  checks passed;
+- targeted authentication suite: 78 passed;
+- full backend suite: 1,903 passed, 11 skipped, zero failures;
+- real PostgreSQL refresh race: 1 passed and the disposable database was
+  removed;
+- staff-app type-check and production build: passed;
+- final diff check: clean.
+
+**Acceptance decision:** Gate 2B1 is closed. Later TOTP/bootstrap, auth audit,
+and reusable step-up work must use separate checkpoints and must not be folded
+back into this boundary.
