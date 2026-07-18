@@ -121,6 +121,8 @@ const allSections = computed<NavSection[]>(() => [
       { path: '/portal/leaves',     label: t('backoffice.nav.leaves'),     icon: '🌴' },
       { path: '/portal/payroll',    label: t('backoffice.nav.payroll'),    icon: '💳' },
       { path: '/portal/profile',    label: t('backoffice.nav.profile'),    icon: '👤' },
+      // Gate 2B3B — session & security self-service, reachable by any signed-in user.
+      { path: '/account/sessions',  label: t('account.sessions.navLink'),  icon: '🔒' },
     ],
   },
 ])

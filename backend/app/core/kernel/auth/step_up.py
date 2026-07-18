@@ -95,6 +95,21 @@ def setting_upsert_scope(
     })
 
 
+def session_revoke_scope(*, session_ref: str) -> str:
+    """Gate 2B3B — bind a step-up proof to revoking exactly one session
+    (family) by its public reference, so a proof minted to revoke session A
+    can never be replayed to revoke session B."""
+    return build_step_up_scope("session_revoke", {"session_ref": session_ref})
+
+
+def other_sessions_revoke_scope(*, keep_session_ref: str) -> str:
+    """Gate 2B3B — bind a step-up proof to the "revoke every session except
+    this one" operation. ``keep_session_ref`` is the caller's *current*
+    session (proven server-side from the refresh cookie), so a proof cannot
+    be reused after the current session itself has changed."""
+    return build_step_up_scope("other_sessions_revoke", {"keep_session_ref": keep_session_ref})
+
+
 def access_token_hash_from_request(request) -> str:
     """Hash of the current request's bearer token — binds a step-up grant
     (at issuance) or its consumption to the exact browser session that

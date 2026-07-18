@@ -7,6 +7,7 @@ FastAPI Dependencies — Auth
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Request, status
@@ -87,7 +88,7 @@ def _resolve_user_from_token(token: str, db: Session):
     قفل WebSocket)."""
     from jose import JWTError  # noqa: PLC0415
     from app.core.kernel.cache import get_cache  # noqa: PLC0415
-    from app.core.kernel.models.user import TokenBlacklist, User  # noqa: PLC0415
+    from app.core.kernel.models.user import RefreshToken, TokenBlacklist, User  # noqa: PLC0415
     from app.core.kernel.security import decode_token, hash_token  # noqa: PLC0415
 
     settings = get_settings()
@@ -108,6 +109,24 @@ def _resolve_user_from_token(token: str, db: Session):
     user = db.query(User).filter(User.email == email).first()
     if not user:
         return None
+
+    # Gate 2B3B acceptance hardening: access tokens minted by the HTTP login
+    # and refresh flows carry the public id of their refresh-token family.
+    # Re-checking that family here makes a targeted session revoke immediate,
+    # instead of leaving a stolen access token usable until its 30-minute TTL.
+    # Tokens without ``sid`` remain valid for backward compatibility and for
+    # the short-lived POS PIN-switch flow, which has no refresh session.
+    session_ref = payload.get("sid")
+    if session_ref:
+        live_session = db.query(RefreshToken.id).filter(
+            RefreshToken.user_id == user.id,
+            RefreshToken.family_public_id == session_ref,
+            RefreshToken.consumed_at.is_(None),
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > datetime.now(timezone.utc),
+        ).first()
+        if live_session is None:
+            return None
 
     revoked_at = get_cache(f"{REVOKED_CACHE_PREFIX}:{user.id}")
     if revoked_at and payload.get("iat", 0) < revoked_at:

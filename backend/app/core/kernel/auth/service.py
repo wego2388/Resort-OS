@@ -6,6 +6,7 @@ refresh token rotation, 2FA, password reset, token revocation).
 
 import base64
 import hashlib
+import hmac
 import json
 import secrets
 import string
@@ -19,6 +20,7 @@ from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.kernel.correlation import get_request_id
 from app.core.kernel.security import (
     verify_password, get_password_hash, create_access_token,
     validate_password_strength, validate_email_format,
@@ -27,6 +29,23 @@ from app.core.kernel.auth.repository import (
     UserRepository,
     delete_refresh_tokens_for_user,
 )
+
+
+# Gate 2B3B — the stable, filterable authentication event codes written into
+# the unified AuditLog (entity_type="user_authentication"). This frozenset is
+# the single allow-list the self-service security-activity endpoint reads
+# back, so an action not listed here is never surfaced to a user. Rejected/
+# noisy internal events (step_up_rejected, step_up_issuance_rejected) are
+# deliberately absent — they are operator-facing, not personal activity.
+AUTH_AUDIT_ACTIONS = frozenset({
+    "login_succeeded", "login_failed", "login_locked_out",
+    "login_blocked_locked", "login_blocked_inactive",
+    "password_changed", "password_reset_requested", "password_reset_completed",
+    "two_factor_setup_started", "two_factor_enabled", "two_factor_disabled",
+    "two_factor_recovery_code_used", "two_factor_recovery_codes_regenerated",
+    "logout", "session_revoked", "all_sessions_revoked", "refresh_token_replayed",
+    "step_up_issued", "step_up_consumed",
+})
 
 
 # A real bcrypt hash computed once at import. When an email doesn't exist we
@@ -67,6 +86,22 @@ class AuthService(BaseService):
         super().__init__(db)
         self.repo = UserRepository(user_model, db)
         self.settings = settings
+        # Gate 2B3B — per-request audit context. Set once by the router
+        # dependency (attach_request_context) from the trusted client IP and
+        # the request's User-Agent; None on non-HTTP callers (CLI, Celery,
+        # tests) which simply record no IP/UA. request_id is read ambiently
+        # from the correlation context var, so it needs no threading.
+        self._audit_ip: Optional[str] = None
+        self._audit_user_agent: Optional[str] = None
+
+    def attach_request_context(self, *, ip: Optional[str], user_agent: Optional[str]) -> "AuthService":
+        """Attach trusted request metadata for the unified auth audit. The IP
+        must already be the trusted client IP resolved with the app's proxy
+        policy (app.core.rate_limit._client_ip) — never a raw
+        X-Forwarded-For value."""
+        self._audit_ip = ip
+        self._audit_user_agent = self._sanitize_user_agent(user_agent)
+        return self
 
     # ── Registration ──────────────────────────────────────────────────────
 
@@ -167,18 +202,76 @@ class AuthService(BaseService):
         )
         return consumed == 1
 
-    def _add_auth_audit(self, user, action: str, *, details: Optional[dict] = None) -> None:
-        """Append a secret-free event to the existing unified AuditLog."""
+    @staticmethod
+    def _sanitize_user_agent(user_agent: Optional[str]) -> Optional[str]:
+        """Strip control characters and cap length before storing a
+        client-supplied User-Agent — it is untrusted, attacker-controlled
+        text that must never carry log-injection payloads into AuditLog."""
+        if not user_agent:
+            return None
+        cleaned = "".join(ch for ch in user_agent if ch.isprintable()).strip()
+        return cleaned[:255] or None
+
+    def _email_fingerprint(self, email: str) -> str:
+        """Non-reversible, domain-separated HMAC of an email — for the
+        unknown-account structured log only, so a login sweep is correlatable
+        without ever writing a raw address (which would be both a PII leak
+        and an enumeration oracle). Keyed with SECRET_KEY so the digest can't
+        be precomputed from a wordlist by anyone without the server key."""
+        return hmac.new(
+            self.settings.SECRET_KEY.encode("utf-8"),
+            b"auth-audit-email:" + (email or "").strip().casefold().encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()[:16]
+
+    def _add_auth_audit(
+        self,
+        user,
+        action: str,
+        *,
+        details: Optional[dict] = None,
+        bounded: bool = False,
+    ) -> None:
+        """Append a secret-free authentication event to the existing unified
+        AuditLog (no parallel audit table — Gate 2B3A's pattern). Records the
+        actor, the stable event code, the trusted client IP, a sanitized
+        User-Agent, and the correlation request id — never an email in the
+        clear, password, TOTP/recovery code, or any token/secret hash.
+
+        ``bounded=True`` gates the *write* behind a per-user/per-action
+        rate_limit so a flood of failures (repeated bad-password attempts on
+        one known account) cannot grow AuditLog without limit. The bound
+        applies only to whether the row is written — the caller's own
+        accept/reject decision is completely independent and already made.
+        """
         from app.modules.core.models import AuditLog  # noqa: PLC0415
 
+        # Accept either a user object or a bare id — some paths (refresh
+        # replay, logout) only carry the id, not a loaded ORM user.
+        user_id = user if isinstance(user, int) else user.id
+
+        if bounded:
+            from app.core.kernel.cache import rate_limit  # noqa: PLC0415
+
+            if not rate_limit(
+                f"auth-audit:{action}:{user_id}", max_requests=20, window_seconds=300,
+            ):
+                return
+
+        payload = dict(details or {})
+        request_id = get_request_id()
+        if request_id:
+            payload["request_id"] = request_id
         self.db.add(AuditLog(
-            user_id=user.id,
+            user_id=user_id,
             branch_id=None,
             action=action,
             entity_type="user_authentication",
-            entity_id=user.id,
+            entity_id=user_id,
             old_data=None,
-            new_data=json.dumps(details or {}, ensure_ascii=False, sort_keys=True),
+            new_data=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+            ip_address=(self._audit_ip or None),
+            user_agent=self._audit_user_agent,
         ))
 
     def _log_step_up_issuance_rejected(self, user, purpose: str, reason_code: str) -> None:
@@ -287,6 +380,15 @@ class AuthService(BaseService):
             # Equalize timing with the wrong-password path (bcrypt ~300ms) and
             # return the exact same message — no user-enumeration oracle.
             verify_password(password, _DUMMY_PASSWORD_HASH)
+            # Gate 2B3B — an unknown account writes NO AuditLog row on purpose:
+            # a database row per anonymous bot attempt is exactly the PII/write
+            # amplification this gate must avoid. A single structured log line
+            # with a keyed, non-reversible email fingerprint keeps the attempt
+            # correlatable for operators without persisting a raw address.
+            logger.warning(
+                "login attempt for unknown account fp={} ip={}",
+                self._email_fingerprint(email), self._audit_ip or "-",
+            )
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, _GENERIC_AUTH_ERROR)
 
         if user.account_locked_until:
@@ -295,6 +397,8 @@ class AuthService(BaseService):
                 locked_until = locked_until.replace(tzinfo=timezone.utc)
             if locked_until > datetime.now(timezone.utc):
                 remaining = int((locked_until - datetime.now(timezone.utc)).total_seconds() / 60) + 1
+                self._add_auth_audit(user, "login_blocked_locked", bounded=True)
+                self.db.commit()
                 raise HTTPException(
                     status.HTTP_423_LOCKED,
                     f"Account locked after too many failed attempts. Try again in {remaining} minutes.",
@@ -304,6 +408,8 @@ class AuthService(BaseService):
             self.db.commit()
 
         if not user.is_active:
+            self._add_auth_audit(user, "login_blocked_inactive", bounded=True)
+            self.db.commit()
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Inactive account")
 
         if not verify_password(password, user.password_hash):
@@ -311,11 +417,15 @@ class AuthService(BaseService):
             user.failed_login_attempts = attempts
             if attempts >= max_attempts:
                 user.account_locked_until = datetime.now(timezone.utc) + timedelta(minutes=lockout_minutes)
+                # Lockout is a bounded, once-per-lockout-window event — logged
+                # unbounded (there can be at most one per max_attempts failures).
+                self._add_auth_audit(user, "login_locked_out")
                 self.db.commit()
                 raise HTTPException(
                     status.HTTP_423_LOCKED,
                     f"Account locked after {max_attempts} failed attempts. Try again in {lockout_minutes} minutes.",
                 )
+            self._add_auth_audit(user, "login_failed", bounded=True)
             self.db.commit()
             # No "N attempts remaining" — that both confirms the email exists and
             # hands the attacker the lockout threshold. Same message as unknown email.
@@ -341,6 +451,10 @@ class AuthService(BaseService):
             if recovery_code and not otp_code:
                 recovery_code_used = self._consume_recovery_code(user.id, recovery_code)
             if not valid_totp and not recovery_code_used:
+                self._add_auth_audit(
+                    user, "login_failed", details={"factor": "2fa"}, bounded=True,
+                )
+                self.db.commit()
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
                     {"code": "2FA_CODE_INVALID", "message": "رمز التحقق بخطوتين غير صحيح"},
@@ -358,6 +472,9 @@ class AuthService(BaseService):
         )
         if recovery_code_used:
             self._add_auth_audit(user, "two_factor_recovery_code_used")
+        self._add_auth_audit(user, "login_succeeded", details={
+            "assurance": "2fa" if user.two_factor_enabled else "password",
+        })
         self.db.commit()
         return {
             "access_token": token,
@@ -475,6 +592,13 @@ class AuthService(BaseService):
         return hashlib.sha256(token.encode()).hexdigest()
 
     def create_refresh_token(self, user_id: int, device_fingerprint: Optional[str] = None) -> str:
+        """Start a brand-new refresh-token *family* for one login (Gate 2B3B).
+
+        A fresh, random ``family_id`` (never derived from ``user_id``) and a
+        separate public handle are minted here; every later rotation stays
+        inside the same family so a replay can be traced to, and revoke, the
+        whole lineage.
+        """
         from app.core.kernel.models.user import RefreshToken
         user = self.repo.get(user_id)
         self._require_active_user(user)
@@ -489,9 +613,58 @@ class AuthService(BaseService):
             device_fingerprint=device_fingerprint,
             expires_at=expires_at,
             created_at=now,
+            family_id=secrets.token_hex(16),
+            # 128-bit public reference. It is not a bearer secret, but the
+            # larger space makes an accidental collision between two session
+            # families operationally negligible without exposing family_id.
+            family_public_id=secrets.token_hex(16),
+            family_started_at=now,
+            user_agent=self._audit_user_agent,
         ))
         self.db.commit()
         return token
+
+    # ── Refresh-token family helpers (Gate 2B3B) ─────────────────────────
+
+    def _revoke_family(self, user_id: int, family_id: str) -> int:
+        """Atomically mark every still-live row of one family revoked. Does
+        NOT commit — the caller owns the transaction so the revocation and any
+        accompanying audit/access cutoff land together. Follows the same
+        conditional-UPDATE pattern as refresh rotation and step-up consumption
+        (the ``revoked_at IS NULL`` guard makes a double-revoke a safe no-op)."""
+        from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
+
+        return (
+            self.db.query(RefreshToken)
+            .filter(
+                RefreshToken.user_id == user_id,
+                RefreshToken.family_id == family_id,
+                RefreshToken.revoked_at.is_(None),
+            )
+            .update({RefreshToken.revoked_at: datetime.now(timezone.utc)}, synchronize_session=False)
+        )
+
+    def _handle_replay(self, refresh_token) -> None:
+        """A consumed token was presented again — provable replay. Revoke the
+        whole family AND publish a global access-token cutoff (a detected token
+        theft warrants killing every access token immediately, unlike a routine
+        self-service session revoke). Secret-free audit; never the token."""
+        self._revoke_family(refresh_token.user_id, refresh_token.family_id)
+        logger.warning(
+            "refresh-token replay detected for user {} (family revoked)",
+            refresh_token.user_id,
+        )
+        self._add_auth_audit(
+            refresh_token.user_id,
+            "refresh_token_replayed",
+            details={"session_ref": refresh_token.family_public_id, "reason": "reuse_detected"},
+        )
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self._revoke_access_tokens(refresh_token.user_id)
 
     @staticmethod
     def _as_utc(value: datetime) -> datetime:
@@ -532,6 +705,8 @@ class AuthService(BaseService):
             self.db.query(RefreshToken)
             .filter(
                 RefreshToken.token_hash == self._hash_token(token),
+                RefreshToken.consumed_at.is_(None),
+                RefreshToken.revoked_at.is_(None),
                 RefreshToken.expires_at > datetime.now(timezone.utc),
             )
             .first()
@@ -553,31 +728,75 @@ class AuthService(BaseService):
         return user
 
     def rotate_refresh_token(self, old_token: str, device_fingerprint: Optional[str] = None) -> Optional[tuple]:
-        """Consume one refresh token and issue its replacement atomically.
+        """Consume one refresh token and issue its successor in the same
+        family — atomically, with replay detection (Gate 2B3B).
 
-        The conditional DELETE is the concurrency boundary: two requests may
-        read the same row, but only one can delete it. The loser observes a
-        zero row-count after the winner commits and cannot mint another token.
+        Rotation no longer hard-deletes the old row; it stamps ``consumed_at``
+        (a tombstone) via a conditional UPDATE that is the concurrency
+        boundary: two requests may both read the row unconsumed, but only one
+        UPDATE can flip ``consumed_at`` from NULL, so only one successor is
+        ever minted. Presenting an already-tombstoned token again is a
+        *provable* replay → the whole family is revoked and access tokens are
+        cut off. A concurrent-race loser (it read the row unconsumed but lost
+        the UPDATE) is rejected generically WITHOUT revoking the family — it
+        never observed a tombstone, so it is a benign double-submit, not a
+        provable replay (see slice B design).
         """
         from app.core.kernel.models.user import RefreshToken
         if not old_token:
             return None
         token_hash = self._hash_token(old_token)
         now = datetime.now(timezone.utc)
-        rt = (
+        initial_rt = (
             self.db.query(RefreshToken)
-            .filter(
-                RefreshToken.token_hash == token_hash,
-                RefreshToken.expires_at > now,
-            )
+            .filter(RefreshToken.token_hash == token_hash)
             .first()
         )
-        if not rt:
+        if not initial_rt:
+            # Unknown token — no tombstone proves prior consumption, so this is
+            # a plain invalid token, not a provable replay. Generic reject.
             return None
+
+        # A stable per-user row lock serializes refresh rotation, replay
+        # handling, logout and self-service family revocation. The old
+        # token-row-only boundary prevented double minting, but could not
+        # guarantee that a family-wide revoke saw a successor inserted by a
+        # concurrent transaction after the UPDATE statement's snapshot.
+        user = self._lock_user_for_update(initial_rt.user_id)
+        rt = (
+            self.db.query(RefreshToken)
+            .filter(RefreshToken.token_hash == token_hash)
+            .populate_existing()
+            .first()
+        )
+        if rt is None:
+            self.db.rollback()
+            return None
+
+        # ── Provable replay: a consumed token presented again ──
+        if rt.consumed_at is not None:
+            self._handle_replay(rt)
+            return None
+
+        # Already-revoked family (sibling replay, explicit revoke, credential
+        # change) or expired → generic reject; never revive.
+        if rt.revoked_at is not None or self._as_utc(rt.expires_at) <= now:
+            return None
+
         if device_fingerprint and rt.device_fingerprint != device_fingerprint:
             logger.warning("Device fingerprint mismatch for user {}", rt.user_id)
             return None
-        user = self.repo.get(rt.user_id)
+
+        # Capture family lineage into locals BEFORE any UPDATE/expunge — never
+        # read attributes off an ORM row after a bulk UPDATE/commit (the
+        # ObjectDeletedError class of bug found in Gate 2B3A).
+        rt_id = rt.id
+        family_id = rt.family_id
+        family_public_id = rt.family_public_id
+        family_started_at = rt.family_started_at or rt.created_at
+        rt_user_agent = rt.user_agent
+        user_id = rt.user_id
+
         if (
             not user
             or not user.is_active
@@ -585,38 +804,213 @@ class AuthService(BaseService):
             or not self._refresh_allowed_for_user(user)
             or self._refresh_token_predates_revocation(rt)
         ):
-            delete_refresh_tokens_for_user(self.db, rt.user_id)
+            # A now-ineligible account: retire the whole family rather than
+            # leaving live rows behind.
+            self._revoke_family(user_id, family_id)
             self.db.commit()
             return None
 
+        new_token = secrets.token_urlsafe(32)
+        new_token_hash = self._hash_token(new_token)
+
+        # Atomic consume. The WHERE clause re-checks consumed/revoked/expiry so
+        # a session-revoke or a sibling rotation racing this one cannot be
+        # revived: only one caller flips consumed_at from NULL.
         consumed = (
             self.db.query(RefreshToken)
-            .filter(RefreshToken.id == rt.id, RefreshToken.token_hash == token_hash)
-            .delete(synchronize_session=False)
+            .filter(
+                RefreshToken.id == rt_id,
+                RefreshToken.consumed_at.is_(None),
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > now,
+            )
+            .update(
+                {
+                    RefreshToken.consumed_at: now,
+                    RefreshToken.successor_token_hash: new_token_hash,
+                },
+                synchronize_session=False,
+            )
         )
         if consumed != 1:
+            # Lost the race (or revoked/expired between SELECT and UPDATE) —
+            # generic reject, no family revocation (no tombstone was observed).
             self.db.rollback()
             return None
-        # Bulk DELETE intentionally bypasses ORM synchronization. Remove the
-        # consumed instance from the identity map before adding its successor;
-        # SQLite may reuse the same integer primary key immediately, otherwise
-        # SQLAlchemy warns and can replace the tracked identity unexpectedly.
-        self.db.expunge(rt)
 
-        new_token = secrets.token_urlsafe(32)
+        # Bulk UPDATE bypasses ORM synchronization; drop the stale instance
+        # from the identity map before adding the successor.
+        self.db.expunge(rt)
         self.db.add(RefreshToken(
             user_id=user.id,
-            token_hash=self._hash_token(new_token),
+            token_hash=new_token_hash,
             device_fingerprint=device_fingerprint,
             expires_at=now + timedelta(days=self.settings.REFRESH_TOKEN_EXPIRE_DAYS),
             created_at=now,
+            family_id=family_id,
+            family_public_id=family_public_id,
+            family_started_at=family_started_at,
+            user_agent=self._audit_user_agent or rt_user_agent,
         ))
+        # Bounded cleanup: only this user's own expired rows (never a global
+        # sweep) — keeps tombstones alive for replay detection until natural
+        # expiry, then reaps them off the hot path.
+        self.db.query(RefreshToken).filter(
+            RefreshToken.user_id == user.id,
+            RefreshToken.expires_at <= now,
+        ).delete(synchronize_session=False)
         try:
             self.db.commit()
         except Exception:
             self.db.rollback()
             raise
         return user, new_token
+
+    # ── Self-service session management (Gate 2B3B) ──────────────────────
+
+    def current_session(
+        self,
+        refresh_token: Optional[str],
+        *,
+        expected_user_id: Optional[int] = None,
+    ) -> Optional[tuple[str, str]]:
+        """Resolve (family_id, family_public_id) of the live session that
+        presented this refresh token, or None. Used only to flag the caller's
+        own 'current' session and to protect 'revoke others'."""
+        from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
+
+        if not refresh_token:
+            return None
+        query = self.db.query(RefreshToken).filter(
+                RefreshToken.token_hash == self._hash_token(refresh_token),
+                RefreshToken.consumed_at.is_(None),
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > datetime.now(timezone.utc),
+        )
+        if expected_user_id is not None:
+            query = query.filter(RefreshToken.user_id == expected_user_id)
+        rt = query.first()
+        return (rt.family_id, rt.family_public_id) if rt else None
+
+    def list_active_sessions(self, user_id: int, *, current_family_id: Optional[str] = None) -> list[dict]:
+        """Return the user's live refresh families as non-secret DTO dicts —
+        one row per family (the live successor). Never exposes token_hash,
+        successor_token_hash, or the internal family_id."""
+        from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
+
+        now = datetime.now(timezone.utc)
+        rows = (
+            self.db.query(RefreshToken)
+            .filter(
+                RefreshToken.user_id == user_id,
+                RefreshToken.consumed_at.is_(None),
+                RefreshToken.revoked_at.is_(None),
+                RefreshToken.expires_at > now,
+            )
+            .order_by(RefreshToken.created_at.desc(), RefreshToken.id.desc())
+            .all()
+        )
+        return [
+            {
+                "session_ref": r.family_public_id,
+                "started_at": self._as_utc(r.family_started_at or r.created_at),
+                "last_active_at": self._as_utc(r.created_at),
+                "expires_at": self._as_utc(r.expires_at),
+                "device": r.user_agent,
+                "current": bool(current_family_id and r.family_id == current_family_id),
+            }
+            for r in rows
+        ]
+
+    def revoke_session_by_ref(self, user_id: int, session_ref: str) -> bool:
+        """Revoke one refresh family the caller owns, by its public reference.
+        Returns True if a live family was revoked, False if none matched
+        (unknown ref, another user's ref, or already revoked) — the endpoint
+        maps False to 404 so a user cannot probe another user's session refs.
+
+        Deliberately does NOT publish a global access-token cutoff: that is a
+        user-wide switch that would also kill the caller's *current* access
+        token. Killing the target family stops its refresh, so that session
+        ends within one access-token TTL; the caller's session is untouched.
+        (A detected replay is different — that path cuts access immediately.)"""
+        from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
+
+        self._lock_user_for_update(user_id)
+        now = datetime.now(timezone.utc)
+        live = self.db.query(RefreshToken.family_id).filter(
+            RefreshToken.user_id == user_id,
+            RefreshToken.family_public_id == session_ref,
+            RefreshToken.consumed_at.is_(None),
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
+        ).first()
+        affected = self._revoke_family(user_id, live[0]) if live else 0
+        if affected == 0:
+            self.db.rollback()
+            return False
+        self._add_auth_audit(user_id, "session_revoked", details={"session_ref": session_ref})
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return True
+
+    def revoke_other_sessions(self, user_id: int, *, keep_family_id: Optional[str]) -> int:
+        """Revoke every refresh family the caller owns except the current one.
+        Returns the number of families revoked. Same surgical, no-global-cutoff
+        policy as revoke_session_by_ref — the kept current session stays live."""
+        from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
+
+        self._lock_user_for_update(user_id)
+        now = datetime.now(timezone.utc)
+        family_query = self.db.query(RefreshToken.family_id).filter(
+            RefreshToken.user_id == user_id,
+            RefreshToken.consumed_at.is_(None),
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
+        )
+        if keep_family_id is not None:
+            family_query = family_query.filter(RefreshToken.family_id != keep_family_id)
+        family_ids = [row[0] for row in family_query.distinct().all()]
+        if family_ids:
+            self.db.query(RefreshToken).filter(
+                RefreshToken.user_id == user_id,
+                RefreshToken.family_id.in_(family_ids),
+                RefreshToken.revoked_at.is_(None),
+            ).update({RefreshToken.revoked_at: now}, synchronize_session=False)
+        affected = len(family_ids)
+        self._add_auth_audit(
+            user_id, "all_sessions_revoked",
+            details={"revoked_count": affected, "kept_current": keep_family_id is not None},
+        )
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return affected
+
+    def list_security_activity(self, user_id: int, *, limit: int, offset: int) -> tuple[list, int]:
+        """Paginated, allow-listed view of the caller's OWN authentication
+        audit events. Only actions in AUTH_AUDIT_ACTIONS are surfaced, and
+        only rows owned by this user — never another user's, never the raw
+        audit payload beyond the whitelisted fields the endpoint returns."""
+        from app.modules.core.models import AuditLog  # noqa: PLC0415
+
+        base = self.db.query(AuditLog).filter(
+            AuditLog.user_id == user_id,
+            AuditLog.entity_type == "user_authentication",
+            AuditLog.action.in_(AUTH_AUDIT_ACTIONS),
+        )
+        total = base.count()
+        rows = (
+            base.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        return rows, total
 
     # ── 2FA ───────────────────────────────────────────────────────────────
 
@@ -1177,15 +1571,22 @@ class AuthService(BaseService):
         refresh_token: str,
         user_id: int,
     ) -> None:
-        """Revoke both credentials belonging to the current browser session."""
+        """Revoke both credentials belonging to the current browser session
+        (logout). The presented refresh token's whole family is revoked (not
+        just the single row) so its consumed-token tombstones stay behind for
+        replay detection while no live successor remains."""
         from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
 
         self.revoke_token(access_token, user_id, commit=False)
         if refresh_token:
-            self.db.query(RefreshToken).filter(
+            self._lock_user_for_update(user_id)
+            rt = self.db.query(RefreshToken).filter(
                 RefreshToken.user_id == user_id,
                 RefreshToken.token_hash == self._hash_token(refresh_token),
-            ).delete(synchronize_session=False)
+            ).first()
+            if rt is not None:
+                self._revoke_family(user_id, rt.family_id)
+        self._add_auth_audit(user_id, "logout")
         try:
             self.db.commit()
         except Exception:
@@ -1238,6 +1639,10 @@ class AuthService(BaseService):
             user_id=user.id,
             expires_at=expires,
         ))
+        # Server-side audit only (never returned to the client, so not an
+        # enumeration side channel) and already bounded by the per-account
+        # rate limit above — records that a real account requested a reset.
+        self._add_auth_audit(user, "password_reset_requested")
         self.db.commit()
         return token
 

@@ -86,6 +86,17 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
 
+  // Gate 2B3B — session & security self-service, available to any authenticated
+  // user (mirrors /2fa-setup: standalone, no back-office chrome). Lists the
+  // user's own active sessions (revoke one / revoke all others via step-up) and
+  // their recent security activity.
+  {
+    path: '/account/sessions',
+    name: 'account-sessions',
+    component: () => import('../views/account/SessionsView.vue'),
+    meta: { requiresAuth: true },
+  },
+
   // ── /pos — FieldLayout (lightweight, tablet/phone, on-floor cashier use) ──
   {
     path: '/pos',

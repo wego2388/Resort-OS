@@ -122,6 +122,15 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
         "step-up-issue", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
         settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
     ),
+    # Gate 2B3B — bulk "revoke all other sessions" is a sensitive, static-path
+    # mutation, so it gets the same IP bucket as the other sensitive auth
+    # routes. (Single-session DELETE carries a path parameter, which this
+    # exact-match middleware cannot key on — it is protected by step-up plus
+    # the per-user audit bound instead.)
+    ("POST", "/api/v1/auth/sessions/revoke-others"): (
+        "session-revoke-others", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+        settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+    ),
     ("POST", "/api/v1/hub/contact"):   ("public", 30, 60),
     ("GET",  "/api/v1/hub/blog/posts"): ("public", 30, 60),
     ("GET",  "/api/v1/pms/public/room-types"): ("public", 30, 60),

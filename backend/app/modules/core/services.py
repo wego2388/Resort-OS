@@ -123,6 +123,51 @@ def _step_up_audit_context(
     return context
 
 
+def _commit_rejected_control_plane_audit(
+    db: Session,
+    *,
+    actor_id: int,
+    action: str,
+    target_user_id: Optional[int],
+    reason_code: str,
+    reason: Optional[str] = None,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
+    branch_id: Optional[int] = None,
+    details: Optional[dict] = None,
+) -> None:
+    """Persist an attributable, secret-free audit row for a rejected
+    super-admin control-plane mutation before raising its domain exception.
+
+    Gate 2A deliberately logged these attempts only to the process logger;
+    Gate 2B3B closes that deferred gap in the existing unified ``AuditLog``.
+    No business mutation has happened at these call sites, so the commit
+    contains only the rejection record and releases any ordered row locks.
+    """
+    payload = {
+        "reason_code": reason_code,
+        **(details or {}),
+        **_step_up_audit_context(
+            reason=reason,
+            step_up_public_reference=step_up_public_reference,
+            assurance_method=assurance_method,
+        ),
+    }
+    crud.create_audit_log(db, AuditLogCreate(
+        user_id=actor_id,
+        branch_id=branch_id,
+        action=action,
+        entity_type="user" if target_user_id is not None else "security_control_plane",
+        entity_id=target_user_id,
+        new_data=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+    ))
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+
 # ─────────────────────── PIN Credentials ──────────────────────────────
 # راجع PinCredential (models.py) للسياق الكامل — PIN تشغيلي منفصل عن
 # JWT، مُستخدم لموافقة مدير سريعة على إجراء حسّاس (إلغاء/مرتجع) لما
@@ -398,6 +443,17 @@ def update_user_role(
             "updated_by=%s target_user_id=%s",
             updated_by, user_id,
         )
+        _commit_rejected_control_plane_audit(
+            db,
+            actor_id=updated_by,
+            action="role_update_rejected",
+            target_user_id=user_id,
+            reason_code="ACTOR_SUPER_ADMIN_PRIVILEGES_CHANGED",
+            reason=reason,
+            step_up_public_reference=step_up_public_reference,
+            assurance_method=assurance_method,
+            details={"requested_role": role, "requested_is_active": is_active},
+        )
         raise ActorSuperAdminPrivilegesChangedError(
             "صلاحيتك تغيّرت في نفس اللحظة من عملية أخرى — أعد تحميل حالتك وحاول تاني"
         )
@@ -431,6 +487,17 @@ def update_user_role(
             "user_id=%s requested_role=%s requested_is_active=%s",
             user_id, role, is_active,
         )
+        _commit_rejected_control_plane_audit(
+            db,
+            actor_id=updated_by,
+            action="role_update_rejected",
+            target_user_id=user_id,
+            reason_code="SUPER_ADMIN_SELF_LOCKOUT_FORBIDDEN",
+            reason=reason,
+            step_up_public_reference=step_up_public_reference,
+            assurance_method=assurance_method,
+            details={"requested_role": role, "requested_is_active": is_active},
+        )
         raise SuperAdminSelfLockoutForbiddenError(
             "لا يمكنك تعديل دورك أو تعطيل حسابك بنفسك عبر هذا المسار — "
             "اطلب من super_admin آخر تنفيذ هذا التغيير"
@@ -445,6 +512,17 @@ def update_user_role(
             "gate2a.role_update_rejected last_active_super_admin "
             "updated_by=%s target_user_id=%s",
             updated_by, user_id,
+        )
+        _commit_rejected_control_plane_audit(
+            db,
+            actor_id=updated_by,
+            action="role_update_rejected",
+            target_user_id=user_id,
+            reason_code="LAST_ACTIVE_SUPER_ADMIN_REQUIRED",
+            reason=reason,
+            step_up_public_reference=step_up_public_reference,
+            assurance_method=assurance_method,
+            details={"requested_role": role, "requested_is_active": is_active},
         )
         raise LastActiveSuperAdminRequiredError(
             "لازم يفضل يوجد super_admin نشط واحد على الأقل — "
@@ -764,6 +842,22 @@ def grant_permission(
             "gate2a.permission_override_rejected target_super_admin "
             "target_user_id=%s resource=%s action=%s granted_by=%s",
             user_id, data.resource, data.action, granted_by,
+        )
+        _commit_rejected_control_plane_audit(
+            db,
+            actor_id=granted_by,
+            action="permission_override_rejected",
+            target_user_id=user_id,
+            reason_code="SUPER_ADMIN_PERMISSION_OVERRIDE_FORBIDDEN",
+            reason=reason,
+            step_up_public_reference=step_up_public_reference,
+            assurance_method=assurance_method,
+            branch_id=data.branch_id,
+            details={
+                "resource": data.resource,
+                "action": data.action,
+                "allowed": data.allowed,
+            },
         )
         raise SuperAdminPermissionOverrideForbiddenError(
             "لا يمكن إنشاء أو تعديل صلاحية صريحة تستهدف حساب super_admin — "

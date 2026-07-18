@@ -42,15 +42,22 @@ import { AppModal, AppInput } from '@resort-os/ui'
 import { useI18n } from 'vue-i18n'
 
 const props = withDefaults(defineProps<{
-  purpose: 'user_role_update' | 'permission_override_upsert' | 'permission_override_revoke' | 'setting_upsert'
+  purpose: 'user_role_update' | 'permission_override_upsert' | 'permission_override_revoke' | 'setting_upsert' | 'session_revoke' | 'other_sessions_revoke'
   intent: Record<string, unknown>
   description?: string
   loading?: boolean
   errorMessage?: string
+  // Gate 2B3B: the session-revocation intents (session_revoke /
+  // other_sessions_revoke) are `extra="forbid"` server-side and reject any
+  // `reason` field. When false, the reason input is not rendered, its length
+  // is not validated, and `reason` is NOT injected into the posted intent.
+  // Defaults to true so every pre-existing caller is unchanged.
+  requireReason?: boolean
 }>(), {
   description: '',
   loading: false,
   errorMessage: '',
+  requireReason: true,
 })
 
 const emit = defineEmits<{
@@ -74,8 +81,11 @@ const localError = ref('')
 // (2026-07-18): مودال بلا focus management بيسيب لوحة المفاتيح على أي
 // عنصر كان مفعّل قبل الفتح، مش على أول حقل فعلي جوه المودال نفسه.
 const reasonInputRef = ref<InstanceType<typeof AppInput> | null>(null)
+const passwordInputRef = ref<InstanceType<typeof AppInput> | null>(null)
 onMounted(() => {
-  nextTick(() => reasonInputRef.value?.focus())
+  // Focus the first real field inside the modal — the reason field when it's
+  // rendered, otherwise the password field (Gate 2B3B: reasonless intents).
+  nextTick(() => (props.requireReason ? reasonInputRef.value : passwordInputRef.value)?.focus())
 })
 
 function resetSensitiveFields() {
@@ -97,7 +107,7 @@ watch(() => props.errorMessage, (msg) => {
 async function submit() {
   localError.value = ''
   const trimmedReason = reason.value.trim()
-  if (trimmedReason.length < 3) {
+  if (props.requireReason && trimmedReason.length < 3) {
     localError.value = t('backoffice.stepUp.reasonRequired')
     return
   }
@@ -117,7 +127,9 @@ async function submit() {
     const payload: Record<string, unknown> = {
       current_password: password.value,
       purpose: props.purpose,
-      intent: { ...props.intent, reason: trimmedReason },
+      // Gate 2B3B: reasonless intents must post EXACTLY `{ ...props.intent }` —
+      // the backend intent models forbid an unexpected `reason` field.
+      intent: props.requireReason ? { ...props.intent, reason: trimmedReason } : { ...props.intent },
     }
     if (needsTwoFactorCode) {
       if (useRecovery.value) payload.recovery_code = recoveryCode.value.trim()
@@ -129,7 +141,7 @@ async function submit() {
 
     // التوكن هيتسلّم للأب فورًا — مفيش داعي نحتفظ بأي حاجة حسّاسة هنا تاني.
     resetSensitiveFields()
-    emit('confirmed', { stepUpToken, reason: trimmedReason })
+    emit('confirmed', { stepUpToken, reason: props.requireReason ? trimmedReason : '' })
   } catch (e: any) {
     const code = e?.response?.data?.detail?.code
     if (code === 'CURRENT_PASSWORD_REQUIRED') localError.value = t('backoffice.stepUp.errorWrongPassword')
@@ -157,6 +169,7 @@ function cancel() {
       <p v-if="description" class="text-sm text-gray-600 dark:text-gray-400">{{ description }}</p>
 
       <AppInput
+        v-if="requireReason"
         ref="reasonInputRef"
         v-model="reason"
         :label="t('backoffice.stepUp.reasonLabel')"
@@ -167,6 +180,7 @@ function cancel() {
       />
 
       <AppInput
+        ref="passwordInputRef"
         v-model="password"
         type="password"
         :label="t('backoffice.stepUp.passwordLabel')"

@@ -15,9 +15,10 @@ Endpoints:
     POST /password-reset/confirm   → updates password
 """
 
-from datetime import datetime
+import json
+from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Body, Form, Request, Response
+from fastapi import APIRouter, Depends, Body, Form, Header, Path, Query, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -193,6 +194,12 @@ _STEP_UP_PURPOSES = frozenset({
     "permission_override_upsert",
     "permission_override_revoke",
     "setting_upsert",
+    # Gate 2B3B — self-service session revocation (reuses the exact same
+    # step-up proof mechanism, not a parallel one). These two carry no
+    # free-text reason: revoking your own session is a personal security
+    # action, not an admin control-plane mutation that needs justification.
+    "session_revoke",
+    "other_sessions_revoke",
 })
 
 
@@ -304,11 +311,29 @@ class _SettingUpsertIntent(BaseModel):
         return normalized
 
 
+class _SessionRevokeIntent(BaseModel):
+    """Gate 2B3B — revoke one session (family) by its public reference."""
+    model_config = ConfigDict(extra="forbid")
+    session_ref: str = Field(min_length=1, max_length=32)
+
+
+class _OtherSessionsRevokeIntent(BaseModel):
+    """Gate 2B3B — revoke every session except the caller's current one. The
+    proof is bound to the current session's public reference so it cannot be
+    reused after the current session itself changed. The server re-derives the
+    real current session from the refresh cookie at consumption time — this is
+    the value the client *claims* is current, and a mismatch fails closed."""
+    model_config = ConfigDict(extra="forbid")
+    keep_session_ref: str = Field(min_length=1, max_length=32)
+
+
 _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "user_role_update": _UserRoleUpdateIntent,
     "permission_override_upsert": _PermissionOverrideUpsertIntent,
     "permission_override_revoke": _PermissionOverrideRevokeIntent,
     "setting_upsert": _SettingUpsertIntent,
+    "session_revoke": _SessionRevokeIntent,
+    "other_sessions_revoke": _OtherSessionsRevokeIntent,
 }
 
 
@@ -319,14 +344,45 @@ def build_auth_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    def get_auth_service(db: Session = Depends(get_db)) -> AuthService:
-        return AuthService(db, user_model, settings)
+    def get_auth_service(request: Request, db: Session = Depends(get_db)) -> AuthService:
+        # Gate 2B3B — attach the trusted client IP (resolved with the app's
+        # proxy policy, never a raw X-Forwarded-For) and the request's
+        # User-Agent so the unified auth audit can record them. request_id is
+        # read ambiently from the correlation context var inside the service.
+        from app.core.rate_limit import _client_ip  # noqa: PLC0415
+
+        service = AuthService(db, user_model, settings)
+        service.attach_request_context(
+            ip=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+        return service
 
     def _no_auth():
         from fastapi import HTTPException
         raise HTTPException(501, "get_current_user not configured for this router")
 
     _get_current_user = get_current_user or _no_auth
+
+    def _session_bound_access_token(user, session_ref: Optional[str] = None) -> str:
+        """Mint an access token for the authenticated HTTP session.
+
+        ``sid`` is a non-secret public session reference. The shared auth
+        dependency resolves it against a still-live refresh family on every
+        request, so revoking one session invalidates that session's access
+        token immediately without logging every other device out.
+        """
+        from app.core.kernel.security import create_access_token  # noqa: PLC0415
+
+        claims = {"sub": user.email}
+        if session_ref:
+            claims["sid"] = session_ref
+        return create_access_token(
+            data=claims,
+            secret_key=settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM,
+            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        )
 
     # ── Public routes ─────────────────────────────────────────────────────
 
@@ -351,6 +407,13 @@ def build_auth_router(
         allow_refresh = result.pop("_allow_refresh", True)
         if user and allow_refresh:
             refresh = auth.create_refresh_token(user.id)
+            current = auth.current_session(refresh, expected_user_id=user.id)
+            if current is None:
+                # A refresh family was just committed; failure to resolve it
+                # is an internal invariant violation. Fail closed rather than
+                # issuing an access token that cannot be revoked by session.
+                raise RuntimeError("New refresh session could not be resolved")
+            result["access_token"] = _session_bound_access_token(user, current[1])
             _set_refresh_cookie(
                 response,
                 refresh,
@@ -390,9 +453,6 @@ def build_auth_router(
         الـ refresh_token يُقرأ من httpOnly cookie أولاً (T-01)؛
         fallback لـ body للتوافق مع clients قديمة."""
         from fastapi import HTTPException  # noqa: PLC0415
-        from datetime import timedelta  # noqa: PLC0415
-        from app.core.kernel.security import create_access_token  # noqa: PLC0415
-
         _mark_sensitive_response(response)
 
         # httpOnly cookie هو المصدر الأساسي (T-01) — body كـ fallback
@@ -404,12 +464,10 @@ def build_auth_router(
         if not result:
             raise HTTPException(401, "Invalid or expired refresh token")
         user, new_refresh_token = result
-        access = create_access_token(
-            data={"sub": user.email},
-            secret_key=settings.SECRET_KEY,
-            algorithm=settings.ALGORITHM,
-            expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
-        )
+        current = auth.current_session(new_refresh_token, expected_user_id=user.id)
+        if current is None:
+            raise RuntimeError("Rotated refresh session could not be resolved")
+        access = _session_bound_access_token(user, current[1])
         # refresh_token الجديد في cookie (T-01) — لا يُعاد في body
         _set_refresh_cookie(
             response,
@@ -608,9 +666,15 @@ def build_auth_router(
             scope_hash = step_up_scopes.permission_override_revoke_scope(
                 permission_id=intent.permission_id, reason=intent.reason,
             )
-        else:  # setting_upsert
+        elif payload.purpose == "setting_upsert":
             scope_hash = step_up_scopes.setting_upsert_scope(
                 key=intent.key, branch_id=intent.branch_id, value=intent.value, reason=intent.reason,
+            )
+        elif payload.purpose == "session_revoke":
+            scope_hash = step_up_scopes.session_revoke_scope(session_ref=intent.session_ref)
+        else:  # other_sessions_revoke
+            scope_hash = step_up_scopes.other_sessions_revoke_scope(
+                keep_session_ref=intent.keep_session_ref,
             )
 
         access_token_hash = step_up_scopes.access_token_hash_from_request(request)
@@ -628,5 +692,150 @@ def build_auth_router(
             "expires_at": result["expires_at"],
             "assurance_method": result["assurance_method"],
         }
+
+    # ── Self-service session management (Gate 2B3B) ──────────────────────
+
+    def _consume_session_step_up_or_raise(
+        auth: AuthService,
+        request: Request,
+        current_user,
+        *,
+        purpose: str,
+        scope_hash: str,
+        x_step_up_token: Optional[str],
+    ) -> None:
+        """Reuse Gate 2B3A's proof mechanism for a session-revoke operation.
+        Missing header → 428; any other failure (invalid/expired/replayed/
+        wrong-user/wrong-session/wrong-purpose/wrong-scope) → identical
+        generic 403, so the caller cannot tell why it was rejected."""
+        from fastapi import HTTPException  # noqa: PLC0415
+        from app.core.kernel.auth.step_up import access_token_hash_from_request  # noqa: PLC0415
+
+        if not x_step_up_token:
+            raise HTTPException(428, {
+                "error_code": "STEP_UP_REQUIRED",
+                "message": "يلزم إثبات هوية حديث (كلمة السر + التحقق بخطوتين) قبل إنهاء الجلسة",
+            })
+        result = auth.consume_step_up(
+            user_id=current_user.id,
+            purpose=purpose,
+            scope_hash=scope_hash,
+            access_token_hash=access_token_hash_from_request(request),
+            token=x_step_up_token,
+        )
+        if result is None:
+            raise HTTPException(403, {
+                "error_code": "STEP_UP_INVALID",
+                "message": "إثبات الهوية غير صالح أو منتهي أو مُستخدَم بالفعل — أعد التأكيد وحاول تاني",
+            })
+
+    @router.get("/sessions")
+    def list_sessions(
+        request: Request,
+        current_user=Depends(_get_current_user),
+        auth: AuthService = Depends(get_auth_service),
+    ):
+        """List the current user's own active sessions (refresh-token
+        families). Non-secret DTOs only — never a token/hash or the internal
+        family id. The session that presented the current refresh cookie is
+        flagged ``current``."""
+        current = auth.current_session(
+            request.cookies.get(_REFRESH_COOKIE_NAME),
+            expected_user_id=current_user.id,
+        )
+        current_family_id = current[0] if current else None
+        return {"sessions": auth.list_active_sessions(current_user.id, current_family_id=current_family_id)}
+
+    @router.post("/sessions/revoke-others")
+    def revoke_other_sessions(
+        request: Request,
+        current_user=Depends(_get_current_user),
+        auth: AuthService = Depends(get_auth_service),
+        x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+    ):
+        """Revoke every session the user owns except the current one. The
+        current session is proven server-side from the refresh cookie — the
+        step-up proof is bound to that public reference, so a proof cannot be
+        replayed after the current session changed."""
+        from fastapi import HTTPException  # noqa: PLC0415
+        from app.core.kernel.auth import step_up as step_up_scopes  # noqa: PLC0415
+
+        current = auth.current_session(
+            request.cookies.get(_REFRESH_COOKIE_NAME),
+            expected_user_id=current_user.id,
+        )
+        if current is None:
+            # Without a live current session there is no "others vs current"
+            # distinction to make safely — the client must be on a real
+            # refreshable session to use this.
+            raise HTTPException(400, {
+                "error_code": "NO_CURRENT_SESSION",
+                "message": "لا توجد جلسة حالية صالحة لتنفيذ هذا الإجراء",
+            })
+        current_family_id, current_public_id = current
+        scope_hash = step_up_scopes.other_sessions_revoke_scope(keep_session_ref=current_public_id)
+        _consume_session_step_up_or_raise(
+            auth, request, current_user,
+            purpose="other_sessions_revoke", scope_hash=scope_hash,
+            x_step_up_token=x_step_up_token,
+        )
+        revoked = auth.revoke_other_sessions(current_user.id, keep_family_id=current_family_id)
+        return {"revoked_count": revoked, "message": "تم إنهاء الجلسات الأخرى بنجاح."}
+
+    @router.delete("/sessions/{session_ref}")
+    def revoke_session(
+        request: Request,
+        session_ref: str = Path(..., min_length=1, max_length=32),
+        current_user=Depends(_get_current_user),
+        auth: AuthService = Depends(get_auth_service),
+        x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+    ):
+        """Revoke exactly one session the user owns, by its public reference.
+        Step-up bound to that specific reference. A reference not owned by the
+        caller returns 404 — a user cannot probe another user's sessions."""
+        from fastapi import HTTPException  # noqa: PLC0415
+        from app.core.kernel.auth import step_up as step_up_scopes  # noqa: PLC0415
+
+        scope_hash = step_up_scopes.session_revoke_scope(session_ref=session_ref)
+        _consume_session_step_up_or_raise(
+            auth, request, current_user,
+            purpose="session_revoke", scope_hash=scope_hash,
+            x_step_up_token=x_step_up_token,
+        )
+        if not auth.revoke_session_by_ref(current_user.id, session_ref):
+            raise HTTPException(404, {
+                "error_code": "SESSION_NOT_FOUND",
+                "message": "الجلسة غير موجودة أو تم إنهاؤها بالفعل",
+            })
+        return {"message": "تم إنهاء الجلسة بنجاح."}
+
+    @router.get("/security-activity")
+    def security_activity(
+        current_user=Depends(_get_current_user),
+        auth: AuthService = Depends(get_auth_service),
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+    ):
+        """Paginated, allow-listed view of the current user's OWN
+        authentication activity. Whitelisted fields only — never the raw audit
+        payload, another user's rows, or any secret."""
+        rows, total = auth.list_security_activity(current_user.id, limit=limit, offset=offset)
+        items = []
+        for row in rows:
+            meta = {}
+            if row.new_data:
+                try:
+                    meta = json.loads(row.new_data)
+                except (ValueError, TypeError):
+                    meta = {}
+            items.append({
+                "id": row.id,
+                "action": row.action,
+                "at": row.created_at,
+                "ip_address": row.ip_address,
+                "device": row.user_agent,
+                "request_id": meta.get("request_id"),
+            })
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
 
     return router

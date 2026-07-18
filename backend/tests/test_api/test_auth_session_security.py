@@ -257,9 +257,15 @@ class TestCredentialChangesRevokeSessions:
 
 
 class TestRefreshTokenSafety:
-    def test_rotation_replaces_the_token_and_old_token_cannot_be_replayed(
+    def test_rotation_replaces_token_and_replaying_old_token_revokes_the_family(
         self, app, setup_db,
     ):
+        """Gate 2B3B changed the semantics deliberately: replaying an
+        already-rotated (consumed) refresh token is now a *provable replay*
+        that revokes the ENTIRE family, not just a silent rejection that left
+        the fresh successor usable. Before this gate the successor survived a
+        replay of its parent; now a detected replay cuts off the whole
+        lineage — the correct, stronger security behavior."""
         user_id, _email = _create_user()
         db = TestingSessionLocal()
         try:
@@ -278,13 +284,16 @@ class TestRefreshTokenSafety:
             replacement = isolated_client.cookies.get("refresh_token")
             assert replacement and replacement != old_token
 
+            # Replaying the consumed parent is rejected AND revokes the family.
             isolated_client.cookies.clear()
             assert isolated_client.post(
                 "/api/v1/auth/refresh", json={"refresh_token": old_token},
             ).status_code == 401
+            # The previously-valid successor is now dead too — the family was
+            # revoked by the replay.
             assert isolated_client.post(
                 "/api/v1/auth/refresh", json={"refresh_token": replacement},
-            ).status_code == 200
+            ).status_code == 401
 
     def test_inactive_user_cannot_rotate_refresh_token(self, app, setup_db):
         user_id, _email = _create_user()

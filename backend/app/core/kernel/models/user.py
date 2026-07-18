@@ -131,6 +131,23 @@ class User(Base, UserMixin):
 
 
 class RefreshToken(Base):
+    """A single refresh credential inside a token *family* (Gate 2B3B).
+
+    A family is the lineage of every refresh token descended from one login.
+    Rotation no longer hard-deletes the consumed row — it stamps
+    ``consumed_at`` (a tombstone) and issues a successor in the *same*
+    family. Presenting an already-``consumed_at`` token again is a proven
+    replay: the whole family is revoked atomically (``revoked_at`` on every
+    still-live row) and the user's access tokens are cut off. Only the SHA-256
+    of the bearer token is ever stored, exactly as before.
+
+    ``family_id`` is the internal, random (never derived from ``user_id``)
+    lineage key used for revocation; ``family_public_id`` is the separate,
+    non-secret handle the self-service UI lists and revokes by — the internal
+    ``family_id``/``token_hash``/``successor_token_hash`` are never exposed to
+    a client.
+    """
+
     __tablename__ = "refresh_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -139,6 +156,29 @@ class RefreshToken(Base):
     device_fingerprint = Column(String(255), nullable=True)
     expires_at = Column(TIMESTAMP, nullable=False)
     created_at = Column(TIMESTAMP, server_default=func.now())
+
+    # ── Gate 2B3B: token families + replay detection ──────────────────────
+    # Random lineage key (secrets.token_hex, never derived from user_id).
+    # Every successor of one login shares it; revocation targets it.
+    family_id = Column(String(64), nullable=False, index=True, server_default="")
+    # Separate non-secret handle the self-service UI lists/revokes by — never
+    # the internal family_id/token_hash.
+    family_public_id = Column(String(32), nullable=False, index=True, server_default="")
+    # True session start = the original login, carried forward across every
+    # rotation (created_at resets each refresh and reads as "last activity").
+    family_started_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # Tombstone: set when this exact token is rotated. Its presence is what
+    # makes a later re-presentation a *provable* replay rather than a plain
+    # unknown/expired token.
+    consumed_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # Set on every live row of a family when the family is revoked (replay
+    # detected, password/credential change, or explicit session revoke).
+    revoked_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    # SHA-256 of the successor's bearer token — a debuggable lineage pointer,
+    # never a usable secret (it is a one-way hash, same as token_hash).
+    successor_token_hash = Column(String(64), nullable=True)
+    # Limited, sanitized device description for the self-service session list.
+    user_agent = Column(String(255), nullable=True)
 
 
 class TwoFactorRecoveryCode(Base):

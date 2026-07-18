@@ -14,6 +14,11 @@ export const ENDPOINTS = {
     passwordResetConfirm: '/api/v1/auth/password-reset/confirm',
     // Gate 2B3A — step-up control plane (docs/decisions/0003-super-admin-control-plane.md)
     stepUp: '/api/v1/auth/step-up',
+    // Gate 2B3B — session & security self-service. Single-session DELETE builds
+    // its URL as `${ENDPOINTS.auth.sessions}/${ref}` (step-up token required).
+    sessions: '/api/v1/auth/sessions',
+    sessionsRevokeOthers: '/api/v1/auth/sessions/revoke-others',
+    securityActivity: '/api/v1/auth/security-activity',
   },
   core: {
     branches: '/api/v1/branches',

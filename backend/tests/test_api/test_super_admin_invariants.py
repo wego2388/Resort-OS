@@ -169,6 +169,16 @@ class TestPermissionOverrideCannotTargetSuperAdmin:
 
         from app.modules.core import crud as core_crud
         assert core_crud.find_explicit_permission(db, sa_id, "dining.void_order_item", "execute") is None
+        from app.modules.core.models import AuditLog
+        db.expire_all()
+        audit = db.query(AuditLog).filter(
+            AuditLog.user_id == actor_id,
+            AuditLog.entity_id == sa_id,
+            AuditLog.action == "permission_override_rejected",
+        ).order_by(AuditLog.id.desc()).first()
+        assert audit is not None
+        assert "SUPER_ADMIN_PERMISSION_OVERRIDE_FORBIDDEN" in (audit.new_data or "")
+        assert actor_secret not in (audit.new_data or "")
 
     def test_grant_rejects_inactive_super_admin_target(self, client: TestClient, db):
         from app.core.kernel.models.user import User
@@ -300,6 +310,14 @@ class TestSelfLockoutForbidden:
         user = db.query(User).filter(User.id == sa_id).first()
         assert user.role == "super_admin"
         assert user.is_active is True
+        from app.modules.core.models import AuditLog
+        audit = db.query(AuditLog).filter(
+            AuditLog.user_id == sa_id,
+            AuditLog.entity_id == sa_id,
+            AuditLog.action == "role_update_rejected",
+        ).order_by(AuditLog.id.desc()).first()
+        assert audit is not None
+        assert "SUPER_ADMIN_SELF_LOCKOUT_FORBIDDEN" in (audit.new_data or "")
 
     def test_self_deactivation_rejected(self, client: TestClient, db):
         sa_id, sa_headers, sa_secret = _fresh_super_admin("self-deactivate")
@@ -353,9 +371,8 @@ class TestSelfLockoutForbidden:
         assert resp_empty.status_code == 200, resp_empty.text
 
     def test_rejected_self_lockout_does_not_revoke_tokens(self, client: TestClient, db):
-        """رفض self-lockout لازم يفضل بلا أثر جانبي خالص — الرفض بيحصل
-        قبل أي revoke_user_tokens/commit، فنفس التوكن يفضل شغال بعد المحاولة
-        المرفوضة."""
+        """رفض self-lockout لا يغيّر الحساب ولا يبطل الجلسة. Gate 2B3B
+        يضيف فقط سجل تدقيق للمحاولة المرفوضة، لذلك نفس التوكن يظل صالحًا."""
         sa_id, sa_headers, sa_secret = _fresh_super_admin("self-noeffect")
         reason = "محاولة (يجب رفضها) ترقية/تخفيض الحساب الحالي بنفسه"
         token = _issue_step_up(
