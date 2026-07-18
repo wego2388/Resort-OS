@@ -93,6 +93,14 @@ class Settings(CoreSettings):
     # (كل حساب = محاولة تسجيل دخول منفصلة على نفس الـ IP).
     LOGIN_RATE_LIMIT_MAX: int = 5
     LOGIN_RATE_LIMIT_WINDOW_SECONDS: int = 300
+    AUTH_REFRESH_RATE_LIMIT_MAX: int = 60
+    AUTH_REFRESH_RATE_LIMIT_WINDOW_SECONDS: int = 60
+    AUTH_SENSITIVE_RATE_LIMIT_MAX: int = 10
+    AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS: int = 300
+    PASSWORD_RESET_REQUEST_RATE_LIMIT_MAX: int = 10
+    PASSWORD_RESET_REQUEST_RATE_LIMIT_WINDOW_SECONDS: int = 900
+    PASSWORD_RESET_ACCOUNT_RATE_LIMIT_MAX: int = 3
+    PASSWORD_RESET_ACCOUNT_RATE_LIMIT_WINDOW_SECONDS: int = 900
 
     # ── Rate limiting: trusted reverse-proxy hop count (Codex security
     # review، 2026-07-17) ───────────────────────────────────────────────

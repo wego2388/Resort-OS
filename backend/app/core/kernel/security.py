@@ -49,8 +49,13 @@ def create_access_token(
     expires_delta: Optional[timedelta] = None,
 ) -> str:
     payload = data.copy()
-    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
-    payload.update({"exp": expire, "iat": datetime.now(timezone.utc)})
+    now = datetime.now(timezone.utc)
+    expire = now + (expires_delta or timedelta(minutes=15))
+    # Keep sub-second precision for iat. Session revocation stores a precise
+    # cutoff timestamp; integer-second JWT dates can otherwise reject a fresh
+    # login made later in the same second as a password/role change (or leave
+    # an older token from that second indistinguishable from the new one).
+    payload.update({"exp": expire, "iat": now.timestamp()})
     return jwt.encode(payload, secret_key, algorithm=algorithm)
 
 

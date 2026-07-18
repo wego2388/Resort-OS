@@ -86,6 +86,22 @@ def _client_ip(request: Request) -> str:
 _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("POST", "/api/v1/auth/login"):    ("login", settings.LOGIN_RATE_LIMIT_MAX, settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS),
     ("POST", "/api/v1/auth/register"): ("login", settings.LOGIN_RATE_LIMIT_MAX, settings.LOGIN_RATE_LIMIT_WINDOW_SECONDS),
+    ("POST", "/api/v1/auth/refresh"): (
+        "auth-refresh", settings.AUTH_REFRESH_RATE_LIMIT_MAX,
+        settings.AUTH_REFRESH_RATE_LIMIT_WINDOW_SECONDS,
+    ),
+    ("POST", "/api/v1/auth/password-reset/request"): (
+        "password-reset-request", settings.PASSWORD_RESET_REQUEST_RATE_LIMIT_MAX,
+        settings.PASSWORD_RESET_REQUEST_RATE_LIMIT_WINDOW_SECONDS,
+    ),
+    ("POST", "/api/v1/auth/password-reset/confirm"): (
+        "password-reset-confirm", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+        settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+    ),
+    ("POST", "/api/v1/auth/change-password"): (
+        "password-change", settings.AUTH_SENSITIVE_RATE_LIMIT_MAX,
+        settings.AUTH_SENSITIVE_RATE_LIMIT_WINDOW_SECONDS,
+    ),
     ("POST", "/api/v1/hub/contact"):   ("public", 30, 60),
     ("GET",  "/api/v1/hub/blog/posts"): ("public", 30, 60),
     ("GET",  "/api/v1/pms/public/room-types"): ("public", 30, 60),

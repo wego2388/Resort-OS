@@ -178,3 +178,20 @@ class UserRepository(BaseRepository):
         return self.db.query(self.model).filter(
             self.model.role == role
         ).offset(skip).limit(limit).all()
+
+
+def delete_refresh_tokens_for_user(db: Session, user_id: int) -> int:
+    """Delete every refresh session owned by ``user_id`` without committing.
+
+    The caller owns the transaction so a credential/role mutation and refresh
+    revocation can be committed atomically. Access-token invalidation lives in
+    ``app.core.deps.revoke_user_tokens`` because that uses the shared cache;
+    this helper deliberately handles database persistence only.
+    """
+    from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
+
+    return (
+        db.query(RefreshToken)
+        .filter(RefreshToken.user_id == user_id)
+        .delete(synchronize_session=False)
+    )

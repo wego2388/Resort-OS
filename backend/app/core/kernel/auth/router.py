@@ -19,7 +19,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Body, Form, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.orm import Session
 from typing import Callable, Optional
 
@@ -86,6 +86,57 @@ class _PublicUserOut(BaseModel):
     created_at: Optional[datetime] = None
 
 
+class _RefreshRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    refresh_token: str = Field(default="", max_length=512)
+    device_fingerprint: Optional[str] = Field(default=None, max_length=255)
+
+
+class _PasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(min_length=1, max_length=320)
+
+
+class _PasswordResetConfirm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=512)
+    new_password: str = Field(min_length=1, max_length=1024)
+
+
+class _LogoutRequest(BaseModel):
+    """Body token remains a compatibility fallback for older API clients."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(default="", max_length=4096)
+
+
+class _ChangePasswordRequest(BaseModel):
+    """Canonical frontend contract plus the legacy backend field alias."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    current_password: Optional[str] = Field(default=None, min_length=1, max_length=1024)
+    old_password: Optional[str] = Field(default=None, min_length=1, max_length=1024)
+    new_password: str = Field(min_length=1, max_length=1024)
+
+    @model_validator(mode="after")
+    def _validate_current_password_fields(self) -> "_ChangePasswordRequest":
+        if not self.current_password and not self.old_password:
+            raise ValueError("current_password is required")
+        if self.current_password and self.old_password and self.current_password != self.old_password:
+            raise ValueError("current_password and old_password must match when both are supplied")
+        return self
+
+    @property
+    def verified_current_password(self) -> str:
+        # The validator above guarantees one of these values is present.
+        return self.current_password or self.old_password or ""
+
+
 def build_auth_router(
     user_model,
     settings,
@@ -140,7 +191,7 @@ def build_auth_router(
     def refresh(
         response: Response,
         request: Request,
-        payload: dict = Body(default={}),
+        payload: Optional[_RefreshRequest] = Body(default=None),
         auth: AuthService = Depends(get_auth_service),
     ):
         """يستبدل refresh_token بـ access_token جديد (rotation).
@@ -151,8 +202,10 @@ def build_auth_router(
         from app.core.kernel.security import create_access_token  # noqa: PLC0415
 
         # httpOnly cookie هو المصدر الأساسي (T-01) — body كـ fallback
-        token = request.cookies.get(_REFRESH_COOKIE_NAME) or payload.get("refresh_token", "")
-        fingerprint = payload.get("device_fingerprint")
+        token = request.cookies.get(_REFRESH_COOKIE_NAME) or (
+            payload.refresh_token if payload else ""
+        )
+        fingerprint = payload.device_fingerprint if payload else None
         result = auth.rotate_refresh_token(token, fingerprint)
         if not result:
             raise HTTPException(401, "Invalid or expired refresh token")
@@ -172,11 +225,11 @@ def build_auth_router(
 
     @router.post("/password-reset/request")
     async def password_reset_request(
-        payload: dict = Body(...),
+        payload: _PasswordResetRequest,
         auth: AuthService = Depends(get_auth_service),
     ):
         """Generate a reset token and (optionally) send it via email."""
-        email = payload.get("email", "")
+        email = payload.email.strip()
         token = auth.create_password_reset_token(email)
         if token:
             try:
@@ -188,11 +241,16 @@ def build_auth_router(
 
     @router.post("/password-reset/confirm")
     def password_reset_confirm(
-        payload: dict = Body(...),
+        response: Response,
+        payload: _PasswordResetConfirm,
         auth: AuthService = Depends(get_auth_service),
     ):
-        auth.confirm_password_reset(payload["token"], payload["new_password"])
-        return {"message": "Password updated successfully."}
+        auth.confirm_password_reset(payload.token, payload.new_password)
+        _clear_refresh_cookie(response)
+        return {
+            "message": "Password updated successfully.",
+            "reauthentication_required": True,
+        }
 
     # ── Authenticated routes ───────────────────────────────────────────────
 
@@ -200,28 +258,42 @@ def build_auth_router(
     def logout(
         response: Response,
         request: Request,
-        payload: dict = Body(default={}),
+        payload: Optional[_LogoutRequest] = Body(default=None),
         current_user=Depends(_get_current_user),
         auth: AuthService = Depends(get_auth_service),
     ):
-        token = payload.get("token", "")
-        auth.revoke_token(token, current_user.id)
+        auth_header = request.headers.get("Authorization", "")
+        access_token = (
+            auth_header.removeprefix("Bearer ")
+            if auth_header.startswith("Bearer ")
+            else (payload.token if payload else "")
+        )
+        auth.revoke_session(
+            access_token=access_token,
+            refresh_token=request.cookies.get(_REFRESH_COOKIE_NAME, ""),
+            user_id=current_user.id,
+        )
         # امسح الـ refresh_token cookie (T-01)
         _clear_refresh_cookie(response)
         return {"message": "Logged out successfully."}
 
     @router.post("/change-password")
     def change_password(
-        payload: dict = Body(...),
+        response: Response,
+        payload: _ChangePasswordRequest,
         current_user=Depends(_get_current_user),
         auth: AuthService = Depends(get_auth_service),
     ):
         auth.change_password(
             current_user,
-            payload["old_password"],
-            payload["new_password"],
+            payload.verified_current_password,
+            payload.new_password,
         )
-        return {"message": "Password changed successfully."}
+        _clear_refresh_cookie(response)
+        return {
+            "message": "Password changed successfully.",
+            "reauthentication_required": True,
+        }
 
     @router.post("/2fa/setup")
     def setup_2fa(

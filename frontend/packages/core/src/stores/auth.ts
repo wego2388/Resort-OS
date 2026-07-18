@@ -118,12 +118,24 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  function logout() {
-    // نبلّغ الـ backend يمسح الـ refresh_token cookie — fire and forget
-    api.post(ENDPOINTS.auth.logout, { token: token.value ?? '' }, { withCredentials: true }).catch(() => {})
-    _setToken(null)
-    user.value = null
-    window.location.replace('/login')
+  async function logout() {
+    // لازم نستنى رد السيرفر قبل تغيير الصفحة؛ التنقل الفوري كان ممكن يقطع
+    // طلب الـlogout ويترك refresh session صالحة على السيرفر رغم إن الواجهة
+    // بدت للمستخدم كأنها خرجت. الفشل الشبكي لا يمنع التنظيف المحلي.
+    const accessToken = token.value ?? ''
+    try {
+      await api.post(
+        ENDPOINTS.auth.logout,
+        { token: accessToken },
+        { withCredentials: true, timeout: 5_000 },
+      )
+    } catch {
+      // Offline/server failure: local credentials still must disappear.
+    } finally {
+      _setToken(null)
+      user.value = null
+      window.location.replace('/login')
+    }
   }
 
   return {

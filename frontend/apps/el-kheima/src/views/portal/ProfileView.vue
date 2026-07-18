@@ -49,7 +49,10 @@ async function changePassword() {
     })
     pwMsg.value = 'تم تغيير كلمة المرور بنجاح ✓'
     pwForm.value = { current_password: '', new_password: '', confirm_password: '' }
-    setTimeout(() => pwMsg.value = '', 4000)
+    // Credential changes intentionally revoke every access/refresh session.
+    // Reloading clears the in-memory access token and starts a clean login
+    // instead of leaving the user on a screen with a revoked credential.
+    setTimeout(() => window.location.replace('/login'), 900)
   } catch(e: any) {
     pwError.value = e?.response?.data?.detail ?? 'كلمة المرور الحالية غير صحيحة'
   } finally { pwLoading.value = false }

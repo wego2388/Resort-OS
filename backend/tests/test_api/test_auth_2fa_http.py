@@ -9,6 +9,7 @@ accountant (MANDATORY_2FA_ROLES في app/core/deps.py) كان يقدر يعطّ�
 """
 from __future__ import annotations
 
+import base64
 import os
 
 import pyotp
@@ -60,6 +61,15 @@ class TestTwoFactorSetupFlow:
         body = res.json()
         assert "secret" in body and len(body["secret"]) > 0
         assert "provisioning_uri" in body
+        # The old implementation returned an api.qrserver.com URL containing
+        # the full otpauth URI. Rendering that image disclosed the permanent
+        # TOTP seed to a third party. The QR must now be self-contained.
+        assert body["qr_url"].startswith("data:image/png;base64,")
+        assert "http://" not in body["qr_url"]
+        assert "https://" not in body["qr_url"]
+        assert body["secret"] not in body["qr_url"]
+        png = base64.b64decode(body["qr_url"].split(",", 1)[1])
+        assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
     def test_enable_with_valid_code_succeeds(self, client, setup_db):
         secret = _create_user_with_secret("2fa-enable@test.local", "manager", enabled=False)

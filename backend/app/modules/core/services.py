@@ -331,6 +331,9 @@ def update_user_role(
     AuditLog لمحاولة *مرفوضة* مؤجَّلة عمدًا لمرحلة audit/step-up القادمة
     (Gate 2B+)، عشان معاملة الرفض تفضل قراءة فقط بدون commit مستقل."""
     from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+    from app.core.kernel.auth.repository import (  # noqa: PLC0415
+        delete_refresh_tokens_for_user,
+    )
 
     active_super_admins = crud.lock_active_super_admins(db)
     active_super_admin_ids = {u.id for u in active_super_admins}
@@ -396,9 +399,14 @@ def update_user_role(
             old_data=json.dumps(old_data),
             new_data=json.dumps({"role": final_role, "is_active": final_is_active}),
         ))
-        revoke_user_tokens(user.id)
+        # Refresh sessions are database state and therefore belong to the same
+        # transaction as the role/status mutation. The access-token cutoff is
+        # a cache side effect and is published only after the commit succeeds.
+        delete_refresh_tokens_for_user(db, user.id)
 
     db.commit()
+    if changed:
+        revoke_user_tokens(user.id)
     db.refresh(user)
     return user
 

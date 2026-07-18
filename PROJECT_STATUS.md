@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1,885 ناجح، 10 skipped، صفر فشل** ✅ + **5/5 Dining concurrency** + **2/2 Super Admin concurrency** حقيقية على PostgreSQL (2026-07-18، بعد اعتماد Gate 1B وGate 2A) |
+| **الاختبارات** | **1,903 ناجح، 11 skipped، صفر فشل** ✅ + **5/5 Dining** + **2/2 Super Admin** + **1/1 Refresh rotation** concurrency حقيقية على PostgreSQL (2026-07-18؛ Gate 2B1 منفذة وتنتظر مراجعة مستقلة) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
@@ -259,6 +259,40 @@ settings registry.
 "آخر super_admin نشط"، وسجل مراجعتي Codex): `docs/audits/
 gate-2a-super-admin-invariants.md`. **تم عمل checkpoint** (commitين
 منظمين على `gate-2a-super-admin-invariants`، بدون push).
+
+---
+
+## 🔑 Gate 2B1 — كلمة السر ودورة الجلسة: منفذة وتنتظر مراجعة Claude (2026-07-18)
+
+الفحص العملي وجد أن تغيير كلمة السر من شاشة البروفايل كان معطّلًا لكل
+الأدوار بسبب اختلاف `current_password` في الفرونت عن `old_password` غير
+الـtyped في الباك إند، وأن admin/super_admin كانا يتجاوزان تحقق كلمة السر
+الحالية عبر API. تغيير/reset كلمة السر وتعطيل الحساب لم تكن تلغي كل
+الجلسات، وrefresh rotation لم تكن ذرّية تحت التزامن. reset tokens كانت
+مخزنة خامًا، وlogout لا يستهلك refresh cookie من السيرفر.
+
+أخطر اكتشاف إضافي: شاشة إعداد 2FA كانت تعرض QR من خدمة خارجية عنوانها
+يحمل `otpauth://` كاملًا، وبالتالي ترسل سر TOTP الدائم لطرف ثالث. أصبح QR
+يتولد محليًا كـPNG data URI باستخدام dependency موجودة بالفعل.
+
+تم توحيد عقد تغيير كلمة السر مع توافق مؤقت للاسم القديم، وفرض كلمة السر
+الحالية على كل الأدوار، وإلغاء access/refresh sessions بعد change/reset،
+وحذف refresh sessions داخل معاملة تغيير role/status في Gate 2A. أصبحت
+refresh rotation معاملة واحدة باستهلاك شرطي، وlogout يلغي access header
+وrefresh cookie، وتُخزّن reset tokens الجديدة كـhash مع رابط حي واحد لكل
+حساب. أضيفت حدود مستقلة لمسارات auth الحساسة وحد account-scoped لطلبات
+reset. لا migration جديدة.
+
+**التحقق:** **1,914 collected؛ 1,903 passed؛ 11 skipped؛ صفر فشل**، واختبار
+refresh race جديد نجح **1/1 على PostgreSQL حي**، وfrontend type-check/build
+ناجحان. التفاصيل في
+`docs/audits/gate-2b1-auth-session-lifecycle.md`.
+
+**الحالة:** تغييرات غير committed على `gate-2b-authentication-step-up`؛
+بانتظار مراجعة Claude المستقلة، وليست Acceptance بعد. لا يبدأ Gate 2B2
+قبل إغلاق هذه الشريحة. المؤجل عمدًا: auth audit، bootstrap آمن بدل كلمة
+السر الافتراضية، فرض TOTP في production، recent-auth/step-up، recovery
+codes، وrefresh-token family reuse detection.
 
 ---
 
