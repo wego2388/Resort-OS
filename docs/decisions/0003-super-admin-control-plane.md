@@ -168,6 +168,24 @@ forward migrations and include rollback/data-impact reasoning.
 
 ## Current status
 
-The direction is approved. No authorization, settings, database, or frontend
-behavior was changed when this record was created. These backend safeguards and
-the bilingual control center are mandatory gates before Public Phase 0.
+The direction remains approved and is now partially implemented in isolated
+gates:
+
+- Gate 2A is accepted: permission semantics, self-lockout, last-active-admin,
+  and concurrent role-change invariants are enforced.
+- Gate 2B1 is accepted: password/session lifecycle, atomic refresh rotation,
+  and local TOTP QR generation are enforced.
+- Gate 2B2 is accepted: production TOTP is fail-closed, privileged bootstrap
+  has no static production password, enrollment uses a separate expiring
+  token, temporary credentials are restricted, and TOTP/recovery codes are
+  single-use. Independently re-verified: full backend suite, 3 real-Postgres
+  concurrency proofs, and a full migration upgrade/downgrade/upgrade cycle.
+- Reusable recent-auth/step-up for role, permission, and global-setting changes
+  plus the typed settings control center remain Gate 2B3/later work. Gate 2B3
+  began as a read-only design analysis on `gate-2b3-step-up-control-plane`
+  after Gate 2B2's acceptance, with no implementation yet.
+
+See `docs/audits/gate-2a-super-admin-invariants.md`,
+`docs/audits/gate-2b1-auth-session-lifecycle.md`, and
+`docs/audits/gate-2b2-totp-bootstrap-recovery.md`. None of these gates alone is
+a claim that the complete platform is production-ready.

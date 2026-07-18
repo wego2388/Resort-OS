@@ -15,19 +15,19 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1,903 ناجح، 11 skipped، صفر فشل** ✅ + **5/5 Dining** + **2/2 Super Admin** + **1/1 Refresh rotation** concurrency حقيقية على PostgreSQL (2026-07-18؛ Gate 2B1 مُعتمَدة نهائيًا) |
+| **الاختبارات** | **1,924 ناجح، 13 skipped، صفر فشل** ✅ + **5/5 Dining** + **2/2 Super Admin** + **3/3 Auth consume** concurrency حقيقية على PostgreSQL (2026-07-18؛ Gate 2B2 مُعتمَدة) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
-| **الاستضافة** | جاهز للـ VPS (docker-compose + Dockerfiles + DEPLOYMENT.md) — **لسه ما جربناهوش على سيرفر حقيقي** |
+| **الاستضافة** | هيكل VPS موجود (Compose + Dockerfiles + DEPLOYMENT.md)، لكنه **غير مُثبت على سيرفر حقيقي** وتهيئة reference data للإنتاج ما زالت بوابة مفتوحة |
 | **الاعتماديات** | **مستقل 100%** — مفيش أي اعتماد على `wego_core` أو أي باكدج خارجي مشترك (اتأكد منه live 2026-07-03) |
 | **النسخ الاحتياطي** | `scripts/backup_db.sh` + `restore_db.sh` + systemd timer، اتجرّب backup→restore→مقارنة بيانات فعليًا |
-| **التشغيل** | `scripts/start.sh`/`stop.sh`/`status.sh`/`restart.sh`/`logs.sh` — حساب تجريبي واحد لكل دور (12 حساب) |
+| **التشغيل** | `scripts/start.sh`/`stop.sh`/`status.sh`/`restart.sh`/`logs.sh` — الحسابات التجريبية الـ12 مسموحة في development/test فقط |
 | **الدستور الهندسي** | `CLAUDE.md` بقى فيه دستور CTO كامل (أولويات 70% جودة/20% تنضيج/10% ميزات جديدة) — راجعه أول أي جلسة |
 
 ---
 
-## 🧭 قرارات معتمدة قبل Public Phase 0 — لم تُنفذ برمجيًا بعد
+## 🧭 قرارات معتمدة قبل Public Phase 0 — حالة التنفيذ موضحة تحت كل Gate
 
 في 2026-07-17 اعتمد Mohamed بوابتين تسبقان نقل الموقع العام:
 
@@ -298,6 +298,59 @@ type-check/build. implementation checkpoint:
 آمن بدل كلمة السر الافتراضية، فرض TOTP في production، recent-auth/step-up،
 recovery codes، وrefresh-token family reuse detection. تبدأ Gate 2B2 في
 فرع/checkpoint مستقل بعد تحليل rollout يمنع lockout أو استحواذ أول enrollment.
+
+---
+
+## 🔐 Gate 2B2 — Bootstrap وTOTP والاسترداد: مُنفَّذة ومُعتمَدة (2026-07-18)
+
+الفحص أثبت أن مجرد تحويل `LOGIN_2FA_ENFORCED=true` كان غير آمن: حساب
+Super Admin الافتراضي وكلمة مروره معروفان في seed، وأول شخص يدخل كان يقدر
+يربط TOTP بهاتفه. لم توجد كلمة مرور مؤقتة إجبارية أو enrollment token أو
+recovery codes، وseed نفسه كان قادرًا على إنشاء بيانات تجريبية كاملة في
+production لو شُغّل هناك.
+
+تم بناء control plane محلي تفاعلي (`python -m app.admin_bootstrap
+create|recover`) يولّد كلمة مرور عشوائية ورمز تهيئة منفصل محدود العمر، من
+غير قبول أسرار في command arguments أو env. الحساب يظل محصورًا في رحلة
+تغيير الكلمة ثم ربط TOTP، ولا يحصل على refresh cookie قبل اكتمالها. أضيفت
+8 أكواد استرداد 120-bit تُعرض مرة واحدة وتُخزن hash، ومنع replay لنفس
+TOTP/recovery code تحت التزامن. `recover` يحافظ على الدور ولا يصعّد حسابًا،
+وترقية/تفعيل `super_admin` أو `accountant` تُرفض قبل تفعيل 2FA.
+
+أضيفت migration `a7c2e91f4b6d` غير مدمرة، وproduction/staging/أي اسم بيئة
+غير معروف يفشل الإقلاع ما لم يكن TOTP مفروضًا ومفتاح Fernet صالحًا.
+`app.seed` أصبح محصورًا صراحةً في development/test/testing. تطبيق الموظفين
+أصبح يشرح وينفذ الرحلة كاملة بالعربي والإنجليزي، بما فيها الدخول بكود
+استرداد وتجديد الأكواد وتغيير كلمة المرور المؤقتة.
+
+**التحقق الحالي:** دورة migration upgrade→downgrade→upgrade نجحت على
+PostgreSQL مؤقتة، و3/3 اختبارات تزامن حقيقية (refresh/recovery/TOTP) نجحت،
+وfrontend type-check/build نجحا. الـfull suite: **1,937 مجمّع؛ 1,924 ناجح؛
+13 skipped؛ صفر فشل**، وAlembic له رأس واحد `a7c2e91f4b6d`.
+
+**مراجعة Claude المستقلة:** راجعت الـdiff كاملًا (31 ملف) سطرًا بسطر —
+مش تصديق تقرير التنفيذ — وأعادت تشغيل كل شيء بنفسها: 79 اختبارًا مستهدفًا،
+الـfull suite (1,924 ناجح/13 skipped/صفر فشل)، 3/3 اختبارات تزامن حقيقية
+على PostgreSQL، ودورة migration كاملة (upgrade→downgrade→upgrade) على
+قاعدة معزولة اتعملها واتمسحت خصيصًا للمراجعة. **صفر ملاحظة Critical/High/
+Medium.** ملاحظتان Low فقط (تكرار ثابت بيئات آمنة بلا خطر، وكود ميت قديم)
+اتأجلتا عمدًا.
+
+**الحالة: مُعتمَدة.** commitين منظمين على فرع `gate-2b2-totp-bootstrap`،
+بدون push:
+- `c78e7ba fix(security): enforce secure TOTP bootstrap and recovery`
+- `docs: record Gate 2B2 acceptance`
+
+**تنويه تشغيلي (مش عيب في الشريحة نفسها):** `.env.prod` الحقيقي لسه
+`LOGIN_2FA_ENFORCED=false` — السيرفر الحقيقي هيرفض الإقلاع بعد نشر الفرع
+ده لحد ما يتحدّث الإعداد ده والتأكد من `FIELD_ENCRYPTION_KEY`. هذا سلوك
+مقصود (fail-closed)، لكنه خطوة تشغيلية إلزامية قبل أي نشر جديد.
+
+**مهم:** هذا الاعتماد يخص شريحة bootstrap/TOTP/الاسترداد فقط — **لا يعني
+أن المشروع ككل production-ready**. Gate 2B3 (step-up/recent-auth عام
+للأدوار والصلاحيات والإعدادات) ما زالت مطلوبة، وفجوة بيانات المرجع
+للإنتاج (production reference-data) لسه غير محلولة. التفاصيل الكاملة:
+`docs/audits/gate-2b2-totp-bootstrap-recovery.md`.
 
 ---
 
