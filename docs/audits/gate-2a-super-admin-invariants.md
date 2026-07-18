@@ -303,7 +303,7 @@ audit) اتشال بالكامل — بقى dead code فور ما role/is_active
 بينجح من غير ما يختبر أي حاجة فعليًا، ومكانش فيه أصلاً أي assertion على
 عدد/هوية super_admin النشطين قبل التصحيح.
 
-**الإصلاح**: 
+**الإصلاح**:
 - اختيار الناجي اتصحّح (`still_super_admin_id = a_id if outcome["x"][0] == "ok" else b_id`).
 - اتضافت assertions صريحة: معاملة واحدة بالظبط تنجح والتانية تفشل، والفشل
   لازم يكون بسبب `ActorSuperAdminPrivilegesChangedError` أو
