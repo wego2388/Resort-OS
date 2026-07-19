@@ -66,7 +66,7 @@ export const PROJECT_SNAPSHOT = {
   updatedAt: '2026-07-19',
   sourcePath: 'wagdy.md',
   sourceRevision: '2083567 feat(frontend): establish bilingual UI quality foundation',
-  branchAtSnapshot: 'gate-3-ui-i18n-quality-foundation',
+  branchAtSnapshot: 'gate-4-dining-payment-shift-order-integrity',
   baseline: {
     modules: 13,
     backendTestsPassed: 1992,
