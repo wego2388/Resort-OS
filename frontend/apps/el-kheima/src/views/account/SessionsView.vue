@@ -22,11 +22,13 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppButton, AppBadge, AppSpinner, EmptyState, Paginator, useToast } from '@resort-os/ui'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
 import StepUpConfirmModal from '../../components/StepUpConfirmModal.vue'
 
-const { t, te, locale } = useI18n()
+const { t, te } = useI18n()
+const { formatDateTime } = useStaffFormat()
 const toast = useToast()
 const router = useRouter()
 
@@ -107,10 +109,8 @@ function actionLabel(action: string): string {
   return te(key) ? t(key) : action
 }
 
-// ── Formatting (locale-aware, like Gate 2B3A's SettingsView date fix) ───────
-function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString(locale.value === 'ar' ? 'ar-EG' : 'en-US')
-}
+// Formatting is centralized in @resort-os/core's useStaffFormat (locale-aware,
+// tabular Latin digits, timezone-safe) — see formatDateTime above.
 
 function deviceLabel(device: string | null): string {
   return device && device.trim() ? device : t('account.sessions.unknownDevice')

@@ -10,5 +10,5 @@
 
 @layer base {
   body { font-family: 'Cairo', sans-serif; }
-  /* لا تحدد direction هنا — بيتظبط ديناميكيًا في switchLocale() */
+  /* لا تحدد direction هنا — بيتظبط على document root في switchLocale() */
 }

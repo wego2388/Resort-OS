@@ -528,7 +528,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 </script>
 
 <template>
-  <div class="flex flex-col h-full" dir="rtl">
+  <!-- Direction inherited from <html dir> (central staff locale controller). -->
+  <div class="flex flex-col h-full">
 
     <!-- ── Offline banner — visible الطول، مش toast بيختفي (راجع RestaurantPOSView) ── -->
     <div

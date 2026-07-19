@@ -9,7 +9,10 @@
     "./stores": "./src/stores/index.ts",
     "./types": "./src/types/index.ts",
     "./composables": "./src/composables/index.ts",
-    "./i18n": "./src/i18n/index.ts"
+    "./i18n": "./src/i18n/index.ts",
+    "./i18n/staff": "./src/i18n/staff.ts",
+    "./i18n/controller": "./src/i18n/controller.ts",
+    "./i18n/format": "./src/i18n/format.ts"
   },
   "dependencies": {
     "idb": "^8.0.3",

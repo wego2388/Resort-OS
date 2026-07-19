@@ -3409,6 +3409,7 @@
   "backoffice": {
     "nav": {
       "operations": "Operations",
+      "reception": "Reception",
       "rooms": "Rooms",
       "bookings": "Bookings",
       "housekeeping": "Housekeeping",
@@ -3564,7 +3565,30 @@
       "resortOs": "Resort OS",
       "today": "Today",
       "languageLabel": "Language",
-      "selectLanguage": "Select Language"
+      "selectLanguage": "Select Language",
+      "languageSaveFailed": "Could not save your language, please try again",
+      "quickSearch": "Quick Search",
+      "searchPlaceholder": "Search pages and actions..."
+    },
+    "profile": {
+      "title": "My Profile",
+      "loading": "Loading...",
+      "loadFailed": "Could not load your profile",
+      "email": "Email",
+      "phone": "Phone",
+      "hireDate": "Hire date",
+      "changePassword": "Change Password",
+      "currentPassword": "Current password",
+      "newPassword": "New password",
+      "confirmPassword": "Confirm password",
+      "newPasswordHint": "At least 8 characters",
+      "saving": "Saving...",
+      "savePassword": "Save password",
+      "passwordChanged": "Password changed successfully ✓",
+      "fillAllFields": "Please fill in all fields",
+      "passwordsMismatch": "Passwords do not match",
+      "passwordTooShort": "Password must be at least 8 characters",
+      "currentPasswordWrong": "Current password is incorrect"
     },
     "langSwitcher": {
       "ar": "العربية",

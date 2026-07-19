@@ -1,10 +1,16 @@
 <script setup lang="ts">
+// Gate 3B — Account/Profile reference screen migrated to the shared i18n
+// runtime + @resort-os/ui primitives. Direction is inherited from <html dir>
+// (central staff locale controller); no forced dir, no hard-coded ar-EG.
 import { ref, onMounted } from 'vue'
 import { api } from '@resort-os/core'
-import { AppSpinner, useToast } from '@resort-os/ui'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
+import { AppSpinner, AppInput, AppButton, useToast } from '@resort-os/ui'
+import { useI18n } from 'vue-i18n'
 
+const { t } = useI18n()
+const { formatDate } = useStaffFormat()
 const toast = useToast()
-
 
 interface Profile {
   id: number; employee_code: string; full_name: string; email?: string
@@ -25,21 +31,21 @@ async function fetchProfile() {
   try {
     const { data } = await api.get('/api/v1/hr/me/profile')
     profile.value = data
-  } catch(e: any) {
-    profileError.value = e?.response?.data?.detail ?? 'تعذّر تحميل بيانات الملف الشخصي'
+  } catch (e: any) {
+    profileError.value = e?.response?.data?.detail ?? t('backoffice.profile.loadFailed')
     toast.error(profileError.value)
   } finally { loading.value = false }
 }
 
 async function changePassword() {
   if (!pwForm.value.current_password || !pwForm.value.new_password) {
-    pwError.value = 'الرجاء ملء جميع الحقول'; return
+    pwError.value = t('backoffice.profile.fillAllFields'); return
   }
   if (pwForm.value.new_password !== pwForm.value.confirm_password) {
-    pwError.value = 'كلمتا المرور غير متطابقتان'; return
+    pwError.value = t('backoffice.profile.passwordsMismatch'); return
   }
   if (pwForm.value.new_password.length < 8) {
-    pwError.value = 'كلمة المرور يجب أن تكون 8 أحرف على الأقل'; return
+    pwError.value = t('backoffice.profile.passwordTooShort'); return
   }
   pwLoading.value = true; pwError.value = ''
   try {
@@ -47,14 +53,14 @@ async function changePassword() {
       current_password: pwForm.value.current_password,
       new_password: pwForm.value.new_password,
     })
-    pwMsg.value = 'تم تغيير كلمة المرور بنجاح ✓'
+    pwMsg.value = t('backoffice.profile.passwordChanged')
     pwForm.value = { current_password: '', new_password: '', confirm_password: '' }
     // Credential changes intentionally revoke every access/refresh session.
     // Reloading clears the in-memory access token and starts a clean login
     // instead of leaving the user on a screen with a revoked credential.
     setTimeout(() => window.location.replace('/login'), 900)
-  } catch(e: any) {
-    pwError.value = e?.response?.data?.detail ?? 'كلمة المرور الحالية غير صحيحة'
+  } catch (e: any) {
+    pwError.value = e?.response?.data?.detail ?? t('backoffice.profile.currentPasswordWrong')
   } finally { pwLoading.value = false }
 }
 
@@ -62,16 +68,16 @@ onMounted(fetchProfile)
 </script>
 
 <template>
-  <div dir="rtl" class="space-y-4">
-    <h2 class="font-bold text-gray-900 dark:text-gray-100 text-lg">ملفي الشخصي</h2>
+  <div class="space-y-4">
+    <h2 class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ t('backoffice.profile.title') }}</h2>
 
     <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
-      <p>جاري التحميل...</p>
+      <p>{{ t('backoffice.profile.loading') }}</p>
     </div>
 
     <div v-else-if="profileError && !profile" class="text-center py-12 text-red-500 bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border">
-      <div class="text-4xl mb-3">⚠️</div>
+      <div class="text-4xl mb-3" aria-hidden="true">⚠️</div>
       <p class="font-medium">{{ profileError }}</p>
     </div>
 
@@ -94,17 +100,17 @@ onMounted(fetchProfile)
 
         <div class="space-y-3 border-t border-stone-100 dark:border-border/50 pt-4">
           <div v-if="profile.email" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📧 البريد الإلكتروني</span>
+            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📧 {{ t('backoffice.profile.email') }}</span>
             <span class="font-medium text-gray-900 dark:text-gray-100">{{ profile.email }}</span>
           </div>
           <div v-if="profile.phone" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📞 الهاتف</span>
-            <span class="font-medium text-gray-900 dark:text-gray-100">{{ profile.phone }}</span>
+            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📞 {{ t('backoffice.profile.phone') }}</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100" dir="ltr">{{ profile.phone }}</span>
           </div>
           <div v-if="profile.hire_date" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📅 تاريخ التعيين</span>
+            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📅 {{ t('backoffice.profile.hireDate') }}</span>
             <span class="font-medium text-gray-900 dark:text-gray-100">
-              {{ new Date(profile.hire_date).toLocaleDateString('ar-EG', { year: 'numeric', month: 'long', day: 'numeric' }) }}
+              {{ formatDate(profile.hire_date, { year: 'numeric', month: 'long', day: 'numeric' }) }}
             </span>
           </div>
         </div>
@@ -112,30 +118,35 @@ onMounted(fetchProfile)
 
       <!-- Change password -->
       <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-6 shadow-sm">
-        <h3 class="font-bold text-gray-900 dark:text-gray-100 mb-4">تغيير كلمة المرور</h3>
-        <div class="space-y-3">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كلمة المرور الحالية</label>
-            <input v-model="pwForm.current_password" type="password" placeholder="••••••••"
-              class="w-full border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">كلمة المرور الجديدة</label>
-            <input v-model="pwForm.new_password" type="password" placeholder="8 أحرف على الأقل"
-              class="w-full border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">تأكيد كلمة المرور</label>
-            <input v-model="pwForm.confirm_password" type="password" placeholder="••••••••"
-              class="w-full border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
-          </div>
-          <div v-if="pwMsg" class="bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium">{{ pwMsg }}</div>
-          <div v-if="pwError" class="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-sm">{{ pwError }}</div>
-          <button @click="changePassword" :disabled="pwLoading"
-            class="w-full py-2.5 bg-blue-700 text-white rounded-xl font-bold hover:bg-blue-800 disabled:opacity-50 transition-colors">
-            {{ pwLoading ? 'جاري الحفظ...' : 'حفظ كلمة المرور' }}
-          </button>
-        </div>
+        <h3 class="font-bold text-gray-900 dark:text-gray-100 mb-4">{{ t('backoffice.profile.changePassword') }}</h3>
+        <form class="space-y-3" @submit.prevent="changePassword">
+          <AppInput
+            v-model="pwForm.current_password"
+            type="password"
+            :label="t('backoffice.profile.currentPassword')"
+            placeholder="••••••••"
+            autocomplete="current-password"
+          />
+          <AppInput
+            v-model="pwForm.new_password"
+            type="password"
+            :label="t('backoffice.profile.newPassword')"
+            :placeholder="t('backoffice.profile.newPasswordHint')"
+            autocomplete="new-password"
+          />
+          <AppInput
+            v-model="pwForm.confirm_password"
+            type="password"
+            :label="t('backoffice.profile.confirmPassword')"
+            placeholder="••••••••"
+            autocomplete="new-password"
+          />
+          <div v-if="pwMsg" role="status" class="bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium">{{ pwMsg }}</div>
+          <div v-if="pwError" role="alert" class="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-sm">{{ pwError }}</div>
+          <AppButton type="submit" :loading="pwLoading" variant="primary" class="w-full">
+            {{ pwLoading ? t('backoffice.profile.saving') : t('backoffice.profile.savePassword') }}
+          </AppButton>
+        </form>
       </div>
     </template>
   </div>

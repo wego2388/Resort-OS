@@ -6,6 +6,11 @@
 // none of the former 6 apps ever mounted it, so toast.error()/success() calls
 // were silently swallowed before this.
 import { ToastContainer, ConfirmDialogContainer } from '@resort-os/ui'
+import { useStaffLocaleSync } from './composables/useStaffLocaleSync'
+
+// Gate 3A — keep the UI language reconciled to the signed-in user's saved
+// preferred_language on login / refresh / PIN switch (shared-terminal safety).
+useStaffLocaleSync()
 </script>
 
 <template>

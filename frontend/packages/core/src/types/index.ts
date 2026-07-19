@@ -16,6 +16,10 @@ export interface User {
   two_factor_enabled?: boolean
   must_change_password?: boolean
   two_factor_bootstrap_required?: boolean
+  // Gate 3A — personal display language. The staff app treats this as the
+  // source of truth once signed in (ar|en); the backend normalizes legacy/
+  // null values. Never tied to currency or any business config.
+  preferred_language?: string
 }
 
 export interface Branch {

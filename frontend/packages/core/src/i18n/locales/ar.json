@@ -3409,6 +3409,7 @@
   "backoffice": {
     "nav": {
       "operations": "العمليات",
+      "reception": "الاستقبال",
       "rooms": "الغرف",
       "bookings": "الحجوزات",
       "housekeeping": "التنظيف",
@@ -3561,7 +3562,30 @@
       "resortOs": "Resort OS",
       "today": "اليوم",
       "languageLabel": "اللغة",
-      "selectLanguage": "اختر اللغة"
+      "selectLanguage": "اختر اللغة",
+      "languageSaveFailed": "فشل حفظ اللغة، حاول مرة أخرى",
+      "quickSearch": "بحث سريع",
+      "searchPlaceholder": "ابحث في الصفحات والإجراءات..."
+    },
+    "profile": {
+      "title": "ملفي الشخصي",
+      "loading": "جاري التحميل...",
+      "loadFailed": "تعذّر تحميل بيانات الملف الشخصي",
+      "email": "البريد الإلكتروني",
+      "phone": "الهاتف",
+      "hireDate": "تاريخ التعيين",
+      "changePassword": "تغيير كلمة المرور",
+      "currentPassword": "كلمة المرور الحالية",
+      "newPassword": "كلمة المرور الجديدة",
+      "confirmPassword": "تأكيد كلمة المرور",
+      "newPasswordHint": "8 أحرف على الأقل",
+      "saving": "جاري الحفظ...",
+      "savePassword": "حفظ كلمة المرور",
+      "passwordChanged": "تم تغيير كلمة المرور بنجاح ✓",
+      "fillAllFields": "الرجاء ملء جميع الحقول",
+      "passwordsMismatch": "كلمتا المرور غير متطابقتان",
+      "passwordTooShort": "كلمة المرور يجب أن تكون 8 أحرف على الأقل",
+      "currentPasswordWrong": "كلمة المرور الحالية غير صحيحة"
     },
     "langSwitcher": {
       "ar": "العربية",

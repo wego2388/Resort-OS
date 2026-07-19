@@ -7,6 +7,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useOfflineQueue } from '@resort-os/core/composables'
 import { useI18n } from 'vue-i18n'
 import ShiftPanel from '../components/ShiftPanel.vue'
@@ -18,7 +19,8 @@ import { ThemeToggle } from '@resort-os/ui'
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const { t, locale } = useI18n()
+const { t } = useI18n()
+const { formatTime } = useStaffFormat()
 const { isOnline, pendingCount } = useOfflineQueue()
 
 const showOperatorSwitch = ref(false)
@@ -27,11 +29,9 @@ const branchName = computed(() => `${t('backoffice.layout.branch')} ${auth.branc
 
 const currentTime = ref('')
 function updateClock() {
-  // Clock locale follows UI locale — Arabic gets Arabic-Indic numerals, others get Latin
-  currentTime.value = new Date().toLocaleTimeString(
-    locale.value === 'ar' ? 'ar-EG' : 'en-GB',
-    { hour: '2-digit', minute: '2-digit', hour12: locale.value === 'ar' },
-  )
+  // Locale-aware time via the central formatter (tabular Latin digits for an
+  // unambiguous, column-stable operational clock in both languages).
+  currentTime.value = formatTime(new Date())
 }
 let clockInterval: ReturnType<typeof setInterval> | null = null
 onMounted(() => { updateClock(); clockInterval = setInterval(updateClock, 1000) })
@@ -61,9 +61,10 @@ function logout() {
     اللي بيشتغل 8+ ساعات على الشاشة في الشمس.
     CSS vars محدّدة هنا تنتقل تلقائياً لكل الـ POS views عبر CSS inheritance.
   -->
+  <!-- Direction is inherited from <html dir> (set centrally by the staff
+       locale controller) — no per-component dir override. -->
   <div
     class="min-h-screen flex flex-col"
-    :dir="locale === 'ar' ? 'rtl' : 'ltr'"
     style="
       background: #1E2530;
       --pos-bg: #1E2530;

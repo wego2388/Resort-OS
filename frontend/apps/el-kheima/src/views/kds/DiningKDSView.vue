@@ -27,6 +27,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { api, useResortWebSocket, parseApiTimestamp, ENDPOINTS , useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useToast } from '@resort-os/ui'
 
 const auth = useAuthStore()
@@ -78,6 +79,7 @@ function initialStationFilter(): string[] | null {
 
 const tickets = ref<Ticket[]>([])
 const stationFilter = ref<string[] | null>(initialStationFilter())
+const { formatTime } = useStaffFormat()
 const now = ref(new Date())
 const isConnected = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
@@ -185,7 +187,7 @@ async function advanceStatus(ticket: Ticket) {
   }
 }
 
-const currentTime = computed(() => now.value.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
+const currentTime = computed(() => formatTime(now.value, { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
 const pendingCount = computed(() => tickets.value.filter(t => t.status === 'pending').length)
 const inProgressCount = computed(() => tickets.value.filter(t => t.status === 'in_progress').length)
 
@@ -198,7 +200,8 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-900 text-white flex flex-col" dir="rtl">
+  <!-- Direction inherited from <html dir> (central staff locale controller). -->
+  <div class="min-h-screen bg-slate-900 text-white flex flex-col">
     <header class="bg-slate-800 border-b border-slate-700 px-6 py-3 flex items-center justify-between flex-shrink-0 flex-wrap gap-2">
       <div class="flex items-center gap-4 flex-wrap">
         <div class="flex items-center gap-2">
@@ -271,8 +274,8 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
                 </span>
               </div>
             </div>
-            <div class="text-left">
-              <div class="text-xs text-slate-500 font-semibold mb-1 text-right" v-if="ticket.outlet_name">{{ ticket.outlet_name }}</div>
+            <div class="text-end">
+              <div class="text-xs text-slate-500 font-semibold mb-1 text-end" v-if="ticket.outlet_name">{{ ticket.outlet_name }}</div>
               <div :class="['text-xs px-2 py-0.5 rounded-full font-bold text-white mb-1', statusLabel(ticket.status).color]">{{ statusLabel(ticket.status).label }}</div>
               <div :class="[
                 'text-lg font-black text-center',
@@ -292,7 +295,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
                 type="button"
                 @click="bumpItem(ticket, item)"
                 :class="[
-                  'w-full text-right rounded-lg px-1.5 py-1 flex items-start gap-2 transition-colors',
+                  'w-full text-start rounded-lg px-1.5 py-1 flex items-start gap-2 transition-colors',
                   ITEM_DONE_STATUSES.includes(item.status ?? 'pending') ? 'bg-green-800/40' : 'hover:bg-white/10 active:bg-white/20',
                 ]"
               >
@@ -300,13 +303,13 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
                 <span :class="['leading-tight flex-1', ITEM_DONE_STATUSES.includes(item.status ?? 'pending') && 'line-through text-slate-400']">{{ item.name }}</span>
                 <span v-if="ITEM_DONE_STATUSES.includes(item.status ?? 'pending')" class="text-green-400 text-xs flex-shrink-0">✓</span>
               </button>
-              <p v-if="item.notes" class="text-xs text-amber-300 mr-6 mt-0.5">⚠️ {{ item.notes }}</p>
+              <p v-if="item.notes" class="text-xs text-amber-300 ms-6 mt-0.5">⚠️ {{ item.notes }}</p>
             </li>
           </ul>
 
           <div class="space-y-2">
             <div class="text-xs text-slate-400 text-center">
-              {{ parseApiTimestamp(ticket.created_at).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }) }}
+              {{ formatTime(parseApiTimestamp(ticket.created_at), { hour: '2-digit', minute: '2-digit' }) }}
             </div>
             <button
               v-if="ticket.status === 'pending'"

@@ -5,6 +5,20 @@ export * from './stores/auth'
 export * from './composables/useWebSocket'
 export * from './composables/useTheme'
 export * from './utils/dates'
-// i18n — exported so any app can app.use(i18n) and use switchLocale/getSavedLocale
-export { default as i18n, switchLocale, getSavedLocale, SUPPORTED_LOCALES } from './i18n/index'
-export type { SupportedLocale } from './i18n/index'
+// App-scoped i18n runtimes are deliberately NOT re-exported from this root
+// barrel. Re-exporting an initialized staff/public singleton evaluates it in
+// every app that imports any core utility, which can overwrite that app's
+// <html lang/dir> and pull the other app's catalogs into its bundle. Import
+// `@resort-os/core/i18n` (public) or `@resort-os/core/i18n/staff` explicitly.
+// Only side-effect-free factories/formatters remain safe root exports.
+export { createLocaleController } from './i18n/controller'
+export type { LocaleController, LocaleControllerOptions } from './i18n/controller'
+export {
+  localeTag,
+  formatNumber,
+  formatMoney,
+  formatDate,
+  formatTime,
+  formatDateTime,
+  RESORT_TIME_ZONE,
+} from './i18n/format'

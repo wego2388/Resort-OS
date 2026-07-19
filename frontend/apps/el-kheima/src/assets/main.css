@@ -12,5 +12,11 @@
 @tailwind utilities;
 
 @layer base {
-  body { font-family: 'Cairo', sans-serif; direction: rtl; }
+  /* Gate 3A: direction is owned centrally by the staff locale controller
+     (it sets `<html dir>` from the active locale). No global `direction: rtl`
+     here — that forced RTL even under an English (LTR) session. `dir` on the
+     root cascades to `body`, so components use logical properties and inherit
+     the correct direction automatically. The Cairo family renders Arabic
+     comfortably and falls back cleanly for Latin text. */
+  body { font-family: 'Cairo', sans-serif; }
 }

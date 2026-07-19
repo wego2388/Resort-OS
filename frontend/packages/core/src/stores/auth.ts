@@ -77,6 +77,21 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = res.data
   }
 
+  // Gate 3A — persist the signed-in user's own display language server-side.
+  // The backend enforces the staff `ar|en` allow-list and ownership (target is
+  // the token's user). We update local state from the server response so
+  // `user.preferred_language` stays the single source of truth. The caller
+  // (staff app) is responsible for applying the locale to the UI, and for
+  // surfacing/rolling back on failure — this action rethrows on error rather
+  // than pretending success.
+  async function updatePreferredLanguage(language: string): Promise<string> {
+    const res = await api.patch(ENDPOINTS.auth.mePreferences, {
+      preferred_language: language,
+    })
+    user.value = res.data
+    return res.data.preferred_language as string
+  }
+
   // ── Public actions ───────────────────────────────────────────────────────
 
   async function login(
@@ -160,5 +175,6 @@ export const useAuthStore = defineStore('auth', () => {
     pendingEnrollmentToken,
     login, logout, fetchUser, initAuth, hasRole, roleLevel,
     needsTwoFactorSetup, needsPasswordChange, pinSwitch,
+    updatePreferredLanguage,
   }
 })

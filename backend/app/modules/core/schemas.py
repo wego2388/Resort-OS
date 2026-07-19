@@ -167,6 +167,53 @@ class AuditLogCreate(BaseModel):
 
 # ─────────────────────── Users ───────────────────────────────────────
 
+# ─────────────────── Staff-app language policy (Gate 3A) ───────────────
+# The staff application (frontend/apps/el-kheima) is Arabic/English only —
+# Decision 0002. The public guest app keeps its own independent locale list
+# (ar/en/ru/it) and is unaffected by this allow-list. Language is a personal
+# display preference: it never changes currency, prices, tax, or any
+# financial/business configuration.
+STAFF_LANGUAGES: tuple[str, ...] = ("ar", "en")
+DEFAULT_STAFF_LANGUAGE = "ar"
+
+
+def normalize_staff_language(value: Optional[str]) -> str:
+    """Coerce a stored/legacy ``preferred_language`` into the staff allow-list.
+
+    Old rows may hold ``None`` or a public-only language (``ru``/``it``) that
+    the staff app cannot render. The safest, reversible default is Arabic —
+    the resort's primary operating language — and it never touches money.
+    """
+    if not value:
+        return DEFAULT_STAFF_LANGUAGE
+    candidate = value.strip().lower()
+    return candidate if candidate in STAFF_LANGUAGES else DEFAULT_STAFF_LANGUAGE
+
+
+class UserPreferencesUpdate(BaseModel):
+    """Self-service personal preferences (Gate 3A).
+
+    Only the authenticated user's own preferences — the endpoint derives the
+    target user from the auth token, so there is deliberately no ``user_id``
+    field here. ``extra="forbid"`` rejects mass-assignment / unknown fields
+    (e.g. an attempt to smuggle ``role`` or ``is_active``) with HTTP 422.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    preferred_language: str = Field(..., max_length=10)
+
+    @field_validator("preferred_language")
+    @classmethod
+    def _language_must_be_supported(cls, v: str) -> str:
+        candidate = v.strip().lower()
+        if candidate not in STAFF_LANGUAGES:
+            raise ValueError(
+                "preferred_language غير مدعومة: لازم تكون واحدة من "
+                f"{', '.join(STAFF_LANGUAGES)}"
+            )
+        return candidate
+
+
 class UserRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -179,7 +226,16 @@ class UserRead(BaseModel):
     two_factor_enabled: bool
     must_change_password: bool
     two_factor_bootstrap_required: bool
+    preferred_language: str
     created_at:          datetime
+
+    @field_validator("preferred_language", mode="before")
+    @classmethod
+    def _normalize_language(cls, v: Optional[str]) -> str:
+        # The current-user contract always reports a staff-renderable language
+        # so the frontend can apply it directly; legacy null/public values
+        # normalize to the safe default rather than leaking to the UI.
+        return normalize_staff_language(v)
 
 
 class UserRoleUpdate(BaseModel):

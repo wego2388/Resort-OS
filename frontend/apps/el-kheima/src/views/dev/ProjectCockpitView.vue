@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { switchLocale } from '@resort-os/core'
+import { staffLocale } from '@resort-os/core/i18n/staff'
 import {
   AppBadge,
   AppButton,
@@ -83,8 +83,8 @@ const COPY = {
     decisionsTab: 'القرارات والمخاطر',
     instructionTab: 'أعطِ تعليمة',
     nextTitle: 'المرحلة التالية بعد checkpoint نظيف',
-    nextPrimary: 'ابدأ Gate 3 — أساس اللغة والديزاين والاختبار',
-    nextPrimaryText: 'Gate 2B3B مُعتمَدة بعد مراجعة مستقلة: 1,975 اختبار backend و4/4 refresh-family + 3/3 step-up + 2/2 super-admin على PostgreSQL. التالي حزمة Gate 3: runtime عربي/إنجليزي صحيح، تبنّي Design System مرجعي، وfrontend quality harness صغير قابل للصيانة.',
+    nextPrimary: 'ابدأ Gate 4 — سلامة Dining المالية والتشغيلية',
+    nextPrimaryText: 'Gate 3 مُعتمَدة بعد مراجعة مستقلة: 1,992 اختبار backend ناجح + 20 skipped، و60 اختبار frontend، وبناء Staff/Public مع عزل runtime اللغة. التالي حزمة Gate 4: الدفع والوردية وطرق الدفع وidempotency والتسوية والملكية والتزامن.',
     parallelTitle: 'خطر مالي متبقٍ ومُسجَّل',
     parallelPrimary: 'مسارات مالية أخرى ما زالت تحتاج نفس عقد الذرّية',
     parallelText: 'شريحة دفع Dining اتقفلت؛ نراجع call site ماليًا واحدًا فقط في كل دفعة مع failure injection وreconciliation واضح.',
@@ -236,8 +236,8 @@ const COPY = {
     decisionsTab: 'Decisions & risks',
     instructionTab: 'Give instruction',
     nextTitle: 'Next phase after a clean checkpoint',
-    nextPrimary: 'Start Gate 3 — UI, i18n, and test foundations',
-    nextPrimaryText: 'Gate 2B3B passed independent review: 1,975 backend tests and 4/4 refresh-family + 3/3 step-up + 2/2 super-admin live PostgreSQL proofs. Next is Gate 3: a correct Arabic/English runtime, reference design-system adoption, and a small maintainable frontend quality harness.',
+    nextPrimary: 'Start Gate 4 — Dining financial and operational integrity',
+    nextPrimaryText: 'Gate 3 passed independent review: 1,992 backend tests passed + 20 skipped, 60 frontend tests, and Staff/Public builds with isolated locale runtimes. Next is Gate 4: payments, shifts, methods, idempotency, reconciliation, ownership, and concurrency.',
     parallelTitle: 'Documented residual financial risk',
     parallelPrimary: 'Other financial paths still need the same atomicity contract',
     parallelText: 'The Dining-paid slice is closed; review one financial call site per batch with failure injection and explicit reconciliation.',
@@ -712,7 +712,9 @@ async function selectLanguage(nextLanguage: CockpitLanguage) {
   if (activeSuggestion && objective.value === activeSuggestion.objective[language.value]) {
     objective.value = activeSuggestion.objective[nextLanguage]
   }
-  await switchLocale(nextLanguage)
+  // Dev-only preview: do not rewrite either the authenticated account
+  // preference or the terminal's pre-login language.
+  await staffLocale.setLocale(nextLanguage, { persist: false })
 }
 </script>
 

@@ -18,11 +18,13 @@
 // ولا على أي شاشة تانية بتستخدمه (خارج نطاق Gate 2B3A).
 import { ref, reactive, computed, onMounted } from 'vue'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppButton, AppInput, AppBadge, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 import { useI18n } from 'vue-i18n'
 import StepUpConfirmModal from '../../components/StepUpConfirmModal.vue'
 
 const { t, locale } = useI18n()
+const { formatDateTime } = useStaffFormat()
 const toast = useToast()
 const auth = useAuthStore()
 const branchId = auth.branchId
@@ -150,10 +152,11 @@ function settingDescription(key: string): string {
   return locale.value === 'ar' ? meta.description.ar : meta.description.en
 }
 
-// مراجعة Codex المستقلة (2026-07-18): كان تاريخ آخر تحديث بيتنسّق بـ'ar-EG'
-// ثابتة بغض النظر عن اللغة الحالية للواجهة.
+// Gate 3A: formatting centralized in useStaffFormat (locale-aware, tabular
+// Latin digits). Prior Codex fix (2026-07-18) made the tag follow the UI
+// locale; this now routes through the shared utility instead of an inline tag.
 function formatUpdatedAt(iso: string): string {
-  return new Date(iso).toLocaleString(locale.value === 'ar' ? 'ar-EG' : 'en-US')
+  return formatDateTime(iso)
 }
 
 interface SettingRow {
@@ -348,10 +351,10 @@ onMounted(loadSettings)
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colKey') }}</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colValue') }}</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colUpdatedAt') }}</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colAction') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colKey') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colValue') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colUpdatedAt') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colAction') }}</th>
             </tr>
           </thead>
           <tbody>

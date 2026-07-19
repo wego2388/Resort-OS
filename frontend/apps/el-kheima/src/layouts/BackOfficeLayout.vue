@@ -11,6 +11,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useI18n } from 'vue-i18n'
 import GuestAlertsBell from '../components/GuestAlertsBell.vue'
 import LanguageSwitcher from '../components/LanguageSwitcher.vue'
@@ -20,7 +21,8 @@ import type { CommandItem } from '@resort-os/ui'
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const { t, locale } = useI18n()
+const { t } = useI18n()
+const { formatDate } = useStaffFormat()
 
 // #23: حفظ حالة الـ sidebar في localStorage — بيتذكر اختيار المستخدم بين الجلسات
 const SIDEBAR_KEY = 'resort-os-sidebar-open'
@@ -46,7 +48,7 @@ const allSections = computed<NavSection[]>(() => [
   {
     label: t('backoffice.nav.operations'),
     items: [
-      { path: '/ops/reception',   label: 'الاستقبال',                    icon: '🛎️' },
+      { path: '/ops/reception',   label: t('backoffice.nav.reception'),   icon: '🛎️' },
       { path: '/ops/rooms',       label: t('backoffice.nav.rooms'),       icon: '🛏️' },
       { path: '/ops/bookings',    label: t('backoffice.nav.bookings'),    icon: '📋' },
       { path: '/ops/housekeeping',label: t('backoffice.nav.housekeeping'),icon: '🧹' },
@@ -196,7 +198,8 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
 </script>
 
 <template>
-  <div class="min-h-screen bg-stone-50 dark:bg-gray-950 flex" :dir="locale === 'ar' ? 'rtl' : 'ltr'">
+  <!-- Direction inherited from <html dir> (central staff locale controller). -->
+  <div class="min-h-screen bg-stone-50 dark:bg-gray-950 flex">
 
     <!-- ── Sidebar ── -->
     <aside
@@ -292,7 +295,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
             </svg>
-            <span>بحث سريع</span>
+            <span>{{ t('backoffice.layout.quickSearch') }}</span>
             <kbd class="flex items-center gap-0.5 text-[10px] font-semibold bg-white dark:bg-gray-700 border border-stone-300 dark:border-gray-600 rounded px-1 py-0.5">
               <span>⌘</span><span>K</span>
             </kbd>
@@ -301,7 +304,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
           <ThemeToggle />
           <LanguageSwitcher variant="compact" />
           <span class="hidden lg:block text-xs text-gray-500 dark:text-gray-500">
-            {{ new Date().toLocaleDateString(locale === 'ar' ? 'ar-EG' : 'en-GB') }}
+            {{ formatDate(new Date()) }}
           </span>
         </div>
       </header>
@@ -317,7 +320,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
   <CommandPalette
     :open="showCommandPalette"
     :items="commandItems"
-    placeholder="ابحث في الصفحات والإجراءات..."
+    :placeholder="t('backoffice.layout.searchPlaceholder')"
     @close="showCommandPalette = false"
   />
 </template>

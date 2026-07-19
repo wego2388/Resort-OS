@@ -1,84 +1,65 @@
-import { createI18n } from 'vue-i18n'
-import { nextTick } from 'vue'
-
-// ✅ Import all locale files (Eager load - faster switching)
+/**
+ * Public-app locale runtime.
+ *
+ * This module is intentionally available only through
+ * `@resort-os/core/i18n`. The staff app uses the separate
+ * `@resort-os/core/i18n/staff` runtime so neither application's import can
+ * evaluate the other singleton or overwrite its document direction.
+ */
 import ar from './locales/ar.json'
 import en from './locales/en.json'
 import ru from './locales/ru.json'
 import it from './locales/it.json'
+import { createLocaleController } from './controller'
 
 export const SUPPORTED_LOCALES = ['ar', 'en', 'ru', 'it'] as const
-export type SupportedLocale = typeof SUPPORTED_LOCALES[number]
+export type SupportedLocale = (typeof SUPPORTED_LOCALES)[number]
 
-// Get saved locale or use default
-export const getSavedLocale = (): 'ar' | 'en' | 'ru' | 'it' => {
-  const stored = localStorage.getItem('locale') ??
-                 localStorage.getItem('kheima_lang') ??
-                 localStorage.getItem('app_language')
+export const PUBLIC_LOCALE_STORAGE_KEY = 'resort-os:public:locale'
+export const PUBLIC_LEGACY_LOCALE_KEYS = ['locale', 'kheima_lang', 'app_language'] as const
 
-  if (stored && ['ar', 'en', 'ru', 'it'].includes(stored)) {
-    return stored as 'ar' | 'en' | 'ru' | 'it'
-  }
-
-  return 'ar' // Default to Arabic
-}
-
-const savedLocale = getSavedLocale()
-
-const i18n = createI18n({
-  legacy: false,
-  locale: savedLocale as 'ar' | 'en' | 'ru' | 'it',
-  fallbackLocale: 'en' as const,
-  messages: { ar, en, ru, it },
-  globalInjection: true,
-  missingWarn: false,
-  fallbackWarn: false,
+const publicLocale = createLocaleController({
+  messages: { ar, en, ru, it } as Record<string, Record<string, unknown>>,
+  allowList: SUPPORTED_LOCALES,
+  storageKey: PUBLIC_LOCALE_STORAGE_KEY,
+  fallback: 'ar',
+  // Preserve the public runtime's historical missing-message fallback while
+  // keeping Arabic as the initial display default.
+  messageFallback: 'en',
+  rtlLocales: ['ar'],
+  legacyKeys: PUBLIC_LEGACY_LOCALE_KEYS,
 })
 
+const i18n = publicLocale.i18n
+
+/** Return the public app's already-resolved, namespaced locale. */
+export function getSavedLocale(): SupportedLocale {
+  return publicLocale.current() as SupportedLocale
+}
+
+/**
+ * Catalogs are eager-loaded above, so this remains a compatibility check for
+ * existing callers rather than dynamically importing a second copy.
+ */
 export async function loadLocale(locale: string): Promise<void> {
-  if (!['ar', 'en', 'ru', 'it'].includes(locale)) {
-    console.warn(`🌍 Invalid locale: ${locale}. Using fallback: en`)
-    locale = 'en'
-  }
-  if (i18n.global.availableLocales.includes(locale as any)) {
-    return Promise.resolve()
-  }
-  try {
-    const messages = await import(`./locales/${locale}.json`)
-    i18n.global.setLocaleMessage(locale, messages.default)
-    return Promise.resolve()
-  } catch (error) {
-    console.error(`🌍 Failed to load locale: ${locale}`, error)
-    return Promise.reject(error)
+  if (!SUPPORTED_LOCALES.includes(locale as SupportedLocale)) {
+    throw new Error(`Unsupported public locale: ${locale}`)
   }
 }
 
 export async function switchLocale(locale: string): Promise<void> {
-  try {
-    await loadLocale(locale)
-    ;(i18n.global.locale as any).value = locale
-    await nextTick(() => {
-      document.documentElement.dir = locale === 'ar' ? 'rtl' : 'ltr'
-      document.documentElement.lang = locale
-      document.body.dir = locale === 'ar' ? 'rtl' : 'ltr'
-    })
-    localStorage.setItem('locale', locale)
-    localStorage.setItem('kheima_lang', locale)
-    localStorage.setItem('app_language', locale)
-    return Promise.resolve()
-  } catch (error) {
-    console.error(`🌍 Failed to switch locale to ${locale}:`, error)
-    return Promise.reject(error)
+  const target = SUPPORTED_LOCALES.includes(locale as SupportedLocale)
+    ? (locale as SupportedLocale)
+    : 'en'
+  await publicLocale.setLocale(target)
+  if (typeof window !== 'undefined') {
+    ;(window as any).__LANGUAGE__ = target
   }
 }
 
 if (typeof window !== 'undefined') {
-  const currentLocale = getSavedLocale()
-  document.documentElement.dir = currentLocale === 'ar' ? 'rtl' : 'ltr'
-  document.documentElement.lang = currentLocale
-  document.body.dir = currentLocale === 'ar' ? 'rtl' : 'ltr'
   ;(window as any).__VUE_I18N__ = i18n
-  ;(window as any).__LANGUAGE__ = currentLocale
+  ;(window as any).__LANGUAGE__ = publicLocale.current()
 }
 
 export default i18n

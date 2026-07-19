@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy.orm import Session
 
@@ -29,7 +29,11 @@ from app.modules.core.schemas import (
     NotificationCreate,
     SettingRead,
     UserPermissionCreate,
+    normalize_staff_language,
 )
+
+if TYPE_CHECKING:
+    from app.core.kernel.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -397,6 +401,44 @@ def delete_branch(
 
 
 # ─────────────────────── Users ───────────────────────────────────────
+
+def update_user_preferences(
+    db: Session,
+    *,
+    user: "User",
+    preferred_language: str,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> "User":
+    """Persist the authenticated user's personal display language.
+
+    The HTTP layer derives ``user`` from the access token and the schema has
+    already constrained ``preferred_language`` to the staff ``ar|en`` policy.
+    Keeping the real-change decision, audit write, and commit here preserves
+    the repository's router -> service -> CRUD transaction boundary.
+    """
+    old_raw = user.preferred_language
+    if (
+        normalize_staff_language(old_raw) == preferred_language
+        and old_raw == preferred_language
+    ):
+        return user
+
+    user.preferred_language = preferred_language
+    crud.create_audit_log(db, AuditLogCreate(
+        user_id=user.id,
+        action="user.preferences.language_changed",
+        entity_type="user",
+        entity_id=user.id,
+        old_data=json.dumps({"preferred_language": old_raw}),
+        new_data=json.dumps({"preferred_language": preferred_language}),
+        ip_address=ip_address,
+        user_agent=user_agent,
+    ))
+    db.commit()
+    db.refresh(user)
+    return user
+
 
 def update_user_role(
     db: Session,

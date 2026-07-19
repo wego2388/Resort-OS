@@ -4,9 +4,9 @@
  *
  * Same pattern as apps/qr/src/components/LanguageSelector.vue: calls
  * switchLocale() from @resort-os/core/i18n directly (no store indirection).
- * switchLocale() persists the choice to localStorage and flips
- * document.documentElement/body `dir` for the whole page (rtl for ar, ltr
- * otherwise) — that's what makes ar <-> en/ru/it actually re-layout the site.
+ * switchLocale() persists the choice under the public app's namespaced key
+ * and flips document.documentElement `dir` for the whole page (rtl for ar,
+ * ltr otherwise) — that's what makes ar <-> en/ru/it re-layout the site.
  */
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'

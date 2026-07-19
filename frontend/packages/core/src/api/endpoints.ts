@@ -5,6 +5,8 @@ export const ENDPOINTS = {
     logout: '/api/v1/auth/logout',
     refresh: '/api/v1/auth/refresh',
     me: '/api/v1/auth/me',
+    // Gate 3A — self-service personal preferences (staff display language).
+    mePreferences: '/api/v1/auth/me/preferences',
     changePassword: '/api/v1/auth/change-password',
     setup2fa: '/api/v1/auth/2fa/setup',
     enable2fa: '/api/v1/auth/2fa/enable',

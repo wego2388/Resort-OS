@@ -15,15 +15,21 @@
 // page now that /kds/kitchen and /kds/bar are redirects).
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 
 const router = useRouter()
 const auth = useAuthStore()
+const { t } = useI18n()
+const { formatTime } = useStaffFormat()
 
 const currentTime = ref('')
 function updateClock() {
-  currentTime.value = new Date().toLocaleTimeString('ar-EG', {
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  // Central locale-aware formatter (tabular Latin digits for a legible
+  // wall-mounted clock in either language).
+  currentTime.value = formatTime(new Date(), {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
   })
 }
 let clockInterval: ReturnType<typeof setInterval> | null = null
@@ -37,11 +43,13 @@ function logout() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-slate-950 text-white flex flex-col" dir="rtl">
+  <!-- Direction inherited from <html dir> (central staff locale controller). -->
+  <div class="min-h-screen bg-slate-950 text-white flex flex-col">
     <header class="flex items-center justify-end px-4 py-1.5 bg-slate-900 border-b border-slate-800 flex-shrink-0 text-sm">
       <div class="flex items-center gap-4">
+        <!-- dir="ltr": a clock is a fixed HH:MM:SS numeric token, not directional text. -->
         <span class="font-mono tabular-nums text-slate-300" dir="ltr">{{ currentTime }}</span>
-        <button @click="logout" class="text-red-400 hover:text-red-300 font-medium">خروج</button>
+        <button @click="logout" class="text-red-400 hover:text-red-300 font-medium">{{ t('backoffice.layout.logout') }}</button>
       </div>
     </header>
     <main class="flex-1 overflow-auto">
