@@ -15,7 +15,7 @@
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1,975 ناجح، 20 skipped، صفر فشل** ✅ + **5/5 Dining** + **2/2 Super Admin** + **3/3 Step-Up** + **4/4 Refresh-Family** concurrency حقيقية على PostgreSQL (2026-07-19؛ Gate 2B3B مُعتمَدة نهائيًا بعد مراجعة مستقلة) |
+| **الاختبارات** | **1,992 backend ناجح، 20 skipped، صفر فشل** ✅ + **60/60 frontend** + **5/5 Dining** + **2/2 Super Admin** + **3/3 Step-Up** + **4/4 Refresh-Family** concurrency حقيقية على PostgreSQL (2026-07-19؛ Gate 3 مُعتمَدة بعد مراجعة مستقلة) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
@@ -45,9 +45,32 @@
 واحد. عند التعارض يظل الاسم المعتمد **El Kheima**، والكود والاختبارات الحالية
 هما مصدر حقيقة التنفيذ.
 
-**حالة القرارين نفسيهما:** لم يبدأ تنفيذ أمان السوبر أدمن أو ترجمة التطبيق
-بالكامل، ولم يتغير API أو قاعدة البيانات أو الصلاحيات. أُضيفت بعد ذلك أداة
-واجهة تطوير مستقلة لإدارة الصورة والخطة، موثقة في القسم التالي.
+**حالة القرارين نفسيهما:** أمان السوبر أدمن الأساسي **مُعتمَد** عبر Gate 2؛
+المخاطر المؤجلة موثقة في تقاريرها. **قرار اللغة بدأ تنفيذه فعليًا واعتمدت
+قاعدته في Gate 3 (2026-07-19) — أساس ثنائي اللغة، وليس ترجمة كل الشاشات.**
+
+**Gate 3 — أساس اللغة/الديزاين/الاختبار (مُعتمَدة بعد مراجعة Codex
+المستقلة):** `PATCH /auth/me/preferences` (allow-list `ar|en`،
+ملكية ذاتية، audit عند التغيير الحقيقي، بلا migration)، `preferred_language`
+في `UserRead`. مصدر لغة staff مستقل (`ar/en`، مفتاح namespaced، هجرة لمرة
+واحدة)، ومصدر Public مستقل (`ar/en/ru/it`)؛ فحص الحزمتين أثبت أن كل تطبيق
+يشغّل runtime الخاص به فقط. اتجاه واحد مركزي من
+`<html dir>` (شيل RTL العام)، تنسيق مركزي، **العملة من config لا من اللغة**.
+تبنّي Design System في الشيل + Profile/Sessions/Settings (KDS/POS اتنضّف
+اتجاههم/تنسيقهم فقط، هجرة النص مؤجَّلة). harness اختبار جديد: `validate:i18n`
+(بلا dependency) + Vitest/VTU/jsdom/axe (**60 اختبار frontend**) + **17
+اختبار backend**؛ الـbackend الكامل: **1992 passed + 20 skipped**، وليس
+"2012 passed". المراجعة أصلحت تداخل runtime بين التطبيقين، عزل لغة شاشة
+الدخول عن المستخدم المسجل، توقيت `Africa/Cairo`، ودورة focus للـModal.
+لسه ~40 شاشة غير مهاجرة — **التطبيق مش ثنائي اللغة بالكامل بعد**. التفاصيل
+الكاملة في `docs/audits/gate-3-ui-i18n-quality-foundation.md`
+و`docs/DESIGN_SYSTEM.md` و`docs/FRONTEND_TESTING.md`. لم يتغير أي منطق مالي
+أو صلاحيات.
+
+**التالي المعتمد للتنفيذ:** Gate 4 — Dining Payment, Shift & Order Integrity.
+عقدها المحدود في `docs/audits/gate-4-execution-brief.md`: settlement وPayment
+exactly-once، ربط الكاشير والوردية، split/refund ذريان، reconciliation بقفل
+حقيقي، state machine وone-active-table-order. لا QR/Public أو mass rewrite.
 
 ---
 
@@ -494,10 +517,10 @@ push.**
 الآخرين، QR. التفاصيل الكاملة:
 `docs/audits/gate-2b3b-auth-audit-session-defense.md`.
 
-**المرحلة التالية مفتوحة:** فرع `gate-3-ui-i18n-quality-foundation` وعقد
-`docs/audits/gate-3-execution-brief.md` جاهزان لتنفيذ i18n runtime للموظفين،
-Design-System reference adoption وminimal frontend quality harness. لم يبدأ
-كود Gate 3 بعد.
+**الحالة وقت اعتماد Gate 2B3B:** كان فرع
+`gate-3-ui-i18n-quality-foundation` وعقد
+`docs/audits/gate-3-execution-brief.md` جاهزين، ولم يكن كود Gate 3 قد بدأ
+وقتها. الحالة الأحدث موجودة في مقدمة هذا الملف: Gate 3 اكتملت واعتمدت.
 
 ---
 

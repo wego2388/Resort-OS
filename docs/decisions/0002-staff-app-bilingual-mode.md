@@ -128,6 +128,14 @@ frontend already meets it.
 
 ## Current status
 
-The direction is approved. No product behavior was changed when this record was
-created. Implementation must be delivered in focused, reviewable phases before
-Public Phase 0 begins.
+The direction is approved and its shared foundation was accepted in Gate 3 on
+2026-07-19 after independent review. The delivered foundation includes the
+account-owned `ar|en` preference, isolated Staff/Public locale runtimes,
+central `lang`/`dir`, resort-timezone and currency-safe formatting, reference
+screen adoption, modal accessibility hardening, and the repeatable
+`validate:i18n` + Vitest/axe gate.
+
+This decision is **not complete yet**: KDS/POS copy and roughly 40 remaining
+staff views still require reviewed Arabic/English migration in controlled Gate
+5 batches, followed by real-browser/device validation. Public retains its
+independent `ar/en/ru/it` policy.
