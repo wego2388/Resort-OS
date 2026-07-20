@@ -113,6 +113,12 @@ const STRICT_FILES = [
   'src/views/portal/ProfileView.vue',
   'src/views/account/SessionsView.vue',
   'src/views/admin/SettingsView.vue',
+  // Gate 5 Batch 2 (2026-07-20): already fully migrated by Gate 2B3A, just
+  // never promoted out of the "not yet migrated" bucket.
+  'src/views/admin/PermissionsView.vue',
+  'src/views/admin/DashboardView.vue',
+  'src/views/admin/SalesDashboardView.vue',
+  'src/views/admin/BeachLiveDashboardView.vue',
 ].map((p) => join(APP_DIR, p))
 
 // Direction-normalized reference screens: forced dir + hard-coded locale tags

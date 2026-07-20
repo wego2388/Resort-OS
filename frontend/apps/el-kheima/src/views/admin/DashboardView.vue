@@ -7,9 +7,13 @@
 // opening the dashboard for the first time had no way to tell "no data yet"
 // apart from "this is broken". Rewired to the real endpoints below.
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, useResortWebSocket, ENDPOINTS } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { StatCard } from '@resort-os/ui'
 
+const { t } = useI18n()
+const { formatDate, formatNumber } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -156,9 +160,9 @@ let labelTimer: ReturnType<typeof setInterval> | null = null
 function updateLastUpdatedLabel() {
   if (!lastUpdatedAt.value) { lastUpdatedLabel.value = ''; return }
   const secs = Math.floor((Date.now() - lastUpdatedAt.value.getTime()) / 1000)
-  if (secs < 10) lastUpdatedLabel.value = 'الآن'
-  else if (secs < 60) lastUpdatedLabel.value = `منذ ${secs} ثانية`
-  else lastUpdatedLabel.value = `منذ ${Math.floor(secs / 60)} دقيقة`
+  if (secs < 10) lastUpdatedLabel.value = t('backoffice.dashboard.updatedNow')
+  else if (secs < 60) lastUpdatedLabel.value = t('backoffice.dashboard.updatedSecondsAgo', { count: secs })
+  else lastUpdatedLabel.value = t('backoffice.dashboard.updatedMinutesAgo', { count: Math.floor(secs / 60) })
 }
 
 // ── WebSocket — تحديثات لحظية للإيرادات عبر قناة KDS ────────────────────
@@ -220,18 +224,20 @@ async function fetchUpcomingVisits() {
   } catch { /* non-critical widget */ }
 }
 
-const todayLabel = new Date().toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+const todayLabel = computed(() =>
+  formatDate(new Date(), { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }))
 
-// Quick links
-const quickLinks = [  { path: '/admin/hr',        label: 'الموارد البشرية', icon: '👥', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
-  { path: '/admin/finance',   label: 'التقارير المالية', icon: '📊', color: 'bg-green-50 border-green-200 hover:bg-green-100' },
-  { path: '/admin/inventory', label: 'المخزون',          icon: '📦', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
-  { path: '/admin/crm',       label: 'إدارة العملاء',    icon: '🤝', color: 'bg-purple-50 border-purple-200 hover:bg-purple-100' },
-  { path: '/admin/analytics', label: 'التحليلات',        icon: '📈', color: 'bg-pink-50 border-pink-200 hover:bg-pink-100' },
-  { path: '/admin/dining-menu', label: 'إدارة الدايننج', icon: '🍽️', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
-  { path: '/admin/maintenance', label: 'الصيانة',        icon: '🔧', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
-  { path: '/admin/settings',  label: 'الإعدادات',        icon: '⚙️', color: 'bg-gray-50 border-gray-200 hover:bg-gray-100' },
-]
+// Quick links — computed (مش constant) عشان يعيد الحساب لو اللغة اتغيّرت.
+const quickLinks = computed(() => [
+  { path: '/admin/hr',        label: t('backoffice.dashboard.quickLinks.hr'),        icon: '👥', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
+  { path: '/admin/finance',   label: t('backoffice.dashboard.quickLinks.finance'),   icon: '📊', color: 'bg-green-50 border-green-200 hover:bg-green-100' },
+  { path: '/admin/inventory', label: t('backoffice.dashboard.quickLinks.inventory'), icon: '📦', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
+  { path: '/admin/crm',       label: t('backoffice.dashboard.quickLinks.crm'),       icon: '🤝', color: 'bg-purple-50 border-purple-200 hover:bg-purple-100' },
+  { path: '/admin/analytics', label: t('backoffice.dashboard.quickLinks.analytics'), icon: '📈', color: 'bg-pink-50 border-pink-200 hover:bg-pink-100' },
+  { path: '/admin/dining-menu', label: t('backoffice.dashboard.quickLinks.diningMenu'), icon: '🍽️', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
+  { path: '/admin/maintenance', label: t('backoffice.dashboard.quickLinks.maintenance'), icon: '🔧', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
+  { path: '/admin/settings',  label: t('backoffice.dashboard.quickLinks.settings'),  icon: '⚙️', color: 'bg-gray-50 border-gray-200 hover:bg-gray-100' },
+])
 
 onMounted(() => {
   fetchDashboard()
@@ -251,47 +257,47 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div dir="rtl">
+  <div>
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">لوحة التحكم</h2>
+        <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.dashboard.title') }}</h2>
         <p class="text-sm text-gray-500 dark:text-gray-500 mt-0.5">{{ todayLabel }}</p>
       </div>
       <div class="flex items-center gap-3">
-        <span v-if="lastUpdatedLabel" class="text-xs text-gray-400 dark:text-gray-500">آخر تحديث: {{ lastUpdatedLabel }}</span>
+        <span v-if="lastUpdatedLabel" class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.dashboard.lastUpdated') }}: {{ lastUpdatedLabel }}</span>
         <button @click="fetchDashboard" :class="[`px-4 py-2 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors`, loading ? `opacity-70` : ``]">
-          {{ loading ? 'جاري التحديث...' : '🔄 تحديث' }}
+          {{ loading ? t('backoffice.dashboard.refreshing') : `🔄 ${t('backoffice.dashboard.refresh')}` }}
         </button>
       </div>
     </div>
 
     <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between mb-5">
-      <span>⚠️ تعذّر تحميل بعض بيانات لوحة التحكم — تأكد من اتصالك وحاول تاني</span>
-      <button @click="fetchDashboard" class="font-semibold underline hover:no-underline">إعادة المحاولة</button>
+      <span>⚠️ {{ t('backoffice.dashboard.loadError') }}</span>
+      <button @click="fetchDashboard" class="font-semibold underline hover:no-underline">{{ t('backoffice.dashboard.retry') }}</button>
     </div>
 
     <!-- #17: تنبيهات عاجلة مجمّعة — بديل عن فتح 4 شاشات منفصلة للتأكد من عدم وجود مشاكل -->
     <div v-if="alertsTotal() > 0" class="bg-red-50 border border-red-200 rounded-2xl p-4 mb-6">
-      <p class="text-sm font-black text-red-800 mb-3">🚨 تنبيهات عاجلة ({{ alertsTotal() }})</p>
+      <p class="text-sm font-black text-red-800 mb-3">🚨 {{ t('backoffice.dashboard.urgentAlerts') }} ({{ alertsTotal() }})</p>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <router-link v-if="alerts.lowStock" to="/admin/inventory"
           class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500 dark:text-gray-500">📦 مخزون منخفض</div>
+          <div class="text-xs text-gray-500 dark:text-gray-500">📦 {{ t('backoffice.dashboard.alerts.lowStock') }}</div>
           <div class="text-lg font-black text-red-600">{{ alerts.lowStock }}</div>
         </router-link>
         <router-link v-if="alerts.overdueMaintenance" to="/admin/maintenance"
           class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500 dark:text-gray-500">🔧 صيانة متأخرة</div>
+          <div class="text-xs text-gray-500 dark:text-gray-500">🔧 {{ t('backoffice.dashboard.alerts.overdueMaintenance') }}</div>
           <div class="text-lg font-black text-red-600">{{ alerts.overdueMaintenance }}</div>
         </router-link>
         <router-link v-if="alerts.overdueInstallments" to="/admin/timeshare"
           class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500 dark:text-gray-500">🏨 أقساط متأخرة</div>
+          <div class="text-xs text-gray-500 dark:text-gray-500">🏨 {{ t('backoffice.dashboard.alerts.overdueInstallments') }}</div>
           <div class="text-lg font-black text-red-600">{{ alerts.overdueInstallments }}</div>
         </router-link>
         <router-link v-if="alerts.bouncedChecks" to="/admin/finance"
           class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500 dark:text-gray-500">🏦 شيكات مرتجعة</div>
+          <div class="text-xs text-gray-500 dark:text-gray-500">🏦 {{ t('backoffice.dashboard.alerts.bouncedChecks') }}</div>
           <div class="text-lg font-black text-red-600">{{ alerts.bouncedChecks }}</div>
         </router-link>
       </div>
@@ -300,12 +306,12 @@ onUnmounted(() => {
     <!-- KPI Cards -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
       <StatCard
-        label="إيراد اليوم"
-        :value="loading ? '...' : (data?.today_revenue ?? 0).toLocaleString('ar-EG') + ' ج'"
+        :label="t('backoffice.dashboard.todayRevenue')"
+        :value="loading ? '...' : `${formatNumber(data?.today_revenue ?? 0)} ${t('backoffice.dashboard.currency')}`"
         icon="currency"
         variant="success"
         :trend="revenueTrend"
-        trend-label="مقارنة بالأمس"
+        :trend-label="t('backoffice.dashboard.vsYesterday')"
         :loading="loading"
       />
 
@@ -313,7 +319,7 @@ onUnmounted(() => {
       <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border shadow-elevation-1 p-5">
         <div class="flex items-start justify-between gap-3">
           <div class="min-w-0 flex-1">
-            <p class="text-sm text-muted font-medium">إشغال الأوضة</p>
+            <p class="text-sm text-muted font-medium">{{ t('backoffice.dashboard.occupancy') }}</p>
             <div v-if="loading" class="h-8 w-24 mt-2 rounded bg-background animate-pulse" />
             <p v-else class="text-2xl font-bold text-gray-900 dark:text-gray-100 mt-1 tabular-nums">
               {{ data?.occupancy_rate ?? 0 }}<span class="text-base font-normal text-muted">%</span>
@@ -323,27 +329,27 @@ onUnmounted(() => {
                 <div class="bg-primary-600 h-1.5 rounded-full transition-all" :style="{ width: (data?.occupancy_rate ?? 0) + '%' }" />
               </div>
             </div>
-            <p class="text-xs text-muted mt-1">{{ data?.active_bookings ?? 0 }} حجز نشط</p>
+            <p class="text-xs text-muted mt-1">{{ data?.active_bookings ?? 0 }} {{ t('backoffice.dashboard.activeBookings') }}</p>
           </div>
           <div class="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 bg-primary-50 text-primary-700 text-lg">🏨</div>
         </div>
       </div>
 
       <StatCard
-        label="الشاطئ اليوم"
+        :label="t('backoffice.dashboard.beachToday')"
         :value="loading ? '...' : (data?.beach_sold_today ?? 0)"
         icon="cart"
         variant="warning"
-        trend-label="تذكرة مباعة"
+        :trend-label="t('backoffice.dashboard.ticketsSold')"
         :loading="loading"
       />
 
       <StatCard
-        label="مهام التنظيف"
+        :label="t('backoffice.dashboard.housekeepingTasks')"
         :value="loading ? '...' : (data?.pending_hk_tasks ?? 0)"
         icon="clipboard"
         :variant="(data?.pending_hk_tasks ?? 0) > 10 ? 'warning' : 'neutral'"
-        trend-label="مهمة معلقة"
+        :trend-label="t('backoffice.dashboard.pendingTask')"
         :loading="loading"
       />
     </div>
@@ -355,70 +361,70 @@ onUnmounted(() => {
       <router-link to="/admin/hr" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
         <div class="flex items-center gap-2 mb-2">
           <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-base">👥</div>
-          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">الموارد البشرية</span>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.dashboard.quickLinks.hr') }}</span>
         </div>
         <div v-if="analyticsSummary.hr">
           <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ analyticsSummary.hr.active_employees }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">موظف نشط</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.dashboard.activeEmployees') }}</div>
           <div v-if="analyticsSummary.hr.last_payroll_month" class="text-xs text-blue-600 mt-1">
-            آخر رواتب: {{ analyticsSummary.hr.last_payroll_month }}
+            {{ t('backoffice.dashboard.lastPayroll') }}: {{ analyticsSummary.hr.last_payroll_month }}
           </div>
         </div>
-        <div v-else class="text-xs text-gray-300 mt-2">— لا بيانات</div>
+        <div v-else class="text-xs text-gray-300 mt-2">— {{ t('backoffice.dashboard.noData') }}</div>
       </router-link>
 
       <!-- Maintenance -->
       <router-link to="/admin/maintenance" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
         <div class="flex items-center gap-2 mb-2">
           <div class="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center text-base">🔧</div>
-          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">الصيانة</span>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.dashboard.quickLinks.maintenance') }}</span>
         </div>
         <div v-if="analyticsSummary.maintenance">
           <div class="text-2xl font-black"
             :class="analyticsSummary.maintenance.critical_orders > 0 ? 'text-red-600' : 'text-gray-900 dark:text-gray-100'">
             {{ analyticsSummary.maintenance.open_orders }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">أمر مفتوح</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.dashboard.openOrder') }}</div>
           <div v-if="analyticsSummary.maintenance.critical_orders > 0" class="text-xs text-red-500 font-bold mt-1">
-            {{ analyticsSummary.maintenance.critical_orders }} حرج 🔴
+            {{ analyticsSummary.maintenance.critical_orders }} {{ t('backoffice.dashboard.critical') }} 🔴
           </div>
         </div>
-        <div v-else class="text-xs text-gray-300 mt-2">— لا بيانات</div>
+        <div v-else class="text-xs text-gray-300 mt-2">— {{ t('backoffice.dashboard.noData') }}</div>
       </router-link>
 
       <!-- CRM -->
       <router-link to="/admin/crm" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
         <div class="flex items-center gap-2 mb-2">
           <div class="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center text-base">🤝</div>
-          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">إدارة العملاء</span>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.dashboard.quickLinks.crm') }}</span>
         </div>
         <div v-if="analyticsSummary.crm">
           <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ analyticsSummary.crm.total_customers }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">عميل مسجّل</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.dashboard.registeredCustomer') }}</div>
           <div v-if="analyticsSummary.crm.open_opportunities > 0" class="text-xs text-purple-600 mt-1">
-            {{ analyticsSummary.crm.open_opportunities }} فرصة مفتوحة
+            {{ analyticsSummary.crm.open_opportunities }} {{ t('backoffice.dashboard.openOpportunity') }}
           </div>
         </div>
-        <div v-else class="text-xs text-gray-300 mt-2">— لا بيانات</div>
+        <div v-else class="text-xs text-gray-300 mt-2">— {{ t('backoffice.dashboard.noData') }}</div>
       </router-link>
 
       <!-- Inventory -->
       <router-link to="/admin/inventory" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
         <div class="flex items-center gap-2 mb-2">
           <div class="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center text-base">📦</div>
-          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">المخزون</span>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.dashboard.quickLinks.inventory') }}</span>
         </div>
         <div v-if="analyticsSummary.inventory">
           <div class="text-2xl font-black"
             :class="analyticsSummary.inventory.out_of_stock_count > 0 ? 'text-red-600' : analyticsSummary.inventory.low_stock_count > 0 ? 'text-amber-600' : 'text-green-600'">
             {{ analyticsSummary.inventory.low_stock_count + analyticsSummary.inventory.out_of_stock_count }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">صنف يحتاج طلباً</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.dashboard.itemsNeedReorder') }}</div>
           <div v-if="analyticsSummary.inventory.out_of_stock_count > 0" class="text-xs text-red-500 font-bold mt-1">
-            {{ analyticsSummary.inventory.out_of_stock_count }} نفذ تماماً 🔴
+            {{ analyticsSummary.inventory.out_of_stock_count }} {{ t('backoffice.dashboard.outOfStock') }} 🔴
           </div>
         </div>
-        <div v-else class="text-xs text-gray-300 mt-2">— لا بيانات</div>
+        <div v-else class="text-xs text-gray-300 mt-2">— {{ t('backoffice.dashboard.noData') }}</div>
       </router-link>
 
     </div>
@@ -426,8 +432,8 @@ onUnmounted(() => {
     <!-- Timeshare Upcoming Visits -->
     <div v-if="upcomingVisits.length" class="mb-6">
       <div class="flex items-center justify-between mb-3">
-        <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300">🏨 زيارات التايم شير القادمة</h3>
-        <router-link to="/admin/timeshare" class="text-xs text-primary-700 hover:underline">عرض الكل</router-link>
+        <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300">🏨 {{ t('backoffice.dashboard.upcomingVisits') }}</h3>
+        <router-link to="/admin/timeshare" class="text-xs text-primary-700 hover:underline">{{ t('backoffice.dashboard.viewAll') }}</router-link>
       </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <div v-for="v in upcomingVisits" :key="v.id"
@@ -438,9 +444,9 @@ onUnmounted(() => {
           <div class="min-w-0">
             <div class="font-semibold text-gray-900 dark:text-gray-100 text-sm truncate">{{ v.guest_name }}</div>
             <div class="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
-              {{ new Date(v.visit_start).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' }) }}
+              {{ formatDate(v.visit_start, { month: 'short', day: 'numeric' }) }}
               →
-              {{ new Date(v.visit_end).toLocaleDateString('ar-EG', { month: 'short', day: 'numeric' }) }}
+              {{ formatDate(v.visit_end, { month: 'short', day: 'numeric' }) }}
             </div>
             <div v-if="v.unit_name" class="text-xs text-primary-600 mt-0.5">{{ v.unit_name }}</div>
           </div>
