@@ -11,7 +11,9 @@
  * MenuView.vue/CafeMenuView.vue/TablesAdminView.vue (DINING_CUTOVER_PLAN.md).
  */
 import { ref, computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import {
   AppButton, AppInput, AppTextarea, AppSelect, MoneyInput, AppTabs,
   AppBadge, StatusBadge, AppDrawer, DataTable, SearchInput, IconButton,
@@ -21,6 +23,8 @@ import type { TabItem, SelectOption, DataTableColumn } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
+const { t } = useI18n()
+const { formatNumber } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -47,28 +51,28 @@ interface DiningItemRow {
 }
 interface VenueTable { id: number; outlet_id: number; table_number: string; capacity: number; section: string | null; status: string }
 
-const MAIN_TABS: TabItem[] = [
-  { value: 'outlets', label: 'المنافذ' },
-  { value: 'menu', label: 'القائمة' },
-  { value: 'tables', label: 'الطاولات' },
-  { value: 'kds', label: '📺 شاشات KDS' },
-]
+const MAIN_TABS = computed<TabItem[]>(() => [
+  { value: 'outlets', label: t('backoffice.diningMenu.tabs.outlets') },
+  { value: 'menu', label: t('backoffice.diningMenu.tabs.menu') },
+  { value: 'tables', label: t('backoffice.diningMenu.tabs.tables') },
+  { value: 'kds', label: `📺 ${t('backoffice.diningMenu.tabs.kds')}` },
+])
 const activeTab = ref('outlets')
 
-const STATIONS: SelectOption[] = [
-  { value: 'hot', label: '🔥 ساخن' }, { value: 'grill', label: '🥩 شواية' },
-  { value: 'cold', label: '🥗 بارد' }, { value: 'bar', label: '🍹 بار' },
-  { value: 'dessert', label: '🍰 حلويات' },
-]
-const OUTLET_TYPES: SelectOption[] = [
-  { value: 'restaurant', label: 'مطعم' }, { value: 'cafe', label: 'كافيه' },
-  { value: 'bar', label: 'بار' }, { value: 'buffet', label: 'بوفيه' },
-  { value: 'pool_bar', label: 'بار المسبح' }, { value: 'rooftop', label: 'روف توب' },
-  { value: 'beach_service', label: 'خدمة الشاطئ' },
-]
-const GROUP_TYPES: SelectOption[] = [
-  { value: 'pick_list', label: 'قائمة اختيارات' }, { value: 'text', label: 'نص حر (Free text)' },
-]
+const STATIONS = computed<SelectOption[]>(() => [
+  { value: 'hot', label: `🔥 ${t('backoffice.diningMenu.station.hot')}` }, { value: 'grill', label: `🥩 ${t('backoffice.diningMenu.station.grill')}` },
+  { value: 'cold', label: `🥗 ${t('backoffice.diningMenu.station.cold')}` }, { value: 'bar', label: `🍹 ${t('backoffice.diningMenu.station.bar')}` },
+  { value: 'dessert', label: `🍰 ${t('backoffice.diningMenu.station.dessert')}` },
+])
+const OUTLET_TYPES = computed<SelectOption[]>(() => [
+  { value: 'restaurant', label: t('backoffice.diningMenu.outletType.restaurant') }, { value: 'cafe', label: t('backoffice.diningMenu.outletType.cafe') },
+  { value: 'bar', label: t('backoffice.diningMenu.outletType.bar') }, { value: 'buffet', label: t('backoffice.diningMenu.outletType.buffet') },
+  { value: 'pool_bar', label: t('backoffice.diningMenu.outletType.poolBar') }, { value: 'rooftop', label: t('backoffice.diningMenu.outletType.rooftop') },
+  { value: 'beach_service', label: t('backoffice.diningMenu.outletType.beachService') },
+])
+const GROUP_TYPES = computed<SelectOption[]>(() => [
+  { value: 'pick_list', label: t('backoffice.diningMenu.groupType.pickList') }, { value: 'text', label: t('backoffice.diningMenu.groupType.text') },
+])
 
 // ── Outlets ──────────────────────────────────────────────────────────────
 const outlets = ref<Outlet[]>([])
@@ -115,7 +119,7 @@ function openOutletForm(o?: Outlet) {
 }
 
 async function saveOutlet() {
-  if (!outletForm.value.name.trim()) { toast.error('اسم المنفذ مطلوب'); return }
+  if (!outletForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.outletNameRequired')); return }
   saving.value = true
   try {
     const num = (v: string) => v !== '' ? Number(v) : null
@@ -141,9 +145,9 @@ async function saveOutlet() {
       if (selectedOutletId.value === null) selectedOutletId.value = data.id
     }
     outletDrawerOpen.value = false
-    toast.success(outletEdit.value ? 'تم تعديل المنفذ' : 'تم إضافة المنفذ — بدون أي migration أو كود جديد')
+    toast.success(outletEdit.value ? t('backoffice.diningMenu.outletUpdated') : t('backoffice.diningMenu.outletAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحفظ')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.saveError'))
   } finally {
     saving.value = false
   }
@@ -171,7 +175,7 @@ function openCatForm(cat?: Category) {
 }
 
 async function saveCat() {
-  if (!selectedOutletId.value || !catForm.value.name.trim()) { toast.error('اسم الفئة مطلوب'); return }
+  if (!selectedOutletId.value || !catForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.msg.categoryNameRequired')); return }
   saving.value = true
   try {
     const payload = { name: catForm.value.name.trim(), name_ar: catForm.value.name_ar.trim() || null, sort_order: Number(catForm.value.sort_order), is_active: catForm.value.is_active }
@@ -184,9 +188,9 @@ async function saveCat() {
       categories.value.push(data)
     }
     catDrawerOpen.value = false
-    toast.success(catEdit.value ? 'تم تعديل الفئة' : 'تم إضافة الفئة')
+    toast.success(catEdit.value ? t('backoffice.diningMenu.msg.categoryUpdated') : t('backoffice.diningMenu.msg.categoryAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحفظ')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.saveError'))
   } finally {
     saving.value = false
   }
@@ -198,9 +202,9 @@ async function deleteCat(cat: Category) {
     await api.delete(ENDPOINTS.dining.category(cat.id))
     categories.value = categories.value.filter(c => c.id !== cat.id)
     if (selectedCategoryId.value === cat.id) selectedCategoryId.value = null
-    toast.success('تم حذف الفئة')
+    toast.success(t('backoffice.diningMenu.msg.categoryDeleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteError'))
   }
 }
 
@@ -252,9 +256,9 @@ function openItemForm(item?: DiningItemRow) {
 
 async function saveItem() {
   if (!selectedOutletId.value) return
-  if (!itemForm.value.name.trim()) { toast.error('اسم الصنف مطلوب'); return }
+  if (!itemForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.msg.itemNameRequired')); return }
   const price = Number(itemForm.value.price)
-  if (!(price > 0)) { toast.error('السعر لازم يكون أكبر من صفر'); return }
+  if (!(price > 0)) { toast.error(t('backoffice.diningMenu.msg.priceRequired')); return }
   saving.value = true
   try {
     const payload: Record<string, unknown> = {
@@ -274,9 +278,9 @@ async function saveItem() {
       items.value.push(data)
     }
     itemDrawerOpen.value = false
-    toast.success(itemEdit.value ? 'تم تعديل الصنف' : 'تم إضافة الصنف')
+    toast.success(itemEdit.value ? t('backoffice.diningMenu.msg.itemUpdated') : t('backoffice.diningMenu.msg.itemAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحفظ')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.saveError'))
   } finally {
     saving.value = false
   }
@@ -287,9 +291,9 @@ async function deleteItem(item: DiningItemRow) {
   try {
     await api.delete(ENDPOINTS.dining.item(item.id))
     items.value = items.value.filter(i => i.id !== item.id)
-    toast.success('تم حذف الصنف')
+    toast.success(t('backoffice.diningMenu.msg.itemDeleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteError'))
   }
 }
 
@@ -304,12 +308,12 @@ async function uploadItemImage(event: Event) {
 
   const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
   if (!ALLOWED.includes(file.type)) {
-    toast.error('نوع الملف غير مسموح — فقط jpeg/png/webp')
+    toast.error(t('backoffice.diningMenu.msg.fileTypeNotAllowed'))
     input.value = ''
     return
   }
   if (file.size > 2 * 1024 * 1024) {
-    toast.error('حجم الصورة أكبر من 2 ميجابايت')
+    toast.error(t('backoffice.diningMenu.msg.imageTooLarge'))
     input.value = ''
     return
   }
@@ -325,9 +329,9 @@ async function uploadItemImage(event: Event) {
     const idx = items.value.findIndex(i => i.id === itemEdit.value!.id)
     if (idx >= 0) items.value[idx] = { ...items.value[idx], image_url: data.image_url }
     itemEdit.value = { ...itemEdit.value, image_url: data.image_url }
-    toast.success('تم رفع الصورة')
+    toast.success(t('backoffice.diningMenu.msg.imageUploaded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر رفع الصورة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.uploadImageError'))
   } finally {
     imageUploading.value = false
     input.value = ''
@@ -351,7 +355,7 @@ function resetExtraGroupForm() {
 
 async function addExtraGroup() {
   if (!itemEdit.value) return
-  if (!extraGroupForm.value.name.trim()) { toast.error('اسم المجموعة مطلوب'); return }
+  if (!extraGroupForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.msg.extraGroupNameRequired')); return }
   saving.value = true
   try {
     const payload = {
@@ -370,9 +374,9 @@ async function addExtraGroup() {
     const idx = items.value.findIndex(i => i.id === itemEdit.value!.id)
     if (idx >= 0) items.value[idx]!.extra_groups.push(data)
     resetExtraGroupForm()
-    toast.success('تم إضافة مجموعة الإضافات')
+    toast.success(t('backoffice.diningMenu.msg.extraGroupAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الإضافة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.addError'))
   } finally {
     saving.value = false
   }
@@ -386,9 +390,9 @@ async function deleteExtraGroup(group: ExtraGroup) {
     itemEdit.value.extra_groups = itemEdit.value.extra_groups.filter(g => g.id !== group.id)
     const idx = items.value.findIndex(i => i.id === itemEdit.value!.id)
     if (idx >= 0) items.value[idx]!.extra_groups = items.value[idx]!.extra_groups.filter(g => g.id !== group.id)
-    toast.success('تم حذف المجموعة')
+    toast.success(t('backoffice.diningMenu.msg.extraGroupDeleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteError'))
   }
 }
 
@@ -405,7 +409,7 @@ function openTableForm(t?: VenueTable) {
 }
 
 async function saveTable() {
-  if (!selectedOutletId.value || !tableForm.value.table_number.trim()) { toast.error('رقم الطاولة مطلوب'); return }
+  if (!selectedOutletId.value || !tableForm.value.table_number.trim()) { toast.error(t('backoffice.diningMenu.msg.tableNumberRequired')); return }
   saving.value = true
   try {
     const payload = { table_number: tableForm.value.table_number.trim(), capacity: Number(tableForm.value.capacity), section: tableForm.value.section.trim() || null }
@@ -418,9 +422,9 @@ async function saveTable() {
       tables.value.push(data)
     }
     tableDrawerOpen.value = false
-    toast.success(tableEdit.value ? 'تم تعديل الطاولة' : 'تم إضافة الطاولة')
+    toast.success(tableEdit.value ? t('backoffice.diningMenu.msg.tableUpdated') : t('backoffice.diningMenu.msg.tableAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحفظ')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.saveError'))
   } finally {
     saving.value = false
   }
@@ -431,9 +435,9 @@ async function deleteTable(t: VenueTable) {
   try {
     await api.delete(ENDPOINTS.dining.table(t.id))
     tables.value = tables.value.filter(x => x.id !== t.id)
-    toast.success('تم حذف الطاولة')
+    toast.success(t('backoffice.diningMenu.msg.tableDeleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف — تأكد إنها مش مشغولة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteErrorOccupied'))
   }
 }
 
@@ -458,7 +462,7 @@ async function loadKdsScreens() {
     const { data } = await api.get(ENDPOINTS.dining.kdsScreens, { params: { branch_id: branchId } })
     kdsScreens.value = data.items ?? data ?? []
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل شاشات KDS')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.loadKdsError'))
   } finally { kdsLoading.value = false }
 }
 
@@ -484,7 +488,7 @@ function toggleKdsStation(st: string) {
 }
 
 async function saveKdsScreen() {
-  if (!kdsForm.value.name.trim()) { toast.error('اسم الشاشة مطلوب'); return }
+  if (!kdsForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.msg.kdsNameRequired')); return }
   savingKds.value = true
   try {
     const payload = {
@@ -498,15 +502,15 @@ async function saveKdsScreen() {
     if (editingKds.value) {
       const { data } = await api.patch(ENDPOINTS.dining.kdsScreen(editingKds.value.id), payload)
       kdsScreens.value = kdsScreens.value.map(s => s.id === editingKds.value!.id ? data : s)
-      toast.success('تم تحديث الشاشة')
+      toast.success(t('backoffice.diningMenu.msg.kdsUpdated'))
     } else {
       const { data } = await api.post(ENDPOINTS.dining.kdsScreens, payload)
       kdsScreens.value = [data, ...kdsScreens.value]
-      toast.success('تم إنشاء الشاشة')
+      toast.success(t('backoffice.diningMenu.msg.kdsCreated'))
     }
     showKdsModal.value = false
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ الشاشة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.saveKdsError'))
   } finally { savingKds.value = false }
 }
 
@@ -516,9 +520,9 @@ async function deleteKdsScreen(s: KdsScreen) {
   try {
     await api.delete(ENDPOINTS.dining.kdsScreen(s.id))
     kdsScreens.value = kdsScreens.value.filter(x => x.id !== s.id)
-    toast.success('تم الحذف')
+    toast.success(t('backoffice.diningMenu.msg.deleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteError'))
   }
 }
 
@@ -537,7 +541,7 @@ async function loadOutletScopedData() {
     tables.value = tablesRes.data
     selectedCategoryId.value = null
   } catch {
-    toast.error('تعذّر تحميل بيانات المنفذ')
+    toast.error(t('backoffice.diningMenu.msg.loadOutletDataError'))
   } finally {
     loading.value = false
   }
