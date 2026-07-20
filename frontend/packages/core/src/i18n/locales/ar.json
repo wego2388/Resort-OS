@@ -3645,15 +3645,28 @@
       "reasonPromptDeny": "منع صلاحية \"{label}\" عن {name}",
       "reasonPromptRevert": "إرجاع صلاحية \"{label}\" لـ {name} للسلوك الافتراضي",
       "roles": {
-        "super_admin": "مدير عام", "admin": "إداري", "accountant": "محاسب",
-        "hr_manager": "مسؤول موارد بشرية", "manager": "مدير", "supervisor": "مشرف",
-        "receptionist": "استقبال", "cashier": "كاشير", "waiter": "جرسون",
-        "chef": "شيف", "kitchen": "مطبخ", "employee": "موظف"
+        "super_admin": "مدير عام",
+        "admin": "إداري",
+        "accountant": "محاسب",
+        "hr_manager": "مسؤول موارد بشرية",
+        "manager": "مدير",
+        "supervisor": "مشرف",
+        "receptionist": "استقبال",
+        "cashier": "كاشير",
+        "waiter": "جرسون",
+        "chef": "شيف",
+        "kitchen": "مطبخ",
+        "employee": "موظف"
       },
       "modules": {
-        "finance": "الحسابات", "dining": "الدايننج", "beach": "الشاطئ",
-        "hr": "الموارد البشرية", "timeshare": "التايم شير", "pms": "الفنادق",
-        "inventory": "المخزون", "crm": "العملاء"
+        "finance": "الحسابات",
+        "dining": "الدايننج",
+        "beach": "الشاطئ",
+        "hr": "الموارد البشرية",
+        "timeshare": "التايم شير",
+        "pms": "الفنادق",
+        "inventory": "المخزون",
+        "crm": "العملاء"
       }
     },
     "settings": {
@@ -3690,6 +3703,81 @@
       "quickLinkTables": "إدارة الطاولات",
       "quickLinkCafeMenu": "قائمة الكافيه",
       "quickLinkRestaurantMenu": "قائمة المطعم"
+    },
+    "rooms": {
+      "title": "خريطة الغرف",
+      "nightAudit": "تدقيق ليلي",
+      "refresh": "تحديث",
+      "nightAuditModalTitle": "التدقيق الليلي (Night Audit)",
+      "nightAuditHint": "بيقفل يوم التشغيل، يحسب نسبة الإشغال والإيراد، ويسجّل حالات عدم الحضور (no-show) لليوم المحدد. شغّله بعد منتصف الليل لليوم اللي خلص.",
+      "auditDate": "تاريخ التدقيق",
+      "running": "جاري التشغيل...",
+      "runAudit": "تشغيل التدقيق",
+      "occupancyPct": "نسبة الإشغال",
+      "roomRevenue": "إيراد الغرف",
+      "egp": "ج",
+      "occupiedRoomsLabel": "غرف مشغولة",
+      "noShows": "عدم حضور (No-show)",
+      "checkinsToday": "تسجيل دخول اليوم",
+      "checkoutsToday": "تسجيل خروج اليوم",
+      "close": "إغلاق",
+      "showingFilter": "عرض: {label} ({count} غرفة)",
+      "showAll": "عرض الكل",
+      "loading": "جاري التحميل...",
+      "noRooms": "لا توجد غرف",
+      "roomHash": "أوضة {name}",
+      "type": "النوع",
+      "floor": "الدور",
+      "statusLabel": "الحالة",
+      "currentBooking": "الحجز الحالي",
+      "departureLabel": "مغادرة: {date}",
+      "status": {
+        "available": "فارغة",
+        "reserved": "محجوزة",
+        "occupied": "مشغولة",
+        "checkoutPending": "في انتظار التنظيف",
+        "maintenance": "صيانة"
+      },
+      "loadRoomTypesError": "تعذّر تحميل أنواع الغرف",
+      "loadCurrentBookingsError": "تعذّر تحميل الحجوزات الحالية",
+      "loadRoomMapError": "تعذّر تحميل خريطة الغرف",
+      "nightAuditSuccess": "تم تشغيل التدقيق الليلي بنجاح",
+      "nightAuditError": "تعذّر تشغيل التدقيق الليلي"
+    },
+    "housekeeping": {
+      "title": "مهام التدبير المنزلي",
+      "refresh": "تحديث",
+      "all": "الكل",
+      "loading": "جاري التحميل...",
+      "status": {
+        "dirty": "متسخة",
+        "cleaning": "جاري التنظيف",
+        "inspecting": "فحص",
+        "available": "جاهزة"
+      },
+      "startCleaning": "ابدأ التنظيف",
+      "doneForInspection": "انتهيت — للفحص",
+      "approveReady": "اعتمدها جاهزة",
+      "taskType": {
+        "checkoutClean": "تنظيف إفراغ",
+        "stayClean": "تنظيف إقامة",
+        "inspection": "فحص روتيني",
+        "deepClean": "تنظيف عميق"
+      },
+      "roomHash": "أوضة {room}",
+      "urgent": "عاجل",
+      "employeeHash": "موظف #{id}",
+      "assignEmployee": "تعيين موظف...",
+      "unassigned": "بدون تعيين",
+      "completed": "مكتملة",
+      "noPendingTasks": "لا توجد مهام معلقة",
+      "loadRoomNamesError": "تعذّر تحميل أسماء الغرف",
+      "loadEmployeesError": "تعذّر تحميل قائمة الموظفين",
+      "employeeAssigned": "تم تعيين الموظف",
+      "assignmentCleared": "تم إلغاء التعيين",
+      "assignEmployeeError": "تعذّر تعيين الموظف",
+      "loadTasksError": "تعذّر تحميل مهام التدبير المنزلي",
+      "updateStatusError": "تعذّر تحديث حالة الغرفة"
     }
   }
 }

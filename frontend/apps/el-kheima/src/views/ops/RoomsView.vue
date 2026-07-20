@@ -18,10 +18,14 @@
 // ثانية والزرار اليدوي فضلوا زي ما هما عمدًا كطبقة أمان إضافية (WebSocket
 // بيعيد الاتصال تلقائيًا لو النت اتقطع، لكن مفيش داعي نعتمد عليه 100%).
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, useResortWebSocket } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { t } = useI18n()
+const { formatNumber, formatDate: fmtDateFn } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -58,13 +62,13 @@ function roomTypeName(room: Room): string {
 // available|occupied|reserved|maintenance|checkout_pending. كانت هنا "dirty"
 // غلط بدل "reserved" — "dirty" أصلاً حالة HousekeepingTask مش Room، فكانت
 // غرف الحجز المؤكد (لسه ما دخلش الضيف) بتتصنّف "غير معروفة" في العدّاد.
-const statusConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
-  available:        { label: 'فارغة',              color: 'text-green-700',  bg: 'bg-green-50',  border: 'border-green-400' },
-  reserved:         { label: 'محجوزة',              color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-400' },
-  occupied:         { label: 'مشغولة',              color: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-400' },
-  checkout_pending: { label: 'في انتظار التنظيف',  color: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-400' },
-  maintenance:      { label: 'صيانة',               color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-400' },
-}
+const statusConfig = computed<Record<string, { label: string; color: string; bg: string; border: string }>>(() => ({
+  available:        { label: t('backoffice.rooms.status.available'),        color: 'text-green-700',  bg: 'bg-green-50',  border: 'border-green-400' },
+  reserved:         { label: t('backoffice.rooms.status.reserved'),         color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-400' },
+  occupied:         { label: t('backoffice.rooms.status.occupied'),         color: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-400' },
+  checkout_pending: { label: t('backoffice.rooms.status.checkoutPending'),  color: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-400' },
+  maintenance:      { label: t('backoffice.rooms.status.maintenance'),      color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-400' },
+}))
 
 const filteredRooms = computed(() =>
   filterStatus.value ? rooms.value.filter(r => r.status === filterStatus.value) : rooms.value
@@ -72,7 +76,7 @@ const filteredRooms = computed(() =>
 
 const counts = computed(() =>
   Object.fromEntries(
-    Object.keys(statusConfig).map(s => [s, rooms.value.filter(r => r.status === s).length])
+    Object.keys(statusConfig.value).map(s => [s, rooms.value.filter(r => r.status === s).length])
   )
 )
 
@@ -82,7 +86,7 @@ async function fetchRoomTypes() {
     const list: RoomTypeOption[] = res.data.items ?? res.data
     roomTypesById.value = Object.fromEntries(list.map((rt) => [rt.id, rt]))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل أنواع الغرف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.rooms.loadRoomTypesError'))
   }
 }
 
@@ -104,7 +108,7 @@ async function fetchCurrentBookings() {
     }
     currentBookingByRoomId.value = map
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل الحجوزات الحالية')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.rooms.loadCurrentBookingsError'))
   }
 }
 
@@ -115,7 +119,7 @@ async function fetchRooms() {
     rooms.value = res.data.rooms ?? res.data.items ?? res.data
     await fetchCurrentBookings()
   } catch(e) {
-    toast.error('تعذّر تحميل خريطة الغرف')
+    toast.error(t('backoffice.rooms.loadRoomMapError'))
   } finally { loading.value = false }
 }
 
@@ -175,9 +179,9 @@ async function runNightAudit() {
       params: { branch_id: branchId, audit_date: nightAuditDate.value },
     })
     nightAuditResult.value = res.data
-    toast.success('تم تشغيل التدقيق الليلي بنجاح')
+    toast.success(t('backoffice.rooms.nightAuditSuccess'))
   } catch (e: any) {
-    nightAuditError.value = e?.response?.data?.detail ?? 'تعذّر تشغيل التدقيق الليلي'
+    nightAuditError.value = e?.response?.data?.detail ?? t('backoffice.rooms.nightAuditError')
   } finally {
     nightAuditLoading.value = false
   }
@@ -197,32 +201,31 @@ onUnmounted(() => clearInterval(refreshInterval))
 </script>
 
 <template>
-  <div class="p-4" dir="rtl">
+  <div class="p-4">
     <!-- Page title + refresh -->
     <div class="flex items-center justify-between mb-4">
-      <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">خريطة الغرف</h1>
+      <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.rooms.title') }}</h1>
       <div class="flex items-center gap-2">
         <button
           v-if="auth.hasRole('admin')"
           @click="openNightAudit"
           class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
-        >🌙 تدقيق ليلي</button>
+        >🌙 {{ t('backoffice.rooms.nightAudit') }}</button>
         <button
           @click="fetchRooms"
           class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-        >🔄 تحديث</button>
+        >🔄 {{ t('backoffice.rooms.refresh') }}</button>
       </div>
     </div>
 
-    <AppModal :open="nightAuditOpen" title="🌙 التدقيق الليلي (Night Audit)" @close="nightAuditOpen = false">
-      <div class="space-y-4" dir="rtl">
+    <AppModal :open="nightAuditOpen" :title="`🌙 ${t('backoffice.rooms.nightAuditModalTitle')}`" @close="nightAuditOpen = false">
+      <div class="space-y-4">
         <template v-if="!nightAuditResult">
           <p class="text-sm text-gray-600 dark:text-gray-500">
-            بيقفل يوم التشغيل، يحسب نسبة الإشغال والإيراد، ويسجّل حالات عدم الحضور
-            (no-show) لليوم المحدد. شغّله بعد منتصف الليل لليوم اللي خلص.
+            {{ t('backoffice.rooms.nightAuditHint') }}
           </p>
           <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">تاريخ التدقيق</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.rooms.auditDate') }}</label>
             <input
               v-model="nightAuditDate" type="date"
               class="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -232,40 +235,40 @@ onUnmounted(() => clearInterval(refreshInterval))
           <button
             @click="runNightAudit" :disabled="nightAuditLoading"
             class="w-full bg-indigo-600 text-white py-2.5 rounded-xl font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50"
-          >{{ nightAuditLoading ? 'جاري التشغيل...' : 'تشغيل التدقيق' }}</button>
+          >{{ nightAuditLoading ? t('backoffice.rooms.running') : t('backoffice.rooms.runAudit') }}</button>
         </template>
 
         <template v-else>
           <div class="grid grid-cols-2 gap-3">
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">نسبة الإشغال</div>
+              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.occupancyPct') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.occupancy_pct }}%</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">إيراد الغرف</div>
-              <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ Number(nightAuditResult.room_revenue).toLocaleString('ar-EG') }} ج</div>
+              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.roomRevenue') }}</div>
+              <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ formatNumber(Number(nightAuditResult.room_revenue)) }} {{ t('backoffice.rooms.egp') }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">غرف مشغولة</div>
+              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.occupiedRoomsLabel') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.occupied_rooms }} / {{ nightAuditResult.total_rooms }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">عدم حضور (No-show)</div>
+              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.noShows') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.no_shows }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">تسجيل دخول اليوم</div>
+              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.checkinsToday') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.checkins_today }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">تسجيل خروج اليوم</div>
+              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.checkoutsToday') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.checkouts_today }}</div>
             </div>
           </div>
           <button
             @click="nightAuditOpen = false"
             class="w-full bg-stone-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 py-2.5 rounded-xl font-semibold hover:bg-stone-200 transition-colors"
-          >إغلاق</button>
+          >{{ t('backoffice.rooms.close') }}</button>
         </template>
       </div>
     </AppModal>
@@ -290,18 +293,18 @@ onUnmounted(() => clearInterval(refreshInterval))
     <!-- Active filter banner -->
     <div v-if="filterStatus" class="mb-3 flex items-center gap-2">
       <span class="text-sm text-gray-600 dark:text-gray-500">
-        عرض: <strong>{{ statusConfig[filterStatus]?.label }}</strong> ({{ filteredRooms.length }} غرفة)
+        {{ t('backoffice.rooms.showingFilter', { label: statusConfig[filterStatus]?.label, count: filteredRooms.length }) }}
       </span>
       <button
         @click="filterStatus = null"
         class="text-xs text-blue-600 hover:text-blue-800 underline"
-      >عرض الكل</button>
+      >{{ t('backoffice.rooms.showAll') }}</button>
     </div>
 
     <!-- Loading -->
     <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
-      <p>جاري التحميل...</p>
+      <p>{{ t('backoffice.rooms.loading') }}</p>
     </div>
 
     <!-- Room grid -->
@@ -326,7 +329,7 @@ onUnmounted(() => clearInterval(refreshInterval))
         </div>
       </div>
 
-      <EmptyState v-if="filteredRooms.length === 0" class="col-span-full" icon="🛏️" title="لا توجد غرف" />
+      <EmptyState v-if="filteredRooms.length === 0" class="col-span-full" icon="🛏️" :title="t('backoffice.rooms.noRooms')" />
     </div>
 
     <!-- Room detail modal -->
@@ -336,9 +339,9 @@ onUnmounted(() => clearInterval(refreshInterval))
         class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
         @click.self="selectedRoom = null"
       >
-        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl" dir="rtl">
+        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl">
           <div class="flex items-center justify-between mb-5">
-            <h2 class="text-xl font-black text-gray-900 dark:text-gray-100">أوضة {{ selectedRoom.name }}</h2>
+            <h2 class="text-xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.rooms.roomHash', { name: selectedRoom.name }) }}</h2>
             <button
               @click="selectedRoom = null"
               class="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
@@ -347,26 +350,25 @@ onUnmounted(() => clearInterval(refreshInterval))
 
           <div class="space-y-3 text-sm">
             <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
-              <span class="text-gray-500 dark:text-gray-500">النوع</span>
+              <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.type') }}</span>
               <span class="font-medium text-gray-900 dark:text-gray-100">{{ roomTypeName(selectedRoom) }}</span>
             </div>
             <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
-              <span class="text-gray-500 dark:text-gray-500">الدور</span>
+              <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.floor') }}</span>
               <span class="font-medium text-gray-900 dark:text-gray-100">{{ selectedRoom.floor }}</span>
             </div>
             <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
-              <span class="text-gray-500 dark:text-gray-500">الحالة</span>
+              <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.statusLabel') }}</span>
               <span :class="['font-bold', statusConfig[selectedRoom.status]?.color]">
                 {{ statusConfig[selectedRoom.status]?.label ?? selectedRoom.status }}
               </span>
             </div>
             <div v-if="currentBookingByRoomId[selectedRoom.id]" class="pt-1">
-              <p class="text-xs text-gray-400 dark:text-gray-500 font-semibold uppercase tracking-wide mb-2">الحجز الحالي</p>
+              <p class="text-xs text-gray-400 dark:text-gray-500 font-semibold uppercase tracking-wide mb-2">{{ t('backoffice.rooms.currentBooking') }}</p>
               <div class="bg-blue-50 rounded-xl p-3 border border-blue-100">
                 <div class="font-bold text-gray-900 dark:text-gray-100 mb-1">{{ currentBookingByRoomId[selectedRoom.id].guest_name }}</div>
                 <div class="text-gray-500 dark:text-gray-500 text-xs">
-                  مغادرة:
-                  {{ new Date(currentBookingByRoomId[selectedRoom.id].check_out).toLocaleDateString('ar-EG') }}
+                  {{ t('backoffice.rooms.departureLabel', { date: fmtDateFn(currentBookingByRoomId[selectedRoom.id].check_out) }) }}
                 </div>
               </div>
             </div>
@@ -375,7 +377,7 @@ onUnmounted(() => clearInterval(refreshInterval))
           <button
             @click="selectedRoom = null"
             class="mt-5 w-full py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors"
-          >إغلاق</button>
+          >{{ t('backoffice.rooms.close') }}</button>
         </div>
       </div>
     </Teleport>
