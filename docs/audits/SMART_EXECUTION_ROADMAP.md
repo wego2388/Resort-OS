@@ -2,7 +2,8 @@
 
 **الحالة:** خارطة حية؛ Gate 1A وشريحة Dining-paid من Gate 1B وGate 2 وGate 3
 مُعتمَدة. Gate 4 منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20)، بانتظار
-مراجعة مستقلة قبل الاعتماد. Gate 5 هي البوابة التالية الجاهزة للتخطيط والتنفيذ.
+مراجعة مستقلة قبل الاعتماد. Gate 5 Batch 9 (المالية) منفَّذة ومُتحقَّق منها
+ذاتيًا (2026-07-20) — الباقي (~31 شاشة) دفعات لاحقة.
 **المصدر:** مراجعة 360° بتاريخ 2026-07-17 + القرارات الموجودة في
 `docs/decisions/` + `wagdy.md`.
 
@@ -17,7 +18,7 @@
 | Gate 2: Super Admin safeguards | **مكتملة ومُعتمَدة (2A→2B3B)** | Claude/Codex | server-side policy/concurrency/session/audit tests |
 | Gate 3: i18n/design/test foundation | **مكتملة ومُعتمَدة (2026-07-19)** | Claude/Codex | bilingual shell + reference screens + quality harness |
 | Gate 4: Dining financial integrity | **منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20) — Codex راجعت جولة أولى، كل الملاحظات + step-up المالي اتصلحوا، بانتظار مراجعة مستقلة تالية** | Claude | settlement/idempotency/shift-lock/one-active-order + 18/18 Postgres concurrency؛ لا commit/push بعد؛ مفيش بند مؤجَّل متبقٍّ |
-| Gate 5: Staff UX batches | مغلقة على Gates 3 و4 حسب الشاشة | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
+| Gate 5: Staff UX batches | **Batch 9 (المالية) منفَّذة ومُتحقَّق منها ذاتيًا (2026-07-20)** — الباقي (~31 شاشة) لسه لاحق | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
 | Gate 7: Public migration batches | مغلقة على Gates 2 و3 واعتماد Phase 0 | Claude | visual/API diff لكل batch بلا legacy backend |
 | Gate 8: QR + Guest Service | مغلقة على Gates 1A و3 و4 و7 | Claude | scan-to-call-to-payment E2E evidence |
 | Gate 9: production evidence | مغلقة حتى تحديد release scope | الفريق | CI/staging/security/restore/rollback evidence |
@@ -151,6 +152,12 @@ settlement/payment، shift/reconciliation، ثم state/ownership/reversals. تق
 **يعتمد على:** Gate 3، وGate 4 للشاشات المالية.  
 **الخروج:** keyboard + responsive + Arabic RTL + English LTR + print، ولا
 missing keys أو strings حرجة hard-coded.
+
+**Batch 9 — المالية (2026-07-20)، منفَّذة ومُتحقَّق منها ذاتيًا، فرع
+`gate-5-staff-ux-batch-9-finance-i18n`:** `FinanceView.vue` (8 تابات +
+مودال تفاصيل وردية)، أكبر شاشة اتترجمت لحد دلوقتي. نفس فئة مخالفات Gate 3
+(`dir="rtl"` ثابت، `ar-EG` locale calls، physical CSS `mr-1`/`mr-2`) اتكشفت
+واتصلحت، زائد تعارض اسم `t` مع دالة الترجمة في `loadTab`.
 
 ### Gate 6 — Public Phase 0 فقط — مسموح أن يبدأ الآن
 

@@ -143,6 +143,13 @@ primitives, covered by `validate:i18n` strict checks):
 - `views/portal/ProfileView.vue`
 - `views/account/SessionsView.vue`
 - `views/admin/SettingsView.vue`
+- `views/admin/FinanceView.vue` (Gate 5 Batch 9, 2026-07-20 — largest screen
+  migrated so far, 8 tabs (overview, checks, accounts, cost centers, balance
+  sheet, depreciation, bank reconciliation, shifts) + a shift drill-down
+  modal, 142 keys. Removed a hard-coded `dir="rtl"` and `ar-EG`/
+  `toLocaleString` calls, fixed 2 physical `mr-1`/`mr-2` utilities, renamed
+  a `loadTab(t: ...)` parameter shadowing vue-i18n's `t()`, computed-ified
+  5 label/config maps)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
@@ -152,6 +159,6 @@ removed, formatting centralized; **full copy migration deliberately deferred**
 - `views/pos/UnifiedPOSView.vue`
 
 Not yet migrated (tracked debt, next batches — do not claim bilingual):
-the remaining ~40 admin/ops/pos/portal screens. Migrate in reviewed batches
+the remaining ~31 admin/ops/pos/portal screens. Migrate in reviewed batches
 per Decision 0002, extending the strict list in
 `apps/el-kheima/scripts/validate-i18n.mjs` as each batch lands.
