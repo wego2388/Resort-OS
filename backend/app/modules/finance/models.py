@@ -12,8 +12,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Integer,
-    Numeric, String, Text, UniqueConstraint,
+    Boolean, Date, DateTime, ForeignKey, Index, Integer,
+    Numeric, String, Text, UniqueConstraint, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -124,6 +124,15 @@ class Payment(Base, TimestampMixin):
     # طبقات المعمارية §4). المصدر الحقيقي القابل للقراءة دايمًا هو `reference`
     # (نص حر زي "BCH-000123").
     ref_order_id: Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    # Gate 4A: مصدر عام واضح للدفعة (dining|beach|folio_payment|dining_refund
+    # …) — عمود صريح بدل استنتاج المصدر من folio_id/reference. بيسمح لتقرير
+    # الوردية والمطابقة يفرّقوا بين tender بيع مباشر وعكس/مرتجع من غير تحليل
+    # نصّي هش للـ reference.
+    source:       Mapped[str | None]   = mapped_column(String(30), nullable=True, index=True)
+    # Gate 4C: عكس/مرتجع بيشاور على الدفعة الأصلية اللي بيعكسها (self-ref
+    # منطقي، بدون FK حقيقي عشان مايكسرش أي حذف نظري للأصل) — بيدّي أثر مالي
+    # قابل للتتبّع من العكس للأصل. NULL لأي tender أصلي (مش عكس).
+    original_payment_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     folio: Mapped["Folio | None"] = relationship("Folio", back_populates="payments")
     shift: Mapped["CashierShift"] = relationship("CashierShift", back_populates="payments")
@@ -131,8 +140,23 @@ class Payment(Base, TimestampMixin):
 
 class CashierShift(Base, TimestampMixin):
     """وردية الكاشير / درج النقدية اليومي (POS Day) — فتح برصيد ابتدائي،
-    قفل بعدّ نقدي فعلي مقابل المتوقع (variance)."""
+    قفل بعدّ نقدي فعلي مقابل المتوقع (variance).
+
+    Gate 4B: partial unique index يمنع أكثر من وردية مفتوحة لنفس
+    (branch_id, cashier_id) على مستوى الـ DB نفسه — open_shift القديمة كانت
+    check-then-insert بدون أي invariant، فطلبان متزامنان كانا يقدروا يفتحوا
+    ورديتين. الشرط ``status = 'open'`` بيخلي أي عدد من الورديات المقفولة
+    مسموح (تاريخ)، وواحدة مفتوحة بالكثير."""
     __tablename__ = "cashier_shifts"
+    __table_args__ = (
+        Index(
+            "uq_open_shift_per_branch_cashier",
+            "branch_id", "cashier_id",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+            sqlite_where=text("status = 'open'"),
+        ),
+    )
 
     id:             Mapped[int]           = mapped_column(primary_key=True)
     branch_id:      Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
@@ -213,6 +237,14 @@ class CashMovement(Base, TimestampMixin):
     movement_type: Mapped[str]           = mapped_column(String(20), index=True)
     # cash_in | cash_out | petty_cash | safe_drop | drawer_open | correction
     amount:        Mapped[Decimal]       = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    # Gate 4B: اتجاه صريح لحركة "correction" فقط (increase|decrease) — التصحيح
+    # مفيهوش إشارة ضمنية زي cash_in(+)/cash_out(-)، فلازم الكاشير/المحاسب
+    # يحدد هل التصحيح بيزوّد الكاش المتوقع ولا بينقّصه. NULL لكل الأنواع
+    # التانية (إشارتها من نوعها)، ولأي correction قديمة اتسجّلت قبل العمود ده
+    # — التصحيحات القديمة دي بتظهر في تحذير reconciliation وبتتستبعد من حساب
+    # المتوقع بدل تخمين اتجاهها (الـ brief §2.5). راجع
+    # services._cash_movement_expected_effect.
+    direction:     Mapped[str | None]    = mapped_column(String(10), nullable=True)
     reason:        Mapped[str]           = mapped_column(String(500))
     destination:    Mapped[str | None]   = mapped_column(String(20), nullable=True)
     # main_safe | bank | petty_cash_box — بس لـ movement_type="safe_drop"

@@ -110,6 +110,29 @@ def other_sessions_revoke_scope(*, keep_session_ref: str) -> str:
     return build_step_up_scope("other_sessions_revoke", {"keep_session_ref": keep_session_ref})
 
 
+def payment_void_scope(*, payment_id: int, reason: str) -> str:
+    """Gate 4 (جولة مراجعة Codex الأولى — M5a): يعكس دفعة اتسجّلت بالفعل في
+    الدفاتر (finance.void_payment) — أعلى خطورة من إلغاء صنف قبل الدفع (ده
+    لسه محمي بـPIN موافقة مدير بس، مقصود — راجع الـbrief §2.4: step-up
+    للأفعال الأعلى خطورة، لا لكل ضغطة POS). مربوط بنفس الدفعة والسبب
+    بالظبط — proof اتاخد لعكس دفعة #5 مايشتغلش لدفعة #6."""
+    return build_step_up_scope("payment_void", {
+        "payment_id": payment_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
+def dining_refund_scope(*, order_id: int, item_id: int, reason: str) -> str:
+    """Gate 4 (جولة مراجعة Codex الأولى — M5a): مرتجع بعد الدفع
+    (dining.refund_order_item) — عكس مالي حقيقي لصنف اتحصّل فعليًا، مش نفس
+    إلغاء صنف قبل الدفع. مربوط بالطلب/الصنف/السبب بالظبط."""
+    return build_step_up_scope("dining_refund", {
+        "order_id": order_id,
+        "item_id": item_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
 def access_token_hash_from_request(request) -> str:
     """Hash of the current request's bearer token — binds a step-up grant
     (at issuance) or its consumption to the exact browser session that

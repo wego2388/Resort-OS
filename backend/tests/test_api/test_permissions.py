@@ -31,6 +31,27 @@ def _branch_committed(db):
     return b
 
 
+def _link_user_to_branch(db, user_id: int, branch_id: int) -> None:
+    """High 5 (جولة مراجعة Codex الأولى): void/refund/... بقوا يفرضوا
+    assert_branch_access — أي actor بيلمس طلب لازم يكون Employee مربوط بفرع
+    الطلب، وإلا 403 قبل ما يوصل لمنطق الصلاحية/الـ PIN اللي التست بيختبره."""
+    from datetime import date, timedelta
+    from decimal import Decimal as _D
+    from app.modules.hr.models import Employee
+
+    emp = db.query(Employee).filter(Employee.user_id == user_id).first()
+    if emp:
+        emp.branch_id = branch_id
+    else:
+        db.add(Employee(
+            branch_id=branch_id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name=f"perm-user-{user_id}", national_id=f"2900101{uuid.uuid4().hex[:7]}",
+            position="waiter", department="F&B", basic_salary=_D("4000.00"),
+            hire_date=date.today() - timedelta(days=365), user_id=user_id,
+        ))
+    db.commit()
+
+
 def _outlet_and_item_committed(db, branch):
     from app.modules.dining import services as dining_services
     from app.modules.dining.models import DiningItem
@@ -136,6 +157,7 @@ class TestExplicitOverrideEndToEnd:
         _sa_id, sa_headers, sa_secret = _fresh_super_admin("grant-actor")
 
         branch = _branch_committed(db)
+        _link_user_to_branch(db, waiter_id, branch.id)  # High 5: void بيفرض فحص الفرع
         outlet, item = _outlet_and_item_committed(db, branch)
         order = _create_order(client, outlet.id, item.id, custom_headers)
         order_item_id = order["items"][0]["id"]
@@ -187,6 +209,7 @@ class TestExplicitOverrideEndToEnd:
         _sa_id, sa_headers, sa_secret = _fresh_super_admin("deny-actor")
 
         branch = _branch_committed(db)
+        _link_user_to_branch(db, mgr_id, branch.id)  # High 5: عشان الـ403 يبقى من المنع مش الفرع
         outlet, item = _outlet_and_item_committed(db, branch)
         order = _create_order(client, outlet.id, item.id, custom_headers)
         order_item_id = order["items"][0]["id"]
@@ -222,6 +245,7 @@ class TestExplicitOverrideEndToEnd:
         _sa_id, sa_headers, sa_secret = _fresh_super_admin("revoke-actor")
 
         branch = _branch_committed(db)
+        _link_user_to_branch(db, waiter_id, branch.id)  # High 5: void بيفرض فحص الفرع
         outlet, item = _outlet_and_item_committed(db, branch)
 
         order1 = _create_order(client, outlet.id, item.id, custom_headers)

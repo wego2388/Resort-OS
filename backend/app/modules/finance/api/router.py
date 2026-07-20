@@ -5,7 +5,10 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import (
+    APIRouter, Depends, Header, HTTPException, Query, Request,
+    WebSocket, WebSocketDisconnect, status,
+)
 from fastapi.responses import Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -38,6 +41,14 @@ from app.modules.finance.schemas import (
     ShiftEndReport, ShiftInvoiceLine, TrialBalanceReport, VoidPaymentRequest,
 )
 from app.modules.core.schemas import PaginatedResponse
+from app.modules.core import services as core_services
+
+
+def _assert_shift_branch(db, user, shift, action_desc: str):
+    """Gate 4B: branch isolation على عمليات الوردية بالـ shift_id — مستخدم من
+    فرع مايقدرش يعرض/يقفل/يعدّل وردية فرع تاني (super_admin بس بيتخطى،
+    Decision 0003). يُنادى بعد ما الـ service يتأكد إن الوردية موجودة."""
+    core_services.assert_branch_access(db, user, shift.branch_id, action_desc)
 
 router = APIRouter(tags=["finance"])
 
@@ -154,6 +165,8 @@ def settle_folio(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
 async def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depends(get_cashier_user)):
     try:
         payment = services.add_payment(db, folio_id, data, cashier_id=user.id)
+    except services.ShiftCloseInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if payment.shift_id:
@@ -165,8 +178,24 @@ async def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depend
 
 @router.post("/finance/payments/{payment_id}/void", response_model=PaymentRead,
              dependencies=[Depends(require_permission("finance.void_payment", "execute", min_role_level=60))])
-def void_payment(payment_id: int, data: VoidPaymentRequest, db: DbDep,
-                 user=Depends(get_manager_user)):
+def void_payment(
+    payment_id: int, data: VoidPaymentRequest, db: DbDep, request: Request,
+    user=Depends(get_manager_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """Gate 4 (جولة مراجعة Codex الأولى — M5a): عكس دفعة اتسجّلت بالفعل في
+    الدفاتر أعلى خطورة من إلغاء صنف قبل الدفع — محتاج step-up (كلمة سر +
+    2FA حديثة) فوق صلاحية مدير+ العادية، مش بس منها. راجع
+    app.core.kernel.auth.step_up.payment_void_scope للربط الدقيق بنفس
+    الدفعة والسبب."""
+    from app.core.kernel.auth.step_up import payment_void_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    scope_hash = payment_void_scope(payment_id=payment_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="payment_void", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
     try:
         return services.void_payment(db, payment_id, voided_by=user.id, reason=data.reason)
     except ValueError as exc:
@@ -207,21 +236,36 @@ def download_folios_report_excel(
 @router.post("/finance/shifts/open", response_model=CashierShiftRead,
              status_code=status.HTTP_201_CREATED)
 def open_shift(data: CashierShiftOpen, db: DbDep, user=Depends(get_cashier_user)):
+    # Gate 4B: الكاشير يفتح وردية في فرعه بس (super_admin بيتخطى).
+    try:
+        core_services.assert_branch_access(db, user, data.branch_id, "فتح وردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.open_shift(db, user.id, user.id, data)
+    except services.OpenShiftConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "OPEN_SHIFT_CONFLICT", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 @router.get("/finance/shifts/handover-note")
-def get_handover_note(db: DbDep, _=Depends(get_cashier_user), branch_id: int = Query(...)):
+def get_handover_note(db: DbDep, user=Depends(get_cashier_user), branch_id: int = Query(...)):
     """آخر ملاحظة تسليم من آخر وردية مقفولة في الفرع — يشوفها الكاشير قبل
     ما يفتح ورديته الجديدة."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض ملاحظة تسليم الوردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return {"handover_note": services.get_latest_handover_note(db, branch_id)}
 
 
 @router.get("/finance/shifts/current", response_model=CashierShiftRead)
 def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int = Query(...)):
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض الوردية الحالية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     shift = crud.get_open_shift(db, branch_id, user.id)
     if not shift:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "لا توجد وردية مفتوحة")
@@ -230,12 +274,16 @@ def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int 
 
 @router.get("/finance/shifts", response_model=PaginatedResponse)
 def list_shifts(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...),
     cashier_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
     page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=200),
 ):
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض ورديات")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     items, total = crud.list_shifts(db, branch_id, cashier_id, status_filter,
                                      (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -245,7 +293,15 @@ def list_shifts(
 @router.get("/finance/shifts/{shift_id}/report", response_model=ShiftEndReport)
 def shift_end_report(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
     """راجع Batch 4 (Operations & Control Layer) — كاشير يشوف تقرير وردية
-    نفسه بس، مدير+ يشوف أي وردية (services.build_shift_end_report)."""
+    نفسه بس، مدير+ يشوف أي وردية في فرعه (Gate 4B branch isolation +
+    services.build_shift_end_report للملكية)."""
+    shift = crud.get_shift(db, shift_id)
+    if shift is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الوردية {shift_id} غير موجودة")
+    try:
+        _assert_shift_branch(db, user, shift, "عرض تقرير وردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.build_shift_end_report(db, shift_id, requesting_user=user)
     except ValueError as exc:
@@ -256,6 +312,17 @@ def shift_end_report(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
 
 @router.get("/finance/shifts/{shift_id}/report/pdf")
 def download_shift_end_report_pdf(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
+    # Gate 4 (جولة مراجعة Codex الأولى — High 5): branch isolation كانت مفقودة
+    # هنا — الـ service بيفرض ملكية الكاشير بس (كاشير مايشوفش وردية كاشير تاني)،
+    # لكن مدير فرع تاني كان بيعدّي (level>=60 بيتخطى فحص الملكية) ويطبع تقرير
+    # وردية فرع مختلف. نفس فحص GET .../report العادي المجاور بالظبط.
+    shift = crud.get_shift(db, shift_id)
+    if shift is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الوردية {shift_id} غير موجودة")
+    try:
+        _assert_shift_branch(db, user, shift, "طباعة تقرير وردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         pdf = services.generate_shift_end_report_pdf(db, shift_id, requesting_user=user)
     except ValueError as exc:
@@ -279,6 +346,13 @@ def list_shift_invoices(
     وردية نفسه بس (PermissionError→403)، وحتى وردية نفسه محتاجة موافقة PIN
     من مدير+ (approver_user_id/approver_pin، أو يكون هو نفسه مدير+) — راجع
     services.list_shift_invoices وPinGuardModal (وردية S-03) على الفرونت إند."""
+    shift_row = crud.get_shift(db, shift_id)
+    if shift_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الوردية {shift_id} غير موجودة")
+    try:
+        _assert_shift_branch(db, user, shift_row, "عرض فواتير وردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.list_shift_invoices(db, shift_id, user, approver_user_id, approver_pin)
     except PermissionError as exc:
@@ -290,6 +364,7 @@ def list_shift_invoices(
 @router.post("/finance/shifts/{shift_id}/close", response_model=CashierShiftRead)
 def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(get_cashier_user)):
     """إغلاق وردية الكاشير مع مطابقة كاش حقيقية (#14 + wagdy.md بند 14 وS-06).
+    Gate 4B: branch isolation — مستخدم فرع مايقفلش وردية فرع تاني.
 
     كل منطق المطابقة (تحذير عند فرق بسيط، رفض 400 عند فرق كبير نسبةً لمبيعات
     الوردية، أو تجاوز الرفض بموافقة PIN مدير لو data.force_close=True)
@@ -298,6 +373,13 @@ def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(
     service حطّها على الـ instance، من غير ما يعيد أي قرار عمل بنفسه
     (راجع §4 CLAUDE.md: الراوتر HTTP layer بس).
     """
+    shift_row = crud.get_shift(db, shift_id)
+    if shift_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الوردية {shift_id} غير موجودة")
+    try:
+        _assert_shift_branch(db, user, shift_row, "قفل وردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         shift = services.close_shift(db, shift_id, user.id, data, acting_user_level=user_level(user))
     except ValueError as exc:
@@ -330,7 +412,15 @@ def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(
 def create_cash_movement(shift_id: int, data: CashMovementCreate, db: DbDep, user=Depends(get_cashier_user)):
     """تسجيل حركة كاش يدوية (كاشير+) — كل الأنواع الستة (بما فيها
     drawer_open بدون أي بيع مرتبط) بتمر من هنا. موافقة PIN مدير+ إجبارية
-    لأي منفّذ أقل من مدير، بغض النظر عن النوع أو المبلغ (راجع services)."""
+    لأي منفّذ أقل من مدير، بغض النظر عن النوع أو المبلغ (راجع services).
+    Gate 4B: branch isolation — حركة كاش على وردية فرعك بس."""
+    shift_row = crud.get_shift(db, shift_id)
+    if shift_row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الوردية {shift_id} غير موجودة")
+    try:
+        _assert_shift_branch(db, user, shift_row, "تسجيل حركة كاش")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.record_cash_movement(
             db, shift_id, data, performed_by=user.id, acting_user_level=user_level(user),
@@ -340,10 +430,21 @@ def create_cash_movement(shift_id: int, data: CashMovementCreate, db: DbDep, use
 
 
 @router.get("/finance/shifts/{shift_id}/cash-movements", response_model=list[CashMovementRead])
-def list_cash_movements(shift_id: int, db: DbDep, _=Depends(get_manager_user)):
+def list_cash_movements(shift_id: int, db: DbDep, user=Depends(get_manager_user)):
     """سجل حركات الكاش اليدوية على وردية — مدير+ فقط (نفس مستوى `/audit-logs`،
     ده تفصيل من سجل التدقيق يخص مين نفّذ/وافق على إيه، مش بيانات معاملة
-    عادية يشوفها الكاشير عن نفسه)."""
+    عادية يشوفها الكاشير عن نفسه).
+
+    Gate 4 (جولة مراجعة Codex الأولى — High 5): branch isolation كانت مفقودة —
+    role gate (مدير+) وحده مش بيمنع مدير فرع تاني من قراءة حركات كاش وردية
+    فرع مختلف. نضيف نفس فحص الفرع بتاع باقي endpoints الوردية."""
+    shift = crud.get_shift(db, shift_id)
+    if shift is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الوردية {shift_id} غير موجودة")
+    try:
+        _assert_shift_branch(db, user, shift, "عرض حركات كاش وردية")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.list_cash_movements(db, shift_id)
     except ValueError as exc:

@@ -96,49 +96,11 @@ router = APIRouter(tags=["core"])
 # بس بتستهلك الـtoken وتترجم النتيجة لأكواد HTTP، بعد ما الـendpoint يجهّز
 # كل حاجة.
 
-def _consume_step_up_or_raise(
-    db,
-    user,
-    request: Request,
-    *,
-    purpose: str,
-    scope_hash: str,
-    x_step_up_token: Optional[str],
-) -> dict:
-    if not x_step_up_token:
-        raise HTTPException(
-            status.HTTP_428_PRECONDITION_REQUIRED,
-            {
-                "error_code": "STEP_UP_REQUIRED",
-                "message": "يلزم إثبات هوية حديث (كلمة السر + التحقق بخطوتين) قبل تنفيذ هذا الإجراء",
-            },
-        )
-
-    from app.core.config import settings as app_settings  # noqa: PLC0415
-    from app.core.kernel.auth.service import AuthService  # noqa: PLC0415
-    from app.core.kernel.auth.step_up import access_token_hash_from_request  # noqa: PLC0415
-    from app.core.kernel.models.user import User as _KernelUser  # noqa: PLC0415
-
-    auth_service = AuthService(db, _KernelUser, app_settings)
-    result = auth_service.consume_step_up(
-        user_id=user.id,
-        purpose=purpose,
-        scope_hash=scope_hash,
-        access_token_hash=access_token_hash_from_request(request),
-        token=x_step_up_token,
-    )
-    if result is None:
-        # Deliberately generic — a missing/expired/replayed/wrong-user/
-        # wrong-session/wrong-purpose/wrong-scope grant all look identical
-        # to the caller, matching consume_step_up's own design.
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            {
-                "error_code": "STEP_UP_INVALID",
-                "message": "إثبات الهوية غير صالح أو منتهي أو مُستخدَم بالفعل — أعد التأكيد وحاول تاني",
-            },
-        )
-    return result
+# Gate 4 (جولة مراجعة Codex الأولى — M5a): الدالة دي بقت مشتركة فعليًا
+# (finance/dining بقى عندهم أفعال محتاجة step-up برضو) — راجع
+# app.modules.core.api.step_up_utils لمنع تكرار نفس منطق الاستهلاك/الترجمة
+# لـHTTP في كل موديول بيحتاجه (CLAUDE.md §3.5).
+from app.modules.core.api.step_up_utils import consume_step_up_or_raise as _consume_step_up_or_raise  # noqa: E402
 
 
 def _require_branch_or_global_read(db, user, branch_id: Optional[int], action_desc: str) -> None:

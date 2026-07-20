@@ -26,8 +26,8 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Integer, JSON,
-    Numeric, String, Time, UniqueConstraint,
+    Boolean, DateTime, ForeignKey, Index, Integer, JSON,
+    Numeric, String, Time, UniqueConstraint, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -383,6 +383,25 @@ class DiningOrder(Base, TimestampMixin):
     __tablename__ = "dining_orders"
     __table_args__ = (
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_order_legacy"),
+        # Gate 4C: طلب واحد نشط بالكثير لكل طاولة على مستوى الـ DB نفسه —
+        # الحالات النشطة (held|open|in_kitchen|served) بس؛ paid/cancelled/
+        # refunded مستبعدة عشان تاريخ الطاولة يفضل مسموح. طاولة NULL مستبعدة
+        # (takeaway/delivery/room_service مالهاش طاولة). partial unique index
+        # + قفل الطاولة (crud.lock_table_for_update) بيمنعوا سباق create/
+        # transfer/merge يفتح طلبين نشطين لنفس الطاولة (راجع الـ brief §2.6).
+        Index(
+            "uq_active_order_per_table",
+            "table_id",
+            unique=True,
+            postgresql_where=text(
+                "table_id IS NOT NULL AND status IN "
+                "('held','open','in_kitchen','served')"
+            ),
+            sqlite_where=text(
+                "table_id IS NOT NULL AND status IN "
+                "('held','open','in_kitchen','served')"
+            ),
+        ),
     )
 
     id:                       Mapped[int]         = mapped_column(primary_key=True)
@@ -406,6 +425,11 @@ class DiningOrder(Base, TimestampMixin):
     guests_count:              Mapped[int]         = mapped_column(Integer, default=1)
     notes:                     Mapped[str | None]  = mapped_column(String(500), nullable=True)
     waiter_id:                 Mapped[int | None]  = mapped_column(Integer, nullable=True)
+    # Gate 4C: ``waiter_id`` بقى معناه صراحةً "النادل المسند حاليًا" (قابل
+    # للنقل عبر endpoint مخصص بـ audit)، و``created_by`` هو مين أنشأ الطلب
+    # فعلاً (ثابت، مش بيتغيّر بنقل النادل). قبل كده مكانش فيه تمييز — النادل
+    # المنشئ كان بيضيع لو الطلب اتنقل.
+    created_by:                Mapped[int | None]  = mapped_column(Integer, nullable=True)
     folio_id:                  Mapped[int | None]  = mapped_column(Integer, nullable=True)
     applied_discount_rule_id:  Mapped[int | None]  = mapped_column(Integer, nullable=True)
     customer_id:               Mapped[int | None]  = mapped_column(ForeignKey("crm_customers.id", ondelete="SET NULL"), nullable=True)
@@ -443,6 +467,9 @@ class DiningOrderItem(Base, TimestampMixin):
     quantity:     Mapped[int]        = mapped_column(Integer, default=1)
     notes:        Mapped[str | None] = mapped_column(String(200), nullable=True)
     status:       Mapped[str]        = mapped_column(String(20), default="pending")  # pending|in_kitchen|ready|served|cancelled|refunded
+    # Gate 4C: مين أضاف الصنف فعلاً (creator الطلب أو النادل اللي أضاف بعدين
+    # عبر add_items_to_order) — actor attribution للتدقيق، منفصل عن voided_by.
+    added_by:     Mapped[int | None] = mapped_column(Integer, nullable=True)
     voided_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
     voided_by:    Mapped[int | None] = mapped_column(Integer, nullable=True)
     voided_at:    Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -507,3 +534,55 @@ class DiningKDSScreen(Base, TimestampMixin):
     display_mode:         Mapped[str]        = mapped_column(String(20), default="kanban")  # kanban|list|grid
     alert_after_minutes:  Mapped[int]        = mapped_column(Integer, default=15)
     is_active:            Mapped[bool]       = mapped_column(Boolean, default=True)
+
+
+# ─────────────────────── Settlement (Gate 4A) ──────────────────────────
+
+class DiningSettlement(Base, TimestampMixin):
+    """سجل التسوية الواحد غير القابل للتكرار لطلب دايننج مدفوع (Gate 4A).
+
+    ليه جدول منفصل مش عمود على DiningOrder ولا صف Payment إضافي: التسوية
+    عملية منطقية واحدة ممكن تحتوي عدة tenders (split) — فهي *أب* صفوف
+    Payment (كل tender مباشر = Payment)، مش نسخة مكررة منها. الجدول ده هو:
+    (أ) invariant "تسوية واحدة لكل طلب" عبر UNIQUE(order_id)؛ (ب) بوابة
+    idempotency عبر UNIQUE(branch_id, idempotency_key) الجزئي — نفس المفتاح
+    من العميل عند retry بيصطدم بالـ constraint فيرجّع نفس النتيجة بدل تسوية
+    تانية؛ (ج) لقطة intent (intent_hash) عشان نفس المفتاح بنية مختلفة
+    يترفض 409 بدل ما يرجّع نتيجة غلط.
+
+    مفيش قيمة مالية بتتخزن هنا بتكرر شيء — total لقطة إجمالية للطلب وقت
+    التسوية بس (للتدقيق/إعادة الإنتاج التاريخي)، وتفاصيل الـ tenders الحقيقية
+    في صفوف Payment (ref_order_id = order_id)."""
+    __tablename__ = "dining_settlements"
+    __table_args__ = (
+        UniqueConstraint("order_id", name="uq_dining_settlement_order"),
+        Index(
+            "uq_dining_settlement_idem_key",
+            "branch_id", "idempotency_key",
+            unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+            sqlite_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
+
+    id:              Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:       Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    order_id:        Mapped[int]        = mapped_column(ForeignKey("dining_orders.id", ondelete="CASCADE"))
+    idempotency_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    intent_hash:     Mapped[str]        = mapped_column(String(64))
+    # sha256 لبنية التسوية الأساسية (order_id + tenders المرتبة) — نفس المفتاح
+    # بنفس الـ intent = replay آمن؛ نفس المفتاح بـ intent مختلف = 409.
+    total:           Mapped[Decimal]    = mapped_column(Numeric(10, 2), default=Decimal("0"))
+    cashier_id:      Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    shift_id:        Mapped[int | None] = mapped_column(
+        ForeignKey("cashier_shifts.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    created_by:      Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # M2 (جولة مراجعة Codex الأولى): لقطة توزيع الـ tenders وقت التسوية —
+    # list of {"method","amount","account"?,"folio_id"?}. مصدر تاريخي مستقل
+    # عن حالة Payment الحالية: (أ) تقرير الوردية بيجمع حصة الغرفة من هنا (room
+    # tenders مالهاش صف Payment، فكانت غايبة تمامًا عن التقرير)؛ (ب) إيصال/
+    # OrderRead تاريخي يقدر يعيد بناء الـ split من غير الاعتماد على سعر المنيو
+    # الحالي أو صفوف Payment اللي ممكن تكون اتعكست. nullable — تسويات قبل الـ
+    # migration دي (لو وُجدت) مالهاش لقطة.
+    tender_breakdown: Mapped[list | None] = mapped_column(JSON, nullable=True)

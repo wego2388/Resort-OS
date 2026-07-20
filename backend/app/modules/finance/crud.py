@@ -263,6 +263,18 @@ def get_direct_payment_by_reference(db: Session, branch_id: int, reference: str)
     )
 
 
+def list_direct_payments_for_order(db: Session, order_id: int) -> list[Payment]:
+    """كل صفوف Payment المباشرة (folio_id=None) المرتبطة بطلب دايننج عبر
+    ref_order_id — بما فيها العكوس السالبة (Gate 4C). مرتّبة بالـ id عشان
+    التوزيع المتناسب حتمي."""
+    return (
+        db.query(Payment)
+        .filter(Payment.folio_id.is_(None), Payment.ref_order_id == order_id)
+        .order_by(Payment.id)
+        .all()
+    )
+
+
 def create_payment(
     db: Session, data: PaymentCreate, shift_id: Optional[int] = None, currency: str = "EGP",
 ) -> Payment:
@@ -283,6 +295,8 @@ def create_direct_payment(
     reference: Optional[str] = None,
     ref_order_id: Optional[int] = None,
     currency: str = "EGP",
+    source: Optional[str] = None,
+    original_payment_id: Optional[int] = None,
 ) -> Payment:
     """يسجّل دفعة POS مباشرة (folio_id=None) — بيع نقدي/كارت فوري من موديول
     عمل تاني (شاطئ/دايننج) مش محمّل على فوليو غرفة، عشان يظهر في تقرير نهاية
@@ -294,6 +308,7 @@ def create_direct_payment(
         folio_id=None, branch_id=branch_id, amount=amount, currency=currency,
         method=method, reference=reference, posted_at=posted_at,
         cashier_id=cashier_id, shift_id=shift_id, ref_order_id=ref_order_id,
+        source=source, original_payment_id=original_payment_id,
     )
     db.add(payment)
     db.flush()
@@ -362,6 +377,50 @@ def get_shift(db: Session, shift_id: int) -> Optional[CashierShift]:
     return db.query(CashierShift).filter(CashierShift.id == shift_id).first()
 
 
+def lock_open_shift_for_update(db: Session, branch_id: int, cashier_id: int) -> Optional[CashierShift]:
+    """SELECT ... FOR UPDATE NOWAIT للوردية المفتوحة لـ(الفرع، الكاشير) —
+    Gate 4 (جولة مراجعة Codex الأولى): نسخة مقفولة من get_open_shift عشان
+    نسب أي Payment/tender مباشر لوردية يتسلسل فعليًا ضد close_shift (اللي
+    بيقفل نفس الصف عبر lock_shift_for_update). من غير القفل ده، دفعة كانت
+    تقرا الوردية "مفتوحة" (snapshot قديم) وتنسب نفسها لوردية بتتقفل في نفس
+    اللحظة، فتظهر Payment منسوبة لوردية status=closed وexpected_cash محسوب
+    ومجمّد من غيرها (باج حقيقي مُثبَت).
+
+    NOWAIT (مش blocking) بنفس اتفاقية get_order_for_update: لو الوردية
+    مقفولة الآن بعملية إغلاق أخرى، الدفع بيترفض فورًا 409 (retry) بدل ما
+    يعلّق طلب دفع على قفل إغلاق. لو الإغلاق خلص قبل كده (status='closed')،
+    الفلتر status='open' مايطابقش الصف فيرجّع None (يعني "مفيش وردية مفتوحة").
+    populate_existing() لنفس سبب lock_shift_for_update (قراءة سابقة غير
+    مقفولة في identity map — راجع CLAUDE.md §13 بند ⓫)."""
+    return (
+        db.query(CashierShift)
+        .filter(
+            CashierShift.branch_id == branch_id,
+            CashierShift.cashier_id == cashier_id,
+            CashierShift.status == "open",
+        )
+        .populate_existing()
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
+def lock_shift_for_update(db: Session, shift_id: int) -> Optional[CashierShift]:
+    """SELECT ... FOR UPDATE (blocking) على صف الوردية — Gate 4B: close_shift
+    بيقفل الصف قبل ما يحسب/يكتب reconciliation عشان يمنع إغلاقين متزامنين
+    يكتبوا count lines أو قيم variance مرتين (double-close). blocking مش
+    NOWAIT: الإغلاق التاني يستنى الأول يخلص ثم يشوف إن الوردية بقت مقفولة
+    فيترفض بوضوح. populate_existing لنفس سبب get_order_for_update (قراءة
+    سابقة غير مقفولة في identity map)."""
+    return (
+        db.query(CashierShift)
+        .filter(CashierShift.id == shift_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+
+
 def create_shift(
     db: Session, branch_id: int, cashier_id: int, opened_by: int,
     opening_float: Decimal, notes: Optional[str] = None,
@@ -395,11 +454,12 @@ def create_cash_movement(
     db: Session, branch_id: int, shift_id: int, movement_type: str,
     amount: Decimal, reason: str, performed_by: int, approved_by: Optional[int] = None,
     destination: Optional[str] = None, cost_center_id: Optional[int] = None,
+    direction: Optional[str] = None,
 ) -> CashMovement:
     row = CashMovement(
         branch_id=branch_id, shift_id=shift_id, movement_type=movement_type,
         amount=amount, reason=reason, performed_by=performed_by, approved_by=approved_by,
-        destination=destination, cost_center_id=cost_center_id,
+        destination=destination, cost_center_id=cost_center_id, direction=direction,
     )
     db.add(row)
     db.flush()

@@ -6,6 +6,7 @@ from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -264,7 +265,7 @@ def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Opt
         data = data.model_copy(update={"cashier_id": cashier_id})
     shift_id = None
     if data.cashier_id:
-        open_shift = crud.get_open_shift(db, data.branch_id, data.cashier_id)
+        open_shift = _lock_open_shift_or_conflict(db, data.branch_id, data.cashier_id)
         if open_shift:
             shift_id = open_shift.id
     # عملة الدفعة موروثة من الفوليو دايماً — مش قابلة للتحديد من العميل، عشان
@@ -392,12 +393,60 @@ def move_check_status(
 
 # ── Cashier Shift / Safe (POS Day) ──────────────────────────────────────
 
+class OpenShiftConflictError(ValueError):
+    """محاولة فتح وردية تانية لنفس (الفرع، الكاشير) اللي عنده وردية مفتوحة —
+    409. يرث من ValueError عشان أي router قديم بيمسك ValueError عام يفضل
+    يترجمها 400 لو ما ميّزهاش، لكن الراوتر بيميّزها لـ 409 (سباق فتح مزدوج)."""
+
+
+class ShiftCloseInProgressError(Exception):
+    """Gate 4 (جولة مراجعة Codex الأولى): محاولة نسب Payment/CashMovement
+    لوردية بتتقفل الآن بعملية إغلاق أخرى (SELECT FOR UPDATE NOWAIT فشل على
+    صف الوردية) — 409 SHIFT_CLOSE_IN_PROGRESS. الكاشير يعيد المحاولة بعد ما
+    الإغلاق يخلص؛ من غير القفل ده كان ممكن الدفع ينجح منسوبًا لوردية
+    مقفولة فعليًا (لا حالة رمادية — الـ brief §2.5)."""
+
+
+def _lock_open_shift_or_conflict(db: Session, branch_id: int, cashier_id: int) -> Optional[CashierShift]:
+    """يقفل الوردية المفتوحة لـ(الفرع، الكاشير) بـNOWAIT ويترجم فشل القفل
+    (وردية بتتقفل الآن) لـ ShiftCloseInProgressError (409) — Gate 4 (جولة
+    مراجعة Codex الأولى). المسار الموحّد لأي كود بينسب Payment مباشر لوردية
+    مفتوحة (add_payment هنا، settle_order في dining) عشان يتسلسل ضد
+    close_shift. بيرجّع None لو مفيش وردية مفتوحة (سلوك get_open_shift نفسه)."""
+    from sqlalchemy.exc import OperationalError  # noqa: PLC0415
+    from app.core.db_errors import is_lock_not_available  # noqa: PLC0415
+
+    try:
+        return crud.lock_open_shift_for_update(db, branch_id, cashier_id)
+    except OperationalError as exc:
+        if not is_lock_not_available(exc):
+            raise
+        raise ShiftCloseInProgressError(
+            "الوردية بتتقفل الآن — حاول تسجيل الدفع تاني خلال لحظات"
+        ) from exc
+
+
 def open_shift(db: Session, cashier_id: int, opened_by: int, data: CashierShiftOpen) -> CashierShift:
+    """Gate 4B: فتح الوردية بقى محمي بـ DB invariant حقيقي
+    (uq_open_shift_per_branch_cashier، partial unique index على status='open')
+    مش check-then-insert لوحده — طلبان متزامنان لنفس الكاشير مايقدروش يفتحوا
+    ورديتين، التاني بيصطدم بالـ unique constraint. الـ pre-check الودّي باقي
+    لرسالة أوضح في الحالة الشائعة (مش سباق)، والـ IntegrityError بيمسك
+    السباق الحقيقي (أول واحد commit قبل التاني ما يوصل للـ insert)."""
     existing = crud.get_open_shift(db, data.branch_id, cashier_id)
     if existing:
-        raise ValueError(f"يوجد وردية مفتوحة بالفعل (#{existing.id}) لهذا الكاشير — لازم تقفلها الأول")
-    shift = crud.create_shift(db, data.branch_id, cashier_id, opened_by, data.opening_float, data.notes)
-    db.commit()
+        raise OpenShiftConflictError(
+            f"يوجد وردية مفتوحة بالفعل (#{existing.id}) لهذا الكاشير — لازم تقفلها الأول"
+        )
+    try:
+        shift = crud.create_shift(db, data.branch_id, cashier_id, opened_by, data.opening_float, data.notes)
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise OpenShiftConflictError(
+            "فيه وردية مفتوحة بالفعل لهذا الكاشير في هذا الفرع (سباق فتح مزدوج) — "
+            "افتح صفحة الوردية من جديد"
+        ) from exc
     db.refresh(shift)
     return shift
 
@@ -415,14 +464,32 @@ def record_cash_movement(
 
     زي void_order_item/apply_order_discount بالظبط: الموافقة مطلوبة على
     *محاولة* التسجيل نفسها، بغض النظر عن قيمة المبلغ (حتى drawer_open
-    بمبلغ صفر — فتح الدرج نفسه فعل حسّاس يستاهل إشراف)."""
-    shift = crud.get_shift(db, shift_id)
+    بمبلغ صفر — فتح الدرج نفسه فعل حسّاس يستاهل إشراف).
+
+    Gate 4 (جولة مراجعة Codex الأولى): نقفل صف الوردية (lock_shift_for_update،
+    blocking FOR UPDATE) قبل فحص حالتها بدل قراءة غير مقفولة — عشان تسجيل
+    حركة كاش يتسلسل فعليًا ضد close_shift (اللي بيقفل نفس الصف)، فمستحيل
+    تتسجّل حركة على وردية بتتقفل في نفس اللحظة وexpected_cash اتحسب من غيرها.
+    """
+    shift = crud.lock_shift_for_update(db, shift_id)
     if not shift:
         raise ValueError(f"الوردية {shift_id} غير موجودة")
     if shift.status == "closed":
         raise ValueError("الوردية مقفولة — لا يمكن تسجيل حركة كاش عليها")
     if data.destination and data.movement_type != "safe_drop":
         raise ValueError("الوجهة (destination) بتتحدد بس لحركة 'تنزيل خزنة' (safe_drop)")
+
+    # Gate 4B: التصحيح (correction) لازم يحمل اتجاه صريح (increase|decrease) —
+    # مالوش إشارة ضمنية زي باقي الأنواع، ومنعرفش نخمّن هل بيزوّد الكاش المتوقع
+    # ولا بينقّصه. باقي الأنواع مايقبلوش direction (إشارتهم من نوعهم).
+    if data.movement_type == "correction":
+        if data.direction not in ("increase", "decrease"):
+            raise ValueError(
+                "حركة 'تصحيح' لازم تحدد اتجاه صريح: increase (تزوّد الكاش المتوقع) "
+                "أو decrease (تنقّصه)"
+            )
+    elif data.direction is not None:
+        raise ValueError("الاتجاه (direction) بيتحدد بس لحركة 'تصحيح' (correction)")
 
     from app.modules.core import policy_engine  # noqa: PLC0415
 
@@ -435,6 +502,7 @@ def record_cash_movement(
     movement = crud.create_cash_movement(
         db, shift.branch_id, shift_id, data.movement_type, data.amount, data.reason, performed_by,
         approved_by=approved_by, destination=data.destination, cost_center_id=data.cost_center_id,
+        direction=data.direction,
     )
     policy_engine.record_policy_audit(
         db, f"cash_movement_{data.movement_type}",
@@ -456,6 +524,34 @@ def list_cash_movements(db: Session, shift_id: int):
     if not shift:
         raise ValueError(f"الوردية {shift_id} غير موجودة")
     return crud.list_cash_movements(db, shift_id)
+
+
+def _cash_movement_expected_effect(movement) -> Decimal:
+    """أثر حركة كاش يدوية على الكاش المتوقع في الدرج (Gate 4B). الصيغة
+    الموثّقة (الـ brief §2.5):
+      cash_in           → +amount
+      cash_out          → -amount
+      petty_cash        → -amount
+      safe_drop         → -amount
+      drawer_open       → 0 (فتح الدرج بدون بيع، أثره صفر)
+      correction        → +amount لو direction=increase، -amount لو decrease
+      correction (قديمة بلا اتجاه) → 0 (متتخمّنش — بتظهر في تحذير reconciliation)
+    """
+    mt = movement.movement_type
+    amt = movement.amount or Decimal("0")
+    if mt == "cash_in":
+        return amt
+    if mt in ("cash_out", "petty_cash", "safe_drop"):
+        return -amt
+    if mt == "drawer_open":
+        return Decimal("0")
+    if mt == "correction":
+        if movement.direction == "increase":
+            return amt
+        if movement.direction == "decrease":
+            return -amt
+        return Decimal("0")  # legacy correction بلا اتجاه — مستبعدة
+    return Decimal("0")
 
 
 def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> ShiftEndReport:
@@ -481,19 +577,56 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
     active = [p for p in payments if p.voided_at is None]
     voided = [p for p in payments if p.voided_at is not None]
 
+    # M2 (جولة مراجعة Codex الأولى): نفصل البيع الموجب عن العكوس/المرتجعات
+    # (Payment سالب) بدل ما نجمعهم صافي — التقرير بيعرض إجمالي البيع (gross)
+    # وسطر مرتجعات منفصل صريح، والكاش المتوقع بيحسب الصافي داخليًا.
+    positive = [p for p in active if p.amount > 0]
+    reversals = [p for p in active if p.amount < 0]
+
     def _sum(method: str) -> Decimal:
-        return sum((p.amount for p in active if p.method == method), Decimal("0"))
+        return sum((p.amount for p in positive if p.method == method), Decimal("0"))
 
     total_cash   = _sum("cash")
     total_card   = _sum("card")
     total_credit = _sum("credit")
     known = {"cash", "card", "credit"}
-    total_other  = sum((p.amount for p in active if p.method not in known), Decimal("0"))
-    total_sales  = sum((p.amount for p in active), Decimal("0"))
+    total_other  = sum((p.amount for p in positive if p.method not in known), Decimal("0"))
+    total_sales  = sum((p.amount for p in positive), Decimal("0"))
     voided_amount = sum((p.amount for p in voided), Decimal("0"))
 
+    # مرتجعات صريحة (قيمة موجبة للعرض) + الصافي النقدي للكاش المتوقع.
+    refunds_total = -sum((p.amount for p in reversals), Decimal("0"))
+    refunds_count = len(reversals)
+    cash_refunds  = -sum((p.amount for p in reversals if p.method == "cash"), Decimal("0"))
+    net_cash = total_cash - cash_refunds
+
+    # حصة الغرفة (room tenders) — مالهاش صف Payment، بنجمعها من لقطة
+    # tender_breakdown على DiningSettlement (late import، زي finance.crud→
+    # maintenance.Asset). صفر لو الوردية مفيهاش أي tender غرفة منسوب ليها.
+    from app.modules.dining import crud as dining_crud  # noqa: PLC0415
+    total_room = dining_crud.sum_room_tenders_for_shift(db, shift_id)
+
+    # Gate 4B: الكاش المتوقع = رصيد الافتتاح + الكاش المحصّل + أثر الحركات
+    # اليدوية (cash_in/out، عهدة، تنزيل خزنة، تصحيح موجّه). drawer_open صفر،
+    # وأي correction قديمة بلا اتجاه بتتستبعد وبتظهر في تحذير reconciliation
+    # بدل تخمين اتجاهها.
+    movements = crud.list_cash_movements(db, shift_id)
+    movements_effect = sum((_cash_movement_expected_effect(m) for m in movements), Decimal("0"))
+    unreconciled_corrections = [
+        m for m in movements if m.movement_type == "correction" and m.direction not in ("increase", "decrease")
+    ]
+    # الكاش المتوقع بيستخدم الصافي النقدي (بيع كاش − مرتجع كاش) — المرتجع
+    # النقدي كاش خرج فعليًا من الدرج فلازم يقلّل المتوقع، حتى لو معروض كبند
+    # منفصل. مطابق للسلوك القديم رقميًا (كان بيجمع كل دفعات الكاش صافي).
+    live_expected_cash = shift.opening_float + net_cash + movements_effect
     expected_cash = shift.expected_cash if shift.status == "closed" and shift.expected_cash is not None \
-        else (shift.opening_float + total_cash)
+        else live_expected_cash
+    cash_movements_warning = None
+    if unreconciled_corrections:
+        cash_movements_warning = (
+            f"⚠️ {len(unreconciled_corrections)} حركة تصحيح قديمة بلا اتجاه صريح — "
+            "مستبعدة من حساب الكاش المتوقع لحد ما تتراجع"
+        )
 
     prev = crud.get_previous_closed_shift(db, shift.branch_id, shift.cashier_id, shift.id, shift.opened_at)
     previous_total_sales = None
@@ -538,7 +671,10 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
         total_credit=total_credit,
         total_other=total_other,
         total_sales=total_sales,
-        invoice_count=len(active),
+        total_room=total_room,
+        refunds_total=refunds_total,
+        refunds_count=refunds_count,
+        invoice_count=len(positive),
         voided_count=len(voided),
         voided_amount=voided_amount,
         expected_cash=expected_cash,
@@ -550,6 +686,8 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
         previous_shift_id=prev.id if prev else None,
         previous_total_sales=previous_total_sales,
         delta_vs_previous=delta_vs_previous,
+        cash_movements_effect=movements_effect,
+        cash_movements_warning=cash_movements_warning,
     )
 
 
@@ -577,6 +715,9 @@ def generate_shift_end_report_pdf(db: Session, shift_id: int, requesting_user=No
     summary = [
         ("رصيد الافتتاح",        f"{r.opening_float:,.2f} EGP"),
         ("إجمالي المبيعات",       f"{r.total_sales:,.2f} EGP"),
+        # M2: حصة الغرفة والمرتجعات كبنود مستقلة صريحة (مش مخفية في الصافي).
+        ("محمّل على الغرف",        f"{r.total_room:,.2f} EGP"),
+        ("المرتجعات/العكوس",      f"-{r.refunds_total:,.2f} EGP ({r.refunds_count})"),
         ("عدد الفواتير",          str(r.invoice_count)),
         ("عدد الملغاة",           str(r.voided_count)),
         ("قيمة الملغاة",          f"{r.voided_amount:,.2f} EGP"),
@@ -644,13 +785,40 @@ def close_shift(
     عن كاشير غائب/عطلان — قرار محمد صراحةً: "من صلاحيات المدير إنه يعمل
     كده")، نفس نمط ``build_shift_end_report``/``list_shift_invoices``.
     """
-    shift = crud.get_shift(db, shift_id)
+    # Gate 4B: نقفل صف الوردية (blocking FOR UPDATE) قبل أي فحص/كتابة —
+    # إغلاقان متزامنان لنفس الوردية بيتسلسلوا، فالتاني بيشوف status='closed'
+    # تحت القفل ويترفض، بدل ما يكتب count lines أو variance مرتين (double-close).
+    shift = crud.lock_shift_for_update(db, shift_id)
     if not shift:
         raise ValueError(f"الوردية {shift_id} غير موجودة")
     if shift.status == "closed":
         raise ValueError("الوردية مقفولة بالفعل")
     if acting_user_level < 60 and shift.cashier_id != closed_by:
         raise PermissionError("لا يمكنك قفل وردية غيرك")
+
+    # M3 (جولة مراجعة Codex الأولى — الـ brief §2.5): مدير يقفل وردية شخص
+    # تاني (مش ورديته) محتاج سبب صريح + موافقة معتمدة + AuditLog. قبل الجولة
+    # دي كان أي مدير+ يقفل أي وردية بلا سبب ولا أثر تدقيق. نعيد استخدام
+    # core.services.resolve_pin_approval (نفس نمط void/discount — مدير+ مؤهّل
+    # بنفسه فمفيش PIN، لكن لو approver_* اتبعتوا بيتحققوا) بدل آلية موافقة
+    # موازية. الحقول approver_*/notes الموجودة أصلاً على CashierShiftClose
+    # بتتوصّل هنا فعليًا (كانت stale). force_close باقٍ كحقل متوافق-خلفيًا
+    # بلا أثر بوّابي (آلية رفض الفرق أُلغيت — قرار Mohamed 2026-07-14).
+    closing_other = shift.cashier_id != closed_by
+    other_close_reason = ""
+    other_close_approved_by: Optional[int] = None
+    if closing_other:
+        other_close_reason = (data.notes or "").strip()
+        if not other_close_reason:
+            raise ValueError(
+                "قفل وردية كاشير تاني محتاج سبب صريح في الملاحظات (notes) — "
+                "مين بيقفلها نيابةً عنه وليه"
+            )
+        from app.modules.core.services import resolve_pin_approval  # noqa: PLC0415
+        other_close_approved_by = resolve_pin_approval(
+            db, acting_user_level, data.approver_user_id, data.approver_pin,
+            min_approver_level=60,
+        )
 
     # نحسب الكاش المتوقع (expected_cash) الأول — قبل أي تعديل فعلي على
     # الداتابيز، بنفس مبدأ فحص حد الائتمان في beach.services.checkin_b2b:
@@ -733,6 +901,21 @@ def close_shift(
         shift.notes = f"{shift.notes}\n{data.notes}" if shift.notes else data.notes
     if data.handover_note:
         shift.handover_note = data.handover_note
+
+    # M3: AuditLog إجباري لقفل مدير لوردية شخص تاني — يوثّق مين قفل، وردية مين،
+    # السبب، المعتمِد (لو فيه)، والفرق. جزء من نفس معاملة الإغلاق (بيتكوميت تحت).
+    if closing_other:
+        from app.modules.core import policy_engine  # noqa: PLC0415
+        policy_engine.record_policy_audit(
+            db, "close_other_shift",
+            user_id=closed_by, approved_by=other_close_approved_by, branch_id=shift.branch_id,
+            entity_type="cashier_shift", entity_id=shift.id,
+            data={
+                "target_cashier_id": shift.cashier_id,
+                "reason": other_close_reason,
+                "variance": str(variance),
+            },
+        )
 
     db.commit()
     db.refresh(shift)

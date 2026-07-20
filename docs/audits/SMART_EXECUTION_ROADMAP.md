@@ -1,7 +1,8 @@
 # خارطة التنفيذ الذكية المعتمدة على المخاطر والاعتماديات
 
 **الحالة:** خارطة حية؛ Gate 1A وشريحة Dining-paid من Gate 1B وGate 2 وGate 3
-مُعتمَدة. Gate 4 هي البوابة التالية الجاهزة للتخطيط والتنفيذ (2026-07-19).
+مُعتمَدة. Gate 4 منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20)، بانتظار
+مراجعة مستقلة قبل الاعتماد. Gate 5 هي البوابة التالية الجاهزة للتخطيط والتنفيذ.
 **المصدر:** مراجعة 360° بتاريخ 2026-07-17 + القرارات الموجودة في
 `docs/decisions/` + `wagdy.md`.
 
@@ -15,7 +16,7 @@
 | Gate 1B: Financial Atomicity | **شريحة Dining-paid مكتملة ومُعتمَدة (2026-07-18)**؛ بقية call sites لاحقة | Claude | اجتازت failure/concurrency/full-suite gates؛ لا commit/push بعد |
 | Gate 2: Super Admin safeguards | **مكتملة ومُعتمَدة (2A→2B3B)** | Claude/Codex | server-side policy/concurrency/session/audit tests |
 | Gate 3: i18n/design/test foundation | **مكتملة ومُعتمَدة (2026-07-19)** | Claude/Codex | bilingual shell + reference screens + quality harness |
-| Gate 4: Dining financial integrity | **التالية — اعتمادياتها مكتملة** | Claude | transactional payment/shift/order invariants |
+| Gate 4: Dining financial integrity | **منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20) — Codex راجعت جولة أولى، كل الملاحظات + step-up المالي اتصلحوا، بانتظار مراجعة مستقلة تالية** | Claude | settlement/idempotency/shift-lock/one-active-order + 18/18 Postgres concurrency؛ لا commit/push بعد؛ مفيش بند مؤجَّل متبقٍّ |
 | Gate 5: Staff UX batches | مغلقة على Gates 3 و4 حسب الشاشة | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
 | Gate 7: Public migration batches | مغلقة على Gates 2 و3 واعتماد Phase 0 | Claude | visual/API diff لكل batch بلا legacy backend |
 | Gate 8: QR + Guest Service | مغلقة على Gates 1A و3 و4 و7 | Claude | scan-to-call-to-payment E2E evidence |
@@ -128,10 +129,18 @@ Gate 5 ولا تدخل ضمن ادعاء الاعتماد هنا.
 **النطاق:** Payment، cashier shift، method، idempotency، reconciliation،
 void/refund/discount approvals، order ownership، one-active-order invariant.  
 **يعتمد على:** Gate 1B، وسياسات Gate 2 للأفعال الحساسة.  
-**الحالة:** جاهزة الآن بعد اكتمال اعتماديات Gate 1B وGate 2؛ تبدأ بعقد تنفيذ
-محدود وأدلة failure/concurrency، لا بإعادة كتابة Dining كاملة.
+**الحالة:** **منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20)، بلا
+commit/push.** الثلاث شرائح اتنفّذت: 4A settlement/idempotency/Payment
+attribution/typed-method-fail-closed، 4B open-shift invariant + close lock +
+expected-cash formula + branch isolation، 4C state machine + one-active-order
++ actor attribution + refund lock/reversal. جولة مراجعة Codex مستقلة أولى
+(2026-07-20) لقت 5 High + 5 Medium (منها فساد بيانات حقيقي مثبَت على
+PostgreSQL معزولة) — كلهم اتصلحوا بإثبات حقيقي، بما فيهم step-up المالي
+لـ payment_void/dining_refund (كان الوحيد المؤجَّل، نُفِّذ لاحقًا مباشرة من
+غير وكيل لما Codex بقى غير متاح). **مفيش بند مؤجَّل متبقٍّ.**
 **عقد التنفيذ:** `docs/audits/gate-4-execution-brief.md` — ثلاث شرائح مترابطة:
-settlement/payment، shift/reconciliation، ثم state/ownership/reversals.
+settlement/payment، shift/reconciliation، ثم state/ownership/reversals. تقرير
+التنفيذ: `docs/audits/gate-4-dining-payment-shift-order-integrity.md`.
 **الخروج:** كل بيع يظهر مرة واحدة فقط في Payment والوردية والفوليو والدفتر،
 وتنجح concurrency/failure tests على PostgreSQL.
 

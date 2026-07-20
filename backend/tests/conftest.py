@@ -285,6 +285,38 @@ def make_unrelated_operational_error(context: str = "connection lost") -> "Opera
     return OperationalError(context, {}, Exception("server closed the connection unexpectedly"))
 
 
+def open_cashier_shift(db, branch_id: int, cashier_id: int, opening_float="0"):
+    """Gate 4A test helper: يفتح وردية كاشير مباشرة عبر الـ ORM — بعد Gate 4A
+    أي تحصيل دفع مباشر (cash/card/wallet) عبر مسار HTTP (اللي بيمرّر
+    settled_by=user.id) بيتطلب وردية مفتوحة لهذا الكاشير والفرع، وإلا 409
+    NO_OPEN_SHIFT. أي تست بيدفع طلب دايننج كاش/كارت بهوية كاشير حقيقية لازم
+    يفتح وردية الأول (زي الكاشير الحقيقي بالظبط)."""
+    from decimal import Decimal  # noqa: PLC0415
+    from datetime import datetime  # noqa: PLC0415
+    from app.modules.finance.models import CashierShift  # noqa: PLC0415
+
+    existing = (
+        db.query(CashierShift)
+        .filter(
+            CashierShift.branch_id == branch_id,
+            CashierShift.cashier_id == cashier_id,
+            CashierShift.status == "open",
+        )
+        .first()
+    )
+    if existing:
+        return existing
+    shift = CashierShift(
+        branch_id=branch_id, cashier_id=cashier_id,
+        opened_at=datetime.utcnow(), opened_by=cashier_id,
+        opening_float=Decimal(str(opening_float)), status="open",
+    )
+    db.add(shift)
+    db.commit()
+    db.refresh(shift)
+    return shift
+
+
 def ws_url(path: str, headers: dict[str, str]) -> str:
     """يحوّل مسار WebSocket + fixture headers (زي waiter_headers) لرابط فيه
     ?token=... — كل WebSocket endpoint بقى يتطلبه (wagdy.md A-01،

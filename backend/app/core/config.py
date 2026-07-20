@@ -34,6 +34,21 @@ class Settings(CoreSettings):
     # في تفاصيل الوردية للمحاسب ويتسجّل في AuditLog تلقائياً.
     CASH_VARIANCE_WARNING_ABS: float = 50.0     # ج — فوق كده = warning للمحاسب (الوردية تُقفل برضو)
 
+    # ── Dining tender GL settlement mapping (Gate 4A — typed payment-method
+    # policy, fail-closed) ─────────────────────────────────────────────
+    # كل tender مباشر محصّل (cash/card/wallet) لازم يترحّل لحساب GL معروف
+    # وقت الدفع. cash بيربط بحساب الكاش الموجود 1100، وroom بذمم الفوليو
+    # 1150 (الاتنين موثّقين في دليل الحسابات فعليًا). card/wallet لا يُربطوا
+    # بحساب مخترَع من الوكيل (Gate 4 execution brief §2.1): لو المنتجع عايز
+    # يفرّق card/wallet في الدفاتر، لازم يحدد حساب مقاصّة صريح هنا (مثلاً
+    # 1120 لمقاصّة الفيزا، 1130 للمحفظة) على مستوى deployment. القيمة
+    # الافتراضية None = fail-closed: طريقة الدفع دي بترفض التحصيل برسالة
+    # configuration واضحة (503 METHOD_NOT_CONFIGURED) لحد ما تُهيأ — مش
+    # بتترحّل بصمت لحساب الكاش زي السلوك القديم الغلط. راجع
+    # dining.payment_policy.resolve_direct_tender_account.
+    DINING_CARD_SETTLEMENT_ACCOUNT: Optional[str] = None
+    DINING_WALLET_SETTLEMENT_ACCOUNT: Optional[str] = None
+
     # ── Fraud Detection (Operations & Control Layer plan §3.5) ────────
     # عتبات حقيقية (مش أرقام توضيحية) لكشف نشاط كاشير مشبوه — كل عتبة "عدد
     # حركات خلال نافذة زمنية دوّارة" per-cashier، مش نسبة مئوية (حساب نسبة

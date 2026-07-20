@@ -12,7 +12,10 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status, UploadFile
+from fastapi import (
+    APIRouter, Depends, Header, HTTPException, Query, Request,
+    WebSocket, WebSocketDisconnect, status, UploadFile,
+)
 from fastapi.responses import Response
 
 from app.core.config import settings
@@ -20,7 +23,7 @@ from app.core.deps import (
     DbDep, get_cashier_user, get_current_active_user, get_websocket_user,
     get_manager_user, get_waiter_user, require_permission, user_level,
 )
-from app.modules.dining import crud, services
+from app.modules.dining import crud, payment_policy, services
 from app.modules.dining.models import DiningOrder, VenueTable
 from app.modules.dining.schemas import (
     ApplyDiscountRequest,
@@ -35,7 +38,7 @@ from app.modules.dining.schemas import (
     KDSScreenCreate, KDSScreenRead,
     KitchenTicketRead, TicketStatusUpdate,
     OrderCreate, OrderItemCreate, OrderItemRead, OrderItemStatusUpdate, OrderItemVoidRequest,
-    OrderRead, OrderStatusUpdate, OrderTransferRequest, SplitBillRequest,
+    OrderRead, OrderStatusUpdate, OrderTransferRequest, SplitBillRequest, WaiterTransferRequest,
     OrderSyncRequest, OrderSyncResponse,
     OutletCreate, OutletRead, OutletUpdate,
     GuestOrderCreate, GuestOrderRead, PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
@@ -49,6 +52,24 @@ from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
 from app.resort_os.timezone_utils import business_today
 
 router = APIRouter(tags=["dining"])
+
+
+def _assert_order_branch(db, user, order_id: int, action_desc: str):
+    """Gate 4 (جولة مراجعة Codex الأولى — High 5): branch isolation على أي
+    mutation branch-scoped على طلب دايننج. قبل الجولة دي، endpoints زي
+    refund/void/transfer/add-items/discount/merge كانت مقفولة بـ role/permission
+    بس بدون أي تحقق فرع — مدير فرع تاني كان يقدر ينفّذها على طلب في فرع مختلف
+    بمجرد تخمين order_id. بيعيد استخدام core.services.assert_branch_access
+    الموجود (super_admin بس بيتخطى، Decision 0003) — مفيش آلية موازية. بيرجّع
+    الطلب لو التحقق نجح (404 لو مش موجود، 403 لو فرع تاني)."""
+    order = crud.get_order(db, order_id)
+    if not order:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الطلب {order_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, order.branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return order
 
 
 # ── WebSocket KDS Manager ──────────────────────────────────────────────
@@ -548,11 +569,17 @@ def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 
 @router.patch("/dining/orders/{order_id}/status", response_model=OrderRead)
-async def update_order_status(order_id: int, data: OrderStatusUpdate, db: DbDep, user=Depends(get_waiter_user)):
+async def update_order_status(
+    order_id: int, data: OrderStatusUpdate, db: DbDep, user=Depends(get_waiter_user),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
     """Gate 1B: التحقق من صلاحية الفرع بقى مطبّق على كل تحويلات الحالة (مش
     "مدفوع" بس) قبل أي تعديل — راجع core.services.assert_branch_access
     (bypass كامل لـ super_admin، fail-closed لو المستخدم مش مرتبط بفرع).
-    كود الأخطاء الدقيق لتحويل "مدفوع" (409/400/503) موثّق في خطة Gate 1B."""
+    كود الأخطاء الدقيق لتحويل "مدفوع" (409/400/503) موثّق في خطة Gate 1B/4A.
+
+    Gate 4A: تحويل "مدفوع" بياخد Idempotency-Key (اختياري لكن موصى به من
+    الـ POS) — retry بنفس المفتاح والنية بيرجّع نفس النتيجة بدل دفع مكرر."""
     order_for_access_check = crud.get_order(db, order_id)
     if not order_for_access_check:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الطلب {order_id} غير موجود")
@@ -568,11 +595,24 @@ async def update_order_status(order_id: int, data: OrderStatusUpdate, db: DbDep,
             db, order_id, data.status,
             charge_to_room_id=data.charge_to_room_id,
             payment_method=data.payment_method,
+            settled_by=user.id,
+            acting_user_level=user_level(user),
+            idempotency_key=idempotency_key,
         )
     except services.OrderPaymentConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
     except services.OrderAlreadyPaidError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_ALREADY_PAID", "message": str(exc)})
+    except services.IdempotencyConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "IDEMPOTENCY_KEY_CONFLICT", "message": str(exc)})
+    except services.NoOpenShiftError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "NO_OPEN_SHIFT", "message": str(exc)})
+    except finance_services.ShiftCloseInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc)})
+    except services.PaymentAllocationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "PAYMENT_ALLOCATION_MISMATCH", "message": str(exc)})
+    except payment_policy.PaymentMethodNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {"error_code": "METHOD_NOT_CONFIGURED", "message": str(exc)})
     except services.InvalidOrderTotalError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "INVALID_ORDER_TOTAL", "message": str(exc)})
     except services.InvalidPaymentMethodError as exc:
@@ -608,13 +648,34 @@ async def transfer_order_table(order_id: int, data: OrderTransferRequest,
     """نقل طلب مفتوح لطاولة تانية (الضيوف اتحركوا فعليًا) — نفس مستوى صلاحية
     باقي عمليات التشغيل اليومية على الطلب (get_waiter_user)، مش إجراء مالي.
     راجع restaurant.api.router.transfer_order_table — نفس المنطق بالظبط."""
+    _assert_order_branch(db, user, order_id, "نقل طاولة هذا الطلب")
     try:
         order = services.transfer_order_table(db, order_id, data.table_id)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await dining_manager.broadcast(f"tables-{order.branch_id}", {
         "type": "table_updated", "table_id": order.table_id,
     })
+    return order
+
+
+@router.patch("/dining/orders/{order_id}/waiter", response_model=OrderRead)
+async def transfer_order_waiter(order_id: int, data: WaiterTransferRequest,
+                                db: DbDep, user=Depends(get_manager_user)):
+    """M5 (الـ brief §2.6 بند 3): تغيير النادل المسند لطلب مفتوح — مدير+
+    (permission gate)، بسبب إجباري، وبيترك AuditLog ولا يمسح creator الأصلي.
+    branch isolation مطبّق (High 5)."""
+    _assert_order_branch(db, user, order_id, "تغيير نادل هذا الطلب")
+    try:
+        order = services.transfer_order_waiter(
+            db, order_id, data.new_waiter_id, changed_by=user.id, reason=data.reason,
+        )
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     return order
 
 
@@ -638,12 +699,15 @@ async def update_order_item_status(order_id: int, item_id: int, data: OrderItemS
 def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest, db: DbDep, user=Depends(get_current_active_user)):
     """إلغاء صنف واحد بسبب إجباري — نفس مستوى restaurant/cafe
     void_order_item (كاشير+، PIN موافقة مدير لو أقل من مدير)."""
+    _assert_order_branch(db, user, order_id, "إلغاء صنف من هذا الطلب")
     try:
         return services.void_order_item(
             db, order_id, item_id, data.reason, voided_by=user.id,
             acting_user_level=user_level(user),
             approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
         )
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -652,8 +716,11 @@ def void_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest, db:
 async def add_items_to_order(order_id: int, items: list[OrderItemCreate], db: DbDep, user=Depends(get_waiter_user)):
     if not items:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "لازم تضيف صنف واحد على الأقل")
+    _assert_order_branch(db, user, order_id, "إضافة أصناف لهذا الطلب")
     try:
-        order = services.add_items_to_order(db, order_id, items)
+        order = services.add_items_to_order(db, order_id, items, added_by=user.id)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if order.status == "in_kitchen":
@@ -663,10 +730,35 @@ async def add_items_to_order(order_id: int, items: list[OrderItemCreate], db: Db
 
 @router.patch("/dining/orders/{order_id}/items/{item_id}/refund", response_model=OrderRead,
               dependencies=[Depends(require_permission("dining.refund_order_item", "execute", min_role_level=60))])
-def refund_order_item(order_id: int, item_id: int, data: OrderItemVoidRequest, db: DbDep, user=Depends(get_current_active_user)):
-    """مرتجع بعد الدفع — مستوى مدير (60)، نفس restaurant/cafe.refund_order_item."""
+def refund_order_item(
+    order_id: int, item_id: int, data: OrderItemVoidRequest, db: DbDep, request: Request,
+    user=Depends(get_current_active_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """مرتجع بعد الدفع — مستوى مدير (60)، نفس restaurant/cafe.refund_order_item.
+
+    Gate 4 (جولة مراجعة Codex الأولى — M5a): عكس مالي حقيقي لصنف اتحصّل
+    فعليًا، أعلى خطورة من إلغاء صنف قبل الدفع (لسه محمي بـPIN موافقة مدير
+    بس، مقصود) — محتاج step-up فوق صلاحية مدير+ العادية."""
+    from app.core.kernel.auth.step_up import dining_refund_scope  # noqa: PLC0415
+    from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
+
+    _assert_order_branch(db, user, order_id, "استرجاع صنف من هذا الطلب")
+    scope_hash = dining_refund_scope(order_id=order_id, item_id=item_id, reason=data.reason)
+    consume_step_up_or_raise(
+        db, user, request,
+        purpose="dining_refund", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
     try:
         return services.refund_order_item(db, order_id, item_id, data.reason, refunded_by=user.id)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
+    except finance_services.ShiftCloseInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc)})
+    except payment_policy.PaymentMethodNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {"error_code": "METHOD_NOT_CONFIGURED", "message": str(exc)})
+    except finance_services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {"error_code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -690,31 +782,67 @@ def apply_discount(
     """تطبيق أفضل قاعدة خصم سارية (كاشير+) — الكاشير صفر صلاحية خصم فعليًا،
     فالطلب محتاج موافقة PIN مدير/محاسب حاضر (resolve_pin_approval، مدير+
     مؤهّل بنفسه من غير موافقة). راجع services.apply_order_discount."""
+    _assert_order_branch(db, user, order_id, "تطبيق خصم على هذا الطلب")
     try:
         return services.apply_order_discount(
             db, order_id, applied_by=user.id,
             acting_user_level=user_level(user),
             approver_user_id=data.approver_user_id, approver_pin=data.approver_pin,
         )
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 @router.post("/dining/orders/{order_id}/split-bill", response_model=OrderRead)
 def split_bill(
-    order_id: int, data: SplitBillRequest, db: DbDep, _=Depends(get_cashier_user),
+    order_id: int, data: SplitBillRequest, db: DbDep, user=Depends(get_cashier_user),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
-    """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع (كاشير+).
-    يتحقق أن مجموع الدفعات = order.total ± 0.01 ج،
-    يُرحّل room charges للـ folio لو payment_method=room،
-    ويُسجّل قيد إيراد مجمّع واحد في النهاية.
-    راجع services.split_bill للمنطق الكامل."""
+    """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع (كاشير+). Gate 4A: بقى
+    وحدة عمل صارمة كاملة عبر services.settle_order — كل tender مباشر بيتعمله
+    Payment منسوب للكاشير/الوردية، وكل tender غرفة شحنة فوليو متناسبة، في
+    نفس المعاملة الذرّية، مع idempotency guard (Idempotency-Key). الفرع
+    بيتأكد server-side قبل التحصيل."""
+    order_for_access_check = crud.get_order(db, order_id)
+    if not order_for_access_check:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الطلب {order_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, order_for_access_check.branch_id, "تحصيل هذا الطلب")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         return services.split_bill(
             db,
             order_id,
             [p.model_dump() for p in data.payments],
+            settled_by=user.id,
+            acting_user_level=user_level(user),
+            idempotency_key=idempotency_key,
         )
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
+    except services.OrderAlreadyPaidError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_ALREADY_PAID", "message": str(exc)})
+    except services.IdempotencyConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "IDEMPOTENCY_KEY_CONFLICT", "message": str(exc)})
+    except services.NoOpenShiftError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "NO_OPEN_SHIFT", "message": str(exc)})
+    except finance_services.ShiftCloseInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc)})
+    except services.PaymentAllocationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "PAYMENT_ALLOCATION_MISMATCH", "message": str(exc)})
+    except payment_policy.PaymentMethodNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {"error_code": "METHOD_NOT_CONFIGURED", "message": str(exc)})
+    except services.InvalidPaymentMethodError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "INVALID_PAYMENT_METHOD", "message": str(exc)})
+    except inventory_services.InventoryConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {"error_code": "INVENTORY_CONFIGURATION_ERROR", "message": str(exc)})
+    except finance_services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {"error_code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc)})
+    except finance_services.FolioClosedError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -729,8 +857,12 @@ async def merge_orders(
     """P-08 — دمج أوردرين مفتوحين في أوردر واحد (waiter+).
     يُنقل كل أصناف order_id لـ target_order_id ثم يُلغى order_id.
     الشرط: كلا الأوردرين مفتوحَين (open/in_kitchen) في نفس الـ branch."""
+    _assert_order_branch(db, user, order_id, "دمج هذا الطلب")
+    _assert_order_branch(db, user, target_order_id, "الدمج في هذا الطلب")
     try:
         merged = services.merge_orders(db, order_id, target_order_id, merged_by=user.id)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     # broadcast تحديث الطاولتين

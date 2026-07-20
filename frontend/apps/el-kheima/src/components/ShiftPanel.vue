@@ -11,7 +11,6 @@ import { ref, computed, onMounted } from 'vue'
 import { api } from '@resort-os/core'
 import { useAuthStore } from '@resort-os/core'
 import { AppModal, AppButton, AppInput, useToast } from '@resort-os/ui'
-import PinGuardModal from './PinGuardModal.vue'
 
 const auth = useAuthStore()
 const toast = useToast()
@@ -79,13 +78,12 @@ const lastCloseResult = ref<{
   reconciliation_warning?: string | null
 } | null>(null)
 
-// فرق كاش أكبر من الحد المسموح (services.close_shift) بيترفض القفل بـ 400
-// — بدل ما يفضل الكاشير معلّق لحد ما مدير يتفرّغ، بوابة PIN (wagdy.md بند
-// S-06) بتسمح بتخطي الرفض فورًا لو مدير حاضر فعليًا. نفس payload القفل
-// الأصلي بيتبعت تاني مع force_close=true + موافقة المدير.
-const varianceOverride = ref(false)
-const forceCloseError = ref('')
-const pendingClosePayload = ref<Record<string, unknown> | null>(null)
+// ملاحظة (جولة مراجعة Codex الأولى — M3): آلية رفض القفل بسبب فرق الكاش
+// أُلغيت بالكامل من الباك إند (قرار Mohamed 2026-07-14: الوردية تُقفل دايمًا
+// والفرق يُسجَّل كتحذير للمحاسب). فمسار "force_close + موافقة مدير لتخطي
+// الرفض" اللي كان هنا بقى dead code (الباك إند عمره ما بيرجّع خطأ الفرق ده)
+// — اتشال عشان الفرونت إند والباك إند يتفقوا. الفرق الكبير بيظهر كـ
+// reconciliation_warning في applyCloseResult تحت.
 
 async function fetchCurrentShift() {
   loading.value = true
@@ -133,9 +131,6 @@ function openCloseModalFn() {
   closeNotes.value = ''
   closeHandoverNote.value = ''
   lastCloseResult.value = null
-  varianceOverride.value = false
-  forceCloseError.value = ''
-  pendingClosePayload.value = null
   closeModal.value = true
 }
 
@@ -149,8 +144,6 @@ function applyCloseResult(data: any) {
     reconciliation_warning:  data.reconciliation_warning ?? null,
   }
   shift.value = null
-  varianceOverride.value = false
-  pendingClosePayload.value = null
   // فرق كاش خارج النطاق المقبول (مش كبير بما يكفي عشان يترفض القفل، لكن
   // يستاهل مراجعة مدير) — بيتحول لتحذير حقيقي للكاشير هنا، مش يتبلع بصمت.
   if (data.reconciliation_ok === false && data.reconciliation_warning) {
@@ -178,37 +171,13 @@ async function confirmClose() {
       notes: closeNotes.value || undefined,
       handover_note: closeHandoverNote.value || undefined,
     }
-    pendingClosePayload.value = payload
     const { data } = await api.post(`/api/v1/finance/shifts/${shift.value.id}/close`, payload)
     applyCloseResult(data)
   } catch (e: any) {
+    // الوردية بتُقفل دايمًا الآن (مفيش رفض بسبب الفرق) — أي خطأ هنا حقيقي
+    // (عدّ ناقص، سعر صرف مفقود، صلاحية) بيتعرض كتوست مباشر.
     const detail: string = e?.response?.data?.detail ?? ''
-    // فرق كاش كبير جدًا نسبةً لمبيعات الوردية بيترفض بالكامل من الباك إند
-    // (400، services.close_shift) — بدل ما نرفض للأبد، افتح بوابة موافقة
-    // مدير بالـ PIN لتخطي الحد (wagdy.md بند S-06) بدل التوست العادي.
-    if (e?.response?.status === 400 && detail.includes('يتخطى الحد المسموح')) {
-      varianceOverride.value = true
-    } else {
-      toast.error(detail || 'تعذّر قفل الوردية — تأكد من عدّ الكاش')
-    }
-  } finally { closing.value = false }
-}
-
-async function onForceCloseApproved(payload: { approverUserId: number | null; approverPin: string | null }) {
-  if (!shift.value || !pendingClosePayload.value) return
-  closing.value = true
-  forceCloseError.value = ''
-  try {
-    const { data } = await api.post(`/api/v1/finance/shifts/${shift.value.id}/close`, {
-      ...pendingClosePayload.value,
-      force_close: true,
-      approver_user_id: payload.approverUserId,
-      approver_pin: payload.approverPin,
-    })
-    applyCloseResult(data)
-  } catch (e: any) {
-    // varianceOverride يفضل true — المستخدم يقدر يصحح الـ PIN ويحاول تاني
-    forceCloseError.value = e?.response?.data?.detail ?? 'تعذّر تخطي الفرق — تأكد من الـ PIN'
+    toast.error(detail || 'تعذّر قفل الوردية — تأكد من عدّ الكاش')
   } finally { closing.value = false }
 }
 
@@ -341,17 +310,5 @@ onMounted(fetchCurrentShift)
         </div>
       </template>
     </AppModal>
-
-    <!-- فرق كاش أكبر من الحد المسموح — بوابة موافقة مدير لتخطي الرفض (S-06) -->
-    <PinGuardModal
-      v-if="varianceOverride"
-      :min-level="60"
-      title="فرق كاش كبير — تخطي بموافقة مدير"
-      message="الفرق بين الكاش المتوقع والمعدود أكبر من الحد المسموح لهذه الوردية. مدير+ يقدر يعتمد القفل رغم كده."
-      :loading="closing"
-      :error-message="forceCloseError"
-      @approved="onForceCloseApproved"
-      @cancel="varianceOverride = false"
-    />
   </div>
 </template>

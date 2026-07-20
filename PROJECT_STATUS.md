@@ -27,6 +27,62 @@
 
 ---
 
+## 🟦 Gate 4 — سلامة الدفع والوردية والطلب في Dining (2026-07-20، منفَّذة بالكامل، بانتظار مراجعة مستقلة)
+
+**الحالة:** الثلاث شرائح + **تصحيحات جولة مراجعة Codex المستقلة الأولى (10
+ملاحظات: 5 High + 5 Medium)** + **M5(a) step-up المالي** كلهم منفَّذين على
+الفرع `gate-4-dining-payment-shift-order-integrity`. **بلا commit/push —
+بانتظار مراجعة مستقلة (ليست اعتمادًا).** Codex مش متاح للمراجعة حاليًا (قرار
+محمد 2026-07-20)؛ M5(a) نُفِّذ مباشرة من غير وكيل، وروجع بنفس الدقة. **مفيش بند
+مؤجَّل متبقٍّ.** التقرير الكامل + قسمي جولتي المراجعة:
+`docs/audits/gate-4-dining-payment-shift-order-integrity.md`.
+
+**جولة مراجعة Codex الأولى (2026-07-20) — مختصر:** High 1 (تسلسل الدفع/حركة
+الكاش مع إغلاق الوردية عبر NOWAIT+409 على صف الوردية)، High 2 (كل mutation على
+الطلب بقى يقفل الطلب زي settle/refund)، High 3 (split refund بيعكس الكاش والغرفة
+بالتناسب)، High 4 (المرتجع fail-closed + عكس على حساب الطريقة الأصلي)، High 5
+(branch isolation على refund/void/transfer/discount/merge/waiter + shift PDF +
+cash-movements)، M1 (مقارنة Decimal دقيقة)، M2 (تقرير الوردية بيبيّن الغرفة
+والمرتجعات كبنود منفصلة + لقطة `tender_breakdown`، migration `d2b4a1c3f7e9`)،
+M3 (قفل مدير لوردية غيره محتاج سبب+موافقة+AuditLog)، M4 (تعريف الطاولة النشطة
+مطابق للـ index + no-op حقيقي لـ in_kitchen)، M5(b) (`PATCH .../waiter`).
+
+**جولة M5a (2026-07-20، تنفيذ مباشر بلا وكيل):** step-up مالي لـ
+`payment_void`/`dining_refund` — إعادة استخدام كاملة لآلية Gate 2B3A/2B3B
+(scope builders جديدة، typed intent models، `X-Step-Up-Token`)، مفيش proof
+موازٍ. تكرار حقيقي اتصلح أثناء العمل: `_consume_step_up_or_raise` كانت خاصة
+جوه `core/api/router.py` بس، بقت مشتركة (`app/modules/core/api/step_up_utils.py`).
+الفرونت إند: `DiningOrderDetailModal.vue`'s المرتجع بقى بيستخدم
+`StepUpConfirmModal.vue` بدل textarea مباشر. `void_payment` (finance) مفهوش UI
+frontend خالص لحد دلوقتي — الحماية backend-only.
+
+- **4A settlement/exactly-once:** جدول `dining_settlements` جديد (تسوية واحدة
+  لكل طلب + بوابة idempotency على مستوى الـ DB). `settle_order` primitive واحدة
+  لـ paid وsplit. كل tender مباشر بقى له `Payment` منسوب للكاشير/الوردية/
+  الطريقة. طرق دفع typed fail-closed (cash→1100، room→1150، card/wallet لازم
+  حساب مهيّأ صراحةً وإلا 503). الدفع المباشر يتطلب وردية مفتوحة.
+- **4B shift/reconciliation:** partial unique index يمنع فتح مزدوج للوردية؛
+  الإغلاق بيقفل الصف؛ الكاش المتوقع بالصيغة الكاملة (حركات يدوية + تصحيح موجّه)؛
+  branch isolation على كل endpoints الوردية.
+- **4C state/ownership/reversals:** state machine مركزية؛ partial unique index +
+  قفل الطاولة (طلب نشط واحد لكل طاولة)؛ حفظ منشئ الطلب ومين أضاف كل صنف؛ المرتجع
+  بقى يقفل الطلب ويعمل عكس Payment مرتبط بالـ tender الأصلي.
+
+**التحقق النهائي (بعد جولتي مراجعة Codex + M5a، 2026-07-20):** backend
+**2008 passed · 33 skipped · 0 failed** (SQLite)؛ تزامن Postgres حقيقي على
+قاعدة معزولة (تُنشأ وتُحذف ذاتيًا، **مش** قاعدة التطوير المشتركة): 18/18
+(`test_gate4_concurrency.py` 13 + `test_dining_paid_concurrency.py` 5)؛ دورة
+migration `upgrade head → downgrade c9f1a4d7e2b8 → downgrade b8f4d2a19c07 →
+upgrade head` على قاعدة معزولة، رأس واحد `d2b4a1c3f7e9` (مفيش migration جديدة
+جولة M5a — step-up بيستخدم جدول Gate 2B3A الموجود). frontend: type-check/i18n/
+build نظاف، `test:frontend` 60 passed. `git diff --check` نظيف. صفر commit،
+صفر push.
+
+**مفيش بند مؤجَّل متبقٍّ** — High 1-5 وM1-M5 (بما فيهم M5a وM5b) كلهم منفَّذين
+بإثبات حقيقي.
+
+---
+
 ## 🧭 قرارات معتمدة قبل Public Phase 0 — حالة التنفيذ موضحة تحت كل Gate
 
 في 2026-07-17 اعتمد Mohamed بوابتين تسبقان نقل الموقع العام:

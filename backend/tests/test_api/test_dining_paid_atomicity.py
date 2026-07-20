@@ -711,7 +711,7 @@ class TestRouterErrorCodeMapping:
 
     def _make_branch_linked_headers(self, db, branch, role="cashier") -> dict[str, str]:
         from datetime import date, timedelta
-        from tests.conftest import _create_test_user, _make_token
+        from tests.conftest import _create_test_user, _make_token, open_cashier_shift
         from app.modules.hr.models import Employee
 
         email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
@@ -724,6 +724,8 @@ class TestRouterErrorCodeMapping:
         )
         db.add(emp)
         db.commit()
+        # Gate 4A: الكاشير اللي بيحصّل دفع مباشر لازم يكون له وردية مفتوحة.
+        open_cashier_shift(db, branch.id, user_id)
         return {"Authorization": f"Bearer {_make_token(email)}"}
 
     def test_missing_gl_account_returns_503_with_exact_code(self, client: TestClient, db):
@@ -817,6 +819,14 @@ class TestRouterErrorCodeMapping:
         make_finance_accounts(db, branch)
         item = make_item(db, branch, outlet)
         order = make_order(db, branch, outlet, item, quantity=1)
+
+        # Gate 4A: تحصيل الدفع المباشر بيتطلب وردية مفتوحة للكاشير المسدّد —
+        # هنا الـ super_admin هو اللي بيسدّد؛ نفتح له وردية على فرع الطلب.
+        from tests.conftest import open_cashier_shift
+        from app.core.kernel.models.user import User
+        sa_user = db.query(User).filter(User.email == "super_admin@test.local").first()
+        assert sa_user is not None
+        open_cashier_shift(db, branch.id, sa_user.id)
 
         resp = client.patch(
             f"/api/v1/dining/orders/{order.id}/status",

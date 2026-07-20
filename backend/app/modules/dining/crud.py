@@ -17,7 +17,7 @@ from app.modules.dining.models import (
     DiningCategory, DiningItem, DiningItemExtra, DiningItemExtraGroup,
     DiningItemRecipeLine, DiningItemVariant, DiningItemVariantRecipeLine,
     DiningKDSScreen, DiningKitchenTicket, DiningOrder, DiningOrderItem,
-    DiningOrderItemExtra, VenueTable, Outlet,
+    DiningOrderItemExtra, DiningSettlement, VenueTable, Outlet,
 )
 from app.modules.dining.schemas import (
     DiningCategoryCreate, DiningItemCreate, DiningItemExtraGroupCreate,
@@ -248,6 +248,15 @@ def delete_variant_recipe_line(db: Session, line_id: int) -> bool:
     return True
 
 
+# مجموعة حالات الطلب اللي بتعتبر الطاولة "مشغولة" فعليًا — لازم تطابق
+# بالظبط الـ partial unique index uq_active_order_per_table (راجع
+# DiningOrder.__table_args__). M4 (جولة مراجعة Codex الأولى): قبل كده
+# get_active_order_for_table كان بيستخدم notin_(paid|cancelled) اللي بيشمل
+# refunded — فطلب اترجّع بالكامل كان لسه بيعتبر "مشغّل" للطاولة رغم إن الـ
+# index مش بيمنع طلب جديد مكانه، فالطاولة كانت تفضل عالقة "مشغولة" للأبد.
+ACTIVE_TABLE_ORDER_STATUSES = ("held", "open", "in_kitchen", "served")
+
+
 # ── VenueTable ───────────────────────────────────────────────────────
 
 def list_tables(db: Session, outlet_id: int) -> list[VenueTable]:
@@ -260,64 +269,11 @@ def list_tables(db: Session, outlet_id: int) -> list[VenueTable]:
 
 
 def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
-    """نفس list_tables لكن تضيف معلومات الأوردر النشط لكل طاولة.
-
-    ترجع list[dict] بدل list[VenueTable] عشان الحقول الإضافية مش mapped
-    على ORM model — بيتحوّل لـ DiningTableRead في الـ router.
-    جلب دفعة واحدة (مش N+1 queries).
-    """
-    from sqlalchemy import and_
-
-    tables = (
-        db.query(VenueTable)
-        .filter(VenueTable.outlet_id == outlet_id)
-        .order_by(VenueTable.table_number)
-        .all()
-    )
-
-    active_statuses = ("open", "in_kitchen", "served")
-    active_orders = (
-        db.query(DiningOrder)
-        .filter(
-            and_(
-                DiningOrder.outlet_id == outlet_id,
-                DiningOrder.status.in_(active_statuses),
-                DiningOrder.table_id.isnot(None),
-            )
-        )
-        .all()
-    )
-    # مؤشر: table_id → أحدث أوردر نشط
-    order_by_table: dict[int, DiningOrder] = {}
-    for o in active_orders:
-        if o.table_id not in order_by_table:
-            order_by_table[o.table_id] = o
-
-    result = []
-    for t in tables:
-        o = order_by_table.get(t.id)
-        result.append({
-            "id":                  t.id,
-            "branch_id":           t.branch_id,
-            "outlet_id":           t.outlet_id,
-            "table_number":        t.table_number,
-            "capacity":            t.capacity,
-            "status":              t.status,
-            "section":             t.section,
-            "occupied_at":         t.occupied_at,
-            "grid_row":            t.grid_row,
-            "grid_col":            t.grid_col,
-            "active_order_id":     o.id            if o else None,
-            "active_order_number": o.order_number  if o else None,
-            "active_order_total":  float(o.total)  if o and o.total is not None else None,
-            "active_covers":       o.guests_count  if o else None,
-            "order_status":        o.status        if o else None,
-        })
-    return result
-
-
-def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
     """نفس list_tables لكن تُضيف معلومات الأوردر النشط لكل طاولة.
+
+    ⚠️ كان فيه تعريفان متطابقان لهذه الدالة (الثاني بيحجب الأول بصمت) — اتشال
+    الأول واتساب ده (النسخة الفعّالة اللي كانت بتشتغل قبل كده) عشان تعريف واحد
+    واضح بس. الاتنين كانوا بيرجّعوا نفس النتيجة بالظبط.
 
     تُعيد list[dict] بدل list[VenueTable] عشان الحقول الإضافية مش mapped
     على الـ ORM model — بيتحوّل لـ DiningTableRead في الـ router.
@@ -331,8 +287,10 @@ def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
         .all()
     )
 
-    # جلب كل الأوردرات النشطة لهذا الـ outlet دفعة واحدة (مش N+1)
-    active_statuses = ("open", "in_kitchen", "served")
+    # جلب كل الأوردرات النشطة لهذا الـ outlet دفعة واحدة (مش N+1) — نفس
+    # مجموعة الحالات النشطة اللي الـ partial unique index بيستخدمها بالظبط
+    # (M4: تشمل held كمان — طلب معلّق بيشغّل الطاولة فعليًا).
+    active_statuses = ACTIVE_TABLE_ORDER_STATUSES
     active_orders = (
         db.query(DiningOrder)
         .filter(
@@ -424,12 +382,13 @@ def update_table_status(db: Session, table: VenueTable, status: str) -> VenueTab
 def get_active_order_for_table(
     db: Session, table_id: int, exclude_order_id: Optional[int] = None,
 ) -> Optional[DiningOrder]:
-    """أي طلب غير مقفول (مش paid/cancelled) مرتبط بالطاولة دي حاليًا — يُستخدم
-    للتحقق إن الطاولة "مشغولة بطلب آخر" قبل نقل طلب ليها. راجع
-    restaurant.crud.get_active_order_for_table — نفس المنطق بالظبط."""
+    """أي طلب نشط (held|open|in_kitchen|served — ACTIVE_TABLE_ORDER_STATUSES)
+    مرتبط بالطاولة دي حاليًا — يُستخدم للتحقق إن الطاولة "مشغولة بطلب آخر" قبل
+    فتح/نقل طلب ليها. M4: المجموعة دي مطابقة للـ partial unique index بالظبط
+    (paid/cancelled/refunded مستبعدة — طلب اترجّع بالكامل مايشغّلش الطاولة)."""
     q = db.query(DiningOrder).filter(
         DiningOrder.table_id == table_id,
-        DiningOrder.status.notin_(("paid", "cancelled")),
+        DiningOrder.status.in_(ACTIVE_TABLE_ORDER_STATUSES),
     )
     if exclude_order_id is not None:
         q = q.filter(DiningOrder.id != exclude_order_id)
@@ -466,6 +425,80 @@ def get_order_for_update(db: Session, order_id: int) -> Optional[DiningOrder]:
 
 def get_order_by_local_id(db: Session, local_id: str) -> Optional[DiningOrder]:
     return db.query(DiningOrder).filter(DiningOrder.client_local_id == local_id).first()
+
+
+def lock_table_for_update(db: Session, table_id: int) -> Optional[VenueTable]:
+    """SELECT ... FOR UPDATE (blocking) على صف الطاولة — يُستخدم في
+    create/transfer/merge عشان يسلسل أي محاولتين متزامنتين يفتحوا طلب على
+    نفس الطاولة، فالفحص "الطاولة مشغولة بطلب نشط؟" + partial unique index
+    (uq_active_order_per_table) مايتسابقوش. blocking مش NOWAIT عمدًا: فتح
+    طلبين على نفس الطاولة في نفس اللحظة نادر لكن التسلسل (مش الرفض الفوري)
+    هو السلوك الصح — الطلب التاني يستنى الأول يخلص ثم يشوف إن الطاولة بقت
+    مشغولة فيترفض برسالة واضحة. populate_existing لنفس سبب get_order_for_update
+    (القراءة السابقة غير المقفولة في identity map)."""
+    return (
+        db.query(VenueTable)
+        .filter(VenueTable.id == table_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+
+
+# ── Settlement / idempotency (Gate 4A) ─────────────────────────────────
+
+def get_settlement_by_order(db: Session, order_id: int) -> Optional[DiningSettlement]:
+    return db.query(DiningSettlement).filter(DiningSettlement.order_id == order_id).first()
+
+
+def get_settlement_by_key(
+    db: Session, branch_id: int, idempotency_key: str,
+) -> Optional[DiningSettlement]:
+    return (
+        db.query(DiningSettlement)
+        .filter(
+            DiningSettlement.branch_id == branch_id,
+            DiningSettlement.idempotency_key == idempotency_key,
+        )
+        .first()
+    )
+
+
+def create_settlement(
+    db: Session, *, branch_id: int, order_id: int, idempotency_key: Optional[str],
+    intent_hash: str, total: Decimal, cashier_id: Optional[int],
+    shift_id: Optional[int], created_by: Optional[int],
+    tender_breakdown: Optional[list] = None,
+) -> DiningSettlement:
+    row = DiningSettlement(
+        branch_id=branch_id, order_id=order_id, idempotency_key=idempotency_key,
+        intent_hash=intent_hash, total=total, cashier_id=cashier_id,
+        shift_id=shift_id, created_by=created_by, tender_breakdown=tender_breakdown,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def sum_room_tenders_for_shift(db: Session, shift_id: int) -> Decimal:
+    """إجمالي حصة الغرفة (room tenders) للتسويات المنسوبة لوردية معيّنة —
+    M2 (جولة مراجعة Codex الأولى). room tenders مالهاش صفوف Payment (هي ذمّة
+    على فوليو الغرفة، مش كاش في الدرج)، فكانت غايبة تمامًا عن تقرير الوردية
+    اللي بيقرا Payment بس. بنجمعها من لقطة tender_breakdown المحفوظة على
+    DiningSettlement (المصدر التاريخي المستقل). بيتقرا من finance.services.
+    build_shift_end_report عبر late import (نفس نمط finance.crud بيقرا
+    maintenance.Asset — الطبقة العليا تقرا الأدنى وقت التقرير)."""
+    rows = (
+        db.query(DiningSettlement)
+        .filter(DiningSettlement.shift_id == shift_id)
+        .all()
+    )
+    total = Decimal("0")
+    for r in rows:
+        for tender in (r.tender_breakdown or []):
+            if tender.get("method") == "room":
+                total += Decimal(str(tender.get("amount", "0")))
+    return total
 
 
 def list_orders(
@@ -533,6 +566,7 @@ def create_order_with_items(
     payment_method: Optional[str] = None,
     discount_amount: "Decimal | None" = None,
     delivery_fee: "Decimal | None" = None,
+    created_by: Optional[int] = None,
 ) -> DiningOrder:
     order = DiningOrder(
         branch_id=branch_id,
@@ -547,6 +581,7 @@ def create_order_with_items(
         service_charge=service_charge,
         total=total,
         waiter_id=waiter_id,
+        created_by=created_by,
         client_local_id=client_local_id,
         status=status,
         customer_id=customer_id,
@@ -559,7 +594,8 @@ def create_order_with_items(
 
     for item_d in items_data:
         extras = item_d.pop("extras", [])
-        order_item = DiningOrderItem(order_id=order.id, **item_d)
+        # Gate 4C: أصناف الطلب الأولية أضافها منشئ الطلب (created_by).
+        order_item = DiningOrderItem(order_id=order.id, added_by=created_by, **item_d)
         db.add(order_item)
         db.flush()
         for extra_d in extras:

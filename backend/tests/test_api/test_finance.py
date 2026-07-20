@@ -730,6 +730,66 @@ class TestCashierShift:
         assert report.voided_amount == Decimal("100")
         assert report.expected_cash == Decimal("800")  # 500 opening + 300 cash
 
+    def test_shift_report_shows_refunds_as_explicit_separate_line(self, db: Session, branch):
+        """M2 (جولة مراجعة Codex الأولى): مرتجع (Payment سالب) بيظهر كبند
+        مستقل صريح (refunds_total/refunds_count) بدل ما يتخصم صامت من
+        total_cash/total_sales — والكاش المتوقع بيحسب الصافي (بيع − مرتجع)."""
+        from app.modules.finance import crud as fin_crud
+        shift = services.open_shift(
+            db, cashier_id=40, opened_by=40,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("100")),
+        )
+        fin_crud.create_direct_payment(
+            db, branch_id=branch.id, amount=Decimal("200"), method="cash",
+            posted_at=datetime.utcnow(), shift_id=shift.id, cashier_id=40,
+            reference="ORD-1", ref_order_id=1, source="dining",
+        )
+        fin_crud.create_direct_payment(
+            db, branch_id=branch.id, amount=Decimal("-50"), method="cash",
+            posted_at=datetime.utcnow(), shift_id=shift.id, cashier_id=40,
+            reference="ORD-REFUND-1", ref_order_id=1, source="dining_refund",
+        )
+        db.commit()
+
+        report = services.build_shift_end_report(db, shift.id)
+        assert report.total_cash == Decimal("200")     # إجمالي البيع (gross)، مش صافي
+        assert report.total_sales == Decimal("200")
+        assert report.refunds_total == Decimal("50")   # بند مرتجعات صريح
+        assert report.refunds_count == 1
+        assert report.invoice_count == 1               # المرتجع مش فاتورة
+        assert report.expected_cash == Decimal("250")  # 100 افتتاح + (200 − 50) صافي كاش
+
+    def test_shift_report_includes_room_tenders_from_settlement_snapshot(self, db: Session, branch):
+        """M2: حصة الغرفة (room tender) مالهاش صف Payment — التقرير بيجمعها من
+        لقطة tender_breakdown على DiningSettlement بدل ما تفضل غايبة تمامًا."""
+        from app.modules.dining import crud as dining_crud
+        from app.modules.dining.models import DiningOrder, Outlet
+        outlet = Outlet(branch_id=branch.id, name="rest-m2", outlet_type="restaurant",
+                        revenue_account_code="4200")
+        db.add(outlet)
+        db.flush()
+        order = DiningOrder(branch_id=branch.id, outlet_id=outlet.id, order_number="ORD-RM-M2",
+                            status="paid", order_type="dine_in", total=Decimal("100"))
+        db.add(order)
+        db.flush()
+        shift = services.open_shift(
+            db, cashier_id=41, opened_by=41,
+            data=CashierShiftOpen(branch_id=branch.id, opening_float=Decimal("0")),
+        )
+        dining_crud.create_settlement(
+            db, branch_id=branch.id, order_id=order.id, idempotency_key=None,
+            intent_hash="m2hash", total=Decimal("100"), cashier_id=41,
+            shift_id=shift.id, created_by=41,
+            tender_breakdown=[
+                {"method": "cash", "amount": "40", "account": "1100"},
+                {"method": "room", "amount": "60", "folio_id": 9},
+            ],
+        )
+        db.commit()
+
+        report = services.build_shift_end_report(db, shift.id)
+        assert report.total_room == Decimal("60")
+
     def test_payments_auto_attach_open_shift(self, db: Session, branch, folio):
         shift = services.open_shift(
             db, cashier_id=21, opened_by=21,
@@ -981,7 +1041,11 @@ class TestCashMovement:
         shift = self._open_shift(db, branch, cashier_id=cashier.id)
         with pytest.raises(ValueError, match="موافقة مدير"):
             services.record_cash_movement(
-                db, shift.id, CashMovementCreate(movement_type="correction", amount=Decimal("50"), reason="تصحيح عدّ"),
+                db, shift.id,
+                CashMovementCreate(
+                    movement_type="correction", amount=Decimal("50"),
+                    reason="تصحيح عدّ", direction="increase",
+                ),
                 performed_by=cashier.id, acting_user_level=40,
             )
 

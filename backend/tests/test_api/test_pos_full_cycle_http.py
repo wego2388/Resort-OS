@@ -84,7 +84,7 @@ def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
     بلا Employee/فرع خالص، فمحتاجين مستخدم Employee-linked جديد لكل تست."""
     from datetime import date, timedelta
     from decimal import Decimal as _D
-    from tests.conftest import _create_test_user, _make_token
+    from tests.conftest import _create_test_user, _make_token, open_cashier_shift
     from app.modules.hr.models import Employee
 
     email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
@@ -97,6 +97,8 @@ def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
     )
     db.add(emp)
     db.commit()
+    # Gate 4A: أي مشغّل POS بيحصّل دفع مباشر لازم يكون له وردية مفتوحة.
+    open_cashier_shift(db, branch.id, user_id)
     return {"Authorization": f"Bearer {_make_token(email)}"}
 
 

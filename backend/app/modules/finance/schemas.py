@@ -284,6 +284,10 @@ class CashMovementCreate(BaseModel):
     # (راجع CashMovement.destination). اختياري حتى وقت safe_drop نفسها.
     destination:    Optional[str] = Field(None, pattern=r"^(main_safe|bank|petty_cash_box)$")
     cost_center_id: Optional[int] = None
+    # Gate 4B: اتجاه صريح لـ movement_type="correction" فقط (إجباري وقتها،
+    # مرفوض لغيرها server-side) — increase بتزوّد الكاش المتوقع، decrease
+    # بتنقّصه. راجع finance.services.record_cash_movement/_cash_movement_expected_effect.
+    direction:      Optional[str] = Field(None, pattern=r"^(increase|decrease)$")
 
 
 class CashMovementRead(BaseModel):
@@ -298,6 +302,7 @@ class CashMovementRead(BaseModel):
     approved_by:   Optional[int]
     destination:    Optional[str] = None
     cost_center_id: Optional[int] = None
+    direction:      Optional[str] = None
     created_at:    datetime
 
 
@@ -316,6 +321,14 @@ class ShiftEndReport(BaseModel):
     total_credit:          Decimal
     total_other:           Decimal
     total_sales:           Decimal
+    # M2 (جولة مراجعة Codex الأولى): بنود منفصلة صريحة بدل صافي مخفي —
+    # total_room: حصة الغرفة (ذمّة فوليو، مش كاش في الدرج) من تسويات الوردية.
+    # refunds_*: عكوس/مرتجعات (Payment سالب) بتظهر كبند مستقل بدل ما تتخصم
+    # صامتة من total_cash/total_sales. الإجماليات فوق بقت *إجمالي البيع الموجب*
+    # (gross)، والكاش المتوقع بيحسب الصافي (بيع كاش − مرتجع كاش) داخليًا.
+    total_room:            Decimal = Decimal("0")
+    refunds_total:         Decimal = Decimal("0")
+    refunds_count:         int = 0
     invoice_count:         int
     voided_count:          int
     voided_amount:         Decimal
@@ -331,6 +344,10 @@ class ShiftEndReport(BaseModel):
     previous_shift_id:     Optional[int]
     previous_total_sales:  Optional[Decimal]
     delta_vs_previous:     Optional[Decimal]
+    # Gate 4B: صافي أثر الحركات النقدية اليدوية على الكاش المتوقع (داخل في
+    # expected_cash فوق)، وتحذير لو فيه تصحيحات قديمة بلا اتجاه صريح.
+    cash_movements_effect:   Decimal = Decimal("0")
+    cash_movements_warning:  Optional[str] = None
     reporting_currency:    str = "EGP"
     # كل الإجماليات هنا EGP equivalent — أي دفعة بعملة غير EGP بتتحوّل بسعر
     # الصرف وقت تاريخ الدفعة قبل الجمع (راجع build_shift_end_report).

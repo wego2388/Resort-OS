@@ -200,6 +200,11 @@ _STEP_UP_PURPOSES = frozenset({
     # action, not an admin control-plane mutation that needs justification.
     "session_revoke",
     "other_sessions_revoke",
+    # Gate 4 (جولة مراجعة Codex الأولى — M5a): أعلى-خطورة من إلغاء صنف قبل
+    # الدفع (لسه محمي بـPIN موافقة مدير بس، مقصود) — عكس دفعة مسجّلة فعليًا
+    # أو مرتجع بعد الدفع، الاتنين آثار مالية حقيقية على دفاتر مقفولة جزئيًا.
+    "payment_void",
+    "dining_refund",
 })
 
 
@@ -327,6 +332,37 @@ class _OtherSessionsRevokeIntent(BaseModel):
     keep_session_ref: str = Field(min_length=1, max_length=32)
 
 
+class _PaymentVoidIntent(BaseModel):
+    """Gate 4 (جولة مراجعة Codex الأولى — M5a): عكس دفعة مسجّلة فعليًا."""
+    model_config = ConfigDict(extra="forbid")
+    payment_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+class _DiningRefundIntent(BaseModel):
+    """Gate 4 (جولة مراجعة Codex الأولى — M5a): مرتجع صنف بعد الدفع."""
+    model_config = ConfigDict(extra="forbid")
+    order_id: int = Field(gt=0, strict=True)
+    item_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
 _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "user_role_update": _UserRoleUpdateIntent,
     "permission_override_upsert": _PermissionOverrideUpsertIntent,
@@ -334,6 +370,8 @@ _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "setting_upsert": _SettingUpsertIntent,
     "session_revoke": _SessionRevokeIntent,
     "other_sessions_revoke": _OtherSessionsRevokeIntent,
+    "payment_void": _PaymentVoidIntent,
+    "dining_refund": _DiningRefundIntent,
 }
 
 
@@ -672,9 +710,17 @@ def build_auth_router(
             )
         elif payload.purpose == "session_revoke":
             scope_hash = step_up_scopes.session_revoke_scope(session_ref=intent.session_ref)
-        else:  # other_sessions_revoke
+        elif payload.purpose == "other_sessions_revoke":
             scope_hash = step_up_scopes.other_sessions_revoke_scope(
                 keep_session_ref=intent.keep_session_ref,
+            )
+        elif payload.purpose == "payment_void":
+            scope_hash = step_up_scopes.payment_void_scope(
+                payment_id=intent.payment_id, reason=intent.reason,
+            )
+        else:  # dining_refund
+            scope_hash = step_up_scopes.dining_refund_scope(
+                order_id=intent.order_id, item_id=intent.item_id, reason=intent.reason,
             )
 
         access_token_hash = step_up_scopes.access_token_hash_from_request(request)

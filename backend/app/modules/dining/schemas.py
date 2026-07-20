@@ -429,6 +429,14 @@ class OrderTransferRequest(BaseModel):
     table_id: int
 
 
+class WaiterTransferRequest(BaseModel):
+    """تغيير النادل المسند لطلب مفتوح (M5 — الـ brief §2.6 بند 3): بيحتاج سبب
+    صريح، والتغيير بيترك AuditLog ولا يمسح creator الأصلي (created_by ثابت).
+    مثال: النادل الأصلي مشي/راح break، ومدير بيسند الطلب لنادل تاني."""
+    new_waiter_id: int = Field(..., gt=0)
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
 class SplitBillPayment(BaseModel):
     """جزء دفعة واحدة في تقسيم الفاتورة."""
     amount: Decimal = Field(..., gt=0)

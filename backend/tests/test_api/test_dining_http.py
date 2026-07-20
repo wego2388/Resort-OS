@@ -13,6 +13,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
+import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import ws_url
@@ -63,7 +64,7 @@ def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
     (مستخدم Employee-linked جديد لكل تست بدل الـ fixture المشترك)."""
     from datetime import date, timedelta
     from decimal import Decimal as _D
-    from tests.conftest import _create_test_user, _make_token
+    from tests.conftest import _create_test_user, _make_token, open_cashier_shift
     from app.modules.hr.models import Employee
 
     email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
@@ -76,6 +77,8 @@ def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
     )
     db.add(emp)
     db.commit()
+    # Gate 4A: أي مشغّل POS بيحصّل دفع مباشر لازم يكون له وردية مفتوحة.
+    open_cashier_shift(db, branch.id, user_id)
     return {"Authorization": f"Bearer {_make_token(email)}"}
 
 
@@ -240,10 +243,12 @@ class TestDiningOrderHTTP:
         # يفضل 15 بالظبط رغم كده (رسم ثابت، مش نسبة من الأصناف) — إثبات
         # أقوى إنه مش بيتصفّر مع باقي الحسابات.
         item_id = order["items"][0]["id"]
+        # High 5: void بقى بيفرض assert_branch_access — مدير مربوط بالفرع.
+        linked_manager = make_branch_linked_headers(db, branch, "manager")
         void_resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{item_id}/void",
             json={"reason": "إلغاء السطر بالكامل"},
-            headers=manager_headers,
+            headers=linked_manager,
         )
         assert void_resp.status_code == 200, void_resp.text
         after = void_resp.json()
@@ -289,11 +294,12 @@ class TestDiningOrderHTTP:
         assert forbidden.status_code == 403
 
         # المدير (level 60) مؤهّل بنفسه من غير أي موافقة PIN — راجع
-        # core.services.resolve_pin_approval.
+        # core.services.resolve_pin_approval. High 5: مربوط بالفرع.
+        linked_manager = make_branch_linked_headers(db, branch, "manager")
         allowed = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{item_id}/void",
             json={"reason": "طلب غلط بالخطأ من المدير"},
-            headers=manager_headers,
+            headers=linked_manager,
         )
         assert allowed.status_code == 200, allowed.text
 
@@ -402,8 +408,11 @@ class TestDiningDiscountHTTP:
         item = make_item_committed(db, branch, outlet)
         order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
 
+        # High 5: discount بقى بيفرض assert_branch_access — كاشير مربوط بالفرع
+        # عشان يعدّي فحص الفرع ويوصل لفحص الـ PIN الحقيقي (400).
+        linked_cashier = make_branch_linked_headers(db, branch, "cashier")
         resp = client.post(
-            f"/api/v1/dining/orders/{order_id}/discount", json={}, headers=cashier_headers,
+            f"/api/v1/dining/orders/{order_id}/discount", json={}, headers=linked_cashier,
         )
         assert resp.status_code == 400
         assert "موافقة" in resp.json()["detail"]
@@ -416,8 +425,9 @@ class TestDiningDiscountHTTP:
         item = make_item_committed(db, branch, outlet)
         order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
 
+        linked_manager = make_branch_linked_headers(db, branch, "manager")
         resp = client.post(
-            f"/api/v1/dining/orders/{order_id}/discount", json={}, headers=manager_headers,
+            f"/api/v1/dining/orders/{order_id}/discount", json={}, headers=linked_manager,
         )
         assert resp.status_code == 200, resp.text
 
@@ -430,10 +440,11 @@ class TestDiningDiscountHTTP:
         item = make_item_committed(db, branch, outlet)
         order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
 
+        linked_cashier = make_branch_linked_headers(db, branch, "cashier")
         resp = client.post(
             f"/api/v1/dining/orders/{order_id}/discount",
             json={"approver_user_id": manager_id, "approver_pin": "5566"},
-            headers=cashier_headers,
+            headers=linked_cashier,
         )
         assert resp.status_code == 200, resp.text
 
@@ -446,10 +457,11 @@ class TestDiningDiscountHTTP:
         item = make_item_committed(db, branch, outlet)
         order_id = self._order_id(client, db, waiter_headers, branch, outlet, item)
 
+        linked_cashier = make_branch_linked_headers(db, branch, "cashier")
         resp = client.post(
             f"/api/v1/dining/orders/{order_id}/discount",
             json={"approver_user_id": manager_id, "approver_pin": "0000"},
-            headers=cashier_headers,
+            headers=linked_cashier,
         )
         assert resp.status_code == 400
 
@@ -556,9 +568,10 @@ class TestDiningKitchenItemBumpHTTP:
         order = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
         item_id = order["items"][0]["id"]
 
+        linked_manager = make_branch_linked_headers(db, branch, "manager")
         client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{item_id}/void",
-            json={"reason": "طلب غلط"}, headers=manager_headers,
+            json={"reason": "طلب غلط"}, headers=linked_manager,
         )
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{item_id}/status",
@@ -609,10 +622,12 @@ class TestDiningTableTransferHTTP:
             headers=waiter_headers,
         ).json()
 
+        # High 5: transfer بقى بيفرض assert_branch_access — نادل مربوط بالفرع.
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/transfer",
             json={"table_id": new_table.id},
-            headers=waiter_headers,
+            headers=linked_waiter,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["table_id"] == new_table.id
@@ -643,10 +658,11 @@ class TestDiningTableTransferHTTP:
             headers=waiter_headers,
         )
 
+        linked_waiter = make_branch_linked_headers(db, branch, "waiter")
         resp = client.patch(
             f"/api/v1/dining/orders/{order_a['id']}/transfer",
             json={"table_id": table_b.id},
-            headers=waiter_headers,
+            headers=linked_waiter,
         )
         assert resp.status_code == 400
 
@@ -655,31 +671,130 @@ class TestDiningTableTransferHTTP:
         assert resp.status_code == 401
 
 
+class TestDiningWaiterTransferHTTP:
+    """M5 (جولة مراجعة Codex الأولى — الـ brief §2.6 بند 3): تغيير النادل
+    المسند لطلب مفتوح — endpoint مقفول مدير+، سبب إجباري، AuditLog، وحفاظ على
+    creator الأصلي (created_by مايتمسحش)."""
+
+    def _open_order(self, client, db, outlet, item, creator_headers):
+        return client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
+                  "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=creator_headers,
+        ).json()
+
+    def test_transfer_waiter_reassigns_audits_and_keeps_creator(
+        self, client: TestClient, db, waiter_headers, manager_headers,
+    ):
+        from tests.conftest import _create_test_user
+        from app.modules.dining.models import DiningOrder
+        from app.modules.core.crud import list_audit_logs
+
+        creator_id = _create_test_user("waiter@test.local", "waiter")
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order = self._open_order(client, db, outlet, item, waiter_headers)
+
+        new_waiter_id = _create_test_user(f"nw-{uuid.uuid4().hex[:8]}@test.local", "waiter")
+        linked_manager = make_branch_linked_headers(db, branch, "manager")
+        resp = client.patch(
+            f"/api/v1/dining/orders/{order['id']}/waiter",
+            json={"new_waiter_id": new_waiter_id, "reason": "النادل الأصلي راح break"},
+            headers=linked_manager,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["waiter_id"] == new_waiter_id
+
+        db.expire_all()
+        fresh = db.query(DiningOrder).filter_by(id=order["id"]).first()
+        assert fresh.waiter_id == new_waiter_id
+        assert fresh.created_by == creator_id  # التاريخ الأصلي محفوظ، مش ممسوح
+
+        logs, _ = list_audit_logs(db, branch_id=branch.id, entity_type="dining_order")
+        assert any(l.action == "transfer_waiter" and l.entity_id == order["id"] for l in logs)
+
+    def test_transfer_waiter_requires_reason(
+        self, client: TestClient, db, waiter_headers, manager_headers,
+    ):
+        from tests.conftest import _create_test_user
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order = self._open_order(client, db, outlet, item, waiter_headers)
+        new_waiter_id = _create_test_user(f"nw2-{uuid.uuid4().hex[:8]}@test.local", "waiter")
+        linked_manager = make_branch_linked_headers(db, branch, "manager")
+        resp = client.patch(
+            f"/api/v1/dining/orders/{order['id']}/waiter",
+            json={"new_waiter_id": new_waiter_id},  # مفيش reason
+            headers=linked_manager,
+        )
+        assert resp.status_code == 422
+
+    def test_transfer_waiter_requires_manager(
+        self, client: TestClient, db, waiter_headers,
+    ):
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order = self._open_order(client, db, outlet, item, waiter_headers)
+        resp = client.patch(
+            f"/api/v1/dining/orders/{order['id']}/waiter",
+            json={"new_waiter_id": 1, "reason": "محاولة نادل عادي"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403
+
+
+
+
+def _make_split_finance_accounts(db, branch, revenue_code="4200"):
+    """Gate 4A: settle_order (split) بيرحّل قيود بـ strict=True — لازم حسابات
+    GL موجودة فعليًا: 1100 كاش، 1150 ذمم، 1120 مقاصّة بطاقة (المهيّأ في
+    DINING_CARD_SETTLEMENT_ACCOUNT للتست ده)، وحساب الإيراد."""
+    from app.modules.finance.models import Account
+    for code, acc_type in [
+        ("1100", "asset"), ("1150", "asset"), ("1120", "asset"), (revenue_code, "revenue"),
+    ]:
+        if not db.query(Account).filter_by(branch_id=branch.id, code=code).first():
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+    db.commit()
 
 
 class TestSplitBillHTTP:
-    """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع."""
+    """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع (Gate 4A: وحدة عمل صارمة
+    عبر settle_order — Payment لكل tender، قيد GL strict، وردية للكاشير)."""
 
-    def _create_paid_order(self, client, db, cashier_headers):
-        """Helper — ينشئ order ويرجعه جاهزاً للاختبار (status=open)."""
+    @pytest.fixture(autouse=True)
+    def _configure_card_account(self, monkeypatch):
+        """الدفع بالبطاقة fail-closed افتراضيًا (Gate 4 brief §2.1) — نهيّئ
+        حساب مقاصّة بطاقة صريح عشان نختبر مسار البطاقة نفسه."""
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "DINING_CARD_SETTLEMENT_ACCOUNT", "1120")
+
+    def _create_open_order(self, client, db):
+        """ينشئ طلب مفتوح + كاشير مربوط بالفرع بوردية مفتوحة + حسابات GL.
+        يرجّع (order_json, cashier_headers)."""
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
+        _make_split_finance_accounts(db, branch)
         item = make_item_committed(db, branch, outlet, price=Decimal("100.00"))
+        cashier = make_branch_linked_headers(db, branch, "cashier")
         resp = client.post(
             f"/api/v1/dining/outlets/{outlet.id}/orders",
             json={"outlet_id": outlet.id, "branch_id": branch.id,
                   "order_type": "dine_in", "items": [{"item_id": item.id, "quantity": 1}]},
-            headers=cashier_headers,
+            headers=cashier,
         )
         assert resp.status_code == 201, resp.text
-        return resp.json()
+        return resp.json(), cashier
 
     def test_split_bill_two_methods(self, client: TestClient, db, cashier_headers):
-        """كاش 60 + بطاقة 40 لطلب إجماليه 100 (مع VAT يساوي الـ total بالظبط)."""
-        order = self._create_paid_order(client, db, cashier_headers)
+        """كاش 60 + بطاقة 40 لطلب إجماليه 100."""
+        order, cashier = self._create_open_order(client, db)
         order_total = Decimal(str(order["total"]))
 
-        # تقسيم بنسب عشوائية تساوي الإجمالي بالظبط
         amt1 = (order_total / 2).quantize(Decimal("0.01"))
         amt2 = order_total - amt1
 
@@ -689,16 +804,24 @@ class TestSplitBillHTTP:
                 {"amount": float(amt1), "payment_method": "cash"},
                 {"amount": float(amt2), "payment_method": "card"},
             ]},
-            headers=cashier_headers,
+            headers=cashier,
         )
         assert resp.status_code == 200, resp.text
         data = resp.json()
         assert data["status"] == "paid"
         assert "split" in data["payment_method"]
 
+        # Gate 4A: كل tender مباشر بيتعمله Payment منسوب للكاشير/الوردية.
+        from app.modules.finance.models import Payment
+        payments = db.query(Payment).filter(Payment.ref_order_id == order["id"]).all()
+        assert len(payments) == 2
+        assert {p.method for p in payments} == {"cash", "card"}
+        assert all(p.shift_id is not None and p.source == "dining" for p in payments)
+        assert sum(p.amount for p in payments) == order_total
+
     def test_split_bill_total_mismatch_rejected(self, client: TestClient, db, cashier_headers):
         """مجموع الدفعات أقل من الإجمالي → 400."""
-        order = self._create_paid_order(client, db, cashier_headers)
+        order, cashier = self._create_open_order(client, db)
         order_total = float(order["total"])
 
         resp = client.post(
@@ -707,14 +830,15 @@ class TestSplitBillHTTP:
                 {"amount": round(order_total * 0.4, 2), "payment_method": "cash"},
                 {"amount": round(order_total * 0.4, 2), "payment_method": "card"},
             ]},
-            headers=cashier_headers,
+            headers=cashier,
         )
         assert resp.status_code == 400
-        assert "لا يساوي" in resp.json()["detail"]
+        assert "لا يساوي" in resp.json()["detail"]["message"]
 
     def test_split_bill_already_paid_rejected(self, client: TestClient, db, cashier_headers):
-        """فاتورة مدفوعة بالفعل → 400."""
-        order = self._create_paid_order(client, db, cashier_headers)
+        """فاتورة مدفوعة بالفعل → 409 ORDER_ALREADY_PAID (Gate 4A: أدق من الـ
+        400 القديم — الطلب موجود لكن حالته تمنع العملية)."""
+        order, cashier = self._create_open_order(client, db)
         order_total = float(order["total"])
         amt1 = round(order_total / 2, 2)
         amt2 = round(order_total - amt1, 2)
@@ -722,15 +846,13 @@ class TestSplitBillHTTP:
             {"amount": amt1, "payment_method": "cash"},
             {"amount": amt2, "payment_method": "card"},
         ]}
-        # الدفعة الأولى تنجح
         resp1 = client.post(f"/api/v1/dining/orders/{order['id']}/split-bill",
-                            json=payload, headers=cashier_headers)
-        assert resp1.status_code == 200
-        # الدفعة الثانية ترفض
+                            json=payload, headers=cashier)
+        assert resp1.status_code == 200, resp1.text
         resp2 = client.post(f"/api/v1/dining/orders/{order['id']}/split-bill",
-                            json=payload, headers=cashier_headers)
-        assert resp2.status_code == 400
-        assert "paid" in resp2.json()["detail"]
+                            json=payload, headers=cashier)
+        assert resp2.status_code == 409
+        assert resp2.json()["detail"]["error_code"] == "ORDER_ALREADY_PAID"
 
     def test_split_bill_requires_cashier_auth(self, client: TestClient, db):
         """بدون auth → 401."""
@@ -741,10 +863,10 @@ class TestSplitBillHTTP:
 
     def test_split_bill_single_payment_schema_rejected(self, client: TestClient, db, cashier_headers):
         """SplitBillRequest يشترط min_length=2 — دفعة واحدة → 422."""
-        order = self._create_paid_order(client, db, cashier_headers)
+        order, cashier = self._create_open_order(client, db)
         resp = client.post(
             f"/api/v1/dining/orders/{order['id']}/split-bill",
             json={"payments": [{"amount": float(order["total"]), "payment_method": "cash"}]},
-            headers=cashier_headers,
+            headers=cashier,
         )
         assert resp.status_code == 422

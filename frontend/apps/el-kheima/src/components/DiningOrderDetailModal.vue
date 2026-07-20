@@ -13,12 +13,14 @@
  *  - order items can carry a free-text extra answer (text_value, e.g. "كام
  *    سمكة؟" -> "3 سمكات") alongside/instead of priced pick-list extras.
  *
- * Refund (post-payment) does NOT go through PinGuardModal: the backend only
- * gates *void* behind resolve_pin_approval (min_approver_level=60) — refund
- * is already router-gated to manager+ alone (require_permission(...,
- * min_role_level=60), no PIN escalation path for a lower role). Mirroring
- * that exactly here, rather than inventing an extra approval step the
- * backend doesn't ask for.
+ * Refund (post-payment) does NOT go through PinGuardModal: the backend
+ * gates *void* behind resolve_pin_approval (min_approver_level=60), but
+ * refund — a real financial reversal of money already collected, higher
+ * risk than voiding an item before payment — goes through StepUpConfirmModal
+ * instead (Gate 4, جولة مراجعة Codex الأولى — M5a: reuses the exact same
+ * step-up mechanism Gate 2B3A/2B3B already built, not a parallel one).
+ * require_permission(..., min_role_level=60) still gates the endpoint on
+ * top of that, same as before.
  *
  * Discount (Mohamed, 2026-07-13): the cashier role has zero discount
  * authority at all, so applying a discount is now gated exactly like void —
@@ -33,6 +35,7 @@ import { AppModal, AppButton, StatusBadge, AppTextarea } from '@resort-os/ui'
 import { api, useAuthStore, parseApiTimestamp, ENDPOINTS } from '@resort-os/core'
 import { useOrderDiscount } from '@resort-os/core/composables'
 import PinGuardModal from './PinGuardModal.vue'
+import StepUpConfirmModal from './StepUpConfirmModal.vue'
 
 interface OrderItemExtra {
   id: number; extra_id: number | null; extra_name: string
@@ -223,33 +226,31 @@ async function performVoid(approverUserId: number | null, approverPin: string | 
   }
 }
 
-// ── Refund item (manager+ only, post-payment — no PIN escalation, backend
-// already gates the whole endpoint at manager level) ──
-const refundingItemId = ref<number | null>(null)
-const refundReason = ref('')
-const refundError = ref('')
+// ── Refund item (manager+ only, post-payment — a real financial reversal
+// of money already collected, so it goes through StepUpConfirmModal (Gate
+// 4, جولة مراجعة Codex الأولى — M5a) on top of the router's manager+ gate,
+// not PinGuardModal — reuses the same step-up mechanism Gate 2B3A/2B3B
+// already built, never a parallel one) ──
+const pendingRefundItemId = ref<number | null>(null)
+const refundStepUpBusy = ref(false)
+const refundStepUpError = ref('')
 
 function openRefundPrompt(itemId: number) {
-  refundingItemId.value = itemId
-  refundReason.value = ''
-  refundError.value = ''
+  pendingRefundItemId.value = itemId
+  refundStepUpError.value = ''
 }
 function cancelRefundPrompt() {
-  refundingItemId.value = null
-  refundReason.value = ''
-  refundError.value = ''
+  pendingRefundItemId.value = null
+  refundStepUpError.value = ''
 }
-async function confirmRefund() {
-  if (!order.value || refundingItemId.value === null) return
-  if (refundReason.value.trim().length < 3) {
-    refundError.value = 'السبب لازم يكون 3 حروف على الأقل'
-    return
-  }
-  busy.value = true
+async function onRefundStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string; reason: string }) {
+  if (!order.value || pendingRefundItemId.value === null) return
+  refundStepUpBusy.value = true
   try {
     const { data } = await api.patch(
-      ENDPOINTS.dining.orderItemRefund(order.value.id, refundingItemId.value),
-      { reason: refundReason.value.trim() },
+      ENDPOINTS.dining.orderItemRefund(order.value.id, pendingRefundItemId.value),
+      { reason },
+      { headers: { 'X-Step-Up-Token': stepUpToken } },
     )
     order.value = data
     cancelRefundPrompt()
@@ -257,9 +258,15 @@ async function confirmRefund() {
     emit('changed')
     setTimeout(() => { successMsg.value = '' }, 2500)
   } catch (e: any) {
-    refundError.value = e?.response?.data?.detail ?? 'فشل تسجيل المرتجع'
+    const code = e?.response?.data?.detail?.error_code
+    if (code === 'STEP_UP_INVALID') {
+      // إثبات منتهي/مُستخدَم بالفعل — نبدأ دورة تأكيد جديدة، مانعيدش الإرسال بنفس الـtoken.
+      refundStepUpError.value = 'إثبات الهوية غير صالح أو منتهي — أعد التأكيد وحاول تاني'
+    } else {
+      refundStepUpError.value = e?.response?.data?.detail?.message ?? e?.response?.data?.detail ?? 'فشل تسجيل المرتجع'
+    }
   } finally {
-    busy.value = false
+    refundStepUpBusy.value = false
   }
 }
 
@@ -287,9 +294,29 @@ async function performApplyDiscount(approver: { approverUserId: number | null; a
   } catch { /* discountError renders below */ }
 }
 
-async function setStatus(status: string, extra: Record<string, unknown> = {}) {
+async function setStatus(status: string, extra: Record<string, unknown> = {}, idempotencyKey?: string) {
   if (!order.value) return
-  await api.patch(ENDPOINTS.dining.orderStatus(order.value.id), { status, ...extra })
+  const config = idempotencyKey ? { headers: { 'Idempotency-Key': idempotencyKey } } : undefined
+  await api.patch(ENDPOINTS.dining.orderStatus(order.value.id), { status, ...extra }, config)
+}
+
+// Gate 4A: رسالة خطأ الدفع بقت ممكن تيجي ككائن {error_code, message} من الباك
+// إند (NO_OPEN_SHIFT، METHOD_NOT_CONFIGURED، IDEMPOTENCY_KEY_CONFLICT، …) بدل
+// نص عادي — بنستخرج رسالة واضحة للموظف بدل [object Object].
+function paymentErrorMessage(e: any, fallback: string): string {
+  const detail = e?.response?.data?.detail
+  if (typeof detail === 'string') return detail
+  const code = detail?.error_code
+  const known: Record<string, string> = {
+    NO_OPEN_SHIFT: 'لازم تفتح وردية كاشير الأول قبل تحصيل دفع مباشر',
+    METHOD_NOT_CONFIGURED: 'طريقة الدفع دي (بطاقة/محفظة) مش مهيّأة محاسبيًا — راجع المحاسب',
+    ORDER_ALREADY_PAID: 'الطلب اتدفع بالفعل',
+    ORDER_PAYMENT_IN_PROGRESS: 'الطلب بيتحصّل دلوقتي من جهاز تاني — استنى لحظات وحاول تاني',
+    IDEMPOTENCY_KEY_CONFLICT: 'محاولة دفع مختلفة بنفس المرجع — ابدأ الدفع من جديد',
+    PAYMENT_ALLOCATION_MISMATCH: 'مجموع الدفعات مش مساوي إجمالي الطلب',
+  }
+  if (code && known[code]) return known[code]
+  return detail?.message ?? fallback
 }
 
 async function resumeAndSend() {
@@ -330,6 +357,16 @@ async function markServed() {
 const payingMethod = ref<'cash' | 'card' | 'room' | 'wallet'>('cash')
 const roomIdInput = ref('')
 const payError = ref('')
+// Gate 4A idempotency: نفس المفتاح بيتعاد استخدامه لو الموظف ضغط "ادفع" تاني
+// بعد فشل شبكة (retry آمن مايكررش التحصيل)، وبيتولّد مفتاح جديد بس لمحاولة
+// جديدة فعليًا — لما النية (طريقة الدفع/الغرفة) تتغيّر أو الدفع ينجح/يترفض نهائيًا.
+const pendingPaymentKey = ref<string>('')
+const pendingPaymentIntent = ref<string>('')
+
+function newIdempotencyKey(): string {
+  try { return crypto.randomUUID() } catch { return `pay-${Date.now()}-${Math.random().toString(36).slice(2)}` }
+}
+
 async function completePayment() {
   if (!order.value) return
   payError.value = ''
@@ -342,16 +379,33 @@ async function completePayment() {
     }
     charge_to_room_id = roomId
   }
+
+  // النية الحالية = طريقة الدفع + الغرفة. لو اتغيّرت عن آخر مفتاح، نولّد مفتاح
+  // جديد (محاولة منطقية جديدة)؛ لو نفسها، نعيد استخدام المفتاح (retry آمن).
+  const intent = `${payingMethod.value}:${charge_to_room_id ?? ''}`
+  if (!pendingPaymentKey.value || pendingPaymentIntent.value !== intent) {
+    pendingPaymentKey.value = newIdempotencyKey()
+    pendingPaymentIntent.value = intent
+  }
+
   busy.value = true
   try {
-    await setStatus('paid', { charge_to_room_id, payment_method: payingMethod.value })
+    await setStatus('paid', { charge_to_room_id, payment_method: payingMethod.value }, pendingPaymentKey.value)
     successMsg.value = 'تم إتمام الدفع ✓'
     roomIdInput.value = ''
+    pendingPaymentKey.value = ''       // نجاح → المحاولة الجاية مفتاح جديد
+    pendingPaymentIntent.value = ''
     emit('changed')
     await loadOrder()
     setTimeout(() => { successMsg.value = '' }, 2500)
   } catch (e: any) {
-    payError.value = e?.response?.data?.detail ?? 'فشل إتمام الدفع'
+    // رفض نهائي (مش شبكة/تزامن) → المحاولة الجاية لازم مفتاح جديد.
+    const code = e?.response?.data?.detail?.error_code
+    if (code && !['ORDER_PAYMENT_IN_PROGRESS'].includes(code)) {
+      pendingPaymentKey.value = ''
+      pendingPaymentIntent.value = ''
+    }
+    payError.value = paymentErrorMessage(e, 'فشل إتمام الدفع')
   } finally {
     busy.value = false
   }
@@ -477,7 +531,8 @@ function lineTotal(item: OrderItem): number {
                 <button
                   v-if="canRefund && order.status === 'paid' && !['cancelled', 'refunded'].includes(item.status)"
                   @click="openRefundPrompt(item.id)"
-                  class="text-xs text-danger hover:opacity-80 font-medium"
+                  :disabled="pendingRefundItemId !== null"
+                  class="text-xs text-danger hover:opacity-80 font-medium disabled:opacity-40"
                 >مرتجع</button>
               </div>
             </div>
@@ -491,14 +546,6 @@ function lineTotal(item: OrderItem): number {
               </div>
             </div>
 
-            <div v-if="refundingItemId === item.id" class="mt-2.5 pt-2.5 border-t border-stone-200 space-y-2">
-              <AppTextarea v-model="refundReason" :rows="2" placeholder="سبب المرتجع (إجباري)..." />
-              <p v-if="refundError" class="text-xs text-danger">{{ refundError }}</p>
-              <div class="flex gap-2">
-                <AppButton variant="ghost" size="sm" block @click="cancelRefundPrompt">إلغاء</AppButton>
-                <AppButton variant="danger" size="sm" block :loading="busy" @click="confirmRefund">تأكيد المرتجع</AppButton>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -594,6 +641,17 @@ function lineTotal(item: OrderItem): number {
     :error-message="discountError"
     @approved="onDiscountPinApproved"
     @cancel="showDiscountPinGuard = false"
+  />
+
+  <StepUpConfirmModal
+    v-if="pendingRefundItemId !== null && order"
+    purpose="dining_refund"
+    :intent="{ order_id: order.id, item_id: pendingRefundItemId }"
+    description="مرتجع بعد الدفع عكس مالي حقيقي — أكّد كلمة السر وسبب المرتجع"
+    :loading="refundStepUpBusy"
+    :error-message="refundStepUpError"
+    @confirmed="onRefundStepUpConfirmed"
+    @cancel="cancelRefundPrompt"
   />
 </template>
 

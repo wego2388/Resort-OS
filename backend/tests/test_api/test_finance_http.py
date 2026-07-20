@@ -20,13 +20,60 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 
+def _void_payment_headers(client, headers, *, payment_id, reason):
+    """Gate 4 (جولة مراجعة Codex الأولى — M5a): عكس دفعة مسجّلة بقى محتاج
+    step-up proof فوق صلاحية مدير+ العادية — راجع
+    app.core.kernel.auth.step_up.payment_void_scope."""
+    from tests.conftest import _issue_step_up
+    token = _issue_step_up(
+        client, headers, purpose="payment_void",
+        intent={"payment_id": payment_id, "reason": reason},
+    )
+    return {**headers, "X-Step-Up-Token": token}
+
+
 def make_branch_committed(db):
     from app.modules.core.models import Branch
     b = Branch(name="Finance HTTP Branch", name_ar="فرع مالي",
                code=f"FINH-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
+    # Gate 4B: عمليات الوردية بقت تفرض branch isolation server-side — أي
+    # مستخدم بيفتح/يعرض/يقفل وردية لازم يكون مربوط بالفرع (Employee.branch_id).
+    # الـ headers fixtures المشتركة (cashier/manager/…) بلا Employee أصلاً،
+    # فبنربط أي واحد منهم اتعمل بالفعل بالفرع الجديد ده (upsert) عشان تستات
+    # الوردية HTTP تفضل تمثّل مشغّل حقيقي مربوط بفرعه.
+    _link_shared_users_to_branch(db, b.id)
     return b
+
+
+def _link_shared_users_to_branch(db, branch_id: int) -> None:
+    from datetime import date as _date, timedelta as _td
+    from decimal import Decimal as _D
+    from app.core.kernel.models.user import User
+    from app.modules.hr.models import Employee
+
+    # ⚠️ super_admin@test.local مقصود مستبعد: بيتخطى assert_branch_access
+    # أصلاً (level 100، Decision 0003)، ولو ربطناه بموظف هيكسر تستات
+    # hr/me اللي بتتأكد إن super_admin بلا موظف مرتبط بيرجّع 404.
+    for email in (
+        "cashier@test.local", "manager@test.local", "accountant@test.local",
+        "cashier2@test.local",
+    ):
+        user = db.query(User).filter(User.email == email).first()
+        if not user:
+            continue
+        emp = db.query(Employee).filter(Employee.user_id == user.id).first()
+        if emp:
+            emp.branch_id = branch_id
+        else:
+            db.add(Employee(
+                branch_id=branch_id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+                full_name=email, national_id=f"2900101{uuid.uuid4().hex[:7]}",
+                position="cashier", department="F&B", basic_salary=_D("4000.00"),
+                hire_date=_date.today() - _td(days=365), user_id=user.id,
+            ))
+    db.commit()
 
 
 def make_account_committed(db, branch, code, name, account_type):
@@ -474,10 +521,11 @@ class TestVoidPaymentAndRevenueAuditLogHTTP:
         branch = make_branch_committed(db)
         _, payment = self._make_folio_with_payment(client, branch, cashier_headers)
 
+        reason = "الضيف دفع بالخطأ مرتين"
         void_resp = client.post(
             f"/api/v1/finance/payments/{payment['id']}/void",
-            json={"reason": "الضيف دفع بالخطأ مرتين"},
-            headers=manager_headers,
+            json={"reason": reason},
+            headers=_void_payment_headers(client, manager_headers, payment_id=payment["id"], reason=reason),
         )
         assert void_resp.status_code == 200, void_resp.text
         voided = void_resp.json()
@@ -508,13 +556,15 @@ class TestVoidPaymentAndRevenueAuditLogHTTP:
 
         first = client.post(
             f"/api/v1/finance/payments/{payment['id']}/void",
-            json={"reason": "إلغاء أول مرة"}, headers=manager_headers,
+            json={"reason": "إلغاء أول مرة"},
+            headers=_void_payment_headers(client, manager_headers, payment_id=payment["id"], reason="إلغاء أول مرة"),
         )
         assert first.status_code == 200, first.text
 
         second = client.post(
             f"/api/v1/finance/payments/{payment['id']}/void",
-            json={"reason": "محاولة إلغاء تانية"}, headers=manager_headers,
+            json={"reason": "محاولة إلغاء تانية"},
+            headers=_void_payment_headers(client, manager_headers, payment_id=payment["id"], reason="محاولة إلغاء تانية"),
         )
         assert second.status_code == 400, second.text
         assert "ملغاة بالفعل" in second.json()["detail"]
@@ -539,10 +589,11 @@ class TestVoidPaymentAndRevenueAuditLogHTTP:
         assert resp.status_code == 422
 
     def test_void_nonexistent_payment_400(self, client: TestClient, db, manager_headers):
+        reason = "دفعة غير موجودة"
         resp = client.post(
             "/api/v1/finance/payments/999999/void",
-            json={"reason": "دفعة غير موجودة"},
-            headers=manager_headers,
+            json={"reason": reason},
+            headers=_void_payment_headers(client, manager_headers, payment_id=999999, reason=reason),
         )
         assert resp.status_code == 400
 
@@ -556,6 +607,44 @@ class TestVoidPaymentAndRevenueAuditLogHTTP:
             headers=cashier_headers,
         )
         assert resp.status_code == 403
+
+    def test_void_payment_without_step_up_token_rejected(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        """Gate 4 (جولة مراجعة Codex الأولى — M5a): مدير مؤهّل (permission +
+        role) بس من غير X-Step-Up-Token → 428، يثبت الحماية الجديدة فعليًا
+        شغالة، مش بس موجودة في الكود."""
+        branch = make_branch_committed(db)
+        _, payment = self._make_folio_with_payment(client, branch, cashier_headers)
+
+        resp = client.post(
+            f"/api/v1/finance/payments/{payment['id']}/void",
+            json={"reason": "من غير step-up"},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 428
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
+
+    def test_void_payment_with_step_up_token_for_different_payment_rejected(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        """proof مربوط بـ(payment_id, reason) بالظبط — proof اتاخد لدفعة A
+        ما يشتغلش لدفعة B، حتى بنفس السبب."""
+        branch = make_branch_committed(db)
+        _, payment = self._make_folio_with_payment(client, branch, cashier_headers)
+        reason = "محاولة إعادة استخدام proof لدفعة تانية"
+
+        # proof حقيقي، بس مربوط بـpayment_id مختلف (وهمي) عن الدفعة الفعلية.
+        headers_wrong_payment = _void_payment_headers(
+            client, manager_headers, payment_id=payment["id"] + 999, reason=reason,
+        )
+        resp = client.post(
+            f"/api/v1/finance/payments/{payment['id']}/void",
+            json={"reason": reason},
+            headers=headers_wrong_payment,
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_INVALID"
 
     def test_revenue_audit_logs_requires_manager(self, client: TestClient, db, cashier_headers):
         branch = make_branch_committed(db)
@@ -582,7 +671,10 @@ class TestCashierShiftHTTPFlow:
             json={"branch_id": branch.id, "opening_float": "0"},
             headers=cashier_headers,
         )
-        assert dup_resp.status_code == 400
+        # Gate 4B: فتح مزدوج بقى 409 (تعارض) بـ error_code واضح، أدق من الـ
+        # 400 القديم — الطلب صحيح لكن فيه وردية مفتوحة بالفعل.
+        assert dup_resp.status_code == 409
+        assert dup_resp.json()["detail"]["error_code"] == "OPEN_SHIFT_CONFLICT"
 
         current_resp = client.get(
             "/api/v1/finance/shifts/current", params={"branch_id": branch.id}, headers=cashier_headers,
@@ -843,7 +935,8 @@ class TestCashMovementHTTP:
         shift_id = self._open_shift(client, cashier_headers, branch.id)
         resp = client.post(
             f"/api/v1/finance/shifts/{shift_id}/cash-movements",
-            json={"movement_type": "correction", "amount": "50.00", "reason": "تصحيح عدّ الكاش"},
+            json={"movement_type": "correction", "amount": "50.00", "reason": "تصحيح عدّ الكاش",
+                  "direction": "increase"},
             headers=cashier_headers,
         )
         assert resp.status_code == 400
@@ -945,6 +1038,19 @@ class TestCashMovementHTTP:
         allowed = client.get(f"/api/v1/finance/shifts/{shift_id}/cash-movements", headers=manager_headers)
         assert allowed.status_code == 200
         assert len(allowed.json()) == 1
+
+    def test_cross_branch_manager_cannot_list_cash_movements(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        """High 5 (جولة مراجعة Codex الأولى): مدير مربوط بفرع تاني مايقدرش
+        يقرا حركات كاش وردية فرع مختلف — role gate (مدير+) وحده مكانش بيمنع
+        ده قبل الإصلاح. نفس-الفرع بيرجّع 200 (test_cashier_cannot_list_... فوق)."""
+        branch_a = make_branch_committed(db)
+        shift_id = self._open_shift(client, cashier_headers, branch_a.id)
+        # فرع تاني بيعيد ربط المدير المشترك ليه — بقى بره فرع الوردية.
+        make_branch_committed(db)
+        resp = client.get(f"/api/v1/finance/shifts/{shift_id}/cash-movements", headers=manager_headers)
+        assert resp.status_code == 403
 
 
 def _set_shift_pin(db, email: str, pin: str) -> int:
@@ -1140,6 +1246,28 @@ class TestShiftInvoicesHTTP:
         report_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report", headers=manager_headers)
         assert report_resp.status_code == 200
 
+    def test_cross_branch_manager_cannot_view_shift_report_or_pdf(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        """High 5 (جولة مراجعة Codex الأولى): مدير مربوط بفرع تاني مايشوفش
+        تقرير/PDF وردية فرع مختلف. قبل الإصلاح، /report/pdf كان بلا فحص فرع
+        خالص (فحص الملكية بس بيتخطى لمدير)، فمدير أي فرع كان يقرا PDF أي
+        وردية. نفس-الفرع بيرجّع 200 (test_manager_can_view_any_... فوق)."""
+        branch_a = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch_a.id, "opening_float": "100.00"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+
+        # فرع تاني بيعيد ربط المدير المشترك ليه (upsert) — بقى بره فرع الوردية.
+        make_branch_committed(db)
+        report_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report", headers=manager_headers)
+        assert report_resp.status_code == 403
+        pdf_resp = client.get(f"/api/v1/finance/shifts/{shift_id}/report/pdf", headers=manager_headers)
+        assert pdf_resp.status_code == 403
+
     def test_cashier_cannot_close_other_cashiers_shift(
         self, client: TestClient, db, cashier_headers,
     ):
@@ -1166,7 +1294,33 @@ class TestShiftInvoicesHTTP:
         self, client: TestClient, db, cashier_headers, manager_headers,
     ):
         """مدير+ مؤهّل يقفل وردية أي كاشير نيابة عنه (كاشير غائب/عطلان) —
-        قرار محمد صراحةً: "من صلاحيات المدير إنه يعمل كده"."""
+        قرار محمد صراحةً: "من صلاحيات المدير إنه يعمل كده". M3 (جولة مراجعة
+        Codex الأولى): قفل وردية غيرك بقى محتاج سبب صريح (notes) + بيكتب
+        AuditLog(action="close_other_shift")."""
+        from app.modules.core.crud import list_audit_logs
+        branch = make_branch_committed(db)
+        open_resp = client.post(
+            "/api/v1/finance/shifts/open",
+            json={"branch_id": branch.id, "opening_float": "100.00"},
+            headers=cashier_headers,
+        )
+        shift_id = open_resp.json()["id"]
+
+        close_resp = client.post(
+            f"/api/v1/finance/shifts/{shift_id}/close",
+            json={"counted_cash": "100.00", "notes": "الكاشير مشي بدري، قفلت نيابةً عنه"},
+            headers=manager_headers,
+        )
+        assert close_resp.status_code == 200, close_resp.text
+        assert close_resp.json()["status"] == "closed"
+
+        logs, _ = list_audit_logs(db, branch_id=branch.id, entity_type="cashier_shift")
+        assert any(l.action == "close_other_shift" and l.entity_id == shift_id for l in logs)
+
+    def test_manager_close_other_shift_without_reason_rejected(
+        self, client: TestClient, db, cashier_headers, manager_headers,
+    ):
+        """M3: قفل وردية كاشير تاني بلا سبب صريح (notes) بيترفض 400."""
         branch = make_branch_committed(db)
         open_resp = client.post(
             "/api/v1/finance/shifts/open",
@@ -1180,12 +1334,14 @@ class TestShiftInvoicesHTTP:
             json={"counted_cash": "100.00"},
             headers=manager_headers,
         )
-        assert close_resp.status_code == 200, close_resp.text
-        assert close_resp.json()["status"] == "closed"
+        assert close_resp.status_code == 400
+        assert "سبب" in close_resp.json()["detail"]
 
     def test_invoices_404_for_missing_shift(self, client: TestClient, db, manager_headers):
         resp = client.get("/api/v1/finance/shifts/999999/invoices", headers=manager_headers)
-        assert resp.status_code == 400
+        # Gate 4B: وردية غير موجودة بقت 404 (كانت 400) — أدق دلاليًا، ومطابقة
+        # لاسم التست نفسه.
+        assert resp.status_code == 404
 
     def test_voided_payment_shows_is_voided_true(
         self, client: TestClient, db, cashier_headers, manager_headers,
@@ -1194,10 +1350,11 @@ class TestShiftInvoicesHTTP:
         shift_id, payment_id = self._open_shift_with_paid_folio(
             client, cashier_headers, branch.id, "ضيف فاتورة ملغاة", "40.00",
         )
+        reason = "خطأ في التسجيل"
         void_resp = client.post(
             f"/api/v1/finance/payments/{payment_id}/void",
-            json={"reason": "خطأ في التسجيل"},
-            headers=manager_headers,
+            json={"reason": reason},
+            headers=_void_payment_headers(client, manager_headers, payment_id=payment_id, reason=reason),
         )
         assert void_resp.status_code == 200, void_resp.text
 
