@@ -31,6 +31,7 @@
  * course firing, kitchen timer, customer display.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, useResortWebSocket, ENDPOINTS } from '@resort-os/core'
 import { useOfflineQueue, useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
 import {
@@ -43,6 +44,10 @@ import DiningExtrasModal, { type DiningExtrasItem } from '../../components/Dinin
 import DiningOrderDetailModal from '../../components/DiningOrderDetailModal.vue'
 import PinGuardModal from '../../components/PinGuardModal.vue'
 
+const { t, locale } = useI18n()
+// فاصلة القائمة (extras label، رسالة الأصناف المرفوضة) — عربي "، " مقابل
+// إنجليزي ", " بدل فاصلة عربية ثابتة في النص الإنجليزي.
+const listSeparator = computed(() => locale.value === 'ar' ? '، ' : ', ')
 const toast = useToast()
 const { printBlob } = usePrintDocument()
 const auth = useAuthStore()
@@ -90,12 +95,13 @@ interface ActiveOrder {
 }
 
 // ── Order-type tabs — real 4-way taxonomy, not "table vs. takeaway" ───────
-const ORDER_TYPE_TABS: TabItem[] = [
-  { value: 'dine_in', label: '🍽️ صالة' },
-  { value: 'takeaway', label: '🥡 تيك أواي' },
-  { value: 'delivery', label: '🛵 توصيل' },
-  { value: 'room_service', label: '🛎️ خدمة الغرف' },
-]
+// computed (not a plain constant) عشان يعيد الحساب لو اللغة اتغيّرت.
+const orderTypeTabs = computed<TabItem[]>(() => [
+  { value: 'dine_in', label: `🍽️ ${t('backoffice.pos.orderTypes.dineIn')}` },
+  { value: 'takeaway', label: `🥡 ${t('backoffice.pos.orderTypes.takeaway')}` },
+  { value: 'delivery', label: `🛵 ${t('backoffice.pos.orderTypes.delivery')}` },
+  { value: 'room_service', label: `🛎️ ${t('backoffice.pos.orderTypes.roomService')}` },
+])
 const orderType = ref<'dine_in' | 'takeaway' | 'delivery' | 'room_service'>('dine_in')
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -110,7 +116,10 @@ const searchQuery = ref('')
 const loading = ref(false)
 const submitting = ref(false)
 const covers = ref(1)
-const extraNoteLabel = computed(() => orderType.value === 'delivery' ? 'عنوان التوصيل' : orderType.value === 'room_service' ? 'رقم الغرفة' : 'ملاحظة')
+const extraNoteLabel = computed(() =>
+  orderType.value === 'delivery' ? t('backoffice.pos.deliveryAddress')
+  : orderType.value === 'room_service' ? t('backoffice.pos.roomNumber')
+  : t('backoffice.pos.note'))
 const extraNote = ref('')
 
 const cart = ref<CartLine[]>([])
@@ -154,7 +163,7 @@ const selectedOutletIdOption = computed<string | number | undefined>({
 })
 
 const categoryTabs = computed<TabItem[]>(() => [
-  { value: 'all', label: 'الكل' },
+  { value: 'all', label: t('backoffice.pos.categoryAll') },
   ...categories.value.map(c => ({ value: String(c.id), label: c.name_ar || c.name })),
 ])
 
@@ -176,10 +185,10 @@ const filteredItems = computed(() => {
 // without a full hierarchy rebuild (CLAUDE.md scope discipline).
 const tablesBySection = computed(() => {
   const groups = new Map<string, VenueTable[]>()
-  for (const t of tables.value) {
-    const key = t.section || 'بدون قسم'
+  for (const tbl of tables.value) {
+    const key = tbl.section || t('backoffice.pos.noSection')
     if (!groups.has(key)) groups.set(key, [])
-    groups.get(key)!.push(t)
+    groups.get(key)!.push(tbl)
   }
   return [...groups.entries()].map(([section, list]) => ({ section, tables: list }))
 })
@@ -200,16 +209,30 @@ const tableSummary = computed(() => {
 function elapsedSince(isoStr: string | null): string {
   if (!isoStr) return ''
   const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000)
-  if (diff < 60) return `${diff}ث`
-  if (diff < 3600) return `${Math.floor(diff / 60)}د`
+  const sec = t('backoffice.pos.elapsedUnits.seconds')
+  const min = t('backoffice.pos.elapsedUnits.minutes')
+  const hr = t('backoffice.pos.elapsedUnits.hours')
+  if (diff < 60) return `${diff}${sec}`
+  if (diff < 3600) return `${Math.floor(diff / 60)}${min}`
   const h = Math.floor(diff / 3600)
   const m = Math.floor((diff % 3600) / 60)
-  return m > 0 ? `${h}س ${m}د` : `${h}س`
+  return m > 0 ? `${h}${hr} ${m}${min}` : `${h}${hr}`
 }
 
 const hasItems = computed(() => cart.value.length > 0)
 const cartTotal = computed(() => cart.value.reduce((s, l) => s + l.unitPrice * l.quantity, 0))
 const displayTotal = computed(() => pendingOrderSummary.value?.total ?? cartTotal.value)
+const cartHeaderLabel = computed(() => {
+  if (orderType.value === 'dine_in' && selectedTableId.value) {
+    const tbl = tables.value.find(tbl => tbl.id === selectedTableId.value)
+    return tbl ? t('backoffice.pos.tableLabel', { number: tbl.table_number }) : ''
+  }
+  return orderTypeTabs.value.find(tab => tab.value === orderType.value)?.label ?? ''
+})
+const selectedTableFilterLabel = computed(() => {
+  const tbl = tables.value.find(tbl => tbl.id === selectedTableId.value)
+  return tbl ? t('backoffice.pos.tableFilterOnly', { number: tbl.table_number }) : ''
+})
 
 function cartKey(itemId: number, variantId: number | null, extraIds: number[]): string {
   return `${itemId}:${variantId ?? ''}:${[...extraIds].sort().join(',')}`
@@ -237,7 +260,7 @@ async function loadOutletData() {
     selectedCategoryId.value = 'all'
     selectedTableId.value = null
   } catch {
-    toast.error('تعذّر تحميل بيانات المنفذ — تأكد من الاتصال وحاول تاني')
+    toast.error(t('backoffice.pos.errors.loadOutletData'))
   } finally {
     loading.value = false
   }
@@ -265,7 +288,7 @@ async function loadActiveOrders() {
     const [open, kitchen, served] = await Promise.all([fetchAll('open'), fetchAll('in_kitchen'), fetchAll('served')])
     activeOrders.value = [...open, ...kitchen, ...served]
   } catch {
-    toast.error('تعذّر تحميل الطلبات الجارية')
+    toast.error(t('backoffice.pos.errors.loadActiveOrders'))
   } finally {
     activeOrdersLoading.value = false
   }
@@ -276,9 +299,9 @@ function openActiveOrders() {
   loadActiveOrders()
 }
 function tableLabelFor(order: ActiveOrder): string {
-  if (!order.table_id) return ORDER_TYPE_TABS.find(t => t.value === order.order_type)?.label ?? order.order_type
-  const t = tables.value.find(t => t.id === order.table_id)
-  return t ? `طاولة ${t.table_number}` : `طاولة #${order.table_id}`
+  if (!order.table_id) return orderTypeTabs.value.find(tab => tab.value === order.order_type)?.label ?? order.order_type
+  const tbl = tables.value.find(tbl => tbl.id === order.table_id)
+  return tbl ? t('backoffice.pos.tableLabel', { number: tbl.table_number }) : `#${order.table_id}`
 }
 function openOrder(orderId: number) {
   activeOrdersOpen.value = false
@@ -292,12 +315,12 @@ function onOrderDetailClosed() {
 // ── منطق tap على الطاولة ─────────────────────────────────────────────────
 // occupied/served → افتح الأوردر مباشرة
 // available       → اختر الطاولة لأوردر جديد
-function onTableClick(t: VenueTable) {
-  if (cartLocked.value || t.status === 'out_of_service') return
-  if ((t.status === 'occupied' || t.status === 'served') && t.active_order_id) {
-    openOrder(t.active_order_id)
+function onTableClick(tbl: VenueTable) {
+  if (cartLocked.value || tbl.status === 'out_of_service') return
+  if ((tbl.status === 'occupied' || tbl.status === 'served') && tbl.active_order_id) {
+    openOrder(tbl.active_order_id)
   } else {
-    selectedTableId.value = selectedTableId.value === t.id ? null : t.id
+    selectedTableId.value = selectedTableId.value === tbl.id ? null : tbl.id
   }
 }
 
@@ -310,7 +333,7 @@ const loyaltyRedeemLoading = ref(false)
 async function redeemLoyaltyInPOS() {
   const customerId = parseInt(loyaltyCustomerIdPos.value)
   const points     = parseInt(loyaltyPointsToRedeem.value)
-  if (!customerId || !points || points < 1) { toast.error('أدخل ID العميل وعدد النقاط'); return }
+  if (!customerId || !points || points < 1) { toast.error(t('backoffice.pos.loyalty.enterIdAndPoints')); return }
   loyaltyRedeemLoading.value = true
   try {
     await api.post(ENDPOINTS.crm.loyaltyRedeem, {
@@ -319,12 +342,12 @@ async function redeemLoyaltyInPOS() {
       points,
       reference:   `POS-order`,
     })
-    toast.success(`تم استرداد ${points} نقطة ✓`)
+    toast.success(t('backoffice.pos.loyalty.redeemSuccess', { points }))
     loyaltyRedeemOpen.value     = false
     loyaltyCustomerIdPos.value  = ''
     loyaltyPointsToRedeem.value = ''
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'فشل استرداد النقاط')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.pos.loyalty.redeemError'))
   } finally { loyaltyRedeemLoading.value = false }
 }
 function onItemClick(item: DiningItemRow) {
@@ -367,7 +390,7 @@ function addLineToCart(item: DiningItemRow, choice: { variantId: number | null; 
     unitPrice: Number(variant ? variant.price : item.price) + extraPrice,
     quantity: 1, notes: choice.notes,
     extraIds: choice.extraIds, extraTexts: choice.extraTexts,
-    extrasLabel: [...extrasNames, ...textAnswers].join('، '),
+    extrasLabel: [...extrasNames, ...textAnswers].join(listSeparator.value),
   })
 }
 
@@ -394,7 +417,7 @@ async function clearOrder() {
     try {
       await api.patch(ENDPOINTS.dining.orderStatus(pendingOrderId.value), { status: 'cancelled' })
     } catch {
-      toast.error('تعذّر إلغاء الطلب المحفوظ — راجعه من الطلبات الجارية')
+      toast.error(t('backoffice.pos.errors.cancelHeldOrder'))
     }
   }
   cart.value = []
@@ -432,7 +455,7 @@ async function applyDiscountToCart() {
       pendingOrderId.value = data.id
       pendingOrderNumber.value = data.order_number
     } catch (e: any) {
-      toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الطلب لتطبيق الخصم')
+      toast.error(e?.response?.data?.detail ?? t('backoffice.pos.errors.holdOrderForDiscount'))
       return
     }
   }
@@ -447,7 +470,9 @@ async function performDiscount(approver: { approverUserId: number | null; approv
   try {
     const data = await applyDiscountRule(pendingOrderId.value, approver)
     pendingOrderSummary.value = { discount_amount: data.discount_amount, total: data.total }
-    toast.success(Number(data.discount_amount) > 0 ? `تم تطبيق خصم ${data.discount_amount} ج ✓` : 'مفيش قاعدة خصم سارية حاليًا')
+    toast.success(Number(data.discount_amount) > 0
+      ? t('backoffice.pos.discountApplied', { amount: data.discount_amount })
+      : t('backoffice.pos.noActiveDiscountRule'))
   } catch { /* discountError shown inline */ }
 }
 
@@ -456,19 +481,19 @@ async function finalizeOrderToKitchen(orderId: number, wasHeld: boolean) {
     if (wasHeld) await api.patch(ENDPOINTS.dining.orderStatus(orderId), { status: 'open' })
     await api.patch(ENDPOINTS.dining.orderStatus(orderId), { status: 'in_kitchen' })
   } catch {
-    toast.error('اتسجّل الطلب لكن حصل خطأ في إرساله للمطبخ — راجعه من الطلبات الجارية')
+    toast.error(t('backoffice.pos.errors.sendToKitchen'))
   }
   try {
     const receiptRes = await api.get(ENDPOINTS.dining.receipt(orderId), { responseType: 'blob' })
     const outcome = printBlob(receiptRes.data, `dining-receipt-${orderId}.pdf`)
-    if (outcome.downloadedInstead) toast.warning('الإيصال اتحمّل كملف (المتصفح منع نافذة الطباعة)')
+    if (outcome.downloadedInstead) toast.warning(t('backoffice.pos.receiptDownloadedInstead'))
   } catch { /* receipt optional */ }
 }
 
 async function submitOrder() {
   if (!hasItems.value || submitting.value || !selectedOutletId.value) return
   if (orderType.value === 'dine_in' && !selectedTableId.value) {
-    toast.error('اختر طاولة للطلب الداخلي')
+    toast.error(t('backoffice.pos.errors.selectTableRequired'))
     return
   }
   submitting.value = true
@@ -483,16 +508,16 @@ async function submitOrder() {
       if (data === null) {
         // مفيش نت — اتحفظ محليًا (IndexedDB)، هيتزامن أوتوماتيك لما الاتصال يرجع
         await clearOrder()
-        toast.success('📥 الطلب محفوظ — هيتبعت للمطبخ أول ما النت يرجع')
+        toast.success(`📥 ${t('backoffice.pos.offlineSaved')}`)
         return
       }
       await finalizeOrderToKitchen(data.id, false)
     }
     await clearOrder()
-    toast.success('تم إرسال الطلب للمطبخ ✓')
+    toast.success(t('backoffice.pos.kitchenSentSuccess'))
     loadActiveOrders()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'فشل في إرسال الطلب')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.pos.errors.submitOrder'))
   } finally {
     submitting.value = false
   }
@@ -536,52 +561,52 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       v-if="!isOnline"
       class="bg-amber-500 text-white text-xs font-bold px-4 py-1.5 flex items-center justify-center gap-2 flex-shrink-0"
     >
-      <span>⚠️ وضع offline — الطلبات بتتحفظ محلياً وهتتبعت أول ما النت يرجع</span>
-      <span v-if="pendingCount > 0" class="bg-amber-700 px-2 py-0.5 rounded-full">{{ pendingCount }} في الانتظار</span>
+      <span>⚠️ {{ t('backoffice.pos.offlineBanner') }}</span>
+      <span v-if="pendingCount > 0" class="bg-amber-700 px-2 py-0.5 rounded-full">{{ t('backoffice.pos.pendingCount', { count: pendingCount }) }}</span>
     </div>
     <div
       v-else-if="pendingCount > 0"
       class="bg-primary-500 text-white text-xs font-bold px-4 py-1.5 flex items-center justify-center gap-2 flex-shrink-0"
     >
-      <span>⏳ جاري إرسال {{ pendingCount }} طلب محفوظ من فترة الانقطاع...</span>
+      <span>⏳ {{ t('backoffice.pos.syncingBanner', { count: pendingCount }) }}</span>
     </div>
     <div
       v-if="lastPartialRejection && lastPartialRejection.length"
       class="bg-red-100 text-red-800 text-xs font-semibold px-4 py-2 flex-shrink-0 border-b border-red-200"
     >
-      ⚠️ تم رفض بعض الأصناف من طلب محفوظ سابقاً (نفاد المخزون):
-      {{ lastPartialRejection.map(i => `${i.name} (×${i.requested_qty})`).join('، ') }}
+      ⚠️ {{ t('backoffice.pos.partialRejectionBanner') }}
+      {{ lastPartialRejection.map(i => `${i.name} (×${i.requested_qty})`).join(listSeparator) }}
     </div>
 
     <!-- ── Top bar ── -->
     <div class="bg-white dark:bg-surface border-b border-stone-200 dark:border-border px-4 py-3 flex flex-wrap gap-3 items-center shadow-sm flex-shrink-0">
       <div class="w-48">
-        <AppSelect v-model="selectedOutletIdOption" :options="outletOptions" placeholder="اختر المنفذ" @update:model-value="loadOutletData(); loadActiveOrders()" />
+        <AppSelect v-model="selectedOutletIdOption" :options="outletOptions" :placeholder="t('backoffice.pos.selectOutlet')" @update:model-value="loadOutletData(); loadActiveOrders()" />
       </div>
 
-      <AppTabs v-model="orderType" :tabs="ORDER_TYPE_TABS" />
+      <AppTabs v-model="orderType" :tabs="orderTypeTabs" />
 
       <button
         type="button"
         @click="openActiveOrders"
         class="relative px-3 py-2 bg-white dark:bg-surface border-2 border-primary-400 text-primary-700 rounded-lg font-bold text-sm hover:bg-primary-50 transition-colors min-h-[48px]"
       >
-        🧾 الطلبات الجارية
+        🧾 {{ t('backoffice.pos.activeOrdersTitle') }}
         <AppBadge v-if="activeOrders.length" variant="info" size="sm" class="ms-1.5">{{ activeOrders.length }}</AppBadge>
       </button>
 
       <div class="w-56">
-        <SearchInput ref="searchInputEl" v-model="searchQuery" placeholder="🔍 بحث في الأصناف... (/)" />
+        <SearchInput ref="searchInputEl" v-model="searchQuery" :placeholder="t('backoffice.pos.searchPlaceholder')" />
       </div>
 
       <span
         class="text-gray-300 hover:text-gray-500 cursor-help text-sm select-none transition-colors"
-        title="⌨️ /  — تركيز على البحث · Enter — إرسال الطلب · Esc — إغلاق/مسح"
+        :title="t('backoffice.pos.hotkeysHint')"
       >⌨️</span>
 
       <!-- مؤشر حالة الـ WebSocket -->
       <span
-        :title="wsStatus === 'connected' ? 'تحديثات لحظية — متصل' : wsStatus === 'connecting' ? 'جاري الاتصال...' : 'لا يوجد اتصال لحظي'"
+        :title="wsStatus === 'connected' ? t('backoffice.pos.wsStatus.connected') : wsStatus === 'connecting' ? t('backoffice.pos.wsStatus.connecting') : t('backoffice.pos.wsStatus.disconnected')"
         :class="['w-2 h-2 rounded-full flex-shrink-0 transition-colors', wsStatus === 'connected' ? 'bg-green-500' : wsStatus === 'connecting' ? 'bg-amber-400 animate-pulse' : 'bg-gray-300']"
       />
     </div>
@@ -589,69 +614,69 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
     <!-- ── Order-type-specific fields ── -->
     <div class="bg-stone-50 border-b border-stone-200 dark:border-border px-4 py-3 flex-shrink-0">
       <template v-if="orderType === 'dine_in'">
-        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">اختر الطاولة</div>
-        <div v-if="tables.length === 0" class="text-sm text-gray-400">لا توجد طاولات لهذا المنفذ</div>
+        <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">{{ t('backoffice.pos.selectTable') }}</div>
+        <div v-if="tables.length === 0" class="text-sm text-gray-400">{{ t('backoffice.pos.noTables') }}</div>
 
         <!-- Summary Bar -->
         <div v-if="tables.length > 0" class="flex flex-wrap gap-1.5 mb-3 text-[11px] font-semibold">
-          <span class="px-2 py-0.5 rounded-full bg-stone-100 text-gray-500">الكل: {{ tableSummary.total }}</span>
-          <span class="px-2 py-0.5 rounded-full bg-green-50 text-green-700">🟢 فاضي: {{ tableSummary.available }}</span>
-          <span class="px-2 py-0.5 rounded-full bg-red-50 text-red-700">🔴 مشغول: {{ tableSummary.occupied }}</span>
-          <span v-if="tableSummary.served > 0" class="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">🟠 انتظار دفع: {{ tableSummary.served }}</span>
-          <span v-if="tableSummary.reserved > 0" class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">🔵 محجوز: {{ tableSummary.reserved }}</span>
+          <span class="px-2 py-0.5 rounded-full bg-stone-100 text-gray-500">{{ t('backoffice.pos.tableSummary.all') }}: {{ tableSummary.total }}</span>
+          <span class="px-2 py-0.5 rounded-full bg-green-50 text-green-700">🟢 {{ t('backoffice.pos.tableSummary.available') }}: {{ tableSummary.available }}</span>
+          <span class="px-2 py-0.5 rounded-full bg-red-50 text-red-700">🔴 {{ t('backoffice.pos.tableSummary.occupied') }}: {{ tableSummary.occupied }}</span>
+          <span v-if="tableSummary.served > 0" class="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">🟠 {{ t('backoffice.pos.tableSummary.waitingPayment') }}: {{ tableSummary.served }}</span>
+          <span v-if="tableSummary.reserved > 0" class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">🔵 {{ t('backoffice.pos.tableSummary.reserved') }}: {{ tableSummary.reserved }}</span>
         </div>
 
         <div v-for="group in tablesBySection" :key="group.section" class="mb-3 last:mb-0">
           <div class="text-xs font-semibold text-gray-400 mb-1.5">{{ group.section }}</div>
           <div class="flex flex-wrap gap-2">
             <button
-              v-for="t in group.tables"
-              :key="t.id"
+              v-for="tbl in group.tables"
+              :key="tbl.id"
               type="button"
-              :disabled="cartLocked || t.status === 'out_of_service'"
-              @click="onTableClick(t)"
+              :disabled="cartLocked || tbl.status === 'out_of_service'"
+              @click="onTableClick(tbl)"
               :class="[
                 'min-w-[110px] min-h-[90px] px-3 py-2 rounded-xl border-2 text-sm font-bold transition-all flex flex-col items-start justify-between gap-0.5',
-                t.status === 'out_of_service' ? 'opacity-40 cursor-not-allowed bg-gray-100 border-gray-300' :
-                  selectedTableId === t.id ? 'border-primary-600 bg-primary-50 text-primary-800 ring-2 ring-primary-200' :
-                  t.status === 'available' ? 'bg-green-50 border-green-400 hover:border-green-500' :
-                  t.status === 'occupied'  ? 'bg-red-50 border-red-400 ring-2 ring-red-200 hover:border-red-500' :
-                  t.status === 'served'    ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-200 hover:border-amber-500' :
-                  t.status === 'reserved'  ? 'bg-blue-50 border-blue-400 hover:border-blue-500' :
+                tbl.status === 'out_of_service' ? 'opacity-40 cursor-not-allowed bg-gray-100 border-gray-300' :
+                  selectedTableId === tbl.id ? 'border-primary-600 bg-primary-50 text-primary-800 ring-2 ring-primary-200' :
+                  tbl.status === 'available' ? 'bg-green-50 border-green-400 hover:border-green-500' :
+                  tbl.status === 'occupied'  ? 'bg-red-50 border-red-400 ring-2 ring-red-200 hover:border-red-500' :
+                  tbl.status === 'served'    ? 'bg-amber-50 border-amber-400 ring-2 ring-amber-200 hover:border-amber-500' :
+                  tbl.status === 'reserved'  ? 'bg-blue-50 border-blue-400 hover:border-blue-500' :
                   'bg-white dark:bg-surface border-stone-200 dark:border-border hover:border-primary-300',
               ]"
             >
               <!-- السطر 1: رقم الطاولة -->
-              <div class="text-base font-black leading-tight">{{ t.table_number }}</div>
+              <div class="text-base font-black leading-tight">{{ tbl.table_number }}</div>
 
               <!-- السطر 2-4: بيانات الأوردر النشط -->
-              <div v-if="t.status === 'occupied' || t.status === 'served'" class="w-full space-y-0.5 mt-0.5">
-                <div v-if="t.active_covers" class="text-[10px] text-gray-600">👥 {{ t.active_covers }} ضيوف</div>
-                <div v-if="t.active_order_total" class="text-[10px] text-gray-700 dark:text-gray-300 font-semibold">💰 {{ t.active_order_total }} ج</div>
-                <div v-if="t.occupied_at" class="text-[10px] text-gray-500">⏱ {{ elapsedSince(t.occupied_at) }}</div>
+              <div v-if="tbl.status === 'occupied' || tbl.status === 'served'" class="w-full space-y-0.5 mt-0.5">
+                <div v-if="tbl.active_covers" class="text-[10px] text-gray-600">👥 {{ tbl.active_covers }} {{ t('backoffice.pos.guests') }}</div>
+                <div v-if="tbl.active_order_total" class="text-[10px] text-gray-700 dark:text-gray-300 font-semibold">💰 {{ tbl.active_order_total }} {{ t('backoffice.pos.currency') }}</div>
+                <div v-if="tbl.occupied_at" class="text-[10px] text-gray-500">⏱ {{ elapsedSince(tbl.occupied_at) }}</div>
               </div>
 
               <!-- السطر 5: حالة -->
               <div :class="[
                 'text-[10px] font-semibold mt-0.5',
-                t.status === 'available' ? 'text-green-600' :
-                t.status === 'occupied'  ? 'text-red-600' :
-                t.status === 'served'    ? 'text-amber-600' :
-                t.status === 'reserved'  ? 'text-blue-600' : 'text-gray-400',
+                tbl.status === 'available' ? 'text-green-600' :
+                tbl.status === 'occupied'  ? 'text-red-600' :
+                tbl.status === 'served'    ? 'text-amber-600' :
+                tbl.status === 'reserved'  ? 'text-blue-600' : 'text-gray-400',
               ]">{{
-                t.status === 'available' ? 'فارغة' :
-                t.status === 'occupied'  ? 'مشغولة' :
-                t.status === 'served'    ? 'انتظار دفع' :
-                t.status === 'reserved'  ? 'محجوزة' : 'خارج الخدمة'
+                tbl.status === 'available' ? t('backoffice.pos.tableStatus.available') :
+                tbl.status === 'occupied'  ? t('backoffice.pos.tableStatus.occupied') :
+                tbl.status === 'served'    ? t('backoffice.pos.tableStatus.served') :
+                tbl.status === 'reserved'  ? t('backoffice.pos.tableStatus.reserved') : t('backoffice.pos.tableStatus.outOfService')
               }}</div>
             </button>
           </div>
         </div>
         <div class="flex items-center gap-2 mt-2">
-          <label class="text-xs font-semibold text-gray-600">الغطاءات:</label>
-          <IconButton icon="remove" label="تقليل الغطاءات" size="sm" :disabled="cartLocked" @click="covers = Math.max(1, covers - 1)" />
+          <label class="text-xs font-semibold text-gray-600">{{ t('backoffice.pos.covers') }}:</label>
+          <IconButton icon="remove" :label="t('backoffice.pos.decreaseCovers')" size="sm" :disabled="cartLocked" @click="covers = Math.max(1, covers - 1)" />
           <span class="w-6 text-center font-bold text-sm">{{ covers }}</span>
-          <IconButton icon="add" label="زيادة الغطاءات" size="sm" :disabled="cartLocked" @click="covers++" />
+          <IconButton icon="add" :label="t('backoffice.pos.increaseCovers')" size="sm" :disabled="cartLocked" @click="covers++" />
         </div>
       </template>
 
@@ -660,7 +685,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       </template>
 
       <template v-else>
-        <div class="text-sm text-gray-500">🥡 تيك أواي — أسرع مسار، بدون طاولة</div>
+        <div class="text-sm text-gray-500">🥡 {{ t('backoffice.pos.takeawayHint') }}</div>
       </template>
     </div>
 
@@ -672,7 +697,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
         </div>
 
         <LoadingState v-if="loading" />
-        <EmptyState v-else-if="filteredItems.length === 0" icon="🍽️" title="لا توجد أصناف" :subtitle="searchQuery ? `لا نتائج لـ «${searchQuery}»` : undefined" />
+        <EmptyState v-else-if="filteredItems.length === 0" icon="🍽️" :title="t('backoffice.pos.noItems')" :subtitle="searchQuery ? t('backoffice.pos.noResultsFor', { query: searchQuery }) : undefined" />
         <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3">
           <button
             v-for="item in filteredItems"
@@ -689,12 +714,12 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
             <div class="p-3 flex flex-col flex-1 justify-between">
               <div class="font-semibold text-gray-900 dark:text-gray-100 text-sm leading-tight mb-2">{{ item.name_ar || item.name }}</div>
               <div v-if="(item.variants ?? []).some(v => v.is_available)" class="text-sm font-bold text-primary-700">
-                من {{ Math.min(...item.variants!.filter(v => v.is_available).map(v => Number(v.price))) }}
-                <span class="text-xs font-normal text-gray-400 ms-0.5">ج · اختر الحجم</span>
+                {{ t('backoffice.pos.fromPrice') }} {{ Math.min(...item.variants!.filter(v => v.is_available).map(v => Number(v.price))) }}
+                <span class="text-xs font-normal text-gray-400 ms-0.5">{{ t('backoffice.pos.currency') }} · {{ t('backoffice.pos.chooseSize') }}</span>
               </div>
-              <div v-else class="text-lg font-black text-primary-700">{{ item.price }}<span class="text-xs font-normal text-gray-400 ms-0.5">ج</span></div>
+              <div v-else class="text-lg font-black text-primary-700">{{ item.price }}<span class="text-xs font-normal text-gray-400 ms-0.5">{{ t('backoffice.pos.currency') }}</span></div>
             </div>
-            <AppBadge v-if="(item.extra_groups ?? []).length > 0" variant="info" size="sm" class="absolute top-1.5 start-1.5">إضافات</AppBadge>
+            <AppBadge v-if="(item.extra_groups ?? []).length > 0" variant="info" size="sm" class="absolute top-1.5 start-1.5">{{ t('backoffice.pos.extrasBadge') }}</AppBadge>
           </button>
         </div>
       </div>
@@ -703,15 +728,15 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       <div class="w-80 bg-white dark:bg-surface border-s border-stone-200 dark:border-border flex flex-col flex-shrink-0 shadow-elevation-3">
         <div class="p-4 border-b border-stone-100 bg-stone-50">
           <div class="font-bold text-gray-900 dark:text-gray-100">
-            {{ orderType === 'dine_in' && selectedTableId ? `طاولة ${tables.find(t => t.id === selectedTableId)?.table_number}` : ORDER_TYPE_TABS.find(t => t.value === orderType)?.label }}
+            {{ cartHeaderLabel }}
           </div>
         </div>
 
         <div class="flex-1 overflow-y-auto p-3 space-y-2">
-          <EmptyState v-if="cart.length === 0" icon="🛒" title="اختر أصناف من القائمة" />
+          <EmptyState v-if="cart.length === 0" icon="🛒" :title="t('backoffice.pos.cartEmpty')" />
 
           <div v-if="cartLocked" class="bg-success/10 border border-success/30 rounded-lg px-3 py-2 text-xs text-success">
-            🔒 الطلب #{{ pendingOrderNumber }} اتسجّل وطُبّق عليه خصم — امسح الطلب لو عايز تعدّل
+            🔒 {{ t('backoffice.pos.cartLockedNotice', { number: pendingOrderNumber }) }}
           </div>
 
           <div v-for="line in cart" :key="line.key" class="bg-stone-50 rounded-lg p-3 border border-stone-200 dark:border-border">
@@ -720,54 +745,54 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 {{ line.nameAr || line.name }}
                 <span v-if="line.variantLabel" class="text-xs font-normal text-primary-600">— {{ line.variantLabel }}</span>
               </span>
-              <IconButton icon="close" label="حذف الصنف" size="sm" variant="danger" :disabled="cartLocked" @click="removeLine(line.key)" />
+              <IconButton icon="close" :label="t('backoffice.pos.removeItem')" size="sm" variant="danger" :disabled="cartLocked" @click="removeLine(line.key)" />
             </div>
             <div v-if="line.extrasLabel" class="text-xs text-gray-500 mb-1.5">{{ line.extrasLabel }}</div>
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-1.5">
-                <IconButton icon="remove" label="تقليل الكمية" size="sm" :disabled="cartLocked" @click="adjustQty(line.key, -1)" />
+                <IconButton icon="remove" :label="t('backoffice.pos.decreaseQty')" size="sm" :disabled="cartLocked" @click="adjustQty(line.key, -1)" />
                 <span class="text-sm font-bold w-5 text-center">{{ line.quantity }}</span>
-                <IconButton icon="add" label="زيادة الكمية" size="sm" :disabled="cartLocked" @click="adjustQty(line.key, 1)" />
+                <IconButton icon="add" :label="t('backoffice.pos.increaseQty')" size="sm" :disabled="cartLocked" @click="adjustQty(line.key, 1)" />
               </div>
-              <span class="text-sm font-bold text-primary-700">{{ (line.unitPrice * line.quantity).toFixed(2) }} ج</span>
+              <span class="text-sm font-bold text-primary-700">{{ (line.unitPrice * line.quantity).toFixed(2) }} {{ t('backoffice.pos.currency') }}</span>
             </div>
           </div>
         </div>
 
         <div class="border-t border-stone-200 dark:border-border p-3 space-y-3 bg-white dark:bg-surface">
           <div class="flex justify-between items-center">
-            <span class="text-base font-bold text-gray-900 dark:text-gray-100">المجموع</span>
-            <span class="text-xl font-black text-primary-700">{{ displayTotal }} ج</span>
+            <span class="text-base font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.pos.total') }}</span>
+            <span class="text-xl font-black text-primary-700">{{ displayTotal }} {{ t('backoffice.pos.currency') }}</span>
           </div>
 
           <div v-if="!cartLocked">
-            <AppButton variant="outline" size="sm" block :disabled="!hasItems" :loading="applyingDiscount" @click="applyDiscountToCart">🏷️ تطبيق خصم</AppButton>
+            <AppButton variant="outline" size="sm" block :disabled="!hasItems" :loading="applyingDiscount" @click="applyDiscountToCart">🏷️ {{ t('backoffice.pos.applyDiscount') }}</AppButton>
             <p v-if="discountError" class="text-xs text-danger mt-1 text-center">{{ discountError }}</p>
           </div>
           <div v-else class="rounded-lg border-2 border-success/30 bg-success/10 px-3 py-2 text-xs">
             <div class="flex justify-between text-success font-bold">
-              <span>خصم مطبّق ✓</span>
-              <span v-if="pendingOrderSummary && Number(pendingOrderSummary.discount_amount) > 0">−{{ pendingOrderSummary.discount_amount }} ج</span>
+              <span>{{ t('backoffice.pos.discountAppliedBadge') }}</span>
+              <span v-if="pendingOrderSummary && Number(pendingOrderSummary.discount_amount) > 0">−{{ pendingOrderSummary.discount_amount }} {{ t('backoffice.pos.currency') }}</span>
             </div>
           </div>
 
           <!-- استرداد نقاط ولاء -->
           <div v-if="loyaltyRedeemOpen" class="rounded-lg border border-amber-200 bg-amber-50 p-2 space-y-1.5">
-            <div class="text-xs font-bold text-amber-800">🎁 استرداد نقاط</div>
+            <div class="text-xs font-bold text-amber-800">🎁 {{ t('backoffice.pos.loyalty.title') }}</div>
             <div class="flex gap-1.5">
-              <input v-model="loyaltyCustomerIdPos" type="number" placeholder="ID العميل"
+              <input v-model="loyaltyCustomerIdPos" type="number" :placeholder="t('backoffice.pos.loyalty.customerIdPlaceholder')"
                 class="border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-xs w-24" />
-              <input v-model="loyaltyPointsToRedeem" type="number" min="1" placeholder="نقاط"
+              <input v-model="loyaltyPointsToRedeem" type="number" min="1" :placeholder="t('backoffice.pos.loyalty.pointsPlaceholder')"
                 class="border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-xs w-20" />
-              <AppButton size="sm" :loading="loyaltyRedeemLoading" @click="redeemLoyaltyInPOS">تأكيد</AppButton>
+              <AppButton size="sm" :loading="loyaltyRedeemLoading" @click="redeemLoyaltyInPOS">{{ t('backoffice.pos.loyalty.confirm') }}</AppButton>
             </div>
-            <button @click="loyaltyRedeemOpen = false" class="text-[10px] text-gray-400 hover:underline">إلغاء</button>
+            <button @click="loyaltyRedeemOpen = false" class="text-[10px] text-gray-400 hover:underline">{{ t('backoffice.pos.loyalty.cancel') }}</button>
           </div>
-          <AppButton v-else variant="outline" size="sm" block @click="loyaltyRedeemOpen = true">🎁 استرداد نقاط ولاء</AppButton>
+          <AppButton v-else variant="outline" size="sm" block @click="loyaltyRedeemOpen = true">🎁 {{ t('backoffice.pos.loyalty.redeemButton') }}</AppButton>
 
           <div class="grid grid-cols-2 gap-2">
-            <AppButton variant="ghost" :disabled="!hasItems" @click="clearOrder">مسح</AppButton>
-            <AppButton variant="primary" :disabled="!hasItems" :loading="submitting" @click="submitOrder">إرسال للمطبخ</AppButton>
+            <AppButton variant="ghost" :disabled="!hasItems" @click="clearOrder">{{ t('backoffice.pos.clear') }}</AppButton>
+            <AppButton variant="primary" :disabled="!hasItems" :loading="submitting" @click="submitOrder">{{ t('backoffice.pos.sendToKitchen') }}</AppButton>
           </div>
         </div>
       </div>
@@ -783,8 +808,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
     <PinGuardModal
       v-if="showDiscountPinGuard"
       :min-level="60"
-      title="موافقة تطبيق خصم"
-      message="الكاشير مالوش صلاحية خصم — محتاج موافقة مدير/محاسب بالـ PIN"
+      :title="t('backoffice.pos.discountPinGuard.title')"
+      :message="t('backoffice.pos.discountPinGuard.message')"
       :loading="applyingDiscount"
       :error-message="discountError"
       @approved="onDiscountPinApproved"
@@ -797,7 +822,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           <div class="absolute inset-0 bg-black/50" @click="activeOrdersOpen = false" />
           <div class="relative bg-white dark:bg-surface rounded-2xl shadow-2xl w-full max-w-sm max-h-[80vh] flex flex-col">
             <div class="flex items-center justify-between px-5 py-4 border-b border-stone-100">
-              <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">الطلبات الجارية</h2>
+              <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.pos.activeOrdersTitle') }}</h2>
               <div class="flex items-center gap-2">
                 <!-- فلتر بالطاولة المحددة -->
                 <button
@@ -810,14 +835,14 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                       : 'bg-white dark:bg-surface text-primary-700 border-primary-300 hover:bg-primary-50'
                   ]"
                 >
-                  طاولة {{ tables.find(t => t.id === selectedTableId)?.table_number }} فقط
+                  {{ selectedTableFilterLabel }}
                 </button>
-                <IconButton icon="close" label="إغلاق" size="sm" @click="activeOrdersOpen = false" />
+                <IconButton icon="close" :label="t('backoffice.pos.close')" size="sm" @click="activeOrdersOpen = false" />
               </div>
             </div>
             <div class="overflow-y-auto p-4 space-y-2">
               <LoadingState v-if="activeOrdersLoading" />
-              <EmptyState v-else-if="filteredActiveOrders.length === 0" icon="🧾" title="مفيش طلبات جارية دلوقتي" />
+              <EmptyState v-else-if="filteredActiveOrders.length === 0" icon="🧾" :title="t('backoffice.pos.noActiveOrders')" />
               <button
                 v-for="o in filteredActiveOrders"
                 :key="o.id"

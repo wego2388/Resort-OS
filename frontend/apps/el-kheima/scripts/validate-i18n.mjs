@@ -113,6 +113,10 @@ const STRICT_FILES = [
   'src/views/portal/ProfileView.vue',
   'src/views/account/SessionsView.vue',
   'src/views/admin/SettingsView.vue',
+  // Gate 5 Batch 1 (2026-07-20): full ar/en copy migration, promoted out of
+  // DIRECTION_CLEAN_FILES below.
+  'src/views/pos/UnifiedPOSView.vue',
+  'src/views/kds/DiningKDSView.vue',
 ].map((p) => join(APP_DIR, p))
 
 // Direction-normalized reference screens: forced dir + hard-coded locale tags
@@ -120,8 +124,6 @@ const STRICT_FILES = [
 // deferred (they still hold hard-coded Arabic strings — tracked, not claimed
 // as bilingual). Only the direction/locale-tag checks apply here.
 const DIRECTION_CLEAN_FILES = [
-  'src/views/kds/DiningKDSView.vue',
-  'src/views/pos/UnifiedPOSView.vue',
 ].map((p) => join(APP_DIR, p))
 
 // ── 4. missing runtime keys in strict reference screens ─────────────────────

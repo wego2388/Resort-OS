@@ -83,6 +83,29 @@ build نظاف، `test:frontend` 60 passed. `git diff --check` نظيف. صفر 
 
 ---
 
+## 🟩 Gate 5 — اكتمال إدارة الموظفين بلغتين — Batch 1: POS + KDS (2026-07-20)
+
+**الحالة:** منفَّذة ومُتحقَّق منها ذاتيًا — نُفِّذت مباشرة من غير وكيل، على فرع
+مستقل `gate-5-staff-ux-batch-1-pos-kds-i18n` (منفصل عن Gate 4). **بلا
+commit/push بعد.** الشاشتين المرجعيتين اللي كانتا "direction-normalized بس" من
+Gate 3 (`views/pos/UnifiedPOSView.vue`، `views/kds/DiningKDSView.vue`) اتترجموا
+بالكامل: 83 مفتاح جديد تحت `backoffice.pos.*`، 25 تحت `backoffice.kds.*`
+(بيعيد استخدام `backoffice.pos.orderTypes`/`tableLabel`/`elapsedUnits` بدل
+تكرار نفس التصنيف). الاتنين اتترقّوا من `DIRECTION_CLEAN_FILES` لـ
+`STRICT_FILES` في `validate-i18n.mjs` (بقى 9 شاشة strict، صفر direction-clean
+متبقية). فاصلة القائمة (extras label) بقت locale-aware (عربي "، " مقابل
+إنجليزي ", ") بدل فاصلة عربية ثابتة في النص الإنجليزي — تفصيلة صغيرة اتصلحت
+أثناء المراجعة.
+
+**التحقق:** `validate:i18n` أخضر (3224 مفتاح ar/en متطابق، صفر ناقص)،
+`type-check:all` (el-kheima + public) نظيف، `test:frontend` 60/60 (صفر رجوع)،
+`build:all` نظيف. `git diff --check` نظيف.
+
+**الباقي (~38 شاشة admin/ops/portal):** لسه مؤجَّل لدفعات لاحقة — دفعة تالية
+مقترحة حسب ترتيب الخارطة: شاشات الإدارة/Super Admin.
+
+---
+
 ## 🧭 قرارات معتمدة قبل Public Phase 0 — حالة التنفيذ موضحة تحت كل Gate
 
 في 2026-07-17 اعتمد Mohamed بوابتين تسبقان نقل الموقع العام:
