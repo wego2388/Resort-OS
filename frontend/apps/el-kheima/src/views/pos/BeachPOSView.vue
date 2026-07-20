@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { usePrintDocument, useOfflineQueue } from '@resort-os/core/composables'
 import { useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { t } = useI18n()
 const { printBlob } = usePrintDocument()
 
 // ── Offline queue ──────────────────────────────────────────────────────────────
@@ -119,7 +121,7 @@ async function fetchInventory() {
     const { data } = await api.get(ENDPOINTS.beach.inventory, { params: { branch_id: branchId } })
     inventory.value = data
   } catch (e) {
-    toast.error('تعذّر تحميل بيانات سعة الشاطئ — الأسعار/الإشغال قد لا تكون محدّثة')
+    toast.error(t('backoffice.beachPos.loadInventoryError'))
   } finally {
     loading.value = false
   }
@@ -148,7 +150,7 @@ async function printTicket(txId: number) {
     const ticketRes = await api.get(ENDPOINTS.beach.ticket(txId), { responseType: 'blob' })
     const outcome = printBlob(ticketRes.data, `ticket-${txId}.pdf`)
     if (outcome.downloadedInstead) {
-      toast.error('التذكرة اتحمّلت كملف (المتصفح منع نافذة الطباعة) — افتحها واطبعها يدويًا')
+      toast.error(t('backoffice.beachPos.ticketDownloadedInstead'))
     }
   } catch {
     // ticket printing is optional — don't block success
@@ -179,15 +181,15 @@ async function completeSale() {
     if (soldTxIds.length || anyQueued) await fetchInventory()
 
     successMsg.value = anyQueued
-      ? '📥 جزء من البيع محفوظ (بدون نت) — هيتزامن أول ما النت يرجع'
-      : 'تم البيع بنجاح ✓'
+      ? t('backoffice.beachPos.partialSaleQueued')
+      : t('backoffice.beachPos.saleSuccess')
     setTimeout(() => { successMsg.value = '' }, 4000)
 
     // Auto-focus back to first price button
     await nextTick()
     firstButtonRef.value?.focus()
   } catch (e: any) {
-    errorMsg.value = e?.response?.data?.detail ?? 'حدث خطأ في البيع'
+    errorMsg.value = e?.response?.data?.detail ?? t('backoffice.beachPos.saleError')
     setTimeout(() => { errorMsg.value = '' }, 4000)
   } finally {
     submitting.value = false
@@ -211,20 +213,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="p-4 h-full" dir="rtl">
+  <div class="p-4 h-full">
     <!-- ── Offline banner — visible الطول، مش toast بيختفي ── -->
     <div
       v-if="!isOnline"
       class="bg-amber-500 text-white text-xs font-bold px-4 py-1.5 rounded-lg mb-3 flex items-center justify-center gap-2"
     >
-      <span>⚠️ وضع offline — المبيعات بتتحفظ محلياً وهتتزامن أول ما النت يرجع</span>
-      <span v-if="pendingCount > 0" class="bg-amber-700 px-2 py-0.5 rounded-full">{{ pendingCount }} في الانتظار</span>
+      <span>⚠️ {{ t('backoffice.beachPos.offlineBanner') }}</span>
+      <span v-if="pendingCount > 0" class="bg-amber-700 px-2 py-0.5 rounded-full">{{ t('backoffice.beachPos.pendingCount', { count: pendingCount }) }}</span>
     </div>
     <div
       v-else-if="pendingCount > 0"
       class="bg-blue-500 text-white text-xs font-bold px-4 py-1.5 rounded-lg mb-3 flex items-center justify-center gap-2"
     >
-      <span>⏳ جاري تزامن {{ pendingCount }} عملية بيع محفوظة من فترة الانقطاع...</span>
+      <span>⏳ {{ t('backoffice.beachPos.syncingBanner', { count: pendingCount }) }}</span>
     </div>
 
     <!-- Loading splash -->
@@ -235,9 +237,9 @@ onUnmounted(() => {
     <!-- No connection -->
     <div v-else-if="!inventory && !loading" class="flex flex-col items-center justify-center h-64 text-gray-500 gap-3">
       <div class="text-5xl">⚠️</div>
-      <p class="font-medium">لا يمكن الاتصال بالسيرفر</p>
+      <p class="font-medium">{{ t('backoffice.beachPos.cannotConnect') }}</p>
       <button @click="fetchInventory" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
-        إعادة المحاولة
+        {{ t('backoffice.beachPos.retry') }}
       </button>
     </div>
 
@@ -250,7 +252,7 @@ onUnmounted(() => {
         <!-- Beach status card -->
         <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
           <div class="flex items-center justify-between mb-3">
-            <h2 class="font-bold text-gray-900 dark:text-gray-100 text-base">حالة الشاطئ</h2>
+            <h2 class="font-bold text-gray-900 dark:text-gray-100 text-base">{{ t('backoffice.beachPos.beachStatus') }}</h2>
             <div class="flex items-center gap-2">
               <span
                 v-if="inventory.surge_active"
@@ -259,7 +261,7 @@ onUnmounted(() => {
               <button
                 @click="fetchInventory"
                 :class="['text-gray-400 hover:text-blue-600 transition-colors', loading ? 'animate-spin' : '']"
-                title="تحديث"
+                :title="t('backoffice.beachPos.refresh')"
               >↻</button>
             </div>
           </div>
@@ -267,7 +269,7 @@ onUnmounted(() => {
           <!-- Occupancy bar -->
           <div class="mb-3">
             <div class="flex justify-between text-sm text-gray-600 mb-1">
-              <span>الإشغال</span>
+              <span>{{ t('backoffice.beachPos.occupancy') }}</span>
               <span class="font-medium">
                 {{ inventory.capacity_used }} / {{ inventory.capacity_max }}
                 <span class="text-xs text-gray-400">({{ occupancyPct }}%)</span>
@@ -286,11 +288,11 @@ onUnmounted(() => {
           <div class="grid grid-cols-2 gap-2">
             <div class="bg-blue-50 rounded-lg p-2.5 text-center">
               <div class="text-2xl font-black text-blue-700">{{ availableSlots }}</div>
-              <div class="text-xs text-blue-600 mt-0.5">أماكن متاحة</div>
+              <div class="text-xs text-blue-600 mt-0.5">{{ t('backoffice.beachPos.availableSlots') }}</div>
             </div>
             <div class="bg-amber-50 rounded-lg p-2.5 text-center">
               <div class="text-2xl font-black text-amber-700">{{ inventory.towels_available }}</div>
-              <div class="text-xs text-amber-600 mt-0.5">فوط متاحة</div>
+              <div class="text-xs text-amber-600 mt-0.5">{{ t('backoffice.beachPos.towelsAvailable') }}</div>
             </div>
           </div>
         </div>
@@ -302,12 +304,12 @@ onUnmounted(() => {
           <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">👤</div>
-              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">بالغ</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.adult') }}</div>
               <div class="text-2xl font-black text-blue-700 mt-1">
-                {{ prices.adult }}<span class="text-xs font-normal text-gray-500 mr-1">ج</span>
+                {{ prices.adult }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
               </div>
               <div v-if="inventory.surge_active" class="text-xs text-amber-600 mt-0.5">
-                (أصل: {{ inventory.adult_price }} ج)
+                {{ t('backoffice.beachPos.originalPrice', { price: inventory.adult_price }) }}
               </div>
             </div>
             <div class="flex items-center justify-center gap-3">
@@ -329,12 +331,12 @@ onUnmounted(() => {
           <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🧒</div>
-              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">طفل</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.child') }}</div>
               <div class="text-2xl font-black text-green-700 mt-1">
-                {{ prices.child }}<span class="text-xs font-normal text-gray-500 mr-1">ج</span>
+                {{ prices.child }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
               </div>
               <div v-if="inventory.surge_active" class="text-xs text-amber-600 mt-0.5">
-                (أصل: {{ inventory.child_price }} ج)
+                {{ t('backoffice.beachPos.originalPrice', { price: inventory.child_price }) }}
               </div>
             </div>
             <div class="flex items-center justify-center gap-3">
@@ -355,12 +357,12 @@ onUnmounted(() => {
           <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🏠</div>
-              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">مقيم</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.resident') }}</div>
               <div class="text-2xl font-black text-purple-700 mt-1">
-                {{ prices.resident }}<span class="text-xs font-normal text-gray-500 mr-1">ج</span>
+                {{ prices.resident }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
               </div>
               <div v-if="inventory.surge_active" class="text-xs text-amber-600 mt-0.5">
-                (أصل: {{ inventory.resident_price }} ج)
+                {{ t('backoffice.beachPos.originalPrice', { price: inventory.resident_price }) }}
               </div>
             </div>
             <div class="flex items-center justify-center gap-3">
@@ -381,11 +383,11 @@ onUnmounted(() => {
           <div class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 shadow-sm">
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🏊</div>
-              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">فوطة</div>
+              <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.towel') }}</div>
               <div class="text-2xl font-black text-amber-700 mt-1">
-                {{ prices.towel }}<span class="text-xs font-normal text-gray-500 mr-1">ج</span>
+                {{ prices.towel }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
               </div>
-              <div class="text-xs text-gray-400 mt-0.5">بدون surge</div>
+              <div class="text-xs text-gray-400 mt-0.5">{{ t('backoffice.beachPos.noSurge') }}</div>
             </div>
             <div class="flex items-center justify-center gap-3">
               <button
@@ -409,7 +411,7 @@ onUnmounted(() => {
 
         <!-- Header -->
         <div class="p-4 border-b border-stone-100">
-          <h2 class="font-bold text-gray-900 dark:text-gray-100">ملخص الطلب</h2>
+          <h2 class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.orderSummary') }}</h2>
         </div>
 
         <!-- Cart items list -->
@@ -418,36 +420,36 @@ onUnmounted(() => {
             v-if="adultQty > 0"
             class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
           >
-            <span class="text-gray-700 dark:text-gray-300">👤 بالغ × {{ adultQty }}</span>
-            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ adultQty * prices.adult }} ج</span>
+            <span class="text-gray-700 dark:text-gray-300">👤 {{ t('backoffice.beachPos.cartLine', { label: t('backoffice.beachPos.adult'), qty: adultQty }) }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.lineTotal', { amount: adultQty * prices.adult }) }}</span>
           </div>
           <div
             v-if="childQty > 0"
             class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
           >
-            <span class="text-gray-700 dark:text-gray-300">🧒 طفل × {{ childQty }}</span>
-            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ childQty * prices.child }} ج</span>
+            <span class="text-gray-700 dark:text-gray-300">🧒 {{ t('backoffice.beachPos.cartLine', { label: t('backoffice.beachPos.child'), qty: childQty }) }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.lineTotal', { amount: childQty * prices.child }) }}</span>
           </div>
           <div
             v-if="residentQty > 0"
             class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
           >
-            <span class="text-gray-700 dark:text-gray-300">🏠 مقيم × {{ residentQty }}</span>
-            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ residentQty * prices.resident }} ج</span>
+            <span class="text-gray-700 dark:text-gray-300">🏠 {{ t('backoffice.beachPos.cartLine', { label: t('backoffice.beachPos.resident'), qty: residentQty }) }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.lineTotal', { amount: residentQty * prices.resident }) }}</span>
           </div>
           <div
             v-if="towelQty > 0"
             class="flex items-center justify-between py-2.5 border-b border-dashed border-stone-200 dark:border-border"
           >
-            <span class="text-gray-700 dark:text-gray-300">🏊 فوطة × {{ towelQty }}</span>
-            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ towelQty * prices.towel }} ج</span>
+            <span class="text-gray-700 dark:text-gray-300">🏊 {{ t('backoffice.beachPos.cartLine', { label: t('backoffice.beachPos.towel'), qty: towelQty }) }}</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.lineTotal', { amount: towelQty * prices.towel }) }}</span>
           </div>
 
           <!-- Empty state -->
           <div v-if="!hasItems" class="flex flex-col items-center justify-center py-12 text-gray-400">
             <div class="text-5xl mb-3">🏖️</div>
-            <p class="text-sm">لم يتم اختيار أي صنف</p>
-            <p class="text-xs mt-1">اضغط + على أي سعر للإضافة</p>
+            <p class="text-sm">{{ t('backoffice.beachPos.noItemsSelected') }}</p>
+            <p class="text-xs mt-1">{{ t('backoffice.beachPos.tapToAdd') }}</p>
           </div>
         </div>
 
@@ -456,17 +458,17 @@ onUnmounted(() => {
 
           <!-- Total -->
           <div class="flex items-center justify-between">
-            <span class="text-lg font-bold text-gray-900 dark:text-gray-100">المجموع</span>
-            <span class="text-2xl font-black text-blue-700">{{ total }} <span class="text-sm font-normal">ج</span></span>
+            <span class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.total') }}</span>
+            <span class="text-2xl font-black text-blue-700">{{ total }} <span class="text-sm font-normal">{{ t('backoffice.beachPos.egp') }}</span></span>
           </div>
 
           <!-- Payment method selector -->
           <div class="grid grid-cols-3 gap-2">
             <button
               v-for="m in [
-                { val: 'cash',   label: 'كاش',   icon: '💵' },
-                { val: 'card',   label: 'كارت',  icon: '💳' },
-                { val: 'wallet', label: 'محفظة', icon: '📱' },
+                { val: 'cash',   label: t('backoffice.beachPos.payCash'),   icon: '💵' },
+                { val: 'card',   label: t('backoffice.beachPos.payCard'),  icon: '💳' },
+                { val: 'wallet', label: t('backoffice.beachPos.payWallet'), icon: '📱' },
               ]"
               :key="m.val"
               @click="paymentMethod = (m.val as 'cash' | 'card' | 'wallet')"
@@ -499,7 +501,7 @@ onUnmounted(() => {
               @click="clearCart"
               :disabled="!hasItems"
               class="py-3 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50 disabled:opacity-40 transition-colors"
-            >مسح الطلب</button>
+            >{{ t('backoffice.beachPos.clearOrder') }}</button>
             <button
               @click="completeSale"
               :disabled="!hasItems || submitting"
@@ -509,7 +511,7 @@ onUnmounted(() => {
                 v-if="submitting"
                 class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"
               />
-              <span>{{ submitting ? 'جاري...' : 'إتمام البيع' }}</span>
+              <span>{{ submitting ? t('backoffice.beachPos.processing') : t('backoffice.beachPos.completeSale') }}</span>
             </button>
           </div>
 

@@ -143,6 +143,12 @@ primitives, covered by `validate:i18n` strict checks):
 - `views/portal/ProfileView.vue`
 - `views/account/SessionsView.vue`
 - `views/admin/SettingsView.vue`
+- `views/pos/BeachMapView.vue` (Gate 5 Batch 8, 2026-07-20 — renamed two `t`
+  parameters (`typeLabel`/`typeIcon`) shadowing vue-i18n's `t()`, replaced a
+  raw `toLocaleTimeString('ar-EG')` call with the centralized formatter,
+  fixed a `text-right` physical utility)
+- `views/pos/BeachPOSView.vue` (Gate 5 Batch 8, 2026-07-20 — fixed 4 `mr-1`
+  physical-margin instances on price labels)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
@@ -152,6 +158,6 @@ removed, formatting centralized; **full copy migration deliberately deferred**
 - `views/pos/UnifiedPOSView.vue`
 
 Not yet migrated (tracked debt, next batches — do not claim bilingual):
-the remaining ~40 admin/ops/pos/portal screens. Migrate in reviewed batches
+the remaining ~32 admin/ops/pos/portal screens. Migrate in reviewed batches
 per Decision 0002, extending the strict list in
 `apps/el-kheima/scripts/validate-i18n.mjs` as each batch lands.
