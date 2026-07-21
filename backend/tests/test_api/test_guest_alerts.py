@@ -1,13 +1,19 @@
 """
 tests/test_api/test_guest_alerts.py
 HTTP-level tests for the guest-alerts feature — a guest-initiated,
-unauthenticated staff-alert channel ("call waiter" / "request bill") with
-live WebSocket delivery to staff. No auth needed for the create call
-(mirrors tests/test_api/test_cafe_public_orders.py's public-endpoint
-pattern); the staff list/resolve endpoints are role-gated (get_waiter_user).
+unauthenticated staff-alert channel ("call waiter" / "ready to order" /
+"assistance" / "request bill") with live WebSocket delivery to staff. No
+auth needed for the create call (mirrors tests/test_api/
+test_cafe_public_orders.py's public-endpoint pattern); the staff list/
+resolve endpoints are role-gated (get_waiter_user).
 
 راجع app/modules/core/models.py::GuestAlert للشرح الكامل عن التصميم (generic
-context_type/context_id بدون FK، الفرق بين restaurant_table وcafe_table).
+context_type/context_id بدون FK).
+
+Gate 8 Phase 1 (2026-07-21): context_type كان لسه restaurant_table/
+cafe_table القديمين (الموديولين اتحذفوا 2026-07-13) — بقى dining_table،
+وcontext_id بقى محتاج يتحقق فعليًا إنه ينتمي لنفس الفرع (مش رقم عشوائي زي
+كان قبل كده). زائد dedup/cooldown جديد واختباراته الخاصة.
 """
 from __future__ import annotations
 
@@ -26,6 +32,18 @@ def make_branch(db):
     db.add(b)
     db.commit()
     return b
+
+
+def make_dining_table(db, branch):
+    """Gate 8 Phase 1: context_id لازم يبقى VenueTable حقيقي تابع لنفس
+    الفرع — الطاولة مشتركة بين كل المنافذ (راجع dining.models.VenueTable's
+    docstring، 2026-07-21)، فمفيش outlet_id هنا خالص."""
+    from app.modules.dining.models import VenueTable
+    t = VenueTable(branch_id=branch.id, table_number=f"T-{uuid.uuid4().hex[:6].upper()}", capacity=4)
+    db.add(t)
+    db.commit()
+    db.refresh(t)
+    return t
 
 
 def enable_guest_alerts(db, branch):
@@ -69,25 +87,25 @@ def make_branch_linked_waiter_headers(db, branch) -> dict[str, str]:
 class TestCreateGuestAlertPublic:
     def test_create_alert_disabled_by_default(self, client: TestClient, db):
         """Gate 1 containment (جولة تصحيح ثانية): بدون core.guest_alerts_enabled
-        صريح، الإنشاء يترفض 400 — مش 201. context_id/context_type لسه بلا
-        أي تحقق حقيقي (راجع docstring assert_guest_alerts_enabled)، فمفيش
-        سبب يسمح للـendpoint يشتغل قبل ما يتفعّل صراحةً."""
+        صريح، الإنشاء يترفض 400 — مش 201."""
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         resp = client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "restaurant_table",
-            "context_id": 5,
+            "context_type": "dining_table",
+            "context_id": table.id,
             "alert_type": "call_waiter",
         })
         assert resp.status_code == 400, resp.text
 
     def test_create_call_waiter_alert_no_auth(self, client: TestClient, db):
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         resp = client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "restaurant_table",
-            "context_id": 5,
+            "context_type": "dining_table",
+            "context_id": table.id,
             "alert_type": "call_waiter",
         })
         assert resp.status_code == 201, resp.text
@@ -98,23 +116,44 @@ class TestCreateGuestAlertPublic:
 
     def test_create_request_bill_alert_gets_bill_specific_message(self, client: TestClient, db):
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         resp = client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "cafe_table",
-            "context_id": 12,
+            "context_type": "dining_table",
+            "context_id": table.id,
             "alert_type": "request_bill",
             "message": "الحساب من فضلكم",
         })
         assert resp.status_code == 201, resp.text
         assert "الفاتورة" in resp.json()["message"]
 
+    def test_create_ready_to_order_and_assistance_alerts(self, client: TestClient, db):
+        """Gate 8 Phase 1 — النوعين الجداد من Decision 0001's الأربع أفعال
+        (call waiter / ready to order / assistance / request bill)."""
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        enable_guest_alerts(db, branch)
+
+        ready_resp = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id, "context_type": "dining_table",
+            "context_id": table.id, "alert_type": "ready_to_order",
+        })
+        assert ready_resp.status_code == 201, ready_resp.text
+
+        assist_resp = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id, "context_type": "dining_table",
+            "context_id": table.id, "alert_type": "assistance",
+        })
+        assert assist_resp.status_code == 201, assist_resp.text
+
     def test_create_alert_rejects_unknown_alert_type(self, client: TestClient, db):
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         resp = client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "restaurant_table",
-            "context_id": 1,
+            "context_type": "dining_table",
+            "context_id": table.id,
             "alert_type": "not_a_real_type",
         })
         assert resp.status_code == 422
@@ -129,14 +168,131 @@ class TestCreateGuestAlertPublic:
         })
         assert resp.status_code == 422
 
-    def test_create_alert_rejects_missing_branch(self, client: TestClient, db):
+    def test_create_alert_rejects_legacy_context_type(self, client: TestClient, db):
+        """Gate 8 Phase 1: restaurant_table/cafe_table القديمين (موديولين
+        محذوفين نهائيًا) لازم يترفضوا دلوقتي — مش مقبولين في الـpattern."""
+        branch = make_branch(db)
         resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": 999999999,
+            "branch_id": branch.id,
             "context_type": "restaurant_table",
             "context_id": 1,
             "alert_type": "call_waiter",
         })
+        assert resp.status_code == 422
+
+    def test_create_alert_rejects_missing_branch(self, client: TestClient, db):
+        resp = client.post("/api/v1/public/alerts", json={
+            "branch_id": 999999999,
+            "context_type": "dining_table",
+            "context_id": 1,
+            "alert_type": "call_waiter",
+        })
         assert resp.status_code == 400
+
+    def test_create_alert_rejects_table_from_different_branch(self, client: TestClient, db):
+        """Gate 8 Phase 1 (فجوة حقيقية اتصلحت): context_id مفيهوش أي تحقق
+        فرع قبل كده — ضيف يقدر يبعت رقم طاولة تابعة لفرع تاني تمامًا،
+        والتنبيه كان هيتحفظ عادي وهيوصل لطاقم الفرع الغلط."""
+        branch = make_branch(db)
+        other_branch = make_branch(db)
+        foreign_table = make_dining_table(db, other_branch)
+        enable_guest_alerts(db, branch)
+
+        resp = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id,
+            "context_type": "dining_table",
+            "context_id": foreign_table.id,
+            "alert_type": "call_waiter",
+        })
+        assert resp.status_code == 400, resp.text
+
+    def test_create_alert_rejects_nonexistent_table(self, client: TestClient, db):
+        branch = make_branch(db)
+        enable_guest_alerts(db, branch)
+        resp = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id,
+            "context_type": "dining_table",
+            "context_id": 999999999,
+            "alert_type": "call_waiter",
+        })
+        assert resp.status_code == 400, resp.text
+
+    def test_context_type_other_skips_location_validation(self, client: TestClient, db):
+        """context_type="other" مفيهوش موقع فعلي — أي context_id (حتى غير
+        موجود) مقبول، مطابق للتصميم الأصلي (نص حر، راجع GuestAlertCreate)."""
+        branch = make_branch(db)
+        enable_guest_alerts(db, branch)
+        resp = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id,
+            "context_type": "other",
+            "context_id": 999999999,
+            "alert_type": "other",
+            "message": "محتاج كرسي إضافي",
+        })
+        assert resp.status_code == 201, resp.text
+
+    def test_duplicate_alert_within_cooldown_returns_existing(self, client: TestClient, db):
+        """Gate 8 Phase 1 — dedup/idempotency: نفس (الطاولة، نوع الطلب)
+        مرتين خلال نافذة التهدئة يرجّع نفس الطلب المفتوح، مش صف جديد."""
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        enable_guest_alerts(db, branch)
+
+        first = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id, "context_type": "dining_table",
+            "context_id": table.id, "alert_type": "call_waiter",
+        })
+        assert first.status_code == 201, first.text
+
+        second = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id, "context_type": "dining_table",
+            "context_id": table.id, "alert_type": "call_waiter",
+        })
+        assert second.status_code == 201, second.text
+        assert second.json()["alert_id"] == first.json()["alert_id"]
+
+    def test_duplicate_alert_after_cooldown_creates_new(self, client: TestClient, db):
+        """نفس الطلب بعد ما نافذة التهدئة تخلص (أو الطلب القديم اتقفل)
+        لازم يعمل صف جديد — مش idempotent للأبد."""
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        enable_guest_alerts(db, branch)
+        branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
+
+        first = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id, "context_type": "dining_table",
+            "context_id": table.id, "alert_type": "call_waiter",
+        })
+        first_id = first.json()["alert_id"]
+        resolve = client.patch(
+            f"/api/v1/alerts/{first_id}/status", json={"status": "resolved"}, headers=branch_waiter_headers,
+        )
+        assert resolve.status_code == 200, resolve.text
+
+        second = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id, "context_type": "dining_table",
+            "context_id": table.id, "alert_type": "call_waiter",
+        })
+        assert second.status_code == 201, second.text
+        assert second.json()["alert_id"] != first_id
+
+    def test_different_alert_types_same_table_both_created(self, client: TestClient, db):
+        """dedup بيقارن alert_type كمان — طلب "نادِ الجرسون" و"هات الفاتورة"
+        على نفس الطاولة في نفس اللحظة لازم يبقوا صفّين منفصلين، مش يبتلع
+        التاني كـ"تكرار"."""
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        enable_guest_alerts(db, branch)
+
+        call = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id, "context_type": "dining_table",
+            "context_id": table.id, "alert_type": "call_waiter",
+        })
+        bill = client.post("/api/v1/public/alerts", json={
+            "branch_id": branch.id, "context_type": "dining_table",
+            "context_id": table.id, "alert_type": "request_bill",
+        })
+        assert call.json()["alert_id"] != bill.json()["alert_id"]
 
 
 class TestStaffAlertsFeed:
@@ -182,12 +338,13 @@ class TestStaffAlertsFeed:
 
     def test_list_alerts_returns_created_open_alert(self, client: TestClient, db, waiter_headers):
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
         client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "restaurant_table",
-            "context_id": 3,
+            "context_type": "dining_table",
+            "context_id": table.id,
             "alert_type": "call_waiter",
         })
 
@@ -196,16 +353,17 @@ class TestStaffAlertsFeed:
         items = resp.json()["items"]
         assert len(items) == 1
         assert items[0]["status"] == "open"
-        assert items[0]["context_type"] == "restaurant_table"
-        assert items[0]["context_id"] == 3
+        assert items[0]["context_type"] == "dining_table"
+        assert items[0]["context_id"] == table.id
 
     def test_resolve_alert_requires_auth(self, client: TestClient, db):
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         create_resp = client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "cafe_table",
-            "context_id": 2,
+            "context_type": "dining_table",
+            "context_id": table.id,
             "alert_type": "request_bill",
         })
         alert_id = create_resp.json()["alert_id"]
@@ -215,12 +373,13 @@ class TestStaffAlertsFeed:
 
     def test_acknowledge_then_resolve_alert(self, client: TestClient, db, waiter_headers):
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
         create_resp = client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "cafe_table",
-            "context_id": 7,
+            "context_type": "dining_table",
+            "context_id": table.id,
             "alert_type": "call_waiter",
         })
         alert_id = create_resp.json()["alert_id"]
@@ -257,13 +416,14 @@ class TestStaffAlertsFeed:
         PATCH). اتصلح عبر core.services.assert_branch_access."""
         home_branch  = make_branch(db)
         other_branch = make_branch(db)
+        home_table = make_dining_table(db, home_branch)
         enable_guest_alerts(db, home_branch)
         other_branch_waiter_headers = make_branch_linked_waiter_headers(db, other_branch)
 
         create_resp = client.post("/api/v1/public/alerts", json={
             "branch_id": home_branch.id,
-            "context_type": "restaurant_table",
-            "context_id": 1,
+            "context_type": "dining_table",
+            "context_id": home_table.id,
             "alert_type": "call_waiter",
         })
         alert_id = create_resp.json()["alert_id"]
@@ -280,8 +440,8 @@ class TestStaffAlertsFeed:
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
         create_resp = client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "restaurant_table",
-            "context_id": 9,
+            "context_type": "other",
+            "context_id": 999999999,
             "alert_type": "other",
             "message": "محتاج كرسي إضافي",
         })
@@ -304,6 +464,7 @@ class TestGuestAlertsWebSocket:
         إنشائه — نفس فكرة test_kds_websocket_client_actually_receives_broadcast_message
         في المطعم (مش بس mock للـ broadcast، اتصال حقيقي)."""
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         # Gate 1 containment (جولة تصحيح ثانية): الاتصال بقى بيفرض تطابق
         # الفرع (core.services.assert_branch_access) — waiter_headers
@@ -313,26 +474,27 @@ class TestGuestAlertsWebSocket:
         with client.websocket_connect(ws_url(f"/api/v1/ws/alerts/{branch.id}", branch_waiter_headers)) as ws:
             create_resp = client.post("/api/v1/public/alerts", json={
                 "branch_id": branch.id,
-                "context_type": "restaurant_table",
-                "context_id": 4,
+                "context_type": "dining_table",
+                "context_id": table.id,
                 "alert_type": "call_waiter",
             })
             assert create_resp.status_code == 201, create_resp.text
 
             message = ws.receive_json()
             assert message["type"] == "new_alert"
-            assert message["alert"]["context_id"] == 4
+            assert message["alert"]["context_id"] == table.id
             assert message["alert"]["alert_type"] == "call_waiter"
             assert message["alert"]["status"] == "open"
 
     def test_websocket_receives_status_change_broadcast(self, client: TestClient, db, waiter_headers):
         branch = make_branch(db)
+        table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
         create_resp = client.post("/api/v1/public/alerts", json={
             "branch_id": branch.id,
-            "context_type": "cafe_table",
-            "context_id": 6,
+            "context_type": "dining_table",
+            "context_id": table.id,
             "alert_type": "request_bill",
         })
         alert_id = create_resp.json()["alert_id"]

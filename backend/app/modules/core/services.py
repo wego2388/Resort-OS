@@ -1050,10 +1050,66 @@ def assert_guest_alerts_enabled(db: Session, branch_id: int) -> None:
         raise ValueError("نداء الضيف غير متاح حاليًا")
 
 
+def _assert_guest_alert_context_belongs_to_branch(db: Session, data: GuestAlertCreate) -> None:
+    """Gate 8 Phase 1 (2026-07-21): context_id مش FK (راجع GuestAlert
+    docstring)، وقبل كده مفيش أي تحقق إنه ينتمي فعليًا لـbranch_id —
+    ضيف يقدر يبعت context_id لطاولة/موقع شاطئ/غرفة تابعة لفرع تاني تمامًا،
+    والتنبيه هيوصل لطاقم الفرع الغلط (أو يظهر لهم مكان مش موجود أصلاً).
+    نفس فئة الثغرة اللي اتصلحت في beach check-in وGuest Alerts read-side
+    (core_services.assert_branch_access) — هنا التحقق مختلف لأن الضيف
+    بدون auth أصلاً، فمفيش "مستخدم" نتحقق من فرعه؛ التحقق هنا إن الموقع
+    المُدَّعى (context_id) حقيقي وتابع لنفس الفرع المُدَّعى (branch_id)،
+    مش أكتر."""
+    if data.context_type == "other":
+        return  # مفيش موقع فعلي نتحقق منه — نص حر بس (راجع GuestAlertCreate)
+
+    if data.context_type == "dining_table":
+        from app.modules.dining.models import VenueTable  # noqa: PLC0415
+        exists = (
+            db.query(VenueTable.id)
+            .filter(VenueTable.id == data.context_id, VenueTable.branch_id == data.branch_id)
+            .first()
+        )
+        if not exists:
+            raise ValueError("الطاولة المحدّدة لا تنتمي لهذا الفرع")
+    elif data.context_type == "beach_location":
+        from app.modules.beach.models import BeachLocation  # noqa: PLC0415
+        exists = (
+            db.query(BeachLocation.id)
+            .filter(BeachLocation.id == data.context_id, BeachLocation.branch_id == data.branch_id)
+            .first()
+        )
+        if not exists:
+            raise ValueError("موقع الشاطئ المحدّد لا ينتمي لهذا الفرع")
+    elif data.context_type == "room":
+        from app.modules.pms.models import Room  # noqa: PLC0415
+        exists = (
+            db.query(Room.id)
+            .filter(Room.id == data.context_id, Room.branch_id == data.branch_id)
+            .first()
+        )
+        if not exists:
+            raise ValueError("الغرفة المحدّدة لا تنتمي لهذا الفرع")
+
+
 def create_guest_alert(db: Session, data: GuestAlertCreate) -> GuestAlert:
     if not crud.get_branch(db, data.branch_id):
         raise ValueError(f"الفرع {data.branch_id} غير موجود")
     assert_guest_alerts_enabled(db, data.branch_id)
+    _assert_guest_alert_context_belongs_to_branch(db, data)
+
+    # Gate 8 Phase 1 — dedup/idempotency (Decision 0001's Phase-1 list):
+    # نفس الموقع بيبعت نفس نوع الطلب مرتين (ضغطة زيادة بالغلط، أو ضيف
+    # قلقان مفيش رد) خلال نافذة التهدئة → يرجّع الطلب الموجود المفتوح بدل
+    # ما يدخّل صف مكرر يغرق طابور الطاقم بنفس الطلب عدة مرات.
+    from app.core.config import settings  # noqa: PLC0415
+    existing = crud.get_recent_open_alert(
+        db, branch_id=data.branch_id, context_type=data.context_type,
+        context_id=data.context_id, alert_type=data.alert_type,
+        cooldown_seconds=settings.GUEST_ALERT_COOLDOWN_SECONDS,
+    )
+    if existing:
+        return existing
 
     alert = crud.create_guest_alert(db, data)
     db.commit()

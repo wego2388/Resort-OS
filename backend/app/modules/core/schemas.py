@@ -346,10 +346,17 @@ class EffectivePermission(BaseModel):
 
 # ─────────────────────── GuestAlert ──────────────────────────────────
 # راجع app/modules/core/models.py::GuestAlert للشرح الكامل عن ليه context
-# generic (مفيش FK) وليه context_type بيفرّق بين restaurant_table/cafe_table.
-
-_CONTEXT_TYPE_PATTERN = r"^(restaurant_table|cafe_table|beach_location|room|other)$"
-_ALERT_TYPE_PATTERN = r"^(call_waiter|request_bill|other)$"
+# generic (مفيش FK).
+#
+# Gate 8 Phase 1 (2026-07-21): كان الـpattern لسه بيحتوي restaurant_table/
+# cafe_table القديمين — الموديولين دول اتحذفوا نهائيًا 2026-07-13 (dining
+# حلّ محلهم)، وapps/public's OrderView.vue كان فعليًا بيبعت context_type=
+# "dining_table" من الأساس (مش ضمن الـpattern القديم خالص) — يعني أي نداء
+# ضيف من طاولة دايننج كان يترفض 422 بصمت طول الوقت، حتى لو GUEST_ALERTS_
+# ENABLED اتفعّل. راجع docs/decisions/0001-qr-guest-service-mode.md's
+# "known current gaps" — نفس الباج الموثّق هناك، دلوقتي مُصلَّح فعليًا.
+_CONTEXT_TYPE_PATTERN = r"^(dining_table|beach_location|room|other)$"
+_ALERT_TYPE_PATTERN = r"^(call_waiter|ready_to_order|assistance|request_bill|other)$"
 
 
 class GuestAlertCreate(BaseModel):

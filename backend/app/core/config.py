@@ -93,6 +93,12 @@ class Settings(CoreSettings):
     # واحد منهم True، مش تحذير بس.
     DINING_SELF_ORDER_ENABLED: bool = False
     GUEST_ALERTS_ENABLED: bool = False
+    # Gate 8 Phase 1 (2026-07-21) — how long an identical unresolved guest
+    # request (same branch+location+alert_type) blocks a duplicate instead
+    # of creating a second row. Guards against a guest repeatedly tapping
+    # "call waiter" flooding the staff queue with duplicates of the same
+    # request — see core.services.create_guest_alert.
+    GUEST_ALERT_COOLDOWN_SECONDS: int = 120
 
     # ── E-Invoice Egypt (ETA) ─────────────────────────────────────────
     ETA_ENABLED: bool = False

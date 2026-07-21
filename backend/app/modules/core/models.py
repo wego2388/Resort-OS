@@ -135,14 +135,18 @@ class UserPermission(Base, TimestampMixin):
 
 # ────────────────────────── GuestAlert ───────────────────────────────
 # قناة تنبيه يبدأها الضيف نفسه بدون تسجيل دخول ("نادِ الجرسون"، "هات
-# الفاتورة"...) — عامّة عمداً عبر كل الموديولات (مطعم/كافيه/شاطئ/غرفة)
-# بدل ما تتكرر داخل كل موديول لوحده. مفيش FK حقيقي على context_id عمداً:
-# السياق ممكن يكون صف من dining_tables أو cafe_tables أو غرفة PMS أو موقع
-# شاطئ — جدول واحد بيغطي كل الحالات دي من غير ما يتقيّد بجدول واحد بعينه،
-# وده قرار معماري متعمد مش نسيان. context_type بيفرّق بين "restaurant_table"
-# و"cafe_table" (مش "table" عام) لأن dining_tables.id وcafe_tables.id
-# جداول منفصلة تمامًا — رقم واحد (context_id=5) ممكن يكون طاولة مطعم أو
-# طاولة كافيه في نفس الوقت، فلازم context_type يحسم الغموض ده.
+# الفاتورة"...) — عامّة عمداً عبر كل الموديولات (دايننج/شاطئ/غرفة) بدل ما
+# تتكرر داخل كل موديول لوحده. مفيش FK حقيقي على context_id عمداً: السياق
+# ممكن يكون صف من dining_venue_tables أو beach_locations أو rooms — جدول
+# واحد بيغطي كل الحالات دي من غير ما يتقيّد بجدول واحد بعينه، وده قرار
+# معماري متعمد مش نسيان. context_type بيحسم أي جدول يتحقق منه context_id
+# (dining_venue_tables.id وbeach_locations.id وrooms.id جداول منفصلة
+# تمامًا، فرقم واحد زي context_id=5 ممكن يكون أي واحد فيهم).
+#
+# ⚠️ تاريخيًا (قبل 2026-07-13) كان context_type فيه "restaurant_table" و
+# "cafe_table" منفصلين، لأن restaurant/cafe كانوا موديولين بجداول طاولات
+# منفصلة تمامًا. اتحذفوا نهائيًا واتوحّدوا في dining.VenueTable — القيمة
+# بقت "dining_table" واحدة بس (راجع schemas.py's _CONTEXT_TYPE_PATTERN).
 
 class GuestAlert(Base, TimestampMixin):
     __tablename__ = "guest_alerts"
@@ -152,11 +156,15 @@ class GuestAlert(Base, TimestampMixin):
     # يمنع full table scan مع تراكم التنبيهات القديمة المتحلّة بمرور الوقت.
     branch_id: Mapped[int] = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"), index=True)
     context_type: Mapped[str] = mapped_column(String(30))
-    # restaurant_table | cafe_table | beach_location | room | other
+    # dining_table | beach_location | room | other — راجع schemas.py's
+    # _CONTEXT_TYPE_PATTERN لمصدر الحقيقة الفعلي (Gate 8 Phase 1، 2026-07-21:
+    # كان لسه restaurant_table/cafe_table القديمين، اتصلح).
     context_id: Mapped[int] = mapped_column(Integer)
     # ⚠️ عمداً مش ForeignKey — راجع التعليق فوق الكلاس. لا تضيف قيد هنا.
+    # بيتحقق فعليًا وقت الإنشاء (core.services.create_guest_alert) إن
+    # context_id ينتمي لنفس branch_id — راجع هناك للتفاصيل.
     alert_type: Mapped[str] = mapped_column(String(30))
-    # call_waiter | request_bill | other
+    # call_waiter | ready_to_order | assistance | request_bill | other
     message: Mapped[str | None] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)
     # open | acknowledged | resolved

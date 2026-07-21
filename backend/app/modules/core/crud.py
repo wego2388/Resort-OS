@@ -472,6 +472,31 @@ def get_guest_alert(db: Session, alert_id: int) -> Optional[GuestAlert]:
     return db.query(GuestAlert).filter(GuestAlert.id == alert_id).first()
 
 
+def get_recent_open_alert(
+    db: Session, *, branch_id: int, context_type: str, context_id: int,
+    alert_type: str, cooldown_seconds: int,
+) -> Optional[GuestAlert]:
+    """Gate 8 Phase 1 (2026-07-21) — أحدث تنبيه غير مُغلَق لنفس (الموقع،
+    نوع الطلب) اتفتح خلال نافذة التهدئة، لو موجود. راجع
+    core.services.create_guest_alert للاستخدام (dedup/idempotency)."""
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.utcnow() - timedelta(seconds=cooldown_seconds)
+    return (
+        db.query(GuestAlert)
+        .filter(
+            GuestAlert.branch_id == branch_id,
+            GuestAlert.context_type == context_type,
+            GuestAlert.context_id == context_id,
+            GuestAlert.alert_type == alert_type,
+            GuestAlert.status != "resolved",
+            GuestAlert.created_at >= cutoff,
+        )
+        .order_by(GuestAlert.created_at.desc())
+        .first()
+    )
+
+
 def list_active_alerts(
     db: Session,
     branch_id: int,
