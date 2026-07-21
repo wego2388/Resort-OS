@@ -83,6 +83,32 @@ build نظاف، `test:frontend` 60 passed. `git diff --check` نظيف. صفر 
 
 ---
 
+## 🟩 Gate 5 — اكتمال إدارة الموظفين بلغتين — Batch 2: لوحات الإدارة الرئيسية (2026-07-20)
+
+**الحالة:** منفَّذة ومُتحقَّق منها ذاتيًا — نُفِّذت مباشرة من غير وكيل، على فرع
+مستقل `gate-5-staff-ux-batch-2-admin-i18n`. **بلا commit/push بعد.** 4 شاشات:
+`PermissionsView.vue` (كانت مترجمة بالفعل من Gate 2B3A، بس مش مسجّلة كـstrict
+— ترقية بلا أي تعديل كود)، `DashboardView.vue` (لوحة الإدارة الرئيسية)،
+`SalesDashboardView.vue` (لوحة مبيعات التايم شير)، `BeachLiveDashboardView.vue`
+(لوحة الشاطئ الحيّة). كل الأربعة بقوا `STRICT_FILES` في `validate-i18n.mjs`
+(11 شاشة strict دلوقتي).
+
+**تنظيف حقيقي اتكشف أثناء الترجمة (مش بس نص):** الثلاث شاشات الجديدة (خارج
+Permissions) كان فيها `dir="rtl"` ثابت + استدعاءات `toLocaleString('ar-EG')`/
+`toLocaleDateString('ar-EG')` — مخالفات مباشرة لقاعدة Gate 3 (الاتجاه لازم
+يجي من `<html dir>` المركزي بس)، ما كانتش اتكشفت لأن الشاشات دي معملتلهاش
+مراجعة وقت Gate 3. اتصلحت بالكامل (formatDate/formatNumber المركزية بدل
+التاريخ/الرقم الخام). فاحص `validate:i18n` الصارم كشف كمان استخدامين فعليين
+لـ`text-left`/`mr-auto` (physical CSS) في `SalesDashboardView.vue` — اتصلحوا
+لـ`text-end`/`ms-auto` المنطقية. `BeachLiveDashboardView.vue` كان فيها متغيّر
+حلقة محلي اسمه `t` بيغطّي دالة الترجمة `t()` بتاعة vue-i18n — اتغيّر اسمه.
+
+**التحقق:** `validate:i18n` أخضر (3238 مفتاح ar/en متطابق، صفر ناقص، صفر
+مخالفة اتجاه فيزيائي)، `type-check:all` (el-kheima + public) نظيف،
+`test:frontend` 60/60 (صفر رجوع)، `build:all` نظيف. `git diff --check` نظيف.
+
+**الباقي (~34 شاشة admin/ops/portal):** لسه مؤجَّل لدفعات لاحقة.
+
 ## 🟩 Gate 5 — اكتمال إدارة الموظفين بلغتين — Batch 1: POS + KDS (2026-07-20)
 
 **الحالة:** منفَّذة ومُتحقَّق منها ذاتيًا — نُفِّذت مباشرة من غير وكيل، على فرع

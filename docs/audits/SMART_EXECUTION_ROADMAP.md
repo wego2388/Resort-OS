@@ -2,8 +2,8 @@
 
 **الحالة:** خارطة حية؛ Gate 1A وشريحة Dining-paid من Gate 1B وGate 2 وGate 3
 مُعتمَدة. Gate 4 منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20)، بانتظار
-مراجعة مستقلة قبل الاعتماد. Gate 5 Batch 1 (POS+KDS) منفَّذة ومُتحقَّق منها
-ذاتيًا (2026-07-20) — الباقي (~38 شاشة) دفعات لاحقة.
+مراجعة مستقلة قبل الاعتماد. Gate 5 Batch 2 (لوحات الإدارة) منفَّذة ومُتحقَّق
+منها ذاتيًا (2026-07-20) — الباقي (~34 شاشة) دفعات لاحقة.
 **المصدر:** مراجعة 360° بتاريخ 2026-07-17 + القرارات الموجودة في
 `docs/decisions/` + `wagdy.md`.
 
@@ -18,7 +18,7 @@
 | Gate 2: Super Admin safeguards | **مكتملة ومُعتمَدة (2A→2B3B)** | Claude/Codex | server-side policy/concurrency/session/audit tests |
 | Gate 3: i18n/design/test foundation | **مكتملة ومُعتمَدة (2026-07-19)** | Claude/Codex | bilingual shell + reference screens + quality harness |
 | Gate 4: Dining financial integrity | **منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20) — Codex راجعت جولة أولى، كل الملاحظات + step-up المالي اتصلحوا، بانتظار مراجعة مستقلة تالية** | Claude | settlement/idempotency/shift-lock/one-active-order + 18/18 Postgres concurrency؛ لا commit/push بعد؛ مفيش بند مؤجَّل متبقٍّ |
-| Gate 5: Staff UX batches | **Batch 1 (POS+KDS) منفَّذة ومُتحقَّق منها ذاتيًا (2026-07-20)** — الباقي (~38 شاشة) لسه لاحق | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
+| Gate 5: Staff UX batches | **Batch 2 (لوحات الإدارة) منفَّذة ومُتحقَّق منها ذاتيًا (2026-07-20)** — الباقي (~34 شاشة) لسه لاحق | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
 | Gate 7: Public migration batches | مغلقة على Gates 2 و3 واعتماد Phase 0 | Claude | visual/API diff لكل batch بلا legacy backend |
 | Gate 8: QR + Guest Service | مغلقة على Gates 1A و3 و4 و7 | Claude | scan-to-call-to-payment E2E evidence |
 | Gate 9: production evidence | مغلقة حتى تحديد release scope | الفريق | CI/staging/security/restore/rollback evidence |
@@ -161,6 +161,12 @@ missing keys أو strings حرجة hard-coded.
 `DIRECTION_CLEAN_FILES` لـ`STRICT_FILES` في `validate-i18n.mjs`. KDS بيعيد
 استخدام `backoffice.pos.orderTypes`/`tableLabel`/`elapsedUnits` بدل تكرار
 نفس التصنيف تحت namespace تاني.
+
+**Batch 2 — لوحات الإدارة الرئيسية (2026-07-20)، منفَّذة ومُتحقَّق منها ذاتيًا،
+فرع `gate-5-staff-ux-batch-2-admin-i18n`:** `PermissionsView.vue` (ترقية بلا
+تعديل كود — كانت مترجمة بالفعل)، `DashboardView.vue`، `SalesDashboardView.vue`،
+`BeachLiveDashboardView.vue`. الثلاثة الأخيرة كان فيها `dir="rtl"` ثابت و
+`ar-EG` locale calls (مخالفات Gate 3 ما كانتش اتكشفت) — اتصلحت مع الترجمة.
 
 ### Gate 6 — Public Phase 0 فقط — مسموح أن يبدأ الآن
 

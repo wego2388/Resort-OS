@@ -149,6 +149,16 @@ primitives, covered by `validate:i18n` strict checks):
   direction-clean; ~25 strings under `backoffice.kds.*`, reuses
   `backoffice.pos.orderTypes`/`tableLabel`/`elapsedUnits` rather than
   duplicating the same taxonomy under a second namespace)
+- `views/admin/PermissionsView.vue` (Gate 5 Batch 2, 2026-07-20 — already
+  fully migrated by Gate 2B3A, just never promoted out of "not yet migrated")
+- `views/admin/DashboardView.vue` (Gate 5 Batch 2, 2026-07-20 — also removed
+  a hard-coded `dir="rtl"` and `ar-EG` locale calls that predated Gate 3)
+- `views/admin/SalesDashboardView.vue` (Gate 5 Batch 2, 2026-07-20 — same
+  hard-coded `dir`/`ar-EG` cleanup, plus 2 physical `text-left`/`mr-auto`
+  utilities caught and fixed by the strict validator)
+- `views/admin/BeachLiveDashboardView.vue` (Gate 5 Batch 2, 2026-07-20 — same
+  cleanup; also had a local `t` loop variable shadowing vue-i18n's `t()`,
+  renamed)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
@@ -157,6 +167,6 @@ removed, formatting centralized; **full copy migration deliberately deferred**
 _(none currently — both prior entries were promoted above in Gate 5 Batch 1)_
 
 Not yet migrated (tracked debt, next batches — do not claim bilingual):
-the remaining ~38 admin/ops/portal screens. Migrate in reviewed batches
+the remaining ~34 admin/ops/pos/portal screens. Migrate in reviewed batches
 per Decision 0002, extending the strict list in
 `apps/el-kheima/scripts/validate-i18n.mjs` as each batch lands.
