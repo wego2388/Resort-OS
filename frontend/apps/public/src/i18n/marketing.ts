@@ -120,6 +120,24 @@ export interface MarketingMessages {
     body: string
     backHome: string
   }
+  // Batch 1 (Public Phase 0 migration, 2026-07-21) — page titles for the 3
+  // routes that never had one (order/beachCheckin/survey — QR/token guest
+  // flows, no nav entry) + a <meta name="description"> per route, read by
+  // useSEO.ts. See docs/audits/public-phase-0/07_MIGRATION_BATCH_PROPOSAL.md.
+  pageTitles: {
+    order: string
+    beachCheckin: string
+    survey: string
+  }
+  seo: {
+    home: string
+    dining: string
+    booking: string
+    confirmation: string
+    order: string
+    beachCheckin: string
+    survey: string
+  }
 }
 
 const ar: MarketingMessages = {
@@ -222,6 +240,20 @@ const ar: MarketingMessages = {
     title: 'تم إرسال طلبك بنجاح!',
     body: 'سيتم التواصل معك قريباً لتأكيد التفاصيل',
     backHome: 'العودة للرئيسية',
+  },
+  pageTitles: {
+    order: 'اطلب الآن',
+    beachCheckin: 'تسجيل دخول الشاطئ',
+    survey: 'استبيان الرضا',
+  },
+  seo: {
+    home: 'منتجع الخيمة الشاطئي — منتجع خاص على شاطئ خليج شرم الماية، شرم الشيخ. شاطئ رملي خاص 13,000 م²، مطعم إيطالي أصيل، رياضات مائية، وغرف بإطلالة بحرية.',
+    dining: 'استكشف قائمة الطعام والمشروبات في منتجع الخيمة — مطبخ إيطالي أصيل، كافيه مطل على البحر، وبار مشروبات وكوكتيلات.',
+    booking: 'احجز إقامتك في منتجع الخيمة الشاطئي — غرف وأجنحة بإطلالة بحرية، شرم الشيخ. سيتم التواصل معك خلال 24 ساعة لتأكيد حجزك.',
+    confirmation: 'تم استلام طلب حجزك بنجاح في منتجع الخيمة الشاطئي — سيتواصل معك فريقنا قريبًا لتأكيد التفاصيل.',
+    order: 'اطلب طعامك ومشروباتك مباشرة من طاولتك في منتجع الخيمة الشاطئي.',
+    beachCheckin: 'تسجيل دخول حجز الشاطئ في منتجع الخيمة الشاطئي.',
+    survey: 'شاركنا رأيك في تجربتك بمنتجع الخيمة الشاطئي — رضاك يهمنا.',
   },
 }
 
@@ -326,6 +358,20 @@ const en: MarketingMessages = {
     body: "We'll be in touch shortly to confirm the details",
     backHome: 'Back to Home',
   },
+  pageTitles: {
+    order: 'Order Now',
+    beachCheckin: 'Beach Check-in',
+    survey: 'Satisfaction Survey',
+  },
+  seo: {
+    home: 'El Kheima Beach Resort — a private beachfront resort in Sharm El Maya Bay, Sharm El Sheikh. 13,000 sqm private sandy beach, authentic Italian dining, water sports, and sea-view rooms.',
+    dining: "Explore El Kheima Beach Resort's dining menu — authentic Italian cuisine, a seafront cafe, and a drinks & cocktails bar.",
+    booking: "Book your stay at El Kheima Beach Resort — sea-view rooms and suites in Sharm El Sheikh. We'll get back to you within 24 hours to confirm your booking.",
+    confirmation: 'Your booking request at El Kheima Beach Resort has been received — our team will contact you shortly to confirm the details.',
+    order: 'Order food and drinks straight from your table at El Kheima Beach Resort.',
+    beachCheckin: 'Beach reservation check-in at El Kheima Beach Resort.',
+    survey: 'Share your feedback about your stay at El Kheima Beach Resort — your satisfaction matters to us.',
+  },
 }
 
 const ru: MarketingMessages = {
@@ -429,6 +475,20 @@ const ru: MarketingMessages = {
     body: 'Мы скоро свяжемся с вами для подтверждения деталей',
     backHome: 'Вернуться на главную',
   },
+  pageTitles: {
+    order: 'Заказать',
+    beachCheckin: 'Регистрация на пляже',
+    survey: 'Опрос удовлетворённости',
+  },
+  seo: {
+    home: 'El Kheima Beach Resort — частный пляжный курорт в заливе Шарм-эль-Майя, Шарм-эль-Шейх. Частный песчаный пляж 13 000 м², аутентичная итальянская кухня, водные виды спорта и номера с видом на море.',
+    dining: 'Меню ресторана и бара El Kheima Beach Resort — аутентичная итальянская кухня, кафе на берегу моря и бар напитков и коктейлей.',
+    booking: 'Забронируйте проживание в El Kheima Beach Resort — номера и люксы с видом на море в Шарм-эль-Шейхе. Мы свяжемся с вами в течение 24 часов для подтверждения.',
+    confirmation: 'Ваш запрос на бронирование в El Kheima Beach Resort получен — наша команда свяжется с вами в ближайшее время для подтверждения деталей.',
+    order: 'Заказывайте еду и напитки прямо со своего столика в El Kheima Beach Resort.',
+    beachCheckin: 'Регистрация пляжного бронирования в El Kheima Beach Resort.',
+    survey: 'Поделитесь своим мнением о пребывании в El Kheima Beach Resort — ваше мнение важно для нас.',
+  },
 }
 
 const it: MarketingMessages = {
@@ -531,6 +591,20 @@ const it: MarketingMessages = {
     title: 'La tua richiesta è stata inviata con successo!',
     body: 'Ti contatteremo a breve per confermare i dettagli',
     backHome: 'Torna alla Home',
+  },
+  pageTitles: {
+    order: 'Ordina ora',
+    beachCheckin: 'Check-in spiaggia',
+    survey: 'Sondaggio di soddisfazione',
+  },
+  seo: {
+    home: 'El Kheima Beach Resort — un resort privato sulla spiaggia nella baia di Sharm El Maya, Sharm El Sheikh. Spiaggia privata di 13.000 mq, autentica cucina italiana, sport acquatici e camere vista mare.',
+    dining: 'Scopri il menu di El Kheima Beach Resort — autentica cucina italiana, un caffè fronte mare e un bar per drink e cocktail.',
+    booking: 'Prenota il tuo soggiorno a El Kheima Beach Resort — camere e suite vista mare a Sharm El Sheikh. Ti contatteremo entro 24 ore per confermare la prenotazione.',
+    confirmation: 'La tua richiesta di prenotazione presso El Kheima Beach Resort è stata ricevuta — il nostro team ti contatterà a breve per confermare i dettagli.',
+    order: 'Ordina cibo e bevande direttamente dal tuo tavolo a El Kheima Beach Resort.',
+    beachCheckin: 'Check-in della prenotazione spiaggia a El Kheima Beach Resort.',
+    survey: 'Condividi la tua opinione sul soggiorno a El Kheima Beach Resort — la tua soddisfazione è importante per noi.',
   },
 }
 

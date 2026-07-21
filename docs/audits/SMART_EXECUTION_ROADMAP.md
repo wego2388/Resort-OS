@@ -220,14 +220,26 @@ locale calls، physical CSS `text-right`/`mr-1`) اتكشفت واتصلحت.
 (`dir="rtl"` ثابت، `ar-EG` locale calls، physical CSS `mr-1`/`mr-2`) اتكشفت
 واتصلحت، زائد تعارض اسم `t` مع دالة الترجمة في `loadTab`.
 
-### Gate 6 — Public Phase 0 فقط — مسموح أن يبدأ الآن
+### Gate 6 — Public Phase 0 فقط
 
 **النطاق:** لا نقل كود بعد. نجمد مرجع المشروع القديم والحالي: routes، Desktop
 وMobile screenshots، assets/fonts، content، API calls، حالات loading/error/
 empty، ثم Keep/Adapt/Remove.  
-**يعتمد على:** Gate 0، قرار brand `El Kheima`، وموافقة Mohamed الحالية. يمكن
-تشغيله بالتوازي لأنه قراءة وتوثيق ولا يغير المنتج.  
+**يعتمد على:** Gate 0، قرار brand `El Kheima`، وموافقة Mohamed الحالية.  
 **الخروج:** migration map ومصفوفة API compatibility يوافق عليهما Mohamed.
+
+**الحالة (2026-07-17، مُصحَّحة 2026-07-21 — النص هنا كان قديم وبيقول
+"مسموح يبدأ الآن" رغم إن الشغل خلص فعليًا)**: **الأدلة/الأبحاث كاملة
+ومراجَعة من Codex على 4 جولات مستقلة** — `docs/audits/public-phase-0/`
+(8 ملفات: route/state inventory، visual reference، design/asset inventory،
+content/i18n/SEO map، API/data contract map، Keep/Adapt/Remove matrix،
+migration batch proposal بـ 6 دفعات، open questions/risks). النتائج
+الحرجة اللي طلعت من المراجعة دي (PII/فلوس ظاهرين بلا حماية على مسار
+حجوزات الشاطئ العام، ثغرة تفويض على تسجيل دخول الشاطئ) اتصلحت بالفعل
+كجزء من Gate 1A. **الخطوة المتبقية الوحيدة لإغلاق البوابة رسميًا هي
+موافقة Mohamed الصريحة على خطة الدفعات الست في `07_MIGRATION_BATCH_
+PROPOSAL.md`** — مراجعة Codex التقنية حصلت، بس موافقة صاحب المنتج على
+الخطة نفسها (مش بس صحتها التقنية) لسه الشرط الرسمي المطلوب هنا.
 
 ### Gate 7 — نقل الموقع العام تدريجيًا
 
