@@ -1903,6 +1903,23 @@ def _post_refund_reversals(
     shift_id = None
     if any(kind == "direct" for kind, _, _ in parts):
         open_shift = finance_services._lock_open_shift_or_conflict(db, order.branch_id, refunded_by)
+        if not open_shift:
+            # Gate 4 review (2026-07-21, finding N1): refund_order_item is
+            # manager-gated (min_role_level=60) — refunded_by is almost
+            # always a manager approving the refund, not a cashier running a
+            # drawer, so they rarely have an open shift of their own. Without
+            # this fallback the reversed cash Payment gets shift_id=None and
+            # never reduces any shift's expected_cash in build_shift_end_
+            # report, even though the cash physically left a real drawer.
+            # Only resolve this when exactly one shift is open at the branch
+            # (the unambiguous case — that's the drawer the cash came from);
+            # zero or multiple open shifts stay unattributed rather than
+            # guess which cashier's drawer to charge.
+            open_shifts, _ = finance_crud.list_shifts(db, order.branch_id, status="open", limit=2)
+            if len(open_shifts) == 1:
+                open_shift = finance_services._lock_open_shift_or_conflict(
+                    db, order.branch_id, open_shifts[0].cashier_id,
+                )
         if open_shift:
             shift_id = open_shift.id
 

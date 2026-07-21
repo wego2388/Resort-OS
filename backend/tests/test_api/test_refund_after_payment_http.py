@@ -100,6 +100,28 @@ def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
     return {"Authorization": f"Bearer {_make_token(email)}"}
 
 
+def make_branch_linked_headers_no_shift(db, branch, role="manager") -> dict[str, str]:
+    """زي make_branch_linked_headers بالظبط (Employee مربوط بنفس الفرع، عشان
+    assert_branch_access ينجح) لكن **من غير** فتح وردية — الحالة الحقيقية اللي
+    بيحصّلها N1 (مدير بيوافق على مرتجع بس مفيش وردية كاشير خاصة بيه)."""
+    from datetime import date, timedelta
+    from decimal import Decimal as _D
+    from tests.conftest import _create_test_user, _make_token
+    from app.modules.hr.models import Employee
+
+    email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, role)
+    emp = Employee(
+        branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+        full_name=f"{role} اختبار مرتجع بلا وردية", national_id="29001011234568",
+        position=role, department="F&B", basic_salary=_D("6000.00"),
+        hire_date=date.today() - timedelta(days=365), user_id=user_id,
+    )
+    db.add(emp)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email)}"}
+
+
 def _refund_headers(client, headers, *, order_id, item_id, reason):
     """Gate 4 (جولة مراجعة Codex الأولى — M5a): مرتجع بعد الدفع بقى محتاج
     step-up proof فوق صلاحية مدير+ العادية — راجع
@@ -350,6 +372,69 @@ class TestDiningRefundAfterPayment:
         rev_line = next(l for l in entry.lines if l.account_id == rest_rev.id)
         assert cash_line.credit == total_debit  # كاش خرج
         assert rev_line.debit == total_debit    # إيراد اتعكس
+
+    def test_refund_by_shiftless_manager_attributes_to_the_sole_open_shift(
+        self, client: TestClient, db,
+    ):
+        """Gate 4 review (2026-07-21, finding N1): refund_order_item is
+        manager-gated — refunded_by is almost always a manager approving the
+        refund, not a cashier running a drawer, so they typically have no
+        open shift of their own. Before this fix the reversal Payment's
+        shift_id was silently None, so the refunded cash never reduced any
+        shift's expected_cash in build_shift_end_report even though it
+        physically left a real drawer. The manager here is branch-linked
+        (assert_branch_access requires it — Decision 0003, super_admin-only
+        bypass) but deliberately has no shift of their own
+        (make_branch_linked_headers_no_shift) — the real production
+        scenario; `linked_cashier`'s shift (still open, the only one at
+        this branch) is the one unambiguous candidate."""
+        from app.modules.finance import crud as finance_crud
+
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        make_finance_accounts(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        # ⚠️ make_branch_linked_headers opens a shift for *any* role passed
+        # (Gate 4A helper, indiscriminate) — using it for the waiter here
+        # too would leave two open shifts at this branch, breaking the
+        # "exactly one" scenario this test is built to prove. The waiter
+        # only needs the Employee/branch link (assert_branch_access on the
+        # in_kitchen transition), not a shift, so use the no-shift variant.
+        linked_waiter = make_branch_linked_headers_no_shift(db, branch, "waiter")
+        linked_cashier = make_branch_linked_headers(db, branch, "cashier")
+        linked_manager_no_shift = make_branch_linked_headers_no_shift(db, branch, "manager")
+
+        order = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "takeaway", "guests_count": 1,
+                  "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=linked_waiter,
+        ).json()
+        client.patch(f"/api/v1/dining/orders/{order['id']}/status",
+                     json={"status": "in_kitchen"}, headers=linked_waiter)
+        paid = client.patch(f"/api/v1/dining/orders/{order['id']}/status",
+                            json={"status": "paid"}, headers=linked_cashier).json()
+        item_id = paid["items"][0]["id"]
+
+        from app.modules.finance.models import CashierShift
+        cashier_shift = db.query(CashierShift).filter(
+            CashierShift.branch_id == branch.id, CashierShift.status == "open",
+        ).one()  # exactly one open shift at this branch — the unambiguous case
+
+        reason = "اختبار نسب الوردية"
+        resp = client.patch(
+            f"/api/v1/dining/orders/{paid['id']}/items/{item_id}/refund",
+            json={"reason": reason},
+            headers=_refund_headers(
+                client, linked_manager_no_shift, order_id=paid["id"], item_id=item_id, reason=reason,
+            ),
+        )
+        assert resp.status_code == 200, resp.text
+
+        reversal = next(
+            p for p in finance_crud.list_direct_payments_for_order(db, paid["id"]) if p.amount < 0
+        )
+        assert reversal.shift_id == cashier_shift.id
 
     def test_refund_reduces_room_folio_charge(self, client: TestClient, db, waiter_headers, cashier_headers, manager_headers):
         branch = make_branch_committed(db)
