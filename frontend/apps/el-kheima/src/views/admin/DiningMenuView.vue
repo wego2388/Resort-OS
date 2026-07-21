@@ -11,7 +11,9 @@
  * MenuView.vue/CafeMenuView.vue/TablesAdminView.vue (DINING_CUTOVER_PLAN.md).
  */
 import { ref, computed, onMounted, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import {
   AppButton, AppInput, AppTextarea, AppSelect, MoneyInput, AppTabs,
   AppBadge, StatusBadge, AppDrawer, DataTable, SearchInput, IconButton,
@@ -21,6 +23,8 @@ import type { TabItem, SelectOption, DataTableColumn } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
+const { t } = useI18n()
+const { formatNumber } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -47,28 +51,28 @@ interface DiningItemRow {
 }
 interface VenueTable { id: number; outlet_id: number; table_number: string; capacity: number; section: string | null; status: string }
 
-const MAIN_TABS: TabItem[] = [
-  { value: 'outlets', label: 'المنافذ' },
-  { value: 'menu', label: 'القائمة' },
-  { value: 'tables', label: 'الطاولات' },
-  { value: 'kds', label: '📺 شاشات KDS' },
-]
+const MAIN_TABS = computed<TabItem[]>(() => [
+  { value: 'outlets', label: t('backoffice.diningMenu.tabs.outlets') },
+  { value: 'menu', label: t('backoffice.diningMenu.tabs.menu') },
+  { value: 'tables', label: t('backoffice.diningMenu.tabs.tables') },
+  { value: 'kds', label: `📺 ${t('backoffice.diningMenu.tabs.kds')}` },
+])
 const activeTab = ref('outlets')
 
-const STATIONS: SelectOption[] = [
-  { value: 'hot', label: '🔥 ساخن' }, { value: 'grill', label: '🥩 شواية' },
-  { value: 'cold', label: '🥗 بارد' }, { value: 'bar', label: '🍹 بار' },
-  { value: 'dessert', label: '🍰 حلويات' },
-]
-const OUTLET_TYPES: SelectOption[] = [
-  { value: 'restaurant', label: 'مطعم' }, { value: 'cafe', label: 'كافيه' },
-  { value: 'bar', label: 'بار' }, { value: 'buffet', label: 'بوفيه' },
-  { value: 'pool_bar', label: 'بار المسبح' }, { value: 'rooftop', label: 'روف توب' },
-  { value: 'beach_service', label: 'خدمة الشاطئ' },
-]
-const GROUP_TYPES: SelectOption[] = [
-  { value: 'pick_list', label: 'قائمة اختيارات' }, { value: 'text', label: 'نص حر (Free text)' },
-]
+const STATIONS = computed<SelectOption[]>(() => [
+  { value: 'hot', label: `🔥 ${t('backoffice.diningMenu.station.hot')}` }, { value: 'grill', label: `🥩 ${t('backoffice.diningMenu.station.grill')}` },
+  { value: 'cold', label: `🥗 ${t('backoffice.diningMenu.station.cold')}` }, { value: 'bar', label: `🍹 ${t('backoffice.diningMenu.station.bar')}` },
+  { value: 'dessert', label: `🍰 ${t('backoffice.diningMenu.station.dessert')}` },
+])
+const OUTLET_TYPES = computed<SelectOption[]>(() => [
+  { value: 'restaurant', label: t('backoffice.diningMenu.outletType.restaurant') }, { value: 'cafe', label: t('backoffice.diningMenu.outletType.cafe') },
+  { value: 'bar', label: t('backoffice.diningMenu.outletType.bar') }, { value: 'buffet', label: t('backoffice.diningMenu.outletType.buffet') },
+  { value: 'pool_bar', label: t('backoffice.diningMenu.outletType.poolBar') }, { value: 'rooftop', label: t('backoffice.diningMenu.outletType.rooftop') },
+  { value: 'beach_service', label: t('backoffice.diningMenu.outletType.beachService') },
+])
+const GROUP_TYPES = computed<SelectOption[]>(() => [
+  { value: 'pick_list', label: t('backoffice.diningMenu.groupType.pickList') }, { value: 'text', label: t('backoffice.diningMenu.groupType.text') },
+])
 
 // ── Outlets ──────────────────────────────────────────────────────────────
 const outlets = ref<Outlet[]>([])
@@ -115,7 +119,7 @@ function openOutletForm(o?: Outlet) {
 }
 
 async function saveOutlet() {
-  if (!outletForm.value.name.trim()) { toast.error('اسم المنفذ مطلوب'); return }
+  if (!outletForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.outletNameRequired')); return }
   saving.value = true
   try {
     const num = (v: string) => v !== '' ? Number(v) : null
@@ -141,9 +145,9 @@ async function saveOutlet() {
       if (selectedOutletId.value === null) selectedOutletId.value = data.id
     }
     outletDrawerOpen.value = false
-    toast.success(outletEdit.value ? 'تم تعديل المنفذ' : 'تم إضافة المنفذ — بدون أي migration أو كود جديد')
+    toast.success(outletEdit.value ? t('backoffice.diningMenu.outletUpdated') : t('backoffice.diningMenu.outletAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحفظ')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.saveError'))
   } finally {
     saving.value = false
   }
@@ -171,7 +175,7 @@ function openCatForm(cat?: Category) {
 }
 
 async function saveCat() {
-  if (!selectedOutletId.value || !catForm.value.name.trim()) { toast.error('اسم الفئة مطلوب'); return }
+  if (!selectedOutletId.value || !catForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.msg.categoryNameRequired')); return }
   saving.value = true
   try {
     const payload = { name: catForm.value.name.trim(), name_ar: catForm.value.name_ar.trim() || null, sort_order: Number(catForm.value.sort_order), is_active: catForm.value.is_active }
@@ -184,23 +188,23 @@ async function saveCat() {
       categories.value.push(data)
     }
     catDrawerOpen.value = false
-    toast.success(catEdit.value ? 'تم تعديل الفئة' : 'تم إضافة الفئة')
+    toast.success(catEdit.value ? t('backoffice.diningMenu.msg.categoryUpdated') : t('backoffice.diningMenu.msg.categoryAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحفظ')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.saveError'))
   } finally {
     saving.value = false
   }
 }
 
 async function deleteCat(cat: Category) {
-  if (!await confirm({ message: `حذف فئة "${cat.name_ar || cat.name}"؟ هتتشال من كل أصنافها.`, danger: true })) return
+  if (!await confirm({ message: t('backoffice.diningMenu.confirmDeleteCategory', { name: cat.name_ar || cat.name }), danger: true })) return
   try {
     await api.delete(ENDPOINTS.dining.category(cat.id))
     categories.value = categories.value.filter(c => c.id !== cat.id)
     if (selectedCategoryId.value === cat.id) selectedCategoryId.value = null
-    toast.success('تم حذف الفئة')
+    toast.success(t('backoffice.diningMenu.msg.categoryDeleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteError'))
   }
 }
 
@@ -220,14 +224,14 @@ const itemCategoryIdOption = computed<string | number | undefined>({
   set: (v) => { itemForm.value.category_id = v !== undefined && v !== '' ? Number(v) : null },
 })
 
-const itemColumns: DataTableColumn[] = [
-  { key: 'name', label: 'الصنف' },
-  { key: 'category', label: 'الفئة' },
-  { key: 'station', label: 'المحطة' },
-  { key: 'price', label: 'السعر', align: 'end' },
-  { key: 'status', label: 'الحالة' },
+const itemColumns = computed<DataTableColumn[]>(() => [
+  { key: 'name', label: t('backoffice.diningMenu.column.name') },
+  { key: 'category', label: t('backoffice.diningMenu.column.category') },
+  { key: 'station', label: t('backoffice.diningMenu.column.station') },
+  { key: 'price', label: t('backoffice.diningMenu.column.price'), align: 'end' },
+  { key: 'status', label: t('backoffice.diningMenu.column.status') },
   { key: 'actions', label: '', align: 'end' },
-]
+])
 
 const filteredItems = computed(() => {
   let list = items.value
@@ -240,7 +244,7 @@ const filteredItems = computed(() => {
 function categoryName(id: number | null) {
   return categories.value.find(c => c.id === id)?.name_ar || categories.value.find(c => c.id === id)?.name || '—'
 }
-const stationLabel = (s: string) => STATIONS.find(st => st.value === s)?.label ?? s
+const stationLabel = (s: string) => STATIONS.value.find(st => st.value === s)?.label ?? s
 
 function openItemForm(item?: DiningItemRow) {
   itemEdit.value = item ?? null
@@ -252,9 +256,9 @@ function openItemForm(item?: DiningItemRow) {
 
 async function saveItem() {
   if (!selectedOutletId.value) return
-  if (!itemForm.value.name.trim()) { toast.error('اسم الصنف مطلوب'); return }
+  if (!itemForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.msg.itemNameRequired')); return }
   const price = Number(itemForm.value.price)
-  if (!(price > 0)) { toast.error('السعر لازم يكون أكبر من صفر'); return }
+  if (!(price > 0)) { toast.error(t('backoffice.diningMenu.msg.priceRequired')); return }
   saving.value = true
   try {
     const payload: Record<string, unknown> = {
@@ -274,22 +278,22 @@ async function saveItem() {
       items.value.push(data)
     }
     itemDrawerOpen.value = false
-    toast.success(itemEdit.value ? 'تم تعديل الصنف' : 'تم إضافة الصنف')
+    toast.success(itemEdit.value ? t('backoffice.diningMenu.msg.itemUpdated') : t('backoffice.diningMenu.msg.itemAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحفظ')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.saveError'))
   } finally {
     saving.value = false
   }
 }
 
 async function deleteItem(item: DiningItemRow) {
-  if (!await confirm({ message: `حذف "${item.name_ar || item.name}"؟`, danger: true })) return
+  if (!await confirm({ message: t('backoffice.diningMenu.confirmDeleteItem', { name: item.name_ar || item.name }), danger: true })) return
   try {
     await api.delete(ENDPOINTS.dining.item(item.id))
     items.value = items.value.filter(i => i.id !== item.id)
-    toast.success('تم حذف الصنف')
+    toast.success(t('backoffice.diningMenu.msg.itemDeleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteError'))
   }
 }
 
@@ -304,12 +308,12 @@ async function uploadItemImage(event: Event) {
 
   const ALLOWED = ['image/jpeg', 'image/png', 'image/webp']
   if (!ALLOWED.includes(file.type)) {
-    toast.error('نوع الملف غير مسموح — فقط jpeg/png/webp')
+    toast.error(t('backoffice.diningMenu.msg.fileTypeNotAllowed'))
     input.value = ''
     return
   }
   if (file.size > 2 * 1024 * 1024) {
-    toast.error('حجم الصورة أكبر من 2 ميجابايت')
+    toast.error(t('backoffice.diningMenu.msg.imageTooLarge'))
     input.value = ''
     return
   }
@@ -325,9 +329,9 @@ async function uploadItemImage(event: Event) {
     const idx = items.value.findIndex(i => i.id === itemEdit.value!.id)
     if (idx >= 0) items.value[idx] = { ...items.value[idx], image_url: data.image_url }
     itemEdit.value = { ...itemEdit.value, image_url: data.image_url }
-    toast.success('تم رفع الصورة')
+    toast.success(t('backoffice.diningMenu.msg.imageUploaded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر رفع الصورة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.uploadImageError'))
   } finally {
     imageUploading.value = false
     input.value = ''
@@ -351,7 +355,7 @@ function resetExtraGroupForm() {
 
 async function addExtraGroup() {
   if (!itemEdit.value) return
-  if (!extraGroupForm.value.name.trim()) { toast.error('اسم المجموعة مطلوب'); return }
+  if (!extraGroupForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.msg.extraGroupNameRequired')); return }
   saving.value = true
   try {
     const payload = {
@@ -370,9 +374,9 @@ async function addExtraGroup() {
     const idx = items.value.findIndex(i => i.id === itemEdit.value!.id)
     if (idx >= 0) items.value[idx]!.extra_groups.push(data)
     resetExtraGroupForm()
-    toast.success('تم إضافة مجموعة الإضافات')
+    toast.success(t('backoffice.diningMenu.msg.extraGroupAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الإضافة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.addError'))
   } finally {
     saving.value = false
   }
@@ -380,15 +384,15 @@ async function addExtraGroup() {
 
 async function deleteExtraGroup(group: ExtraGroup) {
   if (!itemEdit.value) return
-  if (!await confirm({ message: `حذف مجموعة "${group.name_ar || group.name}"؟`, danger: true })) return
+  if (!await confirm({ message: t('backoffice.diningMenu.confirmDeleteExtraGroup', { name: group.name_ar || group.name }), danger: true })) return
   try {
     await api.delete(ENDPOINTS.dining.extraGroup(group.id))
     itemEdit.value.extra_groups = itemEdit.value.extra_groups.filter(g => g.id !== group.id)
     const idx = items.value.findIndex(i => i.id === itemEdit.value!.id)
     if (idx >= 0) items.value[idx]!.extra_groups = items.value[idx]!.extra_groups.filter(g => g.id !== group.id)
-    toast.success('تم حذف المجموعة')
+    toast.success(t('backoffice.diningMenu.msg.extraGroupDeleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteError'))
   }
 }
 
@@ -398,42 +402,42 @@ const tableDrawerOpen = ref(false)
 const tableEdit = ref<VenueTable | null>(null)
 const tableForm = ref({ table_number: '', capacity: 4, section: '' })
 
-function openTableForm(t?: VenueTable) {
-  tableEdit.value = t ?? null
-  tableForm.value = t ? { table_number: t.table_number, capacity: t.capacity, section: t.section ?? '' } : { table_number: '', capacity: 4, section: '' }
+function openTableForm(tbl?: VenueTable) {
+  tableEdit.value = tbl ?? null
+  tableForm.value = tbl ? { table_number: tbl.table_number, capacity: tbl.capacity, section: tbl.section ?? '' } : { table_number: '', capacity: 4, section: '' }
   tableDrawerOpen.value = true
 }
 
 async function saveTable() {
-  if (!selectedOutletId.value || !tableForm.value.table_number.trim()) { toast.error('رقم الطاولة مطلوب'); return }
+  if (!selectedOutletId.value || !tableForm.value.table_number.trim()) { toast.error(t('backoffice.diningMenu.msg.tableNumberRequired')); return }
   saving.value = true
   try {
     const payload = { table_number: tableForm.value.table_number.trim(), capacity: Number(tableForm.value.capacity), section: tableForm.value.section.trim() || null }
     if (tableEdit.value) {
       const { data } = await api.patch(ENDPOINTS.dining.table(tableEdit.value.id), payload)
-      const idx = tables.value.findIndex(t => t.id === tableEdit.value!.id)
+      const idx = tables.value.findIndex(tbl => tbl.id === tableEdit.value!.id)
       if (idx >= 0) tables.value[idx] = data
     } else {
       const { data } = await api.post(ENDPOINTS.dining.tables(selectedOutletId.value), { ...payload, branch_id: branchId, outlet_id: selectedOutletId.value })
       tables.value.push(data)
     }
     tableDrawerOpen.value = false
-    toast.success(tableEdit.value ? 'تم تعديل الطاولة' : 'تم إضافة الطاولة')
+    toast.success(tableEdit.value ? t('backoffice.diningMenu.msg.tableUpdated') : t('backoffice.diningMenu.msg.tableAdded'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحفظ')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.saveError'))
   } finally {
     saving.value = false
   }
 }
 
-async function deleteTable(t: VenueTable) {
-  if (!await confirm({ message: `حذف طاولة "${t.table_number}"؟`, danger: true })) return
+async function deleteTable(tbl: VenueTable) {
+  if (!await confirm({ message: t('backoffice.diningMenu.confirmDeleteTable', { number: tbl.table_number }), danger: true })) return
   try {
-    await api.delete(ENDPOINTS.dining.table(t.id))
-    tables.value = tables.value.filter(x => x.id !== t.id)
-    toast.success('تم حذف الطاولة')
+    await api.delete(ENDPOINTS.dining.table(tbl.id))
+    tables.value = tables.value.filter(x => x.id !== tbl.id)
+    toast.success(t('backoffice.diningMenu.msg.tableDeleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف — تأكد إنها مش مشغولة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteErrorOccupied'))
   }
 }
 
@@ -458,7 +462,7 @@ async function loadKdsScreens() {
     const { data } = await api.get(ENDPOINTS.dining.kdsScreens, { params: { branch_id: branchId } })
     kdsScreens.value = data.items ?? data ?? []
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل شاشات KDS')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.loadKdsError'))
   } finally { kdsLoading.value = false }
 }
 
@@ -484,7 +488,7 @@ function toggleKdsStation(st: string) {
 }
 
 async function saveKdsScreen() {
-  if (!kdsForm.value.name.trim()) { toast.error('اسم الشاشة مطلوب'); return }
+  if (!kdsForm.value.name.trim()) { toast.error(t('backoffice.diningMenu.msg.kdsNameRequired')); return }
   savingKds.value = true
   try {
     const payload = {
@@ -498,27 +502,27 @@ async function saveKdsScreen() {
     if (editingKds.value) {
       const { data } = await api.patch(ENDPOINTS.dining.kdsScreen(editingKds.value.id), payload)
       kdsScreens.value = kdsScreens.value.map(s => s.id === editingKds.value!.id ? data : s)
-      toast.success('تم تحديث الشاشة')
+      toast.success(t('backoffice.diningMenu.msg.kdsUpdated'))
     } else {
       const { data } = await api.post(ENDPOINTS.dining.kdsScreens, payload)
       kdsScreens.value = [data, ...kdsScreens.value]
-      toast.success('تم إنشاء الشاشة')
+      toast.success(t('backoffice.diningMenu.msg.kdsCreated'))
     }
     showKdsModal.value = false
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ الشاشة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.saveKdsError'))
   } finally { savingKds.value = false }
 }
 
 async function deleteKdsScreen(s: KdsScreen) {
-  const ok = await confirm({ message: `حذف شاشة "${s.name}"؟`, danger: true, confirmText: 'حذف' })
+  const ok = await confirm({ message: t('backoffice.diningMenu.confirmDeleteKds', { name: s.name }), danger: true, confirmText: t('backoffice.diningMenu.delete') })
   if (!ok) return
   try {
     await api.delete(ENDPOINTS.dining.kdsScreen(s.id))
     kdsScreens.value = kdsScreens.value.filter(x => x.id !== s.id)
-    toast.success('تم الحذف')
+    toast.success(t('backoffice.diningMenu.msg.deleted'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر الحذف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.deleteError'))
   }
 }
 
@@ -537,7 +541,7 @@ async function loadOutletScopedData() {
     tables.value = tablesRes.data
     selectedCategoryId.value = null
   } catch {
-    toast.error('تعذّر تحميل بيانات المنفذ')
+    toast.error(t('backoffice.diningMenu.msg.loadOutletDataError'))
   } finally {
     loading.value = false
   }
@@ -557,14 +561,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="page-container" dir="rtl">
+  <div class="page-container">
     <div class="flex items-center justify-between mb-5 flex-wrap gap-2">
       <div>
-        <h1 class="section-title mb-0">🍽️ إدارة الدايننج الموحّدة</h1>
-        <p class="text-xs text-muted mt-1">شاشة تجريبية — API dining فقط، مش بديل عن قوائم المطعم/الكافيه الحالية بعد.</p>
+        <h1 class="section-title mb-0">🍽️ {{ t('backoffice.diningMenu.title') }}</h1>
+        <p class="text-xs text-muted mt-1">{{ t('backoffice.diningMenu.subtitle') }}</p>
       </div>
       <div class="w-56" v-if="outletOptions.length">
-        <AppSelect v-model="selectedOutletIdOption" :options="outletOptions" placeholder="اختر المنفذ" />
+        <AppSelect v-model="selectedOutletIdOption" :options="outletOptions" :placeholder="t('backoffice.diningMenu.selectOutlet')" />
       </div>
     </div>
 
@@ -576,20 +580,20 @@ onMounted(async () => {
       <!-- ══════════════════ Outlets tab ══════════════════ -->
       <div v-if="activeTab === 'outlets'" class="space-y-3">
         <div class="flex justify-end">
-          <AppButton variant="primary" @click="openOutletForm()">+ منفذ جديد</AppButton>
+          <AppButton variant="primary" @click="openOutletForm()">+ {{ t('backoffice.diningMenu.newOutlet') }}</AppButton>
         </div>
-        <EmptyState v-if="outlets.length === 0" icon="🏪" title="لا توجد منافذ بعد" />
+        <EmptyState v-if="outlets.length === 0" icon="🏪" :title="t('backoffice.diningMenu.noOutlets')" />
         <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div v-for="o in outlets" :key="o.id" class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 flex flex-col gap-2">
             <div class="flex items-start justify-between">
               <div>
                 <div class="font-bold text-gray-900 dark:text-gray-100">{{ o.name_ar || o.name }}</div>
-                <div class="text-xs text-muted">{{ OUTLET_TYPES.find(t => t.value === o.outlet_type)?.label ?? o.outlet_type }}</div>
+                <div class="text-xs text-muted">{{ OUTLET_TYPES.find(ot => ot.value === o.outlet_type)?.label ?? o.outlet_type }}</div>
               </div>
-              <AppBadge :variant="o.is_active ? 'success' : 'neutral'" size="sm">{{ o.is_active ? 'مفعّل' : 'موقوف' }}</AppBadge>
+              <AppBadge :variant="o.is_active ? 'success' : 'neutral'" size="sm">{{ o.is_active ? t('backoffice.diningMenu.active') : t('backoffice.diningMenu.stopped') }}</AppBadge>
             </div>
-            <div class="text-xs text-muted">حساب الإيراد: {{ o.revenue_account_code }}</div>
-            <IconButton icon="edit" label="تعديل المنفذ" size="sm" class="self-end" @click="openOutletForm(o)" />
+            <div class="text-xs text-muted">{{ t('backoffice.diningMenu.revenueAccount') }}: {{ o.revenue_account_code }}</div>
+            <IconButton icon="edit" :label="t('backoffice.diningMenu.editOutlet')" size="sm" class="self-end" @click="openOutletForm(o)" />
           </div>
         </div>
       </div>
@@ -599,15 +603,15 @@ onMounted(async () => {
         <!-- Categories sidebar -->
         <div class="w-56 flex-shrink-0 space-y-1">
           <div class="flex items-center justify-between mb-2">
-            <span class="text-xs font-bold text-muted uppercase tracking-wide">الفئات</span>
-            <IconButton icon="add" label="فئة جديدة" size="sm" @click="openCatForm()" />
+            <span class="text-xs font-bold text-muted uppercase tracking-wide">{{ t('backoffice.diningMenu.categories') }}</span>
+            <IconButton icon="add" :label="t('backoffice.diningMenu.newCategory')" size="sm" @click="openCatForm()" />
           </div>
           <button
             type="button"
             @click="selectedCategoryId = null"
             :class="['w-full text-start px-3 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px]',
               selectedCategoryId === null ? 'bg-primary-600 text-white' : 'bg-white dark:bg-surface hover:bg-background text-gray-700 border border-stone-200 dark:border-border']"
-          >الكل ({{ items.length }})</button>
+          >{{ t('backoffice.diningMenu.all') }} ({{ items.length }})</button>
           <div
             v-for="cat in categories" :key="cat.id"
             :class="['group flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors',
@@ -619,24 +623,24 @@ onMounted(async () => {
               <span class="text-xs opacity-70 ms-1">({{ items.filter(i => i.category_id === cat.id).length }})</span>
             </button>
             <div class="flex gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-              <IconButton icon="edit" label="تعديل الفئة" size="sm" @click.stop="openCatForm(cat)" />
-              <IconButton icon="delete" label="حذف الفئة" size="sm" variant="danger" @click.stop="deleteCat(cat)" />
+              <IconButton icon="edit" :label="t('backoffice.diningMenu.editCategory')" size="sm" @click.stop="openCatForm(cat)" />
+              <IconButton icon="delete" :label="t('backoffice.diningMenu.deleteCategory')" size="sm" variant="danger" @click.stop="deleteCat(cat)" />
             </div>
           </div>
-          <EmptyState v-if="categories.length === 0" title="لا توجد فئات بعد" />
+          <EmptyState v-if="categories.length === 0" :title="t('backoffice.diningMenu.noCategories')" />
         </div>
 
         <!-- Items -->
         <div class="flex-1 min-w-0">
           <div class="flex items-center justify-between mb-3 gap-3">
-            <div class="w-64"><SearchInput v-model="itemSearch" placeholder="بحث عن صنف..." /></div>
-            <AppButton variant="primary" @click="openItemForm()">+ صنف جديد</AppButton>
+            <div class="w-64"><SearchInput v-model="itemSearch" :placeholder="t('backoffice.diningMenu.searchItem')" /></div>
+            <AppButton variant="primary" @click="openItemForm()">+ {{ t('backoffice.diningMenu.newItem') }}</AppButton>
           </div>
           <DataTable
             :columns="itemColumns"
             :items="filteredItems"
             :row-key="(i: DiningItemRow) => i.id"
-            empty-title="لا توجد أصناف — اضغط + صنف جديد"
+            :empty-title="t('backoffice.diningMenu.noItems')"
             @row-click="openItemForm"
           >
             <template #cell-name="{ item }">
@@ -648,20 +652,20 @@ onMounted(async () => {
                 <div>
                   <div class="font-semibold text-gray-900 dark:text-gray-100">{{ item.name_ar || item.name }}</div>
                   <div v-if="item.extra_groups.length" class="text-xs text-muted mt-0.5">
-                    {{ item.extra_groups.length }} مجموعة إضافات
-                    <AppBadge v-if="item.extra_groups.some((g: ExtraGroup) => g.group_type === 'text')" variant="info" size="sm" class="ms-1">نص حر</AppBadge>
+                    {{ t('backoffice.diningMenu.extraGroupsCount', { count: item.extra_groups.length }) }}
+                    <AppBadge v-if="item.extra_groups.some((g: ExtraGroup) => g.group_type === 'text')" variant="info" size="sm" class="ms-1">{{ t('backoffice.diningMenu.freeText') }}</AppBadge>
                   </div>
                 </div>
               </div>
             </template>
             <template #cell-category="{ item }">{{ categoryName(item.category_id) }}</template>
             <template #cell-station="{ item }">{{ stationLabel(item.station) }}</template>
-            <template #cell-price="{ item }">{{ item.price }} ج</template>
-            <template #cell-status="{ item }"><StatusBadge :status="item.is_available ? 'active' : 'draft'" :map="{ active: { label: 'متاح', variant: 'success' }, draft: { label: 'موقوف', variant: 'neutral' } }" /></template>
+            <template #cell-price="{ item }">{{ formatNumber(Number(item.price)) }} {{ t('backoffice.diningMenu.currency') }}</template>
+            <template #cell-status="{ item }"><StatusBadge :status="item.is_available ? 'active' : 'draft'" :map="{ active: { label: t('backoffice.diningMenu.available'), variant: 'success' }, draft: { label: t('backoffice.diningMenu.stopped'), variant: 'neutral' } }" /></template>
             <template #cell-actions="{ item }">
               <div class="flex justify-end gap-1" @click.stop>
-                <IconButton icon="edit" label="تعديل" size="sm" @click="openItemForm(item)" />
-                <IconButton icon="delete" label="حذف" size="sm" variant="danger" @click="deleteItem(item)" />
+                <IconButton icon="edit" :label="t('backoffice.diningMenu.edit')" size="sm" @click="openItemForm(item)" />
+                <IconButton icon="delete" :label="t('backoffice.diningMenu.delete')" size="sm" variant="danger" @click="deleteItem(item)" />
               </div>
             </template>
           </DataTable>
@@ -671,19 +675,19 @@ onMounted(async () => {
       <!-- ══════════════════ Tables tab ══════════════════ -->
       <div v-else-if="activeTab === 'tables'" class="space-y-3">
         <div class="flex justify-end">
-          <AppButton variant="primary" @click="openTableForm()">+ طاولة جديدة</AppButton>
+          <AppButton variant="primary" @click="openTableForm()">+ {{ t('backoffice.diningMenu.newTable') }}</AppButton>
         </div>
-        <EmptyState v-if="tables.length === 0" icon="🪑" title="لا توجد طاولات لهذا المنفذ بعد" />
+        <EmptyState v-if="tables.length === 0" icon="🪑" :title="t('backoffice.diningMenu.noTables')" />
         <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          <div v-for="t in tables" :key="t.id" class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-3 flex flex-col gap-1.5">
+          <div v-for="tbl in tables" :key="tbl.id" class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-3 flex flex-col gap-1.5">
             <div class="flex items-center justify-between">
-              <span class="font-bold text-gray-900 dark:text-gray-100">{{ t.table_number }}</span>
-              <StatusBadge :status="t.status" :map="{ available: { label: 'فارغة', variant: 'success' }, occupied: { label: 'مشغولة', variant: 'danger' }, reserved: { label: 'محجوزة', variant: 'warning' }, out_of_service: { label: 'خارج الخدمة', variant: 'neutral' } }" size="sm" />
+              <span class="font-bold text-gray-900 dark:text-gray-100">{{ tbl.table_number }}</span>
+              <StatusBadge :status="tbl.status" :map="{ available: { label: t('backoffice.diningMenu.tableStatus.available'), variant: 'success' }, occupied: { label: t('backoffice.diningMenu.tableStatus.occupied'), variant: 'danger' }, reserved: { label: t('backoffice.diningMenu.tableStatus.reserved'), variant: 'warning' }, out_of_service: { label: t('backoffice.diningMenu.tableStatus.outOfService'), variant: 'neutral' } }" size="sm" />
             </div>
-            <div class="text-xs text-muted">{{ t.section || 'بدون قسم' }} · {{ t.capacity }} أشخاص</div>
+            <div class="text-xs text-muted">{{ tbl.section || t('backoffice.diningMenu.noSection') }} · {{ t('backoffice.diningMenu.peopleCount', { count: tbl.capacity }) }}</div>
             <div class="flex justify-end gap-1">
-              <IconButton icon="edit" label="تعديل" size="sm" @click="openTableForm(t)" />
-              <IconButton icon="delete" label="حذف" size="sm" variant="danger" @click="deleteTable(t)" />
+              <IconButton icon="edit" :label="t('backoffice.diningMenu.edit')" size="sm" @click="openTableForm(tbl)" />
+              <IconButton icon="delete" :label="t('backoffice.diningMenu.delete')" size="sm" variant="danger" @click="deleteTable(tbl)" />
             </div>
           </div>
         </div>
@@ -693,17 +697,17 @@ onMounted(async () => {
       <div v-else-if="activeTab === 'kds'" class="space-y-4">
         <div class="flex items-center justify-between">
           <div>
-            <p class="text-sm text-muted">شاشات KDS (Kitchen Display System) — بتعرض التذاكر للمطبخ حسب المحطة.</p>
+            <p class="text-sm text-muted">{{ t('backoffice.diningMenu.kdsDescription') }}</p>
           </div>
-          <AppButton variant="primary" @click="openKdsCreate">+ شاشة جديدة</AppButton>
+          <AppButton variant="primary" @click="openKdsCreate">+ {{ t('backoffice.diningMenu.newKdsScreen') }}</AppButton>
         </div>
 
         <div v-if="kdsLoading" class="flex justify-center py-12">
           <div class="w-8 h-8 border-2 border-primary-600 border-t-transparent rounded-full animate-spin" />
         </div>
         <EmptyState v-else-if="kdsScreens.length === 0"
-          icon="📺" title="لا توجد شاشات KDS"
-          subtitle="أنشئ شاشة لكل محطة في المطبخ (ساخن، شواية، بارد...)" />
+          icon="📺" :title="t('backoffice.diningMenu.noKdsScreens')"
+          :subtitle="t('backoffice.diningMenu.noKdsScreensHint')" />
         <div v-else class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           <div v-for="s in kdsScreens" :key="s.id"
             class="bg-white dark:bg-surface rounded-xl border border-stone-200 dark:border-border p-4 flex flex-col gap-3">
@@ -711,38 +715,38 @@ onMounted(async () => {
               <div>
                 <div class="font-bold text-gray-900 dark:text-gray-100">{{ s.name }}</div>
                 <div v-if="s.outlet_id" class="text-xs text-muted mt-0.5">
-                  {{ outlets.find(o => o.id === s.outlet_id)?.name_ar || outlets.find(o => o.id === s.outlet_id)?.name || `منفذ #${s.outlet_id}` }}
+                  {{ outlets.find(o => o.id === s.outlet_id)?.name_ar || outlets.find(o => o.id === s.outlet_id)?.name || t('backoffice.diningMenu.outletHash', { id: s.outlet_id }) }}
                 </div>
-                <div v-else class="text-xs text-muted mt-0.5">كل المنافذ</div>
+                <div v-else class="text-xs text-muted mt-0.5">{{ t('backoffice.diningMenu.allOutlets') }}</div>
               </div>
               <StatusBadge :status="s.is_active ? 'active' : 'closed'"
-                :map="{ active: { label: 'نشطة', variant: 'success' }, closed: { label: 'موقوفة', variant: 'neutral' } }" />
+                :map="{ active: { label: t('backoffice.diningMenu.kdsActive'), variant: 'success' }, closed: { label: t('backoffice.diningMenu.kdsClosed'), variant: 'neutral' } }" />
             </div>
             <div class="flex flex-wrap gap-1">
-              <span v-if="s.stations.length === 0" class="text-xs text-muted">كل المحطات</span>
+              <span v-if="s.stations.length === 0" class="text-xs text-muted">{{ t('backoffice.diningMenu.allStations') }}</span>
               <AppBadge v-for="st in s.stations" :key="st" variant="info" size="sm">
                 {{ STATIONS.find(x => x.value === st)?.label ?? st }}
               </AppBadge>
             </div>
-            <div class="text-xs text-muted">مدة العرض: {{ s.display_seconds }}ث لكل تذكرة</div>
+            <div class="text-xs text-muted">{{ t('backoffice.diningMenu.displayDuration') }}: {{ t('backoffice.diningMenu.secondsPerTicket', { seconds: s.display_seconds }) }}</div>
             <div class="flex justify-end gap-2">
-              <IconButton icon="edit" label="تعديل" size="sm" @click="openKdsEdit(s)" />
-              <IconButton icon="delete" label="حذف" size="sm" variant="danger" @click="deleteKdsScreen(s)" />
+              <IconButton icon="edit" :label="t('backoffice.diningMenu.edit')" size="sm" @click="openKdsEdit(s)" />
+              <IconButton icon="delete" :label="t('backoffice.diningMenu.delete')" size="sm" variant="danger" @click="deleteKdsScreen(s)" />
             </div>
           </div>
         </div>
 
         <!-- KDS Modal -->
-        <AppModal :open="showKdsModal" :title="editingKds ? 'تعديل شاشة KDS' : 'شاشة KDS جديدة'" @close="showKdsModal = false">
+        <AppModal :open="showKdsModal" :title="editingKds ? t('backoffice.diningMenu.editKdsScreen') : t('backoffice.diningMenu.newKdsScreenTitle')" @close="showKdsModal = false">
           <div class="space-y-3">
-            <AppInput v-model="kdsForm.name" label="اسم الشاشة *" placeholder="مثال: شاشة المطبخ الساخن" />
+            <AppInput v-model="kdsForm.name" :label="t('backoffice.diningMenu.kdsNameLabel')" :placeholder="t('backoffice.diningMenu.kdsNamePlaceholder')" />
             <AppSelect
               :model-value="kdsForm.outlet_id !== '' ? String(kdsForm.outlet_id) : ''"
               @update:model-value="kdsForm.outlet_id = $event"
-              :options="[{ value: '', label: 'كل المنافذ' }, ...outletOptions.map(o => ({ value: String(o.value), label: String(o.label) }))]"
-              label="المنفذ (اختياري)" />
+              :options="[{ value: '', label: t('backoffice.diningMenu.allOutlets') }, ...outletOptions.map(o => ({ value: String(o.value), label: String(o.label) }))]"
+              :label="t('backoffice.diningMenu.outletOptional')" />
             <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">المحطات (فاضي = كل المحطات)</label>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">{{ t('backoffice.diningMenu.stationsLabel') }}</label>
               <div class="flex flex-wrap gap-2">
                 <button v-for="st in STATIONS" :key="String(st.value)"
                   type="button"
@@ -755,14 +759,14 @@ onMounted(async () => {
                 </button>
               </div>
             </div>
-            <AppInput v-model.number="kdsForm.display_seconds" type="number" label="مدة العرض (ثانية لكل تذكرة)" />
+            <AppInput v-model.number="kdsForm.display_seconds" type="number" :label="t('backoffice.diningMenu.displaySecondsLabel')" />
             <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-              <input type="checkbox" v-model="kdsForm.is_active" class="rounded" /> نشطة
+              <input type="checkbox" v-model="kdsForm.is_active" class="rounded" /> {{ t('backoffice.diningMenu.kdsActive') }}
             </label>
             <div class="flex gap-2 justify-end pt-2">
-              <AppButton variant="ghost" @click="showKdsModal = false">إلغاء</AppButton>
+              <AppButton variant="ghost" @click="showKdsModal = false">{{ t('backoffice.diningMenu.cancel') }}</AppButton>
               <AppButton variant="primary" :loading="savingKds" @click="saveKdsScreen">
-                {{ editingKds ? 'تحديث' : 'إنشاء' }}
+                {{ editingKds ? t('backoffice.diningMenu.update') : t('backoffice.diningMenu.create') }}
               </AppButton>
             </div>
           </div>
@@ -771,90 +775,90 @@ onMounted(async () => {
     </template>
 
     <!-- ══════════════════ Outlet drawer ══════════════════ -->
-    <AppDrawer :open="outletDrawerOpen" :title="outletEdit ? 'تعديل منفذ' : 'منفذ جديد'" @close="outletDrawerOpen = false">
+    <AppDrawer :open="outletDrawerOpen" :title="outletEdit ? t('backoffice.diningMenu.editOutletTitle') : t('backoffice.diningMenu.newOutletTitle')" @close="outletDrawerOpen = false">
       <div class="space-y-3">
-        <AppInput v-model="outletForm.name" label="الاسم (EN)" required />
-        <AppInput v-model="outletForm.name_ar" label="الاسم (AR)" />
-        <AppSelect v-model="outletForm.outlet_type" :options="OUTLET_TYPES" label="نوع المنفذ" />
-        <AppInput v-model="outletForm.revenue_account_code" label="حساب الإيراد (Chart of Accounts)" />
-        <AppInput v-model="outletForm.default_service_charge_pct" type="number" label="نسبة رسم الخدمة (اختياري — فاضي = الإعداد العام)" />
+        <AppInput v-model="outletForm.name" :label="t('backoffice.diningMenu.nameEn')" required />
+        <AppInput v-model="outletForm.name_ar" :label="t('backoffice.diningMenu.nameAr')" />
+        <AppSelect v-model="outletForm.outlet_type" :options="OUTLET_TYPES" :label="t('backoffice.diningMenu.outletTypeLabel')" />
+        <AppInput v-model="outletForm.revenue_account_code" :label="t('backoffice.diningMenu.revenueAccountLabel')" />
+        <AppInput v-model="outletForm.default_service_charge_pct" type="number" :label="t('backoffice.diningMenu.serviceChargePct')" />
 
         <!-- تسعير حسب قناة الطلب (2026-07-16، بحث Click) — كلها اختيارية،
              فاضي = بتاخد نفس نسبة رسم الخدمة العامة فوق دي. -->
         <div class="border-t border-stone-200 dark:border-border pt-3 mt-1">
-          <h4 class="text-xs font-bold text-gray-400 uppercase mb-2">تسعير حسب قناة الطلب (اختياري)</h4>
+          <h4 class="text-xs font-bold text-gray-400 uppercase mb-2">{{ t('backoffice.diningMenu.channelPricing') }}</h4>
           <div class="grid grid-cols-2 gap-2">
-            <AppInput v-model="outletForm.takeaway_service_charge_pct" type="number" label="رسم خدمة تيك أواي %" />
-            <AppInput v-model="outletForm.delivery_service_charge_pct" type="number" label="رسم خدمة توصيل %" />
-            <AppInput v-model="outletForm.room_service_service_charge_pct" type="number" label="رسم خدمة الغرف %" />
-            <AppInput v-model="outletForm.delivery_fee" type="number" label="رسم توصيل ثابت (ج)" />
+            <AppInput v-model="outletForm.takeaway_service_charge_pct" type="number" :label="t('backoffice.diningMenu.takeawayServiceChargePct')" />
+            <AppInput v-model="outletForm.delivery_service_charge_pct" type="number" :label="t('backoffice.diningMenu.deliveryServiceChargePct')" />
+            <AppInput v-model="outletForm.room_service_service_charge_pct" type="number" :label="t('backoffice.diningMenu.roomServiceChargePct')" />
+            <AppInput v-model="outletForm.delivery_fee" type="number" :label="t('backoffice.diningMenu.deliveryFeeLabel')" />
           </div>
         </div>
 
         <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-          <input type="checkbox" v-model="outletForm.is_active" class="rounded" /> مفعّل
+          <input type="checkbox" v-model="outletForm.is_active" class="rounded" /> {{ t('backoffice.diningMenu.enabled') }}
         </label>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <AppButton variant="ghost" block @click="outletDrawerOpen = false">إلغاء</AppButton>
-          <AppButton variant="primary" block :loading="saving" @click="saveOutlet">حفظ</AppButton>
+          <AppButton variant="ghost" block @click="outletDrawerOpen = false">{{ t('backoffice.diningMenu.cancel') }}</AppButton>
+          <AppButton variant="primary" block :loading="saving" @click="saveOutlet">{{ t('backoffice.diningMenu.save') }}</AppButton>
         </div>
       </template>
     </AppDrawer>
 
     <!-- ══════════════════ Category drawer ══════════════════ -->
-    <AppDrawer :open="catDrawerOpen" :title="catEdit ? 'تعديل فئة' : 'فئة جديدة'" width="sm" @close="catDrawerOpen = false">
+    <AppDrawer :open="catDrawerOpen" :title="catEdit ? t('backoffice.diningMenu.editCategoryTitle') : t('backoffice.diningMenu.newCategoryTitle')" width="sm" @close="catDrawerOpen = false">
       <div class="space-y-3">
-        <AppInput v-model="catForm.name" label="الاسم (EN)" required />
-        <AppInput v-model="catForm.name_ar" label="الاسم (AR)" />
-        <AppInput v-model.number="catForm.sort_order" type="number" label="الترتيب" />
+        <AppInput v-model="catForm.name" :label="t('backoffice.diningMenu.nameEn')" required />
+        <AppInput v-model="catForm.name_ar" :label="t('backoffice.diningMenu.nameAr')" />
+        <AppInput v-model.number="catForm.sort_order" type="number" :label="t('backoffice.diningMenu.sortOrder')" />
         <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-          <input type="checkbox" v-model="catForm.is_active" class="rounded" /> مفعّلة
+          <input type="checkbox" v-model="catForm.is_active" class="rounded" /> {{ t('backoffice.diningMenu.categoryEnabled') }}
         </label>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <AppButton variant="ghost" block @click="catDrawerOpen = false">إلغاء</AppButton>
-          <AppButton variant="primary" block :loading="saving" @click="saveCat">حفظ</AppButton>
+          <AppButton variant="ghost" block @click="catDrawerOpen = false">{{ t('backoffice.diningMenu.cancel') }}</AppButton>
+          <AppButton variant="primary" block :loading="saving" @click="saveCat">{{ t('backoffice.diningMenu.save') }}</AppButton>
         </div>
       </template>
     </AppDrawer>
 
     <!-- ══════════════════ Item drawer (incl. extra groups) ══════════════════ -->
-    <AppDrawer :open="itemDrawerOpen" :title="itemEdit ? 'تعديل صنف' : 'صنف جديد'" width="lg" @close="itemDrawerOpen = false; resetExtraGroupForm()">
+    <AppDrawer :open="itemDrawerOpen" :title="itemEdit ? t('backoffice.diningMenu.editItemTitle') : t('backoffice.diningMenu.newItemTitle')" width="lg" @close="itemDrawerOpen = false; resetExtraGroupForm()">
       <div class="space-y-4">
         <div class="grid grid-cols-2 gap-3">
-          <AppInput v-model="itemForm.name" label="الاسم (EN)" required />
-          <AppInput v-model="itemForm.name_ar" label="الاسم (AR)" />
+          <AppInput v-model="itemForm.name" :label="t('backoffice.diningMenu.nameEn')" required />
+          <AppInput v-model="itemForm.name_ar" :label="t('backoffice.diningMenu.nameAr')" />
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <MoneyInput v-model="itemForm.price" label="السعر" required />
-          <MoneyInput v-model="itemForm.cost" label="التكلفة (اختياري)" />
+          <MoneyInput v-model="itemForm.price" :label="t('backoffice.diningMenu.priceLabel')" required />
+          <MoneyInput v-model="itemForm.cost" :label="t('backoffice.diningMenu.costLabel')" />
         </div>
         <div class="grid grid-cols-2 gap-3">
-          <AppSelect v-model="itemCategoryIdOption" :options="categories.map(c => ({ value: c.id, label: c.name_ar || c.name }))" label="الفئة" placeholder="بدون فئة" />
-          <AppSelect v-model="itemForm.station" :options="STATIONS" label="المحطة (KDS)" />
+          <AppSelect v-model="itemCategoryIdOption" :options="categories.map(c => ({ value: c.id, label: c.name_ar || c.name }))" :label="t('backoffice.diningMenu.categoryLabel')" :placeholder="t('backoffice.diningMenu.noCategory')" />
+          <AppSelect v-model="itemForm.station" :options="STATIONS" :label="t('backoffice.diningMenu.stationKdsLabel')" />
         </div>
-        <AppInput v-model.number="itemForm.preparation_minutes" type="number" label="وقت التحضير (دقيقة)" />
+        <AppInput v-model.number="itemForm.preparation_minutes" type="number" :label="t('backoffice.diningMenu.prepMinutesLabel')" />
 
         <!-- ── نافذة تقديم الصنف (wagdy.md P-03، dining parity — DINING_CUTOVER_PLAN.md
              Batch 1) — إفطار 7-11، غداء 12-4، عشاء 7-11. فاضي/فاضي = بدون قيد وقتي. ── -->
         <div class="grid grid-cols-2 gap-3">
-          <AppInput v-model="itemForm.available_from_time" type="time" label="متاح من (اختياري)" />
-          <AppInput v-model="itemForm.available_until_time" type="time" label="متاح حتى (اختياري)" />
+          <AppInput v-model="itemForm.available_from_time" type="time" :label="t('backoffice.diningMenu.availableFrom')" />
+          <AppInput v-model="itemForm.available_until_time" type="time" :label="t('backoffice.diningMenu.availableUntil')" />
         </div>
         <p v-if="itemForm.available_from_time || itemForm.available_until_time" class="text-[11px] text-gray-400 dark:text-gray-500 -mt-2">
-          الصنف هيبقى غير متاح للطلب برّه النافذة دي — سيب الحقلين فاضيين لإتاحته طول اليوم.
+          {{ t('backoffice.diningMenu.availabilityWindowHint') }}
         </p>
 
         <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
-          <input type="checkbox" v-model="itemForm.is_available" class="rounded" /> متاح للطلب
+          <input type="checkbox" v-model="itemForm.is_available" class="rounded" /> {{ t('backoffice.diningMenu.availableForOrder') }}
         </label>
 
         <!-- ── صورة الصنف (T-05) — متاح فقط لو الصنف محفوظ ── -->
         <div v-if="itemEdit" class="border border-stone-200 dark:border-border rounded-xl p-3 space-y-2">
-          <div class="text-xs font-bold text-gray-700 dark:text-gray-300">صورة الصنف</div>
+          <div class="text-xs font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.diningMenu.itemImage') }}</div>
           <div class="flex items-center gap-3">
             <!-- preview -->
             <div class="w-16 h-16 rounded-lg overflow-hidden bg-gray-100 border border-stone-200 dark:border-border flex-shrink-0 flex items-center justify-center">
@@ -866,84 +870,84 @@ onMounted(async () => {
               <label class="cursor-pointer">
                 <input type="file" accept="image/jpeg,image/png,image/webp" class="sr-only" @change="uploadItemImage" :disabled="imageUploading" />
                 <AppButton as="span" variant="secondary" size="sm" :loading="imageUploading">
-                  {{ imageUploading ? 'جارٍ الرفع...' : itemEdit.image_url ? 'تغيير الصورة' : 'رفع صورة' }}
+                  {{ imageUploading ? t('backoffice.diningMenu.uploading') : itemEdit.image_url ? t('backoffice.diningMenu.changeImage') : t('backoffice.diningMenu.uploadImage') }}
                 </AppButton>
               </label>
-              <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1">jpeg / png / webp — حد أقصى 2 ميجابايت</p>
+              <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.diningMenu.imageHint') }}</p>
             </div>
           </div>
         </div>
         <p v-else class="text-xs text-muted border border-dashed border-stone-200 dark:border-border rounded-xl px-3 py-2">
-          احفظ الصنف أولاً لرفع صورة له.
+          {{ t('backoffice.diningMenu.saveItemFirst') }}
         </p>
 
 
         <div v-if="itemEdit" class="border-t border-stone-200 dark:border-border pt-4 space-y-3">
-          <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">مجموعات الإضافات</h3>
+          <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200">{{ t('backoffice.diningMenu.extraGroups') }}</h3>
 
           <div v-for="g in itemEdit.extra_groups" :key="g.id" class="bg-background rounded-xl p-3 space-y-1.5">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
                 <span class="font-semibold text-sm text-gray-900 dark:text-gray-100">{{ g.name_ar || g.name }}</span>
-                <AppBadge :variant="g.group_type === 'text' ? 'info' : 'neutral'" size="sm">{{ g.group_type === 'text' ? 'نص حر' : 'قائمة اختيارات' }}</AppBadge>
-                <AppBadge v-if="g.min_select >= 1" variant="warning" size="sm">إجباري</AppBadge>
+                <AppBadge :variant="g.group_type === 'text' ? 'info' : 'neutral'" size="sm">{{ g.group_type === 'text' ? t('backoffice.diningMenu.freeText') : t('backoffice.diningMenu.pickListLabel') }}</AppBadge>
+                <AppBadge v-if="g.min_select >= 1" variant="warning" size="sm">{{ t('backoffice.diningMenu.required') }}</AppBadge>
               </div>
-              <IconButton icon="delete" label="حذف المجموعة" size="sm" variant="danger" @click="deleteExtraGroup(g)" />
+              <IconButton icon="delete" :label="t('backoffice.diningMenu.deleteGroup')" size="sm" variant="danger" @click="deleteExtraGroup(g)" />
             </div>
             <div v-if="g.group_type === 'pick_list' && g.options.length" class="text-xs text-muted">
-              {{ g.options.map(o => `${o.name_ar || o.name} (+${o.price_addition} ج)`).join('، ') }}
+              {{ g.options.map(o => `${o.name_ar || o.name} (+${formatNumber(Number(o.price_addition))} ${t('backoffice.diningMenu.currency')})`).join(t('backoffice.diningMenu.listSeparator')) }}
             </div>
           </div>
 
           <div class="bg-white dark:bg-surface border-2 border-dashed border-stone-200 dark:border-border rounded-xl p-3 space-y-2.5">
-            <div class="text-xs font-bold text-muted uppercase tracking-wide">مجموعة جديدة</div>
+            <div class="text-xs font-bold text-muted uppercase tracking-wide">{{ t('backoffice.diningMenu.newGroup') }}</div>
             <div class="grid grid-cols-2 gap-2">
-              <AppInput v-model="extraGroupForm.name" label="الاسم (EN)" />
-              <AppInput v-model="extraGroupForm.name_ar" label="الاسم (AR) — مثال: كام سمكة؟" />
+              <AppInput v-model="extraGroupForm.name" :label="t('backoffice.diningMenu.nameEn')" />
+              <AppInput v-model="extraGroupForm.name_ar" :label="t('backoffice.diningMenu.groupNameArPlaceholder')" />
             </div>
-            <AppSelect v-model="extraGroupForm.group_type" :options="GROUP_TYPES" label="النوع" />
+            <AppSelect v-model="extraGroupForm.group_type" :options="GROUP_TYPES" :label="t('backoffice.diningMenu.typeLabel')" />
             <div v-if="extraGroupForm.group_type === 'pick_list'" class="grid grid-cols-2 gap-2">
-              <AppInput v-model.number="extraGroupForm.min_select" type="number" label="أقل عدد اختيار" />
-              <AppInput v-model.number="extraGroupForm.max_select" type="number" label="أقصى عدد اختيار" />
+              <AppInput v-model.number="extraGroupForm.min_select" type="number" :label="t('backoffice.diningMenu.minSelect')" />
+              <AppInput v-model.number="extraGroupForm.max_select" type="number" :label="t('backoffice.diningMenu.maxSelect')" />
             </div>
             <div v-else class="flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" :checked="extraGroupForm.min_select >= 1" @change="extraGroupForm.min_select = extraGroupForm.min_select >= 1 ? 0 : 1" class="rounded" />
-              إجباري (لازم الموظف يدخل قيمة)
+              {{ t('backoffice.diningMenu.requiredHint') }}
             </div>
 
             <div v-if="extraGroupForm.group_type === 'pick_list'" class="space-y-2">
               <div v-for="(opt, idx) in extraOptionsDraft" :key="idx" class="flex items-center gap-2">
-                <AppInput v-model="opt.name" placeholder="اسم الاختيار" class="flex-1" />
+                <AppInput v-model="opt.name" :placeholder="t('backoffice.diningMenu.optionNamePlaceholder')" class="flex-1" />
                 <MoneyInput v-model="opt.price_addition" class="w-28" />
-                <IconButton icon="close" label="حذف" size="sm" @click="removeOptionDraft(idx)" />
+                <IconButton icon="close" :label="t('backoffice.diningMenu.delete')" size="sm" @click="removeOptionDraft(idx)" />
               </div>
-              <AppButton variant="ghost" size="sm" @click="addOptionDraft">+ اختيار</AppButton>
+              <AppButton variant="ghost" size="sm" @click="addOptionDraft">+ {{ t('backoffice.diningMenu.addOption') }}</AppButton>
             </div>
 
-            <AppButton variant="secondary" size="sm" block :loading="saving" @click="addExtraGroup">إضافة المجموعة</AppButton>
+            <AppButton variant="secondary" size="sm" block :loading="saving" @click="addExtraGroup">{{ t('backoffice.diningMenu.addGroup') }}</AppButton>
           </div>
         </div>
-        <p v-else class="text-xs text-muted border-t border-stone-200 dark:border-border pt-3">احفظ الصنف الأول عشان تقدر تضيف مجموعات إضافات.</p>
+        <p v-else class="text-xs text-muted border-t border-stone-200 dark:border-border pt-3">{{ t('backoffice.diningMenu.saveItemFirstForExtras') }}</p>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <AppButton variant="ghost" block @click="itemDrawerOpen = false; resetExtraGroupForm()">إغلاق</AppButton>
-          <AppButton variant="primary" block :loading="saving" @click="saveItem">حفظ الصنف</AppButton>
+          <AppButton variant="ghost" block @click="itemDrawerOpen = false; resetExtraGroupForm()">{{ t('backoffice.diningMenu.close') }}</AppButton>
+          <AppButton variant="primary" block :loading="saving" @click="saveItem">{{ t('backoffice.diningMenu.saveItem') }}</AppButton>
         </div>
       </template>
     </AppDrawer>
 
     <!-- ══════════════════ Table drawer ══════════════════ -->
-    <AppDrawer :open="tableDrawerOpen" :title="tableEdit ? 'تعديل طاولة' : 'طاولة جديدة'" width="sm" @close="tableDrawerOpen = false">
+    <AppDrawer :open="tableDrawerOpen" :title="tableEdit ? t('backoffice.diningMenu.editTableTitle') : t('backoffice.diningMenu.newTableTitle')" width="sm" @close="tableDrawerOpen = false">
       <div class="space-y-3">
-        <AppInput v-model="tableForm.table_number" label="رقم الطاولة" required />
-        <AppInput v-model.number="tableForm.capacity" type="number" label="السعة (أشخاص)" />
-        <AppInput v-model="tableForm.section" label="القسم/المنطقة (اختياري)" placeholder="مثال: تراس، صالة داخلية" />
+        <AppInput v-model="tableForm.table_number" :label="t('backoffice.diningMenu.tableNumberLabel')" required />
+        <AppInput v-model.number="tableForm.capacity" type="number" :label="t('backoffice.diningMenu.capacityLabel')" />
+        <AppInput v-model="tableForm.section" :label="t('backoffice.diningMenu.sectionLabel')" :placeholder="t('backoffice.diningMenu.sectionPlaceholder')" />
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <AppButton variant="ghost" block @click="tableDrawerOpen = false">إلغاء</AppButton>
-          <AppButton variant="primary" block :loading="saving" @click="saveTable">حفظ</AppButton>
+          <AppButton variant="ghost" block @click="tableDrawerOpen = false">{{ t('backoffice.diningMenu.cancel') }}</AppButton>
+          <AppButton variant="primary" block :loading="saving" @click="saveTable">{{ t('backoffice.diningMenu.save') }}</AppButton>
         </div>
       </template>
     </AppDrawer>

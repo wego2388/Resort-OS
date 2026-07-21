@@ -202,6 +202,10 @@ primitives, covered by `validate:i18n` strict checks):
   `toLocaleString` calls, fixed 2 physical `mr-1`/`mr-2` utilities, renamed
   a `loadTab(t: ...)` parameter shadowing vue-i18n's `t()`, computed-ified
   5 label/config maps)
+- `views/admin/DiningMenuView.vue`, `views/admin/RecipesView.vue`,
+  `views/admin/FoodCostReportView.vue` (Gate 5 Batch 10, on branch
+  `gate-5-staff-ux-batch-10-dining-recipes-foodcost-i18n` — not yet merged
+  with the other Gate 5 batch branches)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
