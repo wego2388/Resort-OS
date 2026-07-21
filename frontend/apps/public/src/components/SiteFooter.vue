@@ -43,7 +43,8 @@ const year = new Date().getFullYear()
           </a>
         </p>
         <p class="text-sm mb-1">{{ t('marketing.contact.hours') }}:</p>
-        <p class="text-sm">{{ t('marketing.contact.hoursValue') }}</p>
+        <p class="text-sm mb-3">{{ t('marketing.contact.hoursValue') }}</p>
+        <RouterLink to="/contact" class="text-sm font-bold text-brand-sunset rounded hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">✉️ {{ t('marketing.pages.contact.formTitle') }}</RouterLink>
       </div>
 
       <div>
@@ -54,8 +55,12 @@ const year = new Date().getFullYear()
       </div>
     </div>
 
-    <div class="border-t border-white/10 py-5 text-center text-xs text-white/50">
-      © {{ year }} {{ t('marketing.brand.name') }} — {{ t('marketing.footer.rights') }}
+    <div class="border-t border-white/10 py-5 px-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-center text-xs text-white/50">
+      <span>© {{ year }} {{ t('marketing.brand.name') }} — {{ t('marketing.footer.rights') }}</span>
+      <span class="flex items-center gap-4">
+        <RouterLink to="/privacy" class="rounded hover:text-white/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">{{ t('marketing.footer.privacyLink') }}</RouterLink>
+        <RouterLink to="/terms" class="rounded hover:text-white/80 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">{{ t('marketing.footer.termsLink') }}</RouterLink>
+      </span>
     </div>
   </footer>
 </template>

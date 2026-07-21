@@ -21,7 +21,7 @@
 
 export interface MarketingMessages {
   brand: { name: string; nameNative: string; tagline: string }
-  nav: { home: string; rooms: string; dining: string; book: string; contact: string; callUs: string; menuToggle: string }
+  nav: { home: string; rooms: string; dining: string; book: string; contact: string; callUs: string; menuToggle: string; about: string; faq: string }
   hero: {
     eyebrow: string
     title: string
@@ -87,6 +87,31 @@ export interface MarketingMessages {
   }
   footer: {
     rights: string
+    privacyLink: string
+    termsLink: string
+  }
+  // Batch 2 (Public Phase 0 migration, 2026-07-21) — About/Contact/FAQ/
+  // Privacy/Terms, the routes that didn't exist at all before this batch
+  // (confirmed via router/index.ts — only /, /dining, /book, /confirmation
+  // existed). Privacy/Terms/FAQ ship as real page shells with an explicit
+  // "content pending" notice rather than fabricated legal/FAQ text —
+  // Mohamed asked to write that content himself later (2026-07-21).
+  pages: {
+    about: { subtitle: string }
+    contact: {
+      title: string; subtitle: string; formTitle: string
+      fullName: string; fullNamePlaceholder: string
+      email: string; phone: string
+      subject: string; subjectPlaceholder: string
+      message: string; messagePlaceholder: string
+      submit: string; submitting: string
+      validationError: string; genericError: string
+      successTitle: string; successBody: string
+      infoTitle: string
+    }
+    faq: { title: string; subtitle: string; pendingNotice: string }
+    privacy: { title: string; pendingNotice: string }
+    terms: { title: string; pendingNotice: string }
   }
   booking: {
     back: string
@@ -137,6 +162,11 @@ export interface MarketingMessages {
     order: string
     beachCheckin: string
     survey: string
+    about: string
+    contact: string
+    faq: string
+    privacy: string
+    terms: string
   }
 }
 
@@ -146,7 +176,7 @@ const ar: MarketingMessages = {
     nameNative: 'منتجع الخيمة الشاطئي',
     tagline: 'ملاذك الخاص في انتظارك',
   },
-  nav: { home: 'الرئيسية', rooms: 'الغرف', dining: 'المطعم والكافيه', book: 'احجز الآن', contact: 'تواصل معنا', callUs: 'اتصل بنا', menuToggle: 'فتح/إغلاق القائمة' },
+  nav: { home: 'الرئيسية', rooms: 'الغرف', dining: 'المطعم والكافيه', book: 'احجز الآن', contact: 'تواصل معنا', callUs: 'اتصل بنا', menuToggle: 'فتح/إغلاق القائمة', about: 'من نحن', faq: 'الأسئلة الشائعة' },
   hero: {
     eyebrow: 'خليج شرم الماية • شرم الشيخ',
     title: 'منتجع الخيمة الشاطئي',
@@ -208,6 +238,8 @@ const ar: MarketingMessages = {
   },
   footer: {
     rights: 'جميع الحقوق محفوظة',
+    privacyLink: 'سياسة الخصوصية',
+    termsLink: 'الشروط والأحكام',
   },
   booking: {
     back: 'الرئيسية',
@@ -254,6 +286,40 @@ const ar: MarketingMessages = {
     order: 'اطلب طعامك ومشروباتك مباشرة من طاولتك في منتجع الخيمة الشاطئي.',
     beachCheckin: 'تسجيل دخول حجز الشاطئ في منتجع الخيمة الشاطئي.',
     survey: 'شاركنا رأيك في تجربتك بمنتجع الخيمة الشاطئي — رضاك يهمنا.',
+    about: 'تعرّف على قصة منتجع الخيمة الشاطئي وما يميزنا — شاطئ خاص، مطبخ إيطالي أصيل، ورياضات مائية في شرم الشيخ.',
+    contact: 'تواصل مع منتجع الخيمة الشاطئي — أرقام الهاتف، العنوان، ونموذج تواصل مباشر.',
+    faq: 'إجابات على أكثر الأسئلة شيوعًا عن الإقامة في منتجع الخيمة الشاطئي.',
+    privacy: 'سياسة الخصوصية الخاصة بمنتجع الخيمة الشاطئي.',
+    terms: 'الشروط والأحكام الخاصة بمنتجع الخيمة الشاطئي.',
+  },
+  pages: {
+    about: { subtitle: 'قصتنا وما يميزنا' },
+    contact: {
+      title: 'تواصل معنا',
+      subtitle: 'يسعدنا الرد على استفساراتك — راسلنا وسيتواصل معك فريقنا خلال 24 ساعة',
+      formTitle: 'أرسل رسالة',
+      fullName: 'الاسم الكامل', fullNamePlaceholder: 'محمد أحمد',
+      email: 'البريد الإلكتروني', phone: 'رقم الهاتف',
+      subject: 'الموضوع', subjectPlaceholder: 'استفسار عام',
+      message: 'الرسالة', messagePlaceholder: 'اكتب رسالتك هنا...',
+      submit: 'إرسال', submitting: 'جاري الإرسال...',
+      validationError: 'الرجاء ملء الاسم والبريد الإلكتروني والرسالة',
+      genericError: 'حدث خطأ، يرجى المحاولة مرة أخرى أو التواصل عبر الهاتف',
+      successTitle: 'تم إرسال رسالتك بنجاح!', successBody: 'سيتواصل معك فريقنا قريبًا',
+      infoTitle: 'بيانات التواصل',
+    },
+    faq: {
+      title: 'الأسئلة الشائعة', subtitle: 'إجابات على أكثر الأسئلة شيوعًا',
+      pendingNotice: 'المحتوى قيد الإعداد — لأي استفسار الآن، تواصل معنا مباشرة',
+    },
+    privacy: {
+      title: 'سياسة الخصوصية',
+      pendingNotice: 'سيتم نشر سياسة الخصوصية الكاملة قريبًا. لأي استفسار بخصوص بياناتك، تواصل معنا مباشرة.',
+    },
+    terms: {
+      title: 'الشروط والأحكام',
+      pendingNotice: 'سيتم نشر الشروط والأحكام الكاملة قريبًا. لأي استفسار، تواصل معنا مباشرة.',
+    },
   },
 }
 
@@ -263,7 +329,7 @@ const en: MarketingMessages = {
     nameNative: 'El Kheima Beach Resort',
     tagline: 'Your Private Retreat Awaits',
   },
-  nav: { home: 'Home', rooms: 'Rooms', dining: 'Dining', book: 'Book Now', contact: 'Contact', callUs: 'Call Us', menuToggle: 'Toggle menu' },
+  nav: { home: 'Home', rooms: 'Rooms', dining: 'Dining', book: 'Book Now', contact: 'Contact', callUs: 'Call Us', menuToggle: 'Toggle menu', about: 'About', faq: 'FAQ' },
   hero: {
     eyebrow: 'Sharm El Maya Bay • Sharm El Sheikh',
     title: 'El Kheima Beach Resort',
@@ -325,6 +391,8 @@ const en: MarketingMessages = {
   },
   footer: {
     rights: 'All rights reserved',
+    privacyLink: 'Privacy Policy',
+    termsLink: 'Terms & Conditions',
   },
   booking: {
     back: 'Home',
@@ -371,6 +439,40 @@ const en: MarketingMessages = {
     order: 'Order food and drinks straight from your table at El Kheima Beach Resort.',
     beachCheckin: 'Beach reservation check-in at El Kheima Beach Resort.',
     survey: 'Share your feedback about your stay at El Kheima Beach Resort — your satisfaction matters to us.',
+    about: 'Discover the story of El Kheima Beach Resort and what makes us different — a private beach, authentic Italian dining, and water sports in Sharm El Sheikh.',
+    contact: 'Get in touch with El Kheima Beach Resort — phone numbers, address, and a direct contact form.',
+    faq: 'Answers to the most common questions about staying at El Kheima Beach Resort.',
+    privacy: "El Kheima Beach Resort's privacy policy.",
+    terms: "El Kheima Beach Resort's terms and conditions.",
+  },
+  pages: {
+    about: { subtitle: 'Our story and what makes us different' },
+    contact: {
+      title: 'Contact Us',
+      subtitle: "We'd love to hear from you — send us a message and our team will get back to you within 24 hours",
+      formTitle: 'Send a Message',
+      fullName: 'Full Name', fullNamePlaceholder: 'John Smith',
+      email: 'Email', phone: 'Phone Number',
+      subject: 'Subject', subjectPlaceholder: 'General inquiry',
+      message: 'Message', messagePlaceholder: 'Write your message here...',
+      submit: 'Send', submitting: 'Sending...',
+      validationError: 'Please fill in your name, email, and message',
+      genericError: 'Something went wrong — please try again or contact us by phone',
+      successTitle: 'Your message was sent successfully!', successBody: 'Our team will get back to you shortly',
+      infoTitle: 'Contact Information',
+    },
+    faq: {
+      title: 'Frequently Asked Questions', subtitle: 'Answers to our most common questions',
+      pendingNotice: 'Content is being prepared — for any question now, please contact us directly',
+    },
+    privacy: {
+      title: 'Privacy Policy',
+      pendingNotice: 'The full privacy policy will be published soon. For any question about your data, please contact us directly.',
+    },
+    terms: {
+      title: 'Terms & Conditions',
+      pendingNotice: 'The full terms & conditions will be published soon. For any question, please contact us directly.',
+    },
   },
 }
 
@@ -380,7 +482,7 @@ const ru: MarketingMessages = {
     nameNative: 'Эль-Хейма Бич Резорт',
     tagline: 'Ваше личное убежище ждёт вас',
   },
-  nav: { home: 'Главная', rooms: 'Номера', dining: 'Питание', book: 'Забронировать', contact: 'Контакты', callUs: 'Позвонить', menuToggle: 'Открыть/закрыть меню' },
+  nav: { home: 'Главная', rooms: 'Номера', dining: 'Питание', book: 'Забронировать', contact: 'Контакты', callUs: 'Позвонить', menuToggle: 'Открыть/закрыть меню', about: 'О нас', faq: 'Вопросы и ответы' },
   hero: {
     eyebrow: 'Бухта Шарм-эль-Майя • Шарм-эль-Шейх',
     title: 'El Kheima Beach Resort',
@@ -442,6 +544,8 @@ const ru: MarketingMessages = {
   },
   footer: {
     rights: 'Все права защищены',
+    privacyLink: 'Политика конфиденциальности',
+    termsLink: 'Условия использования',
   },
   booking: {
     back: 'Главная',
@@ -488,6 +592,40 @@ const ru: MarketingMessages = {
     order: 'Заказывайте еду и напитки прямо со своего столика в El Kheima Beach Resort.',
     beachCheckin: 'Регистрация пляжного бронирования в El Kheima Beach Resort.',
     survey: 'Поделитесь своим мнением о пребывании в El Kheima Beach Resort — ваше мнение важно для нас.',
+    about: 'Узнайте историю El Kheima Beach Resort и что делает нас особенными — частный пляж, аутентичная итальянская кухня и водные виды спорта в Шарм-эль-Шейхе.',
+    contact: 'Свяжитесь с El Kheima Beach Resort — номера телефонов, адрес и форма обратной связи.',
+    faq: 'Ответы на самые распространённые вопросы о проживании в El Kheima Beach Resort.',
+    privacy: 'Политика конфиденциальности El Kheima Beach Resort.',
+    terms: 'Условия использования El Kheima Beach Resort.',
+  },
+  pages: {
+    about: { subtitle: 'Наша история и что делает нас особенными' },
+    contact: {
+      title: 'Свяжитесь с нами',
+      subtitle: 'Будем рады услышать вас — отправьте сообщение, и наша команда свяжется с вами в течение 24 часов',
+      formTitle: 'Отправить сообщение',
+      fullName: 'Полное имя', fullNamePlaceholder: 'Иван Иванов',
+      email: 'Электронная почта', phone: 'Номер телефона',
+      subject: 'Тема', subjectPlaceholder: 'Общий вопрос',
+      message: 'Сообщение', messagePlaceholder: 'Напишите ваше сообщение здесь...',
+      submit: 'Отправить', submitting: 'Отправка...',
+      validationError: 'Пожалуйста, заполните имя, email и сообщение',
+      genericError: 'Произошла ошибка — попробуйте снова или свяжитесь с нами по телефону',
+      successTitle: 'Ваше сообщение успешно отправлено!', successBody: 'Наша команда свяжется с вами в ближайшее время',
+      infoTitle: 'Контактная информация',
+    },
+    faq: {
+      title: 'Часто задаваемые вопросы', subtitle: 'Ответы на самые популярные вопросы',
+      pendingNotice: 'Раздел находится в разработке — по любым вопросам свяжитесь с нами напрямую',
+    },
+    privacy: {
+      title: 'Политика конфиденциальности',
+      pendingNotice: 'Полная политика конфиденциальности будет опубликована в ближайшее время. По вопросам о ваших данных свяжитесь с нами напрямую.',
+    },
+    terms: {
+      title: 'Условия использования',
+      pendingNotice: 'Полные условия использования будут опубликованы в ближайшее время. По любым вопросам свяжитесь с нами напрямую.',
+    },
   },
 }
 
@@ -497,7 +635,7 @@ const it: MarketingMessages = {
     nameNative: 'El Kheima Beach Resort',
     tagline: 'Il tuo rifugio privato ti aspetta',
   },
-  nav: { home: 'Home', rooms: 'Camere', dining: 'Ristorazione', book: 'Prenota Ora', contact: 'Contatti', callUs: 'Chiamaci', menuToggle: 'Attiva/disattiva menu' },
+  nav: { home: 'Home', rooms: 'Camere', dining: 'Ristorazione', book: 'Prenota Ora', contact: 'Contatti', callUs: 'Chiamaci', menuToggle: 'Attiva/disattiva menu', about: 'Chi siamo', faq: 'FAQ' },
   hero: {
     eyebrow: 'Baia di Sharm El Maya • Sharm El Sheikh',
     title: 'El Kheima Beach Resort',
@@ -559,6 +697,8 @@ const it: MarketingMessages = {
   },
   footer: {
     rights: 'Tutti i diritti riservati',
+    privacyLink: 'Informativa sulla privacy',
+    termsLink: 'Termini e condizioni',
   },
   booking: {
     back: 'Home',
@@ -605,6 +745,40 @@ const it: MarketingMessages = {
     order: 'Ordina cibo e bevande direttamente dal tuo tavolo a El Kheima Beach Resort.',
     beachCheckin: 'Check-in della prenotazione spiaggia a El Kheima Beach Resort.',
     survey: 'Condividi la tua opinione sul soggiorno a El Kheima Beach Resort — la tua soddisfazione è importante per noi.',
+    about: 'Scopri la storia di El Kheima Beach Resort e cosa ci rende unici — spiaggia privata, autentica cucina italiana e sport acquatici a Sharm El Sheikh.',
+    contact: 'Contatta El Kheima Beach Resort — numeri di telefono, indirizzo e un modulo di contatto diretto.',
+    faq: 'Risposte alle domande più comuni sul soggiorno a El Kheima Beach Resort.',
+    privacy: 'Informativa sulla privacy di El Kheima Beach Resort.',
+    terms: 'Termini e condizioni di El Kheima Beach Resort.',
+  },
+  pages: {
+    about: { subtitle: 'La nostra storia e cosa ci rende unici' },
+    contact: {
+      title: 'Contattaci',
+      subtitle: 'Saremo felici di sentirti — inviaci un messaggio e il nostro team ti risponderà entro 24 ore',
+      formTitle: 'Invia un messaggio',
+      fullName: 'Nome completo', fullNamePlaceholder: 'Mario Rossi',
+      email: 'Email', phone: 'Numero di telefono',
+      subject: 'Oggetto', subjectPlaceholder: 'Richiesta generale',
+      message: 'Messaggio', messagePlaceholder: 'Scrivi qui il tuo messaggio...',
+      submit: 'Invia', submitting: 'Invio in corso...',
+      validationError: 'Compila nome, email e messaggio',
+      genericError: 'Si è verificato un errore — riprova o contattaci telefonicamente',
+      successTitle: 'Il tuo messaggio è stato inviato con successo!', successBody: 'Il nostro team ti risponderà a breve',
+      infoTitle: 'Informazioni di contatto',
+    },
+    faq: {
+      title: 'Domande frequenti', subtitle: 'Risposte alle domande più comuni',
+      pendingNotice: 'Contenuto in preparazione — per qualsiasi domanda, contattaci direttamente',
+    },
+    privacy: {
+      title: 'Informativa sulla privacy',
+      pendingNotice: "L'informativa completa sulla privacy sarà pubblicata a breve. Per domande sui tuoi dati, contattaci direttamente.",
+    },
+    terms: {
+      title: 'Termini e condizioni',
+      pendingNotice: 'I termini e condizioni completi saranno pubblicati a breve. Per qualsiasi domanda, contattaci direttamente.',
+    },
   },
 }
 

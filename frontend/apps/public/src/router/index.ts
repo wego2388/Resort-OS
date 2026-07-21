@@ -2,11 +2,29 @@ import { createRouter, createWebHistory } from 'vue-router'
 
 const router = createRouter({
   history: createWebHistory(),
+  // Batch 2 fix (2026-07-21): the header's "Rooms" nav link is `#rooms`
+  // (Home's own in-page anchor) — with no scrollBehavior, clicking it from
+  // any page other than Home was a dead no-op (no element with that id
+  // exists there). Cross-page hash navigation now scrolls to the target
+  // once the destination page has mounted; same-page hash clicks keep
+  // working via the browser's native anchor behavior.
+  scrollBehavior(to) {
+    if (to.hash) return { el: to.hash, behavior: 'smooth' }
+    return { top: 0 }
+  },
   routes: [
     { path: '/', component: () => import('../views/HomeView.vue'), meta: { titleKey: 'marketing.nav.home', descriptionKey: 'marketing.seo.home' } },
     { path: '/dining', component: () => import('../views/DiningView.vue'), meta: { titleKey: 'marketing.nav.dining', descriptionKey: 'marketing.seo.dining' } },
     { path: '/book', component: () => import('../views/BookingView.vue'), meta: { titleKey: 'marketing.booking.title', descriptionKey: 'marketing.seo.booking' } },
     { path: '/confirmation', component: () => import('../views/ConfirmationView.vue'), meta: { titleKey: 'marketing.confirmation.title', descriptionKey: 'marketing.seo.confirmation', noindex: true } },
+
+    // ── Batch 2 (Public Phase 0 migration, 2026-07-21) — didn't exist at
+    // all before this batch (only the 4 routes above did).
+    { path: '/about', component: () => import('../views/AboutView.vue'), meta: { titleKey: 'marketing.nav.about', descriptionKey: 'marketing.seo.about' } },
+    { path: '/contact', component: () => import('../views/ContactView.vue'), meta: { titleKey: 'marketing.pages.contact.title', descriptionKey: 'marketing.seo.contact' } },
+    { path: '/faq', component: () => import('../views/FaqView.vue'), meta: { titleKey: 'marketing.pages.faq.title', descriptionKey: 'marketing.seo.faq' } },
+    { path: '/privacy', component: () => import('../views/PrivacyView.vue'), meta: { titleKey: 'marketing.pages.privacy.title', descriptionKey: 'marketing.seo.privacy' } },
+    { path: '/terms', component: () => import('../views/TermsView.vue'), meta: { titleKey: 'marketing.pages.terms.title', descriptionKey: 'marketing.seo.terms' } },
 
     // ── Guest QR flows — دُمجت من apps/qr المستقل سابقاً (2026-07-06) ────
     // كل الروابط دي بتوصل للضيف عن طريق مسح QR على طاولة/شمسية، بدون أي
