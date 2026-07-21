@@ -2,8 +2,8 @@
 
 **الحالة:** خارطة حية؛ Gate 1A وشريحة Dining-paid من Gate 1B وGate 2 وGate 3
 مُعتمَدة. Gate 4 منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20)، بانتظار
-مراجعة مستقلة قبل الاعتماد. Gate 5 Batch 2 (لوحات الإدارة) منفَّذة ومُتحقَّق
-منها ذاتيًا (2026-07-20) — الباقي (~34 شاشة) دفعات لاحقة.
+مراجعة مستقلة قبل الاعتماد. Gate 5 Batch 3 (CRM) منفَّذة ومُتحقَّق منها ذاتيًا
+(2026-07-20) — الباقي (~39 شاشة) دفعات لاحقة، HR (Batch 4) التالية.
 **المصدر:** مراجعة 360° بتاريخ 2026-07-17 + القرارات الموجودة في
 `docs/decisions/` + `wagdy.md`.
 
@@ -18,7 +18,7 @@
 | Gate 2: Super Admin safeguards | **مكتملة ومُعتمَدة (2A→2B3B)** | Claude/Codex | server-side policy/concurrency/session/audit tests |
 | Gate 3: i18n/design/test foundation | **مكتملة ومُعتمَدة (2026-07-19)** | Claude/Codex | bilingual shell + reference screens + quality harness |
 | Gate 4: Dining financial integrity | **منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20) — Codex راجعت جولة أولى، كل الملاحظات + step-up المالي اتصلحوا، بانتظار مراجعة مستقلة تالية** | Claude | settlement/idempotency/shift-lock/one-active-order + 18/18 Postgres concurrency؛ لا commit/push بعد؛ مفيش بند مؤجَّل متبقٍّ |
-| Gate 5: Staff UX batches | **Batch 2 (لوحات الإدارة) منفَّذة ومُتحقَّق منها ذاتيًا (2026-07-20)** — الباقي (~34 شاشة) لسه لاحق | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
+| Gate 5: Staff UX batches | **Batch 3 (CRM) منفَّذة ومُتحقَّق منها ذاتيًا (2026-07-20)** — الباقي (~39 شاشة) لسه لاحق | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
 | Gate 7: Public migration batches | مغلقة على Gates 2 و3 واعتماد Phase 0 | Claude | visual/API diff لكل batch بلا legacy backend |
 | Gate 8: QR + Guest Service | مغلقة على Gates 1A و3 و4 و7 | Claude | scan-to-call-to-payment E2E evidence |
 | Gate 9: production evidence | مغلقة حتى تحديد release scope | الفريق | CI/staging/security/restore/rollback evidence |
@@ -167,6 +167,12 @@ missing keys أو strings حرجة hard-coded.
 تعديل كود — كانت مترجمة بالفعل)، `DashboardView.vue`، `SalesDashboardView.vue`،
 `BeachLiveDashboardView.vue`. الثلاثة الأخيرة كان فيها `dir="rtl"` ثابت و
 `ar-EG` locale calls (مخالفات Gate 3 ما كانتش اتكشفت) — اتصلحت مع الترجمة.
+
+**Batch 3 — CRM (2026-07-20)، منفَّذة ومُتحقَّق منها ذاتيًا، فرع
+`gate-5-staff-ux-batch-3-crm-i18n`:** `CRMView.vue` (7 تابات + مودالين)، أكبر
+شاشة اتترجمت لحد دلوقتي. نفس فئة مخالفات Gate 3 (`dir="rtl"` ثابت، `ar-EG`
+locale calls، physical CSS `text-right`/`mr-2`) اتكشفت واتصلحت، زائد تعارض
+اسم `t` مع دالة الترجمة في مكانين (function parameter + loop variable).
 
 ### Gate 6 — Public Phase 0 فقط — مسموح أن يبدأ الآن
 

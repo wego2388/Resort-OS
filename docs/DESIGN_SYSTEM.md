@@ -159,6 +159,12 @@ primitives, covered by `validate:i18n` strict checks):
 - `views/admin/BeachLiveDashboardView.vue` (Gate 5 Batch 2, 2026-07-20 — same
   cleanup; also had a local `t` loop variable shadowing vue-i18n's `t()`,
   renamed)
+- `views/admin/CRMView.vue` (Gate 5 Batch 3, 2026-07-20 — largest screen
+  migrated so far, 7 tabs + 2 modals; removed a hard-coded `dir="rtl"` and
+  `ar-EG`/`ar-EG` locale calls that predated Gate 3, fixed 2 physical
+  `text-right`/`mr-2` utilities, renamed a `t` loop variable/function
+  parameter shadowing vue-i18n's `t()`, and computed-ified all label/config
+  lookup maps so they react to locale changes)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
@@ -167,6 +173,6 @@ removed, formatting centralized; **full copy migration deliberately deferred**
 _(none currently — both prior entries were promoted above in Gate 5 Batch 1)_
 
 Not yet migrated (tracked debt, next batches — do not claim bilingual):
-the remaining ~34 admin/ops/pos/portal screens. Migrate in reviewed batches
+the remaining ~39 admin/ops/pos/portal screens. Migrate in reviewed batches
 per Decision 0002, extending the strict list in
 `apps/el-kheima/scripts/validate-i18n.mjs` as each batch lands.
