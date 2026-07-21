@@ -21,6 +21,7 @@ from app.modules.core.models import (
     GuestAlert,
     Notification,
     PinCredential,
+    ServiceLocationToken,
     Setting,
     UserPermission,
 )
@@ -567,3 +568,45 @@ def reset_pin_failures(db: Session, cred: PinCredential) -> PinCredential:
     cred.locked_until = None
     db.flush()
     return cred
+
+
+# ─────────────────────── ServiceLocationToken ─────────────────────────
+
+def create_service_location_token(
+    db: Session, *, token: str, branch_id: int, location_type: str,
+    location_id: int, created_by: int,
+) -> ServiceLocationToken:
+    row = ServiceLocationToken(
+        token=token, branch_id=branch_id, location_type=location_type,
+        location_id=location_id, created_by=created_by,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def deactivate_service_location_tokens(
+    db: Session, branch_id: int, location_type: str, location_id: int,
+) -> None:
+    (
+        db.query(ServiceLocationToken)
+        .filter(
+            ServiceLocationToken.branch_id == branch_id,
+            ServiceLocationToken.location_type == location_type,
+            ServiceLocationToken.location_id == location_id,
+            ServiceLocationToken.is_active.is_(True),
+        )
+        .update({"is_active": False}, synchronize_session=False)
+    )
+    db.flush()
+
+
+def get_active_service_location_token(db: Session, token: str) -> Optional[ServiceLocationToken]:
+    return (
+        db.query(ServiceLocationToken)
+        .filter(
+            ServiceLocationToken.token == token,
+            ServiceLocationToken.is_active.is_(True),
+        )
+        .first()
+    )

@@ -34,6 +34,9 @@ Endpoints:
   GET    /api/v1/alerts                    (طاقم الخدمة)
   PATCH  /api/v1/alerts/{id}/status        (طاقم الخدمة)
   WS     /api/v1/ws/alerts/{branch_id}     (بث لحظي لطاقم الخدمة)
+
+  POST   /api/v1/service-location-tokens        (مدير+ — توليد/تدوير)
+  GET    /api/v1/public/service-location        (بدون auth — الضيف يحلّل QR)
 ═══════════════════════════════════════════════════════════════════════
 """
 from __future__ import annotations
@@ -77,6 +80,9 @@ from app.modules.core.schemas import (
     PinSetRequest,
     PinSwitchRequest,
     PinSwitchResponse,
+    ServiceLocationRead,
+    ServiceLocationTokenCreate,
+    ServiceLocationTokenRead,
     SettingRead,
     SettingUpdate,
     UserPermissionGrantRequest,
@@ -812,6 +818,51 @@ async def update_guest_alert_status(
         "alert": GuestAlertRead.model_validate(alert).model_dump(mode="json"),
     })
     return GuestAlertRead.model_validate(alert)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Service Location Token — Gate 8 Phase 1 Batch B (راجع
+# docs/decisions/0001-qr-guest-service-mode.md بند 5/6). المنطق كامل في
+# services.create_or_rotate_service_location_token/
+# resolve_service_location_token — الراوتر هنا ترجمة HTTP بس.
+# ══════════════════════════════════════════════════════════════════════
+
+@router.post(
+    "/service-location-tokens",
+    response_model=ServiceLocationTokenRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_service_location_token(
+    data: ServiceLocationTokenCreate,
+    db: DbDep,
+    user=Depends(get_manager_user),
+):
+    """توليد/تدوير رمز موقع خدمة (طاولة/موقع شاطئ/غرفة) — أي رمز نشط سابق
+    لنفس الموقع بيتلغي فورًا. مستخدم من شاشة طباعة QR الإدارية."""
+    try:
+        token = services.create_or_rotate_service_location_token(
+            db, data.branch_id, data.location_type, data.location_id, requesting_user=user,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return ServiceLocationTokenRead.model_validate(token)
+
+
+@router.get(
+    "/public/service-location",
+    response_model=ServiceLocationRead,
+    tags=["core-public"],
+)
+def resolve_service_location(db: DbDep, token: str = Query(...)):
+    """Public — بدون auth. الضيف بيمسح QR فيوصله `/s/{token}`، الفرونت إند
+    بينادي هنا يحلّل السياق الحقيقي (فرع/نوع موقع/موقع) قبل عرض أي حاجة —
+    الرابط نفسه ميحملش أي ID خام أبدًا (Decision 0001 بند 6)."""
+    try:
+        return services.resolve_service_location_token(db, token)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 # ══════════════════════════════════════════════════════════════════════

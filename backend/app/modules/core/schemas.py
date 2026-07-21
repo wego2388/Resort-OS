@@ -395,6 +395,44 @@ class GuestAlertStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(acknowledged|resolved)$")
 
 
+# ─────────────────────── ServiceLocationToken ──────────────────────────
+# راجع app/modules/core/models.py::ServiceLocationToken للشرح الكامل.
+
+_LOCATION_TYPE_PATTERN = _CONTEXT_TYPE_PATTERN  # نفس enum GuestAlert.context_type بالضبط
+
+
+class ServiceLocationTokenCreate(BaseModel):
+    """للاستخدام من POST /service-location-tokens — موظف مصرَّح له بس
+    (manager+، راجع الـrouter)."""
+    branch_id:     int
+    location_type: str = Field(..., pattern=_LOCATION_TYPE_PATTERN)
+    location_id:   int
+
+
+class ServiceLocationTokenRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:            int
+    token:         str
+    branch_id:     int
+    location_type: str
+    location_id:   int
+    is_active:     bool
+    created_at:    datetime
+
+
+class ServiceLocationRead(BaseModel):
+    """رد GET /public/service-location?token=... — السياق المُشتَق من الرمز
+    بس، بدون أي بيانات داخلية حسّاسة (لا token تاني، لا created_by، لا
+    أي IDs غير location_id نفسه اللي الرمز أصلاً بيمثّله)."""
+    branch_id:     int
+    location_type: str
+    location_id:   int
+    location_label: str
+    # وصف بشري بسيط ("طاولة 5"، "موقع الشاطئ 12") يبنيه الـservice من
+    # الصف الحقيقي (VenueTable.table_number مثلاً) — الضيف يشوفه بدل ما
+    # يشوف رقم ID خام.
+
+
 # ─────────────────────── PIN Credentials ──────────────────────────────
 
 class PinSetRequest(BaseModel):

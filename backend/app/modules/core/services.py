@@ -18,7 +18,14 @@ from typing import TYPE_CHECKING, Optional
 from sqlalchemy.orm import Session
 
 from app.modules.core import crud
-from app.modules.core.models import Branch, GuestAlert, Notification, PinCredential, UserPermission
+from app.modules.core.models import (
+    Branch,
+    GuestAlert,
+    Notification,
+    PinCredential,
+    ServiceLocationToken,
+    UserPermission,
+)
 from app.modules.core.permission_catalog import PERMISSION_CATALOG
 from app.modules.core.schemas import (
     AuditLogCreate,
@@ -27,6 +34,7 @@ from app.modules.core.schemas import (
     EffectivePermission,
     GuestAlertCreate,
     NotificationCreate,
+    ServiceLocationRead,
     SettingRead,
     UserPermissionCreate,
     normalize_staff_language,
@@ -1050,42 +1058,43 @@ def assert_guest_alerts_enabled(db: Session, branch_id: int) -> None:
         raise ValueError("نداء الضيف غير متاح حاليًا")
 
 
-def _assert_guest_alert_context_belongs_to_branch(db: Session, data: GuestAlertCreate) -> None:
-    """Gate 8 Phase 1 (2026-07-21): context_id مش FK (راجع GuestAlert
-    docstring)، وقبل كده مفيش أي تحقق إنه ينتمي فعليًا لـbranch_id —
-    ضيف يقدر يبعت context_id لطاولة/موقع شاطئ/غرفة تابعة لفرع تاني تمامًا،
-    والتنبيه هيوصل لطاقم الفرع الغلط (أو يظهر لهم مكان مش موجود أصلاً).
-    نفس فئة الثغرة اللي اتصلحت في beach check-in وGuest Alerts read-side
-    (core_services.assert_branch_access) — هنا التحقق مختلف لأن الضيف
-    بدون auth أصلاً، فمفيش "مستخدم" نتحقق من فرعه؛ التحقق هنا إن الموقع
-    المُدَّعى (context_id) حقيقي وتابع لنفس الفرع المُدَّعى (branch_id)،
-    مش أكتر."""
-    if data.context_type == "other":
-        return  # مفيش موقع فعلي نتحقق منه — نص حر بس (راجع GuestAlertCreate)
+def assert_location_belongs_to_branch(
+    db: Session, branch_id: int, location_type: str, location_id: int,
+) -> None:
+    """Gate 8 Phase 1 (2026-07-21): تحقق مشترك يستخدمه أي كود بيتعامل مع
+    "موقع خدمة" عام (dining_table|beach_location|room|other) بدون FK حقيقي
+    — GuestAlert وServiceLocationToken الاتنين. قبل كده مفيش أي تحقق إن
+    location_id ينتمي فعليًا لـbranch_id — ضيف/طلب يقدر يشاور على طاولة/
+    موقع شاطئ/غرفة تابعة لفرع تاني تمامًا. نفس فئة الثغرة اللي اتصلحت في
+    beach check-in (core_services.assert_branch_access)، بس هنا مفيش
+    "مستخدم" نتحقق من فرعه (context عام مش مستخدم مصادَق عليه بالضرورة)؛
+    التحقق إن الموقع المُدَّعى حقيقي وتابع لنفس الفرع المُدَّعى، مش أكتر."""
+    if location_type == "other":
+        return  # مفيش موقع فعلي نتحقق منه — نص حر بس
 
-    if data.context_type == "dining_table":
+    if location_type == "dining_table":
         from app.modules.dining.models import VenueTable  # noqa: PLC0415
         exists = (
             db.query(VenueTable.id)
-            .filter(VenueTable.id == data.context_id, VenueTable.branch_id == data.branch_id)
+            .filter(VenueTable.id == location_id, VenueTable.branch_id == branch_id)
             .first()
         )
         if not exists:
             raise ValueError("الطاولة المحدّدة لا تنتمي لهذا الفرع")
-    elif data.context_type == "beach_location":
+    elif location_type == "beach_location":
         from app.modules.beach.models import BeachLocation  # noqa: PLC0415
         exists = (
             db.query(BeachLocation.id)
-            .filter(BeachLocation.id == data.context_id, BeachLocation.branch_id == data.branch_id)
+            .filter(BeachLocation.id == location_id, BeachLocation.branch_id == branch_id)
             .first()
         )
         if not exists:
             raise ValueError("موقع الشاطئ المحدّد لا ينتمي لهذا الفرع")
-    elif data.context_type == "room":
+    elif location_type == "room":
         from app.modules.pms.models import Room  # noqa: PLC0415
         exists = (
             db.query(Room.id)
-            .filter(Room.id == data.context_id, Room.branch_id == data.branch_id)
+            .filter(Room.id == location_id, Room.branch_id == branch_id)
             .first()
         )
         if not exists:
@@ -1096,7 +1105,7 @@ def create_guest_alert(db: Session, data: GuestAlertCreate) -> GuestAlert:
     if not crud.get_branch(db, data.branch_id):
         raise ValueError(f"الفرع {data.branch_id} غير موجود")
     assert_guest_alerts_enabled(db, data.branch_id)
-    _assert_guest_alert_context_belongs_to_branch(db, data)
+    assert_location_belongs_to_branch(db, data.branch_id, data.context_type, data.context_id)
 
     # Gate 8 Phase 1 — dedup/idempotency (Decision 0001's Phase-1 list):
     # نفس الموقع بيبعت نفس نوع الطلب مرتين (ضغطة زيادة بالغلط، أو ضيف
@@ -1142,3 +1151,68 @@ def update_alert_status(
     db.commit()
     db.refresh(alert)
     return alert
+
+
+# ─────────────────────── ServiceLocationToken ──────────────────────────
+# راجع app/modules/core/models.py::ServiceLocationToken — رمز عام لموقع
+# خدمة (طاولة/موقع شاطئ/غرفة)، Gate 8 Phase 1.
+
+def _location_label(db: Session, location_type: str, location_id: int) -> str:
+    """وصف بشري بسيط للموقع — الضيف يشوفه بدل رقم ID خام (راجع
+    ServiceLocationRead's docstring)."""
+    if location_type == "dining_table":
+        from app.modules.dining.models import VenueTable  # noqa: PLC0415
+        table = db.query(VenueTable).filter(VenueTable.id == location_id).first()
+        return f"طاولة {table.table_number}" if table else "طاولة"
+    if location_type == "beach_location":
+        from app.modules.beach.models import BeachLocation  # noqa: PLC0415
+        loc = db.query(BeachLocation).filter(BeachLocation.id == location_id).first()
+        return loc.name if loc and loc.name else "موقع شاطئ"
+    if location_type == "room":
+        from app.modules.pms.models import Room  # noqa: PLC0415
+        room = db.query(Room).filter(Room.id == location_id).first()
+        return f"غرفة {room.name}" if room else "غرفة"
+    return "موقع"
+
+
+def create_or_rotate_service_location_token(
+    db: Session, branch_id: int, location_type: str, location_id: int, requesting_user,
+) -> ServiceLocationToken:
+    """يولّد رمز جديد لموقع خدمة، ويُلغي أي رمز نشط سابق لنفس الموقع فورًا
+    (is_active=False) — "قابل للتدوير" زي ما Decision 0001 طالب: QR قديم
+    مطبوع لنفس الطاولة بيبطل تلقائيًا لحظة توليد رمز جديد ليها، من غير أي
+    خطوة إلغاء منفصلة. يتحقق إن الموقع حقيقي وتابع لنفس الفرع الأول (نفس
+    فحص GuestAlert بالظبط — راجع assert_location_belongs_to_branch)، وإن
+    المدير المنفّذ فعلاً مرتبط بنفس الفرع (assert_branch_access — نفس قيد
+    GET /alerts بالظبط، مدير فرع تاني ميقدرش يولّد رموز لطاولات مش بتاعته)."""
+    if not crud.get_branch(db, branch_id):
+        raise ValueError(f"الفرع {branch_id} غير موجود")
+    assert_branch_access(db, requesting_user, branch_id, "توليد رمز موقع خدمة")
+    assert_location_belongs_to_branch(db, branch_id, location_type, location_id)
+
+    import secrets  # noqa: PLC0415
+    crud.deactivate_service_location_tokens(db, branch_id, location_type, location_id)
+    token = crud.create_service_location_token(
+        db, token=secrets.token_urlsafe(32), branch_id=branch_id,
+        location_type=location_type, location_id=location_id, created_by=requesting_user.id,
+    )
+    db.commit()
+    db.refresh(token)
+    return token
+
+
+def resolve_service_location_token(db: Session, token: str) -> ServiceLocationRead:
+    """Public — بدون auth. Decision 0001 بند 6: "the backend derives the
+    trusted branch/outlet/service-location context — it does not trust
+    those IDs from the public client." كل استخدام تاني للموقع (قائمة
+    الطعام، تنبيه الضيف) لازم يمرّ من هنا الأول، مش ياخد IDs مباشرة من
+    الرابط/الـquery params."""
+    row = crud.get_active_service_location_token(db, token)
+    if not row:
+        raise ValueError("الرمز غير صالح أو منتهي")
+    return ServiceLocationRead(
+        branch_id=row.branch_id,
+        location_type=row.location_type,
+        location_id=row.location_id,
+        location_label=_location_label(db, row.location_type, row.location_id),
+    )

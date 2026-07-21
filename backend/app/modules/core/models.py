@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.kernel.models.mixins import TimestampMixin
@@ -172,6 +172,44 @@ class GuestAlert(Base, TimestampMixin):
     # user.id اللي قفل التنبيه — بدون FK زي order_items.voided_by (نفس السبب:
     # مرجع تدقيقي بسيط، مش علاقة يحتاج SQLAlchemy يحمّلها)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ─────────────────────── ServiceLocationToken ──────────────────────────
+# Gate 8 Phase 1 (2026-07-21) — docs/decisions/0001-qr-guest-service-mode.md
+# بند 5/6: "Public URLs use a stable, random, non-sequential, rotatable
+# token. They do not expose internal table/outlet/room/beach-location IDs.
+# After token validation, the backend derives the trusted branch/outlet/
+# service-location context — it does not trust those IDs from the client."
+#
+# قبل كده، QR الضيف كان بيشاور مباشرة على `/order/{outlet_id}/{table_id}` —
+# IDs متسلسلة حقيقية قابلة للتخمين/العد (enumeration). الحل: طاولة/موقع
+# شاطئ/غرفة (location_type+location_id، نفس نمط GuestAlert.context_type/
+# context_id بالضبط — مفيش FK حقيقي عمدًا لنفس السبب) بيتاخدله رمز عشوائي
+# (secrets.token_urlsafe، نفس نمط step_up/enrollment tokens الموجودين) —
+# ده اللي بيتطبع فعليًا على الـQR، مش الأرقام الداخلية. "قابل للتدوير":
+# توليد رمز جديد لنفس الموقع بيلغي القديم فورًا (is_active=False) — مفيد
+# لو QR اتسرق/اتصوّر أو لو المنتجع عايز يجدّد كل الأكواد المطبوعة.
+class ServiceLocationToken(Base, TimestampMixin):
+    __tablename__ = "service_location_tokens"
+    __table_args__ = (
+        Index("ix_service_location_tokens_location", "branch_id", "location_type", "location_id"),
+    )
+
+    id:            Mapped[int]  = mapped_column(primary_key=True)
+    token:         Mapped[str]  = mapped_column(String(64), unique=True, index=True)
+    branch_id:     Mapped[int]  = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    location_type: Mapped[str]  = mapped_column(String(30))
+    # dining_table | beach_location | room | other — نفس enum
+    # GuestAlert.context_type بالظبط (راجع schemas.py's
+    # _LOCATION_TYPE_PATTERN)، عمدًا نفس الاسم/القيم عشان الاتنين يمثّلوا
+    # نفس مفهوم "الموقع الفعلي" باستمرار.
+    location_id:   Mapped[int]  = mapped_column(Integer)
+    # ⚠️ عمداً مش ForeignKey — نفس سبب GuestAlert.context_id بالظبط
+    # (جدول واحد بيغطي عدة جداول موقع مختلفة). بيتحقق فعليًا وقت الإنشاء.
+    is_active:     Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by:    Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # user.id بتاع الموظف اللي ولّد الرمز — مرجع تدقيقي بسيط زي
+    # GuestAlert.resolved_by، مش علاقة.
 
 
 # ────────────────────────── PinCredential ─────────────────────────────
