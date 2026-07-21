@@ -27,6 +27,35 @@
 
 ---
 
+## 🟩 Gate 5 Batch 12 — Inventory + Maintenance ar/en (2026-07-21)
+
+**الحالة:** جزء من مجهود ترجمة تطبيق الموظفين (`el-kheima`) الكامل عربي/إنجليزي
+(Gate 5)، شغال على فرع مستقل `gate-5-staff-ux-batch-12-inventory-maintenance-i18n`
+متفرّع من نفس قاعدة Gate 4 (فرع شقيق لدفعات 1-11، مش متسلسل فوقهم، لسه محتاج
+دمج). بلا commit/push خارج الفرع.
+
+**الشاشتان المترجمتان بالكامل** (أصبحتا STRICT_FILES في `validate-i18n.mjs`):
+- `InventoryView.vue` (593 سطر) — منتجات، تسجيل استلام بضاعة (Purchase
+  Order)، تعديل مخزون يدوي، إدارة موردين كاملة (CRUD).
+- `MaintenanceView.vue` (857 سطر) — أصول (Assets) + إهلاك، أوامر صيانة
+  (Work Orders) + قطع غيار، جداول صيانة وقائية.
+
+**تحسينات نظافة إضافية** (نفس نمط كل الدفعات السابقة): إزالة `dir="rtl"`
+الثابتة، تحويل خرائط التسميات الثابتة في `MaintenanceView.vue`
+(`categoryLabels`، `assetStatusConfig`، `priorityConfig`، `woStatusConfig`،
+`orderTypeLabels`) من `const` لـ `computed`، استبدال
+`.toLocaleString('ar-EG')`/`.toLocaleDateString('ar-EG')` بـ
+`useStaffFormat()`، تصحيح `mr-auto`→`ms-auto` و`text-right`→`text-start`
+الفيزيائية. باج `t`-shadowing حقيقي اتصلح: `function loadTab(t: typeof
+tab.value)` في `MaintenanceView.vue` كانت بتستخدم `t` كاسم بارامتر — بقت
+`tabId`، ونفس الشيء لـ `v-for="t in [...]"` بقى `v-for="tabDef in [...]"`
+في القالب.
+
+**تحقق شامل قبل الـ commit**: `node scripts/validate-i18n.mjs` نظيف (3338
+مفتاح ar/en، صفر ناقص، صفر مخالفة اتجاه فيزيائي)، `pnpm run type-check:all`
+نظيف، `npx vitest run` → 60/60، `pnpm run build:all` نظيف لـ `el-kheima`
+و`public`، `git diff --check` نظيف.
+
 ## 🟦 Gate 4 — سلامة الدفع والوردية والطلب في Dining (2026-07-20، منفَّذة بالكامل، بانتظار مراجعة مستقلة)
 
 **الحالة:** الثلاث شرائح + **تصحيحات جولة مراجعة Codex المستقلة الأولى (10

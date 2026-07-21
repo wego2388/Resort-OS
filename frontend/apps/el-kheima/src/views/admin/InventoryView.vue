@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { t } = useI18n()
+const { formatNumber } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -27,6 +31,7 @@ interface Supplier {
 }
 
 const UNIT_OPTIONS = ['piece', 'kg', 'liter', 'box', 'pack', 'dozen']
+const unitLabel = (u: string) => t(`backoffice.inventory.unit.${u}`)
 
 const products = ref<Product[]>([])
 const warehouses = ref<Warehouse[]>([])
@@ -64,8 +69,8 @@ function openEditProduct(p: Product) {
 }
 
 async function saveProduct() {
-  if (!productForm.value.name.trim()) { toast.error('اسم المنتج مطلوب'); return }
-  if (!editingProduct.value && !productForm.value.sku.trim()) { toast.error('SKU مطلوب'); return }
+  if (!productForm.value.name.trim()) { toast.error(t('backoffice.inventory.msg.productNameRequired')); return }
+  if (!editingProduct.value && !productForm.value.sku.trim()) { toast.error(t('backoffice.inventory.msg.skuRequired')); return }
   savingProduct.value = true
   try {
     if (editingProduct.value) {
@@ -80,7 +85,7 @@ async function saveProduct() {
         reorder_point: productForm.value.reorder_point,
         notes: productForm.value.notes || undefined,
       })
-      toast.success('تم تعديل المنتج')
+      toast.success(t('backoffice.inventory.msg.productUpdated'))
     } else {
       await api.post('/api/v1/inventory/products', {
         branch_id: branchId,
@@ -96,12 +101,12 @@ async function saveProduct() {
         reorder_point: productForm.value.reorder_point,
         notes: productForm.value.notes || undefined,
       })
-      toast.success('تم إضافة المنتج')
+      toast.success(t('backoffice.inventory.msg.productAdded'))
     }
     productModal.value = false
     await fetchProducts()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ المنتج')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.inventory.msg.saveProductError'))
   } finally {
     savingProduct.value = false
   }
@@ -138,11 +143,11 @@ function onSelectSupplier() {
 
 async function saveReceivePO() {
   if (!poForm.value.supplier_id && !poForm.value.supplier_name.trim()) {
-    toast.error('اختر مورد مسجّل أو أدخل اسم مورد'); return
+    toast.error(t('backoffice.inventory.msg.selectOrEnterSupplier')); return
   }
-  if (!poForm.value.warehouse_id) { toast.error('اختر المخزن'); return }
+  if (!poForm.value.warehouse_id) { toast.error(t('backoffice.inventory.msg.selectWarehouse')); return }
   const validLines = poForm.value.lines.filter(l => l.product_id && Number(l.quantity) > 0)
-  if (validLines.length === 0) { toast.error('أضف صنف واحد على الأقل بكمية أكبر من صفر'); return }
+  if (validLines.length === 0) { toast.error(t('backoffice.inventory.msg.addAtLeastOneLine')); return }
 
   savingPO.value = true
   try {
@@ -159,11 +164,11 @@ async function saveReceivePO() {
       received_at: new Date().toISOString().slice(0, 10),
       items: po.items.map((it: { id: number; ordered_qty: number }) => ({ item_id: it.id, received_qty: it.ordered_qty })),
     })
-    toast.success('تم تسجيل استلام البضاعة وتحديث المخزون')
+    toast.success(t('backoffice.inventory.msg.receiptRecorded'))
     poModal.value = false
     await fetchProducts()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الاستلام')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.inventory.msg.receiptError'))
   } finally {
     savingPO.value = false
   }
@@ -180,10 +185,10 @@ function openAdjustStock() {
 const adjustProduct = computed(() => products.value.find(p => p.id === adjustForm.value.product_id) ?? null)
 
 async function saveAdjustStock() {
-  if (!adjustForm.value.product_id) { toast.error('اختر المنتج'); return }
-  if (!adjustForm.value.warehouse_id) { toast.error('اختر المخزن'); return }
+  if (!adjustForm.value.product_id) { toast.error(t('backoffice.inventory.msg.selectProduct')); return }
+  if (!adjustForm.value.warehouse_id) { toast.error(t('backoffice.inventory.msg.selectWarehouse')); return }
   const qty = Number(adjustForm.value.quantity)
-  if (!qty) { toast.error('أدخل كمية التعديل (موجب = إضافة، سالب = خصم)'); return }
+  if (!qty) { toast.error(t('backoffice.inventory.msg.enterAdjustQty')); return }
   savingAdjust.value = true
   try {
     await api.post('/api/v1/inventory/movements', {
@@ -196,11 +201,11 @@ async function saveAdjustStock() {
       notes: adjustForm.value.notes || undefined,
       moved_at: new Date().toISOString(),
     })
-    toast.success('تم تسجيل تعديل المخزون')
+    toast.success(t('backoffice.inventory.msg.adjustmentRecorded'))
     adjustModal.value = false
     await fetchProducts()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل التعديل')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.inventory.msg.adjustmentError'))
   } finally {
     savingAdjust.value = false
   }
@@ -275,7 +280,7 @@ function openEditSupplier(s: Supplier) {
 }
 
 async function saveSupplier() {
-  if (!supplierForm.value.name.trim()) { toast.error('اسم المورد مطلوب'); return }
+  if (!supplierForm.value.name.trim()) { toast.error(t('backoffice.inventory.msg.supplierNameRequired')); return }
   savingSupplier.value = true
   try {
     const payload = {
@@ -293,15 +298,15 @@ async function saveSupplier() {
     }
     if (editingSupplier.value) {
       await api.patch(`/api/v1/inventory/suppliers/${editingSupplier.value.id}`, payload)
-      toast.success('تم تعديل المورد')
+      toast.success(t('backoffice.inventory.msg.supplierUpdated'))
     } else {
       await api.post('/api/v1/inventory/suppliers', { branch_id: branchId, ...payload })
-      toast.success('تم إضافة المورد')
+      toast.success(t('backoffice.inventory.msg.supplierAdded'))
     }
     supplierModal.value = false
     await fetchSuppliers()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ المورد')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.inventory.msg.saveSupplierError'))
   } finally {
     savingSupplier.value = false
   }
@@ -312,7 +317,7 @@ async function toggleSupplierActive(s: Supplier) {
     await api.patch(`/api/v1/inventory/suppliers/${s.id}`, { is_active: !s.is_active })
     await fetchSuppliers()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة المورد')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.inventory.msg.supplierStatusError'))
   }
 }
 
@@ -333,7 +338,7 @@ async function fetchProducts() {
       page += 1
     }
     products.value = all
-  } catch { toast.error('تعذّر تحميل الأصناف — حاول تاني') }
+  } catch { toast.error(t('backoffice.inventory.msg.loadProductsError')) }
   finally { loading.value = false }
 }
 
@@ -341,25 +346,25 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
 </script>
 
 <template>
-  <div dir="rtl">
+  <div>
     <div class="flex items-center justify-between mb-6">
-      <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">المخزون</h2>
+      <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.inventory.title') }}</h2>
       <div class="flex items-center gap-2">
         <button @click="showLowStock = !showLowStock"
           :class="['px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-colors', showLowStock ? 'border-red-500 bg-red-50 text-red-700' : 'border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 hover:border-red-300']">
-          ⚠️ منخفض ({{ lowStockCount() }})
+          ⚠️ {{ t('backoffice.inventory.lowStock') }} ({{ lowStockCount() }})
         </button>
-        <AppButton variant="secondary" size="sm" @click="supplierListModal = true">🚚 الموردون</AppButton>
-        <AppButton variant="secondary" size="sm" @click="openAdjustStock">⚖️ تعديل يدوي</AppButton>
-        <AppButton variant="secondary" size="sm" @click="openReceivePO">📦 تسجيل استلام بضاعة</AppButton>
-        <AppButton size="sm" @click="openCreateProduct">+ منتج جديد</AppButton>
+        <AppButton variant="secondary" size="sm" @click="supplierListModal = true">🚚 {{ t('backoffice.inventory.suppliers') }}</AppButton>
+        <AppButton variant="secondary" size="sm" @click="openAdjustStock">⚖️ {{ t('backoffice.inventory.manualAdjustment') }}</AppButton>
+        <AppButton variant="secondary" size="sm" @click="openReceivePO">📦 {{ t('backoffice.inventory.recordReceipt') }}</AppButton>
+        <AppButton size="sm" @click="openCreateProduct">+ {{ t('backoffice.inventory.newProduct') }}</AppButton>
         <AppButton variant="secondary" size="sm" @click="fetchProducts">🔄</AppButton>
       </div>
     </div>
 
     <!-- Search -->
     <div class="mb-4">
-      <input v-model="search" type="text" placeholder="ابحث عن منتج أو SKU..."
+      <input v-model="search" type="text" :placeholder="t('backoffice.inventory.searchPlaceholder')"
         class="w-full max-w-sm border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
     </div>
 
@@ -370,14 +375,14 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المنتج</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">SKU</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الفئة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المخزون</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">حد الطلب</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تكلفة الوحدة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.product') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">SKU</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.category') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.stock') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.reorderPoint') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.unitCost') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.status') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
             </tr>
           </thead>
           <tbody>
@@ -387,23 +392,23 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
               <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ categoryLabel(p) }}</td>
               <td class="px-4 py-3">
                 <span :class="['text-sm font-bold', p.current_stock <= p.reorder_point ? 'text-red-600' : 'text-gray-900 dark:text-gray-100']">
-                  {{ p.current_stock }} {{ p.unit }}
+                  {{ p.current_stock }} {{ unitLabel(p.unit) }}
                 </span>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ p.reorder_point }} {{ p.unit }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ (p.cost_price ?? 0).toLocaleString('ar-EG') }} ج</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ p.reorder_point }} {{ unitLabel(p.unit) }}</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatNumber(p.cost_price ?? 0) }} {{ t('backoffice.inventory.currency') }}</td>
               <td class="px-4 py-3">
                 <AppBadge size="sm" :variant="p.current_stock <= 0 ? 'danger' : p.current_stock <= p.reorder_point ? 'warning' : 'success'">
-                  {{ p.current_stock <= 0 ? 'نفد' : p.current_stock <= p.reorder_point ? 'منخفض' : 'متاح' }}
+                  {{ p.current_stock <= 0 ? t('backoffice.inventory.outOfStock') : p.current_stock <= p.reorder_point ? t('backoffice.inventory.low') : t('backoffice.inventory.available') }}
                 </AppBadge>
               </td>
-              <td class="px-4 py-3 text-left">
-                <button @click="openEditProduct(p)" class="text-xs font-semibold text-primary-700 hover:underline">تعديل</button>
+              <td class="px-4 py-3 text-end">
+                <button @click="openEditProduct(p)" class="text-xs font-semibold text-primary-700 hover:underline">{{ t('backoffice.inventory.edit') }}</button>
               </td>
             </tr>
             <tr v-if="filtered().length === 0">
               <td colspan="8" class="px-4 py-8">
-                <EmptyState icon="📦" title="لا توجد أصناف" subtitle="جرّب تغيير كلمة البحث أو إلغاء فلتر المخزون المنخفض" />
+                <EmptyState icon="📦" :title="t('backoffice.inventory.noProducts')" :subtitle="t('backoffice.inventory.noProductsHint')" />
               </td>
             </tr>
           </tbody>
@@ -412,120 +417,120 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
     </AppCard>
 
     <!-- #6: إضافة/تعديل منتج -->
-    <AppModal :open="productModal" :title="editingProduct ? 'تعديل منتج' : 'منتج جديد'" @close="productModal = false">
+    <AppModal :open="productModal" :title="editingProduct ? t('backoffice.inventory.editProductTitle') : t('backoffice.inventory.newProductTitle')" @close="productModal = false">
       <div class="space-y-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input v-model="productForm.name" type="text" placeholder="الاسم (إنجليزي) *"
+          <input v-model="productForm.name" type="text" :placeholder="t('backoffice.inventory.nameEn')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="productForm.name_ar" type="text" placeholder="الاسم (عربي)"
+          <input v-model="productForm.name_ar" type="text" :placeholder="t('backoffice.inventory.nameAr')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.sku" type="text" placeholder="SKU *" :disabled="!!editingProduct"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400 dark:text-gray-500" />
           <select v-model="productForm.unit" :disabled="!!editingProduct" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm disabled:bg-gray-50">
-            <option v-for="u in UNIT_OPTIONS" :key="u" :value="u">{{ u }}</option>
+            <option v-for="u in UNIT_OPTIONS" :key="u" :value="u">{{ unitLabel(u) }}</option>
           </select>
           <select v-model="productForm.category_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
-            <option value="">بدون فئة</option>
+            <option value="">{{ t('backoffice.inventory.noCategory') }}</option>
             <option v-for="c in categories" :key="c.id" :value="c.id">{{ c.name_ar || c.name }}</option>
           </select>
           <select v-model="productForm.warehouse_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
-            <option value="">بدون مخزن محدد</option>
+            <option value="">{{ t('backoffice.inventory.noSpecificWarehouse') }}</option>
             <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.name_ar || w.name }}</option>
           </select>
-          <input v-model="productForm.cost_price" type="number" min="0" step="0.01" placeholder="تكلفة الوحدة"
+          <input v-model="productForm.cost_price" type="number" min="0" step="0.01" :placeholder="t('backoffice.inventory.unitCost')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="productForm.reorder_point" type="number" min="0" step="0.01" placeholder="حد إعادة الطلب"
+          <input v-model="productForm.reorder_point" type="number" min="0" step="0.01" :placeholder="t('backoffice.inventory.reorderPoint')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="productForm.min_stock" type="number" min="0" step="0.01" placeholder="الحد الأدنى"
+          <input v-model="productForm.min_stock" type="number" min="0" step="0.01" :placeholder="t('backoffice.inventory.minStock')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="productForm.max_stock" type="number" min="0" step="0.01" placeholder="الحد الأقصى (اختياري)"
+          <input v-model="productForm.max_stock" type="number" min="0" step="0.01" :placeholder="t('backoffice.inventory.maxStockOptional')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="productForm.notes" type="text" placeholder="ملاحظات"
+          <input v-model="productForm.notes" type="text" :placeholder="t('backoffice.inventory.notes')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
         </div>
         <AppButton class="mt-1" size="sm" :loading="savingProduct" @click="saveProduct">
-          {{ editingProduct ? 'حفظ التعديلات' : 'إضافة المنتج' }}
+          {{ editingProduct ? t('backoffice.inventory.saveChanges') : t('backoffice.inventory.addProduct') }}
         </AppButton>
       </div>
     </AppModal>
 
     <!-- #6: تسجيل استلام بضاعة -->
-    <AppModal :open="poModal" title="تسجيل استلام بضاعة" size="lg" @close="poModal = false">
+    <AppModal :open="poModal" :title="t('backoffice.inventory.recordReceiptTitle')" size="lg" @close="poModal = false">
       <div class="space-y-3">
         <div>
-          <label class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المورد</label>
+          <label class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.supplier') }}</label>
           <select v-model="poForm.supplier_id" @change="onSelectSupplier"
             class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm mt-1">
-            <option value="">— مورد غير مسجّل (اكتب الاسم يدويًا تحت) —</option>
+            <option value="">{{ t('backoffice.inventory.unregisteredSupplier') }}</option>
             <option v-for="s in suppliers.filter(x => x.is_active)" :key="s.id" :value="s.id">
               {{ s.name_ar || s.name }}
             </option>
           </select>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <input v-model="poForm.supplier_name" type="text" placeholder="اسم المورد *"
+          <input v-model="poForm.supplier_name" type="text" :placeholder="t('backoffice.inventory.supplierName')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
-          <input v-model="poForm.supplier_phone" type="text" placeholder="تليفون المورد"
+          <input v-model="poForm.supplier_phone" type="text" :placeholder="t('backoffice.inventory.supplierPhone')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <select v-model="poForm.warehouse_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
-          <option value="">اختر المخزن المستلم إليه *</option>
+          <option value="">{{ t('backoffice.inventory.selectReceivingWarehouse') }}</option>
           <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.name_ar || w.name }}</option>
         </select>
 
         <div class="border-t border-stone-100 dark:border-border/50 pt-3 space-y-2">
-          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الأصناف المستلمة</div>
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.receivedItems') }}</div>
           <div v-for="(line, i) in poForm.lines" :key="i" class="grid grid-cols-12 gap-2 items-center">
             <select v-model="line.product_id" class="col-span-6 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
-              <option value="">اختر منتج</option>
+              <option value="">{{ t('backoffice.inventory.selectProduct') }}</option>
               <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name_ar || p.name }} ({{ p.sku }})</option>
             </select>
-            <input v-model="line.quantity" type="number" min="0" step="0.01" placeholder="الكمية"
+            <input v-model="line.quantity" type="number" min="0" step="0.01" :placeholder="t('backoffice.inventory.quantity')"
               class="col-span-3 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-            <input v-model="line.unit_cost" type="number" min="0" step="0.01" placeholder="سعر الوحدة"
+            <input v-model="line.unit_cost" type="number" min="0" step="0.01" :placeholder="t('backoffice.inventory.unitPrice')"
               class="col-span-2 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <button @click="removePOLine(i)" class="col-span-1 text-red-400 hover:text-red-600 text-lg">×</button>
           </div>
-          <button @click="addPOLine" class="text-xs font-semibold text-primary-700 hover:underline">+ إضافة صنف</button>
+          <button @click="addPOLine" class="text-xs font-semibold text-primary-700 hover:underline">+ {{ t('backoffice.inventory.addItem') }}</button>
         </div>
 
-        <AppButton class="mt-1" size="sm" :loading="savingPO" @click="saveReceivePO">تسجيل الاستلام</AppButton>
+        <AppButton class="mt-1" size="sm" :loading="savingPO" @click="saveReceivePO">{{ t('backoffice.inventory.recordReceiptAction') }}</AppButton>
       </div>
     </AppModal>
 
     <!-- #6: تعديل مخزون يدوي -->
-    <AppModal :open="adjustModal" title="تعديل مخزون يدوي" @close="adjustModal = false">
+    <AppModal :open="adjustModal" :title="t('backoffice.inventory.manualAdjustmentTitle')" @close="adjustModal = false">
       <div class="space-y-3">
         <select v-model="adjustForm.product_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
-          <option value="">اختر المنتج *</option>
-          <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name_ar || p.name }} ({{ p.sku }}) — الحالي: {{ p.current_stock }} {{ p.unit }}</option>
+          <option value="">{{ t('backoffice.inventory.selectProductRequired') }}</option>
+          <option v-for="p in products" :key="p.id" :value="p.id">{{ p.name_ar || p.name }} ({{ p.sku }}) — {{ t('backoffice.inventory.current') }}: {{ p.current_stock }} {{ unitLabel(p.unit) }}</option>
         </select>
         <select v-model="adjustForm.warehouse_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
-          <option value="">اختر المخزن *</option>
+          <option value="">{{ t('backoffice.inventory.selectWarehouseRequired') }}</option>
           <option v-for="w in warehouses" :key="w.id" :value="w.id">{{ w.name_ar || w.name }}</option>
         </select>
-        <input v-model="adjustForm.quantity" type="number" step="0.01" placeholder="كمية التعديل (موجب = إضافة، سالب = خصم) *"
+        <input v-model="adjustForm.quantity" type="number" step="0.01" :placeholder="t('backoffice.inventory.adjustQtyPlaceholder')"
           class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-        <input v-model="adjustForm.notes" type="text" placeholder="سبب التعديل (جرد، تلف، غلط عدّ...)"
+        <input v-model="adjustForm.notes" type="text" :placeholder="t('backoffice.inventory.adjustReasonPlaceholder')"
           class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-        <AppButton class="mt-1" size="sm" :loading="savingAdjust" @click="saveAdjustStock">تسجيل التعديل</AppButton>
+        <AppButton class="mt-1" size="sm" :loading="savingAdjust" @click="saveAdjustStock">{{ t('backoffice.inventory.recordAdjustment') }}</AppButton>
       </div>
     </AppModal>
 
     <!-- الموردون — قائمة كاملة -->
-    <AppModal :open="supplierListModal" title="الموردون" size="lg" @close="supplierListModal = false">
+    <AppModal :open="supplierListModal" :title="t('backoffice.inventory.suppliers')" size="lg" @close="supplierListModal = false">
       <div class="space-y-3">
-        <AppButton size="sm" @click="openCreateSupplier">+ مورد جديد</AppButton>
+        <AppButton size="sm" @click="openCreateSupplier">+ {{ t('backoffice.inventory.newSupplier') }}</AppButton>
         <div class="overflow-x-auto border border-stone-100 dark:border-border/50 rounded-xl">
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الاسم</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">جهة الاتصال</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التليفون</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">مهلة السداد</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
-                <th class="px-3 py-2 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.name') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.contactPerson') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.phone') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.paymentTerms') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.status') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
               </tr>
             </thead>
             <tbody>
@@ -533,22 +538,22 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
                 <td class="px-3 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ s.name_ar || s.name }}</td>
                 <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500">{{ s.contact_person || '—' }}</td>
                 <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500" dir="ltr">{{ s.phone || '—' }}</td>
-                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500">{{ s.payment_terms_days }} يوم</td>
+                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500">{{ t('backoffice.inventory.daysCount', { days: s.payment_terms_days }) }}</td>
                 <td class="px-3 py-2">
                   <AppBadge size="sm" :variant="s.is_active ? 'success' : 'neutral'">
-                    {{ s.is_active ? 'نشط' : 'موقوف' }}
+                    {{ s.is_active ? t('backoffice.inventory.active') : t('backoffice.inventory.stopped') }}
                   </AppBadge>
                 </td>
-                <td class="px-3 py-2 text-left whitespace-nowrap">
-                  <button @click="openEditSupplier(s)" class="text-xs font-semibold text-primary-700 hover:underline ml-3">تعديل</button>
+                <td class="px-3 py-2 text-end whitespace-nowrap">
+                  <button @click="openEditSupplier(s)" class="text-xs font-semibold text-primary-700 hover:underline me-3">{{ t('backoffice.inventory.edit') }}</button>
                   <button @click="toggleSupplierActive(s)" class="text-xs font-semibold text-gray-500 dark:text-gray-500 hover:underline">
-                    {{ s.is_active ? 'إيقاف' : 'تفعيل' }}
+                    {{ s.is_active ? t('backoffice.inventory.stop') : t('backoffice.inventory.activate') }}
                   </button>
                 </td>
               </tr>
               <tr v-if="suppliers.length === 0">
                 <td colspan="6" class="px-4 py-8">
-                  <EmptyState icon="🚚" title="لا يوجد موردون بعد" subtitle="ابدأ بإضافة أول مورد" />
+                  <EmptyState icon="🚚" :title="t('backoffice.inventory.noSuppliers')" :subtitle="t('backoffice.inventory.noSuppliersHint')" />
                 </td>
               </tr>
             </tbody>
@@ -558,34 +563,34 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
     </AppModal>
 
     <!-- الموردون — إضافة/تعديل -->
-    <AppModal :open="supplierModal" :title="editingSupplier ? 'تعديل مورد' : 'مورد جديد'" @close="supplierModal = false">
+    <AppModal :open="supplierModal" :title="editingSupplier ? t('backoffice.inventory.editSupplierTitle') : t('backoffice.inventory.newSupplierTitle')" @close="supplierModal = false">
       <div class="space-y-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input v-model="supplierForm.name" type="text" placeholder="الاسم (إنجليزي) *"
+          <input v-model="supplierForm.name" type="text" :placeholder="t('backoffice.inventory.nameEn')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="supplierForm.name_ar" type="text" placeholder="الاسم (عربي)"
+          <input v-model="supplierForm.name_ar" type="text" :placeholder="t('backoffice.inventory.nameAr')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="supplierForm.contact_person" type="text" placeholder="جهة الاتصال"
+          <input v-model="supplierForm.contact_person" type="text" :placeholder="t('backoffice.inventory.contactPerson')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="supplierForm.phone" type="text" placeholder="التليفون"
+          <input v-model="supplierForm.phone" type="text" :placeholder="t('backoffice.inventory.phone')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" dir="ltr" />
-          <input v-model="supplierForm.email" type="email" placeholder="البريد الإلكتروني"
+          <input v-model="supplierForm.email" type="email" :placeholder="t('backoffice.inventory.email')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" dir="ltr" />
-          <input v-model="supplierForm.tax_number" type="text" placeholder="الرقم الضريبي"
+          <input v-model="supplierForm.tax_number" type="text" :placeholder="t('backoffice.inventory.taxNumber')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="supplierForm.category" type="text" placeholder="التصنيف (مثال: خضروات، مشروبات)"
+          <input v-model="supplierForm.category" type="text" :placeholder="t('backoffice.inventory.categoryExample')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="supplierForm.payment_terms_days" type="number" min="0" placeholder="مهلة السداد (يوم)"
+          <input v-model="supplierForm.payment_terms_days" type="number" min="0" :placeholder="t('backoffice.inventory.paymentTermsDays')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="supplierForm.credit_limit" type="number" min="0" step="0.01" placeholder="حد الائتمان (اختياري)"
+          <input v-model="supplierForm.credit_limit" type="number" min="0" step="0.01" :placeholder="t('backoffice.inventory.creditLimitOptional')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="supplierForm.address" type="text" placeholder="العنوان"
+          <input v-model="supplierForm.address" type="text" :placeholder="t('backoffice.inventory.address')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
-          <input v-model="supplierForm.notes" type="text" placeholder="ملاحظات"
+          <input v-model="supplierForm.notes" type="text" :placeholder="t('backoffice.inventory.notes')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm sm:col-span-2" />
         </div>
         <AppButton class="mt-1" size="sm" :loading="savingSupplier" @click="saveSupplier">
-          {{ editingSupplier ? 'حفظ التعديلات' : 'إضافة المورد' }}
+          {{ editingSupplier ? t('backoffice.inventory.saveChanges') : t('backoffice.inventory.addSupplier') }}
         </AppButton>
       </div>
     </AppModal>

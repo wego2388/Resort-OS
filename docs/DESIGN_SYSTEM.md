@@ -143,6 +143,9 @@ primitives, covered by `validate:i18n` strict checks):
 - `views/portal/ProfileView.vue`
 - `views/account/SessionsView.vue`
 - `views/admin/SettingsView.vue`
+- `views/admin/InventoryView.vue`, `views/admin/MaintenanceView.vue` (Gate 5
+  Batch 12, on branch `gate-5-staff-ux-batch-12-inventory-maintenance-i18n`
+  — not yet merged with the other Gate 5 batch branches)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
