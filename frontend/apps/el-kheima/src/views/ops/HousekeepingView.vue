@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { t } = useI18n()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -33,13 +35,13 @@ const loading = ref(false)
 const filterStatus = ref<string | null>(null)
 
 const filteredTasks = computed(() =>
-  filterStatus.value ? tasks.value.filter(t => t.status === filterStatus.value) : tasks.value
+  filterStatus.value ? tasks.value.filter(hk => hk.status === filterStatus.value) : tasks.value
 )
 
 const priorityBorder: Record<string, string> = {
-  high:   'border-r-4 border-r-red-500',
-  normal: 'border-r-4 border-r-blue-500',
-  low:    'border-r-4 border-r-gray-300',
+  high:   'border-e-4 border-e-red-500',
+  normal: 'border-e-4 border-e-blue-500',
+  low:    'border-e-4 border-e-gray-300',
 }
 
 const statusFlow: Record<string, string> = {
@@ -48,18 +50,18 @@ const statusFlow: Record<string, string> = {
   inspecting: 'available',
 }
 
-const statusLabels: Record<string, string> = {
-  dirty:      '🔴 متسخة',
-  cleaning:   '🔵 جاري التنظيف',
-  inspecting: '🟡 فحص',
-  available:  '🟢 جاهزة',
-}
+const statusLabels = computed<Record<string, string>>(() => ({
+  dirty:      `🔴 ${t('backoffice.housekeeping.status.dirty')}`,
+  cleaning:   `🔵 ${t('backoffice.housekeeping.status.cleaning')}`,
+  inspecting: `🟡 ${t('backoffice.housekeeping.status.inspecting')}`,
+  available:  `🟢 ${t('backoffice.housekeeping.status.available')}`,
+}))
 
-const nextActionLabel: Record<string, string> = {
-  dirty:      'ابدأ التنظيف',
-  cleaning:   'انتهيت — للفحص',
-  inspecting: 'اعتمدها جاهزة',
-}
+const nextActionLabel = computed<Record<string, string>>(() => ({
+  dirty:      t('backoffice.housekeeping.startCleaning'),
+  cleaning:   t('backoffice.housekeeping.doneForInspection'),
+  inspecting: t('backoffice.housekeeping.approveReady'),
+}))
 
 const nextActionColor: Record<string, string> = {
   dirty:      'bg-red-600 hover:bg-red-700',
@@ -67,16 +69,16 @@ const nextActionColor: Record<string, string> = {
   inspecting: 'bg-amber-600 hover:bg-amber-700',
 }
 
-const taskTypeLabel: Record<string, string> = {
-  checkout_clean: 'تنظيف إفراغ',
-  stay_clean:     'تنظيف إقامة',
-  inspection:     'فحص روتيني',
-  deep_clean:     'تنظيف عميق',
-}
+const taskTypeLabel = computed<Record<string, string>>(() => ({
+  checkout_clean: t('backoffice.housekeeping.taskType.checkoutClean'),
+  stay_clean:     t('backoffice.housekeeping.taskType.stayClean'),
+  inspection:     t('backoffice.housekeeping.taskType.inspection'),
+  deep_clean:     t('backoffice.housekeeping.taskType.deepClean'),
+}))
 
 const statusCounts = computed(() =>
   Object.fromEntries(
-    Object.keys(statusLabels).map(s => [s, tasks.value.filter(t => t.status === s).length])
+    Object.keys(statusLabels.value).map(s => [s, tasks.value.filter(hk => hk.status === s).length])
   )
 )
 
@@ -86,7 +88,7 @@ async function fetchRoomNames() {
     const list: { id: number; name: string }[] = res.data.items ?? res.data
     roomNameById.value = Object.fromEntries(list.map((r) => [r.id, r.name]))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل أسماء الغرف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.housekeeping.loadRoomNamesError'))
   }
 }
 
@@ -104,7 +106,7 @@ async function fetchEmployees() {
     employees.value = res.data.items ?? []
     employeeNameById.value = Object.fromEntries(employees.value.map((e) => [e.id, e.full_name]))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل قائمة الموظفين')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.housekeeping.loadEmployeesError'))
   }
 }
 
@@ -115,10 +117,10 @@ async function assignTask(task: HKTask, employeeId: number | null) {
     await api.patch(ENDPOINTS.pms_extra.housekeepingTask(task.id), {
       status: task.status, assigned_to: employeeId,
     })
-    toast.success(employeeId ? 'تم تعيين الموظف' : 'تم إلغاء التعيين')
+    toast.success(employeeId ? t('backoffice.housekeeping.employeeAssigned') : t('backoffice.housekeeping.assignmentCleared'))
   } catch (e: any) {
     task.assigned_to = previous
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تعيين الموظف')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.housekeeping.assignEmployeeError'))
   } finally {
     assigningTaskId.value = null
   }
@@ -132,7 +134,7 @@ async function fetchTasks() {
     })
     tasks.value = res.data.tasks ?? res.data.items ?? res.data
   } catch(e) {
-    toast.error('تعذّر تحميل مهام التدبير المنزلي')
+    toast.error(t('backoffice.housekeeping.loadTasksError'))
   } finally { loading.value = false }
 }
 
@@ -144,11 +146,11 @@ async function advanceStatus(task: HKTask) {
     task.status = next
     if (next === 'available') {
       setTimeout(() => {
-        tasks.value = tasks.value.filter(t => t.id !== task.id)
+        tasks.value = tasks.value.filter(hk => hk.id !== task.id)
       }, 1500)
     }
   } catch(e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة الغرفة')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.housekeeping.updateStatusError'))
   }
 }
 
@@ -160,14 +162,14 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="p-4" dir="rtl">
+  <div class="p-4">
     <!-- Header -->
     <div class="flex items-center justify-between mb-4">
-      <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">مهام التدبير المنزلي</h1>
+      <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.housekeeping.title') }}</h1>
       <button
         @click="fetchTasks"
         class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-      >🔄 تحديث</button>
+      >🔄 {{ t('backoffice.housekeeping.refresh') }}</button>
     </div>
 
     <!-- Summary chips -->
@@ -189,7 +191,7 @@ onMounted(() => {
           'px-3 py-1 rounded-lg text-sm font-medium transition-colors',
           !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
         ]"
-      >الكل ({{ tasks.length }})</button>
+      >{{ t('backoffice.housekeeping.all') }} ({{ tasks.length }})</button>
       <button
         v-for="(label, status) in statusLabels"
         :key="status"
@@ -204,7 +206,7 @@ onMounted(() => {
     <!-- Loading state -->
     <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
-      <p>جاري التحميل...</p>
+      <p>{{ t('backoffice.housekeeping.loading') }}</p>
     </div>
 
     <!-- Task list -->
@@ -217,10 +219,10 @@ onMounted(() => {
           priorityBorder[task.priority] ?? ''
         ]"
       >
-        <div class="flex-1 min-w-0 ml-4">
+        <div class="flex-1 min-w-0 me-4">
           <div class="flex items-center gap-2 mb-1 flex-wrap">
             <span class="font-bold text-gray-900 dark:text-gray-100 text-base">
-              أوضة {{ roomLabel(task) }}
+              {{ t('backoffice.housekeeping.roomHash', { room: roomLabel(task) }) }}
             </span>
             <span class="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-600 dark:text-gray-500 font-medium">
               {{ taskTypeLabel[task.task_type] ?? task.task_type }}
@@ -228,7 +230,7 @@ onMounted(() => {
             <span
               v-if="task.priority === 'high'"
               class="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full font-bold"
-            >عاجل</span>
+            >{{ t('backoffice.housekeeping.urgent') }}</span>
           </div>
           <div class="text-sm text-gray-500 dark:text-gray-500 mb-0.5">{{ statusLabels[task.status] ?? task.status }}</div>
 
@@ -238,7 +240,7 @@ onMounted(() => {
               @click="assigningTaskId = task.id"
               class="text-gray-400 dark:text-gray-500 hover:text-blue-600 underline decoration-dotted"
             >
-              👤 {{ task.assigned_to ? (employeeNameById[task.assigned_to] ?? `موظف #${task.assigned_to}`) : 'تعيين موظف...' }}
+              👤 {{ task.assigned_to ? (employeeNameById[task.assigned_to] ?? t('backoffice.housekeeping.employeeHash', { id: task.assigned_to })) : t('backoffice.housekeeping.assignEmployee') }}
             </button>
           </div>
           <select
@@ -248,7 +250,7 @@ onMounted(() => {
             @blur="assigningTaskId = null"
             class="text-xs border border-stone-200 dark:border-border rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400"
           >
-            <option value="">بدون تعيين</option>
+            <option value="">{{ t('backoffice.housekeeping.unassigned') }}</option>
             <option v-for="emp in employees" :key="emp.id" :value="emp.id">{{ emp.full_name }}</option>
           </select>
         </div>
@@ -265,11 +267,11 @@ onMounted(() => {
           <span
             v-else
             class="px-4 py-2 rounded-xl text-sm font-bold bg-green-100 text-green-700"
-          >✓ مكتملة</span>
+          >✓ {{ t('backoffice.housekeeping.completed') }}</span>
         </div>
       </div>
 
-      <EmptyState v-if="filteredTasks.length === 0" icon="✨" title="لا توجد مهام معلقة" />
+      <EmptyState v-if="filteredTasks.length === 0" icon="✨" :title="t('backoffice.housekeeping.noPendingTasks')" />
     </div>
   </div>
 </template>
