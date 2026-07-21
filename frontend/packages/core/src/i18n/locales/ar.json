@@ -3645,15 +3645,28 @@
       "reasonPromptDeny": "منع صلاحية \"{label}\" عن {name}",
       "reasonPromptRevert": "إرجاع صلاحية \"{label}\" لـ {name} للسلوك الافتراضي",
       "roles": {
-        "super_admin": "مدير عام", "admin": "إداري", "accountant": "محاسب",
-        "hr_manager": "مسؤول موارد بشرية", "manager": "مدير", "supervisor": "مشرف",
-        "receptionist": "استقبال", "cashier": "كاشير", "waiter": "جرسون",
-        "chef": "شيف", "kitchen": "مطبخ", "employee": "موظف"
+        "super_admin": "مدير عام",
+        "admin": "إداري",
+        "accountant": "محاسب",
+        "hr_manager": "مسؤول موارد بشرية",
+        "manager": "مدير",
+        "supervisor": "مشرف",
+        "receptionist": "استقبال",
+        "cashier": "كاشير",
+        "waiter": "جرسون",
+        "chef": "شيف",
+        "kitchen": "مطبخ",
+        "employee": "موظف"
       },
       "modules": {
-        "finance": "الحسابات", "dining": "الدايننج", "beach": "الشاطئ",
-        "hr": "الموارد البشرية", "timeshare": "التايم شير", "pms": "الفنادق",
-        "inventory": "المخزون", "crm": "العملاء"
+        "finance": "الحسابات",
+        "dining": "الدايننج",
+        "beach": "الشاطئ",
+        "hr": "الموارد البشرية",
+        "timeshare": "التايم شير",
+        "pms": "الفنادق",
+        "inventory": "المخزون",
+        "crm": "العملاء"
       }
     },
     "settings": {
@@ -3690,6 +3703,141 @@
       "quickLinkTables": "إدارة الطاولات",
       "quickLinkCafeMenu": "قائمة الكافيه",
       "quickLinkRestaurantMenu": "قائمة المطعم"
+    },
+    "pos": {
+      "selectOutlet": "اختر المنفذ",
+      "activeOrdersTitle": "الطلبات الجارية",
+      "searchPlaceholder": "🔍 بحث في الأصناف... (/)",
+      "hotkeysHint": "⌨️ /  — تركيز على البحث · Enter — إرسال الطلب · Esc — إغلاق/مسح",
+      "wsStatus": {
+        "connected": "تحديثات لحظية — متصل",
+        "connecting": "جاري الاتصال...",
+        "disconnected": "لا يوجد اتصال لحظي"
+      },
+      "selectTable": "اختر الطاولة",
+      "noTables": "لا توجد طاولات لهذا المنفذ",
+      "tableSummary": {
+        "all": "الكل",
+        "available": "فاضي",
+        "occupied": "مشغول",
+        "waitingPayment": "انتظار دفع",
+        "reserved": "محجوز"
+      },
+      "noSection": "بدون قسم",
+      "tableStatus": {
+        "available": "فارغة",
+        "occupied": "مشغولة",
+        "served": "انتظار دفع",
+        "reserved": "محجوزة",
+        "outOfService": "خارج الخدمة"
+      },
+      "guests": "ضيوف",
+      "currency": "ج",
+      "covers": "الغطاءات",
+      "decreaseCovers": "تقليل الغطاءات",
+      "increaseCovers": "زيادة الغطاءات",
+      "deliveryAddress": "عنوان التوصيل",
+      "roomNumber": "رقم الغرفة",
+      "note": "ملاحظة",
+      "takeawayHint": "تيك أواي — أسرع مسار، بدون طاولة",
+      "categoryAll": "الكل",
+      "noItems": "لا توجد أصناف",
+      "noResultsFor": "لا نتائج لـ «{query}»",
+      "fromPrice": "من",
+      "chooseSize": "اختر الحجم",
+      "extrasBadge": "إضافات",
+      "cartEmpty": "اختر أصناف من القائمة",
+      "cartLockedNotice": "الطلب #{number} اتسجّل وطُبّق عليه خصم — امسح الطلب لو عايز تعدّل",
+      "removeItem": "حذف الصنف",
+      "decreaseQty": "تقليل الكمية",
+      "increaseQty": "زيادة الكمية",
+      "total": "المجموع",
+      "applyDiscount": "تطبيق خصم",
+      "discountAppliedBadge": "خصم مطبّق ✓",
+      "discountApplied": "تم تطبيق خصم {amount} ج ✓",
+      "noActiveDiscountRule": "مفيش قاعدة خصم سارية حاليًا",
+      "discountPinGuard": {
+        "title": "موافقة تطبيق خصم",
+        "message": "الكاشير مالوش صلاحية خصم — محتاج موافقة مدير/محاسب بالـ PIN"
+      },
+      "loyalty": {
+        "title": "استرداد نقاط",
+        "customerIdPlaceholder": "ID العميل",
+        "pointsPlaceholder": "نقاط",
+        "confirm": "تأكيد",
+        "cancel": "إلغاء",
+        "redeemButton": "استرداد نقاط ولاء",
+        "enterIdAndPoints": "أدخل ID العميل وعدد النقاط",
+        "redeemSuccess": "تم استرداد {points} نقطة ✓",
+        "redeemError": "فشل استرداد النقاط"
+      },
+      "clear": "مسح",
+      "sendToKitchen": "إرسال للمطبخ",
+      "close": "إغلاق",
+      "noActiveOrders": "مفيش طلبات جارية دلوقتي",
+      "tableFilterOnly": "طاولة {number} فقط",
+      "tableLabel": "طاولة {number}",
+      "orderTypes": {
+        "dineIn": "صالة",
+        "takeaway": "تيك أواي",
+        "delivery": "توصيل",
+        "roomService": "خدمة الغرف"
+      },
+      "elapsedUnits": {
+        "seconds": "ث",
+        "minutes": "د",
+        "hours": "س"
+      },
+      "offlineBanner": "وضع offline — الطلبات بتتحفظ محلياً وهتتبعت أول ما النت يرجع",
+      "pendingCount": "{count} في الانتظار",
+      "syncingBanner": "جاري إرسال {count} طلب محفوظ من فترة الانقطاع...",
+      "partialRejectionBanner": "تم رفض بعض الأصناف من طلب محفوظ سابقاً (نفاد المخزون):",
+      "offlineSaved": "الطلب محفوظ — هيتبعت للمطبخ أول ما النت يرجع",
+      "kitchenSentSuccess": "تم إرسال الطلب للمطبخ ✓",
+      "receiptDownloadedInstead": "الإيصال اتحمّل كملف (المتصفح منع نافذة الطباعة)",
+      "errors": {
+        "loadOutletData": "تعذّر تحميل بيانات المنفذ — تأكد من الاتصال وحاول تاني",
+        "loadActiveOrders": "تعذّر تحميل الطلبات الجارية",
+        "cancelHeldOrder": "تعذّر إلغاء الطلب المحفوظ — راجعه من الطلبات الجارية",
+        "holdOrderForDiscount": "تعذّر تسجيل الطلب لتطبيق الخصم",
+        "sendToKitchen": "اتسجّل الطلب لكن حصل خطأ في إرساله للمطبخ — راجعه من الطلبات الجارية",
+        "selectTableRequired": "اختر طاولة للطلب الداخلي",
+        "submitOrder": "فشل في إرسال الطلب"
+      }
+    },
+    "kds": {
+      "title": "شاشة المطبخ الموحّدة — Dining KDS",
+      "connected": "متصل",
+      "disconnected": "منقطع",
+      "liveUpdatesOn": "تحديث لحظي شغال",
+      "reconnecting": "بيحاول يعيد الاتصال...",
+      "live": "لحظي",
+      "reconnectingShort": "...جاري إعادة الاتصال",
+      "muteSound": "إيقاف صوت التنبيه",
+      "unmuteSound": "تشغيل صوت التنبيه",
+      "allStations": "كل المحطات",
+      "kitchenGroup": "المطبخ",
+      "barGroup": "البار",
+      "stations": {
+        "hot": "ساخن",
+        "grill": "شواية",
+        "cold": "بارد",
+        "bar": "بار",
+        "dessert": "حلويات"
+      },
+      "ticketStatus": {
+        "pending": "معلق",
+        "inProgress": "قيد التحضير",
+        "ready": "جاهز"
+      },
+      "noPendingOrders": "لا توجد طلبات معلقة",
+      "startPreparing": "بدء التحضير",
+      "readyToServe": "جاهز للتسليم",
+      "delivered": "تم التسليم",
+      "errors": {
+        "updateItemStatus": "تعذّر تحديث حالة الصنف — حاول تاني",
+        "updateTicketStatus": "تعذّر تحديث حالة التذكرة — حاول تاني"
+      }
     }
   }
 }

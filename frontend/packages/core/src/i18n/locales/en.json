@@ -3426,9 +3426,6 @@
       "beachAdmin": "Beach Management",
       "hubSection": "Website",
       "hubManagement": "Website & Bookings",
-      "beachAdmin": "Beach Management",
-      "hubSection": "Website",
-      "hubManagement": "Website & Bookings",
       "inventory": "Inventory",
       "recipes": "Item Recipes",
       "foodCost": "Food Cost",
@@ -3648,15 +3645,28 @@
       "reasonPromptDeny": "Deny \"{label}\" permission from {name}",
       "reasonPromptRevert": "Revert \"{label}\" permission for {name} to default",
       "roles": {
-        "super_admin": "Super Admin", "admin": "Admin", "accountant": "Accountant",
-        "hr_manager": "HR Manager", "manager": "Manager", "supervisor": "Supervisor",
-        "receptionist": "Receptionist", "cashier": "Cashier", "waiter": "Waiter",
-        "chef": "Chef", "kitchen": "Kitchen", "employee": "Employee"
+        "super_admin": "Super Admin",
+        "admin": "Admin",
+        "accountant": "Accountant",
+        "hr_manager": "HR Manager",
+        "manager": "Manager",
+        "supervisor": "Supervisor",
+        "receptionist": "Receptionist",
+        "cashier": "Cashier",
+        "waiter": "Waiter",
+        "chef": "Chef",
+        "kitchen": "Kitchen",
+        "employee": "Employee"
       },
       "modules": {
-        "finance": "Finance", "dining": "Dining", "beach": "Beach",
-        "hr": "HR", "timeshare": "Timeshare", "pms": "Hotel/PMS",
-        "inventory": "Inventory", "crm": "CRM"
+        "finance": "Finance",
+        "dining": "Dining",
+        "beach": "Beach",
+        "hr": "HR",
+        "timeshare": "Timeshare",
+        "pms": "Hotel/PMS",
+        "inventory": "Inventory",
+        "crm": "CRM"
       }
     },
     "settings": {
@@ -3693,6 +3703,141 @@
       "quickLinkTables": "Manage Tables",
       "quickLinkCafeMenu": "Cafe Menu",
       "quickLinkRestaurantMenu": "Restaurant Menu"
+    },
+    "pos": {
+      "selectOutlet": "Select outlet",
+      "activeOrdersTitle": "Active orders",
+      "searchPlaceholder": "🔍 Search items... (/)",
+      "hotkeysHint": "⌨️ /  — focus search · Enter — send order · Esc — close/clear",
+      "wsStatus": {
+        "connected": "Live updates — connected",
+        "connecting": "Connecting...",
+        "disconnected": "No live connection"
+      },
+      "selectTable": "Select table",
+      "noTables": "No tables for this outlet",
+      "tableSummary": {
+        "all": "All",
+        "available": "Free",
+        "occupied": "Occupied",
+        "waitingPayment": "Awaiting payment",
+        "reserved": "Reserved"
+      },
+      "noSection": "No section",
+      "tableStatus": {
+        "available": "Free",
+        "occupied": "Occupied",
+        "served": "Awaiting payment",
+        "reserved": "Reserved",
+        "outOfService": "Out of service"
+      },
+      "guests": "guests",
+      "currency": "EGP",
+      "covers": "Covers",
+      "decreaseCovers": "Decrease covers",
+      "increaseCovers": "Increase covers",
+      "deliveryAddress": "Delivery address",
+      "roomNumber": "Room number",
+      "note": "Note",
+      "takeawayHint": "Takeaway — fastest path, no table needed",
+      "categoryAll": "All",
+      "noItems": "No items",
+      "noResultsFor": "No results for “{query}”",
+      "fromPrice": "From",
+      "chooseSize": "choose a size",
+      "extrasBadge": "Extras",
+      "cartEmpty": "Pick items from the menu",
+      "cartLockedNotice": "Order #{number} is saved with a discount applied — clear the order to edit it",
+      "removeItem": "Remove item",
+      "decreaseQty": "Decrease quantity",
+      "increaseQty": "Increase quantity",
+      "total": "Total",
+      "applyDiscount": "Apply discount",
+      "discountAppliedBadge": "Discount applied ✓",
+      "discountApplied": "Discount of {amount} EGP applied ✓",
+      "noActiveDiscountRule": "No active discount rule right now",
+      "discountPinGuard": {
+        "title": "Discount approval",
+        "message": "Cashiers have no discount authority — needs manager/accountant PIN approval"
+      },
+      "loyalty": {
+        "title": "Redeem points",
+        "customerIdPlaceholder": "Customer ID",
+        "pointsPlaceholder": "Points",
+        "confirm": "Confirm",
+        "cancel": "Cancel",
+        "redeemButton": "Redeem loyalty points",
+        "enterIdAndPoints": "Enter customer ID and point count",
+        "redeemSuccess": "Redeemed {points} points ✓",
+        "redeemError": "Failed to redeem points"
+      },
+      "clear": "Clear",
+      "sendToKitchen": "Send to kitchen",
+      "close": "Close",
+      "noActiveOrders": "No active orders right now",
+      "tableFilterOnly": "Table {number} only",
+      "tableLabel": "Table {number}",
+      "orderTypes": {
+        "dineIn": "Dine-in",
+        "takeaway": "Takeaway",
+        "delivery": "Delivery",
+        "roomService": "Room service"
+      },
+      "elapsedUnits": {
+        "seconds": "s",
+        "minutes": "m",
+        "hours": "h"
+      },
+      "offlineBanner": "Offline mode — orders are saved locally and sent once you're back online",
+      "pendingCount": "{count} pending",
+      "syncingBanner": "Sending {count} saved order(s) from the outage...",
+      "partialRejectionBanner": "Some items from a saved order were rejected (out of stock):",
+      "offlineSaved": "Order saved — it'll be sent to the kitchen once you're back online",
+      "kitchenSentSuccess": "Order sent to the kitchen ✓",
+      "receiptDownloadedInstead": "Receipt downloaded as a file (browser blocked the print window)",
+      "errors": {
+        "loadOutletData": "Could not load outlet data — check your connection and try again",
+        "loadActiveOrders": "Could not load active orders",
+        "cancelHeldOrder": "Could not cancel the saved order — review it from Active Orders",
+        "holdOrderForDiscount": "Could not save the order to apply a discount",
+        "sendToKitchen": "Order saved, but sending it to the kitchen failed — review it from Active Orders",
+        "selectTableRequired": "Select a table for a dine-in order",
+        "submitOrder": "Failed to send the order"
+      }
+    },
+    "kds": {
+      "title": "Unified Kitchen Display — Dining KDS",
+      "connected": "Connected",
+      "disconnected": "Disconnected",
+      "liveUpdatesOn": "Live updates active",
+      "reconnecting": "Reconnecting...",
+      "live": "Live",
+      "reconnectingShort": "Reconnecting...",
+      "muteSound": "Mute alert sound",
+      "unmuteSound": "Unmute alert sound",
+      "allStations": "All stations",
+      "kitchenGroup": "Kitchen",
+      "barGroup": "Bar",
+      "stations": {
+        "hot": "Hot",
+        "grill": "Grill",
+        "cold": "Cold",
+        "bar": "Bar",
+        "dessert": "Dessert"
+      },
+      "ticketStatus": {
+        "pending": "Pending",
+        "inProgress": "In progress",
+        "ready": "Ready"
+      },
+      "noPendingOrders": "No pending orders",
+      "startPreparing": "Start preparing",
+      "readyToServe": "Ready to serve",
+      "delivered": "Delivered",
+      "errors": {
+        "updateItemStatus": "Could not update item status — try again",
+        "updateTicketStatus": "Could not update ticket status — try again"
+      }
     }
   }
 }

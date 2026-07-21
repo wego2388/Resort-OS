@@ -26,10 +26,12 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { api, useResortWebSocket, parseApiTimestamp, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useToast } from '@resort-os/ui'
 
+const { t } = useI18n()
 const auth = useAuthStore()
 const branchId = auth.branchId
 const toast = useToast()
@@ -57,19 +59,20 @@ const ITEM_DONE_STATUSES: ItemStatus[] = ['ready', 'served']
 // ?stations=hot,grill,cold,dessert في الـ URL بيحدد الفلتر الافتراضي وقت
 // الفتح (راجع router/index.ts's /kds/kitchen و/kds/bar redirects) — عشان
 // جهاز مثبّت فعليًا في المطبخ يفضل يفتح على تذاكر المطبخ بس زي الأول بالظبط.
-const STATION_GROUPS: { val: string[] | null; label: string }[] = [
-  { val: null, label: 'كل المحطات' },
-  { val: ['hot', 'grill', 'cold', 'dessert'], label: '🍳 المطبخ' },
-  { val: ['bar'], label: '🍹 البار' },
-]
-const STATIONS = [
-  { val: null, label: 'كل المحطات' },
-  { val: 'hot', label: '🔥 ساخن' },
-  { val: 'grill', label: '🥩 شواية' },
-  { val: 'cold', label: '🥗 بارد' },
-  { val: 'bar', label: '🍹 بار' },
-  { val: 'dessert', label: '🍰 حلويات' },
-]
+// computed (مش constant) عشان يعيد الحساب لو اللغة اتغيّرت.
+const stationGroups = computed<{ val: string[] | null; label: string }[]>(() => [
+  { val: null, label: t('backoffice.kds.allStations') },
+  { val: ['hot', 'grill', 'cold', 'dessert'], label: `🍳 ${t('backoffice.kds.kitchenGroup')}` },
+  { val: ['bar'], label: `🍹 ${t('backoffice.kds.barGroup')}` },
+])
+const stations = computed(() => [
+  { val: null, label: t('backoffice.kds.allStations') },
+  { val: 'hot', label: `🔥 ${t('backoffice.kds.stations.hot')}` },
+  { val: 'grill', label: `🥩 ${t('backoffice.kds.stations.grill')}` },
+  { val: 'cold', label: `🥗 ${t('backoffice.kds.stations.cold')}` },
+  { val: 'bar', label: `🍹 ${t('backoffice.kds.stations.bar')}` },
+  { val: 'dessert', label: `🍰 ${t('backoffice.kds.stations.dessert')}` },
+])
 
 function initialStationFilter(): string[] | null {
   const q = route.query.stations
@@ -113,7 +116,7 @@ const { status: wsStatus, onMessage } = useResortWebSocket(ENDPOINTS.dining.kdsW
 onMessage((data: any) => { if (data?.type === 'tickets_updated') fetchTickets() })
 
 const filteredTickets = computed(() =>
-  stationFilter.value ? tickets.value.filter(t => stationFilter.value!.includes(t.station)) : tickets.value)
+  stationFilter.value ? tickets.value.filter(tk => stationFilter.value!.includes(tk.station)) : tickets.value)
 function isActiveFilter(val: string[] | null) {
   if (val === null) return stationFilter.value === null
   return !!stationFilter.value && stationFilter.value.length === val.length && val.every(s => stationFilter.value!.includes(s))
@@ -136,11 +139,30 @@ function ticketClasses(ticket: Ticket) {
   return 'border-slate-600 bg-slate-800'
 }
 function statusLabel(status: TicketStatus) {
-  if (status === 'pending') return { label: 'معلق', color: 'bg-amber-500' }
-  if (status === 'in_progress') return { label: 'قيد التحضير', color: 'bg-blue-500' }
-  return { label: 'جاهز', color: 'bg-green-500' }
+  if (status === 'pending') return { label: t('backoffice.kds.ticketStatus.pending'), color: 'bg-amber-500' }
+  if (status === 'in_progress') return { label: t('backoffice.kds.ticketStatus.inProgress'), color: 'bg-blue-500' }
+  return { label: t('backoffice.kds.ticketStatus.ready'), color: 'bg-green-500' }
 }
-const stationLabel: Record<string, string> = { hot: 'ساخن', grill: 'شواية', cold: 'بارد', dessert: 'حلويات', bar: 'بار' }
+const stationLabelFor = (station: string): string => {
+  const map: Record<string, string> = {
+    hot: t('backoffice.kds.stations.hot'), grill: t('backoffice.kds.stations.grill'),
+    cold: t('backoffice.kds.stations.cold'), dessert: t('backoffice.kds.stations.dessert'),
+    bar: t('backoffice.kds.stations.bar'),
+  }
+  return map[station] ?? station
+}
+function orderTypeLabelFor(orderType: string): string {
+  const map: Record<string, string> = {
+    takeaway: t('backoffice.pos.orderTypes.takeaway'),
+    delivery: t('backoffice.pos.orderTypes.delivery'),
+    room_service: t('backoffice.pos.orderTypes.roomService'),
+  }
+  return map[orderType] ?? orderType
+}
+function ticketTitleFor(ticket: Ticket): string {
+  if (ticket.table_number) return t('backoffice.pos.tableLabel', { number: ticket.table_number })
+  return ticket.order_number ?? `#${ticket.order_id}`
+}
 
 async function fetchTickets() {
   try {
@@ -148,10 +170,10 @@ async function fetchTickets() {
     const newTickets: Ticket[] = res.data
     // تحقق من تذاكر جديدة (pending فقط) وشغّل الصوت
     if (soundEnabled.value && knownTicketIds.size > 0) {
-      const hasNew = newTickets.some(t => t.status === 'pending' && !knownTicketIds.has(t.id))
+      const hasNew = newTickets.some(tk => tk.status === 'pending' && !knownTicketIds.has(tk.id))
       if (hasNew) playNewTicketSound()
     }
-    knownTicketIds = new Set(newTickets.map(t => t.id))
+    knownTicketIds = new Set(newTickets.map(tk => tk.id))
     tickets.value = newTickets
     isConnected.value = true
   } catch {
@@ -170,7 +192,7 @@ async function bumpItem(ticket: Ticket, item: TicketItem) {
     await api.patch(ENDPOINTS.dining.orderItemStatus(ticket.order_id, item.order_item_id), { status: next })
     await fetchTickets()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة الصنف — حاول تاني')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.kds.errors.updateItemStatus'))
   }
 }
 
@@ -180,16 +202,16 @@ async function advanceStatus(ticket: Ticket) {
     await api.patch(ENDPOINTS.dining.ticketStatus(ticket.id), { status: next })
     ticket.status = next
     if (next === 'done') {
-      setTimeout(() => { tickets.value = tickets.value.filter(t => t.id !== ticket.id) }, 2000)
+      setTimeout(() => { tickets.value = tickets.value.filter(tk => tk.id !== ticket.id) }, 2000)
     }
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث حالة التذكرة — حاول تاني')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.kds.errors.updateTicketStatus'))
   }
 }
 
 const currentTime = computed(() => formatTime(now.value, { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
-const pendingCount = computed(() => tickets.value.filter(t => t.status === 'pending').length)
-const inProgressCount = computed(() => tickets.value.filter(t => t.status === 'in_progress').length)
+const pendingCount = computed(() => tickets.value.filter(tk => tk.status === 'pending').length)
+const inProgressCount = computed(() => tickets.value.filter(tk => tk.status === 'in_progress').length)
 
 onMounted(() => {
   fetchTickets()
@@ -206,30 +228,30 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
       <div class="flex items-center gap-4 flex-wrap">
         <div class="flex items-center gap-2">
           <div :class="['w-2.5 h-2.5 rounded-full', isConnected ? 'bg-green-400 animate-pulse' : 'bg-red-400']" />
-          <span class="text-sm text-slate-300">{{ isConnected ? 'متصل' : 'منقطع' }}</span>
+          <span class="text-sm text-slate-300">{{ isConnected ? t('backoffice.kds.connected') : t('backoffice.kds.disconnected') }}</span>
         </div>
-        <div class="flex items-center gap-1.5" :title="wsStatus === 'connected' ? 'تحديث لحظي شغال' : 'بيحاول يعيد الاتصال...'">
+        <div class="flex items-center gap-1.5" :title="wsStatus === 'connected' ? t('backoffice.kds.liveUpdatesOn') : t('backoffice.kds.reconnecting')">
           <div :class="['w-2 h-2 rounded-full', wsStatus === 'connected' ? 'bg-cyan-400' : 'bg-slate-500 animate-pulse']" />
-          <span class="text-xs text-slate-400">{{ wsStatus === 'connected' ? 'لحظي' : '...جاري إعادة الاتصال' }}</span>
+          <span class="text-xs text-slate-400">{{ wsStatus === 'connected' ? t('backoffice.kds.live') : t('backoffice.kds.reconnectingShort') }}</span>
         </div>
-        <h1 class="text-xl font-black tracking-wide">🍽️ شاشة المطبخ الموحّدة — Dining KDS</h1>
+        <h1 class="text-xl font-black tracking-wide">🍽️ {{ t('backoffice.kds.title') }}</h1>
         <div class="flex gap-3 text-sm">
-          <span class="px-2 py-0.5 bg-amber-600 rounded-full font-bold">معلق: {{ pendingCount }}</span>
-          <span class="px-2 py-0.5 bg-blue-600 rounded-full font-bold">تحضير: {{ inProgressCount }}</span>
+          <span class="px-2 py-0.5 bg-amber-600 rounded-full font-bold">{{ t('backoffice.kds.ticketStatus.pending') }}: {{ pendingCount }}</span>
+          <span class="px-2 py-0.5 bg-blue-600 rounded-full font-bold">{{ t('backoffice.kds.ticketStatus.inProgress') }}: {{ inProgressCount }}</span>
         </div>
       </div>
       <span class="text-2xl font-mono font-bold text-amber-300">{{ currentTime }}</span>
       <!-- زرار تشغيل/إيقاف الصوت -->
       <button @click="soundEnabled = !soundEnabled"
         :class="['px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors', soundEnabled ? 'bg-slate-700 text-green-400 hover:bg-slate-600' : 'bg-slate-700 text-slate-400 hover:bg-slate-600']"
-        :title="soundEnabled ? 'إيقاف صوت التنبيه' : 'تشغيل صوت التنبيه'">
+        :title="soundEnabled ? t('backoffice.kds.muteSound') : t('backoffice.kds.unmuteSound')">
         {{ soundEnabled ? '🔔' : '🔕' }}
       </button>
     </header>
 
     <div class="bg-slate-800 border-b border-slate-700 px-6 py-2 flex flex-wrap items-center gap-2">
       <button
-        v-for="g in STATION_GROUPS"
+        v-for="g in stationGroups"
         :key="'group-' + String(g.val)"
         type="button"
         @click="stationFilter = g.val"
@@ -240,7 +262,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
       >{{ g.label }}</button>
       <span class="w-px h-5 bg-slate-600 mx-1" />
       <button
-        v-for="s in STATIONS.filter(s => s.val !== null)"
+        v-for="s in stations.filter(s => s.val !== null)"
         :key="'single-' + s.val"
         type="button"
         @click="stationFilter = [s.val as string]"
@@ -255,7 +277,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
       <div v-if="filteredTickets.length === 0" class="flex items-center justify-center h-64 text-slate-500">
         <div class="text-center">
           <div class="text-5xl mb-3">✅</div>
-          <p class="text-lg">لا توجد طلبات معلقة</p>
+          <p class="text-lg">{{ t('backoffice.kds.noPendingOrders') }}</p>
         </div>
       </div>
 
@@ -265,12 +287,12 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
             <div>
               <!-- رقم الطاولة أو نوع الأوردر — أهم معلومة للمطبخ -->
               <div class="text-2xl font-black leading-none">
-                {{ ticket.table_number ? `طاولة ${ticket.table_number}` : (ticket.order_number ?? `#${ticket.order_id}`) }}
+                {{ ticketTitleFor(ticket) }}
               </div>
               <div class="text-xs text-slate-400 mt-0.5">
-                {{ stationLabel[ticket.station] ?? ticket.station }}
+                {{ stationLabelFor(ticket.station) }}
                 <span v-if="!ticket.table_number && ticket.order_type" class="ms-1 opacity-70">
-                  · {{ ticket.order_type === 'takeaway' ? 'تيك أواي' : ticket.order_type === 'delivery' ? 'توصيل' : ticket.order_type === 'room_service' ? 'خدمة غرف' : ticket.order_type }}
+                  · {{ orderTypeLabelFor(ticket.order_type) }}
                 </span>
               </div>
             </div>
@@ -280,7 +302,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
               <div :class="[
                 'text-lg font-black text-center',
                 ticketAge(ticket.created_at) === 'urgent' ? 'text-red-400' : ticketAge(ticket.created_at) === 'warning' ? 'text-amber-400' : 'text-green-400',
-              ]">{{ minutesElapsed(ticket.created_at) }}د</div>
+              ]">{{ minutesElapsed(ticket.created_at) }}{{ t('backoffice.pos.elapsedUnits.minutes') }}</div>
             </div>
           </div>
 
@@ -316,14 +338,14 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
               type="button"
               @click="advanceStatus(ticket)"
               class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-bold transition-colors active:scale-95 min-h-[48px]"
-            >▶ بدء التحضير</button>
+            >▶ {{ t('backoffice.kds.startPreparing') }}</button>
             <button
               v-else-if="ticket.status === 'in_progress'"
               type="button"
               @click="advanceStatus(ticket)"
               class="w-full py-2.5 bg-green-600 hover:bg-green-500 rounded-xl text-sm font-bold transition-colors active:scale-95 min-h-[48px]"
-            >✓ جاهز للتسليم</button>
-            <div v-else class="w-full py-2.5 bg-green-700 rounded-xl text-sm font-bold text-center text-green-200">✓ تم التسليم</div>
+            >✓ {{ t('backoffice.kds.readyToServe') }}</button>
+            <div v-else class="w-full py-2.5 bg-green-700 rounded-xl text-sm font-bold text-center text-green-200">✓ {{ t('backoffice.kds.delivered') }}</div>
           </div>
         </div>
       </div>

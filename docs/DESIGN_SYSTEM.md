@@ -143,15 +143,20 @@ primitives, covered by `validate:i18n` strict checks):
 - `views/portal/ProfileView.vue`
 - `views/account/SessionsView.vue`
 - `views/admin/SettingsView.vue`
+- `views/pos/UnifiedPOSView.vue` (Gate 5 Batch 1, 2026-07-20 — promoted from
+  direction-clean; ~83 strings migrated under `backoffice.pos.*`)
+- `views/kds/DiningKDSView.vue` (Gate 5 Batch 1, 2026-07-20 — promoted from
+  direction-clean; ~25 strings under `backoffice.kds.*`, reuses
+  `backoffice.pos.orderTypes`/`tableLabel`/`elapsedUnits` rather than
+  duplicating the same taxonomy under a second namespace)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
 — they still contain hard-coded Arabic strings):
 
-- `views/kds/DiningKDSView.vue`
-- `views/pos/UnifiedPOSView.vue`
+_(none currently — both prior entries were promoted above in Gate 5 Batch 1)_
 
 Not yet migrated (tracked debt, next batches — do not claim bilingual):
-the remaining ~40 admin/ops/pos/portal screens. Migrate in reviewed batches
+the remaining ~38 admin/ops/portal screens. Migrate in reviewed batches
 per Decision 0002, extending the strict list in
 `apps/el-kheima/scripts/validate-i18n.mjs` as each batch lands.
