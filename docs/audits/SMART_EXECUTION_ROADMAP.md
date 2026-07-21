@@ -152,10 +152,11 @@ settlement/payment، shift/reconciliation، ثم state/ownership/reversals. تق
 **يعتمد على:** Gate 3، وGate 4 للشاشات المالية.  
 **الخروج:** keyboard + responsive + Arabic RTL + English LTR + print، ولا
 missing keys أو strings حرجة hard-coded.  
-**التقدّم:** دفعات 1-13 منفَّذة، كل واحدة على فرع مستقل متفرّع من نفس قاعدة
-Gate 4 (فروع شقيقة، لسه محتاجة دمج). دفعة 13 (2026-07-21) غطّت
-`AnalyticsView.vue`، `HubManagementView.vue`، `QRGeneratorView.vue`،
-و`EInvoiceView.vue` — أكبر دفعة حتى الآن (4 ملفات، 2084 سطر).
+**التقدّم:** دفعات 1-14 منفَّذة، كل واحدة على فرع مستقل متفرّع من نفس قاعدة
+Gate 4 (فروع شقيقة، لسه محتاجة دمج). دفعة 14 (2026-07-21) غطّت
+`pos/ShiftDashboardView.vue` وشاشات الخدمة الذاتية الثلاث
+(`portal/PayrollView.vue`, `portal/AttendanceView.vue`,
+`portal/LeavesView.vue`). دفعة 15 (Login/Auth) هي الأخيرة المتبقية.
 
 **Batch 1 — POS + KDS (2026-07-20)، منفَّذة ومُتحقَّق منها ذاتيًا، فرع
 `gate-5-staff-ux-batch-1-pos-kds-i18n`:** الشاشتين المرجعيتين اللي كانتا

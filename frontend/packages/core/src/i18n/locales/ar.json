@@ -6121,6 +6121,123 @@
         "loadError": "تعذّر تحميل الفواتير الإلكترونية — حاول تاني",
         "submitError": "تعذّر إرسال الفاتورة"
       }
+    },
+    "shiftDashboard": {
+      "title": "لوحة الوردية",
+      "refresh": "تحديث",
+      "noOpenShift": "لا توجد وردية مفتوحة",
+      "noOpenShiftHint": "افتح وردية من الزر أسفل عشان تشوف لوحة التحكم الكاملة",
+      "shiftHash": "وردية #{id}",
+      "salesSummary": "ملخص المبيعات (X-Report)",
+      "loading": "جاري التحميل...",
+      "totalSales": "إجمالي المبيعات",
+      "cash": "كاش",
+      "card": "كارت",
+      "invoiceCount": "عدد الفواتير",
+      "voidedInvoices": "{count} فاتورة ملغاة بقيمة {amount} ج",
+      "invoiceLog": "سجل الفواتير",
+      "downloadPdf": "تحميل PDF",
+      "liveOrdersTitle": "الطلبات الجارية ({count}) — {tables} طاولة مفتوحة",
+      "noLiveOrders": "مفيش طلبات جارية حاليًا",
+      "outletHash": "منفذ #{id}",
+      "orderStatus": {
+        "open": "مفتوح",
+        "inKitchen": "في المطبخ",
+        "served": "اتقدّم"
+      },
+      "tableNumber": "طاولة {number}",
+      "takeaway": "Takeaway",
+      "currency": "ج",
+      "msg": {
+        "loadShiftError": "تعذّر تحميل حالة الوردية",
+        "loadReportError": "تعذّر تحميل ملخص المبيعات",
+        "loadOrdersError": "تعذّر تحميل الطلبات الجارية"
+      }
+    },
+    "payroll": {
+      "title": "قسائم الراتب",
+      "loading": "جاري التحميل...",
+      "currency": "ج",
+      "statusPaid": "مصروف",
+      "statusApproved": "معتمد",
+      "basicSalary": "الراتب الأساسي",
+      "allowances": "البدلات",
+      "socialInsurance": "التأمينات الاجتماعية",
+      "monthlyTax": "الضريبة الشهرية",
+      "penaltyDeduction": "خصم جزاءات",
+      "unpaidLeaveDeduction": "خصم إجازة بدون راتب",
+      "netSalary": "صافي الراتب",
+      "noPayslips": "لا توجد قسائم راتب",
+      "month": {
+        "january": "يناير",
+        "february": "فبراير",
+        "march": "مارس",
+        "april": "أبريل",
+        "may": "مايو",
+        "june": "يونيو",
+        "july": "يوليو",
+        "august": "أغسطس",
+        "september": "سبتمبر",
+        "october": "أكتوبر",
+        "november": "نوفمبر",
+        "december": "ديسمبر"
+      },
+      "msg": {
+        "loadError": "تعذّر تحميل قسائم الراتب"
+      }
+    },
+    "attendance": {
+      "currentTime": "الوقت الحالي",
+      "checkIn": "تسجيل الدخول",
+      "checkOut": "تسجيل الخروج",
+      "hours": "الساعات",
+      "working": "جاري...",
+      "shiftEnded": "✓ تم إنهاء الدوام",
+      "punchOut": "🔴 تسجيل الخروج",
+      "punchIn": "🟢 تسجيل الحضور",
+      "last30Days": "سجل آخر 30 يوم",
+      "loading": "جاري التحميل...",
+      "noRecords": "لا توجد سجلات حضور",
+      "status": {
+        "present": "حاضر",
+        "absent": "غائب",
+        "late": "متأخر",
+        "halfDay": "نصف يوم"
+      },
+      "msg": {
+        "loadError": "تعذّر تحميل سجل الحضور",
+        "punchError": "تعذّر تسجيل الحضور، حاول مرة أخرى"
+      }
+    },
+    "leaves": {
+      "title": "طلبات الإجازات",
+      "requestLeave": "طلب إجازة",
+      "loading": "جاري التحميل...",
+      "daysCount": "{count} يوم",
+      "noLeaveRequests": "لا توجد طلبات إجازات",
+      "noLeaveRequestsHint": "اضغط \"طلب إجازة\" لتقديم طلب جديد",
+      "newRequestTitle": "طلب إجازة جديدة",
+      "leaveType": "نوع الإجازة",
+      "from": "من",
+      "to": "إلى",
+      "reasonOptional": "السبب (اختياري)",
+      "reasonPlaceholder": "وصف سبب الإجازة...",
+      "cancel": "إلغاء",
+      "submitting": "جاري الإرسال...",
+      "submitRequest": "تقديم الطلب",
+      "typeHash": "نوع #{id}",
+      "status": {
+        "pending": "معلق",
+        "approved": "معتمد",
+        "rejected": "مرفوض"
+      },
+      "msg": {
+        "loadTypesError": "تعذّر تحميل أنواع الإجازات",
+        "loadLeavesError": "تعذّر تحميل طلبات الإجازات",
+        "fieldsRequired": "الرجاء تحديد نوع الإجازة وتاريخ البداية والنهاية",
+        "requestSubmitted": "تم تقديم طلب الإجازة بنجاح ✓",
+        "submitError": "حدث خطأ في تقديم الطلب"
+      }
     }
   }
 }
