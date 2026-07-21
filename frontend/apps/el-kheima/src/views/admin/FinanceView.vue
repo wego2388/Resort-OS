@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore, useResortWebSocket } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
+const { t } = useI18n()
+const { formatNumber, formatDate: fmtDateFn, formatDateTime: fmtDateTimeFn } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId ?? 1)
 const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts'>('overview')
@@ -60,7 +64,7 @@ async function loadShifts() {
     shifts.value      = (data.items ?? []).map(parseShift)
     shiftsTotal.value = data.total ?? 0
   } catch(e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل الورديات')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.loadShiftsError'))
   } finally {
     loadingShifts.value = false
   }
@@ -139,7 +143,7 @@ async function openShiftDetail(s: ShiftItem) {
       amount: Number(inv.amount ?? 0),
     }))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل تفاصيل الوردية')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.loadShiftDetailError'))
   } finally {
     detailLoading.value = false
   }
@@ -160,10 +164,12 @@ onShiftWsMessage((data: any) => {
   }
 })
 
-const METHOD_LABEL: Record<string, string> = {
-  cash: '💵 كاش', card: '💳 كارت', bank_transfer: '🏦 تحويل بنكي',
-  credit: '📝 آجل', room_charge: '🛏️ حساب الغرفة', other: 'أخرى',
-}
+const METHOD_LABEL = computed<Record<string, string>>(() => ({
+  cash: `💵 ${t('backoffice.finance.methodCash')}`, card: `💳 ${t('backoffice.finance.methodCard')}`,
+  bank_transfer: `🏦 ${t('backoffice.finance.methodBankTransfer')}`,
+  credit: `📝 ${t('backoffice.finance.methodCredit')}`, room_charge: `🛏️ ${t('backoffice.finance.methodRoomCharge')}`,
+  other: t('backoffice.finance.methodOther'),
+}))
 interface BankAccount {
   id: number; bank_name: string; account_name: string; account_number: string
   currency: string; opening_balance: number; is_active: boolean
@@ -202,7 +208,7 @@ async function loadDepreciation() {
     const map: Record<number, string> = {}
     for (const a of (assetsRes.data.items ?? []) as Asset[]) map[a.id] = a.name
     assetsById.value = map
-  } catch { toast.error('تعذّر تحميل بيانات الإهلاك — حاول تاني') }
+  } catch { toast.error(t('backoffice.finance.loadDepreciationError')) }
   finally { loading.value = false }
 }
 
@@ -218,10 +224,10 @@ async function runDepreciation() {
       entries_count: data.entries.length,
       skipped: data.skipped_assets,
     }
-    toast.success(`تم ترحيل إهلاك ${data.entries.length} أصل بإجمالي ${Number(data.total_amount).toLocaleString('ar-EG')} ج`)
+    toast.success(t('backoffice.finance.depreciationPostedToast', { count: data.entries.length, amount: formatNumber(Number(data.total_amount)) }))
     await loadDepreciation()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تشغيل دورة الإهلاك')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.runDepreciationError'))
   } finally {
     runningDepreciation.value = false
   }
@@ -245,7 +251,7 @@ async function loadBankAccounts() {
       selectedBankAccountId.value = data[0].id
       await loadStatementLinesAndSummary()
     }
-  } catch { toast.error('تعذّر تحميل الحسابات البنكية — حاول تاني') }
+  } catch { toast.error(t('backoffice.finance.loadBankAccountsError')) }
   finally { loading.value = false }
 }
 
@@ -262,12 +268,12 @@ async function loadStatementLinesAndSummary() {
     ])
     statementLines.value = linesRes.data.items ?? []
     reconciliationSummary.value = summaryRes.data
-  } catch { toast.error('تعذّر تحميل بيانات التسوية — حاول تاني') }
+  } catch { toast.error(t('backoffice.finance.loadReconciliationError')) }
 }
 
 async function createBankAccount() {
   if (!bankAccountForm.value.bank_name || !bankAccountForm.value.account_number) {
-    toast.error('املأ اسم البنك ورقم الحساب'); return
+    toast.error(t('backoffice.finance.bankAccountFieldsRequired')); return
   }
   try {
     await api.post(ENDPOINTS.finance.bankAccounts, {
@@ -277,12 +283,12 @@ async function createBankAccount() {
       account_number: bankAccountForm.value.account_number,
       opening_balance: bankAccountForm.value.opening_balance,
     })
-    toast.success('تم إنشاء الحساب البنكي')
+    toast.success(t('backoffice.finance.bankAccountCreated'))
     showBankAccountForm.value = false
     bankAccountForm.value = { bank_name: '', account_name: '', account_number: '', opening_balance: '0' }
     await loadBankAccounts()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر إنشاء الحساب البنكي')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.bankAccountCreateError'))
   }
 }
 
@@ -293,17 +299,17 @@ async function runAutoMatch() {
     const { data } = await api.post(
       ENDPOINTS.finance.bankAccountAutoMatch(selectedBankAccountId.value),
     )
-    toast.success(`اتطابق ${data.matched_count} سطر تلقائيًا`)
+    toast.success(t('backoffice.finance.autoMatchedToast', { count: data.matched_count }))
     await loadStatementLinesAndSummary()
-  } catch { toast.error('تعذّر تشغيل المطابقة التلقائية') }
+  } catch { toast.error(t('backoffice.finance.autoMatchError')) }
   finally { matchingInProgress.value = false }
 }
 
-const statementLineStatusConfig: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
-  unmatched: { label: 'غير مطابق', variant: 'warning' },
-  matched:   { label: 'مطابق',     variant: 'success' },
-  ignored:   { label: 'متجاهل',    variant: 'neutral' },
-}
+const statementLineStatusConfig = computed<Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }>>(() => ({
+  unmatched: { label: t('backoffice.finance.stmtUnmatched'), variant: 'warning' },
+  matched:   { label: t('backoffice.finance.stmtMatched'),     variant: 'success' },
+  ignored:   { label: t('backoffice.finance.stmtIgnored'),    variant: 'neutral' },
+}))
 
 // ── Cost Centers ─────────────────────────────────────────────────────
 const today = new Date().toISOString().slice(0, 10)
@@ -325,7 +331,7 @@ async function loadCostCenters() {
     ccTotalRevenue.value = res.data.total_revenue ?? 0
     ccTotalExpense.value = res.data.total_expense ?? 0
     ccTotalNet.value = res.data.total_net ?? 0
-  } catch { toast.error('تعذّر تحميل مراكز التكلفة — حاول تاني') }
+  } catch { toast.error(t('backoffice.finance.loadCostCentersError')) }
   finally { loading.value = false }
 }
 
@@ -357,29 +363,29 @@ async function loadBalanceSheet() {
       is_balanced: Boolean(data.is_balanced),
     }
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحميل الميزانية العمومية')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.loadBalanceSheetError'))
   } finally {
     loading.value = false
   }
 }
 
-const checkStatusConfig: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
-  received:  { label: 'مستلم',   variant: 'neutral' },
-  deposited: { label: 'مودع',    variant: 'info' },
-  cleared:   { label: 'محصل',    variant: 'success' },
-  bounced:   { label: 'مرتجع',   variant: 'danger' },
-}
+const checkStatusConfig = computed<Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }>>(() => ({
+  received:  { label: t('backoffice.finance.checkReceived'),   variant: 'neutral' },
+  deposited: { label: t('backoffice.finance.checkDeposited'),    variant: 'info' },
+  cleared:   { label: t('backoffice.finance.checkCleared'),    variant: 'success' },
+  bounced:   { label: t('backoffice.finance.checkBounced'),   variant: 'danger' },
+}))
 
-async function loadTab(t: typeof tab.value) {
-  tab.value = t
-  if (t === 'shifts') { await loadShifts(); return }
-  if (t === 'depreciation') { await loadDepreciation(); return }
-  if (t === 'bank-reconciliation') { await loadBankAccounts(); return }
-  if (t === 'balance-sheet') { await loadBalanceSheet(); return }
+async function loadTab(tabId: typeof tab.value) {
+  tab.value = tabId
+  if (tabId === 'shifts') { await loadShifts(); return }
+  if (tabId === 'depreciation') { await loadDepreciation(); return }
+  if (tabId === 'bank-reconciliation') { await loadBankAccounts(); return }
+  if (tabId === 'balance-sheet') { await loadBalanceSheet(); return }
 
   loading.value = true
   try {
-    if (t === 'overview') {
+    if (tabId === 'overview') {
       const res = await api.get(ENDPOINTS.finance.reportsIncomeStatement, {
         params: { branch_id: branchId.value, date_from: firstOfMonth, date_to: today },
       })
@@ -388,23 +394,23 @@ async function loadTab(t: typeof tab.value) {
         total_expense: Number(res.data.total_expense),
         net_income: Number(res.data.net_income),
       }
-    } else if (t === 'checks') {
+    } else if (tabId === 'checks') {
       const res = await api.get(ENDPOINTS.finance.checks, { params: { branch_id: branchId.value } })
       checks.value = res.data.checks ?? res.data.items ?? res.data
-    } else if (t === 'accounts') {
+    } else if (tabId === 'accounts') {
       const res = await api.get(ENDPOINTS.finance.accounts, { params: { branch_id: branchId.value } })
       accounts.value = res.data.accounts ?? res.data.items ?? res.data
-    } else if (t === 'cost-centers') {
+    } else if (tabId === 'cost-centers') {
       await loadCostCenters()
     }
   } catch {
     const messages: Record<'overview' | 'checks' | 'accounts' | 'cost-centers', string> = {
-      overview: 'تعذّر تحميل قائمة الدخل — حاول تاني',
-      checks: 'تعذّر تحميل الشيكات — حاول تاني',
-      accounts: 'تعذّر تحميل الحسابات — حاول تاني',
-      'cost-centers': 'تعذّر تحميل مراكز التكلفة — حاول تاني',
+      overview: t('backoffice.finance.loadIncomeStatementError'),
+      checks: t('backoffice.finance.loadChecksError'),
+      accounts: t('backoffice.finance.loadAccountsError'),
+      'cost-centers': t('backoffice.finance.loadCostCentersError'),
     }
-    toast.error(messages[t as 'overview' | 'checks' | 'accounts' | 'cost-centers'])
+    toast.error(messages[tabId as 'overview' | 'checks' | 'accounts' | 'cost-centers'])
   } finally { loading.value = false }
 }
 
@@ -415,7 +421,7 @@ async function advanceCheck(check: Check) {
   try {
     await api.patch(ENDPOINTS.finance.checkStatus(check.id), { to_status: next })
     check.status = next
-  } catch { toast.error('تعذّر تحديث حالة الشيك — حاول تاني') }
+  } catch { toast.error(t('backoffice.finance.updateCheckStatusError')) }
 }
 
 // كانت الشاشة بتعرض بس مسار "إيداع → تحصيل" — مفيش أي زرار لتسجيل شيك
@@ -425,31 +431,40 @@ async function advanceCheck(check: Check) {
 // ميزة موجودة، مش ميزة جديدة.
 async function markCheckBounced(check: Check) {
   const ok = await confirm({
-    message: `تأكيد ارتداد الشيك رقم "${check.check_number}" (${check.amount.toLocaleString('ar-EG')} ج)؟ لا يمكن التراجع عن هذا الإجراء.`,
-    danger: true, confirmText: 'نعم، الشيك مرتجع', cancelText: 'تراجع',
+    message: t('backoffice.finance.confirmBounceMessage', { number: check.check_number, amount: formatNumber(check.amount) }),
+    danger: true, confirmText: t('backoffice.finance.confirmBounceYes'), cancelText: t('backoffice.finance.confirmBounceNo'),
   })
   if (!ok) return
   try {
     await api.patch(ENDPOINTS.finance.checkStatus(check.id), {
-      to_status: 'bounced', notes: 'رصيد غير كافٍ — سُجّل من شاشة الحسابات',
+      to_status: 'bounced', notes: t('backoffice.finance.bouncedNoteDefault'),
     })
     check.status = 'bounced'
-    toast.success('تم تسجيل الشيك كمرتجع')
-  } catch { toast.error('تعذّر تحديث حالة الشيك — حاول تاني') }
+    toast.success(t('backoffice.finance.checkMarkedBounced'))
+  } catch { toast.error(t('backoffice.finance.updateCheckStatusError')) }
 }
 
 onMounted(() => loadTab('overview'))
 </script>
 
 <template>
-  <div dir="rtl">
-    <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">المالية</h2>
+  <div>
+    <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">{{ t('backoffice.finance.title') }}</h2>
 
-    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
-      <button v-for="t in [{ val: 'overview', label: 'نظرة عامة' }, { val: 'checks', label: 'الشيكات' }, { val: 'accounts', label: 'الحسابات' }, { val: 'cost-centers', label: 'مراكز التكلفة' }, { val: 'balance-sheet', label: 'الميزانية العمومية' }, { val: 'depreciation', label: 'إهلاك الأصول' }, { val: 'bank-reconciliation', label: 'التسوية البنكية' }, { val: 'shifts', label: 'الورديات' }]"
-        :key="t.val" @click="loadTab(t.val as any)"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === t.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
-      >{{ t.label }}</button>
+    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit flex-wrap">
+      <button v-for="tabDef in [
+        { val: 'overview', label: t('backoffice.finance.tabs.overview') },
+        { val: 'checks', label: t('backoffice.finance.tabs.checks') },
+        { val: 'accounts', label: t('backoffice.finance.tabs.accounts') },
+        { val: 'cost-centers', label: t('backoffice.finance.tabs.costCenters') },
+        { val: 'balance-sheet', label: t('backoffice.finance.tabs.balanceSheet') },
+        { val: 'depreciation', label: t('backoffice.finance.tabs.depreciation') },
+        { val: 'bank-reconciliation', label: t('backoffice.finance.tabs.bankReconciliation') },
+        { val: 'shifts', label: t('backoffice.finance.tabs.shifts') },
+      ]"
+        :key="tabDef.val" @click="loadTab(tabDef.val as any)"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
+      >{{ tabDef.label }}</button>
     </div>
 
     <!-- Overview -->
@@ -457,25 +472,25 @@ onMounted(() => loadTab('overview'))
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else-if="financeData" class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إجمالي الإيرادات</div>
-          <div class="text-3xl font-black text-green-600">{{ financeData.total_revenue.toLocaleString('ar-EG') }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.finance.totalRevenue') }}</div>
+          <div class="text-3xl font-black text-green-600">{{ formatNumber(financeData.total_revenue) }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
         </AppCard>
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إجمالي المصروفات</div>
-          <div class="text-3xl font-black text-red-500">{{ financeData.total_expense.toLocaleString('ar-EG') }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.finance.totalExpense') }}</div>
+          <div class="text-3xl font-black text-red-500">{{ formatNumber(financeData.total_expense) }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
         </AppCard>
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">صافي الربح</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.finance.netIncome') }}</div>
           <div :class="['text-3xl font-black', financeData.net_income >= 0 ? 'text-blue-700' : 'text-red-500']">
-            {{ financeData.net_income.toLocaleString('ar-EG') }}
+            {{ formatNumber(financeData.net_income) }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
         </AppCard>
       </div>
       <AppCard v-else padding="lg">
-        <EmptyState icon="📊" title="لا تتوفر بيانات مالية حالياً" />
+        <EmptyState icon="📊" :title="t('backoffice.finance.noFinancialData')" />
       </AppCard>
     </div>
 
@@ -487,20 +502,20 @@ onMounted(() => loadTab('overview'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">رقم الشيك</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الساحب</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المبلغ</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تاريخ الاستحقاق</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">إجراء</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.checkNumber') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.drawer') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.amount') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.dueDate') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.statusCol') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.action') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="check in checks" :key="check.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3 font-mono text-sm text-gray-900 dark:text-gray-100">{{ check.check_number }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ check.drawer_name }}</td>
-                <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ check.amount.toLocaleString('ar-EG') }} ج</td>
-                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ new Date(check.due_date).toLocaleDateString('ar-EG') }}</td>
+                <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(check.amount) }} {{ t('backoffice.finance.egp') }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ fmtDateFn(check.due_date) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="checkStatusConfig[check.status]?.variant ?? 'neutral'">
                     {{ checkStatusConfig[check.status]?.label ?? check.status }}
@@ -509,17 +524,17 @@ onMounted(() => loadTab('overview'))
                 <td class="px-4 py-3">
                   <div v-if="check.status === 'received' || check.status === 'deposited'" class="flex gap-2">
                     <AppButton size="sm" @click="advanceCheck(check)">
-                      {{ check.status === 'received' ? 'إيداع' : 'تحصيل' }}
+                      {{ check.status === 'received' ? t('backoffice.finance.deposit') : t('backoffice.finance.collect') }}
                     </AppButton>
                     <AppButton size="sm" variant="danger" @click="markCheckBounced(check)">
-                      مرتجع
+                      {{ t('backoffice.finance.bounced') }}
                     </AppButton>
                   </div>
                 </td>
               </tr>
               <tr v-if="checks.length === 0">
                 <td colspan="6" class="px-4 py-8">
-                  <EmptyState icon="🏦" title="لا توجد شيكات" />
+                  <EmptyState icon="🏦" :title="t('backoffice.finance.noChecks')" />
                 </td>
               </tr>
             </tbody>
@@ -536,10 +551,10 @@ onMounted(() => loadTab('overview'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الكود</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">اسم الحساب</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">النوع</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الرصيد</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.code') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.accountName') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.type') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.balance') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -548,12 +563,12 @@ onMounted(() => loadTab('overview'))
                 <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ acc.name }}</td>
                 <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ acc.account_type }}</td>
                 <td class="px-4 py-3 text-sm font-bold" :class="acc.balance >= 0 ? 'text-green-600' : 'text-red-500'">
-                  {{ acc.balance.toLocaleString('ar-EG') }} ج
+                  {{ formatNumber(acc.balance) }} {{ t('backoffice.finance.egp') }}
                 </td>
               </tr>
               <tr v-if="accounts.length === 0">
                 <td colspan="4" class="px-4 py-8">
-                  <EmptyState icon="📒" title="لا توجد حسابات" />
+                  <EmptyState icon="📒" :title="t('backoffice.finance.noAccounts')" />
                 </td>
               </tr>
             </tbody>
@@ -566,14 +581,14 @@ onMounted(() => loadTab('overview'))
     <div v-if="tab === 'cost-centers'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">من تاريخ</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.fromDate') }}</label>
           <input v-model="ccDateFrom" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">إلى تاريخ</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.toDate') }}</label>
           <input v-model="ccDateTo" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
         </div>
-        <AppButton size="sm" @click="loadCostCenters">تطبيق</AppButton>
+        <AppButton size="sm" @click="loadCostCenters">{{ t('backoffice.finance.apply') }}</AppButton>
       </div>
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
@@ -583,42 +598,40 @@ onMounted(() => loadTab('overview'))
             <table class="w-full">
               <thead class="bg-stone-50 dark:bg-gray-800/60">
                 <tr>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">مركز التكلفة</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الإيراد</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المصروف</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الصافي</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.costCenter') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.revenue') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.expense') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.net') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="line in ccLines" :key="line.code" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                   <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ line.name }}</td>
-                  <td class="px-4 py-3 text-sm font-bold text-green-600">{{ line.revenue.toLocaleString('ar-EG') }} ج</td>
-                  <td class="px-4 py-3 text-sm font-bold text-red-600">{{ line.expense.toLocaleString('ar-EG') }} ج</td>
+                  <td class="px-4 py-3 text-sm font-bold text-green-600">{{ formatNumber(line.revenue) }} {{ t('backoffice.finance.egp') }}</td>
+                  <td class="px-4 py-3 text-sm font-bold text-red-600">{{ formatNumber(line.expense) }} {{ t('backoffice.finance.egp') }}</td>
                   <td class="px-4 py-3 text-sm font-bold" :class="line.net >= 0 ? 'text-gray-900 dark:text-gray-100' : 'text-red-700'">
-                    {{ line.net.toLocaleString('ar-EG') }} ج
+                    {{ formatNumber(line.net) }} {{ t('backoffice.finance.egp') }}
                   </td>
                 </tr>
                 <tr v-if="ccLines.length === 0">
                   <td colspan="4" class="px-4 py-8">
-                    <EmptyState icon="📈" title="لا توجد بيانات في هذه الفترة" />
+                    <EmptyState icon="📈" :title="t('backoffice.finance.noDataThisPeriod')" />
                   </td>
                 </tr>
               </tbody>
               <tfoot v-if="ccLines.length">
                 <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
-                  <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">الإجمالي</td>
-                  <td class="px-4 py-3 text-sm font-black text-green-700">{{ ccTotalRevenue.toLocaleString('ar-EG') }} ج</td>
-                  <td class="px-4 py-3 text-sm font-black text-red-700">{{ ccTotalExpense.toLocaleString('ar-EG') }} ج</td>
-                  <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ ccTotalNet.toLocaleString('ar-EG') }} ج</td>
+                  <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.total') }}</td>
+                  <td class="px-4 py-3 text-sm font-black text-green-700">{{ formatNumber(ccTotalRevenue) }} {{ t('backoffice.finance.egp') }}</td>
+                  <td class="px-4 py-3 text-sm font-black text-red-700">{{ formatNumber(ccTotalExpense) }} {{ t('backoffice.finance.egp') }}</td>
+                  <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ formatNumber(ccTotalNet) }} {{ t('backoffice.finance.egp') }}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
         </AppCard>
         <p class="text-[11px] text-gray-400 dark:text-gray-500">
-          الأرقام محسوبة من القيود المحاسبية الفعلية (journal_lines) الموسومة بمركز التكلفة وقت
-          الترحيل — الإيراد والمصروف (تكلفة البضاعة المباعة) الاتنين، مش الإيراد بس. قيود اتُرحّلت
-          قبل هذا التحديث مالهاش وسم مركز تكلفة، فمش هتظهر هنا.
+          {{ t('backoffice.finance.costCenterHint') }}
         </p>
       </template>
     </div>
@@ -627,12 +640,12 @@ onMounted(() => loadTab('overview'))
     <div v-if="tab === 'balance-sheet'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">كما في تاريخ</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.asOfDate') }}</label>
           <input v-model="bsAsOf" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
         </div>
-        <AppButton size="sm" @click="loadBalanceSheet">تطبيق</AppButton>
+        <AppButton size="sm" @click="loadBalanceSheet">{{ t('backoffice.finance.apply') }}</AppButton>
         <AppBadge v-if="bsData" size="sm" :variant="bsData.is_balanced ? 'success' : 'danger'">
-          {{ bsData.is_balanced ? '✅ متوازنة (الأصول = الخصوم + حقوق الملكية)' : '⚠️ غير متوازنة — راجع القيود' }}
+          {{ bsData.is_balanced ? `✅ ${t('backoffice.finance.balanced')}` : `⚠️ ${t('backoffice.finance.notBalanced')}` }}
         </AppBadge>
       </div>
 
@@ -640,23 +653,23 @@ onMounted(() => loadTab('overview'))
       <template v-else-if="bsData">
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
           <AppCard padding="none">
-            <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">الأصول</div>
+            <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.assets') }}</div>
             <div class="overflow-x-auto">
               <table class="w-full">
                 <tbody>
                   <tr v-for="l in bsData.asset_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
                     <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
                     <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
-                    <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ l.amount.toLocaleString('ar-EG') }} ج</td>
+                    <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.amount) }} {{ t('backoffice.finance.egp') }}</td>
                   </tr>
                   <tr v-if="bsData.asset_lines.length === 0">
-                    <td colspan="3" class="px-4 py-6"><EmptyState icon="🏦" title="لا توجد أصول مسجّلة حتى هذا التاريخ" /></td>
+                    <td colspan="3" class="px-4 py-6"><EmptyState icon="🏦" :title="t('backoffice.finance.noAssetsToDate')" /></td>
                   </tr>
                 </tbody>
                 <tfoot v-if="bsData.asset_lines.length">
                   <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
-                    <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">إجمالي الأصول</td>
-                    <td class="px-4 py-3 text-sm font-black text-green-700">{{ bsData.total_assets.toLocaleString('ar-EG') }} ج</td>
+                    <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.totalAssets') }}</td>
+                    <td class="px-4 py-3 text-sm font-black text-green-700">{{ formatNumber(bsData.total_assets) }} {{ t('backoffice.finance.egp') }}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -665,23 +678,23 @@ onMounted(() => loadTab('overview'))
 
           <div class="space-y-4">
             <AppCard padding="none">
-              <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">الخصوم</div>
+              <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.liabilities') }}</div>
               <div class="overflow-x-auto">
                 <table class="w-full">
                   <tbody>
                     <tr v-for="l in bsData.liability_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
                       <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
                       <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
-                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ l.amount.toLocaleString('ar-EG') }} ج</td>
+                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.amount) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
                     <tr v-if="bsData.liability_lines.length === 0">
-                      <td colspan="3" class="px-4 py-6"><EmptyState icon="📋" title="لا توجد خصوم مسجّلة حتى هذا التاريخ" /></td>
+                      <td colspan="3" class="px-4 py-6"><EmptyState icon="📋" :title="t('backoffice.finance.noLiabilitiesToDate')" /></td>
                     </tr>
                   </tbody>
                   <tfoot v-if="bsData.liability_lines.length">
                     <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
-                      <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">إجمالي الخصوم</td>
-                      <td class="px-4 py-3 text-sm font-black text-red-700">{{ bsData.total_liabilities.toLocaleString('ar-EG') }} ج</td>
+                      <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.totalLiabilities') }}</td>
+                      <td class="px-4 py-3 text-sm font-black text-red-700">{{ formatNumber(bsData.total_liabilities) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -689,24 +702,24 @@ onMounted(() => loadTab('overview'))
             </AppCard>
 
             <AppCard padding="none">
-              <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">حقوق الملكية</div>
+              <div class="px-4 py-3 border-b border-stone-100 dark:border-border/50 font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.equity') }}</div>
               <div class="overflow-x-auto">
                 <table class="w-full">
                   <tbody>
                     <tr v-for="l in bsData.equity_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
                       <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
                       <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
-                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ l.amount.toLocaleString('ar-EG') }} ج</td>
+                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.amount) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
                     <tr class="border-t border-stone-100 dark:border-border/50">
-                      <td colspan="2" class="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">أرباح محتجزة (صافي الإيراد − المصروف تراكميًا)</td>
-                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ bsData.retained_earnings.toLocaleString('ar-EG') }} ج</td>
+                      <td colspan="2" class="px-4 py-2 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.finance.retainedEarnings') }}</td>
+                      <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(bsData.retained_earnings) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
                   </tbody>
                   <tfoot>
                     <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
-                      <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">إجمالي الخصوم + حقوق الملكية</td>
-                      <td class="px-4 py-3 text-sm font-black text-blue-700">{{ bsData.total_liabilities_and_equity.toLocaleString('ar-EG') }} ج</td>
+                      <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.totalLiabilitiesAndEquity') }}</td>
+                      <td class="px-4 py-3 text-sm font-black text-blue-700">{{ formatNumber(bsData.total_liabilities_and_equity) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -715,13 +728,11 @@ onMounted(() => loadTab('overview'))
           </div>
         </div>
         <p class="text-[11px] text-gray-400 dark:text-gray-500">
-          الأرقام محسوبة من أرصدة القيود المحاسبية الفعلية (journal_lines) لكل حساب حتى تاريخ "كما في"
-          — نفس مصدر بيانات الحسابات ومراكز التكلفة، مش حساب موازٍ منفصل. الأرباح المحتجزة = صافي
-          الإيرادات ناقص المصروفات تراكميًا (المشروع مفيهوش قيد إقفال سنوي فعلي لسه).
+          {{ t('backoffice.finance.balanceSheetHint') }}
         </p>
       </template>
       <AppCard v-else padding="lg">
-        <EmptyState icon="⚖️" title="لا تتوفر بيانات ميزانية عمومية" />
+        <EmptyState icon="⚖️" :title="t('backoffice.finance.noBalanceSheetData')" />
       </AppCard>
     </div>
 
@@ -730,25 +741,25 @@ onMounted(() => loadTab('overview'))
       <AppCard class="mb-4">
         <div class="flex flex-wrap items-end gap-3">
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">السنة</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.year') }}</label>
             <input v-model.number="depYear" type="number" min="2020" max="2100"
               class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm w-28" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الشهر</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.month') }}</label>
             <input v-model.number="depMonth" type="number" min="1" max="12"
               class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm w-20" />
           </div>
           <AppButton size="sm" :loading="runningDepreciation" @click="runDepreciation">
-            شغّل دورة الإهلاك
+            {{ t('backoffice.finance.runDepreciationCycle') }}
           </AppButton>
         </div>
         <div v-if="lastRunResult" class="mt-3 text-sm">
           <p class="text-green-700 font-semibold">
-            ترحّل إهلاك {{ lastRunResult.entries_count }} أصل — إجمالي {{ lastRunResult.total_amount.toLocaleString('ar-EG') }} ج
+            {{ t('backoffice.finance.depreciationRunSummary', { count: lastRunResult.entries_count, amount: formatNumber(lastRunResult.total_amount) }) }}
           </p>
           <p v-if="lastRunResult.skipped.length" class="text-gray-400 dark:text-gray-500 text-xs mt-1">
-            اتخطّى: {{ lastRunResult.skipped.join('، ') }}
+            {{ t('backoffice.finance.skippedList', { names: lastRunResult.skipped.join('، ') }) }}
           </p>
         </div>
       </AppCard>
@@ -759,22 +770,22 @@ onMounted(() => loadTab('overview'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الأصل</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الشهر</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">قيمة الإهلاك</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">مجمّع الإهلاك بعدها</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.asset') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.month') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.depreciationAmount') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.accumulatedAfter') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="e in depreciationEntries" :key="e.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
-                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ assetsById[e.asset_id] ?? `أصل #${e.asset_id}` }}</td>
+                <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ assetsById[e.asset_id] ?? t('backoffice.finance.assetHash', { id: e.asset_id }) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ e.month }}/{{ e.year }}</td>
-                <td class="px-4 py-3 text-sm font-bold text-red-500">{{ Number(e.amount).toLocaleString('ar-EG') }} ج</td>
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ Number(e.accumulated_after).toLocaleString('ar-EG') }} ج</td>
+                <td class="px-4 py-3 text-sm font-bold text-red-500">{{ formatNumber(Number(e.amount)) }} {{ t('backoffice.finance.egp') }}</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatNumber(Number(e.accumulated_after)) }} {{ t('backoffice.finance.egp') }}</td>
               </tr>
               <tr v-if="depreciationEntries.length === 0">
                 <td colspan="4" class="px-4 py-8">
-                  <EmptyState icon="📉" title="لا توجد قيود إهلاك بعد" subtitle="شغّل دورة الإهلاك أعلاه لأول مرة" />
+                  <EmptyState icon="📉" :title="t('backoffice.finance.noDepreciationEntries')" :subtitle="t('backoffice.finance.noDepreciationEntriesHint')" />
                 </td>
               </tr>
             </tbody>
@@ -794,53 +805,53 @@ onMounted(() => loadTab('overview'))
         </select>
         <span v-else />
         <AppButton size="sm" @click="showBankAccountForm = !showBankAccountForm">
-          {{ showBankAccountForm ? 'إلغاء' : '+ حساب بنكي جديد' }}
+          {{ showBankAccountForm ? t('backoffice.finance.cancel') : t('backoffice.finance.newBankAccount') }}
         </AppButton>
       </div>
 
       <AppCard v-if="showBankAccountForm" class="mb-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <input v-model="bankAccountForm.bank_name" type="text" placeholder="اسم البنك"
+          <input v-model="bankAccountForm.bank_name" type="text" :placeholder="t('backoffice.finance.bankName')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="bankAccountForm.account_name" type="text" placeholder="اسم الحساب (اختياري)"
+          <input v-model="bankAccountForm.account_name" type="text" :placeholder="t('backoffice.finance.accountNameOptional')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="bankAccountForm.account_number" type="text" placeholder="رقم الحساب"
+          <input v-model="bankAccountForm.account_number" type="text" :placeholder="t('backoffice.finance.accountNumber')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <input v-model="bankAccountForm.opening_balance" type="number" step="0.01" placeholder="الرصيد الافتتاحي"
+          <input v-model="bankAccountForm.opening_balance" type="number" step="0.01" :placeholder="t('backoffice.finance.openingBalance')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
-        <AppButton class="mt-3" size="sm" @click="createBankAccount">حفظ الحساب</AppButton>
+        <AppButton class="mt-3" size="sm" @click="createBankAccount">{{ t('backoffice.finance.saveAccount') }}</AppButton>
       </AppCard>
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
-      <EmptyState v-else-if="bankAccounts.length === 0" icon="🏦" title="لا توجد حسابات بنكية بعد" />
+      <EmptyState v-else-if="bankAccounts.length === 0" icon="🏦" :title="t('backoffice.finance.noBankAccountsYet')" />
       <template v-else>
         <div v-if="reconciliationSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">رصيد الدفاتر</div>
-            <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ reconciliationSummary.book_balance.toLocaleString('ar-EG') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.bookBalance') }}</div>
+            <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ formatNumber(reconciliationSummary.book_balance) }}</div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">رصيد كشف الحساب</div>
-            <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ reconciliationSummary.statement_balance.toLocaleString('ar-EG') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.statementBalance') }}</div>
+            <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ formatNumber(reconciliationSummary.statement_balance) }}</div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">الفرق</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.difference') }}</div>
             <div :class="['text-lg font-black', reconciliationSummary.is_reconciled ? 'text-green-600' : 'text-amber-600']">
-              {{ reconciliationSummary.difference.toLocaleString('ar-EG') }}
+              {{ formatNumber(reconciliationSummary.difference) }}
             </div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">الحالة</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.statusLabel') }}</div>
             <AppBadge :variant="reconciliationSummary.is_reconciled ? 'success' : 'warning'">
-              {{ reconciliationSummary.is_reconciled ? 'متطابقة ✓' : 'غير متطابقة' }}
+              {{ reconciliationSummary.is_reconciled ? `${t('backoffice.finance.reconciled')} ✓` : t('backoffice.finance.notReconciled') }}
             </AppBadge>
           </AppCard>
         </div>
 
         <div class="flex justify-end mb-3">
           <AppButton size="sm" :loading="matchingInProgress" @click="runAutoMatch">
-            مطابقة تلقائية محافظة
+            {{ t('backoffice.finance.autoMatchConservative') }}
           </AppButton>
         </div>
 
@@ -849,10 +860,10 @@ onMounted(() => loadTab('overview'))
             <table class="w-full">
               <thead class="bg-stone-50 dark:bg-gray-800/60">
                 <tr>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التاريخ</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الوصف</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المبلغ</th>
-                  <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.date') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.description') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.amount') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.statusCol') }}</th>
                 </tr>
               </thead>
               <tbody>
@@ -860,7 +871,7 @@ onMounted(() => loadTab('overview'))
                   <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ line.line_date }}</td>
                   <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{{ line.description }}</td>
                   <td class="px-4 py-3 text-sm font-bold" :class="line.amount >= 0 ? 'text-green-600' : 'text-red-500'">
-                    {{ Number(line.amount).toLocaleString('ar-EG') }}
+                    {{ formatNumber(Number(line.amount)) }}
                   </td>
                   <td class="px-4 py-3">
                     <AppBadge size="sm" :variant="statementLineStatusConfig[line.status]?.variant ?? 'neutral'">
@@ -870,7 +881,7 @@ onMounted(() => loadTab('overview'))
                 </tr>
                 <tr v-if="statementLines.length === 0">
                   <td colspan="4" class="px-4 py-8">
-                    <EmptyState icon="📄" title="لا توجد سطور كشف حساب" />
+                    <EmptyState icon="📄" :title="t('backoffice.finance.noStatementLines')" />
                   </td>
                 </tr>
               </tbody>
@@ -884,7 +895,11 @@ onMounted(() => loadTab('overview'))
     <div v-if="tab === 'shifts'" class="space-y-4">
       <div class="flex items-center gap-3 flex-wrap">
         <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl">
-          <button v-for="s in [{ v: 'all', l: 'الكل' }, { v: 'open', l: 'مفتوحة' }, { v: 'closed', l: 'مقفولة' }]"
+          <button v-for="s in [
+            { v: 'all', l: t('backoffice.finance.all') },
+            { v: 'open', l: t('backoffice.finance.shiftOpen') },
+            { v: 'closed', l: t('backoffice.finance.shiftClosed') },
+          ]"
             :key="s.v" @click="shiftStatus = s.v as any; loadShifts()"
             :class="['px-3 py-1 rounded-lg text-xs font-semibold transition-all', shiftStatus === s.v ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500']">
             {{ s.l }}
@@ -895,25 +910,25 @@ onMounted(() => loadTab('overview'))
           @click="shiftVarianceOnly = !shiftVarianceOnly"
           :class="['px-3 py-1 rounded-lg text-xs font-semibold border transition-all',
             shiftVarianceOnly ? 'bg-amber-500 border-amber-500 text-white' : 'bg-white dark:bg-surface border-stone-200 dark:border-border text-gray-500']"
-        >⚠️ فرق &gt; 0 فقط</button>
+        >⚠️ {{ t('backoffice.finance.varianceOnlyFilter') }}</button>
         <!-- spinner أثناء التحميل -->
         <AppSpinner v-if="loadingShifts" size="sm" />
-        <span class="text-xs text-gray-400 dark:text-gray-500">إجمالي: {{ shiftsTotal }} — معروض: {{ filteredShifts.length }}</span>
-        <button @click="loadShifts()" class="ms-auto px-3 py-1 rounded-lg text-xs font-semibold border border-stone-200 dark:border-border bg-white dark:bg-surface text-gray-500 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 transition-all">🔄 تحديث</button>
+        <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.finance.totalShown', { total: shiftsTotal, shown: filteredShifts.length }) }}</span>
+        <button @click="loadShifts()" class="ms-auto px-3 py-1 rounded-lg text-xs font-semibold border border-stone-200 dark:border-border bg-white dark:bg-surface text-gray-500 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 transition-all">🔄 {{ t('backoffice.finance.refresh') }}</button>
       </div>
       <div class="overflow-x-auto rounded-xl border border-stone-200 dark:border-border">
         <table class="w-full text-sm">
           <thead class="bg-stone-50 dark:bg-gray-800/60 text-xs text-gray-500 dark:text-gray-500 uppercase">
             <tr>
-              <th class="px-4 py-3 text-right">#</th>
-              <th class="px-4 py-3 text-right">كاشير</th>
-              <th class="px-4 py-3 text-right">فُتحت</th>
-              <th class="px-4 py-3 text-right">أُغلقت</th>
-              <th class="px-4 py-3 text-right">الحالة</th>
-              <th class="px-4 py-3 text-right">متوقع</th>
-              <th class="px-4 py-3 text-right">معدود</th>
-              <th class="px-4 py-3 text-right">الفرق</th>
-              <th class="px-4 py-3 text-right">PDF</th>
+              <th class="px-4 py-3 text-start">#</th>
+              <th class="px-4 py-3 text-start">{{ t('backoffice.finance.cashier') }}</th>
+              <th class="px-4 py-3 text-start">{{ t('backoffice.finance.opened') }}</th>
+              <th class="px-4 py-3 text-start">{{ t('backoffice.finance.closed') }}</th>
+              <th class="px-4 py-3 text-start">{{ t('backoffice.finance.statusCol') }}</th>
+              <th class="px-4 py-3 text-start">{{ t('backoffice.finance.expected') }}</th>
+              <th class="px-4 py-3 text-start">{{ t('backoffice.finance.counted') }}</th>
+              <th class="px-4 py-3 text-start">{{ t('backoffice.finance.variance') }}</th>
+              <th class="px-4 py-3 text-start">PDF</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-stone-100">
@@ -925,17 +940,17 @@ onMounted(() => loadTab('overview'))
               <td class="px-4 py-3 font-mono text-gray-500 dark:text-gray-500">#{{ s.id }}</td>
               <td class="px-4 py-3 font-semibold">{{ s.cashier_id }}</td>
               <td class="px-4 py-3 text-gray-600 dark:text-gray-500 text-xs">
-                {{ new Date(s.opened_at).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) }}
+                {{ fmtDateTimeFn(s.opened_at) }}
               </td>
               <td class="px-4 py-3 text-gray-500 dark:text-gray-500 text-xs">
-                {{ s.closed_at ? new Date(s.closed_at).toLocaleString('ar-EG', { dateStyle: 'short', timeStyle: 'short' }) : '—' }}
+                {{ s.closed_at ? fmtDateTimeFn(s.closed_at) : '—' }}
               </td>
               <td class="px-4 py-3">
                 <span :class="['px-2 py-0.5 rounded-full text-xs font-bold',
                   s.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600']">
-                  {{ s.status === 'open' ? 'مفتوحة' : 'مقفولة' }}
+                  {{ s.status === 'open' ? t('backoffice.finance.shiftOpen') : t('backoffice.finance.shiftClosed') }}
                 </span>
-                <span v-if="s.reconciliation_warning" class="mr-1 text-red-500 cursor-help"
+                <span v-if="s.reconciliation_warning" class="ms-1 text-red-500 cursor-help"
                   :title="s.reconciliation_warning">⚠️</span>
               </td>
               <td class="px-4 py-3 text-gray-700 dark:text-gray-300">{{ s.expected_cash?.toFixed(2) ?? '—' }}</td>
@@ -953,7 +968,7 @@ onMounted(() => loadTab('overview'))
               </td>
             </tr>
             <tr v-if="!filteredShifts.length">
-              <td colspan="9" class="px-4 py-12 text-center text-gray-400 dark:text-gray-500">لا توجد ورديات</td>
+              <td colspan="9" class="px-4 py-12 text-center text-gray-400 dark:text-gray-500">{{ t('backoffice.finance.noShifts') }}</td>
             </tr>
           </tbody>
         </table>
@@ -961,29 +976,29 @@ onMounted(() => loadTab('overview'))
     </div>
 
     <!-- Shift drill-down (S-05) — تقرير كامل + سجل فواتير لوردية واحدة -->
-    <AppModal :open="!!detailShift" :title="`تفاصيل وردية #${detailShift?.id ?? ''}`" size="lg" @close="closeShiftDetail">
+    <AppModal :open="!!detailShift" :title="t('backoffice.finance.shiftDetailTitle', { id: detailShift?.id ?? '' })" size="lg" @close="closeShiftDetail">
       <div v-if="detailLoading" class="flex justify-center py-10"><AppSpinner size="lg" /></div>
-      <div v-else-if="detailReport" dir="rtl" class="space-y-4">
+      <div v-else-if="detailReport" class="space-y-4">
 
         <!-- KPIs رئيسية -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 text-center border border-emerald-100 dark:border-emerald-800/40">
             <div class="text-lg font-black text-emerald-700 dark:text-emerald-400">{{ detailReport.total_sales.toFixed(2) }}</div>
-            <div class="text-xs text-emerald-600 dark:text-emerald-500 mt-0.5">إجمالي المبيعات</div>
+            <div class="text-xs text-emerald-600 dark:text-emerald-500 mt-0.5">{{ t('backoffice.finance.totalSales') }}</div>
           </div>
           <div class="bg-blue-50 dark:bg-blue-900/20 rounded-xl p-3 text-center border border-blue-100 dark:border-blue-800/40">
             <div class="text-lg font-black text-blue-700 dark:text-blue-400">{{ detailReport.total_cash.toFixed(2) }}</div>
-            <div class="text-xs text-blue-600 dark:text-blue-500 mt-0.5">كاش</div>
+            <div class="text-xs text-blue-600 dark:text-blue-500 mt-0.5">{{ t('backoffice.finance.methodCash') }}</div>
           </div>
           <div class="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-3 text-center border border-purple-100 dark:border-purple-800/40">
             <div class="text-lg font-black text-purple-700 dark:text-purple-400">{{ detailReport.total_card.toFixed(2) }}</div>
-            <div class="text-xs text-purple-600 dark:text-purple-500 mt-0.5">كارت</div>
+            <div class="text-xs text-purple-600 dark:text-purple-500 mt-0.5">{{ t('backoffice.finance.methodCard') }}</div>
           </div>
           <div class="rounded-xl p-3 text-center border" :class="shiftVarianceClass(detailShift?.variance).includes('red') ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/40' : 'bg-stone-50 dark:bg-gray-800/60 border-stone-200 dark:border-border'">
             <div class="text-lg font-black" :class="shiftVarianceClass(detailShift?.variance)">
               {{ detailShift?.variance != null ? (detailShift.variance > 0 ? '+' : '') + detailShift.variance.toFixed(2) : '—' }}
             </div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">الفرق</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ t('backoffice.finance.variance') }}</div>
           </div>
         </div>
 
@@ -991,24 +1006,24 @@ onMounted(() => loadTab('overview'))
         <div v-if="detailReport.total_credit > 0 || detailReport.total_other > 0 || detailReport.voided_count > 0"
           class="grid grid-cols-3 gap-2">
           <div v-if="detailReport.total_credit > 0" class="bg-stone-50 dark:bg-gray-800/60 rounded-lg p-2.5 text-center border border-stone-200 dark:border-border">
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-300">{{ detailReport.total_credit.toFixed(2) }} ج</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">📝 آجل</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-300">{{ detailReport.total_credit.toFixed(2) }} {{ t('backoffice.finance.egp') }}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">📝 {{ t('backoffice.finance.methodCredit') }}</div>
           </div>
           <div v-if="detailReport.total_other > 0" class="bg-stone-50 dark:bg-gray-800/60 rounded-lg p-2.5 text-center border border-stone-200 dark:border-border">
-            <div class="text-sm font-bold text-gray-700 dark:text-gray-300">{{ detailReport.total_other.toFixed(2) }} ج</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">🔄 أخرى</div>
+            <div class="text-sm font-bold text-gray-700 dark:text-gray-300">{{ detailReport.total_other.toFixed(2) }} {{ t('backoffice.finance.egp') }}</div>
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">🔄 {{ t('backoffice.finance.methodOther') }}</div>
           </div>
           <div v-if="detailReport.voided_count > 0" class="bg-red-50 dark:bg-red-900/20 rounded-lg p-2.5 text-center border border-red-100 dark:border-red-800/40">
             <div class="text-sm font-bold text-red-600 dark:text-red-400">
-              {{ detailReport.voided_count }} ({{ detailReport.voided_amount.toFixed(2) }} ج)
+              {{ detailReport.voided_count }} ({{ detailReport.voided_amount.toFixed(2) }} {{ t('backoffice.finance.egp') }})
             </div>
-            <div class="text-xs text-red-500 dark:text-red-400 mt-0.5">❌ ملغاة</div>
+            <div class="text-xs text-red-500 dark:text-red-400 mt-0.5">❌ {{ t('backoffice.finance.voided') }}</div>
           </div>
         </div>
 
         <!-- ملخص العملات الأجنبية -->
         <div v-if="detailReport.foreign_currency_summary?.length">
-          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">🌍 عملات أجنبية</h3>
+          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">🌍 {{ t('backoffice.finance.foreignCurrencies') }}</h3>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
             <div v-for="fc in detailReport.foreign_currency_summary" :key="fc.currency"
               class="bg-amber-50 dark:bg-amber-900/20 rounded-lg px-2 py-1.5 border border-amber-100 dark:border-amber-800/40 flex justify-between">
@@ -1016,22 +1031,22 @@ onMounted(() => loadTab('overview'))
                 {{ fc.total_foreign.toFixed(2) }} {{ fc.currency }}
                 <span class="text-gray-400 dark:text-gray-500"> × {{ fc.fx_rate }}</span>
               </span>
-              <span class="font-semibold text-amber-700 dark:text-amber-400">{{ fc.egp_equivalent.toFixed(2) }} ج</span>
+              <span class="font-semibold text-amber-700 dark:text-amber-400">{{ fc.egp_equivalent.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
             </div>
           </div>
           <div v-if="detailReport.counted_cash_egp != null" class="mt-1.5 text-xs text-end text-gray-500 dark:text-gray-400">
-            إجمالي العدّ بالجنيه: <span class="font-bold text-gray-700 dark:text-gray-300">{{ detailReport.counted_cash_egp.toFixed(2) }} ج</span>
+            {{ t('backoffice.finance.totalCountedEgp') }} <span class="font-bold text-gray-700 dark:text-gray-300">{{ detailReport.counted_cash_egp.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
           </div>
         </div>
 
         <!-- عدّ الكاش بالفئة -->
         <div v-if="detailReport.cash_count.length">
-          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">عدّ الكاش بالفئة</h3>
+          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">{{ t('backoffice.finance.cashCountByDenomination') }}</h3>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
             <div v-for="(line, i) in detailReport.cash_count" :key="i"
               class="bg-stone-50 dark:bg-gray-800/60 rounded-lg px-2 py-1.5 flex justify-between">
               <span class="text-gray-600 dark:text-gray-400">{{ line.denomination }} {{ line.currency }} × {{ line.quantity }}</span>
-              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ line.egp_equivalent.toFixed(2) }} ج</span>
+              <span class="font-semibold text-gray-800 dark:text-gray-200">{{ line.egp_equivalent.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
             </div>
           </div>
         </div>
@@ -1039,17 +1054,17 @@ onMounted(() => loadTab('overview'))
         <!-- سجل الفواتير -->
         <div>
           <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">
-            الفواتير ({{ detailInvoices.length }})
+            {{ t('backoffice.finance.invoicesCount', { count: detailInvoices.length }) }}
           </h3>
-          <EmptyState v-if="!detailInvoices.length" title="مفيش فواتير في الوردية دي" />
+          <EmptyState v-if="!detailInvoices.length" :title="t('backoffice.finance.noInvoicesInShift')" />
           <div v-else class="divide-y divide-stone-100 dark:divide-border/50 max-h-64 overflow-y-auto">
             <div v-for="inv in detailInvoices" :key="inv.payment_id"
               class="py-2 flex items-center justify-between gap-2" :class="inv.is_voided && 'opacity-50'">
               <div>
                 <span class="text-sm font-semibold text-gray-800 dark:text-gray-200" :class="inv.is_voided && 'line-through'">{{ inv.guest_name }}</span>
-                <span class="text-xs text-gray-400 dark:text-gray-500 mr-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-500 ms-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
               </div>
-              <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 dark:text-gray-500 line-through' : 'text-blue-700 dark:text-blue-400'">{{ inv.amount.toFixed(2) }} ج</span>
+              <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 dark:text-gray-500 line-through' : 'text-blue-700 dark:text-blue-400'">{{ inv.amount.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
             </div>
           </div>
         </div>
@@ -1060,9 +1075,9 @@ onMounted(() => loadTab('overview'))
             :href="ENDPOINTS.finance.shiftReportPdf(detailShift.id)"
             target="_blank"
             class="flex-1">
-            <AppButton variant="outline" block>📄 تحميل PDF</AppButton>
+            <AppButton variant="outline" block>📄 {{ t('backoffice.finance.downloadPdf') }}</AppButton>
           </a>
-          <AppButton variant="ghost" :block="detailShift?.status !== 'closed'" @click="closeShiftDetail">إغلاق</AppButton>
+          <AppButton variant="ghost" :block="detailShift?.status !== 'closed'" @click="closeShiftDetail">{{ t('backoffice.finance.close') }}</AppButton>
         </div>
       </template>
     </AppModal>
