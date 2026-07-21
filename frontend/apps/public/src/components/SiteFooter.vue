@@ -15,7 +15,7 @@ const year = new Date().getFullYear()
 
 <template>
   <footer id="contact" class="bg-brand-charcoal text-white/80">
-    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-12 grid grid-cols-1 md:grid-cols-3 gap-10">
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 py-12 grid grid-cols-1 md:grid-cols-4 gap-10">
       <div>
         <div class="flex items-center gap-2 mb-3">
           <img src="../assets/el-kheima-logo.svg" alt="El Kheima Beach Resort" class="h-10 w-auto bg-white rounded-md p-0.5" />
@@ -52,6 +52,16 @@ const year = new Date().getFullYear()
         <p class="text-sm leading-relaxed mb-3">{{ t('marketing.contact.address') }}</p>
         <a :href="RESORT.mapUrl" target="_blank" rel="noopener"
           class="rounded text-sm font-bold text-brand-sunset hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">🗺️ Google Maps</a>
+      </div>
+
+      <div>
+        <h4 class="font-heading font-bold text-white mb-3">{{ t('marketing.nav.gallery') }}</h4>
+        <ul class="space-y-2 text-sm">
+          <li><RouterLink to="/beach" class="rounded hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">{{ t('marketing.nav.beach') }}</RouterLink></li>
+          <li><RouterLink to="/packages" class="rounded hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">{{ t('marketing.nav.packages') }}</RouterLink></li>
+          <li><RouterLink to="/events" class="rounded hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">{{ t('marketing.nav.events') }}</RouterLink></li>
+          <li><RouterLink to="/gallery" class="rounded hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">{{ t('marketing.nav.gallery') }}</RouterLink></li>
+        </ul>
       </div>
     </div>
 

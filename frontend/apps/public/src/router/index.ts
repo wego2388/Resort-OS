@@ -26,6 +26,16 @@ const router = createRouter({
     { path: '/privacy', component: () => import('../views/PrivacyView.vue'), meta: { titleKey: 'marketing.pages.privacy.title', descriptionKey: 'marketing.seo.privacy' } },
     { path: '/terms', component: () => import('../views/TermsView.vue'), meta: { titleKey: 'marketing.pages.terms.title', descriptionKey: 'marketing.seo.terms' } },
 
+    // ── Batch 3 (Public Phase 0 migration, 2026-07-21) — Beach and Packages
+    // ship with real, sourced content; Events and Gallery ship as page
+    // shells with a "content pending" notice (no verified event-package
+    // detail or real resort photography in this repo — see each view's
+    // header comment).
+    { path: '/beach', component: () => import('../views/BeachView.vue'), meta: { titleKey: 'marketing.nav.beach', descriptionKey: 'marketing.seo.beach' } },
+    { path: '/packages', component: () => import('../views/PackagesView.vue'), meta: { titleKey: 'marketing.nav.packages', descriptionKey: 'marketing.seo.packages' } },
+    { path: '/events', component: () => import('../views/EventsView.vue'), meta: { titleKey: 'marketing.nav.events', descriptionKey: 'marketing.seo.events' } },
+    { path: '/gallery', component: () => import('../views/GalleryView.vue'), meta: { titleKey: 'marketing.nav.gallery', descriptionKey: 'marketing.seo.gallery' } },
+
     // ── Guest QR flows — دُمجت من apps/qr المستقل سابقاً (2026-07-06) ────
     // كل الروابط دي بتوصل للضيف عن طريق مسح QR على طاولة/شمسية، بدون أي
     // تسجيل دخول — راجع OrderView.vue للتفاصيل.

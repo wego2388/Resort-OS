@@ -21,7 +21,7 @@
 
 export interface MarketingMessages {
   brand: { name: string; nameNative: string; tagline: string }
-  nav: { home: string; rooms: string; dining: string; book: string; contact: string; callUs: string; menuToggle: string; about: string; faq: string }
+  nav: { home: string; rooms: string; dining: string; book: string; contact: string; callUs: string; menuToggle: string; about: string; faq: string; beach: string; packages: string; events: string; gallery: string }
   hero: {
     eyebrow: string
     title: string
@@ -112,6 +112,34 @@ export interface MarketingMessages {
     faq: { title: string; subtitle: string; pendingNotice: string }
     privacy: { title: string; pendingNotice: string }
     terms: { title: string; pendingNotice: string }
+    // Batch 3 (2026-07-21) — sourced from
+    // elkheima-beach-resort-marketing/05_content/MASTER_FILE_COMPLETE.md
+    // (facilities/activities list + the 4 beach-access tiers + the 3 named
+    // packages) — real content, not invented. Prices carry an explicit
+    // "subject to change" note since this is a static marketing document,
+    // not a live price feed.
+    beach: {
+      title: string; subtitle: string
+      amenitiesTitle: string
+      amenity1: string; amenity2: string; amenity3: string; amenity4: string; amenity5: string; amenity6: string
+      activitiesTitle: string
+      activity1: string; activity2: string; activity3: string; activity4: string
+      accessTitle: string; accessSubtitle: string
+      tierRegular: string; tierRegularPrice: string; tierRegularDesc: string
+      tierVip: string; tierVipPrice: string; tierVipDesc: string
+      tierPrivate: string; tierPrivatePrice: string; tierPrivateDesc: string
+      tierGroup: string; tierGroupPrice: string; tierGroupDesc: string
+      priceDisclaimer: string
+    }
+    packages: {
+      title: string; subtitle: string
+      morningTitle: string; morningPrice: string; morningDesc: string
+      sunsetTitle: string; sunsetPrice: string; sunsetDesc: string
+      coupleTitle: string; couplePrice: string; coupleDesc: string
+      priceDisclaimer: string
+    }
+    events: { title: string; subtitle: string; pendingNotice: string }
+    gallery: { title: string; subtitle: string; pendingNotice: string }
   }
   booking: {
     back: string
@@ -167,6 +195,10 @@ export interface MarketingMessages {
     faq: string
     privacy: string
     terms: string
+    beach: string
+    packages: string
+    events: string
+    gallery: string
   }
 }
 
@@ -176,7 +208,7 @@ const ar: MarketingMessages = {
     nameNative: 'منتجع الخيمة الشاطئي',
     tagline: 'ملاذك الخاص في انتظارك',
   },
-  nav: { home: 'الرئيسية', rooms: 'الغرف', dining: 'المطعم والكافيه', book: 'احجز الآن', contact: 'تواصل معنا', callUs: 'اتصل بنا', menuToggle: 'فتح/إغلاق القائمة', about: 'من نحن', faq: 'الأسئلة الشائعة' },
+  nav: { home: 'الرئيسية', rooms: 'الغرف', dining: 'المطعم والكافيه', book: 'احجز الآن', contact: 'تواصل معنا', callUs: 'اتصل بنا', menuToggle: 'فتح/إغلاق القائمة', about: 'من نحن', faq: 'الأسئلة الشائعة', beach: 'الشاطئ', packages: 'الباقات الخاصة', events: 'المناسبات', gallery: 'معرض الصور' },
   hero: {
     eyebrow: 'خليج شرم الماية • شرم الشيخ',
     title: 'منتجع الخيمة الشاطئي',
@@ -291,6 +323,10 @@ const ar: MarketingMessages = {
     faq: 'إجابات على أكثر الأسئلة شيوعًا عن الإقامة في منتجع الخيمة الشاطئي.',
     privacy: 'سياسة الخصوصية الخاصة بمنتجع الخيمة الشاطئي.',
     terms: 'الشروط والأحكام الخاصة بمنتجع الخيمة الشاطئي.',
+    beach: 'اكتشف شاطئ منتجع الخيمة الخاص — 13,000 م² رمال، 225 متر إطلالة بحرية، ورياضات مائية متنوعة.',
+    packages: 'باقات خاصة في منتجع الخيمة الشاطئي — من قهوة الصباح إلى أمسيات الغروب الرومانسية.',
+    events: 'قاعات المناسبات والأفراح في منتجع الخيمة الشاطئي بإطلالة بحرية ساحرة.',
+    gallery: 'معرض صور منتجع الخيمة الشاطئي.',
   },
   pages: {
     about: { subtitle: 'قصتنا وما يميزنا' },
@@ -320,6 +356,37 @@ const ar: MarketingMessages = {
       title: 'الشروط والأحكام',
       pendingNotice: 'سيتم نشر الشروط والأحكام الكاملة قريبًا. لأي استفسار، تواصل معنا مباشرة.',
     },
+    beach: {
+      title: 'الشاطئ الخاص', subtitle: '13,000 م² من الرمال الذهبية وإطلالة بحرية صافية بطول 225 متر',
+      amenitiesTitle: 'المرافق',
+      amenity1: 'شاطئ رملي خاص بمساحة 13,000 م²', amenity2: '225 متر إطلالة بحرية واضحة',
+      amenity3: 'مياه نظيفة وآمنة', amenity4: 'كراسي ومظلات شاطئية',
+      amenity5: 'خدمة منقذين', amenity6: 'مناشف شاطئ مجانية',
+      activitiesTitle: 'الرياضات المائية',
+      activity1: '🏄 الغطس (Snorkeling)', activity2: '🪂 الطيران الشراعي (Parasailing)',
+      activity3: '🏊 السباحة', activity4: '🤿 دورات الغوص',
+      accessTitle: 'دخول الشاطئ', accessSubtitle: 'اختر ما يناسبك',
+      tierRegular: 'عادي', tierRegularPrice: '50 ج.م', tierRegularDesc: 'كرسي + مظلة',
+      tierVip: 'VIP', tierVipPrice: '150 ج.م', tierVipDesc: 'سرير تشمس + مظلة + منشفة + خدمة نادل',
+      tierPrivate: 'قسم خاص', tierPrivatePrice: '400 ج.م', tierPrivateDesc: 'كابانا + أسرة + طاولة + خدمة مخصصة',
+      tierGroup: 'باقة جماعية', tierGroupPrice: '500 ج.م', tierGroupDesc: 'حتى 10 أشخاص + أنشطة',
+      priceDisclaimer: 'الأسعار تقريبية وقابلة للتغيير — تواصل معنا للتأكيد قبل الحضور',
+    },
+    packages: {
+      title: 'باقاتنا الخاصة', subtitle: 'لحظات مميزة، بأسعار مميزة',
+      morningTitle: 'Morning Bliss', morningPrice: '85 ج.م', morningDesc: 'قهوة + كرواسون + عصير طازج',
+      sunsetTitle: 'Sunset Signature', sunsetPrice: '120 ج.م', sunsetDesc: 'مشروب مميز + كيك وقت الغروب',
+      coupleTitle: "Couple's Chill", couplePrice: '400 ج.م', coupleDesc: 'شيشتين + مشروبات + طبق حلى للاثنين',
+      priceDisclaimer: 'الأسعار تقريبية وقابلة للتغيير — تواصل معنا للتأكيد قبل الحضور',
+    },
+    events: {
+      title: 'المناسبات والأفراح', subtitle: 'قاعات بإطلالة بحرية ساحرة لمناسبتك الخاصة',
+      pendingNotice: 'تفاصيل باقات المناسبات قيد الإعداد — تواصل معنا مباشرة لمناقشة مناسبتك القادمة',
+    },
+    gallery: {
+      title: 'معرض الصور', subtitle: 'لحظات من منتجع الخيمة الشاطئي',
+      pendingNotice: 'معرض الصور قيد الإعداد — تابعونا على وسائل التواصل الاجتماعي لأحدث الصور',
+    },
   },
 }
 
@@ -329,7 +396,7 @@ const en: MarketingMessages = {
     nameNative: 'El Kheima Beach Resort',
     tagline: 'Your Private Retreat Awaits',
   },
-  nav: { home: 'Home', rooms: 'Rooms', dining: 'Dining', book: 'Book Now', contact: 'Contact', callUs: 'Call Us', menuToggle: 'Toggle menu', about: 'About', faq: 'FAQ' },
+  nav: { home: 'Home', rooms: 'Rooms', dining: 'Dining', book: 'Book Now', contact: 'Contact', callUs: 'Call Us', menuToggle: 'Toggle menu', about: 'About', faq: 'FAQ', beach: 'Beach', packages: 'Packages', events: 'Events', gallery: 'Gallery' },
   hero: {
     eyebrow: 'Sharm El Maya Bay • Sharm El Sheikh',
     title: 'El Kheima Beach Resort',
@@ -444,6 +511,10 @@ const en: MarketingMessages = {
     faq: 'Answers to the most common questions about staying at El Kheima Beach Resort.',
     privacy: "El Kheima Beach Resort's privacy policy.",
     terms: "El Kheima Beach Resort's terms and conditions.",
+    beach: "Discover El Kheima Beach Resort's private beach — 13,000 sqm of sand, 225m of sea view, and a range of water sports.",
+    packages: 'Special packages at El Kheima Beach Resort — from morning coffee to romantic sunset evenings.',
+    events: "El Kheima Beach Resort's event and wedding halls with a stunning sea view.",
+    gallery: 'A gallery of El Kheima Beach Resort.',
   },
   pages: {
     about: { subtitle: 'Our story and what makes us different' },
@@ -473,6 +544,37 @@ const en: MarketingMessages = {
       title: 'Terms & Conditions',
       pendingNotice: 'The full terms & conditions will be published soon. For any question, please contact us directly.',
     },
+    beach: {
+      title: 'Our Private Beach', subtitle: '13,000 sqm of golden sand and 225m of crystal-clear sea view',
+      amenitiesTitle: 'Amenities',
+      amenity1: '13,000 sqm private sandy beach', amenity2: '225m of clear sea view',
+      amenity3: 'Clean, safe water', amenity4: 'Sunbeds and umbrellas',
+      amenity5: 'Lifeguard service', amenity6: 'Free beach towels',
+      activitiesTitle: 'Water Sports',
+      activity1: '🏄 Snorkeling', activity2: '🪂 Parasailing',
+      activity3: '🏊 Swimming', activity4: '🤿 Diving Courses',
+      accessTitle: 'Beach Access', accessSubtitle: 'Choose what suits you',
+      tierRegular: 'Regular', tierRegularPrice: 'EGP 50', tierRegularDesc: 'Sunbed + umbrella',
+      tierVip: 'VIP', tierVipPrice: 'EGP 150', tierVipDesc: 'Sunbed + umbrella + towel + waiter service',
+      tierPrivate: 'Private Section', tierPrivatePrice: 'EGP 400', tierPrivateDesc: 'Cabana + beds + table + dedicated service',
+      tierGroup: 'Group Package', tierGroupPrice: 'EGP 500', tierGroupDesc: 'Up to 10 guests + activities',
+      priceDisclaimer: 'Prices are approximate and subject to change — contact us to confirm before you arrive',
+    },
+    packages: {
+      title: 'Our Special Packages', subtitle: 'Special moments, special prices',
+      morningTitle: 'Morning Bliss', morningPrice: 'EGP 85', morningDesc: 'Coffee + croissant + fresh juice',
+      sunsetTitle: 'Sunset Signature', sunsetPrice: 'EGP 120', sunsetDesc: 'Signature drink + cake at sunset',
+      coupleTitle: "Couple's Chill", couplePrice: 'EGP 400', coupleDesc: 'Two shishas + drinks + a dessert to share',
+      priceDisclaimer: 'Prices are approximate and subject to change — contact us to confirm before you arrive',
+    },
+    events: {
+      title: 'Events & Weddings', subtitle: 'Halls with a stunning sea view for your special occasion',
+      pendingNotice: 'Event package details are being prepared — contact us directly to discuss your upcoming event',
+    },
+    gallery: {
+      title: 'Gallery', subtitle: 'Moments from El Kheima Beach Resort',
+      pendingNotice: 'The gallery is being prepared — follow us on social media for the latest photos',
+    },
   },
 }
 
@@ -482,7 +584,7 @@ const ru: MarketingMessages = {
     nameNative: 'Эль-Хейма Бич Резорт',
     tagline: 'Ваше личное убежище ждёт вас',
   },
-  nav: { home: 'Главная', rooms: 'Номера', dining: 'Питание', book: 'Забронировать', contact: 'Контакты', callUs: 'Позвонить', menuToggle: 'Открыть/закрыть меню', about: 'О нас', faq: 'Вопросы и ответы' },
+  nav: { home: 'Главная', rooms: 'Номера', dining: 'Питание', book: 'Забронировать', contact: 'Контакты', callUs: 'Позвонить', menuToggle: 'Открыть/закрыть меню', about: 'О нас', faq: 'Вопросы и ответы', beach: 'Пляж', packages: 'Пакеты', events: 'Мероприятия', gallery: 'Галерея' },
   hero: {
     eyebrow: 'Бухта Шарм-эль-Майя • Шарм-эль-Шейх',
     title: 'El Kheima Beach Resort',
@@ -597,6 +699,10 @@ const ru: MarketingMessages = {
     faq: 'Ответы на самые распространённые вопросы о проживании в El Kheima Beach Resort.',
     privacy: 'Политика конфиденциальности El Kheima Beach Resort.',
     terms: 'Условия использования El Kheima Beach Resort.',
+    beach: 'Откройте для себя частный пляж El Kheima Beach Resort — 13 000 м² песка, 225 м вида на море и разнообразные водные виды спорта.',
+    packages: 'Специальные пакеты в El Kheima Beach Resort — от утреннего кофе до романтических вечеров на закате.',
+    events: 'Залы для мероприятий и свадеб в El Kheima Beach Resort с потрясающим видом на море.',
+    gallery: 'Галерея El Kheima Beach Resort.',
   },
   pages: {
     about: { subtitle: 'Наша история и что делает нас особенными' },
@@ -626,6 +732,37 @@ const ru: MarketingMessages = {
       title: 'Условия использования',
       pendingNotice: 'Полные условия использования будут опубликованы в ближайшее время. По любым вопросам свяжитесь с нами напрямую.',
     },
+    beach: {
+      title: 'Наш частный пляж', subtitle: '13 000 м² золотого песка и 225 м кристально чистого вида на море',
+      amenitiesTitle: 'Удобства',
+      amenity1: 'Частный песчаный пляж 13 000 м²', amenity2: '225 м чистого вида на море',
+      amenity3: 'Чистая, безопасная вода', amenity4: 'Шезлонги и зонтики',
+      amenity5: 'Услуги спасателя', amenity6: 'Бесплатные пляжные полотенца',
+      activitiesTitle: 'Водные виды спорта',
+      activity1: '🏄 Снорклинг', activity2: '🪂 Полёт на параплане',
+      activity3: '🏊 Плавание', activity4: '🤿 Курсы дайвинга',
+      accessTitle: 'Доступ на пляж', accessSubtitle: 'Выберите подходящий вариант',
+      tierRegular: 'Обычный', tierRegularPrice: '50 EGP', tierRegularDesc: 'Шезлонг + зонтик',
+      tierVip: 'VIP', tierVipPrice: '150 EGP', tierVipDesc: 'Шезлонг + зонтик + полотенце + обслуживание официантом',
+      tierPrivate: 'Приватная зона', tierPrivatePrice: '400 EGP', tierPrivateDesc: 'Кабана + кровати + стол + персональное обслуживание',
+      tierGroup: 'Групповой пакет', tierGroupPrice: '500 EGP', tierGroupDesc: 'До 10 гостей + активности',
+      priceDisclaimer: 'Цены приблизительны и могут меняться — свяжитесь с нами для подтверждения перед приездом',
+    },
+    packages: {
+      title: 'Наши специальные пакеты', subtitle: 'Особые моменты по особым ценам',
+      morningTitle: 'Morning Bliss', morningPrice: '85 EGP', morningDesc: 'Кофе + круассан + свежий сок',
+      sunsetTitle: 'Sunset Signature', sunsetPrice: '120 EGP', sunsetDesc: 'Фирменный напиток + торт на закате',
+      coupleTitle: "Couple's Chill", couplePrice: '400 EGP', coupleDesc: 'Два кальяна + напитки + десерт на двоих',
+      priceDisclaimer: 'Цены приблизительны и могут меняться — свяжитесь с нами для подтверждения перед приездом',
+    },
+    events: {
+      title: 'Мероприятия и свадьбы', subtitle: 'Залы с потрясающим видом на море для вашего особого случая',
+      pendingNotice: 'Детали пакетов для мероприятий готовятся — свяжитесь с нами напрямую, чтобы обсудить ваше мероприятие',
+    },
+    gallery: {
+      title: 'Галерея', subtitle: 'Моменты из El Kheima Beach Resort',
+      pendingNotice: 'Галерея готовится — следите за нами в социальных сетях, чтобы увидеть последние фото',
+    },
   },
 }
 
@@ -635,7 +772,7 @@ const it: MarketingMessages = {
     nameNative: 'El Kheima Beach Resort',
     tagline: 'Il tuo rifugio privato ti aspetta',
   },
-  nav: { home: 'Home', rooms: 'Camere', dining: 'Ristorazione', book: 'Prenota Ora', contact: 'Contatti', callUs: 'Chiamaci', menuToggle: 'Attiva/disattiva menu', about: 'Chi siamo', faq: 'FAQ' },
+  nav: { home: 'Home', rooms: 'Camere', dining: 'Ristorazione', book: 'Prenota Ora', contact: 'Contatti', callUs: 'Chiamaci', menuToggle: 'Attiva/disattiva menu', about: 'Chi siamo', faq: 'FAQ', beach: 'Spiaggia', packages: 'Pacchetti', events: 'Eventi', gallery: 'Galleria' },
   hero: {
     eyebrow: 'Baia di Sharm El Maya • Sharm El Sheikh',
     title: 'El Kheima Beach Resort',
@@ -750,6 +887,10 @@ const it: MarketingMessages = {
     faq: 'Risposte alle domande più comuni sul soggiorno a El Kheima Beach Resort.',
     privacy: 'Informativa sulla privacy di El Kheima Beach Resort.',
     terms: 'Termini e condizioni di El Kheima Beach Resort.',
+    beach: 'Scopri la spiaggia privata di El Kheima Beach Resort — 13.000 mq di sabbia, 225 m di vista mare e diversi sport acquatici.',
+    packages: 'Pacchetti speciali a El Kheima Beach Resort — dal caffè del mattino alle romantiche serate al tramonto.',
+    events: 'Sale per eventi e matrimoni a El Kheima Beach Resort con una vista mare mozzafiato.',
+    gallery: 'Una galleria di El Kheima Beach Resort.',
   },
   pages: {
     about: { subtitle: 'La nostra storia e cosa ci rende unici' },
@@ -778,6 +919,37 @@ const it: MarketingMessages = {
     terms: {
       title: 'Termini e condizioni',
       pendingNotice: 'I termini e condizioni completi saranno pubblicati a breve. Per qualsiasi domanda, contattaci direttamente.',
+    },
+    beach: {
+      title: 'La Nostra Spiaggia Privata', subtitle: '13.000 mq di sabbia dorata e 225 m di vista mare cristallina',
+      amenitiesTitle: 'Servizi',
+      amenity1: 'Spiaggia privata di 13.000 mq', amenity2: '225 m di vista mare limpida',
+      amenity3: 'Acqua pulita e sicura', amenity4: 'Lettini e ombrelloni',
+      amenity5: 'Servizio di bagnino', amenity6: 'Teli mare gratuiti',
+      activitiesTitle: 'Sport Acquatici',
+      activity1: '🏄 Snorkeling', activity2: '🪂 Parasailing',
+      activity3: '🏊 Nuoto', activity4: '🤿 Corsi di immersione',
+      accessTitle: 'Accesso alla Spiaggia', accessSubtitle: 'Scegli quello che fa per te',
+      tierRegular: 'Standard', tierRegularPrice: '50 EGP', tierRegularDesc: 'Lettino + ombrellone',
+      tierVip: 'VIP', tierVipPrice: '150 EGP', tierVipDesc: 'Lettino + ombrellone + telo + servizio cameriere',
+      tierPrivate: 'Area Privata', tierPrivatePrice: '400 EGP', tierPrivateDesc: 'Cabana + letti + tavolo + servizio dedicato',
+      tierGroup: 'Pacchetto Gruppo', tierGroupPrice: '500 EGP', tierGroupDesc: 'Fino a 10 ospiti + attività',
+      priceDisclaimer: 'I prezzi sono indicativi e soggetti a modifiche — contattaci per confermare prima del tuo arrivo',
+    },
+    packages: {
+      title: 'I Nostri Pacchetti Speciali', subtitle: 'Momenti speciali, prezzi speciali',
+      morningTitle: 'Morning Bliss', morningPrice: '85 EGP', morningDesc: 'Caffè + croissant + succo fresco',
+      sunsetTitle: 'Sunset Signature', sunsetPrice: '120 EGP', sunsetDesc: 'Drink esclusivo + torta al tramonto',
+      coupleTitle: "Couple's Chill", couplePrice: '400 EGP', coupleDesc: 'Due shisha + drink + un dolce da condividere',
+      priceDisclaimer: 'I prezzi sono indicativi e soggetti a modifiche — contattaci per confermare prima del tuo arrivo',
+    },
+    events: {
+      title: 'Eventi e Matrimoni', subtitle: 'Sale con una vista mare mozzafiato per la tua occasione speciale',
+      pendingNotice: 'I dettagli dei pacchetti eventi sono in preparazione — contattaci direttamente per discutere il tuo prossimo evento',
+    },
+    gallery: {
+      title: 'Galleria', subtitle: 'Momenti da El Kheima Beach Resort',
+      pendingNotice: 'La galleria è in preparazione — seguici sui social media per le foto più recenti',
     },
   },
 }
