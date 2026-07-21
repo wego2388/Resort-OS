@@ -83,6 +83,31 @@ build نظاف، `test:frontend` 60 passed. `git diff --check` نظيف. صفر 
 
 ---
 
+## 🟩 Gate 5 — اكتمال إدارة الموظفين بلغتين — Batch 8: خريطة/POS الشاطئ (2026-07-20)
+
+**الحالة:** منفَّذة ومُتحقَّق منها ذاتيًا — نُفِّذت مباشرة من غير وكيل، على فرع
+مستقل `gate-5-staff-ux-batch-8-beach-map-pos-i18n`. **بلا commit/push بعد.**
+شاشتان: `BeachMapView.vue` (خريطة الشاطئ الحية بـWebSocket — تسجيل دخول/خروج
+ضيف بموقع فعلي، إضافة/حذف مواقع بالجملة للمدير) و`BeachPOSView.vue` (POS
+سريع للبيع — بالغ/طفل/مقيم/فوطة، قائمة انتظار offline). الاتنين بقوا
+`STRICT_FILES`.
+
+**تنظيف حقيقي اتكشف أثناء الترجمة:** `dir="rtl"` ثابت في الشاشتين. في
+`BeachMapView.vue`: مفتاحين function parameters اسمهم `t`
+(`typeLabel(t: string)`، `typeIcon(t: string)`) كانوا بيغطّوا دالة الترجمة —
+اتغيّروا لـ`locType`، `ar-EG` locale call، وفيزيكال `text-right`. في
+`BeachPOSView.vue`: 4 مواضع `mr-1` (فيزيكال margin) على تسميات الأسعار.
+
+**مفاتيح جديدة:** `backoffice.beachMap.*` (52 مفتاح) + `backoffice.beachPos.*`
+(34 مفتاح) — استُخدمت جميعها، صفر ناقص، صفر زيادة.
+
+**التحقق:** `validate:i18n` أخضر (3201 مفتاح ar/en متطابق، صفر ناقص، صفر
+مخالفة اتجاه فيزيائي)، `type-check:all` (el-kheima + public) نظيف،
+`test:frontend` 60/60 (صفر رجوع)، `build:all` نظيف. `git diff --check` نظيف.
+
+**الباقي (~32 شاشة admin/ops/portal):** لسه مؤجَّل لدفعات لاحقة — التالية
+حسب الخطة: المالية (Batch 9).
+
 ## 🟩 Gate 5 — اكتمال إدارة الموظفين بلغتين — Batch 7: إدارة الشاطئ (2026-07-20)
 
 **الحالة:** منفَّذة ومُتحقَّق منها ذاتيًا — نُفِّذت مباشرة من غير وكيل، على فرع

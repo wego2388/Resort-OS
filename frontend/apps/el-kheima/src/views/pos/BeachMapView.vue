@@ -13,12 +13,16 @@
  * الوقت عبر WebSocket (نفس نمط KDS/تنبيهات الضيوف — useResortWebSocket).
  */
 import { ref, computed, onMounted } from 'vue'
-import { api, useAuthStore, useResortWebSocket, ENDPOINTS } from '@resort-os/core'
+import { useI18n } from 'vue-i18n'
+import { api, useAuthStore, useResortWebSocket, ENDPOINTS, parseApiTimestamp } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppModal, EmptyState, useConfirm, useToast } from '@resort-os/ui'
 
 const auth = useAuthStore()
 const toast = useToast()
 const { confirm } = useConfirm()
+const { t } = useI18n()
+const { formatTime: fmtTimeFn } = useStaffFormat()
 const branchId = computed(() => auth.branchId ?? 1)
 const isManager = computed(() => auth.hasRole('manager'))
 
@@ -39,15 +43,16 @@ interface BeachLocation {
   checked_in_by: number | null
 }
 
-const TYPE_LABELS: Record<string, string> = {
-  umbrella: 'شمسية', pergola: 'برجولة', sunbed: 'سرير شاطئ', cabana: 'كابانا',
-}
-function typeLabel(t: string) { return TYPE_LABELS[t] ?? t }
+const TYPE_LABELS = computed<Record<string, string>>(() => ({
+  umbrella: t('backoffice.beachMap.type.umbrella'), pergola: t('backoffice.beachMap.type.pergola'),
+  sunbed: t('backoffice.beachMap.type.sunbed'), cabana: t('backoffice.beachMap.type.cabana'),
+}))
+function typeLabel(locType: string) { return TYPE_LABELS.value[locType] ?? locType }
 
 const TYPE_ICONS: Record<string, string> = {
   umbrella: '⛱️', pergola: '🏝️', sunbed: '🛏️', cabana: '🏖️',
 }
-function typeIcon(t: string) { return TYPE_ICONS[t] ?? '📍' }
+function typeIcon(locType: string) { return TYPE_ICONS[locType] ?? '📍' }
 
 const locations = ref<BeachLocation[]>([])
 const loading = ref(false)
@@ -77,7 +82,7 @@ async function fetchLocations() {
     const { data } = await api.get(ENDPOINTS.beach.locations, { params: { branch_id: branchId.value } })
     locations.value = data
   } catch (e) {
-    toast.error('تعذّر تحميل خريطة الشاطئ')
+    toast.error(t('backoffice.beachMap.loadMapError'))
   } finally {
     loading.value = false
   }
@@ -110,9 +115,9 @@ function statusColor(loc: BeachLocation): string {
 }
 
 function statusLabel(status: string): string {
-  if (status === 'occupied') return 'مشغول'
-  if (status === 'out_of_service') return 'خارج الخدمة'
-  return 'فاضي'
+  if (status === 'occupied') return t('backoffice.beachMap.occupied')
+  if (status === 'out_of_service') return t('backoffice.beachMap.outOfService')
+  return t('backoffice.beachMap.available')
 }
 
 // ── Check-in modal ──────────────────────────────────────────────────────
@@ -143,13 +148,13 @@ async function submitCheckin() {
     )
     upsertLocation(data)
     checkinModalOpen.value = false
-    toast.success(`تم تسجيل الدخول — ${typeLabel(checkinTarget.value.location_type)} ${checkinTarget.value.number}`)
+    toast.success(t('backoffice.beachMap.checkedInToast', { type: typeLabel(checkinTarget.value.location_type), number: checkinTarget.value.number }))
   } catch (e: any) {
     if (e?.response?.status === 409) {
-      toast.error('الموقع اتشغل بالفعل من كاشير تاني — جاري التحديث')
+      toast.error(t('backoffice.beachMap.locationTakenError'))
       fetchLocations()
     } else {
-      toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الدخول')
+      toast.error(e?.response?.data?.detail ?? t('backoffice.beachMap.checkInError'))
     }
   } finally {
     checkinSubmitting.value = false
@@ -169,9 +174,9 @@ function openDetail(loc: BeachLocation) {
 async function submitCheckout() {
   if (!detailTarget.value) return
   const ok = await confirm({
-    title: 'تأكيد تسجيل الخروج',
-    message: `تسجيل خروج ${detailTarget.value.guest_name || 'الضيف'} من ${typeLabel(detailTarget.value.location_type)} ${detailTarget.value.number}؟`,
-    confirmText: 'تسجيل الخروج', danger: true,
+    title: t('backoffice.beachMap.confirmCheckOutTitle'),
+    message: t('backoffice.beachMap.confirmCheckOutMessage', { guest: detailTarget.value.guest_name || t('backoffice.beachMap.theGuest'), type: typeLabel(detailTarget.value.location_type), number: detailTarget.value.number }),
+    confirmText: t('backoffice.beachMap.checkOutAction'), danger: true,
   })
   if (!ok) return
   checkoutSubmitting.value = true
@@ -182,9 +187,9 @@ async function submitCheckout() {
     )
     upsertLocation(data)
     detailModalOpen.value = false
-    toast.success('تم تسجيل الخروج')
+    toast.success(t('backoffice.beachMap.checkedOutToast'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الخروج')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.beachMap.checkOutError'))
   } finally {
     checkoutSubmitting.value = false
   }
@@ -206,9 +211,9 @@ async function toggleOutOfService(loc: BeachLocation) {
       { params: { branch_id: branchId.value } },
     )
     upsertLocation(data)
-    toast.success(makeAvailable ? 'تم إعادة تفعيل الموقع' : 'تم تعطيل الموقع')
+    toast.success(makeAvailable ? t('backoffice.beachMap.locationReactivated') : t('backoffice.beachMap.locationDisabled'))
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تحديث الموقع')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.beachMap.updateLocationError'))
   }
 }
 
@@ -232,10 +237,10 @@ async function submitBulkAdd() {
       count: bulkAddForm.value.count,
     })
     bulkAddModalOpen.value = false
-    toast.success(`تم إضافة ${bulkAddForm.value.count} موقع`)
+    toast.success(t('backoffice.beachMap.locationsAdded', { count: bulkAddForm.value.count }))
     fetchLocations()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر إضافة المواقع')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.beachMap.addLocationsError'))
   } finally {
     bulkAddSubmitting.value = false
   }
@@ -255,10 +260,10 @@ async function submitBulkReduce() {
       count: bulkReduceForm.value.count,
     })
     bulkReduceModalOpen.value = false
-    toast.success(`تم حذف ${bulkReduceForm.value.count} موقع`)
+    toast.success(t('backoffice.beachMap.locationsRemoved', { count: bulkReduceForm.value.count }))
     fetchLocations()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر حذف المواقع (تأكد إن العدد المطلوب متاح فعلاً)')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.beachMap.removeLocationsError'))
   } finally {
     bulkReduceSubmitting.value = false
   }
@@ -268,26 +273,26 @@ onMounted(fetchLocations)
 </script>
 
 <template>
-  <div class="page-container" dir="rtl">
+  <div class="page-container">
     <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
       <div class="flex items-center gap-3">
-        <h1 class="section-title mb-0">خريطة الشاطئ</h1>
+        <h1 class="section-title mb-0">{{ t('backoffice.beachMap.title') }}</h1>
         <span
           class="w-2 h-2 rounded-full flex-shrink-0"
           :class="wsStatus === 'connected' ? 'bg-green-500' : 'bg-amber-500 animate-pulse'"
-          :title="wsStatus === 'connected' ? 'تحديث حي متصل' : 'جاري إعادة الاتصال...'"
+          :title="wsStatus === 'connected' ? t('backoffice.beachMap.liveConnected') : t('backoffice.beachMap.reconnecting')"
         />
       </div>
       <div v-if="isManager" class="flex items-center gap-2">
         <button
           @click="bulkAddModalOpen = true"
           class="px-4 py-2 bg-blue-700 text-white rounded-xl font-bold text-sm hover:bg-blue-800 active:scale-95 transition-all shadow-sm"
-        >➕ إضافة مواقع</button>
+        >➕ {{ t('backoffice.beachMap.addLocations') }}</button>
         <button
           @click="openBulkReduce"
           :disabled="locations.length === 0"
           class="px-4 py-2 bg-white dark:bg-surface border-2 border-red-300 text-red-700 rounded-xl font-bold text-sm hover:bg-red-50 active:scale-95 transition-all shadow-sm disabled:opacity-40"
-        >➖ حذف مواقع</button>
+        >➖ {{ t('backoffice.beachMap.removeLocations') }}</button>
       </div>
     </div>
 
@@ -295,15 +300,15 @@ onMounted(fetchLocations)
     <div v-if="locations.length > 0" class="grid grid-cols-3 gap-3 mb-5">
       <div class="bg-green-50 rounded-xl p-3 text-center border border-green-100">
         <div class="text-2xl font-black text-green-700">{{ stats.available }}</div>
-        <div class="text-xs text-green-600 mt-0.5">فاضي</div>
+        <div class="text-xs text-green-600 mt-0.5">{{ t('backoffice.beachMap.available') }}</div>
       </div>
       <div class="bg-red-50 rounded-xl p-3 text-center border border-red-100">
         <div class="text-2xl font-black text-red-700">{{ stats.occupied }}</div>
-        <div class="text-xs text-red-600 mt-0.5">مشغول</div>
+        <div class="text-xs text-red-600 mt-0.5">{{ t('backoffice.beachMap.occupied') }}</div>
       </div>
       <div class="bg-gray-50 rounded-xl p-3 text-center border border-gray-200">
         <div class="text-2xl font-black text-gray-500">{{ stats.outOfService }}</div>
-        <div class="text-xs text-gray-500 mt-0.5">خارج الخدمة</div>
+        <div class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.beachMap.outOfService') }}</div>
       </div>
     </div>
 
@@ -314,8 +319,8 @@ onMounted(fetchLocations)
     <EmptyState
       v-else-if="locations.length === 0"
       icon="🏖️"
-      title="مفيش مواقع شاطئ مضافة لهذا الفرع"
-      :description="isManager ? 'اضغط \'إضافة مواقع\' فوق عشان تبدأ' : 'اطلب من المدير إضافة مواقع الشاطئ الأول'"
+      :title="t('backoffice.beachMap.noLocations')"
+      :description="isManager ? t('backoffice.beachMap.noLocationsManagerHint') : t('backoffice.beachMap.noLocationsStaffHint')"
     />
 
     <div v-else class="space-y-6">
@@ -345,107 +350,107 @@ onMounted(fetchLocations)
     </div>
 
     <!-- ── Check-in modal ── -->
-    <AppModal :open="checkinModalOpen" title="تسجيل دخول ضيف" size="sm" @close="checkinModalOpen = false">
+    <AppModal :open="checkinModalOpen" :title="t('backoffice.beachMap.checkInModalTitle')" size="sm" @close="checkinModalOpen = false">
       <div v-if="checkinTarget" class="space-y-3">
         <p class="text-sm text-gray-500">
           {{ typeIcon(checkinTarget.location_type) }} {{ typeLabel(checkinTarget.location_type) }} {{ checkinTarget.number }}
         </p>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">اسم الضيف (اختياري)</label>
+          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.guestNameOptional') }}</label>
           <input v-model="checkinForm.guest_name" type="text" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">رقم التليفون (اختياري)</label>
+          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.phoneOptional') }}</label>
           <input v-model="checkinForm.guest_phone" type="text" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" dir="ltr" />
         </div>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">عدد الأفراد</label>
+          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.guestsCount') }}</label>
           <input v-model.number="checkinForm.guests_count" type="number" min="1" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
         <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
           <input v-model="checkinForm.with_towel" type="checkbox" class="rounded border-stone-300" />
-          مع فوطة
+          {{ t('backoffice.beachMap.withTowel') }}
         </label>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="checkinModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
+          <button @click="checkinModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">{{ t('backoffice.beachMap.cancel') }}</button>
           <button
             @click="submitCheckin" :disabled="checkinSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-50"
-          >{{ checkinSubmitting ? 'جاري...' : 'تسجيل الدخول' }}</button>
+          >{{ checkinSubmitting ? t('backoffice.beachMap.processing') : t('backoffice.beachMap.checkInAction') }}</button>
         </div>
       </template>
     </AppModal>
 
     <!-- ── Occupied detail / checkout modal ── -->
-    <AppModal :open="detailModalOpen" title="بيانات الموقع" size="sm" @close="detailModalOpen = false">
+    <AppModal :open="detailModalOpen" :title="t('backoffice.beachMap.locationDetailsTitle')" size="sm" @close="detailModalOpen = false">
       <div v-if="detailTarget" class="space-y-2 text-sm">
         <p class="font-bold text-gray-900 dark:text-gray-100">
           {{ typeIcon(detailTarget.location_type) }} {{ typeLabel(detailTarget.location_type) }} {{ detailTarget.number }}
         </p>
-        <p v-if="detailTarget.guest_name"><span class="text-gray-500">الضيف:</span> {{ detailTarget.guest_name }}</p>
-        <p v-if="detailTarget.guest_phone" dir="ltr" class="text-right"><span class="text-gray-500">التليفون:</span> {{ detailTarget.guest_phone }}</p>
-        <p><span class="text-gray-500">عدد الأفراد:</span> {{ detailTarget.guests_count }}</p>
-        <p><span class="text-gray-500">فوط:</span> {{ detailTarget.towels_given }}</p>
-        <p v-if="detailTarget.checked_in_at"><span class="text-gray-500">وقت الدخول:</span> {{ new Date(detailTarget.checked_in_at).toLocaleTimeString('ar-EG') }}</p>
+        <p v-if="detailTarget.guest_name"><span class="text-gray-500">{{ t('backoffice.beachMap.guestLabel') }}</span> {{ detailTarget.guest_name }}</p>
+        <p v-if="detailTarget.guest_phone" dir="ltr" class="text-end"><span class="text-gray-500">{{ t('backoffice.beachMap.phoneLabel') }}</span> {{ detailTarget.guest_phone }}</p>
+        <p><span class="text-gray-500">{{ t('backoffice.beachMap.guestsCountLabel') }}</span> {{ detailTarget.guests_count }}</p>
+        <p><span class="text-gray-500">{{ t('backoffice.beachMap.towelsLabel') }}</span> {{ detailTarget.towels_given }}</p>
+        <p v-if="detailTarget.checked_in_at"><span class="text-gray-500">{{ t('backoffice.beachMap.checkInTimeLabel') }}</span> {{ fmtTimeFn(parseApiTimestamp(detailTarget.checked_in_at)) }}</p>
       </div>
       <template #footer>
         <button
           @click="submitCheckout" :disabled="checkoutSubmitting"
           class="w-full py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 disabled:opacity-50"
-        >{{ checkoutSubmitting ? 'جاري...' : 'تسجيل الخروج' }}</button>
+        >{{ checkoutSubmitting ? t('backoffice.beachMap.processing') : t('backoffice.beachMap.checkOutAction') }}</button>
       </template>
     </AppModal>
 
     <!-- ── Manager: bulk add modal ── -->
-    <AppModal :open="bulkAddModalOpen" title="إضافة مواقع" size="sm" @close="bulkAddModalOpen = false">
+    <AppModal :open="bulkAddModalOpen" :title="t('backoffice.beachMap.addLocations')" size="sm" @close="bulkAddModalOpen = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">نوع الموقع</label>
+          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.locationType') }}</label>
           <input
             v-model="bulkAddForm.location_type" type="text" placeholder="umbrella / pergola / sunbed / cabana"
             class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" dir="ltr"
           />
         </div>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">العدد</label>
+          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.count') }}</label>
           <input v-model.number="bulkAddForm.count" type="number" min="1" max="200" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="bulkAddModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
+          <button @click="bulkAddModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">{{ t('backoffice.beachMap.cancel') }}</button>
           <button
             @click="submitBulkAdd" :disabled="bulkAddSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-50"
-          >{{ bulkAddSubmitting ? 'جاري...' : 'إضافة' }}</button>
+          >{{ bulkAddSubmitting ? t('backoffice.beachMap.processing') : t('backoffice.beachMap.add') }}</button>
         </div>
       </template>
     </AppModal>
 
     <!-- ── Manager: bulk reduce modal ── -->
-    <AppModal :open="bulkReduceModalOpen" title="حذف مواقع متاحة" size="sm" @close="bulkReduceModalOpen = false">
+    <AppModal :open="bulkReduceModalOpen" :title="t('backoffice.beachMap.removeAvailableLocations')" size="sm" @close="bulkReduceModalOpen = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">نوع الموقع</label>
+          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.locationType') }}</label>
           <select v-model="bulkReduceForm.location_type" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm">
-            <option v-for="t in existingTypes" :key="t" :value="t">{{ typeLabel(t) }}</option>
+            <option v-for="lt in existingTypes" :key="lt" :value="lt">{{ typeLabel(lt) }}</option>
           </select>
         </div>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">العدد</label>
+          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.count') }}</label>
           <input v-model.number="bulkReduceForm.count" type="number" min="1" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
-        <p class="text-xs text-amber-600">⚠️ بيحذف آخر المواقع المتاحة فقط — المواقع المشغولة لازم تتعمل لها checkout الأول.</p>
+        <p class="text-xs text-amber-600">⚠️ {{ t('backoffice.beachMap.reduceHint') }}</p>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="bulkReduceModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">إلغاء</button>
+          <button @click="bulkReduceModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">{{ t('backoffice.beachMap.cancel') }}</button>
           <button
             @click="submitBulkReduce" :disabled="bulkReduceSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 disabled:opacity-50"
-          >{{ bulkReduceSubmitting ? 'جاري...' : 'حذف' }}</button>
+          >{{ bulkReduceSubmitting ? t('backoffice.beachMap.processing') : t('backoffice.beachMap.remove') }}</button>
         </div>
       </template>
     </AppModal>
