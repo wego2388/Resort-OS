@@ -148,6 +148,13 @@ const STRICT_FILES = [
   'src/views/portal/PayrollView.vue',
   'src/views/portal/AttendanceView.vue',
   'src/views/portal/LeavesView.vue',
+  // Gate 5 Batch 15 (2026-07-21): already bilingual from the mandatory 2FA /
+  // security-onboarding work in Gate 2B2/2B3, promoted here.
+  'src/views/account/LoginView.vue',
+  'src/views/account/ForgotPasswordView.vue',
+  'src/views/account/ResetPasswordView.vue',
+  'src/views/account/ForcePasswordChangeView.vue',
+  'src/views/account/TwoFactorSetupView.vue',
 ].map((p) => join(APP_DIR, p))
 
 // Direction-normalized reference screens: forced dir + hard-coded locale tags

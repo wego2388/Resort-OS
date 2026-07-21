@@ -1,11 +1,10 @@
 # El Kheima Beach Resort OS — Design System
 
-> Status: **baseline adopted** on the Gate 3B reference surfaces (app shell,
-> Account/Profile, Sessions, Settings, and direction/format hygiene on the
-> Dining KDS and Unified POS). This is not a claim that all 50+ staff screens
-> are migrated — see the ratchet/inventory at the end. Light mode and
-> operational clarity are the priority; dark mode is preserved where it already
-> worked and is not expanded here.
+> Status: baseline adopted on the Gate 3B reference surfaces, then extended to
+> full bilingual coverage of the staff app across Gate 5's 15 batches
+> (2026-07-20/21) — see the ratchet/inventory at the end for the complete
+> file-by-file history. Light mode and operational clarity are the priority;
+> dark mode is preserved where it already worked and is not expanded here.
 
 The design system is the shared package **`@resort-os/ui`** (`frontend/packages/ui`)
 plus its tokens (`src/styles/tokens.css`, `tailwind-preset.js`) and base rules
@@ -219,16 +218,25 @@ primitives, covered by `validate:i18n` strict checks):
   with the other Gate 5 batch branches)
 - `views/pos/ShiftDashboardView.vue`, `views/portal/PayrollView.vue`,
   `views/portal/AttendanceView.vue`, `views/portal/LeavesView.vue` (Gate 5
-  Batch 14, on branch `gate-5-staff-ux-batch-14-pos-shift-portal-i18n` —
-  not yet merged with the other Gate 5 batch branches)
+  Batch 14, on branch `gate-5-staff-ux-batch-14-pos-shift-portal-i18n`)
+- `views/account/LoginView.vue`, `views/account/ForgotPasswordView.vue`,
+  `views/account/ResetPasswordView.vue`,
+  `views/account/ForcePasswordChangeView.vue`,
+  `views/account/TwoFactorSetupView.vue` (Gate 5 Batch 15 — already bilingual
+  from the mandatory 2FA/security-onboarding work in Gate 2B2/2B3, promoted
+  to STRICT_FILES here; a real missing key, `errors.generic`, was found and
+  fixed in the process)
+
+**Gate 5 is now complete: all 15 batches merged into one integration branch**
+(`gate-5-integration`, see PROJECT_STATUS.md for the full batch-by-batch
+history). Every staff-app screen in scope is fully bilingual and covered by
+`validate:i18n` strict checks. Not yet pushed or merged into `main` — that
+still needs review.
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
 — they still contain hard-coded Arabic strings):
 
-_(none currently — both prior entries were promoted above in Gate 5 Batch 1)_
-
-Not yet migrated (tracked debt, next batches — do not claim bilingual):
-the remaining ~31 admin/ops/pos/portal screens. Migrate in reviewed batches
-per Decision 0002, extending the strict list in
-`apps/el-kheima/scripts/validate-i18n.mjs` as each batch lands.
+_(none — the only two entries this category ever had,
+`views/kds/DiningKDSView.vue` and `views/pos/UnifiedPOSView.vue`, were
+promoted to fully migrated above in Gate 5 Batch 1)_

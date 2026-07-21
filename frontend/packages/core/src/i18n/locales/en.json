@@ -2929,7 +2929,8 @@
     "notFoundDesc": "The page you're looking for doesn't exist",
     "goHome": "Go Home",
     "serverError": "Server Error",
-    "networkError": "Network Error"
+    "networkError": "Network Error",
+    "generic": "An unexpected error occurred — please try again"
   },
   "cookies": {
     "message": "We use cookies to improve your experience and analyze usage.",
