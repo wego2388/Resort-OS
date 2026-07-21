@@ -3426,9 +3426,6 @@
       "beachAdmin": "Beach Management",
       "hubSection": "Website",
       "hubManagement": "Website & Bookings",
-      "beachAdmin": "Beach Management",
-      "hubSection": "Website",
-      "hubManagement": "Website & Bookings",
       "inventory": "Inventory",
       "recipes": "Item Recipes",
       "foodCost": "Food Cost",
@@ -3648,15 +3645,28 @@
       "reasonPromptDeny": "Deny \"{label}\" permission from {name}",
       "reasonPromptRevert": "Revert \"{label}\" permission for {name} to default",
       "roles": {
-        "super_admin": "Super Admin", "admin": "Admin", "accountant": "Accountant",
-        "hr_manager": "HR Manager", "manager": "Manager", "supervisor": "Supervisor",
-        "receptionist": "Receptionist", "cashier": "Cashier", "waiter": "Waiter",
-        "chef": "Chef", "kitchen": "Kitchen", "employee": "Employee"
+        "super_admin": "Super Admin",
+        "admin": "Admin",
+        "accountant": "Accountant",
+        "hr_manager": "HR Manager",
+        "manager": "Manager",
+        "supervisor": "Supervisor",
+        "receptionist": "Receptionist",
+        "cashier": "Cashier",
+        "waiter": "Waiter",
+        "chef": "Chef",
+        "kitchen": "Kitchen",
+        "employee": "Employee"
       },
       "modules": {
-        "finance": "Finance", "dining": "Dining", "beach": "Beach",
-        "hr": "HR", "timeshare": "Timeshare", "pms": "Hotel/PMS",
-        "inventory": "Inventory", "crm": "CRM"
+        "finance": "Finance",
+        "dining": "Dining",
+        "beach": "Beach",
+        "hr": "HR",
+        "timeshare": "Timeshare",
+        "pms": "Hotel/PMS",
+        "inventory": "Inventory",
+        "crm": "CRM"
       }
     },
     "settings": {
@@ -3693,6 +3703,123 @@
       "quickLinkTables": "Manage Tables",
       "quickLinkCafeMenu": "Cafe Menu",
       "quickLinkRestaurantMenu": "Restaurant Menu"
+    },
+    "shiftDashboard": {
+      "title": "Shift Dashboard",
+      "refresh": "Refresh",
+      "noOpenShift": "No open shift",
+      "noOpenShiftHint": "Open a shift from the button below to see the full dashboard",
+      "shiftHash": "Shift #{id}",
+      "salesSummary": "Sales Summary (X-Report)",
+      "loading": "Loading...",
+      "totalSales": "Total sales",
+      "cash": "Cash",
+      "card": "Card",
+      "invoiceCount": "Invoice count",
+      "voidedInvoices": "{count} voided invoice(s) worth {amount} EGP",
+      "invoiceLog": "Invoice log",
+      "downloadPdf": "Download PDF",
+      "liveOrdersTitle": "Live orders ({count}) — {tables} open table(s)",
+      "noLiveOrders": "No live orders right now",
+      "outletHash": "Outlet #{id}",
+      "orderStatus": {
+        "open": "Open",
+        "inKitchen": "In kitchen",
+        "served": "Served"
+      },
+      "tableNumber": "Table {number}",
+      "takeaway": "Takeaway",
+      "currency": "EGP",
+      "msg": {
+        "loadShiftError": "Couldn't load shift status",
+        "loadReportError": "Couldn't load the sales summary",
+        "loadOrdersError": "Couldn't load live orders"
+      }
+    },
+    "payroll": {
+      "title": "Payslips",
+      "loading": "Loading...",
+      "currency": "EGP",
+      "statusPaid": "Paid",
+      "statusApproved": "Approved",
+      "basicSalary": "Basic salary",
+      "allowances": "Allowances",
+      "socialInsurance": "Social insurance",
+      "monthlyTax": "Monthly tax",
+      "penaltyDeduction": "Penalty deduction",
+      "unpaidLeaveDeduction": "Unpaid leave deduction",
+      "netSalary": "Net salary",
+      "noPayslips": "No payslips",
+      "month": {
+        "january": "January",
+        "february": "February",
+        "march": "March",
+        "april": "April",
+        "may": "May",
+        "june": "June",
+        "july": "July",
+        "august": "August",
+        "september": "September",
+        "october": "October",
+        "november": "November",
+        "december": "December"
+      },
+      "msg": {
+        "loadError": "Couldn't load payslips"
+      }
+    },
+    "attendance": {
+      "currentTime": "Current time",
+      "checkIn": "Check-in",
+      "checkOut": "Check-out",
+      "hours": "Hours",
+      "working": "Working...",
+      "shiftEnded": "✓ Shift ended",
+      "punchOut": "🔴 Check out",
+      "punchIn": "🟢 Check in",
+      "last30Days": "Last 30 days",
+      "loading": "Loading...",
+      "noRecords": "No attendance records",
+      "status": {
+        "present": "Present",
+        "absent": "Absent",
+        "late": "Late",
+        "halfDay": "Half day"
+      },
+      "msg": {
+        "loadError": "Couldn't load attendance records",
+        "punchError": "Couldn't record attendance, try again"
+      }
+    },
+    "leaves": {
+      "title": "Leave Requests",
+      "requestLeave": "Request leave",
+      "loading": "Loading...",
+      "daysCount": "{count} day(s)",
+      "noLeaveRequests": "No leave requests",
+      "noLeaveRequestsHint": "Click \"Request leave\" to submit a new request",
+      "newRequestTitle": "New leave request",
+      "leaveType": "Leave type",
+      "from": "From",
+      "to": "To",
+      "reasonOptional": "Reason (optional)",
+      "reasonPlaceholder": "Describe the reason for leave...",
+      "cancel": "Cancel",
+      "submitting": "Submitting...",
+      "submitRequest": "Submit request",
+      "typeHash": "Type #{id}",
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "rejected": "Rejected"
+      },
+      "msg": {
+        "loadTypesError": "Couldn't load leave types",
+        "loadLeavesError": "Couldn't load leave requests",
+        "fieldsRequired": "Please select a leave type and start/end dates",
+        "requestSubmitted": "Leave request submitted successfully ✓",
+        "submitError": "An error occurred while submitting the request"
+      }
     }
   }
 }

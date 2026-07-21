@@ -15,7 +15,9 @@
  * outlet بدل موديول ثابت، عشان يفضل يشتغل صح لأي outlet_type مستقبلي).
  */
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppBadge, EmptyState, useToast } from '@resort-os/ui'
 import ShiftPanel from '../../components/ShiftPanel.vue'
 import InvoiceLogModal from '../../components/InvoiceLogModal.vue'
@@ -23,6 +25,8 @@ import CashControlPanel from '../../components/CashControlPanel.vue'
 
 const auth = useAuthStore()
 const toast = useToast()
+const { t } = useI18n()
+const { formatNumber } = useStaffFormat()
 const branchId = computed(() => auth.branchId ?? 1)
 
 interface CurrentShift { id: number; opened_at: string; opening_float: number | string; status: string }
@@ -37,7 +41,7 @@ async function fetchShift() {
     await Promise.all([loadReport(), loadOpenOrders()])
   } catch (e: any) {
     shift.value = null
-    if (e?.response?.status !== 404) toast.error('تعذّر تحميل حالة الوردية')
+    if (e?.response?.status !== 404) toast.error(t('backoffice.shiftDashboard.msg.loadShiftError'))
   } finally {
     loadingShift.value = false
   }
@@ -61,7 +65,7 @@ async function loadReport() {
     const { data } = await api.get(ENDPOINTS.finance.shiftReport(shift.value.id))
     report.value = data
   } catch {
-    toast.error('تعذّر تحميل ملخص المبيعات')
+    toast.error(t('backoffice.shiftDashboard.msg.loadReportError'))
   } finally {
     loadingReport.value = false
   }
@@ -116,12 +120,12 @@ async function loadOpenOrders() {
     }
     ordersByOutlet.value = [...grouped.entries()]
       .map(([outletId, list]) => ({
-        outlet: outletsById.value[outletId] ?? { id: outletId, name: `منفذ #${outletId}`, name_ar: null },
+        outlet: outletsById.value[outletId] ?? { id: outletId, name: t('backoffice.shiftDashboard.outletHash', { id: outletId }), name_ar: null },
         orders: list,
       }))
       .sort((a, b) => a.outlet.id - b.outlet.id)
   } catch {
-    toast.error('تعذّر تحميل الطلبات الجارية')
+    toast.error(t('backoffice.shiftDashboard.msg.loadOrdersError'))
   } finally {
     loadingOrders.value = false
   }
@@ -132,11 +136,14 @@ const openTablesCount = computed(() =>
   new Set(ordersByOutlet.value.flatMap(g => g.orders).filter(o => o.table_id).map(o => `${o.table_id}`)).size,
 )
 
-const STATUS_LABEL: Record<string, string> = { open: 'مفتوح', in_kitchen: 'في المطبخ', served: 'اتقدّم' }
+const STATUS_LABEL = computed<Record<string, string>>(() => ({
+  open: t('backoffice.shiftDashboard.orderStatus.open'), in_kitchen: t('backoffice.shiftDashboard.orderStatus.inKitchen'),
+  served: t('backoffice.shiftDashboard.orderStatus.served'),
+}))
 const STATUS_VARIANT: Record<string, 'success' | 'warning' | 'info'> = { open: 'info', in_kitchen: 'warning', served: 'success' }
 
 function orderLabel(o: LiveOrder): string {
-  return o.table_id ? `طاولة ${o.table_id}` : 'Takeaway'
+  return o.table_id ? t('backoffice.shiftDashboard.tableNumber', { number: o.table_id }) : t('backoffice.shiftDashboard.takeaway')
 }
 
 // ── سجل الفواتير (S-02) — بوابة PIN مدير+ داخل InvoiceLogModal نفسها ─────
@@ -150,14 +157,14 @@ onMounted(fetchShift)
 </script>
 
 <template>
-  <div class="page-container" dir="rtl">
+  <div class="page-container">
     <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
-      <h1 class="section-title mb-0">لوحة الوردية</h1>
+      <h1 class="section-title mb-0">{{ t('backoffice.shiftDashboard.title') }}</h1>
       <button
         @click="refreshAll"
         class="text-xs text-blue-600 font-semibold hover:text-blue-800 disabled:opacity-50"
         :disabled="loadingShift"
-      >🔄 تحديث</button>
+      >🔄 {{ t('backoffice.shiftDashboard.refresh') }}</button>
     </div>
 
     <div v-if="loadingShift && !shift" class="flex items-center justify-center py-16">
@@ -167,8 +174,8 @@ onMounted(fetchShift)
     <EmptyState
       v-else-if="!shift"
       icon="🔒"
-      title="لا توجد وردية مفتوحة"
-      description="افتح وردية من الزر أسفل عشان تشوف لوحة التحكم الكاملة"
+      :title="t('backoffice.shiftDashboard.noOpenShift')"
+      :description="t('backoffice.shiftDashboard.noOpenShiftHint')"
     />
 
     <template v-else>
@@ -176,7 +183,7 @@ onMounted(fetchShift)
            في هيدر FieldLayout بالظبط، من غير أي تكرار لمنطق القفل/عدّ الكاش -->
       <AppCard class="mb-4" padding="sm">
         <div class="flex items-center justify-between px-1">
-          <span class="text-sm font-bold text-gray-700 dark:text-gray-300">وردية #{{ shift.id }}</span>
+          <span class="text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.shiftDashboard.shiftHash', { id: shift.id }) }}</span>
           <ShiftPanel @shift-changed="refreshAll" />
         </div>
       </AppCard>
@@ -187,51 +194,51 @@ onMounted(fetchShift)
 
       <!-- ملخص المبيعات — X-Report (S-04)، مبني على نفس endpoint التقرير
            بدون قفل الوردية -->
-      <AppCard title="ملخص المبيعات (X-Report)" class="mb-4">
-        <div v-if="loadingReport" class="text-center text-sm text-gray-400 py-4">جاري التحميل...</div>
+      <AppCard :title="t('backoffice.shiftDashboard.salesSummary')" class="mb-4">
+        <div v-if="loadingReport" class="text-center text-sm text-gray-400 py-4">{{ t('backoffice.shiftDashboard.loading') }}</div>
         <template v-else-if="report">
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div class="bg-emerald-50 rounded-xl p-3 text-center border border-emerald-100">
-              <div class="text-lg font-black text-emerald-700">{{ Number(report.total_sales).toFixed(2) }}</div>
-              <div class="text-xs text-emerald-600 mt-0.5">إجمالي المبيعات</div>
+              <div class="text-lg font-black text-emerald-700">{{ formatNumber(Number(report.total_sales), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
+              <div class="text-xs text-emerald-600 mt-0.5">{{ t('backoffice.shiftDashboard.totalSales') }}</div>
             </div>
             <div class="bg-blue-50 rounded-xl p-3 text-center border border-blue-100">
-              <div class="text-lg font-black text-blue-700">{{ Number(report.total_cash).toFixed(2) }}</div>
-              <div class="text-xs text-blue-600 mt-0.5">كاش</div>
+              <div class="text-lg font-black text-blue-700">{{ formatNumber(Number(report.total_cash), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
+              <div class="text-xs text-blue-600 mt-0.5">{{ t('backoffice.shiftDashboard.cash') }}</div>
             </div>
             <div class="bg-purple-50 rounded-xl p-3 text-center border border-purple-100">
-              <div class="text-lg font-black text-purple-700">{{ Number(report.total_card).toFixed(2) }}</div>
-              <div class="text-xs text-purple-600 mt-0.5">كارت</div>
+              <div class="text-lg font-black text-purple-700">{{ formatNumber(Number(report.total_card), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
+              <div class="text-xs text-purple-600 mt-0.5">{{ t('backoffice.shiftDashboard.card') }}</div>
             </div>
             <div class="bg-stone-50 rounded-xl p-3 text-center border border-stone-200 dark:border-border">
               <div class="text-lg font-black text-gray-700 dark:text-gray-300">{{ report.invoice_count }}</div>
-              <div class="text-xs text-gray-500 mt-0.5">عدد الفواتير</div>
+              <div class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.shiftDashboard.invoiceCount') }}</div>
             </div>
           </div>
           <p v-if="report.voided_count > 0" class="text-xs text-red-500 mt-2">
-            ⚠️ {{ report.voided_count }} فاتورة ملغاة بقيمة {{ Number(report.voided_amount).toFixed(2) }} ج
+            ⚠️ {{ t('backoffice.shiftDashboard.voidedInvoices', { count: report.voided_count, amount: formatNumber(Number(report.voided_amount), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }) }}
           </p>
           <div class="flex gap-2 mt-3">
             <button
               @click="showInvoiceLog = true"
               class="flex-1 py-2 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-100"
-            >📋 سجل الفواتير</button>
+            >📋 {{ t('backoffice.shiftDashboard.invoiceLog') }}</button>
             <a
               :href="ENDPOINTS.finance.shiftReportPdf(shift.id)"
               target="_blank"
               class="flex-1 py-2 text-xs font-bold text-gray-600 bg-stone-50 border border-stone-200 dark:border-border rounded-lg text-center hover:bg-stone-100"
-            >📄 تحميل PDF</a>
+            >📄 {{ t('backoffice.shiftDashboard.downloadPdf') }}</a>
           </div>
         </template>
       </AppCard>
 
       <!-- الطاولات/الطلبات المفتوحة لحظيًا (كل منافذ الدايننج) -->
-      <AppCard :title="`الطلبات الجارية (${totalOpenOrdersCount}) — ${openTablesCount} طاولة مفتوحة`">
-        <div v-if="loadingOrders" class="text-center text-sm text-gray-400 py-4">جاري التحميل...</div>
+      <AppCard :title="t('backoffice.shiftDashboard.liveOrdersTitle', { count: totalOpenOrdersCount, tables: openTablesCount })">
+        <div v-if="loadingOrders" class="text-center text-sm text-gray-400 py-4">{{ t('backoffice.shiftDashboard.loading') }}</div>
         <EmptyState
           v-else-if="totalOpenOrdersCount === 0"
           icon="✅"
-          title="مفيش طلبات جارية حاليًا"
+          :title="t('backoffice.shiftDashboard.noLiveOrders')"
         />
         <div v-else class="space-y-4">
           <div v-for="group in ordersByOutlet" :key="group.outlet.id">
@@ -240,10 +247,10 @@ onMounted(fetchShift)
               <div v-for="o in group.orders" :key="o.id" class="py-2 flex items-center justify-between gap-2">
                 <div>
                   <span class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ o.order_number }}</span>
-                  <span class="text-xs text-gray-400 mr-2">{{ orderLabel(o) }}</span>
+                  <span class="text-xs text-gray-400 ms-2">{{ orderLabel(o) }}</span>
                 </div>
                 <div class="flex items-center gap-2">
-                  <span class="text-sm font-bold text-blue-700">{{ Number(o.total).toFixed(2) }} ج</span>
+                  <span class="text-sm font-bold text-blue-700">{{ formatNumber(Number(o.total), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} {{ t('backoffice.shiftDashboard.currency') }}</span>
                   <AppBadge :variant="STATUS_VARIANT[o.status] ?? 'neutral'">{{ STATUS_LABEL[o.status] ?? o.status }}</AppBadge>
                 </div>
               </div>

@@ -27,6 +27,39 @@
 
 ---
 
+## 🟩 Gate 5 Batch 14 — POS Shift + Portal self-service ar/en (2026-07-21)
+
+**الحالة:** جزء من مجهود ترجمة تطبيق الموظفين (`el-kheima`) الكامل عربي/إنجليزي
+(Gate 5)، شغال على فرع مستقل `gate-5-staff-ux-batch-14-pos-shift-portal-i18n`
+متفرّع من نفس قاعدة Gate 4 (فرع شقيق لدفعات 1-13، لسه محتاج دمج). بلا
+commit/push خارج الفرع.
+
+**الشاشات الأربع المترجمة بالكامل** (أصبحت STRICT_FILES في `validate-i18n.mjs`):
+- `pos/ShiftDashboardView.vue` (258 سطر) — لوحة الوردية: X-Report، سجل
+  الفواتير، الطلبات الجارية عبر كل منافذ الدايننج.
+- `portal/PayrollView.vue` (114 سطر) — قسائم راتب الموظف الذاتية.
+- `portal/AttendanceView.vue` (152 سطر) — تسجيل حضور/انصراف ذاتي + سجل آخر
+  30 يوم.
+- `portal/LeavesView.vue` (182 سطر) — طلبات إجازة ذاتية.
+
+**ملحوظة نطاق**: `pos/UnifiedPOSView.vue` و`kds/DiningKDSView.vue` **متلمسوش
+عمدًا** — دول بالفعل DIRECTION_CLEAN_FILES من Gate 3B (اتجاه/تنسيق مركزي بس،
+الترجمة الكاملة مؤجَّلة قصدًا وموثّقة كده في `docs/DESIGN_SYSTEM.md`).
+`BeachMapView.vue`/`BeachPOSView.vue` (دفعة 8) و`portal/ProfileView.vue`
+(Gate 3B) كانوا مترجمين من قبل.
+
+**تحسينات نظافة إضافية**: إزالة `dir="rtl"` الثابتة من الأربع شاشات، تحويل
+خرائط تسميات الحالة الثابتة لـ `computed`، استبدال `.toLocaleTimeString('ar-EG')`/
+`.toLocaleDateString('ar-EG')` بـ `useStaffFormat()`. باج `t`-shadowing حقيقي
+اتصلح: `leaveTypeLabel` computed في `LeavesView.vue` كانت بتستخدم `const t =
+leaveTypes.value.find(...)` — بارامتر محلي اسمه `t` بيتصادم مع دالة الترجمة —
+اتصلح بإعادة تسمية لـ `lt`.
+
+**تحقق شامل قبل الـ commit**: `node scripts/validate-i18n.mjs` نظيف (3208
+مفتاح ar/en، صفر ناقص، صفر مخالفة اتجاه فيزيائي)، `pnpm run type-check:all`
+نظيف، `npx vitest run` → 60/60، `pnpm run build:all` نظيف لـ `el-kheima`
+و`public`، `git diff --check` نظيف.
+
 ## 🟦 Gate 4 — سلامة الدفع والوردية والطلب في Dining (2026-07-20، منفَّذة بالكامل، بانتظار مراجعة مستقلة)
 
 **الحالة:** الثلاث شرائح + **تصحيحات جولة مراجعة Codex المستقلة الأولى (10

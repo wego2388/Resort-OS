@@ -143,6 +143,10 @@ primitives, covered by `validate:i18n` strict checks):
 - `views/portal/ProfileView.vue`
 - `views/account/SessionsView.vue`
 - `views/admin/SettingsView.vue`
+- `views/pos/ShiftDashboardView.vue`, `views/portal/PayrollView.vue`,
+  `views/portal/AttendanceView.vue`, `views/portal/LeavesView.vue` (Gate 5
+  Batch 14, on branch `gate-5-staff-ux-batch-14-pos-shift-portal-i18n` —
+  not yet merged with the other Gate 5 batch branches)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**

@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { t } = useI18n()
+const { formatDate } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -23,8 +27,8 @@ const errorMsg = ref('')
 const form = ref({ leave_type_id: null as number | null, start_date: '', end_date: '', reason: '' })
 
 const leaveTypeLabel = computed(() => (id: number) => {
-  const t = leaveTypes.value.find(lt => lt.id === id)
-  return t ? (t.name_ar || t.name) : `نوع #${id}`
+  const lt = leaveTypes.value.find(x => x.id === id)
+  return lt ? (lt.name_ar || lt.name) : t('backoffice.leaves.typeHash', { id })
 })
 
 const statusColors: Record<string, string> = {
@@ -32,9 +36,9 @@ const statusColors: Record<string, string> = {
   approved: 'bg-green-100 text-green-700',
   rejected: 'bg-red-100 text-red-700',
 }
-const statusLabels: Record<string, string> = {
-  pending: 'معلق', approved: 'معتمد', rejected: 'مرفوض'
-}
+const statusLabels = computed<Record<string, string>>(() => ({
+  pending: t('backoffice.leaves.status.pending'), approved: t('backoffice.leaves.status.approved'), rejected: t('backoffice.leaves.status.rejected'),
+}))
 
 function calcDays() {
   if (!form.value.start_date || !form.value.end_date) return 0
@@ -50,7 +54,7 @@ async function fetchLeaveTypes() {
       form.value.leave_type_id = leaveTypes.value[0].id
     }
   } catch(e) {
-    toast.error('تعذّر تحميل أنواع الإجازات')
+    toast.error(t('backoffice.leaves.msg.loadTypesError'))
   }
 }
 
@@ -60,13 +64,13 @@ async function fetchLeaves() {
     const res = await api.get(ENDPOINTS.hr_extra.meLeaves)
     leaves.value = res.data.items ?? []
   } catch(e) {
-    toast.error('تعذّر تحميل طلبات الإجازات')
+    toast.error(t('backoffice.leaves.msg.loadLeavesError'))
   } finally { loading.value = false }
 }
 
 async function requestLeave() {
   if (!form.value.start_date || !form.value.end_date || !form.value.leave_type_id) {
-    errorMsg.value = 'الرجاء تحديد نوع الإجازة وتاريخ البداية والنهاية'; return
+    errorMsg.value = t('backoffice.leaves.msg.fieldsRequired'); return
   }
   submitting.value = true; errorMsg.value = ''
   try {
@@ -78,11 +82,11 @@ async function requestLeave() {
     })
     showModal.value = false
     form.value = { leave_type_id: leaveTypes.value[0]?.id ?? null, start_date: '', end_date: '', reason: '' }
-    successMsg.value = 'تم تقديم طلب الإجازة بنجاح ✓'
+    successMsg.value = t('backoffice.leaves.msg.requestSubmitted')
     setTimeout(() => successMsg.value = '', 4000)
     await fetchLeaves()
   } catch(e: any) {
-    errorMsg.value = e?.response?.data?.detail ?? 'حدث خطأ في تقديم الطلب'
+    errorMsg.value = e?.response?.data?.detail ?? t('backoffice.leaves.msg.submitError')
   } finally { submitting.value = false }
 }
 
@@ -90,12 +94,12 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
 </script>
 
 <template>
-  <div dir="rtl" class="space-y-4">
+  <div class="space-y-4">
     <div class="flex items-center justify-between">
-      <h2 class="font-bold text-gray-900 dark:text-gray-100 text-lg">طلبات الإجازات</h2>
+      <h2 class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ t('backoffice.leaves.title') }}</h2>
       <button @click="showModal = true"
         class="px-4 py-2 bg-blue-700 text-white rounded-xl text-sm font-bold hover:bg-blue-800 transition-colors">
-        + طلب إجازة
+        + {{ t('backoffice.leaves.requestLeave') }}
       </button>
     </div>
 
@@ -103,7 +107,7 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
 
     <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
-      <p>جاري التحميل...</p>
+      <p>{{ t('backoffice.leaves.loading') }}</p>
     </div>
     <div v-else class="space-y-3">
       <div v-for="leave in leaves" :key="leave.id"
@@ -112,12 +116,12 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
           <div>
             <div class="font-semibold text-gray-900 dark:text-gray-100">{{ leaveTypeLabel(leave.leave_type_id) }}</div>
             <div class="text-sm text-gray-500 dark:text-gray-500 mt-0.5">
-              {{ new Date(leave.start_date).toLocaleDateString('ar-EG') }}
+              {{ formatDate(leave.start_date) }}
               ←
-              {{ new Date(leave.end_date).toLocaleDateString('ar-EG') }}
+              {{ formatDate(leave.end_date) }}
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ leave.days_requested }} {{ leave.days_requested === 1 ? 'يوم' : 'أيام' }}</div>
-            <div v-if="leave.reason" class="text-xs text-gray-500 dark:text-gray-500 mt-1.5 italic border-r-2 border-stone-200 dark:border-border pr-2">{{ leave.reason }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.leaves.daysCount', { count: leave.days_requested }) }}</div>
+            <div v-if="leave.reason" class="text-xs text-gray-500 dark:text-gray-500 mt-1.5 italic border-e-2 border-stone-200 dark:border-border pe-2">{{ leave.reason }}</div>
           </div>
           <span :class="['px-2.5 py-1 rounded-full text-xs font-medium flex-shrink-0', statusColors[leave.status] ?? 'bg-gray-100 text-gray-600 dark:text-gray-500']">
             {{ statusLabels[leave.status] ?? leave.status }}
@@ -126,21 +130,21 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
       </div>
 
       <div v-if="leaves.length === 0" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border">
-        <EmptyState icon="🌴" title="لا توجد طلبات إجازات" subtitle='اضغط "طلب إجازة" لتقديم طلب جديد' />
+        <EmptyState icon="🌴" :title="t('backoffice.leaves.noLeaveRequests')" :subtitle="t('backoffice.leaves.noLeaveRequestsHint')" />
       </div>
     </div>
 
     <!-- Request modal -->
     <Teleport to="body">
       <div v-if="showModal" class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" @click.self="showModal = false">
-        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl" dir="rtl">
+        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl">
           <div class="flex items-center justify-between mb-5">
-            <h3 class="font-bold text-gray-900 dark:text-gray-100 text-lg">طلب إجازة جديدة</h3>
+            <h3 class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ t('backoffice.leaves.newRequestTitle') }}</h3>
             <button @click="showModal = false" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 text-2xl leading-none">×</button>
           </div>
           <div class="space-y-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">نوع الإجازة</label>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.leaves.leaveType') }}</label>
               <select v-model="form.leave_type_id"
                 class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
                 <option v-for="lt in leaveTypes" :key="lt.id" :value="lt.id">{{ lt.name_ar || lt.name }}</option>
@@ -148,31 +152,31 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
             </div>
             <div class="grid grid-cols-2 gap-3">
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">من</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.leaves.from') }}</label>
                 <input v-model="form.start_date" type="date"
                   class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">إلى</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.leaves.to') }}</label>
                 <input v-model="form.end_date" type="date"
                   class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
               </div>
             </div>
             <div v-if="calcDays() > 0" class="text-center text-sm font-medium text-blue-700 bg-blue-50 py-2 rounded-lg">
-              {{ calcDays() }} {{ calcDays() === 1 ? 'يوم' : 'أيام' }}
+              {{ t('backoffice.leaves.daysCount', { count: calcDays() }) }}
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">السبب (اختياري)</label>
-              <textarea v-model="form.reason" rows="2" placeholder="وصف سبب الإجازة..."
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.leaves.reasonOptional') }}</label>
+              <textarea v-model="form.reason" rows="2" :placeholder="t('backoffice.leaves.reasonPlaceholder')"
                 class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm"/>
             </div>
             <div v-if="errorMsg" class="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-sm">{{ errorMsg }}</div>
           </div>
           <div class="flex gap-2 mt-5">
-            <button @click="showModal = false" class="flex-1 py-2.5 border-2 border-stone-200 dark:border-border rounded-xl text-sm font-semibold text-gray-600 dark:text-gray-500 hover:bg-gray-50">إلغاء</button>
+            <button @click="showModal = false" class="flex-1 py-2.5 border-2 border-stone-200 dark:border-border rounded-xl text-sm font-semibold text-gray-600 dark:text-gray-500 hover:bg-gray-50">{{ t('backoffice.leaves.cancel') }}</button>
             <button @click="requestLeave" :disabled="submitting"
               class="flex-1 py-2.5 bg-blue-700 text-white rounded-xl text-sm font-bold hover:bg-blue-800 disabled:opacity-50">
-              {{ submitting ? 'جاري الإرسال...' : 'تقديم الطلب' }}
+              {{ submitting ? t('backoffice.leaves.submitting') : t('backoffice.leaves.submitRequest') }}
             </button>
           </div>
         </div>

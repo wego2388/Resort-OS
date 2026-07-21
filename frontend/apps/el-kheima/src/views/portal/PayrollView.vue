@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
-
+const { t } = useI18n()
+const { formatNumber } = useStaffFormat()
 
 interface Payslip {
   id: number; period_year: number; period_month: number; status: string
@@ -17,8 +20,11 @@ const payslips = ref<Payslip[]>([])
 const loading = ref(false)
 const expanded = ref<number | null>(null)
 
-const monthNames = ['', 'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-  'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر']
+const monthNames = ['', 'january', 'february', 'march', 'april', 'may', 'june',
+  'july', 'august', 'september', 'october', 'november', 'december']
+function monthLabel(m: number) {
+  return t(`backoffice.payroll.month.${monthNames[m]}`)
+}
 
 function totalDeductions(slip: Payslip) {
   return slip.employee_si + slip.monthly_tax + slip.penalty_deduction + slip.unpaid_leave_deduction
@@ -33,7 +39,7 @@ async function fetchPayslips() {
     const res = await api.get(ENDPOINTS.hr_extra.mePayslips)
     payslips.value = res.data.items ?? []
   } catch(e) {
-    toast.error('تعذّر تحميل قسائم الراتب')
+    toast.error(t('backoffice.payroll.msg.loadError'))
   } finally { loading.value = false }
 }
 
@@ -41,12 +47,12 @@ onMounted(fetchPayslips)
 </script>
 
 <template>
-  <div dir="rtl" class="space-y-4">
-    <h2 class="font-bold text-gray-900 dark:text-gray-100 text-lg">قسائم الراتب</h2>
+  <div class="space-y-4">
+    <h2 class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ t('backoffice.payroll.title') }}</h2>
 
     <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-500 gap-3">
       <AppSpinner size="lg" />
-      <p>جاري التحميل...</p>
+      <p>{{ t('backoffice.payroll.loading') }}</p>
     </div>
 
     <div v-else class="space-y-3">
@@ -55,16 +61,16 @@ onMounted(fetchPayslips)
         <!-- Header (always visible) -->
         <button @click="expanded = expanded === slip.id ? null : slip.id"
           class="w-full px-5 py-4 flex items-center justify-between hover:bg-stone-50 dark:bg-gray-800/60 transition-colors">
-          <div class="text-right">
+          <div class="text-start">
             <div class="font-bold text-gray-900 dark:text-gray-100">
-              {{ monthNames[slip.period_month] }} {{ slip.period_year }}
+              {{ monthLabel(slip.period_month) }} {{ slip.period_year }}
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <div class="text-left">
-              <div class="text-xl font-black text-blue-700">{{ Number(slip.net_salary).toLocaleString('ar-EG') }} <span class="text-sm font-normal">ج</span></div>
+            <div class="text-end">
+              <div class="text-xl font-black text-blue-700">{{ formatNumber(Number(slip.net_salary)) }} <span class="text-sm font-normal">{{ t('backoffice.payroll.currency') }}</span></div>
               <span :class="['px-2 py-0.5 rounded-full text-xs font-medium block text-center', slip.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700']">
-                {{ slip.status === 'paid' ? 'مصروف' : 'معتمد' }}
+                {{ slip.status === 'paid' ? t('backoffice.payroll.statusPaid') : t('backoffice.payroll.statusApproved') }}
               </span>
             </div>
             <svg :class="['w-4 h-4 text-gray-400 dark:text-gray-500 transition-transform', expanded === slip.id ? 'rotate-180' : '']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -76,38 +82,38 @@ onMounted(fetchPayslips)
         <!-- Details (expandable) -->
         <div v-if="expanded === slip.id" class="border-t border-stone-100 dark:border-border/50 px-5 py-4 space-y-2.5 bg-stone-50 dark:bg-gray-800/60">
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500">الراتب الأساسي</span>
-            <span class="font-medium text-gray-900 dark:text-gray-100">{{ Number(slip.basic_salary).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.payroll.basicSalary') }}</span>
+            <span class="font-medium text-gray-900 dark:text-gray-100">{{ formatNumber(Number(slip.basic_salary)) }} {{ t('backoffice.payroll.currency') }}</span>
           </div>
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500">البدلات</span>
-            <span class="font-medium text-green-600">+ {{ Number(totalAllowances(slip)).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.payroll.allowances') }}</span>
+            <span class="font-medium text-green-600">+ {{ formatNumber(Number(totalAllowances(slip))) }} {{ t('backoffice.payroll.currency') }}</span>
           </div>
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500">التأمينات الاجتماعية</span>
-            <span class="font-medium text-red-500">- {{ Number(slip.employee_si).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.payroll.socialInsurance') }}</span>
+            <span class="font-medium text-red-500">- {{ formatNumber(Number(slip.employee_si)) }} {{ t('backoffice.payroll.currency') }}</span>
           </div>
           <div class="flex justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500">الضريبة الشهرية</span>
-            <span class="font-medium text-red-500">- {{ Number(slip.monthly_tax).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.payroll.monthlyTax') }}</span>
+            <span class="font-medium text-red-500">- {{ formatNumber(Number(slip.monthly_tax)) }} {{ t('backoffice.payroll.currency') }}</span>
           </div>
           <div v-if="slip.penalty_deduction > 0" class="flex justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500">خصم جزاءات</span>
-            <span class="font-medium text-red-500">- {{ Number(slip.penalty_deduction).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.payroll.penaltyDeduction') }}</span>
+            <span class="font-medium text-red-500">- {{ formatNumber(Number(slip.penalty_deduction)) }} {{ t('backoffice.payroll.currency') }}</span>
           </div>
           <div v-if="slip.unpaid_leave_deduction > 0" class="flex justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500">خصم إجازة بدون راتب</span>
-            <span class="font-medium text-red-500">- {{ Number(slip.unpaid_leave_deduction).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.payroll.unpaidLeaveDeduction') }}</span>
+            <span class="font-medium text-red-500">- {{ formatNumber(Number(slip.unpaid_leave_deduction)) }} {{ t('backoffice.payroll.currency') }}</span>
           </div>
           <div class="flex justify-between text-base font-black pt-2 border-t border-stone-200 dark:border-border">
-            <span class="text-gray-900 dark:text-gray-100">صافي الراتب</span>
-            <span class="text-blue-700">{{ Number(slip.net_salary).toLocaleString('ar-EG') }} ج</span>
+            <span class="text-gray-900 dark:text-gray-100">{{ t('backoffice.payroll.netSalary') }}</span>
+            <span class="text-blue-700">{{ formatNumber(Number(slip.net_salary)) }} {{ t('backoffice.payroll.currency') }}</span>
           </div>
         </div>
       </div>
 
       <div v-if="payslips.length === 0" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border">
-        <EmptyState icon="💰" title="لا توجد قسائم راتب" />
+        <EmptyState icon="💰" :title="t('backoffice.payroll.noPayslips')" />
       </div>
     </div>
   </div>

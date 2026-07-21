@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, parseApiTimestamp } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
-
+const { t } = useI18n()
+const { formatTime, formatDate } = useStaffFormat()
 
 interface AttRecord {
   id: number; record_date: string; check_in?: string; check_out?: string
@@ -28,28 +31,28 @@ function localDateStr(d: Date): string {
   return `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 }
 const today = localDateStr(new Date())
-const currentTime = ref(new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
+const currentTime = ref(formatTime(new Date(), { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
 
 let clockInterval: ReturnType<typeof setInterval>
-onMounted(() => { clockInterval = setInterval(() => { currentTime.value = new Date().toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }, 1000) })
+onMounted(() => { clockInterval = setInterval(() => { currentTime.value = formatTime(new Date(), { hour: '2-digit', minute: '2-digit', second: '2-digit' }) }, 1000) })
 onUnmounted(() => clearInterval(clockInterval))
 
 const isClockedIn = computed(() => !!(todayRecord.value?.check_in && !todayRecord.value?.check_out))
 const isCompleted  = computed(() => !!(todayRecord.value?.check_in && todayRecord.value?.check_out))
 
-const statusConfig: Record<string, { label: string; color: string }> = {
-  present:  { label: 'حاضر',    color: 'text-green-600 bg-green-50' },
-  absent:   { label: 'غائب',    color: 'text-red-600 bg-red-50' },
-  late:     { label: 'متأخر',   color: 'text-amber-600 bg-amber-50' },
-  half_day: { label: 'نصف يوم', color: 'text-blue-600 bg-blue-50' },
-}
+const statusConfig = computed<Record<string, { label: string; color: string }>>(() => ({
+  present:  { label: t('backoffice.attendance.status.present'),    color: 'text-green-600 bg-green-50' },
+  absent:   { label: t('backoffice.attendance.status.absent'),    color: 'text-red-600 bg-red-50' },
+  late:     { label: t('backoffice.attendance.status.late'),   color: 'text-amber-600 bg-amber-50' },
+  half_day: { label: t('backoffice.attendance.status.halfDay'), color: 'text-blue-600 bg-blue-50' },
+}))
 
 function fmtTime(iso?: string) {
   if (!iso) return '—'
   // check_in/check_out تيجي من الباك إند بدون "Z" (naive UTC) — نفس فئة باج
   // الـ KDS الموثّقة في parseApiTimestamp، لازم نفس المعالجة هنا وإلا وقت
   // الحضور المعروض يبقى مزاح بفرق توقيت القاهرة عن UTC (~2-3 ساعات).
-  return parseApiTimestamp(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+  return formatTime(parseApiTimestamp(iso), { hour: '2-digit', minute: '2-digit' })
 }
 
 async function fetchAttendance() {
@@ -59,7 +62,7 @@ async function fetchAttendance() {
     records.value = res.data.items ?? []
     todayRecord.value = records.value.find(r => r.record_date === today) ?? null
   } catch(e) {
-    toast.error('تعذّر تحميل سجل الحضور')
+    toast.error(t('backoffice.attendance.msg.loadError'))
   } finally { loading.value = false }
 }
 
@@ -76,7 +79,7 @@ async function punch() {
     }
     await fetchAttendance()
   } catch(e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الحضور، حاول مرة أخرى')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.attendance.msg.punchError'))
   } finally { punching.value = false }
 }
 
@@ -84,25 +87,25 @@ onMounted(fetchAttendance)
 </script>
 
 <template>
-  <div dir="rtl" class="space-y-4">
+  <div class="space-y-4">
     <!-- Clock + Punch card -->
     <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-6 shadow-sm text-center">
-      <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">الوقت الحالي</div>
+      <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.attendance.currentTime') }}</div>
       <div class="text-4xl font-mono font-black text-gray-900 dark:text-gray-100 mb-5" dir="ltr">{{ currentTime }}</div>
 
       <div v-if="todayRecord" class="flex items-center justify-center gap-8 text-sm mb-5">
         <div class="text-center">
-          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">تسجيل الدخول</div>
+          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">{{ t('backoffice.attendance.checkIn') }}</div>
           <div class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ fmtTime(todayRecord.check_in) }}</div>
         </div>
         <div class="w-px h-10 bg-stone-200"/>
         <div class="text-center">
-          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">تسجيل الخروج</div>
+          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">{{ t('backoffice.attendance.checkOut') }}</div>
           <div class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ fmtTime(todayRecord.check_out) }}</div>
         </div>
         <div class="w-px h-10 bg-stone-200"/>
         <div class="text-center">
-          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">الساعات</div>
+          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">{{ t('backoffice.attendance.hours') }}</div>
           <div class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ todayRecord.hours_worked?.toFixed(1) ?? '—' }}h</div>
         </div>
       </div>
@@ -114,27 +117,27 @@ onMounted(fetchAttendance)
           isClockedIn ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white',
         ]"
       >
-        {{ punching ? 'جاري...' : isCompleted ? '✓ تم إنهاء الدوام' : isClockedIn ? '🔴 تسجيل الخروج' : '🟢 تسجيل الحضور' }}
+        {{ punching ? t('backoffice.attendance.working') : isCompleted ? t('backoffice.attendance.shiftEnded') : isClockedIn ? t('backoffice.attendance.punchOut') : t('backoffice.attendance.punchIn') }}
       </button>
     </div>
 
     <!-- History -->
     <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border shadow-sm overflow-hidden">
       <div class="px-5 py-4 border-b border-stone-100 dark:border-border/50 flex items-center justify-between">
-        <span class="font-bold text-gray-900 dark:text-gray-100">سجل آخر 30 يوم</span>
+        <span class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.attendance.last30Days') }}</span>
         <button @click="fetchAttendance" :class="['text-xs text-gray-400 dark:text-gray-500 hover:text-blue-600', loading ? 'animate-spin' : '']">↻</button>
       </div>
       <div v-if="loading" class="p-8 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
         <AppSpinner size="md" />
-        <span>جاري التحميل...</span>
+        <span>{{ t('backoffice.attendance.loading') }}</span>
       </div>
       <div v-else class="divide-y divide-stone-100">
         <div v-for="rec in records" :key="rec.id" class="flex items-center justify-between px-5 py-3">
           <div>
             <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
-              {{ new Date(rec.record_date).toLocaleDateString('ar-EG', { weekday: 'short', month: 'short', day: 'numeric' }) }}
+              {{ formatDate(rec.record_date, { weekday: 'short', month: 'short', day: 'numeric' }) }}
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 dir-ltr" dir="ltr">
+            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5" dir="ltr">
               {{ fmtTime(rec.check_in) }} → {{ fmtTime(rec.check_out) }}
             </div>
           </div>
@@ -145,7 +148,7 @@ onMounted(fetchAttendance)
             </span>
           </div>
         </div>
-        <EmptyState v-if="records.length === 0" icon="📅" title="لا توجد سجلات حضور" />
+        <EmptyState v-if="records.length === 0" icon="📅" :title="t('backoffice.attendance.noRecords')" />
       </div>
     </div>
   </div>
