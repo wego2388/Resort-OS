@@ -56,7 +56,7 @@ def make_item(db, branch, outlet, available=True, station="hot", price=Decimal("
 def make_table(db, branch, outlet, status="available"):
     from app.modules.dining.models import VenueTable
     t = VenueTable(
-        branch_id=branch.id, outlet_id=outlet.id,
+        branch_id=branch.id,
         table_number=f"T-{uuid.uuid4().hex[:6].upper()}",
         capacity=4, status=status,
     )

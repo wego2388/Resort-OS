@@ -106,7 +106,8 @@ class Outlet(Base, TimestampMixin):
 
     categories: Mapped[list["DiningCategory"]] = relationship("DiningCategory", back_populates="outlet", lazy="select")
     items:      Mapped[list["DiningItem"]]     = relationship("DiningItem", back_populates="outlet", lazy="select")
-    tables:     Mapped[list["VenueTable"]]    = relationship("VenueTable", back_populates="outlet", lazy="select")
+    # مفيش علاقة tables هنا عمدًا — الطاولة ملك للفرع مش للمنفذ، راجع
+    # VenueTable's docstring (فرع 2026-07-21: "طاولات مشتركة").
 
 
 # ─────────────────────── Menu ──────────────────────────────────────────
@@ -331,8 +332,8 @@ class DiningItemVariantRecipeLine(Base, TimestampMixin):
 # ─────────────────────── Tables / Orders ───────────────────────────────
 
 class VenueTable(Base, TimestampMixin):
-    """يدمج restaurant.DiningTable + cafe.CafeTable — نفس الشكل، outlet_id
-    بدل جدولين منفصلين. grid_row/grid_col للخريطة الحية (راجع
+    """يدمج restaurant.DiningTable + cafe.CafeTable — نفس الشكل. ملك للفرع
+    (branch_id)، **مش** لمنفذ بعينه. grid_row/grid_col للخريطة الحية (راجع
     restaurant.DiningTable الأصلي — أول outlet ضاف الميزة دي).
 
     ⚠️ الكلاس هنا اسمه ``VenueTable`` مش ``DiningTable`` عمدًا (رغم إن
@@ -343,15 +344,24 @@ class VenueTable(Base, TimestampMixin):
     "DiningTable"`` وقت resolve أي ``relationship("DiningTable", ...)``
     نصي — تصادم اسم كلاس حقيقي، مش مجرد تصادم اسم جدول. نفس السبب خلّى
     اسم الجدول نفسه ``dining_venue_tables`` مش ``dining_tables`` (تصادم
-    اسم جدول مباشر مع restaurant.DiningTable.__tablename__)."""
+    اسم جدول مباشر مع restaurant.DiningTable.__tablename__).
+
+    ⚠️ **طاولات مشتركة عبر كل المنافذ (2026-07-21)**: كانت الطاولة قبل كده
+    ملك لمنفذ بعينه (outlet_id إجباري) — يعني نفس الصالة الفعلية كانت
+    بتتزرع مرتين (12 طاولة "مطعم" + 8 طاولة "كافيه" لكل فرع)، فالكاشير
+    كان يشوف شبكة طاولات مختلفة تمامًا كل ما يبدّل المنفذ، عكس الواقع
+    (طاولة 5 هي نفسها طاولة 5 سواء الضيف طلب من منيو المطعم أو الكافيه).
+    اتصلح: outlet_id اتشال، branch_id+table_number بقى unique. المنفذ
+    (Outlet) بقى مجرد فلتر على المنيو المعروض، مش على الطاولة نفسها.
+    راجع migration ``9b4e1a2c7f30`` للتفاصيل (دمج/حذف الصفوف المكررة)."""
     __tablename__ = "dining_venue_tables"
     __table_args__ = (
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_table_legacy"),
+        UniqueConstraint("branch_id", "table_number", name="uq_dining_table_branch_number"),
     )
 
     id:           Mapped[int]        = mapped_column(primary_key=True)
     branch_id:    Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
-    outlet_id:    Mapped[int]        = mapped_column(ForeignKey("dining_outlets.id", ondelete="CASCADE"))
     table_number: Mapped[str]        = mapped_column(String(20))
     capacity:     Mapped[int]        = mapped_column(Integer, default=4)
     status:       Mapped[str]        = mapped_column(String(30), default="available")  # available|occupied|reserved|out_of_service
@@ -361,8 +371,6 @@ class VenueTable(Base, TimestampMixin):
     grid_col:     Mapped[int | None] = mapped_column(Integer, nullable=True)
     legacy_module: Mapped[str | None] = mapped_column(String(20), nullable=True)
     legacy_id:     Mapped[int | None] = mapped_column(Integer, nullable=True)
-
-    outlet: Mapped["Outlet"] = relationship("Outlet", back_populates="tables")
 
 
 class DiningOrder(Base, TimestampMixin):

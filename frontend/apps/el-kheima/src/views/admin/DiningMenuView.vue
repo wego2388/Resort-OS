@@ -49,7 +49,7 @@ interface DiningItemRow {
   image_url: string | null
   extra_groups: ExtraGroup[]
 }
-interface VenueTable { id: number; outlet_id: number; table_number: string; capacity: number; section: string | null; status: string }
+interface VenueTable { id: number; branch_id: number; table_number: string; capacity: number; section: string | null; status: string }
 
 const MAIN_TABS = computed<TabItem[]>(() => [
   { value: 'outlets', label: t('backoffice.diningMenu.tabs.outlets') },
@@ -409,7 +409,7 @@ function openTableForm(tbl?: VenueTable) {
 }
 
 async function saveTable() {
-  if (!selectedOutletId.value || !tableForm.value.table_number.trim()) { toast.error(t('backoffice.diningMenu.msg.tableNumberRequired')); return }
+  if (!tableForm.value.table_number.trim()) { toast.error(t('backoffice.diningMenu.msg.tableNumberRequired')); return }
   saving.value = true
   try {
     const payload = { table_number: tableForm.value.table_number.trim(), capacity: Number(tableForm.value.capacity), section: tableForm.value.section.trim() || null }
@@ -418,7 +418,7 @@ async function saveTable() {
       const idx = tables.value.findIndex(tbl => tbl.id === tableEdit.value!.id)
       if (idx >= 0) tables.value[idx] = data
     } else {
-      const { data } = await api.post(ENDPOINTS.dining.tables(selectedOutletId.value), { ...payload, branch_id: branchId, outlet_id: selectedOutletId.value })
+      const { data } = await api.post(ENDPOINTS.dining.tables(branchId), { ...payload, branch_id: branchId })
       tables.value.push(data)
     }
     tableDrawerOpen.value = false
@@ -527,18 +527,18 @@ async function deleteKdsScreen(s: KdsScreen) {
 }
 
 // ── Data loading ─────────────────────────────────────────────────────────
+// المنيو (فئات/أصناف) بس بتتغيّر حسب المنفذ المختار — الطاولات (تحت) بقت
+// مشتركة بين كل منافذ الفرع (2026-07-21)، فبتتحمّل مرة واحدة بس، مش هنا.
 async function loadOutletScopedData() {
   if (!selectedOutletId.value) return
   loading.value = true
   try {
-    const [catsRes, itemsRes, tablesRes] = await Promise.all([
+    const [catsRes, itemsRes] = await Promise.all([
       api.get(ENDPOINTS.dining.categories(selectedOutletId.value)),
       api.get(ENDPOINTS.dining.items(selectedOutletId.value), { params: { available_only: false } }),
-      api.get(ENDPOINTS.dining.tables(selectedOutletId.value)),
     ])
     categories.value = catsRes.data
     items.value = itemsRes.data
-    tables.value = tablesRes.data
     selectedCategoryId.value = null
   } catch {
     toast.error(t('backoffice.diningMenu.msg.loadOutletDataError'))
@@ -547,12 +547,21 @@ async function loadOutletScopedData() {
   }
 }
 
+async function loadTables() {
+  try {
+    const { data } = await api.get(ENDPOINTS.dining.tables(branchId))
+    tables.value = data
+  } catch {
+    toast.error(t('backoffice.diningMenu.msg.loadOutletDataError'))
+  }
+}
+
 watch(selectedOutletId, loadOutletScopedData)
 
 onMounted(async () => {
   loading.value = true
   try {
-    await Promise.all([loadOutlets(), loadKdsScreens()])
+    await Promise.all([loadOutlets(), loadKdsScreens(), loadTables()])
     await loadOutletScopedData()
   } finally {
     loading.value = false
@@ -674,7 +683,8 @@ onMounted(async () => {
 
       <!-- ══════════════════ Tables tab ══════════════════ -->
       <div v-else-if="activeTab === 'tables'" class="space-y-3">
-        <div class="flex justify-end">
+        <div class="flex items-center justify-between gap-2">
+          <p class="text-xs text-muted">{{ t('backoffice.diningMenu.tablesSharedHint') }}</p>
           <AppButton variant="primary" @click="openTableForm()">+ {{ t('backoffice.diningMenu.newTable') }}</AppButton>
         </div>
         <EmptyState v-if="tables.length === 0" icon="🪑" :title="t('backoffice.diningMenu.noTables')" />

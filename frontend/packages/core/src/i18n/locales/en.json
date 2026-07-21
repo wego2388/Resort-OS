@@ -3716,7 +3716,7 @@
         "disconnected": "No live connection"
       },
       "selectTable": "Select table",
-      "noTables": "No tables for this outlet",
+      "noTables": "No tables registered for this branch",
       "tableSummary": {
         "all": "All",
         "available": "Free",
@@ -5073,7 +5073,8 @@
         "status": "Status"
       },
       "newTable": "New table",
-      "noTables": "No tables for this outlet yet",
+      "noTables": "No tables registered for this branch yet",
+      "tablesSharedHint": "Tables are shared across every outlet — the same table serves the restaurant and the cafe; the outlet only changes the menu",
       "noSection": "No section",
       "peopleCount": "{count} people",
       "tableStatus": {

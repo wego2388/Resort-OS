@@ -517,8 +517,8 @@ def create_order(
         table = crud.get_table(db, data.table_id)
         if not table:
             raise ValueError(f"الطاولة {data.table_id} غير موجودة")
-        if table.outlet_id != data.outlet_id or table.branch_id != branch_id:
-            raise ValueError(f"الطاولة {data.table_id} لا تتبع هذا المنفذ")
+        if table.branch_id != branch_id:
+            raise ValueError(f"الطاولة {data.table_id} لا تتبع هذا الفرع")
         if table.status == "out_of_service":
             raise ValueError(f"الطاولة {table.table_number} خارج الخدمة")
         # Gate 4C: قفل صف الطاولة (blocking) ثم فحص طلب نشط — يسلسل أي

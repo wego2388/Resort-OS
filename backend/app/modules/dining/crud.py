@@ -259,21 +259,16 @@ ACTIVE_TABLE_ORDER_STATUSES = ("held", "open", "in_kitchen", "served")
 
 # ── VenueTable ───────────────────────────────────────────────────────
 
-def list_tables(db: Session, outlet_id: int) -> list[VenueTable]:
-    return (
-        db.query(VenueTable)
-        .filter(VenueTable.outlet_id == outlet_id)
-        .order_by(VenueTable.table_number)
-        .all()
-    )
-
-
-def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
+def list_tables_with_orders(db: Session, branch_id: int) -> list[dict]:
     """نفس list_tables لكن تُضيف معلومات الأوردر النشط لكل طاولة.
 
     ⚠️ كان فيه تعريفان متطابقان لهذه الدالة (الثاني بيحجب الأول بصمت) — اتشال
     الأول واتساب ده (النسخة الفعّالة اللي كانت بتشتغل قبل كده) عشان تعريف واحد
     واضح بس. الاتنين كانوا بيرجّعوا نفس النتيجة بالظبط.
+
+    ⚠️ **بقت مفلترة بالفرع مش بالمنفذ (2026-07-21)** — الطاولة بقت مشتركة
+    بين كل منافذ نفس الفرع (راجع VenueTable's docstring)، فقائمة الطاولات
+    ثابتة بغض النظر عن أي منفذ الكاشير واقف عليه دلوقتي في الشاشة.
 
     تُعيد list[dict] بدل list[VenueTable] عشان الحقول الإضافية مش mapped
     على الـ ORM model — بيتحوّل لـ DiningTableRead في الـ router.
@@ -282,20 +277,21 @@ def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
 
     tables = (
         db.query(VenueTable)
-        .filter(VenueTable.outlet_id == outlet_id)
+        .filter(VenueTable.branch_id == branch_id)
         .order_by(VenueTable.table_number)
         .all()
     )
 
-    # جلب كل الأوردرات النشطة لهذا الـ outlet دفعة واحدة (مش N+1) — نفس
+    # جلب كل الأوردرات النشطة لهذا الـ فرع دفعة واحدة (مش N+1) — نفس
     # مجموعة الحالات النشطة اللي الـ partial unique index بيستخدمها بالظبط
-    # (M4: تشمل held كمان — طلب معلّق بيشغّل الطاولة فعليًا).
+    # (M4: تشمل held كمان — طلب معلّق بيشغّل الطاولة فعليًا). مفيش فلتر
+    # outlet_id هنا عمدًا — طلب مفتوح من أي منفذ لازم يظهر الطاولة مشغولة.
     active_statuses = ACTIVE_TABLE_ORDER_STATUSES
     active_orders = (
         db.query(DiningOrder)
         .filter(
             and_(
-                DiningOrder.outlet_id == outlet_id,
+                DiningOrder.branch_id == branch_id,
                 DiningOrder.status.in_(active_statuses),
                 DiningOrder.table_id.isnot(None),
             )
@@ -313,7 +309,6 @@ def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
         row = {
             "id":           t.id,
             "branch_id":    t.branch_id,
-            "outlet_id":    t.outlet_id,
             "table_number": t.table_number,
             "capacity":     t.capacity,
             "status":       t.status,
@@ -326,6 +321,7 @@ def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
             "active_order_total":  None,
             "active_covers":       None,
             "order_status":        None,
+            "active_order_outlet_id": None,
         }
         o = order_by_table.get(t.id)
         if o:
@@ -334,6 +330,7 @@ def list_tables_with_orders(db: Session, outlet_id: int) -> list[dict]:
             row["active_order_total"]  = float(o.total) if o.total is not None else None
             row["active_covers"]       = o.guests_count
             row["order_status"]        = o.status
+            row["active_order_outlet_id"] = o.outlet_id
         result.append(row)
     return result
 

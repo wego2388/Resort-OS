@@ -71,7 +71,7 @@ def make_item(db, branch, outlet, category, available=True):
 
 def make_table(db, branch, outlet):
     from app.modules.dining.models import VenueTable
-    t = VenueTable(branch_id=branch.id, outlet_id=outlet.id, table_number="T5",
+    t = VenueTable(branch_id=branch.id, table_number="T5",
                    capacity=4, status="available")
     db.add(t)
     db.commit()
@@ -148,13 +148,29 @@ class TestPublicMenuEndpoint:
         resp = client.get("/api/v1/dining/public/menu", params={"outlet_id": 999999})
         assert resp.status_code == 404
 
-    def test_public_menu_table_from_different_outlet_rejected(self, client: TestClient, db):
-        """Gate 1 containment: table_id في الـQR لازم يتبع نفس outlet_id —
-        فشل سريع وواضح لو الضيف مسح/خمّن مجموعة outlet/table غير متطابقة."""
+    def test_public_menu_table_from_other_outlet_same_branch_allowed(self, client: TestClient, db):
+        """2026-07-21: الطاولة بقت مشتركة بين كل منافذ نفس الفرع (راجع
+        VenueTable's docstring) — طاولة اتعملت تحت منفذ تاني بنفس الفرع
+        لازم تشتغل عادي، مش تترفض. ده الاختبار اللي بيثبت الإصلاح نفسه."""
         branch       = make_branch(db)
         outlet       = make_outlet(db, branch)
         other_outlet = make_outlet(db, branch, name="مطعم QR الآخر")
-        foreign_table = make_table(db, branch, other_outlet)
+        table = make_table(db, branch, other_outlet)
+
+        resp = client.get("/api/v1/dining/public/menu",
+                          params={"outlet_id": outlet.id, "table_id": table.id})
+        assert resp.status_code == 200, resp.text
+
+    def test_public_menu_table_from_different_branch_rejected(self, client: TestClient, db):
+        """Gate 1 containment: الطاولة لازم تتبع نفس الفرع على الأقل —
+        فشل سريع وواضح لو الضيف مسح/خمّن مجموعة outlet/table من فرعين
+        مختلفين تمامًا (الحماية الحقيقية المتبقية بعد ما الطاولة بقت
+        مشتركة بين المنافذ)."""
+        branch       = make_branch(db)
+        other_branch = make_branch(db)
+        outlet        = make_outlet(db, branch)
+        other_outlet  = make_outlet(db, other_branch, name="مطعم فرع تاني")
+        foreign_table = make_table(db, other_branch, other_outlet)
 
         resp = client.get("/api/v1/dining/public/menu",
                           params={"outlet_id": outlet.id, "table_id": foreign_table.id})
@@ -247,16 +263,35 @@ class TestPublicOrderEndpoint:
         })
         assert resp.status_code == 400, resp.text
 
-    def test_table_from_different_outlet_rejected(self, client: TestClient, db):
-        """Gate 1 containment: table_id لازم يتبع نفس outlet_id — منع ضيف
-        يخمّن table_id تابع لمنفذ/فرع تاني تمامًا."""
+    def test_table_from_other_outlet_same_branch_allowed(self, client: TestClient, db):
+        """2026-07-21: طاولة اتعملت تحت منفذ تاني بنفس الفرع لازم تشتغل
+        عادي — الطاولة مشتركة بين المنافذ (راجع VenueTable's docstring)."""
         branch        = make_branch(db)
         enable_self_order(db, branch)
         outlet        = make_outlet(db, branch)
         other_outlet  = make_outlet(db, branch, name="مطعم QR الآخر")
         cat           = make_category(db, branch, outlet)
         item          = make_item(db, branch, outlet, cat)
-        foreign_table = make_table(db, branch, other_outlet)
+        table = make_table(db, branch, other_outlet)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "table_id":  table.id,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        })
+        assert resp.status_code == 201, resp.text
+
+    def test_table_from_different_branch_rejected(self, client: TestClient, db):
+        """Gate 1 containment: الطاولة لازم تتبع نفس الفرع على الأقل — منع
+        ضيف يخمّن table_id تابع لفرع تاني تمامًا (الحماية الحقيقية المتبقية)."""
+        branch        = make_branch(db)
+        other_branch  = make_branch(db)
+        enable_self_order(db, branch)
+        outlet        = make_outlet(db, branch)
+        other_outlet  = make_outlet(db, other_branch, name="مطعم فرع تاني")
+        cat           = make_category(db, branch, outlet)
+        item          = make_item(db, branch, outlet, cat)
+        foreign_table = make_table(db, other_branch, other_outlet)
 
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,

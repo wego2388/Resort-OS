@@ -106,7 +106,7 @@ def _open_shift(db, branch_id, cashier_id):
 
 def _make_table(db, branch, outlet):
     from app.modules.dining.models import VenueTable
-    t = VenueTable(branch_id=branch.id, outlet_id=outlet.id,
+    t = VenueTable(branch_id=branch.id,
                    table_number=f"T-{uuid.uuid4().hex[:4]}", capacity=4, status="available")
     db.add(t)
     db.commit()

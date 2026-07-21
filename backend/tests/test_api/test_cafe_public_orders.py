@@ -50,7 +50,7 @@ def make_table(db, branch, outlet):
     from app.modules.dining.models import VenueTable
     # اسم الطاولة هنا "شمسية 12" عمداً — الشمسيات ممثَّلة كصفوف VenueTable
     # عادية برقم مميز، مفيش موديل منفصل (راجع CLAUDE.md §13).
-    table = VenueTable(branch_id=branch.id, outlet_id=outlet.id, table_number="شمسية 12",
+    table = VenueTable(branch_id=branch.id, table_number="شمسية 12",
                        capacity=2, status="available")
     db.add(table)
     db.commit()

@@ -35,11 +35,10 @@ import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, useResortWebSocket, ENDPOINTS } from '@resort-os/core'
 import { useOfflineQueue, useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
 import {
-  AppButton, AppBadge, AppTabs, AppSelect, SearchInput, AppTextarea,
+  AppButton, AppBadge, AppTabs, SearchInput, AppTextarea,
   EmptyState, LoadingState, IconButton, useToast,
 } from '@resort-os/ui'
 import type { TabItem } from '@resort-os/ui'
-import type { SelectOption } from '@resort-os/ui'
 import DiningExtrasModal, { type DiningExtrasItem } from '../../components/DiningExtrasModal.vue'
 import DiningOrderDetailModal from '../../components/DiningOrderDetailModal.vue'
 import PinGuardModal from '../../components/PinGuardModal.vue'
@@ -58,7 +57,7 @@ const { isOnline, pendingCount, submitOrder: submitOrderOnlineOrQueue, lastParti
 const { status: wsStatus, onMessage: onWsMessage } = useResortWebSocket(ENDPOINTS.dining.tablesWs(branchId))
 onWsMessage((data: any) => {
   if (data?.type === 'table_updated' || data?.type === 'tables_updated') {
-    loadOutletData()
+    loadTables()
   }
 })
 
@@ -77,6 +76,10 @@ interface VenueTable {
   active_covers:       number | null
   occupied_at:         string | null
   order_status:        string | null  // open | in_kitchen | served
+  // الطاولة مشتركة بين كل المنافذ (2026-07-21) — ده بيقول أي منفذ فتح
+  // الطلب الشاغل لها دلوقتي، عشان الكاشير يعرف لو الطاولة مشغولة بطلب من
+  // منفذ تاني غير اللي هو واقف عليه دلوقتي.
+  active_order_outlet_id: number | null
 }
 interface DiningItemRow extends DiningExtrasItem {
   is_available: boolean; category_id: number | null; station: string
@@ -151,16 +154,20 @@ const selectedOrderId = ref<number | null>(null)
 const searchInputEl = ref<InstanceType<typeof SearchInput> | null>(null)
 
 // ── Computed ─────────────────────────────────────────────────────────────
-const outletOptions = computed<SelectOption[]>(() =>
-  outlets.value.map(o => ({ value: o.id, label: o.name_ar || o.name })))
-// AppSelect's modelValue is `string | number | undefined` (native <select>
-// values are always strings) — selectedOutletId stays `number | null`
-// everywhere else (API params, comparisons), so this proxy is the only
-// place the null<->undefined/string<->number conversion happens.
-const selectedOutletIdOption = computed<string | number | undefined>({
-  get: () => selectedOutletId.value ?? undefined,
-  set: (v) => { selectedOutletId.value = v !== undefined && v !== '' ? Number(v) : null },
+// تابات المنفذ في شريط الأدوات العلوي — بدل dropdown، لتبديل أسرع.
+const outletTabs = computed<TabItem[]>(() =>
+  outlets.value.map(o => ({ value: String(o.id), label: o.name_ar || o.name })))
+const selectedOutletTab = computed<string>({
+  get: () => selectedOutletId.value !== null ? String(selectedOutletId.value) : '',
+  set: (v) => { selectedOutletId.value = v ? Number(v) : null },
 })
+// اسم المنفذ من الـ id — لإظهار "مشغولة بطلب [منفذ]" على طاولة شغالة
+// بمنفذ غير اللي الكاشير واقف عليه دلوقتي.
+function outletNameById(id: number | null): string {
+  if (id === null) return ''
+  return outlets.value.find(o => o.id === id)?.name_ar
+    || outlets.value.find(o => o.id === id)?.name || ''
+}
 
 const categoryTabs = computed<TabItem[]>(() => [
   { value: 'all', label: t('backoffice.pos.categoryAll') },
@@ -245,24 +252,35 @@ async function loadOutlets() {
   if (data.length && selectedOutletId.value === null) selectedOutletId.value = data[0].id
 }
 
-async function loadOutletData() {
+// المنيو بس بتتغيّر لما الكاشير يبدّل المنفذ — الطاولات مشتركة بين كل
+// المنافذ (2026-07-21)، فبتتحمّل مرة واحدة بس (loadTables) مش هنا.
+async function loadMenu() {
   if (!selectedOutletId.value) return
   loading.value = true
   try {
-    const [catsRes, itemsRes, tablesRes] = await Promise.all([
+    const [catsRes, itemsRes] = await Promise.all([
       api.get(ENDPOINTS.dining.categories(selectedOutletId.value)),
       api.get(ENDPOINTS.dining.items(selectedOutletId.value), { params: { available_only: false } }),
-      api.get(ENDPOINTS.dining.tables(selectedOutletId.value)),
     ])
     categories.value = catsRes.data
     items.value = itemsRes.data
-    tables.value = tablesRes.data
     selectedCategoryId.value = 'all'
-    selectedTableId.value = null
   } catch {
     toast.error(t('backoffice.pos.errors.loadOutletData'))
   } finally {
     loading.value = false
+  }
+}
+
+// شبكة الطاولات فرعية بالكامل — بتتحمّل مرة واحدة (مش لكل منفذ)، وبتتحدّث
+// لحظيًا عبر الـ WebSocket (tables-{branchId}) بدل ما تتحمّل من جديد كل ما
+// المنفذ يتغيّر. الطاولة المختارة تفضل زي ما هي عمدًا عند التحديث.
+async function loadTables() {
+  try {
+    const { data } = await api.get(ENDPOINTS.dining.tables(branchId))
+    tables.value = data
+  } catch {
+    toast.error(t('backoffice.pos.errors.loadOutletData'))
   }
 }
 
@@ -545,7 +563,7 @@ function handleKeydown(e: KeyboardEvent) {
 
 onMounted(async () => {
   await loadOutlets()
-  await loadOutletData()
+  await Promise.all([loadMenu(), loadTables()])
   loadActiveOrders()
   window.addEventListener('keydown', handleKeydown)
 })
@@ -580,9 +598,9 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 
     <!-- ── Top bar ── -->
     <div class="bg-white dark:bg-surface border-b border-stone-200 dark:border-border px-4 py-3 flex flex-wrap gap-3 items-center shadow-sm flex-shrink-0">
-      <div class="w-48">
-        <AppSelect v-model="selectedOutletIdOption" :options="outletOptions" :placeholder="t('backoffice.pos.selectOutlet')" @update:model-value="loadOutletData(); loadActiveOrders()" />
-      </div>
+      <!-- تابات بدل dropdown — تبديل أسرع وقت الزحمة (Foodics/Toast-style)،
+           والطاولات تفضل ثابتة مكانها لأنها مشتركة بين المنافذ. -->
+      <AppTabs v-model="selectedOutletTab" :tabs="outletTabs" @update:model-value="loadMenu(); loadActiveOrders()" />
 
       <AppTabs v-model="orderType" :tabs="orderTypeTabs" />
 
@@ -651,6 +669,13 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
 
               <!-- السطر 2-4: بيانات الأوردر النشط -->
               <div v-if="tbl.status === 'occupied' || tbl.status === 'served'" class="w-full space-y-0.5 mt-0.5">
+                <!-- الطاولة مشتركة بين المنافذ — لو الطلب الشاغل من منفذ
+                     تاني غير اللي الكاشير واقف عليه دلوقتي، وضّح ده صراحةً
+                     بدل ما يفتكرها فاضية أو يلخبط بين الطلبين. -->
+                <div
+                  v-if="tbl.active_order_outlet_id !== null && tbl.active_order_outlet_id !== selectedOutletId"
+                  class="text-[10px] font-bold text-purple-700 bg-purple-50 rounded px-1 py-0.5 inline-block"
+                >🔀 {{ outletNameById(tbl.active_order_outlet_id) }}</div>
                 <div v-if="tbl.active_covers" class="text-[10px] text-gray-600">👥 {{ tbl.active_covers }} {{ t('backoffice.pos.guests') }}</div>
                 <div v-if="tbl.active_order_total" class="text-[10px] text-gray-700 dark:text-gray-300 font-semibold">💰 {{ tbl.active_order_total }} {{ t('backoffice.pos.currency') }}</div>
                 <div v-if="tbl.occupied_at" class="text-[10px] text-gray-500">⏱ {{ elapsedSince(tbl.occupied_at) }}</div>

@@ -432,16 +432,16 @@ def get_branch_food_cost_report(
 
 # ── Tables ────────────────────────────────────────────────────────────
 
-@router.get("/dining/outlets/{outlet_id}/tables", response_model=list[DiningTableRead])
-def list_tables(outlet_id: int, db: DbDep, _=Depends(get_current_active_user)):
-    return [DiningTableRead.model_validate(t) for t in crud.list_tables_with_orders(db, outlet_id)]
+@router.get("/dining/branches/{branch_id}/tables", response_model=list[DiningTableRead])
+def list_tables(branch_id: int, db: DbDep, _=Depends(get_current_active_user)):
+    return [DiningTableRead.model_validate(t) for t in crud.list_tables_with_orders(db, branch_id)]
 
 
-@router.post("/dining/outlets/{outlet_id}/tables", response_model=DiningTableRead,
+@router.post("/dining/branches/{branch_id}/tables", response_model=DiningTableRead,
              status_code=status.HTTP_201_CREATED)
-def create_table(outlet_id: int, data: DiningTableCreate, db: DbDep, _=Depends(get_manager_user)):
-    if data.outlet_id != outlet_id:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "outlet_id في الجسم لازم يطابق المسار")
+def create_table(branch_id: int, data: DiningTableCreate, db: DbDep, _=Depends(get_manager_user)):
+    if data.branch_id != branch_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "branch_id في الجسم لازم يطابق المسار")
     table = crud.create_table(db, data)
     db.commit()
     db.refresh(table)
@@ -1050,10 +1050,13 @@ def get_outlet_sales_report(
 #     "dining.self_order_enabled" الخاص بالفرع — الاتنين لازم يبقوا true،
 #     راجع services.assert_guest_self_order_enabled) — Decision 0001 / C-02.
 #     AGENTS.md بيمنع الاعتماد على core.Setting لوحده كبوابة أمان.
-#   - table_id/item_id بيتحققوا فعليًا إنهم يتبعوا نفس outlet_id وbranch_id
-#     (services.create_order + get_public_menu) قبل أي قراءة/كتابة — منع
-#     طلب طاولة/صنف من منفذ أو فرع تاني تمامًا. table_id لازم يكون رقم
-#     موجب (Field(ge=1)) — صفر أو سالب يترفض 422 قبل ما يوصل لأي منطق.
+#   - item_id بيتحقق فعليًا إنه يتبع نفس outlet_id وbranch_id، وtable_id
+#     بيتحقق إنه يتبع نفس branch_id بس (2026-07-21: الطاولة بقت مشتركة بين
+#     كل منافذ الفرع عمدًا — راجع VenueTable's docstring — فمنع "طاولة من
+#     منفذ تاني" بقى غير منطقي، لكن منع "طاولة من فرع تاني تمامًا" لسه
+#     الحماية الحقيقية المطلوبة) — راجع services.create_order + get_public_menu
+#     قبل أي قراءة/كتابة. table_id لازم يكون رقم موجب (Field(ge=1)) — صفر
+#     أو سالب يترفض 422 قبل ما يوصل لأي منطق.
 #   - GET /orders/{order_id} **مقفول بالكامل الآن**، بغض النظر عن حالة
 #     dining.self_order_enabled — order_id بيقرا من نفس جدول الطلبات اللي
 #     فيه طلبات POS/الكاشير العادية كمان (staff orders تقدر توجد بغض النظر
@@ -1107,8 +1110,8 @@ def get_public_menu(
 
     if table_id is not None:
         table = crud.get_table(db, table_id)
-        if not table or table.outlet_id != outlet_id:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "الطاولة لا تتبع هذا المنفذ")
+        if not table or table.branch_id != outlet.branch_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "الطاولة لا تتبع هذا الفرع")
 
     categories = crud.list_categories(db, outlet_id)
     items = crud.list_items(db, outlet_id, available_only=True)

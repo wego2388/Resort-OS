@@ -54,7 +54,7 @@ def make_outlet(db, branch, outlet_type="restaurant", revenue_account_code="4200
 
 def make_table(db, branch, outlet):
     from app.modules.dining.models import VenueTable
-    t = VenueTable(branch_id=branch.id, outlet_id=outlet.id, table_number="F1", capacity=4, status="available")
+    t = VenueTable(branch_id=branch.id, table_number="F1", capacity=4, status="available")
     db.add(t)
     db.commit()
     return t
@@ -191,7 +191,7 @@ class TestDiningFullCycle:
 
         # 6) الطاولة اترجعت متاحة
         tables_resp = client.get(
-            f"/api/v1/dining/outlets/{outlet.id}/tables", headers=waiter_headers,
+            f"/api/v1/dining/branches/{branch.id}/tables", headers=waiter_headers,
         )
         found = next(t for t in tables_resp.json() if t["id"] == table.id)
         assert found["status"] == "available"

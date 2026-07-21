@@ -48,7 +48,7 @@ def make_item_committed(db, branch, outlet, price=Decimal("80.00"), station="hot
 
 def make_table_committed(db, branch, outlet):
     from app.modules.dining.models import VenueTable
-    table = VenueTable(branch_id=branch.id, outlet_id=outlet.id, table_number="T1",
+    table = VenueTable(branch_id=branch.id, table_number=f"T-{uuid.uuid4().hex[:6].upper()}",
                         capacity=4, status="available")
     db.add(table)
     db.commit()
@@ -633,7 +633,7 @@ class TestDiningTableTransferHTTP:
         assert resp.json()["table_id"] == new_table.id
 
         tables = client.get(
-            f"/api/v1/dining/outlets/{outlet.id}/tables", headers=waiter_headers,
+            f"/api/v1/dining/branches/{branch.id}/tables", headers=waiter_headers,
         ).json()
         assert next(t for t in tables if t["id"] == old_table.id)["status"] == "available"
         assert next(t for t in tables if t["id"] == new_table.id)["status"] == "occupied"

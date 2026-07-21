@@ -76,13 +76,14 @@ onMounted(async () => {
   }
 })
 
+// الطاولات مشتركة بين كل المنافذ (2026-07-21) — بتتحمّل مرة واحدة بس، مش
+// لكل منفذ. activeOutletId لسه بيحدد رابط الـ QR نفسه (/order/{outlet}/
+// {table}) بس مش قائمة الطاولات المعروضة.
 async function loadTables() {
-  if (activeOutletId.value == null) { tables.value = []; return }
   loading.value = true
-  tables.value = []
   selectedIds.value = new Set()
   try {
-    const { data } = await api.get(ENDPOINTS.dining.tables(activeOutletId.value))
+    const { data } = await api.get(ENDPOINTS.dining.tables(branchId))
     tables.value = data.tables ?? data.items ?? data
   } catch {
     toast.error(t('backoffice.qrGenerator.msg.loadTablesError'))
@@ -312,7 +313,7 @@ const grouped = computed(() => {
       <button
         v-for="o in outlets"
         :key="o.id"
-        @click="activeOutletId = o.id; loadTables()"
+        @click="activeOutletId = o.id"
         :class="[
           'px-5 py-2 rounded-lg text-sm font-bold transition-all',
           activeOutletId === o.id ? 'bg-white dark:bg-surface text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700',

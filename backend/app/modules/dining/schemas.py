@@ -283,7 +283,6 @@ class DiningTableRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:           int
     branch_id:    int
-    outlet_id:    int
     table_number: str
     capacity:     int
     status:       str
@@ -297,11 +296,14 @@ class DiningTableRead(BaseModel):
     active_order_total:  Optional[float] = None
     active_covers:       Optional[int]   = None
     order_status:        Optional[str]   = None  # open | in_kitchen | served
+    # أي منفذ فتح الطلب الشاغل للطاولة دي — مهم لما الكاشير يكون واقف على
+    # منيو منفذ تاني ويشوف الطاولة مشغولة (مثلاً طلب كافيه وهو واقف على
+    # تاب المطعم)، عشان يعرف يفتح تفاصيل الطلب الصح بدل ما يفتره إنه فاضي.
+    active_order_outlet_id: Optional[int] = None
 
 
 class DiningTableCreate(BaseModel):
     branch_id:    int
-    outlet_id:    int
     table_number: str = Field(..., max_length=20)
     capacity:     int = Field(4, ge=1)
     section:      Optional[str] = Field(None, max_length=50)

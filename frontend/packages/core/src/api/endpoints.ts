@@ -82,7 +82,9 @@ export const ENDPOINTS = {
     variantRecipeLines: (variantId: number) => `/api/v1/dining/variants/${variantId}/recipe-lines`,
     variantRecipeLine: (lineId: number) => `/api/v1/dining/variant-recipe-lines/${lineId}`,
     itemImage: (itemId: number) => `/api/v1/dining/items/${itemId}/image`,
-    tables: (outletId: number) => `/api/v1/dining/outlets/${outletId}/tables`,
+    // الطاولة مشتركة بين كل منافذ الفرع (2026-07-21) — مش outlet-scoped
+    // بعد كده، راجع backend's VenueTable docstring.
+    tables: (branchId: number) => `/api/v1/dining/branches/${branchId}/tables`,
     table: (tableId: number) => `/api/v1/dining/tables/${tableId}`,
     tableGrid: (tableId: number) => `/api/v1/dining/tables/${tableId}/grid`,
     orders: '/api/v1/dining/orders',

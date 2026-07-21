@@ -1120,18 +1120,19 @@ def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
     "لا توجد طاولات مسجّلة لهذا الفرع" دايمًا، فمفيش أي طريقة حقيقية لعمل أوردر
     dine_in مربوط بطاولة فعلية (اتكشف أثناء اختبار حي لمسار الجرسون الكامل —
     نفس فئة باج rooms الفاضية اللي اتصلحت قبل كده). ازرع ترقيم منطقي متسلسل
-    دلوقتي: 12 طاولة مطعم (1-10 لـ4 أفراد، 11-12 لـ8 أفراد لمجموعات كبيرة)
-    + 8 طاولات كافيه (1-8 لـ2 فرد).
+    دلوقتي: 12 طاولة (1-10 لـ4 أفراد، 11-12 لـ8 أفراد لمجموعات كبيرة).
 
     `branch_id` اختياري — للتستات بس (عشان تحدد فرع بعينه بدل الاعتماد على
     'أول فرع في الداتابيز' اللي مش مضمون يكون معزول في session-scoped test DB
     فيها فروع تانية من تستات HTTP بتعمل commit حقيقي). الاستخدام الحقيقي من
     seed_all() مبيبعتش الحجة دي خالص — بيعتمد على أول فرع زي باقي دوال الـ seed.
 
-    DINING_CUTOVER_PLAN.md Batch 6 — بتزرع dining.models.VenueTable (بـ
-    outlet_id مطعم/كافيه، عبر _get_or_create_outlet المشتركة) بدل
-    restaurant.DiningTable/cafe.CafeTable القديمين اللي اتحذفوا، نفس
-    الأرقام والسعات بالحرف الواحد."""
+    ⚠️ **طاولات مشتركة (2026-07-21)**: كانت الدالة دي بتزرع مجموعتين منفصلتين
+    (12 طاولة "مطعم" + 8 طاولة "كافيه"، كل مجموعة أرقامها من 1) — باج حقيقي
+    اكتشفه Mohamed: الكاشير كان يشوف شبكة طاولات مختلفة تمامًا كل ما يبدّل
+    المنفذ، عكس الواقع (نفس الصالة الفعلية بتخدم المطعم والكافيه). بقت الطاولة
+    ملك للفرع بس (VenueTable.outlet_id اتشال، راجع migration 9b4e1a2c7f30) —
+    مجموعة واحدة، والمنفذ بقى بيفلتر المنيو المعروض مش الطاولات."""
     from app.modules.dining.models import VenueTable
     from app.modules.core.models import Branch
 
@@ -1139,26 +1140,18 @@ def _seed_dining_tables(db: Session, branch_id: int | None = None) -> None:
     if not branch:
         return
 
-    restaurant_outlet = _get_or_create_outlet(db, branch.id, "restaurant", "المطعم", "4200")
-    if not db.query(VenueTable).filter(VenueTable.outlet_id == restaurant_outlet.id).first():
-        total = 0
-        for i in range(1, 11):
-            db.add(VenueTable(branch_id=branch.id, outlet_id=restaurant_outlet.id, table_number=str(i), capacity=4))
-            total += 1
-        for i in range(11, 13):
-            db.add(VenueTable(branch_id=branch.id, outlet_id=restaurant_outlet.id, table_number=str(i), capacity=8))
-            total += 1
-        db.flush()
-        print(f"  ✓ Restaurant tables seeded ({total} tables — logical default numbering, not verified real numbers)")
+    if db.query(VenueTable).filter(VenueTable.branch_id == branch.id).first():
+        return
 
-    cafe_outlet = _get_or_create_outlet(db, branch.id, "cafe", "الكافيه", "4400")
-    if not db.query(VenueTable).filter(VenueTable.outlet_id == cafe_outlet.id).first():
-        total = 0
-        for i in range(1, 9):
-            db.add(VenueTable(branch_id=branch.id, outlet_id=cafe_outlet.id, table_number=str(i), capacity=2))
-            total += 1
-        db.flush()
-        print(f"  ✓ Cafe tables seeded ({total} tables — logical default numbering, not verified real numbers)")
+    total = 0
+    for i in range(1, 11):
+        db.add(VenueTable(branch_id=branch.id, table_number=str(i), capacity=4))
+        total += 1
+    for i in range(11, 13):
+        db.add(VenueTable(branch_id=branch.id, table_number=str(i), capacity=8))
+        total += 1
+    db.flush()
+    print(f"  ✓ Dining tables seeded ({total} tables, shared across outlets — logical default numbering, not verified real numbers)")
 
 
 def _seed_beach_reservations(db: Session, branch_id: int | None = None) -> None:

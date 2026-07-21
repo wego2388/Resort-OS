@@ -8,8 +8,12 @@ a real dine_in order tied to an actual table — the exact same class of bug as
 the previously-empty `rooms` table (PMS).
 
 راجع DINING_CUTOVER_PLAN.md Batch 6 — _seed_dining_tables بقى بيزرع
-dining.models.VenueTable (بـ outlet_id مطعم/كافيه) بدل restaurant.DiningTable/
-cafe.CafeTable القديمين اللي اتحذفوا.
+dining.models.VenueTable بدل restaurant.DiningTable/cafe.CafeTable القديمين
+اللي اتحذفوا.
+
+2026-07-21: الطاولة بقت مشتركة بين كل منافذ الفرع (مش outlet_id خاص بيها
+بعد كده) — راجع migration 9b4e1a2c7f30 و VenueTable's docstring. الدالة
+بقت بتزرع مجموعة واحدة بس (12 طاولة) بدل مجموعتين مكررتين.
 """
 from __future__ import annotations
 
@@ -18,7 +22,7 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.modules.core.models import Branch
-from app.modules.dining.models import Outlet, VenueTable
+from app.modules.dining.models import VenueTable
 from app.seed import _seed_dining_tables
 
 
@@ -33,26 +37,22 @@ def _make_branch(db: Session) -> Branch:
     return b
 
 
-def _tables_for(db: Session, branch_id: int, outlet_type: str) -> list[VenueTable]:
-    outlet = db.query(Outlet).filter(Outlet.branch_id == branch_id, Outlet.outlet_type == outlet_type).first()
-    if not outlet:
-        return []
-    return db.query(VenueTable).filter(VenueTable.outlet_id == outlet.id).all()
+def _tables_for(db: Session, branch_id: int) -> list[VenueTable]:
+    return db.query(VenueTable).filter(VenueTable.branch_id == branch_id).all()
 
 
-def test_seed_dining_tables_creates_restaurant_and_cafe_tables(db: Session):
+def test_seed_dining_tables_creates_one_shared_set(db: Session):
     branch = _make_branch(db)
     _seed_dining_tables(db, branch_id=branch.id)
     db.commit()
 
-    restaurant_tables = _tables_for(db, branch.id, "restaurant")
-    cafe_tables = _tables_for(db, branch.id, "cafe")
+    tables = _tables_for(db, branch.id)
 
-    assert len(restaurant_tables) == 12
-    assert len(cafe_tables) == 8
+    assert len(tables) == 12
     # every seeded table must start "available" so a waiter can actually pick it
-    assert all(t.status == "available" for t in restaurant_tables)
-    assert all(t.status == "available" for t in cafe_tables)
+    assert all(t.status == "available" for t in tables)
+    # numbers must be unique per branch (shared across outlets, not duplicated)
+    assert len({t.table_number for t in tables}) == 12
 
 
 def test_seed_dining_tables_is_idempotent(db: Session):
@@ -61,5 +61,4 @@ def test_seed_dining_tables_is_idempotent(db: Session):
     _seed_dining_tables(db, branch_id=branch.id)  # running twice must not duplicate rows
     db.commit()
 
-    assert len(_tables_for(db, branch.id, "restaurant")) == 12
-    assert len(_tables_for(db, branch.id, "cafe")) == 8
+    assert len(_tables_for(db, branch.id)) == 12
