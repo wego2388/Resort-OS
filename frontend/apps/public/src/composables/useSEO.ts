@@ -19,8 +19,10 @@
 import { watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
+import { RESORT } from '../constants/resort'
 
 const HREFLANG_CODES = ['ar', 'en', 'ru', 'it'] as const
+const STRUCTURED_DATA_ID = 'ld-lodgingbusiness'
 
 function setMeta(attr: 'name' | 'property', key: string, content: string): void {
   let el = document.head.querySelector(`meta[${attr}="${key}"]`)
@@ -42,6 +44,31 @@ function setLink(rel: string, href: string, hreflang?: string): void {
     document.head.appendChild(el)
   }
   el.setAttribute('href', href)
+}
+
+// LodgingBusiness JSON-LD — sitewide (not homepage-only), built only from
+// already-sourced real facts (constants/resort.ts + marketing.ts's
+// per-locale contact.address, both cited from the brand content repo — see
+// marketing.ts's file header). No fabricated fields (e.g. geo coordinates,
+// star rating, price range) — only what's actually verified.
+function setStructuredData(name: string, address: string): void {
+  let el = document.head.querySelector<HTMLScriptElement>(`script#${STRUCTURED_DATA_ID}`)
+  if (!el) {
+    el = document.createElement('script')
+    el.type = 'application/ld+json'
+    el.id = STRUCTURED_DATA_ID
+    document.head.appendChild(el)
+  }
+  el.textContent = JSON.stringify({
+    '@context': 'https://schema.org',
+    '@type': 'LodgingBusiness',
+    name,
+    url: RESORT.website,
+    telephone: RESORT.phones[0],
+    email: RESORT.email,
+    address: { '@type': 'PostalAddress', streetAddress: address },
+    sameAs: Object.values(RESORT.social),
+  })
 }
 
 export function useSEO(): void {
@@ -71,6 +98,8 @@ export function useSEO(): void {
     setLink('canonical', canonicalUrl)
     for (const code of HREFLANG_CODES) setLink('alternate', canonicalUrl, code)
     setLink('alternate', canonicalUrl, 'x-default')
+
+    setStructuredData(brand, t('marketing.contact.address'))
   }
 
   watch([locale, () => route.path, () => route.meta.titleKey], update, { immediate: true })
