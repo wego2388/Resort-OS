@@ -2929,7 +2929,8 @@
     "notFoundDesc": "The page you're looking for doesn't exist",
     "goHome": "Go Home",
     "serverError": "Server Error",
-    "networkError": "Network Error"
+    "networkError": "Network Error",
+    "generic": "An unexpected error occurred — please try again"
   },
   "cookies": {
     "message": "We use cookies to improve your experience and analyze usage.",
@@ -3426,9 +3427,6 @@
       "beachAdmin": "Beach Management",
       "hubSection": "Website",
       "hubManagement": "Website & Bookings",
-      "beachAdmin": "Beach Management",
-      "hubSection": "Website",
-      "hubManagement": "Website & Bookings",
       "inventory": "Inventory",
       "recipes": "Item Recipes",
       "foodCost": "Food Cost",
@@ -3648,15 +3646,28 @@
       "reasonPromptDeny": "Deny \"{label}\" permission from {name}",
       "reasonPromptRevert": "Revert \"{label}\" permission for {name} to default",
       "roles": {
-        "super_admin": "Super Admin", "admin": "Admin", "accountant": "Accountant",
-        "hr_manager": "HR Manager", "manager": "Manager", "supervisor": "Supervisor",
-        "receptionist": "Receptionist", "cashier": "Cashier", "waiter": "Waiter",
-        "chef": "Chef", "kitchen": "Kitchen", "employee": "Employee"
+        "super_admin": "Super Admin",
+        "admin": "Admin",
+        "accountant": "Accountant",
+        "hr_manager": "HR Manager",
+        "manager": "Manager",
+        "supervisor": "Supervisor",
+        "receptionist": "Receptionist",
+        "cashier": "Cashier",
+        "waiter": "Waiter",
+        "chef": "Chef",
+        "kitchen": "Kitchen",
+        "employee": "Employee"
       },
       "modules": {
-        "finance": "Finance", "dining": "Dining", "beach": "Beach",
-        "hr": "HR", "timeshare": "Timeshare", "pms": "Hotel/PMS",
-        "inventory": "Inventory", "crm": "CRM"
+        "finance": "Finance",
+        "dining": "Dining",
+        "beach": "Beach",
+        "hr": "HR",
+        "timeshare": "Timeshare",
+        "pms": "Hotel/PMS",
+        "inventory": "Inventory",
+        "crm": "CRM"
       }
     },
     "settings": {

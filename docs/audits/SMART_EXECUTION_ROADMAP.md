@@ -2,7 +2,9 @@
 
 **الحالة:** خارطة حية؛ Gate 1A وشريحة Dining-paid من Gate 1B وGate 2 وGate 3
 مُعتمَدة. Gate 4 منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20)، بانتظار
-مراجعة مستقلة قبل الاعتماد. Gate 5 هي البوابة التالية الجاهزة للتخطيط والتنفيذ.
+مراجعة مستقلة قبل الاعتماد. Gate 5 منفَّذة بالكامل ذاتيًا (2026-07-21، 15/15
+دفعة) على فروع شقيقة منفصلة — محتاجة دمج واحد قبل أي commit/push أو مراجعة
+نهائية.
 **المصدر:** مراجعة 360° بتاريخ 2026-07-17 + القرارات الموجودة في
 `docs/decisions/` + `wagdy.md`.
 
@@ -17,7 +19,7 @@
 | Gate 2: Super Admin safeguards | **مكتملة ومُعتمَدة (2A→2B3B)** | Claude/Codex | server-side policy/concurrency/session/audit tests |
 | Gate 3: i18n/design/test foundation | **مكتملة ومُعتمَدة (2026-07-19)** | Claude/Codex | bilingual shell + reference screens + quality harness |
 | Gate 4: Dining financial integrity | **منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20) — Codex راجعت جولة أولى، كل الملاحظات + step-up المالي اتصلحوا، بانتظار مراجعة مستقلة تالية** | Claude | settlement/idempotency/shift-lock/one-active-order + 18/18 Postgres concurrency؛ لا commit/push بعد؛ مفيش بند مؤجَّل متبقٍّ |
-| Gate 5: Staff UX batches | مغلقة على Gates 3 و4 حسب الشاشة | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
+| Gate 5: Staff UX batches | **منفَّذة بالكامل ذاتيًا (2026-07-21) — 15/15 دفعة، فروع شقيقة محتاجة دمج، لا commit/push بعد** | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
 | Gate 7: Public migration batches | مغلقة على Gates 2 و3 واعتماد Phase 0 | Claude | visual/API diff لكل batch بلا legacy backend |
 | Gate 8: QR + Guest Service | مغلقة على Gates 1A و3 و4 و7 | Claude | scan-to-call-to-payment E2E evidence |
 | Gate 9: production evidence | مغلقة حتى تحديد release scope | الفريق | CI/staging/security/restore/rollback evidence |
@@ -150,7 +152,12 @@ settlement/payment، shift/reconciliation، ثم state/ownership/reversals. تق
 صغيرة.  
 **يعتمد على:** Gate 3، وGate 4 للشاشات المالية.  
 **الخروج:** keyboard + responsive + Arabic RTL + English LTR + print، ولا
-missing keys أو strings حرجة hard-coded.
+missing keys أو strings حرجة hard-coded.  
+**التقدّم: مكتملة — كل 15 دفعة منفَّذة (2026-07-21).** دفعة 15 (الأخيرة)
+غطّت شاشات Login/Auth الخمس (كانت مترجمة بالفعل من شغل الـ 2FA الإجباري،
+الدفعة دي كانت تحقق+ترقية STRICT_FILES + إصلاح مفتاح ترجمة ناقص حقيقي
+`errors.generic`). **كل الدفعات على فروع شقيقة منفصلة متفرّعة من نفس قاعدة
+Gate 4 — محتاجة دمج واحد قبل أي نشر للإنتاج، ده لسه ما اتعملش.**
 
 ### Gate 6 — Public Phase 0 فقط — مسموح أن يبدأ الآن
 

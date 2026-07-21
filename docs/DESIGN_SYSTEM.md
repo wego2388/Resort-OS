@@ -143,6 +143,21 @@ primitives, covered by `validate:i18n` strict checks):
 - `views/portal/ProfileView.vue`
 - `views/account/SessionsView.vue`
 - `views/admin/SettingsView.vue`
+- `views/account/LoginView.vue`, `views/account/ForgotPasswordView.vue`,
+  `views/account/ResetPasswordView.vue`,
+  `views/account/ForcePasswordChangeView.vue`,
+  `views/account/TwoFactorSetupView.vue` (Gate 5 Batch 15 — already bilingual
+  from the mandatory 2FA/security-onboarding work in Gate 2B2/2B3, promoted
+  to STRICT_FILES here; a real missing key, `errors.generic`, was found and
+  fixed in the process. On branch
+  `gate-5-staff-ux-batch-15-login-auth-i18n` — not yet merged with the other
+  Gate 5 batch branches)
+
+Gate 5 is now complete: batches 1-15 (see PROJECT_STATUS.md for the full
+list) each fully translated their target screens and were self-verified on
+independent sibling branches off the Gate 4 base. **They still need a
+combined merge before any of this reaches main** — the sibling branches are
+not stacked on each other.
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
@@ -150,8 +165,3 @@ removed, formatting centralized; **full copy migration deliberately deferred**
 
 - `views/kds/DiningKDSView.vue`
 - `views/pos/UnifiedPOSView.vue`
-
-Not yet migrated (tracked debt, next batches — do not claim bilingual):
-the remaining ~40 admin/ops/pos/portal screens. Migrate in reviewed batches
-per Decision 0002, extending the strict list in
-`apps/el-kheima/scripts/validate-i18n.mjs` as each batch lands.

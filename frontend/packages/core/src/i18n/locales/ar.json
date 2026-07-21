@@ -2929,7 +2929,8 @@
     "notFoundDesc": "الصفحة التي تبحث عنها غير موجودة",
     "goHome": "العودة للرئيسية",
     "serverError": "خطأ في الخادم",
-    "networkError": "خطأ في الاتصال"
+    "networkError": "خطأ في الاتصال",
+    "generic": "حدث خطأ غير متوقع — حاول تاني"
   },
   "cookies": {
     "message": "نستخدم cookies لتحسين تجربتك وتحليل الاستخدام.",
@@ -3645,15 +3646,28 @@
       "reasonPromptDeny": "منع صلاحية \"{label}\" عن {name}",
       "reasonPromptRevert": "إرجاع صلاحية \"{label}\" لـ {name} للسلوك الافتراضي",
       "roles": {
-        "super_admin": "مدير عام", "admin": "إداري", "accountant": "محاسب",
-        "hr_manager": "مسؤول موارد بشرية", "manager": "مدير", "supervisor": "مشرف",
-        "receptionist": "استقبال", "cashier": "كاشير", "waiter": "جرسون",
-        "chef": "شيف", "kitchen": "مطبخ", "employee": "موظف"
+        "super_admin": "مدير عام",
+        "admin": "إداري",
+        "accountant": "محاسب",
+        "hr_manager": "مسؤول موارد بشرية",
+        "manager": "مدير",
+        "supervisor": "مشرف",
+        "receptionist": "استقبال",
+        "cashier": "كاشير",
+        "waiter": "جرسون",
+        "chef": "شيف",
+        "kitchen": "مطبخ",
+        "employee": "موظف"
       },
       "modules": {
-        "finance": "الحسابات", "dining": "الدايننج", "beach": "الشاطئ",
-        "hr": "الموارد البشرية", "timeshare": "التايم شير", "pms": "الفنادق",
-        "inventory": "المخزون", "crm": "العملاء"
+        "finance": "الحسابات",
+        "dining": "الدايننج",
+        "beach": "الشاطئ",
+        "hr": "الموارد البشرية",
+        "timeshare": "التايم شير",
+        "pms": "الفنادق",
+        "inventory": "المخزون",
+        "crm": "العملاء"
       }
     },
     "settings": {

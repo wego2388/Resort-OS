@@ -113,6 +113,11 @@ const STRICT_FILES = [
   'src/views/portal/ProfileView.vue',
   'src/views/account/SessionsView.vue',
   'src/views/admin/SettingsView.vue',
+  'src/views/account/LoginView.vue',
+  'src/views/account/ForgotPasswordView.vue',
+  'src/views/account/ResetPasswordView.vue',
+  'src/views/account/ForcePasswordChangeView.vue',
+  'src/views/account/TwoFactorSetupView.vue',
 ].map((p) => join(APP_DIR, p))
 
 // Direction-normalized reference screens: forced dir + hard-coded locale tags
