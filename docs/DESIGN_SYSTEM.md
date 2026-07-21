@@ -206,6 +206,9 @@ primitives, covered by `validate:i18n` strict checks):
   `views/admin/FoodCostReportView.vue` (Gate 5 Batch 10, on branch
   `gate-5-staff-ux-batch-10-dining-recipes-foodcost-i18n` — not yet merged
   with the other Gate 5 batch branches)
+- `views/admin/TimeshareView.vue`, `views/admin/LeasingView.vue` (Gate 5
+  Batch 11, on branch `gate-5-staff-ux-batch-11-timeshare-leasing-i18n` — not
+  yet merged with the other Gate 5 batch branches)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**

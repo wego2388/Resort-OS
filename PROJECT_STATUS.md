@@ -27,6 +27,40 @@
 
 ---
 
+## 🟩 Gate 5 Batch 11 — Timeshare + Leasing ar/en (2026-07-21)
+
+**الحالة:** جزء من مجهود ترجمة تطبيق الموظفين (`el-kheima`) الكامل عربي/إنجليزي
+(Gate 5)، شغال على فرع مستقل `gate-5-staff-ux-batch-11-timeshare-leasing-i18n`
+متفرّع من نفس قاعدة Gate 4 (زي كل دفعات Gate 5 — فروع شقيقة منفصلة، مش متسلسلة
+فوق بعض، لسه محتاجة دمج لاحقًا مع دفعات 1-10). بلا commit/push خارج الفرع.
+
+**الشاشتان المترجمتان بالكامل** (أصبحتا STRICT_FILES في `validate-i18n.mjs`):
+- `TimeshareView.vue` (995 سطر، أكبر شاشة في هذه الدفعة — 4 تابات: لوحة تحكم/
+  كالندر/عملاء/أقساط + 3 مودالات + ملف عميل شامل مجمّع). تضمّنت حالة خاصة:
+  دالة `printCalendarView` بتفتح نافذة طباعة مستقلة (HTML كامل منفصل عن
+  الـ Vue component، `<html dir="rtl" lang="ar">` ثابت) — بدل ما تُترك عربي
+  ثابت، اتحوّلت لتاخد الاتجاه/اللغة من `locale` الحالي فعليًا + كل نصوصها
+  (العنوان، "أسابيع محجوزة"، "صدّره"، تلميح الطباعة) بقت مترجمة، عشان الملف
+  يعدّي `validate-i18n.mjs`'s `FORCED_RTL` check اللي بيفحص نص الملف الخام
+  بما فيه الـ JS template literals مش بس الـ `<template>`.
+- `LeasingView.vue` (456 سطر) — عقود إيجار تجاري، دفعات، غرامات تأخير، سجل
+  كاش مستأجرين، تحميل إيصال PDF.
+
+**تحسينات نظافة إضافية** (نفس نمط كل الدفعات السابقة): إزالة `dir="rtl"`
+الثابتة، تحويل خرائط التسميات الثابتة (`statusConfig`، `paymentStatusConfig`،
+`paymentPeriodLabels`، `activityTypeLabels`، `TABS` في Timeshare) من `const`
+لـ `computed` عشان تتفاعل مع تغيير اللغة، استبدال كل نداءات
+`.toLocaleString('ar-EG')`/`.toLocaleDateString('ar-EG')` بـ
+`useStaffFormat()`، وتصحيح عدة اتجاهات CSS فيزيائية (`text-left`→`text-end`،
+`mr-1`→`ms-1`، `pr-1`→`ps-1`، `file:ml-3`→`file:me-3`) في `TimeshareView.vue`،
+و`v-for="t in TABS"` renamed لـ `v-for="tab in TABS"` قبل ما تسبب باج تصادم
+مع `t()` بتاعة vue-i18n (نفس فئة الباج المتكررة من كل دفعة سابقة).
+
+**تحقق شامل قبل الـ commit**: `node scripts/validate-i18n.mjs` نظيف (3333
+مفتاح ar/en، صفر ناقص، صفر مخالفة اتجاه فيزيائي)، `pnpm run type-check:all`
+نظيف، `npx vitest run` → 60/60، `pnpm run build:all` نظيف لـ `el-kheima`
+و`public`، `git diff --check` نظيف.
+
 ## 🟩 Gate 5 Batch 10 — Dining Menu + Recipes + Food Cost Report ar/en (2026-07-21)
 
 **الحالة:** جزء من مجهود ترجمة تطبيق الموظفين (`el-kheima`) الكامل عربي/إنجليزي
