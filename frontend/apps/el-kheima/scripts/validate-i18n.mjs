@@ -140,6 +140,10 @@ const STRICT_FILES = [
   'src/views/admin/LeasingView.vue',
   'src/views/admin/InventoryView.vue',
   'src/views/admin/MaintenanceView.vue',
+  'src/views/admin/AnalyticsView.vue',
+  'src/views/admin/HubManagementView.vue',
+  'src/views/admin/QRGeneratorView.vue',
+  'src/views/admin/EInvoiceView.vue',
 ].map((p) => join(APP_DIR, p))
 
 // Direction-normalized reference screens: forced dir + hard-coded locale tags

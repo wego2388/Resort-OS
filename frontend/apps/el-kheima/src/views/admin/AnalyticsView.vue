@@ -19,10 +19,14 @@
 // _safe_query في الباك إند — لو module مش مبني، القيمة بترجع null، فكل قسم
 // هنا لازم يتعامل مع احتمال null بشكل صريح (مش يفترض وجود بيانات).
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppBadge, AppButton, AppInput, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { t } = useI18n()
+const { formatNumber, formatDate } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -144,13 +148,15 @@ function revDiff(cur: number | null, prev: number | null): { pct: string; up: bo
   return { pct: Math.abs(pct).toFixed(1), up: pct >= 0 }
 }
 
-const categoryLabels: Record<string, string> = {
-  cleanliness: 'النظافة', service: 'الخدمة', value: 'القيمة مقابل السعر',
-  beach: 'الشاطئ', food: 'الطعام', location: 'الموقع',
-}
-const utilityTypeLabels: Record<string, string> = {
-  electricity: 'كهرباء', water: 'مياه', gas: 'غاز', diesel: 'ديزل',
-}
+const categoryLabels = computed<Record<string, string>>(() => ({
+  cleanliness: t('backoffice.analytics.category.cleanliness'), service: t('backoffice.analytics.category.service'),
+  value: t('backoffice.analytics.category.value'), beach: t('backoffice.analytics.category.beach'),
+  food: t('backoffice.analytics.category.food'), location: t('backoffice.analytics.category.location'),
+}))
+const utilityTypeLabels = computed<Record<string, string>>(() => ({
+  electricity: t('backoffice.analytics.utilityType.electricity'), water: t('backoffice.analytics.utilityType.water'),
+  gas: t('backoffice.analytics.utilityType.gas'), diesel: t('backoffice.analytics.utilityType.diesel'),
+}))
 const currentPeriod = new Date().toISOString().slice(0, 7)  // YYYY-MM
 const utilityForm = reactive({
   utility_type:  'electricity',
@@ -164,7 +170,7 @@ async function loadDashboard() {
     const res = await api.get('/api/v1/analytics/dashboard', { params: { branch_id: branchId } })
     dashboard.value = res.data
   } catch {
-    toast.error('تعذّر تحميل لوحة المؤشرات العامة — تأكد من اتصالك وحاول تاني')
+    toast.error(t('backoffice.analytics.msg.loadDashboardError'))
     dashboard.value = null
   }
 }
@@ -174,7 +180,7 @@ async function loadOccupancy() {
     const res = await api.get('/api/v1/analytics/occupancy', { params: { branch_id: branchId } })
     occupancy.value = res.data
   } catch {
-    toast.error('تعذّر تحميل نسبة الإشغال — تأكد من اتصالك وحاول تاني')
+    toast.error(t('backoffice.analytics.msg.loadOccupancyError'))
     occupancy.value = null
   }
 }
@@ -184,7 +190,7 @@ async function loadDailyStats() {
     const res = await api.get('/api/v1/analytics/daily-stats', { params: { branch_id: branchId } })
     dailyStats.value = res.data
   } catch {
-    toast.error('تعذّر تحميل إحصائيات اليوم — تأكد من اتصالك وحاول تاني')
+    toast.error(t('backoffice.analytics.msg.loadDailyStatsError'))
     dailyStats.value = null
   }
 }
@@ -194,7 +200,7 @@ async function loadReviews() {
     const res = await api.get('/api/v1/analytics/reviews', { params: { branch_id: branchId, size: 5 } })
     reviews.value = res.data
   } catch {
-    toast.error('تعذّر تحميل تقييمات الضيوف — تأكد من اتصالك وحاول تاني')
+    toast.error(t('backoffice.analytics.msg.loadReviewsError'))
     reviews.value = null
   }
 }
@@ -204,7 +210,7 @@ async function loadReviewInsights() {
     const res = await api.get('/api/v1/analytics/reviews/insights', { params: { branch_id: branchId } })
     reviewInsights.value = res.data
   } catch {
-    toast.error('تعذّر تحميل تفصيل التقييمات حسب الفئة')
+    toast.error(t('backoffice.analytics.msg.loadReviewInsightsError'))
     reviewInsights.value = null
   }
 }
@@ -214,7 +220,7 @@ async function loadUtilities() {
     const res = await api.get('/api/v1/analytics/utilities', { params: { branch_id: branchId } })
     utilityReadings.value = res.data
   } catch {
-    toast.error('تعذّر تحميل قراءات المرافق')
+    toast.error(t('backoffice.analytics.msg.loadUtilitiesError'))
     utilityReadings.value = []
   }
 }
@@ -240,10 +246,11 @@ const exportingEnergyTrend = ref(false)
 
 const thisYearTrend = computed(() => energyTrend.value.slice(12))
 const lastYearTrend = computed(() => energyTrend.value.slice(0, 12))
-const trendMaxCost = computed(() => Math.max(...energyTrend.value.map(t => t.total_cost), 1))
+const trendMaxCost = computed(() => Math.max(...energyTrend.value.map(pt => pt.total_cost), 1))
 function monthLabelShort(period: string) {
   const [, m] = period.split('-')
-  return ['', 'ينا', 'فبر', 'مار', 'أبر', 'ماي', 'يون', 'يول', 'أغس', 'سبت', 'أكت', 'نوف', 'ديس'][Number(m)]
+  const months = t('backoffice.analytics.monthsShort').split(',')
+  return months[Number(m)]
 }
 // مقارنة سنة بسنة لإجمالي تكلفة آخر 12 شهر مقابل الـ 12 قبلهم
 const yoyChangePct = computed(() => {
@@ -278,7 +285,7 @@ async function exportEnergyTrend() {
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 5000)
   } catch {
-    toast.error('تعذّر تصدير اتجاه تكلفة المرافق')
+    toast.error(t('backoffice.analytics.msg.exportEnergyTrendError'))
   } finally {
     exportingEnergyTrend.value = false
   }
@@ -286,7 +293,7 @@ async function exportEnergyTrend() {
 
 async function submitUtilityReading() {
   if (!utilityForm.reading_value || Number(utilityForm.reading_value) <= 0) {
-    toast.error('اكتب قيمة استهلاك أكبر من صفر')
+    toast.error(t('backoffice.analytics.msg.enterPositiveReading'))
     return
   }
   savingUtility.value = true
@@ -298,12 +305,12 @@ async function submitUtilityReading() {
       reading_value: utilityForm.reading_value,
       unit_cost: utilityForm.unit_cost || '0',
     })
-    toast.success('اتسجّلت قراءة المرفق')
+    toast.success(t('backoffice.analytics.msg.readingRecorded'))
     utilityForm.reading_value = ''
     utilityForm.unit_cost = ''
     await Promise.all([loadUtilities(), loadEnergy()])
   } catch {
-    toast.error('تعذّر تسجيل القراءة — تأكد من البيانات وحاول تاني')
+    toast.error(t('backoffice.analytics.msg.recordReadingError'))
   } finally {
     savingUtility.value = false
   }
@@ -320,7 +327,7 @@ async function loadAll() {
 }
 
 function money(n: number | null | undefined) {
-  return (n ?? 0).toLocaleString('ar-EG', { maximumFractionDigits: 0 })
+  return formatNumber(n ?? 0, { maximumFractionDigits: 0 })
 }
 
 function ratingVariant(rating: number): 'success' | 'warning' | 'danger' {
@@ -329,22 +336,23 @@ function ratingVariant(rating: number): 'success' | 'warning' | 'danger' {
   return 'danger'
 }
 
-const reviewSourceLabels: Record<string, string> = {
-  google: 'جوجل', tripadvisor: 'TripAdvisor', internal: 'استبيان داخلي', facebook: 'فيسبوك',
-}
+const reviewSourceLabels = computed<Record<string, string>>(() => ({
+  google: t('backoffice.analytics.reviewSource.google'), tripadvisor: 'TripAdvisor',
+  internal: t('backoffice.analytics.reviewSource.internal'), facebook: t('backoffice.analytics.reviewSource.facebook'),
+}))
 
 onMounted(loadAll)
 </script>
 
 <template>
-  <div dir="rtl" class="space-y-5">
+  <div class="space-y-5">
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">التقارير والتحليلات</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">نظرة عامة على أداء المنتجع — آخر 30 يوم وأحدث المؤشرات</p>
+        <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.analytics.title') }}</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">{{ t('backoffice.analytics.subtitle') }}</p>
       </div>
       <button v-if="!loading" @click="loadAll" class="text-sm font-semibold text-blue-700 hover:underline">
-        تحديث ↻
+        {{ t('backoffice.analytics.refresh') }} ↻
       </button>
     </div>
 
@@ -356,80 +364,80 @@ onMounted(loadAll)
       <!-- بطاقات المؤشرات الرئيسية -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إجمالي الإيرادات (30 يوم)</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.totalRevenue30d') }}</div>
           <div class="text-2xl font-black text-green-600">{{ money(dashboard?.revenue_30d?.total) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.analytics.currency') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">نسبة الإشغال (الشهر الحالي)</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.occupancyThisMonth') }}</div>
           <div class="text-2xl font-black text-blue-700">
             {{ occupancy?.pms ? occupancy.pms.avg_occupancy_pct.toFixed(1) + '%' : '—' }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ occupancy?.pms ? `${occupancy.pms.nights_audited} ليلة مدقّقة` : 'لا توجد بيانات' }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ occupancy?.pms ? t('backoffice.analytics.nightsAudited', { count: occupancy.pms.nights_audited }) : t('backoffice.analytics.noData') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">الموظفون النشطون</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.activeEmployees') }}</div>
           <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ dashboard?.hr?.active_employees ?? '—' }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ dashboard?.hr?.last_payroll_period ? `آخر رواتب: ${dashboard.hr.last_payroll_period}` : 'لا يوجد سجل رواتب' }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ dashboard?.hr?.last_payroll_period ? t('backoffice.analytics.lastPayroll', { period: dashboard.hr.last_payroll_period }) : t('backoffice.analytics.noPayrollRecord') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">أوامر صيانة مفتوحة</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.openWorkOrders') }}</div>
           <div class="text-2xl font-black text-amber-600">{{ dashboard?.maintenance?.open_work_orders ?? '—' }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">أصناف منخفضة المخزون</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.lowStockItems') }}</div>
           <div class="text-2xl font-black text-red-500">{{ dashboard?.inventory?.low_stock_count ?? '—' }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إجمالي العملاء</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.totalCustomers') }}</div>
           <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ dashboard?.crm?.total_customers ?? '—' }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">متوسط تقييم الضيوف</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.avgGuestRating') }}</div>
           <div class="text-2xl font-black text-gray-800 dark:text-gray-200">
             {{ dashboard?.reviews?.avg_rating != null ? dashboard.reviews.avg_rating.toFixed(2) : '—' }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ dashboard?.reviews?.count ? `${dashboard.reviews.count} تقييم` : 'لا توجد تقييمات' }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ dashboard?.reviews?.count ? t('backoffice.analytics.reviewCount', { count: dashboard.reviews.count }) : t('backoffice.analytics.noReviews') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إيراد الفنادق (30 يوم)</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.pmsRevenue30d') }}</div>
           <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ money(dashboard?.revenue_30d?.pms) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.analytics.currency') }}</div>
         </AppCard>
       </div>
 
       <!-- تفصيل الإيرادات -->
-      <AppCard title="تفصيل الإيرادات — آخر 30 يوم">
-        <EmptyState v-if="!dashboard?.revenue_30d" icon="📊" title="لا تتوفر بيانات إيرادات" subtitle="موديولات الإيرادات (مطعم/كافيه/فنادق/شاطئ) غير متاحة حاليًا" />
+      <AppCard :title="t('backoffice.analytics.revenueBreakdown30d')">
+        <EmptyState v-if="!dashboard?.revenue_30d" icon="📊" :title="t('backoffice.analytics.noRevenueData')" :subtitle="t('backoffice.analytics.noRevenueDataHint')" />
         <div v-else class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">القسم</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الإيراد (جنيه)</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.department') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.revenueCurrency') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr class="border-t border-stone-100 dark:border-border/50">
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">المطعم</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.analytics.dining') }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ money(dashboard.revenue_30d.restaurant) }}</td>
               </tr>
               <tr class="border-t border-stone-100 dark:border-border/50">
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">الكافيه</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.analytics.cafe') }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ money(dashboard.revenue_30d.cafe) }}</td>
               </tr>
               <tr class="border-t border-stone-100 dark:border-border/50">
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">الفنادق (PMS)</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.analytics.pmsRooms') }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ money(dashboard.revenue_30d.pms) }}</td>
               </tr>
               <tr class="border-t border-stone-100 dark:border-border/50">
-                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">الشاطئ</td>
+                <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.analytics.beach') }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ money(dashboard.revenue_30d.beach) }}</td>
               </tr>
             </tbody>
             <tfoot>
               <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
-                <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">الإجمالي</td>
+                <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.analytics.total') }}</td>
                 <td class="px-4 py-3 text-sm font-black text-green-700">{{ money(dashboard.revenue_30d.total) }}</td>
               </tr>
             </tfoot>
@@ -438,19 +446,19 @@ onMounted(loadAll)
       </AppCard>
 
       <!-- مقارنة الإيرادات: هذا الشهر vs الشهر الماضي (R-02) -->
-      <AppCard title="مقارنة الإيرادات — هذا الشهر vs الشهر الماضي">
+      <AppCard :title="t('backoffice.analytics.revenueComparisonTitle')">
         <div v-if="revLoading" class="flex justify-center py-6"><AppSpinner /></div>
         <div v-else-if="!revCurrent && !revPrevious">
-          <EmptyState icon="📈" title="لا تتوفر بيانات مقارنة" />
+          <EmptyState icon="📈" :title="t('backoffice.analytics.noComparisonData')" />
         </div>
         <div v-else class="space-y-3">
           <!-- فترتا المقارنة -->
           <div class="flex gap-2 text-xs text-gray-400 dark:text-gray-500 mb-2">
             <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-semibold">
-              هذا الشهر: {{ revCurrent?.period.from }} → {{ revCurrent?.period.to }}
+              {{ t('backoffice.analytics.thisMonth') }}: {{ revCurrent?.period.from }} → {{ revCurrent?.period.to }}
             </span>
             <span class="bg-stone-100 dark:bg-gray-700 text-gray-600 dark:text-gray-500 px-2 py-0.5 rounded-full font-semibold">
-              الشهر الماضي: {{ revPrevious?.period.from }} → {{ revPrevious?.period.to }}
+              {{ t('backoffice.analytics.lastMonth') }}: {{ revPrevious?.period.from }} → {{ revPrevious?.period.to }}
             </span>
           </div>
 
@@ -458,22 +466,22 @@ onMounted(loadAll)
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-stone-200 dark:border-border">
-                <th class="px-3 py-2 text-right text-xs text-gray-500 dark:text-gray-500 font-semibold">المصدر</th>
-                <th class="px-3 py-2 text-right text-xs text-blue-600 font-semibold">هذا الشهر</th>
-                <th class="px-3 py-2 text-right text-xs text-gray-400 dark:text-gray-500 font-semibold">الشهر الماضي</th>
-                <th class="px-3 py-2 text-right text-xs text-gray-500 dark:text-gray-500 font-semibold">التغيير</th>
+                <th class="px-3 py-2 text-start text-xs text-gray-500 dark:text-gray-500 font-semibold">{{ t('backoffice.analytics.column.source') }}</th>
+                <th class="px-3 py-2 text-start text-xs text-blue-600 font-semibold">{{ t('backoffice.analytics.thisMonth') }}</th>
+                <th class="px-3 py-2 text-start text-xs text-gray-400 dark:text-gray-500 font-semibold">{{ t('backoffice.analytics.lastMonth') }}</th>
+                <th class="px-3 py-2 text-start text-xs text-gray-500 dark:text-gray-500 font-semibold">{{ t('backoffice.analytics.change') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="row in [
-                { label: '🍽️ دايننج', cur: revCurrent?.restaurant, prev: revPrevious?.restaurant },
-                { label: '☕ كافيه', cur: revCurrent?.cafe, prev: revPrevious?.cafe },
-                { label: '🛏️ إقامة', cur: revCurrent?.pms, prev: revPrevious?.pms },
-                { label: '🏖️ شاطئ', cur: revCurrent?.beach, prev: revPrevious?.beach },
+                { label: `🍽️ ${t('backoffice.analytics.dining')}`, cur: revCurrent?.restaurant, prev: revPrevious?.restaurant },
+                { label: `☕ ${t('backoffice.analytics.cafe')}`, cur: revCurrent?.cafe, prev: revPrevious?.cafe },
+                { label: `🛏️ ${t('backoffice.analytics.stay')}`, cur: revCurrent?.pms, prev: revPrevious?.pms },
+                { label: `🏖️ ${t('backoffice.analytics.beach')}`, cur: revCurrent?.beach, prev: revPrevious?.beach },
               ]" :key="row.label" class="border-b border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">{{ row.label }}</td>
-                <td class="px-3 py-2 font-bold text-blue-700">{{ money(row.cur ?? 0) }} ج</td>
-                <td class="px-3 py-2 text-gray-500 dark:text-gray-500">{{ money(row.prev ?? 0) }} ج</td>
+                <td class="px-3 py-2 font-bold text-blue-700">{{ money(row.cur ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
+                <td class="px-3 py-2 text-gray-500 dark:text-gray-500">{{ money(row.prev ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
                 <td class="px-3 py-2">
                   <span v-if="revDiff(row.cur ?? null, row.prev ?? null)" :class="[
                     'text-xs font-bold px-2 py-0.5 rounded-full',
@@ -486,9 +494,9 @@ onMounted(loadAll)
                 </td>
               </tr>
               <tr class="border-t-2 border-stone-300 bg-stone-50 dark:bg-gray-800/60 font-black">
-                <td class="px-3 py-2 text-gray-900 dark:text-gray-100">الإجمالي</td>
-                <td class="px-3 py-2 text-green-700 text-base">{{ money(revCurrent?.total ?? 0) }} ج</td>
-                <td class="px-3 py-2 text-gray-500 dark:text-gray-500 text-base">{{ money(revPrevious?.total ?? 0) }} ج</td>
+                <td class="px-3 py-2 text-gray-900 dark:text-gray-100">{{ t('backoffice.analytics.total') }}</td>
+                <td class="px-3 py-2 text-green-700 text-base">{{ money(revCurrent?.total ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
+                <td class="px-3 py-2 text-gray-500 dark:text-gray-500 text-base">{{ money(revPrevious?.total ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
                 <td class="px-3 py-2">
                   <span v-if="revDiff(revCurrent?.total ?? null, revPrevious?.total ?? null)" :class="[
                     'text-sm font-black px-2 py-0.5 rounded-full',
@@ -505,11 +513,11 @@ onMounted(loadAll)
       </AppCard>
 
       <!-- إحصائيات اليوم -->
-      <AppCard title="إحصائيات اليوم">
-        <EmptyState v-if="!dailyStats || dailyStats.message" icon="🗓️" title="لا توجد بيانات لهذا اليوم" subtitle="لسه ما اتسجّلش إحصائيات (DailyStats) لليوم الحالي" />
+      <AppCard :title="t('backoffice.analytics.todayStats')">
+        <EmptyState v-if="!dailyStats || dailyStats.message" icon="🗓️" :title="t('backoffice.analytics.noTodayData')" :subtitle="t('backoffice.analytics.noTodayDataHint')" />
         <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">نسبة الإشغال</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.occupancyRate') }}</div>
             <div class="text-lg font-black text-blue-700">{{ dailyStats.occupancy_pct?.toFixed(1) }}%</div>
           </div>
           <div class="text-center">
@@ -521,52 +529,52 @@ onMounted(loadAll)
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.revpar) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">زوار الشاطئ</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.beachVisitors') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ dailyStats.beach_visitors }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">عدد كفوفر المطعم</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.diningCovers') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ dailyStats.restaurant_covers }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">إيراد الغرف</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.roomRevenue') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.room_revenue) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">إيراد الشاطئ</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.beachRevenue') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.beach_revenue) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">إيراد المطعم</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.diningRevenue') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.restaurant_revenue) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">إيراد الكافيه</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.cafeRevenue') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.cafe_revenue) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">إجمالي اليوم</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.todayTotal') }}</div>
             <div class="text-lg font-black text-green-700">{{ money(dailyStats.total_revenue) }}</div>
           </div>
         </div>
       </AppCard>
 
       <!-- أحدث تقييمات الضيوف -->
-      <AppCard title="أحدث تقييمات الضيوف">
+      <AppCard :title="t('backoffice.analytics.latestReviews')">
         <div v-if="reviews && reviews.total > 0" class="flex items-center gap-2 mb-4">
-          <AppBadge variant="info">{{ reviews.total }} تقييم منشور</AppBadge>
-          <AppBadge :variant="ratingVariant(reviews.avg_rating)">متوسط {{ reviews.avg_rating.toFixed(2) }} / 5</AppBadge>
+          <AppBadge variant="info">{{ t('backoffice.analytics.publishedReviewCount', { count: reviews.total }) }}</AppBadge>
+          <AppBadge :variant="ratingVariant(reviews.avg_rating)">{{ t('backoffice.analytics.avgRatingOf5', { rating: reviews.avg_rating.toFixed(2) }) }}</AppBadge>
         </div>
-        <EmptyState v-if="!reviews || reviews.items.length === 0" icon="⭐" title="لا توجد تقييمات منشورة بعد" />
+        <EmptyState v-if="!reviews || reviews.items.length === 0" icon="⭐" :title="t('backoffice.analytics.noPublishedReviews')" />
         <div v-else class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الضيف</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التقييم</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التعليق</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المصدر</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التاريخ</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.guest') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.rating') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.comment') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.source') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.date') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -577,7 +585,7 @@ onMounted(loadAll)
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500 max-w-xs truncate">{{ r.comment ?? '—' }}</td>
                 <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ reviewSourceLabels[r.source] ?? r.source }}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ new Date(r.reviewed_at).toLocaleDateString('ar-EG') }}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ formatDate(r.reviewed_at) }}</td>
               </tr>
             </tbody>
           </table>
@@ -585,12 +593,12 @@ onMounted(loadAll)
       </AppCard>
 
       <!-- تفصيل التقييمات حسب الفئة (GSS) -->
-      <AppCard title="تفصيل تقييمات الضيوف حسب الفئة">
+      <AppCard :title="t('backoffice.analytics.reviewsByCategory')">
         <div v-if="reviewInsights && reviewInsights.gss_score != null" class="flex items-center gap-2 mb-4">
           <AppBadge variant="info">GSS {{ reviewInsights.gss_score.toFixed(2) }} / 5</AppBadge>
-          <span class="text-xs text-gray-400 dark:text-gray-500">من {{ reviewInsights.review_count }} تقييم منشور</span>
+          <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.analytics.ofPublishedReviews', { count: reviewInsights.review_count }) }}</span>
         </div>
-        <EmptyState v-if="!reviewInsights || reviewInsights.category_breakdown.length === 0" icon="📋" title="لا توجد تقييمات مفصّلة حسب الفئة بعد" />
+        <EmptyState v-if="!reviewInsights || reviewInsights.category_breakdown.length === 0" icon="📋" :title="t('backoffice.analytics.noCategoryReviews')" />
         <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-4">
           <div v-for="c in reviewInsights.category_breakdown" :key="c.category" class="text-center">
             <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ categoryLabels[c.category] ?? c.category }}</div>
@@ -598,33 +606,33 @@ onMounted(loadAll)
             <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
               <div class="bg-blue-600 h-1.5 rounded-full" :style="{ width: (c.avg_rating / 5 * 100) + '%' }" />
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ c.count }} تقييم</div>
+            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.analytics.reviewCount', { count: c.count }) }}</div>
           </div>
         </div>
       </AppCard>
 
       <!-- عدادات المرافق -->
-      <AppCard title="عدادات المرافق (كهرباء / مياه / غاز / ديزل)">
+      <AppCard :title="t('backoffice.analytics.utilitiesTitle')">
         <div class="grid grid-cols-2 md:grid-cols-5 gap-3 items-end mb-5">
           <div class="flex flex-col gap-1">
-            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">النوع</label>
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ t('backoffice.analytics.typeLabel') }}</label>
             <select v-model="utilityForm.utility_type" class="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-border bg-white dark:bg-surface text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="electricity">كهرباء</option>
-              <option value="water">مياه</option>
-              <option value="gas">غاز</option>
-              <option value="diesel">ديزل</option>
+              <option value="electricity">{{ t('backoffice.analytics.utilityType.electricity') }}</option>
+              <option value="water">{{ t('backoffice.analytics.utilityType.water') }}</option>
+              <option value="gas">{{ t('backoffice.analytics.utilityType.gas') }}</option>
+              <option value="diesel">{{ t('backoffice.analytics.utilityType.diesel') }}</option>
             </select>
           </div>
-          <AppInput label="التاريخ" type="date" v-model="utilityForm.reading_date" />
-          <AppInput label="الاستهلاك" type="number" placeholder="مثال: 1500" v-model="utilityForm.reading_value" />
-          <AppInput label="تكلفة الوحدة (جنيه)" type="number" placeholder="مثال: 2.5" v-model="utilityForm.unit_cost" />
-          <AppButton variant="primary" :loading="savingUtility" @click="submitUtilityReading">تسجيل القراءة</AppButton>
+          <AppInput :label="t('backoffice.analytics.column.date')" type="date" v-model="utilityForm.reading_date" />
+          <AppInput :label="t('backoffice.analytics.consumption')" type="number" placeholder="1500" v-model="utilityForm.reading_value" />
+          <AppInput :label="t('backoffice.analytics.unitCostCurrency')" type="number" placeholder="2.5" v-model="utilityForm.unit_cost" />
+          <AppButton variant="primary" :loading="savingUtility" @click="submitUtilityReading">{{ t('backoffice.analytics.recordReading') }}</AppButton>
         </div>
 
         <div v-if="energyKpi" class="flex flex-wrap items-center gap-2 mb-4">
-          <AppBadge variant="info">إجمالي تكلفة المرافق هذا الشهر: {{ money(energyKpi.total_cost) }} جنيه</AppBadge>
+          <AppBadge variant="info">{{ t('backoffice.analytics.totalUtilitiesCostMonth', { amount: money(energyKpi.total_cost) }) }}</AppBadge>
           <AppBadge v-if="energyKpi.electricity_cost_per_guest_night != null" variant="warning">
-            {{ energyKpi.electricity_cost_per_guest_night.toFixed(2) }} جنيه / ليلة إشغال (كهرباء)
+            {{ t('backoffice.analytics.costPerGuestNight', { amount: energyKpi.electricity_cost_per_guest_night.toFixed(2) }) }}
           </AppBadge>
         </div>
 
@@ -632,38 +640,38 @@ onMounted(loadAll)
         <div v-if="thisYearTrend.length" class="mb-5 border-t border-stone-100 dark:border-border/50 pt-4">
           <div class="flex items-center justify-between mb-3">
             <div class="flex items-center gap-2">
-              <p class="text-sm font-bold text-gray-700 dark:text-gray-300">📈 اتجاه تكلفة المرافق (آخر 12 شهر)</p>
+              <p class="text-sm font-bold text-gray-700 dark:text-gray-300">📈 {{ t('backoffice.analytics.utilitiesCostTrend') }}</p>
               <AppBadge v-if="yoyChangePct !== null" :variant="yoyChangePct > 0 ? 'danger' : 'success'">
-                {{ yoyChangePct > 0 ? '▲' : '▼' }} {{ Math.abs(yoyChangePct) }}% عن نفس الفترة السنة اللي فاتت
+                {{ yoyChangePct > 0 ? '▲' : '▼' }} {{ t('backoffice.analytics.yoyChange', { pct: Math.abs(yoyChangePct) }) }}
               </AppBadge>
             </div>
             <AppButton variant="secondary" size="sm" :loading="exportingEnergyTrend" @click="exportEnergyTrend">
-              📊 تصدير Excel
+              📊 {{ t('backoffice.analytics.exportExcel') }}
             </AppButton>
           </div>
           <div class="flex items-end gap-1.5 h-28 bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-            <div v-for="t in thisYearTrend" :key="t.period" class="flex-1 flex flex-col items-center justify-end h-full gap-1">
-              <div class="w-full bg-blue-500 rounded-t" :style="{ height: `${Math.max(4, (t.total_cost / trendMaxCost) * 100)}%` }"
-                :title="`${t.period}: ${money(t.total_cost)} ج`" />
-              <span class="text-[9px] text-gray-400 dark:text-gray-500">{{ monthLabelShort(t.period) }}</span>
+            <div v-for="pt in thisYearTrend" :key="pt.period" class="flex-1 flex flex-col items-center justify-end h-full gap-1">
+              <div class="w-full bg-blue-500 rounded-t" :style="{ height: `${Math.max(4, (pt.total_cost / trendMaxCost) * 100)}%` }"
+                :title="`${pt.period}: ${money(pt.total_cost)} ${t('backoffice.analytics.currency')}`" />
+              <span class="text-[9px] text-gray-400 dark:text-gray-500">{{ monthLabelShort(pt.period) }}</span>
             </div>
           </div>
         </div>
 
-        <EmptyState v-if="utilityReadings.length === 0" icon="🔌" title="لا توجد قراءات مسجّلة بعد" />
+        <EmptyState v-if="utilityReadings.length === 0" icon="🔌" :title="t('backoffice.analytics.noReadingsRecorded')" />
         <div v-else class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التاريخ</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">النوع</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الاستهلاك</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التكلفة الإجمالية</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.date') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.typeLabel') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.consumption') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.totalCost') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="r in utilityReadings.slice(0, 10)" :key="r.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ new Date(r.reading_date).toLocaleDateString('ar-EG') }}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ formatDate(r.reading_date) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ utilityTypeLabels[r.utility_type] ?? r.utility_type }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ r.reading_value }} {{ r.unit }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ money(Number(r.total_cost)) }}</td>

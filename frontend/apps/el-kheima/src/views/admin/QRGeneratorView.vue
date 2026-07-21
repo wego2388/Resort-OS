@@ -13,11 +13,13 @@
  */
 import { ref, computed, onMounted, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
 
 const toast    = useToast()
 const route    = useRoute()
+const { t, locale } = useI18n()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -55,7 +57,7 @@ onMounted(async () => {
     const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId, active_only: true } })
     outlets.value = data?.items ?? data ?? []
   } catch {
-    toast.error('تعذّر تحميل منافذ الدايننج')
+    toast.error(t('backoffice.qrGenerator.msg.loadOutletsError'))
     return
   }
   const queryOutlet = route.query.outlet ? parseInt(route.query.outlet as string) : NaN
@@ -83,7 +85,7 @@ async function loadTables() {
     const { data } = await api.get(ENDPOINTS.dining.tables(activeOutletId.value))
     tables.value = data.tables ?? data.items ?? data
   } catch {
-    toast.error('تعذّر تحميل الطاولات')
+    toast.error(t('backoffice.qrGenerator.msg.loadTablesError'))
   } finally {
     loading.value = false
   }
@@ -97,7 +99,7 @@ function toggleSelect(id: number) {
 }
 
 function selectAll() {
-  selectedIds.value = new Set(tables.value.map(t => t.id))
+  selectedIds.value = new Set(tables.value.map(tbl => tbl.id))
 }
 function clearAll() {
   selectedIds.value = new Set()
@@ -147,7 +149,7 @@ async function drawQrFallback(tableId: number, canvas: HTMLCanvasElement) {
     ctx.fillStyle = '#1e40af'
     ctx.font = 'bold 10px monospace'
     ctx.textAlign = 'center'
-    ctx.fillText('⚠️ QR — اتصل بالإنترنت', 100, 20)
+    ctx.fillText(`⚠️ QR — ${t('backoffice.qrGenerator.connectToInternet')}`, 100, 20)
     ctx.font = '8px monospace'
     ctx.fillStyle = '#374151'
     const words = url.match(/.{1,28}/g) ?? []
@@ -156,21 +158,23 @@ async function drawQrFallback(tableId: number, canvas: HTMLCanvasElement) {
 }
 
 function tableLabel(table: Table): string {
-  return table.section ? `${table.section} — ${table.table_number}` : `طاولة ${table.table_number}`
+  return table.section ? `${table.section} — ${table.table_number}` : t('backoffice.qrGenerator.tableNumber', { number: table.table_number })
 }
 
 // ── Print selected ────────────────────────────────────────────────────
 function printSelected() {
-  const selectedTables = tables.value.filter(t => selectedIds.value.has(t.id))
-  if (selectedTables.length === 0) { toast.error('اختر طاولة واحدة على الأقل'); return }
+  const selectedTables = tables.value.filter(tbl => selectedIds.value.has(tbl.id))
+  if (selectedTables.length === 0) { toast.error(t('backoffice.qrGenerator.msg.selectAtLeastOneTable')); return }
 
   const outlet_ar = activeOutletLabel.value
+  const dir = locale.value === 'ar' ? 'rtl' : 'ltr'
+  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string))
 
   const html = `<!DOCTYPE html>
-<html dir="rtl">
+<html dir="${dir}" lang="${locale.value}">
 <head>
   <meta charset="UTF-8">
-  <title>QR Codes — ${outlet_ar}</title>
+  <title>${escapeHtml(t('backoffice.qrGenerator.printTitle', { outlet: outlet_ar }))}</title>
   <style>
     body { font-family: 'Cairo', sans-serif; margin: 0; padding: 20px; background: #fff; }
     .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
@@ -191,18 +195,18 @@ function printSelected() {
 </head>
 <body>
   <div style="text-align:center; margin-bottom:20px; font-size:14px; color:#666;" class="no-print">
-    اضغط Ctrl+P للطباعة
+    ${escapeHtml(t('backoffice.qrGenerator.printHint'))}
   </div>
   <div class="grid">
-    ${selectedTables.map(t => {
-      const fullUrl = `${PUBLIC_BASE.value}${orderPath(t.id)}`
+    ${selectedTables.map(tbl => {
+      const fullUrl = `${PUBLIC_BASE.value}${orderPath(tbl.id)}`
       const qr = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(fullUrl)}&margin=10`
       return `<div class="card">
-        <img src="${qr}" alt="QR ${t.table_number}"
+        <img src="${qr}" alt="QR ${tbl.table_number}"
           onerror="this.style.display='none';var c=this.nextElementSibling;c.style.display='block';if(window.QRCode){QRCode.toCanvas(c,'${fullUrl}',{width:180,margin:2})}else{var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';s.onload=function(){QRCode.toCanvas(c,'${fullUrl}',{width:180,margin:2})};document.head.appendChild(s)}" />
         <canvas style="display:none;width:180px;height:180px"></canvas>
-        <div class="table-name">طاولة ${t.table_number}</div>
-        <div class="module-name">${outlet_ar}</div>
+        <div class="table-name">${escapeHtml(t('backoffice.qrGenerator.tableNumber', { number: tbl.table_number }))}</div>
+        <div class="module-name">${escapeHtml(outlet_ar)}</div>
         <div class="url">${fullUrl}</div>
       </div>`
     }).join('\n')}
@@ -211,7 +215,7 @@ function printSelected() {
 </html>`
 
   const win = window.open('', '_blank')
-  if (!win) { toast.error('المتصفح منع فتح نافذة الطباعة — فعّل النوافذ المنبثقة'); return }
+  if (!win) { toast.error(t('backoffice.qrGenerator.msg.popupBlocked')); return }
   win.document.write(html)
   win.document.close()
   win.focus()
@@ -262,44 +266,44 @@ async function downloadQr(table: Table) {
     a.click()
     setTimeout(() => URL.revokeObjectURL(a.href), 5000)
   } catch {
-    toast.error('تعذّر تنزيل الـ QR — تأكد من الاتصال بالإنترنت')
+    toast.error(t('backoffice.qrGenerator.msg.downloadError'))
   }
 }
 
 const grouped = computed(() => {
   const map = new Map<string, Table[]>()
-  for (const t of tables.value) {
-    const key = t.section || 'عام'
+  for (const tbl of tables.value) {
+    const key = tbl.section || t('backoffice.qrGenerator.general')
     if (!map.has(key)) map.set(key, [])
-    map.get(key)!.push(t)
+    map.get(key)!.push(tbl)
   }
   return Array.from(map.entries())
 })
 </script>
 
 <template>
-  <div dir="rtl" class="p-6 max-w-6xl mx-auto">
+  <div class="p-6 max-w-6xl mx-auto">
 
     <!-- Header -->
     <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
       <div>
-        <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">📱 توليد QR Codes</h1>
-        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">اختر الطاولات وطبع QR codes جاهزة للتعليق</p>
+        <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">📱 {{ t('backoffice.qrGenerator.title') }}</h1>
+        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.qrGenerator.subtitle') }}</p>
       </div>
       <div class="flex gap-2">
         <button
           @click="selectAll"
           class="px-3 py-2 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold transition-colors"
-        >تحديد الكل</button>
+        >{{ t('backoffice.qrGenerator.selectAll') }}</button>
         <button
           @click="clearAll"
           class="px-3 py-2 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold transition-colors"
-        >إلغاء التحديد</button>
+        >{{ t('backoffice.qrGenerator.clearSelection') }}</button>
         <button
           @click="printSelected"
           :disabled="selectedIds.size === 0"
           class="px-4 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800 transition-colors disabled:opacity-40"
-        >🖨️ طباعة ({{ selectedIds.size }})</button>
+        >🖨️ {{ t('backoffice.qrGenerator.printCount', { count: selectedIds.size }) }}</button>
       </div>
     </div>
 
@@ -315,7 +319,7 @@ const grouped = computed(() => {
         ]"
       >{{ outletLabel(o) }}</button>
     </div>
-    <div v-else-if="!loading" class="text-sm text-gray-400 dark:text-gray-500 mb-6">لا توجد منافذ دايننج مفعّلة</div>
+    <div v-else-if="!loading" class="text-sm text-gray-400 dark:text-gray-500 mb-6">{{ t('backoffice.qrGenerator.noActiveOutlets') }}</div>
 
     <!-- Loading -->
     <div v-if="loading" class="flex justify-center py-16">
@@ -325,8 +329,8 @@ const grouped = computed(() => {
     <!-- Empty -->
     <div v-else-if="tables.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-500">
       <div class="text-5xl mb-4">📱</div>
-      <p class="font-medium text-gray-600 dark:text-gray-500">لا توجد طاولات مضافة</p>
-      <p class="text-sm mt-1">اذهب لإدارة الطاولات وأضف طاولات أولاً</p>
+      <p class="font-medium text-gray-600 dark:text-gray-500">{{ t('backoffice.qrGenerator.noTables') }}</p>
+      <p class="text-sm mt-1">{{ t('backoffice.qrGenerator.noTablesHint') }}</p>
     </div>
 
     <!-- Tables grid grouped by section -->
@@ -351,7 +355,7 @@ const grouped = computed(() => {
             <!-- Checkmark -->
             <div
               :class="[
-                'absolute top-3 right-3 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all',
+                'absolute top-3 end-3 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all',
                 selectedIds.has(table.id) ? 'bg-blue-600 border-blue-600' : 'border-stone-300',
               ]"
             >
@@ -362,7 +366,7 @@ const grouped = computed(() => {
             <div class="w-24 h-24 rounded-lg overflow-hidden flex items-center justify-center bg-stone-50 dark:bg-gray-800/60">
               <img
                 :src="qrUrl(table.id)"
-                :alt="`QR طاولة ${table.table_number}`"
+                :alt="t('backoffice.qrGenerator.qrAltTable', { number: table.table_number })"
                 class="w-24 h-24 rounded-lg"
                 loading="lazy"
                 @error="(e) => { (e.target as HTMLImageElement).style.display='none'; const c = canvasRefs[table.id]; if(c) drawQrFallback(table.id, c) }"
@@ -376,7 +380,7 @@ const grouped = computed(() => {
 
             <!-- Label -->
             <div class="text-center">
-              <div class="font-black text-gray-900 dark:text-gray-100">طاولة {{ table.table_number }}</div>
+              <div class="font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.qrGenerator.tableNumber', { number: table.table_number }) }}</div>
               <div v-if="table.section" class="text-xs text-gray-500 dark:text-gray-500">{{ table.section }}</div>
             </div>
 
@@ -384,7 +388,7 @@ const grouped = computed(() => {
             <button
               @click.stop="downloadQr(table)"
               class="w-full py-1.5 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-600 dark:text-gray-500 text-xs font-semibold rounded-lg transition-colors"
-            >⬇️ تحميل</button>
+            >⬇️ {{ t('backoffice.qrGenerator.download') }}</button>
           </div>
         </div>
       </div>
@@ -392,12 +396,12 @@ const grouped = computed(() => {
 
     <!-- Info box -->
     <div class="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-800">
-      <p class="font-bold mb-1">💡 كيفية الاستخدام:</p>
+      <p class="font-bold mb-1">💡 {{ t('backoffice.qrGenerator.howToUse') }}</p>
       <ul class="space-y-1 text-xs list-disc list-inside text-blue-700">
-        <li>اختر الطاولات بالضغط عليها</li>
-        <li>اضغط "طباعة" لفتح نافذة الطباعة مع كل QR codes المختارة</li>
-        <li>أو اضغط "تحميل" على أي طاولة لتحميل الـ QR منفرداً</li>
-        <li>الـ QR بيشاور على شاشة الضيف (/order/{{ activeOutletId }}/[table_id])</li>
+        <li>{{ t('backoffice.qrGenerator.step1') }}</li>
+        <li>{{ t('backoffice.qrGenerator.step2') }}</li>
+        <li>{{ t('backoffice.qrGenerator.step3') }}</li>
+        <li>{{ t('backoffice.qrGenerator.step4', { outletId: activeOutletId }) }}</li>
       </ul>
     </div>
 

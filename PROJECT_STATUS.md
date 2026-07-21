@@ -27,6 +27,39 @@
 
 ---
 
+## 🟩 Gate 5 Batch 13 — Analytics + Hub + QR + E-Invoice ar/en (2026-07-21)
+
+**الحالة:** جزء من مجهود ترجمة تطبيق الموظفين (`el-kheima`) الكامل عربي/إنجليزي
+(Gate 5)، شغال على فرع مستقل
+`gate-5-staff-ux-batch-13-analytics-hub-qr-einvoice-i18n` متفرّع من نفس قاعدة
+Gate 4 (فرع شقيق لدفعات 1-12، لسه محتاج دمج). بلا commit/push خارج الفرع.
+أكبر دفعة حتى الآن — 4 ملفات، 2084 سطر إجمالي.
+
+**الشاشات الأربع المترجمة بالكامل** (أصبحت STRICT_FILES في `validate-i18n.mjs`):
+- `AnalyticsView.vue` (677 سطر) — لوحة مؤشرات شاملة، مقارنة إيرادات شهرية،
+  إحصائيات يومية، تقييمات الضيوف (GSS)، عدادات المرافق + اتجاه 12 شهر.
+- `HubManagementView.vue` (770 سطر) — حجوزات الموقع الأونلاين، عروض، صفحات
+  الموقع، مدونة، رسائل تواصل (5 تابات).
+- `QRGeneratorView.vue` (405 سطر) — توليد/طباعة/تحميل QR codes للطاولات.
+- `EInvoiceView.vue` (232 سطر) — الفاتورة الإلكترونية (ETA).
+
+**حالة خاصة اتعاملنا معاها**: نافذة طباعة QR codes في `QRGeneratorView.vue`
+(زي نافذة طباعة كالندر التايم شير في دفعة 11) كانت `<html dir="rtl">` ثابتة
+داخل HTML مولَّد بالكود — بقت تاخد الاتجاه/اللغة من locale المستخدم الحالي
+فعليًا + كل نصوصها اتترجمت.
+
+**باجات `t`-shadowing حقيقية اتصلحت** (نفس الفئة المتكررة من كل دفعة سابقة):
+`HubManagementView.vue` كان فيها `async function switchTab(t: typeof
+tab.value)` — بارامتر اسمه `t` بيتصادم مع دالة الترجمة. `QRGeneratorView.vue`
+كان فيها 3 حالات مماثلة (`.map(t => t.id)` مرتين + `.filter(t => ...)` جوه
+`printSelected`، الأخيرة كانت الأخطر لأنها بتستخدم `t()` الترجمة فعليًا جوة
+نفس النطاق). كلها اتصلحت بإعادة تسمية لـ `tabId`/`tbl` قبل ما توصل لأي مستخدم.
+
+**تحقق شامل قبل الـ commit**: `node scripts/validate-i18n.mjs` نظيف (3380
+مفتاح ar/en، صفر ناقص، صفر مخالفة اتجاه فيزيائي)، `pnpm run type-check:all`
+نظيف، `npx vitest run` → 60/60، `pnpm run build:all` نظيف لـ `el-kheima`
+و`public`، `git diff --check` نظيف.
+
 ## 🟩 Gate 5 Batch 12 — Inventory + Maintenance ar/en (2026-07-21)
 
 **الحالة:** جزء من مجهود ترجمة تطبيق الموظفين (`el-kheima`) الكامل عربي/إنجليزي
