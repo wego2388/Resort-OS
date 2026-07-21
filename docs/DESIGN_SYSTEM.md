@@ -170,6 +170,14 @@ primitives, covered by `validate:i18n` strict checks):
   fixed physical CSS (`text-right`/`mr-2`/`text-left`/`file:ml-3`),
   renamed a `t` function parameter and loop variable shadowing vue-i18n's
   `t()`, and computed-ified the status label map)
+- `views/ops/ReceptionView.vue` (Gate 5 Batch 5, 2026-07-20 — removed a
+  hard-coded `dir="rtl"` and `ar-EG`/`toLocaleTimeString`/`toLocaleDateString`
+  calls that predated Gate 3, computed-ified `roomStatusConfig`/`payOptions`
+  so they react to locale changes, and made the room-name join separator
+  locale-aware instead of a hard-coded Arabic comma)
+- `views/ops/BookingsView.vue` (Gate 5 Batch 5, 2026-07-20 — removed a
+  hard-coded `dir="rtl"` and `ar-EG` calls, fixed 2 physical `text-right`/
+  `mr-1` utilities, computed-ified `statusConfig`)
 
 Direction-normalized reference screens (forced `dir`/hard-coded locale tags
 removed, formatting centralized; **full copy migration deliberately deferred**
@@ -178,6 +186,6 @@ removed, formatting centralized; **full copy migration deliberately deferred**
 _(none currently — both prior entries were promoted above in Gate 5 Batch 1)_
 
 Not yet migrated (tracked debt, next batches — do not claim bilingual):
-the remaining ~38 admin/ops/pos/portal screens. Migrate in reviewed batches
+the remaining ~37 admin/ops/pos/portal screens. Migrate in reviewed batches
 per Decision 0002, extending the strict list in
 `apps/el-kheima/scripts/validate-i18n.mjs` as each batch lands.

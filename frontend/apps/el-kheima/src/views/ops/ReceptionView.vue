@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore, parseApiTimestamp } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import {
   AppCard, AppBadge, AppButton, AppModal, AppInput, AppSelect, AppSpinner,
   EmptyState, StatCard, StatusBadge, SearchInput, useToast, useConfirm,
@@ -9,6 +11,8 @@ import {
 
 const toast  = useToast()
 const { confirm } = useConfirm()
+const { t } = useI18n()
+const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth   = useAuthStore()
 const branchId = auth.branchId
 
@@ -59,9 +63,9 @@ interface HKTask {
 const now = ref(new Date())
 let clockInterval: ReturnType<typeof setInterval>
 const currentTime = computed(() =>
-  now.value.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
+  fmtTimeFn(now.value, { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
 const todayLabel = computed(() =>
-  now.value.toLocaleDateString('ar-EG', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }))
+  fmtDateFn(now.value, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Data
@@ -113,7 +117,7 @@ function roomName(booking: Booking): string {
   return booking.rooms.map(r => {
     const rm = allRooms.value.find(x => x.id === r.room_id)
     return rm?.name ?? `#${r.room_id}`
-  }).join('، ')
+  }).join(t('backoffice.reception.listSeparator'))
 }
 function roomTypeName(room: Room): string {
   return roomTypesById.value[room.room_type_id]?.name ?? '—'
@@ -197,11 +201,11 @@ const ciIdNumber  = ref('')
 const ciPayMethod = ref<'cash' | 'card' | 'bank_transfer'>('cash')
 const ciLoading   = ref(false)
 
-const payOptions: SelectOption[] = [
-  { value: 'cash',          label: 'كاش' },
-  { value: 'card',          label: 'بطاقة بنكية' },
-  { value: 'bank_transfer', label: 'تحويل بنكي' },
-]
+const payOptions = computed<SelectOption[]>(() => [
+  { value: 'cash',          label: t('backoffice.reception.payCash') },
+  { value: 'card',          label: t('backoffice.reception.payCard') },
+  { value: 'bank_transfer', label: t('backoffice.reception.payBankTransfer') },
+])
 
 function openCheckIn(booking: Booking) {
   ciBooking.value  = booking
@@ -215,11 +219,11 @@ async function confirmCheckIn() {
   ciLoading.value = true
   try {
     await api.post(ENDPOINTS.pms.bookingCheckin(ciBooking.value.id))
-    toast.success(`تم تسجيل دخول ${ciBooking.value.guest_name} ✅`)
+    toast.success(t('backoffice.reception.checkedInToast', { name: ciBooking.value.guest_name }))
     ciOpen.value = false
     await fetchAll()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الدخول')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.reception.checkInError'))
   } finally {
     ciLoading.value = false
   }
@@ -262,14 +266,14 @@ async function confirmCheckOut() {
   coLoading.value = true
   try {
     const res = await api.post(ENDPOINTS.pms.bookingCheckout(coBooking.value.id))
-    toast.success(`تم تسجيل خروج ${coBooking.value.guest_name} ✅`)
+    toast.success(t('backoffice.reception.checkedOutToast', { name: coBooking.value.guest_name }))
     if (res.data?.folio_total != null) {
-      toast.success(`الإجمالي: ${res.data.folio_total.toLocaleString('ar-EG')} ج`)
+      toast.success(t('backoffice.reception.folioTotalToast', { amount: formatNumber(res.data.folio_total) }))
     }
     coOpen.value = false
     await fetchAll()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر تسجيل الخروج')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.reception.checkOutError'))
   } finally {
     coLoading.value = false
   }
@@ -305,10 +309,10 @@ function openNewBooking() {
 }
 
 async function saveNewBooking() {
-  if (!nbForm.value.guest_name.trim()) { toast.error('اسم الضيف مطلوب'); return }
-  if (!nbForm.value.room_ids.length)   { toast.error('اختر غرفة واحدة على الأقل'); return }
-  if (!nbForm.value.check_in)          { toast.error('تاريخ الوصول مطلوب'); return }
-  if (!nbForm.value.check_out)         { toast.error('تاريخ المغادرة مطلوب'); return }
+  if (!nbForm.value.guest_name.trim()) { toast.error(t('backoffice.reception.guestNameRequired')); return }
+  if (!nbForm.value.room_ids.length)   { toast.error(t('backoffice.reception.selectRoomRequired')); return }
+  if (!nbForm.value.check_in)          { toast.error(t('backoffice.reception.checkInDateRequired')); return }
+  if (!nbForm.value.check_out)         { toast.error(t('backoffice.reception.checkOutDateRequired')); return }
   nbLoading.value = true
   try {
     await api.post(ENDPOINTS.pms.bookings, {
@@ -321,11 +325,11 @@ async function saveNewBooking() {
       rate_plan_id: nbForm.value.rate_plan_id || undefined,
       notes:        nbForm.value.notes || undefined,
     })
-    toast.success('تم إنشاء الحجز بنجاح ✅')
+    toast.success(t('backoffice.reception.bookingCreated'))
     nbOpen.value = false
     await fetchAll()
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر حفظ الحجز')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.reception.bookingSaveError'))
   } finally {
     nbLoading.value = false
   }
@@ -349,9 +353,9 @@ async function runNightAudit() {
       params: { branch_id: branchId, date: naDate.value },
     })
     naResult.value = res.data
-    toast.success('تم تشغيل Night Audit بنجاح ✅')
+    toast.success(t('backoffice.reception.nightAuditSuccess'))
   } catch (e: any) {
-    naError.value = e?.response?.data?.detail ?? 'تعذّر تشغيل Night Audit'
+    naError.value = e?.response?.data?.detail ?? t('backoffice.reception.nightAuditError')
   } finally {
     naLoading.value = false
   }
@@ -360,13 +364,13 @@ async function runNightAudit() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Room status colors
 // ─────────────────────────────────────────────────────────────────────────────
-const roomStatusConfig: Record<string, { label: string; bg: string; text: string; dot: string }> = {
-  available:        { label: 'شاغرة',      bg: 'bg-green-50',  text: 'text-green-700',  dot: 'bg-green-500' },
-  occupied:         { label: 'مشغولة',     bg: 'bg-blue-50',   text: 'text-blue-700',   dot: 'bg-blue-500' },
-  reserved:         { label: 'محجوزة',     bg: 'bg-amber-50',  text: 'text-amber-700',  dot: 'bg-amber-500' },
-  checkout_pending: { label: 'قيد التنظيف', bg: 'bg-slate-50',  text: 'text-slate-600',  dot: 'bg-slate-400' },
-  maintenance:      { label: 'صيانة',      bg: 'bg-red-50',    text: 'text-red-700',    dot: 'bg-red-500' },
-}
+const roomStatusConfig = computed<Record<string, { label: string; bg: string; text: string; dot: string }>>(() => ({
+  available:        { label: t('backoffice.reception.roomStatus.available'),       bg: 'bg-green-50',  text: 'text-green-700',  dot: 'bg-green-500' },
+  occupied:         { label: t('backoffice.reception.roomStatus.occupied'),        bg: 'bg-blue-50',   text: 'text-blue-700',   dot: 'bg-blue-500' },
+  reserved:         { label: t('backoffice.reception.roomStatus.reserved'),        bg: 'bg-amber-50',  text: 'text-amber-700',  dot: 'bg-amber-500' },
+  checkout_pending: { label: t('backoffice.reception.roomStatus.checkoutPending'), bg: 'bg-slate-50',  text: 'text-slate-600',  dot: 'bg-slate-400' },
+  maintenance:      { label: t('backoffice.reception.roomStatus.maintenance'),     bg: 'bg-red-50',    text: 'text-red-700',    dot: 'bg-red-500' },
+}))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle
@@ -385,20 +389,20 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="space-y-6 p-6" dir="rtl">
+  <div class="space-y-6 p-6">
 
     <!-- ══ HEADER ══ -->
     <div class="flex flex-wrap items-center justify-between gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">🛎️ شاشة الاستقبال</h1>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-gray-100">🛎️ {{ t('backoffice.reception.title') }}</h1>
         <p class="text-sm text-muted mt-0.5">{{ todayLabel }} — {{ currentTime }}</p>
       </div>
       <div class="flex flex-wrap gap-2">
         <AppButton variant="secondary" size="sm" @click="fetchAll" :loading="loading">
-          تحديث
+          {{ t('backoffice.reception.refresh') }}
         </AppButton>
         <AppButton size="sm" @click="openNewBooking">
-          + حجز جديد
+          {{ t('backoffice.reception.newBooking') }}
         </AppButton>
         <AppButton
           v-if="auth.hasRole('admin')"
@@ -406,19 +410,19 @@ onUnmounted(() => {
           size="sm"
           @click="naOpen = true"
         >
-          ⚡ Night Audit
+          ⚡ {{ t('backoffice.reception.nightAudit') }}
         </AppButton>
       </div>
     </div>
 
     <!-- ══ KPI STATS ══ -->
     <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-      <StatCard label="دخل اليوم"    :value="checkedInToday"  icon="login"   variant="success" />
-      <StatCard label="خرج اليوم"    :value="checkedOutToday" icon="logout"  variant="info" />
-      <StatCard label="وصول قادم"    :value="arrivalsToday"   icon="calendar" variant="warning" />
-      <StatCard label="غرف شاغرة"    :value="availableRooms"  icon="building" variant="success" />
-      <StatCard label="غرف مشغولة"   :value="occupiedRooms"   icon="users"   variant="info" />
-      <StatCard label="تنظيف معلق"   :value="pendingHK"       icon="refresh"
+      <StatCard :label="t('backoffice.reception.checkedInToday')"  :value="checkedInToday"  icon="login"   variant="success" />
+      <StatCard :label="t('backoffice.reception.checkedOutToday')" :value="checkedOutToday" icon="logout"  variant="info" />
+      <StatCard :label="t('backoffice.reception.upcomingArrivals')" :value="arrivalsToday"   icon="calendar" variant="warning" />
+      <StatCard :label="t('backoffice.reception.availableRoomsKpi')" :value="availableRooms"  icon="building" variant="success" />
+      <StatCard :label="t('backoffice.reception.occupiedRoomsKpi')" :value="occupiedRooms"   icon="users"   variant="info" />
+      <StatCard :label="t('backoffice.reception.pendingCleaning')" :value="pendingHK"       icon="refresh"
         :variant="urgentHK > 0 ? 'danger' : 'neutral'" />
     </div>
 
@@ -430,13 +434,13 @@ onUnmounted(() => {
         <AppCard>
           <template v-slot:default>
             <div class="flex items-center justify-between mb-4">
-              <h2 class="text-base font-semibold text-gray-800 dark:text-gray-200">📋 وصول اليوم</h2>
+              <h2 class="text-base font-semibold text-gray-800 dark:text-gray-200">📋 {{ t('backoffice.reception.todaysArrivals') }}</h2>
               <AppBadge :label="String(arrivals.length)" variant="warning" />
             </div>
 
             <SearchInput
               v-model="searchQuery"
-              placeholder="بحث بالاسم أو رقم الحجز..."
+              :placeholder="t('backoffice.reception.searchPlaceholder')"
               class="mb-3"
             />
 
@@ -446,8 +450,8 @@ onUnmounted(() => {
 
             <EmptyState
               v-else-if="!arrivals.length"
-              title="لا توجد وصولات اليوم"
-              subtitle="يمكنك إنشاء حجز جديد"
+              :title="t('backoffice.reception.noArrivalsToday')"
+              :subtitle="t('backoffice.reception.noArrivalsTodayHint')"
             />
 
             <div v-else class="space-y-2 max-h-[420px] overflow-y-auto">
@@ -464,8 +468,8 @@ onUnmounted(() => {
                   <StatusBadge
                     :status="b.status"
                     :map="{
-                      pending:    { label: 'معلق',  variant: 'warning' },
-                      confirmed:  { label: 'مؤكد',  variant: 'info' },
+                      pending:    { label: t('backoffice.reception.bookingStatus.pending'),  variant: 'warning' },
+                      confirmed:  { label: t('backoffice.reception.bookingStatus.confirmed'),  variant: 'info' },
                     }"
                     size="sm"
                   />
@@ -474,7 +478,7 @@ onUnmounted(() => {
                   <span>{{ b.check_in }} → {{ b.check_out }}</span>
                 </div>
                 <AppButton size="sm" class="w-full" @click="openCheckIn(b)">
-                  تسجيل دخول ✅
+                  {{ t('backoffice.reception.checkInAction') }}
                 </AppButton>
               </div>
             </div>
@@ -487,7 +491,7 @@ onUnmounted(() => {
         <AppCard>
           <template v-slot:default>
             <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-              <h2 class="text-base font-semibold text-gray-800 dark:text-gray-200">🏨 حالة الغرف</h2>
+              <h2 class="text-base font-semibold text-gray-800 dark:text-gray-200">🏨 {{ t('backoffice.reception.roomStatusTitle') }}</h2>
               <!-- legend -->
               <div class="flex flex-wrap gap-3">
                 <span v-for="(cfg, key) in roomStatusConfig" :key="key"
@@ -500,7 +504,7 @@ onUnmounted(() => {
 
             <div v-if="loading" class="flex justify-center py-12"><AppSpinner /></div>
 
-            <EmptyState v-else-if="!rooms.length" title="لا توجد غرف" />
+            <EmptyState v-else-if="!rooms.length" :title="t('backoffice.reception.noRooms')" />
 
             <div v-else class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
               <div
@@ -525,7 +529,7 @@ onUnmounted(() => {
                     {{ bookingByRoomId[room.id].guest_name }}
                   </span>
                   <span class="text-xs text-muted">
-                    خروج: {{ bookingByRoomId[room.id].check_out }}
+                    {{ t('backoffice.reception.checkOutLabel', { date: bookingByRoomId[room.id].check_out }) }}
                   </span>
                   <AppButton
                     size="sm"
@@ -533,7 +537,7 @@ onUnmounted(() => {
                     class="mt-1 text-xs py-0.5"
                     @click.stop="openCheckOutFromRoom(room.id)"
                   >
-                    تسجيل خروج
+                    {{ t('backoffice.reception.checkOutAction') }}
                   </AppButton>
                 </template>
               </div>
@@ -545,7 +549,7 @@ onUnmounted(() => {
         <AppCard v-if="hkTasks.length">
           <template v-slot:default>
             <div class="flex items-center justify-between mb-3">
-              <h2 class="text-base font-semibold text-gray-800 dark:text-gray-200">🧹 التنظيف المعلق</h2>
+              <h2 class="text-base font-semibold text-gray-800 dark:text-gray-200">🧹 {{ t('backoffice.reception.pendingCleaningTitle') }}</h2>
               <AppBadge
                 :label="String(pendingHK)"
                 :variant="urgentHK > 0 ? 'danger' : 'warning'"
@@ -553,7 +557,7 @@ onUnmounted(() => {
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
               <div
-                v-for="task in hkTasks.filter(t => t.status !== 'done')"
+                v-for="task in hkTasks.filter(hk => hk.status !== 'done')"
                 :key="task.id"
                 :class="[
                   'flex items-center gap-2 rounded-lg px-3 py-2 text-sm',
@@ -568,7 +572,7 @@ onUnmounted(() => {
                   task.priority === 'high'   ? 'bg-amber-500' : 'bg-slate-400',
                 ]" />
                 <span class="font-medium text-gray-800 dark:text-gray-200">
-                  {{ rooms.find(r => r.id === task.room_id)?.name ?? `غرفة #${task.room_id}` }}
+                  {{ rooms.find(r => r.id === task.room_id)?.name ?? t('backoffice.reception.roomHash', { id: task.room_id }) }}
                 </span>
                 <span v-if="task.assigned_to_name" class="text-xs text-muted ms-auto">
                   {{ task.assigned_to_name }}
@@ -585,7 +589,7 @@ onUnmounted(() => {
     ═════════════════════════════════════════════════ -->
     <AppModal
       :open="ciOpen"
-      title="تسجيل دخول ضيف"
+      :title="t('backoffice.reception.checkInModalTitle')"
       size="sm"
       @close="ciOpen = false"
     >
@@ -594,33 +598,33 @@ onUnmounted(() => {
           <div class="bg-primary-50 border border-primary-200 rounded-xl p-4 space-y-1">
             <p class="font-bold text-primary-900 text-lg">{{ ciBooking.guest_name }}</p>
             <p class="text-sm text-primary-700">
-              حجز #{{ ciBooking.id }} — {{ roomName(ciBooking) }}
+              {{ t('backoffice.reception.bookingHash', { id: ciBooking.id }) }} — {{ roomName(ciBooking) }}
             </p>
             <p class="text-sm text-primary-700">
               {{ ciBooking.check_in }} → {{ ciBooking.check_out }}
             </p>
             <p v-if="ciBooking.total_rate" class="text-sm font-semibold text-primary-800">
-              القيمة الإجمالية: {{ ciBooking.total_rate.toLocaleString('ar-EG') }} ج
+              {{ t('backoffice.reception.totalValue', { amount: formatNumber(ciBooking.total_rate) }) }}
             </p>
           </div>
 
           <AppInput
             v-model="ciIdNumber"
-            label="رقم الهوية / جواز السفر"
-            placeholder="اختياري"
+            :label="t('backoffice.reception.idNumberLabel')"
+            :placeholder="t('backoffice.reception.optional')"
           />
 
           <AppSelect
             v-model="ciPayMethod"
-            label="طريقة الدفع المتوقعة"
+            :label="t('backoffice.reception.expectedPaymentMethod')"
             :options="payOptions"
           />
         </div>
       </template>
       <template v-slot:footer>
-        <AppButton variant="ghost" @click="ciOpen = false">إلغاء</AppButton>
+        <AppButton variant="ghost" @click="ciOpen = false">{{ t('backoffice.reception.cancel') }}</AppButton>
         <AppButton @click="confirmCheckIn" :loading="ciLoading">
-          تأكيد الدخول ✅
+          {{ t('backoffice.reception.confirmCheckIn') }}
         </AppButton>
       </template>
     </AppModal>
@@ -630,7 +634,7 @@ onUnmounted(() => {
     ═════════════════════════════════════════════════ -->
     <AppModal
       :open="coOpen"
-      title="تسجيل خروج ضيف"
+      :title="t('backoffice.reception.checkOutModalTitle')"
       size="sm"
       @close="coOpen = false"
     >
@@ -638,18 +642,18 @@ onUnmounted(() => {
         <div v-if="coBooking" class="space-y-3">
           <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-1">
             <p class="font-bold text-amber-900 text-lg">{{ coBooking.guest_name }}</p>
-            <p class="text-sm text-amber-700">حجز #{{ coBooking.id }}</p>
-            <p class="text-sm text-amber-700">موعد المغادرة: {{ coBooking.check_out }}</p>
+            <p class="text-sm text-amber-700">{{ t('backoffice.reception.bookingHash', { id: coBooking.id }) }}</p>
+            <p class="text-sm text-amber-700">{{ t('backoffice.reception.departureDate', { date: coBooking.check_out }) }}</p>
           </div>
           <p class="text-sm text-muted">
-            سيتم تسجيل الخروج وتسوية الفاتورة تلقائياً من النظام.
+            {{ t('backoffice.reception.checkOutHint') }}
           </p>
         </div>
       </template>
       <template v-slot:footer>
-        <AppButton variant="ghost" @click="coOpen = false">إلغاء</AppButton>
+        <AppButton variant="ghost" @click="coOpen = false">{{ t('backoffice.reception.cancel') }}</AppButton>
         <AppButton variant="danger" @click="confirmCheckOut" :loading="coLoading">
-          تأكيد الخروج 🚪
+          {{ t('backoffice.reception.confirmCheckOut') }}
         </AppButton>
       </template>
     </AppModal>
@@ -659,7 +663,7 @@ onUnmounted(() => {
     ═════════════════════════════════════════════════ -->
     <AppModal
       :open="nbOpen"
-      title="حجز جديد"
+      :title="t('backoffice.reception.newBookingModalTitle')"
       size="md"
       @close="nbOpen = false"
     >
@@ -667,26 +671,26 @@ onUnmounted(() => {
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <AppInput
             v-model="nbForm.guest_name"
-            label="اسم الضيف *"
-            placeholder="الاسم الكامل"
+            :label="t('backoffice.reception.guestNameRequiredLabel')"
+            :placeholder="t('backoffice.reception.fullName')"
           />
           <AppInput
             v-model="nbForm.guest_phone"
-            label="رقم الهاتف"
-            placeholder="اختياري"
+            :label="t('backoffice.reception.phoneNumber')"
+            :placeholder="t('backoffice.reception.optional')"
           />
           <AppInput
             v-model="nbForm.check_in"
-            label="تاريخ الوصول *"
+            :label="t('backoffice.reception.checkInDateRequiredLabel')"
             type="date"
           />
           <AppInput
             v-model="nbForm.check_out"
-            label="تاريخ المغادرة *"
+            :label="t('backoffice.reception.checkOutDateRequiredLabel')"
             type="date"
           />
           <div class="sm:col-span-2">
-            <label class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">الغرف *</label>
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300 block mb-1">{{ t('backoffice.reception.roomsRequiredLabel') }}</label>
             <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-36 overflow-y-auto p-1">
               <label
                 v-for="opt in availableRoomOptions"
@@ -707,26 +711,26 @@ onUnmounted(() => {
                 {{ opt.label }}
               </label>
               <p v-if="!availableRoomOptions.length" class="text-sm text-muted col-span-3 py-2 text-center">
-                لا توجد غرف شاغرة
+                {{ t('backoffice.reception.noAvailableRooms') }}
               </p>
             </div>
           </div>
           <AppSelect
             v-model="nbForm.rate_plan_id"
-            label="خطة الأسعار"
-            :options="([{ value: undefined, label: 'السعر الافتراضي' }, ...applicableRatePlans] as SelectOption[])"
+            :label="t('backoffice.reception.ratePlan')"
+            :options="([{ value: undefined, label: t('backoffice.reception.defaultRate') }, ...applicableRatePlans] as SelectOption[])"
           />
           <AppInput
             v-model="nbForm.notes"
-            label="ملاحظات"
-            placeholder="اختياري"
+            :label="t('backoffice.reception.notes')"
+            :placeholder="t('backoffice.reception.optional')"
           />
         </div>
       </template>
       <template v-slot:footer>
-        <AppButton variant="ghost" @click="nbOpen = false">إلغاء</AppButton>
+        <AppButton variant="ghost" @click="nbOpen = false">{{ t('backoffice.reception.cancel') }}</AppButton>
         <AppButton @click="saveNewBooking" :loading="nbLoading">
-          حفظ الحجز
+          {{ t('backoffice.reception.saveBooking') }}
         </AppButton>
       </template>
     </AppModal>
@@ -736,26 +740,25 @@ onUnmounted(() => {
     ═════════════════════════════════════════════════ -->
     <AppModal
       :open="naOpen"
-      title="⚡ Night Audit"
+      :title="`⚡ ${t('backoffice.reception.nightAudit')}`"
       size="sm"
       @close="naOpen = false"
     >
       <template v-slot:default>
         <div class="space-y-4">
           <p class="text-sm text-muted">
-            يُشغّل Night Audit لحساب إيرادات الغرف وتحديث حالة الحجوزات لتاريخ محدد.
-            العملية لا يمكن التراجع عنها.
+            {{ t('backoffice.reception.nightAuditHint') }}
           </p>
           <AppInput
             v-model="naDate"
-            label="تاريخ الـ Audit"
+            :label="t('backoffice.reception.auditDate')"
             type="date"
           />
           <div v-if="naResult" class="bg-green-50 border border-green-200 rounded-xl p-4 space-y-1 text-sm">
-            <p class="font-bold text-green-800">✅ تم بنجاح</p>
-            <p class="text-green-700">غرف محدّثة: {{ naResult.rooms_updated }}</p>
+            <p class="font-bold text-green-800">✅ {{ t('backoffice.reception.auditSuccess') }}</p>
+            <p class="text-green-700">{{ t('backoffice.reception.roomsUpdated', { count: naResult.rooms_updated }) }}</p>
             <p class="text-green-700">
-              الإيراد المحتسب: {{ naResult.revenue?.toLocaleString('ar-EG') ?? '—' }} ج
+              {{ t('backoffice.reception.calculatedRevenue', { amount: naResult.revenue != null ? formatNumber(naResult.revenue) : '—' }) }}
             </p>
           </div>
           <div v-if="naError" class="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
@@ -764,14 +767,14 @@ onUnmounted(() => {
         </div>
       </template>
       <template v-slot:footer>
-        <AppButton variant="ghost" @click="naOpen = false">إغلاق</AppButton>
+        <AppButton variant="ghost" @click="naOpen = false">{{ t('backoffice.reception.close') }}</AppButton>
         <AppButton
           v-if="!naResult"
           variant="danger"
           @click="runNightAudit"
           :loading="naLoading"
         >
-          تشغيل Night Audit
+          {{ t('backoffice.reception.runNightAudit') }}
         </AppButton>
       </template>
     </AppModal>

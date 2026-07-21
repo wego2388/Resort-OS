@@ -125,6 +125,8 @@ const STRICT_FILES = [
   'src/views/admin/BeachLiveDashboardView.vue',
   'src/views/admin/CRMView.vue',
   'src/views/admin/HRView.vue',
+  'src/views/ops/ReceptionView.vue',
+  'src/views/ops/BookingsView.vue',
 ].map((p) => join(APP_DIR, p))
 
 // Direction-normalized reference screens: forced dir + hard-coded locale tags
