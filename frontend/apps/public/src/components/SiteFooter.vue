@@ -1,4 +1,11 @@
 <script setup lang="ts">
+/**
+ * SiteFooter — Gate 6 migration Batch 1 polish (2026-07-21). Real a11y gaps
+ * fixed: the three social links were emoji-only anchors with no accessible
+ * name at all (a screen reader announces "link" with nothing else) — added
+ * aria-label to each. Also added focus-visible states throughout (none
+ * existed before). Brand palette untouched (see SiteHeader.vue's note).
+ */
 import { useI18n } from 'vue-i18n'
 import { RESORT } from '../constants/resort'
 
@@ -18,12 +25,12 @@ const year = new Date().getFullYear()
           {{ t('marketing.brand.tagline') }}
         </p>
         <div class="flex gap-3 mt-4">
-          <a :href="RESORT.social.facebook" target="_blank" rel="noopener"
-            class="w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-brand-sunset transition-colors">📘</a>
-          <a :href="RESORT.social.instagram" target="_blank" rel="noopener"
-            class="w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-brand-sunset transition-colors">📷</a>
-          <a :href="`https://wa.me/2${RESORT.whatsapp}`" target="_blank" rel="noopener"
-            class="w-9 h-9 flex items-center justify-center rounded-full bg-white/10 hover:bg-brand-sunset transition-colors">💬</a>
+          <a :href="RESORT.social.facebook" target="_blank" rel="noopener" aria-label="Facebook"
+            class="w-11 h-11 flex items-center justify-center rounded-full bg-white/10 hover:bg-brand-sunset transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">📘</a>
+          <a :href="RESORT.social.instagram" target="_blank" rel="noopener" aria-label="Instagram"
+            class="w-11 h-11 flex items-center justify-center rounded-full bg-white/10 hover:bg-brand-sunset transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">📷</a>
+          <a :href="`https://wa.me/2${RESORT.whatsapp}`" target="_blank" rel="noopener" aria-label="WhatsApp"
+            class="w-11 h-11 flex items-center justify-center rounded-full bg-white/10 hover:bg-brand-sunset transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">💬</a>
         </div>
       </div>
 
@@ -31,7 +38,7 @@ const year = new Date().getFullYear()
         <h4 class="font-heading font-bold text-white mb-3">{{ t('marketing.contact.title') }}</h4>
         <p class="text-sm mb-1">{{ t('marketing.contact.phone') }}:</p>
         <p class="text-sm mb-3" dir="ltr">
-          <a v-for="(p, i) in RESORT.phones" :key="p" :href="`tel:${p}`" class="hover:text-white">
+          <a v-for="(p, i) in RESORT.phones" :key="p" :href="`tel:${p}`" class="rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 hover:text-white">
             {{ p }}<span v-if="i < RESORT.phones.length - 1"> | </span>
           </a>
         </p>
@@ -43,7 +50,7 @@ const year = new Date().getFullYear()
         <h4 class="font-heading font-bold text-white mb-3">{{ t('marketing.nav.contact') }}</h4>
         <p class="text-sm leading-relaxed mb-3">{{ t('marketing.contact.address') }}</p>
         <a :href="RESORT.mapUrl" target="_blank" rel="noopener"
-          class="text-sm font-bold text-brand-sunset hover:underline">🗺️ Google Maps</a>
+          class="rounded text-sm font-bold text-brand-sunset hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70">🗺️ Google Maps</a>
       </div>
     </div>
 

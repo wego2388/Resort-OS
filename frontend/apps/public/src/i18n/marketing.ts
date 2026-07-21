@@ -21,7 +21,7 @@
 
 export interface MarketingMessages {
   brand: { name: string; nameNative: string; tagline: string }
-  nav: { home: string; rooms: string; dining: string; book: string; contact: string; callUs: string }
+  nav: { home: string; rooms: string; dining: string; book: string; contact: string; callUs: string; menuToggle: string }
   hero: {
     eyebrow: string
     title: string
@@ -146,7 +146,7 @@ const ar: MarketingMessages = {
     nameNative: 'منتجع الخيمة الشاطئي',
     tagline: 'ملاذك الخاص في انتظارك',
   },
-  nav: { home: 'الرئيسية', rooms: 'الغرف', dining: 'المطعم والكافيه', book: 'احجز الآن', contact: 'تواصل معنا', callUs: 'اتصل بنا' },
+  nav: { home: 'الرئيسية', rooms: 'الغرف', dining: 'المطعم والكافيه', book: 'احجز الآن', contact: 'تواصل معنا', callUs: 'اتصل بنا', menuToggle: 'فتح/إغلاق القائمة' },
   hero: {
     eyebrow: 'خليج شرم الماية • شرم الشيخ',
     title: 'منتجع الخيمة الشاطئي',
@@ -263,7 +263,7 @@ const en: MarketingMessages = {
     nameNative: 'El Kheima Beach Resort',
     tagline: 'Your Private Retreat Awaits',
   },
-  nav: { home: 'Home', rooms: 'Rooms', dining: 'Dining', book: 'Book Now', contact: 'Contact', callUs: 'Call Us' },
+  nav: { home: 'Home', rooms: 'Rooms', dining: 'Dining', book: 'Book Now', contact: 'Contact', callUs: 'Call Us', menuToggle: 'Toggle menu' },
   hero: {
     eyebrow: 'Sharm El Maya Bay • Sharm El Sheikh',
     title: 'El Kheima Beach Resort',
@@ -380,7 +380,7 @@ const ru: MarketingMessages = {
     nameNative: 'Эль-Хейма Бич Резорт',
     tagline: 'Ваше личное убежище ждёт вас',
   },
-  nav: { home: 'Главная', rooms: 'Номера', dining: 'Питание', book: 'Забронировать', contact: 'Контакты', callUs: 'Позвонить' },
+  nav: { home: 'Главная', rooms: 'Номера', dining: 'Питание', book: 'Забронировать', contact: 'Контакты', callUs: 'Позвонить', menuToggle: 'Открыть/закрыть меню' },
   hero: {
     eyebrow: 'Бухта Шарм-эль-Майя • Шарм-эль-Шейх',
     title: 'El Kheima Beach Resort',
@@ -497,7 +497,7 @@ const it: MarketingMessages = {
     nameNative: 'El Kheima Beach Resort',
     tagline: 'Il tuo rifugio privato ti aspetta',
   },
-  nav: { home: 'Home', rooms: 'Camere', dining: 'Ristorazione', book: 'Prenota Ora', contact: 'Contatti', callUs: 'Chiamaci' },
+  nav: { home: 'Home', rooms: 'Camere', dining: 'Ristorazione', book: 'Prenota Ora', contact: 'Contatti', callUs: 'Chiamaci', menuToggle: 'Attiva/disattiva menu' },
   hero: {
     eyebrow: 'Baia di Sharm El Maya • Sharm El Sheikh',
     title: 'El Kheima Beach Resort',
