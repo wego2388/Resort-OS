@@ -150,7 +150,11 @@ settlement/payment، shift/reconciliation، ثم state/ownership/reversals. تق
 صغيرة.  
 **يعتمد على:** Gate 3، وGate 4 للشاشات المالية.  
 **الخروج:** keyboard + responsive + Arabic RTL + English LTR + print، ولا
-missing keys أو strings حرجة hard-coded.
+missing keys أو strings حرجة hard-coded.  
+**التقدّم:** دفعات 1-13 منفَّذة، كل واحدة على فرع مستقل متفرّع من نفس قاعدة
+Gate 4 (فروع شقيقة، لسه محتاجة دمج). دفعة 13 (2026-07-21) غطّت
+`AnalyticsView.vue`، `HubManagementView.vue`، `QRGeneratorView.vue`،
+و`EInvoiceView.vue` — أكبر دفعة حتى الآن (4 ملفات، 2084 سطر).
 
 ### Gate 6 — Public Phase 0 فقط — مسموح أن يبدأ الآن
 

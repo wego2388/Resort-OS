@@ -7,10 +7,14 @@
 // وقت فتح الشاشة — الإشارة الوحيدة الحقيقية بتظهر أول ما حد يحاول يبعت فاتورة.
 // notEnabledError بيتفعّل من رد الإرسال ده ويعرض بانر واضح فوق الصفحة.
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { t } = useI18n()
+const { formatDateTime } = useStaffFormat()
 
 const auth = useAuthStore()
 const branchId = auth.branchId
@@ -28,13 +32,13 @@ const loading = ref(true)
 const statusFilter = ref('')
 const notEnabledError = ref('')
 
-const STATUS_CONFIG: Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }> = {
-  pending:   { label: 'قيد الانتظار', variant: 'neutral' },
-  submitted: { label: 'مُرسلة',        variant: 'info' },
-  valid:     { label: 'مقبولة ✓',      variant: 'success' },
-  invalid:   { label: 'مرفوضة',        variant: 'danger' },
-  failed:    { label: 'فشل الإرسال',   variant: 'warning' },
-}
+const STATUS_CONFIG = computed<Record<string, { label: string; variant: 'success' | 'warning' | 'danger' | 'info' | 'neutral' }>>(() => ({
+  pending:   { label: t('backoffice.eInvoice.status.pending'), variant: 'neutral' },
+  submitted: { label: t('backoffice.eInvoice.status.submitted'),        variant: 'info' },
+  valid:     { label: t('backoffice.eInvoice.status.valid'),      variant: 'success' },
+  invalid:   { label: t('backoffice.eInvoice.status.invalid'),        variant: 'danger' },
+  failed:    { label: t('backoffice.eInvoice.status.failed'),   variant: 'warning' },
+}))
 
 // ── Submit modal ─────────────────────────────────────────────────────
 const submitModal = reactive({
@@ -62,7 +66,7 @@ function removeLine(i: number) { submitModal.items.splice(i, 1) }
 const rinError = computed(() => {
   const v = submitModal.receiver_rin.trim()
   if (!v) return ''
-  return /^\d{9}$/.test(v) ? '' : 'الرقم الضريبي لازم يكون 9 أرقام بالظبط'
+  return /^\d{9}$/.test(v) ? '' : t('backoffice.eInvoice.rinFormatError')
 })
 
 async function loadInvoices() {
@@ -74,7 +78,7 @@ async function loadInvoices() {
     invoices.value = res.data.items ?? []
     total.value = res.data.total ?? 0
   } catch {
-    toast.error('تعذّر تحميل الفواتير الإلكترونية — حاول تاني')
+    toast.error(t('backoffice.eInvoice.msg.loadError'))
   } finally {
     loading.value = false
   }
@@ -103,7 +107,7 @@ async function submitInvoice() {
     submitModal.open = false
     await loadInvoices()
   } catch (e: any) {
-    const detail = e?.response?.data?.detail ?? 'تعذّر إرسال الفاتورة'
+    const detail = e?.response?.data?.detail ?? t('backoffice.eInvoice.msg.submitError')
     if (typeof detail === 'string' && ETA_CONFIG_MARKERS.some(marker => detail.includes(marker))) {
       notEnabledError.value = detail
       submitModal.open = false
@@ -119,13 +123,13 @@ onMounted(loadInvoices)
 </script>
 
 <template>
-  <div dir="rtl" class="p-6 max-w-5xl mx-auto">
+  <div class="p-6 max-w-5xl mx-auto">
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">🧾 الفاتورة الإلكترونية (ETA)</h1>
-        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">رفع الفواتير لمصلحة الضرائب المصرية ومتابعة حالتها</p>
+        <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">🧾 {{ t('backoffice.eInvoice.title') }}</h1>
+        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.eInvoice.subtitle') }}</p>
       </div>
-      <AppButton @click="openSubmitModal">+ فاتورة جديدة</AppButton>
+      <AppButton @click="openSubmitModal">+ {{ t('backoffice.eInvoice.newInvoice') }}</AppButton>
     </div>
 
     <!-- بانر "غير مفعّل" — بيظهر لما الباك إند يرجّع إشارة حقيقية إن ETA مش مهيأ
@@ -133,13 +137,17 @@ onMounted(loadInvoices)
     <div v-if="notEnabledError" class="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
       <span class="text-lg leading-none">⚠️</span>
       <div>
-        <p class="font-bold">الفاتورة الإلكترونية غير مفعّلة حاليًا</p>
+        <p class="font-bold">{{ t('backoffice.eInvoice.notEnabled') }}</p>
         <p class="text-xs text-amber-700 mt-0.5">{{ notEnabledError }}</p>
       </div>
     </div>
 
     <div class="flex gap-2 mb-4">
-      <button v-for="s in [{v:'',l:'الكل'},{v:'pending',l:'قيد الانتظار'},{v:'submitted',l:'مُرسلة'},{v:'valid',l:'مقبولة'},{v:'invalid',l:'مرفوضة'},{v:'failed',l:'فشل'}]"
+      <button v-for="s in [
+                {v:'',l:t('backoffice.eInvoice.all')},{v:'pending',l:t('backoffice.eInvoice.status.pending')},
+                {v:'submitted',l:t('backoffice.eInvoice.status.submitted')},{v:'valid',l:t('backoffice.eInvoice.statusShort.valid')},
+                {v:'invalid',l:t('backoffice.eInvoice.status.invalid')},{v:'failed',l:t('backoffice.eInvoice.statusShort.failed')},
+              ]"
               :key="s.v" @click="statusFilter = s.v; loadInvoices()"
               :class="['px-3 py-1.5 rounded-lg text-xs font-bold', statusFilter === s.v ? 'bg-primary text-white' : 'bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500']">
         {{ s.l }}
@@ -152,11 +160,11 @@ onMounted(loadInvoices)
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الرقم الداخلي</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">UUID</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الحالة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تاريخ الإرسال</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">خطأ</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.eInvoice.column.internalId') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">UUID</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.eInvoice.column.status') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.eInvoice.column.submittedAt') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.eInvoice.column.error') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -169,7 +177,7 @@ onMounted(loadInvoices)
                 </AppBadge>
               </td>
               <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-500">
-                {{ inv.submitted_at ? new Date(inv.submitted_at).toLocaleString('ar-EG') : '—' }}
+                {{ inv.submitted_at ? formatDateTime(inv.submitted_at) : '—' }}
               </td>
               <td class="px-4 py-3 text-xs text-red-500 max-w-xs truncate" :title="inv.error_message ?? ''">
                 {{ inv.error_message ?? '—' }}
@@ -177,7 +185,7 @@ onMounted(loadInvoices)
             </tr>
             <tr v-if="invoices.length === 0">
               <td colspan="5" class="px-4 py-8">
-                <EmptyState icon="🧾" title="لا توجد فواتير إلكترونية بعد" />
+                <EmptyState icon="🧾" :title="t('backoffice.eInvoice.noInvoices')" />
               </td>
             </tr>
           </tbody>
@@ -186,34 +194,34 @@ onMounted(loadInvoices)
     </AppCard>
 
     <!-- Submit Modal -->
-    <AppModal :open="submitModal.open" title="فاتورة إلكترونية جديدة" @close="submitModal.open = false">
+    <AppModal :open="submitModal.open" :title="t('backoffice.eInvoice.newInvoiceTitle')" @close="submitModal.open = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">اسم العميل</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.eInvoice.customerName') }}</label>
           <input v-model="submitModal.receiver_name" type="text"
                  class="w-full border border-stone-200 dark:border-border rounded-lg px-3 py-2 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">الرقم الضريبي (اختياري — فاضي = B2C)</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.eInvoice.rinOptional') }}</label>
           <input v-model="submitModal.receiver_rin" type="text" maxlength="9"
                  :class="['w-full border rounded-lg px-3 py-2 text-sm', rinError ? 'border-red-400' : 'border-stone-200 dark:border-border']" />
           <p v-if="rinError" class="text-[11px] text-red-600 mt-1">{{ rinError }}</p>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">رقم الفوليو (اختياري)</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.eInvoice.folioIdOptional') }}</label>
           <input v-model="submitModal.folio_id" type="number"
                  class="w-full border border-stone-200 dark:border-border rounded-lg px-3 py-2 text-sm" />
         </div>
 
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-2">بنود الفاتورة</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-2">{{ t('backoffice.eInvoice.invoiceLines') }}</label>
           <div v-for="(item, i) in submitModal.items" :key="i" class="flex gap-2 mb-2">
-            <input v-model="item.description" placeholder="الوصف" class="flex-1 border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-xs" />
-            <input v-model.number="item.quantity" type="number" placeholder="كمية" class="w-16 border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-xs" />
-            <input v-model.number="item.unit_price" type="number" placeholder="السعر" class="w-20 border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-xs" />
+            <input v-model="item.description" :placeholder="t('backoffice.eInvoice.description')" class="flex-1 border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-xs" />
+            <input v-model.number="item.quantity" type="number" :placeholder="t('backoffice.eInvoice.quantity')" class="w-16 border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-xs" />
+            <input v-model.number="item.unit_price" type="number" :placeholder="t('backoffice.eInvoice.price')" class="w-20 border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-xs" />
             <button @click="removeLine(i)" class="text-red-400 text-xs px-1">✕</button>
           </div>
-          <button @click="addLine" class="text-xs text-primary font-bold">+ إضافة بند</button>
+          <button @click="addLine" class="text-xs text-primary font-bold">+ {{ t('backoffice.eInvoice.addLine') }}</button>
         </div>
 
         <p v-if="submitModal.error" class="text-red-600 text-xs bg-red-50 rounded-lg p-2">{{ submitModal.error }}</p>
@@ -221,9 +229,9 @@ onMounted(loadInvoices)
 
       <template #footer>
         <div class="flex gap-2">
-          <AppButton variant="outline" block @click="submitModal.open = false">إلغاء</AppButton>
+          <AppButton variant="outline" block @click="submitModal.open = false">{{ t('backoffice.eInvoice.cancel') }}</AppButton>
           <AppButton block :disabled="!!rinError" :loading="submitModal.saving" @click="submitInvoice">
-            {{ submitModal.saving ? 'جاري الإرسال...' : 'إرسال لمصلحة الضرائب' }}
+            {{ submitModal.saving ? t('backoffice.eInvoice.sending') : t('backoffice.eInvoice.sendToTaxAuthority') }}
           </AppButton>
         </div>
       </template>
