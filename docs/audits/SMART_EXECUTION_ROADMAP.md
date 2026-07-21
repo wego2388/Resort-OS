@@ -150,7 +150,12 @@ settlement/payment، shift/reconciliation، ثم state/ownership/reversals. تق
 صغيرة.  
 **يعتمد على:** Gate 3، وGate 4 للشاشات المالية.  
 **الخروج:** keyboard + responsive + Arabic RTL + English LTR + print، ولا
-missing keys أو strings حرجة hard-coded.
+missing keys أو strings حرجة hard-coded.  
+**التقدّم:** دفعات 1-11 منفَّذة، كل واحدة على فرع مستقل متفرّع من نفس قاعدة
+Gate 4 (فروع شقيقة، لسه محتاجة دمج). دفعة 11 (2026-07-21) غطّت
+`TimeshareView.vue` و`LeasingView.vue`، بما فيها ترجمة نافذة طباعة الكالندر
+المستقلة (كانت `dir="rtl"` ثابتة داخل HTML مولَّد بالكود، بقت تاخد اللغة من
+locale المستخدم الحالي فعليًا).
 
 ### Gate 6 — Public Phase 0 فقط — مسموح أن يبدأ الآن
 
