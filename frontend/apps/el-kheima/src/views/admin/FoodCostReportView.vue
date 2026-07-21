@@ -16,10 +16,14 @@
 // معروفة" مش صفر — مُستبعدة من الملخص والاتجاه اليومي عمدًا (راجع تعليقات
 // services.get_food_cost_report) عشان ما تضخّمش هامش الربح الظاهر بالغلط.
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppBadge, AppButton, AppInput, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
+const { t } = useI18n()
+const { formatNumber, formatDate } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -92,7 +96,7 @@ async function loadOutlets() {
     outlets.value = data?.items ?? data ?? []
     activeOutletId.value = outlets.value[0]?.id ?? null
   } catch {
-    toast.error('تعذّر تحميل منافذ الدايننج')
+    toast.error(t('backoffice.foodCostReport.loadOutletsError'))
   }
 }
 
@@ -109,7 +113,7 @@ async function fetchReport() {
     })
     report.value = res.data
   } catch {
-    toast.error('تعذّر تحميل تقرير تكلفة الطعام — تأكد من المدى الزمني وحاول تاني')
+    toast.error(t('backoffice.foodCostReport.loadReportError'))
     report.value = null
   } finally {
     loading.value = false
@@ -139,7 +143,7 @@ async function exportExcel() {
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 5000)
   } catch {
-    toast.error('تعذّر تصدير التقرير')
+    toast.error(t('backoffice.foodCostReport.exportError'))
   } finally {
     exporting.value = false
   }
@@ -147,7 +151,7 @@ async function exportExcel() {
 
 function money(v: string | number | null | undefined) {
   if (v == null) return '—'
-  return Number(v).toLocaleString('ar-EG', { maximumFractionDigits: 2 })
+  return formatNumber(Number(v), { maximumFractionDigits: 2 })
 }
 function pct(v: string | null | undefined) {
   return v == null ? '—' : `${Number(v).toFixed(1)}%`
@@ -158,7 +162,7 @@ function pct(v: string | null | undefined) {
 const trendMax = computed(() => {
   if (!report.value) return 0
   const values = report.value.trend
-    .map((t) => (t.food_cost_pct != null ? Number(t.food_cost_pct) : 0))
+    .map((pt) => (pt.food_cost_pct != null ? Number(pt.food_cost_pct) : 0))
     .concat(Number(report.value.summary.threshold_pct))
   return Math.max(...values, 1)
 })
@@ -172,26 +176,26 @@ function barStatus(point: TrendPoint): 'good' | 'critical' | 'muted' {
   return Number(point.food_cost_pct) > Number(report.value.summary.threshold_pct) ? 'critical' : 'good'
 }
 function shortDay(iso: string) {
-  return new Date(iso).toLocaleDateString('ar-EG', { day: 'numeric', month: 'numeric' })
+  return formatDate(iso, { day: 'numeric', month: 'numeric' })
 }
 
 onMounted(async () => { await loadOutlets(); await fetchReport() })
 </script>
 
 <template>
-  <div dir="rtl" class="space-y-5">
+  <div class="space-y-5">
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">تقرير تكلفة الطعام (Food Cost)</h1>
+        <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.foodCostReport.title') }}</h1>
         <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
-          التكلفة النظرية (وصفة × كمية مباعة فعليًا) مقابل الإيراد الفعلي — لكشف الأصناف اللي تكلفتها أعلى من المسموح.
+          {{ t('backoffice.foodCostReport.subtitle') }}
         </p>
       </div>
       <div class="flex items-center gap-2">
         <AppButton variant="secondary" size="sm" :disabled="loading || exporting || !report" :loading="exporting" @click="exportExcel">
-          📊 تصدير Excel
+          📊 {{ t('backoffice.foodCostReport.exportExcel') }}
         </AppButton>
-        <AppButton variant="secondary" size="sm" :disabled="loading" @click="fetchReport">تحديث ↻</AppButton>
+        <AppButton variant="secondary" size="sm" :disabled="loading" @click="fetchReport">{{ t('backoffice.foodCostReport.refresh') }} ↻</AppButton>
       </div>
     </div>
 
@@ -210,10 +214,10 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
     <!-- Filters -->
     <AppCard padding="md">
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3 items-end">
-        <AppInput label="من تاريخ" type="date" v-model="dateFrom" />
-        <AppInput label="إلى تاريخ" type="date" v-model="dateTo" />
-        <AppInput label="حد الإنذار (%)" type="number" placeholder="30" v-model="thresholdPct" />
-        <AppButton variant="primary" :loading="loading" @click="fetchReport">تطبيق</AppButton>
+        <AppInput :label="t('backoffice.foodCostReport.dateFrom')" type="date" v-model="dateFrom" />
+        <AppInput :label="t('backoffice.foodCostReport.dateTo')" type="date" v-model="dateTo" />
+        <AppInput :label="t('backoffice.foodCostReport.thresholdPct')" type="number" placeholder="30" v-model="thresholdPct" />
+        <AppButton variant="primary" :loading="loading" @click="fetchReport">{{ t('backoffice.foodCostReport.apply') }}</AppButton>
       </div>
     </AppCard>
 
@@ -225,41 +229,41 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
       <!-- Summary KPIs -->
       <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">إجمالي الإيراد (مدى محسوب)</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.totalRevenue') }}</div>
           <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ money(report.summary.total_revenue) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.foodCostReport.currency') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">التكلفة النظرية</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.theoreticalCost') }}</div>
           <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ money(report.summary.total_theoretical_cost) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.foodCostReport.currency') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">نسبة تكلفة الطعام</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.foodCostPct') }}</div>
           <div :class="['text-2xl font-black', report.summary.food_cost_pct != null && Number(report.summary.food_cost_pct) > Number(report.summary.threshold_pct) ? 'text-red-600' : 'text-green-700']">
             {{ pct(report.summary.food_cost_pct) }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">الحد: {{ report.summary.threshold_pct }}%</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.foodCostReport.thresholdShort') }}: {{ report.summary.threshold_pct }}%</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">هامش الربح الإجمالي</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.grossMargin') }}</div>
           <div class="text-2xl font-black text-blue-700">{{ pct(report.summary.gross_margin_pct) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ money(report.summary.gross_margin_amount) }} جنيه</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ money(report.summary.gross_margin_amount) }} {{ t('backoffice.foodCostReport.currency') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">أصناف بدون وصفة</div>
+          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.itemsMissingRecipe') }}</div>
           <div :class="['text-2xl font-black', report.summary.items_missing_recipe > 0 ? 'text-amber-600' : 'text-gray-800 dark:text-gray-200']">
             {{ report.summary.items_missing_recipe }}
           </div>
           <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-            {{ report.summary.items_missing_recipe > 0 ? `${money(report.summary.items_missing_recipe_revenue)} ج إيراد مُستبعد من الحساب` : 'كل المبيعات تكلفتها معروفة' }}
+            {{ report.summary.items_missing_recipe > 0 ? t('backoffice.foodCostReport.excludedRevenue', { amount: money(report.summary.items_missing_recipe_revenue) }) : t('backoffice.foodCostReport.allCostsKnown') }}
           </div>
         </AppCard>
       </div>
 
       <!-- Alerts -->
-      <AppCard :title="`أصناف تخطّت حد الإنذار (${report.alerts.length})`">
-        <EmptyState v-if="report.alerts.length === 0" icon="✅" title="مفيش أصناف تخطّت الحد حاليًا" subtitle="كل الأصناف اللي معاها وصفة نسبة تكلفتها تحت المسموح" />
+      <AppCard :title="t('backoffice.foodCostReport.alertsTitle', { count: report.alerts.length })">
+        <EmptyState v-if="report.alerts.length === 0" icon="✅" :title="t('backoffice.foodCostReport.noAlerts')" :subtitle="t('backoffice.foodCostReport.noAlertsHint')" />
         <div v-else class="flex flex-wrap gap-2">
           <AppBadge v-for="line in report.alerts" :key="itemKey(line)" variant="danger" size="sm">
             {{ itemName(line) }} — {{ pct(line.food_cost_pct) }}
@@ -268,13 +272,13 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
       </AppCard>
 
       <!-- Daily trend -->
-      <AppCard title="اتجاه نسبة تكلفة الطعام اليومي">
-        <EmptyState v-if="report.trend.every((t) => t.food_cost_pct == null)" icon="📉"
-          title="لا توجد بيانات كافية لرسم الاتجاه" subtitle="مفيش مبيعات لأصناف معاها وصفة في المدى ده" />
+      <AppCard :title="t('backoffice.foodCostReport.trendTitle')">
+        <EmptyState v-if="report.trend.every((pt) => pt.food_cost_pct == null)" icon="📉"
+          :title="t('backoffice.foodCostReport.noTrendData')" :subtitle="t('backoffice.foodCostReport.noTrendDataHint')" />
         <div v-else>
           <div class="flex items-end gap-1 h-32 border-b border-stone-200 dark:border-border">
             <div v-for="point in report.trend" :key="point.date" class="flex-1 flex flex-col items-center justify-end h-full group relative"
-              :title="`${shortDay(point.date)}: ${pct(point.food_cost_pct)} — إيراد ${money(point.revenue)} ج / تكلفة ${money(point.theoretical_cost)} ج`">
+              :title="t('backoffice.foodCostReport.trendTooltip', { day: shortDay(point.date), pct: pct(point.food_cost_pct), revenue: money(point.revenue), cost: money(point.theoretical_cost) })">
               <div
                 :class="['w-full rounded-t transition-all',
                          barStatus(point) === 'critical' ? 'bg-red-500' : barStatus(point) === 'good' ? 'bg-green-500' : 'bg-stone-200']"
@@ -288,27 +292,27 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
             </div>
           </div>
           <div class="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-500">
-            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-green-500 inline-block" /> ضمن الحد</span>
-            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> تخطّى الحد ({{ report.summary.threshold_pct }}%)</span>
-            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-stone-200 inline-block" /> بدون مبيعات معروفة التكلفة</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-green-500 inline-block" /> {{ t('backoffice.foodCostReport.withinThreshold') }}</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> {{ t('backoffice.foodCostReport.exceedsThreshold', { pct: report.summary.threshold_pct }) }}</span>
+            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-stone-200 inline-block" /> {{ t('backoffice.foodCostReport.noKnownCostSales') }}</span>
           </div>
         </div>
       </AppCard>
 
       <!-- Full lines table -->
-      <AppCard title="تفصيل الأصناف" padding="none">
+      <AppCard :title="t('backoffice.foodCostReport.itemsBreakdown')" padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الصنف</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الوصفة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الكمية المباعة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الإيراد</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">تكلفة الوحدة</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التكلفة الإجمالية</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">نسبة تكلفة الطعام</th>
-                <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">هامش الربح</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.item') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.recipe') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.qtySold') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.revenue') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.unitCost') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.totalCost') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.foodCostPct') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.grossMargin') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -317,7 +321,7 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
                 <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ itemName(line) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="line.has_recipe ? 'neutral' : 'warning'">
-                    {{ line.has_recipe ? 'موجودة' : 'ناقصة' }}
+                    {{ line.has_recipe ? t('backoffice.foodCostReport.recipePresent') : t('backoffice.foodCostReport.recipeMissing') }}
                   </AppBadge>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ line.quantity_sold }}</td>
@@ -328,13 +332,13 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
                   <AppBadge v-if="line.food_cost_pct != null" size="sm" :variant="line.exceeds_threshold ? 'danger' : 'success'">
                     {{ pct(line.food_cost_pct) }}
                   </AppBadge>
-                  <span v-else class="text-xs text-gray-400 dark:text-gray-500">غير معروفة</span>
+                  <span v-else class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.foodCostReport.unknown') }}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ pct(line.gross_margin_pct) }}</td>
               </tr>
               <tr v-if="report.lines.length === 0">
                 <td colspan="8" class="px-4 py-8">
-                  <EmptyState icon="🍽️" title="لا توجد أصناف" />
+                  <EmptyState icon="🍽️" :title="t('backoffice.foodCostReport.noItems')" />
                 </td>
               </tr>
             </tbody>

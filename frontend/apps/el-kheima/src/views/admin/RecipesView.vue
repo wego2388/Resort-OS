@@ -10,11 +10,15 @@
 // ديناميكية من /dining/outlets (DINING_CUTOVER_PLAN.md Batch 6 — كانت
 // restaurant/cafe تابين ثابتين، دلوقتي أي عدد منافذ).
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
+const { t } = useI18n()
+const { formatNumber } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -86,7 +90,7 @@ async function loadOutlets() {
     outlets.value = data?.items ?? data ?? []
     activeOutletId.value = outlets.value[0]?.id ?? null
   } catch {
-    toast.error('تعذّر تحميل منافذ الدايننج')
+    toast.error(t('backoffice.diningRecipes.msg.loadOutletsError'))
   }
 }
 
@@ -97,7 +101,7 @@ async function fetchItems() {
     const res = await api.get(ENDPOINTS.dining.items(activeOutletId.value), { params: { available_only: false } })
     items.value = res.data
   } catch {
-    toast.error('تعذّر تحميل الأصناف — حاول تاني')
+    toast.error(t('backoffice.diningRecipes.msg.loadItemsError'))
   } finally {
     loading.value = false
   }
@@ -129,7 +133,7 @@ const filtered = computed(() => {
 const recipeCount = computed(() => items.value.filter((i) => i.recipe_lines.length > 0).length)
 
 function productLabel(p: Product) {
-  return `${p.name_ar || p.name} (${p.unit}) — ${p.cost_price.toLocaleString('ar-EG')} ج`
+  return `${p.name_ar || p.name} (${p.unit}) — ${formatNumber(p.cost_price)} ${t('backoffice.diningRecipes.currency')}`
 }
 
 function openRecipe(item: MenuItem) {
@@ -154,7 +158,7 @@ async function refreshSelectedItem() {
 async function addLine() {
   if (!selectedItem.value) return
   if (!newLineProductId.value || !newLineQty.value || Number(newLineQty.value) <= 0) {
-    toast.error('اختر منتج مخزني وحدد كمية أكبر من صفر')
+    toast.error(t('backoffice.diningRecipes.msg.selectProductAndQty'))
     return
   }
   savingLine.value = true
@@ -163,13 +167,13 @@ async function addLine() {
       product_id: newLineProductId.value,
       quantity_per_unit: newLineQty.value,
     })
-    toast.success('تمت إضافة المكوّن للوصفة')
+    toast.success(t('backoffice.diningRecipes.msg.lineAdded'))
     newLineProductId.value = ''
     newLineQty.value = ''
     await refreshSelectedItem()
   } catch (e: unknown) {
     const message = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    toast.error(message ?? 'تعذّرت إضافة المكوّن — تأكد إنه مش مضاف بالفعل')
+    toast.error(message ?? t('backoffice.diningRecipes.msg.lineAddError'))
   } finally {
     savingLine.value = false
   }
@@ -186,32 +190,32 @@ function cancelEdit() {
 
 async function saveEdit(line: RecipeLine) {
   if (!editingQty.value || Number(editingQty.value) <= 0) {
-    toast.error('الكمية لازم تكون أكبر من صفر')
+    toast.error(t('backoffice.diningRecipes.msg.qtyMustBePositive'))
     return
   }
   try {
     await api.patch(recipeLinePath(line.id), { quantity_per_unit: editingQty.value })
-    toast.success('تم تحديث الكمية')
+    toast.success(t('backoffice.diningRecipes.msg.qtyUpdated'))
     editingLineId.value = null
     await refreshSelectedItem()
   } catch {
-    toast.error('تعذّر تحديث الكمية')
+    toast.error(t('backoffice.diningRecipes.msg.qtyUpdateError'))
   }
 }
 
 async function removeLine(line: RecipeLine) {
   const ok = await confirm({
-    title: 'حذف مكوّن من الوصفة',
-    message: `متأكد من حذف "${line.product_name}" من وصفة "${selectedItem.value?.name_ar || selectedItem.value?.name}"؟`,
-    confirmText: 'حذف', danger: true,
+    title: t('backoffice.diningRecipes.deleteLineTitle'),
+    message: t('backoffice.diningRecipes.confirmDeleteLine', { product: line.product_name, item: selectedItem.value?.name_ar || selectedItem.value?.name }),
+    confirmText: t('backoffice.diningRecipes.delete'), danger: true,
   })
   if (!ok) return
   try {
     await api.delete(recipeLinePath(line.id))
-    toast.success('تم حذف المكوّن')
+    toast.success(t('backoffice.diningRecipes.msg.lineDeleted'))
     await refreshSelectedItem()
   } catch {
-    toast.error('تعذّر حذف المكوّن')
+    toast.error(t('backoffice.diningRecipes.msg.lineDeleteError'))
   }
 }
 
@@ -222,7 +226,7 @@ async function removeLine(line: RecipeLine) {
 async function addVariant() {
   if (!selectedItem.value) return
   if (!newVariantName.value.trim() || !newVariantPrice.value || Number(newVariantPrice.value) <= 0) {
-    toast.error('اكتب اسم المتغيّر وسعر أكبر من صفر')
+    toast.error(t('backoffice.diningRecipes.msg.enterVariantNameAndPrice'))
     return
   }
   savingVariant.value = true
@@ -231,13 +235,13 @@ async function addVariant() {
       name: newVariantName.value.trim(),
       price: newVariantPrice.value,
     })
-    toast.success('تمت إضافة المتغيّر')
+    toast.success(t('backoffice.diningRecipes.msg.variantAdded'))
     newVariantName.value = ''
     newVariantPrice.value = ''
     await refreshSelectedItem()
   } catch (e: unknown) {
     const message = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    toast.error(message ?? 'تعذّرت إضافة المتغيّر — تأكد إن الاسم مش مكرر')
+    toast.error(message ?? t('backoffice.diningRecipes.msg.variantAddError'))
   } finally {
     savingVariant.value = false
   }
@@ -245,18 +249,18 @@ async function addVariant() {
 
 async function removeVariant(variant: Variant) {
   const ok = await confirm({
-    title: 'حذف متغيّر',
-    message: `متأكد من حذف "${variant.name_ar || variant.name}"؟ الطلبات القديمة اللي اختارت المتغيّر ده هتفضل زي ما هي (سجل تاريخي)، بس مش هيبقى متاح للطلبات الجديدة.`,
-    confirmText: 'حذف', danger: true,
+    title: t('backoffice.diningRecipes.deleteVariantTitle'),
+    message: t('backoffice.diningRecipes.confirmDeleteVariant', { name: variant.name_ar || variant.name }),
+    confirmText: t('backoffice.diningRecipes.delete'), danger: true,
   })
   if (!ok) return
   try {
     await api.delete(variantPath(variant.id))
-    toast.success('تم حذف المتغيّر')
+    toast.success(t('backoffice.diningRecipes.msg.variantDeleted'))
     if (expandedVariantId.value === variant.id) expandedVariantId.value = null
     await refreshSelectedItem()
   } catch {
-    toast.error('تعذّر حذف المتغيّر')
+    toast.error(t('backoffice.diningRecipes.msg.variantDeleteError'))
   }
 }
 
@@ -269,7 +273,7 @@ function toggleVariantExpand(variant: Variant) {
 
 async function addVariantLine(variant: Variant) {
   if (!newVariantLineProductId.value || !newVariantLineQty.value || Number(newVariantLineQty.value) <= 0) {
-    toast.error('اختر منتج مخزني وحدد كمية أكبر من صفر')
+    toast.error(t('backoffice.diningRecipes.msg.selectProductAndQty'))
     return
   }
   savingVariantLine.value = true
@@ -278,13 +282,13 @@ async function addVariantLine(variant: Variant) {
       product_id: newVariantLineProductId.value,
       quantity_per_unit: newVariantLineQty.value,
     })
-    toast.success('تمت إضافة المكوّن لوصفة المتغيّر')
+    toast.success(t('backoffice.diningRecipes.msg.variantLineAdded'))
     newVariantLineProductId.value = ''
     newVariantLineQty.value = ''
     await refreshSelectedItem()
   } catch (e: unknown) {
     const message = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    toast.error(message ?? 'تعذّرت إضافة المكوّن — تأكد إنه مش مضاف بالفعل')
+    toast.error(message ?? t('backoffice.diningRecipes.msg.lineAddError'))
   } finally {
     savingVariantLine.value = false
   }
@@ -301,32 +305,32 @@ function cancelEditVariantLine() {
 
 async function saveEditVariantLine(line: RecipeLine) {
   if (!editingVariantLineQty.value || Number(editingVariantLineQty.value) <= 0) {
-    toast.error('الكمية لازم تكون أكبر من صفر')
+    toast.error(t('backoffice.diningRecipes.msg.qtyMustBePositive'))
     return
   }
   try {
     await api.patch(variantLinePath(line.id), { quantity_per_unit: editingVariantLineQty.value })
-    toast.success('تم تحديث الكمية')
+    toast.success(t('backoffice.diningRecipes.msg.qtyUpdated'))
     editingVariantLineId.value = null
     await refreshSelectedItem()
   } catch {
-    toast.error('تعذّر تحديث الكمية')
+    toast.error(t('backoffice.diningRecipes.msg.qtyUpdateError'))
   }
 }
 
 async function removeVariantLine(variant: Variant, line: RecipeLine) {
   const ok = await confirm({
-    title: 'حذف مكوّن من وصفة المتغيّر',
-    message: `متأكد من حذف "${line.product_name}" من وصفة "${variant.name_ar || variant.name}"؟`,
-    confirmText: 'حذف', danger: true,
+    title: t('backoffice.diningRecipes.deleteVariantLineTitle'),
+    message: t('backoffice.diningRecipes.confirmDeleteLine', { product: line.product_name, item: variant.name_ar || variant.name }),
+    confirmText: t('backoffice.diningRecipes.delete'), danger: true,
   })
   if (!ok) return
   try {
     await api.delete(variantLinePath(line.id))
-    toast.success('تم حذف المكوّن')
+    toast.success(t('backoffice.diningRecipes.msg.lineDeleted'))
     await refreshSelectedItem()
   } catch {
-    toast.error('تعذّر حذف المكوّن')
+    toast.error(t('backoffice.diningRecipes.msg.lineDeleteError'))
   }
 }
 
@@ -334,12 +338,12 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
 </script>
 
 <template>
-  <div dir="rtl">
+  <div>
     <div class="flex items-center justify-between mb-6">
       <div>
-        <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">وصفات الأصناف (Recipe / BOM)</h2>
+        <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.diningRecipes.title') }}</h2>
         <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
-          اربط كل صنف بمكوّناته المخزنية — البيع بيخصم المخزون تلقائيًا وبيحسب التكلفة الحقيقية.
+          {{ t('backoffice.diningRecipes.subtitle') }}
         </p>
       </div>
       <AppButton variant="secondary" size="sm" @click="fetchItems">🔄</AppButton>
@@ -355,13 +359,13 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
       >
         {{ outletLabel(o) }}
       </button>
-      <span class="self-center text-xs text-gray-400 dark:text-gray-500 mr-2">
-        {{ recipeCount }} صنف من أصل {{ items.length }} معاه وصفة حقيقية
+      <span class="self-center text-xs text-gray-400 dark:text-gray-500 ms-2">
+        {{ t('backoffice.diningRecipes.recipeCount', { withRecipe: recipeCount, total: items.length }) }}
       </span>
     </div>
 
     <div class="mb-4">
-      <input v-model="search" type="text" placeholder="ابحث عن صنف..."
+      <input v-model="search" type="text" :placeholder="t('backoffice.diningRecipes.searchItem')"
         class="w-full max-w-sm border border-stone-200 dark:border-border rounded-xl px-4 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"/>
     </div>
 
@@ -372,38 +376,38 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الصنف</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">السعر</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التكلفة اليدوية</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">التكلفة المحسوبة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">الوصفة</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">المتغيّرات</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.item') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.price') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.manualCost') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.computedCost') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.recipe') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.variants') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="item in filtered" :key="item.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
               <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-sm">{{ item.name_ar || item.name }}</td>
-              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ item.price.toLocaleString('ar-EG') }} ج</td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ item.cost != null ? item.cost.toLocaleString('ar-EG') + ' ج' : '—' }}</td>
-              <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ item.computed_cost.toLocaleString('ar-EG') }} ج</td>
+              <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatNumber(item.price) }} {{ t('backoffice.diningRecipes.currency') }}</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ item.cost != null ? `${formatNumber(item.cost)} ${t('backoffice.diningRecipes.currency')}` : '—' }}</td>
+              <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(item.computed_cost) }} {{ t('backoffice.diningRecipes.currency') }}</td>
               <td class="px-4 py-3">
                 <AppBadge size="sm" :variant="item.recipe_lines.length > 0 ? 'success' : 'neutral'">
-                  {{ item.recipe_lines.length > 0 ? `${item.recipe_lines.length} مكوّن` : 'بدون وصفة' }}
+                  {{ item.recipe_lines.length > 0 ? t('backoffice.diningRecipes.ingredientCount', { count: item.recipe_lines.length }) : t('backoffice.diningRecipes.noRecipe') }}
                 </AppBadge>
               </td>
               <td class="px-4 py-3">
                 <AppBadge size="sm" :variant="item.variants.length > 0 ? 'info' : 'neutral'">
-                  {{ item.variants.length > 0 ? `${item.variants.length} حجم/نوع` : 'صنف واحد' }}
+                  {{ item.variants.length > 0 ? t('backoffice.diningRecipes.variantCount', { count: item.variants.length }) : t('backoffice.diningRecipes.singleItem') }}
                 </AppBadge>
               </td>
-              <td class="px-4 py-3 text-left">
-                <AppButton variant="outline" size="sm" @click="openRecipe(item)">إدارة الوصفة</AppButton>
+              <td class="px-4 py-3 text-end">
+                <AppButton variant="outline" size="sm" @click="openRecipe(item)">{{ t('backoffice.diningRecipes.manageRecipe') }}</AppButton>
               </td>
             </tr>
             <tr v-if="filtered.length === 0">
               <td colspan="7" class="px-4 py-8">
-                <EmptyState icon="🧾" title="لا توجد أصناف" subtitle="جرّب تغيير كلمة البحث أو التبويب" />
+                <EmptyState icon="🧾" :title="t('backoffice.diningRecipes.noItems')" :subtitle="t('backoffice.diningRecipes.noItemsHint')" />
               </td>
             </tr>
           </tbody>
@@ -412,19 +416,19 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
     </AppCard>
 
     <!-- Recipe management modal -->
-    <AppModal :open="showRecipeModal" :title="`وصفة: ${selectedItem?.name_ar || selectedItem?.name || ''}`"
+    <AppModal :open="showRecipeModal" :title="t('backoffice.diningRecipes.recipeModalTitle', { name: selectedItem?.name_ar || selectedItem?.name || '' })"
       size="lg" @close="showRecipeModal = false">
       <div v-if="selectedItem" class="space-y-5">
         <div class="flex items-center justify-between bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3 text-sm">
-          <span class="text-gray-500 dark:text-gray-500">التكلفة المحسوبة من الوصفة</span>
-          <span class="font-black text-lg text-gray-900 dark:text-gray-100">{{ selectedItem.computed_cost.toLocaleString('ar-EG') }} ج</span>
+          <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.diningRecipes.costFromRecipe') }}</span>
+          <span class="font-black text-lg text-gray-900 dark:text-gray-100">{{ formatNumber(selectedItem.computed_cost) }} {{ t('backoffice.diningRecipes.currency') }}</span>
         </div>
 
         <!-- Existing lines -->
         <div>
-          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">المكوّنات الحالية</h4>
+          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{{ t('backoffice.diningRecipes.currentIngredients') }}</h4>
           <div v-if="selectedItem.recipe_lines.length === 0" class="text-sm text-gray-400 dark:text-gray-500 py-4 text-center">
-            مفيش مكوّنات مضافة — الصنف بيستخدم التكلفة اليدوية بس.
+            {{ t('backoffice.diningRecipes.noIngredients') }}
           </div>
           <div v-else class="space-y-2">
             <div v-for="line in selectedItem.recipe_lines" :key="line.id"
@@ -432,15 +436,15 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
               <div class="flex-1">
                 <div class="font-medium text-sm text-gray-900 dark:text-gray-100">{{ line.product_name }}</div>
                 <div class="text-xs text-gray-500 dark:text-gray-500">
-                  {{ line.quantity_per_unit }} {{ line.product_unit }} × {{ line.unit_cost.toLocaleString('ar-EG') }} ج
-                  = <span class="font-bold text-gray-700 dark:text-gray-300">{{ line.line_cost.toLocaleString('ar-EG') }} ج</span>
+                  {{ line.quantity_per_unit }} {{ line.product_unit }} × {{ formatNumber(line.unit_cost) }} {{ t('backoffice.diningRecipes.currency') }}
+                  = <span class="font-bold text-gray-700 dark:text-gray-300">{{ formatNumber(line.line_cost) }} {{ t('backoffice.diningRecipes.currency') }}</span>
                 </div>
               </div>
               <div v-if="editingLineId === line.id" class="flex items-center gap-2">
                 <input v-model="editingQty" type="number" step="0.001" min="0.001"
                   class="w-24 border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-sm"/>
-                <AppButton variant="primary" size="sm" @click="saveEdit(line)">حفظ</AppButton>
-                <AppButton variant="ghost" size="sm" @click="cancelEdit">إلغاء</AppButton>
+                <AppButton variant="primary" size="sm" @click="saveEdit(line)">{{ t('backoffice.diningRecipes.save') }}</AppButton>
+                <AppButton variant="ghost" size="sm" @click="cancelEdit">{{ t('backoffice.diningRecipes.cancel') }}</AppButton>
               </div>
               <div v-else class="flex items-center gap-2">
                 <AppButton variant="ghost" size="sm" @click="startEdit(line)">✏️</AppButton>
@@ -452,22 +456,22 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
 
         <!-- Add new line -->
         <div class="border-t border-stone-200 dark:border-border pt-4">
-          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">إضافة مكوّن جديد</h4>
+          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{{ t('backoffice.diningRecipes.addIngredient') }}</h4>
           <div class="flex items-end gap-2">
             <div class="flex-1">
-              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">المنتج المخزني</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.diningRecipes.inventoryProduct') }}</label>
               <select v-model="newLineProductId" class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm">
-                <option value="" disabled>اختر منتج...</option>
+                <option value="" disabled>{{ t('backoffice.diningRecipes.selectProduct') }}</option>
                 <option v-for="p in products" :key="p.id" :value="p.id">{{ productLabel(p) }}</option>
               </select>
             </div>
             <div class="w-32">
-              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">الكمية / وحدة</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.diningRecipes.qtyPerUnit') }}</label>
               <input v-model="newLineQty" type="number" step="0.001" min="0.001" placeholder="0.150"
                 class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>
             <AppButton variant="primary" size="sm" :disabled="savingLine" @click="addLine">
-              {{ savingLine ? '...' : 'إضافة' }}
+              {{ savingLine ? '...' : t('backoffice.diningRecipes.add') }}
             </AppButton>
           </div>
         </div>
@@ -476,14 +480,13 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
              مختلف عن مكوّنات الوصفة فوق (بتاعت الصنف الأساسي بس). مثال:
              كابتشينو صغير/كبير — سعر مختلف واستهلاك حليب مختلف فعليًا. -->
         <div class="border-t border-stone-200 dark:border-border pt-4">
-          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">المتغيّرات (أحجام/أنواع مختلفة — اختياري)</h4>
+          <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.diningRecipes.variantsTitle') }}</h4>
           <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">
-            لو الصنف بيتباع بأكتر من حجم/نوع بسعر ووصفة مختلفين (زي كابتشينو صغير/كبير)، أضف متغيّر لكل واحد.
-            لو مفيش متغيّرات، الصنف بيتباع بسعره ووصفته الأساسية زي ما هو.
+            {{ t('backoffice.diningRecipes.variantsHint') }}
           </p>
 
           <div v-if="selectedItem.variants.length === 0" class="text-sm text-gray-400 dark:text-gray-500 py-3 text-center">
-            مفيش متغيّرات — الصنف بيتباع بسعر واحد ثابت.
+            {{ t('backoffice.diningRecipes.noVariants') }}
           </div>
           <div v-else class="space-y-2 mb-3">
             <div v-for="variant in selectedItem.variants" :key="variant.id"
@@ -492,16 +495,16 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
                 <div class="flex-1 cursor-pointer" @click="toggleVariantExpand(variant)">
                   <div class="font-medium text-sm text-gray-900 dark:text-gray-100">
                     {{ variant.name_ar || variant.name }}
-                    <span v-if="!variant.is_available" class="text-xs text-red-500 mr-1">(غير متاح)</span>
+                    <span v-if="!variant.is_available" class="text-xs text-red-500 ms-1">({{ t('backoffice.diningRecipes.notAvailable') }})</span>
                   </div>
                   <div class="text-xs text-gray-500 dark:text-gray-500">
-                    {{ variant.price.toLocaleString('ar-EG') }} ج · تكلفة {{ variant.computed_cost.toLocaleString('ar-EG') }} ج ·
-                    {{ variant.recipe_lines.length > 0 ? `${variant.recipe_lines.length} مكوّن` : 'بدون وصفة (fallback لوصفة الصنف الأساسي)' }}
+                    {{ formatNumber(variant.price) }} {{ t('backoffice.diningRecipes.currency') }} · {{ t('backoffice.diningRecipes.costLabel') }} {{ formatNumber(variant.computed_cost) }} {{ t('backoffice.diningRecipes.currency') }} ·
+                    {{ variant.recipe_lines.length > 0 ? t('backoffice.diningRecipes.ingredientCount', { count: variant.recipe_lines.length }) : t('backoffice.diningRecipes.noRecipeFallback') }}
                   </div>
                 </div>
                 <div class="flex items-center gap-2">
                   <AppButton variant="ghost" size="sm" @click="toggleVariantExpand(variant)">
-                    {{ expandedVariantId === variant.id ? '▲ وصفته' : '▼ وصفته' }}
+                    {{ expandedVariantId === variant.id ? `▲ ${t('backoffice.diningRecipes.variantRecipe')}` : `▼ ${t('backoffice.diningRecipes.variantRecipe')}` }}
                   </AppButton>
                   <AppButton variant="ghost" size="sm" @click="removeVariant(variant)">🗑️</AppButton>
                 </div>
@@ -510,22 +513,22 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
               <!-- وصفة المتغيّر — نفس نمط وصفة الصنف الأساسي فوق بالظبط -->
               <div v-if="expandedVariantId === variant.id" class="p-3 space-y-2 bg-white dark:bg-surface">
                 <div v-if="variant.recipe_lines.length === 0" class="text-xs text-gray-400 dark:text-gray-500 py-2 text-center">
-                  مفيش مكوّنات مضافة لهذا المتغيّر — هيستخدم وصفة الصنف الأساسي (لو موجودة) عند البيع.
+                  {{ t('backoffice.diningRecipes.noVariantIngredients') }}
                 </div>
                 <div v-for="line in variant.recipe_lines" :key="line.id"
                   class="flex items-center justify-between border border-stone-100 dark:border-border/50 rounded-lg px-2 py-1.5">
                   <div class="flex-1">
                     <div class="text-sm text-gray-900 dark:text-gray-100">{{ line.product_name }}</div>
                     <div class="text-xs text-gray-500 dark:text-gray-500">
-                      {{ line.quantity_per_unit }} {{ line.product_unit }} × {{ line.unit_cost.toLocaleString('ar-EG') }} ج
-                      = <span class="font-bold text-gray-700 dark:text-gray-300">{{ line.line_cost.toLocaleString('ar-EG') }} ج</span>
+                      {{ line.quantity_per_unit }} {{ line.product_unit }} × {{ formatNumber(line.unit_cost) }} {{ t('backoffice.diningRecipes.currency') }}
+                      = <span class="font-bold text-gray-700 dark:text-gray-300">{{ formatNumber(line.line_cost) }} {{ t('backoffice.diningRecipes.currency') }}</span>
                     </div>
                   </div>
                   <div v-if="editingVariantLineId === line.id" class="flex items-center gap-2">
                     <input v-model="editingVariantLineQty" type="number" step="0.001" min="0.001"
                       class="w-20 border border-stone-200 dark:border-border rounded-lg px-2 py-1 text-sm"/>
-                    <AppButton variant="primary" size="sm" @click="saveEditVariantLine(line)">حفظ</AppButton>
-                    <AppButton variant="ghost" size="sm" @click="cancelEditVariantLine">إلغاء</AppButton>
+                    <AppButton variant="primary" size="sm" @click="saveEditVariantLine(line)">{{ t('backoffice.diningRecipes.save') }}</AppButton>
+                    <AppButton variant="ghost" size="sm" @click="cancelEditVariantLine">{{ t('backoffice.diningRecipes.cancel') }}</AppButton>
                   </div>
                   <div v-else class="flex items-center gap-1">
                     <AppButton variant="ghost" size="sm" @click="startEditVariantLine(line)">✏️</AppButton>
@@ -536,7 +539,7 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
                 <div class="flex items-end gap-2 pt-1">
                   <div class="flex-1">
                     <select v-model="newVariantLineProductId" class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-sm">
-                      <option value="" disabled>اختر منتج...</option>
+                      <option value="" disabled>{{ t('backoffice.diningRecipes.selectProduct') }}</option>
                       <option v-for="p in products" :key="p.id" :value="p.id">{{ productLabel(p) }}</option>
                     </select>
                   </div>
@@ -545,7 +548,7 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
                       class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-sm"/>
                   </div>
                   <AppButton variant="primary" size="sm" :disabled="savingVariantLine" @click="addVariantLine(variant)">
-                    {{ savingVariantLine ? '...' : 'إضافة' }}
+                    {{ savingVariantLine ? '...' : t('backoffice.diningRecipes.add') }}
                   </AppButton>
                 </div>
               </div>
@@ -554,17 +557,17 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
 
           <div class="flex items-end gap-2">
             <div class="flex-1">
-              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">اسم المتغيّر</label>
-              <input v-model="newVariantName" type="text" placeholder="كبير"
+              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.diningRecipes.variantNameLabel') }}</label>
+              <input v-model="newVariantName" type="text" :placeholder="t('backoffice.diningRecipes.variantNamePlaceholder')"
                 class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>
             <div class="w-28">
-              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">السعر</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.diningRecipes.priceLabel') }}</label>
               <input v-model="newVariantPrice" type="number" step="0.01" min="0.01" placeholder="35.00"
                 class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>
             <AppButton variant="primary" size="sm" :disabled="savingVariant" @click="addVariant">
-              {{ savingVariant ? '...' : 'إضافة متغيّر' }}
+              {{ savingVariant ? '...' : t('backoffice.diningRecipes.addVariant') }}
             </AppButton>
           </div>
         </div>
