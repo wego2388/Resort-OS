@@ -70,6 +70,13 @@ failure**؛ Dining المركزة **69 + 36 + 2 passed**؛ frontend **69/69**؛ 
 تشغيل concurrency على PostgreSQL في بيئة ما قبل النشر. لم يحدث commit أو push
 أو deploy من worktree المراجعة.
 
+**تحديث تحقق 22 يوليو 2026:** أُعيد تشغيل التزامن الحي على PostgreSQL 16
+داخل قواعد throwaway: **13/13 passed**، وملفات Dining/Finance/Refund المركزة
+**218/218 passed**. الحزمة الكاملة بعد حماية تهيئة حسابات الإنتاج: **2084
+collected، 2051 passed + 33 skipped، صفر failure**. شرط التزامن قبل Gate 9
+مغلق الآن؛ تبقى اختبارات الهاتف/QR المطبوع والشبكة والـrestore/rollback
+والمراقبة كأدلة تشغيلية ميدانية.
+
 ---
 
 ## 🟩 Gate 8 — QR الآمن وGuest Service (2026-07-22)

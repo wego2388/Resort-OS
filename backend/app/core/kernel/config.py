@@ -75,4 +75,11 @@ class CoreSettings(BaseSettings):
     # Enable in lockstep with the frontend collecting the code at login.
     LOGIN_2FA_ENFORCED: bool = False
 
+    # Public self-registration is intentionally opt-in. Production staff
+    # accounts are provisioned by a super-admin through the protected control
+    # plane; leaving this false removes an unnecessary anonymous account-
+    # creation surface while preserving explicit customer registration for
+    # deployments that genuinely need it.
+    PUBLIC_REGISTRATION_ENABLED: bool = False
+
     model_config = {"extra": "allow", "env_file": ".env"}

@@ -33,7 +33,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="$ROOT/backend/.env"
+ENV_FILE="${ENV_FILE:-$ROOT/backend/.env}"
 BACKUP_DIR="${BACKUP_DIR:-$ROOT/backups}"
 RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
@@ -53,10 +53,10 @@ BACKUP_RCLONE_CONFIG="${BACKUP_RCLONE_CONFIG:-$(grep -E '^BACKUP_RCLONE_CONFIG='
 DATABASE_URL="$(grep -E '^DATABASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
 [[ -n "$DATABASE_URL" ]] || { echo "✗ DATABASE_URL not set in $ENV_FILE" >&2; exit 1; }
 
-read -r DB_USER DB_PASS DB_HOST DB_PORT DB_NAME < <(python3 -c "
-import sys
+read -r DB_USER DB_PASS DB_HOST DB_PORT DB_NAME < <(RESORT_DATABASE_URL="$DATABASE_URL" python3 -c "
+import os
 from urllib.parse import urlparse
-u = urlparse('$DATABASE_URL'.replace('postgresql+psycopg://', 'postgresql://'))
+u = urlparse(os.environ['RESORT_DATABASE_URL'].replace('postgresql+psycopg://', 'postgresql://'))
 print(u.username, u.password, u.hostname, u.port or 5432, u.path.lstrip('/'))
 ")
 
@@ -83,6 +83,12 @@ if ! command -v pg_dump &>/dev/null; then
     exit 1
   fi
 else
+  # Production DATABASE_URL uses the Compose service hostname internally.
+  # The host reaches the deliberately loopback-only published port instead.
+  if [[ "$DB_HOST" == "db_postgres" ]]; then
+    DB_HOST="127.0.0.1"
+    DB_PORT="5436"
+  fi
   PGPASSWORD="$DB_PASS" pg_dump \
     -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" \
     -Fc --no-owner --no-privileges \

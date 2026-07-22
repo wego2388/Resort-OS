@@ -29,6 +29,7 @@ describe('reference routes are registered', () => {
     '/login',
     '/admin/settings',
     '/admin/permissions',
+    '/admin/users',
     '/account/sessions',
     '/portal/profile',
     '/pos/dining',

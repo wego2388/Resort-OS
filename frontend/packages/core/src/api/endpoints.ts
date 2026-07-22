@@ -386,6 +386,10 @@ export const ENDPOINTS = {
     catalog:    '/api/v1/permissions/catalog',
     users:      '/api/v1/users',
   },
+  users: {
+    list: '/api/v1/users',
+    role: (id: number) => `/api/v1/users/${id}/role`,
+  },
   finance_eta: {
     invoices: '/api/v1/finance/eta/invoices',
   },

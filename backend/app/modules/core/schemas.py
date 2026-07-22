@@ -13,7 +13,7 @@ Pydantic v2 schemas للـ Core Module
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -236,6 +236,63 @@ class UserRead(BaseModel):
         # so the frontend can apply it directly; legacy null/public values
         # normalize to the safe default rather than leaking to the UI.
         return normalize_staff_language(v)
+
+
+class StaffUserCreate(BaseModel):
+    """Super-admin-only staff provisioning request.
+
+    ``extra=forbid`` prevents role-adjacent mass assignment. In particular,
+    callers cannot supply ``is_active``, password hashes, 2FA state, or a
+    super-admin role.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    email: str = Field(..., min_length=3, max_length=320)
+    full_name: str = Field(..., min_length=3, max_length=255)
+    phone: Optional[str] = Field(None, max_length=50)
+    employee_id: Optional[int] = Field(None, gt=0)
+    role: Literal[
+        "admin", "accountant", "hr_manager", "manager", "supervisor",
+        "receptionist", "cashier", "waiter", "chef", "kitchen", "employee",
+    ]
+    preferred_language: Literal["ar", "en"] = "ar"
+    reason: str = Field(..., max_length=_REASON_MAX_LENGTH)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        from app.core.kernel.security import validate_email_format  # noqa: PLC0415
+
+        normalized = value.strip().casefold()
+        if not validate_email_format(normalized):
+            raise ValueError("صيغة البريد الإلكتروني غير صحيحة")
+        return normalized
+
+    @field_validator("full_name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("الاسم الكامل مطلوب")
+        return normalized
+
+    @field_validator("phone")
+    @classmethod
+    def _normalize_phone(cls, value: Optional[str]) -> Optional[str]:
+        normalized = (value or "").strip()
+        return normalized or None
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_must_be_real_text(cls, value: str) -> str:
+        return _validate_reason(value)
+
+
+class StaffUserProvisioned(BaseModel):
+    user: UserRead
+    temporary_password: str
+    enrollment_token: str
+    enrollment_expires_at: datetime
 
 
 class UserRoleUpdate(BaseModel):

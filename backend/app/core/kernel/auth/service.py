@@ -17,7 +17,7 @@ from typing import Optional
 import pyotp
 from fastapi import HTTPException, status
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.core.kernel.correlation import get_request_id
@@ -63,6 +63,14 @@ _RESET_TOKEN_PREFIX = "reset_"
 _SAFE_ENVIRONMENTS = {"development", "test", "testing"}
 _RECOVERY_CODE_BYTES = 15  # 120 bits; rendered as 24 base32 characters.
 _RECOVERY_CODE_COUNT = 8
+
+# A compromised web super-admin session must never be able to mint another
+# super-admin. That role remains CLI-only through app.admin_bootstrap. Public
+# customer/guest identities are also intentionally outside staff provisioning.
+STAFF_PROVISIONABLE_ROLES = frozenset({
+    "admin", "accountant", "hr_manager", "manager", "supervisor",
+    "receptionist", "cashier", "waiter", "chef", "kitchen", "employee",
+})
 
 
 class BaseService:
@@ -1536,6 +1544,123 @@ class AuthService(BaseService):
             "user_id": user.id,
             "email": normalized_email,
             "full_name": user.full_name,
+            "temporary_password": temporary_password,
+            "enrollment_token": enrollment_token,
+            "enrollment_expires_at": expires_at,
+        }
+
+    def provision_staff_account(
+        self,
+        *,
+        email: str,
+        full_name: str,
+        phone: Optional[str],
+        employee_id: Optional[int],
+        role: str,
+        preferred_language: str,
+        actor_id: int,
+        reason: str,
+        step_up_public_reference: str,
+        assurance_method: str,
+    ) -> dict:
+        """Provision one staff identity after super-admin step-up.
+
+        The returned temporary password and enrollment token are one-time
+        response values. Only password/token hashes are stored. Super-admin
+        creation deliberately remains out-of-band in ``app.admin_bootstrap``.
+        """
+        from app.modules.core import crud  # noqa: PLC0415
+        from app.modules.core.models import AuditLog  # noqa: PLC0415
+
+        normalized_email = (email or "").strip().casefold()
+        normalized_name = (full_name or "").strip()
+        normalized_phone = (phone or "").strip() or None
+        normalized_reason = (reason or "").strip()
+
+        if not validate_email_format(normalized_email):
+            raise ValueError("A valid email address is required")
+        if len(normalized_name) < 3:
+            raise ValueError("A full name is required")
+        if role not in STAFF_PROVISIONABLE_ROLES:
+            raise ValueError("This role cannot be provisioned through the web control plane")
+        if preferred_language not in {"ar", "en"}:
+            raise ValueError("Unsupported staff language")
+        if len(normalized_reason) < 3:
+            raise ValueError("A reason is required")
+
+        # Serialize privileged control-plane mutations and re-check the actor
+        # under the same ordered lock used by Gate 2A role changes.
+        active_super_admins = crud.lock_active_super_admins(self.db)
+        if actor_id not in {user.id for user in active_super_admins}:
+            raise PermissionError("Your super-admin privileges changed; reload and try again")
+
+        existing = self.db.query(self.repo.model).filter(
+            func.lower(self.repo.model.email) == normalized_email,
+        ).with_for_update().first()
+        if existing is not None:
+            raise ValueError("An account with this email already exists")
+
+        temporary_password = self._new_temporary_password()
+        enrollment_token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            minutes=self.settings.TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES,
+        )
+        user = self.repo.model(
+            email=normalized_email,
+            password_hash=get_password_hash(temporary_password),
+            full_name=normalized_name,
+            phone=normalized_phone,
+            role=role,
+            is_active=True,
+            preferred_language=preferred_language,
+            must_change_password=True,
+            two_factor_enabled=False,
+            two_factor_bootstrap_required=True,
+            two_factor_enrollment_token_hash=self._hash_token(enrollment_token),
+            two_factor_enrollment_expires_at=expires_at,
+        )
+        self.db.add(user)
+        self.db.flush()
+        if employee_id is not None:
+            from app.modules.hr.models import Employee  # noqa: PLC0415
+
+            employee = self.db.query(Employee).filter(
+                Employee.id == employee_id,
+            ).with_for_update().first()
+            if employee is None:
+                raise ValueError("The selected employee record does not exist")
+            if employee.user_id is not None:
+                raise ValueError("The selected employee record is already linked to an account")
+            employee.user_id = user.id
+        self.db.add(AuditLog(
+            user_id=actor_id,
+            branch_id=None,
+            action="staff_account_provisioned",
+            entity_type="user",
+            entity_id=user.id,
+            old_data=None,
+            new_data=json.dumps({
+                "email": normalized_email,
+                "full_name": normalized_name,
+                "phone": normalized_phone,
+                "employee_id": employee_id,
+                "role": role,
+                "preferred_language": preferred_language,
+                "reason": normalized_reason,
+                "step_up_public_reference": step_up_public_reference,
+                "assurance_method": assurance_method,
+                "enrollment_expires_at": expires_at.isoformat(),
+                "requires_password_change": True,
+            }, ensure_ascii=False, sort_keys=True),
+        ))
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self.db.refresh(user)
+        return {
+            "user": user,
             "temporary_password": temporary_password,
             "enrollment_token": enrollment_token,
             "enrollment_expires_at": expires_at,

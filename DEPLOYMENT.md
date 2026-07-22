@@ -49,13 +49,13 @@ cd resort-os
 > arise (there's no dev stack to collide with), but the pin costs nothing and
 > stays as a permanent guard rail.
 
-## 3. Create `backend/.env` with real production secrets
+## 3. Create `backend/.env.prod` with real production secrets
 
 ```bash
-cp backend/.env.example backend/.env
+cp backend/.env.example backend/.env.prod
 ```
 
-Generate real values for the secrets below and edit them into `backend/.env`
+Generate real values for the secrets below and edit them into `backend/.env.prod`
 (never commit this file — it's gitignored):
 
 ```bash
@@ -84,6 +84,8 @@ RESORT_NAME=El Kheima Beach
 # this flag or a valid FIELD_ENCRYPTION_KEY is missing.
 LOGIN_2FA_ENFORCED=true
 TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES=30
+# Anonymous customer registration is off unless a deployment explicitly needs it.
+PUBLIC_REGISTRATION_ENABLED=false
 
 # Optional but recommended for production — see §9 and §10
 SENTRY_DSN=https://xxxx@oXXXXXX.ingest.sentry.io/XXXXXXX
@@ -182,6 +184,27 @@ The user-visible onboarding sequence is:
 If the enrollment token expires, run `recover` again. Do not disable
 `LOGIN_2FA_ENFORCED` as a recovery shortcut.
 
+After the named super-admin has completed password replacement and 2FA, use
+**Settings → Staff Accounts** to create ordinary staff identities. Creation
+requires a fresh password + 2FA step-up and returns a random temporary
+password plus a separate enrollment token once; neither secret is stored in
+browser storage. Optionally select an existing HR employee record during
+creation so attendance, leave, payroll, and profile self-service resolve to
+the same login. The web control plane cannot create a `super_admin`; create a
+second named super-admin only with the local bootstrap command above.
+
+After at least one named super-admin has completed password replacement and
+2FA and successfully signed in, disable the documented seed identities:
+
+```bash
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml \
+  exec backend python -m app.admin_bootstrap disable-legacy-demo
+```
+
+The command refuses to run before that replacement account is fully enrolled,
+requires an exact interactive confirmation, revokes demo sessions, and writes
+one audit event.
+
 ## 6. DNS
 
 This deployment routes by **subdomain**, not path, because neither of the two
@@ -236,6 +259,52 @@ standard) and have it reload the `nginx` container after renewal:
   "docker compose -f /opt/wegosharm/resort-os/docker-compose.prod.yml exec -T nginx nginx -s reload"
 ```
 
+### 7A. Publicly trusted TLS when only the VPS IP is available
+
+Let's Encrypt supports short-lived IP certificates. Certbot 5.4 or newer is
+required for the webroot/IP flow. These certificates last about six days, so
+the included twice-daily renewal timer is mandatory rather than optional.
+
+Start the HTTP edge first so the ACME challenge path is reachable:
+
+```bash
+sudo install -d -m 0755 /var/www/certbot /etc/letsencrypt
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-only.yml up -d nginx
+
+sudo snap install core
+sudo snap refresh core
+sudo snap install --classic certbot
+/snap/bin/certbot --version   # must be 5.4+
+
+sudo /snap/bin/certbot certonly \
+  --webroot --webroot-path /var/www/certbot \
+  --preferred-profile shortlived \
+  --ip-address 187.124.170.249 \
+  --cert-name 187.124.170.249 \
+  --email theagaty@gmail.com --agree-tos --non-interactive
+```
+
+Install renewal and switch the edge to TLS:
+
+```bash
+sudo install -m 0755 deploy/certbot/reload-resort-os-nginx.sh \
+  /etc/letsencrypt/renewal-hooks/deploy/reload-resort-os-nginx.sh
+sudo install -m 0644 deploy/systemd/resort-os-certbot-renew.service \
+  deploy/systemd/resort-os-certbot-renew.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now resort-os-certbot-renew.timer
+sudo ufw allow 8443/tcp
+
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml up -d nginx
+curl -fsS https://187.124.170.249/health
+curl -fsSI https://187.124.170.249:8443/
+sudo /snap/bin/certbot renew --dry-run
+```
+
+The staff app is `https://187.124.170.249/`; the guest/public app is
+`https://187.124.170.249:8443/`. Set `PUBLIC_SITE_URL` to the latter in
+`backend/.env.prod`. Port 8081 remains only as an HTTP redirect to 8443.
+
 ## 8. Health check verification
 
 ```bash
@@ -252,7 +321,7 @@ logs backend`, confirm `alembic upgrade head` succeeded (step 5), and confirm
 
 ## 9. Error tracking (Sentry)
 
-Set `SENTRY_DSN` in `backend/.env` (get one free at sentry.io — a new
+Set `SENTRY_DSN` in `backend/.env.prod` (get one free at sentry.io — a new
 project of type "FastAPI"/"Python") and restart the backend:
 
 ```bash
@@ -271,14 +340,14 @@ user reports them. Setting this is cheap and worth doing before go-live.
 `scripts/backup_db.sh` and `scripts/restore_db.sh` (repo root) run directly
 against Postgres on `127.0.0.1:5436` (published to the host by both
 docker-compose.yml and docker-compose.prod.yml — see the note in §3) using
-the same `DATABASE_URL` from `backend/.env` the app itself reads, so there's
+the same `DATABASE_URL` from the environment file the app itself reads, so there's
 nothing extra to configure.
 
 **Manual test run** (do this once after first deploy to confirm it actually
 works on this server, not just in theory):
 
 ```bash
-./scripts/backup_db.sh
+ENV_FILE=backend/.env.prod ./scripts/backup_db.sh
 # → backups/resort_os_<timestamp>.dump
 
 # Prove it restores cleanly, into a throwaway DB (never overwrites anything real):
@@ -319,7 +388,7 @@ Backups land in `backups/` at the repo root — gitignored.
 **Offsite sync** (wagdy.md T-04) — for real disaster recovery (the server
 itself dying, not just the database), `backup_db.sh` can also push every
 fresh dump to S3/Backblaze B2/any `rclone`-supported remote in the same run.
-Set in `backend/.env` (unset by default — the local-only flow above works
+Set in `backend/.env.prod` (unset by default — the local-only flow above works
 exactly the same either way):
 
 ```bash
@@ -335,12 +404,11 @@ rebuild) — no separate disaster-recovery procedure to remember.
 ## Updating / redeploying
 
 ```bash
-cd /opt/wegosharm/resort-os && git pull
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml exec backend alembic upgrade head
+cd /opt/wegosharm/resort-os
+DEPLOY_BRANCH=release/vps-ready-2026-07-22 bash scripts/deploy.sh
 ```
 
-Migrations are deliberately a manual step (not baked into the container's
-start command) so a routine restart never silently re-runs them. Consider
-running `./scripts/backup_db.sh` manually right before a redeploy that
-includes a migration, as a point-in-time safety net beyond the nightly timer.
+The deployment script refuses a dirty worktree, takes a point-in-time backup,
+fast-forwards only the selected branch, builds, applies Alembic migrations
+before replacing services, selects IP TLS automatically when its certificate
+exists, and fails if the backend health check does not recover.
