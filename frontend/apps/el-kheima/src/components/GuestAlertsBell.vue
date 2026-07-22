@@ -1,33 +1,36 @@
 <script setup lang="ts">
 /**
- * GuestAlertsBell — بيانات حية لتنبيهات الضيوف (نادِ الجرسون / هات الفاتورة)
+ * GuestAlertsBell — طابور حي لطلبات الضيوف الأربعة في Gate 8
  * في هيدر FieldLayout (يغطي /pos/* و/waiter/* — بالظبط الشاشات اللي النادل/
- * الكاشير شغالين عليها طول الوقت). قبل ده: الـ backend كان عنده قناة تنبيه
- * كاملة (POST /public/alerts + WebSocket) بس مفيش زر واحد في الفرونت إند
- * يستخدمها — نفس فئة باج "الموديل والـ API موجودين، الفرونت إند صفر".
+ * الكاشير شغالين عليها طول الوقت). الـWebSocket هو المسار السريع، مع polling
+ * دوري حتى لا يضيع تحديث لو انقطع الاتصال أو أُغلق طلب فاتورة أثناء الدفع.
  *
  * يستخدم:
- *   GET   /api/v1/alerts                (تحميل أولي — fallback لو الـ WS اتقطع)
- *   PATCH /api/v1/alerts/{id}/status    (تأكيد استلام / إغلاق)
+ *   GET   /api/v1/alerts                (تحميل أولي + polling fallback)
+ *   PATCH /api/v1/alerts/{id}/status    (استلام / وصول / إغلاق)
  *   WS    /api/v1/ws/alerts/{branch_id} (بث لحظي — نفس نمط KDS)
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, useResortWebSocket, ENDPOINTS } from '@resort-os/core'
 import { AppBadge, useToast } from '@resort-os/ui'
 
 const auth = useAuthStore()
 const toast = useToast()
-const { t } = useI18n()
-const branchId = computed(() => auth.branchId ?? 1)
+const { locale, t } = useI18n()
+const branchId = computed(() => auth.branchId ?? 0)
 
 interface GuestAlert {
   id: number
   context_type: string
   context_id: number
+  location_label: string | null
+  outlet_name: string | null
+  outlet_name_ar: string | null
   alert_type: string
   message: string | null
-  status: 'open' | 'acknowledged' | 'resolved'
+  status: 'open' | 'acknowledged' | 'arrived' | 'resolved'
+  assigned_to: number | null
   created_at: string
 }
 
@@ -39,30 +42,25 @@ const updatingId = ref<number | null>(null)
 // المُصدَر دلوقتي من apps/public's OrderView.vue — restaurant_table/
 // cafe_table باقيين هنا بس عشان أي تنبيه تاريخي قديم لسه في الداتابيز
 // يفضل يترجم صح، مش لأنهم بيتصدروا تاني.
-const CONTEXT_KEY: Record<string, string> = {
-  dining_table: 'diningTable',
-  restaurant_table: 'restaurantTable',
-  cafe_table: 'cafeTable',
-  beach_location: 'beachLocation',
-  room: 'room',
-  other: 'other',
-}
-
 const ALERT_UI: Record<string, { icon: string; key: string }> = {
-  call_waiter: { icon: '🧑‍🍳', key: 'callWaiter' },
-  request_bill: { icon: '🧾', key: 'requestBill' },
-  other: { icon: '❗', key: 'other' },
+  call_waiter:   { icon: '🧑‍🍳', key: 'callWaiter' },
+  ready_to_order:{ icon: '🍽️', key: 'readyToOrder' },
+  assistance:    { icon: '🙋', key: 'assistance' },
+  request_bill:  { icon: '🧾', key: 'requestBill' },
+  other:         { icon: '❗', key: 'other' },
 }
 
 function contextLabel(a: GuestAlert) {
-  const key = CONTEXT_KEY[a.context_type]
-  const label = key ? t(`backoffice.guestAlerts.context.${key}`) : a.context_type
-  return `${label} #${a.context_id}`
+  const outlet = locale.value === 'ar' ? (a.outlet_name_ar ?? a.outlet_name) : a.outlet_name
+  return [a.location_label ?? a.context_type, outlet].filter(Boolean).join(' · ')
 }
 
 function alertUi(a: GuestAlert) {
-  const value = ALERT_UI[a.alert_type] ?? ALERT_UI.other
-  return { icon: value.icon, label: t(`backoffice.guestAlerts.type.${value.key}`) }
+  return ALERT_UI[a.alert_type] ?? ALERT_UI.other
+}
+
+function alertLabel(a: GuestAlert) {
+  return t(`backoffice.guestAlerts.types.${alertUi(a).key}`)
 }
 
 function timeAgo(iso: string) {
@@ -73,27 +71,28 @@ function timeAgo(iso: string) {
 }
 
 async function fetchAlerts() {
+  if (!branchId.value) return
   try {
     const { data } = await api.get(ENDPOINTS.core.alerts, { params: { branch_id: branchId.value, size: 50 } })
     alerts.value = data.items ?? []
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.guestAlerts.loadFailed'))
+    toast.error(e?.response?.data?.detail ?? t('backoffice.guestAlerts.loadError'))
   }
 }
 
-async function setStatus(alert: GuestAlert, status: 'acknowledged' | 'resolved') {
+async function setStatus(alert: GuestAlert, status: 'acknowledged' | 'arrived' | 'resolved') {
   updatingId.value = alert.id
   try {
     const { data } = await api.patch(ENDPOINTS.core.alertStatus(alert.id), { status })
     if (status === 'resolved') {
       alerts.value = alerts.value.filter(a => a.id !== alert.id)
-      toast.success(t('backoffice.guestAlerts.resolvedSuccess'))
+      toast.success(t('backoffice.guestAlerts.closed'))
     } else {
       const idx = alerts.value.findIndex(a => a.id === alert.id)
       if (idx >= 0) alerts.value[idx] = data
     }
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.guestAlerts.updateFailed'))
+    toast.error(e?.response?.data?.detail ?? t('backoffice.guestAlerts.updateError'))
   } finally {
     updatingId.value = null
   }
@@ -109,7 +108,7 @@ const { onMessage } = useResortWebSocket(
 onMessage((data: any) => {
   if (data?.type === 'new_alert') {
     alerts.value.unshift(data.alert)
-    toast.info(`${alertUi(data.alert).icon} ${alertUi(data.alert).label} — ${contextLabel(data.alert)}`)
+    toast.info(`${alertUi(data.alert).icon} ${alertLabel(data.alert)} — ${contextLabel(data.alert)}`)
   } else if (data?.type === 'alert_status_changed') {
     const a = data.alert as GuestAlert
     if (a.status === 'resolved') {
@@ -121,24 +120,31 @@ onMessage((data: any) => {
   }
 })
 
-onMounted(fetchAlerts)
+let fallbackTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  fetchAlerts()
+  fallbackTimer = setInterval(fetchAlerts, 20_000)
+})
+onUnmounted(() => {
+  if (fallbackTimer) clearInterval(fallbackTimer)
+})
 </script>
 
 <template>
   <div class="relative">
     <button
       type="button"
-      :aria-label="t('backoffice.guestAlerts.buttonLabel', { count: alerts.length })"
+      :aria-label="t('backoffice.guestAlerts.titleCount', { count: alerts.length })"
       :aria-expanded="panelOpen"
       aria-haspopup="dialog"
       @click="panelOpen = !panelOpen"
       class="relative flex h-11 w-11 items-center justify-center rounded-xl text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
-      :title="t('backoffice.guestAlerts.buttonLabel', { count: alerts.length })"
+      :title="t('backoffice.guestAlerts.titleCount', { count: alerts.length })"
     >
       <span class="text-lg" :class="alerts.length ? 'animate-pulse' : ''">🔔</span>
       <span
         v-if="alerts.length > 0"
-        class="absolute -start-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-black text-white"
+        class="absolute -top-0.5 -start-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 rounded-full text-white text-[10px] font-black flex items-center justify-center"
       >{{ alerts.length }}</span>
     </button>
 
@@ -146,40 +152,50 @@ onMounted(fetchAlerts)
       <div v-if="panelOpen" class="fixed inset-0 z-40" @click="panelOpen = false" />
       <div
         v-if="panelOpen"
-        class="fixed inset-x-2 top-14 z-50 flex max-h-[70vh] w-auto flex-col rounded-2xl border border-stone-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900 sm:absolute sm:inset-x-auto sm:end-0 sm:top-auto sm:mt-2 sm:w-80"
+        class="fixed sm:absolute inset-x-2 sm:inset-x-auto sm:end-0 top-14 sm:top-auto sm:mt-2 w-auto sm:w-80 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 max-h-[70vh] flex flex-col dark:border-gray-700 dark:bg-gray-900"
+        :dir="locale === 'ar' ? 'rtl' : 'ltr'"
         role="dialog"
         :aria-label="t('backoffice.guestAlerts.title')"
       >
-        <div class="flex items-center justify-between border-b border-stone-100 px-4 py-3 font-bold text-gray-900 dark:border-gray-700 dark:text-gray-100">
+        <div class="px-4 py-3 border-b border-stone-100 font-bold text-gray-900 flex items-center justify-between dark:border-gray-700 dark:text-gray-100">
           <span>{{ t('backoffice.guestAlerts.title') }}</span>
           <AppBadge v-if="alerts.length" variant="danger" size="sm">{{ alerts.length }}</AppBadge>
         </div>
 
         <div class="overflow-y-auto flex-1">
-          <div v-if="alerts.length === 0" class="py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+          <div v-if="alerts.length === 0" class="text-center text-gray-500 text-sm py-10 dark:text-gray-400">
             {{ t('backoffice.guestAlerts.empty') }} 👍
           </div>
           <div
             v-for="a in alerts" :key="a.id"
-            class="flex items-start gap-2.5 border-b border-stone-100 px-4 py-3 dark:border-gray-800"
+            class="px-4 py-3 border-b border-stone-100 flex items-start gap-2.5 dark:border-gray-800"
           >
             <span class="text-xl flex-shrink-0">{{ alertUi(a).icon }}</span>
             <div class="flex-1 min-w-0">
-              <div class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ alertUi(a).label }}</div>
+              <div class="font-semibold text-sm text-gray-900 dark:text-gray-100">{{ alertLabel(a) }}</div>
               <div class="text-xs text-gray-500 dark:text-gray-400">{{ contextLabel(a) }} · {{ timeAgo(a.created_at) }}</div>
-              <div v-if="a.message" class="mt-0.5 text-xs italic text-gray-600 dark:text-gray-300">“{{ a.message }}”</div>
+              <div v-if="a.message" class="text-xs text-gray-600 mt-0.5 italic dark:text-gray-300">"{{ a.message }}"</div>
               <div class="flex gap-1.5 mt-1.5">
                 <button
+                  type="button"
                   v-if="a.status === 'open'"
                   :disabled="updatingId === a.id"
                   @click="setStatus(a, 'acknowledged')"
                   class="min-h-11 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 disabled:opacity-50 dark:bg-amber-950/40 dark:text-amber-300"
                 >{{ t('backoffice.guestAlerts.acknowledge') }}</button>
                 <button
+                  type="button"
+                  v-if="a.status === 'acknowledged'"
+                  :disabled="updatingId === a.id"
+                  @click="setStatus(a, 'arrived')"
+                  class="min-h-11 rounded-xl bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 disabled:opacity-50 dark:bg-blue-950/40 dark:text-blue-300"
+                >{{ t('backoffice.guestAlerts.arrived') }}</button>
+                <button
+                  type="button"
                   :disabled="updatingId === a.id"
                   @click="setStatus(a, 'resolved')"
                   class="min-h-11 rounded-xl bg-green-50 px-3 py-2 text-xs font-bold text-green-700 disabled:opacity-50 dark:bg-green-950/40 dark:text-green-300"
-                >{{ t('backoffice.guestAlerts.resolve') }} ✓</button>
+                >{{ t('backoffice.guestAlerts.done') }} ✓</button>
               </div>
             </div>
           </div>

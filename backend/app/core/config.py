@@ -81,24 +81,16 @@ class Settings(CoreSettings):
     # ── Field Encryption (national_id, passport) ──────────────────────
     FIELD_ENCRYPTION_KEY: Optional[str] = None
 
-    # ── Gate 1 containment kill switches (جولة مراجعة Codex الثالثة) ───
-    # AGENTS.md بيمنع صراحةً الاعتماد على core.Setting (key/value حر في
-    # الداتابيز) كبوابة أمان لوحدها. الطلب الذاتي وتنبيهات الضيف كلاهما
-    # مسارات غير آمنة قبل Gate 8 (Service Location/QR token/guest session
-    # — راجع docs/decisions/0001-qr-guest-service-mode.md) — لازم الاتنين
-    # معًا: الـflag المكتوب هنا (deployment-level، مش قابل للتغيير من
-    # الـAPI) + core.Setting الخاص بالفرع (dining.self_order_enabled /
-    # core.guest_alerts_enabled). أي واحد بس متفعّل مش كافي. راجع
-    # _validate_containment_switches تحت — production ترفض تشغّل لو أي
-    # واحد منهم True، مش تحذير بس.
+    # ── Gate 8 guest-service switches ─────────────────────────────────
+    # Both layers remain required: a deployment flag plus the branch
+    # setting.  Gate 8 binds public mutations to a short-lived session and
+    # server-derived location, so production may now enable either feature
+    # deliberately; defaults remain fail-closed.
     DINING_SELF_ORDER_ENABLED: bool = False
     GUEST_ALERTS_ENABLED: bool = False
-    # Gate 8 Phase 1 (2026-07-21) — how long an identical unresolved guest
-    # request (same branch+location+alert_type) blocks a duplicate instead
-    # of creating a second row. Guards against a guest repeatedly tapping
-    # "call waiter" flooding the staff queue with duplicates of the same
-    # request — see core.services.create_guest_alert.
-    GUEST_ALERT_COOLDOWN_SECONDS: int = 120
+    # Browser capability lifetime and maximum service-request queue age.
+    GUEST_SESSION_TTL_MINUTES: int = 480
+    GUEST_REQUEST_TTL_MINUTES: int = 120
 
     # ── E-Invoice Egypt (ETA) ─────────────────────────────────────────
     ETA_ENABLED: bool = False
@@ -172,38 +164,6 @@ class Settings(CoreSettings):
                 raise ValueError(msg)
             import warnings  # noqa: PLC0415
             warnings.warn(f"[config] {msg}", stacklevel=2)
-        return self
-
-    @model_validator(mode="after")
-    def _validate_containment_switches(self) -> "Settings":
-        """Gate 1 containment: DINING_SELF_ORDER_ENABLED/GUEST_ALERTS_ENABLED
-        لازم يفضلوا False في أي بيئة غير معروفة صراحةً كآمنة — فشل صريح
-        وقت الإقلاع، مش قبول صامت.
-
-        **تصحيح (جولة مراجعة Codex الرابعة): fail-closed حقيقي، مش
-        blacklist.** النسخة الأولى كانت بترفض `ENVIRONMENT == "production"`
-        بس (مطابقة حرفية) — يعني "Production" بحرف كبير، "staging"، أو أي
-        قيمة تانية غير متوقعة (typo، بيئة جديدة محدش عرّفها هنا) كانت
-        بتعدّي من غير أي فحص خالص. دلوقتي allow-list صريح
-        (development/test/testing بعد strip().lower()) هو الوحيد المسموح
-        فيه تفعيل أي من الاثنين — أي حاجة تانية (بما فيها production بأي
-        حروف، staging، أو قيمة غير معروفة) بترفض لو أي واحد منهم True."""
-        _SAFE_ENVIRONMENTS = {"development", "test", "testing"}
-        normalized_env = (self.ENVIRONMENT or "").strip().lower()
-        if normalized_env not in _SAFE_ENVIRONMENTS:
-            unsafe = [
-                name for name, value in (
-                    ("DINING_SELF_ORDER_ENABLED", self.DINING_SELF_ORDER_ENABLED),
-                    ("GUEST_ALERTS_ENABLED", self.GUEST_ALERTS_ENABLED),
-                ) if value
-            ]
-            if unsafe:
-                raise ValueError(
-                    "لا يجوز تفعيل " + "، ".join(unsafe) + f" في بيئة '{self.ENVIRONMENT}' "
-                    "قبل اكتمال Gate 8 (Service Location/QR token/guest session) — "
-                    "مسموح فقط في development/test/testing. راجع "
-                    "docs/decisions/0001-qr-guest-service-mode.md"
-                )
         return self
 
     @model_validator(mode="after")

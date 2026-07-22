@@ -504,6 +504,8 @@ def create_order(
     data: OrderCreate,
     waiter_id: Optional[int] = None,
     hold: bool = False,
+    guest_session_id: Optional[int] = None,
+    guest_public_reference: Optional[str] = None,
 ) -> DiningOrder:
     outlet = _get_outlet_or_404(db, data.outlet_id)
     if outlet.branch_id != branch_id:
@@ -604,7 +606,24 @@ def create_order(
         discount_amount=discount_amount,
         delivery_fee=delivery_fee,
         created_by=waiter_id,
+        guest_session_id=guest_session_id,
+        guest_public_reference=guest_public_reference,
     )
+
+    if guest_session_id is not None:
+        from app.modules.core import crud as core_crud  # noqa: PLC0415
+        from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+        core_crud.create_audit_log(db, AuditLogCreate(
+            branch_id=branch_id,
+            action="guest_order_created",
+            entity_type="dining_order",
+            entity_id=order.id,
+            new_data=json.dumps({
+                "public_reference": guest_public_reference,
+                "outlet_id": outlet.id,
+                "table_id": data.table_id,
+            }, ensure_ascii=False, sort_keys=True),
+        ))
 
     if data.table_id and data.order_type == "dine_in":
         table = crud.get_table(db, data.table_id)
@@ -625,6 +644,57 @@ def create_order(
     return order
 
 
+def _create_kitchen_tickets_for_items(
+    db: Session,
+    order: DiningOrder,
+    order_items: list,
+) -> int:
+    """Create one KDS ticket per station for the supplied, not-yet-ticketed lines."""
+    if not order_items:
+        return 0
+
+    menu_item_ids = {item.item_id for item in order_items}
+    station_by_item = {
+        menu_item.id: menu_item.station
+        for menu_item in db.query(DiningItem).filter(DiningItem.id.in_(menu_item_ids)).all()
+    } if menu_item_ids else {}
+
+    items_by_station: dict[str, list[dict]] = {}
+    for order_item in order_items:
+        station = station_by_item.get(order_item.item_id, "hot")
+        items_by_station.setdefault(station, []).append({
+            "order_item_id": order_item.id,
+            "name": order_item.name,
+            "quantity": order_item.quantity,
+            "notes": order_item.notes,
+        })
+
+    for station, items_snapshot in items_by_station.items():
+        crud.create_kitchen_ticket(
+            db,
+            order_id=order.id,
+            branch_id=order.branch_id,
+            outlet_id=order.outlet_id,
+            station=station,
+            items_snapshot=items_snapshot,
+        )
+    return len(items_by_station)
+
+
+def _ensure_kitchen_tickets_for_order(db: Session, order: DiningOrder) -> int:
+    """Ticket every live line exactly once while preserving existing KDS state."""
+    ticketed_item_ids = {
+        entry.get("order_item_id")
+        for ticket in crud.list_tickets_for_order(db, order.id)
+        for entry in ticket.items_snapshot
+    }
+    missing_items = [
+        item for item in crud.list_active_order_items(db, order.id)
+        if item.id not in ticketed_item_ids
+    ]
+    return _create_kitchen_tickets_for_items(db, order, missing_items)
+
+
 def add_items_to_order(db: Session, order_id: int, items: list, added_by: Optional[int] = None) -> DiningOrder:
     """راجع restaurant.services.add_items_to_order — نفس المنطق بالظبط.
     Gate 4C: كل صنف جديد بيحفظ مين أضافه (added_by) للتدقيق."""
@@ -638,10 +708,15 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
 
     outlet = crud.get_outlet(db, order.outlet_id)
     added_subtotal = Decimal("0")
+    new_items = []
     for item_req in items:
         item = crud.get_item(db, item_req.item_id)
         if not item:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
+        if item.branch_id != order.branch_id or item.outlet_id != order.outlet_id:
+            raise ValueError(
+                f"الصنف {item_req.item_id} لا ينتمي لنفس فرع ومنفذ الطلب"
+            )
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
         _check_item_available_now(item)
@@ -664,6 +739,7 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
         )
         db.add(new_item)
         db.flush()
+        new_items.append(new_item)
 
         for e in extras_data:
             db.add(DiningOrderItemExtra(
@@ -701,6 +777,12 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
     order.discount_amount          = discount_amount
     order.applied_discount_rule_id = applied_rule_id
     order.total                    = new_total
+
+    # أصناف تضاف بعد إرسال الطلب لازم تظهر في KDS فورًا. ولو الطلب كان served،
+    # وجود صنف pending جديد يعيده لحالة in_kitchen بدل ادعاء أن الكل اتخدم.
+    if order.status in ("in_kitchen", "served"):
+        _create_kitchen_tickets_for_items(db, order, new_items)
+        order.status = "in_kitchen"
 
     db.commit()
     db.refresh(order)
@@ -827,31 +909,7 @@ def update_order_status(
     # إعادة إرسال طلب أصلاً in_kitchen مابتنشئش تذاكر مكررة.
     if new_status == "in_kitchen" and previous_status != "in_kitchen":
         active_items = [item for item in order.items if item.status != "cancelled"]
-        item_ids = {item.item_id for item in active_items}
-        station_by_item = {
-            di.id: di.station
-            for di in db.query(DiningItem).filter(DiningItem.id.in_(item_ids)).all()
-        } if item_ids else {}
-
-        items_by_station: dict[str, list[dict]] = {}
-        for item in active_items:
-            station = station_by_item.get(item.item_id, "hot")
-            items_by_station.setdefault(station, []).append({
-                "order_item_id": item.id,
-                "name":          item.name,
-                "quantity":      item.quantity,
-                "notes":         item.notes,
-            })
-
-        for station, items_snapshot in items_by_station.items():
-            crud.create_kitchen_ticket(
-                db,
-                order_id=order.id,
-                branch_id=order.branch_id,
-                outlet_id=order.outlet_id,
-                station=station,
-                items_snapshot=items_snapshot,
-            )
+        _create_kitchen_tickets_for_items(db, order, active_items)
 
     if new_status == "cancelled" and order.table_id:
         table = crud.get_table(db, order.table_id)
@@ -868,14 +926,19 @@ def _settlement_intent_hash(order_id: int, tenders: list[dict]) -> str:
     (طريقة/مبلغ/غرفة، مرتبة) = نفس الـ hash. أساس idempotency: retry بنفس
     النية بيطابق، ونية مختلفة بنفس المفتاح بتترفض 409. المبلغ None (دفع
     كامل بـ tender واحد) بيتمثّل كـ "full" عشان يفضل ثابت عبر إعادة المحاولة."""
-    norm = sorted(
-        (
-            str(t["method"]),
-            "full" if t.get("amount") is None else str(Decimal(str(t["amount"])).quantize(Decimal("0.01"))),
-            t.get("charge_to_room_id"),
-        )
+    norm = [
+        {
+            "method": str(t["method"]),
+            "amount": (
+                "full"
+                if t.get("amount") is None
+                else str(Decimal(str(t["amount"])).quantize(Decimal("0.01")))
+            ),
+            "charge_to_room_id": t.get("charge_to_room_id"),
+        }
         for t in tenders
-    )
+    ]
+    norm.sort(key=lambda t: (t["method"], t["amount"], str(t["charge_to_room_id"] or "")))
     canonical = json.dumps(
         {"order_id": order_id, "tenders": norm},
         sort_keys=True, separators=(",", ":"), ensure_ascii=True,
@@ -967,6 +1030,11 @@ def settle_order(
 
         direct = [t for t in norm if is_direct_method(t["method"])]
         room = [t for t in norm if t["method"] == "room"]
+        if len(room) > 1:
+            raise PaymentAllocationError(
+                "تقسيم الدفع على أكثر من tender غرفة غير مدعوم بأمان؛ "
+                "استخدم tender غرفة واحد والباقي طرق دفع مباشرة"
+            )
 
         # حل حساب GL لكل tender مباشر (fail-closed) قبل أي تعديل — أي طريقة
         # غير مهيّأة (card/wallet) بترفع PaymentMethodNotConfiguredError فورًا.
@@ -1073,6 +1141,12 @@ def settle_order(
             shift_id=shift_id, created_by=settled_by,
             tender_breakdown=tender_breakdown,
         )
+
+        # Gate 8: a linked "request bill" is operational state only. Close
+        # it in this same strict payment transaction after all financial
+        # effects succeeded and before the single commit.
+        from app.modules.core import services as core_services  # noqa: PLC0415
+        core_services.resolve_bill_requests_for_paid_order(db, order, settled_by)
 
         db.commit()
         db.refresh(order)
@@ -1560,48 +1634,126 @@ def transfer_order_waiter(
     return order
 
 
+def _recompute_order_totals(db: Session, order: DiningOrder) -> None:
+    """Rebuild all monetary snapshots from the order lines currently in DB."""
+    active_items = crud.list_active_order_items(db, order.id)
+    subtotal = Decimal("0")
+    for item in active_items:
+        extras_total = sum((extra.price_addition for extra in item.extras), Decimal("0"))
+        subtotal += (item.unit_price + extras_total) * item.quantity
+
+    outlet = crud.get_outlet(db, order.outlet_id)
+    vat_pct = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
+    service_pct = _service_charge_pct(outlet, order.order_type)
+    vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
+    service_charge = (subtotal * service_pct).quantize(Decimal("0.01"))
+    discount_amount, rule_id = _resolve_order_discount(db, order, subtotal)
+
+    order.subtotal = subtotal
+    order.vat_amount = vat_amount
+    order.service_charge = service_charge
+    order.discount_amount = discount_amount
+    order.applied_discount_rule_id = rule_id
+    order.total = max(
+        Decimal("0"),
+        subtotal + vat_amount + service_charge + order.delivery_fee - discount_amount,
+    )
+
+
 def merge_orders(db: Session, source_id: int, target_id: int, merged_by: int) -> DiningOrder:
-    """P-08 — دمج أوردرين مفتوحَين: ينقل كل أصناف source لـ target ثم يلغيه.
-    الشرط: كلا الأوردرين في نفس الفرع، وكلاهما open/in_kitchen."""
-    from app.modules.dining.models import DiningOrderItem  # noqa: PLC0415
+    """Merge two live dine-in orders without corrupting totals or KDS ownership."""
+    from app.modules.core import policy_engine  # noqa: PLC0415
 
     if source_id == target_id:
         raise ValueError("لا يمكن دمج أوردر مع نفسه")
 
-    # Gate 4 (جولة مراجعة Codex الأولى): قفل الطلبين بترتيب حتمي (id تصاعدي)
-    # عشان دمجان متزامنان بترتيب معكوس مايعملوش deadlock، وإعادة فحص حالتهما
-    # تحت القفل قبل أي تعديل (عشان الدمج مايتسابقش مع دفع أي منهما).
+    # Lock in deterministic order so reverse concurrent merges cannot deadlock.
     first_id, second_id = sorted((source_id, target_id))
-    _lock_order_or_conflict(db, first_id)
-    _lock_order_or_conflict(db, second_id)
-
-    source = _get_order_or_404(db, source_id)
-    target = _get_order_or_404(db, target_id)
+    locked = {
+        first_id: _lock_order_or_conflict(db, first_id),
+        second_id: _lock_order_or_conflict(db, second_id),
+    }
+    source = locked[source_id]
+    target = locked[target_id]
 
     if source.branch_id != target.branch_id:
         raise ValueError("الأوردران في فرعَين مختلفَين")
-    if source.status in ("paid", "cancelled"):
-        raise ValueError(f"لا يمكن دمج أوردر بحالة '{source.status}'")
-    if target.status in ("paid", "cancelled"):
-        raise ValueError(f"لا يمكن الدمج في أوردر بحالة '{target.status}'")
+    if source.outlet_id != target.outlet_id:
+        raise ValueError("لا يمكن دمج طلبين من منفذين مختلفين")
+    if source.customer_id != target.customer_id:
+        raise ValueError("لا يمكن دمج طلبين مرتبطين بعميلين مختلفين")
+    if source.folio_id != target.folio_id:
+        raise ValueError("لا يمكن دمج طلبين بارتباط فوليو مختلف")
+    if source.applied_discount_rule_id != target.applied_discount_rule_id:
+        raise ValueError("لا يمكن دمج طلبين عليهما قواعد خصم مختلفة")
+    if source.guest_session_id != target.guest_session_id:
+        raise ValueError(
+            "لا يمكن دمج طلب ضيف QR مع طلب تابع لجلسة ضيف مختلفة"
+        )
 
-    # نقل الأصناف
-    db.query(DiningOrderItem).filter(
-        DiningOrderItem.order_id == source_id
-    ).update({"order_id": target_id})
+    active_statuses = {"held", "open", "in_kitchen", "served"}
+    for order, label in ((source, "المصدر"), (target, "الهدف")):
+        if order.status not in active_statuses:
+            raise ValueError(f"لا يمكن دمج الطلب {label} بحالة '{order.status}'")
+        if order.order_type != "dine_in" or not order.table_id:
+            raise ValueError(f"الطلب {label} لازم يكون طلب صالة على طاولة")
 
-    # تحديث total الهدف
-    target.total = (target.total or 0) + (source.total or 0)
+    source_number = source.order_number
+    source_total = source.total or Decimal("0")
+    target_total = target.total or Decimal("0")
+    moved_items = crud.reassign_order_items(db, source.id, target.id)
+    moved_tickets = crud.reassign_kitchen_tickets(db, source.id, target.id)
+    _recompute_order_totals(db, target)
 
-    # تحرير طاولة الـ source لو اتفرّغت
+    # الحالة المدمجة لا تدّعي served لو جزء من الطلب ما زال مفتوحًا/في المطبخ.
+    # عند خلط open/held مع in_kitchen/served نرسل فقط الأصناف التي ليس لها
+    # ticket، مع الحفاظ على التذاكر المنقولة وحالاتها كما هي.
+    merged_statuses = {source.status, target.status}
+    if merged_statuses == {"served"}:
+        target.status = "served"
+    elif merged_statuses & {"in_kitchen", "served"}:
+        target.status = "in_kitchen"
+        _ensure_kitchen_tickets_for_order(db, target)
+    elif "open" in merged_statuses:
+        target.status = "open"
+    else:
+        target.status = "held"
+
     if source.table_id:
         src_table = crud.get_table(db, source.table_id)
         if src_table:
             crud.update_table_status(db, src_table, "available")
 
-    # إلغاء الـ source
     source.status = "cancelled"
-    source.notes = (source.notes or "") + f" | مدموج في #{target.order_number} بواسطة user#{merged_by}"
+    source.subtotal = Decimal("0")
+    source.vat_amount = Decimal("0")
+    source.service_charge = Decimal("0")
+    source.delivery_fee = Decimal("0")
+    source.discount_amount = Decimal("0")
+    source.applied_discount_rule_id = None
+    source.total = Decimal("0")
+
+    source_note = f"مدموج في #{target.order_number} بواسطة user#{merged_by}"
+    target_note = f"تم دمج الطلب #{source_number} في هذا الطلب"
+    source.notes = f"{source.notes} | {source_note}" if source.notes else source_note
+    target.notes = f"{target.notes} | {target_note}" if target.notes else target_note
+    source.notes = source.notes[-500:]
+    target.notes = target.notes[-500:]
+
+    policy_engine.record_policy_audit(
+        db, "merge_orders",
+        user_id=merged_by, approved_by=None, branch_id=target.branch_id,
+        entity_type="dining_order", entity_id=target.id,
+        data={
+            "source_order_id": source.id,
+            "source_order_number": source_number,
+            "moved_items_count": moved_items,
+            "moved_tickets_count": moved_tickets,
+            "source_total_before": str(source_total),
+            "target_total_before": str(target_total),
+            "target_total_after": str(target.total),
+        },
+    )
 
     db.commit()
     db.refresh(target)
@@ -1642,7 +1794,10 @@ def bump_order_item_status(db: Session, order_id: int, item_id: int, new_status:
     كلها. راجع restaurant.services.bump_order_item_status — نفس المنطق
     بالظبط. لما كل أصناف تذكرة معيّنة (محطة واحدة) تبقى ready/served/
     cancelled، التذكرة نفسها بتتحوّل لـ 'done' تلقائيًا."""
-    order = _get_order_or_404(db, order_id)
+    order = _lock_order_or_conflict(db, order_id)
+    if order.status not in ("held", "open", "in_kitchen", "served"):
+        raise ValueError(f"لا يمكن تغيير حالة صنف في طلب بحالة '{order.status}'")
+
     item = crud.get_order_item(db, order_id, item_id)
     if not item:
         raise ValueError(f"الصنف {item_id} غير موجود في هذا الطلب")
@@ -1830,6 +1985,23 @@ def _refund_order_item_locked(
     # لـ order.total الأصلي.
     refund_discount = (order.discount_amount * share_ratio).quantize(Decimal("0.01")) if order.discount_amount else Decimal("0")
     refund_amount = max(Decimal("0"), item_gross - refund_discount + refund_vat + refund_svc)
+
+    active_before = [
+        order_item for order_item in order.items
+        if order_item.status not in ("cancelled", "refunded")
+    ]
+    remaining_refundable = max(
+        Decimal("0"),
+        (order.total or Decimal("0")) - (order.refunded_amount or Decimal("0")),
+    )
+    if remaining_refundable <= 0:
+        raise ValueError("لا يوجد رصيد متبقٍ قابل للمرتجع على هذا الطلب")
+    if len(active_before) == 1:
+        # Give the final line the exact remainder so per-line rounding can never
+        # leave a cent behind or reverse more than the original settlement.
+        refund_amount = remaining_refundable
+    else:
+        refund_amount = min(refund_amount, remaining_refundable)
 
     crud.refund_order_item(db, item, reason, refunded_by)
     order.refunded_amount = (order.refunded_amount or Decimal("0")) + refund_amount
@@ -2072,6 +2244,15 @@ def update_kitchen_ticket_status(db: Session, ticket_id: int, new_status: str) -
     'ready' تلقائيًا — عشان DiningOrderItem.status وحالة التذكرة يفضلوا
     متسقين. راجع restaurant.services.update_kitchen_ticket_status."""
     from app.modules.dining.models import DiningOrderItem  # noqa: PLC0415
+
+    ticket = db.query(DiningKitchenTicket).filter(DiningKitchenTicket.id == ticket_id).first()
+    if not ticket:
+        raise ValueError(f"التذكرة {ticket_id} غير موجودة")
+    order = _lock_order_or_conflict(db, ticket.order_id)
+    if order.status not in ("held", "open", "in_kitchen", "served"):
+        raise ValueError(
+            f"لا يمكن تحديث تذكرة مطبخ لطلب بحالة '{order.status}'"
+        )
 
     ticket = crud.update_ticket_status(db, ticket_id, new_status)
     if not ticket:

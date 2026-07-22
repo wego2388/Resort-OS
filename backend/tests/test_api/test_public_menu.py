@@ -91,6 +91,21 @@ def enable_self_order(db, branch):
     db.commit()
 
 
+def guest_session_headers(client: TestClient, db, branch, table) -> dict[str, str]:
+    import secrets
+    from app.modules.core import crud as core_crud
+
+    token = secrets.token_urlsafe(24)
+    core_crud.create_service_location_token(
+        db, token=token, branch_id=branch.id,
+        location_type="dining_table", location_id=table.id, created_by=None,
+    )
+    db.commit()
+    response = client.post("/api/v1/public/guest-sessions", json={"token": token})
+    assert response.status_code == 201, response.text
+    return {"X-Guest-Session": response.json()["session_token"]}
+
+
 class TestPublicMenuEndpoint:
     def test_public_menu_no_auth_required(self, client: TestClient, db):
         """GET /dining/public/menu يشتغل بدون token."""
@@ -119,6 +134,21 @@ class TestPublicMenuEndpoint:
         assert data["outlet_id"] == outlet.id
         item_ids = [i["id"] for i in data["items"]]
         assert item.id in item_ids
+
+    def test_public_menu_self_order_enabled_reflects_gate_state(self, client: TestClient, db):
+        """Gate 8 Phase 1 Batch D/E: self_order_enabled بيعكس نفس بوابة
+        assert_guest_self_order_enabled — الفرونت إند بيقرر يعرض سلة الطلب
+        الذاتي ولا view_and_call بس بناءً عليه، بدل ما يكتشف الرفض وقت
+        الإرسال بس."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+
+        disabled_resp = client.get("/api/v1/dining/public/menu", params={"outlet_id": outlet.id})
+        assert disabled_resp.json()["self_order_enabled"] is False
+
+        enable_self_order(db, branch)
+        enabled_resp = client.get("/api/v1/dining/public/menu", params={"outlet_id": outlet.id})
+        assert enabled_resp.json()["self_order_enabled"] is True
 
     def test_public_menu_no_internal_fields(self, client: TestClient, db):
         """الـ cost و station مش موجودين في الـ public response."""
@@ -239,12 +269,16 @@ class TestPublicOrderEndpoint:
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
+        table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
             "table_id":  0,
             "items": [{"item_id": item.id, "quantity": 1}],
-        })
+        }, headers=headers)
+        # table_id is no longer accepted from the public client; extra input
+        # cannot override the server-derived table.
         assert resp.status_code == 422, resp.text
 
     def test_self_order_disabled_by_default(self, client: TestClient, db):
@@ -256,11 +290,13 @@ class TestPublicOrderEndpoint:
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
+        table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
             "items": [{"item_id": item.id, "quantity": 1}],
-        })
+        }, headers=headers)
         assert resp.status_code == 400, resp.text
 
     def test_table_from_other_outlet_same_branch_allowed(self, client: TestClient, db):
@@ -273,12 +309,12 @@ class TestPublicOrderEndpoint:
         cat           = make_category(db, branch, outlet)
         item          = make_item(db, branch, outlet, cat)
         table = make_table(db, branch, other_outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
-            "table_id":  table.id,
             "items": [{"item_id": item.id, "quantity": 1}],
-        })
+        }, headers=headers)
         assert resp.status_code == 201, resp.text
 
     def test_table_from_different_branch_rejected(self, client: TestClient, db):
@@ -292,12 +328,12 @@ class TestPublicOrderEndpoint:
         cat           = make_category(db, branch, outlet)
         item          = make_item(db, branch, outlet, cat)
         foreign_table = make_table(db, other_branch, other_outlet)
+        headers = guest_session_headers(client, db, other_branch, foreign_table)
 
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
-            "table_id":  foreign_table.id,
             "items": [{"item_id": item.id, "quantity": 1}],
-        })
+        }, headers=headers)
         assert resp.status_code == 400, resp.text
 
     def test_item_from_different_outlet_rejected(self, client: TestClient, db):
@@ -308,14 +344,15 @@ class TestPublicOrderEndpoint:
         enable_self_order(db, branch)
         outlet       = make_outlet(db, branch)
         other_outlet = make_outlet(db, branch, name="مطعم QR الآخر")
-        cat          = make_category(db, branch, outlet)
         other_cat    = make_category(db, branch, other_outlet)
         foreign_item = make_item(db, branch, other_outlet, other_cat)
+        table = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
             "items": [{"item_id": foreign_item.id, "quantity": 1}],
-        })
+        }, headers=headers)
         assert resp.status_code == 400, resp.text
 
     def test_item_from_different_branch_rejected(self, client: TestClient, db):
@@ -326,14 +363,15 @@ class TestPublicOrderEndpoint:
         enable_self_order(db, branch)
         outlet       = make_outlet(db, branch)
         other_outlet = make_outlet(db, other_branch)
-        cat          = make_category(db, branch, outlet)
         other_cat    = make_category(db, other_branch, other_outlet)
         foreign_item = make_item(db, other_branch, other_outlet, other_cat)
+        table = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
             "items": [{"item_id": foreign_item.id, "quantity": 1}],
-        })
+        }, headers=headers)
         assert resp.status_code == 400, resp.text
 
     def test_create_guest_order_no_auth(self, client: TestClient, db):
@@ -345,18 +383,18 @@ class TestPublicOrderEndpoint:
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
         table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         payload = {
             "outlet_id":    outlet.id,
-            "table_id":     table.id,
             "guests_count": 2,
             "items": [{"item_id": item.id, "quantity": 1}],
         }
-        resp = client.post("/api/v1/dining/public/orders", json=payload)
+        resp = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
         assert resp.status_code == 201, resp.text
 
         data = resp.json()
-        assert "order_id"     in data
+        assert data["public_reference"].startswith("ord_")
         assert "order_number" in data
         assert data["status"] in ("open", "in_kitchen", "held")
         assert data["items_count"] == 1
@@ -369,76 +407,85 @@ class TestPublicOrderEndpoint:
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat, available=False)
+        table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         payload = {
             "outlet_id": outlet.id,
             "items": [{"item_id": item.id, "quantity": 1}],
         }
-        resp = client.post("/api/v1/dining/public/orders", json=payload)
+        resp = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
         assert resp.status_code == 400
 
     def test_create_guest_order_empty_items_rejected(self, client: TestClient, db):
         """items فارغة → 422 Validation Error."""
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
+        table = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
         payload = {"outlet_id": outlet.id, "items": []}
-        resp = client.post("/api/v1/dining/public/orders", json=payload)
+        resp = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
         assert resp.status_code == 422
 
-    def test_create_guest_order_without_table(self, client: TestClient, db):
-        """table_id=None مسموح (takeaway من الـ lobby مثلاً)."""
+    def test_create_guest_order_uses_session_table(self, client: TestClient, db):
+        """The public body omits table_id; the session supplies it."""
         branch = make_branch(db)
         enable_self_order(db, branch)
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
+        table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         payload = {
             "outlet_id": outlet.id,
-            "table_id":  None,
             "items": [{"item_id": item.id, "quantity": 2}],
         }
-        resp = client.post("/api/v1/dining/public/orders", json=payload)
+        resp = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
         assert resp.status_code == 201
         assert resp.json()["items_count"] == 2
 
     def test_create_guest_order_unknown_outlet_returns_404(self, client: TestClient, db):
+        branch = make_branch(db)
+        real_outlet = make_outlet(db, branch)
+        table = make_table(db, branch, real_outlet)
+        headers = guest_session_headers(client, db, branch, table)
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": 999999, "items": [{"item_id": 1, "quantity": 1}],
-        })
-        assert resp.status_code == 404
+        }, headers=headers)
+        assert resp.status_code == 400
 
 
 class TestPublicOrderStatusEndpoint:
-    def test_get_order_status_always_closed(self, client: TestClient, db):
-        """Gate 1 containment (جولة مراجعة Codex الثالثة): الـendpoint ده
-        مقفول تمامًا لحد Gate 8، بغض النظر عن dining.self_order_enabled —
-        order_id رقم متسلسل قابل للتخمين بلا أي token، وبيقرا من نفس
-        جدول الطلبات اللي فيه طلبات POS/الكاشير العادية كمان (ملهاش
-        علاقة بالطلب الذاتي)، فتفعيل الطلب الذاتي لوحده مش كافي حماية."""
+    def test_get_order_status_requires_issuing_session(self, client: TestClient, db):
+        """Gate 8 recovery uses a random reference plus the issuing session."""
         branch = make_branch(db)
         enable_self_order(db, branch)
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
         item   = make_item(db, branch, outlet, cat)
+        table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         create_resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
             "items": [{"item_id": item.id, "quantity": 1}],
-        })
+        }, headers=headers)
         assert create_resp.status_code == 201, create_resp.text
-        order_id = create_resp.json()["order_id"]
+        reference = create_resp.json()["public_reference"]
 
-        resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
-        assert resp.status_code == 404, resp.text
+        no_session = client.get(f"/api/v1/dining/public/orders/{reference}")
+        assert no_session.status_code == 422
+        resp = client.get(f"/api/v1/dining/public/orders/{reference}", headers=headers)
+        assert resp.status_code == 200, resp.text
 
     def test_get_nonexistent_order_returns_404(self, client: TestClient, db):
         """Order غير موجود (أو أي order_id تاني — الـendpoint مقفول
         بالكامل) → 404."""
-        resp = client.get("/api/v1/dining/public/orders/999999")
-        assert resp.status_code == 404
+        resp = client.get("/api/v1/dining/public/orders/ord_does-not-exist")
+        assert resp.status_code == 422
 
-    def test_full_qr_flow_order_status_unavailable(self, client: TestClient, db):
+    def test_full_qr_flow_order_status_recovery(self, client: TestClient, db):
         """
         Flow كامل — بس متابعة حالة الطلب بقت مقفولة عمدًا لحد Gate 8:
         1. اجلب القائمة بدون auth
@@ -449,12 +496,15 @@ class TestPublicOrderStatusEndpoint:
         enable_self_order(db, branch)
         outlet = make_outlet(db, branch)
         cat    = make_category(db, branch, outlet)
-        item   = make_item(db, branch, outlet, cat)
+        make_item(db, branch, outlet, cat)
         table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         # Step 1: fetch menu
-        menu_resp = client.get("/api/v1/dining/public/menu",
-                               params={"outlet_id": outlet.id, "table_id": table.id})
+        menu_resp = client.get(
+            "/api/v1/dining/public/service-menu",
+            params={"outlet_id": outlet.id}, headers=headers,
+        )
         assert menu_resp.status_code == 200
         menu = menu_resp.json()
         assert len(menu["items"]) >= 1
@@ -462,12 +512,13 @@ class TestPublicOrderStatusEndpoint:
         # Step 2: place order
         order_resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
-            "table_id":  table.id,
             "items": [{"item_id": menu["items"][0]["id"], "quantity": 1}],
-        })
+        }, headers=headers)
         assert order_resp.status_code == 201
-        order_id = order_resp.json()["order_id"]
+        reference = order_resp.json()["public_reference"]
 
-        # Step 3: status polling مقفول عمدًا
-        poll_resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
-        assert poll_resp.status_code == 404, poll_resp.text
+        # Step 3: safe status polling succeeds only with the session.
+        poll_resp = client.get(
+            f"/api/v1/dining/public/orders/{reference}", headers=headers,
+        )
+        assert poll_resp.status_code == 200, poll_resp.text

@@ -1,412 +1,249 @@
 <script setup lang="ts">
-/**
- * QRGeneratorView — توليد وطباعة QR codes لطاولات منافذ الدايننج.
- * يستخدم qrcode.js عبر CDN أو الـ Canvas API المدمج في المتصفح.
- * المدير يختار المنفذ، يختار الطاولة، يطبع أو يحمّل الـ QR.
- *
- * DINING_CUTOVER_PLAN.md Batch 6 (2026-07-13): كانت restaurant/cafe تابين
- * ثابتين (موديولين منفصلين، endpoints مختلفة) — دلوقتي قايمة منافذ ديناميكية
- * حقيقية من /dining/outlets (بتغطي أي outlet_type مستقبلي من غير تعديل هنا).
- * الـ QR بيشاور على `/order/{outlet_id}/{table_id}` بدل `/order/{restaurant|
- * cafe}/{table_id}` القديم — ⚠️ يعني أي QR مطبوع قبل الـ cutover بقى غير
- * صالح، لازم إعادة طباعة كل QR الطاولات من هنا من جديد.
- */
-import { ref, computed, onMounted, nextTick } from 'vue'
+/** Gate 8 QR administration: one locally-rendered QR per physical table. */
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
+import QRCode from 'qrcode'
+import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
 
-const toast    = useToast()
-const route    = useRoute()
-const { t, locale } = useI18n()
-const auth = useAuthStore()
-const branchId = auth.branchId
-
-// ── استخرج base URL من location الحالي عشان QR يشاور على العنوان الصحيح ──
-const PUBLIC_BASE = computed(() => {
-  // الـ QR بيشير للـ public app (apps/public) — بنفترض إنها على نفس الـ host
-  // في port 5174 في dev، أو /order/* في production (كأقل تقدير نستخدم
-  // window.location.origin + المسار المعروف).
-  const origin = window.location.origin.replace(':5173', ':5174').replace(':5175', ':5174')
-  return origin
-})
-
-interface Outlet { id: number; name: string; name_ar: string | null; outlet_type: string; is_active: boolean }
-interface Table { id: number; table_number: string; section: string | null; status: string }
-
-const outlets        = ref<Outlet[]>([])
-const activeOutletId = ref<number | null>(null)
-const tables          = ref<Table[]>([])
-const loading         = ref(false)
-const selectedIds     = ref<Set<number>>(new Set())
-const canvasRefs      = ref<Record<number, HTMLCanvasElement | null>>({})
-
-function outletLabel(o: Outlet): string {
-  return o.name_ar || o.name
+interface Table {
+  id: number
+  table_number: string
+  section: string | null
+  status: string
 }
-const activeOutletLabel = computed(() => {
-  const o = outlets.value.find(o => o.id === activeOutletId.value)
-  return o ? outletLabel(o) : ''
+
+interface LocationToken {
+  id: number
+  token: string
+  branch_id: number
+  location_type: 'dining_table'
+  location_id: number
+  is_active: boolean
+  created_at: string
+}
+
+const route = useRoute()
+const auth = useAuthStore()
+const toast = useToast()
+const { locale, t } = useI18n()
+
+const branchId = computed(() => auth.branchId)
+const publicBase = computed(() => {
+  const configured = (import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined)?.replace(/\/$/, '')
+  if (configured) return configured
+  return window.location.origin.replace(':5173', ':5174').replace(':5175', ':5174')
 })
 
-// دعم query params من شاشات إدارة الطاولات: ?outlet=12&highlight=5
-// يختار المنفذ الصح ويحدد الطاولة المطلوبة تلقائياً
-onMounted(async () => {
-  try {
-    const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId, active_only: true } })
-    outlets.value = data?.items ?? data ?? []
-  } catch {
-    toast.error(t('backoffice.qrGenerator.msg.loadOutletsError'))
-    return
-  }
-  const queryOutlet = route.query.outlet ? parseInt(route.query.outlet as string) : NaN
-  activeOutletId.value = !isNaN(queryOutlet) && outlets.value.some(o => o.id === queryOutlet)
-    ? queryOutlet
-    : (outlets.value[0]?.id ?? null)
+const tables = ref<Table[]>([])
+const tokens = ref<LocationToken[]>([])
+const selectedIds = ref<Set<number>>(new Set())
+const canvasRefs = ref<Record<number, HTMLCanvasElement | null>>({})
+const loading = ref(false)
+const mutatingId = ref<number | null>(null)
 
-  await loadTables()
-  if (route.query.highlight) {
-    const id = parseInt(route.query.highlight as string)
-    if (!isNaN(id)) {
-      selectedIds.value = new Set([id])
-      await nextTick()
-      document.getElementById(`table-card-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
+const tokenByTable = computed(() => new Map(tokens.value.map(row => [row.location_id, row])))
+const grouped = computed(() => {
+  const map = new Map<string, Table[]>()
+  for (const table of tables.value) {
+    const key = table.section || t('backoffice.qrGenerator.general')
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(table)
   }
+  return Array.from(map.entries())
 })
 
-// الطاولات مشتركة بين كل المنافذ (2026-07-21) — بتتحمّل مرة واحدة بس، مش
-// لكل منفذ. activeOutletId لسه بيحدد رابط الـ QR نفسه (/order/{outlet}/
-// {table}) بس مش قائمة الطاولات المعروضة.
-async function loadTables() {
+function guestUrl(tableId: number): string | null {
+  const token = tokenByTable.value.get(tableId)?.token
+  return token ? `${publicBase.value}/s/${encodeURIComponent(token)}` : null
+}
+
+async function renderTableQr(tableId: number) {
+  const canvas = canvasRefs.value[tableId]
+  const url = guestUrl(tableId)
+  if (!canvas || !url) return
+  await QRCode.toCanvas(canvas, url, {
+    width: 192,
+    margin: 2,
+    errorCorrectionLevel: 'M',
+    color: { dark: '#111827', light: '#ffffff' },
+  })
+}
+
+async function renderAll() {
+  await nextTick()
+  await Promise.all(tables.value.map(table => renderTableQr(table.id)))
+}
+
+async function loadData() {
+  if (!branchId.value) return
   loading.value = true
-  selectedIds.value = new Set()
   try {
-    const { data } = await api.get(ENDPOINTS.dining.tables(branchId))
-    tables.value = data.tables ?? data.items ?? data
-  } catch {
-    toast.error(t('backoffice.qrGenerator.msg.loadTablesError'))
+    const [tablesResponse, tokensResponse] = await Promise.all([
+      api.get(ENDPOINTS.dining.tables(branchId.value)),
+      api.get('/api/v1/service-location-tokens', { params: { branch_id: branchId.value } }),
+    ])
+    const tableData = tablesResponse.data
+    tables.value = tableData.tables ?? tableData.items ?? tableData ?? []
+    tokens.value = (tokensResponse.data ?? []).filter(
+      (row: LocationToken) => row.location_type === 'dining_table' && row.is_active,
+    )
+    await renderAll()
+  } catch (error: any) {
+    toast.error(error?.response?.data?.detail ?? t('backoffice.qrGenerator.msg.loadTablesError'))
   } finally {
     loading.value = false
   }
 }
 
+async function mintOrRotate(table: Table, rotate = false) {
+  if (!branchId.value || mutatingId.value !== null) return
+  if (rotate && !window.confirm(t('backoffice.qrGenerator.rotateConfirm', { number: table.table_number }))) return
+  mutatingId.value = table.id
+  try {
+    const { data } = await api.post('/api/v1/service-location-tokens', {
+      branch_id: branchId.value,
+      location_type: 'dining_table',
+      location_id: table.id,
+    })
+    tokens.value = [...tokens.value.filter(row => row.location_id !== table.id), data]
+    await renderTableQr(table.id)
+    toast.success(t(rotate ? 'backoffice.qrGenerator.msg.rotated' : 'backoffice.qrGenerator.msg.generated'))
+  } catch (error: any) {
+    toast.error(error?.response?.data?.detail ?? t('backoffice.qrGenerator.msg.generateError'))
+  } finally {
+    mutatingId.value = null
+  }
+}
+
+async function generateSelectedMissing() {
+  for (const table of tables.value) {
+    if (selectedIds.value.has(table.id) && !tokenByTable.value.has(table.id)) {
+      await mintOrRotate(table)
+    }
+  }
+}
+
 function toggleSelect(id: number) {
-  const s = new Set(selectedIds.value)
-  if (s.has(id)) s.delete(id)
-  else s.add(id)
-  selectedIds.value = s
+  const next = new Set(selectedIds.value)
+  next.has(id) ? next.delete(id) : next.add(id)
+  selectedIds.value = next
 }
 
 function selectAll() {
-  selectedIds.value = new Set(tables.value.map(tbl => tbl.id))
+  selectedIds.value = new Set(tables.value.map(table => table.id))
 }
+
 function clearAll() {
   selectedIds.value = new Set()
 }
 
-// ── QR generation — native Canvas fallback ────────────────────────────
-// محاولة أولى: qrserver.com (أسرع، لا يحتاج lib). لو النت قاطع أو المتصفح
-// حجب الـ request، الصورة بتـ fallback لـ Canvas محلي عبر qrcode-svg مضغوط
-// (tiny-qr) محسوب في الـ browser مباشرة — بدون dependency خارجية إضافية.
-// الـ fallback بيشتغل تلقائياً عبر @error على الـ <img>.
-
-function orderPath(tableId: number): string {
-  return `/order/${activeOutletId.value}/${tableId}`
+function escapeHtml(value: string) {
+  return value.replace(/[&<>"']/g, char => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  })[char] as string)
 }
 
-function qrUrl(tableId: number): string {
-  const target = encodeURIComponent(`${PUBLIC_BASE.value}${orderPath(tableId)}`)
-  return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${target}&margin=10`
-}
-
-/** Canvas fallback — يُرسم لو <img> فشل في التحميل (offline / مُحجوب).
- * يستخدم script lazy من CDN أو يرسم QR بسيط بـ ASCII matrix (placeholder). */
-async function drawQrFallback(tableId: number, canvas: HTMLCanvasElement) {
-  const url = `${PUBLIC_BASE.value}${orderPath(tableId)}`
-
-  // نحاول نحمّل مكتبة qrcode خفيفة من CDN (تعمل offline لو كانت cached)
-  try {
-    // @ts-ignore — dynamic global script injection
-    if (!window.QRCode) {
-      await new Promise<void>((resolve, reject) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js'
-        s.onload = () => resolve()
-        s.onerror = () => reject(new Error('cdn failed'))
-        document.head.appendChild(s)
-      })
-    }
-    // @ts-ignore
-    await window.QRCode.toCanvas(canvas, url, { width: 200, margin: 2 })
-  } catch {
-    // آخر fallback: نكتب الـ URL كنص مباشرة على الـ canvas
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    canvas.width = 200; canvas.height = 60
-    ctx.fillStyle = '#fff'
-    ctx.fillRect(0, 0, 200, 60)
-    ctx.fillStyle = '#1e40af'
-    ctx.font = 'bold 10px monospace'
-    ctx.textAlign = 'center'
-    ctx.fillText(`⚠️ QR — ${t('backoffice.qrGenerator.connectToInternet')}`, 100, 20)
-    ctx.font = '8px monospace'
-    ctx.fillStyle = '#374151'
-    const words = url.match(/.{1,28}/g) ?? []
-    words.forEach((w, i) => ctx.fillText(w, 100, 34 + i * 12))
+async function printSelected() {
+  const selected = tables.value.filter(table => selectedIds.value.has(table.id))
+  if (!selected.length) {
+    toast.error(t('backoffice.qrGenerator.msg.selectAtLeastOneTable'))
+    return
   }
-}
-
-function tableLabel(table: Table): string {
-  return table.section ? `${table.section} — ${table.table_number}` : t('backoffice.qrGenerator.tableNumber', { number: table.table_number })
-}
-
-// ── Print selected ────────────────────────────────────────────────────
-function printSelected() {
-  const selectedTables = tables.value.filter(tbl => selectedIds.value.has(tbl.id))
-  if (selectedTables.length === 0) { toast.error(t('backoffice.qrGenerator.msg.selectAtLeastOneTable')); return }
-
-  const outlet_ar = activeOutletLabel.value
+  const missing = selected.filter(table => !guestUrl(table.id))
+  if (missing.length) {
+    toast.error(t('backoffice.qrGenerator.msg.generateBeforePrint', { count: missing.length }))
+    return
+  }
+  const cards = await Promise.all(selected.map(async table => ({
+    table,
+    dataUrl: await QRCode.toDataURL(guestUrl(table.id)!, { width: 500, margin: 2, errorCorrectionLevel: 'M' }),
+  })))
   const dir = locale.value === 'ar' ? 'rtl' : 'ltr'
-  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string))
-
-  const html = `<!DOCTYPE html>
-<html dir="${dir}" lang="${locale.value}">
-<head>
-  <meta charset="UTF-8">
-  <title>${escapeHtml(t('backoffice.qrGenerator.printTitle', { outlet: outlet_ar }))}</title>
-  <style>
-    body { font-family: 'Cairo', sans-serif; margin: 0; padding: 20px; background: #fff; }
-    .grid { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; }
-    .card {
-      border: 2px solid #d4a017; border-radius: 16px; padding: 20px;
-      text-align: center; width: 220px; page-break-inside: avoid;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .card img { width: 180px; height: 180px; }
-    .table-name { font-size: 20px; font-weight: 900; margin-top: 10px; color: #1a1a1a; }
-    .module-name { font-size: 13px; color: #888; margin-top: 4px; }
-    .url { font-size: 9px; color: #aaa; margin-top: 6px; word-break: break-all; }
-    @media print {
-      body { padding: 10px; }
-      .no-print { display: none; }
-    }
-  </style>
-</head>
-<body>
-  <div style="text-align:center; margin-bottom:20px; font-size:14px; color:#666;" class="no-print">
-    ${escapeHtml(t('backoffice.qrGenerator.printHint'))}
-  </div>
-  <div class="grid">
-    ${selectedTables.map(tbl => {
-      const fullUrl = `${PUBLIC_BASE.value}${orderPath(tbl.id)}`
-      const qr = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(fullUrl)}&margin=10`
-      return `<div class="card">
-        <img src="${qr}" alt="QR ${tbl.table_number}"
-          onerror="this.style.display='none';var c=this.nextElementSibling;c.style.display='block';if(window.QRCode){QRCode.toCanvas(c,'${fullUrl}',{width:180,margin:2})}else{var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js';s.onload=function(){QRCode.toCanvas(c,'${fullUrl}',{width:180,margin:2})};document.head.appendChild(s)}" />
-        <canvas style="display:none;width:180px;height:180px"></canvas>
-        <div class="table-name">${escapeHtml(t('backoffice.qrGenerator.tableNumber', { number: tbl.table_number }))}</div>
-        <div class="module-name">${escapeHtml(outlet_ar)}</div>
-        <div class="url">${fullUrl}</div>
-      </div>`
-    }).join('\n')}
-  </div>
-</body>
-</html>`
-
+  const html = `<!doctype html><html dir="${dir}" lang="${locale.value}"><head><meta charset="UTF-8"><title>${escapeHtml(t('backoffice.qrGenerator.printTitle'))}</title><style>
+    body{font-family:Arial,sans-serif;margin:0;padding:20px;background:#fff}.grid{display:flex;flex-wrap:wrap;gap:20px;justify-content:center}.card{border:2px solid #d4a017;border-radius:16px;padding:20px;text-align:center;width:220px;page-break-inside:avoid}.card img{width:190px;height:190px}.name{font-size:20px;font-weight:900;margin-top:10px}.section{font-size:12px;color:#6b7280;margin-top:4px}@media print{body{padding:8px}}
+  </style></head><body><div class="grid">${cards.map(({ table, dataUrl }) => `<div class="card"><img src="${dataUrl}" alt="QR"><div class="name">${escapeHtml(t('backoffice.qrGenerator.tableNumber', { number: table.table_number }))}</div>${table.section ? `<div class="section">${escapeHtml(table.section)}</div>` : ''}</div>`).join('')}</div></body></html>`
   const win = window.open('', '_blank')
-  if (!win) { toast.error(t('backoffice.qrGenerator.msg.popupBlocked')); return }
+  if (!win) {
+    toast.error(t('backoffice.qrGenerator.msg.popupBlocked'))
+    return
+  }
   win.document.write(html)
   win.document.close()
   win.focus()
-  setTimeout(() => win.print(), 800)
+  window.setTimeout(() => win.print(), 300)
 }
 
-// ── Download single QR ────────────────────────────────────────────────
-// #22: بدل fetch من qrserver.com (بيفشل offline أو لو الـ API اتغيّر)،
-// بنستخدم canvas محلي — نفس منطق drawQrFallback لكن بـ offscreen canvas
-// عشان مايأثرش على العرض، وبنصدّر PNG محليًا من toDataURL.
 async function downloadQr(table: Table) {
-  const targetUrl = `${PUBLIC_BASE.value}${orderPath(table.id)}`
-
-  // خطوة 1: حاول تحميل QRCode lib من CDN (cached بعد أول مرة)
-  try {
-    if (!window.QRCode) {
-      await new Promise<void>((resolve, reject) => {
-        const s = document.createElement('script')
-        s.src = 'https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js'
-        s.onload = () => resolve()
-        s.onerror = () => reject(new Error('cdn failed'))
-        document.head.appendChild(s)
-      })
-    }
-    // offscreen canvas — مش بيظهر للمستخدم
-    const offscreen = document.createElement('canvas')
-    // @ts-ignore
-    await window.QRCode.toCanvas(offscreen, targetUrl, { width: 400, margin: 2 })
-    const dataUrl = offscreen.toDataURL('image/png')
-    const a = document.createElement('a')
-    a.href     = dataUrl
-    a.download = `qr-${activeOutletId.value}-${table.table_number}.png`
-    a.click()
+  const url = guestUrl(table.id)
+  if (!url) {
+    toast.error(t('backoffice.qrGenerator.msg.generateBeforeDownload'))
     return
-  } catch {
-    // CDN فشل — fallback لـ qrserver.com
   }
-
-  // خطوة 2: fallback لـ qrserver.com (يشتغل لو في نت بس CDN اتحجب)
-  try {
-    const apiUrl = qrUrl(table.id)
-    const res    = await fetch(apiUrl)
-    if (!res.ok) throw new Error('api failed')
-    const blob = await res.blob()
-    const a    = document.createElement('a')
-    a.href     = URL.createObjectURL(blob)
-    a.download = `qr-${activeOutletId.value}-${table.table_number}.png`
-    a.click()
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000)
-  } catch {
-    toast.error(t('backoffice.qrGenerator.msg.downloadError'))
-  }
+  const dataUrl = await QRCode.toDataURL(url, { width: 700, margin: 2, errorCorrectionLevel: 'M' })
+  const anchor = document.createElement('a')
+  anchor.href = dataUrl
+  anchor.download = `service-table-${table.table_number}.png`
+  anchor.click()
 }
 
-const grouped = computed(() => {
-  const map = new Map<string, Table[]>()
-  for (const tbl of tables.value) {
-    const key = tbl.section || t('backoffice.qrGenerator.general')
-    if (!map.has(key)) map.set(key, [])
-    map.get(key)!.push(tbl)
+onMounted(async () => {
+  await loadData()
+  const highlighted = Number(route.query.highlight)
+  if (Number.isInteger(highlighted) && highlighted > 0) {
+    selectedIds.value = new Set([highlighted])
+    await nextTick()
+    document.getElementById(`table-card-${highlighted}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }
-  return Array.from(map.entries())
 })
 </script>
 
 <template>
   <div class="p-6 max-w-6xl mx-auto">
-
-    <!-- Header -->
     <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
       <div>
         <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">📱 {{ t('backoffice.qrGenerator.title') }}</h1>
-        <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.qrGenerator.subtitle') }}</p>
+        <p class="text-xs text-gray-500 mt-1 dark:text-gray-400">{{ t('backoffice.qrGenerator.subtitle') }}</p>
       </div>
-      <div class="flex gap-2">
-        <button
-          @click="selectAll"
-          class="px-3 py-2 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold transition-colors"
-        >{{ t('backoffice.qrGenerator.selectAll') }}</button>
-        <button
-          @click="clearAll"
-          class="px-3 py-2 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-semibold transition-colors"
-        >{{ t('backoffice.qrGenerator.clearSelection') }}</button>
-        <button
-          @click="printSelected"
-          :disabled="selectedIds.size === 0"
-          class="px-4 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm hover:bg-blue-800 transition-colors disabled:opacity-40"
-        >🖨️ {{ t('backoffice.qrGenerator.printCount', { count: selectedIds.size }) }}</button>
+      <div class="flex gap-2 flex-wrap">
+        <button class="px-3 py-2 bg-stone-100 rounded-lg text-sm font-semibold text-gray-700 dark:bg-gray-700 dark:text-gray-200" @click="selectAll">{{ t('backoffice.qrGenerator.selectAll') }}</button>
+        <button class="px-3 py-2 bg-stone-100 rounded-lg text-sm font-semibold text-gray-700 dark:bg-gray-700 dark:text-gray-200" @click="clearAll">{{ t('backoffice.qrGenerator.clearSelection') }}</button>
+        <button class="px-3 py-2 bg-amber-100 text-amber-800 rounded-lg text-sm font-bold disabled:opacity-40 dark:bg-amber-950/40 dark:text-amber-300" :disabled="!selectedIds.size || mutatingId !== null" @click="generateSelectedMissing">{{ t('backoffice.qrGenerator.generateMissing') }}</button>
+        <button class="px-4 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm disabled:opacity-40" :disabled="!selectedIds.size" @click="printSelected">🖨️ {{ t('backoffice.qrGenerator.printCount', { count: selectedIds.size }) }}</button>
       </div>
     </div>
 
-    <!-- Outlet tabs — ديناميكية من /dining/outlets (أي عدد منافذ، مش بس اتنين) -->
-    <div v-if="outlets.length" class="flex gap-2 mb-6 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl w-fit flex-wrap">
-      <button
-        v-for="o in outlets"
-        :key="o.id"
-        @click="activeOutletId = o.id"
-        :class="[
-          'px-5 py-2 rounded-lg text-sm font-bold transition-all',
-          activeOutletId === o.id ? 'bg-white text-blue-700 shadow-sm dark:bg-surface dark:text-blue-300' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200',
-        ]"
-      >{{ outletLabel(o) }}</button>
+    <div v-if="loading" class="flex justify-center py-16"><div class="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
+    <div v-else-if="!tables.length" class="text-center py-20 text-gray-500 dark:text-gray-400">
+      <div class="text-5xl mb-4">📱</div><p class="font-medium">{{ t('backoffice.qrGenerator.noTables') }}</p>
     </div>
-    <div v-else-if="!loading" class="text-sm text-gray-400 dark:text-gray-400 mb-6">{{ t('backoffice.qrGenerator.noActiveOutlets') }}</div>
-
-    <!-- Loading -->
-    <div v-if="loading" class="flex justify-center py-16">
-      <div class="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
-    </div>
-
-    <!-- Empty -->
-    <div v-else-if="tables.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-400">
-      <div class="text-5xl mb-4">📱</div>
-      <p class="font-medium text-gray-600 dark:text-gray-400">{{ t('backoffice.qrGenerator.noTables') }}</p>
-      <p class="text-sm mt-1">{{ t('backoffice.qrGenerator.noTablesHint') }}</p>
-    </div>
-
-    <!-- Tables grid grouped by section -->
     <div v-else class="space-y-8">
-      <div v-for="[section, sectionTables] in grouped" :key="section">
-        <h2 class="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4 flex items-center gap-2">
-          <span class="flex-1 border-b border-stone-200 dark:border-border" />
-          <span>{{ section }}</span>
-          <span class="flex-1 border-b border-stone-200 dark:border-border" />
-        </h2>
+      <section v-for="[section, sectionTables] in grouped" :key="section">
+        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide mb-4 dark:text-gray-400">{{ section }}</h2>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          <div
-            v-for="table in sectionTables"
-            :key="table.id"
-            :id="`table-card-${table.id}`"
-            @click="toggleSelect(table.id)"
-            :class="[
-              'relative bg-white dark:bg-surface rounded-2xl border-2 p-4 flex flex-col items-center gap-3 cursor-pointer transition-all hover:shadow-md',
-              selectedIds.has(table.id)
-                ? 'border-blue-600 bg-blue-50 shadow-md dark:border-blue-500 dark:bg-blue-950/40'
-                : 'border-stone-200 dark:border-border',
-            ]"
-          >
-            <!-- Checkmark -->
-            <div
-              :class="[
-                'absolute top-3 end-3 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all',
-                selectedIds.has(table.id) ? 'bg-blue-600 border-blue-600' : 'border-stone-300',
-              ]"
-            >
-              <span v-if="selectedIds.has(table.id)" class="text-white text-xs font-black">✓</span>
+          <article v-for="table in sectionTables" :id="`table-card-${table.id}`" :key="table.id" :class="['relative bg-white dark:bg-surface rounded-2xl border-2 p-4 flex flex-col items-center gap-3 transition-all', selectedIds.has(table.id) ? 'border-blue-600 bg-blue-50 shadow-md dark:border-blue-500 dark:bg-blue-950/40' : 'border-stone-200 dark:border-border']">
+            <button class="absolute top-2 end-2 w-6 h-6 rounded-full border-2 text-xs" :class="selectedIds.has(table.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-stone-300'" @click="toggleSelect(table.id)">{{ selectedIds.has(table.id) ? '✓' : '' }}</button>
+            <div class="w-28 h-28 bg-stone-50 dark:bg-white rounded-xl flex items-center justify-center overflow-hidden">
+              <canvas v-if="tokenByTable.has(table.id)" :ref="el => { canvasRefs[table.id] = el as HTMLCanvasElement | null; if (el) renderTableQr(table.id) }" class="w-28 h-28" />
+              <span v-else class="text-xs text-gray-400 text-center px-2">{{ t('backoffice.qrGenerator.notGenerated') }}</span>
             </div>
-
-            <!-- QR Image — fallback to canvas if external API unreachable -->
-            <div class="w-24 h-24 rounded-lg overflow-hidden flex items-center justify-center bg-stone-50 dark:bg-gray-800/60">
-              <img
-                :src="qrUrl(table.id)"
-                :alt="t('backoffice.qrGenerator.qrAltTable', { number: table.table_number })"
-                class="w-24 h-24 rounded-lg"
-                loading="lazy"
-                @error="(e) => { (e.target as HTMLImageElement).style.display='none'; const c = canvasRefs[table.id]; if(c) drawQrFallback(table.id, c) }"
-              />
-              <canvas
-                :ref="(el) => { canvasRefs[table.id] = el as HTMLCanvasElement | null }"
-                class="w-24 h-24 rounded-lg hidden"
-                style="display:none"
-              />
+            <div class="text-center"><div class="font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.qrGenerator.tableNumber', { number: table.table_number }) }}</div><div v-if="table.section" class="text-xs text-gray-500 dark:text-gray-400">{{ table.section }}</div></div>
+            <div class="w-full flex gap-1">
+              <button v-if="!tokenByTable.has(table.id)" class="flex-1 py-1.5 bg-blue-700 text-white text-xs font-bold rounded-lg disabled:opacity-50" :disabled="mutatingId !== null" @click="mintOrRotate(table)">{{ t('backoffice.qrGenerator.generate') }}</button>
+              <template v-else>
+                <button class="flex-1 py-1.5 bg-stone-100 text-gray-700 text-xs font-semibold rounded-lg dark:bg-gray-700 dark:text-gray-200" @click="downloadQr(table)">⬇️ {{ t('backoffice.qrGenerator.download') }}</button>
+                <button class="px-2 py-1.5 bg-red-50 text-red-700 text-xs font-semibold rounded-lg disabled:opacity-50 dark:bg-red-950/40 dark:text-red-300" :disabled="mutatingId !== null" @click="mintOrRotate(table, true)">{{ t('backoffice.qrGenerator.rotate') }}</button>
+              </template>
             </div>
-
-            <!-- Label -->
-            <div class="text-center">
-              <div class="font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.qrGenerator.tableNumber', { number: table.table_number }) }}</div>
-              <div v-if="table.section" class="text-xs text-gray-500 dark:text-gray-400">{{ table.section }}</div>
-            </div>
-
-            <!-- Download btn -->
-            <button
-              @click.stop="downloadQr(table)"
-              class="w-full py-1.5 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-600 dark:text-gray-400 text-xs font-semibold rounded-lg transition-colors"
-            >⬇️ {{ t('backoffice.qrGenerator.download') }}</button>
-          </div>
+          </article>
         </div>
-      </div>
+      </section>
     </div>
 
-    <!-- Info box -->
-    <div class="mt-8 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
+    <div class="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
       <p class="font-bold mb-1">💡 {{ t('backoffice.qrGenerator.howToUse') }}</p>
-      <ul class="list-inside list-disc space-y-1 text-xs text-blue-700 dark:text-blue-300">
-        <li>{{ t('backoffice.qrGenerator.step1') }}</li>
-        <li>{{ t('backoffice.qrGenerator.step2') }}</li>
-        <li>{{ t('backoffice.qrGenerator.step3') }}</li>
-        <li>{{ t('backoffice.qrGenerator.step4', { outletId: activeOutletId }) }}</li>
-      </ul>
+      <p class="text-xs">{{ t('backoffice.qrGenerator.securityNote') }}</p>
     </div>
-
   </div>
 </template>

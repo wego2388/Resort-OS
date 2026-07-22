@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
+import secrets
 from typing import Optional
 
 from fastapi import (
@@ -24,7 +25,7 @@ from app.core.deps import (
     get_manager_user, get_waiter_user, require_permission, user_level,
 )
 from app.modules.dining import crud, payment_policy, services
-from app.modules.dining.models import DiningOrder, VenueTable
+from app.modules.dining.models import DiningKitchenTicket, DiningOrder, VenueTable
 from app.modules.dining.schemas import (
     ApplyDiscountRequest,
     DiningCategoryCreate, DiningCategoryRead, DiningCategoryUpdate,
@@ -41,7 +42,8 @@ from app.modules.dining.schemas import (
     OrderRead, OrderStatusUpdate, OrderTransferRequest, SplitBillRequest, WaiterTransferRequest,
     OrderSyncRequest, OrderSyncResponse,
     OutletCreate, OutletRead, OutletUpdate,
-    GuestOrderCreate, GuestOrderRead, PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
+    GuestOrderCreate, GuestOrderRead, GuestServiceMenuResponse,
+    PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
     PublicOutletRead,
 )
 from app.modules.core import services as core_services
@@ -102,7 +104,13 @@ dining_manager = ConnectionManager()
 
 @router.websocket("/dining/ws/kds/{branch_id}")
 async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
-    if not await get_websocket_user(ws, db):
+    user = await get_websocket_user(ws, db)
+    if not user:
+        return
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "متابعة شاشة المطبخ")
+    except PermissionError:
+        await ws.close(code=4403)
         return
     await dining_manager.connect(ws, str(branch_id))
     try:
@@ -115,7 +123,13 @@ async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
 
 @router.websocket("/dining/ws/tables/{branch_id}")
 async def tables_websocket(ws: WebSocket, branch_id: int, db: DbDep):
-    if not await get_websocket_user(ws, db):
+    user = await get_websocket_user(ws, db)
+    if not user:
+        return
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "متابعة تحديثات الطاولات")
+    except PermissionError:
+        await ws.close(code=4403)
         return
     await dining_manager.connect(ws, f"tables-{branch_id}")
     try:
@@ -561,10 +575,8 @@ def sync_offline_order(outlet_id: int, data: OrderSyncRequest, db: DbDep, user=D
 
 
 @router.get("/dining/orders/{order_id}", response_model=OrderRead)
-def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
-    order = crud.get_order(db, order_id)
-    if not order:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الطلب {order_id} غير موجود")
+def get_order(order_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    order = _assert_order_branch(db, user, order_id, "عرض هذا الطلب")
     return OrderRead.model_validate(order)
 
 
@@ -681,13 +693,18 @@ async def transfer_order_waiter(order_id: int, data: WaiterTransferRequest,
 
 @router.patch("/dining/orders/{order_id}/items/{item_id}/status", response_model=OrderRead)
 async def update_order_item_status(order_id: int, item_id: int, data: OrderItemStatusUpdate,
-                                    db: DbDep, _=Depends(get_current_active_user)):
+                                    db: DbDep, user=Depends(get_current_active_user)):
     """تأكيد صنف واحد داخل تذكرة مطبخ (bump فردي من شاشة KDS) — نفس مستوى
     صلاحية تأكيد التذكرة كلها (get_current_active_user، أي موظف مسجّل دخول
     زي طاقم المطبخ)، مش إجراء مالي. راجع
     restaurant.api.router.update_order_item_status — نفس المنطق بالظبط."""
+    _assert_order_branch(db, user, order_id, "تحديث حالة صنف في هذا الطلب")
     try:
         order = services.bump_order_item_status(db, order_id, item_id, data.status)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await dining_manager.broadcast(str(order.branch_id), {"type": "tickets_updated", "order_id": order.id})
@@ -764,7 +781,8 @@ def refund_order_item(
 
 
 @router.get("/dining/orders/{order_id}/receipt")
-def download_receipt(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def download_receipt(order_id: int, db: DbDep, user=Depends(get_cashier_user)):
+    _assert_order_branch(db, user, order_id, "طباعة إيصال هذا الطلب")
     try:
         pdf = services.generate_receipt_pdf(db, order_id)
         return Response(
@@ -854,22 +872,27 @@ async def merge_orders(
     db: DbDep = ...,
     user=Depends(get_waiter_user),
 ):
-    """P-08 — دمج أوردرين مفتوحين في أوردر واحد (waiter+).
+    """P-08 — دمج طلبي صالة نشطين في طلب واحد (waiter+).
     يُنقل كل أصناف order_id لـ target_order_id ثم يُلغى order_id.
-    الشرط: كلا الأوردرين مفتوحَين (open/in_kitchen) في نفس الـ branch."""
-    _assert_order_branch(db, user, order_id, "دمج هذا الطلب")
+    الشرط: نفس الفرع والمنفذ والسياق المالي/الضيف."""
+    source_order = _assert_order_branch(db, user, order_id, "دمج هذا الطلب")
     _assert_order_branch(db, user, target_order_id, "الدمج في هذا الطلب")
+    source_table_id = source_order.table_id
     try:
         merged = services.merge_orders(db, order_id, target_order_id, merged_by=user.id)
     except services.OrderPaymentConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-    # broadcast تحديث الطاولتين
-    for tbl_id in {merged.table_id} - {None}:
+    # الطاولة المصدر اتحررت، والهدف اتغيرت إجمالياته/حالته؛ والـKDS قد يكون
+    # نقل تذاكر موجودة أو أنشأ تذاكر ناقصة لأصناف كانت لسه open.
+    for tbl_id in {source_table_id, merged.table_id} - {None}:
         await dining_manager.broadcast(f"tables-{merged.branch_id}", {
             "type": "table_updated", "table_id": tbl_id,
         })
+    await dining_manager.broadcast(str(merged.branch_id), {
+        "type": "tickets_updated", "order_id": merged.id,
+    })
     return merged
 
 
@@ -877,13 +900,17 @@ async def merge_orders(
 
 @router.get("/dining/kitchen/tickets", response_model=list[KitchenTicketRead])
 def list_kitchen_tickets(
-    db: DbDep, _=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_current_active_user),
     branch_id: int = Query(...), outlet_id: Optional[int] = Query(None),
     stations: Optional[str] = Query(None, description="Comma-separated list of stations"),
 ):
     """قائمة تذاكر الـ KDS المعلقة — outlet_id اختياري (None = كل الـ
     outlets في الفرع). كل تذكرة بتيجي معاها table_number + order_type +
     order_notes للعرض في شاشة المطبخ بدون ما المطبخ يعمل call تاني."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض تذاكر المطبخ")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     station_list = [s.strip() for s in stations.split(",")] if stations else None
     tickets = services.get_kds_tickets(db, branch_id, outlet_id=outlet_id, stations=station_list)
 
@@ -931,14 +958,25 @@ def list_kitchen_tickets(
 
 
 @router.patch("/dining/kitchen/tickets/{ticket_id}/status", response_model=KitchenTicketRead)
-async def update_ticket_status(ticket_id: int, data: TicketStatusUpdate, db: DbDep, _=Depends(get_current_active_user)):
+async def update_ticket_status(ticket_id: int, data: TicketStatusUpdate, db: DbDep, user=Depends(get_current_active_user)):
     """يحدّث حالة تذكرة الـ KDS كاملة (pending → in_progress → done) — تأكيد
     دفعة واحدة. لو التذكرة اتأكدت done، أي صنف لسه pending/in_kitchen جواها
     بيترقّى لـ ready تلقائيًا (راجع services.update_kitchen_ticket_status)."""
+    ticket = db.query(DiningKitchenTicket).filter(DiningKitchenTicket.id == ticket_id).first()
+    if ticket is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"تذكرة المطبخ {ticket_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, ticket.branch_id, "تحديث تذكرة المطبخ")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         ticket_dict = services.update_kitchen_ticket_status(db, ticket_id, data.status)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc),
+        })
     except ValueError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await dining_manager.broadcast(str(ticket_dict["branch_id"]), {"type": "tickets_updated", "ticket_id": ticket_dict["id"]})
     return KitchenTicketRead.model_validate(ticket_dict)
 
@@ -1057,12 +1095,8 @@ def get_outlet_sales_report(
 #     الحماية الحقيقية المطلوبة) — راجع services.create_order + get_public_menu
 #     قبل أي قراءة/كتابة. table_id لازم يكون رقم موجب (Field(ge=1)) — صفر
 #     أو سالب يترفض 422 قبل ما يوصل لأي منطق.
-#   - GET /orders/{order_id} **مقفول بالكامل الآن**، بغض النظر عن حالة
-#     dining.self_order_enabled — order_id بيقرا من نفس جدول الطلبات اللي
-#     فيه طلبات POS/الكاشير العادية كمان (staff orders تقدر توجد بغض النظر
-#     عن حالة الطلب الذاتي)، فتفعيل الطلب الذاتي مش كافي حماية لمنع تخمين
-#     order_id يخص طلب POS داخلي. مقفول لحد Gate 8 الحقيقي (راجع
-#     get_guest_order_status).
+#   - Gate 8 order creation/status require X-Guest-Session. Status uses a
+#     random public reference bound to the issuing session, never order_id.
 #   - order_type ثابت "dine_in" — نفس تقييد restaurant/cafe الأصليين
 #   - لا يوجد تعديل أو حذف من هنا — read + create فقط
 #
@@ -1116,15 +1150,59 @@ def get_public_menu(
     categories = crud.list_categories(db, outlet_id)
     items = crud.list_items(db, outlet_id, available_only=True)
 
+    try:
+        services.assert_guest_self_order_enabled(db, outlet.branch_id)
+        self_order_enabled = True
+    except ValueError:
+        self_order_enabled = False
+
     return PublicMenuResponse(
         branch_id=outlet.branch_id,
         outlet_id=outlet_id,
         outlet_name=outlet.name,
         outlet_name_ar=outlet.name_ar,
         table_id=table_id,
+        self_order_enabled=self_order_enabled,
         categories=[PublicMenuCategoryRead.model_validate(c) for c in categories],
         items=[PublicMenuItemRead.model_validate(i) for i in items],
     )
+
+
+@router.get(
+    "/dining/public/service-menu",
+    response_model=GuestServiceMenuResponse,
+    tags=["dining-public"],
+    summary="قائمة منفذ مرتبطة بجلسة QR صالحة",
+)
+def get_guest_service_menu(
+    db: DbDep,
+    outlet_id: int = Query(..., ge=1),
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
+    try:
+        _session, location = core_services.resolve_guest_session(db, x_guest_session)
+        if location.location_type != "dining_table":
+            raise ValueError("القائمة غير متاحة لهذا النوع من المواقع")
+        outlet = crud.get_outlet(db, outlet_id)
+        if not outlet or not outlet.is_active or outlet.branch_id != location.branch_id:
+            raise ValueError("المنفذ غير متاح لهذا الموقع")
+        categories = crud.list_categories(db, outlet_id)
+        items = crud.list_items(db, outlet_id, available_only=True)
+        try:
+            services.assert_guest_self_order_enabled(db, location.branch_id)
+            self_order_enabled = True
+        except ValueError:
+            self_order_enabled = False
+        return GuestServiceMenuResponse(
+            outlet_id=outlet.id,
+            outlet_name=outlet.name,
+            outlet_name_ar=outlet.name_ar,
+            self_order_enabled=self_order_enabled,
+            categories=[PublicMenuCategoryRead.model_validate(c) for c in categories],
+            items=[PublicMenuItemRead.model_validate(i) for i in items],
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 @router.post(
@@ -1134,27 +1212,38 @@ def get_public_menu(
     tags=["dining-public"],
     summary="تقديم طلب من الضيف (QR) — بدون auth",
 )
-def create_guest_order(data: GuestOrderCreate, db: DbDep):
+def create_guest_order(
+    data: GuestOrderCreate,
+    db: DbDep,
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
     """Public endpoint — لا يحتاج login. الضيف يطلب من القائمة عبر QR الطاولة.
     - order_type ثابت dine_in
     - waiter_id = None (النادل يتولى التذكرة من KDS/POS بعدين)
     - مفيش customer_id (ضيف مجهول، مفيش تسجيل دخول)"""
     try:
+        session, location = core_services.resolve_guest_session(db, x_guest_session)
+        if location.location_type != "dining_table":
+            raise ValueError("الطلب الذاتي متاح من QR الطاولة فقط")
+        outlet = crud.get_outlet(db, data.outlet_id)
+        if not outlet or not outlet.is_active or outlet.branch_id != location.branch_id:
+            raise ValueError("المنفذ غير متاح لهذا الموقع")
+        services.assert_guest_self_order_enabled(db, location.branch_id)
+        public_reference = f"ord_{secrets.token_urlsafe(18)}"
         order_data = OrderCreate(
             outlet_id=data.outlet_id,
-            table_id=data.table_id,
+            table_id=location.location_id,
             order_type="dine_in",
             guests_count=data.guests_count,
             notes=data.notes,
             items=[OrderItemCreate(**i.model_dump()) for i in data.items],
         )
-        outlet = crud.get_outlet(db, data.outlet_id)
-        if not outlet:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
-        services.assert_guest_self_order_enabled(db, outlet.branch_id)
-        order = services.create_order(db, branch_id=outlet.branch_id, data=order_data, waiter_id=None)
+        order = services.create_order(
+            db, branch_id=location.branch_id, data=order_data, waiter_id=None,
+            guest_session_id=session.id, guest_public_reference=public_reference,
+        )
         return GuestOrderRead(
-            order_id=order.id,
+            public_reference=public_reference,
             order_number=order.order_number,
             status=order.status,
             total=order.total,
@@ -1166,21 +1255,28 @@ def create_guest_order(data: GuestOrderCreate, db: DbDep):
 
 
 @router.get(
-    "/dining/public/orders/{order_id}",
+    "/dining/public/orders/{public_reference}",
     response_model=GuestOrderRead,
     tags=["dining-public"],
     summary="حالة الطلب للضيف (QR) — بدون auth",
 )
-def get_guest_order_status(order_id: int, db: DbDep):
-    """Public endpoint — كان مقصود للضيف يتابع حالة طلبه (polling)، لكنه
-    **مقفول بالكامل الآن**، بغض النظر عن dining.self_order_enabled.
-
-    Gate 1 containment (جولة مراجعة Codex الثالثة): order_id رقم متسلسل
-    قابل للتخمين بلا أي token، وبيقرا من نفس جدول DiningOrder اللي فيه
-    طلبات الكاشير/النادل العادية (POS) كمان — حتى لو الطلب الذاتي مفعّل
-    لفرع معيّن، ده مايمنعش ضيف من تخمين order_id يخص طلب POS داخلي (مش
-    طلب ذاتي أصلًا) ويشوف order_number/total بتاعه. الجولة التانية كانت
-    قفلته بشرط self_order_enabled بس — مش كافي، الخطر مستقل عن الإعداد ده.
-    مقفول تمامًا لحد Gate 8 (Service Location/QR token/guest session
-    حقيقي، مش قبل كده) — لا نبني بديل توكن هنا الآن."""
-    raise HTTPException(status.HTTP_404_NOT_FOUND, "الطلب غير موجود")
+def get_guest_order_status(
+    public_reference: str,
+    db: DbDep,
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
+    try:
+        session, _location = core_services.resolve_guest_session(db, x_guest_session)
+        order = crud.get_order_by_guest_public_reference(db, public_reference)
+        if not order or order.guest_session_id != session.id:
+            raise ValueError("الطلب غير موجود")
+        return GuestOrderRead(
+            public_reference=order.guest_public_reference,
+            order_number=order.order_number,
+            status=order.status,
+            total=order.total,
+            items_count=sum(i.quantity for i in order.items),
+            message="تم استلام طلبك وسيتم تحديث حالته تلقائيًا",
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))

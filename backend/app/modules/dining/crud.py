@@ -398,6 +398,16 @@ def get_order(db: Session, order_id: int) -> Optional[DiningOrder]:
     return db.query(DiningOrder).filter(DiningOrder.id == order_id).first()
 
 
+def get_order_by_guest_public_reference(
+    db: Session, public_reference: str,
+) -> Optional[DiningOrder]:
+    return (
+        db.query(DiningOrder)
+        .filter(DiningOrder.guest_public_reference == public_reference)
+        .first()
+    )
+
+
 def get_order_for_update(db: Session, order_id: int) -> Optional[DiningOrder]:
     """SELECT ... FOR UPDATE NOWAIT — يقفل صف الطلب طوال معاملة الدفع الصارمة
     (راجع Gate 1B: dining.services._mark_order_paid) عشان يمنع دفعتين
@@ -564,6 +574,8 @@ def create_order_with_items(
     discount_amount: "Decimal | None" = None,
     delivery_fee: "Decimal | None" = None,
     created_by: Optional[int] = None,
+    guest_session_id: Optional[int] = None,
+    guest_public_reference: Optional[str] = None,
 ) -> DiningOrder:
     order = DiningOrder(
         branch_id=branch_id,
@@ -585,6 +597,8 @@ def create_order_with_items(
         payment_method=payment_method,
         discount_amount=discount_amount if discount_amount is not None else Decimal("0"),
         delivery_fee=delivery_fee if delivery_fee is not None else Decimal("0"),
+        guest_session_id=guest_session_id,
+        guest_public_reference=guest_public_reference,
     )
     db.add(order)
     db.flush()
@@ -613,6 +627,38 @@ def get_order_item(db: Session, order_id: int, item_id: int) -> Optional[DiningO
         .filter(DiningOrderItem.id == item_id, DiningOrderItem.order_id == order_id)
         .first()
     )
+
+
+def list_active_order_items(db: Session, order_id: int) -> list[DiningOrderItem]:
+    """Return live order lines from the database, avoiding stale relationships."""
+    return (
+        db.query(DiningOrderItem)
+        .filter(
+            DiningOrderItem.order_id == order_id,
+            DiningOrderItem.status.notin_(("cancelled", "refunded")),
+        )
+        .all()
+    )
+
+
+def reassign_order_items(db: Session, from_order_id: int, to_order_id: int) -> int:
+    """Move order lines without changing their preparation or audit state."""
+    items = db.query(DiningOrderItem).filter(DiningOrderItem.order_id == from_order_id).all()
+    for item in items:
+        item.order_id = to_order_id
+    db.flush()
+    return len(items)
+
+
+def reassign_kitchen_tickets(db: Session, from_order_id: int, to_order_id: int) -> int:
+    """Move KDS ownership without re-firing or modifying ticket snapshots."""
+    tickets = db.query(DiningKitchenTicket).filter(
+        DiningKitchenTicket.order_id == from_order_id,
+    ).all()
+    for ticket in tickets:
+        ticket.order_id = to_order_id
+    db.flush()
+    return len(tickets)
 
 
 def void_order_item(db: Session, item: DiningOrderItem, reason: str, voided_by: int) -> DiningOrderItem:

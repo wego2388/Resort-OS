@@ -152,7 +152,7 @@ class TestDiningFullCycle:
         tickets_resp = client.get(
             "/api/v1/dining/kitchen/tickets",
             params={"branch_id": branch.id, "outlet_id": outlet.id},
-            headers=waiter_headers,
+            headers=waiter_linked,
         )
         tickets = tickets_resp.json()
         stations = {t["station"] for t in tickets if t["order_id"] == order["id"]}
@@ -164,12 +164,12 @@ class TestDiningFullCycle:
                 continue
             r1 = client.patch(
                 f"/api/v1/dining/kitchen/tickets/{ticket['id']}/status",
-                json={"status": "in_progress"}, headers=waiter_headers,
+                json={"status": "in_progress"}, headers=waiter_linked,
             )
             assert r1.status_code == 200
             r2 = client.patch(
                 f"/api/v1/dining/kitchen/tickets/{ticket['id']}/status",
-                json={"status": "done"}, headers=waiter_headers,
+                json={"status": "done"}, headers=waiter_linked,
             )
             assert r2.status_code == 200
 

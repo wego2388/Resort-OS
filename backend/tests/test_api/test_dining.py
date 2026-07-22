@@ -1228,3 +1228,209 @@ class TestSplitBillFolioFailClosed:
             assert charge_count == 0, "شحنة فوليو اتسجّلت رغم إن الفوليو مقفول"
         finally:
             fresh.close()
+
+
+class TestGate4FinalReviewRegressions:
+    """Regression coverage for the final independent Gate 4 review."""
+
+    def test_add_items_rejects_item_from_another_outlet(self, db):
+        branch = make_branch(db)
+        restaurant = make_outlet(db, branch, outlet_type="restaurant")
+        cafe = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        restaurant_item = make_item(db, branch, restaurant)
+        cafe_item = make_item(db, branch, cafe)
+        order = make_order(db, branch, restaurant, restaurant_item)
+
+        with pytest.raises(ValueError, match="لا ينتمي"):
+            services.add_items_to_order(
+                db, order.id, [OrderItemCreate(item_id=cafe_item.id, quantity=1)],
+            )
+
+        db.refresh(order)
+        assert len(order.items) == 1
+        assert order.outlet_id == restaurant.id
+
+    def test_settlement_intent_hash_handles_mixed_room_identifiers(self):
+        tenders = [
+            {"method": "room", "amount": Decimal("50"), "charge_to_room_id": None},
+            {"method": "room", "amount": Decimal("50"), "charge_to_room_id": 7},
+        ]
+        first = services._settlement_intent_hash(10, tenders)
+        second = services._settlement_intent_hash(10, list(reversed(tenders)))
+        assert first == second
+
+    def test_settlement_rejects_multiple_room_tenders_fail_closed(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        order = make_order(db, branch, outlet, item, quantity=1)
+        half = (order.total / 2).quantize(Decimal("0.01"))
+
+        with pytest.raises(services.PaymentAllocationError, match="أكثر من tender غرفة"):
+            services.settle_order(
+                db,
+                order.id,
+                tenders=[
+                    {"method": "room", "amount": half, "charge_to_room_id": 1},
+                    {
+                        "method": "room",
+                        "amount": order.total - half,
+                        "charge_to_room_id": 2,
+                    },
+                ],
+            )
+
+        db.refresh(order)
+        assert order.status != "paid"
+        assert order.folio_id is None
+
+    def test_merge_recomputes_totals_moves_kds_and_audits(self, db):
+        from app.modules.core.models import AuditLog
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("50.00"), station="grill")
+        source_table = make_table(db, branch, outlet)
+        target_table = make_table(db, branch, outlet)
+        source = make_order(db, branch, outlet, item, table=source_table, quantity=2)
+        target = make_order(db, branch, outlet, item, table=target_table, quantity=1)
+        expected_subtotal = source.subtotal + target.subtotal
+        source_item_id = source.items[0].id
+        target_item_id = target.items[0].id
+
+        services.update_order_status(db, source.id, "in_kitchen")
+        source_ticket = crud.list_tickets_for_order(db, source.id)[0]
+        ticket_snapshot = source_ticket.items_snapshot
+
+        merged = services.merge_orders(db, source.id, target.id, merged_by=1)
+
+        assert merged.subtotal == expected_subtotal
+        assert merged.total == Decimal("189.00")
+        assert merged.status == "in_kitchen"
+        assert crud.get_order_item(db, target.id, source_item_id) is not None
+        assert crud.list_tickets_for_order(db, source.id) == []
+        target_tickets = crud.list_tickets_for_order(db, target.id)
+        moved_ticket = next(ticket for ticket in target_tickets if ticket.id == source_ticket.id)
+        assert moved_ticket.id == source_ticket.id
+        assert moved_ticket.station == "grill"
+        assert moved_ticket.items_snapshot == ticket_snapshot
+        ticketed_item_ids = {
+            entry["order_item_id"]
+            for ticket in target_tickets
+            for entry in ticket.items_snapshot
+        }
+        assert ticketed_item_ids == {source_item_id, target_item_id}
+        assert len(target_tickets) == 2
+
+        db.refresh(source)
+        db.refresh(source_table)
+        db.refresh(target_table)
+        assert source.status == "cancelled"
+        assert source.total == Decimal("0")
+        assert source_table.status == "available"
+        assert target_table.status == "occupied"
+
+        audit = (
+            db.query(AuditLog)
+            .filter(
+                AuditLog.action == "merge_orders",
+                AuditLog.entity_type == "dining_order",
+                AuditLog.entity_id == target.id,
+            )
+            .first()
+        )
+        assert audit is not None
+
+    def test_merge_rejects_cross_outlet_orders(self, db):
+        branch = make_branch(db)
+        first_outlet = make_outlet(db, branch)
+        second_outlet = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        first = make_order(db, branch, first_outlet, make_item(db, branch, first_outlet),
+                           table=make_table(db, branch, first_outlet))
+        second = make_order(db, branch, second_outlet, make_item(db, branch, second_outlet),
+                            table=make_table(db, branch, second_outlet))
+
+        with pytest.raises(ValueError, match="منفذين مختلفين"):
+            services.merge_orders(db, first.id, second.id, merged_by=1)
+
+    def test_adding_item_to_served_order_reopens_kds_without_duplicates(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        original_item = make_item(db, branch, outlet, station="grill")
+        added_item = make_item(db, branch, outlet, price=Decimal("25.00"), station="grill")
+        order = make_order(db, branch, outlet, original_item)
+
+        services.update_order_status(db, order.id, "in_kitchen")
+        services.update_order_status(db, order.id, "served")
+        original_ticket = crud.list_tickets_for_order(db, order.id)[0]
+        original_item_id = order.items[0].id
+
+        updated = services.add_items_to_order(
+            db,
+            order.id,
+            [OrderItemCreate(item_id=added_item.id, quantity=1)],
+            added_by=1,
+        )
+
+        assert updated.status == "in_kitchen"
+        tickets = crud.list_tickets_for_order(db, order.id)
+        assert len(tickets) == 2
+        assert original_ticket.id in {ticket.id for ticket in tickets}
+        ticketed_item_ids = {
+            entry["order_item_id"]
+            for ticket in tickets
+            for entry in ticket.items_snapshot
+        }
+        assert original_item_id in ticketed_item_ids
+        assert updated.items[-1].id in ticketed_item_ids
+
+    def test_final_refund_absorbs_rounding_remainder_exactly(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet, price=Decimal("0.03"))
+        order = services.create_order(
+            db,
+            branch.id,
+            OrderCreate(
+                outlet_id=outlet.id,
+                order_type="takeaway",
+                items=[
+                    OrderItemCreate(item_id=item.id, quantity=1),
+                    OrderItemCreate(item_id=item.id, quantity=1),
+                    OrderItemCreate(item_id=item.id, quantity=1),
+                ],
+            ),
+            waiter_id=1,
+        )
+        original_total = order.total
+        item_ids = [line.id for line in order.items]
+        order.status = "paid"
+        db.commit()
+
+        for item_id in item_ids:
+            services.refund_order_item(
+                db, order.id, item_id, reason="اختبار تقريب", refunded_by=1,
+            )
+
+        db.refresh(order)
+        assert order.status == "refunded"
+        assert order.refunded_amount == original_total
+
+    def test_kds_ticket_update_rejects_closed_order(self, db):
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet)
+        order = make_order(db, branch, outlet, item, quantity=1)
+        services.update_order_status(db, order.id, "in_kitchen")
+        ticket = crud.list_tickets_for_order(db, order.id)[0]
+        ticket_status = ticket.status
+
+        order.status = "paid"
+        db.commit()
+
+        with pytest.raises(ValueError, match="طلب بحالة 'paid'"):
+            services.update_kitchen_ticket_status(db, ticket.id, "done")
+
+        db.rollback()
+        db.refresh(ticket)
+        assert ticket.status == ticket_status

@@ -347,7 +347,7 @@ class TestDiningOrderHTTP:
         )
         order_id = order_resp.json()["id"]
 
-        with client.websocket_connect(ws_url(f"/api/v1/dining/ws/kds/{branch.id}", waiter_headers)) as ws:
+        with client.websocket_connect(ws_url(f"/api/v1/dining/ws/kds/{branch.id}", linked_headers)) as ws:
             status_resp = client.patch(
                 f"/api/v1/dining/orders/{order_id}/status",
                 json={"status": "in_kitchen"}, headers=linked_headers,
@@ -376,7 +376,7 @@ class TestDiningOrderHTTP:
         tickets_resp = client.get(
             "/api/v1/dining/kitchen/tickets",
             params={"branch_id": branch.id, "stations": "grill"},
-            headers=waiter_headers,
+            headers=linked_headers,
         )
         assert tickets_resp.status_code == 200
         tickets = tickets_resp.json()
@@ -484,19 +484,19 @@ class TestDiningKitchenItemBumpHTTP:
         resp = client.patch(f"/api/v1/dining/orders/{order['id']}/status",
                              json={"status": "in_kitchen"}, headers=linked_headers)
         assert resp.status_code == 200, resp.text
-        return order
+        return order, linked_headers
 
     def test_bump_single_item_updates_status_and_ticket(self, client: TestClient, db, waiter_headers, manager_headers):
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
         item_id = order["items"][0]["id"]
 
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{item_id}/status",
             json={"status": "ready"},
-            headers=waiter_headers,
+            headers=linked_headers,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["items"][0]["status"] == "ready"
@@ -506,7 +506,7 @@ class TestDiningKitchenItemBumpHTTP:
         tickets = client.get(
             "/api/v1/dining/kitchen/tickets",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=linked_headers,
         ).json()
         assert not any(t["order_id"] == order["id"] for t in tickets)  # مش pending/in_progress بقى
 
@@ -516,18 +516,18 @@ class TestDiningKitchenItemBumpHTTP:
         hot_item = make_item_committed(db, branch, outlet, station="hot")
         grill_item = make_item_committed(db, branch, outlet, station="hot")
 
-        order = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [hot_item, grill_item])
+        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [hot_item, grill_item])
         first_item_id = order["items"][0]["id"]
 
         client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{first_item_id}/status",
-            json={"status": "ready"}, headers=waiter_headers,
+            json={"status": "ready"}, headers=linked_headers,
         )
 
         tickets = client.get(
             "/api/v1/dining/kitchen/tickets",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=linked_headers,
         ).json()
         ticket = next(t for t in tickets if t["order_id"] == order["id"])
         assert ticket["status"] == "in_progress"  # لسه مش كل الأصناف اتأكدت
@@ -538,12 +538,12 @@ class TestDiningKitchenItemBumpHTTP:
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
 
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/999999/status",
             json={"status": "ready"},
-            headers=waiter_headers,
+            headers=linked_headers,
         )
         assert resp.status_code == 400
 
@@ -551,13 +551,13 @@ class TestDiningKitchenItemBumpHTTP:
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
         item_id = order["items"][0]["id"]
 
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{item_id}/status",
             json={"status": "cancelled"},  # ليه endpoint مخصص (void) — مش مسموح هنا
-            headers=waiter_headers,
+            headers=linked_headers,
         )
         assert resp.status_code == 422
 
@@ -565,7 +565,7 @@ class TestDiningKitchenItemBumpHTTP:
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
         item_id = order["items"][0]["id"]
 
         linked_manager = make_branch_linked_headers(db, branch, "manager")
@@ -575,7 +575,7 @@ class TestDiningKitchenItemBumpHTTP:
         )
         resp = client.patch(
             f"/api/v1/dining/orders/{order['id']}/items/{item_id}/status",
-            json={"status": "ready"}, headers=waiter_headers,
+            json={"status": "ready"}, headers=linked_headers,
         )
         assert resp.status_code == 400
 
@@ -583,23 +583,23 @@ class TestDiningKitchenItemBumpHTTP:
         branch = make_branch_committed(db)
         outlet = make_outlet_committed(db, branch)
         item = make_item_committed(db, branch, outlet)
-        order = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
+        order, linked_headers = self._order_in_kitchen(client, db, waiter_headers, branch, outlet, [item])
 
         tickets = client.get(
             "/api/v1/dining/kitchen/tickets",
             params={"branch_id": branch.id},
-            headers=manager_headers,
+            headers=linked_headers,
         ).json()
         ticket = next(t for t in tickets if t["order_id"] == order["id"])
 
         resp = client.patch(
             f"/api/v1/dining/kitchen/tickets/{ticket['id']}/status",
-            json={"status": "done"}, headers=manager_headers,
+            json={"status": "done"}, headers=linked_headers,
         )
         assert resp.status_code == 200
         assert resp.json()["items_snapshot"][0]["status"] == "ready"
 
-        order_resp = client.get(f"/api/v1/dining/orders/{order['id']}", headers=manager_headers).json()
+        order_resp = client.get(f"/api/v1/dining/orders/{order['id']}", headers=linked_headers).json()
         assert order_resp["items"][0]["status"] == "ready"
 
 
@@ -870,3 +870,54 @@ class TestSplitBillHTTP:
             headers=cashier,
         )
         assert resp.status_code == 422
+
+
+class TestDiningBranchIsolationHTTP:
+    """Gate 4 final review: order and KDS reads are branch scoped."""
+
+    def _order(self, client, db, waiter_headers):
+        branch = make_branch_committed(db)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+        order = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={
+                "outlet_id": outlet.id,
+                "order_type": "takeaway",
+                "items": [{"item_id": item.id, "quantity": 1}],
+            },
+            headers=waiter_headers,
+        ).json()
+        return branch, order
+
+    def test_cross_branch_user_cannot_read_order(
+        self, client: TestClient, db, waiter_headers,
+    ):
+        _owner_branch, order = self._order(client, db, waiter_headers)
+        other_branch = make_branch_committed(db)
+        other_user = make_branch_linked_headers(db, other_branch)
+
+        response = client.get(
+            f"/api/v1/dining/orders/{order['id']}", headers=other_user,
+        )
+        assert response.status_code == 403
+
+    def test_cross_branch_user_cannot_list_kds_tickets(
+        self, client: TestClient, db, waiter_headers,
+    ):
+        owner_branch, order = self._order(client, db, waiter_headers)
+        owner_user = make_branch_linked_headers(db, owner_branch)
+        client.patch(
+            f"/api/v1/dining/orders/{order['id']}/status",
+            json={"status": "in_kitchen"},
+            headers=owner_user,
+        )
+        other_branch = make_branch_committed(db)
+        other_user = make_branch_linked_headers(db, other_branch)
+
+        response = client.get(
+            "/api/v1/dining/kitchen/tickets",
+            params={"branch_id": owner_branch.id},
+            headers=other_user,
+        )
+        assert response.status_code == 403
