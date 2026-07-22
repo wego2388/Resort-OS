@@ -20,18 +20,24 @@ def test_disable_legacy_demo_accounts_after_named_super_admin_is_ready(db):
         must_change_password=False,
         two_factor_bootstrap_required=False,
     )
-    demo = db.query(User).filter(User.email == "admin@resortos.local").first()
-    if demo is None:
-        demo = User(
-            email="admin@resortos.local",
-            password_hash=get_password_hash("Admin@123456"),
-            full_name="Legacy Demo Admin",
-            role="super_admin",
-            is_active=True,
-        )
-        db.add(demo)
-    else:
-        demo.is_active = True
+    demos = []
+    for email, full_name, role in (
+        ("admin@resortos.local", "Legacy Demo Admin", "super_admin"),
+        ("housekeeper@resortos.local", "Synthetic HR Employee", "employee"),
+    ):
+        demo = db.query(User).filter(User.email == email).first()
+        if demo is None:
+            demo = User(
+                email=email,
+                password_hash=get_password_hash("Admin@123456"),
+                full_name=full_name,
+                role=role,
+                is_active=True,
+            )
+            db.add(demo)
+        else:
+            demo.is_active = True
+        demos.append(demo)
     db.add(named)
     db.flush()
     enabled_at = datetime.utcnow() - timedelta(seconds=2)
@@ -57,9 +63,10 @@ def test_disable_legacy_demo_accounts_after_named_super_admin_is_ready(db):
 
     disabled = disable_legacy_demo_accounts(db)
 
-    db.refresh(demo)
+    for demo in demos:
+        db.refresh(demo)
+        assert demo.is_active is False
     assert disabled >= 1
-    assert demo.is_active is False
     audit = db.query(AuditLog).filter(
         AuditLog.action == "legacy_demo_accounts_disabled",
     ).order_by(AuditLog.id.desc()).first()

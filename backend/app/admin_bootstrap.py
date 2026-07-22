@@ -34,6 +34,12 @@ LEGACY_DEMO_EMAILS = frozenset({
     "chef@resortos.local",
     "kitchen@resortos.local",
     "employee@resortos.local",
+    # Employee-portal smoke identities created against the synthetic HR seed.
+    # Keep these explicit (rather than matching the whole domain) so cleanup
+    # can never disable an unreviewed account by pattern.
+    "housekeeper@resortos.local",
+    "lifeguard@resortos.local",
+    "maintenance@resortos.local",
 })
 
 

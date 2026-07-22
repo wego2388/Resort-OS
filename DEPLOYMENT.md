@@ -194,7 +194,8 @@ the same login. The web control plane cannot create a `super_admin`; create a
 second named super-admin only with the local bootstrap command above.
 
 After at least one named super-admin has completed password replacement and
-2FA and successfully signed in, disable the documented seed identities:
+2FA and successfully signed in, disable the explicitly reviewed seed and
+synthetic employee-portal identities:
 
 ```bash
 docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml \
