@@ -365,11 +365,11 @@ async function runNightAudit() {
 // Room status colors
 // ─────────────────────────────────────────────────────────────────────────────
 const roomStatusConfig = computed<Record<string, { label: string; bg: string; text: string; dot: string }>>(() => ({
-  available:        { label: t('backoffice.reception.roomStatus.available'),       bg: 'bg-green-50',  text: 'text-green-700',  dot: 'bg-green-500' },
-  occupied:         { label: t('backoffice.reception.roomStatus.occupied'),        bg: 'bg-blue-50',   text: 'text-blue-700',   dot: 'bg-blue-500' },
-  reserved:         { label: t('backoffice.reception.roomStatus.reserved'),        bg: 'bg-amber-50',  text: 'text-amber-700',  dot: 'bg-amber-500' },
-  checkout_pending: { label: t('backoffice.reception.roomStatus.checkoutPending'), bg: 'bg-slate-50',  text: 'text-slate-600',  dot: 'bg-slate-400' },
-  maintenance:      { label: t('backoffice.reception.roomStatus.maintenance'),     bg: 'bg-red-50',    text: 'text-red-700',    dot: 'bg-red-500' },
+  available:        { label: t('backoffice.reception.roomStatus.available'), bg: 'bg-green-50 dark:bg-green-950/40', text: 'text-green-700 dark:text-green-300', dot: 'bg-green-500' },
+  occupied:         { label: t('backoffice.reception.roomStatus.occupied'), bg: 'bg-blue-50 dark:bg-blue-950/40', text: 'text-blue-700 dark:text-blue-300', dot: 'bg-blue-500' },
+  reserved:         { label: t('backoffice.reception.roomStatus.reserved'), bg: 'bg-amber-50 dark:bg-amber-950/40', text: 'text-amber-700 dark:text-amber-300', dot: 'bg-amber-500' },
+  checkout_pending: { label: t('backoffice.reception.roomStatus.checkoutPending'), bg: 'bg-slate-50 dark:bg-slate-800/60', text: 'text-slate-600 dark:text-slate-300', dot: 'bg-slate-400' },
+  maintenance:      { label: t('backoffice.reception.roomStatus.maintenance'), bg: 'bg-red-50 dark:bg-red-950/40', text: 'text-red-700 dark:text-red-300', dot: 'bg-red-500' },
 }))
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -561,8 +561,8 @@ onUnmounted(() => {
                 :key="task.id"
                 :class="[
                   'flex items-center gap-2 rounded-lg px-3 py-2 text-sm',
-                  task.priority === 'urgent'   ? 'bg-red-50 border border-red-200' :
-                  task.priority === 'high'     ? 'bg-amber-50 border border-amber-200' :
+                  task.priority === 'urgent'   ? 'border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/40' :
+                  task.priority === 'high'     ? 'border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40' :
                                                  'bg-background border border-border',
                 ]"
               >
@@ -640,10 +640,10 @@ onUnmounted(() => {
     >
       <template v-slot:default>
         <div v-if="coBooking" class="space-y-3">
-          <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-1">
-            <p class="font-bold text-amber-900 text-lg">{{ coBooking.guest_name }}</p>
-            <p class="text-sm text-amber-700">{{ t('backoffice.reception.bookingHash', { id: coBooking.id }) }}</p>
-            <p class="text-sm text-amber-700">{{ t('backoffice.reception.departureDate', { date: coBooking.check_out }) }}</p>
+          <div class="space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40">
+            <p class="text-lg font-bold text-amber-900 dark:text-amber-200">{{ coBooking.guest_name }}</p>
+            <p class="text-sm text-amber-700 dark:text-amber-300">{{ t('backoffice.reception.bookingHash', { id: coBooking.id }) }}</p>
+            <p class="text-sm text-amber-700 dark:text-amber-300">{{ t('backoffice.reception.departureDate', { date: coBooking.check_out }) }}</p>
           </div>
           <p class="text-sm text-muted">
             {{ t('backoffice.reception.checkOutHint') }}
@@ -698,7 +698,7 @@ onUnmounted(() => {
                 :class="[
                   'flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer text-sm transition-colors',
                   nbForm.room_ids.includes(opt.value as number)
-                    ? 'border-primary-500 bg-primary-50 text-primary-800'
+                    ? 'border-primary-500 bg-primary-50 text-primary-800 dark:bg-primary-950/40 dark:text-primary-200'
                     : 'border-border bg-background hover:border-primary-300',
                 ]"
               >
@@ -754,14 +754,14 @@ onUnmounted(() => {
             :label="t('backoffice.reception.auditDate')"
             type="date"
           />
-          <div v-if="naResult" class="bg-green-50 border border-green-200 rounded-xl p-4 space-y-1 text-sm">
-            <p class="font-bold text-green-800">✅ {{ t('backoffice.reception.auditSuccess') }}</p>
-            <p class="text-green-700">{{ t('backoffice.reception.roomsUpdated', { count: naResult.rooms_updated }) }}</p>
-            <p class="text-green-700">
+          <div v-if="naResult" class="space-y-1 rounded-xl border border-green-200 bg-green-50 p-4 text-sm dark:border-green-800 dark:bg-green-950/40">
+            <p class="font-bold text-green-800 dark:text-green-300">✅ {{ t('backoffice.reception.auditSuccess') }}</p>
+            <p class="text-green-700 dark:text-green-300">{{ t('backoffice.reception.roomsUpdated', { count: naResult.rooms_updated }) }}</p>
+            <p class="text-green-700 dark:text-green-300">
               {{ t('backoffice.reception.calculatedRevenue', { amount: naResult.revenue != null ? formatNumber(naResult.revenue) : '—' }) }}
             </p>
           </div>
-          <div v-if="naError" class="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
+          <div v-if="naError" class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
             {{ naError }}
           </div>
         </div>

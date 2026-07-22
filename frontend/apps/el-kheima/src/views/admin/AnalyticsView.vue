@@ -349,9 +349,9 @@ onMounted(loadAll)
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.analytics.title') }}</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">{{ t('backoffice.analytics.subtitle') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.analytics.subtitle') }}</p>
       </div>
-      <button v-if="!loading" @click="loadAll" class="text-sm font-semibold text-blue-700 hover:underline">
+      <button v-if="!loading" @click="loadAll" class="text-sm font-semibold text-blue-700 hover:underline dark:text-blue-300">
         {{ t('backoffice.analytics.refresh') }} ↻
       </button>
     </div>
@@ -364,45 +364,45 @@ onMounted(loadAll)
       <!-- بطاقات المؤشرات الرئيسية -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.totalRevenue30d') }}</div>
-          <div class="text-2xl font-black text-green-600">{{ money(dashboard?.revenue_30d?.total) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.analytics.currency') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.analytics.totalRevenue30d') }}</div>
+          <div class="text-2xl font-black text-green-600 dark:text-green-300">{{ money(dashboard?.revenue_30d?.total) }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.analytics.currency') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.occupancyThisMonth') }}</div>
-          <div class="text-2xl font-black text-blue-700">
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.analytics.occupancyThisMonth') }}</div>
+          <div class="text-2xl font-black text-blue-700 dark:text-blue-300">
             {{ occupancy?.pms ? occupancy.pms.avg_occupancy_pct.toFixed(1) + '%' : '—' }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ occupancy?.pms ? t('backoffice.analytics.nightsAudited', { count: occupancy.pms.nights_audited }) : t('backoffice.analytics.noData') }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ occupancy?.pms ? t('backoffice.analytics.nightsAudited', { count: occupancy.pms.nights_audited }) : t('backoffice.analytics.noData') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.activeEmployees') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.analytics.activeEmployees') }}</div>
           <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ dashboard?.hr?.active_employees ?? '—' }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ dashboard?.hr?.last_payroll_period ? t('backoffice.analytics.lastPayroll', { period: dashboard.hr.last_payroll_period }) : t('backoffice.analytics.noPayrollRecord') }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ dashboard?.hr?.last_payroll_period ? t('backoffice.analytics.lastPayroll', { period: dashboard.hr.last_payroll_period }) : t('backoffice.analytics.noPayrollRecord') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.openWorkOrders') }}</div>
-          <div class="text-2xl font-black text-amber-600">{{ dashboard?.maintenance?.open_work_orders ?? '—' }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.analytics.openWorkOrders') }}</div>
+          <div class="text-2xl font-black text-amber-600 dark:text-amber-300">{{ dashboard?.maintenance?.open_work_orders ?? '—' }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.lowStockItems') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.analytics.lowStockItems') }}</div>
           <div class="text-2xl font-black text-red-500">{{ dashboard?.inventory?.low_stock_count ?? '—' }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.totalCustomers') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.analytics.totalCustomers') }}</div>
           <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ dashboard?.crm?.total_customers ?? '—' }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.avgGuestRating') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.analytics.avgGuestRating') }}</div>
           <div class="text-2xl font-black text-gray-800 dark:text-gray-200">
             {{ dashboard?.reviews?.avg_rating != null ? dashboard.reviews.avg_rating.toFixed(2) : '—' }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ dashboard?.reviews?.count ? t('backoffice.analytics.reviewCount', { count: dashboard.reviews.count }) : t('backoffice.analytics.noReviews') }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ dashboard?.reviews?.count ? t('backoffice.analytics.reviewCount', { count: dashboard.reviews.count }) : t('backoffice.analytics.noReviews') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.analytics.pmsRevenue30d') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.analytics.pmsRevenue30d') }}</div>
           <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ money(dashboard?.revenue_30d?.pms) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.analytics.currency') }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.analytics.currency') }}</div>
         </AppCard>
       </div>
 
@@ -413,8 +413,8 @@ onMounted(loadAll)
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.department') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.revenueCurrency') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.department') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.revenueCurrency') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -438,7 +438,7 @@ onMounted(loadAll)
             <tfoot>
               <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.analytics.total') }}</td>
-                <td class="px-4 py-3 text-sm font-black text-green-700">{{ money(dashboard.revenue_30d.total) }}</td>
+                <td class="px-4 py-3 text-sm font-black text-green-700 dark:text-green-300">{{ money(dashboard.revenue_30d.total) }}</td>
               </tr>
             </tfoot>
           </table>
@@ -453,11 +453,11 @@ onMounted(loadAll)
         </div>
         <div v-else class="space-y-3">
           <!-- فترتا المقارنة -->
-          <div class="flex gap-2 text-xs text-gray-400 dark:text-gray-500 mb-2">
-            <span class="bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full font-semibold">
+          <div class="flex gap-2 text-xs text-gray-400 dark:text-gray-400 mb-2">
+            <span class="rounded-full bg-blue-50 px-2 py-0.5 font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
               {{ t('backoffice.analytics.thisMonth') }}: {{ revCurrent?.period.from }} → {{ revCurrent?.period.to }}
             </span>
-            <span class="bg-stone-100 dark:bg-gray-700 text-gray-600 dark:text-gray-500 px-2 py-0.5 rounded-full font-semibold">
+            <span class="bg-stone-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-0.5 rounded-full font-semibold">
               {{ t('backoffice.analytics.lastMonth') }}: {{ revPrevious?.period.from }} → {{ revPrevious?.period.to }}
             </span>
           </div>
@@ -466,10 +466,10 @@ onMounted(loadAll)
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-stone-200 dark:border-border">
-                <th class="px-3 py-2 text-start text-xs text-gray-500 dark:text-gray-500 font-semibold">{{ t('backoffice.analytics.column.source') }}</th>
-                <th class="px-3 py-2 text-start text-xs text-blue-600 font-semibold">{{ t('backoffice.analytics.thisMonth') }}</th>
-                <th class="px-3 py-2 text-start text-xs text-gray-400 dark:text-gray-500 font-semibold">{{ t('backoffice.analytics.lastMonth') }}</th>
-                <th class="px-3 py-2 text-start text-xs text-gray-500 dark:text-gray-500 font-semibold">{{ t('backoffice.analytics.change') }}</th>
+                <th class="px-3 py-2 text-start text-xs text-gray-500 dark:text-gray-400 font-semibold">{{ t('backoffice.analytics.column.source') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-blue-600 dark:text-blue-300">{{ t('backoffice.analytics.thisMonth') }}</th>
+                <th class="px-3 py-2 text-start text-xs text-gray-400 dark:text-gray-400 font-semibold">{{ t('backoffice.analytics.lastMonth') }}</th>
+                <th class="px-3 py-2 text-start text-xs text-gray-500 dark:text-gray-400 font-semibold">{{ t('backoffice.analytics.change') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -480,27 +480,31 @@ onMounted(loadAll)
                 { label: `🏖️ ${t('backoffice.analytics.beach')}`, cur: revCurrent?.beach, prev: revPrevious?.beach },
               ]" :key="row.label" class="border-b border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-3 py-2 font-medium text-gray-700 dark:text-gray-300">{{ row.label }}</td>
-                <td class="px-3 py-2 font-bold text-blue-700">{{ money(row.cur ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
-                <td class="px-3 py-2 text-gray-500 dark:text-gray-500">{{ money(row.prev ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
+                <td class="px-3 py-2 font-bold text-blue-700 dark:text-blue-300">{{ money(row.cur ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
+                <td class="px-3 py-2 text-gray-500 dark:text-gray-400">{{ money(row.prev ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
                 <td class="px-3 py-2">
                   <span v-if="revDiff(row.cur ?? null, row.prev ?? null)" :class="[
                     'text-xs font-bold px-2 py-0.5 rounded-full',
-                    revDiff(row.cur ?? null, row.prev ?? null)!.up ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'
+                    revDiff(row.cur ?? null, row.prev ?? null)!.up
+                      ? 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300'
+                      : 'bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300'
                   ]">
                     {{ revDiff(row.cur ?? null, row.prev ?? null)!.up ? '▲' : '▼' }}
                     {{ revDiff(row.cur ?? null, row.prev ?? null)!.pct }}%
                   </span>
-                  <span v-else class="text-xs text-gray-400 dark:text-gray-500">—</span>
+                  <span v-else class="text-xs text-gray-400 dark:text-gray-400">—</span>
                 </td>
               </tr>
               <tr class="border-t-2 border-stone-300 bg-stone-50 dark:bg-gray-800/60 font-black">
                 <td class="px-3 py-2 text-gray-900 dark:text-gray-100">{{ t('backoffice.analytics.total') }}</td>
-                <td class="px-3 py-2 text-green-700 text-base">{{ money(revCurrent?.total ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
-                <td class="px-3 py-2 text-gray-500 dark:text-gray-500 text-base">{{ money(revPrevious?.total ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
+                <td class="px-3 py-2 text-base text-green-700 dark:text-green-300">{{ money(revCurrent?.total ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
+                <td class="px-3 py-2 text-gray-500 dark:text-gray-400 text-base">{{ money(revPrevious?.total ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
                 <td class="px-3 py-2">
                   <span v-if="revDiff(revCurrent?.total ?? null, revPrevious?.total ?? null)" :class="[
                     'text-sm font-black px-2 py-0.5 rounded-full',
-                    revDiff(revCurrent?.total ?? null, revPrevious?.total ?? null)!.up ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-700'
+                    revDiff(revCurrent?.total ?? null, revPrevious?.total ?? null)!.up
+                      ? 'bg-green-100 text-green-800 dark:bg-green-950/50 dark:text-green-300'
+                      : 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300'
                   ]">
                     {{ revDiff(revCurrent?.total ?? null, revPrevious?.total ?? null)!.up ? '▲' : '▼' }}
                     {{ revDiff(revCurrent?.total ?? null, revPrevious?.total ?? null)!.pct }}%
@@ -517,44 +521,44 @@ onMounted(loadAll)
         <EmptyState v-if="!dailyStats || dailyStats.message" icon="🗓️" :title="t('backoffice.analytics.noTodayData')" :subtitle="t('backoffice.analytics.noTodayDataHint')" />
         <div v-else class="grid grid-cols-2 md:grid-cols-5 gap-4">
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.occupancyRate') }}</div>
-            <div class="text-lg font-black text-blue-700">{{ dailyStats.occupancy_pct?.toFixed(1) }}%</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.occupancyRate') }}</div>
+            <div class="text-lg font-black text-blue-700 dark:text-blue-300">{{ dailyStats.occupancy_pct?.toFixed(1) }}%</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">ADR</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">ADR</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.adr) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">RevPAR</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">RevPAR</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.revpar) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.beachVisitors') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.beachVisitors') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ dailyStats.beach_visitors }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.diningCovers') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.diningCovers') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ dailyStats.restaurant_covers }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.roomRevenue') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.roomRevenue') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.room_revenue) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.beachRevenue') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.beachRevenue') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.beach_revenue) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.diningRevenue') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.diningRevenue') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.restaurant_revenue) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.cafeRevenue') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.cafeRevenue') }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ money(dailyStats.cafe_revenue) }}</div>
           </div>
           <div class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.analytics.todayTotal') }}</div>
-            <div class="text-lg font-black text-green-700">{{ money(dailyStats.total_revenue) }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.analytics.todayTotal') }}</div>
+            <div class="text-lg font-black text-green-700 dark:text-green-300">{{ money(dailyStats.total_revenue) }}</div>
           </div>
         </div>
       </AppCard>
@@ -570,11 +574,11 @@ onMounted(loadAll)
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.guest') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.rating') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.comment') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.source') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.date') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.guest') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.rating') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.comment') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.source') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.date') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -583,9 +587,9 @@ onMounted(loadAll)
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="ratingVariant(r.overall_rating)">{{ r.overall_rating }} / 5</AppBadge>
                 </td>
-                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500 max-w-xs truncate">{{ r.comment ?? '—' }}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ reviewSourceLabels[r.source] ?? r.source }}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ formatDate(r.reviewed_at) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 max-w-xs truncate">{{ r.comment ?? '—' }}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{{ reviewSourceLabels[r.source] ?? r.source }}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{{ formatDate(r.reviewed_at) }}</td>
               </tr>
             </tbody>
           </table>
@@ -596,17 +600,17 @@ onMounted(loadAll)
       <AppCard :title="t('backoffice.analytics.reviewsByCategory')">
         <div v-if="reviewInsights && reviewInsights.gss_score != null" class="flex items-center gap-2 mb-4">
           <AppBadge variant="info">GSS {{ reviewInsights.gss_score.toFixed(2) }} / 5</AppBadge>
-          <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.analytics.ofPublishedReviews', { count: reviewInsights.review_count }) }}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.analytics.ofPublishedReviews', { count: reviewInsights.review_count }) }}</span>
         </div>
         <EmptyState v-if="!reviewInsights || reviewInsights.category_breakdown.length === 0" icon="📋" :title="t('backoffice.analytics.noCategoryReviews')" />
         <div v-else class="grid grid-cols-2 md:grid-cols-3 gap-4">
           <div v-for="c in reviewInsights.category_breakdown" :key="c.category" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ categoryLabels[c.category] ?? c.category }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ categoryLabels[c.category] ?? c.category }}</div>
             <div class="text-lg font-black text-gray-800 dark:text-gray-200">{{ c.avg_rating.toFixed(2) }} / 5</div>
-            <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+            <div class="mt-1 h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-700">
               <div class="bg-blue-600 h-1.5 rounded-full" :style="{ width: (c.avg_rating / 5 * 100) + '%' }" />
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.analytics.reviewCount', { count: c.count }) }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.analytics.reviewCount', { count: c.count }) }}</div>
           </div>
         </div>
       </AppCard>
@@ -653,7 +657,7 @@ onMounted(loadAll)
             <div v-for="pt in thisYearTrend" :key="pt.period" class="flex-1 flex flex-col items-center justify-end h-full gap-1">
               <div class="w-full bg-blue-500 rounded-t" :style="{ height: `${Math.max(4, (pt.total_cost / trendMaxCost) * 100)}%` }"
                 :title="`${pt.period}: ${money(pt.total_cost)} ${t('backoffice.analytics.currency')}`" />
-              <span class="text-[9px] text-gray-400 dark:text-gray-500">{{ monthLabelShort(pt.period) }}</span>
+              <span class="text-[9px] text-gray-400 dark:text-gray-400">{{ monthLabelShort(pt.period) }}</span>
             </div>
           </div>
         </div>
@@ -663,15 +667,15 @@ onMounted(loadAll)
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.column.date') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.typeLabel') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.consumption') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.analytics.totalCost') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.column.date') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.typeLabel') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.consumption') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.analytics.totalCost') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="r in utilityReadings.slice(0, 10)" :key="r.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ formatDate(r.reading_date) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{{ formatDate(r.reading_date) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ utilityTypeLabels[r.utility_type] ?? r.utility_type }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ r.reading_value }} {{ r.unit }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ money(Number(r.total_cost)) }}</td>

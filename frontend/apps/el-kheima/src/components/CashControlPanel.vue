@@ -22,7 +22,9 @@
  * requirement. The history list below only renders for manager+.
  */
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppButton, AppSelect, AppTextarea, MoneyInput, EmptyState, useToast } from '@resort-os/ui'
 import type { SelectOption } from '@resort-os/ui'
 import PinGuardModal from './PinGuardModal.vue'
@@ -31,26 +33,28 @@ const props = defineProps<{ shiftId: number }>()
 
 const auth = useAuthStore()
 const toast = useToast()
+const { t } = useI18n()
+const { formatMoney, formatTime } = useStaffFormat()
 const canViewLedger = computed(() => auth.hasRole('manager'))
 
-const MOVEMENT_TYPES: SelectOption[] = [
-  { value: 'cash_in', label: '💵 إيداع كاش' },
-  { value: 'cash_out', label: '💸 سحب كاش' },
-  { value: 'petty_cash', label: '🧾 عهدة نثرية' },
-  { value: 'safe_drop', label: '🏦 تنزيل خزنة' },
-  { value: 'drawer_open', label: '🗄️ فتح الدرج (بدون بيع)' },
-  { value: 'correction', label: '✏️ تصحيح' },
-]
-const MOVEMENT_LABEL: Record<string, string> = Object.fromEntries(MOVEMENT_TYPES.map(o => [o.value, o.label]))
+const movementTypes = computed<SelectOption[]>(() => [
+  { value: 'cash_in', label: `💵 ${t('backoffice.shiftDashboard.cashControl.types.cashIn')}` },
+  { value: 'cash_out', label: `💸 ${t('backoffice.shiftDashboard.cashControl.types.cashOut')}` },
+  { value: 'petty_cash', label: `🧾 ${t('backoffice.shiftDashboard.cashControl.types.pettyCash')}` },
+  { value: 'safe_drop', label: `🏦 ${t('backoffice.shiftDashboard.cashControl.types.safeDrop')}` },
+  { value: 'drawer_open', label: `🗄️ ${t('backoffice.shiftDashboard.cashControl.types.drawerOpen')}` },
+  { value: 'correction', label: `✏️ ${t('backoffice.shiftDashboard.cashControl.types.correction')}` },
+])
+const movementLabel = computed<Record<string, string>>(() => Object.fromEntries(movementTypes.value.map(o => [o.value, o.label])))
 
 // فين رايح الكاش — بس لـ safe_drop (2026-07-16، بحث مقارنة Click القديم:
 // الخزنة الرئيسية/البنك كانوا مواقع مستقلة، مش مجرد "خرج من الدرج").
-const DESTINATIONS: SelectOption[] = [
-  { value: 'main_safe', label: '🏦 الخزنة الرئيسية' },
-  { value: 'bank', label: '🏛️ تسليم بنكي' },
-  { value: 'petty_cash_box', label: '🧾 صندوق العهدة' },
-]
-const DESTINATION_LABEL: Record<string, string> = Object.fromEntries(DESTINATIONS.map(o => [o.value, o.label]))
+const destinations = computed<SelectOption[]>(() => [
+  { value: 'main_safe', label: `🏦 ${t('backoffice.shiftDashboard.cashControl.destinations.mainSafe')}` },
+  { value: 'bank', label: `🏛️ ${t('backoffice.shiftDashboard.cashControl.destinations.bank')}` },
+  { value: 'petty_cash_box', label: `🧾 ${t('backoffice.shiftDashboard.cashControl.destinations.pettyCashBox')}` },
+])
+const destinationLabel = computed<Record<string, string>>(() => Object.fromEntries(destinations.value.map(o => [o.value, o.label])))
 
 const movementType = ref<string>('cash_in')
 const amount = ref('')
@@ -69,7 +73,7 @@ const showDestination = computed(() => movementType.value === 'safe_drop')
 interface CostCenter { id: number; code: string; name: string }
 const costCenters = ref<CostCenter[]>([])
 const costCenterOptions = computed<SelectOption[]>(() => [
-  { value: '', label: '— بدون مركز تكلفة —' },
+  { value: '', label: t('backoffice.shiftDashboard.cashControl.noCostCenter') },
   ...costCenters.value.map(c => ({ value: String(c.id), label: `${c.code} — ${c.name}` })),
 ])
 async function loadCostCenters() {
@@ -82,11 +86,11 @@ async function loadCostCenters() {
 function requestRecordMovement() {
   formError.value = ''
   if (reason.value.trim().length < 3) {
-    formError.value = 'السبب لازم يكون 3 حروف على الأقل'
+    formError.value = t('backoffice.shiftDashboard.cashControl.reasonTooShort')
     return
   }
   if (amountRequired.value && (!amount.value || Number(amount.value) <= 0)) {
-    formError.value = 'أدخل مبلغ صحيح'
+    formError.value = t('backoffice.shiftDashboard.cashControl.invalidAmount')
     return
   }
   showPinGuard.value = true
@@ -112,10 +116,10 @@ async function performRecordMovement(approverUserId: number | null, approverPin:
     reason.value = ''
     destination.value = ''
     costCenterId.value = ''
-    toast.success('تم تسجيل الحركة ✓')
+    toast.success(t('backoffice.shiftDashboard.cashControl.recorded'))
     if (canViewLedger.value) await loadLedger()
   } catch (e: any) {
-    formError.value = e?.response?.data?.detail ?? 'فشل تسجيل الحركة'
+    formError.value = e?.response?.data?.detail ?? t('backoffice.shiftDashboard.cashControl.recordFailed')
   } finally {
     submitting.value = false
   }
@@ -136,7 +140,7 @@ async function loadLedger() {
     const { data } = await api.get(ENDPOINTS.finance.shiftCashMovements(props.shiftId))
     ledger.value = data
   } catch {
-    toast.error('تعذّر تحميل سجل حركات الكاش')
+    toast.error(t('backoffice.shiftDashboard.cashControl.loadFailed'))
   } finally {
     loadingLedger.value = false
   }
@@ -147,45 +151,45 @@ onMounted(() => {
 })
 
 function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+  return formatTime(iso)
 }
 </script>
 
 <template>
-  <AppCard title="ضبط الكاش (Cash Control)" class="mb-4">
-    <div dir="rtl" class="space-y-3">
+  <AppCard :title="t('backoffice.shiftDashboard.cashControl.title')" class="mb-4">
+    <div class="space-y-3">
       <div class="grid grid-cols-2 gap-2">
-        <AppSelect v-model="movementType" label="نوع الحركة" :options="MOVEMENT_TYPES" class="col-span-2 sm:col-span-1" />
-        <MoneyInput v-model="amount" :label="amountRequired ? 'المبلغ' : 'المبلغ (اختياري)'" />
+        <AppSelect v-model="movementType" :label="t('backoffice.shiftDashboard.cashControl.type')" :options="movementTypes" class="col-span-2 sm:col-span-1" />
+        <MoneyInput v-model="amount" currency="EGP" :label="amountRequired ? t('backoffice.shiftDashboard.cashControl.amount') : t('backoffice.shiftDashboard.cashControl.optionalAmount')" />
       </div>
       <div v-if="showDestination" class="grid grid-cols-2 gap-2">
-        <AppSelect v-model="destination" label="فين رايح الكاش؟" :options="DESTINATIONS" class="col-span-2 sm:col-span-1" />
+        <AppSelect v-model="destination" :label="t('backoffice.shiftDashboard.cashControl.destination')" :options="destinations" class="col-span-2 sm:col-span-1" />
       </div>
-      <AppSelect v-if="costCenters.length" v-model="costCenterId" label="مركز التكلفة (اختياري)" :options="costCenterOptions" />
-      <AppTextarea v-model="reason" :rows="2" placeholder="السبب (إجباري)..." />
-      <p v-if="formError" class="text-xs text-danger">{{ formError }}</p>
+      <AppSelect v-if="costCenters.length" v-model="costCenterId" :label="t('backoffice.shiftDashboard.cashControl.costCenter')" :options="costCenterOptions" />
+      <AppTextarea v-model="reason" :rows="2" :placeholder="t('backoffice.shiftDashboard.cashControl.reason')" />
+      <p v-if="formError" role="alert" class="text-sm text-danger">{{ formError }}</p>
       <AppButton variant="secondary" block :loading="submitting" @click="requestRecordMovement">
-        تسجيل الحركة
+        {{ t('backoffice.shiftDashboard.cashControl.record') }}
       </AppButton>
 
       <template v-if="canViewLedger">
-        <div class="border-t border-stone-200 pt-3">
-          <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">سجل حركات الوردية</h3>
-          <div v-if="loadingLedger" class="text-center text-sm text-gray-400 py-3">جاري التحميل...</div>
-          <EmptyState v-else-if="!ledger.length" icon="📭" title="مفيش حركات كاش يدوية في الوردية دي لحد دلوقتي" />
-          <div v-else class="divide-y divide-stone-100 max-h-64 overflow-y-auto">
+        <div class="border-t border-stone-200 pt-3 dark:border-border">
+          <h3 class="mb-1.5 text-xs font-bold uppercase text-gray-500 dark:text-gray-400">{{ t('backoffice.shiftDashboard.cashControl.ledgerTitle') }}</h3>
+          <div v-if="loadingLedger" class="py-3 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.shiftDashboard.loading') }}</div>
+          <EmptyState v-else-if="!ledger.length" icon="📭" :title="t('backoffice.shiftDashboard.cashControl.empty')" />
+          <div v-else class="max-h-64 divide-y divide-stone-100 overflow-y-auto dark:divide-border">
             <div v-for="m in ledger" :key="m.id" class="py-2 flex items-center justify-between gap-2">
               <div>
-                <div class="text-sm font-semibold text-gray-800">
-                  {{ MOVEMENT_LABEL[m.movement_type] ?? m.movement_type }}
-                  <span v-if="m.destination" class="text-xs font-normal text-gray-500">← {{ DESTINATION_LABEL[m.destination] ?? m.destination }}</span>
+                <div class="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                  {{ movementLabel[m.movement_type] ?? m.movement_type }}
+                  <span v-if="m.destination" class="text-xs font-normal text-gray-500 dark:text-gray-400">← {{ destinationLabel[m.destination] ?? m.destination }}</span>
                 </div>
                 <div class="text-xs text-gray-400">
                   {{ m.reason }} — {{ fmtTime(m.created_at) }}
-                  <span v-if="m.approved_by" class="text-emerald-600">— بموافقة مدير</span>
+                  <span v-if="m.approved_by" class="text-emerald-600 dark:text-emerald-300">— {{ t('backoffice.shiftDashboard.cashControl.managerApproved') }}</span>
                 </div>
               </div>
-              <span class="text-sm font-bold text-blue-700">{{ Number(m.amount).toFixed(2) }} ج</span>
+              <span class="text-sm font-bold text-blue-700 dark:text-blue-300">{{ formatMoney(m.amount, 'EGP') }}</span>
             </div>
           </div>
         </div>
@@ -196,8 +200,8 @@ function fmtTime(iso: string): string {
   <PinGuardModal
     v-if="showPinGuard"
     :min-level="60"
-    title="موافقة حركة كاش"
-    message="أي حركة كاش يدوية محتاجة موافقة مدير/محاسب بالـ PIN"
+    :title="t('backoffice.shiftDashboard.cashControl.approvalTitle')"
+    :message="t('backoffice.shiftDashboard.cashControl.approvalMessage')"
     :loading="submitting"
     :error-message="formError"
     @approved="onPinApproved"

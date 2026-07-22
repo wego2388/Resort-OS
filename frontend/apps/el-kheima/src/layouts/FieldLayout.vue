@@ -56,49 +56,28 @@ function logout() {
 </script>
 
 <template>
-  <!--
-    POS dark theme — warm dark navy (#1E2530) بيقلل إرهاق العين للكاشير
-    اللي بيشتغل 8+ ساعات على الشاشة في الشمس.
-    CSS vars محدّدة هنا تنتقل تلقائياً لكل الـ POS views عبر CSS inheritance.
-  -->
   <!-- Direction is inherited from <html dir> (set centrally by the staff
        locale controller) — no per-component dir override. -->
-  <div
-    class="min-h-screen flex flex-col"
-    style="
-      background: #1E2530;
-      --pos-bg: #1E2530;
-      --pos-surface: #252D3A;
-      --pos-surface-2: #2E3748;
-      --pos-border: #374151;
-      --pos-text: #F9FAFB;
-      --pos-text-muted: #9CA3AF;
-      --pos-accent: #C9963C;
-      --pos-accent-bg: rgba(201,150,60,0.15);
-      --pos-success: #10B981;
-      --pos-danger: #F87171;
-    "
-  >
+  <div class="field-shell flex min-h-screen flex-col">
     <!-- ── Header ── -->
-    <header style="background:#252D3A; border-bottom:1px solid #374151;" class="flex-shrink-0 shadow-elevation-2">
-      <div class="flex items-center justify-between px-4 py-2.5">
+    <header class="flex-shrink-0 border-b border-stone-200 bg-white shadow-elevation-2 dark:border-gray-700 dark:bg-[#252D3A]">
+      <div class="flex min-h-16 items-center justify-between gap-2 px-3 py-2 sm:px-4">
 
         <!-- Logo + title -->
         <div class="flex items-center gap-3">
-          <div class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 shadow-elevation-1"
-            style="background:#C9963C;">
+          <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-xl bg-gold-DEFAULT shadow-elevation-1">
             <span class="text-white text-xs font-black">{{ isWaiter ? '🧑🍳' : 'POS' }}</span>
           </div>
           <div>
-            <div class="font-bold text-sm leading-tight" style="color:#F9FAFB;">
+            <div class="text-sm font-bold leading-tight text-gray-900 dark:text-gray-50">
               {{ isWaiter ? t('backoffice.layout.orderTaker') : t('backoffice.layout.pos') }}
             </div>
-            <div class="text-xs leading-tight" style="color:#9CA3AF;">{{ branchName }}</div>
+            <div class="text-xs leading-tight text-gray-500 dark:text-gray-400">{{ branchName }}</div>
           </div>
         </div>
 
         <!-- Actions -->
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1 sm:gap-2">
           <!-- Shift panel — كاشير+ فقط -->
           <ShiftPanel v-if="auth.hasRole('cashier')" />
 
@@ -107,18 +86,16 @@ function logout() {
 
           <!-- Connectivity dot -->
           <div class="flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full"
+            <span class="h-2.5 w-2.5 rounded-full"
               :class="isOnline ? 'bg-[#10B981]' : 'bg-amber-500 animate-pulse'" />
             <span v-if="pendingCount > 0"
-              class="text-xs font-bold px-1.5 py-0.5 rounded-full"
-              style="color:#FBBF24; background:rgba(120,80,0,0.3);">
+              class="rounded-full bg-amber-100 px-1.5 py-0.5 text-xs font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
               {{ pendingCount }}
             </span>
           </div>
 
           <!-- Clock — gold لجذب الانتباه -->
-          <div class="text-sm font-mono font-bold tabular-nums px-3 py-1 rounded-lg border"
-            style="color:#C9963C; background:#2E3748; border-color:#374151;"
+          <div class="hidden min-h-11 items-center rounded-xl border border-stone-200 bg-stone-50 px-3 font-mono text-sm font-bold tabular-nums text-amber-700 dark:border-gray-600 dark:bg-[#2E3748] dark:text-amber-300 md:flex"
             dir="ltr">
             {{ currentTime }}
           </div>
@@ -126,20 +103,22 @@ function logout() {
           <!-- User info -->
           <button
             @click="showOperatorSwitch = true"
-            class="hidden sm:flex flex-col items-end rounded-lg px-1.5 py-0.5 transition-colors"
-            style="hover:background:#2E3748;"
+            type="button"
+            class="hidden min-h-11 flex-col items-end justify-center rounded-xl px-2 transition-colors hover:bg-stone-100 dark:hover:bg-[#2E3748] sm:flex"
           >
-            <span class="text-sm font-medium" style="color:#F9FAFB;">{{ auth.user?.full_name }}</span>
-            <span class="text-xs" style="color:#C9963C;">{{ auth.role }}</span>
+            <span class="text-sm font-medium text-gray-900 dark:text-gray-50">{{ auth.user?.full_name }}</span>
+            <span class="text-xs text-amber-700 dark:text-amber-300">{{ auth.role }}</span>
           </button>
 
           <LanguageSwitcher variant="compact" />
-          <ThemeToggle />
+          <ThemeToggle
+            :light-label="t('backoffice.layout.switchLight')"
+            :dark-label="t('backoffice.layout.switchDark')"
+          />
 
           <button
             @click="logout"
-            class="text-sm font-medium px-2 py-1 rounded transition-colors"
-            style="color:#F87171;"
+            class="min-h-11 rounded-xl px-2 text-sm font-medium text-red-600 transition-colors hover:bg-red-50 dark:text-red-300 dark:hover:bg-red-950/40"
           >{{ t('backoffice.layout.logout') }}</button>
         </div>
       </div>
@@ -147,16 +126,15 @@ function logout() {
       <OperatorSwitchModal v-if="showOperatorSwitch" @close="showOperatorSwitch = false" />
 
       <!-- ── Nav tabs ── -->
-      <nav v-if="navItems.length" class="flex overflow-x-auto"
-        style="border-top:1px solid #374151;">
+      <nav v-if="navItems.length" class="flex overflow-x-auto border-t border-stone-200 dark:border-gray-700">
         <RouterLink
           v-for="item in navItems"
           :key="item.path"
           :to="item.path"
-          class="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold transition-colors min-w-[80px]"
-          :style="route.path === item.path
-            ? 'background:#C9963C; color:#FFFFFF;'
-            : 'color:#9CA3AF;'"
+          class="flex min-h-11 min-w-[96px] flex-1 items-center justify-center gap-2 px-3 py-2.5 text-sm font-semibold transition-colors"
+          :class="route.path === item.path
+            ? 'bg-gold-DEFAULT text-white'
+            : 'text-gray-600 hover:bg-stone-100 hover:text-gray-900 dark:text-gray-300 dark:hover:bg-[#2E3748] dark:hover:text-white'"
         >
           <span>{{ item.icon }}</span>
           <span>{{ item.label }}</span>
@@ -171,3 +149,33 @@ function logout() {
 
   </div>
 </template>
+
+<style scoped>
+.field-shell {
+  background: #f8fafc;
+  --pos-bg: #f8fafc;
+  --pos-surface: #ffffff;
+  --pos-surface-2: #f1f5f9;
+  --pos-border: #e2e8f0;
+  --pos-text: #111827;
+  --pos-text-muted: #64748b;
+  --pos-accent: #a86f18;
+  --pos-accent-bg: rgb(201 150 60 / 12%);
+  --pos-success: #047857;
+  --pos-danger: #dc2626;
+}
+
+:global(.dark) .field-shell {
+  background: #1e2530;
+  --pos-bg: #1e2530;
+  --pos-surface: #252d3a;
+  --pos-surface-2: #2e3748;
+  --pos-border: #4b5563;
+  --pos-text: #f9fafb;
+  --pos-text-muted: #cbd5e1;
+  --pos-accent: #d7aa5b;
+  --pos-accent-bg: rgb(201 150 60 / 15%);
+  --pos-success: #34d399;
+  --pos-danger: #fca5a5;
+}
+</style>

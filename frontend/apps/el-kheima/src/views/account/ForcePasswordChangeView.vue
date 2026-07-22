@@ -79,7 +79,7 @@ function returnToLogin() {
       <div class="bg-white dark:bg-surface rounded-2xl border border-white/20 dark:border-border shadow-2xl p-6 sm:p-8">
         <template v-if="completed">
           <div role="status" class="text-center py-3">
-            <div class="mx-auto w-14 h-14 rounded-full bg-green-100 text-green-700 flex items-center justify-center text-2xl mb-4">✓</div>
+            <div class="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-green-100 text-2xl text-green-700 dark:bg-green-950/50 dark:text-green-300">✓</div>
             <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100">
               {{ t('backoffice.securityOnboarding.password.successTitle') }}
             </h2>
@@ -97,7 +97,7 @@ function returnToLogin() {
         </template>
 
         <form v-else class="space-y-4" @submit.prevent="submit">
-          <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
+          <div class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
             {{ t('backoffice.securityOnboarding.password.reason') }}
           </div>
 
@@ -159,7 +159,7 @@ function returnToLogin() {
             >
           </div>
 
-          <p v-if="error" role="alert" class="rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <p v-if="error" role="alert" class="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
             {{ error }}
           </p>
 

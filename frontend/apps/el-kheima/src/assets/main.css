@@ -7,6 +7,22 @@
    Replaces the duplicate @layer components block that used to live here. */
 @import '@resort-os/ui/src/styles/base.css';
 
+/*
+ * Staff dark theme — keep the entire back-office shell on one cool neutral
+ * palette.  The shared defaults use warm stone surfaces, which looked brown
+ * when placed inside the staff app's slate/navy chrome.  These overrides are
+ * intentionally staff-only; the public guest application retains its own
+ * visual language.
+ */
+.dark {
+  --color-surface: 17 24 39;       /* gray-900 */
+  --color-border: 55 65 81;        /* gray-700 */
+  --color-muted: 156 163 175;      /* gray-400 */
+  --color-background: 3 7 18;      /* gray-950 */
+  --color-dark: 249 250 251;        /* gray-50 foreground */
+  --color-light: 17 24 39;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -18,5 +34,25 @@
      root cascades to `body`, so components use logical properties and inherit
      the correct direction automatically. The Cairo family renders Arabic
      comfortably and falls back cleanly for Latin text. */
-  body { font-family: 'Cairo', sans-serif; }
+  html {
+    color-scheme: light;
+    background-color: rgb(var(--color-background));
+  }
+
+  html.dark { color-scheme: dark; }
+
+  body {
+    min-width: 320px;
+    font-family: 'Cairo', sans-serif;
+    background-color: rgb(var(--color-background));
+    color: rgb(var(--color-dark));
+  }
+
+  /* Native controls must follow the active palette even on older screens
+     that have not yet migrated to AppInput/AppSelect. */
+  input,
+  select,
+  textarea {
+    color: inherit;
+  }
 }

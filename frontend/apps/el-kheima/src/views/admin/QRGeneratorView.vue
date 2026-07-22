@@ -289,7 +289,7 @@ const grouped = computed(() => {
     <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
       <div>
         <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">📱 {{ t('backoffice.qrGenerator.title') }}</h1>
-        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.qrGenerator.subtitle') }}</p>
+        <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.qrGenerator.subtitle') }}</p>
       </div>
       <div class="flex gap-2">
         <button
@@ -316,11 +316,11 @@ const grouped = computed(() => {
         @click="activeOutletId = o.id"
         :class="[
           'px-5 py-2 rounded-lg text-sm font-bold transition-all',
-          activeOutletId === o.id ? 'bg-white dark:bg-surface text-blue-700 shadow-sm' : 'text-gray-500 hover:text-gray-700',
+          activeOutletId === o.id ? 'bg-white text-blue-700 shadow-sm dark:bg-surface dark:text-blue-300' : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200',
         ]"
       >{{ outletLabel(o) }}</button>
     </div>
-    <div v-else-if="!loading" class="text-sm text-gray-400 dark:text-gray-500 mb-6">{{ t('backoffice.qrGenerator.noActiveOutlets') }}</div>
+    <div v-else-if="!loading" class="text-sm text-gray-400 dark:text-gray-400 mb-6">{{ t('backoffice.qrGenerator.noActiveOutlets') }}</div>
 
     <!-- Loading -->
     <div v-if="loading" class="flex justify-center py-16">
@@ -328,16 +328,16 @@ const grouped = computed(() => {
     </div>
 
     <!-- Empty -->
-    <div v-else-if="tables.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-500">
+    <div v-else-if="tables.length === 0" class="flex flex-col items-center justify-center py-20 text-gray-400 dark:text-gray-400">
       <div class="text-5xl mb-4">📱</div>
-      <p class="font-medium text-gray-600 dark:text-gray-500">{{ t('backoffice.qrGenerator.noTables') }}</p>
+      <p class="font-medium text-gray-600 dark:text-gray-400">{{ t('backoffice.qrGenerator.noTables') }}</p>
       <p class="text-sm mt-1">{{ t('backoffice.qrGenerator.noTablesHint') }}</p>
     </div>
 
     <!-- Tables grid grouped by section -->
     <div v-else class="space-y-8">
       <div v-for="[section, sectionTables] in grouped" :key="section">
-        <h2 class="text-sm font-bold text-gray-500 dark:text-gray-500 uppercase tracking-wide mb-4 flex items-center gap-2">
+        <h2 class="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4 flex items-center gap-2">
           <span class="flex-1 border-b border-stone-200 dark:border-border" />
           <span>{{ section }}</span>
           <span class="flex-1 border-b border-stone-200 dark:border-border" />
@@ -350,7 +350,9 @@ const grouped = computed(() => {
             @click="toggleSelect(table.id)"
             :class="[
               'relative bg-white dark:bg-surface rounded-2xl border-2 p-4 flex flex-col items-center gap-3 cursor-pointer transition-all hover:shadow-md',
-              selectedIds.has(table.id) ? 'border-blue-600 shadow-md bg-blue-50' : 'border-stone-200 dark:border-border',
+              selectedIds.has(table.id)
+                ? 'border-blue-600 bg-blue-50 shadow-md dark:border-blue-500 dark:bg-blue-950/40'
+                : 'border-stone-200 dark:border-border',
             ]"
           >
             <!-- Checkmark -->
@@ -382,13 +384,13 @@ const grouped = computed(() => {
             <!-- Label -->
             <div class="text-center">
               <div class="font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.qrGenerator.tableNumber', { number: table.table_number }) }}</div>
-              <div v-if="table.section" class="text-xs text-gray-500 dark:text-gray-500">{{ table.section }}</div>
+              <div v-if="table.section" class="text-xs text-gray-500 dark:text-gray-400">{{ table.section }}</div>
             </div>
 
             <!-- Download btn -->
             <button
               @click.stop="downloadQr(table)"
-              class="w-full py-1.5 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-600 dark:text-gray-500 text-xs font-semibold rounded-lg transition-colors"
+              class="w-full py-1.5 bg-stone-100 dark:bg-gray-700 hover:bg-stone-200 text-gray-600 dark:text-gray-400 text-xs font-semibold rounded-lg transition-colors"
             >⬇️ {{ t('backoffice.qrGenerator.download') }}</button>
           </div>
         </div>
@@ -396,9 +398,9 @@ const grouped = computed(() => {
     </div>
 
     <!-- Info box -->
-    <div class="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-800">
+    <div class="mt-8 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
       <p class="font-bold mb-1">💡 {{ t('backoffice.qrGenerator.howToUse') }}</p>
-      <ul class="space-y-1 text-xs list-disc list-inside text-blue-700">
+      <ul class="list-inside list-disc space-y-1 text-xs text-blue-700 dark:text-blue-300">
         <li>{{ t('backoffice.qrGenerator.step1') }}</li>
         <li>{{ t('backoffice.qrGenerator.step2') }}</li>
         <li>{{ t('backoffice.qrGenerator.step3') }}</li>

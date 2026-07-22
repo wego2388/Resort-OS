@@ -168,11 +168,11 @@ onMounted(() => {
 
       <div class="bg-white dark:bg-surface rounded-2xl border border-white/20 dark:border-border shadow-2xl p-6 sm:p-8">
         <template v-if="recoveryCodes.length">
-          <div role="status" class="rounded-xl border border-amber-300 bg-amber-50 p-4 sm:p-5">
-            <h2 class="font-bold text-amber-950 text-lg">
+          <div role="status" class="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40 sm:p-5">
+            <h2 class="text-lg font-bold text-amber-950 dark:text-amber-200">
               {{ t('backoffice.securityOnboarding.twoFactor.recoveryTitle') }}
             </h2>
-            <p class="text-sm leading-6 text-amber-900 mt-1">
+            <p class="mt-1 text-sm leading-6 text-amber-900 dark:text-amber-200">
               {{ t('backoffice.securityOnboarding.twoFactor.recoveryBody') }}
             </p>
           </div>
@@ -181,11 +181,11 @@ onMounted(() => {
             <code
               v-for="recoveryCode in recoveryCodes"
               :key="recoveryCode"
-              class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-center font-mono font-semibold tracking-wide text-gray-900 select-all"
+              class="select-all rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-center font-mono font-semibold tracking-wide text-gray-900 dark:border-border dark:bg-gray-800 dark:text-gray-100"
             >{{ recoveryCode }}</code>
           </div>
 
-          <button type="button" class="text-sm font-semibold text-blue-700 hover:underline" @click="copyRecoveryCodes">
+          <button type="button" class="text-sm font-semibold text-blue-700 hover:underline dark:text-blue-300" @click="copyRecoveryCodes">
             {{ copied
               ? t('backoffice.securityOnboarding.twoFactor.copied')
               : t('backoffice.securityOnboarding.twoFactor.copyCodes') }}
@@ -209,7 +209,7 @@ onMounted(() => {
         </template>
 
         <template v-else-if="isEnabled">
-          <div class="flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-green-800">
+          <div class="flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-green-800 dark:border-green-800 dark:bg-green-950/40 dark:text-green-300">
             <span aria-hidden="true" class="text-xl">✓</span>
             <span class="font-semibold">{{ t('backoffice.securityOnboarding.twoFactor.enabled') }}</span>
           </div>
@@ -251,7 +251,7 @@ onMounted(() => {
                 required
                 class="w-full min-h-11 px-4 rounded-xl border border-stone-300 dark:border-border dark:bg-gray-800 dark:text-gray-100 text-center font-mono tracking-widest"
               >
-              <p v-if="regenerateError" role="alert" class="text-sm text-red-700">{{ regenerateError }}</p>
+              <p v-if="regenerateError" role="alert" class="text-sm text-red-700 dark:text-red-300">{{ regenerateError }}</p>
               <div class="flex gap-2">
                 <AppButton type="submit" variant="primary" :loading="regenerating">
                   {{ t('backoffice.securityOnboarding.twoFactor.regenerate') }}
@@ -267,13 +267,13 @@ onMounted(() => {
             <button
               v-if="!showDisableForm"
               type="button"
-              class="text-sm font-semibold text-red-700 hover:underline"
+              class="text-sm font-semibold text-red-700 hover:underline dark:text-red-300"
               @click="showDisableForm = true"
             >
               {{ t('backoffice.securityOnboarding.twoFactor.disable') }}
             </button>
             <form v-else class="space-y-3" @submit.prevent="submitDisable">
-              <p class="text-sm text-red-700">{{ t('backoffice.securityOnboarding.twoFactor.disableWarning') }}</p>
+              <p class="text-sm text-red-700 dark:text-red-300">{{ t('backoffice.securityOnboarding.twoFactor.disableWarning') }}</p>
               <label for="disable-password" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                 {{ t('backoffice.securityOnboarding.twoFactor.currentPassword') }}
               </label>
@@ -300,7 +300,7 @@ onMounted(() => {
                 required
                 class="w-full min-h-11 px-4 rounded-xl border border-stone-300 dark:border-border dark:bg-gray-800 dark:text-gray-100 text-center font-mono tracking-widest"
               >
-              <p v-if="disableError" role="alert" class="text-sm text-red-700">{{ disableError }}</p>
+              <p v-if="disableError" role="alert" class="text-sm text-red-700 dark:text-red-300">{{ disableError }}</p>
               <div class="flex gap-2">
                 <AppButton type="submit" variant="danger" :loading="disabling">
                   {{ t('backoffice.securityOnboarding.twoFactor.confirmDisable') }}
@@ -318,7 +318,7 @@ onMounted(() => {
 
         <template v-else>
           <div v-if="!secret && !loadingSetup" class="space-y-4">
-            <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+            <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
               {{ t('backoffice.securityOnboarding.twoFactor.bindingExplanation') }}
             </div>
             <div v-if="requiresEnrollmentToken">
@@ -346,7 +346,7 @@ onMounted(() => {
                 class="w-full min-h-12 px-4 rounded-xl border border-stone-300 dark:border-border dark:bg-gray-800 dark:text-gray-100"
               >
             </div>
-            <p v-if="setupError" role="alert" class="rounded-xl bg-red-50 border border-red-200 p-3 text-sm text-red-700">
+            <p v-if="setupError" role="alert" class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
               {{ setupError }}
             </p>
             <AppButton variant="primary" class="w-full" @click="loadSetup">
@@ -374,13 +374,13 @@ onMounted(() => {
                 @error="qrFailed = true"
               >
             </div>
-            <p v-if="qrFailed" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            <p v-if="qrFailed" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
               {{ t('backoffice.securityOnboarding.twoFactor.qrFailed') }}
             </p>
 
-            <div class="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-center" dir="ltr">
-              <p class="text-xs text-gray-500 mb-1">{{ t('backoffice.securityOnboarding.twoFactor.manualKey') }}</p>
-              <code class="font-mono text-sm tracking-widest text-gray-900 select-all break-all">{{ secret }}</code>
+            <div class="rounded-xl border border-stone-200 bg-stone-50 px-4 py-3 text-center dark:border-border dark:bg-gray-800" dir="ltr">
+              <p class="mb-1 text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.securityOnboarding.twoFactor.manualKey') }}</p>
+              <code class="select-all break-all font-mono text-sm tracking-widest text-gray-900 dark:text-gray-100">{{ secret }}</code>
             </div>
 
             <label for="totp-code" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
@@ -396,7 +396,7 @@ onMounted(() => {
               class="w-full min-h-12 px-4 rounded-xl border border-stone-300 dark:border-border dark:bg-gray-800 dark:text-gray-100 text-center tracking-widest text-lg font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
               @keyup.enter="submitEnable"
             >
-            <p v-if="enableError" role="alert" class="text-sm text-red-700">{{ enableError }}</p>
+            <p v-if="enableError" role="alert" class="text-sm text-red-700 dark:text-red-300">{{ enableError }}</p>
             <AppButton variant="primary" class="w-full" :loading="enabling" @click="submitEnable">
               {{ t('backoffice.securityOnboarding.twoFactor.enable') }}
             </AppButton>

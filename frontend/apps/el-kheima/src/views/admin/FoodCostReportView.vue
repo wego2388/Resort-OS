@@ -187,7 +187,7 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.foodCostReport.title') }}</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
           {{ t('backoffice.foodCostReport.subtitle') }}
         </p>
       </div>
@@ -205,7 +205,9 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
         v-for="o in outlets" :key="o.id"
         @click="switchOutlet(o.id)"
         :class="['px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors',
-                 activeOutletId === o.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 dark:border-border text-gray-600 hover:border-blue-300']"
+                 activeOutletId === o.id
+                   ? 'border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-300'
+                   : 'border-stone-200 text-gray-600 hover:border-blue-300 dark:border-border dark:text-gray-400']"
       >
         {{ outletLabel(o) }}
       </button>
@@ -229,33 +231,33 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
       <!-- Summary KPIs -->
       <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.totalRevenue') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.foodCostReport.totalRevenue') }}</div>
           <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ money(report.summary.total_revenue) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.foodCostReport.currency') }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.foodCostReport.currency') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.theoreticalCost') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.foodCostReport.theoreticalCost') }}</div>
           <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ money(report.summary.total_theoretical_cost) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.foodCostReport.currency') }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.foodCostReport.currency') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.foodCostPct') }}</div>
-          <div :class="['text-2xl font-black', report.summary.food_cost_pct != null && Number(report.summary.food_cost_pct) > Number(report.summary.threshold_pct) ? 'text-red-600' : 'text-green-700']">
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.foodCostReport.foodCostPct') }}</div>
+          <div :class="['text-2xl font-black', report.summary.food_cost_pct != null && Number(report.summary.food_cost_pct) > Number(report.summary.threshold_pct) ? 'text-red-600 dark:text-red-300' : 'text-green-700 dark:text-green-300']">
             {{ pct(report.summary.food_cost_pct) }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.foodCostReport.thresholdShort') }}: {{ report.summary.threshold_pct }}%</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.foodCostReport.thresholdShort') }}: {{ report.summary.threshold_pct }}%</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.grossMargin') }}</div>
-          <div class="text-2xl font-black text-blue-700">{{ pct(report.summary.gross_margin_pct) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ money(report.summary.gross_margin_amount) }} {{ t('backoffice.foodCostReport.currency') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.foodCostReport.grossMargin') }}</div>
+          <div class="text-2xl font-black text-blue-700 dark:text-blue-300">{{ pct(report.summary.gross_margin_pct) }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ money(report.summary.gross_margin_amount) }} {{ t('backoffice.foodCostReport.currency') }}</div>
         </AppCard>
         <AppCard padding="md">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.foodCostReport.itemsMissingRecipe') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.foodCostReport.itemsMissingRecipe') }}</div>
           <div :class="['text-2xl font-black', report.summary.items_missing_recipe > 0 ? 'text-amber-600' : 'text-gray-800 dark:text-gray-200']">
             {{ report.summary.items_missing_recipe }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">
             {{ report.summary.items_missing_recipe > 0 ? t('backoffice.foodCostReport.excludedRevenue', { amount: money(report.summary.items_missing_recipe_revenue) }) : t('backoffice.foodCostReport.allCostsKnown') }}
           </div>
         </AppCard>
@@ -281,20 +283,20 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
               :title="t('backoffice.foodCostReport.trendTooltip', { day: shortDay(point.date), pct: pct(point.food_cost_pct), revenue: money(point.revenue), cost: money(point.theoretical_cost) })">
               <div
                 :class="['w-full rounded-t transition-all',
-                         barStatus(point) === 'critical' ? 'bg-red-500' : barStatus(point) === 'good' ? 'bg-green-500' : 'bg-stone-200']"
+                         barStatus(point) === 'critical' ? 'bg-red-500' : barStatus(point) === 'good' ? 'bg-green-500' : 'bg-stone-200 dark:bg-gray-700']"
                 :style="{ height: barStatus(point) === 'muted' ? '2px' : `${Math.max(barHeightPct(point), 2)}%` }"
               />
             </div>
           </div>
           <div class="flex gap-1 mt-1">
-            <div v-for="point in report.trend" :key="point.date" class="flex-1 text-center text-[10px] text-gray-400 dark:text-gray-500 truncate">
+            <div v-for="point in report.trend" :key="point.date" class="flex-1 text-center text-[10px] text-gray-400 dark:text-gray-400 truncate">
               {{ shortDay(point.date) }}
             </div>
           </div>
-          <div class="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-500">
+          <div class="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-400">
             <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-green-500 inline-block" /> {{ t('backoffice.foodCostReport.withinThreshold') }}</span>
             <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-red-500 inline-block" /> {{ t('backoffice.foodCostReport.exceedsThreshold', { pct: report.summary.threshold_pct }) }}</span>
-            <span class="flex items-center gap-1"><span class="w-2.5 h-2.5 rounded-sm bg-stone-200 inline-block" /> {{ t('backoffice.foodCostReport.noKnownCostSales') }}</span>
+            <span class="flex items-center gap-1"><span class="inline-block h-2.5 w-2.5 rounded-sm bg-stone-200 dark:bg-gray-700" /> {{ t('backoffice.foodCostReport.noKnownCostSales') }}</span>
           </div>
         </div>
       </AppCard>
@@ -305,14 +307,14 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.item') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.recipe') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.qtySold') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.revenue') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.unitCost') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.totalCost') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.foodCostPct') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.foodCostReport.column.grossMargin') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.item') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.recipe') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.qtySold') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.revenue') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.unitCost') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.totalCost') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.foodCostPct') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.foodCostReport.column.grossMargin') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -326,13 +328,13 @@ onMounted(async () => { await loadOutlets(); await fetchReport() })
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ line.quantity_sold }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ money(line.revenue) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ money(line.theoretical_unit_cost) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{{ money(line.theoretical_unit_cost) }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ money(line.theoretical_total_cost) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge v-if="line.food_cost_pct != null" size="sm" :variant="line.exceeds_threshold ? 'danger' : 'success'">
                     {{ pct(line.food_cost_pct) }}
                   </AppBadge>
-                  <span v-else class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.foodCostReport.unknown') }}</span>
+                  <span v-else class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.foodCostReport.unknown') }}</span>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ pct(line.gross_margin_pct) }}</td>
               </tr>

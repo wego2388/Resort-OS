@@ -27,7 +27,12 @@ const props = withDefaults(defineProps<{
   clearable?: boolean
   disabled?: boolean
   onSearch?: (query: string) => void
-}>(), { placeholder: 'ابحث أو اختر...', clearable: true })
+  emptyLabel?: string
+}>(), {
+  placeholder: 'Search or select / ابحث أو اختر',
+  clearable: true,
+  emptyLabel: 'No results / لا توجد نتائج',
+})
 
 const emit = defineEmits<{
   'update:modelValue': [v: string | number | null]
@@ -149,7 +154,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="containerRef" class="relative w-full" dir="rtl">
+  <div ref="containerRef" class="relative w-full">
     <label v-if="label" :class="[fieldLabelClasses, 'block mb-1']">{{ label }}</label>
 
     <div class="relative" @click="openDropdown">
@@ -188,20 +193,20 @@ onBeforeUnmount(() => {
           <Skeleton v-for="i in 3" :key="i" class="h-8" />
         </div>
         <div v-else-if="!filteredOptions.length" class="px-4 py-6 text-center text-sm text-muted">
-          لا توجد نتائج{{ query ? ` لـ "${query}"` : '' }}
+          {{ emptyLabel }}{{ query ? ` “${query}”` : '' }}
         </div>
         <ul v-else ref="listRef" role="listbox" class="max-h-64 overflow-y-auto py-1">
           <template v-for="[group, opts] in grouped" :key="group">
-            <li v-if="group" class="px-3 py-1.5 text-[10px] font-bold text-muted uppercase tracking-wider bg-stone-50">{{ group }}</li>
+            <li v-if="group" class="bg-stone-50 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-muted dark:bg-gray-800">{{ group }}</li>
             <li v-for="opt in opts" :key="opt.value"
               :data-index="flatOptions.indexOf(opt)"
               role="option"
               :aria-selected="modelValue === opt.value"
               :class="[
                 'flex items-start justify-between gap-3 px-3 py-2 text-sm select-none transition-colors',
-                opt.disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-primary-50',
-                activeIndex === flatOptions.indexOf(opt) ? 'bg-primary-50' : '',
-                modelValue === opt.value ? 'bg-primary-50/60 text-primary-700 font-semibold' : 'text-gray-800 dark:text-gray-200',
+                opt.disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-primary-50 dark:hover:bg-primary-900/20',
+                activeIndex === flatOptions.indexOf(opt) ? 'bg-primary-50 dark:bg-primary-900/20' : '',
+                modelValue === opt.value ? 'bg-primary-50/60 text-primary-700 dark:bg-primary-900/30 dark:text-primary-300 font-semibold' : 'text-gray-800 dark:text-gray-200',
               ]"
               @mousedown.prevent="selectOption(opt)"
               @mousemove="activeIndex = flatOptions.indexOf(opt)"

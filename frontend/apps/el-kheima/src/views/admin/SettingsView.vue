@@ -34,10 +34,10 @@ const hasRealBranchContext = computed(() => auth.user?.branch_id != null)
 
 // روابط سريعة لأقسام الإدارة ذات الصلة
 const QUICK_LINKS = [
-  { path: '/admin/tables',    labelKey: 'backoffice.settings.quickLinkTables', icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
-  { path: '/admin/cafe-menu', labelKey: 'backoffice.settings.quickLinkCafeMenu', icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
-  { path: '/admin/menu',      labelKey: 'backoffice.settings.quickLinkRestaurantMenu', icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
-  { path: '/admin/qr',        labelKey: 'backoffice.nav.qrCodes', icon: '📱', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
+  { path: '/admin/tables', labelKey: 'backoffice.settings.quickLinkTables', icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100 dark:bg-orange-950/40 dark:border-orange-900 dark:hover:bg-orange-950/60' },
+  { path: '/admin/cafe-menu', labelKey: 'backoffice.settings.quickLinkCafeMenu', icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100 dark:bg-cyan-950/40 dark:border-cyan-900 dark:hover:bg-cyan-950/60' },
+  { path: '/admin/menu', labelKey: 'backoffice.settings.quickLinkRestaurantMenu', icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/40 dark:border-amber-900 dark:hover:bg-amber-950/60' },
+  { path: '/admin/qr', labelKey: 'backoffice.nav.qrCodes', icon: '📱', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100 dark:bg-blue-950/40 dark:border-blue-900 dark:hover:bg-blue-950/60' },
 ]
 
 // شرح كل مفتاح إعداد معروف — اتبنى بقراءة الكود فعليًا (مش تخمين)، راجع مين
@@ -301,10 +301,10 @@ onMounted(loadSettings)
   <div class="space-y-5">
     <div>
       <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.settings.title') }}</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">{{ t('backoffice.settings.subtitle') }}</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.settings.subtitle') }}</p>
     </div>
 
-    <div v-if="!hasRealBranchContext" class="bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 text-sm">
+    <div v-if="!hasRealBranchContext" class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
       ⚠️ {{ t('backoffice.settings.branchContextWarning') }}
     </div>
 
@@ -318,7 +318,7 @@ onMounted(loadSettings)
       </router-link>
     </div>
 
-    <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between">
+    <div v-if="loadError" class="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
       <span>⚠️ {{ loadError }}</span>
       <button @click="loadSettings" class="font-semibold underline hover:no-underline">{{ t('backoffice.settings.retry') }}</button>
     </div>
@@ -351,10 +351,10 @@ onMounted(loadSettings)
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colKey') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colValue') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colUpdatedAt') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.settings.colAction') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.settings.colKey') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.settings.colValue') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.settings.colUpdatedAt') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.settings.colAction') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -366,17 +366,17 @@ onMounted(loadSettings)
                     {{ settingMeta(row.key)!.live ? t('backoffice.settings.live') : t('backoffice.settings.noEffect') }}
                   </AppBadge>
                 </div>
-                <p v-if="settingMeta(row.key)" class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                <p v-if="settingMeta(row.key)" class="text-xs text-gray-400 dark:text-gray-400 mt-1">
                   {{ settingDescription(row.key) }}
                 </p>
-                <p v-else class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                <p v-else class="text-xs text-gray-400 dark:text-gray-400 mt-1">
                   {{ t('backoffice.settings.customSettingNote') }}
                 </p>
               </td>
               <td class="px-4 py-3 min-w-[240px]">
                 <AppInput v-model="edited[row.key]" :disabled="savingKey === row.key" />
               </td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500 align-top pt-4">
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400 align-top pt-4">
                 {{ formatUpdatedAt(row.updated_at) }}
               </td>
               <td class="px-4 py-3 align-top">

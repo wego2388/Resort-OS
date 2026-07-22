@@ -93,7 +93,7 @@ function onBlur() {
       aria-haspopup="listbox"
       :title="t('backoffice.layout.selectLanguage')"
       class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-medium
-             text-gray-600 hover:bg-gray-100 transition-colors select-none
+             text-gray-600 hover:bg-gray-100 transition-colors select-none dark:text-gray-300 dark:hover:bg-gray-800
              disabled:opacity-60 disabled:cursor-wait
              focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
     >
@@ -121,14 +121,13 @@ function onBlur() {
         v-if="isOpen"
         role="listbox"
         :aria-label="t('backoffice.layout.selectLanguage')"
-        class="absolute z-50 mt-1 py-1 bg-white rounded-xl shadow-lg border border-gray-100
-               min-w-[9rem] end-0"
+        class="absolute end-0 z-50 mt-1 min-w-[9rem] rounded-xl border border-gray-100 bg-white py-1 shadow-lg dark:border-border dark:bg-surface"
       >
         <!-- Current locale (selected) -->
         <li
           role="option"
           :aria-selected="true"
-          class="flex items-center gap-2.5 px-3 py-2 text-sm font-semibold text-blue-700 bg-blue-50 rounded-lg mx-1 mb-1"
+          class="mx-1 mb-1 flex items-center gap-2.5 rounded-lg bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 dark:bg-blue-950/40 dark:text-blue-300"
         >
           <span>{{ LOCALE_LABELS[currentLocale] }}</span>
           <svg class="w-3.5 h-3.5 ms-auto text-blue-500" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
@@ -140,8 +139,8 @@ function onBlur() {
           <button
             type="button"
             @click="select(locale)"
-            class="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700
-                   hover:bg-gray-50 transition-colors rounded-lg
+            class="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-gray-700
+                   transition-colors hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800
                    focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             <span>{{ LOCALE_LABELS[locale] }}</span>

@@ -256,11 +256,11 @@ onUnmounted(() => {
             <div class="flex items-center gap-2">
               <span
                 v-if="inventory.surge_active"
-                class="px-2.5 py-1 bg-amber-100 text-amber-700 text-xs font-bold rounded-full animate-pulse"
+                class="animate-pulse rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
               >🌊 SURGE ×{{ inventory.surge_multiplier }}</span>
               <button
                 @click="fetchInventory"
-                :class="['text-gray-400 hover:text-blue-600 transition-colors', loading ? 'animate-spin' : '']"
+                :class="['text-gray-400 transition-colors hover:text-blue-600 dark:hover:text-blue-300', loading ? 'animate-spin' : '']"
                 :title="t('backoffice.beachPos.refresh')"
               >↻</button>
             </div>
@@ -268,14 +268,14 @@ onUnmounted(() => {
 
           <!-- Occupancy bar -->
           <div class="mb-3">
-            <div class="flex justify-between text-sm text-gray-600 mb-1">
+            <div class="mb-1 flex justify-between text-sm text-gray-600 dark:text-gray-300">
               <span>{{ t('backoffice.beachPos.occupancy') }}</span>
               <span class="font-medium">
                 {{ inventory.capacity_used }} / {{ inventory.capacity_max }}
                 <span class="text-xs text-gray-400">({{ occupancyPct }}%)</span>
               </span>
             </div>
-            <div class="w-full bg-gray-200 rounded-full h-3">
+            <div class="h-3 w-full rounded-full bg-gray-200 dark:bg-gray-700">
               <div
                 class="h-3 rounded-full transition-all duration-500"
                 :class="occupancyPct >= 90 ? 'bg-red-500' : occupancyPct >= 70 ? 'bg-amber-500' : 'bg-green-500'"
@@ -286,13 +286,13 @@ onUnmounted(() => {
 
           <!-- Available slots — سعة الشاطئ مجمّعة (مفيش حصة منفصلة بالغ/طفل) -->
           <div class="grid grid-cols-2 gap-2">
-            <div class="bg-blue-50 rounded-lg p-2.5 text-center">
-              <div class="text-2xl font-black text-blue-700">{{ availableSlots }}</div>
-              <div class="text-xs text-blue-600 mt-0.5">{{ t('backoffice.beachPos.availableSlots') }}</div>
+            <div class="rounded-lg bg-blue-50 p-2.5 text-center dark:bg-blue-950/40">
+              <div class="text-2xl font-black text-blue-700 dark:text-blue-300">{{ availableSlots }}</div>
+              <div class="mt-0.5 text-xs text-blue-600 dark:text-blue-400">{{ t('backoffice.beachPos.availableSlots') }}</div>
             </div>
-            <div class="bg-amber-50 rounded-lg p-2.5 text-center">
-              <div class="text-2xl font-black text-amber-700">{{ inventory.towels_available }}</div>
-              <div class="text-xs text-amber-600 mt-0.5">{{ t('backoffice.beachPos.towelsAvailable') }}</div>
+            <div class="rounded-lg bg-amber-50 p-2.5 text-center dark:bg-amber-950/40">
+              <div class="text-2xl font-black text-amber-700 dark:text-amber-300">{{ inventory.towels_available }}</div>
+              <div class="mt-0.5 text-xs text-amber-600 dark:text-amber-400">{{ t('backoffice.beachPos.towelsAvailable') }}</div>
             </div>
           </div>
         </div>
@@ -305,10 +305,10 @@ onUnmounted(() => {
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">👤</div>
               <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.adult') }}</div>
-              <div class="text-2xl font-black text-blue-700 mt-1">
+              <div class="mt-1 text-2xl font-black text-blue-700 dark:text-blue-300">
                 {{ prices.adult }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
               </div>
-              <div v-if="inventory.surge_active" class="text-xs text-amber-600 mt-0.5">
+              <div v-if="inventory.surge_active" class="mt-0.5 text-xs text-amber-600 dark:text-amber-300">
                 {{ t('backoffice.beachPos.originalPrice', { price: inventory.adult_price }) }}
               </div>
             </div>
@@ -316,7 +316,7 @@ onUnmounted(() => {
               <button
                 @click="adjust('adult', -1)"
                 :disabled="adultQty === 0"
-                class="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 font-bold text-lg transition-colors leading-none"
+                class="h-9 w-9 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
               >−</button>
               <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ adultQty }}</span>
               <button
@@ -332,10 +332,10 @@ onUnmounted(() => {
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🧒</div>
               <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.child') }}</div>
-              <div class="text-2xl font-black text-green-700 mt-1">
+              <div class="mt-1 text-2xl font-black text-green-700 dark:text-green-300">
                 {{ prices.child }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
               </div>
-              <div v-if="inventory.surge_active" class="text-xs text-amber-600 mt-0.5">
+              <div v-if="inventory.surge_active" class="mt-0.5 text-xs text-amber-600 dark:text-amber-300">
                 {{ t('backoffice.beachPos.originalPrice', { price: inventory.child_price }) }}
               </div>
             </div>
@@ -343,7 +343,7 @@ onUnmounted(() => {
               <button
                 @click="adjust('child', -1)"
                 :disabled="childQty === 0"
-                class="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 font-bold text-lg transition-colors leading-none"
+                class="h-9 w-9 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
               >−</button>
               <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ childQty }}</span>
               <button
@@ -358,10 +358,10 @@ onUnmounted(() => {
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🏠</div>
               <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.resident') }}</div>
-              <div class="text-2xl font-black text-purple-700 mt-1">
+              <div class="mt-1 text-2xl font-black text-purple-700 dark:text-purple-300">
                 {{ prices.resident }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
               </div>
-              <div v-if="inventory.surge_active" class="text-xs text-amber-600 mt-0.5">
+              <div v-if="inventory.surge_active" class="mt-0.5 text-xs text-amber-600 dark:text-amber-300">
                 {{ t('backoffice.beachPos.originalPrice', { price: inventory.resident_price }) }}
               </div>
             </div>
@@ -369,7 +369,7 @@ onUnmounted(() => {
               <button
                 @click="adjust('resident', -1)"
                 :disabled="residentQty === 0"
-                class="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 font-bold text-lg transition-colors leading-none"
+                class="h-9 w-9 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
               >−</button>
               <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ residentQty }}</span>
               <button
@@ -384,7 +384,7 @@ onUnmounted(() => {
             <div class="text-center mb-3">
               <div class="text-3xl mb-1">🏊</div>
               <div class="font-bold text-gray-900 dark:text-gray-100 text-sm">{{ t('backoffice.beachPos.towel') }}</div>
-              <div class="text-2xl font-black text-amber-700 mt-1">
+              <div class="mt-1 text-2xl font-black text-amber-700 dark:text-amber-300">
                 {{ prices.towel }}<span class="text-xs font-normal text-gray-500 ms-1">{{ t('backoffice.beachPos.egp') }}</span>
               </div>
               <div class="text-xs text-gray-400 mt-0.5">{{ t('backoffice.beachPos.noSurge') }}</div>
@@ -393,7 +393,7 @@ onUnmounted(() => {
               <button
                 @click="adjust('towel', -1)"
                 :disabled="towelQty === 0"
-                class="w-9 h-9 rounded-lg bg-gray-100 hover:bg-gray-200 disabled:opacity-40 font-bold text-lg transition-colors leading-none"
+                class="h-9 w-9 rounded-lg bg-gray-100 text-lg font-bold leading-none transition-colors hover:bg-gray-200 disabled:opacity-40 dark:bg-gray-800 dark:hover:bg-gray-700"
               >−</button>
               <span class="text-xl font-black w-8 text-center text-gray-900 dark:text-gray-100">{{ towelQty }}</span>
               <button
@@ -459,7 +459,7 @@ onUnmounted(() => {
           <!-- Total -->
           <div class="flex items-center justify-between">
             <span class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.beachPos.total') }}</span>
-            <span class="text-2xl font-black text-blue-700">{{ total }} <span class="text-sm font-normal">{{ t('backoffice.beachPos.egp') }}</span></span>
+            <span class="text-2xl font-black text-blue-700 dark:text-blue-300">{{ total }} <span class="text-sm font-normal">{{ t('backoffice.beachPos.egp') }}</span></span>
           </div>
 
           <!-- Payment method selector -->
@@ -475,8 +475,8 @@ onUnmounted(() => {
               :class="[
                 'py-2 rounded-lg text-sm font-medium transition-all border-2',
                 paymentMethod === m.val
-                  ? 'border-blue-600 bg-blue-50 text-blue-700'
-                  : 'border-stone-200 dark:border-border text-gray-600 hover:border-blue-300 hover:bg-gray-50',
+                  ? 'border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-300'
+                  : 'border-stone-200 text-gray-600 hover:border-blue-300 hover:bg-gray-50 dark:border-border dark:text-gray-400 dark:hover:bg-gray-800',
               ]"
             >{{ m.icon }} {{ m.label }}</button>
           </div>
@@ -485,13 +485,13 @@ onUnmounted(() => {
           <transition name="fade">
             <div
               v-if="successMsg"
-              class="bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium text-center"
+              class="rounded-lg bg-green-100 px-3 py-2 text-center text-sm font-medium text-green-700 dark:bg-green-950/50 dark:text-green-300"
             >{{ successMsg }}</div>
           </transition>
           <transition name="fade">
             <div
               v-if="errorMsg"
-              class="bg-red-100 text-red-700 px-3 py-2 rounded-lg text-sm font-medium text-center"
+              class="rounded-lg bg-red-100 px-3 py-2 text-center text-sm font-medium text-red-700 dark:bg-red-950/50 dark:text-red-300"
             >{{ errorMsg }}</div>
           </transition>
 
@@ -500,7 +500,7 @@ onUnmounted(() => {
             <button
               @click="clearCart"
               :disabled="!hasItems"
-              class="py-3 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50 disabled:opacity-40 transition-colors"
+              class="rounded-xl border-2 border-stone-200 py-3 font-semibold text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-border dark:text-gray-300 dark:hover:bg-gray-800"
             >{{ t('backoffice.beachPos.clearOrder') }}</button>
             <button
               @click="completeSale"

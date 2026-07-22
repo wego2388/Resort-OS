@@ -34,7 +34,23 @@ const props = withDefaults(defineProps<{
   items: CommandItem[]
   loading?: boolean
   placeholder?: string
-}>(), { placeholder: 'ابحث في النظام...' })
+  recentLabel?: string
+  actionsLabel?: string
+  noResultsLabel?: string
+  startTypingLabel?: string
+  navigateLabel?: string
+  executeLabel?: string
+  closeLabel?: string
+}>(), {
+  placeholder: 'Search / بحث',
+  recentLabel: 'Recent / الأخيرة',
+  actionsLabel: 'Actions / إجراءات',
+  noResultsLabel: 'No results / لا توجد نتائج',
+  startTypingLabel: 'Start typing to search / ابدأ الكتابة للبحث',
+  navigateLabel: 'Navigate / تنقل',
+  executeLabel: 'Open / فتح',
+  closeLabel: 'Close / إغلاق',
+})
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -94,7 +110,9 @@ const filteredItems = computed(() => {
 const grouped = computed(() => {
   const map = new Map<string, CommandItem[]>()
   for (const item of filteredItems.value) {
-    const g = !query.value && recentIds.value.includes(item.id) ? 'الأخيرة' : (item.category ?? 'إجراءات')
+    const g = !query.value && recentIds.value.includes(item.id)
+      ? props.recentLabel
+      : (item.category ?? props.actionsLabel)
     if (!map.has(g)) map.set(g, [])
     map.get(g)!.push(item)
   }
@@ -163,7 +181,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
 <template>
   <Teleport to="body">
     <Transition name="cp">
-      <div v-if="open" class="fixed inset-0 z-[200] flex items-start justify-center pt-[15vh] px-4" dir="rtl">
+      <div
+        v-if="open"
+        class="fixed inset-0 z-[200] flex items-start justify-center px-4 pt-[15vh]"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="placeholder"
+      >
         <!-- Backdrop -->
         <div class="absolute inset-0 bg-black/40 backdrop-blur-sm" @click="emit('close')" />
 
@@ -193,7 +217,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
           <div class="max-h-[60vh] overflow-y-auto">
             <div v-if="!filteredItems.length" class="flex flex-col items-center gap-2 py-10 text-muted">
               <AppIcon name="search" size="xl" class="opacity-30" />
-              <span class="text-sm">{{ query ? `لا نتائج لـ "${query}"` : 'ابدأ الكتابة للبحث' }}</span>
+              <span class="text-sm">{{ query ? `${noResultsLabel} “${query}”` : startTypingLabel }}</span>
             </div>
 
             <template v-for="[group, groupItems] in grouped" :key="group">
@@ -245,9 +269,9 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
 
           <!-- Footer hint -->
           <div class="flex items-center gap-4 px-4 py-2.5 border-t border-stone-100 dark:border-border text-[11px] text-muted bg-stone-50/50 dark:bg-gray-800/50">
-            <span class="flex items-center gap-1"><kbd class="px-1 py-0.5 bg-stone-200 dark:bg-gray-700 rounded text-[10px]">↑↓</kbd> تنقل</span>
-            <span class="flex items-center gap-1"><kbd class="px-1 py-0.5 bg-stone-200 dark:bg-gray-700 rounded text-[10px]">↵</kbd> تنفيذ</span>
-            <span class="flex items-center gap-1"><kbd class="px-1 py-0.5 bg-stone-200 dark:bg-gray-700 rounded text-[10px]">ESC</kbd> إغلاق</span>
+            <span class="flex items-center gap-1"><kbd class="px-1 py-0.5 bg-stone-200 dark:bg-gray-700 rounded text-[10px]">↑↓</kbd> {{ navigateLabel }}</span>
+            <span class="flex items-center gap-1"><kbd class="px-1 py-0.5 bg-stone-200 dark:bg-gray-700 rounded text-[10px]">↵</kbd> {{ executeLabel }}</span>
+            <span class="flex items-center gap-1"><kbd class="px-1 py-0.5 bg-stone-200 dark:bg-gray-700 rounded text-[10px]">ESC</kbd> {{ closeLabel }}</span>
           </div>
         </div>
       </div>

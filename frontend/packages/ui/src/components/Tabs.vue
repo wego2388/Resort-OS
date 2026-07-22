@@ -51,7 +51,7 @@ function onKeydown(e: KeyboardEvent) {
       @click="!tab.disabled && emit('update:modelValue', tab.value)"
       :class="[
         'relative px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors duration-base focus:outline-none focus-visible:shadow-focus-ring rounded-t-lg',
-        tab.value === modelValue ? 'text-primary-700' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300',
+        tab.value === modelValue ? 'text-primary-700 dark:text-primary-300' : 'text-muted hover:text-gray-700 dark:hover:text-gray-300',
         tab.disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer',
       ]"
     >

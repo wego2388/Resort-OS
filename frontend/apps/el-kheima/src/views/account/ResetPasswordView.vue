@@ -92,7 +92,7 @@ async function handleSubmit() {
         <!-- لا يوجد توكن في الرابط أصلاً -->
         <template v-if="missingToken && !done">
           <div class="text-center py-4">
-            <p class="text-gray-600 text-sm mb-4">{{ t('backoffice.resetPassword.noToken') }}</p>
+            <p class="mb-4 text-sm text-gray-600 dark:text-gray-300">{{ t('backoffice.resetPassword.noToken') }}</p>
             <router-link
               to="/forgot-password"
               class="inline-block bg-blue-700 text-white px-5 py-2.5 rounded-xl font-semibold hover:bg-blue-800 transition-colors"
@@ -104,7 +104,7 @@ async function handleSubmit() {
 
         <!-- نجاح -->
         <template v-else-if="done">
-          <div class="flex items-center gap-3 bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3 mb-2">
+          <div class="mb-2 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-green-700 dark:border-green-800 dark:bg-green-950/40 dark:text-green-300">
             <span class="text-xl">✓</span>
             <span class="font-medium text-sm">{{ t('backoffice.resetPassword.successMessage') }}</span>
           </div>
@@ -134,11 +134,11 @@ async function handleSubmit() {
                 class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
               />
             </div>
-            <p v-if="error" class="text-red-600 text-sm">{{ error }}</p>
+            <p v-if="error" class="text-sm text-red-600 dark:text-red-300">{{ error }}</p>
             <router-link
               v-if="tokenInvalid"
               to="/forgot-password"
-              class="block text-center text-sm text-blue-700 font-medium hover:underline"
+              class="block text-center text-sm font-medium text-blue-700 hover:underline dark:text-blue-300"
             >
               {{ t('backoffice.resetPassword.requestNew') }}
             </router-link>
@@ -156,7 +156,7 @@ async function handleSubmit() {
           </form>
         </template>
 
-        <router-link to="/login" class="block text-center text-sm text-blue-700 font-medium hover:underline mt-6">
+        <router-link to="/login" class="mt-6 block text-center text-sm font-medium text-blue-700 hover:underline dark:text-blue-300">
           {{ t('backoffice.resetPassword.backToLogin') }}
         </router-link>
         <p class="text-center text-xs text-gray-400 mt-6">{{ t('backoffice.login.footer') }}</p>

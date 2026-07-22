@@ -229,14 +229,14 @@ const todayLabel = computed(() =>
 
 // Quick links — computed (مش constant) عشان يعيد الحساب لو اللغة اتغيّرت.
 const quickLinks = computed(() => [
-  { path: '/admin/hr',        label: t('backoffice.dashboard.quickLinks.hr'),        icon: '👥', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100' },
-  { path: '/admin/finance',   label: t('backoffice.dashboard.quickLinks.finance'),   icon: '📊', color: 'bg-green-50 border-green-200 hover:bg-green-100' },
-  { path: '/admin/inventory', label: t('backoffice.dashboard.quickLinks.inventory'), icon: '📦', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100' },
-  { path: '/admin/crm',       label: t('backoffice.dashboard.quickLinks.crm'),       icon: '🤝', color: 'bg-purple-50 border-purple-200 hover:bg-purple-100' },
-  { path: '/admin/analytics', label: t('backoffice.dashboard.quickLinks.analytics'), icon: '📈', color: 'bg-pink-50 border-pink-200 hover:bg-pink-100' },
-  { path: '/admin/dining-menu', label: t('backoffice.dashboard.quickLinks.diningMenu'), icon: '🍽️', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100' },
-  { path: '/admin/maintenance', label: t('backoffice.dashboard.quickLinks.maintenance'), icon: '🔧', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100' },
-  { path: '/admin/settings',  label: t('backoffice.dashboard.quickLinks.settings'),  icon: '⚙️', color: 'bg-gray-50 border-gray-200 hover:bg-gray-100' },
+  { path: '/admin/hr',        label: t('backoffice.dashboard.quickLinks.hr'),        icon: '👥', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100 dark:bg-blue-950/30 dark:border-blue-800 dark:hover:bg-blue-950/50' },
+  { path: '/admin/finance',   label: t('backoffice.dashboard.quickLinks.finance'),   icon: '📊', color: 'bg-green-50 border-green-200 hover:bg-green-100 dark:bg-green-950/30 dark:border-green-800 dark:hover:bg-green-950/50' },
+  { path: '/admin/inventory', label: t('backoffice.dashboard.quickLinks.inventory'), icon: '📦', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/30 dark:border-amber-800 dark:hover:bg-amber-950/50' },
+  { path: '/admin/crm',       label: t('backoffice.dashboard.quickLinks.crm'),       icon: '🤝', color: 'bg-purple-50 border-purple-200 hover:bg-purple-100 dark:bg-purple-950/30 dark:border-purple-800 dark:hover:bg-purple-950/50' },
+  { path: '/admin/analytics', label: t('backoffice.dashboard.quickLinks.analytics'), icon: '📈', color: 'bg-pink-50 border-pink-200 hover:bg-pink-100 dark:bg-pink-950/30 dark:border-pink-800 dark:hover:bg-pink-950/50' },
+  { path: '/admin/dining-menu', label: t('backoffice.dashboard.quickLinks.diningMenu'), icon: '🍽️', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100 dark:bg-cyan-950/30 dark:border-cyan-800 dark:hover:bg-cyan-950/50' },
+  { path: '/admin/maintenance', label: t('backoffice.dashboard.quickLinks.maintenance'), icon: '🔧', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100 dark:bg-orange-950/30 dark:border-orange-800 dark:hover:bg-orange-950/50' },
+  { path: '/admin/settings',  label: t('backoffice.dashboard.quickLinks.settings'),  icon: '⚙️', color: 'bg-gray-50 border-gray-200 hover:bg-gray-100 dark:bg-gray-900 dark:border-gray-700 dark:hover:bg-gray-800' },
 ])
 
 onMounted(() => {
@@ -261,44 +261,44 @@ onUnmounted(() => {
     <div class="flex items-center justify-between mb-6">
       <div>
         <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.dashboard.title') }}</h2>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mt-0.5">{{ todayLabel }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{{ todayLabel }}</p>
       </div>
       <div class="flex items-center gap-3">
-        <span v-if="lastUpdatedLabel" class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.dashboard.lastUpdated') }}: {{ lastUpdatedLabel }}</span>
+        <span v-if="lastUpdatedLabel" class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.dashboard.lastUpdated') }}: {{ lastUpdatedLabel }}</span>
         <button @click="fetchDashboard" :class="[`px-4 py-2 bg-amber-500 text-white rounded-xl font-medium text-sm hover:bg-amber-600 transition-colors`, loading ? `opacity-70` : ``]">
           {{ loading ? t('backoffice.dashboard.refreshing') : `🔄 ${t('backoffice.dashboard.refresh')}` }}
         </button>
       </div>
     </div>
 
-    <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between mb-5">
+    <div v-if="loadError" class="mb-5 flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
       <span>⚠️ {{ t('backoffice.dashboard.loadError') }}</span>
       <button @click="fetchDashboard" class="font-semibold underline hover:no-underline">{{ t('backoffice.dashboard.retry') }}</button>
     </div>
 
     <!-- #17: تنبيهات عاجلة مجمّعة — بديل عن فتح 4 شاشات منفصلة للتأكد من عدم وجود مشاكل -->
-    <div v-if="alertsTotal() > 0" class="bg-red-50 border border-red-200 rounded-2xl p-4 mb-6">
-      <p class="text-sm font-black text-red-800 mb-3">🚨 {{ t('backoffice.dashboard.urgentAlerts') }} ({{ alertsTotal() }})</p>
+    <div v-if="alertsTotal() > 0" class="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 dark:border-red-900 dark:bg-red-950/30">
+      <p class="mb-3 text-sm font-black text-red-800 dark:text-red-300">🚨 {{ t('backoffice.dashboard.urgentAlerts') }} ({{ alertsTotal() }})</p>
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <router-link v-if="alerts.lowStock" to="/admin/inventory"
-          class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500 dark:text-gray-500">📦 {{ t('backoffice.dashboard.alerts.lowStock') }}</div>
-          <div class="text-lg font-black text-red-600">{{ alerts.lowStock }}</div>
+          class="rounded-xl border border-red-200 bg-white px-3 py-2 transition-colors hover:bg-red-50 dark:border-red-900 dark:bg-gray-900 dark:hover:bg-red-950/40">
+          <div class="text-xs text-gray-500 dark:text-gray-400">📦 {{ t('backoffice.dashboard.alerts.lowStock') }}</div>
+          <div class="text-lg font-black text-red-600 dark:text-red-400">{{ alerts.lowStock }}</div>
         </router-link>
         <router-link v-if="alerts.overdueMaintenance" to="/admin/maintenance"
-          class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500 dark:text-gray-500">🔧 {{ t('backoffice.dashboard.alerts.overdueMaintenance') }}</div>
-          <div class="text-lg font-black text-red-600">{{ alerts.overdueMaintenance }}</div>
+          class="rounded-xl border border-red-200 bg-white px-3 py-2 transition-colors hover:bg-red-50 dark:border-red-900 dark:bg-gray-900 dark:hover:bg-red-950/40">
+          <div class="text-xs text-gray-500 dark:text-gray-400">🔧 {{ t('backoffice.dashboard.alerts.overdueMaintenance') }}</div>
+          <div class="text-lg font-black text-red-600 dark:text-red-400">{{ alerts.overdueMaintenance }}</div>
         </router-link>
         <router-link v-if="alerts.overdueInstallments" to="/admin/timeshare"
-          class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500 dark:text-gray-500">🏨 {{ t('backoffice.dashboard.alerts.overdueInstallments') }}</div>
-          <div class="text-lg font-black text-red-600">{{ alerts.overdueInstallments }}</div>
+          class="rounded-xl border border-red-200 bg-white px-3 py-2 transition-colors hover:bg-red-50 dark:border-red-900 dark:bg-gray-900 dark:hover:bg-red-950/40">
+          <div class="text-xs text-gray-500 dark:text-gray-400">🏨 {{ t('backoffice.dashboard.alerts.overdueInstallments') }}</div>
+          <div class="text-lg font-black text-red-600 dark:text-red-400">{{ alerts.overdueInstallments }}</div>
         </router-link>
         <router-link v-if="alerts.bouncedChecks" to="/admin/finance"
-          class="bg-white dark:bg-surface rounded-xl border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-          <div class="text-xs text-gray-500 dark:text-gray-500">🏦 {{ t('backoffice.dashboard.alerts.bouncedChecks') }}</div>
-          <div class="text-lg font-black text-red-600">{{ alerts.bouncedChecks }}</div>
+          class="rounded-xl border border-red-200 bg-white px-3 py-2 transition-colors hover:bg-red-50 dark:border-red-900 dark:bg-gray-900 dark:hover:bg-red-950/40">
+          <div class="text-xs text-gray-500 dark:text-gray-400">🏦 {{ t('backoffice.dashboard.alerts.bouncedChecks') }}</div>
+          <div class="text-lg font-black text-red-600 dark:text-red-400">{{ alerts.bouncedChecks }}</div>
         </router-link>
       </div>
     </div>
@@ -325,13 +325,13 @@ onUnmounted(() => {
               {{ data?.occupancy_rate ?? 0 }}<span class="text-base font-normal text-muted">%</span>
             </p>
             <div class="mt-2">
-              <div class="w-full bg-gray-200 rounded-full h-1.5">
+              <div class="h-1.5 w-full rounded-full bg-gray-200 dark:bg-gray-700">
                 <div class="bg-primary-600 h-1.5 rounded-full transition-all" :style="{ width: (data?.occupancy_rate ?? 0) + '%' }" />
               </div>
             </div>
             <p class="text-xs text-muted mt-1">{{ data?.active_bookings ?? 0 }} {{ t('backoffice.dashboard.activeBookings') }}</p>
           </div>
-          <div class="w-11 h-11 rounded-lg flex items-center justify-center shrink-0 bg-primary-50 text-primary-700 text-lg">🏨</div>
+          <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary-50 text-lg text-primary-700 dark:bg-primary-950/50 dark:text-primary-300">🏨</div>
         </div>
       </div>
 
@@ -360,71 +360,75 @@ onUnmounted(() => {
       <!-- HR -->
       <router-link to="/admin/hr" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
         <div class="flex items-center gap-2 mb-2">
-          <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-base">👥</div>
-          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.dashboard.quickLinks.hr') }}</span>
+          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-100 text-base dark:bg-blue-950/60">👥</div>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.dashboard.quickLinks.hr') }}</span>
         </div>
         <div v-if="analyticsSummary.hr">
           <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ analyticsSummary.hr.active_employees }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.dashboard.activeEmployees') }}</div>
-          <div v-if="analyticsSummary.hr.last_payroll_month" class="text-xs text-blue-600 mt-1">
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{{ t('backoffice.dashboard.activeEmployees') }}</div>
+          <div v-if="analyticsSummary.hr.last_payroll_month" class="mt-1 text-xs text-blue-600 dark:text-blue-400">
             {{ t('backoffice.dashboard.lastPayroll') }}: {{ analyticsSummary.hr.last_payroll_month }}
           </div>
         </div>
-        <div v-else class="text-xs text-gray-300 mt-2">— {{ t('backoffice.dashboard.noData') }}</div>
+        <div v-else class="mt-2 text-xs text-gray-500 dark:text-gray-400">— {{ t('backoffice.dashboard.noData') }}</div>
       </router-link>
 
       <!-- Maintenance -->
       <router-link to="/admin/maintenance" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
         <div class="flex items-center gap-2 mb-2">
-          <div class="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center text-base">🔧</div>
-          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.dashboard.quickLinks.maintenance') }}</span>
+          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-orange-100 text-base dark:bg-orange-950/60">🔧</div>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.dashboard.quickLinks.maintenance') }}</span>
         </div>
         <div v-if="analyticsSummary.maintenance">
           <div class="text-2xl font-black"
             :class="analyticsSummary.maintenance.critical_orders > 0 ? 'text-red-600' : 'text-gray-900 dark:text-gray-100'">
             {{ analyticsSummary.maintenance.open_orders }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.dashboard.openOrder') }}</div>
-          <div v-if="analyticsSummary.maintenance.critical_orders > 0" class="text-xs text-red-500 font-bold mt-1">
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{{ t('backoffice.dashboard.openOrder') }}</div>
+          <div v-if="analyticsSummary.maintenance.critical_orders > 0" class="mt-1 text-xs font-bold text-red-600 dark:text-red-400">
             {{ analyticsSummary.maintenance.critical_orders }} {{ t('backoffice.dashboard.critical') }} 🔴
           </div>
         </div>
-        <div v-else class="text-xs text-gray-300 mt-2">— {{ t('backoffice.dashboard.noData') }}</div>
+        <div v-else class="mt-2 text-xs text-gray-500 dark:text-gray-400">— {{ t('backoffice.dashboard.noData') }}</div>
       </router-link>
 
       <!-- CRM -->
       <router-link to="/admin/crm" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
         <div class="flex items-center gap-2 mb-2">
-          <div class="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center text-base">🤝</div>
-          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.dashboard.quickLinks.crm') }}</span>
+          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-100 text-base dark:bg-purple-950/60">🤝</div>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.dashboard.quickLinks.crm') }}</span>
         </div>
         <div v-if="analyticsSummary.crm">
           <div class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ analyticsSummary.crm.total_customers }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.dashboard.registeredCustomer') }}</div>
-          <div v-if="analyticsSummary.crm.open_opportunities > 0" class="text-xs text-purple-600 mt-1">
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{{ t('backoffice.dashboard.registeredCustomer') }}</div>
+          <div v-if="analyticsSummary.crm.open_opportunities > 0" class="mt-1 text-xs text-purple-600 dark:text-purple-400">
             {{ analyticsSummary.crm.open_opportunities }} {{ t('backoffice.dashboard.openOpportunity') }}
           </div>
         </div>
-        <div v-else class="text-xs text-gray-300 mt-2">— {{ t('backoffice.dashboard.noData') }}</div>
+        <div v-else class="mt-2 text-xs text-gray-500 dark:text-gray-400">— {{ t('backoffice.dashboard.noData') }}</div>
       </router-link>
 
       <!-- Inventory -->
       <router-link to="/admin/inventory" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-4 shadow-sm hover:shadow-md transition-shadow">
         <div class="flex items-center gap-2 mb-2">
-          <div class="w-8 h-8 bg-amber-100 rounded-lg flex items-center justify-center text-base">📦</div>
-          <span class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.dashboard.quickLinks.inventory') }}</span>
+          <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-100 text-base dark:bg-amber-950/60">📦</div>
+          <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.dashboard.quickLinks.inventory') }}</span>
         </div>
         <div v-if="analyticsSummary.inventory">
           <div class="text-2xl font-black"
-            :class="analyticsSummary.inventory.out_of_stock_count > 0 ? 'text-red-600' : analyticsSummary.inventory.low_stock_count > 0 ? 'text-amber-600' : 'text-green-600'">
+            :class="analyticsSummary.inventory.out_of_stock_count > 0
+              ? 'text-red-600 dark:text-red-300'
+              : analyticsSummary.inventory.low_stock_count > 0
+                ? 'text-amber-600 dark:text-amber-300'
+                : 'text-green-600 dark:text-green-300'">
             {{ analyticsSummary.inventory.low_stock_count + analyticsSummary.inventory.out_of_stock_count }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.dashboard.itemsNeedReorder') }}</div>
-          <div v-if="analyticsSummary.inventory.out_of_stock_count > 0" class="text-xs text-red-500 font-bold mt-1">
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{{ t('backoffice.dashboard.itemsNeedReorder') }}</div>
+          <div v-if="analyticsSummary.inventory.out_of_stock_count > 0" class="mt-1 text-xs font-bold text-red-600 dark:text-red-400">
             {{ analyticsSummary.inventory.out_of_stock_count }} {{ t('backoffice.dashboard.outOfStock') }} 🔴
           </div>
         </div>
-        <div v-else class="text-xs text-gray-300 mt-2">— {{ t('backoffice.dashboard.noData') }}</div>
+        <div v-else class="mt-2 text-xs text-gray-500 dark:text-gray-400">— {{ t('backoffice.dashboard.noData') }}</div>
       </router-link>
 
     </div>
@@ -433,22 +437,22 @@ onUnmounted(() => {
     <div v-if="upcomingVisits.length" class="mb-6">
       <div class="flex items-center justify-between mb-3">
         <h3 class="text-sm font-bold text-gray-700 dark:text-gray-300">🏨 {{ t('backoffice.dashboard.upcomingVisits') }}</h3>
-        <router-link to="/admin/timeshare" class="text-xs text-primary-700 hover:underline">{{ t('backoffice.dashboard.viewAll') }}</router-link>
+        <router-link to="/admin/timeshare" class="text-xs text-primary-700 hover:underline dark:text-primary-300">{{ t('backoffice.dashboard.viewAll') }}</router-link>
       </div>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <div v-for="v in upcomingVisits" :key="v.id"
           class="bg-white dark:bg-surface border border-stone-200 dark:border-border rounded-xl p-3 flex items-start gap-3 shadow-sm">
-          <div class="w-9 h-9 bg-primary-100 rounded-xl flex items-center justify-center text-primary-700 font-black text-sm shrink-0">
+          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-sm font-black text-primary-700 dark:bg-primary-950/50 dark:text-primary-300">
             {{ new Date(v.visit_start).getDate() }}
           </div>
           <div class="min-w-0">
             <div class="font-semibold text-gray-900 dark:text-gray-100 text-sm truncate">{{ v.guest_name }}</div>
-            <div class="text-xs text-gray-500 dark:text-gray-500 mt-0.5">
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
               {{ formatDate(v.visit_start, { month: 'short', day: 'numeric' }) }}
               →
               {{ formatDate(v.visit_end, { month: 'short', day: 'numeric' }) }}
             </div>
-            <div v-if="v.unit_name" class="text-xs text-primary-600 mt-0.5">{{ v.unit_name }}</div>
+            <div v-if="v.unit_name" class="mt-0.5 text-xs text-primary-600 dark:text-primary-300">{{ v.unit_name }}</div>
           </div>
         </div>
       </div>

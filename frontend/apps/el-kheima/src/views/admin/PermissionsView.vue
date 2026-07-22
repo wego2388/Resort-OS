@@ -276,20 +276,20 @@ onMounted(() => {
   <div class="space-y-5">
     <div>
       <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.permissions.title') }}</h1>
-      <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">{{ t('backoffice.permissions.subtitle') }}</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.permissions.subtitle') }}</p>
     </div>
 
-    <div v-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between">
+    <div v-if="loadError" class="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
       <span>⚠️ {{ loadError }}</span>
       <button @click="loadCatalog(); loadUsers()" class="font-semibold underline hover:no-underline">{{ t('backoffice.permissions.retry') }}</button>
     </div>
 
     <!-- 2FA required banner -->
-    <div v-if="needs2FA" class="bg-amber-50 border border-amber-300 rounded-xl p-5 text-center">
+    <div v-if="needs2FA" class="rounded-xl border border-amber-300 bg-amber-50 p-5 text-center dark:border-amber-800 dark:bg-amber-950/40">
       <div class="text-3xl mb-2">🔐</div>
-      <h2 class="font-black text-amber-800 text-lg mb-1">{{ t('backoffice.permissions.needs2FATitle') }}</h2>
-      <p class="text-amber-700 text-sm mb-3">{{ t('backoffice.permissions.needs2FABody') }}</p>
-      <p class="text-amber-600 text-xs">{{ t('backoffice.permissions.needs2FAHint') }}</p>
+      <h2 class="mb-1 text-lg font-black text-amber-800 dark:text-amber-300">{{ t('backoffice.permissions.needs2FATitle') }}</h2>
+      <p class="mb-3 text-sm text-amber-700 dark:text-amber-300">{{ t('backoffice.permissions.needs2FABody') }}</p>
+      <p class="text-xs text-amber-600 dark:text-amber-400">{{ t('backoffice.permissions.needs2FAHint') }}</p>
       <router-link
         to="/settings"
         class="inline-block mt-3 px-5 py-2 bg-amber-600 text-white rounded-lg font-bold text-sm hover:bg-amber-700 transition-colors"
@@ -305,7 +305,7 @@ onMounted(() => {
         <div v-if="loadingUsers" class="p-8 flex justify-center">
           <AppSpinner />
         </div>
-        <div v-else-if="filteredUsers.length === 0" class="p-8 text-center text-gray-400 dark:text-gray-500 text-sm">
+        <div v-else-if="filteredUsers.length === 0" class="p-8 text-center text-gray-400 dark:text-gray-400 text-sm">
           <div class="text-3xl mb-2">🔍</div>
           {{ t('backoffice.permissions.noEmployees') }}
         </div>
@@ -321,7 +321,7 @@ onMounted(() => {
           >
             <div class="font-medium text-gray-800 dark:text-gray-200 text-sm">{{ u.full_name }}</div>
             <div class="flex items-center gap-2 mt-1">
-              <span class="text-xs text-gray-400 dark:text-gray-500">{{ u.email }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-400">{{ u.email }}</span>
               <AppBadge size="sm" :variant="u.is_active ? 'info' : 'neutral'">
                 {{ roleLabel(u.role) }}
               </AppBadge>
@@ -332,7 +332,7 @@ onMounted(() => {
 
       <!-- مصفوفة الصلاحيات -->
       <AppCard :title="selectedUser ? t('backoffice.permissions.permissionsFor', { name: selectedUser.full_name }) : t('backoffice.permissions.selectEmployeeTitle')" padding="sm">
-        <div v-if="!selectedUserId" class="p-10 text-center text-gray-400 dark:text-gray-500">
+        <div v-if="!selectedUserId" class="p-10 text-center text-gray-400 dark:text-gray-400">
           <div class="text-4xl mb-3">👈</div>
           {{ t('backoffice.permissions.selectEmployeePrompt') }}
         </div>
@@ -343,7 +343,7 @@ onMounted(() => {
 
         <div v-else class="space-y-5">
           <div v-for="(entries, module) in catalogByModule" :key="module">
-            <div class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-2 px-1">
+            <div class="text-xs font-bold text-gray-400 dark:text-gray-400 uppercase tracking-wide mb-2 px-1">
               {{ moduleLabel(module) }}
             </div>
             <div class="space-y-1.5">
@@ -354,7 +354,7 @@ onMounted(() => {
               >
                 <div>
                   <div class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ catalogLabel(entry) }}</div>
-                  <div class="text-xs text-gray-400 dark:text-gray-500 font-mono mt-0.5">{{ entry.endpoint }}</div>
+                  <div class="text-xs text-gray-400 dark:text-gray-400 font-mono mt-0.5">{{ entry.endpoint }}</div>
                 </div>
 
                 <div class="flex items-center gap-1.5 flex-shrink-0">
@@ -366,7 +366,7 @@ onMounted(() => {
                         'px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
                         stateFor(entry) === 'granted'
                           ? 'bg-green-600 text-white'
-                          : 'bg-white dark:bg-surface text-green-700 border border-green-200 hover:bg-green-50',
+                          : 'border border-green-200 bg-white text-green-700 hover:bg-green-50 dark:border-green-800 dark:bg-surface dark:text-green-300 dark:hover:bg-green-950/40',
                       ]"
                     >{{ t('backoffice.permissions.grant') }}</button>
                     <button
@@ -375,7 +375,7 @@ onMounted(() => {
                         'px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
                         stateFor(entry) === 'default'
                           ? 'bg-gray-600 text-white'
-                          : 'bg-white dark:bg-surface text-gray-600 border border-gray-200 hover:bg-gray-50',
+                          : 'border border-gray-200 bg-white text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:bg-surface dark:text-gray-300 dark:hover:bg-gray-800',
                       ]"
                     >{{ t('backoffice.permissions.default') }}</button>
                     <button
@@ -384,7 +384,7 @@ onMounted(() => {
                         'px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors',
                         stateFor(entry) === 'denied'
                           ? 'bg-red-600 text-white'
-                          : 'bg-white dark:bg-surface text-red-700 border border-red-200 hover:bg-red-50',
+                          : 'border border-red-200 bg-white text-red-700 hover:bg-red-50 dark:border-red-800 dark:bg-surface dark:text-red-300 dark:hover:bg-red-950/40',
                       ]"
                     >{{ t('backoffice.permissions.deny') }}</button>
                   </template>

@@ -253,12 +253,12 @@ onMounted(() => {
           <p v-else class="text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
             ⚠️ {{ t('account.sessions.noCurrentSessionNote') }}
           </p>
-          <p v-if="currentSession && otherSessions.length === 0" class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+          <p v-if="currentSession && otherSessions.length === 0" class="text-xs text-gray-400 dark:text-gray-400 mt-1">
             {{ t('account.sessions.noOtherSessions') }}
           </p>
         </div>
 
-        <div v-if="sessionsLoading" class="py-10 flex flex-col items-center gap-3 text-gray-400 dark:text-gray-500">
+        <div v-if="sessionsLoading" class="py-10 flex flex-col items-center gap-3 text-gray-400 dark:text-gray-400">
           <AppSpinner size="lg" />
           <p class="text-sm">{{ t('account.sessions.loading') }}</p>
         </div>
@@ -267,7 +267,7 @@ onMounted(() => {
           v-else-if="sessionsError"
           role="alert"
           aria-live="assertive"
-          class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between gap-3"
+          class="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
         >
           <span>⚠️ {{ sessionsError }}</span>
           <button type="button" class="font-semibold underline hover:no-underline" @click="loadSessions">
@@ -327,7 +327,7 @@ onMounted(() => {
       <AppCard :title="t('account.securityActivity.title')">
         <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('account.securityActivity.subtitle') }}</p>
 
-        <div v-if="activityLoading" class="py-10 flex flex-col items-center gap-3 text-gray-400 dark:text-gray-500">
+        <div v-if="activityLoading" class="py-10 flex flex-col items-center gap-3 text-gray-400 dark:text-gray-400">
           <AppSpinner size="lg" />
           <p class="text-sm">{{ t('account.securityActivity.loading') }}</p>
         </div>
@@ -336,7 +336,7 @@ onMounted(() => {
           v-else-if="activityError"
           role="alert"
           aria-live="assertive"
-          class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between gap-3"
+          class="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300"
         >
           <span>⚠️ {{ activityError }}</span>
           <button type="button" class="font-semibold underline hover:no-underline" @click="loadActivity">
@@ -359,7 +359,7 @@ onMounted(() => {
             >
               <div class="min-w-0">
                 <span class="font-medium text-gray-800 dark:text-gray-100">{{ actionLabel(event.action) }}</span>
-                <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
+                <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
                   <span v-if="event.ip_address">{{ t('account.securityActivity.ipLabel') }}: {{ event.ip_address }}</span>
                   <span v-if="event.device">{{ t('account.securityActivity.deviceLabel') }}: {{ event.device }}</span>
                 </div>

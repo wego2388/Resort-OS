@@ -3,12 +3,23 @@ import { ref, computed, onMounted, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
-import { AppCard, AppBadge, AppButton, AppModal, useToast, useConfirm } from '@resort-os/ui'
+import {
+  AppBadge,
+  AppButton,
+  AppCard,
+  AppIcon,
+  AppModal,
+  EmptyState,
+  LoadingState,
+  SearchInput,
+  useConfirm,
+  useToast,
+} from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
 const { t, locale } = useI18n()
-const { formatNumber, formatDate } = useStaffFormat()
+const { formatDate, formatMoney } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = auth.branchId
 
@@ -197,8 +208,8 @@ const payModal = reactive({
 // ── Import Modal ─────────────────────────────────────────────────────────
 const importModal = reactive({ open: false, uploading: false, result: null as any, file: null as File | null })
 
-const fmt = (v: any) => `${formatNumber(parseFloat(v) || 0, { maximumFractionDigits: 0 })} ${t('backoffice.timeshare.currency')}`
-const formatDateAr = (d?: string) => {
+const fmt = (v: number | string | null | undefined) => formatMoney(v, 'EGP')
+const formatDateValue = (d?: string) => {
   if (!d) return '—'
   try { return formatDate(d, { day: 'numeric', month: 'short', year: 'numeric' }) }
   catch { return d }
@@ -337,8 +348,19 @@ function printCalendarView() {
 async function loadClients() {
   clientsLoading.value = true
   try {
-    const r = await api.get('/api/v1/timeshare/contracts', { params: { branch_id: branchId, size: 100 } })
-    allClients.value = r.data.items ?? []
+    const clients: Contract[] = []
+    let page = 1
+    const size = 100
+    while (true) {
+      const response = await api.get('/api/v1/timeshare/contracts', {
+        params: { branch_id: branchId, page, size },
+      })
+      const pageItems: Contract[] = response.data?.items ?? []
+      clients.push(...pageItems)
+      if (clients.length >= Number(response.data?.total ?? 0) || pageItems.length < size) break
+      page += 1
+    }
+    allClients.value = clients
   } catch (e) { toast.error(t('backoffice.timeshare.msg.loadClientsError')) } finally { clientsLoading.value = false }
 }
 
@@ -435,7 +457,11 @@ function openTransferModal(c: Contract) {
 
 const transferCandidateUnits = computed(() => {
   if (!transferModal.contract) return []
-  return units.value.filter(u => u.unit_type === transferModal.contract!.room_type && u.id !== transferModal.contract!.unit_id)
+  return units.value.filter(u =>
+    u.unit_type === transferModal.contract!.room_type &&
+    u.id !== transferModal.contract!.unit_id &&
+    u.status !== 'maintenance',
+  )
 })
 
 async function saveTransfer() {
@@ -488,9 +514,11 @@ type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
 function roomTypeBadge(type: string) {
   const m: Record<string, string> = {
-    '2R': 'bg-sky-100 text-sky-700', '4R': 'bg-amber-100 text-amber-700', '6R': 'bg-emerald-100 text-emerald-700',
+    '2R': 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300',
+    '4R': 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
+    '6R': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
   }
-  return `text-[10px] px-1.5 py-0.5 rounded-full font-bold ${m[type] || 'bg-stone-100 dark:bg-gray-700 text-stone-500'}`
+  return `text-xs px-2 py-1 rounded-full font-bold ${m[type] || 'bg-stone-100 dark:bg-gray-700 text-stone-600 dark:text-stone-300'}`
 }
 const contractStatusVariant: Record<string, BadgeVariant> = {
   active: 'success', suspended: 'warning', cancelled: 'danger', expired: 'neutral',
@@ -515,37 +543,44 @@ function payLabel(s: string) {
   return labels[s] ? `${icons[s]} ${labels[s]}` : s
 }
 function calContractClass(c: any) {
-  if (c.rci_included) return 'bg-purple-100 text-purple-700 border-purple-200'
+  if (c.rci_included) return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800'
   const m: Record<string, string> = {
-    '2R': 'bg-sky-100 text-sky-700 border-sky-200', '4R': 'bg-amber-100 text-amber-700 border-amber-200',
-    '6R': 'bg-emerald-100 text-emerald-700 border-emerald-200',
+    '2R': 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800',
+    '4R': 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
+    '6R': 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
   }
-  return m[c.room_type] || 'bg-stone-100 dark:bg-gray-700 text-stone-500 border-stone-200 dark:border-border'
+  return m[c.room_type] || 'bg-stone-100 dark:bg-gray-700 text-stone-600 dark:text-stone-300 border-stone-200 dark:border-border'
 }
 
 onMounted(refreshAll)
 </script>
 
 <template>
-  <div>
-    <div class="flex items-center justify-between flex-wrap gap-3 mb-4">
-      <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">🏨 {{ t('backoffice.timeshare.title') }}</h2>
+  <div class="space-y-5 pb-6">
+    <div class="flex items-start justify-between flex-wrap gap-4">
+      <div>
+        <h2 class="text-2xl font-black text-gray-950 dark:text-gray-100">{{ t('backoffice.timeshare.title') }}</h2>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.timeshare.workspaceHint') }}</p>
+      </div>
       <div class="flex items-center gap-2">
-        <button v-if="auth.hasRole('manager')" @click="importModal.open = true; importModal.result = null"
-          class="px-3 py-1.5 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs font-bold hover:bg-stone-50 dark:bg-gray-800/60 transition-all">
-          📥 {{ t('backoffice.timeshare.importExcel') }}
-        </button>
-        <button @click="refreshAll" :disabled="loading"
-          class="px-3 py-1.5 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs font-bold hover:bg-stone-50 dark:bg-gray-800/60 transition-all">
-          {{ loading ? '⏳' : '🔄' }} {{ t('backoffice.timeshare.refresh') }}
-        </button>
+        <AppButton
+          v-if="auth.hasRole('manager')"
+          variant="outline"
+          @click="importModal.open = true; importModal.result = null"
+        >
+          <AppIcon name="upload" size="sm" /> {{ t('backoffice.timeshare.importExcel') }}
+        </AppButton>
+        <AppButton variant="outline" :loading="loading" @click="refreshAll">
+          <AppIcon name="refresh" size="sm" /> {{ t('backoffice.timeshare.refresh') }}
+        </AppButton>
       </div>
     </div>
 
     <!-- Tabs -->
-    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
+    <div class="flex gap-1 bg-stone-100 dark:bg-gray-800 p-1.5 rounded-2xl overflow-x-auto" role="tablist" :aria-label="t('backoffice.timeshare.tabsLabel')">
       <button v-for="tab in TABS" :key="tab.id" @click="activeTab = tab.id"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', activeTab === tab.id ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']">
+        type="button" role="tab" :aria-selected="activeTab === tab.id"
+        :class="['min-h-[44px] px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-all', activeTab === tab.id ? 'bg-white dark:bg-surface shadow-sm text-gray-950 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white']">
         {{ tab.icon }} {{ tab.label }}
       </button>
     </div>
@@ -554,23 +589,23 @@ onMounted(refreshAll)
     <div v-if="activeTab === 'dashboard'" class="space-y-5">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <AppCard padding="md">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.activeContracts') }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.activeContracts') }}</p>
           <p class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ summary.active_contracts || 0 }}</p>
         </AppCard>
         <AppCard padding="md">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.collectionRate') }}</p>
-          <p :class="['text-2xl font-black', (summary.collection_rate_pct||0) >= 50 ? 'text-green-600' : 'text-amber-500']">
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.collectionRate') }}</p>
+          <p :class="['text-2xl font-black', (summary.collection_rate_pct||0) >= 50 ? 'text-green-600 dark:text-green-300' : 'text-amber-500 dark:text-amber-300']">
             {{ summary.collection_rate_pct || 0 }}%
           </p>
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.timeshare.ofTotal', { collected: fmt(summary.total_collected), total: fmt(summary.total_value) }) }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.timeshare.ofTotal', { collected: fmt(summary.total_collected), total: fmt(summary.total_value) }) }}</p>
         </AppCard>
         <AppCard padding="md">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.overdueAmounts') }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.overdueAmounts') }}</p>
           <p class="text-2xl font-black text-red-500">{{ fmt(summary.total_overdue) }}</p>
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.timeshare.overdueContractsCount', { count: summary.overdue_contracts_count || 0 }) }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.timeshare.overdueContractsCount', { count: summary.overdue_contracts_count || 0 }) }}</p>
         </AppCard>
         <AppCard padding="md">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.dueThisMonth') }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.dueThisMonth') }}</p>
           <p class="text-2xl font-black text-amber-500">{{ fmt(summary.this_month_due) }}</p>
         </AppCard>
       </div>
@@ -579,9 +614,9 @@ onMounted(refreshAll)
         <AppCard padding="md">
           <div class="flex items-center justify-between mb-4">
             <p class="font-black text-sm text-gray-900 dark:text-gray-100">📅 {{ t('backoffice.timeshare.upcomingVisits') }}</p>
-            <span class="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 font-bold">{{ summary.upcoming_visits?.length || 0 }}</span>
+            <AppBadge variant="info" size="sm">{{ summary.upcoming_visits?.length || 0 }}</AppBadge>
           </div>
-          <div v-if="!summary.upcoming_visits?.length" class="text-center py-6 text-gray-300 text-xs">{{ t('backoffice.timeshare.noUpcomingVisits') }}</div>
+          <EmptyState v-if="!summary.upcoming_visits?.length" icon="📅" :title="t('backoffice.timeshare.noUpcomingVisits')" />
           <div v-else class="space-y-2">
             <div v-for="v in summary.upcoming_visits" :key="v.id" class="flex items-center justify-between gap-3 p-3 rounded-xl bg-stone-50 dark:bg-gray-800/60 border border-stone-100 dark:border-border/50">
               <div class="flex-1 min-w-0">
@@ -589,13 +624,13 @@ onMounted(refreshAll)
                   <span class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ v.customer_name }}</span>
                   <span :class="roomTypeBadge(v.room_type)">{{ v.room_type }}</span>
                 </div>
-                <div class="text-[10px] text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.weekNumber', { week: v.week_number }) }} · {{ formatDateAr(v.visit_start) }}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.weekNumber', { week: v.week_number }) }} · {{ formatDateValue(v.visit_start) }}</div>
               </div>
               <div class="text-end flex-shrink-0">
-                <div :class="['text-sm font-black', v.days_until === 0 ? 'text-red-500' : v.days_until <= 7 ? 'text-amber-500' : 'text-green-600']">
+                <div :class="['text-sm font-black', v.days_until === 0 ? 'text-red-500 dark:text-red-300' : v.days_until <= 7 ? 'text-amber-500 dark:text-amber-300' : 'text-green-600 dark:text-green-300']">
                   {{ v.days_until === 0 ? t('backoffice.timeshare.today') : v.days_until === 1 ? t('backoffice.timeshare.tomorrow') : t('backoffice.timeshare.inDays', { days: v.days_until }) }}
                 </div>
-                <div v-if="v.customer_phone" class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">{{ v.customer_phone }}</div>
+                <div v-if="v.customer_phone" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ v.customer_phone }}</div>
               </div>
             </div>
           </div>
@@ -604,21 +639,21 @@ onMounted(refreshAll)
         <AppCard padding="md">
           <div class="flex items-center justify-between mb-4">
             <p class="font-black text-sm text-gray-900 dark:text-gray-100">🔴 {{ t('backoffice.timeshare.overdueClients') }}</p>
-            <span class="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">{{ summary.overdue_clients?.length || 0 }}</span>
+            <AppBadge variant="danger" size="sm">{{ summary.overdue_clients?.length || 0 }}</AppBadge>
           </div>
-          <div v-if="!summary.overdue_clients?.length" class="text-center py-6 text-gray-300 text-xs">🎉 {{ t('backoffice.timeshare.noOverdue') }}</div>
+          <EmptyState v-if="!summary.overdue_clients?.length" icon="🎉" :title="t('backoffice.timeshare.noOverdue')" />
           <div v-else class="space-y-2">
-            <div v-for="c in summary.overdue_clients" :key="c.id" class="flex items-center justify-between gap-3 p-3 rounded-xl bg-red-50 border border-red-100">
+            <div v-for="c in summary.overdue_clients" :key="c.id" class="flex items-center justify-between gap-3 p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-100 dark:border-red-900/60">
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1 flex-wrap">
                   <span class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ c.customer_name }}</span>
                   <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
                 </div>
-                <div class="text-[10px] text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.pendingInstallmentCount', { count: c.pending_count }) }}<span v-if="c.next_due"> · {{ t('backoffice.timeshare.dueOn', { date: formatDateAr(c.next_due) }) }}</span></div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.pendingInstallmentCount', { count: c.pending_count }) }}<span v-if="c.next_due"> · {{ t('backoffice.timeshare.dueOn', { date: formatDateValue(c.next_due) }) }}</span></div>
               </div>
               <div class="text-end flex-shrink-0">
                 <div class="text-sm font-black text-red-500">{{ fmt(c.overdue_amount) }}</div>
-                <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="text-[10px] text-gray-400 dark:text-gray-500 hover:text-amber-500">📞 {{ c.customer_phone }}</a>
+                <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="inline-flex min-h-[44px] items-center text-xs text-gray-500 dark:text-gray-400 hover:text-amber-600 dark:hover:text-amber-300">📞 {{ c.customer_phone }}</a>
               </div>
             </div>
           </div>
@@ -628,40 +663,37 @@ onMounted(refreshAll)
 
     <!-- ══ CALENDAR ══ -->
     <div v-if="activeTab === 'calendar'" class="space-y-4">
-      <div class="flex items-center justify-between">
+      <div class="flex items-center justify-between flex-wrap gap-3">
         <div class="flex items-center gap-3">
-          <button @click="calYear--; loadCalendar()" class="w-8 h-8 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-500 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 text-sm font-bold">›</button>
+          <button type="button" :aria-label="t('backoffice.timeshare.previousYear')" @click="calYear--; loadCalendar()" class="w-11 h-11 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 hover:bg-stone-50 dark:hover:bg-gray-800 text-lg font-bold">−</button>
           <h3 class="text-lg font-black text-gray-900 dark:text-gray-100">{{ calYear }}</h3>
-          <button @click="calYear++; loadCalendar()" class="w-8 h-8 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-500 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 text-sm font-bold">‹</button>
+          <button type="button" :aria-label="t('backoffice.timeshare.nextYear')" @click="calYear++; loadCalendar()" class="w-11 h-11 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 hover:bg-stone-50 dark:hover:bg-gray-800 text-lg font-bold">＋</button>
         </div>
-        <div class="flex items-center gap-3">
-          <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.bookedWeeks') }}: <span class="text-amber-500 font-bold">{{ calendar.total_booked_weeks || 0 }}</span></span>
-          <button @click="printCalendarView"
-            class="px-2.5 py-1.5 rounded-xl bg-primary-50 text-primary-700 text-[10px] font-bold border border-primary-200 hover:bg-primary-100"
-            :title="t('backoffice.timeshare.printCalendarHint')">
-            🖨️ {{ t('backoffice.timeshare.printPdf') }}
-          </button>
+        <div class="flex items-center gap-3 flex-wrap">
+          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.bookedWeeks') }}: <span class="text-amber-600 dark:text-amber-300 font-bold">{{ calendar.total_booked_weeks || 0 }}</span></span>
+          <AppButton variant="outline" @click="printCalendarView" :title="t('backoffice.timeshare.printCalendarHint')">
+            <AppIcon name="print" size="sm" /> {{ t('backoffice.timeshare.printPdf') }}
+          </AppButton>
         </div>
       </div>
 
-      <div v-if="calLoading" class="flex justify-center py-12">
-        <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
-      </div>
+      <LoadingState v-if="calLoading" :label="t('backoffice.timeshare.loadingCalendar')" />
+      <EmptyState v-else-if="!calendar.calendar.length" icon="📅" :title="t('backoffice.timeshare.noCalendarData')" />
       <div v-else class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
         <div v-for="month in calendar.calendar" :key="month.month" class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border overflow-hidden shadow-sm">
           <div class="px-4 py-2.5 border-b border-stone-100 dark:border-border/50 bg-stone-50 dark:bg-gray-800/60">
             <p class="font-bold text-xs text-gray-700 dark:text-gray-300">{{ month.month_name }} {{ calYear }}</p>
           </div>
-          <div class="divide-y divide-stone-100">
+          <div class="divide-y divide-stone-100 dark:divide-border">
             <div v-for="week in month.weeks" :key="week.week"
-              :class="['flex items-center gap-2 px-3 py-2', week.is_current ? 'bg-amber-50 border-r-2 border-amber-400' : '', week.is_past && !week.is_current ? 'opacity-40' : '']">
+              :class="['flex items-center gap-2 px-3 py-2.5', week.is_current ? 'bg-amber-50 dark:bg-amber-950/30 border-e-2 border-amber-400' : '', week.is_past && !week.is_current ? 'opacity-55' : '']">
               <div class="flex-shrink-0 w-8 text-center">
-                <span :class="['text-[10px] font-bold rounded-full px-1.5 py-0.5', week.is_current ? 'bg-amber-400 text-white' : 'text-gray-300']">{{ week.week }}</span>
+                <span :class="['text-xs font-bold rounded-full px-2 py-1', week.is_current ? 'bg-amber-500 text-white' : 'text-gray-500 dark:text-gray-400']">{{ week.week }}</span>
               </div>
-              <div class="flex-shrink-0 text-[9px] text-gray-300 w-20">{{ week.start_date?.slice(5) }} →</div>
+              <div class="flex-shrink-0 text-xs text-gray-500 dark:text-gray-400 w-20">{{ week.start_date?.slice(5) }} →</div>
               <div class="flex-1 flex flex-wrap gap-1">
-                <span v-if="!week.contracts.length" class="text-[9px] text-gray-200">—</span>
-                <span v-for="c in week.contracts" :key="c.id" :class="['text-[9px] px-2 py-0.5 rounded-lg font-bold border', calContractClass(c)]">
+                <span v-if="!week.contracts.length" class="text-xs text-gray-400 dark:text-gray-400">—</span>
+                <span v-for="c in week.contracts" :key="c.id" :class="['text-xs px-2 py-1 rounded-lg font-bold border', calContractClass(c)]">
                   {{ c.customer_name.split(' ').slice(0, 2).join(' ') }}
                   <span v-if="c.rci_included" class="ms-1">✦</span>
                 </span>
@@ -675,30 +707,37 @@ onMounted(refreshAll)
     <!-- ══ CLIENTS ══ -->
     <div v-if="activeTab === 'clients'" class="space-y-4">
       <div class="flex flex-wrap gap-3">
-        <input v-model="clientSearch" :placeholder="t('backoffice.timeshare.searchClientsPlaceholder')"
-          class="flex-1 min-w-48 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-xs rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
-        <select v-model="clientStatusFilter" class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs rounded-xl px-3 py-2.5 outline-none">
+        <div class="flex-1 min-w-64">
+          <SearchInput v-model="clientSearch" :placeholder="t('backoffice.timeshare.searchClientsPlaceholder')" :clear-label="t('backoffice.timeshare.clearClientSearch')" />
+        </div>
+        <select v-model="clientStatusFilter" :aria-label="t('backoffice.timeshare.filterByStatus')" class="min-h-[44px] bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2.5 outline-none">
           <option value="">{{ t('backoffice.timeshare.allStatuses') }}</option>
           <option value="active">{{ t('backoffice.timeshare.contractStatus.active') }}</option>
           <option value="suspended">{{ t('backoffice.timeshare.contractStatus.suspended') }}</option>
           <option value="cancelled">{{ t('backoffice.timeshare.contractStatus.cancelled') }}</option>
         </select>
-        <select v-model="clientRoomFilter" class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs rounded-xl px-3 py-2.5 outline-none">
+        <select v-model="clientRoomFilter" :aria-label="t('backoffice.timeshare.filterByRoomType')" class="min-h-[44px] bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2.5 outline-none">
           <option value="">{{ t('backoffice.timeshare.allTypes') }}</option>
           <option value="2R">2R</option><option value="4R">4R</option><option value="6R">6R</option>
         </select>
       </div>
 
-      <div v-if="clientsLoading" class="flex justify-center py-12">
-        <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
-      </div>
+      <LoadingState v-if="clientsLoading" :label="t('backoffice.timeshare.loadingClients')" />
       <div v-else class="space-y-2">
-        <div v-if="!filteredClients.length" class="text-center py-10 text-gray-300 text-xs">{{ t('backoffice.timeshare.noResults') }}</div>
+        <EmptyState v-if="!filteredClients.length" icon="👤" :title="t('backoffice.timeshare.noResults')" />
         <div v-for="c in filteredClients" :key="c.id"
           class="bg-white dark:bg-surface rounded-2xl border overflow-hidden transition-all shadow-sm"
           :class="expandedClient === c.id ? 'border-primary-300' : 'border-stone-200 dark:border-border hover:border-stone-300'">
 
-          <div class="p-4 cursor-pointer flex items-center gap-4" @click="expandedClient = expandedClient === c.id ? null : c.id">
+          <div
+            class="p-4 cursor-pointer flex items-center gap-4 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary-500"
+            role="button"
+            tabindex="0"
+            :aria-expanded="expandedClient === c.id"
+            @click="expandedClient = expandedClient === c.id ? null : c.id"
+            @keydown.enter="expandedClient = expandedClient === c.id ? null : c.id"
+            @keydown.space.prevent="expandedClient = expandedClient === c.id ? null : c.id"
+          >
             <div class="w-9 h-9 rounded-xl flex-shrink-0 flex items-center justify-center text-sm font-black" :class="roomTypeBadge(c.room_type)">
               {{ c.customer_name?.charAt(0) || '?' }}
             </div>
@@ -706,59 +745,59 @@ onMounted(refreshAll)
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-bold text-sm text-gray-900 dark:text-gray-100">{{ c.customer_name }}</span>
                 <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
-                <span v-if="c.rci_included" class="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700 font-bold">RCI</span>
+                <span v-if="c.rci_included" class="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 font-bold">RCI</span>
                 <AppBadge size="sm" :variant="contractStatusVariant[c.status] ?? 'neutral'">{{ statusLabel(c.status) }}</AppBadge>
               </div>
-              <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5 flex flex-wrap gap-3">
+              <div class="text-xs text-gray-500 dark:text-gray-400 mt-1 flex flex-wrap gap-3">
                 <span v-if="c.customer_phone">📞 {{ c.customer_phone }}</span>
                 <span>{{ t('backoffice.timeshare.weekNumber', { week: c.week_number || '—' }) }}</span>
                 <span>{{ c.contract_number }}</span>
               </div>
             </div>
             <div class="text-end flex-shrink-0 hidden sm:block">
-              <div class="text-green-600 font-black text-sm">{{ fmt(c.total_value) }}</div>
+              <div class="text-sm font-black text-green-600 dark:text-green-300">{{ fmt(c.total_value) }}</div>
             </div>
             <button @click.stop="openProfile(c)"
-              class="flex-shrink-0 px-2.5 py-1.5 rounded-xl bg-primary-50 text-primary-700 text-[10px] font-bold border border-primary-200 hover:bg-primary-100">
+              class="flex-shrink-0 min-h-[44px] px-3 py-2 rounded-xl bg-primary-50 text-primary-700 dark:bg-primary-950/40 dark:text-primary-300 text-xs font-bold border border-primary-200 dark:border-primary-800 hover:bg-primary-100 dark:hover:bg-primary-950/60">
               👤 {{ t('backoffice.timeshare.fullProfile') }}
             </button>
-            <div class="text-gray-300 text-xs flex-shrink-0">{{ expandedClient === c.id ? '▲' : '▼' }}</div>
+            <div class="text-gray-500 dark:text-gray-400 text-xs flex-shrink-0">{{ expandedClient === c.id ? '▲' : '▼' }}</div>
           </div>
 
           <div v-if="expandedClient === c.id" class="border-t border-stone-100 dark:border-border/50 p-4 space-y-4">
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-[11px]">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <div class="space-y-1.5">
-                <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">{{ t('backoffice.timeshare.contractData') }}</p>
-                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.contractDuration') }}</span><span>{{ c.start_date }} — {{ c.end_date || '—' }}</span></div>
-                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.nightsPerYear') }}</span><span class="font-bold text-amber-600">{{ c.nights_per_year }}</span></div>
-                <div v-if="c.nationality" class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.nationality') }}</span><span>{{ c.nationality }}</span></div>
-                <div v-if="c.maintenance_fee > 0" class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.annualMaintenance') }}</span><span class="text-amber-600">{{ fmt(c.maintenance_fee) }}</span></div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.contractData') }}</p>
+                <div class="flex justify-between gap-3"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.contractDuration') }}</span><span>{{ formatDateValue(c.start_date) }} — {{ formatDateValue(c.end_date ?? undefined) }}</span></div>
+                <div class="flex justify-between gap-3"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.nightsPerYear') }}</span><span class="font-bold text-amber-600 dark:text-amber-300">{{ c.nights_per_year }}</span></div>
+                <div v-if="c.nationality" class="flex justify-between gap-3"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.nationality') }}</span><span>{{ c.nationality }}</span></div>
+                <div v-if="c.maintenance_fee > 0" class="flex justify-between gap-3"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.annualMaintenance') }}</span><span class="text-amber-600 dark:text-amber-300">{{ fmt(c.maintenance_fee) }}</span></div>
               </div>
               <div class="space-y-1.5">
-                <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">{{ t('backoffice.timeshare.financialStatus') }}</p>
-                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.contractValue') }}</span><span class="font-bold text-green-600">{{ fmt(c.total_value) }}</span></div>
-                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.downPayment') }}</span><span>{{ fmt(c.down_payment) }}</span></div>
-                <div class="flex justify-between"><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.timeshare.installmentCount') }}</span><span>{{ c.installments }}</span></div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.financialStatus') }}</p>
+                <div class="flex justify-between gap-3"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.contractValue') }}</span><span class="font-bold text-green-600 dark:text-green-300">{{ fmt(c.total_value) }}</span></div>
+                <div class="flex justify-between gap-3"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.downPayment') }}</span><span>{{ fmt(c.down_payment) }}</span></div>
+                <div class="flex justify-between gap-3"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.installmentCount') }}</span><span>{{ c.installments }}</span></div>
               </div>
             </div>
 
             <div>
-              <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">{{ t('backoffice.timeshare.installmentSchedule') }}</p>
+              <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.installmentSchedule') }}</p>
               <div v-if="c.installments_list?.length" class="overflow-x-auto">
-                <table class="w-full text-[10px]">
-                  <thead><tr class="text-gray-400 dark:text-gray-500 border-b border-stone-100 dark:border-border/50">
-                    <th class="text-start py-1.5 ps-1">#</th><th class="text-start py-1.5">{{ t('backoffice.timeshare.column.dueDate') }}</th>
-                    <th class="text-start py-1.5">{{ t('backoffice.timeshare.column.amount') }}</th><th class="text-start py-1.5">{{ t('backoffice.timeshare.column.status') }}</th><th></th>
+                <table class="w-full min-w-[520px] text-xs">
+                  <thead><tr class="text-gray-500 dark:text-gray-400 border-b border-stone-100 dark:border-border/50">
+                    <th class="text-start py-2 ps-1">#</th><th class="text-start py-2">{{ t('backoffice.timeshare.column.dueDate') }}</th>
+                    <th class="text-start py-2">{{ t('backoffice.timeshare.column.amount') }}</th><th class="text-start py-2">{{ t('backoffice.timeshare.column.status') }}</th><th></th>
                   </tr></thead>
                   <tbody class="divide-y divide-stone-100">
                     <tr v-for="(p, i) in c.installments_list" :key="p.id">
-                      <td class="py-1.5 ps-1 text-gray-300">{{ i + 1 }}</td>
-                      <td class="py-1.5 text-gray-500 dark:text-gray-500">{{ formatDateAr(p.due_date) }}</td>
+                      <td class="py-2 ps-1 text-gray-500 dark:text-gray-400">{{ i + 1 }}</td>
+                      <td class="py-2 text-gray-600 dark:text-gray-300">{{ formatDateValue(p.due_date) }}</td>
                       <td class="py-1.5 font-bold">{{ fmt(p.amount) }}</td>
                       <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
                       <td class="py-1.5">
                         <button v-if="p.status !== 'paid'" @click="openPayModal({ ...p, customer_name: c.customer_name })"
-                          class="px-2 py-0.5 rounded-lg bg-green-50 text-green-700 text-[9px] font-bold border border-green-200 hover:bg-green-100">{{ t('backoffice.timeshare.pay') }}</button>
+                          class="min-h-[44px] px-3 py-2 rounded-lg bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60">{{ t('backoffice.timeshare.pay') }}</button>
                       </td>
                     </tr>
                   </tbody>
@@ -767,15 +806,15 @@ onMounted(refreshAll)
             </div>
 
             <div class="flex flex-wrap gap-2 pt-2 border-t border-stone-100 dark:border-border/50">
-              <button @click="openPayModalForContract(c)" class="px-4 py-2 rounded-xl bg-green-50 text-green-700 text-xs font-bold border border-green-200 hover:bg-green-100">💰 {{ t('backoffice.timeshare.recordPayment') }}</button>
-              <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="px-4 py-2 rounded-xl bg-sky-50 text-sky-700 text-xs font-bold border border-sky-200 hover:bg-sky-100">📞 {{ t('backoffice.timeshare.call') }}</a>
+              <button @click="openPayModalForContract(c)" class="min-h-[44px] px-4 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-sm font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60">💰 {{ t('backoffice.timeshare.recordPayment') }}</button>
+              <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-xl bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 text-sm font-bold border border-sky-200 dark:border-sky-800 hover:bg-sky-100 dark:hover:bg-sky-950/60">📞 {{ t('backoffice.timeshare.call') }}</a>
               <button v-if="auth.hasRole('manager') && c.status === 'active'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
-                class="px-4 py-2 rounded-xl bg-yellow-50 text-yellow-700 text-xs font-bold border border-yellow-200 hover:bg-yellow-100 disabled:opacity-40">⏸️ {{ t('backoffice.timeshare.suspend') }}</button>
+                class="min-h-[44px] px-4 py-2 rounded-xl bg-yellow-50 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300 text-sm font-bold border border-yellow-200 dark:border-yellow-800 hover:bg-yellow-100 dark:hover:bg-yellow-950/60 disabled:opacity-40">⏸️ {{ t('backoffice.timeshare.suspend') }}</button>
               <button v-else-if="auth.hasRole('manager') && c.status === 'suspended'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
-                class="px-4 py-2 rounded-xl bg-green-50 text-green-700 text-xs font-bold border border-green-200 hover:bg-green-100 disabled:opacity-40">▶️ {{ t('backoffice.timeshare.activate') }}</button>
+                class="min-h-[44px] px-4 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-sm font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60 disabled:opacity-40">▶️ {{ t('backoffice.timeshare.activate') }}</button>
               <button v-if="auth.hasRole('manager') && c.unit_id && !['cancelled','expired'].includes(c.status)" @click="openTransferModal(c)"
-                class="px-4 py-2 rounded-xl bg-violet-50 text-violet-700 text-xs font-bold border border-violet-200 hover:bg-violet-100">🔑 {{ t('backoffice.timeshare.transferUnit') }}</button>
-              <AppButton v-if="auth.hasRole('manager') && c.status !== 'cancelled'" variant="danger" size="sm" @click="cancelContract(c)">🗑️ {{ t('backoffice.timeshare.cancelAction') }}</AppButton>
+                class="min-h-[44px] px-4 py-2 rounded-xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300 text-sm font-bold border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-950/60">🔑 {{ t('backoffice.timeshare.transferUnit') }}</button>
+              <AppButton v-if="auth.hasRole('manager') && c.status !== 'cancelled'" variant="danger" class="min-h-[44px]" @click="cancelContract(c)">🗑️ {{ t('backoffice.timeshare.cancelAction') }}</AppButton>
             </div>
           </div>
         </div>
@@ -785,90 +824,90 @@ onMounted(refreshAll)
     <!-- ══ INSTALLMENTS ══ -->
     <div v-if="activeTab === 'installments'" class="space-y-4">
       <div class="flex flex-wrap gap-3">
-        <div class="px-4 py-2 rounded-xl bg-red-50 border border-red-200 text-xs font-bold text-red-600">🔴 {{ t('backoffice.timeshare.overdueColon', { amount: fmt(installSummary.overdue_total) }) }}</div>
-        <div class="px-4 py-2 rounded-xl bg-amber-50 border border-amber-200 text-xs font-bold text-amber-600">⏳ {{ t('backoffice.timeshare.pendingColon', { amount: fmt(installSummary.pending_total) }) }}</div>
+        <div class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-sm font-bold text-red-700 dark:text-red-300">🔴 {{ t('backoffice.timeshare.overdueColon', { amount: fmt(installSummary.overdue_total) }) }}</div>
+        <div class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-sm font-bold text-amber-700 dark:text-amber-300">⏳ {{ t('backoffice.timeshare.pendingColon', { amount: fmt(installSummary.pending_total) }) }}</div>
       </div>
       <div class="flex flex-wrap gap-3">
         <input v-model="installSearch" @keyup.enter="loadInstallments" :placeholder="t('backoffice.timeshare.searchByCustomerName')"
-          class="flex-1 min-w-40 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-xs rounded-xl px-4 py-2 outline-none" />
-        <select v-model="installStatus" @change="loadInstallments" class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs rounded-xl px-3 py-2">
+          class="min-h-[44px] flex-1 min-w-48 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2 outline-none" />
+        <select v-model="installStatus" :aria-label="t('backoffice.timeshare.filterByStatus')" @change="loadInstallments" class="min-h-[44px] bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2">
           <option value="">{{ t('backoffice.timeshare.allStatuses') }}</option><option value="overdue">🔴 {{ t('backoffice.timeshare.payStatus.overdue') }}</option>
           <option value="pending">⏳ {{ t('backoffice.timeshare.payStatus.pending') }}</option><option value="paid">✅ {{ t('backoffice.timeshare.payStatus.paid') }}</option><option value="partial">🔵 {{ t('backoffice.timeshare.payStatus.partial') }}</option>
         </select>
-        <input v-model="installMonth" @change="loadInstallments" type="month" class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 text-xs rounded-xl px-3 py-2" />
+        <input v-model="installMonth" :aria-label="t('backoffice.timeshare.filterByMonth')" @change="loadInstallments" type="month" class="min-h-[44px] bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2" />
       </div>
 
-      <div v-if="installLoading" class="flex justify-center py-12">
-        <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
-      </div>
+      <LoadingState v-if="installLoading" :label="t('backoffice.timeshare.loadingInstallments')" />
       <AppCard v-else padding="none">
-        <div v-if="!installments.length" class="text-center py-10 text-gray-300 text-xs">{{ t('backoffice.timeshare.noResults') }}</div>
-        <table v-else class="w-full text-xs">
+        <EmptyState v-if="!installments.length" icon="💰" :title="t('backoffice.timeshare.noResults')" />
+        <div v-else class="overflow-x-auto">
+        <table class="w-full min-w-[720px] text-sm">
           <thead class="bg-stone-50 dark:bg-gray-800/60"><tr>
-            <th class="text-start px-4 py-3 text-gray-400 dark:text-gray-500 font-bold">{{ t('backoffice.timeshare.column.customer') }}</th>
-            <th class="text-start px-4 py-3 text-gray-400 dark:text-gray-500 font-bold">{{ t('backoffice.timeshare.column.dueDate') }}</th>
-            <th class="text-start px-4 py-3 text-gray-400 dark:text-gray-500 font-bold">{{ t('backoffice.timeshare.column.amount') }}</th>
-            <th class="text-start px-4 py-3 text-gray-400 dark:text-gray-500 font-bold">{{ t('backoffice.timeshare.column.status') }}</th>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.customer') }}</th>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.dueDate') }}</th>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.amount') }}</th>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.status') }}</th>
             <th class="px-4 py-3"></th>
           </tr></thead>
-          <tbody class="divide-y divide-stone-100">
-            <tr v-for="p in installments" :key="p.id" :class="p.status === 'overdue' ? 'bg-red-50/30' : ''">
+          <tbody class="divide-y divide-stone-100 dark:divide-border">
+            <tr v-for="p in installments" :key="p.id" :class="p.status === 'overdue' ? 'bg-red-50/50 dark:bg-red-950/20' : ''">
               <td class="px-4 py-3">
                 <div class="font-bold text-gray-900 dark:text-gray-100">{{ p.customer_name }}</div>
-                <div class="text-[10px] text-gray-400 dark:text-gray-500">{{ p.customer_phone }}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ p.customer_phone }}</div>
               </td>
-              <td class="px-4 py-3"><span :class="p.status === 'overdue' ? 'text-red-500 font-bold' : 'text-gray-500 dark:text-gray-500'">{{ formatDateAr(p.due_date) }}</span></td>
+              <td class="px-4 py-3"><span :class="p.status === 'overdue' ? 'text-red-600 dark:text-red-300 font-bold' : 'text-gray-600 dark:text-gray-300'">{{ formatDateValue(p.due_date) }}</span></td>
               <td class="px-4 py-3 font-bold">{{ fmt(p.amount) }}</td>
               <td class="px-4 py-3"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
               <td class="px-4 py-3">
                 <button v-if="p.status !== 'paid'" @click="openPayModal(p)"
-                  class="px-3 py-1 rounded-xl bg-green-50 text-green-700 text-[10px] font-bold border border-green-200 hover:bg-green-100">💰 {{ t('backoffice.timeshare.pay') }}</button>
+                  class="min-h-[44px] px-3 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-bold border border-green-200 dark:border-green-800 hover:bg-green-100">💰 {{ t('backoffice.timeshare.pay') }}</button>
               </td>
             </tr>
           </tbody>
         </table>
+        </div>
       </AppCard>
     </div>
 
     <!-- ══ TRANSFER UNIT MODAL (#10) ══ -->
     <AppModal :open="transferModal.open" :title="`🔑 ${t('backoffice.timeshare.transferUnit')}`" size="sm" @close="transferModal.open = false">
       <div v-if="transferModal.contract" class="space-y-3">
-        <p class="text-xs text-gray-500 dark:text-gray-500">
+        <p class="text-sm text-gray-600 dark:text-gray-300">
           {{ transferModal.contract.customer_name }} — {{ t('backoffice.timeshare.currentUnit') }}:
           <span class="font-bold">{{ transferModal.contract.unit_id ? (unitNumberById[transferModal.contract.unit_id] ?? `#${transferModal.contract.unit_id}`) : '—' }}</span>
         </p>
-        <select v-model="transferModal.new_unit_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
+        <select v-model="transferModal.new_unit_id" class="min-h-[44px] w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm">
           <option value="">{{ t('backoffice.timeshare.selectNewUnitOfType', { type: transferModal.contract.room_type }) }}</option>
           <option v-for="u in transferCandidateUnits" :key="u.id" :value="u.id" :disabled="u.status === 'maintenance'">
             {{ u.unit_number }}{{ u.status === 'maintenance' ? ` (${t('backoffice.timeshare.underMaintenance')})` : '' }}
           </option>
         </select>
-        <p v-if="transferCandidateUnits.length === 0" class="text-xs text-amber-600">{{ t('backoffice.timeshare.noCandidateUnits') }}</p>
+        <p v-if="transferCandidateUnits.length === 0" class="text-xs text-amber-600 dark:text-amber-300">{{ t('backoffice.timeshare.noCandidateUnits') }}</p>
         <input v-model="transferModal.reason" type="text" :placeholder="t('backoffice.timeshare.transferReasonPlaceholder')"
-          class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
+          class="min-h-[44px] w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
         <AppButton class="w-full" :loading="transferModal.saving" @click="saveTransfer">{{ t('backoffice.timeshare.confirmTransfer') }}</AppButton>
       </div>
     </AppModal>
 
     <!-- ══ PAY MODAL ══ -->
     <AppModal :open="payModal.open" :title="`💰 ${t('backoffice.timeshare.recordPayment')}`" size="sm" @close="payModal.open = false">
-      <p class="text-xs text-gray-400 dark:text-gray-500 mb-4">{{ payModal.customer_name }}</p>
+      <p class="text-sm text-gray-600 dark:text-gray-300 mb-4">{{ payModal.customer_name }}</p>
       <div class="space-y-3">
         <div>
-          <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">{{ t('backoffice.timeshare.amountPaid') }}</label>
+          <label class="text-xs text-gray-600 dark:text-gray-300 font-semibold block mb-1">{{ t('backoffice.timeshare.amountPaid') }}</label>
           <input v-model.number="payModal.amount" type="number" min="1" :placeholder="t('backoffice.timeshare.duePlaceholder', { amount: fmt(payModal.due_amount) })"
-            class="w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
+            class="min-h-[44px] w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
         </div>
         <div>
-          <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">{{ t('backoffice.timeshare.paymentMethod') }}</label>
-          <select v-model="payModal.method" class="w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-xs rounded-xl px-4 py-2.5 outline-none">
+          <label class="text-xs text-gray-600 dark:text-gray-300 font-semibold block mb-1">{{ t('backoffice.timeshare.paymentMethod') }}</label>
+          <select v-model="payModal.method" class="min-h-[44px] w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none">
             <option value="cash">{{ t('backoffice.timeshare.paymentMethodCash') }}</option><option value="card">{{ t('backoffice.timeshare.paymentMethodCard') }}</option>
             <option value="bank_transfer">{{ t('backoffice.timeshare.paymentMethodBankTransfer') }}</option><option value="other">{{ t('backoffice.timeshare.paymentMethodOther') }}</option>
           </select>
         </div>
         <div>
-          <label class="text-[10px] text-gray-400 dark:text-gray-500 block mb-1">{{ t('backoffice.timeshare.receiptNumberOptional') }}</label>
-          <input v-model="payModal.receipt_number" class="w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-xs rounded-xl px-4 py-2.5 outline-none" />
+          <label class="text-xs text-gray-600 dark:text-gray-300 font-semibold block mb-1">{{ t('backoffice.timeshare.receiptNumberOptional') }}</label>
+          <input v-model="payModal.receipt_number" class="min-h-[44px] w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none" />
         </div>
       </div>
       <template #footer>
@@ -883,12 +922,12 @@ onMounted(refreshAll)
 
     <!-- ══ IMPORT MODAL ══ -->
     <AppModal v-if="auth.hasRole('manager')" :open="importModal.open" :title="`📥 ${t('backoffice.timeshare.importContractsTitle')}`" @close="importModal.open = false">
-      <p class="text-xs text-gray-400 dark:text-gray-500 mb-4">
+      <p class="text-sm text-gray-600 dark:text-gray-300 mb-4">
         {{ t('backoffice.timeshare.importHint') }}
       </p>
       <input type="file" accept=".xlsx,.xls" @change="onFilePicked"
-        class="w-full text-xs text-gray-600 dark:text-gray-500 file:me-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
-      <div v-if="importModal.result" class="mt-4 p-3 rounded-xl text-xs" :class="importModal.result.error ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'">
+        class="min-h-[44px] w-full text-sm text-gray-700 dark:text-gray-300 file:me-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 dark:file:bg-primary-950/40 file:text-primary-700 dark:file:text-primary-300 file:font-bold" />
+      <div v-if="importModal.result" class="mt-4 p-3 rounded-xl text-sm" :class="importModal.result.error ? 'bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300' : 'bg-green-50 dark:bg-green-950/30 text-green-700 dark:text-green-300'">
         <div v-if="importModal.result.error">{{ importModal.result.error }}</div>
         <div v-else>
           ✅ {{ t('backoffice.timeshare.importedCount', { count: importModal.result.imported }) }}
@@ -910,33 +949,31 @@ onMounted(refreshAll)
 
     <!-- ══ CUSTOMER PROFILE (أجمّع كل عقود/زيارات/أقساط/تقييمات نفس العميل) ══ -->
     <AppModal :open="profileModal.open" :title="t('backoffice.timeshare.fullProfileTitle', { name: profileCustomerName })" size="lg" @close="profileModal.open = false">
-      <div v-if="profileModal.loading" class="flex justify-center py-12">
-        <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
-      </div>
-      <div v-else class="space-y-5 text-xs">
+      <LoadingState v-if="profileModal.loading" :label="t('backoffice.timeshare.loadingProfile')" />
+      <div v-else class="space-y-5 text-sm">
         <!-- Totals -->
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-            <p class="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">{{ t('backoffice.timeshare.contractCount') }}</p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-1">{{ t('backoffice.timeshare.contractCount') }}</p>
             <p class="font-black text-gray-900 dark:text-gray-100">{{ profileModal.contracts.length }}</p>
           </div>
-          <div class="bg-green-50 rounded-xl p-3">
-            <p class="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">{{ t('backoffice.timeshare.collected') }}</p>
-            <p class="font-black text-green-600">{{ fmt(profileTotals.collected) }}</p>
+          <div class="bg-green-50 dark:bg-green-950/30 rounded-xl p-3">
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-1">{{ t('backoffice.timeshare.collected') }}</p>
+            <p class="font-black text-green-600 dark:text-green-300">{{ fmt(profileTotals.collected) }}</p>
           </div>
-          <div class="bg-red-50 rounded-xl p-3">
-            <p class="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">{{ t('backoffice.timeshare.overdue') }}</p>
-            <p class="font-black text-red-500">{{ fmt(profileTotals.overdue) }}</p>
+          <div class="bg-red-50 dark:bg-red-950/30 rounded-xl p-3">
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-1">{{ t('backoffice.timeshare.overdue') }}</p>
+            <p class="font-black text-red-600 dark:text-red-300">{{ fmt(profileTotals.overdue) }}</p>
           </div>
-          <div class="bg-amber-50 rounded-xl p-3">
-            <p class="text-[9px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-1">{{ t('backoffice.timeshare.pending') }}</p>
-            <p class="font-black text-amber-600">{{ fmt(profileTotals.pending) }}</p>
+          <div class="bg-amber-50 dark:bg-amber-950/30 rounded-xl p-3">
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-1">{{ t('backoffice.timeshare.pending') }}</p>
+            <p class="font-black text-amber-600 dark:text-amber-300">{{ fmt(profileTotals.pending) }}</p>
           </div>
         </div>
 
         <!-- Contracts -->
         <div>
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">{{ t('backoffice.timeshare.contractsCount', { count: profileModal.contracts.length }) }}</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.contractsCount', { count: profileModal.contracts.length }) }}</p>
           <div class="space-y-1.5">
             <div v-for="c in profileModal.contracts" :key="c.id" class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-stone-50 dark:bg-gray-800/60 border border-stone-100 dark:border-border/50">
               <div class="flex items-center gap-2 flex-wrap">
@@ -944,20 +981,20 @@ onMounted(refreshAll)
                 <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
                 <AppBadge size="sm" :variant="contractStatusVariant[c.status] ?? 'neutral'">{{ statusLabel(c.status) }}</AppBadge>
               </div>
-              <span class="font-bold text-green-600">{{ fmt(c.total_value) }}</span>
+              <span class="font-bold text-green-600 dark:text-green-300">{{ fmt(c.total_value) }}</span>
             </div>
           </div>
         </div>
 
         <!-- Visits (وحدة فعلية مخصَّصة + تواريخ + حالة) -->
         <div>
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">{{ t('backoffice.timeshare.visitsCount', { count: profileModal.visits.length }) }}</p>
-          <div v-if="!profileModal.visits.length" class="text-center py-4 text-gray-300">{{ t('backoffice.timeshare.noVisitsRecorded') }}</div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.visitsCount', { count: profileModal.visits.length }) }}</p>
+          <EmptyState v-if="!profileModal.visits.length" icon="🏝️" :title="t('backoffice.timeshare.noVisitsRecorded')" />
           <div v-else class="space-y-1.5">
-            <div v-for="v in profileModal.visits" :key="v.id" class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-sky-50 border border-sky-100">
+            <div v-for="v in profileModal.visits" :key="v.id" class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-sky-50 dark:bg-sky-950/30 border border-sky-100 dark:border-sky-900/60">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-bold text-gray-900 dark:text-gray-100">🔑 {{ v.unit_id ? (unitNumberById[v.unit_id] ?? t('backoffice.timeshare.unitHash', { id: v.unit_id })) : '—' }}</span>
-                <span class="text-gray-400 dark:text-gray-500">{{ formatDateAr(v.check_in) }} → {{ formatDateAr(v.check_out) }}</span>
+                <span class="text-gray-500 dark:text-gray-400">{{ formatDateValue(v.check_in) }} → {{ formatDateValue(v.check_out) }}</span>
               </div>
               <div class="flex items-center gap-2">
                 <AppButton
@@ -965,7 +1002,7 @@ onMounted(refreshAll)
                   size="sm" variant="ghost" :loading="sendingSurveyId === v.id"
                   @click="sendSurvey(v)"
                 >📨 {{ t('backoffice.timeshare.satisfactionSurvey') }}</AppButton>
-                <span v-else-if="sentSurveyIds.has(v.id)" class="text-[10px] text-green-600 font-bold">✓ {{ t('backoffice.timeshare.sentDone') }}</span>
+                <span v-else-if="sentSurveyIds.has(v.id)" class="text-xs text-green-600 dark:text-green-300 font-bold">✓ {{ t('backoffice.timeshare.sentDone') }}</span>
                 <AppBadge size="sm" :variant="visitStatusVariant[v.status] ?? 'neutral'">{{ visitStatusLabel(v.status) }}</AppBadge>
               </div>
             </div>
@@ -974,35 +1011,37 @@ onMounted(refreshAll)
 
         <!-- Installments across all contracts -->
         <div>
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">{{ t('backoffice.timeshare.installmentsCount', { count: profileAllInstallments.length }) }}</p>
-          <div v-if="!profileAllInstallments.length" class="text-center py-4 text-gray-300">{{ t('backoffice.timeshare.noInstallments') }}</div>
-          <table v-else class="w-full text-[10px]">
-            <thead><tr class="text-gray-400 dark:text-gray-500 border-b border-stone-100 dark:border-border/50">
-              <th class="text-start py-1.5 ps-1">{{ t('backoffice.timeshare.column.contract') }}</th><th class="text-start py-1.5">{{ t('backoffice.timeshare.column.dueDate') }}</th>
-              <th class="text-start py-1.5">{{ t('backoffice.timeshare.column.amount') }}</th><th class="text-start py-1.5">{{ t('backoffice.timeshare.column.status') }}</th>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.installmentsCount', { count: profileAllInstallments.length }) }}</p>
+          <EmptyState v-if="!profileAllInstallments.length" icon="💰" :title="t('backoffice.timeshare.noInstallments')" />
+          <div v-else class="overflow-x-auto">
+          <table class="w-full min-w-[520px] text-xs">
+            <thead><tr class="text-gray-500 dark:text-gray-400 border-b border-stone-100 dark:border-border/50">
+              <th class="text-start py-2 ps-1">{{ t('backoffice.timeshare.column.contract') }}</th><th class="text-start py-2">{{ t('backoffice.timeshare.column.dueDate') }}</th>
+              <th class="text-start py-2">{{ t('backoffice.timeshare.column.amount') }}</th><th class="text-start py-2">{{ t('backoffice.timeshare.column.status') }}</th>
             </tr></thead>
-            <tbody class="divide-y divide-stone-100">
+            <tbody class="divide-y divide-stone-100 dark:divide-border">
               <tr v-for="p in profileAllInstallments" :key="p.id">
-                <td class="py-1.5 ps-1 text-gray-400 dark:text-gray-500">{{ p.contract_number }}</td>
-                <td class="py-1.5 text-gray-500 dark:text-gray-500">{{ formatDateAr(p.due_date) }}</td>
-                <td class="py-1.5 font-bold">{{ fmt(p.amount) }}</td>
-                <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
+                <td class="py-2 ps-1 text-gray-500 dark:text-gray-400">{{ p.contract_number }}</td>
+                <td class="py-2 text-gray-600 dark:text-gray-300">{{ formatDateValue(p.due_date) }}</td>
+                <td class="py-2 font-bold">{{ fmt(p.amount) }}</td>
+                <td class="py-2"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
               </tr>
             </tbody>
           </table>
+          </div>
         </div>
 
         <!-- Reviews (manager فقط — GET /analytics/reviews محتاج صلاحية manager) -->
         <div v-if="auth.hasRole('manager')">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase mb-2">{{ t('backoffice.timeshare.reviewsCount', { count: profileModal.reviews.length }) }}</p>
-          <div v-if="!profileModal.reviews.length" class="text-center py-4 text-gray-300">{{ t('backoffice.timeshare.noReviewsRecorded') }}</div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.reviewsCount', { count: profileModal.reviews.length }) }}</p>
+          <EmptyState v-if="!profileModal.reviews.length" icon="⭐" :title="t('backoffice.timeshare.noReviewsRecorded')" />
           <div v-else class="space-y-1.5">
-            <div v-for="r in profileModal.reviews" :key="r.id" class="p-2.5 rounded-xl bg-amber-50 border border-amber-100">
+            <div v-for="r in profileModal.reviews" :key="r.id" class="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-100 dark:border-amber-900/60">
               <div class="flex items-center justify-between mb-1">
-                <span class="font-bold text-amber-600">{{ '⭐'.repeat(r.overall_rating) }}</span>
-                <span class="text-gray-400 dark:text-gray-500 text-[9px]">{{ formatDateAr(r.reviewed_at) }}</span>
+                <span class="font-bold text-amber-600 dark:text-amber-300">{{ '⭐'.repeat(r.overall_rating) }}</span>
+                <span class="text-gray-500 dark:text-gray-400 text-xs">{{ formatDateValue(r.reviewed_at) }}</span>
               </div>
-              <p v-if="r.comment" class="text-gray-600 dark:text-gray-500">{{ r.comment }}</p>
+              <p v-if="r.comment" class="text-gray-700 dark:text-gray-300">{{ r.comment }}</p>
             </div>
           </div>
         </div>

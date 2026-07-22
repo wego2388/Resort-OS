@@ -63,7 +63,7 @@ export function initTheme(): void {
 
 /**
  * Reactive access to the current theme + a setter that persists the choice.
- * Any component (e.g. a future `<ThemeToggle />`) can call this without
+ * Any component (including the shared `<ThemeToggle />`) can call this without
  * caring whether `initTheme()` already ran elsewhere — reading `isDark`/
  * `preference` before the app boots simply reflects the not-yet-applied
  * resolved value (documentElement update happens once initTheme() runs).

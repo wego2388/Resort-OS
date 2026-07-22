@@ -18,15 +18,15 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
-import { AppCard, AppBadge, EmptyState, useToast } from '@resort-os/ui'
+import { AppBadge, AppButton, AppCard, EmptyState, LoadingState, useToast } from '@resort-os/ui'
 import ShiftPanel from '../../components/ShiftPanel.vue'
 import InvoiceLogModal from '../../components/InvoiceLogModal.vue'
 import CashControlPanel from '../../components/CashControlPanel.vue'
 
 const auth = useAuthStore()
 const toast = useToast()
-const { t } = useI18n()
-const { formatNumber } = useStaffFormat()
+const { t, locale } = useI18n()
+const { formatMoney } = useStaffFormat()
 const branchId = computed(() => auth.branchId ?? 1)
 
 interface CurrentShift { id: number; opened_at: string; opening_float: number | string; status: string }
@@ -160,22 +160,18 @@ onMounted(fetchShift)
   <div class="page-container">
     <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
       <h1 class="section-title mb-0">{{ t('backoffice.shiftDashboard.title') }}</h1>
-      <button
-        @click="refreshAll"
-        class="text-xs text-blue-600 font-semibold hover:text-blue-800 disabled:opacity-50"
-        :disabled="loadingShift"
-      >🔄 {{ t('backoffice.shiftDashboard.refresh') }}</button>
+      <AppButton variant="outline" :loading="loadingShift" @click="refreshAll">
+        🔄 {{ t('backoffice.shiftDashboard.refresh') }}
+      </AppButton>
     </div>
 
-    <div v-if="loadingShift && !shift" class="flex items-center justify-center py-16">
-      <div class="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
-    </div>
+    <LoadingState v-if="loadingShift && !shift" :label="t('backoffice.shiftDashboard.loading')" />
 
     <EmptyState
       v-else-if="!shift"
       icon="🔒"
       :title="t('backoffice.shiftDashboard.noOpenShift')"
-      :description="t('backoffice.shiftDashboard.noOpenShiftHint')"
+      :subtitle="t('backoffice.shiftDashboard.noOpenShiftHint')"
     />
 
     <template v-else>
@@ -198,35 +194,35 @@ onMounted(fetchShift)
         <div v-if="loadingReport" class="text-center text-sm text-gray-400 py-4">{{ t('backoffice.shiftDashboard.loading') }}</div>
         <template v-else-if="report">
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div class="bg-emerald-50 rounded-xl p-3 text-center border border-emerald-100">
-              <div class="text-lg font-black text-emerald-700">{{ formatNumber(Number(report.total_sales), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
-              <div class="text-xs text-emerald-600 mt-0.5">{{ t('backoffice.shiftDashboard.totalSales') }}</div>
+            <div class="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-center dark:border-emerald-900 dark:bg-emerald-950/30">
+              <div class="text-lg font-black text-emerald-700 dark:text-emerald-300">{{ formatMoney(report.total_sales, 'EGP') }}</div>
+              <div class="mt-0.5 text-xs text-emerald-600 dark:text-emerald-400">{{ t('backoffice.shiftDashboard.totalSales') }}</div>
             </div>
-            <div class="bg-blue-50 rounded-xl p-3 text-center border border-blue-100">
-              <div class="text-lg font-black text-blue-700">{{ formatNumber(Number(report.total_cash), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
-              <div class="text-xs text-blue-600 mt-0.5">{{ t('backoffice.shiftDashboard.cash') }}</div>
+            <div class="rounded-xl border border-blue-100 bg-blue-50 p-3 text-center dark:border-blue-900 dark:bg-blue-950/30">
+              <div class="text-lg font-black text-blue-700 dark:text-blue-300">{{ formatMoney(report.total_cash, 'EGP') }}</div>
+              <div class="mt-0.5 text-xs text-blue-600 dark:text-blue-400">{{ t('backoffice.shiftDashboard.cash') }}</div>
             </div>
-            <div class="bg-purple-50 rounded-xl p-3 text-center border border-purple-100">
-              <div class="text-lg font-black text-purple-700">{{ formatNumber(Number(report.total_card), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }}</div>
-              <div class="text-xs text-purple-600 mt-0.5">{{ t('backoffice.shiftDashboard.card') }}</div>
+            <div class="rounded-xl border border-purple-100 bg-purple-50 p-3 text-center dark:border-purple-900 dark:bg-purple-950/30">
+              <div class="text-lg font-black text-purple-700 dark:text-purple-300">{{ formatMoney(report.total_card, 'EGP') }}</div>
+              <div class="mt-0.5 text-xs text-purple-600 dark:text-purple-400">{{ t('backoffice.shiftDashboard.card') }}</div>
             </div>
-            <div class="bg-stone-50 rounded-xl p-3 text-center border border-stone-200 dark:border-border">
+            <div class="rounded-xl border border-stone-200 bg-stone-50 p-3 text-center dark:border-border dark:bg-gray-800/60">
               <div class="text-lg font-black text-gray-700 dark:text-gray-300">{{ report.invoice_count }}</div>
               <div class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.shiftDashboard.invoiceCount') }}</div>
             </div>
           </div>
           <p v-if="report.voided_count > 0" class="text-xs text-red-500 mt-2">
-            ⚠️ {{ t('backoffice.shiftDashboard.voidedInvoices', { count: report.voided_count, amount: formatNumber(Number(report.voided_amount), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }) }}
+            ⚠️ {{ t('backoffice.shiftDashboard.voidedInvoices', { count: report.voided_count, amount: formatMoney(report.voided_amount, 'EGP') }) }}
           </p>
           <div class="flex gap-2 mt-3">
             <button
               @click="showInvoiceLog = true"
-              class="flex-1 py-2 text-xs font-bold text-blue-700 bg-blue-50 border border-blue-100 rounded-lg hover:bg-blue-100"
+              class="min-h-11 flex-1 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 hover:bg-blue-100 dark:border-blue-900 dark:bg-blue-950/30 dark:text-blue-300 dark:hover:bg-blue-950/50"
             >📋 {{ t('backoffice.shiftDashboard.invoiceLog') }}</button>
             <a
               :href="ENDPOINTS.finance.shiftReportPdf(shift.id)"
               target="_blank"
-              class="flex-1 py-2 text-xs font-bold text-gray-600 bg-stone-50 border border-stone-200 dark:border-border rounded-lg text-center hover:bg-stone-100"
+              class="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-center text-xs font-bold text-gray-600 hover:bg-stone-100 dark:border-border dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >📄 {{ t('backoffice.shiftDashboard.downloadPdf') }}</a>
           </div>
         </template>
@@ -242,15 +238,15 @@ onMounted(fetchShift)
         />
         <div v-else class="space-y-4">
           <div v-for="group in ordersByOutlet" :key="group.outlet.id">
-            <h3 class="text-xs font-bold text-gray-400 uppercase mb-1.5">{{ group.outlet.name_ar || group.outlet.name }}</h3>
-            <div class="divide-y divide-stone-100">
+            <h3 class="mb-1.5 text-xs font-bold uppercase text-gray-500 dark:text-gray-400">{{ locale === 'ar' ? (group.outlet.name_ar || group.outlet.name) : group.outlet.name }}</h3>
+            <div class="divide-y divide-stone-100 dark:divide-border">
               <div v-for="o in group.orders" :key="o.id" class="py-2 flex items-center justify-between gap-2">
                 <div>
                   <span class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ o.order_number }}</span>
                   <span class="text-xs text-gray-400 ms-2">{{ orderLabel(o) }}</span>
                 </div>
                 <div class="flex items-center gap-2">
-                  <span class="text-sm font-bold text-blue-700">{{ formatNumber(Number(o.total), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) }} {{ t('backoffice.shiftDashboard.currency') }}</span>
+                  <span class="text-sm font-bold text-blue-700 dark:text-blue-300">{{ formatMoney(o.total, 'EGP') }}</span>
                   <AppBadge :variant="STATUS_VARIANT[o.status] ?? 'neutral'">{{ STATUS_LABEL[o.status] ?? o.status }}</AppBadge>
                 </div>
               </div>

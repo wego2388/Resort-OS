@@ -86,10 +86,10 @@ async function confirmSwitch() {
           @click="selectOperator(op.id)"
           class="p-2.5 rounded-lg border text-right transition-colors"
           :class="selectedId === op.id
-            ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-200'
-            : 'border-stone-200 hover:bg-gray-50'"
+            ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-200 dark:border-blue-500 dark:bg-blue-950/40 dark:ring-blue-800'
+            : 'border-stone-200 hover:bg-gray-50 dark:border-border dark:hover:bg-gray-800'"
         >
-          <div class="text-sm font-semibold text-gray-800">{{ op.full_name }}</div>
+          <div class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ op.full_name }}</div>
           <div class="text-xs text-gray-400">{{ ROLE_LABEL[op.role] ?? op.role }}</div>
         </button>
       </div>
@@ -102,14 +102,14 @@ async function confirmSwitch() {
         maxlength="6"
         placeholder="PIN"
         autofocus
-        class="w-full border border-stone-300 rounded-lg p-2.5 text-center text-lg tracking-[0.4em] focus:outline-none focus:ring-2 focus:ring-blue-400"
+        class="w-full rounded-lg border border-stone-300 bg-white p-2.5 text-center text-lg tracking-[0.4em] focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-border dark:bg-background dark:text-gray-100"
         @keyup.enter="confirmSwitch"
       />
 
-      <p v-if="error" class="text-xs text-red-600">{{ error }}</p>
+      <p v-if="error" class="text-xs text-red-600 dark:text-red-300">{{ error }}</p>
 
       <div class="flex gap-2 pt-1">
-        <button @click="emit('close')" class="flex-1 py-2 text-sm font-semibold text-gray-600 border border-stone-200 rounded-lg">إلغاء</button>
+        <button @click="emit('close')" class="flex-1 rounded-lg border border-stone-200 py-2 text-sm font-semibold text-gray-600 dark:border-border dark:text-gray-300">إلغاء</button>
         <button
           :disabled="busy || !selectedId"
           @click="confirmSwitch"

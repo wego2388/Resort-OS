@@ -71,7 +71,7 @@ onMounted(fetchProfile)
   <div class="space-y-4">
     <h2 class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ t('backoffice.profile.title') }}</h2>
 
-    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-500 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-400 gap-3">
       <AppSpinner size="lg" />
       <p>{{ t('backoffice.profile.loading') }}</p>
     </div>
@@ -85,30 +85,30 @@ onMounted(fetchProfile)
       <!-- Profile card -->
       <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-6 shadow-sm">
         <div class="flex items-center gap-4 mb-5">
-          <div class="w-16 h-16 bg-blue-100 rounded-2xl flex items-center justify-center text-2xl font-black text-blue-700 flex-shrink-0">
+          <div class="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-2xl bg-blue-100 text-2xl font-black text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
             {{ profile.full_name.charAt(0) }}
           </div>
           <div>
             <div class="font-bold text-xl text-gray-900 dark:text-gray-100">{{ profile.full_name }}</div>
-            <div class="text-gray-500 dark:text-gray-500 text-sm">
+            <div class="text-gray-500 dark:text-gray-400 text-sm">
               {{ profile.position }}
               <span v-if="profile.department"> — {{ profile.department }}</span>
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ profile.employee_code }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{{ profile.employee_code }}</div>
           </div>
         </div>
 
         <div class="space-y-3 border-t border-stone-100 dark:border-border/50 pt-4">
           <div v-if="profile.email" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📧 {{ t('backoffice.profile.email') }}</span>
+            <span class="text-gray-500 dark:text-gray-400 flex items-center gap-1.5">📧 {{ t('backoffice.profile.email') }}</span>
             <span class="font-medium text-gray-900 dark:text-gray-100">{{ profile.email }}</span>
           </div>
           <div v-if="profile.phone" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📞 {{ t('backoffice.profile.phone') }}</span>
+            <span class="text-gray-500 dark:text-gray-400 flex items-center gap-1.5">📞 {{ t('backoffice.profile.phone') }}</span>
             <span class="font-medium text-gray-900 dark:text-gray-100" dir="ltr">{{ profile.phone }}</span>
           </div>
           <div v-if="profile.hire_date" class="flex items-center justify-between text-sm">
-            <span class="text-gray-500 dark:text-gray-500 flex items-center gap-1.5">📅 {{ t('backoffice.profile.hireDate') }}</span>
+            <span class="text-gray-500 dark:text-gray-400 flex items-center gap-1.5">📅 {{ t('backoffice.profile.hireDate') }}</span>
             <span class="font-medium text-gray-900 dark:text-gray-100">
               {{ formatDate(profile.hire_date, { year: 'numeric', month: 'long', day: 'numeric' }) }}
             </span>
@@ -141,8 +141,8 @@ onMounted(fetchProfile)
             placeholder="••••••••"
             autocomplete="new-password"
           />
-          <div v-if="pwMsg" role="status" class="bg-green-100 text-green-700 px-3 py-2 rounded-lg text-sm font-medium">{{ pwMsg }}</div>
-          <div v-if="pwError" role="alert" class="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-sm">{{ pwError }}</div>
+          <div v-if="pwMsg" role="status" class="rounded-lg bg-green-100 px-3 py-2 text-sm font-medium text-green-700 dark:bg-green-950/50 dark:text-green-300">{{ pwMsg }}</div>
+          <div v-if="pwError" role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">{{ pwError }}</div>
           <AppButton type="submit" :loading="pwLoading" variant="primary" class="w-full">
             {{ pwLoading ? t('backoffice.profile.saving') : t('backoffice.profile.savePassword') }}
           </AppButton>

@@ -195,13 +195,13 @@ onMounted(fetchCurrentShift)
       <span class="text-xs text-gray-400">...</span>
     </template>
     <template v-else-if="shift">
-      <span class="hidden md:flex items-center gap-1.5 text-xs font-bold text-green-700 bg-green-50 px-2.5 py-1 rounded-full">
+      <span class="hidden items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-xs font-bold text-green-700 dark:bg-green-950/40 dark:text-green-300 md:flex">
         🟢 وردية مفتوحة — {{ fmtTime(shift.opened_at) }}
       </span>
       <AppButton size="sm" variant="outline" @click="openCloseModalFn">قفل الوردية</AppButton>
     </template>
     <template v-else>
-      <span class="hidden md:flex items-center gap-1.5 text-xs font-bold text-gray-400 bg-gray-100 px-2.5 py-1 rounded-full">
+      <span class="hidden items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-400 dark:bg-gray-800 dark:text-gray-400 md:flex">
         🔒 لا توجد وردية مفتوحة
       </span>
       <AppButton size="sm" variant="primary" @click="openOpenModal">فتح وردية</AppButton>
@@ -210,7 +210,7 @@ onMounted(fetchCurrentShift)
     <!-- Open shift -->
     <AppModal :open="openModal" title="فتح وردية جديدة" size="sm" @close="openModal = false">
       <div class="space-y-3">
-        <div v-if="handoverNote" class="text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded-lg p-2.5">
+        <div v-if="handoverNote" class="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
           📋 ملاحظة تسليم من آخر وردية: {{ handoverNote }}
         </div>
         <AppInput v-model="openingFloat" type="number" label="رصيد الافتتاح (كاش)" placeholder="0" />
@@ -234,21 +234,25 @@ onMounted(fetchCurrentShift)
             إجمالي الخزينة (EGP): {{ lastCloseResult.counted_cash_egp.toFixed(2) }} ج
           </p>
           <p class="text-2xl font-black"
-            :class="lastCloseResult.variance === 0 ? 'text-green-600' : lastCloseResult.variance > 0 ? 'text-blue-600' : 'text-red-600'">
+            :class="lastCloseResult.variance === 0
+              ? 'text-green-600 dark:text-green-300'
+              : lastCloseResult.variance > 0
+                ? 'text-blue-600 dark:text-blue-300'
+                : 'text-red-600 dark:text-red-300'">
             {{ lastCloseResult.variance > 0 ? '▲ زيادة' : lastCloseResult.variance < 0 ? '▼ عجز' : '✓ مطابق' }}
             {{ Math.abs(lastCloseResult.variance).toFixed(2) }} ج
           </p>
         </div>
         <!-- تحذير مطابقة الكاش — فرق أكبر من الطبيعي، الوردية اتقفلت لكن
              لازم مدير يراجعها. ثابت في الشاشة (مش توست بس بيختفي). -->
-        <div v-if="lastCloseResult.reconciliation_ok === false" class="bg-amber-50 border border-amber-200 rounded-lg p-2.5">
-          <p class="text-xs font-bold text-amber-800">{{ lastCloseResult.reconciliation_warning }}</p>
+        <div v-if="lastCloseResult.reconciliation_ok === false" class="rounded-lg border border-amber-200 bg-amber-50 p-2.5 dark:border-amber-800 dark:bg-amber-950/40">
+          <p class="text-xs font-bold text-amber-800 dark:text-amber-300">{{ lastCloseResult.reconciliation_warning }}</p>
         </div>
         <!-- ملخص العملات الأجنبية لو موجودة -->
-        <div v-if="lastCloseResult.foreign_currency_summary?.length" class="bg-blue-50 rounded-lg p-2.5 space-y-1">
-          <p class="text-xs font-bold text-blue-700">💱 العملات الأجنبية المعدودة</p>
+        <div v-if="lastCloseResult.foreign_currency_summary?.length" class="space-y-1 rounded-lg bg-blue-50 p-2.5 dark:bg-blue-950/40">
+          <p class="text-xs font-bold text-blue-700 dark:text-blue-300">💱 العملات الأجنبية المعدودة</p>
           <div v-for="fc in lastCloseResult.foreign_currency_summary" :key="fc.currency"
-            class="flex justify-between text-xs text-blue-800">
+            class="flex justify-between text-xs text-blue-800 dark:text-blue-300">
             <span>{{ fc.currency }}: {{ fc.total_foreign.toFixed(2) }}</span>
             <span>= {{ fc.egp_equivalent.toFixed(2) }} ج</span>
           </div>
@@ -259,7 +263,9 @@ onMounted(fetchCurrentShift)
         <div v-for="group in CURRENCY_GROUPS" :key="group.code">
           <div class="flex items-center gap-2 mb-1.5">
             <span class="text-xs font-bold px-2 py-0.5 rounded-full"
-              :class="group.code === 'EGP' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'">
+              :class="group.code === 'EGP'
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-300'
+                : 'bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300'">
               {{ group.code }}
             </span>
             <span class="text-xs text-gray-500">{{ group.label }}</span>
@@ -274,7 +280,7 @@ onMounted(fetchCurrentShift)
             </thead>
             <tbody>
               <tr v-for="d in group.denominations" :key="d" class="border-t border-stone-100">
-                <td class="py-1 font-semibold text-gray-700">
+                <td class="py-1 font-semibold text-gray-700 dark:text-gray-300">
                   {{ d }} {{ group.code === 'EGP' ? 'ج' : group.code }}
                 </td>
                 <td class="py-1">
@@ -296,7 +302,7 @@ onMounted(fetchCurrentShift)
             <span>إجمالي الجنيه المصري</span>
             <span>{{ countedTotalEGP.toFixed(2) }} ج</span>
           </div>
-          <p v-if="hasForeignCash" class="text-xs text-blue-600 bg-blue-50 rounded px-2 py-1">
+          <p v-if="hasForeignCash" class="rounded bg-blue-50 px-2 py-1 text-xs text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
             💱 يوجد عملات أجنبية — الإجمالي الكلي بالجنيه سيحسبه النظام بأسعار الصرف عند القفل
           </p>
         </div>

@@ -274,11 +274,11 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
 
     <!-- #28: عقود قرب انتهائها (خلال 30 يوم) — تنبيه ثابت ظاهر، مش حاجة
          مدير الإيجارات يكتشفها بالصدفة -->
-    <div v-if="expiringSoonContracts.length" class="bg-amber-50 border border-amber-200 rounded-xl p-3 mb-4">
-      <p class="text-xs font-bold text-amber-800 mb-2">⏰ {{ t('backoffice.leasing.expiringSoon', { count: expiringSoonContracts.length }) }}</p>
+    <div v-if="expiringSoonContracts.length" class="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40">
+      <p class="mb-2 text-xs font-bold text-amber-800 dark:text-amber-300">⏰ {{ t('backoffice.leasing.expiringSoon', { count: expiringSoonContracts.length }) }}</p>
       <div class="flex flex-wrap gap-2">
         <span v-for="c in expiringSoonContracts" :key="c.id"
-          class="text-xs bg-white dark:bg-surface border border-amber-200 rounded-full px-2.5 py-1 text-amber-700">
+          class="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-xs text-amber-700 dark:border-amber-800 dark:bg-surface dark:text-amber-300">
           {{ c.tenant_name }} — {{ c.days_until_expiry === 0 ? t('backoffice.leasing.expiresToday') : t('backoffice.leasing.daysCount', { days: c.days_until_expiry }) }}
         </span>
       </div>
@@ -298,18 +298,18 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
           <div class="flex items-center justify-between">
             <div>
               <div class="flex items-center gap-2 mb-1">
-                <span class="font-mono text-xs text-gray-400 dark:text-gray-500">{{ c.contract_number }}</span>
+                <span class="font-mono text-xs text-gray-400 dark:text-gray-400">{{ c.contract_number }}</span>
                 <span class="font-bold text-gray-900 dark:text-gray-100">{{ c.tenant_name }}</span>
               </div>
-              <div class="text-sm text-gray-500 dark:text-gray-500">{{ c.unit_description }}</div>
-              <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              <div class="text-sm text-gray-500 dark:text-gray-400">{{ c.unit_description }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">
                 {{ c.start_date }} → {{ c.end_date }} · {{ paymentPeriodLabels[c.payment_period] }}
               </div>
             </div>
             <div class="flex items-center gap-3">
               <div class="text-end">
-                <div class="font-bold text-blue-700">{{ formatNumber(Number(c.base_rent)) }} {{ t('backoffice.leasing.currency') }}</div>
-                <div class="text-[10px] text-gray-400 dark:text-gray-500">{{ t('backoffice.leasing.baseRent') }}</div>
+                <div class="font-bold text-blue-700 dark:text-blue-300">{{ formatNumber(Number(c.base_rent)) }} {{ t('backoffice.leasing.currency') }}</div>
+                <div class="text-[10px] text-gray-400 dark:text-gray-400">{{ t('backoffice.leasing.baseRent') }}</div>
               </div>
               <AppBadge size="sm" :variant="statusConfig[c.status]?.variant ?? 'neutral'">
                 {{ statusConfig[c.status]?.label ?? c.status }}
@@ -331,7 +331,7 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
           <div class="overflow-x-auto mb-4">
             <table class="w-full text-sm">
               <thead>
-                <tr class="text-xs text-gray-400 dark:text-gray-500">
+                <tr class="text-xs text-gray-400 dark:text-gray-400">
                   <th class="text-start py-1">{{ t('backoffice.leasing.column.dueDate') }}</th>
                   <th class="text-start py-1">{{ t('backoffice.leasing.column.amount') }}</th>
                   <th class="text-start py-1">{{ t('backoffice.leasing.column.penalty') }}</th>
@@ -359,7 +359,7 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
                   </td>
                 </tr>
                 <tr v-if="c.payments.length === 0">
-                  <td colspan="6" class="py-6 text-center text-gray-400 dark:text-gray-500 text-xs">{{ t('backoffice.leasing.noScheduledPayments') }}</td>
+                  <td colspan="6" class="py-6 text-center text-gray-400 dark:text-gray-400 text-xs">{{ t('backoffice.leasing.noScheduledPayments') }}</td>
                 </tr>
               </tbody>
             </table>
@@ -371,7 +371,7 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
               class="flex items-center justify-between text-sm bg-white dark:bg-surface rounded-lg px-3 py-2 border border-stone-100 dark:border-border/50">
               <span>{{ activityTypeLabels[log.activity_type] ?? log.activity_type }}</span>
               <span class="font-bold">{{ formatNumber(Number(log.amount)) }} {{ t('backoffice.leasing.currency') }}</span>
-              <span class="text-xs text-gray-400 dark:text-gray-500">{{ formatDate(log.created_at) }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-400">{{ formatDate(log.created_at) }}</span>
             </div>
             <EmptyState v-if="(cashLogsByContract[c.id] ?? []).length === 0" icon="💵" :title="t('backoffice.leasing.noCashMovements')" />
           </div>
@@ -392,9 +392,9 @@ onMounted(() => { loadContracts(); loadExpiringSoon() })
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="contractForm.tenant_national_id" type="text" :placeholder="t('backoffice.leasing.nationalId')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-          <div><label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.leasing.startDate') }}</label>
+          <div><label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.leasing.startDate') }}</label>
             <input v-model="contractForm.start_date" type="date" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full" /></div>
-          <div><label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.leasing.endDate') }}</label>
+          <div><label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.leasing.endDate') }}</label>
             <input v-model="contractForm.end_date" type="date" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm w-full" /></div>
           <input v-model="contractForm.base_rent" type="number" step="0.01" :placeholder="t('backoffice.leasing.baseRent')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />

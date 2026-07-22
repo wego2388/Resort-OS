@@ -385,7 +385,7 @@ onMounted(() => switchTab('bookings'))
     <div class="flex items-center justify-between">
       <div>
         <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.hub.title') }}</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">{{ t('backoffice.hub.subtitle') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.hub.subtitle') }}</p>
       </div>
     </div>
 
@@ -419,7 +419,7 @@ onMounted(() => switchTab('bookings'))
           class="border border-gray-300 rounded-lg px-3 py-2 text-sm" :placeholder="t('backoffice.hub.from')" />
         <input type="date" v-model="bookingDateTo" @change="loadBookings"
           class="border border-gray-300 rounded-lg px-3 py-2 text-sm" :placeholder="t('backoffice.hub.to')" />
-        <span class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.hub.bookingCount', { count: bookingsTotal }) }}</span>
+        <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.hub.bookingCount', { count: bookingsTotal }) }}</span>
       </div>
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
@@ -429,20 +429,20 @@ onMounted(() => switchTab('bookings'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.guest') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.requestedDate') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.guestsCount') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.source') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.status') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.action') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.guest') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.requestedDate') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.guestsCount') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.source') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.status') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.action') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="b in bookings" :key="b.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3">
                   <div class="font-semibold text-sm text-gray-900 dark:text-gray-100">{{ b.guest_name }}</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-500">{{ b.guest_phone }}</div>
-                  <div v-if="b.guest_email" class="text-xs text-gray-400 dark:text-gray-500">{{ b.guest_email }}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400">{{ b.guest_phone }}</div>
+                  <div v-if="b.guest_email" class="text-xs text-gray-400 dark:text-gray-400">{{ b.guest_email }}</div>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ fmtDate(b.requested_date) }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ b.guests_count }}</td>
@@ -457,7 +457,7 @@ onMounted(() => switchTab('bookings'))
                 <td class="px-4 py-3">
                   <div class="flex gap-2">
                     <button v-if="b.status === 'pending'" @click="confirmBooking(b)"
-                      class="text-xs text-green-600 hover:underline font-semibold">✅ {{ t('backoffice.hub.confirmAction') }}</button>
+                      class="text-xs font-semibold text-green-600 hover:underline dark:text-green-300">✅ {{ t('backoffice.hub.confirmAction') }}</button>
                     <button v-if="b.status === 'pending' || b.status === 'confirmed'" @click="cancelBooking(b)"
                       class="text-xs text-red-500 hover:underline">{{ t('backoffice.hub.cancelBookingAction') }}</button>
                   </div>
@@ -477,7 +477,7 @@ onMounted(() => switchTab('bookings'))
             <input type="checkbox" v-model="offerActiveOnly" @change="loadOffers" class="rounded" />
             {{ t('backoffice.hub.activeOnly') }}
           </label>
-          <span class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.hub.offerCount', { count: offers.length }) }}</span>
+          <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.hub.offerCount', { count: offers.length }) }}</span>
         </div>
         <AppButton size="sm" @click="openCreateOffer">+ {{ t('backoffice.hub.addOffer') }}</AppButton>
       </div>
@@ -489,7 +489,7 @@ onMounted(() => switchTab('bookings'))
           <div class="flex items-start justify-between mb-2">
             <div>
               <div class="font-bold text-gray-900 dark:text-gray-100">{{ o.title }}</div>
-              <div v-if="o.title_ar" class="text-xs text-gray-500 dark:text-gray-500">{{ o.title_ar }}</div>
+              <div v-if="o.title_ar" class="text-xs text-gray-500 dark:text-gray-400">{{ o.title_ar }}</div>
             </div>
             <div class="flex gap-1">
               <AppBadge :variant="isOfferActive(o) ? 'success' : 'neutral'">
@@ -499,15 +499,15 @@ onMounted(() => switchTab('bookings'))
             </div>
           </div>
           <div class="flex items-center gap-2 mt-3">
-            <span class="text-gray-400 dark:text-gray-500 line-through text-sm">{{ fmtMoney(o.original_price) }} {{ t('backoffice.hub.currency') }}</span>
-            <span class="text-lg font-black text-green-600">{{ fmtMoney(o.offer_price) }} {{ t('backoffice.hub.currency') }}</span>
+            <span class="text-gray-400 dark:text-gray-400 line-through text-sm">{{ fmtMoney(o.original_price) }} {{ t('backoffice.hub.currency') }}</span>
+            <span class="text-lg font-black text-green-600 dark:text-green-300">{{ fmtMoney(o.offer_price) }} {{ t('backoffice.hub.currency') }}</span>
           </div>
-          <div class="text-xs text-gray-500 dark:text-gray-500 mt-1">{{ fmtDate(o.valid_from) }} → {{ fmtDate(o.valid_until) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+          <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ fmtDate(o.valid_from) }} → {{ fmtDate(o.valid_until) }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">
             {{ t('backoffice.hub.bookingsShort', { count: o.bookings_count }) }}
             {{ o.max_bookings > 0 ? `/ ${o.max_bookings}` : '' }}
           </div>
-          <button @click="openEditOffer(o)" class="mt-3 text-sm text-blue-600 hover:underline">✏️ {{ t('backoffice.hub.edit') }}</button>
+          <button @click="openEditOffer(o)" class="mt-3 text-sm text-blue-600 hover:underline dark:text-blue-300">✏️ {{ t('backoffice.hub.edit') }}</button>
         </AppCard>
       </div>
     </div>
@@ -515,7 +515,7 @@ onMounted(() => switchTab('bookings'))
     <!-- ══ TAB: PAGES ══ -->
     <div v-else-if="tab === 'pages'" class="space-y-4">
       <div class="flex items-center justify-between">
-        <span class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.hub.pageCount', { count: pages.length }) }}</span>
+        <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.hub.pageCount', { count: pages.length }) }}</span>
         <AppButton size="sm" @click="openCreatePage">+ {{ t('backoffice.hub.addPage') }}</AppButton>
       </div>
 
@@ -526,11 +526,11 @@ onMounted(() => switchTab('bookings'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.title') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.slug') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.type') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.status') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.lastModified') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.title') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.slug') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.type') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.status') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.lastModified') }}</th>
                 <th class="px-4 py-3"></th>
               </tr>
             </thead>
@@ -538,19 +538,19 @@ onMounted(() => switchTab('bookings'))
               <tr v-for="p in pages" :key="p.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3">
                   <div class="font-semibold text-sm text-gray-900 dark:text-gray-100">{{ p.title }}</div>
-                  <div v-if="p.title_ar" class="text-xs text-gray-500 dark:text-gray-500">{{ p.title_ar }}</div>
+                  <div v-if="p.title_ar" class="text-xs text-gray-500 dark:text-gray-400">{{ p.title_ar }}</div>
                 </td>
-                <td class="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-500">/{{ p.slug }}</td>
+                <td class="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-400">/{{ p.slug }}</td>
                 <td class="px-4 py-3"><AppBadge variant="info">{{ pageTypeLabels[p.page_type] ?? p.page_type }}</AppBadge></td>
                 <td class="px-4 py-3">
                   <AppBadge :variant="p.is_published ? 'success' : 'neutral'">
                     {{ p.is_published ? t('backoffice.hub.published') : t('backoffice.hub.draft') }}
                   </AppBadge>
                 </td>
-                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-500">{{ fmtDate(p.updated_at) }}</td>
+                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ fmtDate(p.updated_at) }}</td>
                 <td class="px-4 py-3">
                   <div class="flex gap-2">
-                    <button @click="openEditPage(p)" class="text-xs text-blue-600 hover:underline">✏️ {{ t('backoffice.hub.edit') }}</button>
+                    <button @click="openEditPage(p)" class="text-xs text-blue-600 hover:underline dark:text-blue-300">✏️ {{ t('backoffice.hub.edit') }}</button>
                     <button v-if="auth.hasRole('admin')" @click="deletePage(p)"
                       class="text-xs text-red-500 hover:underline">🗑️ {{ t('backoffice.hub.delete') }}</button>
                   </div>
@@ -569,12 +569,12 @@ onMounted(() => switchTab('bookings'))
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.titleEn') }} *</label>
             <input v-model="offerForm.title" :disabled="!!editingOffer"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50" />
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:border-gray-700 dark:disabled:bg-gray-800" />
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.titleAr') }}</label>
             <input v-model="offerForm.title_ar" :disabled="!!editingOffer"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50" />
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:border-gray-700 dark:disabled:bg-gray-800" />
           </div>
           <div v-if="!editingOffer">
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.column.type') }}</label>
@@ -585,7 +585,7 @@ onMounted(() => switchTab('bookings'))
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.originalPrice') }} *</label>
             <input v-model="offerForm.original_price" type="number" min="0" :disabled="!!editingOffer"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm disabled:bg-gray-50" />
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:border-gray-700 dark:disabled:bg-gray-800" />
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.offerPrice') }} *</label>
@@ -669,7 +669,7 @@ onMounted(() => switchTab('bookings'))
     <!-- ══ TAB: BLOG ══ -->
     <div v-if="tab === 'blog'" class="space-y-4">
       <div class="flex items-center justify-between">
-        <p class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.hub.blogDescription') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.hub.blogDescription') }}</p>
         <AppButton size="sm" @click="openCreateBlog">+ {{ t('backoffice.hub.newPost') }}</AppButton>
       </div>
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
@@ -679,10 +679,10 @@ onMounted(() => switchTab('bookings'))
           <table class="w-full text-sm">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.title') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">Slug</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.status') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hub.column.createdDate') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.title') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Slug</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.status') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hub.column.createdDate') }}</th>
                 <th class="px-4 py-3"></th>
               </tr>
             </thead>
@@ -690,15 +690,15 @@ onMounted(() => switchTab('bookings'))
               <tr v-for="p in blogPosts" :key="p.id" class="hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3">
                   <div class="font-semibold text-gray-900 dark:text-gray-100">{{ p.title }}</div>
-                  <div v-if="p.title_ar" class="text-xs text-gray-400 dark:text-gray-500">{{ p.title_ar }}</div>
+                  <div v-if="p.title_ar" class="text-xs text-gray-400 dark:text-gray-400">{{ p.title_ar }}</div>
                 </td>
-                <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-gray-500">{{ p.slug }}</td>
+                <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">{{ p.slug }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="p.is_published ? 'success' : 'neutral'">
                     {{ p.is_published ? t('backoffice.hub.published') : t('backoffice.hub.draft') }}
                   </AppBadge>
                 </td>
-                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-500">{{ fmtDate(p.created_at) }}</td>
+                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ fmtDate(p.created_at) }}</td>
                 <td class="px-4 py-3">
                   <div class="flex gap-2">
                     <button @click="openEditBlog(p)" class="text-xs font-semibold text-primary-700 hover:underline">{{ t('backoffice.hub.edit') }}</button>
@@ -716,22 +716,22 @@ onMounted(() => switchTab('bookings'))
     <AppModal :open="showBlogModal" :title="editingBlog ? t('backoffice.hub.editPostTitle') : t('backoffice.hub.newPostTitle')" @close="showBlogModal = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-500 mb-1">{{ t('backoffice.hub.titleEn') }}</label>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.hub.titleEn') }}</label>
           <input v-model="blogForm.title" type="text" placeholder="My Beach Experience"
             class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary-500" />
         </div>
         <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-500 mb-1">{{ t('backoffice.hub.titleAr') }}</label>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.hub.titleAr') }}</label>
           <input v-model="blogForm.title_ar" type="text" :placeholder="t('backoffice.hub.blogTitleArPlaceholder')"
             class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary-500" />
         </div>
         <div v-if="!editingBlog">
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-500 mb-1">Slug (URL)</label>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">Slug (URL)</label>
           <input v-model="blogForm.slug" type="text" placeholder="my-beach-experience"
             class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary-500 font-mono" />
         </div>
         <div>
-          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-500 mb-1">{{ t('backoffice.hub.excerptOptional') }}</label>
+          <label class="block text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.hub.excerptOptional') }}</label>
           <textarea v-model="blogForm.excerpt" rows="3" :placeholder="t('backoffice.hub.excerptPlaceholder')"
             class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm outline-none focus:border-primary-500 resize-none"></textarea>
         </div>
@@ -751,7 +751,7 @@ onMounted(() => switchTab('bookings'))
     <!-- ══ TAB: CONTACT ══ -->
     <div v-if="tab === 'contact'" class="space-y-4">
       <div class="flex items-center gap-3">
-        <p class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.hub.contactDescription') }}</p>
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.hub.contactDescription') }}</p>
         <AppBadge v-if="contactUnread > 0" variant="warning" size="sm">{{ t('backoffice.hub.unreadCount', { count: contactUnread }) }}</AppBadge>
       </div>
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
@@ -763,14 +763,14 @@ onMounted(() => switchTab('bookings'))
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-bold text-gray-900 dark:text-gray-100">{{ m.name }}</span>
-                <span class="text-xs text-gray-400 dark:text-gray-500">{{ m.email }}</span>
-                <span v-if="m.phone" class="text-xs text-gray-400 dark:text-gray-500">{{ m.phone }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-400">{{ m.email }}</span>
+                <span v-if="m.phone" class="text-xs text-gray-400 dark:text-gray-400">{{ m.phone }}</span>
                 <AppBadge v-if="!m.is_read" size="sm" variant="warning">{{ t('backoffice.hub.newLabel') }}</AppBadge>
               </div>
               <div v-if="m.subject" class="text-sm font-semibold text-gray-700 dark:text-gray-300 mt-1">{{ m.subject }}</div>
-              <p class="text-sm text-gray-600 dark:text-gray-500 mt-1 line-clamp-3">{{ m.message }}</p>
+              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 line-clamp-3">{{ m.message }}</p>
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 shrink-0">{{ fmtDate(m.created_at) }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 shrink-0">{{ fmtDate(m.created_at) }}</div>
           </div>
         </AppCard>
       </div>

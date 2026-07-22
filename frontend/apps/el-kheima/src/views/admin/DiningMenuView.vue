@@ -619,12 +619,12 @@ onMounted(async () => {
             type="button"
             @click="selectedCategoryId = null"
             :class="['w-full text-start px-3 py-2.5 rounded-xl text-sm font-medium transition-colors min-h-[44px]',
-              selectedCategoryId === null ? 'bg-primary-600 text-white' : 'bg-white dark:bg-surface hover:bg-background text-gray-700 border border-stone-200 dark:border-border']"
+              selectedCategoryId === null ? 'bg-primary-600 text-white' : 'border border-stone-200 bg-white text-gray-700 hover:bg-background dark:border-border dark:bg-surface dark:text-gray-300']"
           >{{ t('backoffice.diningMenu.all') }} ({{ items.length }})</button>
           <div
             v-for="cat in categories" :key="cat.id"
             :class="['group flex items-center justify-between px-3 py-2.5 rounded-xl text-sm transition-colors',
-              selectedCategoryId === cat.id ? 'bg-primary-600 text-white' : 'bg-white dark:bg-surface hover:bg-background text-gray-700 border border-stone-200 dark:border-border',
+              selectedCategoryId === cat.id ? 'bg-primary-600 text-white' : 'border border-stone-200 bg-white text-gray-700 hover:bg-background dark:border-border dark:bg-surface dark:text-gray-300',
               !cat.is_active ? 'opacity-50' : '']"
           >
             <button type="button" class="flex-1 text-start font-medium min-h-[44px]" @click="selectedCategoryId = cat.id">
@@ -654,7 +654,7 @@ onMounted(async () => {
           >
             <template #cell-name="{ item }">
               <div class="flex items-center gap-2.5">
-                <div class="w-9 h-9 rounded-lg overflow-hidden bg-gray-100 border border-stone-200 dark:border-border flex-shrink-0 flex items-center justify-center text-lg">
+                <div class="flex h-9 w-9 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg border border-stone-200 bg-gray-100 text-lg dark:border-border dark:bg-gray-800">
                   <img v-if="item.image_url" :src="item.image_url" :alt="item.name_ar || item.name" class="w-full h-full object-cover" />
                   <span v-else>🍽️</span>
                 </div>
@@ -764,7 +764,7 @@ onMounted(async () => {
                   :class="['px-3 py-1.5 rounded-lg text-sm border transition-colors',
                     kdsForm.stations.includes(String(st.value))
                       ? 'bg-primary-600 text-white border-primary-600'
-                      : 'bg-white dark:bg-surface text-gray-700 border-stone-200 dark:border-border hover:border-primary-400']">
+                      : 'border-stone-200 bg-white text-gray-700 hover:border-primary-400 dark:border-border dark:bg-surface dark:text-gray-300']">
                   {{ st.label }}
                 </button>
               </div>
@@ -858,7 +858,7 @@ onMounted(async () => {
           <AppInput v-model="itemForm.available_from_time" type="time" :label="t('backoffice.diningMenu.availableFrom')" />
           <AppInput v-model="itemForm.available_until_time" type="time" :label="t('backoffice.diningMenu.availableUntil')" />
         </div>
-        <p v-if="itemForm.available_from_time || itemForm.available_until_time" class="text-[11px] text-gray-400 dark:text-gray-500 -mt-2">
+        <p v-if="itemForm.available_from_time || itemForm.available_until_time" class="text-[11px] text-gray-400 dark:text-gray-400 -mt-2">
           {{ t('backoffice.diningMenu.availabilityWindowHint') }}
         </p>
 
@@ -871,7 +871,7 @@ onMounted(async () => {
           <div class="text-xs font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.diningMenu.itemImage') }}</div>
           <div class="flex items-center gap-3">
             <!-- preview -->
-            <div class="w-16 h-16 rounded-lg overflow-hidden bg-gray-100 border border-stone-200 dark:border-border flex-shrink-0 flex items-center justify-center">
+            <div class="flex h-16 w-16 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg border border-stone-200 bg-gray-100 dark:border-border dark:bg-gray-800">
               <img v-if="itemEdit.image_url" :src="itemEdit.image_url" :alt="itemEdit.name_ar || itemEdit.name" class="w-full h-full object-cover" />
               <span v-else class="text-2xl">🍽️</span>
             </div>
@@ -883,7 +883,7 @@ onMounted(async () => {
                   {{ imageUploading ? t('backoffice.diningMenu.uploading') : itemEdit.image_url ? t('backoffice.diningMenu.changeImage') : t('backoffice.diningMenu.uploadImage') }}
                 </AppButton>
               </label>
-              <p class="text-[11px] text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.diningMenu.imageHint') }}</p>
+              <p class="text-[11px] text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.diningMenu.imageHint') }}</p>
             </div>
           </div>
         </div>

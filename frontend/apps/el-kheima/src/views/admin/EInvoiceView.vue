@@ -127,18 +127,18 @@ onMounted(loadInvoices)
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">🧾 {{ t('backoffice.eInvoice.title') }}</h1>
-        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.eInvoice.subtitle') }}</p>
+        <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.eInvoice.subtitle') }}</p>
       </div>
       <AppButton @click="openSubmitModal">+ {{ t('backoffice.eInvoice.newInvoice') }}</AppButton>
     </div>
 
     <!-- بانر "غير مفعّل" — بيظهر لما الباك إند يرجّع إشارة حقيقية إن ETA مش مهيأ
          (اتفعّل من submitInvoice، راجع الملاحظة أعلى الملف). -->
-    <div v-if="notEnabledError" class="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-2">
+    <div v-if="notEnabledError" class="mb-4 flex items-start gap-2 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
       <span class="text-lg leading-none">⚠️</span>
       <div>
         <p class="font-bold">{{ t('backoffice.eInvoice.notEnabled') }}</p>
-        <p class="text-xs text-amber-700 mt-0.5">{{ notEnabledError }}</p>
+        <p class="mt-0.5 text-xs text-amber-700 dark:text-amber-300">{{ notEnabledError }}</p>
       </div>
     </div>
 
@@ -149,7 +149,7 @@ onMounted(loadInvoices)
                 {v:'invalid',l:t('backoffice.eInvoice.status.invalid')},{v:'failed',l:t('backoffice.eInvoice.statusShort.failed')},
               ]"
               :key="s.v" @click="statusFilter = s.v; loadInvoices()"
-              :class="['px-3 py-1.5 rounded-lg text-xs font-bold', statusFilter === s.v ? 'bg-primary text-white' : 'bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-500']">
+              :class="['px-3 py-1.5 rounded-lg text-xs font-bold', statusFilter === s.v ? 'bg-primary text-white' : 'bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-600 dark:text-gray-400']">
         {{ s.l }}
       </button>
     </div>
@@ -160,23 +160,23 @@ onMounted(loadInvoices)
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.eInvoice.column.internalId') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">UUID</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.eInvoice.column.status') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.eInvoice.column.submittedAt') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.eInvoice.column.error') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.eInvoice.column.internalId') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">UUID</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.eInvoice.column.status') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.eInvoice.column.submittedAt') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.eInvoice.column.error') }}</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="inv in invoices" :key="inv.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
               <td class="px-4 py-3 font-mono text-sm text-gray-900 dark:text-gray-100">{{ inv.internal_id }}</td>
-              <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-500 font-mono">{{ inv.submission_uuid ?? '—' }}</td>
+              <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400 font-mono">{{ inv.submission_uuid ?? '—' }}</td>
               <td class="px-4 py-3">
                 <AppBadge size="sm" :variant="STATUS_CONFIG[inv.status]?.variant ?? 'neutral'">
                   {{ STATUS_CONFIG[inv.status]?.label ?? inv.status }}
                 </AppBadge>
               </td>
-              <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-500">
+              <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">
                 {{ inv.submitted_at ? formatDateTime(inv.submitted_at) : '—' }}
               </td>
               <td class="px-4 py-3 text-xs text-red-500 max-w-xs truncate" :title="inv.error_message ?? ''">
@@ -197,24 +197,24 @@ onMounted(loadInvoices)
     <AppModal :open="submitModal.open" :title="t('backoffice.eInvoice.newInvoiceTitle')" @close="submitModal.open = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.eInvoice.customerName') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.eInvoice.customerName') }}</label>
           <input v-model="submitModal.receiver_name" type="text"
                  class="w-full border border-stone-200 dark:border-border rounded-lg px-3 py-2 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.eInvoice.rinOptional') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.eInvoice.rinOptional') }}</label>
           <input v-model="submitModal.receiver_rin" type="text" maxlength="9"
                  :class="['w-full border rounded-lg px-3 py-2 text-sm', rinError ? 'border-red-400' : 'border-stone-200 dark:border-border']" />
-          <p v-if="rinError" class="text-[11px] text-red-600 mt-1">{{ rinError }}</p>
+          <p v-if="rinError" class="mt-1 text-[11px] text-red-600 dark:text-red-300">{{ rinError }}</p>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.eInvoice.folioIdOptional') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.eInvoice.folioIdOptional') }}</label>
           <input v-model="submitModal.folio_id" type="number"
                  class="w-full border border-stone-200 dark:border-border rounded-lg px-3 py-2 text-sm" />
         </div>
 
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-2">{{ t('backoffice.eInvoice.invoiceLines') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-2">{{ t('backoffice.eInvoice.invoiceLines') }}</label>
           <div v-for="(item, i) in submitModal.items" :key="i" class="flex gap-2 mb-2">
             <input v-model="item.description" :placeholder="t('backoffice.eInvoice.description')" class="flex-1 border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-xs" />
             <input v-model.number="item.quantity" type="number" :placeholder="t('backoffice.eInvoice.quantity')" class="w-16 border border-stone-200 dark:border-border rounded-lg px-2 py-1.5 text-xs" />
@@ -224,7 +224,7 @@ onMounted(loadInvoices)
           <button @click="addLine" class="text-xs text-primary font-bold">+ {{ t('backoffice.eInvoice.addLine') }}</button>
         </div>
 
-        <p v-if="submitModal.error" class="text-red-600 text-xs bg-red-50 rounded-lg p-2">{{ submitModal.error }}</p>
+        <p v-if="submitModal.error" class="rounded-lg bg-red-50 p-2 text-xs text-red-600 dark:bg-red-950/40 dark:text-red-300">{{ submitModal.error }}</p>
       </div>
 
       <template #footer>

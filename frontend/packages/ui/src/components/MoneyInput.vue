@@ -5,7 +5,7 @@
 // component only ever emits a plain numeric *string* (never a JS `number`)
 // so a caller sending it straight to the API never loses precision to
 // float rounding before the request even leaves the browser.
-import { computed } from 'vue'
+import { computed, useId } from 'vue'
 import { fieldClasses, fieldLabelClasses, fieldErrorClasses } from '../utils/inputClasses'
 
 const props = withDefaults(defineProps<{
@@ -16,7 +16,8 @@ const props = withDefaults(defineProps<{
   /** Defaults to EGP — the only currency this system's `DEFAULT_CURRENCY` env var is ever actually set to in production. */
   currency?: string
   modelValue?: string
-}>(), { currency: 'ج.م' })
+  id?: string
+}>(), { currency: 'EGP' })
 
 const emit = defineEmits<{ 'update:modelValue': [v: string] }>()
 
@@ -32,28 +33,33 @@ function onInput(e: Event) {
 }
 
 const classes = computed(() => [...fieldClasses({ error: !!props.error, disabled: props.disabled, withEndSlot: true }), 'text-end tabular-nums'])
+const generatedId = `money-input-${useId()}`
+const inputId = computed(() => props.id ?? generatedId)
+const errorId = computed(() => `${inputId.value}-error`)
 </script>
 
 <template>
   <div class="flex flex-col gap-1">
-    <label v-if="label" :class="fieldLabelClasses">
+    <label v-if="label" :for="inputId" :class="fieldLabelClasses">
       {{ label }}
       <span v-if="required" class="text-danger" aria-hidden="true">*</span>
     </label>
     <div class="relative">
       <input
+        :id="inputId"
         type="text"
         inputmode="decimal"
         placeholder="0.00"
         :disabled="disabled"
         :required="required"
         :aria-invalid="!!error"
+        :aria-describedby="error ? errorId : undefined"
         :value="modelValue"
         @input="onInput"
         :class="classes"
       />
       <span class="absolute end-3 top-1/2 -translate-y-1/2 text-sm text-muted pointer-events-none">{{ currency }}</span>
     </div>
-    <p v-if="error" :class="fieldErrorClasses">{{ error }}</p>
+    <p v-if="error" :id="errorId" role="alert" :class="fieldErrorClasses">{{ error }}</p>
   </div>
 </template>

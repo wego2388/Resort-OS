@@ -7,9 +7,9 @@ import App from './App.vue'
 import './assets/main.css'
 
 // Applies the saved/system dark-mode preference to <html class="dark"> before
-// first paint — see packages/core/src/composables/useTheme.ts. No screen
-// opts into the `.dark` tokens yet (no ThemeToggle is mounted anywhere), so
-// this is a visual no-op today beyond making the mechanism real/testable.
+// first paint — see packages/core/src/composables/useTheme.ts. Back-office and
+// field shells both expose ThemeToggle, so this must run before mount to avoid
+// flashing the wrong palette.
 initTheme()
 
 /**

@@ -342,7 +342,7 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
     <div class="flex items-center justify-between mb-6">
       <div>
         <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.diningRecipes.title') }}</h2>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
           {{ t('backoffice.diningRecipes.subtitle') }}
         </p>
       </div>
@@ -355,11 +355,13 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
         v-for="o in outlets" :key="o.id"
         @click="switchOutlet(o.id)"
         :class="['px-4 py-2 rounded-xl text-sm font-bold border-2 transition-colors',
-                 activeOutletId === o.id ? 'border-blue-600 bg-blue-50 text-blue-700' : 'border-stone-200 dark:border-border text-gray-600 hover:border-blue-300']"
+                 activeOutletId === o.id
+                   ? 'border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-300'
+                   : 'border-stone-200 text-gray-600 hover:border-blue-300 dark:border-border dark:text-gray-400']"
       >
         {{ outletLabel(o) }}
       </button>
-      <span class="self-center text-xs text-gray-400 dark:text-gray-500 ms-2">
+      <span class="self-center text-xs text-gray-400 dark:text-gray-400 ms-2">
         {{ t('backoffice.diningRecipes.recipeCount', { withRecipe: recipeCount, total: items.length }) }}
       </span>
     </div>
@@ -376,20 +378,20 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.item') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.price') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.manualCost') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.computedCost') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.recipe') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.diningRecipes.column.variants') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.diningRecipes.column.item') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.diningRecipes.column.price') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.diningRecipes.column.manualCost') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.diningRecipes.column.computedCost') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.diningRecipes.column.recipe') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.diningRecipes.column.variants') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase"></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="item in filtered" :key="item.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
               <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-sm">{{ item.name_ar || item.name }}</td>
               <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatNumber(item.price) }} {{ t('backoffice.diningRecipes.currency') }}</td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ item.cost != null ? `${formatNumber(item.cost)} ${t('backoffice.diningRecipes.currency')}` : '—' }}</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{{ item.cost != null ? `${formatNumber(item.cost)} ${t('backoffice.diningRecipes.currency')}` : '—' }}</td>
               <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(item.computed_cost) }} {{ t('backoffice.diningRecipes.currency') }}</td>
               <td class="px-4 py-3">
                 <AppBadge size="sm" :variant="item.recipe_lines.length > 0 ? 'success' : 'neutral'">
@@ -420,14 +422,14 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
       size="lg" @close="showRecipeModal = false">
       <div v-if="selectedItem" class="space-y-5">
         <div class="flex items-center justify-between bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3 text-sm">
-          <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.diningRecipes.costFromRecipe') }}</span>
+          <span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.diningRecipes.costFromRecipe') }}</span>
           <span class="font-black text-lg text-gray-900 dark:text-gray-100">{{ formatNumber(selectedItem.computed_cost) }} {{ t('backoffice.diningRecipes.currency') }}</span>
         </div>
 
         <!-- Existing lines -->
         <div>
           <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{{ t('backoffice.diningRecipes.currentIngredients') }}</h4>
-          <div v-if="selectedItem.recipe_lines.length === 0" class="text-sm text-gray-400 dark:text-gray-500 py-4 text-center">
+          <div v-if="selectedItem.recipe_lines.length === 0" class="text-sm text-gray-400 dark:text-gray-400 py-4 text-center">
             {{ t('backoffice.diningRecipes.noIngredients') }}
           </div>
           <div v-else class="space-y-2">
@@ -435,7 +437,7 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
               class="flex items-center justify-between border border-stone-200 dark:border-border rounded-xl px-3 py-2">
               <div class="flex-1">
                 <div class="font-medium text-sm text-gray-900 dark:text-gray-100">{{ line.product_name }}</div>
-                <div class="text-xs text-gray-500 dark:text-gray-500">
+                <div class="text-xs text-gray-500 dark:text-gray-400">
                   {{ line.quantity_per_unit }} {{ line.product_unit }} × {{ formatNumber(line.unit_cost) }} {{ t('backoffice.diningRecipes.currency') }}
                   = <span class="font-bold text-gray-700 dark:text-gray-300">{{ formatNumber(line.line_cost) }} {{ t('backoffice.diningRecipes.currency') }}</span>
                 </div>
@@ -459,14 +461,14 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
           <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{{ t('backoffice.diningRecipes.addIngredient') }}</h4>
           <div class="flex items-end gap-2">
             <div class="flex-1">
-              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.diningRecipes.inventoryProduct') }}</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.diningRecipes.inventoryProduct') }}</label>
               <select v-model="newLineProductId" class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm">
                 <option value="" disabled>{{ t('backoffice.diningRecipes.selectProduct') }}</option>
                 <option v-for="p in products" :key="p.id" :value="p.id">{{ productLabel(p) }}</option>
               </select>
             </div>
             <div class="w-32">
-              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.diningRecipes.qtyPerUnit') }}</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.diningRecipes.qtyPerUnit') }}</label>
               <input v-model="newLineQty" type="number" step="0.001" min="0.001" placeholder="0.150"
                 class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>
@@ -481,11 +483,11 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
              كابتشينو صغير/كبير — سعر مختلف واستهلاك حليب مختلف فعليًا. -->
         <div class="border-t border-stone-200 dark:border-border pt-4">
           <h4 class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.diningRecipes.variantsTitle') }}</h4>
-          <p class="text-xs text-gray-400 dark:text-gray-500 mb-3">
+          <p class="text-xs text-gray-400 dark:text-gray-400 mb-3">
             {{ t('backoffice.diningRecipes.variantsHint') }}
           </p>
 
-          <div v-if="selectedItem.variants.length === 0" class="text-sm text-gray-400 dark:text-gray-500 py-3 text-center">
+          <div v-if="selectedItem.variants.length === 0" class="text-sm text-gray-400 dark:text-gray-400 py-3 text-center">
             {{ t('backoffice.diningRecipes.noVariants') }}
           </div>
           <div v-else class="space-y-2 mb-3">
@@ -497,7 +499,7 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
                     {{ variant.name_ar || variant.name }}
                     <span v-if="!variant.is_available" class="text-xs text-red-500 ms-1">({{ t('backoffice.diningRecipes.notAvailable') }})</span>
                   </div>
-                  <div class="text-xs text-gray-500 dark:text-gray-500">
+                  <div class="text-xs text-gray-500 dark:text-gray-400">
                     {{ formatNumber(variant.price) }} {{ t('backoffice.diningRecipes.currency') }} · {{ t('backoffice.diningRecipes.costLabel') }} {{ formatNumber(variant.computed_cost) }} {{ t('backoffice.diningRecipes.currency') }} ·
                     {{ variant.recipe_lines.length > 0 ? t('backoffice.diningRecipes.ingredientCount', { count: variant.recipe_lines.length }) : t('backoffice.diningRecipes.noRecipeFallback') }}
                   </div>
@@ -512,14 +514,14 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
 
               <!-- وصفة المتغيّر — نفس نمط وصفة الصنف الأساسي فوق بالظبط -->
               <div v-if="expandedVariantId === variant.id" class="p-3 space-y-2 bg-white dark:bg-surface">
-                <div v-if="variant.recipe_lines.length === 0" class="text-xs text-gray-400 dark:text-gray-500 py-2 text-center">
+                <div v-if="variant.recipe_lines.length === 0" class="text-xs text-gray-400 dark:text-gray-400 py-2 text-center">
                   {{ t('backoffice.diningRecipes.noVariantIngredients') }}
                 </div>
                 <div v-for="line in variant.recipe_lines" :key="line.id"
                   class="flex items-center justify-between border border-stone-100 dark:border-border/50 rounded-lg px-2 py-1.5">
                   <div class="flex-1">
                     <div class="text-sm text-gray-900 dark:text-gray-100">{{ line.product_name }}</div>
-                    <div class="text-xs text-gray-500 dark:text-gray-500">
+                    <div class="text-xs text-gray-500 dark:text-gray-400">
                       {{ line.quantity_per_unit }} {{ line.product_unit }} × {{ formatNumber(line.unit_cost) }} {{ t('backoffice.diningRecipes.currency') }}
                       = <span class="font-bold text-gray-700 dark:text-gray-300">{{ formatNumber(line.line_cost) }} {{ t('backoffice.diningRecipes.currency') }}</span>
                     </div>
@@ -557,12 +559,12 @@ onMounted(async () => { await loadOutlets(); await Promise.all([fetchItems(), fe
 
           <div class="flex items-end gap-2">
             <div class="flex-1">
-              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.diningRecipes.variantNameLabel') }}</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.diningRecipes.variantNameLabel') }}</label>
               <input v-model="newVariantName" type="text" :placeholder="t('backoffice.diningRecipes.variantNamePlaceholder')"
                 class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>
             <div class="w-28">
-              <label class="block text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.diningRecipes.priceLabel') }}</label>
+              <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.diningRecipes.priceLabel') }}</label>
               <input v-model="newVariantPrice" type="number" step="0.01" min="0.01" placeholder="35.00"
                 class="w-full border border-stone-200 dark:border-border rounded-lg px-2 py-2 text-sm"/>
             </div>

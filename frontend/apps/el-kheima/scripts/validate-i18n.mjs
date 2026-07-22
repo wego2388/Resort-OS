@@ -116,6 +116,18 @@ const STRICT_FILES = [
   // Gate 5 Batch 1 (2026-07-20): full ar/en copy migration, promoted out of
   // DIRECTION_CLEAN_FILES below.
   'src/views/pos/UnifiedPOSView.vue',
+  'src/components/DiningExtrasModal.vue',
+  'src/components/DiningOrderDetailModal.vue',
+  'src/components/CashControlPanel.vue',
+  'src/components/ExtrasSelectionModal.vue',
+  'src/components/GuestAlertsBell.vue',
+  'src/components/InvoiceLogModal.vue',
+  'src/components/PinGuardModal.vue',
+  'src/components/dining-pos/POSActiveOrdersWorkspace.vue',
+  'src/components/dining-pos/POSCartPanel.vue',
+  'src/components/dining-pos/POSCustomerModal.vue',
+  'src/components/dining-pos/POSPaymentModal.vue',
+  'src/components/dining-pos/POSTablesWorkspace.vue',
   'src/views/kds/DiningKDSView.vue',
   // Gate 5 Batch 2 (2026-07-20): already fully migrated by Gate 2B3A, just
   // never promoted out of the "not yet migrated" bucket.

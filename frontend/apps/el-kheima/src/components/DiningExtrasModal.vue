@@ -14,6 +14,8 @@
  * real source of truth (CLAUDE.md §4: no business logic trusted client-side).
  */
 import { computed, reactive, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppModal, AppButton, AppBadge, AppTextarea } from '@resort-os/ui'
 
 interface DiningExtra {
@@ -43,6 +45,13 @@ const emit = defineEmits<{
   confirm: [{ variantId: number | null; extraIds: number[]; extraTexts: Record<number, string>; notes: string }]
   close: []
 }>()
+
+const { t, locale } = useI18n()
+const { formatMoney } = useStaffFormat()
+
+function localizedName(value: { name: string; name_ar: string | null }): string {
+  return locale.value === 'ar' ? (value.name_ar || value.name) : value.name
+}
 
 const availableVariants = computed(() => (props.item?.variants ?? []).filter(v => v.is_available))
 const groups = computed(() => props.item?.extra_groups ?? [])
@@ -93,20 +102,23 @@ const displayPrice = computed(() => {
 
 function validate(): boolean {
   if (availableVariants.value.length > 0 && selectedVariantId.value === null) {
-    errorMsg.value = 'لازم تختار الحجم/النوع'
+    errorMsg.value = t('backoffice.pos.extrasModal.errors.selectVariant')
     return false
   }
   for (const group of groups.value) {
     if (group.group_type === 'text') {
       if (group.min_select >= 1 && !(textAnswers[group.id] ?? '').trim()) {
-        errorMsg.value = `لازم تدخل قيمة لـ "${group.name_ar || group.name}"`
+        errorMsg.value = t('backoffice.pos.extrasModal.errors.answerRequired', { group: localizedName(group) })
         return false
       }
       continue
     }
     const selectedCount = group.options.filter(o => selectedExtraIds.has(o.id)).length
     if (selectedCount < group.min_select) {
-      errorMsg.value = `لازم تختار ${group.min_select} على الأقل من "${group.name_ar || group.name}"`
+      errorMsg.value = t('backoffice.pos.extrasModal.errors.minimumRequired', {
+        count: group.min_select,
+        group: localizedName(group),
+      })
       return false
     }
   }
@@ -132,12 +144,12 @@ function confirm() {
 </script>
 
 <template>
-  <AppModal :open="!!item" :title="item ? (item.name_ar || item.name) : ''" size="md" @close="emit('close')">
-    <div v-if="item" dir="rtl" class="space-y-5">
+  <AppModal :open="!!item" :title="item ? localizedName(item) : ''" size="md" :close-label="t('backoffice.pos.close')" @close="emit('close')">
+    <div v-if="item" class="space-y-5">
 
       <!-- ── الحجم/النوع (Variant) ── -->
       <div v-if="availableVariants.length > 0">
-        <h3 class="text-sm font-bold text-gray-800 mb-2">الحجم/النوع <span class="text-danger">*</span></h3>
+        <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200 mb-2">{{ t('backoffice.pos.extrasModal.variantTitle') }} <span class="text-danger">*</span></h3>
         <div class="grid grid-cols-2 gap-2">
           <button
             v-for="variant in availableVariants"
@@ -148,21 +160,21 @@ function confirm() {
               'flex items-center justify-between gap-2 p-3 rounded-xl border-2 text-start transition-all min-h-[48px]',
               selectedVariantId === variant.id
                 ? 'border-primary-600 bg-primary-50 text-primary-800'
-                : 'border-stone-200 hover:border-primary-300',
+                : 'border-stone-200 dark:border-border hover:border-primary-300',
             ]"
           >
-            <span class="font-semibold text-sm">{{ variant.name_ar || variant.name }}</span>
-            <span class="font-bold text-primary-700">{{ variant.price }} ج</span>
+            <span class="font-semibold text-sm">{{ localizedName(variant) }}</span>
+            <span class="font-bold text-primary-700 dark:text-primary-300">{{ formatMoney(variant.price, 'EGP') }}</span>
           </button>
         </div>
       </div>
 
       <!-- ── مجموعات الإضافات (pick_list + text) ── -->
       <div v-for="group in groups" :key="group.id">
-        <h3 class="text-sm font-bold text-gray-800 mb-2 flex items-center gap-1.5">
-          {{ group.name_ar || group.name }}
-          <AppBadge v-if="group.min_select >= 1" variant="warning" size="sm">إجباري</AppBadge>
-          <AppBadge v-else variant="neutral" size="sm">اختياري</AppBadge>
+        <h3 class="text-sm font-bold text-gray-800 dark:text-gray-200 mb-2 flex items-center gap-1.5">
+          {{ localizedName(group) }}
+          <AppBadge v-if="group.min_select >= 1" variant="warning" size="sm">{{ t('backoffice.pos.extrasModal.required') }}</AppBadge>
+          <AppBadge v-else variant="neutral" size="sm">{{ t('backoffice.pos.extrasModal.optional') }}</AppBadge>
         </h3>
 
         <!-- free-text prompt group (e.g. "كام سمكة؟") -->
@@ -170,7 +182,7 @@ function confirm() {
           v-if="group.group_type === 'text'"
           v-model="textAnswers[group.id]"
           :rows="2"
-          :placeholder="`اكتب الإجابة هنا...`"
+          :placeholder="t('backoffice.pos.extrasModal.answerPlaceholder')"
         />
 
         <!-- pick-list group -->
@@ -185,27 +197,32 @@ function confirm() {
               'flex items-center justify-between gap-2 p-2.5 rounded-xl border-2 text-start transition-all min-h-[48px]',
               selectedExtraIds.has(opt.id)
                 ? 'border-primary-600 bg-primary-50 text-primary-800'
-                : 'border-stone-200 hover:border-primary-300',
+                : 'border-stone-200 dark:border-border hover:border-primary-300',
               !opt.is_available ? 'opacity-40 cursor-not-allowed' : '',
             ]"
           >
-            <span class="text-sm font-medium">{{ opt.name_ar || opt.name }}</span>
-            <span v-if="Number(opt.price_addition) > 0" class="text-xs font-bold text-primary-700">+{{ opt.price_addition }} ج</span>
+            <span class="text-sm font-medium">{{ localizedName(opt) }}</span>
+            <span v-if="Number(opt.price_addition) > 0" class="text-xs font-bold text-primary-700 dark:text-primary-300">+{{ formatMoney(opt.price_addition, 'EGP') }}</span>
           </button>
         </div>
       </div>
 
       <!-- ── ملاحظة حرة على الصنف ── -->
-      <AppTextarea v-model="notes" label="ملاحظة (اختياري)" :rows="2" placeholder="مثال: بدون ثوم، حار جدًا" />
+      <AppTextarea
+        v-model="notes"
+        :label="t('backoffice.pos.extrasModal.notesLabel')"
+        :rows="2"
+        :placeholder="t('backoffice.pos.extrasModal.notesPlaceholder')"
+      />
 
       <p v-if="errorMsg" class="text-sm text-danger font-medium">{{ errorMsg }}</p>
     </div>
 
     <template #footer>
       <div class="flex items-center gap-2">
-        <AppButton variant="ghost" @click="emit('close')">إلغاء</AppButton>
+        <AppButton variant="ghost" @click="emit('close')">{{ t('backoffice.pos.extrasModal.cancel') }}</AppButton>
         <AppButton variant="primary" block @click="confirm">
-          إضافة للسلة — {{ displayPrice.toFixed(2) }} ج
+          {{ t('backoffice.pos.extrasModal.addToCart', { amount: formatMoney(displayPrice, 'EGP') }) }}
         </AppButton>
       </div>
     </template>

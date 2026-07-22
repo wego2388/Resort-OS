@@ -716,7 +716,7 @@ onMounted(fetchEmployees)
     <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
       <button v-for="tabDef in tabsList" :key="tabDef.val"
         @click="loadTab(tabDef.val as any)"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
       >{{ tabDef.label }}</button>
     </div>
 
@@ -724,31 +724,31 @@ onMounted(fetchEmployees)
     <div v-if="tab === 'employees'">
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
-        <span class="text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</span>
+        <span class="text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</span>
       </div>
       <AppCard v-else :title="t('backoffice.hr.employeesCount', { count: employees.length })" padding="none">
         <div class="overflow-x-auto">
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.name') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.position') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.department') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.salary') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.statusCol') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.actions') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.name') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.position') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.department') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.salary') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.statusCol') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.actions') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="emp in employees" :key="emp.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-3">
-                    <div class="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center text-blue-700 font-bold text-sm">
+                    <div class="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-sm font-bold text-blue-700 dark:bg-blue-950/50 dark:text-blue-300">
                       {{ emp.full_name.charAt(0) }}
                     </div>
                     <div>
                       <div class="font-semibold text-gray-900 dark:text-gray-100 text-sm">{{ emp.full_name }}</div>
-                      <div v-if="emp.phone" class="text-xs text-gray-400 dark:text-gray-500">{{ emp.phone }}</div>
+                      <div v-if="emp.phone" class="text-xs text-gray-400 dark:text-gray-400">{{ emp.phone }}</div>
                     </div>
                   </div>
                 </td>
@@ -760,17 +760,17 @@ onMounted(fetchEmployees)
                 </td>
                 <td class="px-4 py-3">
                   <div class="flex items-center gap-2">
-                    <button @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800">{{ t('backoffice.hr.addAllowanceShort') }}</button>
-                    <button @click="openPenaltyModal(emp)" class="text-xs font-semibold text-red-600 hover:text-red-800">{{ t('backoffice.hr.addPenaltyShort') }}</button>
-                    <button v-if="auth.hasRole('admin')" @click="openAdvanceModal(emp)" class="text-xs font-semibold text-amber-600 hover:text-amber-800">💰 {{ t('backoffice.hr.advanceShort') }}</button>
+                    <button @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200">{{ t('backoffice.hr.addAllowanceShort') }}</button>
+                    <button @click="openPenaltyModal(emp)" class="text-xs font-semibold text-red-600 hover:text-red-800 dark:text-red-300 dark:hover:text-red-200">{{ t('backoffice.hr.addPenaltyShort') }}</button>
+                    <button v-if="auth.hasRole('admin')" @click="openAdvanceModal(emp)" class="text-xs font-semibold text-amber-600 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200">💰 {{ t('backoffice.hr.advanceShort') }}</button>
                     <button @click="openPaymentModal(emp)" class="text-xs font-semibold text-teal-600 hover:text-teal-800">📅 {{ t('backoffice.hr.paymentShort') }}</button>
-                    <button @click="openBalanceModal(emp)" class="text-xs font-semibold text-purple-600 hover:text-purple-800">📊 {{ t('backoffice.hr.leaveBalanceShort') }}</button>
-                    <button v-if="auth.hasRole('admin')" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 dark:text-gray-500 hover:text-gray-900 dark:text-gray-100">✏️ {{ t('backoffice.hr.salaryShort') }}</button>
+                    <button @click="openBalanceModal(emp)" class="text-xs font-semibold text-purple-600 hover:text-purple-800 dark:text-purple-300 dark:hover:text-purple-200">📊 {{ t('backoffice.hr.leaveBalanceShort') }}</button>
+                    <button v-if="auth.hasRole('admin')" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:text-gray-100">✏️ {{ t('backoffice.hr.salaryShort') }}</button>
                   </div>
                 </td>
               </tr>
               <tr v-if="employees.length === 0">
-                <td colspan="6" class="px-4 py-12 text-center text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.noEmployees') }}</td>
+                <td colspan="6" class="px-4 py-12 text-center text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.noEmployees') }}</td>
               </tr>
             </tbody>
           </table>
@@ -782,17 +782,17 @@ onMounted(fetchEmployees)
     <AppModal :open="!!allowanceModalEmployee" :title="t('backoffice.hr.allowancesTitle', { name: allowanceModalEmployee?.full_name ?? '' })"
       @close="allowanceModalEmployee = null">
       <div class="space-y-4">
-        <div v-if="allowancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</div>
+        <div v-if="allowancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</div>
         <div v-else-if="employeeAllowances.length" class="space-y-2">
           <div v-for="a in employeeAllowances" :key="a.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-2">
             <span class="font-medium text-gray-800 dark:text-gray-200">{{ a.name }}</span>
-            <span class="text-gray-600 dark:text-gray-500">{{ formatNumber(a.amount) }} {{ t('backoffice.hr.egp') }}{{ a.is_taxable ? '' : ` (${t('backoffice.hr.notTaxable')})` }}</span>
+            <span class="text-gray-600 dark:text-gray-400">{{ formatNumber(a.amount) }} {{ t('backoffice.hr.egp') }}{{ a.is_taxable ? '' : ` (${t('backoffice.hr.notTaxable')})` }}</span>
           </div>
         </div>
         <EmptyState v-else icon="💵" :title="t('backoffice.hr.noAllowances')" />
 
         <div class="border-t border-stone-100 dark:border-border/50 pt-4 space-y-3">
-          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.addNewAllowance') }}</div>
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.addNewAllowance') }}</div>
           <AppInput v-model="allowanceForm.name" :placeholder="t('backoffice.hr.allowanceNamePlaceholder')" />
           <AppInput v-model.number="allowanceForm.amount" type="number" :placeholder="t('backoffice.hr.amountEgp')" />
           <div class="flex items-center gap-4 text-sm text-gray-700 dark:text-gray-300">
@@ -814,11 +814,11 @@ onMounted(fetchEmployees)
         <div>
           <AppInput :label="t('backoffice.hr.insuranceBaseOptional')" v-model.number="compForm.insurance_base_salary" type="number"
             :placeholder="t('backoffice.hr.insuranceBasePlaceholder')" />
-          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.hr.insuranceBaseHint') }}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.hr.insuranceBaseHint') }}</p>
         </div>
         <div>
           <AppInput :label="t('backoffice.hr.holidayBonus')" v-model.number="compForm.holiday_bonus" type="number" />
-          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.hr.holidayBonusHint') }}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.hr.holidayBonusHint') }}</p>
         </div>
         <AppButton :disabled="savingComp" @click="submitComp" variant="primary" size="sm">
           {{ savingComp ? t('backoffice.hr.saving') : t('backoffice.hr.save') }}
@@ -847,7 +847,7 @@ onMounted(fetchEmployees)
     <AppModal :open="!!advanceModalEmployee" :title="t('backoffice.hr.advancesTitle', { name: advanceModalEmployee?.full_name ?? '' })"
       @close="advanceModalEmployee = null">
       <div class="space-y-4">
-        <div v-if="advancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</div>
+        <div v-if="advancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</div>
         <div v-else-if="employeeAdvances.length" class="space-y-2">
           <div v-for="a in employeeAdvances" :key="a.id" class="text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-2">
             <div class="flex items-center justify-between">
@@ -856,19 +856,19 @@ onMounted(fetchEmployees)
                 {{ a.status === 'active' ? t('backoffice.hr.advanceActive') : a.status === 'settled' ? t('backoffice.hr.advanceSettled') : t('backoffice.hr.advanceCancelledBadge') }}
               </AppBadge>
             </div>
-            <div class="text-xs text-gray-500 dark:text-gray-500 mt-1">
+            <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
               {{ t('backoffice.hr.advanceRemaining', { amount: formatNumber(a.remaining_balance), date: formatDate(a.disbursed_date) }) }}
             </div>
             <button v-if="a.status === 'active' && a.remaining_balance == a.amount"
-              @click="cancelAdvance(a)" class="text-xs font-semibold text-red-600 hover:text-red-800 mt-1">{{ t('backoffice.hr.cancel') }}</button>
+              @click="cancelAdvance(a)" class="mt-1 text-xs font-semibold text-red-600 hover:text-red-800 dark:text-red-300 dark:hover:text-red-200">{{ t('backoffice.hr.cancel') }}</button>
           </div>
         </div>
         <EmptyState v-else icon="💰" :title="t('backoffice.hr.noAdvances')" />
 
         <div class="border-t border-stone-100 dark:border-border/50 pt-4 space-y-3">
-          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.logNewAdvance') }}</div>
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.logNewAdvance') }}</div>
           <AppInput v-model.number="advanceForm.amount" type="number" :placeholder="t('backoffice.hr.amountEgp')" />
-          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.hr.disbursedDate') }}</label>
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.disbursedDate') }}</label>
           <input v-model="advanceForm.disbursed_date" type="date"
             class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
           <AppInput v-model.number="advanceForm.monthly_deduction_amount" type="number" :placeholder="t('backoffice.hr.monthlyInstallmentEgp')" />
@@ -884,12 +884,12 @@ onMounted(fetchEmployees)
     <AppModal :open="!!paymentModalEmployee" :title="t('backoffice.hr.paymentsTitle', { name: paymentModalEmployee?.full_name ?? '' })"
       @close="paymentModalEmployee = null">
       <div class="space-y-4">
-        <div v-if="paymentsLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</div>
+        <div v-if="paymentsLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</div>
         <div v-else-if="employeePayments.length" class="space-y-2">
           <div v-for="p in employeePayments" :key="p.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-2">
             <div>
               <span class="font-medium text-gray-800 dark:text-gray-200">{{ formatNumber(p.amount) }} {{ t('backoffice.hr.egp') }}</span>
-              <span class="text-xs text-gray-400 dark:text-gray-500 ms-2">{{ formatDate(p.payment_date) }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-400 ms-2">{{ formatDate(p.payment_date) }}</span>
             </div>
             <AppBadge size="sm" :variant="p.deducted ? 'success' : 'warning'">{{ p.deducted ? t('backoffice.hr.deducted') : t('backoffice.hr.notYet') }}</AppBadge>
           </div>
@@ -897,9 +897,9 @@ onMounted(fetchEmployees)
         <EmptyState v-else icon="📅" :title="t('backoffice.hr.noPayments')" />
 
         <div class="border-t border-stone-100 dark:border-border/50 pt-4 space-y-3">
-          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.logNewPayment') }}</div>
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.logNewPayment') }}</div>
           <AppInput v-model.number="paymentForm.amount" type="number" :placeholder="t('backoffice.hr.amountEgp')" />
-          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.hr.paymentDate') }}</label>
+          <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.paymentDate') }}</label>
           <input v-model="paymentForm.payment_date" type="date"
             class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
           <AppInput v-model="paymentForm.notes" :placeholder="t('backoffice.hr.notesOptional')" />
@@ -913,28 +913,30 @@ onMounted(fetchEmployees)
     <!-- wagdy.md H-07: استيراد حضور من Excel -->
     <AppModal :open="showImportModal" :title="`📥 ${t('backoffice.hr.importAttendanceTitle')}`" @close="showImportModal = false">
       <div class="space-y-3">
-        <p class="text-xs text-gray-400 dark:text-gray-500">
+        <p class="text-xs text-gray-400 dark:text-gray-400">
           {{ t('backoffice.hr.importHint') }}
         </p>
         <div class="grid grid-cols-2 gap-2">
           <div>
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.hr.year') }}</label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.hr.year') }}</label>
             <AppInput v-model.number="importPeriodYear" type="number" />
           </div>
           <div>
-            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.hr.month') }}</label>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.hr.month') }}</label>
             <AppInput v-model.number="importPeriodMonth" type="number" />
           </div>
         </div>
         <input type="file" accept=".xlsx,.xls" @change="onImportFilePicked"
-          class="w-full text-xs text-gray-600 dark:text-gray-500 file:ms-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
+          class="w-full text-xs text-gray-600 dark:text-gray-400 file:ms-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary-50 file:text-primary-700 file:font-bold" />
 
         <div v-if="importResult" class="p-3 rounded-xl text-xs"
-          :class="'error' in importResult ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700'">
+          :class="'error' in importResult
+            ? 'bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300'
+            : 'bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300'">
           <div v-if="'error' in importResult">{{ importResult.error }}</div>
           <div v-else>
             ✅ {{ t('backoffice.hr.importedCount', { count: importResult.imported }) }}
-            <div v-if="importResult.unmatched_employees.length" class="mt-2 text-amber-600">
+            <div v-if="importResult.unmatched_employees.length" class="mt-2 text-amber-600 dark:text-amber-300">
               {{ t('backoffice.hr.unmatchedEmployees', { names: importResult.unmatched_employees.join('، ') }) }}
             </div>
             <div v-if="importResult.errors.length" class="mt-2 text-red-500">
@@ -953,7 +955,7 @@ onMounted(fetchEmployees)
     <!-- wagdy.md H-03: رصيد الإجازة الشهري -->
     <AppModal :open="!!balanceModalEmployee" :title="t('backoffice.hr.balanceTitle', { name: balanceModalEmployee?.full_name ?? '' })"
       @close="balanceModalEmployee = null">
-      <div v-if="balancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</div>
+      <div v-if="balancesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</div>
       <EmptyState v-else-if="!employeeLeaveBalances.length" icon="📊" :title="t('backoffice.hr.noBalanceYet')"
         :subtitle="t('backoffice.hr.noBalanceYetHint')" />
       <div v-else class="space-y-2">
@@ -961,7 +963,7 @@ onMounted(fetchEmployees)
           <span class="text-gray-700 dark:text-gray-300">{{ monthLabel(b.period_year, b.period_month) }}</span>
           <div class="text-end">
             <div class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.hr.dayCount', { count: b.closing_balance }) }}</div>
-            <div class="text-xs text-gray-400 dark:text-gray-500">+{{ b.accrued }} − {{ b.consumed }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400">+{{ b.accrued }} − {{ b.consumed }}</div>
           </div>
         </div>
       </div>
@@ -972,13 +974,13 @@ onMounted(fetchEmployees)
       :title="t('backoffice.hr.editAttendanceTitle', { name: editingAttendance ? (employeeNameById[editingAttendance.employee_id] ?? t('backoffice.hr.employeeHash', { id: editingAttendance.employee_id })) : '' })"
       @close="editingAttendance = null">
       <div class="space-y-3">
-        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.hr.checkInTime') }}</label>
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.checkInTime') }}</label>
         <input v-model="editForm.check_in" type="datetime-local"
           class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
-        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.hr.checkOutTime') }}</label>
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.checkOutTime') }}</label>
         <input v-model="editForm.check_out" type="datetime-local"
           class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
-        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.hr.statusCol') }}</label>
+        <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.statusCol') }}</label>
         <select v-model="editForm.status"
           class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500">
           <option value="present">{{ t('backoffice.hr.status.present') }}</option>
@@ -998,7 +1000,7 @@ onMounted(fetchEmployees)
     <div v-if="tab === 'payroll'">
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
-        <span class="text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</span>
+        <span class="text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</span>
       </div>
       <div v-else-if="!payrollRuns.length">
         <EmptyState icon="💰" :title="t('backoffice.hr.noPayrollRuns')" />
@@ -1008,7 +1010,7 @@ onMounted(fetchEmployees)
           <div class="flex items-center justify-between">
             <div>
               <div class="font-bold text-gray-900 dark:text-gray-100">{{ monthLabel(run.period_year, run.period_month) }}</div>
-              <div class="text-sm text-gray-500 dark:text-gray-500 mt-0.5">{{ t('backoffice.hr.grossTotal', { amount: formatNumber(run.total_gross ?? 0) }) }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">{{ t('backoffice.hr.grossTotal', { amount: formatNumber(run.total_gross ?? 0) }) }}</div>
             </div>
             <div class="text-end">
               <div class="text-xl font-black text-gray-900 dark:text-gray-100">{{ formatNumber(run.total_net ?? 0) }} {{ t('backoffice.hr.egp') }}</div>
@@ -1032,9 +1034,9 @@ onMounted(fetchEmployees)
           <div v-if="expandedRunId === run.id" class="mt-3 pt-3 border-t border-stone-100 dark:border-border/50">
             <div v-if="payrollLinesLoading" class="flex items-center gap-2 py-2">
               <AppSpinner size="sm" />
-              <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loadingLines') }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loadingLines') }}</span>
             </div>
-            <div v-else-if="!payrollLinesByRun[run.id]?.length" class="text-xs text-gray-400 dark:text-gray-500 py-2">
+            <div v-else-if="!payrollLinesByRun[run.id]?.length" class="text-xs text-gray-400 dark:text-gray-400 py-2">
               {{ t('backoffice.hr.noLinesInRun') }}
             </div>
             <div v-else class="space-y-1.5">
@@ -1053,7 +1055,7 @@ onMounted(fetchEmployees)
     <div v-if="tab === 'leaves'">
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
-        <span class="text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</span>
+        <span class="text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</span>
       </div>
       <div v-else-if="!leaveRequests.length">
         <EmptyState icon="🌴" :title="t('backoffice.hr.noPendingLeaves')" />
@@ -1063,8 +1065,8 @@ onMounted(fetchEmployees)
           <div class="flex items-start justify-between">
             <div>
               <div class="font-bold text-gray-900 dark:text-gray-100">{{ employeeNameById[leave.employee_id] ?? t('backoffice.hr.employeeHash', { id: leave.employee_id }) }}</div>
-              <div class="text-sm text-gray-500 dark:text-gray-500">{{ leaveTypeNameById[leave.leave_type_id] ?? t('backoffice.hr.status.leave') }} — {{ t('backoffice.hr.dayCount', { count: leave.days_requested }) }}</div>
-              <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+              <div class="text-sm text-gray-500 dark:text-gray-400">{{ leaveTypeNameById[leave.leave_type_id] ?? t('backoffice.hr.status.leave') }} — {{ t('backoffice.hr.dayCount', { count: leave.days_requested }) }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">
                 {{ formatDate(leave.start_date) }} → {{ formatDate(leave.end_date) }}
               </div>
             </div>
@@ -1081,10 +1083,10 @@ onMounted(fetchEmployees)
     <!-- Attendance Tab -->
     <div v-if="tab === 'attendance'" class="space-y-4">
       <div class="flex flex-wrap items-center gap-3">
-        <label class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.hr.from') }}</label>
+        <label class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.from') }}</label>
         <input v-model="attendanceDateFrom" @change="fetchAttendance" type="date"
           class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
-        <label class="text-xs font-semibold text-gray-500 dark:text-gray-500">{{ t('backoffice.hr.to') }}</label>
+        <label class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.to') }}</label>
         <input v-model="attendanceDateTo" @change="fetchAttendance" type="date"
           class="bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-xs rounded-xl px-3 py-2 outline-none focus:border-primary-500" />
         <AppButton v-if="auth.hasRole('manager')" size="sm" variant="secondary" @click="openImportModal">
@@ -1097,10 +1099,10 @@ onMounted(fetchEmployees)
       <AppCard :title="t('backoffice.hr.attendancePolicyTitle')" padding="md">
         <div v-if="policyLoading" class="flex items-center gap-3 py-4">
           <AppSpinner size="sm" />
-          <span class="text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</span>
+          <span class="text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</span>
         </div>
         <div v-else class="space-y-4">
-          <p v-if="!policyConfigured" class="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2">
+          <p v-if="!policyConfigured" class="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-600 dark:bg-amber-950/40 dark:text-amber-300">
             {{ t('backoffice.hr.noPolicyYet') }}
           </p>
           <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -1121,7 +1123,7 @@ onMounted(fetchEmployees)
 
       <div v-if="attendanceLoading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
-        <span class="text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.hr.loading') }}</span>
+        <span class="text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</span>
       </div>
       <EmptyState v-else-if="!attendanceRecords.length" icon="⏰" :title="t('backoffice.hr.noAttendanceRecords')"
         :subtitle="t('backoffice.hr.noAttendanceRecordsHint')" />
@@ -1130,13 +1132,13 @@ onMounted(fetchEmployees)
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.employee') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.date') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.checkIn') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.checkOut') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.hoursWorked') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.statusCol') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.employee') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.date') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.checkIn') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.checkOut') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.hoursWorked') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.statusCol') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase"></th>
               </tr>
             </thead>
             <tbody>
@@ -1165,12 +1167,12 @@ onMounted(fetchEmployees)
     <div v-if="tab === 'leaderboard'" class="space-y-4">
       <div class="flex flex-wrap items-end gap-3">
         <div>
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.hr.fromDate') }}</label>
+          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.hr.fromDate') }}</label>
           <input v-model="leaderboardFrom" type="date"
             class="px-3 py-1.5 rounded-lg border border-stone-200 dark:border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
         </div>
         <div>
-          <label class="block text-xs font-medium text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.hr.toDate') }}</label>
+          <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.hr.toDate') }}</label>
           <input v-model="leaderboardTo" type="date"
             class="px-3 py-1.5 rounded-lg border border-stone-200 dark:border-border text-sm focus:outline-none focus:ring-2 focus:ring-primary-500" />
         </div>
@@ -1185,10 +1187,10 @@ onMounted(fetchEmployees)
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.rank') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.employee') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.totalSales') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.hr.orderCount') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.rank') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.employee') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.totalSales') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.orderCount') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -1196,9 +1198,9 @@ onMounted(fetchEmployees)
                 <td class="px-4 py-3 text-lg font-black">{{ leaderboardMedal(i) }}</td>
                 <td class="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-gray-100">
                   {{ entry.employee_name ?? t('backoffice.hr.employeeHash', { id: entry.user_id }) }}
-                  <span v-if="entry.employee_code" class="text-gray-400 dark:text-gray-500 font-normal">({{ entry.employee_code }})</span>
+                  <span v-if="entry.employee_code" class="text-gray-400 dark:text-gray-400 font-normal">({{ entry.employee_code }})</span>
                 </td>
-                <td class="px-4 py-3 text-sm font-bold text-green-700">{{ formatNumber(Number(entry.total_sales)) }} {{ t('backoffice.hr.egp') }}</td>
+                <td class="px-4 py-3 text-sm font-bold text-green-700 dark:text-green-300">{{ formatNumber(Number(entry.total_sales)) }} {{ t('backoffice.hr.egp') }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ entry.order_count }}</td>
               </tr>
             </tbody>

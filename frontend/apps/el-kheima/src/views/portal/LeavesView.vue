@@ -32,9 +32,9 @@ const leaveTypeLabel = computed(() => (id: number) => {
 })
 
 const statusColors: Record<string, string> = {
-  pending: 'bg-amber-100 text-amber-700',
-  approved: 'bg-green-100 text-green-700',
-  rejected: 'bg-red-100 text-red-700',
+  pending: 'bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300',
+  approved: 'bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300',
+  rejected: 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-300',
 }
 const statusLabels = computed<Record<string, string>>(() => ({
   pending: t('backoffice.leaves.status.pending'), approved: t('backoffice.leaves.status.approved'), rejected: t('backoffice.leaves.status.rejected'),
@@ -103,9 +103,9 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
       </button>
     </div>
 
-    <div v-if="successMsg" class="bg-green-100 text-green-700 px-4 py-3 rounded-xl text-sm font-medium">{{ successMsg }}</div>
+    <div v-if="successMsg" class="rounded-xl bg-green-100 px-4 py-3 text-sm font-medium text-green-700 dark:bg-green-950/50 dark:text-green-300">{{ successMsg }}</div>
 
-    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-500 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-12 text-gray-400 dark:text-gray-400 gap-3">
       <AppSpinner size="lg" />
       <p>{{ t('backoffice.leaves.loading') }}</p>
     </div>
@@ -115,15 +115,15 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
         <div class="flex items-start justify-between">
           <div>
             <div class="font-semibold text-gray-900 dark:text-gray-100">{{ leaveTypeLabel(leave.leave_type_id) }}</div>
-            <div class="text-sm text-gray-500 dark:text-gray-500 mt-0.5">
+            <div class="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
               {{ formatDate(leave.start_date) }}
               ←
               {{ formatDate(leave.end_date) }}
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.leaves.daysCount', { count: leave.days_requested }) }}</div>
-            <div v-if="leave.reason" class="text-xs text-gray-500 dark:text-gray-500 mt-1.5 italic border-e-2 border-stone-200 dark:border-border pe-2">{{ leave.reason }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{{ t('backoffice.leaves.daysCount', { count: leave.days_requested }) }}</div>
+            <div v-if="leave.reason" class="text-xs text-gray-500 dark:text-gray-400 mt-1.5 italic border-e-2 border-stone-200 dark:border-border pe-2">{{ leave.reason }}</div>
           </div>
-          <span :class="['px-2.5 py-1 rounded-full text-xs font-medium flex-shrink-0', statusColors[leave.status] ?? 'bg-gray-100 text-gray-600 dark:text-gray-500']">
+          <span :class="['flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-medium', statusColors[leave.status] ?? 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400']">
             {{ statusLabels[leave.status] ?? leave.status }}
           </span>
         </div>
@@ -140,7 +140,7 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
         <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-sm shadow-2xl">
           <div class="flex items-center justify-between mb-5">
             <h3 class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ t('backoffice.leaves.newRequestTitle') }}</h3>
-            <button @click="showModal = false" class="text-gray-400 dark:text-gray-500 hover:text-gray-600 text-2xl leading-none">×</button>
+            <button @click="showModal = false" class="text-gray-400 dark:text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
           </div>
           <div class="space-y-4">
             <div>
@@ -162,7 +162,7 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
                   class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"/>
               </div>
             </div>
-            <div v-if="calcDays() > 0" class="text-center text-sm font-medium text-blue-700 bg-blue-50 py-2 rounded-lg">
+            <div v-if="calcDays() > 0" class="rounded-lg bg-blue-50 py-2 text-center text-sm font-medium text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">
               {{ t('backoffice.leaves.daysCount', { count: calcDays() }) }}
             </div>
             <div>
@@ -170,10 +170,10 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
               <textarea v-model="form.reason" rows="2" :placeholder="t('backoffice.leaves.reasonPlaceholder')"
                 class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none text-sm"/>
             </div>
-            <div v-if="errorMsg" class="bg-red-50 text-red-600 px-3 py-2 rounded-lg text-sm">{{ errorMsg }}</div>
+            <div v-if="errorMsg" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">{{ errorMsg }}</div>
           </div>
           <div class="flex gap-2 mt-5">
-            <button @click="showModal = false" class="flex-1 py-2.5 border-2 border-stone-200 dark:border-border rounded-xl text-sm font-semibold text-gray-600 dark:text-gray-500 hover:bg-gray-50">{{ t('backoffice.leaves.cancel') }}</button>
+            <button @click="showModal = false" class="flex-1 rounded-xl border-2 border-stone-200 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50 dark:border-border dark:text-gray-400 dark:hover:bg-gray-800">{{ t('backoffice.leaves.cancel') }}</button>
             <button @click="requestLeave" :disabled="submitting"
               class="flex-1 py-2.5 bg-blue-700 text-white rounded-xl text-sm font-bold hover:bg-blue-800 disabled:opacity-50">
               {{ submitting ? t('backoffice.leaves.submitting') : t('backoffice.leaves.submitRequest') }}

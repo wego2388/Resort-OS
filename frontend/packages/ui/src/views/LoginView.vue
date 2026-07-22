@@ -76,7 +76,7 @@ async function handleLogin() {
             <input v-model="otpCode" type="text" inputmode="numeric" maxlength="6" placeholder="000000"
               autocomplete="one-time-code" autofocus
               class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-widest text-lg font-mono text-gray-900" />
-            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">أدخل الكود من تطبيق المصادقة (Google Authenticator أو Authy)</p>
+            <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">أدخل الكود من تطبيق المصادقة (Google Authenticator أو Authy)</p>
           </div>
           <button type="submit" :disabled="loading"
             class="w-full bg-blue-700 text-white py-3 rounded-xl font-semibold hover:bg-blue-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">

@@ -63,11 +63,11 @@ function roomTypeName(room: Room): string {
 // غلط بدل "reserved" — "dirty" أصلاً حالة HousekeepingTask مش Room، فكانت
 // غرف الحجز المؤكد (لسه ما دخلش الضيف) بتتصنّف "غير معروفة" في العدّاد.
 const statusConfig = computed<Record<string, { label: string; color: string; bg: string; border: string }>>(() => ({
-  available:        { label: t('backoffice.rooms.status.available'),        color: 'text-green-700',  bg: 'bg-green-50',  border: 'border-green-400' },
-  reserved:         { label: t('backoffice.rooms.status.reserved'),         color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-400' },
-  occupied:         { label: t('backoffice.rooms.status.occupied'),         color: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-400' },
-  checkout_pending: { label: t('backoffice.rooms.status.checkoutPending'),  color: 'text-amber-700',  bg: 'bg-amber-50',  border: 'border-amber-400' },
-  maintenance:      { label: t('backoffice.rooms.status.maintenance'),      color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-400' },
+  available:        { label: t('backoffice.rooms.status.available'), color: 'text-green-700 dark:text-green-300', bg: 'bg-green-50 dark:bg-green-950/40', border: 'border-green-400 dark:border-green-800' },
+  reserved:         { label: t('backoffice.rooms.status.reserved'), color: 'text-purple-700 dark:text-purple-300', bg: 'bg-purple-50 dark:bg-purple-950/40', border: 'border-purple-400 dark:border-purple-800' },
+  occupied:         { label: t('backoffice.rooms.status.occupied'), color: 'text-blue-700 dark:text-blue-300', bg: 'bg-blue-50 dark:bg-blue-950/40', border: 'border-blue-400 dark:border-blue-800' },
+  checkout_pending: { label: t('backoffice.rooms.status.checkoutPending'), color: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-50 dark:bg-amber-950/40', border: 'border-amber-400 dark:border-amber-800' },
+  maintenance:      { label: t('backoffice.rooms.status.maintenance'), color: 'text-red-700 dark:text-red-300', bg: 'bg-red-50 dark:bg-red-950/40', border: 'border-red-400 dark:border-red-800' },
 }))
 
 const filteredRooms = computed(() =>
@@ -221,7 +221,7 @@ onUnmounted(() => clearInterval(refreshInterval))
     <AppModal :open="nightAuditOpen" :title="`🌙 ${t('backoffice.rooms.nightAuditModalTitle')}`" @close="nightAuditOpen = false">
       <div class="space-y-4">
         <template v-if="!nightAuditResult">
-          <p class="text-sm text-gray-600 dark:text-gray-500">
+          <p class="text-sm text-gray-600 dark:text-gray-400">
             {{ t('backoffice.rooms.nightAuditHint') }}
           </p>
           <div>
@@ -231,7 +231,7 @@ onUnmounted(() => clearInterval(refreshInterval))
               class="w-full px-3 py-2 rounded-lg border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-indigo-500"
             />
           </div>
-          <p v-if="nightAuditError" class="text-red-600 text-sm">{{ nightAuditError }}</p>
+          <p v-if="nightAuditError" class="text-sm text-red-600 dark:text-red-300">{{ nightAuditError }}</p>
           <button
             @click="runNightAudit" :disabled="nightAuditLoading"
             class="w-full bg-indigo-600 text-white py-2.5 rounded-xl font-semibold hover:bg-indigo-700 transition-colors disabled:opacity-50"
@@ -241,27 +241,27 @@ onUnmounted(() => clearInterval(refreshInterval))
         <template v-else>
           <div class="grid grid-cols-2 gap-3">
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.occupancyPct') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.occupancyPct') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.occupancy_pct }}%</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.roomRevenue') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.roomRevenue') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ formatNumber(Number(nightAuditResult.room_revenue)) }} {{ t('backoffice.rooms.egp') }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.occupiedRoomsLabel') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.occupiedRoomsLabel') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.occupied_rooms }} / {{ nightAuditResult.total_rooms }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.noShows') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.noShows') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.no_shows }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.checkinsToday') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.checkinsToday') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.checkins_today }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.checkoutsToday') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.checkoutsToday') }}</div>
               <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ nightAuditResult.checkouts_today }}</div>
             </div>
           </div>
@@ -286,23 +286,23 @@ onUnmounted(() => clearInterval(refreshInterval))
         @click="filterStatus = filterStatus === status ? null : status"
       >
         <div :class="['text-2xl font-black', cfg.color]">{{ counts[status] ?? 0 }}</div>
-        <div class="text-xs font-medium text-gray-600 dark:text-gray-500 mt-0.5">{{ cfg.label }}</div>
+        <div class="text-xs font-medium text-gray-600 dark:text-gray-400 mt-0.5">{{ cfg.label }}</div>
       </div>
     </div>
 
     <!-- Active filter banner -->
     <div v-if="filterStatus" class="mb-3 flex items-center gap-2">
-      <span class="text-sm text-gray-600 dark:text-gray-500">
+      <span class="text-sm text-gray-600 dark:text-gray-400">
         {{ t('backoffice.rooms.showingFilter', { label: statusConfig[filterStatus]?.label, count: filteredRooms.length }) }}
       </span>
       <button
         @click="filterStatus = null"
-        class="text-xs text-blue-600 hover:text-blue-800 underline"
+        class="text-xs text-blue-600 underline hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200"
       >{{ t('backoffice.rooms.showAll') }}</button>
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-400 gap-3">
       <AppSpinner size="lg" />
       <p>{{ t('backoffice.rooms.loading') }}</p>
     </div>
@@ -320,11 +320,11 @@ onUnmounted(() => clearInterval(refreshInterval))
         @click="selectedRoom = room"
       >
         <div class="font-black text-lg text-gray-900 dark:text-gray-100">{{ room.name }}</div>
-        <div class="text-xs text-gray-500 dark:text-gray-500 truncate">{{ roomTypeName(room) }}</div>
+        <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ roomTypeName(room) }}</div>
         <div :class="['text-xs font-semibold mt-1', statusConfig[room.status]?.color]">
           {{ statusConfig[room.status]?.label ?? room.status }}
         </div>
-        <div v-if="currentBookingByRoomId[room.id]" class="text-xs text-gray-500 dark:text-gray-500 mt-1 truncate">
+        <div v-if="currentBookingByRoomId[room.id]" class="text-xs text-gray-500 dark:text-gray-400 mt-1 truncate">
           {{ currentBookingByRoomId[room.id].guest_name }}
         </div>
       </div>
@@ -344,30 +344,30 @@ onUnmounted(() => clearInterval(refreshInterval))
             <h2 class="text-xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.rooms.roomHash', { name: selectedRoom.name }) }}</h2>
             <button
               @click="selectedRoom = null"
-              class="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
+              class="text-gray-400 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
             >×</button>
           </div>
 
           <div class="space-y-3 text-sm">
             <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
-              <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.type') }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.type') }}</span>
               <span class="font-medium text-gray-900 dark:text-gray-100">{{ roomTypeName(selectedRoom) }}</span>
             </div>
             <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
-              <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.floor') }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.floor') }}</span>
               <span class="font-medium text-gray-900 dark:text-gray-100">{{ selectedRoom.floor }}</span>
             </div>
             <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
-              <span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.rooms.statusLabel') }}</span>
+              <span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.statusLabel') }}</span>
               <span :class="['font-bold', statusConfig[selectedRoom.status]?.color]">
                 {{ statusConfig[selectedRoom.status]?.label ?? selectedRoom.status }}
               </span>
             </div>
             <div v-if="currentBookingByRoomId[selectedRoom.id]" class="pt-1">
-              <p class="text-xs text-gray-400 dark:text-gray-500 font-semibold uppercase tracking-wide mb-2">{{ t('backoffice.rooms.currentBooking') }}</p>
-              <div class="bg-blue-50 rounded-xl p-3 border border-blue-100">
+              <p class="text-xs text-gray-400 dark:text-gray-400 font-semibold uppercase tracking-wide mb-2">{{ t('backoffice.rooms.currentBooking') }}</p>
+              <div class="rounded-xl border border-blue-100 bg-blue-50 p-3 dark:border-blue-900 dark:bg-blue-950/40">
                 <div class="font-bold text-gray-900 dark:text-gray-100 mb-1">{{ currentBookingByRoomId[selectedRoom.id].guest_name }}</div>
-                <div class="text-gray-500 dark:text-gray-500 text-xs">
+                <div class="text-gray-500 dark:text-gray-400 text-xs">
                   {{ t('backoffice.rooms.departureLabel', { date: fmtDateFn(currentBookingByRoomId[selectedRoom.id].check_out) }) }}
                 </div>
               </div>
@@ -376,7 +376,7 @@ onUnmounted(() => clearInterval(refreshInterval))
 
           <button
             @click="selectedRoom = null"
-            class="mt-5 w-full py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors"
+            class="mt-5 w-full rounded-xl bg-gray-100 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
           >{{ t('backoffice.rooms.close') }}</button>
         </div>
       </div>

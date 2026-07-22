@@ -9,13 +9,33 @@
 
 ---
 
+## 🟩 تصحيح شامل للـ Light/Dark Mode في تطبيق الموظفين (2026-07-22)
+
+بعد مراجعة screenshots فعلية من Dashboard وBeach Admin وTimeshare، اتضح إن
+المشكلة مش في 3 شاشات منفصلة: الـshell الكحلي كان بيستخدم tokens بنية، لون
+النص الموروث للـbody/form controls لم يكن محددًا، وعشرات status cards الفاتحة
+كانت بلا مقابل في الدارك مود. الإصلاح اتعمل من المصدر: dark tokens موحدة
+navy/slate، foreground موروث للصفحة والحقول، وتصحيح الحالات الدلالية في كل
+شاشات الموظفين والـshared UI (dashboard/beach/reception/rooms/bookings/
+finance/HR/CRM/analytics/inventory/settings/account/portal وغيرها).
+
+اتضاف test ratchet يحسب contrast الفعلي للـtokens (النص الأساسي ≥7:1
+والـmuted ≥4.5:1)، يمنع `dark:text-gray-500`، ويرفض أي semantic surface فاتح
+`50/100/200` من غير dark variant. التحقق النهائي: frontend **69/69** عبر 9
+ملفات، i18n **5,690** مفتاح لكل لغة وصفر نقص، type-check ناجح، production build
+ناجح، وvisual browser check حي على Dashboard وBeach Admin وTimeshare وRooms
+وReception وFinance في light/dark. التحذير الوحيد هو chunk-size القديم غير
+الحاجب. لم يحصل reset أو تغيير لبيانات قاعدة التطوير.
+
+---
+
 ## 📊 نظرة سريعة (30 ثانية)
 
 | | |
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **1,992 backend ناجح، 20 skipped، صفر فشل** ✅ + **60/60 frontend** + **5/5 Dining** + **2/2 Super Admin** + **3/3 Step-Up** + **4/4 Refresh-Family** concurrency حقيقية على PostgreSQL (2026-07-19؛ Gate 3 مُعتمَدة بعد مراجعة مستقلة) |
+| **الاختبارات** | **1,992 backend ناجح، 20 skipped، صفر فشل** ✅ + **69/69 frontend** + **5/5 Dining** + **2/2 Super Admin** + **3/3 Step-Up** + **4/4 Refresh-Family** concurrency حقيقية على PostgreSQL (frontend محدّث 2026-07-22؛ Gate 3 مُعتمَدة بعد مراجعة مستقلة) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |

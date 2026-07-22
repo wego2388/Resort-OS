@@ -462,7 +462,7 @@ onMounted(() => loadTab('assets'))
       <button
         v-for="tabDef in [{ val: 'assets', label: t('backoffice.maintenance.tabs.assets') }, { val: 'work-orders', label: t('backoffice.maintenance.tabs.workOrders') }, { val: 'schedules', label: t('backoffice.maintenance.tabs.schedules') }]"
         :key="tabDef.val" @click="loadTab(tabDef.val as any)"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
       >{{ tabDef.label }}</button>
     </div>
 
@@ -470,14 +470,14 @@ onMounted(() => loadTab('assets'))
     <div v-if="tab === 'assets'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.category') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.category') }}</label>
           <select v-model="assetCategoryFilter" @change="loadAssets" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-surface">
             <option value="">{{ t('backoffice.maintenance.all') }}</option>
             <option v-for="(label, val) in categoryLabels" :key="val" :value="val">{{ label }}</option>
           </select>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
           <select v-model="assetStatusFilter" @change="loadAssets" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-surface">
             <option value="">{{ t('backoffice.maintenance.all') }}</option>
             <option v-for="(cfg, val) in assetStatusConfig" :key="val" :value="val">{{ cfg.label }}</option>
@@ -492,17 +492,17 @@ onMounted(() => loadTab('assets'))
           <div class="flex items-start justify-between mb-2">
             <div>
               <div class="font-bold text-gray-900 dark:text-gray-100">{{ a.name }}</div>
-              <div class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ a.code }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-400 font-mono">{{ a.code }}</div>
             </div>
             <AppBadge size="sm" :variant="assetStatusConfig[a.status]?.variant ?? 'neutral'">
               {{ assetStatusConfig[a.status]?.label ?? a.status }}
             </AppBadge>
           </div>
-          <div class="text-xs text-gray-500 dark:text-gray-500 space-y-1 mb-3">
+          <div class="text-xs text-gray-500 dark:text-gray-400 space-y-1 mb-3">
             <div>{{ t('backoffice.maintenance.column.category') }}: <span class="font-medium text-gray-700 dark:text-gray-300">{{ categoryLabels[a.category] ?? a.category }}</span></div>
             <div v-if="a.location">{{ t('backoffice.maintenance.location') }}: <span class="font-medium text-gray-700 dark:text-gray-300">{{ a.location }}</span></div>
             <div v-if="a.purchase_cost != null">{{ t('backoffice.maintenance.purchaseCost') }}: <span class="font-medium text-gray-700 dark:text-gray-300">{{ fmtMoney(a.purchase_cost) }}</span></div>
-            <div v-if="a.purchase_cost != null">{{ t('backoffice.maintenance.accumulatedDepreciation') }}: <span class="font-medium text-amber-600">{{ fmtMoney(a.accumulated_depreciation) }}</span></div>
+            <div v-if="a.purchase_cost != null">{{ t('backoffice.maintenance.accumulatedDepreciation') }}: <span class="font-medium text-amber-600 dark:text-amber-300">{{ fmtMoney(a.accumulated_depreciation) }}</span></div>
             <div v-if="a.warranty_until">{{ t('backoffice.maintenance.warrantyUntil') }}: {{ fmtDate(a.warranty_until) }}</div>
           </div>
           <div class="flex gap-2" v-if="auth.hasRole('manager') && a.status !== 'disposed'">
@@ -520,14 +520,14 @@ onMounted(() => loadTab('assets'))
     <div v-if="tab === 'work-orders'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
           <select v-model="woStatusFilter" @change="loadWorkOrders" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-surface">
             <option value="">{{ t('backoffice.maintenance.all') }}</option>
             <option v-for="(cfg, val) in woStatusConfig" :key="val" :value="val">{{ cfg.label }}</option>
           </select>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.priorityLabel') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.priorityLabel') }}</label>
           <select v-model="woPriorityFilter" @change="loadWorkOrders" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-surface">
             <option value="">{{ t('backoffice.maintenance.all') }}</option>
             <option v-for="(cfg, val) in priorityConfig" :key="val" :value="val">{{ cfg.label }}</option>
@@ -543,9 +543,9 @@ onMounted(() => loadTab('assets'))
             <div class="min-w-0">
               <div class="flex items-center gap-2 flex-wrap mb-1">
                 <span class="font-bold text-gray-900 dark:text-gray-100">{{ wo.title }}</span>
-                <span class="text-xs text-gray-400 dark:text-gray-500 font-mono">{{ wo.order_number }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-400 font-mono">{{ wo.order_number }}</span>
               </div>
-              <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-500 flex-wrap">
+              <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 flex-wrap">
                 <span>{{ orderTypeLabels[wo.order_type] ?? wo.order_type }}</span>
                 <span v-if="wo.asset_id">· {{ assetLabel(wo.asset_id) }}</span>
                 <span v-if="wo.scheduled_date">· {{ t('backoffice.maintenance.scheduledFor', { date: fmtDate(wo.scheduled_date) }) }}</span>
@@ -558,18 +558,18 @@ onMounted(() => loadTab('assets'))
           </div>
 
           <div v-if="expandedWorkOrder === wo.id" class="border-t border-stone-100 dark:border-border/50 p-4 space-y-3">
-            <p v-if="wo.description" class="text-sm text-gray-600 dark:text-gray-500">{{ wo.description }}</p>
+            <p v-if="wo.description" class="text-sm text-gray-600 dark:text-gray-400">{{ wo.description }}</p>
             <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-              <div><span class="text-gray-400 dark:text-gray-500 block">{{ t('backoffice.maintenance.labourHours') }}</span><span class="font-bold">{{ wo.labour_hours }}</span></div>
-              <div><span class="text-gray-400 dark:text-gray-500 block">{{ t('backoffice.maintenance.labourCost') }}</span><span class="font-bold">{{ fmtMoney(wo.labour_cost) }}</span></div>
-              <div><span class="text-gray-400 dark:text-gray-500 block">{{ t('backoffice.maintenance.partsCost') }}</span><span class="font-bold">{{ fmtMoney(wo.parts_cost) }}</span></div>
-              <div><span class="text-gray-400 dark:text-gray-500 block">{{ t('backoffice.maintenance.completedAt') }}</span><span class="font-bold">{{ wo.completed_at ? fmtDate(wo.completed_at) : '—' }}</span></div>
+              <div><span class="text-gray-400 dark:text-gray-400 block">{{ t('backoffice.maintenance.labourHours') }}</span><span class="font-bold">{{ wo.labour_hours }}</span></div>
+              <div><span class="text-gray-400 dark:text-gray-400 block">{{ t('backoffice.maintenance.labourCost') }}</span><span class="font-bold">{{ fmtMoney(wo.labour_cost) }}</span></div>
+              <div><span class="text-gray-400 dark:text-gray-400 block">{{ t('backoffice.maintenance.partsCost') }}</span><span class="font-bold">{{ fmtMoney(wo.parts_cost) }}</span></div>
+              <div><span class="text-gray-400 dark:text-gray-400 block">{{ t('backoffice.maintenance.completedAt') }}</span><span class="font-bold">{{ wo.completed_at ? fmtDate(wo.completed_at) : '—' }}</span></div>
             </div>
 
             <div v-if="wo.parts.length">
-              <p class="text-xs font-bold text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.maintenance.usedParts') }}</p>
+              <p class="text-xs font-bold text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.maintenance.usedParts') }}</p>
               <table class="w-full text-xs">
-                <thead class="text-gray-400 dark:text-gray-500"><tr><th class="text-start py-1">{{ t('backoffice.maintenance.column.part') }}</th><th class="text-start py-1">{{ t('backoffice.maintenance.column.quantity') }}</th><th class="text-start py-1">{{ t('backoffice.maintenance.column.cost') }}</th></tr></thead>
+                <thead class="text-gray-400 dark:text-gray-400"><tr><th class="text-start py-1">{{ t('backoffice.maintenance.column.part') }}</th><th class="text-start py-1">{{ t('backoffice.maintenance.column.quantity') }}</th><th class="text-start py-1">{{ t('backoffice.maintenance.column.cost') }}</th></tr></thead>
                 <tbody class="divide-y divide-stone-100">
                   <tr v-for="p in wo.parts" :key="p.id">
                     <td class="py-1">{{ p.part_name }}</td>
@@ -594,7 +594,7 @@ onMounted(() => loadTab('assets'))
     <!-- ══ PREVENTIVE SCHEDULES ══ -->
     <div v-if="tab === 'schedules'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
-        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-500">
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
           <input type="checkbox" v-model="scheduleActiveOnly" @change="loadSchedules" />
           {{ t('backoffice.maintenance.activeOnly') }}
         </label>
@@ -607,21 +607,21 @@ onMounted(() => loadTab('assets'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.maintenance.column.title') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.maintenance.column.asset') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.maintenance.column.everyDays') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.maintenance.column.lastDone') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.maintenance.column.nextDue') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.maintenance.column.status') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.maintenance.column.title') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.maintenance.column.asset') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.maintenance.column.everyDays') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.maintenance.column.lastDone') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.maintenance.column.nextDue') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.maintenance.column.status') }}</th>
                 <th class="px-4 py-3"></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="s in schedules" :key="s.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-sm">{{ s.title }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ assetLabel(s.asset_id) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ s.frequency_days }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ fmtDate(s.last_done) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ assetLabel(s.asset_id) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ s.frequency_days }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ fmtDate(s.last_done) }}</td>
                 <td class="px-4 py-3 text-sm font-bold" :class="new Date(s.next_due) < new Date() ? 'text-red-600' : 'text-gray-900 dark:text-gray-100'">{{ fmtDate(s.next_due) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="s.is_active ? 'success' : 'neutral'">{{ s.is_active ? t('backoffice.maintenance.active') : t('backoffice.maintenance.stopped') }}</AppBadge>
@@ -646,68 +646,68 @@ onMounted(() => loadTab('assets'))
       <div class="space-y-3">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.name') }} *</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.name') }} *</label>
             <input v-model="assetForm.name" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.code') }} *</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.code') }} *</label>
             <input v-model="assetForm.code" type="text" :disabled="!!assetModal.editingId"
-              class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400 dark:text-gray-500" />
+              class="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400 dark:border-border dark:text-gray-400 dark:disabled:bg-gray-800" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.category') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.category') }}</label>
             <select v-model="assetForm.category" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(label, val) in categoryLabels" :key="val" :value="val">{{ label }}</option>
             </select>
           </div>
           <div v-if="assetModal.editingId">
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
             <select v-model="assetForm.status" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(cfg, val) in assetStatusConfig" :key="val" :value="val" :disabled="val === 'disposed'">{{ cfg.label }}</option>
             </select>
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.location') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.location') }}</label>
             <input v-model="assetForm.location" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.serialNumber') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.serialNumber') }}</label>
             <input v-model="assetForm.serial_number" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div v-if="!assetModal.editingId">
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.purchaseDate') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.purchaseDate') }}</label>
             <input v-model="assetForm.purchase_date" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.warrantyUntil') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.warrantyUntil') }}</label>
             <input v-model="assetForm.warranty_until" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
 
         <div class="border-t border-stone-100 dark:border-border/50 pt-3">
-          <p class="text-xs font-bold text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.maintenance.depreciationDataOptional') }}</p>
+          <p class="text-xs font-bold text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.maintenance.depreciationDataOptional') }}</p>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.purchaseCost') }}</label>
+              <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.purchaseCost') }}</label>
               <input v-model="assetForm.purchase_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.salvageValue') }}</label>
+              <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.salvageValue') }}</label>
               <input v-model="assetForm.salvage_value" type="number" min="0" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.usefulLifeYears') }}</label>
+              <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.usefulLifeYears') }}</label>
               <input v-model="assetForm.useful_life_years" type="number" min="1" max="100" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.depreciationStart') }}</label>
+              <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.depreciationStart') }}</label>
               <input v-model="assetForm.depreciation_start_date" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
           </div>
         </div>
 
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.notes') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.notes') }}</label>
           <textarea v-model="assetForm.notes" rows="2" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm resize-none" />
         </div>
       </div>
@@ -723,58 +723,58 @@ onMounted(() => loadTab('assets'))
     <AppModal :open="woModal.open" :title="woModal.editingId ? t('backoffice.maintenance.editWoTitle') : t('backoffice.maintenance.newWoTitle')" @close="woModal.open = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.titleLabel') }} *</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.titleLabel') }} *</label>
           <input v-model="woForm.title" type="text" :placeholder="t('backoffice.maintenance.woTitlePlaceholder')" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.description') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.description') }}</label>
           <textarea v-model="woForm.description" rows="2" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm resize-none" />
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div v-if="!woModal.editingId">
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.assetOptional') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.assetOptional') }}</label>
             <select v-model="woForm.asset_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option value="">{{ t('backoffice.maintenance.noSpecificAsset') }}</option>
               <option v-for="a in assets" :key="a.id" :value="a.id">{{ a.name }} ({{ a.code }})</option>
             </select>
           </div>
           <div v-if="!woModal.editingId">
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.orderTypeLabel') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.orderTypeLabel') }}</label>
             <select v-model="woForm.order_type" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(label, val) in orderTypeLabels" :key="val" :value="val">{{ label }}</option>
             </select>
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.priorityLabel') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.priorityLabel') }}</label>
             <select v-model="woForm.priority" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(cfg, val) in priorityConfig" :key="val" :value="val">{{ cfg.label }}</option>
             </select>
           </div>
           <div v-if="woModal.editingId">
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
             <select v-model="woForm.status" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
               <option v-for="(cfg, val) in woStatusConfig" :key="val" :value="val">{{ cfg.label }}</option>
             </select>
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.assignedToOptional') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.assignedToOptional') }}</label>
             <input v-model="woForm.assigned_to" type="number" min="1" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.scheduledDate') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.scheduledDate') }}</label>
             <input v-model="woForm.scheduled_date" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div v-if="woModal.editingId">
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.labourHours') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.labourHours') }}</label>
             <input v-model="woForm.labour_hours" type="number" min="0" step="0.5" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div v-if="woModal.editingId">
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.labourCost') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.labourCost') }}</label>
             <input v-model="woForm.labour_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.notes') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.notes') }}</label>
           <textarea v-model="woForm.notes" rows="2" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm resize-none" />
         </div>
       </div>
@@ -790,20 +790,20 @@ onMounted(() => loadTab('assets'))
     <AppModal :open="partModal.open" :title="t('backoffice.maintenance.addPartTitle')" size="sm" @close="partModal.open = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.partName') }} *</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.partName') }} *</label>
           <input v-model="partForm.part_name" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.partNumberOptional') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.partNumberOptional') }}</label>
           <input v-model="partForm.part_number" type="text" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.quantity') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.quantity') }}</label>
             <input v-model="partForm.quantity" type="number" min="0.01" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.unitCost') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.unitCost') }}</label>
             <input v-model="partForm.unit_cost" type="number" min="0" step="0.01" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
@@ -820,11 +820,11 @@ onMounted(() => loadTab('assets'))
     <AppModal :open="scheduleModal.open" :title="scheduleModal.editingId ? t('backoffice.maintenance.editScheduleTitle') : t('backoffice.maintenance.newScheduleTitle')" @close="scheduleModal.open = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.titleLabel') }} *</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.titleLabel') }} *</label>
           <input v-model="scheduleForm.title" type="text" :placeholder="t('backoffice.maintenance.schedulePlaceholder')" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div v-if="!scheduleModal.editingId">
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.asset') }} *</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.asset') }} *</label>
           <select v-model="scheduleForm.asset_id" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
             <option value="">{{ t('backoffice.maintenance.selectAssetPlaceholder') }}</option>
             <option v-for="a in assets" :key="a.id" :value="a.id">{{ a.name }} ({{ a.code }})</option>
@@ -832,23 +832,23 @@ onMounted(() => loadTab('assets'))
         </div>
         <div class="grid grid-cols-2 gap-3">
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.everyNDays') }} *</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.everyNDays') }} *</label>
             <input v-model="scheduleForm.frequency_days" type="number" min="1" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.column.nextDue') }} *</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.nextDue') }} *</label>
             <input v-model="scheduleForm.next_due" type="date" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           </div>
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.assignedToOptional') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.assignedToOptional') }}</label>
           <input v-model="scheduleForm.assigned_to" type="number" min="1" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.maintenance.checklistOptional') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.checklistOptional') }}</label>
           <textarea v-model="scheduleForm.checklist" rows="2" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm resize-none" />
         </div>
-        <label v-if="scheduleModal.editingId" class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-500">
+        <label v-if="scheduleModal.editingId" class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
           <input type="checkbox" v-model="scheduleForm.is_active" /> {{ t('backoffice.maintenance.active') }}
         </label>
       </div>

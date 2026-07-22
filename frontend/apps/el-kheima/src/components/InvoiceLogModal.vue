@@ -7,13 +7,17 @@
  * →403، (2) حتى وردية نفسه محتاجة موافقة PIN مدير+ قبل ما التفاصيل تتعرض —
  * بيانات مالية تفصيلية حسّاسة. البوابة التانية دي هي PinGuardModal (S-03).
  */
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS } from '@resort-os/core'
-import { AppModal, AppSpinner, EmptyState } from '@resort-os/ui'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
+import { AppButton, AppModal, AppSpinner, EmptyState } from '@resort-os/ui'
 import PinGuardModal from './PinGuardModal.vue'
 
 const props = defineProps<{ shiftId: number }>()
 const emit = defineEmits<{ close: [] }>()
+const { t } = useI18n()
+const { formatMoney, formatTime } = useStaffFormat()
 
 interface InvoiceLine {
   payment_id: number
@@ -43,7 +47,7 @@ async function fetchInvoices(approverUserId: number | null, approverPin: string 
     showPinGuard.value = false
   } catch (e: any) {
     // showPinGuard يفضل true — المستخدم يقدر يصحح الـ PIN ويحاول تاني
-    loadError.value = e?.response?.data?.detail ?? 'تعذّر تحميل سجل الفواتير'
+    loadError.value = e?.response?.data?.detail ?? t('backoffice.shiftDashboard.invoiceDetail.loadFailed')
   } finally {
     loading.value = false
   }
@@ -53,17 +57,18 @@ function onGuardApproved(payload: { approverUserId: number | null; approverPin: 
   fetchInvoices(payload.approverUserId, payload.approverPin)
 }
 
-const METHOD_LABEL: Record<string, string> = {
-  cash: '💵 كاش',
-  card: '💳 كارت',
-  bank_transfer: '🏦 تحويل بنكي',
-  credit: '📝 آجل',
-  room_charge: '🛏️ حساب الغرفة',
-  other: 'أخرى',
-}
+const methodLabel = computed<Record<string, string>>(() => ({
+  cash: `💵 ${t('backoffice.shiftDashboard.invoiceDetail.methods.cash')}`,
+  card: `💳 ${t('backoffice.shiftDashboard.invoiceDetail.methods.card')}`,
+  bank_transfer: `🏦 ${t('backoffice.shiftDashboard.invoiceDetail.methods.bankTransfer')}`,
+  credit: `📝 ${t('backoffice.shiftDashboard.invoiceDetail.methods.credit')}`,
+  room: `🛏️ ${t('backoffice.shiftDashboard.invoiceDetail.methods.roomCharge')}`,
+  room_charge: `🛏️ ${t('backoffice.shiftDashboard.invoiceDetail.methods.roomCharge')}`,
+  other: t('backoffice.shiftDashboard.invoiceDetail.methods.other'),
+}))
 
 function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+  return formatTime(iso)
 }
 </script>
 
@@ -72,19 +77,19 @@ function fmtTime(iso: string): string {
   <PinGuardModal
     v-if="showPinGuard"
     :min-level="60"
-    title="سجل فواتير الوردية"
-    message="عرض تفاصيل فواتير الوردية يحتاج موافقة مدير بالـ PIN"
+    :title="t('backoffice.shiftDashboard.invoiceLog')"
+    :message="t('backoffice.shiftDashboard.invoiceDetail.approvalMessage')"
     :loading="loading"
     :error-message="loadError"
     @approved="onGuardApproved"
     @cancel="emit('close')"
   />
 
-  <AppModal v-else :open="true" title="سجل فواتير الوردية" size="md" @close="emit('close')">
-    <div dir="rtl" class="space-y-2">
+  <AppModal v-else :open="true" :title="t('backoffice.shiftDashboard.invoiceLog')" size="md" @close="emit('close')">
+    <div class="space-y-2">
       <div v-if="loading" class="flex items-center justify-center py-10"><AppSpinner /></div>
-      <EmptyState v-else-if="!invoices.length" title="مفيش فواتير في الوردية دي لحد دلوقتي" />
-      <div v-else class="divide-y divide-stone-100 max-h-96 overflow-y-auto">
+      <EmptyState v-else-if="!invoices.length" :title="t('backoffice.shiftDashboard.invoiceDetail.empty')" />
+      <div v-else class="max-h-96 divide-y divide-stone-100 overflow-y-auto dark:divide-border">
         <div
           v-for="inv in invoices"
           :key="inv.payment_id"
@@ -92,25 +97,24 @@ function fmtTime(iso: string): string {
           :class="inv.is_voided && 'opacity-50'"
         >
           <div>
-            <div class="text-sm font-semibold text-gray-900" :class="inv.is_voided && 'line-through'">
+            <div class="text-sm font-semibold text-gray-900 dark:text-gray-100" :class="inv.is_voided && 'line-through'">
               {{ inv.guest_name }}
             </div>
             <div class="text-xs text-gray-400">
-              {{ METHOD_LABEL[inv.method] ?? inv.method }} — {{ fmtTime(inv.posted_at) }}
+              {{ methodLabel[inv.method] ?? inv.method }} — {{ fmtTime(inv.posted_at) }}
             </div>
-            <div v-if="inv.is_voided" class="text-xs text-red-500">ملغاة</div>
+            <div v-if="inv.is_voided" class="text-xs text-red-500 dark:text-red-300">{{ t('backoffice.shiftDashboard.invoiceDetail.voided') }}</div>
           </div>
-          <div class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 line-through' : 'text-blue-700'">
-            {{ inv.amount }} ج
+          <div class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 line-through' : 'text-blue-700 dark:text-blue-300'">
+            {{ formatMoney(inv.amount, 'EGP') }}
           </div>
         </div>
       </div>
     </div>
     <template #footer>
-      <button
-        @click="emit('close')"
-        class="w-full py-2 text-sm font-semibold text-gray-600 border border-stone-200 rounded-lg"
-      >إغلاق</button>
+      <AppButton variant="outline" block @click="emit('close')">
+        {{ t('backoffice.shiftDashboard.invoiceDetail.close') }}
+      </AppButton>
     </template>
   </AppModal>
 </template>

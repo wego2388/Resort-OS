@@ -267,16 +267,20 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
     <div class="flex-1 flex flex-col min-w-0">
 
       <!-- Topbar -->
-      <header class="bg-white dark:bg-gray-900 border-b border-stone-200 dark:border-gray-700 px-6 py-3 flex items-center justify-between flex-shrink-0">
+      <header class="flex flex-shrink-0 items-center justify-between border-b border-stone-200 bg-white px-4 py-3 dark:border-gray-700 dark:bg-gray-900 sm:px-6">
         <div class="flex items-center gap-4">
-          <button @click="toggleSidebar"
-            class="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition-colors">
+          <button
+            type="button"
+            :aria-label="t('backoffice.layout.toggleSidebar')"
+            @click="toggleSidebar"
+            class="flex h-11 w-11 items-center justify-center rounded-xl text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
           </button>
           <div>
-            <nav v-if="breadcrumb" class="flex items-center gap-1.5 text-[11px] text-gray-400 dark:text-gray-500 mb-0.5">
+            <nav v-if="breadcrumb" class="mb-0.5 flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
               <span>{{ breadcrumb.section }}</span>
               <span>/</span>
               <span class="text-gray-500 dark:text-gray-400 font-medium">{{ breadcrumb.page }}</span>
@@ -301,16 +305,19 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
             </kbd>
           </button>
           <GuestAlertsBell />
-          <ThemeToggle />
+          <ThemeToggle
+            :light-label="t('backoffice.layout.switchLight')"
+            :dark-label="t('backoffice.layout.switchDark')"
+          />
           <LanguageSwitcher variant="compact" />
-          <span class="hidden lg:block text-xs text-gray-500 dark:text-gray-500">
+          <span class="hidden text-xs text-gray-500 dark:text-gray-400 lg:block">
             {{ formatDate(new Date()) }}
           </span>
         </div>
       </header>
 
       <!-- Content -->
-      <main class="flex-1 overflow-auto p-6 bg-stone-50 dark:bg-gray-950">
+      <main class="flex-1 overflow-auto bg-stone-50 p-4 dark:bg-gray-950 sm:p-6">
         <RouterView />
       </main>
     </div>
@@ -321,6 +328,13 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
     :open="showCommandPalette"
     :items="commandItems"
     :placeholder="t('backoffice.layout.searchPlaceholder')"
+    :recent-label="t('backoffice.layout.commandRecent')"
+    :actions-label="t('backoffice.layout.commandActions')"
+    :no-results-label="t('backoffice.layout.commandNoResults')"
+    :start-typing-label="t('backoffice.layout.commandStartTyping')"
+    :navigate-label="t('backoffice.layout.commandNavigate')"
+    :execute-label="t('backoffice.layout.commandExecute')"
+    :close-label="t('backoffice.layout.commandClose')"
     @close="showCommandPalette = false"
   />
 </template>

@@ -134,7 +134,7 @@ async function handleLogin() {
             />
           </div>
           <div v-if="!needsOtp && !needsEnrollmentToken" class="text-center -mt-2">
-            <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline">
+            <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline dark:text-blue-300">
               {{ t('backoffice.login.forgotPassword') }}
             </router-link>
           </div>
@@ -179,12 +179,12 @@ async function handleLogin() {
               autofocus
               class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-wider font-mono text-gray-900 uppercase"
             />
-            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">
               {{ t(useRecoveryCode ? 'backoffice.login.recoveryCodeHint' : 'backoffice.login.twoFaHint') }}
             </p>
             <button
               type="button"
-              class="mt-2 text-sm text-blue-700 hover:underline"
+              class="mt-2 text-sm text-blue-700 hover:underline dark:text-blue-300"
               @click="useRecoveryCode = !useRecoveryCode"
             >
               {{ t(useRecoveryCode ? 'backoffice.login.useAuthenticator' : 'backoffice.login.useRecoveryCode') }}
@@ -202,7 +202,7 @@ async function handleLogin() {
             {{ loading ? t('backoffice.login.signingIn') : t('backoffice.login.signIn') }}
           </button>
         </form>
-        <p class="text-center text-xs text-gray-400 dark:text-gray-500 mt-6">{{ t('backoffice.login.footer') }}</p>
+        <p class="text-center text-xs text-gray-400 dark:text-gray-400 mt-6">{{ t('backoffice.login.footer') }}</p>
       </div>
     </div>
   </div>
