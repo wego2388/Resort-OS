@@ -446,6 +446,14 @@ class DiningOrder(Base, TimestampMixin):
     # services.sync_offline_order).
     payment_method:            Mapped[str | None]  = mapped_column(String(20), nullable=True)
     # cash | card | room | wallet
+    # Gate 8: public orders are bound to a short-lived guest session and are
+    # recovered through a random reference, never the sequential primary key.
+    guest_session_id:          Mapped[int | None] = mapped_column(
+        ForeignKey("guest_sessions.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    guest_public_reference:    Mapped[str | None] = mapped_column(
+        String(48), nullable=True, unique=True, index=True,
+    )
     legacy_module: Mapped[str | None] = mapped_column(String(20), nullable=True)
     legacy_id:     Mapped[int | None] = mapped_column(Integer, nullable=True)
 

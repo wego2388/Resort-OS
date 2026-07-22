@@ -164,6 +164,37 @@ class TestExactlyOneCommit:
         assert len(commit_calls) == 1
         assert db.query(CostCenter).filter_by(branch_id=branch.id).count() > 0
 
+    def test_successful_payment_auto_resolves_linked_bill_request(self, db):
+        from app.modules.core.models import AuditLog, GuestAlert
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        make_finance_accounts(db, branch)
+        item = make_item(db, branch, outlet)
+        order = make_order(db, branch, outlet, item, quantity=1)
+        alert = GuestAlert(
+            branch_id=branch.id,
+            context_type="other",
+            context_id=0,
+            alert_type="request_bill",
+            status="open",
+            public_reference=f"req_{uuid.uuid4().hex}",
+            outlet_id=outlet.id,
+            order_id=order.id,
+        )
+        db.add(alert)
+        db.commit()
+
+        result = services.update_order_status(db, order.id, "paid")
+        assert result.status == "paid"
+        db.refresh(alert)
+        assert alert.status == "resolved"
+        assert alert.resolved_at is not None
+        assert db.query(AuditLog).filter(
+            AuditLog.action == "guest_request_auto_resolved_on_payment",
+            AuditLog.entity_id == alert.id,
+        ).count() == 1
+
 
 class TestFailureInjectionZeroSideEffects:
     """كل تست هنا يفشّل خطوة معيّنة داخل _mark_order_paid، ثم يفتح جلسة طازة

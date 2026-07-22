@@ -67,6 +67,21 @@ def enable_self_order(db, branch):
     db.commit()
 
 
+def guest_session_headers(client: TestClient, db, branch, table) -> dict[str, str]:
+    import secrets
+    from app.modules.core import crud as core_crud
+
+    token = secrets.token_urlsafe(24)
+    core_crud.create_service_location_token(
+        db, token=token, branch_id=branch.id,
+        location_type="dining_table", location_id=table.id, created_by=None,
+    )
+    db.commit()
+    response = client.post("/api/v1/public/guest-sessions", json={"token": token})
+    assert response.status_code == 201, response.text
+    return {"X-Guest-Session": response.json()["session_token"]}
+
+
 class TestCafePublicOrderEndpoint:
     def test_create_guest_order_no_auth(self, client: TestClient, db):
         """POST /dining/public/orders (outlet_type=cafe) يشتغل بدون token."""
@@ -76,16 +91,16 @@ class TestCafePublicOrderEndpoint:
         item   = make_item(db, branch, outlet)
         table  = make_table(db, branch, outlet)
 
+        headers = guest_session_headers(client, db, branch, table)
         payload = {
             "outlet_id": outlet.id,
-            "table_id":  table.id,
             "items": [{"item_id": item.id, "quantity": 2}],
         }
-        resp = client.post("/api/v1/dining/public/orders", json=payload)
+        resp = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
         assert resp.status_code == 201
 
         data = resp.json()
-        assert "order_id"     in data
+        assert data["public_reference"].startswith("ord_")
         assert "order_number" in data
         assert data["status"] in ("open", "in_kitchen", "held")
         assert data["items_count"] == 2
@@ -97,11 +112,13 @@ class TestCafePublicOrderEndpoint:
         enable_self_order(db, branch)
         outlet = make_cafe_outlet(db, branch)
         item   = make_item(db, branch, outlet, available=False)
+        table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
 
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
             "items": [{"item_id": item.id, "quantity": 1}],
-        })
+        }, headers=headers)
         assert resp.status_code == 400
 
     def test_internal_order_endpoint_still_requires_auth(self, client: TestClient, db):
@@ -127,23 +144,28 @@ class TestCafePublicOrderStatusEndpoint:
         branch = make_branch(db)
         enable_self_order(db, branch)
         outlet = make_cafe_outlet(db, branch)
-        item   = make_item(db, branch, outlet)
+        make_item(db, branch, outlet)
         sunbed = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, sunbed)
 
-        menu_resp = client.get("/api/v1/dining/public/menu", params={"outlet_id": outlet.id})
+        menu_resp = client.get(
+            "/api/v1/dining/public/service-menu",
+            params={"outlet_id": outlet.id}, headers=headers,
+        )
         assert menu_resp.status_code == 200
         menu = menu_resp.json()
         assert len(menu["items"]) >= 1
 
         order_resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": outlet.id,
-            "table_id":  sunbed.id,
             "items": [{"item_id": menu["items"][0]["id"], "quantity": 1}],
-        })
+        }, headers=headers)
         assert order_resp.status_code == 201
-        order_id = order_resp.json()["order_id"]
+        reference = order_resp.json()["public_reference"]
 
         # Gate 1 containment (جولة مراجعة Codex الثالثة): متابعة حالة
         # الطلب مقفولة تمامًا لحد Gate 8 — راجع get_guest_order_status.
-        poll_resp = client.get(f"/api/v1/dining/public/orders/{order_id}")
-        assert poll_resp.status_code == 404, poll_resp.text
+        poll_resp = client.get(
+            f"/api/v1/dining/public/orders/{reference}", headers=headers,
+        )
+        assert poll_resp.status_code == 200, poll_resp.text

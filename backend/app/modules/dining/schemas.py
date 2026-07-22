@@ -650,14 +650,32 @@ class PublicMenuResponse(BaseModel):
     """الرد الكامل على GET /dining/public/menu — categories + items في طلب واحد.
     outlet_name/outlet_name_ar مضافين (DINING_CUTOVER_PLAN.md Batch 6 frontend)
     عشان apps/public's OrderView.vue تعرض اسم المنفذ الحقيقي بدل تسمية ثابتة
-    "المطعم"/"الكافيه" (dining بيدعم أي outlet_type مفتوح، مش بس النوعين دول)."""
-    branch_id:      int
-    outlet_id:      int
-    outlet_name:    str
-    outlet_name_ar: Optional[str]
-    table_id:       Optional[int]
-    categories:     list[PublicMenuCategoryRead]
-    items:          list[PublicMenuItemRead]
+    "المطعم"/"الكافيه" (dining بيدعم أي outlet_type مفتوح، مش بس النوعين دول).
+
+    self_order_enabled (Gate 8 Phase 1 Batch D/E، 2026-07-22): قبل كده
+    الفرونت إند كان بيعرض سلة الطلب الذاتي دايمًا بغض النظر عن حالة
+    services.assert_guest_self_order_enabled — الضيف كان يقدر يملى سلة
+    كاملة ويكتشف الرفض (400) بس وقت الإرسال. بقى الرد نفسه بيقول للضيف
+    مقدمًا لو الطلب الذاتي متاح لهذا الفرع، فالواجهة تعرض view_and_call
+    بس (الافتراضي حسب Decision 0001) لو لأ."""
+    branch_id:          int
+    outlet_id:          int
+    outlet_name:        str
+    outlet_name_ar:     Optional[str]
+    table_id:           Optional[int]
+    self_order_enabled: bool
+    categories:         list[PublicMenuCategoryRead]
+    items:              list[PublicMenuItemRead]
+
+
+class GuestServiceMenuResponse(BaseModel):
+    """Token/session-scoped menu without branch or physical-location IDs."""
+    outlet_id:          int
+    outlet_name:        str
+    outlet_name_ar:     Optional[str]
+    self_order_enabled: bool
+    categories:         list[PublicMenuCategoryRead]
+    items:              list[PublicMenuItemRead]
 
 
 class GuestOrderItemCreate(BaseModel):
@@ -670,24 +688,22 @@ class GuestOrderItemCreate(BaseModel):
 
 
 class GuestOrderCreate(BaseModel):
-    """الطلب من الضيف عبر QR."""
+    """Order body; table and branch come from X-Guest-Session."""
+    model_config = ConfigDict(extra="forbid")
+
     outlet_id:    int
-    table_id:     Optional[int] = Field(None, ge=1)
     guests_count: int = Field(1, ge=1)
     notes:        Optional[str] = Field(None, max_length=300)
     items:        list[GuestOrderItemCreate] = Field(..., min_length=1)
 
 
 class GuestOrderRead(BaseModel):
-    """استجابة تقديم الطلب فورًا (POST /dining/public/orders) — **تصحيح
-    (جولة مراجعة Codex الثالثة):** الوصف القديم "بدون بيانات مالية داخلية"
-    غير دقيق — total (المبلغ الفعلي) موجود هنا فعليًا. الاستخدام الوحيد
-    المتبقي لهذا الـschema هو استجابة الإنشاء نفسها (نفس الطلب اللي الضيف
-    عمله للتو، مش تخمين order_id تاني) — مسار متابعة الحالة بعد الإنشاء
-    (GET /orders/{id}) مقفول بالكامل لحد Gate 8 (راجع
-    get_guest_order_status)، فمفيش خطر تسريب لطلبات تانية من هذا الـschema
-    نفسه، بس الادعاء "بدون بيانات مالية" كان غلط من الأساس."""
-    order_id:     int
+    """Session-bound guest order creation/status response.
+
+    ``public_reference`` is random and status reads additionally require the
+    issuing guest session; the sequential database ID is never returned.
+    """
+    public_reference: str
     order_number: str
     status:       str
     total:        Decimal

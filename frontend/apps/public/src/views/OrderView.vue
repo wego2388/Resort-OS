@@ -1,49 +1,43 @@
 <script setup lang="ts">
 /**
- * OrderView — قائمة الطعام للضيف عبر QR (منفذ + طاولة/شمسية).
+ * Gate 8 guest service: the URL contains only a rotatable location token.
  *
- * دمج frontend/apps/qr → apps/public (2026-07-06): كان فيه تطبيق مستقل
- * بالكامل (apps/qr، بورت 3005) لسكانر الـ QR بس، رغم إنه زي apps/public
- * تمامًا ضيف بدون تسجيل دخول — الدمج قلل تطبيق كامل (build/deploy/nginx)
- * من غير أي فايدة معمارية حقيقية (لسه مفيش أكواد QR مطبوعة فعليًا وقت الدمج).
- *
- * DINING_CUTOVER_PLAN.md Batch 6 (2026-07-13): كانت restaurant/cafe موديولين
- * منفصلين بمسار QR بالنوع (`/order/restaurant/5`) — بعد الدمج في dining
- * (outlet_type نص مفتوح، مش بس مطعم/كافيه)، مفيش معنى نفرّق بالنوع في
- * الـ URL؛ الـ QR بيشاور مباشرة على رقم المنفذ (outlet_id) الحقيقي:
- *   /order/12/5   → منفذ #12، طاولة/شمسية #5
- * ⚠️ QR القديمة (restaurant/cafe) بقت غير صالحة فعليًا بعد الحذف — لازم
- * إعادة طباعة كل QR الطاولات عبر admin/QRGeneratorView.vue الجديدة (نفس
- * الملاحظة موجودة في تقرير الـ cutover). الشمسيات مُمثَّلة بنفس صفوف
- * dining_tables برقم مميز (زي "شمسية 12") — مفيش موديل "sunbed" منفصل،
- * راجع CLAUDE.md §13.
- *
- * يستخدم (بدون auth):
- *   GET  /api/v1/dining/public/menu
- *   POST /api/v1/dining/public/orders
- *   GET  /api/v1/dining/public/orders/:id  (polling حالة الطلب)
- *   POST /api/v1/public/alerts             (نادِ الجرسون / هات الفاتورة)
- *
- * تنبيهات الضيف (guest alerts): قناة منفصلة تمامًا عن الطلبات نفسها —
- * الضيف يقدر "ينادي" طاقم الخدمة مباشرة من غير ما يحتاج يطلب صنف أصلاً.
- * context_type="dining_table" (بدل restaurant_table/cafe_table القديمين)
- * لأن الـ backend مفيهوش FK حقيقي على context_id — راجع
- * app/modules/core/models.py::GuestAlert للتفاصيل.
+ * The QR URL is `/s/{token}` only. The backend derives the physical table,
+ * branch, and allowed outlets, then exchanges the QR capability for a
+ * short-lived guest session. Public order/request recovery uses random
+ * references plus that session; sequential IDs never enter the guest URL.
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import axios from 'axios'
 import LanguageSelector from '../components/LanguageSelector.vue'
-import { PUBLIC_BRANCH_ID } from '../constants/resort'
 
 const route = useRoute()
 const { locale, t } = useI18n()
 
-const outletId = computed(() => parseInt(route.params.outletId as string))
-const tableId  = computed(() => route.params.tableId as string)
-const branchId = computed(() => parseInt((route.query.branch as string) ?? '') || PUBLIC_BRANCH_ID)
+const qrToken = computed(() => route.params.token as string)
+const outletId = ref<number | null>(null)
 const apiBase  = '/api/v1/dining/public'
+
+interface ServiceOutlet { id: number; name: string; name_ar: string | null; outlet_type: string }
+interface GuestContext {
+  location_type: string
+  location_label: string
+  service_mode: 'view_and_call' | 'self_order'
+  alerts_enabled: boolean
+  self_order_enabled: boolean
+  outlets: ServiceOutlet[]
+  session_token?: string
+  expires_at?: string
+}
+
+const guestContext = ref<GuestContext | null>(null)
+const sessionToken = ref('')
+const selfOrderEnabled = computed(() => Boolean(guestContext.value?.self_order_enabled))
+const locationLabel = computed(() => guestContext.value?.location_label ?? '')
+const availableOutlets = computed(() => guestContext.value?.outlets ?? [])
+const direction = computed(() => locale.value === 'ar' ? 'rtl' : 'ltr')
 
 // اسم المنفذ الحقيقي (من الـ API نفسه — راجع PublicMenuResponse.outlet_name/
 // outlet_name_ar) بدل تسمية ثابتة "المطعم"/"الكافيه" (dining بيدعم أي
@@ -86,12 +80,31 @@ const placing      = ref(false)
 const placeError   = ref('')
 
 // بعد تقديم الطلب
-const orderId      = ref<number | null>(null)
+const orderReference = ref('')
 const orderNumber  = ref('')
 const orderStatus  = ref('')
 const orderMessage = ref('')
 const orderPlaced  = ref(false)
 let   pollTimer:    ReturnType<typeof setInterval> | null = null
+
+function persistGuestOrder() {
+  if (!orderReference.value) return
+  sessionStorage.setItem(`resort:guest-order:${qrToken.value}`, JSON.stringify({
+    public_reference: orderReference.value,
+    order_number: orderNumber.value,
+    status: orderStatus.value,
+    message: orderMessage.value,
+  }))
+}
+
+function startNewOrder() {
+  orderPlaced.value = false
+  orderReference.value = ''
+  pollError.value = false
+  if (pollTimer) clearInterval(pollTimer)
+  pollTimer = null
+  sessionStorage.removeItem(`resort:guest-order:${qrToken.value}`)
+}
 
 // فشل الـ polling (مثلاً الضيف فقد اتصال الشبكة أثناء الانتظار) — راجع pollOrderStatus تحت.
 // pollError بيفضل true لحد ما محاولة (تلقائية أو يدوية) تنجح، عشان الرسالة تفضل ظاهرة طول
@@ -160,15 +173,23 @@ function extraOptionDisplayName(opt: ExtraOption) {
   return localizedName(opt)
 }
 
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat(locale.value, {
+    style: 'currency', currency: 'EGP', maximumFractionDigits: 2,
+  }).format(value)
+}
+
 // ── Data Loading ───────────────────────────────────────────────────────
 async function fetchMenu() {
+  if (!outletId.value || !sessionToken.value) return
   loading.value = true
   loadError.value = ''
   cart.value = []
   orderPlaced.value = false
   try {
-    const { data } = await axios.get(`${apiBase}/menu`, {
-      params: { outlet_id: outletId.value, table_id: tableId.value || undefined },
+    const { data } = await axios.get(`${apiBase}/service-menu`, {
+      params: { outlet_id: outletId.value },
+      headers: { 'X-Guest-Session': sessionToken.value },
     })
     outletName.value   = data.outlet_name ?? ''
     outletNameAr.value = data.outlet_name_ar ?? null
@@ -177,6 +198,48 @@ async function fetchMenu() {
     activeCategory.value = categories.value[0]?.id ?? null
   } catch (e: any) {
     loadError.value = e?.response?.data?.detail ?? 'تعذّر تحميل القائمة، حاول مجدداً'
+  } finally {
+    loading.value = false
+  }
+}
+
+async function selectOutlet(id: number) {
+  outletId.value = id
+  sessionStorage.setItem(`resort:guest-outlet:${qrToken.value}`, String(id))
+  await fetchMenu()
+}
+
+async function resolveGuestContext() {
+  loading.value = true
+  loadError.value = ''
+  const storageKey = `resort:guest-session:${qrToken.value}`
+  try {
+    // Resolve first so a rotated/disabled QR never trusts a stale browser
+    // session merely because it still exists in sessionStorage.
+    const { data: publicContext } = await axios.get<GuestContext>('/api/v1/public/service-location', {
+      params: { token: qrToken.value },
+    })
+    const storedRaw = sessionStorage.getItem(storageKey)
+    const stored = storedRaw ? JSON.parse(storedRaw) : null
+    if (stored?.session_token && new Date(stored.expires_at).getTime() > Date.now() + 60_000) {
+      sessionToken.value = stored.session_token
+      guestContext.value = { ...publicContext, expires_at: stored.expires_at }
+    } else {
+      const { data } = await axios.post<GuestContext>('/api/v1/public/guest-sessions', { token: qrToken.value })
+      guestContext.value = data
+      sessionToken.value = data.session_token ?? ''
+      sessionStorage.setItem(storageKey, JSON.stringify({
+        session_token: sessionToken.value,
+        expires_at: data.expires_at,
+      }))
+    }
+    const rememberedOutlet = Number(sessionStorage.getItem(`resort:guest-outlet:${qrToken.value}`))
+    const initial = availableOutlets.value.find(outlet => outlet.id === rememberedOutlet)
+      ?? (availableOutlets.value.length === 1 ? availableOutlets.value[0] : null)
+    if (initial) await selectOutlet(initial.id)
+  } catch (e: any) {
+    sessionStorage.removeItem(storageKey)
+    loadError.value = e?.response?.data?.detail ?? t('qr.invalid_token')
   } finally {
     loading.value = false
   }
@@ -266,7 +329,7 @@ function removeFromCartLine(line: CartItem) {
 
 // ── Place Order ────────────────────────────────────────────────────────
 async function placeOrder() {
-  if (cart.value.length === 0 || placing.value) return
+  if (!selfOrderEnabled.value || !outletId.value || cart.value.length === 0 || placing.value) return
   placing.value = true
   placeError.value = ''
   try {
@@ -281,14 +344,15 @@ async function placeOrder() {
 
     const payload = {
       outlet_id:    outletId.value,
-      table_id:     tableId.value ? parseInt(tableId.value) : null,
       guests_count: 1,
       items,
     }
 
-    const { data } = await axios.post(`${apiBase}/orders`, payload)
+    const { data } = await axios.post(`${apiBase}/orders`, payload, {
+      headers: { 'X-Guest-Session': sessionToken.value },
+    })
 
-    orderId.value     = data.order_id
+    orderReference.value = data.public_reference
     orderNumber.value = data.order_number
     orderStatus.value = data.status
     orderMessage.value = data.message
@@ -296,6 +360,7 @@ async function placeOrder() {
     showCart.value    = false
     cart.value        = []
     pollError.value   = false
+    persistGuestOrder()
 
     pollTimer = setInterval(pollOrderStatus, 10_000)
 
@@ -308,13 +373,16 @@ async function placeOrder() {
 
 async function pollOrderStatus() {
   // pollChecking بيمنع تداخل: تيك تلقائي أثناء ما محاولة يدوية (أو تيك سابق بطيء) لسه شغالة
-  if (!orderId.value || pollChecking.value) return
+  if (!orderReference.value || pollChecking.value) return
   pollChecking.value = true
   try {
-    const { data } = await axios.get(`${apiBase}/orders/${orderId.value}`)
+    const { data } = await axios.get(`${apiBase}/orders/${encodeURIComponent(orderReference.value)}`, {
+      headers: { 'X-Guest-Session': sessionToken.value },
+    })
     orderStatus.value  = data.status
     orderMessage.value = data.message
     pollError.value    = false
+    persistGuestOrder()
     if (data.status === 'served' || data.status === 'paid' || data.status === 'cancelled') {
       if (pollTimer) clearInterval(pollTimer)
     }
@@ -328,23 +396,42 @@ async function pollOrderStatus() {
 }
 
 // ── Guest Alerts (نادِ الجرسون / هات الفاتورة) ──────────────────────────
-const sendingAlert  = ref<'call_waiter' | 'request_bill' | null>(null)
+type GuestRequestType = 'call_waiter' | 'ready_to_order' | 'assistance' | 'request_bill'
+interface GuestRequestStatus { public_reference: string; alert_type: GuestRequestType; status: string }
+const sendingAlert  = ref<GuestRequestType | null>(null)
+const activeRequests = ref<GuestRequestStatus[]>([])
 const alertBanner   = ref('')
 const alertBannerErr = ref(false)
 let   alertBannerTimer: ReturnType<typeof setTimeout> | null = null
 
-async function sendGuestAlert(alertType: 'call_waiter' | 'request_bill') {
-  if (!tableId.value || sendingAlert.value) return
+function persistGuestRequests() {
+  sessionStorage.setItem(
+    `resort:guest-requests:${qrToken.value}`,
+    JSON.stringify(activeRequests.value),
+  )
+}
+
+async function sendGuestAlert(alertType: GuestRequestType) {
+  if (!guestContext.value?.alerts_enabled || sendingAlert.value) return
   sendingAlert.value = alertType
   try {
-    const { data } = await axios.post('/api/v1/public/alerts', {
-      branch_id: branchId.value,
-      context_type: 'dining_table',
-      context_id: parseInt(tableId.value),
+    const { data } = await axios.post('/api/v1/public/guest-requests', {
       alert_type: alertType,
+      outlet_id: outletId.value ?? undefined,
+      idempotency_key: crypto.randomUUID(),
+    }, {
+      headers: { 'X-Guest-Session': sessionToken.value },
     })
     alertBannerErr.value = false
     alertBanner.value = data.message
+    if (!activeRequests.value.some(request => request.public_reference === data.public_reference)) {
+      activeRequests.value.push({
+        public_reference: data.public_reference,
+        alert_type: alertType,
+        status: data.status,
+      })
+      persistGuestRequests()
+    }
   } catch (e: any) {
     alertBannerErr.value = true
     alertBanner.value = e?.response?.data?.detail ?? 'تعذّر إرسال الطلب، حاول مجدداً'
@@ -353,6 +440,26 @@ async function sendGuestAlert(alertType: 'call_waiter' | 'request_bill') {
     if (alertBannerTimer) clearTimeout(alertBannerTimer)
     alertBannerTimer = setTimeout(() => { alertBanner.value = '' }, 6000)
   }
+}
+
+async function pollGuestRequests() {
+  await Promise.all(activeRequests.value.map(async request => {
+    try {
+      const { data } = await axios.get(
+        `/api/v1/public/guest-requests/${encodeURIComponent(request.public_reference)}`,
+        { headers: { 'X-Guest-Session': sessionToken.value } },
+      )
+      request.status = data.status
+      persistGuestRequests()
+    } catch {
+      // Keep the last known state; the next interval retries safely.
+    }
+  }))
+}
+
+function guestRequestStatusLabel(status: string) {
+  const key = ['open', 'acknowledged', 'arrived', 'resolved'].includes(status) ? status : 'open'
+  return t(`qr.request_status_${key}`)
 }
 
 // ── Status UI ──────────────────────────────────────────────────────────
@@ -381,29 +488,58 @@ function statusMessage(s: string): string {
   return map[s] ?? orderMessage.value
 }
 
-onMounted(fetchMenu)
+let requestPollTimer: ReturnType<typeof setInterval> | null = null
+
+onMounted(async () => {
+  try {
+    activeRequests.value = JSON.parse(
+      sessionStorage.getItem(`resort:guest-requests:${qrToken.value}`) ?? '[]',
+    )
+  } catch {
+    activeRequests.value = []
+  }
+  await resolveGuestContext()
+  try {
+    const storedOrder = JSON.parse(
+      sessionStorage.getItem(`resort:guest-order:${qrToken.value}`) ?? 'null',
+    )
+    if (storedOrder?.public_reference && sessionToken.value) {
+      orderReference.value = storedOrder.public_reference
+      orderNumber.value = storedOrder.order_number
+      orderStatus.value = storedOrder.status
+      orderMessage.value = storedOrder.message
+      orderPlaced.value = true
+      await pollOrderStatus()
+      pollTimer = setInterval(pollOrderStatus, 10_000)
+    }
+  } catch {
+    sessionStorage.removeItem(`resort:guest-order:${qrToken.value}`)
+  }
+  requestPollTimer = setInterval(pollGuestRequests, 5_000)
+})
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
+  if (requestPollTimer) clearInterval(requestPollTimer)
   if (alertBannerTimer) clearTimeout(alertBannerTimer)
 })
 </script>
 
 <template>
-  <div dir="rtl" class="min-h-screen bg-stone-50 pb-24">
+  <div :dir="direction" class="min-h-screen bg-stone-50 pb-36">
 
     <!-- Header -->
     <div class="sticky top-0 z-30 bg-white border-b border-stone-200 px-4 py-3 shadow-sm">
       <div class="flex items-center justify-between">
         <div>
           <div class="font-black text-gray-900 text-lg">{{ t('qr.menu_title', { outlet: outletLabel }) }}</div>
-          <div class="text-xs text-gray-400">{{ t('qr.table_label', { tableId: tableId }) }}</div>
+          <div class="text-xs text-gray-400">{{ locationLabel }}</div>
         </div>
 
         <div class="flex items-center gap-2">
           <LanguageSelector />
 
           <button
-            v-if="!orderPlaced"
+            v-if="selfOrderEnabled && outletId && !orderPlaced"
             @click="showCart = true"
             class="relative flex items-center gap-2 bg-blue-700 text-white px-4 py-2.5 rounded-xl font-bold text-sm active:scale-95 transition-transform"
           >
@@ -448,7 +584,7 @@ onUnmounted(() => {
           </div>
         </template>
         <button
-          @click="orderPlaced = false; orderId = null; pollError = false"
+          @click="startNewOrder"
           class="mt-2 px-6 py-2.5 border-2 border-blue-700 text-blue-700 rounded-xl font-bold text-sm"
         >
           {{ t('qr.new_order') }}
@@ -469,13 +605,28 @@ onUnmounted(() => {
       <div v-else-if="loadError" class="p-6 text-center">
         <div class="text-4xl mb-3">⚠️</div>
         <p class="text-gray-700 font-medium mb-4">{{ loadError }}</p>
-        <button @click="fetchMenu" class="px-5 py-2.5 bg-blue-700 text-white rounded-xl font-bold text-sm">
+        <button @click="resolveGuestContext" class="px-5 py-2.5 bg-blue-700 text-white rounded-xl font-bold text-sm">
           {{ t('qr.retry') }}
         </button>
       </div>
 
+      <div v-else-if="!outletId" class="p-5">
+        <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
+          <h2 class="font-black text-gray-900 mb-3">{{ t('qr.choose_outlet') }}</h2>
+          <div v-if="availableOutlets.length" class="grid gap-3">
+            <button v-for="outlet in availableOutlets" :key="outlet.id" class="p-4 border-2 border-stone-200 rounded-xl text-start font-bold hover:border-blue-600" @click="selectOutlet(outlet.id)">
+              {{ locale === 'ar' ? (outlet.name_ar ?? outlet.name) : outlet.name }}
+            </button>
+          </div>
+          <p v-else class="text-sm text-gray-500">{{ t('qr.no_outlets') }}</p>
+        </div>
+      </div>
+
       <!-- Content -->
       <template v-else>
+        <div v-if="!selfOrderEnabled" class="mx-4 mt-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 text-sm font-semibold">
+          {{ t('qr.self_order_disabled_notice') }}
+        </div>
         <!-- Category tabs -->
         <div v-if="categories.length > 0" class="flex gap-2 overflow-x-auto px-4 py-3 scrollbar-hide">
           <button
@@ -510,11 +661,11 @@ onUnmounted(() => {
                 {{ t('qr.customizable') }}
               </div>
               <div class="text-blue-700 font-black mt-1.5">
-                {{ Number(item.price).toLocaleString('ar-EG') }} ج
+                {{ formatCurrency(Number(item.price)) }}
               </div>
             </div>
 
-            <div class="flex flex-col items-center justify-center gap-1 flex-shrink-0">
+            <div v-if="selfOrderEnabled" class="flex flex-col items-center justify-center gap-1 flex-shrink-0">
               <template v-if="itemInCart(item.id)">
                 <button @click="adjustQty(item.id, -1)" class="w-8 h-8 bg-stone-100 rounded-full font-black flex items-center justify-center text-lg">−</button>
                 <span class="font-black text-blue-700 w-5 text-center">{{ itemInCart(item.id)!.qty }}</span>
@@ -547,7 +698,7 @@ onUnmounted(() => {
         class="fixed inset-0 bg-black/50 z-50 flex items-end"
         @click.self="extrasModal.open = false"
       >
-        <div class="bg-white w-full rounded-t-3xl max-h-[85vh] flex flex-col" dir="rtl">
+        <div class="bg-white w-full rounded-t-3xl max-h-[85vh] flex flex-col" :dir="direction">
           <div class="flex items-center justify-between px-5 py-4 border-b border-stone-100">
             <h3 class="font-black text-gray-900">{{ itemDisplayName(extrasModal.item) }}</h3>
             <button @click="extrasModal.open = false" class="text-gray-400 text-2xl leading-none">×</button>
@@ -569,7 +720,7 @@ onUnmounted(() => {
                     tempVariant?.id === v.id ? 'border-blue-600 bg-blue-50 text-blue-700 font-semibold' : 'border-stone-200 text-gray-700']"
                 >
                   <span>{{ localizedName(v) }}</span>
-                  <span class="font-bold">{{ Number(v.price).toLocaleString('ar-EG') }} ج</span>
+                  <span class="font-bold">{{ formatCurrency(Number(v.price)) }}</span>
                 </button>
               </div>
               <p v-if="variantRequiredError" class="text-xs text-red-600 mt-1.5">{{ t('qr.variant_required_error') }}</p>
@@ -602,7 +753,7 @@ onUnmounted(() => {
                 >
                   <span>{{ extraOptionDisplayName(opt) }}</span>
                   <span class="font-bold">
-                    {{ opt.price_addition > 0 ? `+${Number(opt.price_addition).toLocaleString('ar-EG')} ج` : t('qr.free') }}
+                    {{ opt.price_addition > 0 ? `+${formatCurrency(Number(opt.price_addition))}` : t('qr.free') }}
                   </span>
                 </button>
               </div>
@@ -638,7 +789,7 @@ onUnmounted(() => {
         class="fixed inset-0 bg-black/50 z-50 flex items-end"
         @click.self="showCart = false"
       >
-        <div class="bg-white w-full rounded-t-3xl max-h-[85vh] flex flex-col" dir="rtl">
+        <div class="bg-white w-full rounded-t-3xl max-h-[85vh] flex flex-col" :dir="direction">
           <div class="flex items-center justify-between px-5 py-4 border-b border-stone-100">
             <h3 class="font-black text-gray-900 text-lg">
               {{ t('qr.cart_title', { count: cartCount }) }}
@@ -679,7 +830,7 @@ onUnmounted(() => {
                   <button @click="adjustQtyLine(ci, 1)" class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 font-black flex items-center justify-center">+</button>
                 </div>
                 <span class="font-black text-blue-700 text-sm">
-                  {{ Number((ci.variant?.price ?? ci.item.price) * ci.qty).toLocaleString('ar-EG') }} ج
+                  {{ formatCurrency(Number((ci.variant?.price ?? ci.item.price) * ci.qty)) }}
                 </span>
               </div>
             </div>
@@ -689,7 +840,7 @@ onUnmounted(() => {
             <div class="flex justify-between items-center">
               <span class="font-black text-gray-900 text-lg">{{ t('qr.total') }}</span>
               <span class="font-black text-blue-700 text-xl">
-                {{ cartTotal.toLocaleString('ar-EG') }} ج
+                {{ formatCurrency(cartTotal) }}
               </span>
             </div>
 
@@ -713,26 +864,46 @@ onUnmounted(() => {
     <!-- ثابتة أسفل الشاشة، ظاهرة دايمًا لو فيه رقم طاولة حقيقي (مش takeaway) —
          الضيف يقدر ينادي الطاقم في أي وقت، مش بس وقت تصفح القائمة. -->
     <Teleport to="body">
-      <div v-if="tableId" class="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-stone-200 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]" dir="rtl">
+      <div v-if="guestContext?.alerts_enabled && sessionToken" class="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-stone-200 px-3 py-2 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]" :dir="direction">
         <div
           v-if="alertBanner"
           :class="['mb-2 text-center text-sm font-bold rounded-xl py-2 px-3',
             alertBannerErr ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700']"
         >{{ alertBanner }}</div>
 
-        <div class="flex gap-2">
+        <div v-if="activeRequests.length" class="mb-2 flex gap-1 overflow-x-auto text-[11px]">
+          <span v-for="request in activeRequests" :key="request.public_reference" class="shrink-0 bg-stone-100 text-gray-700 rounded-full px-2 py-1">
+            {{ t(`qr.${request.alert_type}`) }} · {{ guestRequestStatusLabel(request.status) }}
+          </span>
+        </div>
+
+        <div class="grid grid-cols-4 gap-1.5">
           <button
             @click="sendGuestAlert('call_waiter')"
             :disabled="sendingAlert !== null"
-            class="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:scale-[0.98] transition-transform"
+            class="flex flex-col items-center justify-center py-2 rounded-xl border border-blue-700 text-blue-700 font-bold text-[11px] disabled:opacity-50"
           >
             <span>🧑‍🍳</span>
             <span>{{ sendingAlert === 'call_waiter' ? t('qr.sending') : t('qr.call_waiter') }}</span>
           </button>
           <button
+            @click="sendGuestAlert('ready_to_order')"
+            :disabled="sendingAlert !== null"
+            class="flex flex-col items-center justify-center py-2 rounded-xl border border-blue-700 text-blue-700 font-bold text-[11px] disabled:opacity-50"
+          >
+            <span>🍽️</span><span>{{ sendingAlert === 'ready_to_order' ? t('qr.sending') : t('qr.ready_to_order') }}</span>
+          </button>
+          <button
+            @click="sendGuestAlert('assistance')"
+            :disabled="sendingAlert !== null"
+            class="flex flex-col items-center justify-center py-2 rounded-xl border border-blue-700 text-blue-700 font-bold text-[11px] disabled:opacity-50"
+          >
+            <span>🙋</span><span>{{ sendingAlert === 'assistance' ? t('qr.sending') : t('qr.assistance') }}</span>
+          </button>
+          <button
             @click="sendGuestAlert('request_bill')"
             :disabled="sendingAlert !== null"
-            class="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border-2 border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:scale-[0.98] transition-transform"
+            class="flex flex-col items-center justify-center py-2 rounded-xl border border-blue-700 text-blue-700 font-bold text-[11px] disabled:opacity-50"
           >
             <span>🧾</span>
             <span>{{ sendingAlert === 'request_bill' ? t('qr.sending') : t('qr.request_bill') }}</span>

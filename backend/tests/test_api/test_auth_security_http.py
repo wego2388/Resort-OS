@@ -345,65 +345,58 @@ class TestSecretKeyValidation:
         assert s.ENVIRONMENT == "production"
 
 
-# ── 7b: Gate 1 containment kill switches rejected in production (جولة
-#        مراجعة Codex الثالثة) — نفس نمط TestSecretKeyValidation بالظبط ────
+# ── 7b: Gate 8 guest-service switches remain default-off, but may be
+#        deliberately enabled in production after session/token hardening. ──
 
 _STRONG_SECRET = "Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz"
 _FERNET_KEY = "9g2Hqbw0QQod3CiEaA9MMrWBpXmb3J3Hb6MEdwv2FeQ="
 
 
 class TestContainmentSwitchValidation:
-    def test_dining_self_order_enabled_rejected_in_production(self):
-        from pydantic import ValidationError
+    def test_dining_self_order_enabled_accepted_in_production(self):
         from app.core.config import Settings
-        with pytest.raises(ValidationError, match="DINING_SELF_ORDER_ENABLED"):
-            Settings(
-                ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
-                DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
-            )
+        s = Settings(
+            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
+            LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
+        )
+        assert s.DINING_SELF_ORDER_ENABLED is True
 
-    def test_guest_alerts_enabled_rejected_in_production(self):
-        from pydantic import ValidationError
+    def test_guest_alerts_enabled_accepted_in_production(self):
         from app.core.config import Settings
-        with pytest.raises(ValidationError, match="GUEST_ALERTS_ENABLED"):
-            Settings(
-                ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
-                DATABASE_URL="sqlite://", GUEST_ALERTS_ENABLED=True,
-            )
+        s = Settings(
+            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://", GUEST_ALERTS_ENABLED=True,
+            LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
+        )
+        assert s.GUEST_ALERTS_ENABLED is True
 
-    def test_dining_self_order_enabled_rejected_with_capitalized_production(self):
-        """تصحيح (جولة مراجعة Codex الرابعة): fail-closed حقيقي — 'Production'
-        بحرف كبير كان بيعدّي من غير فحص مع المطابقة الحرفية القديمة
-        (ENVIRONMENT == "production"). دلوقتي allow-list صريح بعد
-        strip().lower()، فأي شكل تاني لـ"production" بيترفض برضو."""
-        from pydantic import ValidationError
+    def test_dining_self_order_enabled_accepted_with_capitalized_production(self):
         from app.core.config import Settings
-        with pytest.raises(ValidationError, match="DINING_SELF_ORDER_ENABLED"):
-            Settings(
-                ENVIRONMENT="Production", SECRET_KEY=_STRONG_SECRET,
-                DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
-            )
+        s = Settings(
+            ENVIRONMENT="Production", SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
+            LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
+        )
+        assert s.DINING_SELF_ORDER_ENABLED is True
 
-    def test_guest_alerts_enabled_rejected_in_staging(self):
-        from pydantic import ValidationError
+    def test_guest_alerts_enabled_accepted_in_staging(self):
         from app.core.config import Settings
-        with pytest.raises(ValidationError, match="GUEST_ALERTS_ENABLED"):
-            Settings(
-                ENVIRONMENT="staging", SECRET_KEY=_STRONG_SECRET,
-                DATABASE_URL="sqlite://", GUEST_ALERTS_ENABLED=True,
-            )
+        s = Settings(
+            ENVIRONMENT="staging", SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://", GUEST_ALERTS_ENABLED=True,
+            LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
+        )
+        assert s.GUEST_ALERTS_ENABLED is True
 
-    def test_dining_self_order_enabled_rejected_in_unknown_environment(self):
-        """fail-closed: قيمة ENVIRONMENT غير معروفة خالص (typo، بيئة جديدة
-        محدش عرّفها هنا) لازم تترفض برضو — مش تعدّي بالصدفة لأنها مش
-        "production" حرفيًا."""
-        from pydantic import ValidationError
+    def test_dining_self_order_enabled_accepted_in_hardened_unknown_environment(self):
         from app.core.config import Settings
-        with pytest.raises(ValidationError, match="DINING_SELF_ORDER_ENABLED"):
-            Settings(
-                ENVIRONMENT="some-typo-env", SECRET_KEY=_STRONG_SECRET,
-                DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
-            )
+        s = Settings(
+            ENVIRONMENT="some-typo-env", SECRET_KEY=_STRONG_SECRET,
+            DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
+            LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
+        )
+        assert s.DINING_SELF_ORDER_ENABLED is True
 
     def test_both_switches_default_false_and_accepted_in_production(self):
         from app.core.config import Settings

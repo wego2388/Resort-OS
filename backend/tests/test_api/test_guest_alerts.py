@@ -10,10 +10,16 @@ resolve endpoints are role-gated (get_waiter_user).
 راجع app/modules/core/models.py::GuestAlert للشرح الكامل عن التصميم (generic
 context_type/context_id بدون FK).
 
-Gate 8 Phase 1 (2026-07-21): context_type كان لسه restaurant_table/
+Gate 8 Phase 1 Batch A (2026-07-21): context_type كان لسه restaurant_table/
 cafe_table القديمين (الموديولين اتحذفوا 2026-07-13) — بقى dining_table،
 وcontext_id بقى محتاج يتحقق فعليًا إنه ينتمي لنفس الفرع (مش رقم عشوائي زي
 كان قبل كده). زائد dedup/cooldown جديد واختباراته الخاصة.
+
+Gate 8 Phase 1 Batch C (2026-07-21): POST /public/alerts بقى token-based
+بالكامل (Decision 0001 بند 6) — الضيف بيبعت {token, alert_type, message}
+بس، مش branch_id/context_type/context_id خام. التستات هنا بتولّد رمز
+حقيقي عبر make_service_location_token (نفس نمط ServiceLocationToken في
+core.crud) قبل أي استدعاء POST /public/alerts.
 """
 from __future__ import annotations
 
@@ -44,6 +50,34 @@ def make_dining_table(db, branch):
     db.commit()
     db.refresh(t)
     return t
+
+
+def make_service_location_token(db, branch, location_id, location_type="dining_table") -> str:
+    """Gate 8 Phase 1 Batch C: POST /public/alerts بقى token-based — بيولّد
+    رمز حقيقي مباشرة عبر core.crud (بدل استدعاء POST /service-location-tokens
+    الكامل بمستخدم مدير)، نفس نمط make_dining_table's raw model creation."""
+    import secrets
+    from app.modules.core import crud as core_crud
+    token = secrets.token_urlsafe(16)
+    core_crud.create_service_location_token(
+        db, token=token, branch_id=branch.id, location_type=location_type,
+        location_id=location_id, created_by=None,
+    )
+    db.commit()
+    return token
+
+
+def guest_session_headers(client: TestClient, token: str) -> dict[str, str]:
+    response = client.post("/api/v1/public/guest-sessions", json={"token": token})
+    assert response.status_code == 201, response.text
+    return {"X-Guest-Session": response.json()["session_token"]}
+
+
+def alert_id_from_response(db, response) -> int:
+    from app.modules.core.models import GuestAlert
+    reference = response.json()["public_reference"]
+    row = db.query(GuestAlert).filter(GuestAlert.public_reference == reference).one()
+    return row.id
 
 
 def enable_guest_alerts(db, branch):
@@ -90,27 +124,25 @@ class TestCreateGuestAlertPublic:
         صريح، الإنشاء يترفض 400 — مش 201."""
         branch = make_branch(db)
         table = make_dining_table(db, branch)
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": table.id,
+        token = make_service_location_token(db, branch, table.id)
+        headers = guest_session_headers(client, token)
+        resp = client.post("/api/v1/public/guest-requests", json={
             "alert_type": "call_waiter",
-        })
+        }, headers=headers)
         assert resp.status_code == 400, resp.text
 
     def test_create_call_waiter_alert_no_auth(self, client: TestClient, db):
         branch = make_branch(db)
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": table.id,
+        token = make_service_location_token(db, branch, table.id)
+        headers = guest_session_headers(client, token)
+        resp = client.post("/api/v1/public/guest-requests", json={
             "alert_type": "call_waiter",
-        })
+        }, headers=headers)
         assert resp.status_code == 201, resp.text
         data = resp.json()
-        assert data["alert_id"] > 0
+        assert data["public_reference"].startswith("req_")
         assert data["status"] == "open"
         assert data["message"]
 
@@ -118,13 +150,11 @@ class TestCreateGuestAlertPublic:
         branch = make_branch(db)
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": table.id,
-            "alert_type": "request_bill",
-            "message": "الحساب من فضلكم",
-        })
+        token = make_service_location_token(db, branch, table.id)
+        headers = guest_session_headers(client, token)
+        resp = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "request_bill", "message": "الحساب من فضلكم",
+        }, headers=headers)
         assert resp.status_code == 201, resp.text
         assert "الفاتورة" in resp.json()["message"]
 
@@ -134,102 +164,81 @@ class TestCreateGuestAlertPublic:
         branch = make_branch(db)
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, table.id)
 
-        ready_resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id, "context_type": "dining_table",
-            "context_id": table.id, "alert_type": "ready_to_order",
-        })
+        headers = guest_session_headers(client, token)
+        ready_resp = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "ready_to_order",
+        }, headers=headers)
         assert ready_resp.status_code == 201, ready_resp.text
 
-        assist_resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id, "context_type": "dining_table",
-            "context_id": table.id, "alert_type": "assistance",
-        })
+        assist_resp = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "assistance",
+        }, headers=headers)
         assert assist_resp.status_code == 201, assist_resp.text
 
     def test_create_alert_rejects_unknown_alert_type(self, client: TestClient, db):
         branch = make_branch(db)
         table = make_dining_table(db, branch)
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": table.id,
+        enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, table.id)
+        headers = guest_session_headers(client, token)
+        resp = client.post("/api/v1/public/guest-requests", json={
             "alert_type": "not_a_real_type",
-        })
+        }, headers=headers)
         assert resp.status_code == 422
 
-    def test_create_alert_rejects_unknown_context_type(self, client: TestClient, db):
+    def test_public_body_cannot_override_location_ids(self, client: TestClient, db):
         branch = make_branch(db)
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "spaceship",
-            "context_id": 1,
-            "alert_type": "call_waiter",
-        })
-        assert resp.status_code == 422
+        table = make_dining_table(db, branch)
+        token = make_service_location_token(db, branch, table.id)
+        headers = guest_session_headers(client, token)
+        response = client.post(
+            "/api/v1/public/guest-requests",
+            json={
+                "alert_type": "call_waiter",
+                "branch_id": branch.id,
+                "context_type": "dining_table",
+                "context_id": table.id,
+            },
+            headers=headers,
+        )
+        assert response.status_code == 422
 
-    def test_create_alert_rejects_legacy_context_type(self, client: TestClient, db):
-        """Gate 8 Phase 1: restaurant_table/cafe_table القديمين (موديولين
-        محذوفين نهائيًا) لازم يترفضوا دلوقتي — مش مقبولين في الـpattern."""
+    def test_create_alert_rejects_unknown_token(self, client: TestClient, db):
+        """Gate 8 Phase 1 Batch C: الرمز نفسه هو مصدر الثقة الوحيد دلوقتي —
+        رمز غير موجود/ملغي يترفض 400، بديل test_create_alert_rejects_
+        missing_branch القديم (branch_id مش client-supplied تاني)."""
+        resp = client.post("/api/v1/public/guest-sessions", json={"token": "does-not-exist"})
+        assert resp.status_code in (404, 422), resp.text
+
+    def test_create_alert_rejects_deactivated_token(self, client: TestClient, db):
+        """رمز اتلغى بالتدوير (ServiceLocationToken.is_active=False) —
+        بديل test_create_alert_rejects_table_from_different_branch/
+        _nonexistent_table القديمين؛ الفحصين دول اتنقلوا فعليًا لوقت
+        توليد الرمز (راجع test_service_location_tokens.py) بدل وقت
+        الإنشاء، لأن الرمز دلوقتي هو الغلاف الوحيد حول أي location."""
         branch = make_branch(db)
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "restaurant_table",
-            "context_id": 1,
-            "alert_type": "call_waiter",
-        })
-        assert resp.status_code == 422
-
-    def test_create_alert_rejects_missing_branch(self, client: TestClient, db):
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": 999999999,
-            "context_type": "dining_table",
-            "context_id": 1,
-            "alert_type": "call_waiter",
-        })
-        assert resp.status_code == 400
-
-    def test_create_alert_rejects_table_from_different_branch(self, client: TestClient, db):
-        """Gate 8 Phase 1 (فجوة حقيقية اتصلحت): context_id مفيهوش أي تحقق
-        فرع قبل كده — ضيف يقدر يبعت رقم طاولة تابعة لفرع تاني تمامًا،
-        والتنبيه كان هيتحفظ عادي وهيوصل لطاقم الفرع الغلط."""
-        branch = make_branch(db)
-        other_branch = make_branch(db)
-        foreign_table = make_dining_table(db, other_branch)
+        table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, table.id)
+        # تدوير رمز جديد لنفس الموقع يلغي القديم فورًا (crud.deactivate_
+        # service_location_tokens، راجع services.create_or_rotate_service_
+        # location_token).
+        from app.modules.core import crud as core_crud
+        core_crud.deactivate_service_location_tokens(db, branch.id, "dining_table", table.id)
+        db.commit()
 
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": foreign_table.id,
-            "alert_type": "call_waiter",
-        })
-        assert resp.status_code == 400, resp.text
+        resp = client.post("/api/v1/public/guest-sessions", json={"token": token})
+        assert resp.status_code == 404, resp.text
 
-    def test_create_alert_rejects_nonexistent_table(self, client: TestClient, db):
+    def test_context_type_other_is_not_a_qr_location(self, client: TestClient, db):
+        """Gate 8 QR codes represent verified physical resources only."""
         branch = make_branch(db)
         enable_guest_alerts(db, branch)
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": 999999999,
-            "alert_type": "call_waiter",
-        })
-        assert resp.status_code == 400, resp.text
-
-    def test_context_type_other_skips_location_validation(self, client: TestClient, db):
-        """context_type="other" مفيهوش موقع فعلي — أي context_id (حتى غير
-        موجود) مقبول، مطابق للتصميم الأصلي (نص حر، راجع GuestAlertCreate)."""
-        branch = make_branch(db)
-        enable_guest_alerts(db, branch)
-        resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "other",
-            "context_id": 999999999,
-            "alert_type": "other",
-            "message": "محتاج كرسي إضافي",
-        })
-        assert resp.status_code == 201, resp.text
+        token = make_service_location_token(db, branch, 999999999, location_type="other")
+        resp = client.post("/api/v1/public/guest-sessions", json={"token": token})
+        assert resp.status_code == 404, resp.text
 
     def test_duplicate_alert_within_cooldown_returns_existing(self, client: TestClient, db):
         """Gate 8 Phase 1 — dedup/idempotency: نفس (الطاولة، نوع الطلب)
@@ -237,19 +246,20 @@ class TestCreateGuestAlertPublic:
         branch = make_branch(db)
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, table.id)
 
-        first = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id, "context_type": "dining_table",
-            "context_id": table.id, "alert_type": "call_waiter",
-        })
+        headers = guest_session_headers(client, token)
+        first = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "call_waiter",
+        }, headers=headers)
         assert first.status_code == 201, first.text
 
-        second = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id, "context_type": "dining_table",
-            "context_id": table.id, "alert_type": "call_waiter",
-        })
+        second = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "call_waiter",
+        }, headers=headers)
         assert second.status_code == 201, second.text
-        assert second.json()["alert_id"] == first.json()["alert_id"]
+        assert second.json()["public_reference"] == first.json()["public_reference"]
+        assert second.json()["deduplicated"] is True
 
     def test_duplicate_alert_after_cooldown_creates_new(self, client: TestClient, db):
         """نفس الطلب بعد ما نافذة التهدئة تخلص (أو الطلب القديم اتقفل)
@@ -257,24 +267,24 @@ class TestCreateGuestAlertPublic:
         branch = make_branch(db)
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, table.id)
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
 
-        first = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id, "context_type": "dining_table",
-            "context_id": table.id, "alert_type": "call_waiter",
-        })
-        first_id = first.json()["alert_id"]
+        headers = guest_session_headers(client, token)
+        first = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "call_waiter",
+        }, headers=headers)
+        first_id = alert_id_from_response(db, first)
         resolve = client.patch(
             f"/api/v1/alerts/{first_id}/status", json={"status": "resolved"}, headers=branch_waiter_headers,
         )
         assert resolve.status_code == 200, resolve.text
 
-        second = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id, "context_type": "dining_table",
-            "context_id": table.id, "alert_type": "call_waiter",
-        })
+        second = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "call_waiter",
+        }, headers=headers)
         assert second.status_code == 201, second.text
-        assert second.json()["alert_id"] != first_id
+        assert alert_id_from_response(db, second) != first_id
 
     def test_different_alert_types_same_table_both_created(self, client: TestClient, db):
         """dedup بيقارن alert_type كمان — طلب "نادِ الجرسون" و"هات الفاتورة"
@@ -283,16 +293,68 @@ class TestCreateGuestAlertPublic:
         branch = make_branch(db)
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, table.id)
 
-        call = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id, "context_type": "dining_table",
-            "context_id": table.id, "alert_type": "call_waiter",
-        })
-        bill = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id, "context_type": "dining_table",
-            "context_id": table.id, "alert_type": "request_bill",
-        })
-        assert call.json()["alert_id"] != bill.json()["alert_id"]
+        headers = guest_session_headers(client, token)
+        call = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "call_waiter",
+        }, headers=headers)
+        bill = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "request_bill",
+        }, headers=headers)
+        assert call.json()["public_reference"] != bill.json()["public_reference"]
+
+    def test_public_status_is_bound_to_issuing_session(self, client: TestClient, db):
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, table.id)
+        issuing_headers = guest_session_headers(client, token)
+        other_table = make_dining_table(db, branch)
+        other_token = make_service_location_token(db, branch, other_table.id)
+        other_headers = guest_session_headers(client, other_token)
+        created = client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "assistance"},
+            headers=issuing_headers,
+        )
+        reference = created.json()["public_reference"]
+        own = client.get(
+            f"/api/v1/public/guest-requests/{reference}", headers=issuing_headers,
+        )
+        assert own.status_code == 200
+        assert own.json()["status"] == "open"
+        foreign = client.get(
+            f"/api/v1/public/guest-requests/{reference}", headers=other_headers,
+        )
+        assert foreign.status_code == 404
+
+    def test_stale_request_expires_and_no_longer_blocks_new_request(self, client: TestClient, db):
+        from datetime import datetime, timedelta
+        from app.modules.core.models import GuestAlert
+        from app.core.config import settings
+
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, table.id)
+        headers = guest_session_headers(client, token)
+        first = client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "call_waiter"},
+            headers=headers,
+        )
+        first_id = alert_id_from_response(db, first)
+        row = db.query(GuestAlert).filter(GuestAlert.id == first_id).one()
+        row.created_at = datetime.utcnow() - timedelta(minutes=settings.GUEST_REQUEST_TTL_MINUTES + 1)
+        db.commit()
+
+        second = client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "call_waiter"},
+            headers=headers,
+        )
+        assert second.status_code == 201, second.text
+        assert second.json()["public_reference"] != first.json()["public_reference"]
+        db.refresh(row)
+        assert row.status == "expired"
 
 
 class TestStaffAlertsFeed:
@@ -341,12 +403,12 @@ class TestStaffAlertsFeed:
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
-        client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": table.id,
-            "alert_type": "call_waiter",
-        })
+        token = make_service_location_token(db, branch, table.id)
+        guest_headers = guest_session_headers(client, token)
+        client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "call_waiter"},
+            headers=guest_headers,
+        )
 
         resp = client.get("/api/v1/alerts", params={"branch_id": branch.id}, headers=branch_waiter_headers)
         assert resp.status_code == 200
@@ -360,13 +422,13 @@ class TestStaffAlertsFeed:
         branch = make_branch(db)
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
-        create_resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": table.id,
-            "alert_type": "request_bill",
-        })
-        alert_id = create_resp.json()["alert_id"]
+        token = make_service_location_token(db, branch, table.id)
+        guest_headers = guest_session_headers(client, token)
+        create_resp = client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "request_bill"},
+            headers=guest_headers,
+        )
+        alert_id = alert_id_from_response(db, create_resp)
 
         resp = client.patch(f"/api/v1/alerts/{alert_id}/status", json={"status": "resolved"})
         assert resp.status_code == 401
@@ -376,13 +438,13 @@ class TestStaffAlertsFeed:
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
-        create_resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": table.id,
-            "alert_type": "call_waiter",
-        })
-        alert_id = create_resp.json()["alert_id"]
+        token = make_service_location_token(db, branch, table.id)
+        guest_headers = guest_session_headers(client, token)
+        create_resp = client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "call_waiter"},
+            headers=guest_headers,
+        )
+        alert_id = alert_id_from_response(db, create_resp)
 
         # Gate 1 containment (جولة تصحيح ثانية): PATCH بقى بيفرض تطابق الفرع
         # زي GET بالظبط — waiter_headers المشترك بلا فرع بيترفض هنا دلوقتي.
@@ -392,10 +454,17 @@ class TestStaffAlertsFeed:
         assert ack_resp.status_code == 200, ack_resp.text
         assert ack_resp.json()["status"] == "acknowledged"
         assert ack_resp.json()["resolved_at"] is None
+        assert ack_resp.json()["assigned_to"] is not None
 
         # لسه فاضل في الفيد (acknowledged مش resolved)
         list_resp = client.get("/api/v1/alerts", params={"branch_id": branch.id}, headers=branch_waiter_headers)
         assert any(a["id"] == alert_id for a in list_resp.json()["items"])
+
+        arrived_resp = client.patch(
+            f"/api/v1/alerts/{alert_id}/status", json={"status": "arrived"}, headers=branch_waiter_headers,
+        )
+        assert arrived_resp.status_code == 200, arrived_resp.text
+        assert arrived_resp.json()["arrived_at"] is not None
 
         resolve_resp = client.patch(
             f"/api/v1/alerts/{alert_id}/status", json={"status": "resolved"}, headers=branch_waiter_headers,
@@ -419,14 +488,14 @@ class TestStaffAlertsFeed:
         home_table = make_dining_table(db, home_branch)
         enable_guest_alerts(db, home_branch)
         other_branch_waiter_headers = make_branch_linked_waiter_headers(db, other_branch)
+        token = make_service_location_token(db, home_branch, home_table.id)
 
-        create_resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": home_branch.id,
-            "context_type": "dining_table",
-            "context_id": home_table.id,
-            "alert_type": "call_waiter",
-        })
-        alert_id = create_resp.json()["alert_id"]
+        guest_headers = guest_session_headers(client, token)
+        create_resp = client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "call_waiter"},
+            headers=guest_headers,
+        )
+        alert_id = alert_id_from_response(db, create_resp)
 
         resp = client.patch(
             f"/api/v1/alerts/{alert_id}/status", json={"status": "acknowledged"},
@@ -434,18 +503,44 @@ class TestStaffAlertsFeed:
         )
         assert resp.status_code == 403, resp.text
 
+    def test_assigned_request_cannot_be_taken_by_another_waiter(self, client: TestClient, db):
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        enable_guest_alerts(db, branch)
+        first_waiter = make_branch_linked_waiter_headers(db, branch)
+        second_waiter = make_branch_linked_waiter_headers(db, branch)
+        token = make_service_location_token(db, branch, table.id)
+        guest_headers = guest_session_headers(client, token)
+        created = client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "assistance"},
+            headers=guest_headers,
+        )
+        alert_id = alert_id_from_response(db, created)
+        acknowledged = client.patch(
+            f"/api/v1/alerts/{alert_id}/status", json={"status": "acknowledged"},
+            headers=first_waiter,
+        )
+        assert acknowledged.status_code == 200
+
+        stolen = client.patch(
+            f"/api/v1/alerts/{alert_id}/status", json={"status": "resolved"},
+            headers=second_waiter,
+        )
+        assert stolen.status_code == 403, stolen.text
+
     def test_resolve_already_resolved_alert_rejected(self, client: TestClient, db, waiter_headers):
         branch = make_branch(db)
         enable_guest_alerts(db, branch)
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
-        create_resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "other",
-            "context_id": 999999999,
-            "alert_type": "other",
-            "message": "محتاج كرسي إضافي",
-        })
-        alert_id = create_resp.json()["alert_id"]
+        table = make_dining_table(db, branch)
+        token = make_service_location_token(db, branch, table.id)
+        guest_headers = guest_session_headers(client, token)
+        create_resp = client.post(
+            "/api/v1/public/guest-requests",
+            json={"alert_type": "other", "message": "محتاج كرسي إضافي"},
+            headers=guest_headers,
+        )
+        alert_id = alert_id_from_response(db, create_resp)
 
         first = client.patch(f"/api/v1/alerts/{alert_id}/status", json={"status": "resolved"}, headers=branch_waiter_headers)
         assert first.status_code == 200
@@ -470,14 +565,14 @@ class TestGuestAlertsWebSocket:
         # الفرع (core.services.assert_branch_access) — waiter_headers
         # المشترك بلا فرع هيتقفل بـ4403.
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
+        token = make_service_location_token(db, branch, table.id)
+        guest_headers = guest_session_headers(client, token)
 
         with client.websocket_connect(ws_url(f"/api/v1/ws/alerts/{branch.id}", branch_waiter_headers)) as ws:
-            create_resp = client.post("/api/v1/public/alerts", json={
-                "branch_id": branch.id,
-                "context_type": "dining_table",
-                "context_id": table.id,
-                "alert_type": "call_waiter",
-            })
+            create_resp = client.post(
+                "/api/v1/public/guest-requests", json={"alert_type": "call_waiter"},
+                headers=guest_headers,
+            )
             assert create_resp.status_code == 201, create_resp.text
 
             message = ws.receive_json()
@@ -491,13 +586,13 @@ class TestGuestAlertsWebSocket:
         table = make_dining_table(db, branch)
         enable_guest_alerts(db, branch)
         branch_waiter_headers = make_branch_linked_waiter_headers(db, branch)
-        create_resp = client.post("/api/v1/public/alerts", json={
-            "branch_id": branch.id,
-            "context_type": "dining_table",
-            "context_id": table.id,
-            "alert_type": "request_bill",
-        })
-        alert_id = create_resp.json()["alert_id"]
+        token = make_service_location_token(db, branch, table.id)
+        guest_headers = guest_session_headers(client, token)
+        create_resp = client.post(
+            "/api/v1/public/guest-requests", json={"alert_type": "request_bill"},
+            headers=guest_headers,
+        )
+        alert_id = alert_id_from_response(db, create_resp)
 
         with client.websocket_connect(ws_url(f"/api/v1/ws/alerts/{branch.id}", branch_waiter_headers)) as ws:
             resp = client.patch(

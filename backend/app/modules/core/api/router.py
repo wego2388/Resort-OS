@@ -36,6 +36,7 @@ Endpoints:
   WS     /api/v1/ws/alerts/{branch_id}     (بث لحظي لطاقم الخدمة)
 
   POST   /api/v1/service-location-tokens        (مدير+ — توليد/تدوير)
+  GET    /api/v1/service-location-tokens        (مدير+ — الرموز الفعّالة لفرع)
   GET    /api/v1/public/service-location        (بدون auth — الضيف يحلّل QR)
 ═══════════════════════════════════════════════════════════════════════
 """
@@ -70,8 +71,11 @@ from app.modules.core.schemas import (
     EffectivePermission,
     GuestAlertAck,
     GuestAlertCreate,
+    GuestAlertPublicStatus,
     GuestAlertRead,
     GuestAlertStatusUpdate,
+    GuestSessionCreate,
+    GuestSessionRead,
     NotificationRead,
     PaginatedResponse,
     PermissionCatalogEntryRead,
@@ -723,11 +727,9 @@ def revoke_user_permission(
 # ══════════════════════════════════════════════════════════════════════
 # Guest Alerts — قناة تنبيه يبدأها الضيف بدون تسجيل دخول
 # ══════════════════════════════════════════════════════════════════════
-# ⚠️ POST /public/alerts بدون authentication عمداً — نفس نمط
-#    /restaurant/public/orders بالظبط:
-#      - rate limited بالـ middleware (app.core.rate_limit، "public" bucket)
-#      - لا يوجد تعديل أو حذف من الـ public endpoint — إنشاء فقط
-#      - status دايمًا "open" عند الإنشاء (الضيف مش بيحدده)
+# Public guest requests do not require an employee account, but Gate 8 requires
+# a short-lived X-Guest-Session capability. They are rate-limited and the
+# location/status cannot be supplied by the browser.
 #
 # GET /alerts و PATCH /alerts/{id}/status لطاقم الخدمة (نادل فأعلى — نفس
 # مستوى list_held_orders في restaurant، دي حركة تشغيل يومية مش مالية).
@@ -740,29 +742,65 @@ def revoke_user_permission(
     tags=["core-public"],
     summary="تنبيه من الضيف (نادِ الجرسون / هات الفاتورة) — بدون auth",
 )
-async def create_guest_alert(data: GuestAlertCreate, db: DbDep):
-    """
-    Public endpoint — لا يحتاج login.
-    الضيف بيبعت تنبيه من شاشة الطلب (طاولة مطعم/كافيه، أو أي سياق تاني
-    مستقبلاً) — بيتبث فورًا لأي شاشة طاقم خدمة متصلة على نفس الفرع.
-    """
+async def create_guest_alert(
+    data: GuestAlertCreate,
+    db: DbDep,
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
+    """Compatibility alias; Gate 8 still requires the guest-session header."""
+    return await create_guest_request(data, db, x_guest_session)
+
+
+@router.post(
+    "/public/guest-requests",
+    response_model=GuestAlertAck,
+    status_code=status.HTTP_201_CREATED,
+    tags=["core-public"],
+    summary="طلب خدمة من جلسة QR صالحة",
+)
+async def create_guest_request(
+    data: GuestAlertCreate,
+    db: DbDep,
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
     try:
-        alert = services.create_guest_alert(db, data)
+        alert, created = services.create_guest_alert(
+            db, x_guest_session, data.alert_type, data.message,
+            outlet_id=data.outlet_id, idempotency_key=data.idempotency_key,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
-    await alerts_manager.broadcast(str(alert.branch_id), {
-        "type": "new_alert",
-        "alert": GuestAlertRead.model_validate(alert).model_dump(mode="json"),
-    })
+    if created:
+        await alerts_manager.broadcast(str(alert.branch_id), {
+            "type": "new_alert",
+            "alert": services.guest_alert_read(db, alert).model_dump(mode="json"),
+        })
 
     return GuestAlertAck(
-        alert_id=alert.id,
+        public_reference=alert.public_reference,
         status=alert.status,
         message="تم إرسال طلبك — سيصل إليك أحد أفراد الطاقم فورًا 🙌"
         if alert.alert_type != "request_bill"
         else "تم طلب الفاتورة — سيتم إحضارها فورًا 🧾",
+        deduplicated=not created,
     )
+
+
+@router.get(
+    "/public/guest-requests/{public_reference}",
+    response_model=GuestAlertPublicStatus,
+    tags=["core-public"],
+)
+def get_guest_request_status(
+    public_reference: str,
+    db: DbDep,
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
+    try:
+        return services.get_guest_alert_public_status(db, public_reference, x_guest_session)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 @router.get(
@@ -788,7 +826,7 @@ def list_guest_alerts(
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return PaginatedResponse(
         total=total, page=page, size=size,
-        items=[GuestAlertRead.model_validate(a) for a in items],
+        items=[services.guest_alert_read(db, a) for a in items],
     )
 
 
@@ -815,9 +853,9 @@ async def update_guest_alert_status(
 
     await alerts_manager.broadcast(str(alert.branch_id), {
         "type": "alert_status_changed",
-        "alert": GuestAlertRead.model_validate(alert).model_dump(mode="json"),
+        "alert": services.guest_alert_read(db, alert).model_dump(mode="json"),
     })
-    return GuestAlertRead.model_validate(alert)
+    return services.guest_alert_read(db, alert)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -851,6 +889,25 @@ def create_service_location_token(
 
 
 @router.get(
+    "/service-location-tokens",
+    response_model=list[ServiceLocationTokenRead],
+)
+def list_service_location_tokens(
+    db: DbDep,
+    user=Depends(get_manager_user),
+    branch_id: int = Query(...),
+):
+    """الرموز الفعّالة حاليًا لفرع معيّن — بيستخدمه admin/QRGeneratorView.vue
+    عشان يعرف أي طاولة عندها QR فعّال بالفعل من غير ما يولّد رمز جديد
+    (وبالتالي يلغي القديم) في كل مرة يفتح فيها الشاشة."""
+    try:
+        tokens = services.list_service_location_tokens(db, branch_id, user)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return [ServiceLocationTokenRead.model_validate(t) for t in tokens]
+
+
+@router.get(
     "/public/service-location",
     response_model=ServiceLocationRead,
     tags=["core-public"],
@@ -861,6 +918,20 @@ def resolve_service_location(db: DbDep, token: str = Query(...)):
     الرابط نفسه ميحملش أي ID خام أبدًا (Decision 0001 بند 6)."""
     try:
         return services.resolve_service_location_token(db, token)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post(
+    "/public/guest-sessions",
+    response_model=GuestSessionRead,
+    status_code=status.HTTP_201_CREATED,
+    tags=["core-public"],
+)
+def create_guest_session(data: GuestSessionCreate, db: DbDep):
+    """Exchange a valid QR capability for a short-lived guest session."""
+    try:
+        return services.create_guest_session(db, data.token)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 

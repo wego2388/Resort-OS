@@ -504,6 +504,8 @@ def create_order(
     data: OrderCreate,
     waiter_id: Optional[int] = None,
     hold: bool = False,
+    guest_session_id: Optional[int] = None,
+    guest_public_reference: Optional[str] = None,
 ) -> DiningOrder:
     outlet = _get_outlet_or_404(db, data.outlet_id)
     if outlet.branch_id != branch_id:
@@ -604,7 +606,24 @@ def create_order(
         discount_amount=discount_amount,
         delivery_fee=delivery_fee,
         created_by=waiter_id,
+        guest_session_id=guest_session_id,
+        guest_public_reference=guest_public_reference,
     )
+
+    if guest_session_id is not None:
+        from app.modules.core import crud as core_crud  # noqa: PLC0415
+        from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+        core_crud.create_audit_log(db, AuditLogCreate(
+            branch_id=branch_id,
+            action="guest_order_created",
+            entity_type="dining_order",
+            entity_id=order.id,
+            new_data=json.dumps({
+                "public_reference": guest_public_reference,
+                "outlet_id": outlet.id,
+                "table_id": data.table_id,
+            }, ensure_ascii=False, sort_keys=True),
+        ))
 
     if data.table_id and data.order_type == "dine_in":
         table = crud.get_table(db, data.table_id)
@@ -1073,6 +1092,12 @@ def settle_order(
             shift_id=shift_id, created_by=settled_by,
             tender_breakdown=tender_breakdown,
         )
+
+        # Gate 8: a linked "request bill" is operational state only. Close
+        # it in this same strict payment transaction after all financial
+        # effects succeeded and before the single commit.
+        from app.modules.core import services as core_services  # noqa: PLC0415
+        core_services.resolve_bill_requests_for_paid_order(db, order, settled_by)
 
         db.commit()
         db.refresh(order)
