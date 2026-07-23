@@ -115,6 +115,7 @@ const allSections = computed<NavSection[]>(() => [
       { path: '/admin/settings',    label: t('backoffice.nav.settings'),    icon: '⚙️', requiredRole: 'admin' },
       { path: '/admin/users',       label: t('backoffice.nav.users'),       icon: '👤', requiredRole: 'super_admin' },
       { path: '/admin/permissions', label: t('backoffice.nav.permissions'), icon: '🔐', requiredRole: 'super_admin' },
+      { path: '/admin/super-admin', label: t('backoffice.superAdmin.navLabel'), icon: '🛡️', requiredRole: 'super_admin' },
     ],
   },
   {

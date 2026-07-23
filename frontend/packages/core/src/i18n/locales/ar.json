@@ -3606,27 +3606,22 @@
       "approving": "جاري التأكيد..."
     },
     "guestAlerts": {
-      "title": "تنبيهات الضيوف",
-      "buttonLabel": "تنبيهات الضيوف ({count})",
-      "empty": "لا توجد تنبيهات حاليًا",
+      "title": "طلبات خدمة الضيوف",
+      "titleCount": "طلبات خدمة الضيوف ({count})",
+      "empty": "لا توجد طلبات نشطة",
       "now": "الآن",
       "minutesAgo": "منذ {count} د",
       "hoursAgo": "منذ {count} س",
-      "acknowledge": "قيد المتابعة",
-      "resolve": "تم",
-      "resolvedSuccess": "تم إغلاق التنبيه",
-      "loadFailed": "تعذّر تحميل تنبيهات الضيوف",
-      "updateFailed": "تعذّر تحديث التنبيه",
-      "context": {
-        "diningTable": "طاولة",
-        "restaurantTable": "طاولة مطعم",
-        "cafeTable": "طاولة كافيه",
-        "beachLocation": "موقع شاطئ",
-        "room": "غرفة",
-        "other": "أخرى"
-      },
-      "type": {
+      "acknowledge": "استلمت",
+      "arrived": "وصلت",
+      "done": "تم",
+      "closed": "تم إغلاق الطلب",
+      "loadError": "تعذّر تحميل طلبات الضيوف",
+      "updateError": "تعذّر تحديث الطلب",
+      "types": {
         "callWaiter": "نداء جرسون",
+        "readyToOrder": "جاهز للطلب",
+        "assistance": "طلب مساعدة",
         "requestBill": "طلب فاتورة",
         "other": "طلب آخر"
       }
@@ -3968,9 +3963,9 @@
         "orderInProgress": "الطلب الحالي",
         "emptyHint": "اضغط على أي صنف لإضافته هنا.",
         "notePlaceholder": "تعليمات واضحة للمطبخ أو التوصيل...",
-      "itemsSubtotal": "مجموع الأصناف (قبل حساب السيرفر)",
-      "estimatedTotal": "إجمالي الأصناف التقديري",
-      "serverTotal": "إجمالي السيرفر",
+        "itemsSubtotal": "مجموع الأصناف (قبل حساب السيرفر)",
+        "estimatedTotal": "إجمالي الأصناف التقديري",
+        "serverTotal": "إجمالي السيرفر",
         "discount": "الخصم",
         "payNow": "ادفع الآن",
         "paymentOffline": "الدفع يحتاج اتصالاً بالإنترنت؛ يمكنك حفظ الطلب للمطبخ أثناء الانقطاع.",
@@ -6411,27 +6406,6 @@
         "pageCreated": "تم إنشاء الصفحة"
       }
     },
-    "guestAlerts": {
-      "title": "طلبات خدمة الضيوف",
-      "titleCount": "طلبات خدمة الضيوف ({count})",
-      "empty": "لا توجد طلبات نشطة",
-      "now": "الآن",
-      "minutesAgo": "منذ {count} د",
-      "hoursAgo": "منذ {count} س",
-      "acknowledge": "استلمت",
-      "arrived": "وصلت",
-      "done": "تم",
-      "closed": "تم إغلاق الطلب",
-      "loadError": "تعذّر تحميل طلبات الضيوف",
-      "updateError": "تعذّر تحديث الطلب",
-      "types": {
-        "callWaiter": "نداء جرسون",
-        "readyToOrder": "جاهز للطلب",
-        "assistance": "طلب مساعدة",
-        "requestBill": "طلب فاتورة",
-        "other": "طلب آخر"
-      }
-    },
     "qrGenerator": {
       "title": "توليد QR Codes",
       "subtitle": "اختر الطاولات وطبع QR codes جاهزة للتعليق",
@@ -6678,6 +6652,50 @@
         "fieldsRequired": "الرجاء تحديد نوع الإجازة وتاريخ البداية والنهاية",
         "requestSubmitted": "تم تقديم طلب الإجازة بنجاح ✓",
         "submitError": "حدث خطأ في تقديم الطلب"
+      }
+    },
+    "superAdmin": {
+      "navLabel": "لوحة تحكم Super Admin",
+      "title": "مركز تحكم Super Admin",
+      "subtitle": "إدارة المستخدمين، الصلاحيات، الإعدادات، وسجل التدقيق من مكان واحد",
+      "tabs": {
+        "users": "👥 المستخدمون",
+        "permissions": "🔐 الصلاحيات",
+        "settings": "⚙️ الإعدادات",
+        "audit": "📋 التدقيق"
+      },
+      "retry": "إعادة المحاولة",
+      "cancel": "إلغاء",
+      "users": {
+        "total": "{n} مستخدم"
+      },
+      "settings": {
+        "loadError": "فشل تحميل الإعدادات",
+        "empty": "لا توجد إعدادات",
+        "colKey": "المفتاح",
+        "colValue": "القيمة",
+        "colScope": "النطاق",
+        "colUpdated": "آخر تعديل",
+        "editBtn": "تعديل",
+        "editTitle": "تعديل الإعداد: {key}",
+        "newValue": "القيمة الجديدة",
+        "stepUpDesc": "تغيير الإعداد \"{key}\" يتطلب تأكيد هويتك",
+        "updateSuccess": "تم تحديث الإعداد \"{key}\" بنجاح",
+        "updateError": "فشل تحديث الإعداد",
+        "globalNote": "الإعدادات العامة تؤثر على كامل النظام — غيّرها بحذر شديد",
+        "global": "عام"
+      },
+      "audit": {
+        "loadError": "فشل تحميل سجل التدقيق",
+        "empty": "لا توجد سجلات",
+        "filterAction": "فلتر بالإجراء...",
+        "filterEntity": "فلتر بالكيان...",
+        "search": "بحث",
+        "colAction": "الإجراء",
+        "colEntity": "الكيان",
+        "colActor": "المنفّذ",
+        "colTime": "الوقت",
+        "colDetails": "التفاصيل"
       }
     }
   }

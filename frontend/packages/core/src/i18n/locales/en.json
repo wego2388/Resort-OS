@@ -3606,27 +3606,22 @@
       "approving": "Approving..."
     },
     "guestAlerts": {
-      "title": "Guest alerts",
-      "buttonLabel": "Guest alerts ({count})",
-      "empty": "No guest alerts right now",
+      "title": "Guest service requests",
+      "titleCount": "Guest service requests ({count})",
+      "empty": "No active requests",
       "now": "Now",
       "minutesAgo": "{count} min ago",
       "hoursAgo": "{count} hr ago",
-      "acknowledge": "In progress",
-      "resolve": "Done",
-      "resolvedSuccess": "Alert closed",
-      "loadFailed": "Could not load guest alerts",
-      "updateFailed": "Could not update the alert",
-      "context": {
-        "diningTable": "Table",
-        "restaurantTable": "Restaurant table",
-        "cafeTable": "Cafe table",
-        "beachLocation": "Beach location",
-        "room": "Room",
-        "other": "Other"
-      },
-      "type": {
+      "acknowledge": "Acknowledge",
+      "arrived": "I arrived",
+      "done": "Done",
+      "closed": "Request closed",
+      "loadError": "Couldn't load guest requests",
+      "updateError": "Couldn't update the request",
+      "types": {
         "callWaiter": "Call waiter",
+        "readyToOrder": "Ready to order",
+        "assistance": "Assistance",
         "requestBill": "Request bill",
         "other": "Other request"
       }
@@ -3968,9 +3963,9 @@
         "orderInProgress": "Current order",
         "emptyHint": "Tap any menu item to add it here.",
         "notePlaceholder": "Clear instructions for the kitchen or delivery...",
-      "itemsSubtotal": "Items subtotal (before server pricing)",
-      "estimatedTotal": "Estimated item total",
-      "serverTotal": "Server total",
+        "itemsSubtotal": "Items subtotal (before server pricing)",
+        "estimatedTotal": "Estimated item total",
+        "serverTotal": "Server total",
         "discount": "Discount",
         "payNow": "Pay now",
         "paymentOffline": "Payment requires an internet connection; you can still save the kitchen order while offline.",
@@ -6411,27 +6406,6 @@
         "pageCreated": "Page created"
       }
     },
-    "guestAlerts": {
-      "title": "Guest service requests",
-      "titleCount": "Guest service requests ({count})",
-      "empty": "No active requests",
-      "now": "Now",
-      "minutesAgo": "{count} min ago",
-      "hoursAgo": "{count} hr ago",
-      "acknowledge": "Acknowledge",
-      "arrived": "I arrived",
-      "done": "Done",
-      "closed": "Request closed",
-      "loadError": "Couldn't load guest requests",
-      "updateError": "Couldn't update the request",
-      "types": {
-        "callWaiter": "Call waiter",
-        "readyToOrder": "Ready to order",
-        "assistance": "Assistance",
-        "requestBill": "Request bill",
-        "other": "Other request"
-      }
-    },
     "qrGenerator": {
       "title": "Generate QR Codes",
       "subtitle": "Select tables and print QR codes ready to hang up",
@@ -6678,6 +6652,50 @@
         "fieldsRequired": "Please select a leave type and start/end dates",
         "requestSubmitted": "Leave request submitted successfully ✓",
         "submitError": "An error occurred while submitting the request"
+      }
+    },
+    "superAdmin": {
+      "navLabel": "Super Admin Panel",
+      "title": "Super Admin Control Center",
+      "subtitle": "Manage users, permissions, settings, and audit logs from one place",
+      "tabs": {
+        "users": "👥 Users",
+        "permissions": "🔐 Permissions",
+        "settings": "⚙️ Settings",
+        "audit": "📋 Audit"
+      },
+      "retry": "Retry",
+      "cancel": "Cancel",
+      "users": {
+        "total": "{n} users"
+      },
+      "settings": {
+        "loadError": "Failed to load settings",
+        "empty": "No settings found",
+        "colKey": "Key",
+        "colValue": "Value",
+        "colScope": "Scope",
+        "colUpdated": "Last Updated",
+        "editBtn": "Edit",
+        "editTitle": "Edit Setting: {key}",
+        "newValue": "New value",
+        "stepUpDesc": "Changing setting \"{key}\" requires identity confirmation",
+        "updateSuccess": "Setting \"{key}\" updated successfully",
+        "updateError": "Failed to update setting",
+        "globalNote": "Global settings affect the entire system — change with care",
+        "global": "Global"
+      },
+      "audit": {
+        "loadError": "Failed to load audit log",
+        "empty": "No records found",
+        "filterAction": "Filter by action...",
+        "filterEntity": "Filter by entity...",
+        "search": "Search",
+        "colAction": "Action",
+        "colEntity": "Entity",
+        "colActor": "Actor",
+        "colTime": "Time",
+        "colDetails": "Details"
       }
     }
   }

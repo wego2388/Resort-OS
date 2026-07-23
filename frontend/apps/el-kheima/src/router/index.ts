@@ -200,6 +200,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'cafe-sales',  redirect: '/admin/analytics' },
       { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
       { path: 'users', name: 'admin-users', component: () => import('../views/admin/UsersView.vue'), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.accounts.title' } },
+      { path: 'super-admin', name: 'admin-super-admin', component: () => import('../views/admin/SuperAdminView.vue'), meta: { requiredRole: 'super_admin', title: 'لوحة تحكم Super Admin' } },
       { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { title: 'الموقع والحجوزات الأونلاين' } },
       // Mohamed's temporary project control room. The route is compiled into
       // development only and remains role-gated even there. Production builds
