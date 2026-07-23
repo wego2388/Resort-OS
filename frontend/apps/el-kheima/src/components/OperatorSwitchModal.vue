@@ -7,14 +7,19 @@
  * (مدير أو أي حد فتح الشيفت الأول مرة)، والموظف بعد كده بس بيدوس اسمه
  * ويدخل الـ PIN بتاعه (4-6 أرقام) عشان كل عملية بعد كده (بيع، إلغاء...)
  * تتسجل باسمه هو فعليًا مش باسم أول حد سجّل دخول على الجهاز.
+ *
+ * Gate 5 i18n — النصوص متنقلة للـ backoffice.operatorSwitch namespace.
+ * ROLE_LABEL متنقلة لـ backoffice.permissions.roles (موجودة أصلاً).
  */
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
-import { AppModal, useToast } from '@resort-os/ui'
+import { AppModal, AppButton, useToast } from '@resort-os/ui'
 
 const emit = defineEmits<{ close: [] }>()
 const auth = useAuthStore()
 const toast = useToast()
+const { t } = useI18n()
 
 interface Operator { id: number; full_name: string; role: string }
 
@@ -25,12 +30,6 @@ const pin = ref('')
 const busy = ref(false)
 const error = ref('')
 
-const ROLE_LABEL: Record<string, string> = {
-  manager: 'مدير', supervisor: 'مشرف', cashier: 'كاشير',
-  receptionist: 'استقبال', waiter: 'نادل', chef: 'شيف',
-  kitchen: 'مطبخ', employee: 'موظف',
-}
-
 onMounted(async () => {
   try {
     // min_level=20 عشان تجيب كل الموظفين التشغيليين (مش المديرين بس زي
@@ -39,7 +38,7 @@ onMounted(async () => {
     const { data } = await api.get(ENDPOINTS.core.pinApprovers, { params: { min_level: 20 } })
     operators.value = data.filter((o: Operator) => o.id !== auth.user?.id)
   } catch {
-    error.value = 'فشل تحميل قائمة الموظفين'
+    error.value = t('backoffice.operatorSwitch.loadError')
   } finally {
     loading.value = false
   }
@@ -53,17 +52,17 @@ function selectOperator(id: number) {
 
 async function confirmSwitch() {
   if (!selectedId.value || pin.value.length < 4) {
-    error.value = 'اختر اسمك وأدخل الـ PIN بتاعك'
+    error.value = t('backoffice.operatorSwitch.error')
     return
   }
   busy.value = true
   error.value = ''
   try {
     await auth.pinSwitch(selectedId.value, pin.value)
-    toast.success(`تم التبديل — أهلاً ${auth.user?.full_name} 👋`)
+    toast.success(t('backoffice.operatorSwitch.switchSuccess', { name: auth.user?.full_name }))
     emit('close')
   } catch (e: any) {
-    error.value = e?.response?.data?.detail ?? 'فشل التبديل — تأكد من الـ PIN'
+    error.value = e?.response?.data?.detail ?? t('backoffice.operatorSwitch.switchError')
   } finally {
     busy.value = false
   }
@@ -71,26 +70,30 @@ async function confirmSwitch() {
 </script>
 
 <template>
-  <AppModal :open="true" title="تبديل المشغّل" size="sm" @close="emit('close')">
-    <div class="space-y-3 min-w-[280px]">
-      <p class="text-xs text-gray-500">اختر اسمك وأدخل رقم الـ PIN بتاعك (4-6 أرقام)</p>
+  <AppModal :open="true" :title="t('backoffice.operatorSwitch.title')" size="sm" @close="emit('close')">
+    <div class="min-w-[280px] space-y-3">
+      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.operatorSwitch.hint') }}</p>
 
-      <div v-if="loading" class="text-center text-sm text-gray-400 py-4">جاري التحميل...</div>
-      <div v-else-if="operators.length === 0" class="text-center text-sm text-gray-400 py-4">
-        مفيش موظفين تانيين عندهم PIN مضبوط
+      <div v-if="loading" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
+        {{ t('backoffice.operatorSwitch.loading') }}
+      </div>
+      <div v-else-if="operators.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
+        {{ t('backoffice.operatorSwitch.empty') }}
       </div>
       <div v-else class="grid grid-cols-2 gap-2">
         <button
           v-for="op in operators"
           :key="op.id"
-          @click="selectOperator(op.id)"
-          class="p-2.5 rounded-lg border text-right transition-colors"
+          class="rounded-lg border p-2.5 text-start transition-colors"
           :class="selectedId === op.id
             ? 'border-blue-600 bg-blue-50 ring-2 ring-blue-200 dark:border-blue-500 dark:bg-blue-950/40 dark:ring-blue-800'
             : 'border-stone-200 hover:bg-gray-50 dark:border-border dark:hover:bg-gray-800'"
+          @click="selectOperator(op.id)"
         >
           <div class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ op.full_name }}</div>
-          <div class="text-xs text-gray-400">{{ ROLE_LABEL[op.role] ?? op.role }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-500">
+            {{ t(`backoffice.permissions.roles.${op.role}`, op.role) }}
+          </div>
         </button>
       </div>
 
@@ -100,22 +103,30 @@ async function confirmSwitch() {
         type="password"
         inputmode="numeric"
         maxlength="6"
-        placeholder="PIN"
+        :placeholder="t('backoffice.operatorSwitch.pinPlaceholder')"
         autofocus
-        class="w-full rounded-lg border border-stone-300 bg-white p-2.5 text-center text-lg tracking-[0.4em] focus:outline-none focus:ring-2 focus:ring-blue-400 dark:border-border dark:bg-background dark:text-gray-100"
+        class="w-full rounded-xl border border-stone-300 bg-white p-2.5 text-center text-lg tracking-[0.4em] text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-400/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
         @keyup.enter="confirmSwitch"
       />
 
-      <p v-if="error" class="text-xs text-red-600 dark:text-red-300">{{ error }}</p>
-
-      <div class="flex gap-2 pt-1">
-        <button @click="emit('close')" class="flex-1 rounded-lg border border-stone-200 py-2 text-sm font-semibold text-gray-600 dark:border-border dark:text-gray-300">إلغاء</button>
-        <button
-          :disabled="busy || !selectedId"
-          @click="confirmSwitch"
-          class="flex-1 py-2 text-sm font-bold text-white bg-blue-700 rounded-lg disabled:opacity-50"
-        >تأكيد</button>
-      </div>
+      <p v-if="error" role="alert" class="text-xs text-red-600 dark:text-red-300">{{ error }}</p>
     </div>
+
+    <template #footer>
+      <div class="flex gap-2">
+        <AppButton variant="outline" class="flex-1" :disabled="busy" @click="emit('close')">
+          {{ t('backoffice.operatorSwitch.cancel') }}
+        </AppButton>
+        <AppButton
+          variant="primary"
+          class="flex-1"
+          :loading="busy"
+          :disabled="!selectedId || operators.length === 0"
+          @click="confirmSwitch"
+        >
+          {{ busy ? t('backoffice.operatorSwitch.confirming') : t('backoffice.operatorSwitch.confirm') }}
+        </AppButton>
+      </div>
+    </template>
   </AppModal>
 </template>

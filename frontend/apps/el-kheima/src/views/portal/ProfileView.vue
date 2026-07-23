@@ -3,7 +3,7 @@
 // runtime + @resort-os/ui primitives. Direction is inherited from <html dir>
 // (central staff locale controller); no forced dir, no hard-coded ar-EG.
 import { ref, onMounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppSpinner, AppInput, AppButton, useToast } from '@resort-os/ui'
 import { useI18n } from 'vue-i18n'
@@ -17,6 +17,10 @@ interface Profile {
   phone?: string; position: string; department?: string; hire_date: string
 }
 
+interface PinStatus {
+  user_id: number; has_pin: boolean; failed_attempts: number; is_locked: boolean
+}
+
 const profile = ref<Profile | null>(null)
 const loading = ref(false)
 const profileError = ref('')
@@ -24,6 +28,14 @@ const pwForm = ref({ current_password: '', new_password: '', confirm_password: '
 const pwMsg = ref('')
 const pwError = ref('')
 const pwLoading = ref(false)
+
+// ── PIN state ──────────────────────────────────────────────────────────
+const pinStatus = ref<PinStatus | null>(null)
+const pinLoading = ref(false)
+const pinValue = ref('')
+const pinMsg = ref('')
+const pinError = ref('')
+const pinSaving = ref(false)
 
 async function fetchProfile() {
   loading.value = true
@@ -35,6 +47,35 @@ async function fetchProfile() {
     profileError.value = e?.response?.data?.detail ?? t('backoffice.profile.loadFailed')
     toast.error(profileError.value)
   } finally { loading.value = false }
+}
+
+async function fetchPinStatus() {
+  pinLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.core.pinMe)
+    pinStatus.value = data
+  } catch {
+    // 404 = لا PIN مضبوط بعد — حالة طبيعية
+    pinStatus.value = { user_id: 0, has_pin: false, failed_attempts: 0, is_locked: false }
+  } finally { pinLoading.value = false }
+}
+
+async function savePin() {
+  pinMsg.value = ''
+  pinError.value = ''
+  if (!/^\d{4,6}$/.test(pinValue.value)) {
+    pinError.value = t('backoffice.profile.pin.validationError')
+    return
+  }
+  pinSaving.value = true
+  try {
+    const { data } = await api.post(ENDPOINTS.core.pinMe, { pin: pinValue.value })
+    pinStatus.value = data
+    pinMsg.value = t('backoffice.profile.pin.success')
+    pinValue.value = ''
+  } catch (e: any) {
+    pinError.value = e?.response?.data?.detail ?? t('backoffice.profile.pin.saveError')
+  } finally { pinSaving.value = false }
 }
 
 async function changePassword() {
@@ -64,7 +105,7 @@ async function changePassword() {
   } finally { pwLoading.value = false }
 }
 
-onMounted(fetchProfile)
+onMounted(() => { fetchProfile(); fetchPinStatus() })
 </script>
 
 <template>
@@ -145,6 +186,57 @@ onMounted(fetchProfile)
           <div v-if="pwError" role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">{{ pwError }}</div>
           <AppButton type="submit" :loading="pwLoading" variant="primary" class="w-full">
             {{ pwLoading ? t('backoffice.profile.saving') : t('backoffice.profile.savePassword') }}
+          </AppButton>
+        </form>
+      </div>
+
+      <!-- Operational PIN -->
+      <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-6 shadow-sm">
+        <h3 class="font-bold text-gray-900 dark:text-gray-100 mb-1">{{ t('backoffice.profile.pin.title') }}</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mb-4">{{ t('backoffice.profile.pin.subtitle') }}</p>
+
+        <!-- حالة الـ PIN الحالية -->
+        <div v-if="pinLoading" class="flex items-center gap-2 py-2 text-sm text-gray-400">
+          <AppSpinner size="sm" />
+        </div>
+        <div v-else-if="pinStatus" class="mb-4">
+          <div v-if="pinStatus.is_locked"
+            class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+            🔒 {{ t('backoffice.profile.pin.locked') }}
+            <p class="mt-0.5 text-xs opacity-80">{{ t('backoffice.profile.pin.lockedHint') }}</p>
+          </div>
+          <div v-else-if="pinStatus.has_pin"
+            class="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700 dark:border-green-800 dark:bg-green-950/40 dark:text-green-300">
+            ✅ {{ t('backoffice.profile.pin.ready') }}
+          </div>
+          <div v-else
+            class="rounded-lg border border-stone-200 bg-stone-50 px-3 py-2 text-sm text-gray-500 dark:border-border dark:bg-surface-2 dark:text-gray-400">
+            ⚪ {{ t('backoffice.profile.pin.notSet') }}
+          </div>
+        </div>
+
+        <!-- Set / Change PIN form -->
+        <form class="space-y-3" @submit.prevent="savePin">
+          <div>
+            <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-200" for="profile-pin-input">
+              {{ pinStatus?.has_pin ? t('backoffice.profile.pin.changeTitle') : t('backoffice.profile.pin.setTitle') }}
+              <span class="ms-1 text-xs font-normal text-gray-400">{{ t('backoffice.profile.pin.pinHint') }}</span>
+            </label>
+            <input
+              id="profile-pin-input"
+              v-model="pinValue"
+              type="password"
+              inputmode="numeric"
+              maxlength="6"
+              :placeholder="t('backoffice.profile.pin.pinPlaceholder')"
+              autocomplete="off"
+              class="min-h-12 w-full rounded-xl border border-stone-300 bg-white p-2.5 text-center text-xl tracking-[0.5em] text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-400/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+            />
+          </div>
+          <div v-if="pinMsg" role="status" class="rounded-lg bg-green-100 px-3 py-2 text-sm font-medium text-green-700 dark:bg-green-950/50 dark:text-green-300">{{ pinMsg }}</div>
+          <div v-if="pinError" role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">{{ pinError }}</div>
+          <AppButton type="submit" :loading="pinSaving" variant="primary" class="w-full">
+            {{ pinSaving ? t('backoffice.profile.pin.saving') : t('backoffice.profile.pin.confirm') }}
           </AppButton>
         </form>
       </div>

@@ -3653,7 +3653,25 @@
       "fillAllFields": "الرجاء ملء جميع الحقول",
       "passwordsMismatch": "كلمتا المرور غير متطابقتان",
       "passwordTooShort": "كلمة المرور يجب أن تكون 8 أحرف على الأقل",
-      "currentPasswordWrong": "كلمة المرور الحالية غير صحيحة"
+      "currentPasswordWrong": "كلمة المرور الحالية غير صحيحة",
+      "pin": {
+        "title": "رقم PIN التشغيلي",
+        "subtitle": "يُستخدم لتأكيد إجراءات POS الحساسة وتبديل هوية المشغّل",
+        "notSet": "لم يتم ضبط PIN بعد",
+        "ready": "PIN مضبوط ✓",
+        "locked": "PIN مقفول مؤقتًا (بعد 3 محاولات خاطئة)",
+        "lockedHint": "يُرفع القفل تلقائيًا بعد دقيقة واحدة",
+        "setTitle": "ضبط PIN جديد",
+        "changeTitle": "تغيير PIN",
+        "pinLabel": "رقم PIN الجديد",
+        "pinHint": "4 إلى 6 أرقام فقط",
+        "pinPlaceholder": "مثال: 1234",
+        "confirm": "حفظ الـ PIN",
+        "saving": "جارٍ الحفظ...",
+        "success": "تم ضبط الـ PIN بنجاح ✓",
+        "validationError": "يجب أن يكون الـ PIN من 4 إلى 6 أرقام فقط",
+        "saveError": "فشل حفظ الـ PIN"
+      }
     },
     "langSwitcher": {
       "ar": "العربية",
@@ -6696,7 +6714,42 @@
         "colActor": "المنفّذ",
         "colTime": "الوقت",
         "colDetails": "التفاصيل"
+      },
+      "pin": {
+        "columnHeader": "PIN تشغيلي",
+        "set": "ضبط PIN",
+        "reset": "تجديد PIN",
+        "notSet": "غير مضبوط",
+        "ready": "مضبوط",
+        "locked": "مقفول مؤقتًا",
+        "modalTitle": "ضبط PIN التشغيلي",
+        "modalFor": "لـ {name}",
+        "pinLabel": "رقم PIN الجديد",
+        "pinHint": "4 إلى 6 أرقام فقط",
+        "pinPlaceholder": "مثال: 1234",
+        "confirm": "حفظ الـ PIN",
+        "cancel": "إلغاء",
+        "saving": "جارٍ الحفظ...",
+        "success": "تم ضبط الـ PIN بنجاح ✓",
+        "validationError": "يجب أن يكون الـ PIN من 4 إلى 6 أرقام فقط",
+        "loadError": "فشل تحميل حالة الـ PIN",
+        "saveError": "فشل حفظ الـ PIN",
+        "lockedFailedAttempts": "{n} محاولات فاشلة"
       }
+    },
+    "operatorSwitch": {
+      "title": "تبديل المشغّل",
+      "hint": "اختر اسمك وأدخل رقم الـ PIN بتاعك (4-6 أرقام)",
+      "loading": "جارٍ التحميل...",
+      "empty": "لا يوجد موظفون آخرون لديهم PIN مضبوط",
+      "pinPlaceholder": "PIN",
+      "error": "اختر اسمك وأدخل الـ PIN بتاعك",
+      "loadError": "فشل تحميل قائمة الموظفين",
+      "switchError": "فشل التبديل — تأكد من الـ PIN",
+      "switchSuccess": "تم التبديل — أهلاً {name} 👋",
+      "cancel": "إلغاء",
+      "confirm": "تأكيد",
+      "confirming": "جارٍ التبديل..."
     }
   }
 }

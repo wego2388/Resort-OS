@@ -341,6 +341,74 @@ async function loadAuditLogs() {
   finally { auditLoading.value = false }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// PIN MANAGEMENT — ضبط PIN التشغيلي لأي موظف (super_admin فقط)
+// Backend: POST /api/v1/pins/{user_id} (manager+ — super_admin يعدّيها)
+// ══════════════════════════════════════════════════════════════════════
+interface PinStatus {
+  user_id: number
+  has_pin: boolean
+  failed_attempts: number
+  is_locked: boolean
+}
+
+// كاش خفيف لحالات الـ PIN — بيتملأ عند فتح modal أو بعد حفظ ناجح
+const pinStatuses = ref<Map<number, PinStatus>>(new Map())
+const pinTarget = ref<UserRow | null>(null)
+const pinValue = ref('')
+const pinBusy = ref(false)
+const pinError = ref('')
+const pinFetchBusy = ref(false)
+
+function openPinModal(row: UserRow) {
+  pinTarget.value = row
+  pinValue.value = ''
+  pinError.value = ''
+  // حمّل حالة الـ PIN الحالية للمستخدم ده لو مش موجودة في الكاش
+  if (!pinStatuses.value.has(row.id)) fetchPinStatus(row.id)
+}
+
+function closePinModal() {
+  pinTarget.value = null
+  pinValue.value = ''
+  pinError.value = ''
+}
+
+async function fetchPinStatus(userId: number) {
+  pinFetchBusy.value = true
+  try {
+    const res = await api.get(ENDPOINTS.core.pinUser(userId))
+    pinStatuses.value = new Map(pinStatuses.value).set(userId, res.data)
+  } catch {
+    // 404 يعني مفيش PIN مضبوط — ده حالة طبيعية (has_pin: false)
+    pinStatuses.value = new Map(pinStatuses.value).set(userId, {
+      user_id: userId, has_pin: false, failed_attempts: 0, is_locked: false,
+    })
+  } finally {
+    pinFetchBusy.value = false
+  }
+}
+
+async function submitSetPin() {
+  if (!pinTarget.value) return
+  pinError.value = ''
+  if (!/^\d{4,6}$/.test(pinValue.value)) {
+    pinError.value = t('backoffice.superAdmin.pin.validationError')
+    return
+  }
+  pinBusy.value = true
+  try {
+    const res = await api.post(ENDPOINTS.core.pinUser(pinTarget.value.id), { pin: pinValue.value })
+    pinStatuses.value = new Map(pinStatuses.value).set(pinTarget.value.id, res.data)
+    toast.success(t('backoffice.superAdmin.pin.success'))
+    closePinModal()
+  } catch (e: any) {
+    pinError.value = e?.response?.data?.detail ?? t('backoffice.superAdmin.pin.saveError')
+  } finally {
+    pinBusy.value = false
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────
 onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
 </script>
@@ -398,6 +466,7 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
                 <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.nameAndEmail') }}</th>
                 <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.role') }}</th>
                 <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.security') }}</th>
+                <th class="px-4 py-3 text-start">{{ t('backoffice.superAdmin.pin.columnHeader') }}</th>
                 <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.status') }}</th>
                 <th class="px-4 py-3 text-start">{{ t('backoffice.accounts.actions') }}</th>
               </tr>
@@ -415,16 +484,33 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
                   <AppBadge v-else-if="row.two_factor_enabled" variant="success">{{ t('backoffice.accounts.twoFactorOn') }}</AppBadge>
                   <AppBadge v-else variant="neutral">{{ t('backoffice.accounts.passwordReady') }}</AppBadge>
                 </td>
+                <!-- PIN status badge — lazy: يتحمّل من الكاش لما يتضبط أو يُفتح الـ modal -->
+                <td class="px-4 py-3">
+                  <template v-if="pinStatuses.has(row.id)">
+                    <AppBadge v-if="pinStatuses.get(row.id)!.is_locked" variant="danger">{{ t('backoffice.superAdmin.pin.locked') }}</AppBadge>
+                    <AppBadge v-else-if="pinStatuses.get(row.id)!.has_pin" variant="success">{{ t('backoffice.superAdmin.pin.ready') }}</AppBadge>
+                    <AppBadge v-else variant="neutral">{{ t('backoffice.superAdmin.pin.notSet') }}</AppBadge>
+                  </template>
+                  <span v-else class="text-xs text-gray-400 dark:text-gray-500">—</span>
+                </td>
                 <td class="px-4 py-3">
                   <AppBadge :variant="row.is_active ? 'success' : 'danger'">
                     {{ t(row.is_active ? 'backoffice.accounts.active' : 'backoffice.accounts.inactive') }}
                   </AppBadge>
                 </td>
                 <td class="px-4 py-3">
-                  <button class="font-semibold text-primary-700 hover:underline disabled:opacity-50 dark:text-primary-400"
-                    :disabled="stepUpBusy" @click="requestStatus(row)">
-                    {{ t(row.is_active ? 'backoffice.accounts.deactivate' : 'backoffice.accounts.activate') }}
-                  </button>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button class="font-semibold text-primary-700 hover:underline disabled:opacity-50 dark:text-primary-400"
+                      :disabled="stepUpBusy" @click="requestStatus(row)">
+                      {{ t(row.is_active ? 'backoffice.accounts.deactivate' : 'backoffice.accounts.activate') }}
+                    </button>
+                    <!-- PIN button: مخفي لـ super_admin (لا يحتاج PIN تشغيلي) -->
+                    <button v-if="row.role !== 'super_admin'"
+                      class="font-semibold text-amber-600 hover:underline dark:text-amber-400"
+                      @click="openPinModal(row)">
+                      {{ pinStatuses.get(row.id)?.has_pin ? t('backoffice.superAdmin.pin.reset') : t('backoffice.superAdmin.pin.set') }}
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -436,6 +522,78 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
       <StepUpConfirmModal v-if="pending" :purpose="stepUpPurpose" :intent="stepUpIntent"
         :description="stepUpDescription" :loading="stepUpBusy" :error-message="stepUpError"
         @confirmed="onStepUpConfirmed" @cancel="pending = null" />
+
+
+      <!-- ── PIN Setup Modal ──────────────────────────────────────────── -->
+      <!-- super_admin يضبط/يجدّد PIN تشغيلي لأي موظف (manager+ endpoint) -->
+      <AppModal
+        v-if="pinTarget"
+        :open="true"
+        :title="`${t('backoffice.superAdmin.pin.modalTitle')} — ${t('backoffice.superAdmin.pin.modalFor', { name: pinTarget.full_name })}`"
+        size="sm"
+        @close="closePinModal"
+      >
+        <div class="space-y-4">
+          <!-- حالة الـ PIN الحالية -->
+          <div v-if="pinFetchBusy" class="flex justify-center py-2">
+            <AppSpinner size="sm" />
+          </div>
+          <template v-else-if="pinStatuses.has(pinTarget.id)">
+            <div class="rounded-lg border px-3 py-2 text-sm"
+              :class="pinStatuses.get(pinTarget.id)!.is_locked
+                ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300'
+                : pinStatuses.get(pinTarget.id)!.has_pin
+                  ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-800 dark:bg-green-950/40 dark:text-green-300'
+                  : 'border-stone-200 bg-stone-50 text-gray-600 dark:border-border dark:bg-surface-2 dark:text-gray-400'">
+              <template v-if="pinStatuses.get(pinTarget.id)!.is_locked">
+                🔒 {{ t('backoffice.superAdmin.pin.locked') }}
+                <span class="ms-1 text-xs opacity-75">({{ t('backoffice.superAdmin.pin.lockedFailedAttempts', { n: pinStatuses.get(pinTarget.id)!.failed_attempts }, `${pinStatuses.get(pinTarget.id)!.failed_attempts} محاولات`) }})</span>
+              </template>
+              <template v-else-if="pinStatuses.get(pinTarget.id)!.has_pin">
+                ✅ {{ t('backoffice.superAdmin.pin.ready') }}
+              </template>
+              <template v-else>
+                ⚪ {{ t('backoffice.superAdmin.pin.notSet') }}
+              </template>
+            </div>
+          </template>
+
+          <!-- PIN input -->
+          <div>
+            <label class="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-200" for="pin-admin-input">
+              {{ t('backoffice.superAdmin.pin.pinLabel') }}
+              <span class="ms-1 text-xs font-normal text-gray-400">{{ t('backoffice.superAdmin.pin.pinHint') }}</span>
+            </label>
+            <input
+              id="pin-admin-input"
+              v-model="pinValue"
+              type="password"
+              inputmode="numeric"
+              maxlength="6"
+              :placeholder="t('backoffice.superAdmin.pin.pinPlaceholder')"
+              autocomplete="off"
+              autofocus
+              class="min-h-12 w-full rounded-xl border border-stone-300 bg-white p-2.5 text-center text-xl tracking-[0.5em] text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-400/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              @keyup.enter="submitSetPin"
+            />
+          </div>
+
+          <p v-if="pinError" role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">
+            {{ pinError }}
+          </p>
+        </div>
+
+        <template #footer>
+          <div class="flex gap-2">
+            <AppButton variant="outline" class="flex-1" :disabled="pinBusy" @click="closePinModal">
+              {{ t('backoffice.superAdmin.pin.cancel') }}
+            </AppButton>
+            <AppButton variant="primary" class="flex-1" :loading="pinBusy" @click="submitSetPin">
+              {{ pinBusy ? t('backoffice.superAdmin.pin.saving') : t('backoffice.superAdmin.pin.confirm') }}
+            </AppButton>
+          </div>
+        </template>
+      </AppModal>
 
       <!-- Bootstrap credentials modal -->
       <AppModal v-if="bootstrap" :open="true" :title="t('backoffice.accounts.credentialsTitle')" size="md" @close="bootstrap = null">

@@ -3653,7 +3653,25 @@
       "fillAllFields": "Please fill in all fields",
       "passwordsMismatch": "Passwords do not match",
       "passwordTooShort": "Password must be at least 8 characters",
-      "currentPasswordWrong": "Current password is incorrect"
+      "currentPasswordWrong": "Current password is incorrect",
+      "pin": {
+        "title": "Operational PIN",
+        "subtitle": "Used to confirm sensitive POS actions and operator switching",
+        "notSet": "PIN not set yet",
+        "ready": "PIN is set ✓",
+        "locked": "PIN temporarily locked (after 3 wrong attempts)",
+        "lockedHint": "Lock is lifted automatically after one minute",
+        "setTitle": "Set a new PIN",
+        "changeTitle": "Change PIN",
+        "pinLabel": "New PIN",
+        "pinHint": "4 to 6 digits only",
+        "pinPlaceholder": "e.g. 1234",
+        "confirm": "Save PIN",
+        "saving": "Saving...",
+        "success": "PIN set successfully ✓",
+        "validationError": "PIN must be 4 to 6 digits only",
+        "saveError": "Failed to save PIN"
+      }
     },
     "langSwitcher": {
       "ar": "العربية",
@@ -6696,7 +6714,42 @@
         "colActor": "Actor",
         "colTime": "Time",
         "colDetails": "Details"
+      },
+      "pin": {
+        "columnHeader": "Operational PIN",
+        "set": "Set PIN",
+        "reset": "Reset PIN",
+        "notSet": "Not set",
+        "ready": "Set",
+        "locked": "Temporarily locked",
+        "modalTitle": "Set Operational PIN",
+        "modalFor": "for {name}",
+        "pinLabel": "New PIN",
+        "pinHint": "4 to 6 digits only",
+        "pinPlaceholder": "e.g. 1234",
+        "confirm": "Save PIN",
+        "cancel": "Cancel",
+        "saving": "Saving...",
+        "success": "PIN set successfully ✓",
+        "validationError": "PIN must be 4 to 6 digits only",
+        "loadError": "Failed to load PIN status",
+        "saveError": "Failed to save PIN",
+        "lockedFailedAttempts": "{n} failed attempts"
       }
+    },
+    "operatorSwitch": {
+      "title": "Switch Operator",
+      "hint": "Select your name and enter your PIN (4-6 digits)",
+      "loading": "Loading...",
+      "empty": "No other operators have a PIN set",
+      "pinPlaceholder": "PIN",
+      "error": "Select your name and enter your PIN",
+      "loadError": "Failed to load operators list",
+      "switchError": "Switch failed — check your PIN",
+      "switchSuccess": "Switched — Welcome {name} 👋",
+      "cancel": "Cancel",
+      "confirm": "Confirm",
+      "confirming": "Switching..."
     }
   }
 }
