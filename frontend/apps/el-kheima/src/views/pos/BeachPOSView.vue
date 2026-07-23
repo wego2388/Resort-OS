@@ -500,7 +500,7 @@ onUnmounted(() => {
             <button
               @click="clearCart"
               :disabled="!hasItems"
-              class="rounded-xl border-2 border-stone-200 py-3 font-semibold text-gray-600 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-border dark:text-gray-300 dark:hover:bg-gray-800"
+              class="rounded-xl border-2 border-stone-200 py-3 font-semibold text-gray-600 transition-colors hover:bg-gray-50 dark:bg-surface-2 disabled:opacity-40 dark:border-border dark:text-gray-300 dark:hover:bg-gray-800"
             >{{ t('backoffice.beachPos.clearOrder') }}</button>
             <button
               @click="completeSale"

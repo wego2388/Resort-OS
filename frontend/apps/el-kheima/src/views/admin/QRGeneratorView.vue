@@ -223,7 +223,7 @@ onMounted(async () => {
         <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide mb-4 dark:text-gray-400">{{ section }}</h2>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <article v-for="table in sectionTables" :id="`table-card-${table.id}`" :key="table.id" :class="['relative bg-white dark:bg-surface rounded-2xl border-2 p-4 flex flex-col items-center gap-3 transition-all', selectedIds.has(table.id) ? 'border-blue-600 bg-blue-50 shadow-md dark:border-blue-500 dark:bg-blue-950/40' : 'border-stone-200 dark:border-border']">
-            <button class="absolute top-2 end-2 w-6 h-6 rounded-full border-2 text-xs" :class="selectedIds.has(table.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-stone-300'" @click="toggleSelect(table.id)">{{ selectedIds.has(table.id) ? '✓' : '' }}</button>
+            <button class="absolute top-2 end-2 w-6 h-6 rounded-full border-2 text-xs" :class="selectedIds.has(table.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-stone-300 dark:border-gray-600'" @click="toggleSelect(table.id)">{{ selectedIds.has(table.id) ? '✓' : '' }}</button>
             <div class="w-28 h-28 bg-stone-50 dark:bg-white rounded-xl flex items-center justify-center overflow-hidden">
               <canvas v-if="tokenByTable.has(table.id)" :ref="el => { canvasRefs[table.id] = el as HTMLCanvasElement | null; if (el) renderTableQr(table.id) }" class="w-28 h-28" />
               <span v-else class="text-xs text-gray-400 text-center px-2">{{ t('backoffice.qrGenerator.notGenerated') }}</span>

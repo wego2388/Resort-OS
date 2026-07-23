@@ -398,7 +398,7 @@ onMounted(() => {
           <tr
             v-for="b in filteredBookings"
             :key="b.id"
-            class="border-b border-stone-100 transition-colors hover:bg-gray-50 dark:border-border/50 dark:hover:bg-gray-800/60"
+            class="border-b border-stone-100 transition-colors hover:bg-gray-50 dark:bg-surface-2 dark:border-border/50 dark:hover:bg-gray-800/60"
           >
             <td class="px-4 py-3 text-gray-400 dark:text-gray-400 font-mono text-xs">{{ b.id }}</td>
             <td class="px-4 py-3">
@@ -566,7 +566,7 @@ onMounted(() => {
                 v-model="form.guest_name"
                 type="text"
                 :placeholder="t('backoffice.bookings.fullName')"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
 
@@ -577,7 +577,7 @@ onMounted(() => {
                 v-model="form.guest_phone"
                 type="tel"
                 placeholder="01xxxxxxxxx"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 dir="ltr"
               />
             </div>
@@ -589,7 +589,7 @@ onMounted(() => {
                 <input
                   v-model="form.check_in"
                   type="date"
-                  class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   dir="ltr"
                 />
               </div>
@@ -598,7 +598,7 @@ onMounted(() => {
                 <input
                   v-model="form.check_out"
                   type="date"
-                  class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   dir="ltr"
                 />
               </div>
@@ -614,7 +614,7 @@ onMounted(() => {
               </label>
               <div
                 v-if="form.check_in && form.check_out && !roomsLoading && rooms.length > 0"
-                class="border border-stone-300 rounded-xl max-h-40 overflow-y-auto divide-y divide-stone-100"
+                class="border border-stone-300 dark:border-gray-600 rounded-xl max-h-40 overflow-y-auto divide-y divide-stone-100"
               >
                 <label
                   v-for="room in rooms"
@@ -641,7 +641,7 @@ onMounted(() => {
               <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.bookings.ratePlanOptional') }}</label>
               <select
                 v-model="form.rate_plan_id"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-surface"
+                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-surface"
               >
                 <option :value="null">{{ t('backoffice.bookings.baseRateNoPlan') }}</option>
                 <option
@@ -660,7 +660,7 @@ onMounted(() => {
                 v-model="form.notes"
                 rows="2"
                 :placeholder="t('backoffice.bookings.specialInstructions')"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               />
             </div>
 

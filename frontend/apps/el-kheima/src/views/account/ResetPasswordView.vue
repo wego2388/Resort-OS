@@ -79,7 +79,7 @@ async function handleSubmit() {
   >
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
-        <div class="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur text-3xl">🔒</div>
+        <div class="w-16 h-16 bg-white dark:bg-surface/10 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur text-3xl">🔒</div>
         <h1 class="text-2xl font-bold text-white mb-1">{{ t('backoffice.resetPassword.title') }}</h1>
         <p class="text-blue-200 text-sm">{{ t('backoffice.resetPassword.subtitle') }}</p>
       </div>

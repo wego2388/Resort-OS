@@ -495,7 +495,7 @@ onMounted(loadAll)
                   <span v-else class="text-xs text-gray-400 dark:text-gray-400">—</span>
                 </td>
               </tr>
-              <tr class="border-t-2 border-stone-300 bg-stone-50 dark:bg-gray-800/60 font-black">
+              <tr class="border-t-2 border-stone-300 dark:border-gray-600 bg-stone-50 dark:bg-gray-800/60 font-black">
                 <td class="px-3 py-2 text-gray-900 dark:text-gray-100">{{ t('backoffice.analytics.total') }}</td>
                 <td class="px-3 py-2 text-base text-green-700 dark:text-green-300">{{ money(revCurrent?.total ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>
                 <td class="px-3 py-2 text-gray-500 dark:text-gray-400 text-base">{{ money(revPrevious?.total ?? 0) }} {{ t('backoffice.analytics.currency') }}</td>

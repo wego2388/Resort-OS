@@ -658,9 +658,9 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
                   <div class="flex items-center gap-1.5 flex-shrink-0">
                     <AppSpinner v-if="savingPermKey === `${entry.resource}:${entry.action}`" size="sm" />
                     <template v-else>
-                      <button @click="requestPermState(entry,'granted')" :class="['px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors', stateFor(entry)==='granted' ? 'bg-green-600 text-white' : 'bg-white text-green-700 border border-green-200 hover:bg-green-50']">{{ t('backoffice.permissions.grant') }}</button>
-                      <button @click="requestPermState(entry,'default')" :class="['px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors', stateFor(entry)==='default' ? 'bg-gray-600 text-white' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50']">{{ t('backoffice.permissions.default') }}</button>
-                      <button @click="requestPermState(entry,'denied')" :class="['px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors', stateFor(entry)==='denied' ? 'bg-red-600 text-white' : 'bg-white text-red-700 border border-red-200 hover:bg-red-50']">{{ t('backoffice.permissions.deny') }}</button>
+                      <button @click="requestPermState(entry,'granted')" :class="['px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors', stateFor(entry)==='granted' ? 'bg-green-600 text-white' : 'bg-white dark:bg-surface text-green-700 border border-green-200 hover:bg-green-50']">{{ t('backoffice.permissions.grant') }}</button>
+                      <button @click="requestPermState(entry,'default')" :class="['px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors', stateFor(entry)==='default' ? 'bg-gray-600 text-white' : 'bg-white dark:bg-surface text-gray-600 border border-gray-200 hover:bg-gray-50']">{{ t('backoffice.permissions.default') }}</button>
+                      <button @click="requestPermState(entry,'denied')" :class="['px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors', stateFor(entry)==='denied' ? 'bg-red-600 text-white' : 'bg-white dark:bg-surface text-red-700 border border-red-200 hover:bg-red-50']">{{ t('backoffice.permissions.deny') }}</button>
                     </template>
                   </div>
                 </div>

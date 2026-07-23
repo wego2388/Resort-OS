@@ -569,12 +569,12 @@ onMounted(() => switchTab('bookings'))
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.titleEn') }} *</label>
             <input v-model="offerForm.title" :disabled="!!editingOffer"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:border-gray-700 dark:disabled:bg-gray-800" />
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:bg-surface-2 dark:border-gray-700 dark:disabled:bg-gray-800" />
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.titleAr') }}</label>
             <input v-model="offerForm.title_ar" :disabled="!!editingOffer"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:border-gray-700 dark:disabled:bg-gray-800" />
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:bg-surface-2 dark:border-gray-700 dark:disabled:bg-gray-800" />
           </div>
           <div v-if="!editingOffer">
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.column.type') }}</label>
@@ -585,7 +585,7 @@ onMounted(() => switchTab('bookings'))
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.originalPrice') }} *</label>
             <input v-model="offerForm.original_price" type="number" min="0" :disabled="!!editingOffer"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:border-gray-700 dark:disabled:bg-gray-800" />
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-50 dark:bg-surface-2 dark:border-gray-700 dark:disabled:bg-gray-800" />
           </div>
           <div>
             <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.hub.offerPrice') }} *</label>

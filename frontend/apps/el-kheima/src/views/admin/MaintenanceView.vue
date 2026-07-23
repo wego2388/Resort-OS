@@ -652,7 +652,7 @@ onMounted(() => loadTab('assets'))
           <div>
             <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.code') }} *</label>
             <input v-model="assetForm.code" type="text" :disabled="!!assetModal.editingId"
-              class="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400 dark:border-border dark:text-gray-400 dark:disabled:bg-gray-800" />
+              class="w-full rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 dark:bg-surface-2 disabled:text-gray-400 dark:border-border dark:text-gray-400 dark:disabled:bg-gray-800" />
           </div>
           <div>
             <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.category') }}</label>

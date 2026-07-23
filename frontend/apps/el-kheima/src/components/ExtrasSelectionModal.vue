@@ -152,7 +152,7 @@ function confirm() {
                   isSelected(group.id, opt.id) ? 'border-blue-600 bg-blue-600' : 'border-stone-300',
                 ]"
               >
-                <span v-if="isSelected(group.id, opt.id)" class="w-1.5 h-1.5 rounded-full bg-white" />
+                <span v-if="isSelected(group.id, opt.id)" class="w-1.5 h-1.5 rounded-full bg-white dark:bg-surface" />
               </span>
               {{ localizedName(opt) }}
             </span>

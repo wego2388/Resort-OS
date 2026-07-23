@@ -173,7 +173,7 @@ onMounted(() => { fetchLeaveTypes(); fetchLeaves() })
             <div v-if="errorMsg" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">{{ errorMsg }}</div>
           </div>
           <div class="flex gap-2 mt-5">
-            <button @click="showModal = false" class="flex-1 rounded-xl border-2 border-stone-200 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50 dark:border-border dark:text-gray-400 dark:hover:bg-gray-800">{{ t('backoffice.leaves.cancel') }}</button>
+            <button @click="showModal = false" class="flex-1 rounded-xl border-2 border-stone-200 py-2.5 text-sm font-semibold text-gray-600 hover:bg-gray-50 dark:bg-surface-2 dark:border-border dark:text-gray-400 dark:hover:bg-gray-800">{{ t('backoffice.leaves.cancel') }}</button>
             <button @click="requestLeave" :disabled="submitting"
               class="flex-1 py-2.5 bg-blue-700 text-white rounded-xl text-sm font-bold hover:bg-blue-800 disabled:opacity-50">
               {{ submitting ? t('backoffice.leaves.submitting') : t('backoffice.leaves.submitRequest') }}

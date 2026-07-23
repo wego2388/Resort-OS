@@ -370,7 +370,7 @@ onMounted(() => {
               <img
                 :src="qrUrl"
                 :alt="t('backoffice.securityOnboarding.twoFactor.qrAlt')"
-                class="w-48 h-48 rounded-xl border border-stone-200 bg-white p-2"
+                class="w-48 h-48 rounded-xl border border-stone-200 bg-white dark:bg-surface p-2"
                 @error="qrFailed = true"
               >
             </div>

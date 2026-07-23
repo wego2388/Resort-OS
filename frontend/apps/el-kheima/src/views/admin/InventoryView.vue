@@ -425,8 +425,8 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
           <input v-model="productForm.name_ar" type="text" :placeholder="t('backoffice.inventory.nameAr')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.sku" type="text" placeholder="SKU *" :disabled="!!editingProduct"
-            class="rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400 dark:border-border dark:text-gray-400 dark:disabled:bg-gray-800" />
-          <select v-model="productForm.unit" :disabled="!!editingProduct" class="rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 dark:border-border dark:disabled:bg-gray-800">
+            class="rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 dark:bg-surface-2 disabled:text-gray-400 dark:border-border dark:text-gray-400 dark:disabled:bg-gray-800" />
+          <select v-model="productForm.unit" :disabled="!!editingProduct" class="rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 dark:bg-surface-2 dark:border-border dark:disabled:bg-gray-800">
             <option v-for="u in UNIT_OPTIONS" :key="u" :value="u">{{ unitLabel(u) }}</option>
           </select>
           <select v-model="productForm.category_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">

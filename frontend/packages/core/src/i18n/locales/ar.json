@@ -6685,7 +6685,8 @@
       "retry": "إعادة المحاولة",
       "cancel": "إلغاء",
       "users": {
-        "total": "{n} مستخدم"
+        "total": "{n} مستخدم",
+        "colActions": "الإجراءات"
       },
       "settings": {
         "loadError": "فشل تحميل الإعدادات",

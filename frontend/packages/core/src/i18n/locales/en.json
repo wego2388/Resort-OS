@@ -6685,7 +6685,8 @@
       "retry": "Retry",
       "cancel": "Cancel",
       "users": {
-        "total": "{n} users"
+        "total": "{n} users",
+        "colActions": "Actions"
       },
       "settings": {
         "loadError": "Failed to load settings",
