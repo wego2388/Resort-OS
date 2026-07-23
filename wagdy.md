@@ -2539,3 +2539,45 @@ Batch 1. اخترت أصغر/أهم شاشات الإدارة الأول (لوح
 
 ممنوع تحويل الملف مرة أخرى إلى قائمة أكواد مهام غامضة، وممنوع كتابة “كله
 تمام” من غير دليل.
+<pre><font color="#AAAAAA">• تم رفع ومراجعة النظام على الـVPS بنجاح:</font>
+
+  - واجهة الموظفين: https://187.124.170.249/
+  - الموقع العام: https://187.124.170.249:8443/
+  - HTTPS موثوق والتجديد التلقائي اختُبر بنجاح.
+  - التسجيل العام مغلق في الإنتاج.
+  - Gate 4 سليم: اختبارات PostgreSQL المتزامنة <font color="#2AA1B3">13/13</font>، واختبارات Dining/Finance/Refund عددها <font color="#2AA1B3">218/218</font>.
+  - آخر نسخة منشورة: <font color="#2AA1B3">8addb7a</font>.
+  - حسابك الحقيقي موجود: <b>Khaled El Agaty — theagaty@gmail.com — Super Admin</b>.
+
+  المتبقي خطوة يجب أن تنفذها بنفسك حتى لا تظهر بيانات الدخول السرية عندي. افتح Terminal ونفّذ:
+
+  <font color="#89B4FA">ssh</font><font color="#9399B2"> -</font><font color="#EBA0AC">tt</font><font color="#CDD6F4"> elkheima </font><font color="#A6E3A1">&apos;cd /opt/wegosharm/resort-os &amp;&amp; docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml exec backend python -m app.admin_bootstrap recover</font>
+  <font color="#A6E3A1">--email theagaty@gmail.com&apos;</font>
+
+  عندما يطلب التأكيد، اكتب:
+
+  theagaty@gmail.com
+
+  سيعرض لك كلمة مرور مؤقتة وEnrollment Token مرة واحدة. لا ترسلهما لي. بعدها:
+
+  <font color="#2A7BDE">1. </font>سجّل خروج الحساب التجريبي أو استخدم نافذة خاصة.
+  <font color="#2A7BDE">2. </font>افتح https://187.124.170.249/login
+  <font color="#2A7BDE">3. </font>ادخل بالبريد وكلمة المرور المؤقتة والـEnrollment Token.
+  <font color="#2A7BDE">4. </font>عيّن كلمة مرور جديدة.
+  <font color="#2A7BDE">5. </font>سجّل الدخول مجددًا وأكمل ربط تطبيق Authenticator.
+  <font color="#2A7BDE">6. </font>احتفظ بأكواد الاسترداد الثمانية.
+  <font color="#2A7BDE">7. </font>سجّل دخولًا أخيرًا بكود الـ2FA.
+
+  بالنسبة للصورة: الصفّان اللذان ظهرَا هما جلستا دخول لنفس الحساب، وليس حسابين مختلفين. بعد دخولك الجديد عبر HTTPS ستظهر الجلسة الحالية بصورة صحيحة.
+
+  لإنشاء حسابات الموظفين بعد تفعيل حسابك:
+
+  - افتح <b>الإعدادات ← حسابات الموظفين</b> أو <font color="#2AA1B3">/admin/users</font>.
+  - اختر الموظف من HR إن كان موجودًا، ثم البريد والدور الوظيفي.
+  - النظام سيولد كلمة مرور مؤقتة ورمز تهيئة مرة واحدة.
+  - كل موظف يدخل من نفس صفحة <font color="#2AA1B3">/login</font>، ثم ينتقل تلقائيًا إلى شاشته حسب دوره.
+  - الـ2FA إجباري للسوبر أدمن والمحاسب، واختياري لباقي الموظفين.
+  - إنشاء Super Admin ثانٍ يتم من الـVPS فقط، وليس من الواجهة.
+
+  الحسابات التجريبية الـ15 ما زالت فعالة مؤقتًا حتى لا نفقد الوصول. بعد إتمام دخولك الحقيقي اكتب لي فقط <b>تم</b>، وسأتحقق من نجاح الـ2FA ثم أعطّلها كلها وألغي جلساتها بأمان.
+</pre>

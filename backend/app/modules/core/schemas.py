@@ -238,6 +238,42 @@ class UserRead(BaseModel):
         return normalize_staff_language(v)
 
 
+class UserCreate(BaseModel):
+    """super_admin فقط — إنشاء حساب موظف جديد بدور محدد. الباسورد مؤقت
+    (must_change_password=True) بالإجبار — الموظف لازم يغيّره عند أول تسجيل
+    دخول. super_admin مش مسموح ينشئه من هنا (Gate: Decision 0003 invariant —
+    الحسابات الإدارية تُنشأ بـ admin_bootstrap يدويًا)."""
+    email:        str  = Field(..., min_length=5, max_length=255)
+    full_name:    str  = Field(..., min_length=2, max_length=255)
+    phone:        Optional[str] = Field(None, max_length=50)
+    role:         str  = Field(..., max_length=30)
+    password:     str  = Field(..., min_length=8, max_length=128,
+                                description="باسورد مؤقت — يُجبر على تغييره عند أول دخول")
+
+    @field_validator("role")
+    @classmethod
+    def _role_must_be_staff(cls, v: str) -> str:
+        from app.core.deps import ROLE_LEVELS  # noqa: PLC0415
+        if v not in ROLE_LEVELS:
+            raise ValueError(
+                f"role غير معروف: '{v}' — لازم يكون واحد من: {', '.join(sorted(ROLE_LEVELS))}"
+            )
+        # super_admin لا يُنشأ من هذا الـ endpoint — يُنشأ يدويًا بـ admin_bootstrap
+        if v == "super_admin":
+            raise ValueError(
+                "لا يمكن إنشاء حساب super_admin من هنا — استخدم admin_bootstrap"
+            )
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def _email_format(cls, v: str) -> str:
+        from app.core.kernel.security import validate_email_format  # noqa: PLC0415
+        if not validate_email_format(v.strip()):
+            raise ValueError("صيغة البريد الإلكتروني غير صالحة")
+        return v.strip().lower()
+
+
 class UserRoleUpdate(BaseModel):
     """super_admin فقط — تغيير role و/أو is_active لمستخدم. Gate 2B3A:
     reason إجباري ومحمي بـstep-up (راجع

@@ -89,6 +89,7 @@ from app.modules.core.schemas import (
     ServiceLocationTokenRead,
     SettingRead,
     SettingUpdate,
+    UserCreate,
     UserPermissionGrantRequest,
     UserPermissionRead,
     UserRead,
@@ -475,9 +476,30 @@ def list_audit_logs(
 
 
 # ─────────────────────── Users ───────────────────────────────────────
-# GET /users مدير+ (شاشة الصلاحيات محتاجة قائمة المستخدمين). تغيير
-# role/is_active يفضل super_admin فقط — بيُبطل توكنات المستخدم فوراً
-# (revoke_user_tokens في services.update_user_role).
+# POST /users   super_admin فقط — إنشاء حساب موظف جديد.
+# GET  /users   مدير+ (شاشة الصلاحيات محتاجة قائمة المستخدمين).
+# GET  /users/{id} super_admin فقط.
+# PATCH /users/{id}/role super_admin + step-up.
+
+@router.post(
+    "/users",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_user(
+    data: UserCreate,
+    db: DbDep,
+    user=Depends(get_super_admin_user),
+):
+    """super_admin فقط — إنشاء حساب موظف جديد بباسورد مؤقت.
+    الموظف مُجبَر على تغيير الباسورد عند أول تسجيل دخول (must_change_password=True).
+    لا يقبل role=super_admin — الحسابات الإدارية تُنشأ بـ admin_bootstrap فقط.
+    مش محتاج step-up (إنشاء حساب أقل خطورة من تغيير role حساب موجود)."""
+    try:
+        created = services.create_staff_account(db, data, created_by=user.id)
+        return UserRead.model_validate(created)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 @router.get(
     "/users",
@@ -488,9 +510,15 @@ def list_users(
     _user=Depends(get_manager_user),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None, max_length=100),
+    role: Optional[str] = Query(None),
+    is_active: Optional[bool] = Query(None),
 ):
     skip = (page - 1) * size
-    items, total = crud.list_users(db, skip=skip, limit=size)
+    items, total = crud.list_users(
+        db, skip=skip, limit=size,
+        search=search, role=role, is_active=is_active,
+    )
     return PaginatedResponse(
         total=total,
         page=page,

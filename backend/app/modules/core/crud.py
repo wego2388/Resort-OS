@@ -240,9 +240,24 @@ def mark_all_notifications_read(
 # User itself lives in app.core.kernel.models.user — imported lazily to avoid a
 # hard import-order dependency between core and the shared auth model.
 
-def list_users(db: Session, skip: int = 0, limit: int = 20):
+def list_users(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    search: Optional[str] = None,
+    role: Optional[str] = None,
+    is_active: Optional[bool] = None,
+):
     from app.core.kernel.models.user import User  # noqa: PLC0415
     q = db.query(User).filter(User.deleted_at.is_(None))
+    if search:
+        term = f"%{search.strip()}%"
+        from sqlalchemy import or_  # noqa: PLC0415
+        q = q.filter(or_(User.full_name.ilike(term), User.email.ilike(term)))
+    if role is not None:
+        q = q.filter(User.role == role)
+    if is_active is not None:
+        q = q.filter(User.is_active == is_active)
     total = q.count()
     items = q.order_by(User.id).offset(skip).limit(limit).all()
     return items, total

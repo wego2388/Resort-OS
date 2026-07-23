@@ -44,6 +44,7 @@ from app.modules.core.schemas import (
     NotificationCreate,
     ServiceLocationRead,
     SettingRead,
+    UserCreate,
     UserPermissionCreate,
     normalize_staff_language,
 )
@@ -451,6 +452,62 @@ def update_user_preferences(
         ip_address=ip_address,
         user_agent=user_agent,
     ))
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def create_staff_account(
+    db: Session,
+    data: "UserCreate",
+    created_by: int,
+) -> "User":
+    """super_admin فقط — إنشاء حساب موظف جديد بباسورد مؤقت.
+
+    - يستخدم kernel's AuthService.register() لـ password hashing/validation.
+    - يضبط role + must_change_password=True بعد الإنشاء فوراً داخل نفس الـ transaction.
+    - يسجّل AuditLog كامل ثم يعمل commit وحيد.
+    - لا ينشئ super_admin — schema.UserCreate.role validator يرفضه بـ 422.
+    """
+    from app.core.config import get_settings  # noqa: PLC0415
+    from app.core.kernel.auth.service import AuthService  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    settings = get_settings()
+
+    # تحقق من تفرّد الإيميل (AuthService.register بيفحصها بالفعل لكن
+    # يرمي HTTPException مباشرة — نفحص هنا قبله بـ ValueError لعدم تسريب
+    # كود HTTP من طبقة service)
+    existing = db.query(User).filter(User.email == data.email).first()
+    if existing:
+        raise ValueError(f"البريد الإلكتروني '{data.email}' مستخدم مسبقاً")
+
+    auth_svc = AuthService(db, User, settings)
+    user = auth_svc.register(
+        email=data.email,
+        password=data.password,
+        full_name=data.full_name,
+        phone=data.phone,
+    )
+
+    # ضبط role + must_change_password داخل نفس الـ session قبل الـ commit
+    user.role = data.role
+    user.must_change_password = True
+    db.add(user)
+
+    crud.create_audit_log(db, AuditLogCreate(
+        user_id=created_by,
+        action="user.created",
+        entity_type="user",
+        entity_id=user.id,
+        new_data=json.dumps({
+            "email": user.email,
+            "full_name": user.full_name,
+            "role": user.role,
+            "must_change_password": True,
+        }),
+    ))
+
     db.commit()
     db.refresh(user)
     return user
