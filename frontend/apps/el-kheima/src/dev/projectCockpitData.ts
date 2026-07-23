@@ -63,16 +63,16 @@ export interface PromptSuggestion {
  */
 export const PROJECT_SNAPSHOT = {
   product: 'El Kheima Beach Resort OS',
-  updatedAt: '2026-07-19',
+  updatedAt: '2026-07-22',
   sourcePath: 'wagdy.md',
-  sourceRevision: '2083567 feat(frontend): establish bilingual UI quality foundation',
-  branchAtSnapshot: 'gate-4-dining-payment-shift-order-integrity',
+  sourceRevision: 'dfa7e1e + uncommitted Gate 8 worktree',
+  branchAtSnapshot: 'gate-8-qr-guest-service-completion',
   baseline: {
     modules: 13,
-    backendTestsPassed: 1992,
-    postgresOnlySkipped: 20,
+    backendTestsPassed: 2036,
+    postgresOnlySkipped: 33,
     alembicHeads: 1,
-    alembicHead: 'b8f4d2a19c07',
+    alembicHead: '8c12d9e4f6a1',
     productionVpsValidated: false,
   },
 } as const
@@ -440,10 +440,10 @@ export const PROJECT_ROADMAP: RoadmapStep[] = [
     id: 'qr-guest-service',
     track: 'dining',
     order: 2,
-    status: 'locked',
+    status: 'complete',
     title: { ar: 'QR وGuest Service الآمن', en: 'Secure QR and guest service' },
-    outcome: { ar: 'Service Location وtoken آمن ونداء بلا تكرار وربط الويتر والكاشير.', en: 'Service Location, secure token, deduplicated requests, waiter and cashier integration.' },
-    gate: { ar: 'view_and_call أولًا؛ لا أثر مطبخ أو مالي من النداء وحده.', en: 'view_and_call first; a service call alone creates no kitchen or financial action.' },
+    outcome: { ar: 'Service Location وtoken وجلسة ضيف آمنة وطلبات بلا تكرار وربط الويتر والكاشير والدفع.', en: 'Service Location, secure token/session, deduplicated requests, and waiter/cashier/payment integration.' },
+    gate: { ar: 'القبول الآلي مكتمل؛ تجربة الهاتف والطباعة والنشر باقية.', en: 'Automated acceptance is complete; phone, print, and deployment trials remain.' },
   },
 ]
 
@@ -457,10 +457,10 @@ export const PROJECT_RISKS: ProjectRisk[] = [
   },
   {
     id: 'public-qr-trust-boundary',
-    severity: 'critical',
+    severity: 'medium',
     area: 'dining/public',
-    title: { ar: 'حدود Public/QR الحالية غير موثوقة', en: 'Current Public/QR trust boundaries are unsafe' },
-    detail: { ar: 'المسارات العامة تستخدم IDs متسلسلة، تسمح self-order، وrate limiter لا يغطي Dining public الجديد؛ هذا يخالف view_and_call.', en: 'Public routes use sequential IDs, allow self-ordering, and the limiter misses new Dining public paths; this conflicts with view_and_call.' },
+    title: { ar: 'قبول QR الميداني لم يتم بعد', en: 'QR field acceptance remains pending' },
+    detail: { ar: 'حدود الثقة اتصلحت في Gate 8 واختباراتها خضراء، لكن لم تُجرّب كاميرا هاتف أو ورقة مطبوعة أو عنوان production فعلي.', en: 'Gate 8 fixed the trust boundary and its tests pass, but no phone camera, printed sheet, or real production URL has been exercised.' },
   },
   {
     id: 'dining-payment-gap',
@@ -516,14 +516,14 @@ export const PROJECT_RISKS: ProjectRisk[] = [
 export const PROMPT_SUGGESTIONS: PromptSuggestion[] = [
   {
     id: 'public-trust-audit',
-    title: { ar: 'راجع ثبات احتواء Public/QR', en: 'Review Public/QR containment' },
-    description: { ar: 'قراءة فقط: تأكد إن Gate 1A لم تتراجع قبل بناء Gate 8.', en: 'Read-only: confirm Gate 1A has not regressed before Gate 8.' },
+    title: { ar: 'نفّذ قبول QR الميداني', en: 'Run QR field acceptance' },
+    description: { ar: 'اختبر الكاميرا والطباعة واستعادة الشبكة على staging قبل النشر.', en: 'Test camera, print, and network recovery on staging before deployment.' },
     mode: 'review',
     scope: 'dining',
     phase: 'qr-guest-service',
     objective: {
-      ar: 'راجع Gate 1A قراءة فقط: تأكد إن self-order وguest alerts ما زالوا مقفولين افتراضيًا، وإن متابعة الطلب العامة مغلقة، وفحص الفرع وrate limiting لم يتراجعا. لا تبنِ QR أو Service Location الآن؛ اعرض النتائج فقط.',
-      en: 'Review Gate 1A read-only: confirm self-order and guest alerts remain disabled by default, public order tracking remains closed, and branch/rate-limit protections have not regressed. Do not build QR or Service Location now; report findings only.',
+      ar: 'على staging فقط: ولّد QR لطاولة اختبار، اطبعه وامسحه من هاتف، نفّذ الطلبات الأربعة بالعربي والإنجليزي، اختبر إعادة التحميل وقطع الشبكة، ثم أكد ظهور accept/arrive/resolve والدفع بلا تكرار. لا تنشر أكواد تشغيلية قبل توثيق الدليل.',
+      en: 'On staging only: generate and print a test-table QR, scan it on a phone, exercise all four requests in Arabic and English, test reload/network interruption, then confirm accept/arrive/resolve and payment without duplicates. Do not deploy operational codes before documenting evidence.',
     },
     decisionIds: ['brand', 'dining-unified', 'qr-view-call', 'qr-experimental', 'audit-before-phases', 'staged-review'],
   },
@@ -607,14 +607,14 @@ export const PROMPT_SUGGESTIONS: PromptSuggestion[] = [
   },
   {
     id: 'qr-review',
-    title: { ar: 'راجع QR ونداءات الضيوف', en: 'Review QR and guest service' },
-    description: { ar: 'مراجعة الموجود فقط وربطه بقرار view_and_call.', en: 'Review the existing implementation against view_and_call.' },
+    title: { ar: 'راجع قبول Gate 8', en: 'Review Gate 8 acceptance' },
+    description: { ar: 'راجع أدلة التنفيذ ونفّذ فقط التحقق الميداني المتبقي.', en: 'Review implementation evidence and perform only the remaining field validation.' },
     mode: 'review',
     scope: 'dining',
     phase: 'qr-guest-service',
     objective: {
-      ar: 'راجع الكود الحالي للـQR والمنيو العام وGuestAlert والـWebSocket وربط POS قراءةً فقط. رتب الفجوات حسب الخطورة وبيّن ما يعاد استخدامه، مع اعتبار QR تجريبيًا وview_and_call هو الوضع الافتراضي.',
-      en: 'Review the current QR, public menu, GuestAlert, WebSocket, and POS integration read-only. Rank gaps by severity and identify reusable parts, treating QR as experimental and view_and_call as the default.',
+      ar: 'اقرأ docs/audits/gate-8-execution-brief.md وراجع diff Gate 8 والاختبارات. نفّذ تجربة staging بهاتف وQR مطبوع وانقطاع شبكة، وسجّل النتائج فقط؛ view_and_call يظل الافتراضي ولا تفعّل self-order في production.',
+      en: 'Read docs/audits/gate-8-execution-brief.md and review the Gate 8 diff/tests. Run a staging trial with a phone, printed QR, and network interruption, recording results only; keep view_and_call default and do not enable production self-order.',
     },
     decisionIds: ['brand', 'dining-unified', 'qr-view-call', 'qr-experimental', 'staged-review'],
   },

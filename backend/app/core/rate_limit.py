@@ -140,7 +140,10 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     # Guest alerts (نادِ الجرسون / هات الفاتورة) — أضيق شوية من التصفح العادي
     # (20 مش 30) لأنه فعل تنبيه فوري لطاقم الخدمة، مش قراءة قائمة.
     ("POST", "/api/v1/public/alerts"): ("public", 20, 60),
+    ("POST", "/api/v1/public/guest-requests"): ("public", 20, 60),
+    ("POST", "/api/v1/public/guest-sessions"): ("public", 30, 60),
     ("GET",  "/api/v1/public/service-location"): ("public", 30, 60),
+    ("GET",  "/api/v1/dining/public/service-menu"): ("public", 60, 60),
 }
 
 
@@ -148,6 +151,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         route_key = (request.method, request.url.path)
         limit = _LIMITED_ROUTES.get(route_key)
+        if limit is None and request.method == "GET":
+            if request.url.path.startswith("/api/v1/public/guest-requests/"):
+                limit = ("public", 60, 60)
+            elif request.url.path.startswith("/api/v1/dining/public/orders/"):
+                limit = ("public", 60, 60)
         if limit:
             prefix, max_requests, window = limit
             ip = _client_ip(request)

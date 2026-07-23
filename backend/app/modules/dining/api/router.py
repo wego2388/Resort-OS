@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from decimal import Decimal
+import secrets
 from typing import Optional
 
 from fastapi import (
@@ -41,7 +42,8 @@ from app.modules.dining.schemas import (
     OrderRead, OrderStatusUpdate, OrderTransferRequest, SplitBillRequest, WaiterTransferRequest,
     OrderSyncRequest, OrderSyncResponse,
     OutletCreate, OutletRead, OutletUpdate,
-    GuestOrderCreate, GuestOrderRead, PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
+    GuestOrderCreate, GuestOrderRead, GuestServiceMenuResponse,
+    PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
     PublicOutletRead,
 )
 from app.modules.core import services as core_services
@@ -1057,12 +1059,8 @@ def get_outlet_sales_report(
 #     الحماية الحقيقية المطلوبة) — راجع services.create_order + get_public_menu
 #     قبل أي قراءة/كتابة. table_id لازم يكون رقم موجب (Field(ge=1)) — صفر
 #     أو سالب يترفض 422 قبل ما يوصل لأي منطق.
-#   - GET /orders/{order_id} **مقفول بالكامل الآن**، بغض النظر عن حالة
-#     dining.self_order_enabled — order_id بيقرا من نفس جدول الطلبات اللي
-#     فيه طلبات POS/الكاشير العادية كمان (staff orders تقدر توجد بغض النظر
-#     عن حالة الطلب الذاتي)، فتفعيل الطلب الذاتي مش كافي حماية لمنع تخمين
-#     order_id يخص طلب POS داخلي. مقفول لحد Gate 8 الحقيقي (راجع
-#     get_guest_order_status).
+#   - Gate 8 order creation/status require X-Guest-Session. Status uses a
+#     random public reference bound to the issuing session, never order_id.
 #   - order_type ثابت "dine_in" — نفس تقييد restaurant/cafe الأصليين
 #   - لا يوجد تعديل أو حذف من هنا — read + create فقط
 #
@@ -1116,15 +1114,59 @@ def get_public_menu(
     categories = crud.list_categories(db, outlet_id)
     items = crud.list_items(db, outlet_id, available_only=True)
 
+    try:
+        services.assert_guest_self_order_enabled(db, outlet.branch_id)
+        self_order_enabled = True
+    except ValueError:
+        self_order_enabled = False
+
     return PublicMenuResponse(
         branch_id=outlet.branch_id,
         outlet_id=outlet_id,
         outlet_name=outlet.name,
         outlet_name_ar=outlet.name_ar,
         table_id=table_id,
+        self_order_enabled=self_order_enabled,
         categories=[PublicMenuCategoryRead.model_validate(c) for c in categories],
         items=[PublicMenuItemRead.model_validate(i) for i in items],
     )
+
+
+@router.get(
+    "/dining/public/service-menu",
+    response_model=GuestServiceMenuResponse,
+    tags=["dining-public"],
+    summary="قائمة منفذ مرتبطة بجلسة QR صالحة",
+)
+def get_guest_service_menu(
+    db: DbDep,
+    outlet_id: int = Query(..., ge=1),
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
+    try:
+        _session, location = core_services.resolve_guest_session(db, x_guest_session)
+        if location.location_type != "dining_table":
+            raise ValueError("القائمة غير متاحة لهذا النوع من المواقع")
+        outlet = crud.get_outlet(db, outlet_id)
+        if not outlet or not outlet.is_active or outlet.branch_id != location.branch_id:
+            raise ValueError("المنفذ غير متاح لهذا الموقع")
+        categories = crud.list_categories(db, outlet_id)
+        items = crud.list_items(db, outlet_id, available_only=True)
+        try:
+            services.assert_guest_self_order_enabled(db, location.branch_id)
+            self_order_enabled = True
+        except ValueError:
+            self_order_enabled = False
+        return GuestServiceMenuResponse(
+            outlet_id=outlet.id,
+            outlet_name=outlet.name,
+            outlet_name_ar=outlet.name_ar,
+            self_order_enabled=self_order_enabled,
+            categories=[PublicMenuCategoryRead.model_validate(c) for c in categories],
+            items=[PublicMenuItemRead.model_validate(i) for i in items],
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 @router.post(
@@ -1134,27 +1176,38 @@ def get_public_menu(
     tags=["dining-public"],
     summary="تقديم طلب من الضيف (QR) — بدون auth",
 )
-def create_guest_order(data: GuestOrderCreate, db: DbDep):
+def create_guest_order(
+    data: GuestOrderCreate,
+    db: DbDep,
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
     """Public endpoint — لا يحتاج login. الضيف يطلب من القائمة عبر QR الطاولة.
     - order_type ثابت dine_in
     - waiter_id = None (النادل يتولى التذكرة من KDS/POS بعدين)
     - مفيش customer_id (ضيف مجهول، مفيش تسجيل دخول)"""
     try:
+        session, location = core_services.resolve_guest_session(db, x_guest_session)
+        if location.location_type != "dining_table":
+            raise ValueError("الطلب الذاتي متاح من QR الطاولة فقط")
+        outlet = crud.get_outlet(db, data.outlet_id)
+        if not outlet or not outlet.is_active or outlet.branch_id != location.branch_id:
+            raise ValueError("المنفذ غير متاح لهذا الموقع")
+        services.assert_guest_self_order_enabled(db, location.branch_id)
+        public_reference = f"ord_{secrets.token_urlsafe(18)}"
         order_data = OrderCreate(
             outlet_id=data.outlet_id,
-            table_id=data.table_id,
+            table_id=location.location_id,
             order_type="dine_in",
             guests_count=data.guests_count,
             notes=data.notes,
             items=[OrderItemCreate(**i.model_dump()) for i in data.items],
         )
-        outlet = crud.get_outlet(db, data.outlet_id)
-        if not outlet:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
-        services.assert_guest_self_order_enabled(db, outlet.branch_id)
-        order = services.create_order(db, branch_id=outlet.branch_id, data=order_data, waiter_id=None)
+        order = services.create_order(
+            db, branch_id=location.branch_id, data=order_data, waiter_id=None,
+            guest_session_id=session.id, guest_public_reference=public_reference,
+        )
         return GuestOrderRead(
-            order_id=order.id,
+            public_reference=public_reference,
             order_number=order.order_number,
             status=order.status,
             total=order.total,
@@ -1166,21 +1219,28 @@ def create_guest_order(data: GuestOrderCreate, db: DbDep):
 
 
 @router.get(
-    "/dining/public/orders/{order_id}",
+    "/dining/public/orders/{public_reference}",
     response_model=GuestOrderRead,
     tags=["dining-public"],
     summary="حالة الطلب للضيف (QR) — بدون auth",
 )
-def get_guest_order_status(order_id: int, db: DbDep):
-    """Public endpoint — كان مقصود للضيف يتابع حالة طلبه (polling)، لكنه
-    **مقفول بالكامل الآن**، بغض النظر عن dining.self_order_enabled.
-
-    Gate 1 containment (جولة مراجعة Codex الثالثة): order_id رقم متسلسل
-    قابل للتخمين بلا أي token، وبيقرا من نفس جدول DiningOrder اللي فيه
-    طلبات الكاشير/النادل العادية (POS) كمان — حتى لو الطلب الذاتي مفعّل
-    لفرع معيّن، ده مايمنعش ضيف من تخمين order_id يخص طلب POS داخلي (مش
-    طلب ذاتي أصلًا) ويشوف order_number/total بتاعه. الجولة التانية كانت
-    قفلته بشرط self_order_enabled بس — مش كافي، الخطر مستقل عن الإعداد ده.
-    مقفول تمامًا لحد Gate 8 (Service Location/QR token/guest session
-    حقيقي، مش قبل كده) — لا نبني بديل توكن هنا الآن."""
-    raise HTTPException(status.HTTP_404_NOT_FOUND, "الطلب غير موجود")
+def get_guest_order_status(
+    public_reference: str,
+    db: DbDep,
+    x_guest_session: str = Header(..., alias="X-Guest-Session"),
+):
+    try:
+        session, _location = core_services.resolve_guest_session(db, x_guest_session)
+        order = crud.get_order_by_guest_public_reference(db, public_reference)
+        if not order or order.guest_session_id != session.id:
+            raise ValueError("الطلب غير موجود")
+        return GuestOrderRead(
+            public_reference=order.guest_public_reference,
+            order_number=order.order_number,
+            status=order.status,
+            total=order.total,
+            items_count=sum(i.quantity for i in order.items),
+            message="تم استلام طلبك وسيتم تحديث حالته تلقائيًا",
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))

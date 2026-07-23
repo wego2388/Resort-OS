@@ -4,7 +4,8 @@
 مُعتمَدة. Gate 4 منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20)، بانتظار
 مراجعة مستقلة قبل الاعتماد. Gate 5 منفَّذة بالكامل ومدموجة (2026-07-21،
 15/15 دفعة) في فرع تكامل واحد (`gate-5-integration`) — لسه بانتظار مراجعة
-نهائية قبل commit/push.
+نهائية قبل commit/push. Gate 8 منفَّذة ومتحقَّق منها آليًا (2026-07-22)،
+مع بقاء تجربة الكاميرا/الطباعة والنشر الفعلي خارج التنفيذ الحالي.
 **المصدر:** مراجعة 360° بتاريخ 2026-07-17 + القرارات الموجودة في
 `docs/decisions/` + `wagdy.md`.
 
@@ -20,8 +21,8 @@
 | Gate 3: i18n/design/test foundation | **مكتملة ومُعتمَدة (2026-07-19)** | Claude/Codex | bilingual shell + reference screens + quality harness |
 | Gate 4: Dining financial integrity | **منفَّذة بالكامل ومُتحقَّق منها ذاتيًا (2026-07-20) — Codex راجعت جولة أولى، كل الملاحظات + step-up المالي اتصلحوا، بانتظار مراجعة مستقلة تالية** | Claude | settlement/idempotency/shift-lock/one-active-order + 18/18 Postgres concurrency؛ لا commit/push بعد؛ مفيش بند مؤجَّل متبقٍّ |
 | Gate 5: Staff UX batches | **منفَّذة بالكامل ومدموجة ذاتيًا (2026-07-21) — 15/15 دفعة في فرع تكامل واحد، لا commit/push بعد** | Claude | دفعات صغيرة ثنائية اللغة قابلة للاختبار |
-| Gate 7: Public migration batches | مغلقة على Gates 2 و3 واعتماد Phase 0 | Claude | visual/API diff لكل batch بلا legacy backend |
-| Gate 8: QR + Guest Service | مغلقة على Gates 1A و3 و4 و7 | Claude | scan-to-call-to-payment E2E evidence |
+| Gate 7: Public migration batches | **مكتملة (6/6؛ Batch 6 أغلقتها Gate 8 في 2026-07-22)** | Claude/Codex | visual/API diff لكل batch بلا legacy backend |
+| Gate 8: QR + Guest Service | **منفَّذة ومتحقَّق منها آليًا (2026-07-22)؛ تجربة الكاميرا/الطباعة الميدانية باقية** | Claude/Codex | جلسة ضيف آمنة + scan-to-call-to-payment tests + PostgreSQL races؛ لا commit/push |
 | Gate 9: production evidence | مغلقة حتى تحديد release scope | الفريق | CI/staging/security/restore/rollback evidence |
 
 كل ناتج يمر على **Codex كمراجع مستقل** في نفس مساحة الـdiff، ثم يعيد Claude
@@ -250,20 +251,25 @@ Backend الحالي المصدر الوحيد للحقيقة.
 **الخروج لكل batch:** visual comparison، responsive/a11y، budget للأصول،
 type-check/build/smoke، ولا نسخ backend أو بيانات legacy.
 
-**الحالة (2026-07-21)**: **الدفعات الخمس القابلة للجدولة من `07_MIGRATION_
-BATCH_PROPOSAL.md` كلها منفَّذة** — Batch 1 (هيكل/توكنز/SEO)، Batch 2
+**الحالة (2026-07-22)**: **الدفعات الست مكتملة الآن**. الدفعات الخمس الأولى
+كانت منفَّذة بالفعل من `07_MIGRATION_BATCH_PROPOSAL.md` — Batch 1
+(هيكل/توكنز/SEO)، Batch 2
 (صفحات ثابتة: من نحن/تواصل معنا/الأسئلة الشائعة/الخصوصية/الشروط)، Batch 3
 (صفحات ديناميكية: الشاطئ/الباقات/المناسبات/معرض الصور — الغرف والمطعم
 كانا مغطّيين بالفعل فمتلمسوش)، Batch 4 (خط أنابيب الصور — مفيش صور اتضافت
 بالجملة تحتاج ضغط، فمفيش حاجة فعلية تتعمل هنا دلوقتي)، Batch 5 (طبقة SEO —
 اتغطّت فعليًا كجزء من Batch 1's `useSEO`، بما فيها `hreflang` اللي الموقع
-القديم عمره ما كان عنده). **Batch 6 (منيو الضيف عبر QR) لسه مقفولة عمدًا
-لحد ما متطلبات Gate 8 توجد** — مفيش أي كود بيلمسها. كل التعديلات مدموجة في
-`main` ومنشورة على السيرفر الحقيقي. `docs/audits/public-phase-0/06_KEEP_
+القديم عمره ما كان عنده). **Batch 6 (منيو الضيف عبر QR) اتنفَّذت ضمن Gate 8**
+على المسار الآمن `/s/:token` مع guest session وview-and-call افتراضي؛ تغييرات
+Gate 8 ما زالت على فرعها بلا commit/push أو نشر. الدفعات الخمس السابقة وحدها
+مدموجة في `main` ومنشورة على السيرفر الحقيقي. `docs/audits/public-phase-0/06_KEEP_
 ADAPT_REMOVE_MATRIX.md`'s Keep/Adapt items اتبنوا فعليًا ضد التوكنز
 والعقود الحالية، مش نسخ حرفي من الموقع القديم.
 
 ### Gate 8 — QR Menu وGuest Service
+
+**الحالة (2026-07-22):** منفَّذة ومتحقَّق منها آليًا؛ التفاصيل والأدلة
+والنواقص الميدانية الصريحة في `docs/audits/gate-8-execution-brief.md`.
 
 **النطاق:** Service Location عام، QR token آمن وقابل للدوران، guest session،
 view_and_call، dedupe/cooldown، state machine، assignment، realtime مع polling

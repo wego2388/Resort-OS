@@ -418,3 +418,83 @@ class TestPinCredentials:
 
         with pytest.raises(ValueError):
             core_services.resolve_pin_approval(db, 40, waiter.id, "1111", min_approver_level=60)
+
+
+class TestCreateUserEndpoint:
+    """POST /users — super_admin فقط، بباسورد مؤقت."""
+
+    def test_requires_super_admin(self, client: TestClient, manager_headers):
+        payload = {
+            "email": f"new-{uuid.uuid4().hex[:6]}@test.local",
+            "full_name": "موظف جديد",
+            "role": "cashier",
+            "password": "Temp@12345",
+        }
+        resp = client.post("/api/v1/users", json=payload, headers=manager_headers)
+        assert resp.status_code == 403
+
+    def test_creates_staff_account_with_must_change_password(
+        self, client: TestClient, super_admin_headers
+    ):
+        email = f"staff-create-{uuid.uuid4().hex[:6]}@test.local"
+        payload = {
+            "email": email,
+            "full_name": "كاشير اختبار",
+            "role": "cashier",
+            "password": "Temp@12345",
+        }
+        resp = client.post("/api/v1/users", json=payload, headers=super_admin_headers)
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["email"] == email
+        assert body["role"] == "cashier"
+        assert body["must_change_password"] is True
+        # الباسورد مش في الـ response (UserRead schema)
+        assert "password" not in body
+        assert "password_hash" not in body
+
+    def test_rejects_duplicate_email(self, client: TestClient, super_admin_headers):
+        email = f"dup-{uuid.uuid4().hex[:6]}@test.local"
+        payload = {"email": email, "full_name": "موظف", "role": "waiter", "password": "Temp@12345"}
+        r1 = client.post("/api/v1/users", json=payload, headers=super_admin_headers)
+        assert r1.status_code == 201
+        r2 = client.post("/api/v1/users", json=payload, headers=super_admin_headers)
+        assert r2.status_code == 400
+
+    def test_rejects_super_admin_role(self, client: TestClient, super_admin_headers):
+        payload = {
+            "email": f"sa-{uuid.uuid4().hex[:6]}@test.local",
+            "full_name": "مدير",
+            "role": "super_admin",
+            "password": "Temp@12345",
+        }
+        resp = client.post("/api/v1/users", json=payload, headers=super_admin_headers)
+        assert resp.status_code == 422
+
+    def test_rejects_unknown_role(self, client: TestClient, super_admin_headers):
+        payload = {
+            "email": f"bad-role-{uuid.uuid4().hex[:6]}@test.local",
+            "full_name": "موظف",
+            "role": "unknown_role",
+            "password": "Temp@12345",
+        }
+        resp = client.post("/api/v1/users", json=payload, headers=super_admin_headers)
+        assert resp.status_code == 422
+
+    def test_list_users_supports_search_filter(self, client: TestClient, super_admin_headers):
+        unique = uuid.uuid4().hex[:8]
+        email = f"searchable-{unique}@test.local"
+        client.post("/api/v1/users", json={
+            "email": email, "full_name": f"موظف {unique}", "role": "employee", "password": "Temp@12345"
+        }, headers=super_admin_headers)
+
+        resp = client.get(f"/api/v1/users?search={unique}", headers=super_admin_headers)
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        assert any(u["email"] == email for u in items)
+
+    def test_list_users_role_filter(self, client: TestClient, super_admin_headers):
+        resp = client.get("/api/v1/users?role=super_admin", headers=super_admin_headers)
+        assert resp.status_code == 200
+        for u in resp.json()["items"]:
+            assert u["role"] == "super_admin"

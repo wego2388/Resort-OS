@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.kernel.models.mixins import TimestampMixin
@@ -148,8 +148,48 @@ class UserPermission(Base, TimestampMixin):
 # منفصلة تمامًا. اتحذفوا نهائيًا واتوحّدوا في dining.VenueTable — القيمة
 # بقت "dining_table" واحدة بس (راجع schemas.py's _CONTEXT_TYPE_PATTERN).
 
+class GuestSession(Base, TimestampMixin):
+    """Short-lived capability created after a valid service-location scan.
+
+    Only a SHA-256 digest of the bearer secret is persisted.  Every public
+    mutation resolves this row *and* its still-active parent QR token, so a
+    QR rotation immediately revokes sessions issued from the old code.
+    """
+    __tablename__ = "guest_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    public_reference: Mapped[str] = mapped_column(String(48), unique=True, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    service_location_token_id: Mapped[int] = mapped_column(
+        ForeignKey("service_location_tokens.id", ondelete="CASCADE"), index=True,
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class GuestAlert(Base, TimestampMixin):
     __tablename__ = "guest_alerts"
+    __table_args__ = (
+        # Database-level concurrency backstop.  Query-then-insert alone can
+        # race under two simultaneous guest taps.
+        Index(
+            "uq_guest_alert_active_location_type",
+            "branch_id", "context_type", "context_id", "alert_type",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('open','acknowledged','arrived')"
+            ),
+            sqlite_where=text(
+                "status IN ('open','acknowledged','arrived')"
+            ),
+        ),
+        Index(
+            "uq_guest_alert_session_idempotency",
+            "guest_session_id", "idempotency_key", unique=True,
+            postgresql_where=text("idempotency_key IS NOT NULL"),
+            sqlite_where=text("idempotency_key IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # list_active_alerts() بيفلتر بالـ branch_id + status دايمًا — index مركّب
@@ -167,7 +207,23 @@ class GuestAlert(Base, TimestampMixin):
     # call_waiter | ready_to_order | assistance | request_bill | other
     message: Mapped[str | None] = mapped_column(String(300), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="open", index=True)
-    # open | acknowledged | resolved
+    # open | acknowledged | arrived | resolved | expired | cancelled
+    public_reference: Mapped[str | None] = mapped_column(
+        String(48), nullable=True, unique=True, index=True,
+    )
+    guest_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("guest_sessions.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    outlet_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dining_outlets.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    order_id: Mapped[int | None] = mapped_column(
+        ForeignKey("dining_orders.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    assigned_to: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    arrived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     resolved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # user.id اللي قفل التنبيه — بدون FK زي order_items.voided_by (نفس السبب:
     # مرجع تدقيقي بسيط، مش علاقة يحتاج SQLAlchemy يحمّلها)
@@ -193,6 +249,13 @@ class ServiceLocationToken(Base, TimestampMixin):
     __tablename__ = "service_location_tokens"
     __table_args__ = (
         Index("ix_service_location_tokens_location", "branch_id", "location_type", "location_id"),
+        Index(
+            "uq_service_location_tokens_active_location",
+            "branch_id", "location_type", "location_id",
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
+        ),
     )
 
     id:            Mapped[int]  = mapped_column(primary_key=True)

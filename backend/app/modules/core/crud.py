@@ -19,6 +19,7 @@ from app.modules.core.models import (
     AuditLog,
     Branch,
     GuestAlert,
+    GuestSession,
     Notification,
     PinCredential,
     ServiceLocationToken,
@@ -29,7 +30,6 @@ from app.modules.core.schemas import (
     AuditLogCreate,
     BranchCreate,
     BranchUpdate,
-    GuestAlertCreate,
     NotificationCreate,
     UserPermissionCreate,
 )
@@ -240,9 +240,24 @@ def mark_all_notifications_read(
 # User itself lives in app.core.kernel.models.user — imported lazily to avoid a
 # hard import-order dependency between core and the shared auth model.
 
-def list_users(db: Session, skip: int = 0, limit: int = 20):
+def list_users(
+    db: Session,
+    skip: int = 0,
+    limit: int = 20,
+    search: Optional[str] = None,
+    role: Optional[str] = None,
+    is_active: Optional[bool] = None,
+):
     from app.core.kernel.models.user import User  # noqa: PLC0415
     q = db.query(User).filter(User.deleted_at.is_(None))
+    if search:
+        term = f"%{search.strip()}%"
+        from sqlalchemy import or_  # noqa: PLC0415
+        q = q.filter(or_(User.full_name.ilike(term), User.email.ilike(term)))
+    if role is not None:
+        q = q.filter(User.role == role)
+    if is_active is not None:
+        q = q.filter(User.is_active == is_active)
     total = q.count()
     items = q.order_by(User.id).offset(skip).limit(limit).all()
     return items, total
@@ -462,8 +477,19 @@ def list_audit_logs(
 
 # ─────────────────────── GuestAlert ──────────────────────────────────
 
-def create_guest_alert(db: Session, data: GuestAlertCreate) -> GuestAlert:
-    alert = GuestAlert(**data.model_dump(), status="open")
+def create_guest_alert(
+    db: Session, *, branch_id: int, context_type: str, context_id: int,
+    alert_type: str, message: Optional[str], public_reference: str | None = None,
+    guest_session_id: int | None = None, outlet_id: int | None = None,
+    order_id: int | None = None, idempotency_key: str | None = None,
+) -> GuestAlert:
+    """Persist only server-derived location fields from a guest session."""
+    alert = GuestAlert(
+        branch_id=branch_id, context_type=context_type, context_id=context_id,
+        alert_type=alert_type, message=message, status="open",
+        public_reference=public_reference, guest_session_id=guest_session_id,
+        outlet_id=outlet_id, order_id=order_id, idempotency_key=idempotency_key,
+    )
     db.add(alert)
     db.flush()
     return alert
@@ -473,16 +499,20 @@ def get_guest_alert(db: Session, alert_id: int) -> Optional[GuestAlert]:
     return db.query(GuestAlert).filter(GuestAlert.id == alert_id).first()
 
 
-def get_recent_open_alert(
-    db: Session, *, branch_id: int, context_type: str, context_id: int,
-    alert_type: str, cooldown_seconds: int,
-) -> Optional[GuestAlert]:
-    """Gate 8 Phase 1 (2026-07-21) — أحدث تنبيه غير مُغلَق لنفس (الموقع،
-    نوع الطلب) اتفتح خلال نافذة التهدئة، لو موجود. راجع
-    core.services.create_guest_alert للاستخدام (dedup/idempotency)."""
-    from datetime import datetime, timedelta
+def get_guest_alert_for_update(db: Session, alert_id: int) -> Optional[GuestAlert]:
+    return (
+        db.query(GuestAlert)
+        .filter(GuestAlert.id == alert_id)
+        .with_for_update()
+        .populate_existing()
+        .first()
+    )
 
-    cutoff = datetime.utcnow() - timedelta(seconds=cooldown_seconds)
+
+def get_active_guest_alert(
+    db: Session, *, branch_id: int, context_type: str, context_id: int,
+    alert_type: str,
+) -> Optional[GuestAlert]:
     return (
         db.query(GuestAlert)
         .filter(
@@ -490,12 +520,68 @@ def get_recent_open_alert(
             GuestAlert.context_type == context_type,
             GuestAlert.context_id == context_id,
             GuestAlert.alert_type == alert_type,
-            GuestAlert.status != "resolved",
-            GuestAlert.created_at >= cutoff,
+            GuestAlert.status.in_(("open", "acknowledged", "arrived")),
         )
         .order_by(GuestAlert.created_at.desc())
         .first()
     )
+
+
+def expire_stale_guest_alerts(
+    db: Session, cutoff: datetime, branch_id: int | None = None,
+) -> int:
+    query = db.query(GuestAlert).filter(
+        GuestAlert.status.in_(("open", "acknowledged", "arrived")),
+        GuestAlert.created_at < cutoff,
+    )
+    if branch_id is not None:
+        query = query.filter(GuestAlert.branch_id == branch_id)
+    count = query.update({"status": "expired"}, synchronize_session=False)
+    db.flush()
+    return count
+
+
+def get_guest_alert_by_public_reference(
+    db: Session, public_reference: str,
+) -> Optional[GuestAlert]:
+    return db.query(GuestAlert).filter(GuestAlert.public_reference == public_reference).first()
+
+
+def get_guest_alert_by_idempotency_key(
+    db: Session, guest_session_id: int, idempotency_key: str,
+) -> Optional[GuestAlert]:
+    return (
+        db.query(GuestAlert)
+        .filter(
+            GuestAlert.guest_session_id == guest_session_id,
+            GuestAlert.idempotency_key == idempotency_key,
+        )
+        .first()
+    )
+
+
+def list_active_bill_alerts_for_order(
+    db: Session, *, order_id: int, branch_id: int, context_id: int | None,
+    guest_session_id: int | None, outlet_id: int,
+) -> list[GuestAlert]:
+    link_filter = GuestAlert.order_id == order_id
+    if guest_session_id is not None:
+        link_filter = link_filter | (
+            (GuestAlert.guest_session_id == guest_session_id)
+            & (GuestAlert.outlet_id == outlet_id)
+        )
+    query = db.query(GuestAlert).filter(
+        GuestAlert.branch_id == branch_id,
+        GuestAlert.alert_type == "request_bill",
+        GuestAlert.status.in_(("open", "acknowledged", "arrived")),
+        link_filter,
+    )
+    if context_id is not None:
+        query = query.filter(
+            GuestAlert.context_type == "dining_table",
+            GuestAlert.context_id == context_id,
+        )
+    return query.with_for_update().all()
 
 
 def list_active_alerts(
@@ -508,7 +594,7 @@ def list_active_alerts(
     (FIFO) عشان طاقم الخدمة يرد على الأقدم أولاً، مش يغرق في أحدث تنبيه."""
     q = db.query(GuestAlert).filter(
         GuestAlert.branch_id == branch_id,
-        GuestAlert.status != "resolved",
+        GuestAlert.status.in_(("open", "acknowledged", "arrived")),
     )
     total = q.count()
     items = q.order_by(GuestAlert.created_at.asc()).offset(skip).limit(limit).all()
@@ -522,7 +608,15 @@ def update_alert_status(
     resolved_by: Optional[int] = None,
 ) -> GuestAlert:
     alert.status = new_status
+    if new_status == "acknowledged":
+        alert.assigned_to = resolved_by
+        alert.acknowledged_at = datetime.utcnow()
+    elif new_status == "arrived":
+        alert.assigned_to = resolved_by
+        alert.acknowledged_at = alert.acknowledged_at or datetime.utcnow()
+        alert.arrived_at = datetime.utcnow()
     if new_status == "resolved":
+        alert.assigned_to = alert.assigned_to or resolved_by
         alert.resolved_by = resolved_by
         alert.resolved_at = datetime.utcnow()
     db.flush()
@@ -572,9 +666,35 @@ def reset_pin_failures(db: Session, cred: PinCredential) -> PinCredential:
 
 # ─────────────────────── ServiceLocationToken ─────────────────────────
 
+def create_guest_session(
+    db: Session, *, public_reference: str, token_hash: str,
+    service_location_token_id: int, expires_at: datetime,
+) -> GuestSession:
+    now = datetime.utcnow()
+    row = GuestSession(
+        public_reference=public_reference,
+        token_hash=token_hash,
+        service_location_token_id=service_location_token_id,
+        expires_at=expires_at,
+        last_seen_at=now,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+def get_guest_session_by_hash(db: Session, token_hash: str) -> Optional[GuestSession]:
+    return db.query(GuestSession).filter(GuestSession.token_hash == token_hash).first()
+
+
+def get_service_location_token_by_id(
+    db: Session, token_id: int,
+) -> Optional[ServiceLocationToken]:
+    return db.query(ServiceLocationToken).filter(ServiceLocationToken.id == token_id).first()
+
 def create_service_location_token(
     db: Session, *, token: str, branch_id: int, location_type: str,
-    location_id: int, created_by: int,
+    location_id: int, created_by: int | None,
 ) -> ServiceLocationToken:
     row = ServiceLocationToken(
         token=token, branch_id=branch_id, location_type=location_type,
@@ -609,4 +729,18 @@ def get_active_service_location_token(db: Session, token: str) -> Optional[Servi
             ServiceLocationToken.is_active.is_(True),
         )
         .first()
+    )
+
+
+def list_active_service_location_tokens(db: Session, branch_id: int) -> list[ServiceLocationToken]:
+    """يُستخدم من admin/QRGeneratorView.vue عشان يعرف أي طاولة عندها رمز
+    فعّال بالفعل (يعرض QR-ها مباشرة) وأي طاولة محتاجة توليد لأول مرة —
+    بدون round-trip منفصل لكل طاولة."""
+    return (
+        db.query(ServiceLocationToken)
+        .filter(
+            ServiceLocationToken.branch_id == branch_id,
+            ServiceLocationToken.is_active.is_(True),
+        )
+        .all()
     )

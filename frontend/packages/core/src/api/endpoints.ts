@@ -384,7 +384,10 @@ export const ENDPOINTS = {
     list:       '/api/v1/permissions',
     permission: (id: number) => `/api/v1/permissions/${id}`,
     catalog:    '/api/v1/permissions/catalog',
+    me:         '/api/v1/permissions/me',
     users:      '/api/v1/users',
+    user:       (id: number) => `/api/v1/users/${id}`,
+    createUser: '/api/v1/users',
   },
   finance_eta: {
     invoices: '/api/v1/finance/eta/invoices',

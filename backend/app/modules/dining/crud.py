@@ -398,6 +398,16 @@ def get_order(db: Session, order_id: int) -> Optional[DiningOrder]:
     return db.query(DiningOrder).filter(DiningOrder.id == order_id).first()
 
 
+def get_order_by_guest_public_reference(
+    db: Session, public_reference: str,
+) -> Optional[DiningOrder]:
+    return (
+        db.query(DiningOrder)
+        .filter(DiningOrder.guest_public_reference == public_reference)
+        .first()
+    )
+
+
 def get_order_for_update(db: Session, order_id: int) -> Optional[DiningOrder]:
     """SELECT ... FOR UPDATE NOWAIT — يقفل صف الطلب طوال معاملة الدفع الصارمة
     (راجع Gate 1B: dining.services._mark_order_paid) عشان يمنع دفعتين
@@ -564,6 +574,8 @@ def create_order_with_items(
     discount_amount: "Decimal | None" = None,
     delivery_fee: "Decimal | None" = None,
     created_by: Optional[int] = None,
+    guest_session_id: Optional[int] = None,
+    guest_public_reference: Optional[str] = None,
 ) -> DiningOrder:
     order = DiningOrder(
         branch_id=branch_id,
@@ -585,6 +597,8 @@ def create_order_with_items(
         payment_method=payment_method,
         discount_amount=discount_amount if discount_amount is not None else Decimal("0"),
         delivery_fee=delivery_fee if delivery_fee is not None else Decimal("0"),
+        guest_session_id=guest_session_id,
+        guest_public_reference=guest_public_reference,
     )
     db.add(order)
     db.flush()

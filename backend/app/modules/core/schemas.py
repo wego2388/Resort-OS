@@ -238,6 +238,42 @@ class UserRead(BaseModel):
         return normalize_staff_language(v)
 
 
+class UserCreate(BaseModel):
+    """super_admin فقط — إنشاء حساب موظف جديد بدور محدد. الباسورد مؤقت
+    (must_change_password=True) بالإجبار — الموظف لازم يغيّره عند أول تسجيل
+    دخول. super_admin مش مسموح ينشئه من هنا (Gate: Decision 0003 invariant —
+    الحسابات الإدارية تُنشأ بـ admin_bootstrap يدويًا)."""
+    email:        str  = Field(..., min_length=5, max_length=255)
+    full_name:    str  = Field(..., min_length=2, max_length=255)
+    phone:        Optional[str] = Field(None, max_length=50)
+    role:         str  = Field(..., max_length=30)
+    password:     str  = Field(..., min_length=8, max_length=128,
+                                description="باسورد مؤقت — يُجبر على تغييره عند أول دخول")
+
+    @field_validator("role")
+    @classmethod
+    def _role_must_be_staff(cls, v: str) -> str:
+        from app.core.deps import ROLE_LEVELS  # noqa: PLC0415
+        if v not in ROLE_LEVELS:
+            raise ValueError(
+                f"role غير معروف: '{v}' — لازم يكون واحد من: {', '.join(sorted(ROLE_LEVELS))}"
+            )
+        # super_admin لا يُنشأ من هذا الـ endpoint — يُنشأ يدويًا بـ admin_bootstrap
+        if v == "super_admin":
+            raise ValueError(
+                "لا يمكن إنشاء حساب super_admin من هنا — استخدم admin_bootstrap"
+            )
+        return v
+
+    @field_validator("email")
+    @classmethod
+    def _email_format(cls, v: str) -> str:
+        from app.core.kernel.security import validate_email_format  # noqa: PLC0415
+        if not validate_email_format(v.strip()):
+            raise ValueError("صيغة البريد الإلكتروني غير صالحة")
+        return v.strip().lower()
+
+
 class UserRoleUpdate(BaseModel):
     """super_admin فقط — تغيير role و/أو is_active لمستخدم. Gate 2B3A:
     reason إجباري ومحمي بـstep-up (راجع
@@ -360,12 +396,13 @@ _ALERT_TYPE_PATTERN = r"^(call_waiter|ready_to_order|assistance|request_bill|oth
 
 
 class GuestAlertCreate(BaseModel):
-    """للاستخدام من POST /public/alerts — الضيف بيبعتها بدون auth."""
-    branch_id:    int
-    context_type: str = Field(..., pattern=_CONTEXT_TYPE_PATTERN)
-    context_id:   int
-    alert_type:   str = Field(..., pattern=_ALERT_TYPE_PATTERN)
-    message:      Optional[str] = Field(None, max_length=300)
+    """Guest request body. Location comes exclusively from X-Guest-Session."""
+    model_config = ConfigDict(extra="forbid")
+
+    alert_type: str = Field(..., pattern=_ALERT_TYPE_PATTERN)
+    message:    Optional[str] = Field(None, max_length=300)
+    outlet_id:  Optional[int] = Field(None, ge=1)
+    idempotency_key: Optional[str] = Field(None, min_length=8, max_length=64)
 
 
 class GuestAlertRead(BaseModel):
@@ -378,6 +415,15 @@ class GuestAlertRead(BaseModel):
     alert_type:   str
     message:      Optional[str]
     status:       str
+    public_reference: Optional[str] = None
+    location_label: Optional[str] = None
+    outlet_id: Optional[int] = None
+    outlet_name: Optional[str] = None
+    outlet_name_ar: Optional[str] = None
+    order_id: Optional[int] = None
+    assigned_to: Optional[int] = None
+    acknowledged_at: Optional[datetime] = None
+    arrived_at: Optional[datetime] = None
     resolved_by:  Optional[int]
     resolved_at:  Optional[datetime]
     created_at:   datetime
@@ -385,20 +431,32 @@ class GuestAlertRead(BaseModel):
 
 class GuestAlertAck(BaseModel):
     """رد التأكيد للضيف بعد إرسال التنبيه — رسالة ودّية زي GuestOrderRead."""
-    alert_id: int
+    public_reference: str
     status:   str
     message:  str
+    deduplicated: bool = False
+
+
+class GuestAlertPublicStatus(BaseModel):
+    public_reference: str
+    alert_type: str
+    status: str
+    message: Optional[str]
+    created_at: datetime
+    acknowledged_at: Optional[datetime]
+    arrived_at: Optional[datetime]
+    resolved_at: Optional[datetime]
 
 
 class GuestAlertStatusUpdate(BaseModel):
     """طاقم الخدمة بس — الضيف مش بيقدر يحدد status عند الإنشاء (دايمًا open)."""
-    status: str = Field(..., pattern=r"^(acknowledged|resolved)$")
+    status: str = Field(..., pattern=r"^(acknowledged|arrived|resolved)$")
 
 
 # ─────────────────────── ServiceLocationToken ──────────────────────────
 # راجع app/modules/core/models.py::ServiceLocationToken للشرح الكامل.
 
-_LOCATION_TYPE_PATTERN = _CONTEXT_TYPE_PATTERN  # نفس enum GuestAlert.context_type بالضبط
+_LOCATION_TYPE_PATTERN = r"^(dining_table|beach_location|room)$"
 
 
 class ServiceLocationTokenCreate(BaseModel):
@@ -420,17 +478,32 @@ class ServiceLocationTokenRead(BaseModel):
     created_at:    datetime
 
 
+class GuestServiceOutletRead(BaseModel):
+    id: int
+    name: str
+    name_ar: Optional[str]
+    outlet_type: str
+
+
 class ServiceLocationRead(BaseModel):
     """رد GET /public/service-location?token=... — السياق المُشتَق من الرمز
     بس، بدون أي بيانات داخلية حسّاسة (لا token تاني، لا created_by، لا
     أي IDs غير location_id نفسه اللي الرمز أصلاً بيمثّله)."""
-    branch_id:     int
     location_type: str
-    location_id:   int
     location_label: str
-    # وصف بشري بسيط ("طاولة 5"، "موقع الشاطئ 12") يبنيه الـservice من
-    # الصف الحقيقي (VenueTable.table_number مثلاً) — الضيف يشوفه بدل ما
-    # يشوف رقم ID خام.
+    service_mode: str
+    alerts_enabled: bool
+    self_order_enabled: bool
+    outlets: list[GuestServiceOutletRead] = Field(default_factory=list)
+
+
+class GuestSessionCreate(BaseModel):
+    token: str = Field(..., min_length=20, max_length=64)
+
+
+class GuestSessionRead(ServiceLocationRead):
+    session_token: str
+    expires_at: datetime
 
 
 # ─────────────────────── PIN Credentials ──────────────────────────────
