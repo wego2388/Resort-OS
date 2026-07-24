@@ -195,7 +195,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
         <div class="relative w-full max-w-xl bg-white dark:bg-surface rounded-2xl shadow-elevation-5 overflow-hidden animate-ds-scale-in">
           <!-- Search input -->
           <div class="flex items-center gap-3 px-4 py-3.5 border-b border-stone-100 dark:border-border">
-            <svg v-if="loading" class="animate-spin h-5 w-5 text-muted shrink-0" fill="none" viewBox="0 0 24 24">
+            <svg v-if="loading" class="motion-safe:animate-spin h-5 w-5 text-muted shrink-0" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
             </svg>

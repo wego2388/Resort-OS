@@ -125,7 +125,7 @@ onMounted(fetchAttendance)
     <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border shadow-sm overflow-hidden">
       <div class="px-5 py-4 border-b border-stone-100 dark:border-border/50 flex items-center justify-between">
         <span class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.attendance.last30Days') }}</span>
-        <button @click="fetchAttendance" :class="['text-xs text-gray-400 dark:text-gray-400 hover:text-blue-600', loading ? 'animate-spin' : '']">↻</button>
+        <button @click="fetchAttendance" :class="['text-xs text-gray-400 dark:text-gray-400 hover:text-blue-600', loading ? 'motion-safe:animate-spin' : '']">↻</button>
       </div>
       <div v-if="loading" class="p-8 flex flex-col items-center justify-center text-gray-400 dark:text-gray-400 text-sm gap-2">
         <AppSpinner size="md" />

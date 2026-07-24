@@ -214,7 +214,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-if="loading" class="flex justify-center py-16"><div class="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
+    <div v-if="loading" class="flex justify-center py-16"><div class="motion-safe:animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
     <div v-else-if="!tables.length" class="text-center py-20 text-gray-500 dark:text-gray-400">
       <div class="text-5xl mb-4">📱</div><p class="font-medium">{{ t('backoffice.qrGenerator.noTables') }}</p>
     </div>

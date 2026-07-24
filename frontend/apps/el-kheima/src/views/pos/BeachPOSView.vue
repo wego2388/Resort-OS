@@ -231,7 +231,7 @@ onUnmounted(() => {
 
     <!-- Loading splash -->
     <div v-if="loading && !inventory" class="flex items-center justify-center h-64">
-      <div class="animate-spin w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full" />
+      <div class="motion-safe:animate-spin w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full" />
     </div>
 
     <!-- No connection -->
@@ -260,7 +260,7 @@ onUnmounted(() => {
               >🌊 SURGE ×{{ inventory.surge_multiplier }}</span>
               <button
                 @click="fetchInventory"
-                :class="['text-gray-400 transition-colors hover:text-blue-600 dark:hover:text-blue-300', loading ? 'animate-spin' : '']"
+                :class="['text-gray-400 transition-colors hover:text-blue-600 dark:hover:text-blue-300', loading ? 'motion-safe:animate-spin' : '']"
                 :title="t('backoffice.beachPos.refresh')"
               >↻</button>
             </div>
@@ -509,7 +509,7 @@ onUnmounted(() => {
             >
               <div
                 v-if="submitting"
-                class="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"
+                class="motion-safe:animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full"
               />
               <span>{{ submitting ? t('backoffice.beachPos.processing') : t('backoffice.beachPos.completeSale') }}</span>
             </button>

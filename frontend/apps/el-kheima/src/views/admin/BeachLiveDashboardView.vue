@@ -204,7 +204,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
     </div>
 
     <div v-if="loading" class="flex justify-center py-20">
-      <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
+      <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full motion-safe:animate-spin"/>
     </div>
 
     <template v-else-if="dash">

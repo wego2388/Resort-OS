@@ -122,7 +122,7 @@ onMounted(load)
     </div>
 
     <div v-if="loading" class="flex justify-center py-20">
-      <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
+      <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full motion-safe:animate-spin"/>
     </div>
 
     <div v-else-if="loadError" class="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
