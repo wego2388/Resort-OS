@@ -1106,7 +1106,14 @@
     "add": "إضافة",
     "upload": "رفع",
     "status": "الحالة",
-    "brand_name": "الخيمة"
+    "brand_name": "الخيمة",
+    "showingOf": "يعرض {shown} من أصل {total}",
+    "useSearchToFilter": "استخدم البحث لتصفية النتائج"
+  },
+  "confirmDialog": {
+    "defaultTitle": "تأكيد",
+    "defaultConfirm": "تأكيد",
+    "defaultCancel": "إلغاء"
   },
   "booking": {
     "user": "المستخدم",

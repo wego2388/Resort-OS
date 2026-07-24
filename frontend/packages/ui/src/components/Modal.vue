@@ -14,6 +14,12 @@ const props = withDefaults(defineProps<{
   ariaLabel?: string
   /** Accessible name for the icon-only close button. */
   closeLabel?: string
+  /**
+   * Associates the dialog with a description element via aria-describedby.
+   * Pass the `id` of the element that describes the dialog's purpose
+   * (e.g. a message paragraph). Screen readers will announce it automatically.
+   */
+  ariaDescribedby?: string
   // ⚠️ باج حقيقي اتكشف حي (2026-07-06، اختبار زر "📨 استبيان الرضا" في
   // TimeshareView كمدير): useConfirm() بيفتح AppModal تاني فوق أي AppModal
   // شاشة مفتوحة أصلاً (نفس المكوّن، الاتنين Teleport لـ body بنفس z-50).
@@ -131,6 +137,7 @@ onBeforeUnmount(restorePreviousFocus)
           aria-modal="true"
           :aria-labelledby="labelledBy"
           :aria-label="!title ? ariaLabel : undefined"
+          :aria-describedby="ariaDescribedby || undefined"
           tabindex="-1"
           :class="[
           'relative bg-white dark:bg-surface rounded-2xl shadow-2xl w-full max-h-[90vh] flex flex-col focus:outline-none',

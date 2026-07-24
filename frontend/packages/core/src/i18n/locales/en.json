@@ -1106,7 +1106,14 @@
     "add": "Add",
     "upload": "Upload",
     "status": "Status",
-    "brand_name": "El Kheima"
+    "brand_name": "El Kheima",
+    "showingOf": "Showing {shown} of {total}",
+    "useSearchToFilter": "Use search to filter results"
+  },
+  "confirmDialog": {
+    "defaultTitle": "Confirm",
+    "defaultConfirm": "Confirm",
+    "defaultCancel": "Cancel"
   },
   "booking": {
     "user": "User",

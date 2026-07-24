@@ -217,22 +217,25 @@ onMounted(() => {
 <template>
   <main class="min-h-screen bg-stone-50 dark:bg-gray-950 p-4 sm:p-6">
     <section class="w-full max-w-3xl mx-auto space-y-5">
+      <!-- Back nav — top of page, always visible without scrolling -->
+      <div class="flex items-center justify-between">
+        <button
+          type="button"
+          class="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
+          @click="goBack"
+        >
+          <svg class="w-4 h-4 rtl:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+          </svg>
+          {{ t('account.sessions.back') }}
+        </button>
+        <LanguageSwitcher variant="compact" />
+      </div>
+
       <!-- Header -->
-      <div class="flex justify-between items-start gap-4">
-        <div>
-          <h1 class="text-2xl font-black text-gray-800 dark:text-gray-100">{{ t('account.sessions.title') }}</h1>
-          <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('account.sessions.subtitle') }}</p>
-        </div>
-        <div class="flex items-center gap-2 flex-shrink-0">
-          <LanguageSwitcher variant="compact" />
-          <button
-            type="button"
-            class="text-sm font-semibold text-gray-600 dark:text-gray-300 border border-stone-200 dark:border-border rounded-lg px-3 py-2 hover:bg-stone-100 dark:hover:bg-gray-800 transition-colors"
-            @click="goBack"
-          >
-            {{ t('account.sessions.back') }}
-          </button>
-        </div>
+      <div>
+        <h1 class="text-2xl font-black text-gray-800 dark:text-gray-100">{{ t('account.sessions.title') }}</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('account.sessions.subtitle') }}</p>
       </div>
 
       <!-- Active sessions -->

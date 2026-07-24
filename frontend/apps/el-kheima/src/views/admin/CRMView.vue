@@ -59,8 +59,11 @@ const leads = ref<Lead[]>([])
 const leadSources = ref<LeadSource[]>([])
 const customers = ref<Customer[]>([])
 const opportunities = ref<Opportunity[]>([])
+const opportunitiesTotal = ref(0)
 const activities = ref<Activity[]>([])
+const activitiesTotal = ref(0)
 const campaigns = ref<Campaign[]>([])
+const campaignsTotal = ref(0)
 const guestProfiles = ref<GuestProfile[]>([])
 const guestVipOnly = ref(false)
 const loading = ref(false)
@@ -309,6 +312,7 @@ async function loadOpportunities() {
     if (customers.value.length === 0) await loadCustomers()
     const res = await api.get('/api/v1/crm/opportunities', { params: { branch_id: branchId, size: 100 } })
     opportunities.value = res.data.items ?? res.data
+    opportunitiesTotal.value = res.data.total ?? opportunities.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadOpportunitiesError')) }
   finally { loading.value = false }
 }
@@ -319,6 +323,7 @@ async function loadActivities() {
     if (customers.value.length === 0) await loadCustomers()
     const res = await api.get('/api/v1/crm/activities', { params: { branch_id: branchId, size: 100 } })
     activities.value = res.data.items ?? res.data
+    activitiesTotal.value = res.data.total ?? activities.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadActivitiesError')) }
   finally { loading.value = false }
 }
@@ -328,6 +333,7 @@ async function loadCampaigns() {
   try {
     const res = await api.get('/api/v1/crm/campaigns', { params: { branch_id: branchId, size: 100 } })
     campaigns.value = res.data.items ?? res.data
+    campaignsTotal.value = res.data.total ?? campaigns.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadCampaignsError')) }
   finally { loading.value = false }
 }
@@ -1000,6 +1006,13 @@ onMounted(loadLeads)
           </div>
         </div>
         <EmptyState v-if="opportunities.length === 0" icon="💼" :title="t('backoffice.crm.noOpportunities')" />
+        <!-- Truncation warning -->
+        <p
+          v-if="opportunitiesTotal > opportunities.length"
+          class="px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+        >
+          ⚠️ {{ t('common.showingOf', { shown: opportunities.length, total: opportunitiesTotal }) }} — {{ t('common.useSearchToFilter') }}
+        </p>
       </div>
     </div>
 
@@ -1046,6 +1059,13 @@ onMounted(loadLeads)
           </div>
         </div>
         <EmptyState v-if="activities.length === 0" icon="🗓️" :title="t('backoffice.crm.noActivities')" />
+        <!-- Truncation warning -->
+        <p
+          v-if="activitiesTotal > activities.length"
+          class="px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+        >
+          ⚠️ {{ t('common.showingOf', { shown: activities.length, total: activitiesTotal }) }} — {{ t('common.useSearchToFilter') }}
+        </p>
       </div>
     </div>
 
@@ -1141,6 +1161,13 @@ onMounted(loadLeads)
           </div>
         </div>
         <EmptyState v-if="campaigns.length === 0" icon="📢" :title="t('backoffice.crm.noCampaigns')" />
+        <!-- Truncation warning -->
+        <p
+          v-if="campaignsTotal > campaigns.length"
+          class="px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+        >
+          ⚠️ {{ t('common.showingOf', { shown: campaigns.length, total: campaignsTotal }) }} — {{ t('common.useSearchToFilter') }}
+        </p>
       </div>
     </div>
 

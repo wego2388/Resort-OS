@@ -45,6 +45,7 @@ interface EmployeeOption { id: number; full_name: string; employee_code: string;
 type PendingAction = { kind: 'create' } | { kind: 'status'; user: UserRow; nextActive: boolean }
 
 const users = ref<UserRow[]>([])
+const usersTotal = ref(0)
 const employees = ref<EmployeeOption[]>([])
 const usersLoading = ref(true)
 const usersLoadError = ref('')
@@ -82,6 +83,7 @@ async function loadUsers() {
   try {
     const res = await api.get(ENDPOINTS.users.list, { params: { page: 1, size: 100 } })
     users.value = res.data.items
+    usersTotal.value = res.data.total ?? res.data.items.length
   } catch { usersLoadError.value = t('backoffice.accounts.loadFailed') }
   finally { usersLoading.value = false }
 }
@@ -515,6 +517,13 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
               </tr>
             </tbody>
           </table>
+          <!-- Truncation warning: لو total > عدد العناصر المعروضة -->
+          <p
+            v-if="usersTotal > users.length"
+            class="mt-2 px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+          >
+            ⚠️ {{ t('common.showingOf', { shown: users.length, total: usersTotal }) }} — {{ t('common.useSearchToFilter') }}
+          </p>
         </div>
       </AppCard>
 

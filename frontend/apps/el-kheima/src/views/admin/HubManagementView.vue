@@ -46,6 +46,7 @@ const bookingDateTo = ref('')
 
 // Offers
 const offers = ref<HubOffer[]>([])
+const offersTotal = ref(0)
 const offerActiveOnly = ref(false)
 const offerModal = ref(false)
 const editingOffer = ref<HubOffer | null>(null)
@@ -58,6 +59,7 @@ const offerForm = ref({
 
 // Pages
 const pages = ref<HubPage[]>([])
+const pagesTotal = ref(0)
 const pageModal = ref(false)
 const editingPage = ref<HubPage | null>(null)
 const savingPage = ref(false)
@@ -119,6 +121,7 @@ async function loadOffers() {
       params: { branch_id: branchId, active_only: offerActiveOnly.value, size: 100 }
     })
     offers.value = data.items ?? []
+    offersTotal.value = data.total ?? offers.value.length
   } catch { offers.value = [] }
   finally { loading.value = false }
 }
@@ -130,6 +133,7 @@ async function loadPages() {
       params: { branch_id: branchId, size: 100 }
     })
     pages.value = data.items ?? []
+    pagesTotal.value = data.total ?? pages.value.length
   } catch { pages.value = [] }
   finally { loading.value = false }
 }
@@ -509,6 +513,13 @@ onMounted(() => switchTab('bookings'))
           </div>
           <button @click="openEditOffer(o)" class="mt-3 text-sm text-blue-600 hover:underline dark:text-blue-300">✏️ {{ t('backoffice.hub.edit') }}</button>
         </AppCard>
+        <!-- Truncation warning -->
+        <p
+          v-if="offersTotal > offers.length"
+          class="col-span-full px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+        >
+          ⚠️ {{ t('common.showingOf', { shown: offers.length, total: offersTotal }) }} — {{ t('common.useSearchToFilter') }}
+        </p>
       </div>
     </div>
 
@@ -560,6 +571,13 @@ onMounted(() => switchTab('bookings'))
           </table>
         </div>
       </AppCard>
+      <!-- Truncation warning — pages -->
+      <p
+        v-if="pagesTotal > pages.length"
+        class="px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+      >
+        ⚠️ {{ t('common.showingOf', { shown: pages.length, total: pagesTotal }) }} — {{ t('common.useSearchToFilter') }}
+      </p>
     </div>
 
     <!-- ══ MODAL: OFFER ══ -->

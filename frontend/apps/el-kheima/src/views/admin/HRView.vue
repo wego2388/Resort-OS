@@ -53,6 +53,7 @@ interface LeaderboardEntry {
 }
 
 const employees = ref<Employee[]>([])
+const employeesTotal = ref(0)
 const payrollRuns = ref<PayrollRun[]>([])
 // اعتماد الرواتب أصلاً على مستوى الدفعة الكاملة في الباك إند
 // (POST /hr/payroll-runs/{id}/approve بيعتمد كل قسائم الموظفين في الدفعة
@@ -138,6 +139,7 @@ async function fetchEmployees() {
   try {
     const res = await api.get('/api/v1/hr/employees', { params: { branch_id: branchId, size: 100 } })
     employees.value = res.data.employees ?? res.data.items ?? res.data
+    employeesTotal.value = res.data.total ?? employees.value.length
   } catch (e) {
     toast.error(t('backoffice.hr.msg.loadEmployeesError'))
   } finally { loading.value = false }
@@ -774,6 +776,13 @@ onMounted(fetchEmployees)
               </tr>
             </tbody>
           </table>
+          <!-- Truncation warning -->
+          <p
+            v-if="employeesTotal > employees.length"
+            class="mt-2 px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+          >
+            ⚠️ {{ t('common.showingOf', { shown: employees.length, total: employeesTotal }) }} — {{ t('common.useSearchToFilter') }}
+          </p>
         </div>
       </AppCard>
     </div>

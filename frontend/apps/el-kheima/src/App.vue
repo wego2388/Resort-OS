@@ -5,7 +5,7 @@
 // @resort-os/ui LoginView (and any view) calls useToast() to surface errors;
 // none of the former 6 apps ever mounted it, so toast.error()/success() calls
 // were silently swallowed before this.
-import { watch } from 'vue'
+import { watch, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ToastContainer, ConfirmDialogContainer } from '@resort-os/ui'
@@ -29,10 +29,21 @@ watch(
   },
   { immediate: true },
 )
+
+// ── ConfirmDialog i18n fallbacks ──────────────────────────────────────────
+// ConfirmDialogContainer في packages/ui وما عندهاش vue-i18n مباشرة —
+// بنمرر الترجمات من هنا عشان الـ fallbacks تتغير مع اللغة.
+const confirmDefaultTitle = computed(() => t('confirmDialog.defaultTitle'))
+const confirmDefaultConfirmText = computed(() => t('confirmDialog.defaultConfirm'))
+const confirmDefaultCancelText = computed(() => t('confirmDialog.defaultCancel'))
 </script>
 
 <template>
   <RouterView />
   <ToastContainer />
-  <ConfirmDialogContainer />
+  <ConfirmDialogContainer
+    :default-title="confirmDefaultTitle"
+    :default-confirm-text="confirmDefaultConfirmText"
+    :default-cancel-text="confirmDefaultCancelText"
+  />
 </template>
