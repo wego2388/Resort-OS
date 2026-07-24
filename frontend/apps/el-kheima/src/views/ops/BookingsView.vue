@@ -65,16 +65,29 @@ interface RatePlanOption {
 const bookings  = ref<Booking[]>([])
 const rooms     = ref<RoomOption[]>([])
 const loading   = ref(false)
-const submitting = ref(false)
+const submitting  = ref(false)
+const totalBookings = ref(0)
+const currentPage   = ref(1)
+const PAGE_SIZE     = 50
 
 // ─── Filters ─────────────────────────────────────────────────────────────────
 const filterStatus = ref<string | null>(null)
+const searchQuery  = ref('')
 
-const filteredBookings = computed(() =>
-  filterStatus.value
+const filteredBookings = computed(() => {
+  let list = filterStatus.value
     ? bookings.value.filter(b => b.status === filterStatus.value)
     : bookings.value
-)
+  const q = searchQuery.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter(b =>
+      b.guest_name.toLowerCase().includes(q) ||
+      (b.guest_phone ?? '').includes(q) ||
+      String(b.id).includes(q)
+    )
+  }
+  return list
+})
 
 // ─── Status config ────────────────────────────────────────────────────────────
 const statusConfig = computed<Record<string, { label: string; color: string; bg: string }>>(() => ({
@@ -144,13 +157,15 @@ function openCreateModal() {
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
-async function fetchBookings() {
+async function fetchBookings(page = 1) {
   loading.value = true
+  currentPage.value = page
   try {
     const res = await api.get(ENDPOINTS.pms.bookings, {
-      params: { branch_id: branchId, page: 1, size: 100 }
+      params: { branch_id: branchId, page, size: PAGE_SIZE }
     })
-    bookings.value = res.data.items ?? res.data
+    bookings.value  = res.data.items ?? res.data
+    totalBookings.value = res.data.total ?? bookings.value.length
   } catch(e) {
     toast.error(t('backoffice.bookings.loadBookingsError'))
   } finally { loading.value = false }
@@ -344,7 +359,7 @@ onMounted(() => {
       <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.bookings.title') }}</h1>
       <div class="flex gap-2">
         <button
-          @click="fetchBookings"
+          @click="() => fetchBookings()"
           class="rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
         >🔄</button>
         <button
@@ -352,6 +367,16 @@ onMounted(() => {
           class="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors"
         >{{ t('backoffice.bookings.newBooking') }}</button>
       </div>
+    </div>
+
+    <!-- Search -->
+    <div class="mb-3">
+      <input
+        v-model="searchQuery"
+        type="search"
+        :placeholder="t('backoffice.bookings.searchPlaceholder')"
+        class="w-full md:w-80 px-3 py-2 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
     </div>
 
     <!-- Status filter tabs -->
@@ -493,6 +518,26 @@ onMounted(() => {
       </div>
 
       <EmptyState v-if="filteredBookings.length === 0" icon="📋" :title="t('backoffice.bookings.noBookings')" />
+    </div>
+
+    <!-- Pagination -->
+    <div v-if="totalBookings > PAGE_SIZE" class="mt-4 flex items-center justify-between gap-3 text-sm">
+      <span class="text-gray-500 dark:text-gray-400">
+        {{ t('common.showingOf', { shown: filteredBookings.length, total: totalBookings }) }}
+      </span>
+      <div class="flex gap-2">
+        <button
+          :disabled="currentPage <= 1"
+          @click="fetchBookings(currentPage - 1)"
+          class="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-40 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium"
+        >{{ t('common.prevPage') }}</button>
+        <span class="px-3 py-1.5 text-gray-600 dark:text-gray-400">{{ currentPage }}</span>
+        <button
+          :disabled="bookings.length < PAGE_SIZE"
+          @click="fetchBookings(currentPage + 1)"
+          class="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-40 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium"
+        >{{ t('common.nextPage') }}</button>
+      </div>
     </div>
 
     <!-- Early / Late modal -->

@@ -16,6 +16,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { useRouter } from 'vue-router'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppBadge, AppButton, AppCard, EmptyState, LoadingState, useToast } from '@resort-os/ui'
@@ -26,6 +27,7 @@ import CashControlPanel from '../../components/CashControlPanel.vue'
 const auth = useAuthStore()
 const toast = useToast()
 const { t, locale } = useI18n()
+const router = useRouter()
 const { formatMoney } = useStaffFormat()
 const branchId = computed(() => auth.branchId ?? 1)
 
@@ -146,6 +148,10 @@ function orderLabel(o: LiveOrder): string {
   return o.table_id ? t('backoffice.shiftDashboard.tableNumber', { number: o.table_id }) : t('backoffice.shiftDashboard.takeaway')
 }
 
+function openOrder(orderId: number) {
+  router.push({ name: 'pos', query: { order: String(orderId) } })
+}
+
 // ── سجل الفواتير (S-02) — بوابة PIN مدير+ داخل InvoiceLogModal نفسها ─────
 const showInvoiceLog = ref(false)
 
@@ -241,13 +247,14 @@ onMounted(fetchShift)
             <h3 class="mb-1.5 text-xs font-bold uppercase text-gray-500 dark:text-gray-400">{{ locale === 'ar' ? (group.outlet.name_ar || group.outlet.name) : group.outlet.name }}</h3>
             <div class="divide-y divide-stone-100 dark:divide-border">
               <div v-for="o in group.orders" :key="o.id" class="py-2 flex items-center justify-between gap-2">
-                <div>
+                <div class="flex-1 min-w-0">
                   <span class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ o.order_number }}</span>
                   <span class="text-xs text-gray-400 ms-2">{{ orderLabel(o) }}</span>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-shrink-0">
                   <span class="text-sm font-bold text-blue-700 dark:text-blue-300">{{ formatMoney(o.total, 'EGP') }}</span>
                   <AppBadge :variant="STATUS_VARIANT[o.status] ?? 'neutral'">{{ STATUS_LABEL[o.status] ?? o.status }}</AppBadge>
+                  <AppButton size="sm" variant="ghost" @click="openOrder(o.id)">{{ t('common.view') }}</AppButton>
                 </div>
               </div>
             </div>

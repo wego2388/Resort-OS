@@ -231,6 +231,11 @@ function cartKey(itemId: number, variantId: number | null, extraIds: number[]): 
   return `${itemId}:${variantId ?? ''}:${[...extraIds].sort().join(',')}`
 }
 
+
+/** إجمالي الكمية من نفس الصنف في السلة (كل المتغيّرات معاً) */
+function itemQtyInCart(itemId: number): number {
+  return cart.value.filter(l => l.itemId === itemId).reduce((s, l) => s + l.quantity, 0)
+}
 function onItemClick(item: DiningItemRow) {
   if (cartLocked.value) return
   const hasVariants = (item.variants ?? []).some(variant => variant.is_available)
@@ -828,6 +833,12 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 class="relative min-h-[138px] rounded-2xl border-2 border-stone-200 dark:border-border bg-white dark:bg-surface p-3 text-start shadow-sm hover:border-primary-400 hover:shadow-md active:scale-[0.99] transition-all flex flex-col justify-between gap-3 disabled:opacity-60 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
                 @click="onItemClick(item)"
               >
+                <!-- badge كمية: يظهر لو الصنف موجود في السلة -->
+                <span
+                  v-if="itemQtyInCart(item.id) > 0"
+                  class="absolute -top-2 -right-2 z-10 min-w-[22px] h-[22px] bg-primary-700 text-white text-[11px] font-black rounded-full flex items-center justify-center px-1 shadow"
+                  :aria-label="t('backoffice.pos.itemInCartQty', { qty: itemQtyInCart(item.id) })"
+                >{{ itemQtyInCart(item.id) }}</span>
                 <div class="w-full">
                   <div class="flex items-start justify-between gap-2">
                     <span class="text-xs font-semibold text-gray-400 uppercase">{{ item.station }}</span>

@@ -1108,7 +1108,9 @@
     "status": "Status",
     "brand_name": "El Kheima",
     "showingOf": "Showing {shown} of {total}",
-    "useSearchToFilter": "Use search to filter results"
+    "useSearchToFilter": "Use search to filter results",
+    "prevPage": "Previous",
+    "nextPage": "Next"
   },
   "confirmDialog": {
     "defaultTitle": "Confirm",
@@ -3424,7 +3426,15 @@
     "no_items": "No items in this category",
     "poll_error": "Couldn't update order status — check your internet connection",
     "poll_retry": "Check Again",
-    "poll_checking": "Checking..."
+    "poll_checking": "Checking...",
+    "outlet_type": {
+      "restaurant": "Restaurant",
+      "cafe": "Café",
+      "bar": "Bar",
+      "pool_bar": "Pool Bar",
+      "beach_bar": "Beach Bar",
+      "room_service": "Room Service"
+    }
   },
   "backoffice": {
     "nav": {
@@ -4169,7 +4179,8 @@
         "sendToKitchen": "Order saved, but sending it to the kitchen failed — review it from Active Orders",
         "selectTableRequired": "Select a table for a dine-in order",
         "submitOrder": "Failed to send the order"
-      }
+      },
+      "itemInCartQty": "{qty} in cart"
     },
     "kds": {
       "title": "Unified Kitchen Display — Dining KDS",
@@ -4879,7 +4890,11 @@
         "checkoutPending": "Being cleaned",
         "maintenance": "Maintenance"
       },
-      "listSeparator": ", "
+      "listSeparator": ", ",
+      "roomSearchPlaceholder": "Search by room, type, or guest name",
+      "noRoomsFiltered": "No rooms match the filter",
+      "folioSummaryTitle": "Bill Summary",
+      "folioTotal": "Total"
     },
     "bookings": {
       "title": "Bookings",
@@ -4953,7 +4968,8 @@
       "bookingCancelError": "Couldn't cancel the booking",
       "earlyLateSaved": "Early/late arrival request saved",
       "earlyLateSaveError": "Couldn't save the request",
-      "saveBooking": "Save booking"
+      "saveBooking": "Save booking",
+      "searchPlaceholder": "Search by guest name, phone, or booking ID"
     },
     "rooms": {
       "title": "Room map",
@@ -5848,7 +5864,24 @@
         "unitTransferred": "Unit transferred",
         "transferError": "Couldn't transfer the unit",
         "importError": "Import failed"
-      }
+      },
+      "scheduleVisit": {
+        "btnLabel": "Schedule Visit",
+        "title": "Schedule New Visit",
+        "contract": "Contract",
+        "selectContract": "Select contract",
+        "checkIn": "Check-in date",
+        "checkOut": "Check-out date",
+        "notes": "Notes (optional)",
+        "notesPlaceholder": "Any additional details...",
+        "confirm": "Schedule",
+        "validationError": "Please select a contract and dates",
+        "successToast": "✅ Visit scheduled successfully",
+        "errorToast": "Failed to schedule visit",
+        "statusUpdated": "Visit status updated",
+        "statusError": "Failed to update status"
+      },
+      "confirmStatusChange": "Confirm status change from {from} to {to}?"
     },
     "leasing": {
       "title": "Commercial Lease Contracts",

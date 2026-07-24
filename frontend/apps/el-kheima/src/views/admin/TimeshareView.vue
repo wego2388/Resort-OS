@@ -8,12 +8,15 @@ import {
   AppButton,
   AppCard,
   AppIcon,
+  AppInput,
   AppModal,
+  AppSelect,
   EmptyState,
   LoadingState,
   SearchInput,
   useConfirm,
   useToast,
+  type SelectOption,
 } from '@resort-os/ui'
 
 const toast = useToast()
@@ -189,6 +192,106 @@ async function sendSurvey(v: Visit) {
   } finally {
     sendingSurveyId.value = null
   }
+}
+
+// ── Schedule Visit Modal ──────────────────────────────────────────────────
+// الـ backend (POST /api/v1/timeshare/visits) يقبل: branch_id, contract_id,
+// check_in, check_out, notes (optional). الوحدة تُخصَّص تلقائياً بالـ service.
+const scheduleModal = reactive({
+  open: false,
+  loading: false,
+  contractId: undefined as number | undefined,
+  checkIn: '',
+  checkOut: '',
+  notes: '',
+  error: '',
+})
+
+function openScheduleVisit() {
+  // اختر أول عقد نشط في البروفايل الحالي
+  const active = profileModal.contracts.find(c => (c as any).status === 'active') ?? profileModal.contracts[0]
+  scheduleModal.contractId = active?.id ?? undefined
+  scheduleModal.checkIn  = ''
+  scheduleModal.checkOut = ''
+  scheduleModal.notes    = ''
+  scheduleModal.error    = ''
+  scheduleModal.open     = true
+}
+
+const contractOptions = computed<SelectOption[]>(() =>
+  profileModal.contracts.map(c => ({
+    value: c.id,
+    label: `${(c as any).contract_number ?? '#' + c.id} — ${c.nights_per_year ?? ''}n/yr`,
+  })),
+)
+
+async function confirmScheduleVisit() {
+  if (scheduleModal.contractId == null || !scheduleModal.checkIn || !scheduleModal.checkOut) {
+    scheduleModal.error = t('backoffice.timeshare.scheduleVisit.validationError')
+    return
+  }
+  scheduleModal.loading = true
+  scheduleModal.error   = ''
+  try {
+    await api.post('/api/v1/timeshare/visits', {
+      branch_id:   branchId,
+      contract_id: scheduleModal.contractId!,
+      check_in:    scheduleModal.checkIn,
+      check_out:   scheduleModal.checkOut,
+      notes:       scheduleModal.notes || undefined,
+    })
+    toast.success(t('backoffice.timeshare.scheduleVisit.successToast'))
+    scheduleModal.open = false
+    // أعد تحميل الزيارات في البروفايل المفتوح
+    const visitLists = await Promise.all(
+      profileModal.contracts.map(ct =>
+        api.get('/api/v1/timeshare/visits', { params: { branch_id: branchId, contract_id: ct.id } })
+          .then(r => r.data as Visit[]).catch(() => [] as Visit[])),
+    )
+    profileModal.visits = visitLists.flat().sort((a, b) => b.check_in.localeCompare(a.check_in))
+  } catch (e: any) {
+    scheduleModal.error = e?.response?.data?.detail ?? t('backoffice.timeshare.scheduleVisit.errorToast')
+  } finally {
+    scheduleModal.loading = false
+  }
+}
+
+// ── Update Visit Status ────────────────────────────────────────────────────
+const updatingVisitId = ref<number | null>(null)
+
+async function updateVisitStatus(v: Visit, newStatus: string) {
+  const ok = await confirm({
+    message: t('backoffice.timeshare.confirmStatusChange', {
+      from: visitStatusLabel(v.status),
+      to:   visitStatusLabel(newStatus),
+    }),
+    confirmText: t('common.save'),
+    cancelText:  t('common.cancel'),
+  })
+  if (!ok) return
+  updatingVisitId.value = v.id
+  try {
+    const res = await api.patch(`/api/v1/timeshare/visits/${v.id}`, { status: newStatus })
+    // تحديث الزيارة محلياً بدون reload كامل
+    const idx = profileModal.visits.findIndex(x => x.id === v.id)
+    if (idx !== -1) profileModal.visits[idx] = { ...profileModal.visits[idx], status: (res.data as Visit).status }
+    toast.success(t('backoffice.timeshare.scheduleVisit.statusUpdated'))
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.scheduleVisit.statusError'))
+  } finally {
+    updatingVisitId.value = null
+  }
+}
+
+// الحالات المسموح بالانتقال إليها من كل حالة
+function nextStatuses(current: string): { status: string; label: string }[] {
+  const map: Record<string, string[]> = {
+    scheduled:  ['active', 'cancelled'],
+    active:     ['completed', 'cancelled'],
+    completed:  [],
+    cancelled:  [],
+  }
+  return (map[current] ?? []).map(s => ({ status: s, label: visitStatusLabel(s) }))
 }
 
 // ── Installments ─────────────────────────────────────────────────────────
@@ -988,7 +1091,15 @@ onMounted(refreshAll)
 
         <!-- Visits (وحدة فعلية مخصَّصة + تواريخ + حالة) -->
         <div>
-          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.visitsCount', { count: profileModal.visits.length }) }}</p>
+          <div class="flex items-center justify-between mb-2">
+            <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase">{{ t('backoffice.timeshare.visitsCount', { count: profileModal.visits.length }) }}</p>
+            <!-- زرار جدولة زيارة: manager/timeshare_agent فقط -->
+            <AppButton
+              v-if="auth.hasRole('manager') || auth.hasRole('timeshare_agent')"
+              size="sm" variant="primary"
+              @click="openScheduleVisit"
+            >📅 {{ t('backoffice.timeshare.scheduleVisit.btnLabel') }}</AppButton>
+          </div>
           <EmptyState v-if="!profileModal.visits.length" icon="🏝️" :title="t('backoffice.timeshare.noVisitsRecorded')" />
           <div v-else class="space-y-1.5">
             <div v-for="v in profileModal.visits" :key="v.id" class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-xl bg-sky-50 dark:bg-sky-950/30 border border-sky-100 dark:border-sky-900/60">
@@ -996,7 +1107,16 @@ onMounted(refreshAll)
                 <span class="font-bold text-gray-900 dark:text-gray-100">🔑 {{ v.unit_id ? (unitNumberById[v.unit_id] ?? t('backoffice.timeshare.unitHash', { id: v.unit_id })) : '—' }}</span>
                 <span class="text-gray-500 dark:text-gray-400">{{ formatDateValue(v.check_in) }} → {{ formatDateValue(v.check_out) }}</span>
               </div>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
+                <!-- أزرار تغيير الحالة — manager/timeshare_agent فقط على الحالات المسموحة -->
+                <template v-if="(auth.hasRole('manager') || auth.hasRole('timeshare_agent')) && nextStatuses(v.status).length">
+                  <AppButton
+                    v-for="ns in nextStatuses(v.status)" :key="ns.status"
+                    size="sm" variant="ghost"
+                    :loading="updatingVisitId === v.id"
+                    @click="updateVisitStatus(v, ns.status)"
+                  >{{ ns.label }}</AppButton>
+                </template>
                 <AppButton
                   v-if="auth.hasRole('manager') && v.status === 'completed' && !sentSurveyIds.has(v.id)"
                   size="sm" variant="ghost" :loading="sendingSurveyId === v.id"
@@ -1048,6 +1168,57 @@ onMounted(refreshAll)
       </div>
       <template #footer>
         <AppButton variant="ghost" block @click="profileModal.open = false">{{ t('backoffice.timeshare.close') }}</AppButton>
+      </template>
+    </AppModal>
+
+    <!-- ── Schedule Visit Modal ──────────────────────────────────────────── -->
+    <AppModal
+      v-model:open="scheduleModal.open"
+      :title="t('backoffice.timeshare.scheduleVisit.title')"
+      max-width="sm"
+    >
+      <div class="space-y-4">
+        <!-- اختيار العقد — لو العميل عنده أكتر من عقد -->
+        <div v-if="profileModal.contracts.length > 1">
+          <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            {{ t('backoffice.timeshare.scheduleVisit.contract') }}
+          </label>
+          <AppSelect
+            v-model="scheduleModal.contractId"
+            :options="contractOptions"
+            :placeholder="t('backoffice.timeshare.scheduleVisit.selectContract')"
+          />
+        </div>
+        <!-- تاريخ الوصول -->
+        <div>
+          <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            {{ t('backoffice.timeshare.scheduleVisit.checkIn') }}
+          </label>
+          <AppInput v-model="scheduleModal.checkIn" type="date" />
+        </div>
+        <!-- تاريخ المغادرة -->
+        <div>
+          <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            {{ t('backoffice.timeshare.scheduleVisit.checkOut') }}
+          </label>
+          <AppInput v-model="scheduleModal.checkOut" type="date" :min="scheduleModal.checkIn" />
+        </div>
+        <!-- ملاحظات (اختياري) -->
+        <div>
+          <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+            {{ t('backoffice.timeshare.scheduleVisit.notes') }}
+          </label>
+          <AppInput v-model="scheduleModal.notes" :placeholder="t('backoffice.timeshare.scheduleVisit.notesPlaceholder')" />
+        </div>
+        <p v-if="scheduleModal.error" class="text-sm text-red-600 dark:text-red-400">{{ scheduleModal.error }}</p>
+      </div>
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <AppButton variant="ghost" @click="scheduleModal.open = false">{{ t('common.cancel') }}</AppButton>
+          <AppButton variant="primary" :loading="scheduleModal.loading" @click="confirmScheduleVisit">
+            {{ t('backoffice.timeshare.scheduleVisit.confirm') }}
+          </AppButton>
+        </div>
       </template>
     </AppModal>
   </div>

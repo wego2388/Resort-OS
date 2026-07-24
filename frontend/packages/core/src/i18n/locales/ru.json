@@ -1501,7 +1501,9 @@
     "add": "Добавить",
     "upload": "Загрузить",
     "status": "Статус",
-    "brand_name": "Эль Хейма"
+    "brand_name": "Эль Хейма",
+    "prevPage": "Назад",
+    "nextPage": "Вперёд"
   },
   "analytics": {
     "revenue": "Доход",
@@ -3357,6 +3359,47 @@
     "no_items": "Нет блюд в этой категории",
     "poll_error": "Не удалось обновить статус заказа — проверьте подключение к интернету",
     "poll_retry": "Проверить снова",
-    "poll_checking": "Проверка..."
+    "poll_checking": "Проверка...",
+    "outlet_type": {
+      "restaurant": "Ресторан",
+      "cafe": "Кафе",
+      "bar": "Бар",
+      "pool_bar": "Бар у бассейна",
+      "beach_bar": "Пляжный бар",
+      "room_service": "Обслуживание номеров"
+    }
+  },
+  "backoffice": {
+    "pos": {
+      "itemInCartQty": "{qty} в корзине"
+    },
+    "bookings": {
+      "searchPlaceholder": "Поиск по имени гостя, телефону или ID бронирования"
+    },
+    "timeshare": {
+      "scheduleVisit": {
+        "btnLabel": "Запланировать визит",
+        "title": "Запланировать новый визит",
+        "contract": "Контракт",
+        "selectContract": "Выберите контракт",
+        "checkIn": "Дата заезда",
+        "checkOut": "Дата выезда",
+        "notes": "Примечания (необязательно)",
+        "notesPlaceholder": "Дополнительные детали...",
+        "confirm": "Запланировать",
+        "validationError": "Пожалуйста, выберите контракт и даты",
+        "successToast": "✅ Визит успешно запланирован",
+        "errorToast": "Не удалось запланировать визит",
+        "statusUpdated": "Статус визита обновлён",
+        "statusError": "Не удалось обновить статус"
+      },
+      "confirmStatusChange": "Подтвердить изменение статуса с {from} на {to}?"
+    },
+    "reception": {
+      "roomSearchPlaceholder": "Поиск по комнате, типу или имени гостя",
+      "noRoomsFiltered": "Нет комнат, соответствующих фильтру",
+      "folioSummaryTitle": "Сводка счёта",
+      "folioTotal": "Итого"
+    }
   }
 }

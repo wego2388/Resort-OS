@@ -1106,7 +1106,9 @@
     "add": "Aggiungi",
     "upload": "Carica",
     "status": "Stato",
-    "brand_name": "El Kheima"
+    "brand_name": "El Kheima",
+    "prevPage": "Precedente",
+    "nextPage": "Successivo"
   },
   "booking": {
     "user": "User",
@@ -3357,6 +3359,47 @@
     "no_items": "Nessun articolo in questa categoria",
     "poll_error": "Impossibile aggiornare lo stato dell'ordine — controlla la connessione internet",
     "poll_retry": "Controlla di nuovo",
-    "poll_checking": "Verifica in corso..."
+    "poll_checking": "Verifica in corso...",
+    "outlet_type": {
+      "restaurant": "Ristorante",
+      "cafe": "Caffè",
+      "bar": "Bar",
+      "pool_bar": "Bar della Piscina",
+      "beach_bar": "Bar della Spiaggia",
+      "room_service": "Servizio in Camera"
+    }
+  },
+  "backoffice": {
+    "pos": {
+      "itemInCartQty": "{qty} nel carrello"
+    },
+    "bookings": {
+      "searchPlaceholder": "Cerca per nome ospite, telefono o ID prenotazione"
+    },
+    "timeshare": {
+      "scheduleVisit": {
+        "btnLabel": "Programma visita",
+        "title": "Programma nuova visita",
+        "contract": "Contratto",
+        "selectContract": "Seleziona contratto",
+        "checkIn": "Data di arrivo",
+        "checkOut": "Data di partenza",
+        "notes": "Note (opzionale)",
+        "notesPlaceholder": "Dettagli aggiuntivi...",
+        "confirm": "Programma",
+        "validationError": "Selezionare contratto e date",
+        "successToast": "✅ Visita programmata con successo",
+        "errorToast": "Impossibile programmare la visita",
+        "statusUpdated": "Stato visita aggiornato",
+        "statusError": "Impossibile aggiornare lo stato"
+      },
+      "confirmStatusChange": "Confermare il cambio di stato da {from} a {to}?"
+    },
+    "reception": {
+      "roomSearchPlaceholder": "Cerca per camera, tipo o nome ospite",
+      "noRoomsFiltered": "Nessuna camera corrisponde al filtro",
+      "folioSummaryTitle": "Riepilogo fattura",
+      "folioTotal": "Totale"
+    }
   }
 }

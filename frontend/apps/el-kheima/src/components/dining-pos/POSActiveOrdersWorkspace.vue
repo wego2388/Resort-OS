@@ -116,6 +116,23 @@ function elapsed(createdAt: string): string {
     minutes: minutes % 60,
   })
 }
+
+/** دقائق منذ إنشاء الطلب — لتحديد الأولوية البصرية */
+function elapsedMinutes(createdAt: string): number {
+  const normalized = createdAt.endsWith('Z') ? createdAt : `${createdAt}Z`
+  const created = new Date(normalized).getTime()
+  if (!Number.isFinite(created)) return 0
+  return Math.max(0, Math.floor((now.value - created) / 60_000))
+}
+
+/** border + ring urgency class على كارت الطلب */
+function orderUrgencyClass(order: { status: string; created_at: string }): string {
+  if (order.status === 'served') return 'border-amber-400 dark:border-amber-500'
+  const mins = elapsedMinutes(order.created_at)
+  if (mins >= 45) return 'border-red-500 dark:border-red-400 shadow-red-100 dark:shadow-red-900/20'
+  if (mins >= 20) return 'border-amber-400 dark:border-amber-500'
+  return 'border-stone-200 dark:border-border'
+}
 </script>
 
 <template>
@@ -178,7 +195,7 @@ function elapsed(createdAt: string): string {
           v-for="order in filteredOrders"
           :key="order.id"
           type="button"
-          class="min-h-[156px] rounded-2xl border-2 border-stone-200 dark:border-border bg-white dark:bg-surface p-4 text-start shadow-sm hover:border-primary-400 hover:shadow-md transition-all flex flex-col justify-between gap-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+          :class="['min-h-[156px] rounded-2xl border-2 bg-white dark:bg-surface p-4 text-start shadow-sm hover:shadow-md transition-all flex flex-col justify-between gap-4 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2', orderUrgencyClass(order)]"
           @click="emit('open', order.id)"
         >
           <div class="w-full">
@@ -197,7 +214,12 @@ function elapsed(createdAt: string): string {
           <div class="w-full flex items-end justify-between gap-3 pt-3 border-t border-stone-100 dark:border-border">
             <div class="text-xs text-gray-500 dark:text-gray-400">
               <div>{{ formatTime(order.created_at) }}</div>
-              <div class="font-semibold mt-1">{{ elapsed(order.created_at) }}</div>
+              <div
+                :class="['font-black mt-1',
+                  elapsedMinutes(order.created_at) >= 45 ? 'text-red-600 dark:text-red-400' :
+                  elapsedMinutes(order.created_at) >= 20 ? 'text-amber-600 dark:text-amber-400' :
+                  'text-gray-600 dark:text-gray-300']"
+              >{{ elapsed(order.created_at) }}</div>
             </div>
             <div class="text-xl font-black text-primary-800 dark:text-primary-300 tabular-nums">
               {{ formatMoney(order.total, 'EGP') }}

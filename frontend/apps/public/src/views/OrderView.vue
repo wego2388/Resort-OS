@@ -438,7 +438,7 @@ async function sendGuestAlert(alertType: GuestRequestType) {
   } finally {
     sendingAlert.value = null
     if (alertBannerTimer) clearTimeout(alertBannerTimer)
-    alertBannerTimer = setTimeout(() => { alertBanner.value = '' }, 6000)
+    alertBannerTimer = setTimeout(() => { alertBanner.value = '' }, 10000)
   }
 }
 
@@ -614,8 +614,18 @@ onUnmounted(() => {
         <div class="bg-white rounded-2xl border border-stone-200 p-5 shadow-sm">
           <h2 class="font-black text-gray-900 mb-3">{{ t('qr.choose_outlet') }}</h2>
           <div v-if="availableOutlets.length" class="grid gap-3">
-            <button v-for="outlet in availableOutlets" :key="outlet.id" class="p-4 border-2 border-stone-200 rounded-xl text-start font-bold hover:border-blue-600" @click="selectOutlet(outlet.id)">
-              {{ locale === 'ar' ? (outlet.name_ar ?? outlet.name) : outlet.name }}
+            <button v-for="outlet in availableOutlets" :key="outlet.id"
+              class="p-4 border-2 border-stone-200 rounded-2xl text-start hover:border-blue-600 active:bg-blue-50 transition-colors flex items-center gap-3"
+              @click="selectOutlet(outlet.id)"
+            >
+              <!-- أيقونة نوع المنفذ -->
+              <span class="text-3xl w-12 h-12 bg-stone-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                {{ outlet.outlet_type === 'cafe' ? '☕' : outlet.outlet_type === 'bar' ? '🍹' : outlet.outlet_type === 'pool_bar' ? '🏊' : '🍽️' }}
+              </span>
+              <div>
+                <div class="font-black text-gray-900">{{ locale === 'ar' ? (outlet.name_ar ?? outlet.name) : outlet.name }}</div>
+                <div class="text-xs text-gray-400 mt-0.5">{{ t('qr.outlet_type.' + outlet.outlet_type, outlet.outlet_type) }}</div>
+              </div>
             </button>
           </div>
           <p v-else class="text-sm text-gray-500">{{ t('qr.no_outlets') }}</p>
@@ -624,7 +634,7 @@ onUnmounted(() => {
 
       <!-- Content -->
       <template v-else>
-        <div v-if="!selfOrderEnabled" class="mx-4 mt-4 bg-amber-50 border border-amber-200 text-amber-900 rounded-2xl p-4 text-sm font-semibold">
+        <div v-if="!selfOrderEnabled" class="mx-4 mt-4 bg-stone-50 border border-stone-200 text-stone-500 rounded-2xl p-3 text-xs text-center">
           {{ t('qr.self_order_disabled_notice') }}
         </div>
         <!-- Category tabs -->
@@ -648,8 +658,15 @@ onUnmounted(() => {
             v-for="item in filteredItems" :key="item.id"
             class="bg-white rounded-2xl border border-stone-200 p-4 flex gap-3 shadow-sm active:scale-[0.99] transition-transform"
           >
-            <div class="w-14 h-14 bg-stone-100 rounded-xl flex items-center justify-center text-2xl flex-shrink-0">
-              🍽️
+            <div class="relative w-14 h-14 flex-shrink-0">
+              <div class="w-14 h-14 bg-stone-100 rounded-xl flex items-center justify-center text-2xl">
+                🍽️
+              </div>
+              <!-- badge كمية: يظهر فقط لو الصنف في السلة -->
+              <span
+                v-if="itemTotalQtyInCart(item.id) > 0"
+                class="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 bg-blue-700 text-white text-[11px] font-black rounded-full flex items-center justify-center px-1"
+              >{{ itemTotalQtyInCart(item.id) }}</span>
             </div>
 
             <div class="flex-1 min-w-0">
@@ -667,18 +684,18 @@ onUnmounted(() => {
 
             <div v-if="selfOrderEnabled" class="flex flex-col items-center justify-center gap-1 flex-shrink-0">
               <template v-if="itemInCart(item.id)">
-                <button @click="adjustQty(item.id, -1)" class="w-8 h-8 bg-stone-100 rounded-full font-black flex items-center justify-center text-lg">−</button>
+                <button @click="adjustQty(item.id, -1)" class="w-11 h-11 bg-stone-100 rounded-full font-black flex items-center justify-center text-lg">−</button>
                 <span class="font-black text-blue-700 w-5 text-center">{{ itemInCart(item.id)!.qty }}</span>
-                <button @click="openItem(item)" class="w-8 h-8 bg-blue-700 rounded-full text-white font-black flex items-center justify-center text-lg">+</button>
+                <button @click="openItem(item)" class="w-11 h-11 bg-blue-700 rounded-full text-white font-black flex items-center justify-center text-lg">+</button>
               </template>
               <template v-else-if="itemTotalQtyInCart(item.id) > 0">
                 <span class="text-[10px] text-gray-400">{{ itemTotalQtyInCart(item.id) }} {{ t('qr.in_cart') }}</span>
-                <button @click="openItem(item)" class="w-8 h-8 bg-blue-700 rounded-full text-white font-black flex items-center justify-center text-xl">+</button>
+                <button @click="openItem(item)" class="w-11 h-11 bg-blue-700 rounded-full text-white font-black flex items-center justify-center text-xl">+</button>
               </template>
               <button
                 v-else
                 @click="openItem(item)"
-                class="w-8 h-8 bg-blue-700 rounded-full text-white font-black flex items-center justify-center text-xl"
+                class="w-11 h-11 bg-blue-700 rounded-full text-white font-black flex items-center justify-center text-xl"
               >+</button>
             </div>
           </div>
@@ -825,9 +842,9 @@ onUnmounted(() => {
               </div>
               <div class="flex items-center justify-between">
                 <div class="flex items-center gap-2">
-                  <button @click="adjustQtyLine(ci, -1)" class="w-8 h-8 rounded-lg bg-stone-200 font-black flex items-center justify-center">−</button>
+                  <button @click="adjustQtyLine(ci, -1)" class="w-11 h-11 rounded-lg bg-stone-200 font-black flex items-center justify-center">−</button>
                   <span class="font-black w-5 text-center">{{ ci.qty }}</span>
-                  <button @click="adjustQtyLine(ci, 1)" class="w-8 h-8 rounded-lg bg-blue-100 text-blue-700 font-black flex items-center justify-center">+</button>
+                  <button @click="adjustQtyLine(ci, 1)" class="w-11 h-11 rounded-lg bg-blue-100 text-blue-700 font-black flex items-center justify-center">+</button>
                 </div>
                 <span class="font-black text-blue-700 text-sm">
                   {{ formatCurrency(Number((ci.variant?.price ?? ci.item.price) * ci.qty)) }}
@@ -867,9 +884,16 @@ onUnmounted(() => {
       <div v-if="guestContext?.alerts_enabled && sessionToken" class="fixed bottom-0 inset-x-0 z-40 bg-white border-t border-stone-200 px-3 py-2 shadow-[0_-4px_12px_rgba(0,0,0,0.06)]" :dir="direction">
         <div
           v-if="alertBanner"
-          :class="['mb-2 text-center text-sm font-bold rounded-xl py-2 px-3',
+          :class="['mb-2 flex items-center justify-between gap-2 text-sm font-bold rounded-xl py-2 px-3',
             alertBannerErr ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-700']"
-        >{{ alertBanner }}</div>
+        >
+          <span class="flex-1 text-center">{{ alertBanner }}</span>
+          <button
+            @click="alertBanner = ''"
+            class="shrink-0 w-6 h-6 flex items-center justify-center rounded-full hover:bg-black/10 transition-colors"
+            :aria-label="t('common.close')"
+          >×</button>
+        </div>
 
         <div v-if="activeRequests.length" class="mb-2 flex gap-1 overflow-x-auto text-[11px]">
           <span v-for="request in activeRequests" :key="request.public_reference" class="shrink-0 bg-stone-100 text-gray-700 rounded-full px-2 py-1">
@@ -877,35 +901,38 @@ onUnmounted(() => {
           </span>
         </div>
 
-        <div class="grid grid-cols-4 gap-1.5">
+        <!-- grid-cols-2: كل زرار يوصل لـ min-h-[48px] (44px+ معيار a11y) على أصغر شاشة -->
+        <div class="grid grid-cols-2 gap-2">
           <button
             @click="sendGuestAlert('call_waiter')"
             :disabled="sendingAlert !== null"
-            class="flex flex-col items-center justify-center py-2 rounded-xl border border-blue-700 text-blue-700 font-bold text-[11px] disabled:opacity-50"
+            class="flex items-center gap-2 justify-center min-h-[48px] rounded-xl border border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:bg-blue-50 transition-colors"
           >
-            <span>🧑‍🍳</span>
+            <span class="text-lg" aria-hidden="true">🧑‍🍳</span>
             <span>{{ sendingAlert === 'call_waiter' ? t('qr.sending') : t('qr.call_waiter') }}</span>
           </button>
           <button
             @click="sendGuestAlert('ready_to_order')"
             :disabled="sendingAlert !== null"
-            class="flex flex-col items-center justify-center py-2 rounded-xl border border-blue-700 text-blue-700 font-bold text-[11px] disabled:opacity-50"
+            class="flex items-center gap-2 justify-center min-h-[48px] rounded-xl border border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:bg-blue-50 transition-colors"
           >
-            <span>🍽️</span><span>{{ sendingAlert === 'ready_to_order' ? t('qr.sending') : t('qr.ready_to_order') }}</span>
+            <span class="text-lg" aria-hidden="true">🍽️</span>
+            <span>{{ sendingAlert === 'ready_to_order' ? t('qr.sending') : t('qr.ready_to_order') }}</span>
           </button>
           <button
             @click="sendGuestAlert('assistance')"
             :disabled="sendingAlert !== null"
-            class="flex flex-col items-center justify-center py-2 rounded-xl border border-blue-700 text-blue-700 font-bold text-[11px] disabled:opacity-50"
+            class="flex items-center gap-2 justify-center min-h-[48px] rounded-xl border border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:bg-blue-50 transition-colors"
           >
-            <span>🙋</span><span>{{ sendingAlert === 'assistance' ? t('qr.sending') : t('qr.assistance') }}</span>
+            <span class="text-lg" aria-hidden="true">🙋</span>
+            <span>{{ sendingAlert === 'assistance' ? t('qr.sending') : t('qr.assistance') }}</span>
           </button>
           <button
             @click="sendGuestAlert('request_bill')"
             :disabled="sendingAlert !== null"
-            class="flex flex-col items-center justify-center py-2 rounded-xl border border-blue-700 text-blue-700 font-bold text-[11px] disabled:opacity-50"
+            class="flex items-center gap-2 justify-center min-h-[48px] rounded-xl border border-blue-700 text-blue-700 font-bold text-sm disabled:opacity-50 active:bg-blue-50 transition-colors"
           >
-            <span>🧾</span>
+            <span class="text-lg" aria-hidden="true">🧾</span>
             <span>{{ sendingAlert === 'request_bill' ? t('qr.sending') : t('qr.request_bill') }}</span>
           </button>
         </div>

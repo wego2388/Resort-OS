@@ -1108,7 +1108,9 @@
     "status": "الحالة",
     "brand_name": "الخيمة",
     "showingOf": "يعرض {shown} من أصل {total}",
-    "useSearchToFilter": "استخدم البحث لتصفية النتائج"
+    "useSearchToFilter": "استخدم البحث لتصفية النتائج",
+    "prevPage": "السابق",
+    "nextPage": "التالي"
   },
   "confirmDialog": {
     "defaultTitle": "تأكيد",
@@ -3424,7 +3426,15 @@
     "no_items": "لا توجد أصناف في هذه الفئة",
     "poll_error": "تعذر تحديث حالة الطلب — تحقق من اتصال الإنترنت",
     "poll_retry": "إعادة التحقق",
-    "poll_checking": "جارِ التحقق..."
+    "poll_checking": "جارِ التحقق...",
+    "outlet_type": {
+      "restaurant": "مطعم",
+      "cafe": "كافيه",
+      "bar": "بار",
+      "pool_bar": "بار البحر",
+      "beach_bar": "بار الشاطئ",
+      "room_service": "خدمة الغرف"
+    }
   },
   "backoffice": {
     "nav": {
@@ -4169,7 +4179,8 @@
         "sendToKitchen": "اتسجّل الطلب لكن حصل خطأ في إرساله للمطبخ — راجعه من الطلبات الجارية",
         "selectTableRequired": "اختر طاولة للطلب الداخلي",
         "submitOrder": "فشل في إرسال الطلب"
-      }
+      },
+      "itemInCartQty": "{qty} في السلة"
     },
     "kds": {
       "title": "شاشة المطبخ الموحّدة — Dining KDS",
@@ -4879,7 +4890,11 @@
         "checkoutPending": "قيد التنظيف",
         "maintenance": "صيانة"
       },
-      "listSeparator": "، "
+      "listSeparator": "، ",
+      "roomSearchPlaceholder": "ابحث باسم الغرفة أو نوعها أو اسم الضيف",
+      "noRoomsFiltered": "لا توجد غرف تطابق الفلتر",
+      "folioSummaryTitle": "تفاصيل الفاتورة",
+      "folioTotal": "الإجمالي"
     },
     "bookings": {
       "title": "الحجوزات",
@@ -4953,7 +4968,8 @@
       "bookingCancelError": "تعذّر إلغاء الحجز",
       "earlyLateSaved": "تم تسجيل طلب الوصول/المغادرة الخاص",
       "earlyLateSaveError": "تعذّر تسجيل الطلب",
-      "saveBooking": "حفظ الحجز"
+      "saveBooking": "حفظ الحجز",
+      "searchPlaceholder": "ابحث باسم الضيف أو الهاتف أو رقم الحجز"
     },
     "rooms": {
       "title": "خريطة الغرف",
@@ -5848,7 +5864,24 @@
         "unitTransferred": "تم نقل الوحدة",
         "transferError": "تعذّر نقل الوحدة",
         "importError": "فشل الاستيراد"
-      }
+      },
+      "scheduleVisit": {
+        "btnLabel": "جدولة زيارة",
+        "title": "جدولة زيارة جديدة",
+        "contract": "العقد",
+        "selectContract": "اختر العقد",
+        "checkIn": "تاريخ الوصول",
+        "checkOut": "تاريخ المغادرة",
+        "notes": "ملاحظات (اختياري)",
+        "notesPlaceholder": "أي تفاصيل إضافية...",
+        "confirm": "جدولة",
+        "validationError": "يرجى تحديد العقد والتواريخ",
+        "successToast": "✅ تمت جدولة الزيارة بنجاح",
+        "errorToast": "تعذّر جدولة الزيارة",
+        "statusUpdated": "تم تحديث حالة الزيارة",
+        "statusError": "تعذّر تحديث الحالة"
+      },
+      "confirmStatusChange": "تأكيد تغيير الحالة من {from} إلى {to}؟"
     },
     "leasing": {
       "title": "عقود الإيجار التجاري",

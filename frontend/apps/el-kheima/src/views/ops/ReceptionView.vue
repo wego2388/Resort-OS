@@ -79,11 +79,26 @@ const allRooms       = ref<{ id: number; name: string }[]>([])
 const ratePlans      = ref<RatePlanOption[]>([])
 const loading        = ref(false)
 const searchQuery    = ref('')
+// ── Room map filters ─────────────────────────────────────────────────────────
+const roomSearchQuery  = ref('')
+const roomStatusFilter = ref<string | null>(null)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Computed stats
 // ─────────────────────────────────────────────────────────────────────────────
 const checkedInToday  = computed(() => todayBookings.value.filter(b => b.status === 'checked_in').length)
+
+const filteredRooms = computed(() => {
+  let list = rooms.value
+  if (roomStatusFilter.value) list = list.filter(r => r.status === roomStatusFilter.value)
+  const q = roomSearchQuery.value.trim().toLowerCase()
+  if (q) list = list.filter(r =>
+    r.name.toLowerCase().includes(q) ||
+    (roomTypesById.value[r.room_type_id]?.name ?? '').toLowerCase().includes(q) ||
+    (bookingByRoomId.value[r.id]?.guest_name ?? '').toLowerCase().includes(q)
+  )
+  return list
+})
 const checkedOutToday = computed(() => todayBookings.value.filter(b => b.status === 'checked_out').length)
 const arrivalsToday   = computed(() =>
   todayBookings.value.filter(b => ['pending', 'confirmed'].includes(b.status)).length)
@@ -235,10 +250,24 @@ async function confirmCheckIn() {
 const coOpen    = ref(false)
 const coBooking = ref<Booking | null>(null)
 const coLoading = ref(false)
+// folio summary لعرضه في الـ check-out modal قبل التأكيد
+interface FolioCharge { id: number; charge_type: string; description: string; amount: string }
+interface FolioSummary { id: number; total: string; charges: FolioCharge[] }
+const coFolio   = ref<FolioSummary | null>(null)
+const coFolioLoading = ref(false)
 
 function openCheckOut(booking: Booking) {
   coBooking.value = booking
+  coFolio.value   = null
   coOpen.value    = true
+  // جلب الفوليو لو موجود لعرض الإجمالي قبل تأكيد الخروج
+  if ((booking as any).folio_id) {
+    coFolioLoading.value = true
+    api.get(`/api/v1/finance/folios/${(booking as any).folio_id}`)
+      .then(r => { coFolio.value = r.data })
+      .catch(() => {})
+      .finally(() => { coFolioLoading.value = false })
+  }
 }
 
 function openCheckOutFromRoom(roomId: number) {
@@ -490,7 +519,7 @@ onUnmounted(() => {
       <div class="lg:col-span-2 space-y-4">
         <AppCard>
           <template v-slot:default>
-            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
               <h2 class="text-base font-semibold text-gray-800 dark:text-gray-200">🏨 {{ t('backoffice.reception.roomStatusTitle') }}</h2>
               <!-- legend -->
               <div class="flex flex-wrap gap-3">
@@ -501,14 +530,36 @@ onUnmounted(() => {
                 </span>
               </div>
             </div>
+            <!-- فلتر + بحث خريطة الغرف -->
+            <div class="flex flex-wrap gap-2 mb-3">
+              <input
+                v-model="roomSearchQuery"
+                type="search"
+                :placeholder="t('backoffice.reception.roomSearchPlaceholder')"
+                class="flex-1 min-w-[140px] px-3 py-1.5 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+              <button
+                @click="roomStatusFilter = null"
+                :class="['px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors', !roomStatusFilter ? 'bg-primary-700 text-white' : 'bg-stone-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-stone-200']"
+              >{{ t('common.allStatuses') }}</button>
+              <button
+                v-for="(cfg, key) in roomStatusConfig" :key="key"
+                @click="roomStatusFilter = roomStatusFilter === key ? null : key"
+                :class="['px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1',
+                  roomStatusFilter === key ? 'bg-primary-700 text-white' : 'bg-stone-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-stone-200']"
+              >
+                <span :class="['w-2 h-2 rounded-full', cfg.dot]" />{{ cfg.label }}
+              </button>
+            </div>
 
             <div v-if="loading" class="flex justify-center py-12"><AppSpinner /></div>
 
             <EmptyState v-else-if="!rooms.length" :title="t('backoffice.reception.noRooms')" />
+            <p v-else-if="filteredRooms.length === 0" class="text-sm text-center text-muted py-6">{{ t('backoffice.reception.noRoomsFiltered') }}</p>
 
             <div v-else class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
               <div
-                v-for="room in rooms"
+                v-for="room in filteredRooms"
                 :key="room.id"
                 :class="[
                   'rounded-xl border p-2.5 flex flex-col gap-1 cursor-pointer transition-all hover:shadow-sm select-none',
@@ -644,6 +695,21 @@ onUnmounted(() => {
             <p class="text-lg font-bold text-amber-900 dark:text-amber-200">{{ coBooking.guest_name }}</p>
             <p class="text-sm text-amber-700 dark:text-amber-300">{{ t('backoffice.reception.bookingHash', { id: coBooking.id }) }}</p>
             <p class="text-sm text-amber-700 dark:text-amber-300">{{ t('backoffice.reception.departureDate', { date: coBooking.check_out }) }}</p>
+          </div>
+          <!-- Folio summary -->
+          <div v-if="coFolioLoading" class="flex justify-center py-3"><AppSpinner size="sm" /></div>
+          <div v-else-if="coFolio" class="rounded-xl border border-stone-200 dark:border-border p-3 space-y-2">
+            <p class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.reception.folioSummaryTitle') }}</p>
+            <div v-if="coFolio.charges.length" class="space-y-1 max-h-40 overflow-y-auto">
+              <div v-for="ch in coFolio.charges" :key="ch.id" class="flex justify-between text-xs">
+                <span class="text-gray-600 dark:text-gray-300 truncate">{{ ch.description }}</span>
+                <span class="font-semibold tabular-nums ms-2">{{ formatNumber(Number(ch.amount)) }}</span>
+              </div>
+            </div>
+            <div class="flex justify-between items-center border-t border-stone-200 dark:border-border pt-2">
+              <span class="text-sm font-bold text-gray-700 dark:text-gray-200">{{ t('backoffice.reception.folioTotal') }}</span>
+              <span class="text-base font-black text-primary-700 dark:text-primary-300 tabular-nums">{{ formatNumber(Number(coFolio.total)) }}</span>
+            </div>
           </div>
           <p class="text-sm text-muted">
             {{ t('backoffice.reception.checkOutHint') }}
