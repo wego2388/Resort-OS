@@ -78,7 +78,7 @@ function jumpTo(index: number) {
 </script>
 
 <template>
-  <div class="flex flex-col gap-0" dir="rtl">
+  <div class="flex flex-col gap-0">
     <!-- ── Step indicator ───────────────────────────────────────────────── -->
     <div class="flex items-center justify-between px-6 py-5 border-b border-stone-100 dark:border-border overflow-x-auto">
       <template v-for="(step, i) in steps" :key="step.id">
@@ -115,7 +115,7 @@ function jumpTo(index: number) {
         <div v-if="i < steps.length - 1"
           :class="[
             'flex-1 h-0.5 mx-2 rounded transition-all duration-base',
-            i < currentIndex ? 'bg-success' : 'bg-stone-200',
+            i < currentIndex ? 'bg-success' : 'bg-stone-200 dark:bg-gray-700',
           ]"
         />
       </template>

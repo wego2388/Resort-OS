@@ -109,9 +109,9 @@ onMessage((data: any) => {
 })
 
 function statusColor(loc: BeachLocation): string {
-  if (loc.status === 'occupied') return 'bg-red-100 border-red-400 text-red-800 active:bg-red-200'
-  if (loc.status === 'out_of_service') return 'bg-gray-100 border-gray-300 text-gray-400'
-  return 'bg-green-100 border-green-400 text-green-800 active:bg-green-200'
+  if (loc.status === 'occupied') return 'bg-red-100 border-red-400 text-red-800 active:bg-red-200 dark:bg-red-950/50 dark:border-red-800 dark:text-red-200 dark:active:bg-red-900/60'
+  if (loc.status === 'out_of_service') return 'bg-gray-100 border-gray-300 text-gray-400 dark:bg-gray-800 dark:border-gray-700 dark:text-gray-400'
+  return 'bg-green-100 border-green-400 text-green-800 active:bg-green-200 dark:bg-green-950/50 dark:border-green-800 dark:text-green-200 dark:active:bg-green-900/60'
 }
 
 function statusLabel(status: string): string {
@@ -291,29 +291,29 @@ onMounted(fetchLocations)
         <button
           @click="openBulkReduce"
           :disabled="locations.length === 0"
-          class="px-4 py-2 bg-white dark:bg-surface border-2 border-red-300 text-red-700 rounded-xl font-bold text-sm hover:bg-red-50 active:scale-95 transition-all shadow-sm disabled:opacity-40"
+          class="rounded-xl border-2 border-red-300 bg-white px-4 py-2 text-sm font-bold text-red-700 shadow-sm transition-all hover:bg-red-50 active:scale-95 disabled:opacity-40 dark:border-red-800 dark:bg-surface dark:text-red-300 dark:hover:bg-red-950/40"
         >➖ {{ t('backoffice.beachMap.removeLocations') }}</button>
       </div>
     </div>
 
     <!-- Summary stats -->
     <div v-if="locations.length > 0" class="grid grid-cols-3 gap-3 mb-5">
-      <div class="bg-green-50 rounded-xl p-3 text-center border border-green-100">
-        <div class="text-2xl font-black text-green-700">{{ stats.available }}</div>
-        <div class="text-xs text-green-600 mt-0.5">{{ t('backoffice.beachMap.available') }}</div>
+      <div class="rounded-xl border border-green-100 bg-green-50 p-3 text-center dark:border-green-900 dark:bg-green-950/40">
+        <div class="text-2xl font-black text-green-700 dark:text-green-300">{{ stats.available }}</div>
+        <div class="mt-0.5 text-xs text-green-600 dark:text-green-400">{{ t('backoffice.beachMap.available') }}</div>
       </div>
-      <div class="bg-red-50 rounded-xl p-3 text-center border border-red-100">
-        <div class="text-2xl font-black text-red-700">{{ stats.occupied }}</div>
-        <div class="text-xs text-red-600 mt-0.5">{{ t('backoffice.beachMap.occupied') }}</div>
+      <div class="rounded-xl border border-red-100 bg-red-50 p-3 text-center dark:border-red-900 dark:bg-red-950/40">
+        <div class="text-2xl font-black text-red-700 dark:text-red-300">{{ stats.occupied }}</div>
+        <div class="mt-0.5 text-xs text-red-600 dark:text-red-400">{{ t('backoffice.beachMap.occupied') }}</div>
       </div>
-      <div class="bg-gray-50 rounded-xl p-3 text-center border border-gray-200">
+      <div class="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-700 dark:bg-gray-800/60">
         <div class="text-2xl font-black text-gray-500">{{ stats.outOfService }}</div>
         <div class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.beachMap.outOfService') }}</div>
       </div>
     </div>
 
     <div v-if="loading && locations.length === 0" class="flex items-center justify-center h-40">
-      <div class="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
+      <div class="motion-safe:animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" />
     </div>
 
     <EmptyState
@@ -356,25 +356,25 @@ onMounted(fetchLocations)
           {{ typeIcon(checkinTarget.location_type) }} {{ typeLabel(checkinTarget.location_type) }} {{ checkinTarget.number }}
         </p>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.guestNameOptional') }}</label>
+          <label class="mb-1 block text-xs font-bold text-gray-600 dark:text-gray-300">{{ t('backoffice.beachMap.guestNameOptional') }}</label>
           <input v-model="checkinForm.guest_name" type="text" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.phoneOptional') }}</label>
+          <label class="mb-1 block text-xs font-bold text-gray-600 dark:text-gray-300">{{ t('backoffice.beachMap.phoneOptional') }}</label>
           <input v-model="checkinForm.guest_phone" type="text" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" dir="ltr" />
         </div>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.guestsCount') }}</label>
+          <label class="mb-1 block text-xs font-bold text-gray-600 dark:text-gray-300">{{ t('backoffice.beachMap.guestsCount') }}</label>
           <input v-model.number="checkinForm.guests_count" type="number" min="1" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
         <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
-          <input v-model="checkinForm.with_towel" type="checkbox" class="rounded border-stone-300" />
+          <input v-model="checkinForm.with_towel" type="checkbox" class="rounded border-stone-300 dark:border-gray-600" />
           {{ t('backoffice.beachMap.withTowel') }}
         </label>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="checkinModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">{{ t('backoffice.beachMap.cancel') }}</button>
+          <button @click="checkinModalOpen = false" class="flex-1 rounded-xl border-2 border-stone-200 py-2.5 font-semibold text-gray-600 hover:bg-gray-50 dark:bg-surface-2 dark:border-border dark:text-gray-300 dark:hover:bg-gray-800">{{ t('backoffice.beachMap.cancel') }}</button>
           <button
             @click="submitCheckin" :disabled="checkinSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-50"
@@ -407,20 +407,20 @@ onMounted(fetchLocations)
     <AppModal :open="bulkAddModalOpen" :title="t('backoffice.beachMap.addLocations')" size="sm" @close="bulkAddModalOpen = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.locationType') }}</label>
+          <label class="mb-1 block text-xs font-bold text-gray-600 dark:text-gray-300">{{ t('backoffice.beachMap.locationType') }}</label>
           <input
             v-model="bulkAddForm.location_type" type="text" placeholder="umbrella / pergola / sunbed / cabana"
             class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" dir="ltr"
           />
         </div>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.count') }}</label>
+          <label class="mb-1 block text-xs font-bold text-gray-600 dark:text-gray-300">{{ t('backoffice.beachMap.count') }}</label>
           <input v-model.number="bulkAddForm.count" type="number" min="1" max="200" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="bulkAddModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">{{ t('backoffice.beachMap.cancel') }}</button>
+          <button @click="bulkAddModalOpen = false" class="flex-1 rounded-xl border-2 border-stone-200 py-2.5 font-semibold text-gray-600 hover:bg-gray-50 dark:bg-surface-2 dark:border-border dark:text-gray-300 dark:hover:bg-gray-800">{{ t('backoffice.beachMap.cancel') }}</button>
           <button
             @click="submitBulkAdd" :disabled="bulkAddSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-50"
@@ -433,20 +433,20 @@ onMounted(fetchLocations)
     <AppModal :open="bulkReduceModalOpen" :title="t('backoffice.beachMap.removeAvailableLocations')" size="sm" @close="bulkReduceModalOpen = false">
       <div class="space-y-3">
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.locationType') }}</label>
+          <label class="mb-1 block text-xs font-bold text-gray-600 dark:text-gray-300">{{ t('backoffice.beachMap.locationType') }}</label>
           <select v-model="bulkReduceForm.location_type" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm">
             <option v-for="lt in existingTypes" :key="lt" :value="lt">{{ typeLabel(lt) }}</option>
           </select>
         </div>
         <div>
-          <label class="block text-xs font-bold text-gray-600 mb-1">{{ t('backoffice.beachMap.count') }}</label>
+          <label class="mb-1 block text-xs font-bold text-gray-600 dark:text-gray-300">{{ t('backoffice.beachMap.count') }}</label>
           <input v-model.number="bulkReduceForm.count" type="number" min="1" class="w-full px-3 py-2 border border-stone-200 dark:border-border rounded-lg text-sm" />
         </div>
-        <p class="text-xs text-amber-600">⚠️ {{ t('backoffice.beachMap.reduceHint') }}</p>
+        <p class="text-xs text-amber-600 dark:text-amber-300">⚠️ {{ t('backoffice.beachMap.reduceHint') }}</p>
       </div>
       <template #footer>
         <div class="flex gap-2">
-          <button @click="bulkReduceModalOpen = false" class="flex-1 py-2.5 rounded-xl border-2 border-stone-200 dark:border-border text-gray-600 font-semibold hover:bg-gray-50">{{ t('backoffice.beachMap.cancel') }}</button>
+          <button @click="bulkReduceModalOpen = false" class="flex-1 rounded-xl border-2 border-stone-200 py-2.5 font-semibold text-gray-600 hover:bg-gray-50 dark:bg-surface-2 dark:border-border dark:text-gray-300 dark:hover:bg-gray-800">{{ t('backoffice.beachMap.cancel') }}</button>
           <button
             @click="submitBulkReduce" :disabled="bulkReduceSubmitting"
             class="flex-1 py-2.5 rounded-xl bg-red-600 text-white font-bold hover:bg-red-700 disabled:opacity-50"

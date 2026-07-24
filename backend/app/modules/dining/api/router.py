@@ -25,7 +25,7 @@ from app.core.deps import (
     get_manager_user, get_waiter_user, require_permission, user_level,
 )
 from app.modules.dining import crud, payment_policy, services
-from app.modules.dining.models import DiningOrder, VenueTable
+from app.modules.dining.models import DiningKitchenTicket, DiningOrder, VenueTable
 from app.modules.dining.schemas import (
     ApplyDiscountRequest,
     DiningCategoryCreate, DiningCategoryRead, DiningCategoryUpdate,
@@ -104,7 +104,13 @@ dining_manager = ConnectionManager()
 
 @router.websocket("/dining/ws/kds/{branch_id}")
 async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
-    if not await get_websocket_user(ws, db):
+    user = await get_websocket_user(ws, db)
+    if not user:
+        return
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "متابعة شاشة المطبخ")
+    except PermissionError:
+        await ws.close(code=4403)
         return
     await dining_manager.connect(ws, str(branch_id))
     try:
@@ -117,7 +123,13 @@ async def kds_websocket(ws: WebSocket, branch_id: int, db: DbDep):
 
 @router.websocket("/dining/ws/tables/{branch_id}")
 async def tables_websocket(ws: WebSocket, branch_id: int, db: DbDep):
-    if not await get_websocket_user(ws, db):
+    user = await get_websocket_user(ws, db)
+    if not user:
+        return
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "متابعة تحديثات الطاولات")
+    except PermissionError:
+        await ws.close(code=4403)
         return
     await dining_manager.connect(ws, f"tables-{branch_id}")
     try:
@@ -563,10 +575,8 @@ def sync_offline_order(outlet_id: int, data: OrderSyncRequest, db: DbDep, user=D
 
 
 @router.get("/dining/orders/{order_id}", response_model=OrderRead)
-def get_order(order_id: int, db: DbDep, _=Depends(get_current_active_user)):
-    order = crud.get_order(db, order_id)
-    if not order:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الطلب {order_id} غير موجود")
+def get_order(order_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    order = _assert_order_branch(db, user, order_id, "عرض هذا الطلب")
     return OrderRead.model_validate(order)
 
 
@@ -683,13 +693,18 @@ async def transfer_order_waiter(order_id: int, data: WaiterTransferRequest,
 
 @router.patch("/dining/orders/{order_id}/items/{item_id}/status", response_model=OrderRead)
 async def update_order_item_status(order_id: int, item_id: int, data: OrderItemStatusUpdate,
-                                    db: DbDep, _=Depends(get_current_active_user)):
+                                    db: DbDep, user=Depends(get_current_active_user)):
     """تأكيد صنف واحد داخل تذكرة مطبخ (bump فردي من شاشة KDS) — نفس مستوى
     صلاحية تأكيد التذكرة كلها (get_current_active_user، أي موظف مسجّل دخول
     زي طاقم المطبخ)، مش إجراء مالي. راجع
     restaurant.api.router.update_order_item_status — نفس المنطق بالظبط."""
+    _assert_order_branch(db, user, order_id, "تحديث حالة صنف في هذا الطلب")
     try:
         order = services.bump_order_item_status(db, order_id, item_id, data.status)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await dining_manager.broadcast(str(order.branch_id), {"type": "tickets_updated", "order_id": order.id})
@@ -766,7 +781,8 @@ def refund_order_item(
 
 
 @router.get("/dining/orders/{order_id}/receipt")
-def download_receipt(order_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def download_receipt(order_id: int, db: DbDep, user=Depends(get_cashier_user)):
+    _assert_order_branch(db, user, order_id, "طباعة إيصال هذا الطلب")
     try:
         pdf = services.generate_receipt_pdf(db, order_id)
         return Response(
@@ -856,22 +872,27 @@ async def merge_orders(
     db: DbDep = ...,
     user=Depends(get_waiter_user),
 ):
-    """P-08 — دمج أوردرين مفتوحين في أوردر واحد (waiter+).
+    """P-08 — دمج طلبي صالة نشطين في طلب واحد (waiter+).
     يُنقل كل أصناف order_id لـ target_order_id ثم يُلغى order_id.
-    الشرط: كلا الأوردرين مفتوحَين (open/in_kitchen) في نفس الـ branch."""
-    _assert_order_branch(db, user, order_id, "دمج هذا الطلب")
+    الشرط: نفس الفرع والمنفذ والسياق المالي/الضيف."""
+    source_order = _assert_order_branch(db, user, order_id, "دمج هذا الطلب")
     _assert_order_branch(db, user, target_order_id, "الدمج في هذا الطلب")
+    source_table_id = source_order.table_id
     try:
         merged = services.merge_orders(db, order_id, target_order_id, merged_by=user.id)
     except services.OrderPaymentConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
-    # broadcast تحديث الطاولتين
-    for tbl_id in {merged.table_id} - {None}:
+    # الطاولة المصدر اتحررت، والهدف اتغيرت إجمالياته/حالته؛ والـKDS قد يكون
+    # نقل تذاكر موجودة أو أنشأ تذاكر ناقصة لأصناف كانت لسه open.
+    for tbl_id in {source_table_id, merged.table_id} - {None}:
         await dining_manager.broadcast(f"tables-{merged.branch_id}", {
             "type": "table_updated", "table_id": tbl_id,
         })
+    await dining_manager.broadcast(str(merged.branch_id), {
+        "type": "tickets_updated", "order_id": merged.id,
+    })
     return merged
 
 
@@ -879,13 +900,17 @@ async def merge_orders(
 
 @router.get("/dining/kitchen/tickets", response_model=list[KitchenTicketRead])
 def list_kitchen_tickets(
-    db: DbDep, _=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_current_active_user),
     branch_id: int = Query(...), outlet_id: Optional[int] = Query(None),
     stations: Optional[str] = Query(None, description="Comma-separated list of stations"),
 ):
     """قائمة تذاكر الـ KDS المعلقة — outlet_id اختياري (None = كل الـ
     outlets في الفرع). كل تذكرة بتيجي معاها table_number + order_type +
     order_notes للعرض في شاشة المطبخ بدون ما المطبخ يعمل call تاني."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "عرض تذاكر المطبخ")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     station_list = [s.strip() for s in stations.split(",")] if stations else None
     tickets = services.get_kds_tickets(db, branch_id, outlet_id=outlet_id, stations=station_list)
 
@@ -933,14 +958,25 @@ def list_kitchen_tickets(
 
 
 @router.patch("/dining/kitchen/tickets/{ticket_id}/status", response_model=KitchenTicketRead)
-async def update_ticket_status(ticket_id: int, data: TicketStatusUpdate, db: DbDep, _=Depends(get_current_active_user)):
+async def update_ticket_status(ticket_id: int, data: TicketStatusUpdate, db: DbDep, user=Depends(get_current_active_user)):
     """يحدّث حالة تذكرة الـ KDS كاملة (pending → in_progress → done) — تأكيد
     دفعة واحدة. لو التذكرة اتأكدت done، أي صنف لسه pending/in_kitchen جواها
     بيترقّى لـ ready تلقائيًا (راجع services.update_kitchen_ticket_status)."""
+    ticket = db.query(DiningKitchenTicket).filter(DiningKitchenTicket.id == ticket_id).first()
+    if ticket is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"تذكرة المطبخ {ticket_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, ticket.branch_id, "تحديث تذكرة المطبخ")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     try:
         ticket_dict = services.update_kitchen_ticket_status(db, ticket_id, data.status)
+    except services.OrderPaymentConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "error_code": "ORDER_PAYMENT_IN_PROGRESS", "message": str(exc),
+        })
     except ValueError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await dining_manager.broadcast(str(ticket_dict["branch_id"]), {"type": "tickets_updated", "ticket_id": ticket_dict["id"]})
     return KitchenTicketRead.model_validate(ticket_dict)
 

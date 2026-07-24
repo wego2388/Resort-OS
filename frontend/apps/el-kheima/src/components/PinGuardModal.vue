@@ -28,8 +28,9 @@
  *   />
  */
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
-import { AppModal } from '@resort-os/ui'
+import { AppButton, AppModal } from '@resort-os/ui'
 
 const props = withDefaults(defineProps<{
   minLevel?: number
@@ -39,7 +40,7 @@ const props = withDefaults(defineProps<{
   errorMessage?: string
 }>(), {
   minLevel: 60,
-  title: 'يتطلب موافقة مدير',
+  title: '',
   message: '',
   loading: false,
   errorMessage: '',
@@ -51,6 +52,7 @@ const emit = defineEmits<{
 }>()
 
 const auth = useAuthStore()
+const { t } = useI18n()
 // نفس شرط core.services.resolve_pin_approval بالظبط — لو مستوى المستخدم
 // الحالي >= minLevel، مفيش داعي لموافقة PIN منفصلة، ومفيش أي UI يتعرض خالص.
 const selfQualified = auth.roleLevel >= props.minLevel
@@ -72,7 +74,7 @@ onMounted(async () => {
     const { data } = await api.get(ENDPOINTS.core.pinApprovers, { params: { min_level: props.minLevel } })
     approvers.value = data
   } catch {
-    localError.value = 'تعذّر تحميل قائمة المديرين'
+    localError.value = t('backoffice.pinGuard.loadFailed')
   } finally {
     loadingApprovers.value = false
   }
@@ -81,7 +83,7 @@ onMounted(async () => {
 function confirmApproval() {
   localError.value = ''
   if (!approverUserId.value || approverPin.value.length < 4) {
-    localError.value = 'اختر المدير وأدخل رقم الـ PIN بتاعه'
+    localError.value = t('backoffice.pinGuard.validation')
     return
   }
   emit('approved', { approverUserId: approverUserId.value, approverPin: approverPin.value })
@@ -89,43 +91,48 @@ function confirmApproval() {
 </script>
 
 <template>
-  <AppModal v-if="!selfQualified" :open="true" :title="title" size="sm" @close="emit('cancel')">
-    <div class="space-y-2.5 min-w-[260px]" dir="rtl">
-      <p v-if="message" class="text-xs text-gray-500">{{ message }}</p>
-      <div v-if="loadingApprovers" class="text-center text-sm text-gray-400 py-3">جاري التحميل...</div>
+  <AppModal v-if="!selfQualified" :open="true" :title="title || t('backoffice.pinGuard.title')" size="sm" @close="emit('cancel')">
+    <div class="min-w-[260px] space-y-3">
+      <p v-if="message" class="text-sm text-gray-600 dark:text-gray-300">{{ message }}</p>
+      <div v-if="loadingApprovers" class="py-3 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.pinGuard.loading') }}</div>
       <template v-else-if="approvers.length === 0">
-        <p class="text-center text-sm text-gray-400 py-3">مفيش مدير عنده PIN مضبوط حاليًا</p>
+        <p class="py-3 text-center text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.pinGuard.empty') }}</p>
       </template>
       <template v-else>
-        <select v-model="approverUserId" class="w-full border border-stone-300 rounded-lg p-2 text-sm">
-          <option :value="null" disabled>اختر المدير...</option>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-200" for="pin-approver">{{ t('backoffice.pinGuard.approver') }}</label>
+        <select id="pin-approver" v-model="approverUserId" class="min-h-11 w-full rounded-xl border border-stone-300 bg-white px-3 text-sm text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-400/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100">
+          <option :value="null" disabled>{{ t('backoffice.pinGuard.selectApprover') }}</option>
           <option v-for="a in approvers" :key="a.id" :value="a.id">{{ a.full_name }}</option>
         </select>
+        <label class="block text-sm font-medium text-gray-700 dark:text-gray-200" for="pin-code">{{ t('backoffice.pinGuard.pin') }}</label>
         <input
+          id="pin-code"
           v-model="approverPin"
           type="password"
           inputmode="numeric"
           maxlength="6"
-          placeholder="PIN المدير"
+          :placeholder="t('backoffice.pinGuard.pinPlaceholder')"
           autofocus
-          class="w-full border border-stone-300 rounded-lg p-2.5 text-center text-lg tracking-[0.4em] focus:outline-none focus:ring-2 focus:ring-amber-400"
+          class="min-h-12 w-full rounded-xl border border-stone-300 bg-white p-2.5 text-center text-lg tracking-[0.4em] text-gray-900 focus:border-amber-500 focus:outline-none focus:ring-2 focus:ring-amber-400/30 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
           @keyup.enter="confirmApproval"
         />
       </template>
-      <p v-if="localError || errorMessage" class="text-xs text-red-600">{{ localError || errorMessage }}</p>
+      <p v-if="localError || errorMessage" role="alert" class="text-sm text-red-600 dark:text-red-300">{{ localError || errorMessage }}</p>
     </div>
     <template #footer>
       <div class="flex gap-2">
-        <button
+        <AppButton
           :disabled="loading"
           @click="emit('cancel')"
-          class="flex-1 py-2 text-sm font-semibold text-gray-600 border border-stone-200 rounded-lg disabled:opacity-50"
-        >إلغاء</button>
-        <button
+          variant="outline"
+          class="flex-1"
+        >{{ t('backoffice.pinGuard.cancel') }}</AppButton>
+        <AppButton
           :disabled="loading || loadingApprovers || approvers.length === 0"
           @click="confirmApproval"
-          class="flex-1 py-2 text-sm font-bold text-white bg-amber-600 rounded-lg disabled:opacity-50"
-        >{{ loading ? '...' : 'تأكيد الموافقة' }}</button>
+          variant="primary"
+          class="flex-1"
+        >{{ loading ? t('backoffice.pinGuard.approving') : t('backoffice.pinGuard.confirm') }}</AppButton>
       </div>
     </template>
   </AppModal>

@@ -26,10 +26,12 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   minChars?: number
   debounce?: number
+  emptyLabel?: string
 }>(), {
-  placeholder: 'اكتب للبحث...',
+  placeholder: 'Search / بحث',
   minChars: 2,
   debounce: 300,
+  emptyLabel: 'No results / لا توجد نتائج',
 })
 
 const emit = defineEmits<{
@@ -106,12 +108,12 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div ref="containerRef" class="relative w-full" dir="rtl">
+  <div ref="containerRef" class="relative w-full">
     <label v-if="label" :class="[fieldLabelClasses, 'block mb-1']">{{ label }}</label>
 
     <div class="relative">
       <div class="absolute end-2 inset-y-0 flex items-center pointer-events-none">
-        <svg v-if="loading" class="animate-spin h-4 w-4 text-muted" fill="none" viewBox="0 0 24 24">
+        <svg v-if="loading" class="motion-safe:animate-spin h-4 w-4 text-muted" fill="none" viewBox="0 0 24 24">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
         </svg>
@@ -138,13 +140,13 @@ onBeforeUnmount(() => {
         <div v-if="loading && !suggestions.length" class="p-3 space-y-2">
           <Skeleton v-for="i in 3" :key="i" class="h-8" />
         </div>
-        <div v-else-if="!suggestions.length" class="px-4 py-5 text-center text-sm text-muted">لا توجد نتائج</div>
+        <div v-else-if="!suggestions.length" class="px-4 py-5 text-center text-sm text-muted">{{ emptyLabel }}</div>
         <ul v-else role="listbox" class="max-h-60 overflow-y-auto py-1">
           <li v-for="(s, i) in suggestions" :key="s.value"
             role="option"
             :class="[
               'flex items-center justify-between gap-3 px-3 py-2.5 text-sm cursor-pointer select-none transition-colors',
-              activeIndex === i ? 'bg-primary-50 text-primary-700' : 'text-gray-800 dark:text-gray-200 hover:bg-stone-50 dark:hover:bg-gray-700/50',
+              activeIndex === i ? 'bg-primary-50 text-primary-700 dark:bg-primary-950/40 dark:text-primary-300' : 'text-gray-800 dark:text-gray-200 hover:bg-stone-50 dark:hover:bg-gray-700/50',
             ]"
             @mousedown.prevent="selectSuggestion(s)"
             @mousemove="activeIndex = i"

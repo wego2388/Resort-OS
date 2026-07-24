@@ -204,36 +204,36 @@ onMounted(async () => {
     <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
       <div>
         <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">📱 {{ t('backoffice.qrGenerator.title') }}</h1>
-        <p class="text-xs text-gray-400 mt-1">{{ t('backoffice.qrGenerator.subtitle') }}</p>
+        <p class="text-xs text-gray-500 mt-1 dark:text-gray-400">{{ t('backoffice.qrGenerator.subtitle') }}</p>
       </div>
       <div class="flex gap-2 flex-wrap">
-        <button class="px-3 py-2 bg-stone-100 rounded-lg text-sm font-semibold" @click="selectAll">{{ t('backoffice.qrGenerator.selectAll') }}</button>
-        <button class="px-3 py-2 bg-stone-100 rounded-lg text-sm font-semibold" @click="clearAll">{{ t('backoffice.qrGenerator.clearSelection') }}</button>
-        <button class="px-3 py-2 bg-amber-100 text-amber-800 rounded-lg text-sm font-bold disabled:opacity-40" :disabled="!selectedIds.size || mutatingId !== null" @click="generateSelectedMissing">{{ t('backoffice.qrGenerator.generateMissing') }}</button>
+        <button class="px-3 py-2 bg-stone-100 rounded-lg text-sm font-semibold text-gray-700 dark:bg-gray-700 dark:text-gray-200" @click="selectAll">{{ t('backoffice.qrGenerator.selectAll') }}</button>
+        <button class="px-3 py-2 bg-stone-100 rounded-lg text-sm font-semibold text-gray-700 dark:bg-gray-700 dark:text-gray-200" @click="clearAll">{{ t('backoffice.qrGenerator.clearSelection') }}</button>
+        <button class="px-3 py-2 bg-amber-100 text-amber-800 rounded-lg text-sm font-bold disabled:opacity-40 dark:bg-amber-950/40 dark:text-amber-300" :disabled="!selectedIds.size || mutatingId !== null" @click="generateSelectedMissing">{{ t('backoffice.qrGenerator.generateMissing') }}</button>
         <button class="px-4 py-2 bg-blue-700 text-white rounded-lg font-bold text-sm disabled:opacity-40" :disabled="!selectedIds.size" @click="printSelected">🖨️ {{ t('backoffice.qrGenerator.printCount', { count: selectedIds.size }) }}</button>
       </div>
     </div>
 
-    <div v-if="loading" class="flex justify-center py-16"><div class="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
-    <div v-else-if="!tables.length" class="text-center py-20 text-gray-400">
+    <div v-if="loading" class="flex justify-center py-16"><div class="motion-safe:animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full" /></div>
+    <div v-else-if="!tables.length" class="text-center py-20 text-gray-500 dark:text-gray-400">
       <div class="text-5xl mb-4">📱</div><p class="font-medium">{{ t('backoffice.qrGenerator.noTables') }}</p>
     </div>
     <div v-else class="space-y-8">
       <section v-for="[section, sectionTables] in grouped" :key="section">
-        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide mb-4">{{ section }}</h2>
+        <h2 class="text-sm font-bold text-gray-500 uppercase tracking-wide mb-4 dark:text-gray-400">{{ section }}</h2>
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          <article v-for="table in sectionTables" :id="`table-card-${table.id}`" :key="table.id" :class="['relative bg-white dark:bg-surface rounded-2xl border-2 p-4 flex flex-col items-center gap-3 transition-all', selectedIds.has(table.id) ? 'border-blue-600 shadow-md' : 'border-stone-200 dark:border-border']">
-            <button class="absolute top-2 end-2 w-6 h-6 rounded-full border-2 text-xs" :class="selectedIds.has(table.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-stone-300'" @click="toggleSelect(table.id)">{{ selectedIds.has(table.id) ? '✓' : '' }}</button>
-            <div class="w-28 h-28 bg-stone-50 rounded-xl flex items-center justify-center overflow-hidden">
+          <article v-for="table in sectionTables" :id="`table-card-${table.id}`" :key="table.id" :class="['relative bg-white dark:bg-surface rounded-2xl border-2 p-4 flex flex-col items-center gap-3 transition-all', selectedIds.has(table.id) ? 'border-blue-600 bg-blue-50 shadow-md dark:border-blue-500 dark:bg-blue-950/40' : 'border-stone-200 dark:border-border']">
+            <button class="absolute top-2 end-2 w-6 h-6 rounded-full border-2 text-xs" :class="selectedIds.has(table.id) ? 'bg-blue-600 border-blue-600 text-white' : 'border-stone-300 dark:border-gray-600'" @click="toggleSelect(table.id)">{{ selectedIds.has(table.id) ? '✓' : '' }}</button>
+            <div class="w-28 h-28 bg-stone-50 dark:bg-white rounded-xl flex items-center justify-center overflow-hidden">
               <canvas v-if="tokenByTable.has(table.id)" :ref="el => { canvasRefs[table.id] = el as HTMLCanvasElement | null; if (el) renderTableQr(table.id) }" class="w-28 h-28" />
               <span v-else class="text-xs text-gray-400 text-center px-2">{{ t('backoffice.qrGenerator.notGenerated') }}</span>
             </div>
-            <div class="text-center"><div class="font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.qrGenerator.tableNumber', { number: table.table_number }) }}</div><div v-if="table.section" class="text-xs text-gray-500">{{ table.section }}</div></div>
+            <div class="text-center"><div class="font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.qrGenerator.tableNumber', { number: table.table_number }) }}</div><div v-if="table.section" class="text-xs text-gray-500 dark:text-gray-400">{{ table.section }}</div></div>
             <div class="w-full flex gap-1">
               <button v-if="!tokenByTable.has(table.id)" class="flex-1 py-1.5 bg-blue-700 text-white text-xs font-bold rounded-lg disabled:opacity-50" :disabled="mutatingId !== null" @click="mintOrRotate(table)">{{ t('backoffice.qrGenerator.generate') }}</button>
               <template v-else>
-                <button class="flex-1 py-1.5 bg-stone-100 text-gray-700 text-xs font-semibold rounded-lg" @click="downloadQr(table)">⬇️ {{ t('backoffice.qrGenerator.download') }}</button>
-                <button class="px-2 py-1.5 bg-red-50 text-red-700 text-xs font-semibold rounded-lg disabled:opacity-50" :disabled="mutatingId !== null" @click="mintOrRotate(table, true)">{{ t('backoffice.qrGenerator.rotate') }}</button>
+                <button class="flex-1 py-1.5 bg-stone-100 text-gray-700 text-xs font-semibold rounded-lg dark:bg-gray-700 dark:text-gray-200" @click="downloadQr(table)">⬇️ {{ t('backoffice.qrGenerator.download') }}</button>
+                <button class="px-2 py-1.5 bg-red-50 text-red-700 text-xs font-semibold rounded-lg disabled:opacity-50 dark:bg-red-950/40 dark:text-red-300" :disabled="mutatingId !== null" @click="mintOrRotate(table, true)">{{ t('backoffice.qrGenerator.rotate') }}</button>
               </template>
             </div>
           </article>
@@ -241,7 +241,7 @@ onMounted(async () => {
       </section>
     </div>
 
-    <div class="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-800">
+    <div class="mt-8 bg-blue-50 border border-blue-200 rounded-2xl p-4 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950/40 dark:text-blue-300">
       <p class="font-bold mb-1">💡 {{ t('backoffice.qrGenerator.howToUse') }}</p>
       <p class="text-xs">{{ t('backoffice.qrGenerator.securityNote') }}</p>
     </div>

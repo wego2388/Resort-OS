@@ -133,14 +133,18 @@ onUnmounted(() => {
 <template>
   <div class="relative">
     <button
+      type="button"
+      :aria-label="t('backoffice.guestAlerts.titleCount', { count: alerts.length })"
+      :aria-expanded="panelOpen"
+      aria-haspopup="dialog"
       @click="panelOpen = !panelOpen"
-      class="relative w-9 h-9 flex items-center justify-center rounded-full hover:bg-gray-100 transition-colors"
+      class="relative flex h-11 w-11 items-center justify-center rounded-xl text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-gray-800"
       :title="t('backoffice.guestAlerts.titleCount', { count: alerts.length })"
     >
       <span class="text-lg" :class="alerts.length ? 'animate-pulse' : ''">🔔</span>
       <span
         v-if="alerts.length > 0"
-        class="absolute -top-0.5 -left-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 rounded-full text-white text-[10px] font-black flex items-center justify-center"
+        class="absolute -top-0.5 -start-0.5 min-w-[18px] h-[18px] px-1 bg-red-500 rounded-full text-white text-[10px] font-black flex items-center justify-center"
       >{{ alerts.length }}</span>
     </button>
 
@@ -148,44 +152,49 @@ onUnmounted(() => {
       <div v-if="panelOpen" class="fixed inset-0 z-40" @click="panelOpen = false" />
       <div
         v-if="panelOpen"
-        class="fixed sm:absolute left-2 right-2 sm:left-auto sm:right-0 top-14 sm:top-auto sm:mt-2 w-auto sm:w-80 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 max-h-[70vh] flex flex-col"
+        class="fixed sm:absolute inset-x-2 sm:inset-x-auto sm:end-0 top-14 sm:top-auto sm:mt-2 w-auto sm:w-80 bg-white rounded-2xl shadow-xl border border-stone-200 z-50 max-h-[70vh] flex flex-col dark:border-gray-700 dark:bg-gray-900"
         :dir="locale === 'ar' ? 'rtl' : 'ltr'"
+        role="dialog"
+        :aria-label="t('backoffice.guestAlerts.title')"
       >
-        <div class="px-4 py-3 border-b border-stone-100 font-bold text-gray-900 flex items-center justify-between">
+        <div class="px-4 py-3 border-b border-stone-100 font-bold text-gray-900 flex items-center justify-between dark:border-gray-700 dark:text-gray-100">
           <span>{{ t('backoffice.guestAlerts.title') }}</span>
           <AppBadge v-if="alerts.length" variant="danger" size="sm">{{ alerts.length }}</AppBadge>
         </div>
 
         <div class="overflow-y-auto flex-1">
-          <div v-if="alerts.length === 0" class="text-center text-gray-400 text-sm py-10">
+          <div v-if="alerts.length === 0" class="text-center text-gray-500 text-sm py-10 dark:text-gray-400">
             {{ t('backoffice.guestAlerts.empty') }} 👍
           </div>
           <div
             v-for="a in alerts" :key="a.id"
-            class="px-4 py-3 border-b border-stone-50 flex items-start gap-2.5"
+            class="px-4 py-3 border-b border-stone-100 flex items-start gap-2.5 dark:border-gray-800"
           >
             <span class="text-xl flex-shrink-0">{{ alertUi(a).icon }}</span>
             <div class="flex-1 min-w-0">
-              <div class="font-semibold text-sm text-gray-900">{{ alertLabel(a) }}</div>
-              <div class="text-xs text-gray-500">{{ contextLabel(a) }} · {{ timeAgo(a.created_at) }}</div>
-              <div v-if="a.message" class="text-xs text-gray-600 mt-0.5 italic">"{{ a.message }}"</div>
+              <div class="font-semibold text-sm text-gray-900 dark:text-gray-100">{{ alertLabel(a) }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ contextLabel(a) }} · {{ timeAgo(a.created_at) }}</div>
+              <div v-if="a.message" class="text-xs text-gray-600 mt-0.5 italic dark:text-gray-300">"{{ a.message }}"</div>
               <div class="flex gap-1.5 mt-1.5">
                 <button
+                  type="button"
                   v-if="a.status === 'open'"
                   :disabled="updatingId === a.id"
                   @click="setStatus(a, 'acknowledged')"
-                  class="text-xs font-bold text-amber-700 bg-amber-50 px-2 py-1 rounded-lg disabled:opacity-50"
+                  class="min-h-11 rounded-xl bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700 disabled:opacity-50 dark:bg-amber-950/40 dark:text-amber-300"
                 >{{ t('backoffice.guestAlerts.acknowledge') }}</button>
                 <button
+                  type="button"
                   v-if="a.status === 'acknowledged'"
                   :disabled="updatingId === a.id"
                   @click="setStatus(a, 'arrived')"
-                  class="text-xs font-bold text-blue-700 bg-blue-50 px-2 py-1 rounded-lg disabled:opacity-50"
+                  class="min-h-11 rounded-xl bg-blue-50 px-3 py-2 text-xs font-bold text-blue-700 disabled:opacity-50 dark:bg-blue-950/40 dark:text-blue-300"
                 >{{ t('backoffice.guestAlerts.arrived') }}</button>
                 <button
+                  type="button"
                   :disabled="updatingId === a.id"
                   @click="setStatus(a, 'resolved')"
-                  class="text-xs font-bold text-green-700 bg-green-50 px-2 py-1 rounded-lg disabled:opacity-50"
+                  class="min-h-11 rounded-xl bg-green-50 px-3 py-2 text-xs font-bold text-green-700 disabled:opacity-50 dark:bg-green-950/40 dark:text-green-300"
                 >{{ t('backoffice.guestAlerts.done') }} ✓</button>
               </div>
             </div>

@@ -69,6 +69,101 @@ class TestBranchesEndpoints:
         assert resp.status_code == 403
 
 
+class TestStaffProvisioningEndpoints:
+    def test_super_admin_can_provision_staff_with_one_time_bootstrap(self, client: TestClient):
+        from tests.conftest import TestingSessionLocal, _fresh_super_admin, _issue_step_up
+        from app.core.kernel.models.user import User
+        from app.modules.core.models import AuditLog
+
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin("staff-provision")
+        email = f"staff-{uuid.uuid4().hex}@test.local"
+        body = {
+            "email": email,
+            "full_name": "Named Cashier",
+            "phone": "+201000000000",
+            "employee_id": None,
+            "role": "cashier",
+            "preferred_language": "ar",
+            "reason": "تعيين موظف كاشير جديد",
+        }
+        token = _issue_step_up(
+            client,
+            sa_headers,
+            purpose="user_provision",
+            intent=body,
+            totp_secret=sa_secret,
+        )
+        response = client.post(
+            "/api/v1/users",
+            json=body,
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert response.status_code == 201, response.text
+        assert response.headers["cache-control"] == "no-store"
+        payload = response.json()
+        assert payload["user"]["email"] == email
+        assert payload["user"]["role"] == "cashier"
+        assert payload["user"]["must_change_password"] is True
+        assert len(payload["temporary_password"]) >= 20
+        assert len(payload["enrollment_token"]) >= 20
+
+        db = TestingSessionLocal()
+        try:
+            created = db.query(User).filter(User.email == email).one()
+            assert payload["temporary_password"] not in created.password_hash
+            audit = db.query(AuditLog).filter(
+                AuditLog.action == "staff_account_provisioned",
+                AuditLog.entity_id == created.id,
+            ).one()
+            assert payload["temporary_password"] not in (audit.new_data or "")
+            assert payload["enrollment_token"] not in (audit.new_data or "")
+        finally:
+            db.close()
+
+        login = client.post(
+            "/api/v1/auth/login",
+            data={
+                "username": email,
+                "password": payload["temporary_password"],
+                "enrollment_token": payload["enrollment_token"],
+            },
+        )
+        assert login.status_code == 200, login.text
+        assert "refresh_token" not in login.cookies
+
+    def test_staff_provision_rejects_super_admin_and_mass_assignment(self, client: TestClient):
+        from tests.conftest import _fresh_super_admin
+
+        _sa_id, sa_headers, _sa_secret = _fresh_super_admin("staff-provision-reject")
+        response = client.post(
+            "/api/v1/users",
+            json={
+                "email": f"forbidden-{uuid.uuid4().hex}@test.local",
+                "full_name": "Forbidden Role",
+                "role": "super_admin",
+                "preferred_language": "ar",
+                "is_active": True,
+                "reason": "محاولة غير مسموحة",
+            },
+            headers=sa_headers,
+        )
+        assert response.status_code == 422
+
+    def test_staff_provision_requires_super_admin(self, client: TestClient, manager_headers):
+        response = client.post(
+            "/api/v1/users",
+            json={
+                "email": f"manager-{uuid.uuid4().hex}@test.local",
+                "full_name": "Manager Attempt",
+                "role": "waiter",
+                "preferred_language": "en",
+                "reason": "تعيين موظف جديد",
+            },
+            headers=manager_headers,
+        )
+        assert response.status_code == 403
+
+
 class TestSettingsEndpoints:
     def test_upsert_requires_admin(self, client: TestClient, manager_headers):
         resp = client.put("/api/v1/settings/vat_percentage", json={"value": "14"}, headers=manager_headers)

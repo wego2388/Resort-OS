@@ -6,7 +6,7 @@
  */
 import { describe, it, expect, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { AppInput, AppButton, AppModal } from '@resort-os/ui'
+import { AppInput, AppButton, AppModal, MoneyInput } from '@resort-os/ui'
 
 // Teleport(to="body") content is not auto-removed between tests — clear it so
 // one modal's DOM never leaks into the next test's querySelector.
@@ -34,6 +34,18 @@ describe('AppInput', () => {
     const wrapper = mount(AppInput, { props: { modelValue: '' } })
     await wrapper.find('input').setValue('hello')
     expect(wrapper.emitted('update:modelValue')?.[0]).toEqual(['hello'])
+  })
+})
+
+describe('MoneyInput', () => {
+  it('associates its label and announced error with the amount input', () => {
+    const wrapper = mount(MoneyInput, {
+      props: { label: 'Amount', error: 'Required', modelValue: '' },
+    })
+    const input = wrapper.find('input')
+    expect(wrapper.find('label').attributes('for')).toBe(input.attributes('id'))
+    expect(input.attributes('aria-invalid')).toBe('true')
+    expect(input.attributes('aria-describedby')).toBe(wrapper.find('[role="alert"]').attributes('id'))
   })
 })
 

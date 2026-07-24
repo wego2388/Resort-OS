@@ -190,6 +190,7 @@ class _RecoveryCodesRegenerateRequest(BaseModel):
 # endpoint call, so the two sides can never define "same operation"
 # differently.
 _STEP_UP_PURPOSES = frozenset({
+    "user_provision",
     "user_role_update",
     "permission_override_upsert",
     "permission_override_revoke",
@@ -254,6 +255,58 @@ class _UserRoleUpdateIntent(BaseModel):
 
             if value not in ROLE_LEVELS:
                 raise ValueError(f"Unknown role: {value}")
+        return value
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
+class _UserProvisionIntent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: str = Field(min_length=3, max_length=320)
+    full_name: str = Field(min_length=3, max_length=255)
+    phone: Optional[str] = Field(default=None, max_length=50)
+    employee_id: Optional[int] = Field(default=None, gt=0, strict=True)
+    role: str = Field(min_length=1, max_length=30)
+    preferred_language: str = Field(pattern=r"^(ar|en)$")
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        from app.core.kernel.security import validate_email_format  # noqa: PLC0415
+
+        normalized = value.strip().casefold()
+        if not validate_email_format(normalized):
+            raise ValueError("A valid email address is required")
+        return normalized
+
+    @field_validator("full_name")
+    @classmethod
+    def _normalize_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Full name must contain at least 3 characters")
+        return normalized
+
+    @field_validator("phone")
+    @classmethod
+    def _normalize_phone(cls, value: Optional[str]) -> Optional[str]:
+        normalized = (value or "").strip()
+        return normalized or None
+
+    @field_validator("role")
+    @classmethod
+    def _role_must_be_provisionable(cls, value: str) -> str:
+        from app.core.kernel.auth.service import STAFF_PROVISIONABLE_ROLES  # noqa: PLC0415
+
+        if value not in STAFF_PROVISIONABLE_ROLES:
+            raise ValueError(f"Role cannot be provisioned through the web control plane: {value}")
         return value
 
     @field_validator("reason")
@@ -364,6 +417,7 @@ class _DiningRefundIntent(BaseModel):
 
 
 _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
+    "user_provision": _UserProvisionIntent,
     "user_role_update": _UserRoleUpdateIntent,
     "permission_override_upsert": _PermissionOverrideUpsertIntent,
     "permission_override_revoke": _PermissionOverrideRevokeIntent,
@@ -469,6 +523,15 @@ def build_auth_router(
         payload: dict = Body(...),
         auth: AuthService = Depends(get_auth_service),
     ):
+        if not (
+            bool(getattr(settings, "PUBLIC_REGISTRATION_ENABLED", False))
+            or _is_safe_environment(settings.ENVIRONMENT)
+        ):
+            # Do not advertise an anonymous account-creation surface in
+            # production when the deployment has not explicitly enabled it.
+            from fastapi import HTTPException  # noqa: PLC0415
+
+            raise HTTPException(404, "Not found")
         try:
             return auth.register(
                 email=payload["email"],
@@ -691,7 +754,14 @@ def build_auth_router(
         except ValidationError as exc:
             raise HTTPException(422, f"Invalid intent for purpose '{payload.purpose}': {exc}")
 
-        if payload.purpose == "user_role_update":
+        if payload.purpose == "user_provision":
+            scope_hash = step_up_scopes.user_provision_scope(
+                email=intent.email, full_name=intent.full_name, phone=intent.phone,
+                employee_id=intent.employee_id,
+                role=intent.role, preferred_language=intent.preferred_language,
+                reason=intent.reason,
+            )
+        elif payload.purpose == "user_role_update":
             scope_hash = step_up_scopes.user_role_update_scope(
                 user_id=intent.user_id, role=intent.role, is_active=intent.is_active, reason=intent.reason,
             )

@@ -47,6 +47,32 @@ def build_step_up_scope(purpose: str, intent: dict) -> str:
 # endpoint import the exact same builder — never hand-roll the intent dict
 # at either call site.
 
+def user_provision_scope(
+    *,
+    email: str,
+    full_name: str,
+    phone: Optional[str],
+    employee_id: Optional[int],
+    role: str,
+    preferred_language: str,
+    reason: str,
+) -> str:
+    """Bind account creation to the exact normalized staff identity.
+
+    Email, name, phone, and reason are personal/free text, so only their
+    digests enter the canonical scope document.
+    """
+    return build_step_up_scope("user_provision", {
+        "email_sha256": sha256_text(email.strip().casefold()),
+        "full_name_sha256": sha256_text(full_name.strip()),
+        "phone_sha256": sha256_text((phone or "").strip()),
+        "employee_id": employee_id,
+        "role": role,
+        "preferred_language": preferred_language,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
 def user_role_update_scope(
     *, user_id: int, role: Optional[str], is_active: Optional[bool], reason: str,
 ) -> str:

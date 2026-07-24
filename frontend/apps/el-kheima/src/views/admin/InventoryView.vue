@@ -351,7 +351,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
       <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.inventory.title') }}</h2>
       <div class="flex items-center gap-2">
         <button @click="showLowStock = !showLowStock"
-          :class="['px-3 py-1.5 rounded-xl text-sm font-medium border-2 transition-colors', showLowStock ? 'border-red-500 bg-red-50 text-red-700' : 'border-stone-200 dark:border-border text-gray-600 dark:text-gray-500 hover:border-red-300']">
+          :class="['rounded-xl border-2 px-3 py-1.5 text-sm font-medium transition-colors', showLowStock ? 'border-red-500 bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300' : 'border-stone-200 text-gray-600 hover:border-red-300 dark:border-border dark:text-gray-400']">
           ⚠️ {{ t('backoffice.inventory.lowStock') }} ({{ lowStockCount() }})
         </button>
         <AppButton variant="secondary" size="sm" @click="supplierListModal = true">🚚 {{ t('backoffice.inventory.suppliers') }}</AppButton>
@@ -375,27 +375,27 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.product') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">SKU</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.category') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.stock') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.reorderPoint') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.unitCost') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.status') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.product') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">SKU</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.category') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.stock') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.reorderPoint') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.unitCost') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.status') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase"></th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="p in filtered()" :key="p.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
               <td class="px-4 py-3 font-medium text-gray-900 dark:text-gray-100 text-sm">{{ p.name }}</td>
-              <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-gray-500">{{ p.sku }}</td>
-              <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ categoryLabel(p) }}</td>
+              <td class="px-4 py-3 font-mono text-xs text-gray-500 dark:text-gray-400">{{ p.sku }}</td>
+              <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ categoryLabel(p) }}</td>
               <td class="px-4 py-3">
                 <span :class="['text-sm font-bold', p.current_stock <= p.reorder_point ? 'text-red-600' : 'text-gray-900 dark:text-gray-100']">
                   {{ p.current_stock }} {{ unitLabel(p.unit) }}
                 </span>
               </td>
-              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-500">{{ p.reorder_point }} {{ unitLabel(p.unit) }}</td>
+              <td class="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">{{ p.reorder_point }} {{ unitLabel(p.unit) }}</td>
               <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatNumber(p.cost_price ?? 0) }} {{ t('backoffice.inventory.currency') }}</td>
               <td class="px-4 py-3">
                 <AppBadge size="sm" :variant="p.current_stock <= 0 ? 'danger' : p.current_stock <= p.reorder_point ? 'warning' : 'success'">
@@ -425,8 +425,8 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
           <input v-model="productForm.name_ar" type="text" :placeholder="t('backoffice.inventory.nameAr')"
             class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
           <input v-model="productForm.sku" type="text" placeholder="SKU *" :disabled="!!editingProduct"
-            class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm disabled:bg-gray-50 disabled:text-gray-400 dark:text-gray-500" />
-          <select v-model="productForm.unit" :disabled="!!editingProduct" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm disabled:bg-gray-50">
+            class="rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 dark:bg-surface-2 disabled:text-gray-400 dark:border-border dark:text-gray-400 dark:disabled:bg-gray-800" />
+          <select v-model="productForm.unit" :disabled="!!editingProduct" class="rounded-xl border border-stone-200 px-3 py-2 text-sm disabled:bg-gray-50 dark:bg-surface-2 dark:border-border dark:disabled:bg-gray-800">
             <option v-for="u in UNIT_OPTIONS" :key="u" :value="u">{{ unitLabel(u) }}</option>
           </select>
           <select v-model="productForm.category_id" class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
@@ -458,7 +458,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
     <AppModal :open="poModal" :title="t('backoffice.inventory.recordReceiptTitle')" size="lg" @close="poModal = false">
       <div class="space-y-3">
         <div>
-          <label class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.supplier') }}</label>
+          <label class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.supplier') }}</label>
           <select v-model="poForm.supplier_id" @change="onSelectSupplier"
             class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm mt-1">
             <option value="">{{ t('backoffice.inventory.unregisteredSupplier') }}</option>
@@ -479,7 +479,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
         </select>
 
         <div class="border-t border-stone-100 dark:border-border/50 pt-3 space-y-2">
-          <div class="text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.receivedItems') }}</div>
+          <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.receivedItems') }}</div>
           <div v-for="(line, i) in poForm.lines" :key="i" class="grid grid-cols-12 gap-2 items-center">
             <select v-model="line.product_id" class="col-span-6 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm">
               <option value="">{{ t('backoffice.inventory.selectProduct') }}</option>
@@ -489,7 +489,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
               class="col-span-3 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             <input v-model="line.unit_cost" type="number" min="0" step="0.01" :placeholder="t('backoffice.inventory.unitPrice')"
               class="col-span-2 border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
-            <button @click="removePOLine(i)" class="col-span-1 text-red-400 hover:text-red-600 text-lg">×</button>
+            <button @click="removePOLine(i)" class="col-span-1 text-lg text-red-400 hover:text-red-600 dark:hover:text-red-300">×</button>
           </div>
           <button @click="addPOLine" class="text-xs font-semibold text-primary-700 hover:underline">+ {{ t('backoffice.inventory.addItem') }}</button>
         </div>
@@ -525,20 +525,20 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.name') }}</th>
-                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.contactPerson') }}</th>
-                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.phone') }}</th>
-                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.paymentTerms') }}</th>
-                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.inventory.column.status') }}</th>
-                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase"></th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.name') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.contactPerson') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.phone') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.paymentTerms') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.inventory.column.status') }}</th>
+                <th class="px-3 py-2 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase"></th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="s in suppliers" :key="s.id" class="border-t border-stone-100 dark:border-border/50">
                 <td class="px-3 py-2 text-sm font-medium text-gray-900 dark:text-gray-100">{{ s.name_ar || s.name }}</td>
-                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500">{{ s.contact_person || '—' }}</td>
-                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500" dir="ltr">{{ s.phone || '—' }}</td>
-                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-500">{{ t('backoffice.inventory.daysCount', { days: s.payment_terms_days }) }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-400">{{ s.contact_person || '—' }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-400" dir="ltr">{{ s.phone || '—' }}</td>
+                <td class="px-3 py-2 text-sm text-gray-600 dark:text-gray-400">{{ t('backoffice.inventory.daysCount', { days: s.payment_terms_days }) }}</td>
                 <td class="px-3 py-2">
                   <AppBadge size="sm" :variant="s.is_active ? 'success' : 'neutral'">
                     {{ s.is_active ? t('backoffice.inventory.active') : t('backoffice.inventory.stopped') }}
@@ -546,7 +546,7 @@ onMounted(() => { fetchCategories(); fetchWarehouses(); fetchSuppliers(); fetchP
                 </td>
                 <td class="px-3 py-2 text-end whitespace-nowrap">
                   <button @click="openEditSupplier(s)" class="text-xs font-semibold text-primary-700 hover:underline me-3">{{ t('backoffice.inventory.edit') }}</button>
-                  <button @click="toggleSupplierActive(s)" class="text-xs font-semibold text-gray-500 dark:text-gray-500 hover:underline">
+                  <button @click="toggleSupplierActive(s)" class="text-xs font-semibold text-gray-500 dark:text-gray-400 hover:underline">
                     {{ s.is_active ? t('backoffice.inventory.stop') : t('backoffice.inventory.activate') }}
                   </button>
                 </td>

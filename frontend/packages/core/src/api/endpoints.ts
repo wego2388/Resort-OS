@@ -34,6 +34,10 @@ export const ENDPOINTS = {
     // PIN تشغيلي — راجع backend/app/modules/core/models.py::PinCredential
     pinApprovers: '/api/v1/pins/approvers',
     pinSwitch: '/api/v1/pins/switch',
+    // self-service: GET حالة PIN بتاعي / POST لضبطه أو تجديده
+    pinMe: '/api/v1/pins/me',
+    // admin: GET حالة PIN موظف / POST لضبطه له (manager+ — راجع router.py)
+    pinUser: (userId: number) => `/api/v1/pins/${userId}`,
   },
   beach: {
     inventory: '/api/v1/beach/inventory',
@@ -388,6 +392,10 @@ export const ENDPOINTS = {
     users:      '/api/v1/users',
     user:       (id: number) => `/api/v1/users/${id}`,
     createUser: '/api/v1/users',
+  },
+  users: {
+    list: '/api/v1/users',
+    role: (id: number) => `/api/v1/users/${id}/role`,
   },
   finance_eta: {
     invoices: '/api/v1/finance/eta/invoices',

@@ -189,7 +189,7 @@ onMounted(() => {
         @click="filterStatus = null"
         :class="[
           'px-3 py-1 rounded-lg text-sm font-medium transition-colors',
-          !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
+          !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
         ]"
       >{{ t('backoffice.housekeeping.all') }} ({{ tasks.length }})</button>
       <button
@@ -198,13 +198,13 @@ onMounted(() => {
         @click="filterStatus = filterStatus === status ? null : status"
         :class="[
           'px-3 py-1 rounded-lg text-sm font-medium transition-colors',
-          filterStatus === status ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
+          filterStatus === status ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
         ]"
       >{{ label }} ({{ statusCounts[status] ?? 0 }})</button>
     </div>
 
     <!-- Loading state -->
-    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-400 gap-3">
       <AppSpinner size="lg" />
       <p>{{ t('backoffice.housekeeping.loading') }}</p>
     </div>
@@ -224,21 +224,21 @@ onMounted(() => {
             <span class="font-bold text-gray-900 dark:text-gray-100 text-base">
               {{ t('backoffice.housekeeping.roomHash', { room: roomLabel(task) }) }}
             </span>
-            <span class="text-xs px-2 py-0.5 bg-gray-100 rounded-full text-gray-600 dark:text-gray-500 font-medium">
+            <span class="rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-400">
               {{ taskTypeLabel[task.task_type] ?? task.task_type }}
             </span>
             <span
               v-if="task.priority === 'high'"
-              class="text-xs px-2 py-0.5 bg-red-100 text-red-700 rounded-full font-bold"
+              class="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700 dark:bg-red-950/50 dark:text-red-300"
             >{{ t('backoffice.housekeeping.urgent') }}</span>
           </div>
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-0.5">{{ statusLabels[task.status] ?? task.status }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-0.5">{{ statusLabels[task.status] ?? task.status }}</div>
 
           <!-- تعيين موظف — عرض عادي بيتحول لـ select عند الضغط -->
           <div v-if="assigningTaskId !== task.id" class="text-xs mt-0.5">
             <button
               @click="assigningTaskId = task.id"
-              class="text-gray-400 dark:text-gray-500 hover:text-blue-600 underline decoration-dotted"
+              class="text-gray-400 dark:text-gray-400 hover:text-blue-600 underline decoration-dotted"
             >
               👤 {{ task.assigned_to ? (employeeNameById[task.assigned_to] ?? t('backoffice.housekeeping.employeeHash', { id: task.assigned_to })) : t('backoffice.housekeeping.assignEmployee') }}
             </button>
@@ -266,7 +266,7 @@ onMounted(() => {
           >{{ nextActionLabel[task.status] }}</button>
           <span
             v-else
-            class="px-4 py-2 rounded-xl text-sm font-bold bg-green-100 text-green-700"
+            class="rounded-xl bg-green-100 px-4 py-2 text-sm font-bold text-green-700 dark:bg-green-950/50 dark:text-green-300"
           >✓ {{ t('backoffice.housekeeping.completed') }}</span>
         </div>
       </div>

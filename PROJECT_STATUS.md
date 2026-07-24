@@ -9,13 +9,33 @@
 
 ---
 
+## 🟩 تصحيح شامل للـ Light/Dark Mode في تطبيق الموظفين (2026-07-22)
+
+بعد مراجعة screenshots فعلية من Dashboard وBeach Admin وTimeshare، اتضح إن
+المشكلة مش في 3 شاشات منفصلة: الـshell الكحلي كان بيستخدم tokens بنية، لون
+النص الموروث للـbody/form controls لم يكن محددًا، وعشرات status cards الفاتحة
+كانت بلا مقابل في الدارك مود. الإصلاح اتعمل من المصدر: dark tokens موحدة
+navy/slate، foreground موروث للصفحة والحقول، وتصحيح الحالات الدلالية في كل
+شاشات الموظفين والـshared UI (dashboard/beach/reception/rooms/bookings/
+finance/HR/CRM/analytics/inventory/settings/account/portal وغيرها).
+
+اتضاف test ratchet يحسب contrast الفعلي للـtokens (النص الأساسي ≥7:1
+والـmuted ≥4.5:1)، يمنع `dark:text-gray-500`، ويرفض أي semantic surface فاتح
+`50/100/200` من غير dark variant. التحقق النهائي: frontend **69/69** عبر 9
+ملفات، i18n **5,710** مفتاح لكل لغة وصفر نقص، type-check ناجح، production build
+ناجح، وvisual browser check حي على Dashboard وBeach Admin وTimeshare وRooms
+وReception وFinance في light/dark. التحذير الوحيد هو chunk-size القديم غير
+الحاجب. لم يحصل reset أو تغيير لبيانات قاعدة التطوير.
+
+---
+
 ## 📊 نظرة سريعة (30 ثانية)
 
 | | |
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **2,036 backend ناجح، 33 skipped، صفر فشل (2,069 collected)** ✅ + **60/60 frontend** + Gate 8 races حقيقية على PostgreSQL: active QR وactive request كل سباق منهما انتهى `committed + conflict` (2026-07-22) |
+| **الاختبارات** | **2,046 backend ناجح، 33 skipped، صفر فشل (2,079 collected)** ✅ + **69/69 frontend** + Gate 8 races حقيقية سابقة على PostgreSQL: active QR وactive request كل سباق منهما انتهى `committed + conflict` (2026-07-22) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
 | **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
@@ -27,11 +47,43 @@
 
 ---
 
+## 🟩 Gate 4 — المراجعة المستقلة النهائية قبل Gate 9 (2026-07-22)
+
+راجعت Gate 4 داخل worktree الإصدار بعد دمج Gate 8، وظهر ثماني ملاحظات فعلية
+واتصلحت قبل التفكير في Gate 9: منع إضافة صنف من فرع/منفذ آخر، إعادة بناء دمج
+الطلبات بحيث ينقل الأصناف وتذاكر KDS ويعيد حساب كل الإجماليات تحت أقفال حتمية،
+وضمان أن أي صنف جديد/مدموج بعد دخول المطبخ له KDS ticket واحدة مع تحديث realtime،
+رفض أكثر من room tender لحين وجود نموذج multi-folio قابل للعكس، canonical
+idempotency hash آمن للأنواع المختلطة، عزل الفرع لقراءة الطلب/الإيصال/KDS
+وWebSockets، منع KDS من تعديل طلب مقفول أو مدفوع، وضبط آخر مرتجع ليمتص فرق
+التقريب بالضبط. اتضافت اختبارات انحدار لكل العقود الحرجة.
+
+التحقق النهائي المدمج: backend **2046 passed + 33 skipped من 2079، صفر
+failure**؛ Dining المركزة **69 + 36 + 2 passed**؛ frontend **69/69**؛ ar/en
+**5710 مفتاح لكل لغة**؛ type-check/build للتطبيقين ناجحان؛ وAlembic له head
+واحد `8c12d9e4f6a1`. اختبارات PostgreSQL الخاصة بالتزامن اتعمل لها skip في
+الجولة الحالية لعدم وجود DSN، لذلك نتائج PostgreSQL التاريخية محفوظة كدليل
+سابق وليست تشغيلًا جديدًا.
+
+**قرار الدخول إلى Gate 9:** لا يوجد blocker برمجي معروف داخل Gate 4، لكن لا
+نبدأ Gate 9 قبل قبول Gate 8 الميداني بهاتف وQR مطبوع وشبكة وstaging، وإعادة
+تشغيل concurrency على PostgreSQL في بيئة ما قبل النشر. لم يحدث commit أو push
+أو deploy من worktree المراجعة.
+
+**تحديث تحقق 22 يوليو 2026:** أُعيد تشغيل التزامن الحي على PostgreSQL 16
+داخل قواعد throwaway: **13/13 passed**، وملفات Dining/Finance/Refund المركزة
+**218/218 passed**. الحزمة الكاملة بعد حماية تهيئة حسابات الإنتاج: **2084
+collected، 2051 passed + 33 skipped، صفر failure**. شرط التزامن قبل Gate 9
+مغلق الآن؛ تبقى اختبارات الهاتف/QR المطبوع والشبكة والـrestore/rollback
+والمراقبة كأدلة تشغيلية ميدانية.
+
+---
+
 ## 🟩 Gate 8 — QR الآمن وGuest Service (2026-07-22)
 
 اتراجع شغل Claude غير المكتمل من الكود والـdiff وملفات `CLAUDE.md`/`AGENTS.md`
-والصورة المرجعية، واتصلح وكمل على فرع
-`gate-8-qr-guest-service-completion` من base `dfa7e1e`. المسار العام القديم
+والصورة المرجعية، واتصلح ثم اتدمج في worktree الإصدار الحالي
+`release/vps-ready-2026-07-22`. المسار العام القديم
 `/order/{outletId}/{tableId}` خرج من الراوتر، والـQR الجديد يفتح فقط
 `/s/{token}` من غير branch/table/order/request IDs في الرابط أو العقود العامة.
 
@@ -56,16 +108,16 @@ self-order ما زال **مغلقًا افتراضيًا** ويحتاج علم d
 المطبوع. تجربة Public تستعمل RTL/LTR حسب اللغة، العملات عبر `Intl`، واللغات
 الأربع محفوظة؛ طابور الموظفين عربي/إنجليزي.
 
-**التحقق الفعلي:** full backend → **2036 passed + 33 skipped من 2069، صفر
-فشل**؛ 60/60 frontend؛ 5438 مفتاحًا متطابقًا ar/en وسياسة Public ar/en/ru/it
-سليمة؛ build إنتاجي للتطبيقين؛ byte-compile و`git diff --check` نظيفان. سباقان
-منفصلان على PostgreSQL أثبتا `committed + conflict` لكل من active QR وactive
-request، ونُظّفت بيانات الاختبار المحددة بعدهما.
+**التحقق المدمج الأحدث:** full backend → **2046 passed + 33 skipped من 2079،
+صفر فشل**؛ 69/69 frontend؛ 5710 مفتاحًا متطابقًا ar/en وسياسة Public ar/en/ru/it
+سليمة؛ type-check وbuild إنتاجي للتطبيقين ناجحان. دليل Gate 8 السابق على
+PostgreSQL أثبت `committed + conflict` لكل من active QR وactive request؛ لم
+يُعَد تشغيله في الجولة الحالية لغياب DSN.
 
 **ما لم يتم بوضوح:** لا هاتف/كاميرا حقيقية، لا QR مطبوع، لا محاكاة شبكة فعلية
-على جهاز، لا staging/production deploy، ولا commit/push. دول قبول ميداني وGate
-9، وليسوا دليلًا نقدر ندّعيه من الاختبارات. `alembic check` ما زال يرى drift
-قديمًا معروفًا خارج migration Gate 8، لذلك لم نسجله كفحص ناجح.
+على جهاز، لا staging/production deploy، ولا integration commit/push جديد. دول
+قبول ميداني وبوابات دخول Gate 9، وليسوا دليلًا نقدر ندّعيه من الاختبارات.
+`alembic check` ما زال يرى drift قديمًا معروفًا، لذلك لم نسجله كفحص ناجح.
 
 ---
 
@@ -303,14 +355,14 @@ TypeScript — `deleteTable(t: VenueTable)` كانت بتستخدم `t` كاسم
 فبقى لازم `.value` في `stationLabel` — اتصلح)، `npx vitest run` → 60/60،
 `pnpm run build:all` نظيف لـ `el-kheima` و`public`، `git diff --check` نظيف.
 
-## 🟦 Gate 4 — سلامة الدفع والوردية والطلب في Dining (2026-07-20، منفَّذة بالكامل، بانتظار مراجعة مستقلة)
+## 🟩 Gate 4 — سلامة الدفع والوردية والطلب في Dining (مراجعة نهائية 2026-07-22)
 
 **الحالة:** الثلاث شرائح + **تصحيحات جولة مراجعة Codex المستقلة الأولى (10
 ملاحظات: 5 High + 5 Medium)** + **M5(a) step-up المالي** كلهم منفَّذين على
-الفرع `gate-4-dining-payment-shift-order-integrity`. **بلا commit/push —
-بانتظار مراجعة مستقلة (ليست اعتمادًا).** Codex مش متاح للمراجعة حاليًا (قرار
-محمد 2026-07-20)؛ M5(a) نُفِّذ مباشرة من غير وكيل، وروجع بنفس الدقة. **مفيش بند
-مؤجَّل متبقٍّ.** التقرير الكامل + قسمي جولتي المراجعة:
+الفرع الأصلي `gate-4-dining-payment-shift-order-integrity`، ثم دُمجوا في
+worktree الإصدار واتعملت مراجعة مستقلة نهائية في 22 يوليو أصلحت ثماني ملاحظات
+إضافية قبل Gate 9. **مفيش blocker برمجي معروف داخل Gate 4، ومفيش commit/push
+أو deploy جديد من worktree المراجعة.** التقرير الكامل + كل جولات المراجعة:
 `docs/audits/gate-4-dining-payment-shift-order-integrity.md`.
 
 **جولة مراجعة Codex الأولى (2026-07-20) — مختصر:** High 1 (تسلسل الدفع/حركة

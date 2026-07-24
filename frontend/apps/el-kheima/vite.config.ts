@@ -10,7 +10,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon-192.png', 'icon-512.png'],
       manifest: {
-        name: 'Resort OS',
+        name: 'Resort OS — El Kheima',
         short_name: 'Resort OS',
         description: 'نظام إدارة المنتجع المتكامل — نقطة البيع، المطبخ، العمليات، الإدارة، الجرسون، بوابة الموظفين',
         theme_color: '#0B4F8A',
@@ -19,7 +19,7 @@ export default defineConfig({
         start_url: '/',
         scope: '/',
         dir: 'rtl',
-        lang: 'ar',
+        lang: 'ar-EG',
         icons: [
           { src: 'icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icon-512.png', sizes: '512x512', type: 'image/png' },

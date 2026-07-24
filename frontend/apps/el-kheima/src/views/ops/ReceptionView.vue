@@ -79,11 +79,26 @@ const allRooms       = ref<{ id: number; name: string }[]>([])
 const ratePlans      = ref<RatePlanOption[]>([])
 const loading        = ref(false)
 const searchQuery    = ref('')
+// ── Room map filters ─────────────────────────────────────────────────────────
+const roomSearchQuery  = ref('')
+const roomStatusFilter = ref<string | null>(null)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Computed stats
 // ─────────────────────────────────────────────────────────────────────────────
 const checkedInToday  = computed(() => todayBookings.value.filter(b => b.status === 'checked_in').length)
+
+const filteredRooms = computed(() => {
+  let list = rooms.value
+  if (roomStatusFilter.value) list = list.filter(r => r.status === roomStatusFilter.value)
+  const q = roomSearchQuery.value.trim().toLowerCase()
+  if (q) list = list.filter(r =>
+    r.name.toLowerCase().includes(q) ||
+    (roomTypesById.value[r.room_type_id]?.name ?? '').toLowerCase().includes(q) ||
+    (bookingByRoomId.value[r.id]?.guest_name ?? '').toLowerCase().includes(q)
+  )
+  return list
+})
 const checkedOutToday = computed(() => todayBookings.value.filter(b => b.status === 'checked_out').length)
 const arrivalsToday   = computed(() =>
   todayBookings.value.filter(b => ['pending', 'confirmed'].includes(b.status)).length)
@@ -235,10 +250,24 @@ async function confirmCheckIn() {
 const coOpen    = ref(false)
 const coBooking = ref<Booking | null>(null)
 const coLoading = ref(false)
+// folio summary لعرضه في الـ check-out modal قبل التأكيد
+interface FolioCharge { id: number; charge_type: string; description: string; amount: string }
+interface FolioSummary { id: number; total: string; charges: FolioCharge[] }
+const coFolio   = ref<FolioSummary | null>(null)
+const coFolioLoading = ref(false)
 
 function openCheckOut(booking: Booking) {
   coBooking.value = booking
+  coFolio.value   = null
   coOpen.value    = true
+  // جلب الفوليو لو موجود لعرض الإجمالي قبل تأكيد الخروج
+  if ((booking as any).folio_id) {
+    coFolioLoading.value = true
+    api.get(`/api/v1/finance/folios/${(booking as any).folio_id}`)
+      .then(r => { coFolio.value = r.data })
+      .catch(() => {})
+      .finally(() => { coFolioLoading.value = false })
+  }
 }
 
 function openCheckOutFromRoom(roomId: number) {
@@ -365,11 +394,11 @@ async function runNightAudit() {
 // Room status colors
 // ─────────────────────────────────────────────────────────────────────────────
 const roomStatusConfig = computed<Record<string, { label: string; bg: string; text: string; dot: string }>>(() => ({
-  available:        { label: t('backoffice.reception.roomStatus.available'),       bg: 'bg-green-50',  text: 'text-green-700',  dot: 'bg-green-500' },
-  occupied:         { label: t('backoffice.reception.roomStatus.occupied'),        bg: 'bg-blue-50',   text: 'text-blue-700',   dot: 'bg-blue-500' },
-  reserved:         { label: t('backoffice.reception.roomStatus.reserved'),        bg: 'bg-amber-50',  text: 'text-amber-700',  dot: 'bg-amber-500' },
-  checkout_pending: { label: t('backoffice.reception.roomStatus.checkoutPending'), bg: 'bg-slate-50',  text: 'text-slate-600',  dot: 'bg-slate-400' },
-  maintenance:      { label: t('backoffice.reception.roomStatus.maintenance'),     bg: 'bg-red-50',    text: 'text-red-700',    dot: 'bg-red-500' },
+  available:        { label: t('backoffice.reception.roomStatus.available'), bg: 'bg-green-50 dark:bg-green-950/40', text: 'text-green-700 dark:text-green-300', dot: 'bg-green-500' },
+  occupied:         { label: t('backoffice.reception.roomStatus.occupied'), bg: 'bg-blue-50 dark:bg-blue-950/40', text: 'text-blue-700 dark:text-blue-300', dot: 'bg-blue-500' },
+  reserved:         { label: t('backoffice.reception.roomStatus.reserved'), bg: 'bg-amber-50 dark:bg-amber-950/40', text: 'text-amber-700 dark:text-amber-300', dot: 'bg-amber-500' },
+  checkout_pending: { label: t('backoffice.reception.roomStatus.checkoutPending'), bg: 'bg-slate-50 dark:bg-slate-800/60', text: 'text-slate-600 dark:text-slate-300', dot: 'bg-slate-400' },
+  maintenance:      { label: t('backoffice.reception.roomStatus.maintenance'), bg: 'bg-red-50 dark:bg-red-950/40', text: 'text-red-700 dark:text-red-300', dot: 'bg-red-500' },
 }))
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -490,7 +519,7 @@ onUnmounted(() => {
       <div class="lg:col-span-2 space-y-4">
         <AppCard>
           <template v-slot:default>
-            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
               <h2 class="text-base font-semibold text-gray-800 dark:text-gray-200">🏨 {{ t('backoffice.reception.roomStatusTitle') }}</h2>
               <!-- legend -->
               <div class="flex flex-wrap gap-3">
@@ -501,14 +530,36 @@ onUnmounted(() => {
                 </span>
               </div>
             </div>
+            <!-- فلتر + بحث خريطة الغرف -->
+            <div class="flex flex-wrap gap-2 mb-3">
+              <input
+                v-model="roomSearchQuery"
+                type="search"
+                :placeholder="t('backoffice.reception.roomSearchPlaceholder')"
+                class="flex-1 min-w-[140px] px-3 py-1.5 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface text-sm focus:outline-none focus:ring-2 focus:ring-primary-500"
+              />
+              <button
+                @click="roomStatusFilter = null"
+                :class="['px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors', !roomStatusFilter ? 'bg-primary-700 text-white' : 'bg-stone-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-stone-200']"
+              >{{ t('common.allStatuses') }}</button>
+              <button
+                v-for="(cfg, key) in roomStatusConfig" :key="key"
+                @click="roomStatusFilter = roomStatusFilter === key ? null : key"
+                :class="['px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors flex items-center gap-1',
+                  roomStatusFilter === key ? 'bg-primary-700 text-white' : 'bg-stone-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-stone-200']"
+              >
+                <span :class="['w-2 h-2 rounded-full', cfg.dot]" />{{ cfg.label }}
+              </button>
+            </div>
 
             <div v-if="loading" class="flex justify-center py-12"><AppSpinner /></div>
 
             <EmptyState v-else-if="!rooms.length" :title="t('backoffice.reception.noRooms')" />
+            <p v-else-if="filteredRooms.length === 0" class="text-sm text-center text-muted py-6">{{ t('backoffice.reception.noRoomsFiltered') }}</p>
 
             <div v-else class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
               <div
-                v-for="room in rooms"
+                v-for="room in filteredRooms"
                 :key="room.id"
                 :class="[
                   'rounded-xl border p-2.5 flex flex-col gap-1 cursor-pointer transition-all hover:shadow-sm select-none',
@@ -561,8 +612,8 @@ onUnmounted(() => {
                 :key="task.id"
                 :class="[
                   'flex items-center gap-2 rounded-lg px-3 py-2 text-sm',
-                  task.priority === 'urgent'   ? 'bg-red-50 border border-red-200' :
-                  task.priority === 'high'     ? 'bg-amber-50 border border-amber-200' :
+                  task.priority === 'urgent'   ? 'border border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-950/40' :
+                  task.priority === 'high'     ? 'border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40' :
                                                  'bg-background border border-border',
                 ]"
               >
@@ -640,10 +691,25 @@ onUnmounted(() => {
     >
       <template v-slot:default>
         <div v-if="coBooking" class="space-y-3">
-          <div class="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-1">
-            <p class="font-bold text-amber-900 text-lg">{{ coBooking.guest_name }}</p>
-            <p class="text-sm text-amber-700">{{ t('backoffice.reception.bookingHash', { id: coBooking.id }) }}</p>
-            <p class="text-sm text-amber-700">{{ t('backoffice.reception.departureDate', { date: coBooking.check_out }) }}</p>
+          <div class="space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40">
+            <p class="text-lg font-bold text-amber-900 dark:text-amber-200">{{ coBooking.guest_name }}</p>
+            <p class="text-sm text-amber-700 dark:text-amber-300">{{ t('backoffice.reception.bookingHash', { id: coBooking.id }) }}</p>
+            <p class="text-sm text-amber-700 dark:text-amber-300">{{ t('backoffice.reception.departureDate', { date: coBooking.check_out }) }}</p>
+          </div>
+          <!-- Folio summary -->
+          <div v-if="coFolioLoading" class="flex justify-center py-3"><AppSpinner size="sm" /></div>
+          <div v-else-if="coFolio" class="rounded-xl border border-stone-200 dark:border-border p-3 space-y-2">
+            <p class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.reception.folioSummaryTitle') }}</p>
+            <div v-if="coFolio.charges.length" class="space-y-1 max-h-40 overflow-y-auto">
+              <div v-for="ch in coFolio.charges" :key="ch.id" class="flex justify-between text-xs">
+                <span class="text-gray-600 dark:text-gray-300 truncate">{{ ch.description }}</span>
+                <span class="font-semibold tabular-nums ms-2">{{ formatNumber(Number(ch.amount)) }}</span>
+              </div>
+            </div>
+            <div class="flex justify-between items-center border-t border-stone-200 dark:border-border pt-2">
+              <span class="text-sm font-bold text-gray-700 dark:text-gray-200">{{ t('backoffice.reception.folioTotal') }}</span>
+              <span class="text-base font-black text-primary-700 dark:text-primary-300 tabular-nums">{{ formatNumber(Number(coFolio.total)) }}</span>
+            </div>
           </div>
           <p class="text-sm text-muted">
             {{ t('backoffice.reception.checkOutHint') }}
@@ -698,7 +764,7 @@ onUnmounted(() => {
                 :class="[
                   'flex items-center gap-2 rounded-lg border px-3 py-2 cursor-pointer text-sm transition-colors',
                   nbForm.room_ids.includes(opt.value as number)
-                    ? 'border-primary-500 bg-primary-50 text-primary-800'
+                    ? 'border-primary-500 bg-primary-50 text-primary-800 dark:bg-primary-950/40 dark:text-primary-200'
                     : 'border-border bg-background hover:border-primary-300',
                 ]"
               >
@@ -754,14 +820,14 @@ onUnmounted(() => {
             :label="t('backoffice.reception.auditDate')"
             type="date"
           />
-          <div v-if="naResult" class="bg-green-50 border border-green-200 rounded-xl p-4 space-y-1 text-sm">
-            <p class="font-bold text-green-800">✅ {{ t('backoffice.reception.auditSuccess') }}</p>
-            <p class="text-green-700">{{ t('backoffice.reception.roomsUpdated', { count: naResult.rooms_updated }) }}</p>
-            <p class="text-green-700">
+          <div v-if="naResult" class="space-y-1 rounded-xl border border-green-200 bg-green-50 p-4 text-sm dark:border-green-800 dark:bg-green-950/40">
+            <p class="font-bold text-green-800 dark:text-green-300">✅ {{ t('backoffice.reception.auditSuccess') }}</p>
+            <p class="text-green-700 dark:text-green-300">{{ t('backoffice.reception.roomsUpdated', { count: naResult.rooms_updated }) }}</p>
+            <p class="text-green-700 dark:text-green-300">
               {{ t('backoffice.reception.calculatedRevenue', { amount: naResult.revenue != null ? formatNumber(naResult.revenue) : '—' }) }}
             </p>
           </div>
-          <div v-if="naError" class="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
+          <div v-if="naError" class="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
             {{ naError }}
           </div>
         </div>

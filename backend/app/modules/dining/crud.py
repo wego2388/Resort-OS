@@ -629,6 +629,38 @@ def get_order_item(db: Session, order_id: int, item_id: int) -> Optional[DiningO
     )
 
 
+def list_active_order_items(db: Session, order_id: int) -> list[DiningOrderItem]:
+    """Return live order lines from the database, avoiding stale relationships."""
+    return (
+        db.query(DiningOrderItem)
+        .filter(
+            DiningOrderItem.order_id == order_id,
+            DiningOrderItem.status.notin_(("cancelled", "refunded")),
+        )
+        .all()
+    )
+
+
+def reassign_order_items(db: Session, from_order_id: int, to_order_id: int) -> int:
+    """Move order lines without changing their preparation or audit state."""
+    items = db.query(DiningOrderItem).filter(DiningOrderItem.order_id == from_order_id).all()
+    for item in items:
+        item.order_id = to_order_id
+    db.flush()
+    return len(items)
+
+
+def reassign_kitchen_tickets(db: Session, from_order_id: int, to_order_id: int) -> int:
+    """Move KDS ownership without re-firing or modifying ticket snapshots."""
+    tickets = db.query(DiningKitchenTicket).filter(
+        DiningKitchenTicket.order_id == from_order_id,
+    ).all()
+    for ticket in tickets:
+        ticket.order_id = to_order_id
+    db.flush()
+    return len(tickets)
+
+
 def void_order_item(db: Session, item: DiningOrderItem, reason: str, voided_by: int) -> DiningOrderItem:
     item.status = "cancelled"
     item.voided_reason = reason

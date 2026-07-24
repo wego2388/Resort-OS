@@ -185,6 +185,27 @@ class TestLoginTime2FA:
 # ── 6: registration can't self-assign an elevated role ─────────────────────
 
 class TestRegistrationPrivilegeEscalation:
+    def test_public_registration_is_hidden_in_production_by_default(self, client, setup_db):
+        from app.core.config import settings
+
+        original_environment = settings.ENVIRONMENT
+        original_enabled = settings.PUBLIC_REGISTRATION_ENABLED
+        settings.ENVIRONMENT = "production"
+        settings.PUBLIC_REGISTRATION_ENABLED = False
+        try:
+            res = client.post(
+                "/api/v1/auth/register",
+                json={
+                    "email": f"closed-{uuid.uuid4().hex}@test.local",
+                    "password": "Strong@12345",
+                    "full_name": "Closed Registration",
+                },
+            )
+        finally:
+            settings.ENVIRONMENT = original_environment
+            settings.PUBLIC_REGISTRATION_ENABLED = original_enabled
+        assert res.status_code == 404
+
     def test_service_ignores_caller_supplied_role(self, setup_db):
         email = f"reg-{uuid.uuid4().hex}@test.local"
         auth = _svc()

@@ -53,7 +53,7 @@ async function handleSubmit() {
   >
     <div class="w-full max-w-md">
       <div class="text-center mb-8">
-        <div class="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur text-3xl">🔑</div>
+        <div class="w-16 h-16 bg-white dark:bg-surface/10 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur text-3xl">🔑</div>
         <h1 class="text-2xl font-bold text-white mb-1">{{ t('backoffice.forgotPassword.title') }}</h1>
         <p class="text-blue-200 text-sm">{{ t('backoffice.forgotPassword.subtitle') }}</p>
       </div>
@@ -76,13 +76,13 @@ async function handleSubmit() {
                 class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-gray-100"
               />
             </div>
-            <p v-if="error" class="text-red-600 text-sm">{{ error }}</p>
+            <p v-if="error" class="text-sm text-red-600 dark:text-red-300">{{ error }}</p>
             <button
               type="submit"
               :disabled="loading"
               class="w-full bg-blue-700 text-white py-3 rounded-xl font-semibold hover:bg-blue-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              <svg v-if="loading" class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+              <svg v-if="loading" class="motion-safe:animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
               </svg>
@@ -93,13 +93,13 @@ async function handleSubmit() {
 
         <!-- رسالة عامة موحّدة — تظهر سواء الإيميل مسجّل أو لأ (لا تسريب معلومات) -->
         <template v-else>
-          <div class="flex items-center gap-3 bg-green-50 border border-green-200 text-green-700 rounded-xl px-4 py-3 mb-2">
+          <div class="mb-2 flex items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-green-700 dark:border-green-800 dark:bg-green-950/40 dark:text-green-300">
             <span class="text-xl">✓</span>
             <span class="font-medium text-sm">{{ t('backoffice.forgotPassword.successMessage') }}</span>
           </div>
         </template>
 
-        <router-link to="/login" class="block text-center text-sm text-blue-700 font-medium hover:underline mt-6">
+        <router-link to="/login" class="mt-6 block text-center text-sm font-medium text-blue-700 hover:underline dark:text-blue-300">
           {{ t('backoffice.forgotPassword.backToLogin') }}
         </router-link>
         <p class="text-center text-xs text-gray-400 mt-6">{{ t('backoffice.login.footer') }}</p>

@@ -59,8 +59,11 @@ const leads = ref<Lead[]>([])
 const leadSources = ref<LeadSource[]>([])
 const customers = ref<Customer[]>([])
 const opportunities = ref<Opportunity[]>([])
+const opportunitiesTotal = ref(0)
 const activities = ref<Activity[]>([])
+const activitiesTotal = ref(0)
 const campaigns = ref<Campaign[]>([])
+const campaignsTotal = ref(0)
 const guestProfiles = ref<GuestProfile[]>([])
 const guestVipOnly = ref(false)
 const loading = ref(false)
@@ -309,6 +312,7 @@ async function loadOpportunities() {
     if (customers.value.length === 0) await loadCustomers()
     const res = await api.get('/api/v1/crm/opportunities', { params: { branch_id: branchId, size: 100 } })
     opportunities.value = res.data.items ?? res.data
+    opportunitiesTotal.value = res.data.total ?? opportunities.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadOpportunitiesError')) }
   finally { loading.value = false }
 }
@@ -319,6 +323,7 @@ async function loadActivities() {
     if (customers.value.length === 0) await loadCustomers()
     const res = await api.get('/api/v1/crm/activities', { params: { branch_id: branchId, size: 100 } })
     activities.value = res.data.items ?? res.data
+    activitiesTotal.value = res.data.total ?? activities.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadActivitiesError')) }
   finally { loading.value = false }
 }
@@ -328,6 +333,7 @@ async function loadCampaigns() {
   try {
     const res = await api.get('/api/v1/crm/campaigns', { params: { branch_id: branchId, size: 100 } })
     campaigns.value = res.data.items ?? res.data
+    campaignsTotal.value = res.data.total ?? campaigns.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadCampaignsError')) }
   finally { loading.value = false }
 }
@@ -785,7 +791,7 @@ onMounted(loadLeads)
       <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl w-fit">
         <button v-for="tabDef in tabsList"
           :key="tabDef.val" @click="loadTab(tabDef.val as any)"
-          :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
+          :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
         >{{ tabDef.label }}</button>
       </div>
       <AppButton v-if="tab === 'leads'" size="sm" @click="showLeadForm = !showLeadForm">
@@ -843,13 +849,13 @@ onMounted(loadLeads)
           <div>
             <div class="flex items-center gap-2 mb-1">
               <span class="font-bold text-gray-900 dark:text-gray-100">{{ lead.full_name }}</span>
-              <span v-if="lead.phone" class="text-xs text-gray-400 dark:text-gray-500">{{ lead.phone }}</span>
+              <span v-if="lead.phone" class="text-xs text-gray-400 dark:text-gray-400">{{ lead.phone }}</span>
             </div>
             <div class="flex items-center gap-2 text-xs flex-wrap">
-              <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">{{ interestLabels[lead.interest] ?? lead.interest }}</span>
-              <span v-if="lead.source_id" class="px-2 py-0.5 bg-stone-100 dark:bg-gray-700 text-gray-600 dark:text-gray-500 rounded-full">{{ sourceNameById[lead.source_id] ?? t('backoffice.crm.sourceHash', { id: lead.source_id }) }}</span>
-              <span v-else class="px-2 py-0.5 bg-stone-100 dark:bg-gray-700 text-gray-400 dark:text-gray-500 rounded-full">{{ t('backoffice.crm.noSource') }}</span>
-              <span class="text-gray-400 dark:text-gray-500">{{ fmtDate(lead.created_at) }}</span>
+              <span class="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">{{ interestLabels[lead.interest] ?? lead.interest }}</span>
+              <span v-if="lead.source_id" class="px-2 py-0.5 bg-stone-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 rounded-full">{{ sourceNameById[lead.source_id] ?? t('backoffice.crm.sourceHash', { id: lead.source_id }) }}</span>
+              <span v-else class="px-2 py-0.5 bg-stone-100 dark:bg-gray-700 text-gray-400 dark:text-gray-400 rounded-full">{{ t('backoffice.crm.noSource') }}</span>
+              <span class="text-gray-400 dark:text-gray-400">{{ fmtDate(lead.created_at) }}</span>
             </div>
           </div>
           <div class="flex items-center gap-2" @click.stop>
@@ -895,11 +901,11 @@ onMounted(loadLeads)
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.customer') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.segmentCol') }}</th>
-              <th v-if="authStore.roleLevel >= 60" class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.discountGroup') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.visits') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.totalSpent') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.customer') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.segmentCol') }}</th>
+              <th v-if="authStore.roleLevel >= 60" class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.discountGroup') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.visits') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.totalSpent') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -912,7 +918,7 @@ onMounted(loadLeads)
                       {{ c.full_name }}
                       <AppBadge v-if="c.blacklisted" size="sm" variant="danger">{{ t('backoffice.crm.blacklisted') }}</AppBadge>
                     </div>
-                    <div v-if="c.phone" class="text-xs text-gray-400 dark:text-gray-500">{{ c.phone }}</div>
+                    <div v-if="c.phone" class="text-xs text-gray-400 dark:text-gray-400">{{ c.phone }}</div>
                   </div>
                 </div>
               </td>
@@ -929,7 +935,7 @@ onMounted(loadLeads)
                 </select>
               </td>
               <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 font-medium">{{ c.visits_count }}</td>
-              <td class="px-4 py-3 text-sm font-bold text-blue-700">{{ formatNumber(c.total_spent) }} {{ t('backoffice.crm.egp') }}</td>
+              <td class="px-4 py-3 text-sm font-bold text-blue-700 dark:text-blue-300">{{ formatNumber(c.total_spent) }} {{ t('backoffice.crm.egp') }}</td>
             </tr>
             <tr v-if="customers.length === 0">
               <td colspan="5" class="px-4 py-8">
@@ -972,18 +978,18 @@ onMounted(loadLeads)
           <div class="flex items-center justify-between mb-2">
             <div>
               <span class="font-bold text-gray-900 dark:text-gray-100">{{ opp.title }}</span>
-              <span class="text-xs text-gray-400 dark:text-gray-500 ms-2">{{ customerNameById[opp.customer_id] ?? t('backoffice.crm.customerHash', { id: opp.customer_id }) }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-400 ms-2">{{ customerNameById[opp.customer_id] ?? t('backoffice.crm.customerHash', { id: opp.customer_id }) }}</span>
             </div>
             <AppBadge size="sm" :variant="oppStageConfig[opp.stage]?.variant ?? 'neutral'">
               {{ oppStageConfig[opp.stage]?.label ?? opp.stage }}
             </AppBadge>
           </div>
-          <div class="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-500 mb-3 flex-wrap">
+          <div class="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 mb-3 flex-wrap">
             <span>{{ productTypeLabels[opp.product_type] ?? opp.product_type }}</span>
             <span>{{ t('backoffice.crm.expectedValueLabel') }}: {{ formatNumber(opp.expected_value) }} {{ t('backoffice.crm.egp') }}</span>
             <span>{{ t('backoffice.crm.probabilityLabel') }}: {{ opp.probability }}%</span>
             <span v-if="opp.expected_close">{{ t('backoffice.crm.expectedCloseLabel') }}: {{ fmtDate(opp.expected_close) }}</span>
-            <span v-if="opp.lost_reason" class="text-red-600">{{ t('backoffice.crm.lostReasonLabel') }}: {{ opp.lost_reason }}</span>
+            <span v-if="opp.lost_reason" class="text-red-600 dark:text-red-300">{{ t('backoffice.crm.lostReasonLabel') }}: {{ opp.lost_reason }}</span>
           </div>
           <div v-if="!['won','lost'].includes(opp.stage)" class="flex items-center gap-2 flex-wrap">
             <AppButton v-if="opp.stage === 'lead'" size="sm" @click="setOpportunityStage(opp, 'qualified')">{{ t('backoffice.crm.qualify') }}</AppButton>
@@ -1000,6 +1006,13 @@ onMounted(loadLeads)
           </div>
         </div>
         <EmptyState v-if="opportunities.length === 0" icon="💼" :title="t('backoffice.crm.noOpportunities')" />
+        <!-- Truncation warning -->
+        <p
+          v-if="opportunitiesTotal > opportunities.length"
+          class="px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+        >
+          ⚠️ {{ t('common.showingOf', { shown: opportunities.length, total: opportunitiesTotal }) }} — {{ t('common.useSearchToFilter') }}
+        </p>
       </div>
     </div>
 
@@ -1030,11 +1043,11 @@ onMounted(loadLeads)
           <div>
             <div class="flex items-center gap-2 mb-1">
               <span class="font-bold text-gray-900 dark:text-gray-100">{{ act.title }}</span>
-              <span class="text-xs text-gray-400 dark:text-gray-500">{{ customerNameById[act.customer_id] ?? t('backoffice.crm.customerHash', { id: act.customer_id }) }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-400">{{ customerNameById[act.customer_id] ?? t('backoffice.crm.customerHash', { id: act.customer_id }) }}</span>
             </div>
             <div class="flex items-center gap-2 text-xs flex-wrap">
-              <span class="px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full">{{ activityTypeLabels[act.activity_type] ?? act.activity_type }}</span>
-              <span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.crm.dueLabel') }} {{ fmtDate(act.due_date) }}<span v-if="act.due_time"> — {{ act.due_time }}</span></span>
+              <span class="rounded-full bg-blue-50 px-2 py-0.5 text-blue-700 dark:bg-blue-950/40 dark:text-blue-300">{{ activityTypeLabels[act.activity_type] ?? act.activity_type }}</span>
+              <span class="text-gray-400 dark:text-gray-400">{{ t('backoffice.crm.dueLabel') }} {{ fmtDate(act.due_date) }}<span v-if="act.due_time"> — {{ act.due_time }}</span></span>
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -1046,16 +1059,23 @@ onMounted(loadLeads)
           </div>
         </div>
         <EmptyState v-if="activities.length === 0" icon="🗓️" :title="t('backoffice.crm.noActivities')" />
+        <!-- Truncation warning -->
+        <p
+          v-if="activitiesTotal > activities.length"
+          class="px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+        >
+          ⚠️ {{ t('common.showingOf', { shown: activities.length, total: activitiesTotal }) }} — {{ t('common.useSearchToFilter') }}
+        </p>
       </div>
     </div>
 
     <!-- Guest Profiles (PMS checkout integration — read-only) -->
     <div v-if="tab === 'guests'">
-      <p class="text-xs text-gray-500 dark:text-gray-500 mb-3">
+      <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
         {{ t('backoffice.crm.guestProfilesHint') }}
       </p>
       <div class="flex justify-end mb-3">
-        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-500">
+        <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
           <input type="checkbox" v-model="guestVipOnly" @change="loadGuestProfiles" />
           {{ t('backoffice.crm.vipOnly') }}
         </label>
@@ -1065,10 +1085,10 @@ onMounted(loadLeads)
         <table class="w-full">
           <thead class="bg-stone-50 dark:bg-gray-800/60">
             <tr>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.guest') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.visitCount') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.avgSpend') }}</th>
-              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.crm.lastStay') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.guest') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.visitCount') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.avgSpend') }}</th>
+              <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.crm.lastStay') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -1078,13 +1098,13 @@ onMounted(loadLeads)
                   <span v-if="g.vip_flag" class="text-amber-500 text-sm">⭐</span>
                   <div>
                     <div class="font-medium text-gray-900 dark:text-gray-100 text-sm">{{ g.full_name }}</div>
-                    <div class="text-xs text-gray-400 dark:text-gray-500">{{ g.phone }}</div>
+                    <div class="text-xs text-gray-400 dark:text-gray-400">{{ g.phone }}</div>
                   </div>
                 </div>
               </td>
               <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300 font-medium">{{ g.total_visits }}</td>
-              <td class="px-4 py-3 text-sm font-bold text-blue-700">{{ formatNumber(g.avg_spend) }} {{ t('backoffice.crm.egp') }}</td>
-              <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ fmtDate(g.last_stay) }}</td>
+              <td class="px-4 py-3 text-sm font-bold text-blue-700 dark:text-blue-300">{{ formatNumber(g.avg_spend) }} {{ t('backoffice.crm.egp') }}</td>
+              <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ fmtDate(g.last_stay) }}</td>
             </tr>
             <tr v-if="guestProfiles.length === 0">
               <td colspan="4" class="px-4 py-8">
@@ -1122,13 +1142,13 @@ onMounted(loadLeads)
           <div class="flex items-center justify-between mb-2">
             <div>
               <span class="font-bold text-gray-900 dark:text-gray-100">{{ c.name }}</span>
-              <span class="text-xs text-gray-400 dark:text-gray-500 ms-2">{{ campaignTypeLabels[c.campaign_type] ?? c.campaign_type }}</span>
+              <span class="text-xs text-gray-400 dark:text-gray-400 ms-2">{{ campaignTypeLabels[c.campaign_type] ?? c.campaign_type }}</span>
             </div>
             <AppBadge size="sm" :variant="campaignStatusConfig[c.status]?.variant ?? 'neutral'">
               {{ campaignStatusConfig[c.status]?.label ?? c.status }}
             </AppBadge>
           </div>
-          <div class="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-500 mb-3">
+          <div class="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400 mb-3">
             <span>{{ c.start_date }} → {{ c.end_date }}</span>
             <span>{{ t('backoffice.crm.budgetLabel') }}: {{ formatNumber(c.budget) }} {{ t('backoffice.crm.egp') }}</span>
             <span>{{ t('backoffice.crm.attributedRevenue') }}: {{ formatNumber(c.revenue_attributed) }} {{ t('backoffice.crm.egp') }}</span>
@@ -1141,6 +1161,13 @@ onMounted(loadLeads)
           </div>
         </div>
         <EmptyState v-if="campaigns.length === 0" icon="📢" :title="t('backoffice.crm.noCampaigns')" />
+        <!-- Truncation warning -->
+        <p
+          v-if="campaignsTotal > campaigns.length"
+          class="px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+        >
+          ⚠️ {{ t('common.showingOf', { shown: campaigns.length, total: campaignsTotal }) }} — {{ t('common.useSearchToFilter') }}
+        </p>
       </div>
     </div>
 
@@ -1151,8 +1178,8 @@ onMounted(loadLeads)
           <AppBadge size="sm" :variant="stageConfig[selectedLead.stage]?.variant ?? 'neutral'">
             {{ stageConfig[selectedLead.stage]?.label ?? selectedLead.stage }}
           </AppBadge>
-          <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.crm.createdAt') }} {{ fmtDate(selectedLead.created_at) }}</span>
-          <span v-if="selectedLead.lost_reason" class="text-xs text-red-600">{{ t('backoffice.crm.lostReasonLabel') }}: {{ selectedLead.lost_reason }}</span>
+          <span class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.crm.createdAt') }} {{ fmtDate(selectedLead.created_at) }}</span>
+          <span v-if="selectedLead.lost_reason" class="text-xs text-red-600 dark:text-red-300">{{ t('backoffice.crm.lostReasonLabel') }}: {{ selectedLead.lost_reason }}</span>
         </div>
 
         <!-- تعديل بيانات أساسية -->
@@ -1181,12 +1208,12 @@ onMounted(loadLeads)
             <div v-for="n in callNotes" :key="n.id" class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3 text-sm">
               <div class="flex items-center justify-between mb-1">
                 <span class="font-medium text-gray-800 dark:text-gray-200">{{ n.direction === 'inbound' ? t('backoffice.crm.inboundCall') : t('backoffice.crm.outboundCall') }}</span>
-                <span class="text-xs text-gray-400 dark:text-gray-500">{{ fmtDateTime(n.called_at) }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-400">{{ fmtDateTime(n.called_at) }}</span>
               </div>
-              <p class="text-gray-600 dark:text-gray-500">{{ n.summary }}</p>
+              <p class="text-gray-600 dark:text-gray-400">{{ n.summary }}</p>
               <div class="flex items-center gap-2 mt-1">
                 <AppBadge size="sm" variant="info">{{ outcomeLabels[n.outcome] ?? n.outcome }}</AppBadge>
-                <span v-if="n.duration_min" class="text-xs text-gray-400 dark:text-gray-500">{{ n.duration_min }} {{ t('backoffice.crm.minutes') }}</span>
+                <span v-if="n.duration_min" class="text-xs text-gray-400 dark:text-gray-400">{{ n.duration_min }} {{ t('backoffice.crm.minutes') }}</span>
               </div>
             </div>
             <EmptyState v-if="callNotes.length === 0" icon="📞" :title="t('backoffice.crm.noCallsYet')" />
@@ -1227,7 +1254,7 @@ onMounted(loadLeads)
             <AppButton size="sm" variant="primary" :loading="convertingLead" @click="convertLeadToBooking">{{ t('backoffice.crm.convertButton') }}</AppButton>
           </div>
           <p v-if="convertForm.check_in && convertForm.check_out && !loadingAvailableRooms && !availableRoomsForConvert.length"
-            class="text-xs text-amber-600 mt-1">{{ t('backoffice.crm.noRoomsAvailable') }}</p>
+            class="mt-1 text-xs text-amber-600 dark:text-amber-300">{{ t('backoffice.crm.noRoomsAvailable') }}</p>
         </div>
 
         <!-- وسم كخسارة -->
@@ -1245,7 +1272,7 @@ onMounted(loadLeads)
     <!-- مجموعات العملاء (خصم دائم) -->
     <AppModal :open="groupModal" :title="t('backoffice.crm.customerGroups')" size="lg" @close="groupModal = false">
       <div class="space-y-4">
-        <p class="text-xs text-gray-500 dark:text-gray-500">
+        <p class="text-xs text-gray-500 dark:text-gray-400">
           {{ t('backoffice.crm.groupsHint') }}
         </p>
 
@@ -1265,19 +1292,19 @@ onMounted(loadLeads)
             <AppButton v-if="editingGroup" size="sm" variant="secondary" @click="openCreateGroup">{{ t('backoffice.crm.cancelEdit') }}</AppButton>
           </div>
         </AppCard>
-        <p v-else class="text-xs text-amber-600">{{ t('backoffice.crm.groupsAdminOnly') }}</p>
+        <p v-else class="text-xs text-amber-600 dark:text-amber-300">{{ t('backoffice.crm.groupsAdminOnly') }}</p>
 
         <div class="border-t border-stone-100 dark:border-border/50 pt-3 space-y-2">
           <div v-for="g in groups" :key="g.id" class="flex items-center justify-between bg-stone-50 dark:bg-gray-800/60 rounded-xl px-3 py-2">
             <div>
               <span class="font-medium text-sm text-gray-900 dark:text-gray-100">{{ g.name_ar || g.name }}</span>
-              <span class="text-xs text-gray-500 dark:text-gray-500 ms-2">{{ t('backoffice.crm.discountOf', { pct: g.discount_percentage }) }}</span>
+              <span class="text-xs text-gray-500 dark:text-gray-400 ms-2">{{ t('backoffice.crm.discountOf', { pct: g.discount_percentage }) }}</span>
             </div>
             <div class="flex items-center gap-2">
               <AppBadge size="sm" :variant="g.is_active ? 'success' : 'neutral'">{{ g.is_active ? t('backoffice.crm.groupActive') : t('backoffice.crm.groupSuspended') }}</AppBadge>
               <template v-if="authStore.roleLevel >= 80">
                 <button @click="openEditGroup(g)" class="text-xs font-semibold text-primary-700 hover:underline">{{ t('backoffice.crm.edit') }}</button>
-                <button @click="toggleGroupActive(g)" class="text-xs font-semibold text-gray-500 dark:text-gray-500 hover:underline">
+                <button @click="toggleGroupActive(g)" class="text-xs font-semibold text-gray-500 dark:text-gray-400 hover:underline">
                   {{ g.is_active ? t('backoffice.crm.suspend') : t('backoffice.crm.activate') }}
                 </button>
               </template>
@@ -1296,19 +1323,19 @@ onMounted(loadLeads)
         <div v-else-if="loyaltyProgram" class="space-y-3">
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.crm.pointPer') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.crm.pointPer') }}</div>
               <div class="text-xl font-black text-gray-800 dark:text-gray-200">{{ loyaltyProgram.points_per_egp }} {{ t('backoffice.crm.egp') }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.crm.pointValue') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.crm.pointValue') }}</div>
               <div class="text-xl font-black text-gray-800 dark:text-gray-200">{{ loyaltyProgram.redeem_rate }} {{ t('backoffice.crm.egp') }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.crm.minRedeem') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.crm.minRedeem') }}</div>
               <div class="text-xl font-black text-gray-800 dark:text-gray-200">{{ loyaltyProgram.min_redeem_points }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.crm.statusLabel') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.crm.statusLabel') }}</div>
               <AppBadge :variant="loyaltyProgram.is_active ? 'success' : 'neutral'">
                 {{ loyaltyProgram.is_active ? t('backoffice.crm.programActive') : t('backoffice.crm.programSuspended') }}
               </AppBadge>
@@ -1326,17 +1353,17 @@ onMounted(loadLeads)
         <div v-if="showLoyaltySetup" class="mt-4 border-t border-stone-200 dark:border-border pt-4 space-y-3">
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div>
-              <label class="text-xs font-semibold text-gray-600 dark:text-gray-500 block mb-1">{{ t('backoffice.crm.pointPerEgp') }}</label>
+              <label class="text-xs font-semibold text-gray-600 dark:text-gray-400 block mb-1">{{ t('backoffice.crm.pointPerEgp') }}</label>
               <input v-model="loyaltySetupForm.points_per_egp" type="number" min="0.01" step="0.01"
                 class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="text-xs font-semibold text-gray-600 dark:text-gray-500 block mb-1">{{ t('backoffice.crm.pointValueEgp') }}</label>
+              <label class="text-xs font-semibold text-gray-600 dark:text-gray-400 block mb-1">{{ t('backoffice.crm.pointValueEgp') }}</label>
               <input v-model="loyaltySetupForm.redeem_rate" type="number" min="0.01" step="0.01"
                 class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="text-xs font-semibold text-gray-600 dark:text-gray-500 block mb-1">{{ t('backoffice.crm.minRedeem') }}</label>
+              <label class="text-xs font-semibold text-gray-600 dark:text-gray-400 block mb-1">{{ t('backoffice.crm.minRedeem') }}</label>
               <input v-model="loyaltySetupForm.min_redeem_points" type="number" min="1"
                 class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm" />
             </div>
@@ -1366,24 +1393,24 @@ onMounted(loadLeads)
         <div v-if="loyaltyAccount" class="space-y-4">
           <!-- ملخص الرصيد -->
           <div class="grid grid-cols-3 gap-3 text-center">
-            <div class="bg-green-50 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.crm.currentBalance') }}</div>
-              <div class="text-2xl font-black text-green-700">{{ loyaltyAccount.balance }}</div>
-              <div class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.crm.point') }}</div>
+            <div class="rounded-xl bg-green-50 p-3 dark:bg-green-950/40">
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.crm.currentBalance') }}</div>
+              <div class="text-2xl font-black text-green-700 dark:text-green-300">{{ loyaltyAccount.balance }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.crm.point') }}</div>
             </div>
-            <div class="bg-blue-50 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.crm.lifetimeEarned') }}</div>
-              <div class="text-xl font-black text-blue-700">{{ loyaltyAccount.lifetime_earned }}</div>
+            <div class="rounded-xl bg-blue-50 p-3 dark:bg-blue-950/40">
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.crm.lifetimeEarned') }}</div>
+              <div class="text-xl font-black text-blue-700 dark:text-blue-300">{{ loyaltyAccount.lifetime_earned }}</div>
             </div>
             <div class="bg-stone-50 dark:bg-gray-800/60 rounded-xl p-3">
-              <div class="text-xs text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.crm.lifetimeRedeemed') }}</div>
+              <div class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.crm.lifetimeRedeemed') }}</div>
               <div class="text-xl font-black text-gray-700 dark:text-gray-300">{{ loyaltyAccount.lifetime_redeemed }}</div>
             </div>
           </div>
 
           <!-- فورم الاسترداد -->
-          <div class="border border-amber-200 bg-amber-50 rounded-xl p-4 space-y-2">
-            <div class="text-sm font-bold text-amber-800">🎁 {{ t('backoffice.crm.redeemPoints') }}</div>
+          <div class="space-y-2 rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40">
+            <div class="text-sm font-bold text-amber-800 dark:text-amber-300">🎁 {{ t('backoffice.crm.redeemPoints') }}</div>
             <div class="flex gap-2 flex-wrap">
               <input v-model="redeemForm.customer_id" type="number" :placeholder="t('backoffice.crm.customerIdShort')"
                 :value="loyaltyCustomerId"
@@ -1394,7 +1421,7 @@ onMounted(loadLeads)
                 class="border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm flex-1 min-w-[120px]" />
               <AppButton size="sm" variant="primary" :loading="redeemLoading" @click="redeemPoints">{{ t('backoffice.crm.redeem') }}</AppButton>
             </div>
-            <div v-if="loyaltyProgram" class="text-xs text-amber-700">
+            <div v-if="loyaltyProgram" class="text-xs text-amber-700 dark:text-amber-300">
               {{ t('backoffice.crm.redeemValueLine', { value: redeemForm.points ? (parseFloat(redeemForm.points) * loyaltyProgram.redeem_rate).toFixed(2) : '0', min: loyaltyProgram.min_redeem_points }) }}
             </div>
           </div>
@@ -1402,17 +1429,17 @@ onMounted(loadLeads)
           <!-- سجل المعاملات -->
           <div>
             <div class="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">{{ t('backoffice.crm.recentTransactions') }}</div>
-            <div v-if="loyaltyTransactions.length === 0" class="text-sm text-gray-400 dark:text-gray-500">{{ t('backoffice.crm.noTransactions') }}</div>
+            <div v-if="loyaltyTransactions.length === 0" class="text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.crm.noTransactions') }}</div>
             <div v-for="tx in loyaltyTransactions" :key="tx.id"
               class="flex items-center justify-between py-2 border-b border-stone-100 dark:border-border/50 last:border-0 text-sm">
               <div>
-                <span :class="tx.points > 0 ? 'text-green-600 font-bold' : 'text-red-600 font-bold'">
+                <span :class="tx.points > 0 ? 'font-bold text-green-600 dark:text-green-300' : 'font-bold text-red-600 dark:text-red-300'">
                   {{ tx.points > 0 ? '+' : '' }}{{ tx.points }} {{ t('backoffice.crm.point') }}
                 </span>
-                <span class="text-gray-500 dark:text-gray-500 ms-2 text-xs">{{ tx.transaction_type }}</span>
-                <span v-if="tx.reference" class="text-gray-400 dark:text-gray-500 ms-1 text-xs">· {{ tx.reference }}</span>
+                <span class="text-gray-500 dark:text-gray-400 ms-2 text-xs">{{ tx.transaction_type }}</span>
+                <span v-if="tx.reference" class="text-gray-400 dark:text-gray-400 ms-1 text-xs">· {{ tx.reference }}</span>
               </div>
-              <div class="text-xs text-gray-400 dark:text-gray-500">{{ fmtDate(tx.created_at) }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-400">{{ fmtDate(tx.created_at) }}</div>
             </div>
           </div>
         </div>

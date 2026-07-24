@@ -93,7 +93,7 @@ async function handleLogin() {
     <div class="w-full max-w-md">
       <!-- Logo -->
       <div class="text-center mb-8">
-        <div class="w-20 h-20 bg-white/10 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur">
+        <div class="w-20 h-20 bg-white dark:bg-surface/10 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur">
           <svg class="w-10 h-10 text-amber-300" fill="currentColor" viewBox="0 0 24 24">
             <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
           </svg>
@@ -134,7 +134,7 @@ async function handleLogin() {
             />
           </div>
           <div v-if="!needsOtp && !needsEnrollmentToken" class="text-center -mt-2">
-            <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline">
+            <router-link to="/forgot-password" class="text-sm text-blue-700 hover:underline dark:text-blue-300">
               {{ t('backoffice.login.forgotPassword') }}
             </router-link>
           </div>
@@ -179,12 +179,12 @@ async function handleLogin() {
               autofocus
               class="w-full px-4 py-3 rounded-xl border border-stone-200 dark:border-border dark:bg-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center tracking-wider font-mono text-gray-900 uppercase"
             />
-            <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">
               {{ t(useRecoveryCode ? 'backoffice.login.recoveryCodeHint' : 'backoffice.login.twoFaHint') }}
             </p>
             <button
               type="button"
-              class="mt-2 text-sm text-blue-700 hover:underline"
+              class="mt-2 text-sm text-blue-700 hover:underline dark:text-blue-300"
               @click="useRecoveryCode = !useRecoveryCode"
             >
               {{ t(useRecoveryCode ? 'backoffice.login.useAuthenticator' : 'backoffice.login.useRecoveryCode') }}
@@ -195,14 +195,14 @@ async function handleLogin() {
             :disabled="loading"
             class="w-full bg-blue-700 text-white py-3 rounded-xl font-semibold hover:bg-blue-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            <svg v-if="loading" class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+            <svg v-if="loading" class="motion-safe:animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
               <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
               <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
             </svg>
             {{ loading ? t('backoffice.login.signingIn') : t('backoffice.login.signIn') }}
           </button>
         </form>
-        <p class="text-center text-xs text-gray-400 dark:text-gray-500 mt-6">{{ t('backoffice.login.footer') }}</p>
+        <p class="text-center text-xs text-gray-400 dark:text-gray-400 mt-6">{{ t('backoffice.login.footer') }}</p>
       </div>
     </div>
   </div>

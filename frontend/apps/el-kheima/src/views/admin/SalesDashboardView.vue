@@ -106,26 +106,26 @@ onMounted(load)
     <div class="flex items-center justify-between mb-6">
       <div>
         <h1 class="text-xl font-black text-gray-900 dark:text-gray-100">📞 {{ t('backoffice.salesDashboard.title') }}</h1>
-        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.salesDashboard.subtitle') }}</p>
+        <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.salesDashboard.subtitle') }}</p>
       </div>
       <div class="flex items-center gap-2">
         <button
           @click="exportExcel" :disabled="exporting || !dash"
-          class="px-4 py-2 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-sm font-bold text-gray-600 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
+          class="px-4 py-2 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-sm font-bold text-gray-600 dark:text-gray-400 hover:bg-stone-50 dark:bg-gray-800/60 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           {{ exporting ? `⏳ ${t('backoffice.salesDashboard.exporting')}` : `📊 ${t('backoffice.salesDashboard.exportExcel')}` }}
         </button>
-        <button @click="load" class="px-4 py-2 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-sm font-bold text-gray-600 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60">
+        <button @click="load" class="px-4 py-2 rounded-xl bg-white dark:bg-surface border border-stone-200 dark:border-border text-sm font-bold text-gray-600 dark:text-gray-400 hover:bg-stone-50 dark:bg-gray-800/60">
           🔄 {{ t('backoffice.salesDashboard.refresh') }}
         </button>
       </div>
     </div>
 
     <div v-if="loading" class="flex justify-center py-20">
-      <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full animate-spin"/>
+      <div class="w-6 h-6 border-2 border-primary-700 border-t-transparent rounded-full motion-safe:animate-spin"/>
     </div>
 
-    <div v-else-if="loadError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm flex items-center justify-between">
+    <div v-else-if="loadError" class="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
       <span>⚠️ {{ t('backoffice.salesDashboard.loadError') }}</span>
       <button @click="load" class="font-semibold underline hover:no-underline">{{ t('backoffice.salesDashboard.retry') }}</button>
     </div>
@@ -134,19 +134,19 @@ onMounted(load)
       <!-- Stat cards -->
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <div class="bg-white dark:bg-surface rounded-2xl border border-green-200 p-4 shadow-sm">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.salesDashboard.activeContracts') }}</p>
-          <p class="text-2xl font-black text-green-600">{{ dash.active_contracts }}</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.salesDashboard.activeContracts') }}</p>
+          <p class="text-2xl font-black text-green-600 dark:text-green-300">{{ dash.active_contracts }}</p>
         </div>
         <div class="bg-white dark:bg-surface rounded-2xl border border-red-200 p-4 shadow-sm">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.salesDashboard.overdueContracts') }}</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.salesDashboard.overdueContracts') }}</p>
           <p class="text-2xl font-black text-red-500">{{ dash.overdue_contracts_count }}</p>
         </div>
         <div class="bg-white dark:bg-surface rounded-2xl border border-gray-200 p-4 shadow-sm">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.salesDashboard.expiredContracts') }}</p>
-          <p class="text-2xl font-black text-gray-500 dark:text-gray-500">{{ dash.expired_contracts_count }}</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.salesDashboard.expiredContracts') }}</p>
+          <p class="text-2xl font-black text-gray-500 dark:text-gray-400">{{ dash.expired_contracts_count }}</p>
         </div>
         <div class="bg-white dark:bg-surface rounded-2xl border border-amber-200 p-4 shadow-sm">
-          <p class="text-[10px] text-gray-400 dark:text-gray-500 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.salesDashboard.dueThisMonth') }}</p>
+          <p class="text-[10px] text-gray-400 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.salesDashboard.dueThisMonth') }}</p>
           <p class="text-2xl font-black text-amber-500">{{ fmt(dash.this_month_due) }}</p>
         </div>
       </div>
@@ -162,7 +162,7 @@ onMounted(load)
         <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
           <div v-for="stage in PIPELINE_STAGES" :key="stage.key" class="flex items-center gap-2">
             <span :class="['w-2.5 h-2.5 rounded-full flex-shrink-0', stage.color]" />
-            <span class="text-xs text-gray-500 dark:text-gray-500">{{ stage.label }}</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ stage.label }}</span>
             <span class="text-sm font-black text-gray-900 dark:text-gray-100 ms-auto">{{ dash.pipeline[stage.key] || 0 }}</span>
           </div>
         </div>
@@ -173,15 +173,15 @@ onMounted(load)
         <div class="bg-white dark:bg-surface rounded-2xl border border-red-100 p-5 shadow-sm">
           <div class="flex items-center justify-between mb-4">
             <p class="font-black text-sm text-gray-900 dark:text-gray-100">📞 {{ t('backoffice.salesDashboard.callToday') }}</p>
-            <span class="text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 font-bold">{{ dash.overdue_clients.length }}</span>
+            <span class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 dark:bg-red-950/50 dark:text-red-300">{{ dash.overdue_clients.length }}</span>
           </div>
           <div v-if="!dash.overdue_clients.length" class="text-center py-6 text-gray-300 text-xs">🎉 {{ t('backoffice.salesDashboard.noOverdue') }}</div>
           <div v-else class="space-y-2 max-h-96 overflow-y-auto">
             <div v-for="c in dash.overdue_clients" :key="c.id"
-                 class="flex items-center justify-between gap-3 p-3 rounded-xl bg-red-50 border border-red-100">
+                 class="flex items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/40">
               <div class="flex-1 min-w-0">
                 <div class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ c.customer_name }}</div>
-                <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">
+                <div class="text-[10px] text-gray-400 dark:text-gray-400 mt-0.5">
                   {{ c.room_type }} · {{ c.pending_count }} {{ t('backoffice.salesDashboard.pendingInstallment') }}
                   <span v-if="c.next_due"> · {{ t('backoffice.salesDashboard.due') }} {{ formatDateAr(c.next_due) }}</span>
                 </div>
@@ -201,7 +201,7 @@ onMounted(load)
         <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-5 shadow-sm">
           <div class="flex items-center justify-between mb-4">
             <p class="font-black text-sm text-gray-900 dark:text-gray-100">📅 {{ t('backoffice.salesDashboard.upcomingVisits') }}</p>
-            <span class="text-[10px] px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 font-bold">{{ dash.upcoming_visits.length }}</span>
+            <span class="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:bg-sky-950/50 dark:text-sky-300">{{ dash.upcoming_visits.length }}</span>
           </div>
           <div v-if="!dash.upcoming_visits.length" class="text-center py-6 text-gray-300 text-xs">{{ t('backoffice.salesDashboard.noUpcomingVisits') }}</div>
           <div v-else class="space-y-2 max-h-96 overflow-y-auto">
@@ -209,9 +209,9 @@ onMounted(load)
                  class="flex items-center justify-between gap-3 p-3 rounded-xl bg-stone-50 dark:bg-gray-800/60 border border-stone-100 dark:border-border/50">
               <div class="flex-1 min-w-0">
                 <div class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ v.customer_name }}</div>
-                <div class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5">{{ v.room_type }} · {{ t('backoffice.salesDashboard.week') }} {{ v.week_number }} · {{ formatDateAr(v.visit_start) }}</div>
+                <div class="text-[10px] text-gray-400 dark:text-gray-400 mt-0.5">{{ v.room_type }} · {{ t('backoffice.salesDashboard.week') }} {{ v.week_number }} · {{ formatDateAr(v.visit_start) }}</div>
               </div>
-              <div :class="['text-sm font-black flex-shrink-0', v.days_until <= 7 ? 'text-amber-500' : 'text-green-600']">
+              <div :class="['flex-shrink-0 text-sm font-black', v.days_until <= 7 ? 'text-amber-500 dark:text-amber-300' : 'text-green-600 dark:text-green-300']">
                 {{ v.days_until === 0 ? t('backoffice.salesDashboard.today') : v.days_until === 1 ? t('backoffice.salesDashboard.tomorrow') : t('backoffice.salesDashboard.daysCount', { count: v.days_until }) }}
               </div>
             </div>
@@ -222,7 +222,7 @@ onMounted(load)
       <!-- Collection summary -->
       <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-5 shadow-sm mt-5">
         <p class="font-black text-sm text-gray-900 dark:text-gray-100 mb-3">💰 {{ t('backoffice.salesDashboard.totalCollection') }}</p>
-        <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-500 mb-2">
+        <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-2">
           <span>{{ t('backoffice.salesDashboard.collectedOf', { collected: fmt(dash.total_collected), total: fmt(dash.total_value) }) }}</span>
           <span class="font-black text-gray-900 dark:text-gray-100">{{ dash.collection_rate_pct }}%</span>
         </div>

@@ -65,24 +65,37 @@ interface RatePlanOption {
 const bookings  = ref<Booking[]>([])
 const rooms     = ref<RoomOption[]>([])
 const loading   = ref(false)
-const submitting = ref(false)
+const submitting  = ref(false)
+const totalBookings = ref(0)
+const currentPage   = ref(1)
+const PAGE_SIZE     = 50
 
 // ─── Filters ─────────────────────────────────────────────────────────────────
 const filterStatus = ref<string | null>(null)
+const searchQuery  = ref('')
 
-const filteredBookings = computed(() =>
-  filterStatus.value
+const filteredBookings = computed(() => {
+  let list = filterStatus.value
     ? bookings.value.filter(b => b.status === filterStatus.value)
     : bookings.value
-)
+  const q = searchQuery.value.trim().toLowerCase()
+  if (q) {
+    list = list.filter(b =>
+      b.guest_name.toLowerCase().includes(q) ||
+      (b.guest_phone ?? '').includes(q) ||
+      String(b.id).includes(q)
+    )
+  }
+  return list
+})
 
 // ─── Status config ────────────────────────────────────────────────────────────
 const statusConfig = computed<Record<string, { label: string; color: string; bg: string }>>(() => ({
-  pending:     { label: t('backoffice.bookings.status.pending'),     color: 'text-amber-700',  bg: 'bg-amber-100' },
-  confirmed:   { label: t('backoffice.bookings.status.confirmed'),   color: 'text-blue-700',   bg: 'bg-blue-100' },
-  checked_in:  { label: t('backoffice.bookings.status.checkedIn'),   color: 'text-green-700',  bg: 'bg-green-100' },
-  checked_out: { label: t('backoffice.bookings.status.checkedOut'),  color: 'text-gray-600 dark:text-gray-500',   bg: 'bg-gray-100' },
-  cancelled:   { label: t('backoffice.bookings.status.cancelled'),   color: 'text-red-700',    bg: 'bg-red-100' },
+  pending:     { label: t('backoffice.bookings.status.pending'), color: 'text-amber-700 dark:text-amber-300', bg: 'bg-amber-100 dark:bg-amber-950/50' },
+  confirmed:   { label: t('backoffice.bookings.status.confirmed'), color: 'text-blue-700 dark:text-blue-300', bg: 'bg-blue-100 dark:bg-blue-950/50' },
+  checked_in:  { label: t('backoffice.bookings.status.checkedIn'), color: 'text-green-700 dark:text-green-300', bg: 'bg-green-100 dark:bg-green-950/50' },
+  checked_out: { label: t('backoffice.bookings.status.checkedOut'), color: 'text-gray-600 dark:text-gray-400', bg: 'bg-gray-100 dark:bg-gray-800' },
+  cancelled:   { label: t('backoffice.bookings.status.cancelled'), color: 'text-red-700 dark:text-red-300', bg: 'bg-red-100 dark:bg-red-950/50' },
 }))
 
 const statusCounts = computed(() =>
@@ -144,13 +157,15 @@ function openCreateModal() {
 }
 
 // ─── API ──────────────────────────────────────────────────────────────────────
-async function fetchBookings() {
+async function fetchBookings(page = 1) {
   loading.value = true
+  currentPage.value = page
   try {
     const res = await api.get(ENDPOINTS.pms.bookings, {
-      params: { branch_id: branchId, page: 1, size: 100 }
+      params: { branch_id: branchId, page, size: PAGE_SIZE }
     })
-    bookings.value = res.data.items ?? res.data
+    bookings.value  = res.data.items ?? res.data
+    totalBookings.value = res.data.total ?? bookings.value.length
   } catch(e) {
     toast.error(t('backoffice.bookings.loadBookingsError'))
   } finally { loading.value = false }
@@ -344,8 +359,8 @@ onMounted(() => {
       <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.bookings.title') }}</h1>
       <div class="flex gap-2">
         <button
-          @click="fetchBookings"
-          class="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors"
+          @click="() => fetchBookings()"
+          class="rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
         >🔄</button>
         <button
           @click="openCreateModal"
@@ -354,13 +369,23 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- Search -->
+    <div class="mb-3">
+      <input
+        v-model="searchQuery"
+        type="search"
+        :placeholder="t('backoffice.bookings.searchPlaceholder')"
+        class="w-full md:w-80 px-3 py-2 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+    </div>
+
     <!-- Status filter tabs -->
     <div class="flex gap-2 mb-4 overflow-x-auto pb-1">
       <button
         @click="filterStatus = null"
         :class="[
           'flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
-          !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
+          !filterStatus ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
         ]"
       >{{ t('backoffice.bookings.all') }} ({{ bookings.length }})</button>
       <button
@@ -369,13 +394,13 @@ onMounted(() => {
         @click="filterStatus = filterStatus === status ? null : status"
         :class="[
           'flex-shrink-0 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors',
-          filterStatus === status ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 dark:text-gray-500 hover:bg-gray-200'
+          filterStatus === status ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400 dark:hover:bg-gray-700'
         ]"
       >{{ cfg.label }} ({{ statusCounts[status] ?? 0 }})</button>
     </div>
 
     <!-- Loading -->
-    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500 gap-3">
+    <div v-if="loading" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-400 gap-3">
       <AppSpinner size="lg" />
       <p>{{ t('backoffice.bookings.loading') }}</p>
     </div>
@@ -383,14 +408,14 @@ onMounted(() => {
     <!-- Desktop table -->
     <div v-else class="hidden md:block bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border shadow-sm overflow-hidden">
       <table class="w-full text-sm">
-        <thead class="bg-gray-50 border-b border-stone-200 dark:border-border">
+        <thead class="border-b border-stone-200 bg-gray-50 dark:border-border dark:bg-gray-800/60">
           <tr>
-            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">#</th>
-            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">{{ t('backoffice.bookings.guest') }}</th>
-            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">{{ t('backoffice.bookings.room') }}</th>
-            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">{{ t('backoffice.bookings.arrival') }}</th>
-            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">{{ t('backoffice.bookings.departure') }}</th>
-            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-500">{{ t('backoffice.bookings.statusCol') }}</th>
+            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-400">#</th>
+            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-400">{{ t('backoffice.bookings.guest') }}</th>
+            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-400">{{ t('backoffice.bookings.room') }}</th>
+            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-400">{{ t('backoffice.bookings.arrival') }}</th>
+            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-400">{{ t('backoffice.bookings.departure') }}</th>
+            <th class="text-start px-4 py-3 font-semibold text-gray-600 dark:text-gray-400">{{ t('backoffice.bookings.statusCol') }}</th>
             <th class="px-4 py-3"></th>
           </tr>
         </thead>
@@ -398,16 +423,16 @@ onMounted(() => {
           <tr
             v-for="b in filteredBookings"
             :key="b.id"
-            class="border-b border-stone-100 dark:border-border/50 hover:bg-gray-50 transition-colors"
+            class="border-b border-stone-100 transition-colors hover:bg-gray-50 dark:bg-surface-2 dark:border-border/50 dark:hover:bg-gray-800/60"
           >
-            <td class="px-4 py-3 text-gray-400 dark:text-gray-500 font-mono text-xs">{{ b.id }}</td>
+            <td class="px-4 py-3 text-gray-400 dark:text-gray-400 font-mono text-xs">{{ b.id }}</td>
             <td class="px-4 py-3">
               <div class="font-semibold text-gray-900 dark:text-gray-100">{{ b.guest_name }}</div>
-              <div v-if="b.guest_phone" class="text-xs text-gray-400 dark:text-gray-500 dir-ltr">{{ b.guest_phone }}</div>
+              <div v-if="b.guest_phone" class="text-xs text-gray-400 dark:text-gray-400 dir-ltr">{{ b.guest_phone }}</div>
             </td>
             <td class="px-4 py-3 font-medium text-gray-700 dark:text-gray-300">{{ roomLabel(b) }}</td>
-            <td class="px-4 py-3 text-gray-600 dark:text-gray-500">{{ formatDate(b.check_in) }}</td>
-            <td class="px-4 py-3 text-gray-600 dark:text-gray-500">{{ formatDate(b.check_out) }}</td>
+            <td class="px-4 py-3 text-gray-600 dark:text-gray-400">{{ formatDate(b.check_in) }}</td>
+            <td class="px-4 py-3 text-gray-600 dark:text-gray-400">{{ formatDate(b.check_out) }}</td>
             <td class="px-4 py-3">
               <span :class="['px-2 py-0.5 rounded-full text-xs font-bold', statusConfig[b.status]?.bg, statusConfig[b.status]?.color]">
                 {{ statusConfig[b.status]?.label ?? b.status }}
@@ -427,19 +452,19 @@ onMounted(() => {
               <button
                 v-if="b.status === 'confirmed' || b.status === 'checked_in'"
                 @click="openEarlyLate(b)"
-                class="ms-1 px-2 py-1 bg-purple-100 text-purple-700 text-xs font-bold rounded-lg hover:bg-purple-200 transition-colors"
+                class="ms-1 rounded-lg bg-purple-100 px-2 py-1 text-xs font-bold text-purple-700 transition-colors hover:bg-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:hover:bg-purple-900/60"
                 :title="t('backoffice.bookings.earlyLateTitle')"
               >🕐</button>
               <button
                 v-if="b.status === 'pending' || b.status === 'confirmed'"
                 @click="cancelBooking(b)"
-                class="ms-1 px-2 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-lg hover:bg-red-200 transition-colors"
+                class="ms-1 rounded-lg bg-red-100 px-2 py-1 text-xs font-bold text-red-700 transition-colors hover:bg-red-200 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-900/60"
                 :title="t('backoffice.bookings.cancelTitle')"
               >{{ t('backoffice.bookings.cancel') }}</button>
             </td>
           </tr>
           <tr v-if="filteredBookings.length === 0">
-            <td colspan="7" class="px-4 py-16 text-center text-gray-400 dark:text-gray-500">
+            <td colspan="7" class="px-4 py-16 text-center text-gray-400 dark:text-gray-400">
               {{ t('backoffice.bookings.noBookings') }}
             </td>
           </tr>
@@ -457,16 +482,16 @@ onMounted(() => {
         <div class="flex items-start justify-between mb-2">
           <div>
             <div class="font-bold text-gray-900 dark:text-gray-100">{{ b.guest_name }}</div>
-            <div v-if="b.guest_phone" class="text-xs text-gray-400 dark:text-gray-500">{{ b.guest_phone }}</div>
+            <div v-if="b.guest_phone" class="text-xs text-gray-400 dark:text-gray-400">{{ b.guest_phone }}</div>
           </div>
           <span :class="['px-2 py-0.5 rounded-full text-xs font-bold', statusConfig[b.status]?.bg, statusConfig[b.status]?.color]">
             {{ statusConfig[b.status]?.label ?? b.status }}
           </span>
         </div>
-        <div class="grid grid-cols-3 gap-2 text-xs text-gray-600 dark:text-gray-500 mb-3">
-          <div><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.bookings.roomShort') }}</span><strong>{{ roomLabel(b) }}</strong></div>
-          <div><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.bookings.arrivalShort') }}</span>{{ formatDate(b.check_in) }}</div>
-          <div><span class="text-gray-400 dark:text-gray-500">{{ t('backoffice.bookings.departureShort') }}</span>{{ formatDate(b.check_out) }}</div>
+        <div class="grid grid-cols-3 gap-2 text-xs text-gray-600 dark:text-gray-400 mb-3">
+          <div><span class="text-gray-400 dark:text-gray-400">{{ t('backoffice.bookings.roomShort') }}</span><strong>{{ roomLabel(b) }}</strong></div>
+          <div><span class="text-gray-400 dark:text-gray-400">{{ t('backoffice.bookings.arrivalShort') }}</span>{{ formatDate(b.check_in) }}</div>
+          <div><span class="text-gray-400 dark:text-gray-400">{{ t('backoffice.bookings.departureShort') }}</span>{{ formatDate(b.check_out) }}</div>
         </div>
         <div class="flex gap-2">
           <button
@@ -482,17 +507,37 @@ onMounted(() => {
           <button
             v-if="b.status === 'confirmed' || b.status === 'checked_in'"
             @click="openEarlyLate(b)"
-            class="px-3 py-1.5 bg-purple-100 text-purple-700 text-xs font-bold rounded-lg"
+            class="rounded-lg bg-purple-100 px-3 py-1.5 text-xs font-bold text-purple-700 dark:bg-purple-950/50 dark:text-purple-300"
           >🕐 {{ t('backoffice.bookings.earlyLateShort') }}</button>
           <button
             v-if="b.status === 'pending' || b.status === 'confirmed'"
             @click="cancelBooking(b)"
-            class="px-3 py-1.5 bg-red-100 text-red-700 text-xs font-bold rounded-lg hover:bg-red-200 transition-colors"
+            class="rounded-lg bg-red-100 px-3 py-1.5 text-xs font-bold text-red-700 transition-colors hover:bg-red-200 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-900/60"
           >{{ t('backoffice.bookings.cancel') }}</button>
         </div>
       </div>
 
       <EmptyState v-if="filteredBookings.length === 0" icon="📋" :title="t('backoffice.bookings.noBookings')" />
+    </div>
+
+    <!-- Pagination -->
+    <div v-if="totalBookings > PAGE_SIZE" class="mt-4 flex items-center justify-between gap-3 text-sm">
+      <span class="text-gray-500 dark:text-gray-400">
+        {{ t('common.showingOf', { shown: filteredBookings.length, total: totalBookings }) }}
+      </span>
+      <div class="flex gap-2">
+        <button
+          :disabled="currentPage <= 1"
+          @click="fetchBookings(currentPage - 1)"
+          class="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-40 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium"
+        >{{ t('common.prevPage') }}</button>
+        <span class="px-3 py-1.5 text-gray-600 dark:text-gray-400">{{ currentPage }}</span>
+        <button
+          :disabled="bookings.length < PAGE_SIZE"
+          @click="fetchBookings(currentPage + 1)"
+          class="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-40 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium"
+        >{{ t('common.nextPage') }}</button>
+      </div>
     </div>
 
     <!-- Early / Late modal -->
@@ -504,26 +549,26 @@ onMounted(() => {
       >
         <div class="bg-white dark:bg-surface rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
           <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">🕐 {{ t('backoffice.bookings.earlyLateModalTitle') }}</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-500">{{ earlyLateBooking?.guest_name }}</p>
+          <p class="text-sm text-gray-500 dark:text-gray-400">{{ earlyLateBooking?.guest_name }}</p>
           <div class="space-y-3">
             <div>
-              <label class="block text-xs font-medium text-gray-600 dark:text-gray-500 mb-1">{{ t('backoffice.bookings.earlyCheckinTime') }}</label>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.bookings.earlyCheckinTime') }}</label>
               <input type="datetime-local" v-model="earlyCheckinAt"
                 class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-600 dark:text-gray-500 mb-1">{{ t('backoffice.bookings.lateCheckoutTime') }}</label>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.bookings.lateCheckoutTime') }}</label>
               <input type="datetime-local" v-model="lateCheckoutAt"
                 class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-600 dark:text-gray-500 mb-1">{{ t('backoffice.bookings.extraChargeEgp') }}</label>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.bookings.extraChargeEgp') }}</label>
               <input type="number" min="0" step="50" v-model="earlyLateCharge"
                 class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
-              <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{{ t('backoffice.bookings.extraChargeHint') }}</p>
+              <p class="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{{ t('backoffice.bookings.extraChargeHint') }}</p>
             </div>
             <div>
-              <label class="block text-xs font-medium text-gray-600 dark:text-gray-500 mb-1">{{ t('backoffice.bookings.notesOptional') }}</label>
+              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.bookings.notesOptional') }}</label>
               <input type="text" v-model="earlyLateNotes" placeholder="—"
                 class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
             </div>
@@ -554,7 +599,7 @@ onMounted(() => {
             <h2 class="text-lg font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.bookings.newBookingModalTitle') }}</h2>
             <button
               @click="showCreateModal = false"
-              class="text-gray-400 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
+              class="text-gray-400 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
             >×</button>
           </div>
 
@@ -566,7 +611,7 @@ onMounted(() => {
                 v-model="form.guest_name"
                 type="text"
                 :placeholder="t('backoffice.bookings.fullName')"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
             </div>
 
@@ -577,7 +622,7 @@ onMounted(() => {
                 v-model="form.guest_phone"
                 type="tel"
                 placeholder="01xxxxxxxxx"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 dir="ltr"
               />
             </div>
@@ -589,7 +634,7 @@ onMounted(() => {
                 <input
                   v-model="form.check_in"
                   type="date"
-                  class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   dir="ltr"
                 />
               </div>
@@ -598,7 +643,7 @@ onMounted(() => {
                 <input
                   v-model="form.check_out"
                   type="date"
-                  class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   dir="ltr"
                 />
               </div>
@@ -610,11 +655,11 @@ onMounted(() => {
             <div>
               <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                 {{ t('backoffice.bookings.roomsRequiredLabel') }}
-                <span v-if="form.room_ids.length" class="font-normal text-blue-600">{{ t('backoffice.bookings.roomsSelectedCount', { count: form.room_ids.length }) }}</span>
+                <span v-if="form.room_ids.length" class="font-normal text-blue-600 dark:text-blue-300">{{ t('backoffice.bookings.roomsSelectedCount', { count: form.room_ids.length }) }}</span>
               </label>
               <div
                 v-if="form.check_in && form.check_out && !roomsLoading && rooms.length > 0"
-                class="border border-stone-300 rounded-xl max-h-40 overflow-y-auto divide-y divide-stone-100"
+                class="border border-stone-300 dark:border-gray-600 rounded-xl max-h-40 overflow-y-auto divide-y divide-stone-100"
               >
                 <label
                   v-for="room in rooms"
@@ -625,14 +670,14 @@ onMounted(() => {
                     type="checkbox"
                     :value="room.id"
                     v-model="form.room_ids"
-                    class="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                    class="rounded border-stone-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:text-blue-400"
                   />
                   <span>{{ room.name }}</span>
                 </label>
               </div>
-              <p v-if="!form.check_in || !form.check_out" class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.bookings.selectDatesFirst') }}</p>
-              <p v-else-if="roomsLoading" class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.bookings.loadingAvailableRooms') }}</p>
-              <p v-else-if="rooms.length === 0" class="text-xs text-amber-600 mt-1">{{ t('backoffice.bookings.noAvailableRoomsPeriod') }}</p>
+              <p v-if="!form.check_in || !form.check_out" class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.bookings.selectDatesFirst') }}</p>
+              <p v-else-if="roomsLoading" class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.bookings.loadingAvailableRooms') }}</p>
+              <p v-else-if="rooms.length === 0" class="mt-1 text-xs text-amber-600 dark:text-amber-300">{{ t('backoffice.bookings.noAvailableRoomsPeriod') }}</p>
             </div>
 
             <!-- Rate plan — optional, only plans that actually apply to the
@@ -641,7 +686,7 @@ onMounted(() => {
               <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.bookings.ratePlanOptional') }}</label>
               <select
                 v-model="form.rate_plan_id"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-surface"
+                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-surface"
               >
                 <option :value="null">{{ t('backoffice.bookings.baseRateNoPlan') }}</option>
                 <option
@@ -650,7 +695,7 @@ onMounted(() => {
                   :value="plan.id"
                 >{{ plan.name }}</option>
               </select>
-              <p v-if="applicableRatePlans.length === 0" class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.bookings.noApplicableRatePlans') }}</p>
+              <p v-if="applicableRatePlans.length === 0" class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.bookings.noApplicableRatePlans') }}</p>
             </div>
 
             <!-- Notes -->
@@ -660,12 +705,12 @@ onMounted(() => {
                 v-model="form.notes"
                 rows="2"
                 :placeholder="t('backoffice.bookings.specialInstructions')"
-                class="w-full border border-stone-300 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
+                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
               />
             </div>
 
             <!-- Error -->
-            <div v-if="createError" class="text-red-600 text-sm bg-red-50 rounded-xl px-3 py-2 border border-red-200">
+            <div v-if="createError" class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
               ⚠️ {{ createError }}
             </div>
           </div>
@@ -674,7 +719,7 @@ onMounted(() => {
           <div class="flex gap-3 mt-6">
             <button
               @click="showCreateModal = false"
-              class="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-sm font-medium text-gray-700 dark:text-gray-300 transition-colors"
+              class="flex-1 rounded-xl bg-gray-100 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
             >{{ t('backoffice.bookings.cancel') }}</button>
             <button
               @click="createBooking"

@@ -18,3 +18,9 @@ services:
       - "8082:8082"
     volumes:
       - ./deploy/nginx/edge-ip-only.conf:/etc/nginx/conf.d/default.conf:ro
+      # Host paths (instead of the named volumes in docker-compose.prod.yml)
+      # let Certbot's webroot plugin answer HTTP-01 and persist certificates
+      # without stopping the edge proxy.  They are mounted read-only because
+      # only the host Certbot process is allowed to write either directory.
+      - /var/www/certbot:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro

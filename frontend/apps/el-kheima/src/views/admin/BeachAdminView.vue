@@ -96,18 +96,18 @@ const savingCredit = ref(false)
 
 // ── Computed ──────────────────────────────────────────────────────────
 const capacityColor = computed(() => {
-  if (!inventory.value) return 'bg-gray-200'
+  if (!inventory.value) return 'bg-gray-200 dark:bg-gray-700'
   const pct = inventory.value.capacity_pct
   if (pct >= 90) return 'bg-red-500'
   if (pct >= 70) return 'bg-amber-500'
   return 'bg-green-500'
 })
 const capacityTextColor = computed(() => {
-  if (!inventory.value) return 'text-gray-600'
+  if (!inventory.value) return 'text-gray-600 dark:text-gray-300'
   const pct = inventory.value.capacity_pct
-  if (pct >= 90) return 'text-red-600'
-  if (pct >= 70) return 'text-amber-600'
-  return 'text-green-600'
+  if (pct >= 90) return 'text-red-600 dark:text-red-400'
+  if (pct >= 70) return 'text-amber-600 dark:text-amber-300'
+  return 'text-green-600 dark:text-green-400'
 })
 
 // ── Loaders ───────────────────────────────────────────────────────────
@@ -309,21 +309,22 @@ onMounted(() => switchTab('summary'))
     <!-- Header -->
     <div class="flex items-center justify-between">
       <div>
-        <h1 class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ t('backoffice.beachAdmin.title') }}</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mt-1">{{ t('backoffice.beachAdmin.subtitle') }}</p>
+        <h1 class="text-2xl font-black text-gray-950 dark:text-gray-100">{{ t('backoffice.beachAdmin.title') }}</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.beachAdmin.subtitle') }}</p>
       </div>
     </div>
 
     <!-- Tabs -->
-    <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl w-fit flex-wrap">
+    <div class="flex w-fit flex-wrap gap-1 rounded-2xl bg-stone-100 p-1.5 dark:bg-gray-800" role="tablist">
       <button v-for="tabDef in [
         { val: 'summary',      label: `📊 ${t('backoffice.beachAdmin.tabs.summary')}` },
         { val: 'transactions', label: `🧾 ${t('backoffice.beachAdmin.tabs.transactions')}` },
         { val: 'b2b',          label: `🤝 ${t('backoffice.beachAdmin.tabs.b2b')}` },
         { val: 'eod',          label: `📋 ${t('backoffice.beachAdmin.tabs.eod')}` },
       ]" :key="tabDef.val" @click="switchTab(tabDef.val as any)"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all',
-          tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 hover:text-gray-700']"
+        type="button" role="tab" :aria-selected="tab === tabDef.val"
+        :class="['min-h-11 rounded-xl px-4 py-2 text-sm font-bold transition-all',
+          tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white']"
       >{{ tabDef.label }}</button>
     </div>
 
@@ -335,32 +336,32 @@ onMounted(() => switchTab('summary'))
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
           <AppCard padding="md">
             <div class="flex items-center justify-between mb-3">
-              <span class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.currentCapacity') }}</span>
+              <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.currentCapacity') }}</span>
               <AppBadge v-if="inventory?.surge_active" variant="warning">{{ t('backoffice.beachAdmin.surgeActivePct', { pct: inventory?.surge_pct }) }}</AppBadge>
             </div>
             <div :class="['text-3xl font-black', capacityTextColor]">
               {{ inventory?.capacity_used ?? 0 }} / {{ inventory?.capacity_max ?? 0 }}
             </div>
-            <div class="mt-3 bg-gray-100 rounded-full h-3">
+            <div class="mt-3 h-3 rounded-full bg-gray-100 dark:bg-gray-700">
               <div :class="['h-3 rounded-full transition-all', capacityColor]"
                 :style="{ width: (inventory?.capacity_pct ?? 0) + '%' }"></div>
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.beachAdmin.availableSlots', { count: inventory?.available_slots ?? 0 }) }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.beachAdmin.availableSlots', { count: inventory?.available_slots ?? 0 }) }}</div>
           </AppCard>
 
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.beachAdmin.towels') }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.beachAdmin.towels') }}</div>
             <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ inventory?.towels_used ?? 0 }} / {{ inventory?.towels_total ?? 0 }}</div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.beachAdmin.available', { count: inventory?.towels_available ?? 0 }) }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.beachAdmin.available', { count: inventory?.towels_available ?? 0 }) }}</div>
           </AppCard>
 
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.beachAdmin.basePrices') }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.beachAdmin.basePrices') }}</div>
             <div class="space-y-1 text-sm">
-              <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.adult') }}</span><span class="font-bold">{{ fmtMoney(inventory?.adult_price) }} {{ t('backoffice.beachAdmin.egp') }}</span></div>
-              <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.child') }}</span><span class="font-bold">{{ fmtMoney(inventory?.child_price) }} {{ t('backoffice.beachAdmin.egp') }}</span></div>
-              <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.resident') }}</span><span class="font-bold">{{ fmtMoney(inventory?.resident_price) }} {{ t('backoffice.beachAdmin.egp') }}</span></div>
-              <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.towel') }}</span><span class="font-bold">{{ fmtMoney(inventory?.towel_price) }} {{ t('backoffice.beachAdmin.egp') }}</span></div>
+              <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.adult') }}</span><span class="font-bold">{{ fmtMoney(inventory?.adult_price) }} {{ t('backoffice.beachAdmin.egp') }}</span></div>
+              <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.child') }}</span><span class="font-bold">{{ fmtMoney(inventory?.child_price) }} {{ t('backoffice.beachAdmin.egp') }}</span></div>
+              <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.resident') }}</span><span class="font-bold">{{ fmtMoney(inventory?.resident_price) }} {{ t('backoffice.beachAdmin.egp') }}</span></div>
+              <div class="flex justify-between"><span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.towel') }}</span><span class="font-bold">{{ fmtMoney(inventory?.towel_price) }} {{ t('backoffice.beachAdmin.egp') }}</span></div>
             </div>
           </AppCard>
         </div>
@@ -369,21 +370,21 @@ onMounted(() => switchTab('summary'))
         <!-- Summary KPIs -->
         <div v-if="summary" class="grid grid-cols-2 md:grid-cols-4 gap-4">
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.beachAdmin.totalEntries') }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.beachAdmin.totalEntries') }}</div>
             <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ summary.total_entries }}</div>
           </AppCard>
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.beachAdmin.totalRevenue') }}</div>
-            <div class="text-2xl font-black text-green-600">{{ fmtMoney(summary.total_revenue) }}</div>
-            <div class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.beachAdmin.egpWord') }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.beachAdmin.totalRevenue') }}</div>
+            <div class="text-2xl font-black text-green-600 dark:text-green-300">{{ fmtMoney(summary.total_revenue) }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.beachAdmin.egpWord') }}</div>
           </AppCard>
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.beachAdmin.b2bEntries') }}</div>
-            <div class="text-2xl font-black text-blue-700">{{ summary.b2b_entries }}</div>
-            <div class="text-xs text-gray-400 dark:text-gray-500">{{ fmtMoney(summary.b2b_revenue) }} {{ t('backoffice.beachAdmin.egp') }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.beachAdmin.b2bEntries') }}</div>
+            <div class="text-2xl font-black text-blue-700 dark:text-blue-300">{{ summary.b2b_entries }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400">{{ fmtMoney(summary.b2b_revenue) }} {{ t('backoffice.beachAdmin.egp') }}</div>
           </AppCard>
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.beachAdmin.towelsRented') }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.beachAdmin.towelsRented') }}</div>
             <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ summary.towels_rented }}</div>
           </AppCard>
         </div>
@@ -394,7 +395,7 @@ onMounted(() => switchTab('summary'))
           <div class="flex items-center justify-between">
             <div>
               <div class="font-semibold text-gray-800 dark:text-gray-200">{{ t('backoffice.beachAdmin.surgeControl') }}</div>
-              <div class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.surgeControlHint') }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.surgeControlHint') }}</div>
             </div>
             <AppButton variant="outline" size="sm" @click="surgeModal = true">
               {{ inventory?.surge_active ? `✏️ ${t('backoffice.beachAdmin.editSurge')}` : `⚡ ${t('backoffice.beachAdmin.activateSurge')}` }}
@@ -408,7 +409,7 @@ onMounted(() => switchTab('summary'))
       <div class="flex items-center gap-3">
         <input type="date" v-model="txDate" @change="loadTransactions"
           class="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-        <span class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.transactionCount', { count: txTotal }) }}</span>
+        <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.transactionCount', { count: txTotal }) }}</span>
       </div>
 
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
@@ -418,12 +419,12 @@ onMounted(() => switchTab('summary'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.type') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.quantity') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.price') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.total') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.time') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.statusCol') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.type') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.quantity') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.price') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.total') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.time') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.statusCol') }}</th>
                 <th class="px-4 py-3"></th>
               </tr>
             </thead>
@@ -434,7 +435,7 @@ onMounted(() => switchTab('summary'))
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ tx.quantity }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ fmtMoney(tx.unit_price) }} {{ t('backoffice.beachAdmin.egp') }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ fmtMoney(tx.total_amount) }} {{ t('backoffice.beachAdmin.egp') }}</td>
-                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-500">{{ fmtTimeFn(tx.created_at) }}</td>
+                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ fmtTimeFn(tx.created_at) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge v-if="tx.voided_at" variant="danger">{{ t('backoffice.beachAdmin.voided') }}</AppBadge>
                   <AppBadge v-else-if="tx.surge_applied" variant="warning">{{ t('backoffice.beachAdmin.surge') }}</AppBadge>
@@ -442,7 +443,7 @@ onMounted(() => switchTab('summary'))
                 </td>
                 <td class="px-4 py-3">
                   <button v-if="!tx.voided_at" @click="downloadTicket(tx.id)"
-                    class="text-xs text-blue-600 hover:underline">🖨️ {{ t('backoffice.beachAdmin.ticket') }}</button>
+                    class="text-xs text-blue-600 hover:underline dark:text-blue-300">🖨️ {{ t('backoffice.beachAdmin.ticket') }}</button>
                 </td>
               </tr>
             </tbody>
@@ -454,7 +455,7 @@ onMounted(() => switchTab('summary'))
     <!-- ══ TAB: B2B ══ -->
     <div v-else-if="tab === 'b2b'" class="space-y-4">
       <div class="flex items-center justify-between">
-        <div class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.contractCount', { count: b2bContracts.length }) }}</div>
+        <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.contractCount', { count: b2bContracts.length }) }}</div>
         <AppButton v-if="auth.hasRole('admin')" size="sm" @click="b2bModal = true">{{ t('backoffice.beachAdmin.addContract') }}</AppButton>
       </div>
 
@@ -462,7 +463,9 @@ onMounted(() => switchTab('summary'))
       <div v-if="b2bStatus.some(s => s.is_overdue || s.quota_warning)" class="space-y-2">
         <div v-for="s in b2bStatus.filter(x => x.is_overdue || x.quota_warning)" :key="s.contract_id"
           :class="['rounded-lg px-4 py-3 text-sm font-semibold',
-            s.is_overdue ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-amber-50 text-amber-700 border border-amber-200']">
+            s.is_overdue
+              ? 'border border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950/35 dark:text-red-300'
+              : 'border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950/35 dark:text-amber-300']">
           {{ s.is_overdue ? t('backoffice.beachAdmin.overduePrefix') : t('backoffice.beachAdmin.lowQuotaPrefix') }} {{ s.hotel_name }}
           {{ t('backoffice.beachAdmin.slotsRemainingToday', { count: s.remaining }) }}
         </div>
@@ -475,13 +478,13 @@ onMounted(() => switchTab('summary'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.hotel') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.dailyQuota') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.price') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.creditLimit') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.paymentTerms') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.statusCol') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.beachAdmin.validity') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.hotel') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.dailyQuota') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.price') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.creditLimit') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.paymentTerms') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.statusCol') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.beachAdmin.validity') }}</th>
                 <th class="px-4 py-3"></th>
               </tr>
             </thead>
@@ -489,7 +492,7 @@ onMounted(() => switchTab('summary'))
               <tr v-for="c in b2bContracts" :key="c.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3">
                   <div class="font-semibold text-sm text-gray-900 dark:text-gray-100">{{ c.hotel_name }}</div>
-                  <div v-if="c.hotel_name_ar" class="text-xs text-gray-500 dark:text-gray-500">{{ c.hotel_name_ar }}</div>
+                  <div v-if="c.hotel_name_ar" class="text-xs text-gray-500 dark:text-gray-400">{{ c.hotel_name_ar }}</div>
                 </td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ c.daily_quota }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ fmtMoney(c.entry_price) }} {{ t('backoffice.beachAdmin.egp') }}</td>
@@ -502,11 +505,11 @@ onMounted(() => switchTab('summary'))
                   <AppBadge v-else-if="!c.is_active" variant="neutral">{{ t('backoffice.beachAdmin.suspended') }}</AppBadge>
                   <AppBadge v-else variant="success">{{ t('backoffice.beachAdmin.active') }}</AppBadge>
                 </td>
-                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-500">{{ fmtDate(c.valid_from) }} → {{ fmtDate(c.valid_until) }}</td>
+                <td class="px-4 py-3 text-xs text-gray-500 dark:text-gray-400">{{ fmtDate(c.valid_from) }} → {{ fmtDate(c.valid_until) }}</td>
                 <td class="px-4 py-3">
                   <div class="flex gap-2">
-                    <button @click="openCreditEdit(c)" class="text-xs text-blue-600 hover:underline">✏️ {{ t('backoffice.beachAdmin.credit') }}</button>
-                    <button @click="openSettle(c)" class="text-xs text-green-600 hover:underline">✅ {{ t('backoffice.beachAdmin.settle') }}</button>
+                    <button @click="openCreditEdit(c)" class="text-xs text-blue-600 hover:underline dark:text-blue-300">✏️ {{ t('backoffice.beachAdmin.credit') }}</button>
+                    <button @click="openSettle(c)" class="text-xs text-green-600 hover:underline dark:text-green-300">✅ {{ t('backoffice.beachAdmin.settle') }}</button>
                   </div>
                 </td>
               </tr>
@@ -530,9 +533,9 @@ onMounted(() => switchTab('summary'))
       <template v-else-if="eodReport">
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.beachAdmin.totalEntries') }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.beachAdmin.totalEntries') }}</div>
             <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ eodReport.total_entries }}</div>
-            <div v-if="eodReport.yesterday" class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            <div v-if="eodReport.yesterday" class="text-xs text-gray-400 dark:text-gray-400 mt-1">
               {{ t('backoffice.beachAdmin.yesterday', { count: eodReport.yesterday.total_entries }) }}
               <span :class="eodReport.total_entries >= eodReport.yesterday.total_entries ? 'text-green-500' : 'text-red-500'">
                 {{ eodReport.total_entries >= eodReport.yesterday.total_entries ? '↑' : '↓' }}
@@ -540,20 +543,20 @@ onMounted(() => switchTab('summary'))
             </div>
           </AppCard>
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.beachAdmin.grandTotalRevenue') }}</div>
-            <div class="text-2xl font-black text-green-600">{{ fmtMoney(eodReport.total_revenue) }}</div>
-            <div v-if="eodReport.yesterday" class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.beachAdmin.grandTotalRevenue') }}</div>
+            <div class="text-2xl font-black text-green-600 dark:text-green-300">{{ fmtMoney(eodReport.total_revenue) }}</div>
+            <div v-if="eodReport.yesterday" class="text-xs text-gray-400 dark:text-gray-400 mt-1">
               {{ t('backoffice.beachAdmin.yesterdayRevenue', { amount: fmtMoney(eodReport.yesterday.total_revenue) }) }}
             </div>
           </AppCard>
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.beachAdmin.b2bEntries') }}</div>
-            <div class="text-2xl font-black text-blue-700">{{ eodReport.b2b_entries }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.beachAdmin.b2bEntries') }}</div>
+            <div class="text-2xl font-black text-blue-700 dark:text-blue-300">{{ eodReport.b2b_entries }}</div>
           </AppCard>
           <AppCard padding="md">
-            <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.beachAdmin.individualEntries') }}</div>
+            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.beachAdmin.individualEntries') }}</div>
             <div class="text-2xl font-black text-gray-800 dark:text-gray-200">{{ eodReport.individual_entries }}</div>
-            <div class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.beachAdmin.residentCount', { count: eodReport.resident_entries }) }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.beachAdmin.residentCount', { count: eodReport.resident_entries }) }}</div>
           </AppCard>
         </div>
 
@@ -561,20 +564,20 @@ onMounted(() => switchTab('summary'))
         <AppCard v-if="eodReport.last_week" padding="md" :title="t('backoffice.beachAdmin.lastWeekComparison')">
           <div class="grid grid-cols-2 gap-4">
             <div>
-              <div class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.entries') }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.entries') }}</div>
               <div class="flex items-center gap-2">
                 <span class="text-xl font-black text-gray-800 dark:text-gray-200">{{ eodReport.total_entries }}</span>
-                <span class="text-sm text-gray-400 dark:text-gray-500">vs {{ eodReport.last_week.total_entries }}</span>
+                <span class="text-sm text-gray-400 dark:text-gray-400">vs {{ eodReport.last_week.total_entries }}</span>
                 <span :class="eodReport.total_entries >= eodReport.last_week.total_entries ? 'text-green-500 font-bold' : 'text-red-500 font-bold'">
                   {{ eodReport.total_entries >= eodReport.last_week.total_entries ? '▲' : '▼' }}
                 </span>
               </div>
             </div>
             <div>
-              <div class="text-sm text-gray-500 dark:text-gray-500">{{ t('backoffice.beachAdmin.revenue') }}</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.beachAdmin.revenue') }}</div>
               <div class="flex items-center gap-2">
                 <span class="text-xl font-black text-gray-800 dark:text-gray-200">{{ fmtMoney(eodReport.total_revenue) }}</span>
-                <span class="text-sm text-gray-400 dark:text-gray-500">vs {{ fmtMoney(eodReport.last_week.total_revenue) }}</span>
+                <span class="text-sm text-gray-400 dark:text-gray-400">vs {{ fmtMoney(eodReport.last_week.total_revenue) }}</span>
                 <span :class="eodReport.total_revenue >= eodReport.last_week.total_revenue ? 'text-green-500 font-bold' : 'text-red-500 font-bold'">
                   {{ eodReport.total_revenue >= eodReport.last_week.total_revenue ? '▲' : '▼' }}
                 </span>
@@ -593,7 +596,7 @@ onMounted(() => switchTab('summary'))
           <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.surgePctLabel') }}</label>
           <input v-model="surgePct" type="number" min="0" max="200" step="5"
             class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-          <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.beachAdmin.surgeHint') }}</p>
+          <p class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.beachAdmin.surgeHint') }}</p>
         </div>
         <div class="flex gap-3 justify-end">
           <AppButton variant="ghost" @click="surgeModal = false">{{ t('backoffice.beachAdmin.cancel') }}</AppButton>
@@ -657,7 +660,7 @@ onMounted(() => switchTab('summary'))
     <!-- ══ MODAL: SETTLE ══ -->
     <AppModal :open="settleModal" @close="settleModal = false" :title="t('backoffice.beachAdmin.settleModalTitle', { name: settlingContract?.hotel_name })">
       <div class="space-y-4">
-        <p class="text-sm text-gray-600 dark:text-gray-500">{{ t('backoffice.beachAdmin.settleHint') }}</p>
+        <p class="text-sm text-gray-600 dark:text-gray-400">{{ t('backoffice.beachAdmin.settleHint') }}</p>
         <div>
           <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.beachAdmin.settledThroughDate') }}</label>
           <input v-model="settledThrough" type="date" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />

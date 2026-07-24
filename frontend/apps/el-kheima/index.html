@@ -3,6 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+    Cairo font — external Google Fonts dependency.
+    `display=swap` مضمّن في الـ URL (بيخلي المتصفح يعرض النص بفونت system fallback
+    فورًا ويحوّل لـ Cairo لما يتحمّل — بدل ما النص يختفي كليًا لحد ما الفونت يوصل).
+    لو السيرفر مش عنده internet (VPS بدون خروج) أو Google blocked في الشبكة،
+    التطبيق هيشتغل بـ system-ui (نفس خط النظام) من غير أي كسر مرئي.
+    TODO (Gate 9): self-host Cairo كـ woff2 داخل /public/fonts/ عشان نتخلص
+    من الـ external dependency بالكامل ونضمن الخط حتى في VPS بدون internet.
+  -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />

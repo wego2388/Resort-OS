@@ -66,8 +66,8 @@ const routes: RouteRecordRaw[] = [
   // (app/core/kernel/email_service.py::send_password_reset_email). Both call
   // the existing app/core/kernel/auth/router.py password-reset endpoints —
   // no backend changes needed for either.
-  { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue') },
-  { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue') },
+  { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue'), meta: { title: 'نسيت كلمة المرور' } },
+  { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue'), meta: { title: 'إعادة تعيين كلمة المرور' } },
 
   {
     path: '/change-temporary-password',
@@ -94,7 +94,7 @@ const routes: RouteRecordRaw[] = [
     path: '/account/sessions',
     name: 'account-sessions',
     component: () => import('../views/account/SessionsView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, titleKey: 'account.sessions.navLink' },
   },
 
   // ── /pos — FieldLayout (lightweight, tablet/phone, on-floor cashier use) ──
@@ -104,8 +104,8 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredRole: 'cashier' },
     children: [
       { path: '', redirect: '/pos/beach' },
-      { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue') },
-      { path: 'beach-map', name: 'pos-beach-map', component: () => import('../views/pos/BeachMapView.vue') },
+      { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue'), meta: { titleKey: 'backoffice.nav.beachPos' } },
+      { path: 'beach-map', name: 'pos-beach-map', component: () => import('../views/pos/BeachMapView.vue'), meta: { titleKey: 'backoffice.nav.beachMap' } },
       // DINING_CUTOVER_PLAN.md Batch 4 — dining هو الـ POS الافتراضي دلوقتي
       // (مش manager-only preview بقى). requiredRole مخفّض لـ 'waiter' هنا
       // عشان يفوّت بوابة الأب (cashier) — نادل يقدر ياخد طلبات ويبعتها
@@ -113,10 +113,10 @@ const routes: RouteRecordRaw[] = [
       // إند نفسه، مستقل تمامًا عن الـ route gate ده). الروترات القديمة
       // (restaurant/cafe) اتسابت كـ redirect بدل حذف فوري — مفيش رابط حي
       // بيوصلها تاني، لكن أي bookmark قديم لسه بيشتغل صح.
-      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'waiter' } },
+      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'waiter', titleKey: 'backoffice.nav.diningPos' } },
       { path: 'restaurant', redirect: '/pos/dining' },
       { path: 'cafe', redirect: '/pos/dining' },
-      { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue') },
+      { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue'), meta: { titleKey: 'backoffice.nav.shift' } },
     ],
   },
 
@@ -132,7 +132,7 @@ const routes: RouteRecordRaw[] = [
       // (راجع DiningKDSView.vue's STATIONS)، نفس رؤية "نفس المطبخ لكل الـ
       // outlets" الموثّقة في dining.models.DiningKDSScreen. requiredRole
       // بيرث من الأب (waiter، level 30) — نفس مستوى kitchen/chef بالظبط.
-      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue') },
+      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue'), meta: { titleKey: 'backoffice.nav.diningKds' } },
       // ?stations=... يخلي جهاز مثبّت فعليًا في المطبخ/البار يفتح على
       // فلتره الأصلي بالظبط (راجع DiningKDSView.vue's initialStationFilter)
       // بدل ما يفضل يبدأ بـ "كل المحطات" كل مرة.
@@ -149,10 +149,10 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     children: [
       { path: '', redirect: '/ops/reception' },
-      { path: 'reception', name: 'ops-reception', component: () => import('../views/ops/ReceptionView.vue'), meta: { title: 'الاستقبال' } },
-      { path: 'rooms', name: 'ops-rooms', component: () => import('../views/ops/RoomsView.vue'), meta: { title: 'الغرف' } },
-      { path: 'bookings', name: 'ops-bookings', component: () => import('../views/ops/BookingsView.vue'), meta: { title: 'الحجوزات' } },
-      { path: 'housekeeping', name: 'ops-housekeeping', component: () => import('../views/ops/HousekeepingView.vue'), meta: { title: 'التنظيف' } },
+      { path: 'reception', name: 'ops-reception', component: () => import('../views/ops/ReceptionView.vue'), meta: { titleKey: 'backoffice.nav.reception' } },
+      { path: 'rooms', name: 'ops-rooms', component: () => import('../views/ops/RoomsView.vue'), meta: { titleKey: 'backoffice.nav.rooms' } },
+      { path: 'bookings', name: 'ops-bookings', component: () => import('../views/ops/BookingsView.vue'), meta: { titleKey: 'backoffice.nav.bookings' } },
+      { path: 'housekeeping', name: 'ops-housekeeping', component: () => import('../views/ops/HousekeepingView.vue'), meta: { titleKey: 'backoffice.nav.housekeeping' } },
     ],
   },
 
@@ -163,10 +163,10 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredRole: 'manager' },
     children: [
       { path: '', redirect: '/admin/dashboard' },
-      { path: 'dashboard', name: 'admin-dashboard', component: () => import('../views/admin/DashboardView.vue'), meta: { title: 'لوحة التحكم' } },
-      { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { title: 'التحليلات' } },
-      { path: 'hr', name: 'admin-hr', component: () => import('../views/admin/HRView.vue'), meta: { title: 'الموارد البشرية' } },
-      { path: 'finance', name: 'admin-finance', component: () => import('../views/admin/FinanceView.vue'), meta: { title: 'المالية' } },
+      { path: 'dashboard', name: 'admin-dashboard', component: () => import('../views/admin/DashboardView.vue'), meta: { titleKey: 'backoffice.nav.dashboard' } },
+      { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { titleKey: 'backoffice.nav.analytics' } },
+      { path: 'hr', name: 'admin-hr', component: () => import('../views/admin/HRView.vue'), meta: { titleKey: 'backoffice.nav.hr' } },
+      { path: 'finance', name: 'admin-finance', component: () => import('../views/admin/FinanceView.vue'), meta: { titleKey: 'backoffice.nav.finance' } },
       // ⚠️ requiredRole كان 'supervisor' (level 50) — أعلى من الصلاحية اللي
       // الباك إند بيمنحها فعليًا لتسجيل تحصيل قسط (get_cashier_user، level 40،
       // اتصلحت اليوم من get_current_active_user). يعني الكاشير المفروض يقدر
@@ -174,31 +174,32 @@ const routes: RouteRecordRaw[] = [
       // لصفحته الرئيسية لو حاول يدخل /admin/timeshare مباشرة. باقي إجراءات
       // المدير (إلغاء عقد، تعليق، استيراد Excel) محمية أصلاً بـ
       // auth.hasRole('manager') داخل الشاشة نفسها، فتخفيض البوابة هنا آمن.
-      { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { requiredRole: 'cashier', title: 'التايم شير' } },
-      { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { title: 'لوحة المبيعات' } },
-      { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { title: 'لوحة الشاطئ الحيّة' } },
-      { path: 'beach-admin', name: 'admin-beach-admin', component: () => import('../views/admin/BeachAdminView.vue'), meta: { title: 'إدارة الشاطئ' } },
-      { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { title: 'الفاتورة الإلكترونية' } },
-      { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { title: 'المخزون' } },
-      { path: 'recipes', name: 'admin-recipes', component: () => import('../views/admin/RecipesView.vue'), meta: { title: 'وصفات الأصناف' } },
-      { path: 'food-cost', name: 'admin-food-cost', component: () => import('../views/admin/FoodCostReportView.vue'), meta: { title: 'تكلفة الطعام' } },
-      { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { title: 'إدارة العملاء' } },
-      { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRole: 'supervisor', title: 'الصيانة' } },
-      { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRole: 'supervisor', title: 'الإيجارات' } },
-      { path: 'settings',    name: 'admin-settings',    component: () => import('../views/admin/SettingsView.vue'),    meta: { requiredRole: 'admin', title: 'الإعدادات' } },
-      { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { title: 'QR Codes' } },
+      { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { requiredRole: 'cashier', titleKey: 'backoffice.nav.timeshare' } },
+      { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { titleKey: 'backoffice.nav.sales' } },
+      { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { titleKey: 'backoffice.nav.beachLive' } },
+      { path: 'beach-admin', name: 'admin-beach-admin', component: () => import('../views/admin/BeachAdminView.vue'), meta: { titleKey: 'backoffice.nav.beachAdmin' } },
+      { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { titleKey: 'backoffice.nav.eInvoice' } },
+      { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { titleKey: 'backoffice.nav.inventory' } },
+      { path: 'recipes', name: 'admin-recipes', component: () => import('../views/admin/RecipesView.vue'), meta: { titleKey: 'backoffice.nav.recipes' } },
+      { path: 'food-cost', name: 'admin-food-cost', component: () => import('../views/admin/FoodCostReportView.vue'), meta: { titleKey: 'backoffice.nav.foodCost' } },
+      { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { titleKey: 'backoffice.nav.crm' } },
+      { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRole: 'supervisor', titleKey: 'backoffice.nav.maintenance' } },
+      { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRole: 'supervisor', titleKey: 'backoffice.nav.leasing' } },
+      { path: 'settings',    name: 'admin-settings',    component: () => import('../views/admin/SettingsView.vue'),    meta: { requiredRole: 'admin', titleKey: 'backoffice.nav.settings' } },
+      { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { titleKey: 'backoffice.nav.qrCodes' } },
       // DINING_CUTOVER_PLAN.md Batch 4 — dining-menu هو الافتراضي دلوقتي،
       // بيغطي منافذ/فئات/أصناف/مجموعات إضافات/طاولات المطعم والكافيه معًا
       // (راجع DiningMenuView.vue). menu/cafe-menu/tables القدام باقيين كـ
       // redirect — cafe-sales (تقرير مبيعات cafe.reports/sales) اتحول لـ
       // /admin/analytics لحد ما يتعمل شاشة تقرير مبيعات dining مخصصة (فجوة
       // موثّقة، راجع تقرير الـ cutover).
-      { path: 'dining-menu', name: 'admin-dining-menu', component: () => import('../views/admin/DiningMenuView.vue'),        meta: { title: 'إدارة الدايننج' } },
+      { path: 'dining-menu', name: 'admin-dining-menu', component: () => import('../views/admin/DiningMenuView.vue'),        meta: { titleKey: 'backoffice.nav.diningMenu' } },
       { path: 'menu',        redirect: '/admin/dining-menu' },
       { path: 'cafe-menu',   redirect: '/admin/dining-menu' },
       { path: 'tables',      redirect: '/admin/dining-menu' },
       { path: 'cafe-sales',  redirect: '/admin/analytics' },
       { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
+      { path: 'users', name: 'admin-users', component: () => import('../views/admin/UsersView.vue'), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.accounts.title' } },
       { path: 'super-admin', name: 'admin-super-admin', component: () => import('../views/admin/SuperAdminView.vue'), meta: { requiredRole: 'super_admin', title: 'لوحة تحكم Super Admin' } },
       { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { title: 'الموقع والحجوزات الأونلاين' } },
       // Mohamed's temporary project control room. The route is compiled into
@@ -240,10 +241,10 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     children: [
       { path: '', redirect: '/portal/attendance' },
-      { path: 'attendance', name: 'portal-attendance', component: () => import('../views/portal/AttendanceView.vue'), meta: { title: 'الحضور والانصراف' } },
-      { path: 'leaves', name: 'portal-leaves', component: () => import('../views/portal/LeavesView.vue'), meta: { title: 'طلبات الإجازة' } },
-      { path: 'payroll', name: 'portal-payroll', component: () => import('../views/portal/PayrollView.vue'), meta: { title: 'الرواتب' } },
-      { path: 'profile', name: 'portal-profile', component: () => import('../views/portal/ProfileView.vue'), meta: { title: 'ملفي الشخصي' } },
+      { path: 'attendance', name: 'portal-attendance', component: () => import('../views/portal/AttendanceView.vue'), meta: { titleKey: 'backoffice.nav.attendance' } },
+      { path: 'leaves', name: 'portal-leaves', component: () => import('../views/portal/LeavesView.vue'), meta: { titleKey: 'backoffice.nav.leaves' } },
+      { path: 'payroll', name: 'portal-payroll', component: () => import('../views/portal/PayrollView.vue'), meta: { titleKey: 'backoffice.nav.payroll' } },
+      { path: 'profile', name: 'portal-profile', component: () => import('../views/portal/ProfileView.vue'), meta: { titleKey: 'backoffice.nav.profile' } },
     ],
   },
 
@@ -251,11 +252,19 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     redirect: () => homeRouteFor(useAuthStore().role),
   },
-  { path: '/:pathMatch(.*)*', redirect: '/' },
+  { path: '/:pathMatch(.*)*', component: () => import('../views/account/NotFoundView.vue') },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior(to, _from, savedPosition) {
+    // الـ savedPosition موجود لما المستخدم يضغط back/forward في المتصفح
+    // — يرجع لنفس المكان اللي كان فيه (سلوك المتصفح الطبيعي).
+    // لو مفيش saved position، نبدأ من الأعلى دايمًا عند التنقل لصفحة جديدة.
+    if (savedPosition) return savedPosition
+    if (to.hash) return { el: to.hash, behavior: 'smooth' }
+    return { top: 0, behavior: 'smooth' }
+  },
   routes,
 })
 

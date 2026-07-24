@@ -1,0 +1,23 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Publicly trusted TLS for the temporary IP-only deployment.
+#
+#  Let's Encrypt IP certificates are short-lived, so this override is paired
+#  with deploy/systemd/resort-os-certbot-renew.* and the deploy hook under
+#  deploy/certbot/.  Staff is served on 443; the public/guest site is served
+#  on 8443 because the two SPAs do not share a base-path deployment.
+#
+#  Usage (after the first certificate has been issued):
+#    docker compose -f docker-compose.prod.yml \
+#      -f docker-compose.prod.ip-tls.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8081"
+      - "8443:8443"
+    volumes:
+      - ./deploy/nginx/edge-ip-tls.conf:/etc/nginx/conf.d/default.conf:ro
+      - /var/www/certbot:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro

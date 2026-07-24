@@ -45,7 +45,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import (
-    APIRouter, Depends, Header, HTTPException, Query, Request, WebSocket,
+    APIRouter, Depends, Header, HTTPException, Query, Request, Response, WebSocket,
     WebSocketDisconnect, status,
 )
 
@@ -89,6 +89,8 @@ from app.modules.core.schemas import (
     ServiceLocationTokenRead,
     SettingRead,
     SettingUpdate,
+    StaffUserCreate,
+    StaffUserProvisioned,
     UserCreate,
     UserPermissionGrantRequest,
     UserPermissionRead,
@@ -500,6 +502,67 @@ def create_user(
         return UserRead.model_validate(created)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+@router.post(
+    "/users",
+    response_model=StaffUserProvisioned,
+    status_code=status.HTTP_201_CREATED,
+)
+def provision_staff_user(
+    data: StaffUserCreate,
+    db: DbDep,
+    request: Request,
+    response: Response,
+    user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """Create a named staff account and return bootstrap credentials once."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.core.kernel.auth.service import AuthService  # noqa: PLC0415
+    from app.core.kernel.auth.step_up import user_provision_scope  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    scope_hash = user_provision_scope(
+        email=data.email,
+        full_name=data.full_name,
+        phone=data.phone,
+        employee_id=data.employee_id,
+        role=data.role,
+        preferred_language=data.preferred_language,
+        reason=data.reason,
+    )
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="user_provision", scope_hash=scope_hash,
+        x_step_up_token=x_step_up_token,
+    )
+    try:
+        result = AuthService(db, User, settings).provision_staff_account(
+            email=data.email,
+            full_name=data.full_name,
+            phone=data.phone,
+            employee_id=data.employee_id,
+            role=data.role,
+            preferred_language=data.preferred_language,
+            actor_id=user.id,
+            reason=data.reason,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
+        )
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+
+    response.headers["Cache-Control"] = "no-store"
+    response.headers["Pragma"] = "no-cache"
+    return StaffUserProvisioned(
+        user=UserRead.model_validate(result["user"]),
+        temporary_password=result["temporary_password"],
+        enrollment_token=result["enrollment_token"],
+        enrollment_expires_at=result["enrollment_expires_at"],
+    )
+
 
 @router.get(
     "/users",

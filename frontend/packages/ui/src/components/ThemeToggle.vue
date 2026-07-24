@@ -1,16 +1,20 @@
 <script setup lang="ts">
-// The dark-mode trigger — built and ready, but not mounted in any layout
-// yet (BackOfficeLayout/KioskLayout/FieldLayout are all existing shell
-// files, and wiring nav chrome into them is Phase 3's job, not this pass's
-// "pure additive infrastructure" scope). Uses @resort-os/core's useTheme()
-// singleton, so it reflects/drives the same state initTheme() bootstraps in
-// main.ts — mounting this anywhere just works without extra plumbing.
+// Shared light/dark trigger. BackOfficeLayout and FieldLayout both mount it,
+// while the @resort-os/core singleton keeps every shell synchronized with the
+// preference that initTheme() applies before the app mounts.
 import { computed } from 'vue'
 import { useTheme } from '@resort-os/core'
 import AppIcon from './Icon.vue'
 
 const { isDark, toggleTheme } = useTheme()
-const label = computed(() => isDark.value ? 'التبديل للوضع الفاتح' : 'التبديل للوضع الداكن')
+const props = withDefaults(defineProps<{
+  lightLabel?: string
+  darkLabel?: string
+}>(), {
+  lightLabel: 'Switch to light mode / التبديل للوضع الفاتح',
+  darkLabel: 'Switch to dark mode / التبديل للوضع الداكن',
+})
+const label = computed(() => isDark.value ? props.lightLabel : props.darkLabel)
 </script>
 
 <template>
@@ -19,7 +23,7 @@ const label = computed(() => isDark.value ? 'التبديل للوضع الفا�
     :aria-label="label"
     :title="label"
     @click="toggleTheme"
-    class="w-9 h-9 rounded-lg flex items-center justify-center text-gray-600 dark:text-gray-400 hover:bg-background transition-colors duration-base focus:outline-none focus-visible:shadow-focus-ring"
+    class="flex h-11 w-11 items-center justify-center rounded-xl text-gray-600 transition-colors duration-base hover:bg-background focus:outline-none focus-visible:shadow-focus-ring dark:text-gray-300"
   >
     <AppIcon :name="isDark ? 'sun' : 'moon'" size="sm" />
   </button>

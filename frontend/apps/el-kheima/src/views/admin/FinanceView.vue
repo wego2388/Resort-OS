@@ -76,10 +76,10 @@ async function loadShifts() {
 function shiftVarianceClass(v?: number | null): string {
   if (v == null) return 'text-gray-400'
   const abs = Math.abs(v)
-  if (abs === 0) return 'text-green-600 font-bold'
+  if (abs === 0) return 'font-bold text-green-600 dark:text-green-300'
   if (abs <= 50) return 'text-amber-500 font-semibold'
-  if (abs <= 200) return 'text-amber-700 font-bold'
-  return 'text-red-600 font-bold'
+  if (abs <= 200) return 'font-bold text-amber-700 dark:text-amber-300'
+  return 'font-bold text-red-600 dark:text-red-300'
 }
 
 // ── Drill-down لكل وردية (S-05) — تقرير X/Z كامل + سجل الفواتير، نفس
@@ -463,7 +463,7 @@ onMounted(() => loadTab('overview'))
         { val: 'shifts', label: t('backoffice.finance.tabs.shifts') },
       ]"
         :key="tabDef.val" @click="loadTab(tabDef.val as any)"
-        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500 hover:text-gray-700 dark:text-gray-300']"
+        :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
       >{{ tabDef.label }}</button>
     </div>
 
@@ -472,21 +472,21 @@ onMounted(() => loadTab('overview'))
       <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <div v-else-if="financeData" class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.finance.totalRevenue') }}</div>
-          <div class="text-3xl font-black text-green-600">{{ formatNumber(financeData.total_revenue) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.finance.totalRevenue') }}</div>
+          <div class="text-3xl font-black text-green-600 dark:text-green-300">{{ formatNumber(financeData.total_revenue) }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
         </AppCard>
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.finance.totalExpense') }}</div>
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.finance.totalExpense') }}</div>
           <div class="text-3xl font-black text-red-500">{{ formatNumber(financeData.total_expense) }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
         </AppCard>
         <AppCard padding="lg" class="text-center">
-          <div class="text-sm text-gray-500 dark:text-gray-500 mb-2">{{ t('backoffice.finance.netIncome') }}</div>
-          <div :class="['text-3xl font-black', financeData.net_income >= 0 ? 'text-blue-700' : 'text-red-500']">
+          <div class="text-sm text-gray-500 dark:text-gray-400 mb-2">{{ t('backoffice.finance.netIncome') }}</div>
+          <div :class="['text-3xl font-black', financeData.net_income >= 0 ? 'text-blue-700 dark:text-blue-300' : 'text-red-500 dark:text-red-300']">
             {{ formatNumber(financeData.net_income) }}
           </div>
-          <div class="text-xs text-gray-400 dark:text-gray-500 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
+          <div class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.finance.egpWord') }}</div>
         </AppCard>
       </div>
       <AppCard v-else padding="lg">
@@ -502,12 +502,12 @@ onMounted(() => loadTab('overview'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.checkNumber') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.drawer') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.amount') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.dueDate') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.statusCol') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.action') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.checkNumber') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.drawer') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.amount') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.dueDate') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.statusCol') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.action') }}</th>
               </tr>
             </thead>
             <tbody>
@@ -515,7 +515,7 @@ onMounted(() => loadTab('overview'))
                 <td class="px-4 py-3 font-mono text-sm text-gray-900 dark:text-gray-100">{{ check.check_number }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ check.drawer_name }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(check.amount) }} {{ t('backoffice.finance.egp') }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ fmtDateFn(check.due_date) }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ fmtDateFn(check.due_date) }}</td>
                 <td class="px-4 py-3">
                   <AppBadge size="sm" :variant="checkStatusConfig[check.status]?.variant ?? 'neutral'">
                     {{ checkStatusConfig[check.status]?.label ?? check.status }}
@@ -551,18 +551,18 @@ onMounted(() => loadTab('overview'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.code') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.accountName') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.type') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.balance') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.code') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.accountName') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.type') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.balance') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="acc in accounts" :key="acc.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
-                <td class="px-4 py-3 font-mono text-sm text-gray-600 dark:text-gray-500">{{ acc.code }}</td>
+                <td class="px-4 py-3 font-mono text-sm text-gray-600 dark:text-gray-400">{{ acc.code }}</td>
                 <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ acc.name }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ acc.account_type }}</td>
-                <td class="px-4 py-3 text-sm font-bold" :class="acc.balance >= 0 ? 'text-green-600' : 'text-red-500'">
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ acc.account_type }}</td>
+                <td class="px-4 py-3 text-sm font-bold" :class="acc.balance >= 0 ? 'text-green-600 dark:text-green-300' : 'text-red-500 dark:text-red-300'">
                   {{ formatNumber(acc.balance) }} {{ t('backoffice.finance.egp') }}
                 </td>
               </tr>
@@ -581,11 +581,11 @@ onMounted(() => loadTab('overview'))
     <div v-if="tab === 'cost-centers'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.fromDate') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.fromDate') }}</label>
           <input v-model="ccDateFrom" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
         </div>
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.toDate') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.toDate') }}</label>
           <input v-model="ccDateTo" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
         </div>
         <AppButton size="sm" @click="loadCostCenters">{{ t('backoffice.finance.apply') }}</AppButton>
@@ -598,17 +598,17 @@ onMounted(() => loadTab('overview'))
             <table class="w-full">
               <thead class="bg-stone-50 dark:bg-gray-800/60">
                 <tr>
-                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.costCenter') }}</th>
-                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.revenue') }}</th>
-                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.expense') }}</th>
-                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.net') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.costCenter') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.revenue') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.expense') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.net') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="line in ccLines" :key="line.code" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                   <td class="px-4 py-3 text-sm font-bold text-gray-900 dark:text-gray-100">{{ line.name }}</td>
-                  <td class="px-4 py-3 text-sm font-bold text-green-600">{{ formatNumber(line.revenue) }} {{ t('backoffice.finance.egp') }}</td>
-                  <td class="px-4 py-3 text-sm font-bold text-red-600">{{ formatNumber(line.expense) }} {{ t('backoffice.finance.egp') }}</td>
+                  <td class="px-4 py-3 text-sm font-bold text-green-600 dark:text-green-300">{{ formatNumber(line.revenue) }} {{ t('backoffice.finance.egp') }}</td>
+                  <td class="px-4 py-3 text-sm font-bold text-red-600 dark:text-red-300">{{ formatNumber(line.expense) }} {{ t('backoffice.finance.egp') }}</td>
                   <td class="px-4 py-3 text-sm font-bold" :class="line.net >= 0 ? 'text-gray-900 dark:text-gray-100' : 'text-red-700'">
                     {{ formatNumber(line.net) }} {{ t('backoffice.finance.egp') }}
                   </td>
@@ -622,15 +622,15 @@ onMounted(() => loadTab('overview'))
               <tfoot v-if="ccLines.length">
                 <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
                   <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.total') }}</td>
-                  <td class="px-4 py-3 text-sm font-black text-green-700">{{ formatNumber(ccTotalRevenue) }} {{ t('backoffice.finance.egp') }}</td>
-                  <td class="px-4 py-3 text-sm font-black text-red-700">{{ formatNumber(ccTotalExpense) }} {{ t('backoffice.finance.egp') }}</td>
+                  <td class="px-4 py-3 text-sm font-black text-green-700 dark:text-green-300">{{ formatNumber(ccTotalRevenue) }} {{ t('backoffice.finance.egp') }}</td>
+                  <td class="px-4 py-3 text-sm font-black text-red-700 dark:text-red-300">{{ formatNumber(ccTotalExpense) }} {{ t('backoffice.finance.egp') }}</td>
                   <td class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ formatNumber(ccTotalNet) }} {{ t('backoffice.finance.egp') }}</td>
                 </tr>
               </tfoot>
             </table>
           </div>
         </AppCard>
-        <p class="text-[11px] text-gray-400 dark:text-gray-500">
+        <p class="text-[11px] text-gray-400 dark:text-gray-400">
           {{ t('backoffice.finance.costCenterHint') }}
         </p>
       </template>
@@ -640,7 +640,7 @@ onMounted(() => loadTab('overview'))
     <div v-if="tab === 'balance-sheet'">
       <div class="flex flex-wrap items-end gap-3 mb-4">
         <div>
-          <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.asOfDate') }}</label>
+          <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.asOfDate') }}</label>
           <input v-model="bsAsOf" type="date" class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm" />
         </div>
         <AppButton size="sm" @click="loadBalanceSheet">{{ t('backoffice.finance.apply') }}</AppButton>
@@ -658,7 +658,7 @@ onMounted(() => loadTab('overview'))
               <table class="w-full">
                 <tbody>
                   <tr v-for="l in bsData.asset_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
-                    <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
+                    <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400">{{ l.account_code }}</td>
                     <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
                     <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.amount) }} {{ t('backoffice.finance.egp') }}</td>
                   </tr>
@@ -669,7 +669,7 @@ onMounted(() => loadTab('overview'))
                 <tfoot v-if="bsData.asset_lines.length">
                   <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
                     <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.totalAssets') }}</td>
-                    <td class="px-4 py-3 text-sm font-black text-green-700">{{ formatNumber(bsData.total_assets) }} {{ t('backoffice.finance.egp') }}</td>
+                    <td class="px-4 py-3 text-sm font-black text-green-700 dark:text-green-300">{{ formatNumber(bsData.total_assets) }} {{ t('backoffice.finance.egp') }}</td>
                   </tr>
                 </tfoot>
               </table>
@@ -683,7 +683,7 @@ onMounted(() => loadTab('overview'))
                 <table class="w-full">
                   <tbody>
                     <tr v-for="l in bsData.liability_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
-                      <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
+                      <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400">{{ l.account_code }}</td>
                       <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
                       <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.amount) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
@@ -694,7 +694,7 @@ onMounted(() => loadTab('overview'))
                   <tfoot v-if="bsData.liability_lines.length">
                     <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
                       <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.totalLiabilities') }}</td>
-                      <td class="px-4 py-3 text-sm font-black text-red-700">{{ formatNumber(bsData.total_liabilities) }} {{ t('backoffice.finance.egp') }}</td>
+                      <td class="px-4 py-3 text-sm font-black text-red-700 dark:text-red-300">{{ formatNumber(bsData.total_liabilities) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -707,7 +707,7 @@ onMounted(() => loadTab('overview'))
                 <table class="w-full">
                   <tbody>
                     <tr v-for="l in bsData.equity_lines" :key="l.account_code" class="border-t border-stone-100 dark:border-border/50">
-                      <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-500">{{ l.account_code }}</td>
+                      <td class="px-4 py-2 text-xs font-mono text-gray-500 dark:text-gray-400">{{ l.account_code }}</td>
                       <td class="px-4 py-2 text-sm text-gray-900 dark:text-gray-100">{{ l.account_name }}</td>
                       <td class="px-4 py-2 text-sm font-bold text-gray-900 dark:text-gray-100">{{ formatNumber(l.amount) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
@@ -719,7 +719,7 @@ onMounted(() => loadTab('overview'))
                   <tfoot>
                     <tr class="border-t-2 border-stone-200 dark:border-border bg-stone-50 dark:bg-gray-800/60">
                       <td colspan="2" class="px-4 py-3 text-sm font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.finance.totalLiabilitiesAndEquity') }}</td>
-                      <td class="px-4 py-3 text-sm font-black text-blue-700">{{ formatNumber(bsData.total_liabilities_and_equity) }} {{ t('backoffice.finance.egp') }}</td>
+                      <td class="px-4 py-3 text-sm font-black text-blue-700 dark:text-blue-300">{{ formatNumber(bsData.total_liabilities_and_equity) }} {{ t('backoffice.finance.egp') }}</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -727,7 +727,7 @@ onMounted(() => loadTab('overview'))
             </AppCard>
           </div>
         </div>
-        <p class="text-[11px] text-gray-400 dark:text-gray-500">
+        <p class="text-[11px] text-gray-400 dark:text-gray-400">
           {{ t('backoffice.finance.balanceSheetHint') }}
         </p>
       </template>
@@ -741,12 +741,12 @@ onMounted(() => loadTab('overview'))
       <AppCard class="mb-4">
         <div class="flex flex-wrap items-end gap-3">
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.year') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.year') }}</label>
             <input v-model.number="depYear" type="number" min="2020" max="2100"
               class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm w-28" />
           </div>
           <div>
-            <label class="block text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.month') }}</label>
+            <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.month') }}</label>
             <input v-model.number="depMonth" type="number" min="1" max="12"
               class="border border-stone-200 dark:border-border rounded-lg px-3 py-1.5 text-sm w-20" />
           </div>
@@ -755,10 +755,10 @@ onMounted(() => loadTab('overview'))
           </AppButton>
         </div>
         <div v-if="lastRunResult" class="mt-3 text-sm">
-          <p class="text-green-700 font-semibold">
+          <p class="font-semibold text-green-700 dark:text-green-300">
             {{ t('backoffice.finance.depreciationRunSummary', { count: lastRunResult.entries_count, amount: formatNumber(lastRunResult.total_amount) }) }}
           </p>
-          <p v-if="lastRunResult.skipped.length" class="text-gray-400 dark:text-gray-500 text-xs mt-1">
+          <p v-if="lastRunResult.skipped.length" class="text-gray-400 dark:text-gray-400 text-xs mt-1">
             {{ t('backoffice.finance.skippedList', { names: lastRunResult.skipped.join('، ') }) }}
           </p>
         </div>
@@ -770,16 +770,16 @@ onMounted(() => loadTab('overview'))
           <table class="w-full">
             <thead class="bg-stone-50 dark:bg-gray-800/60">
               <tr>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.asset') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.month') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.depreciationAmount') }}</th>
-                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.accumulatedAfter') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.asset') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.month') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.depreciationAmount') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.accumulatedAfter') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="e in depreciationEntries" :key="e.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
                 <td class="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100">{{ assetsById[e.asset_id] ?? t('backoffice.finance.assetHash', { id: e.asset_id }) }}</td>
-                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ e.month }}/{{ e.year }}</td>
+                <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ e.month }}/{{ e.year }}</td>
                 <td class="px-4 py-3 text-sm font-bold text-red-500">{{ formatNumber(Number(e.amount)) }} {{ t('backoffice.finance.egp') }}</td>
                 <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{{ formatNumber(Number(e.accumulated_after)) }} {{ t('backoffice.finance.egp') }}</td>
               </tr>
@@ -828,21 +828,21 @@ onMounted(() => loadTab('overview'))
       <template v-else>
         <div v-if="reconciliationSummary" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.bookBalance') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.bookBalance') }}</div>
             <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ formatNumber(reconciliationSummary.book_balance) }}</div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.statementBalance') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.statementBalance') }}</div>
             <div class="text-lg font-black text-gray-900 dark:text-gray-100">{{ formatNumber(reconciliationSummary.statement_balance) }}</div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.difference') }}</div>
-            <div :class="['text-lg font-black', reconciliationSummary.is_reconciled ? 'text-green-600' : 'text-amber-600']">
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.difference') }}</div>
+            <div :class="['text-lg font-black', reconciliationSummary.is_reconciled ? 'text-green-600 dark:text-green-300' : 'text-amber-600 dark:text-amber-300']">
               {{ formatNumber(reconciliationSummary.difference) }}
             </div>
           </AppCard>
           <AppCard padding="md" class="text-center">
-            <div class="text-xs text-gray-400 dark:text-gray-500 mb-1">{{ t('backoffice.finance.statusLabel') }}</div>
+            <div class="text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.finance.statusLabel') }}</div>
             <AppBadge :variant="reconciliationSummary.is_reconciled ? 'success' : 'warning'">
               {{ reconciliationSummary.is_reconciled ? `${t('backoffice.finance.reconciled')} ✓` : t('backoffice.finance.notReconciled') }}
             </AppBadge>
@@ -860,17 +860,17 @@ onMounted(() => loadTab('overview'))
             <table class="w-full">
               <thead class="bg-stone-50 dark:bg-gray-800/60">
                 <tr>
-                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.date') }}</th>
-                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.description') }}</th>
-                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.amount') }}</th>
-                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-500 uppercase">{{ t('backoffice.finance.statusCol') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.date') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.description') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.amount') }}</th>
+                  <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.finance.statusCol') }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="line in statementLines" :key="line.id" class="border-t border-stone-100 dark:border-border/50 hover:bg-stone-50 dark:bg-gray-800/60">
-                  <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-500">{{ line.line_date }}</td>
+                  <td class="px-4 py-3 text-sm text-gray-600 dark:text-gray-400">{{ line.line_date }}</td>
                   <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{{ line.description }}</td>
-                  <td class="px-4 py-3 text-sm font-bold" :class="line.amount >= 0 ? 'text-green-600' : 'text-red-500'">
+                  <td class="px-4 py-3 text-sm font-bold" :class="line.amount >= 0 ? 'text-green-600 dark:text-green-300' : 'text-red-500 dark:text-red-300'">
                     {{ formatNumber(Number(line.amount)) }}
                   </td>
                   <td class="px-4 py-3">
@@ -901,7 +901,7 @@ onMounted(() => loadTab('overview'))
             { v: 'closed', l: t('backoffice.finance.shiftClosed') },
           ]"
             :key="s.v" @click="shiftStatus = s.v as any; loadShifts()"
-            :class="['px-3 py-1 rounded-lg text-xs font-semibold transition-all', shiftStatus === s.v ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-500']">
+            :class="['px-3 py-1 rounded-lg text-xs font-semibold transition-all', shiftStatus === s.v ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400']">
             {{ s.l }}
           </button>
         </div>
@@ -913,12 +913,12 @@ onMounted(() => loadTab('overview'))
         >⚠️ {{ t('backoffice.finance.varianceOnlyFilter') }}</button>
         <!-- spinner أثناء التحميل -->
         <AppSpinner v-if="loadingShifts" size="sm" />
-        <span class="text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.finance.totalShown', { total: shiftsTotal, shown: filteredShifts.length }) }}</span>
-        <button @click="loadShifts()" class="ms-auto px-3 py-1 rounded-lg text-xs font-semibold border border-stone-200 dark:border-border bg-white dark:bg-surface text-gray-500 dark:text-gray-500 hover:bg-stone-50 dark:bg-gray-800/60 transition-all">🔄 {{ t('backoffice.finance.refresh') }}</button>
+        <span class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.finance.totalShown', { total: shiftsTotal, shown: filteredShifts.length }) }}</span>
+        <button @click="loadShifts()" class="ms-auto px-3 py-1 rounded-lg text-xs font-semibold border border-stone-200 dark:border-border bg-white dark:bg-surface text-gray-500 dark:text-gray-400 hover:bg-stone-50 dark:bg-gray-800/60 transition-all">🔄 {{ t('backoffice.finance.refresh') }}</button>
       </div>
       <div class="overflow-x-auto rounded-xl border border-stone-200 dark:border-border">
         <table class="w-full text-sm">
-          <thead class="bg-stone-50 dark:bg-gray-800/60 text-xs text-gray-500 dark:text-gray-500 uppercase">
+          <thead class="bg-stone-50 dark:bg-gray-800/60 text-xs text-gray-500 dark:text-gray-400 uppercase">
             <tr>
               <th class="px-4 py-3 text-start">#</th>
               <th class="px-4 py-3 text-start">{{ t('backoffice.finance.cashier') }}</th>
@@ -937,17 +937,19 @@ onMounted(() => loadTab('overview'))
               class="hover:bg-stone-50 dark:bg-gray-800/60 transition-colors cursor-pointer"
               @click="openShiftDetail(s)"
             >
-              <td class="px-4 py-3 font-mono text-gray-500 dark:text-gray-500">#{{ s.id }}</td>
+              <td class="px-4 py-3 font-mono text-gray-500 dark:text-gray-400">#{{ s.id }}</td>
               <td class="px-4 py-3 font-semibold">{{ s.cashier_id }}</td>
-              <td class="px-4 py-3 text-gray-600 dark:text-gray-500 text-xs">
+              <td class="px-4 py-3 text-gray-600 dark:text-gray-400 text-xs">
                 {{ fmtDateTimeFn(s.opened_at) }}
               </td>
-              <td class="px-4 py-3 text-gray-500 dark:text-gray-500 text-xs">
+              <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs">
                 {{ s.closed_at ? fmtDateTimeFn(s.closed_at) : '—' }}
               </td>
               <td class="px-4 py-3">
                 <span :class="['px-2 py-0.5 rounded-full text-xs font-bold',
-                  s.status === 'open' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600']">
+                  s.status === 'open'
+                    ? 'bg-green-100 text-green-700 dark:bg-green-950/50 dark:text-green-300'
+                    : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300']">
                   {{ s.status === 'open' ? t('backoffice.finance.shiftOpen') : t('backoffice.finance.shiftClosed') }}
                 </span>
                 <span v-if="s.reconciliation_warning" class="ms-1 text-red-500 cursor-help"
@@ -963,12 +965,12 @@ onMounted(() => loadTab('overview'))
                   :href="ENDPOINTS.finance.shiftReportPdf(s.id)"
                   target="_blank"
                   @click.stop
-                  class="text-xs text-blue-600 hover:underline font-semibold">📄 PDF</a>
+                  class="text-xs font-semibold text-blue-600 hover:underline dark:text-blue-300">📄 PDF</a>
                 <span v-else class="text-gray-300 text-xs">—</span>
               </td>
             </tr>
             <tr v-if="!filteredShifts.length">
-              <td colspan="9" class="px-4 py-12 text-center text-gray-400 dark:text-gray-500">{{ t('backoffice.finance.noShifts') }}</td>
+              <td colspan="9" class="px-4 py-12 text-center text-gray-400 dark:text-gray-400">{{ t('backoffice.finance.noShifts') }}</td>
             </tr>
           </tbody>
         </table>
@@ -1023,13 +1025,13 @@ onMounted(() => loadTab('overview'))
 
         <!-- ملخص العملات الأجنبية -->
         <div v-if="detailReport.foreign_currency_summary?.length">
-          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">🌍 {{ t('backoffice.finance.foreignCurrencies') }}</h3>
+          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-400 uppercase mb-1.5">🌍 {{ t('backoffice.finance.foreignCurrencies') }}</h3>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
             <div v-for="fc in detailReport.foreign_currency_summary" :key="fc.currency"
               class="bg-amber-50 dark:bg-amber-900/20 rounded-lg px-2 py-1.5 border border-amber-100 dark:border-amber-800/40 flex justify-between">
               <span class="text-gray-600 dark:text-gray-400">
                 {{ fc.total_foreign.toFixed(2) }} {{ fc.currency }}
-                <span class="text-gray-400 dark:text-gray-500"> × {{ fc.fx_rate }}</span>
+                <span class="text-gray-400 dark:text-gray-400"> × {{ fc.fx_rate }}</span>
               </span>
               <span class="font-semibold text-amber-700 dark:text-amber-400">{{ fc.egp_equivalent.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
             </div>
@@ -1041,7 +1043,7 @@ onMounted(() => loadTab('overview'))
 
         <!-- عدّ الكاش بالفئة -->
         <div v-if="detailReport.cash_count.length">
-          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">{{ t('backoffice.finance.cashCountByDenomination') }}</h3>
+          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-400 uppercase mb-1.5">{{ t('backoffice.finance.cashCountByDenomination') }}</h3>
           <div class="grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-xs">
             <div v-for="(line, i) in detailReport.cash_count" :key="i"
               class="bg-stone-50 dark:bg-gray-800/60 rounded-lg px-2 py-1.5 flex justify-between">
@@ -1053,7 +1055,7 @@ onMounted(() => loadTab('overview'))
 
         <!-- سجل الفواتير -->
         <div>
-          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-500 uppercase mb-1.5">
+          <h3 class="text-xs font-bold text-gray-400 dark:text-gray-400 uppercase mb-1.5">
             {{ t('backoffice.finance.invoicesCount', { count: detailInvoices.length }) }}
           </h3>
           <EmptyState v-if="!detailInvoices.length" :title="t('backoffice.finance.noInvoicesInShift')" />
@@ -1062,9 +1064,9 @@ onMounted(() => loadTab('overview'))
               class="py-2 flex items-center justify-between gap-2" :class="inv.is_voided && 'opacity-50'">
               <div>
                 <span class="text-sm font-semibold text-gray-800 dark:text-gray-200" :class="inv.is_voided && 'line-through'">{{ inv.guest_name }}</span>
-                <span class="text-xs text-gray-400 dark:text-gray-500 ms-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
+                <span class="text-xs text-gray-400 dark:text-gray-400 ms-2">{{ METHOD_LABEL[inv.method] ?? inv.method }}</span>
               </div>
-              <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 dark:text-gray-500 line-through' : 'text-blue-700 dark:text-blue-400'">{{ inv.amount.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
+              <span class="text-sm font-bold" :class="inv.is_voided ? 'text-gray-400 dark:text-gray-400 line-through' : 'text-blue-700 dark:text-blue-400'">{{ inv.amount.toFixed(2) }} {{ t('backoffice.finance.egp') }}</span>
             </div>
           </div>
         </div>

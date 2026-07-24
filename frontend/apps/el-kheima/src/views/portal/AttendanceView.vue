@@ -41,10 +41,10 @@ const isClockedIn = computed(() => !!(todayRecord.value?.check_in && !todayRecor
 const isCompleted  = computed(() => !!(todayRecord.value?.check_in && todayRecord.value?.check_out))
 
 const statusConfig = computed<Record<string, { label: string; color: string }>>(() => ({
-  present:  { label: t('backoffice.attendance.status.present'),    color: 'text-green-600 bg-green-50' },
-  absent:   { label: t('backoffice.attendance.status.absent'),    color: 'text-red-600 bg-red-50' },
-  late:     { label: t('backoffice.attendance.status.late'),   color: 'text-amber-600 bg-amber-50' },
-  half_day: { label: t('backoffice.attendance.status.halfDay'), color: 'text-blue-600 bg-blue-50' },
+  present:  { label: t('backoffice.attendance.status.present'), color: 'bg-green-50 text-green-600 dark:bg-green-950/40 dark:text-green-300' },
+  absent:   { label: t('backoffice.attendance.status.absent'), color: 'bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300' },
+  late:     { label: t('backoffice.attendance.status.late'), color: 'bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300' },
+  half_day: { label: t('backoffice.attendance.status.halfDay'), color: 'bg-blue-50 text-blue-600 dark:bg-blue-950/40 dark:text-blue-300' },
 }))
 
 function fmtTime(iso?: string) {
@@ -90,22 +90,22 @@ onMounted(fetchAttendance)
   <div class="space-y-4">
     <!-- Clock + Punch card -->
     <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border p-6 shadow-sm text-center">
-      <div class="text-sm text-gray-500 dark:text-gray-500 mb-1">{{ t('backoffice.attendance.currentTime') }}</div>
+      <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.attendance.currentTime') }}</div>
       <div class="text-4xl font-mono font-black text-gray-900 dark:text-gray-100 mb-5" dir="ltr">{{ currentTime }}</div>
 
       <div v-if="todayRecord" class="flex items-center justify-center gap-8 text-sm mb-5">
         <div class="text-center">
-          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">{{ t('backoffice.attendance.checkIn') }}</div>
+          <div class="text-gray-400 dark:text-gray-400 text-xs mb-1">{{ t('backoffice.attendance.checkIn') }}</div>
           <div class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ fmtTime(todayRecord.check_in) }}</div>
         </div>
-        <div class="w-px h-10 bg-stone-200"/>
+        <div class="h-10 w-px bg-stone-200 dark:bg-gray-700"/>
         <div class="text-center">
-          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">{{ t('backoffice.attendance.checkOut') }}</div>
+          <div class="text-gray-400 dark:text-gray-400 text-xs mb-1">{{ t('backoffice.attendance.checkOut') }}</div>
           <div class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ fmtTime(todayRecord.check_out) }}</div>
         </div>
-        <div class="w-px h-10 bg-stone-200"/>
+        <div class="h-10 w-px bg-stone-200 dark:bg-gray-700"/>
         <div class="text-center">
-          <div class="text-gray-400 dark:text-gray-500 text-xs mb-1">{{ t('backoffice.attendance.hours') }}</div>
+          <div class="text-gray-400 dark:text-gray-400 text-xs mb-1">{{ t('backoffice.attendance.hours') }}</div>
           <div class="font-bold text-gray-900 dark:text-gray-100 text-lg">{{ todayRecord.hours_worked?.toFixed(1) ?? '—' }}h</div>
         </div>
       </div>
@@ -113,7 +113,7 @@ onMounted(fetchAttendance)
       <button @click="punch" :disabled="punching || isCompleted"
         :class="[
           'w-full max-w-xs py-4 rounded-2xl text-lg font-black transition-all shadow-lg active:scale-95',
-          isCompleted ? 'bg-gray-200 text-gray-400 dark:text-gray-500 cursor-not-allowed' :
+          isCompleted ? 'cursor-not-allowed bg-gray-200 text-gray-400 dark:bg-gray-800 dark:text-gray-400' :
           isClockedIn ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white',
         ]"
       >
@@ -125,9 +125,9 @@ onMounted(fetchAttendance)
     <div class="bg-white dark:bg-surface rounded-2xl border border-stone-200 dark:border-border shadow-sm overflow-hidden">
       <div class="px-5 py-4 border-b border-stone-100 dark:border-border/50 flex items-center justify-between">
         <span class="font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.attendance.last30Days') }}</span>
-        <button @click="fetchAttendance" :class="['text-xs text-gray-400 dark:text-gray-500 hover:text-blue-600', loading ? 'animate-spin' : '']">↻</button>
+        <button @click="fetchAttendance" :class="['text-xs text-gray-400 dark:text-gray-400 hover:text-blue-600', loading ? 'motion-safe:animate-spin' : '']">↻</button>
       </div>
-      <div v-if="loading" class="p-8 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500 text-sm gap-2">
+      <div v-if="loading" class="p-8 flex flex-col items-center justify-center text-gray-400 dark:text-gray-400 text-sm gap-2">
         <AppSpinner size="md" />
         <span>{{ t('backoffice.attendance.loading') }}</span>
       </div>
@@ -137,13 +137,13 @@ onMounted(fetchAttendance)
             <div class="text-sm font-medium text-gray-900 dark:text-gray-100">
               {{ formatDate(rec.record_date, { weekday: 'short', month: 'short', day: 'numeric' }) }}
             </div>
-            <div class="text-xs text-gray-400 dark:text-gray-500 mt-0.5" dir="ltr">
+            <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5" dir="ltr">
               {{ fmtTime(rec.check_in) }} → {{ fmtTime(rec.check_out) }}
             </div>
           </div>
           <div class="flex items-center gap-3">
-            <span class="text-sm text-gray-600 dark:text-gray-500 font-medium">{{ rec.hours_worked?.toFixed(1) ?? '—' }}h</span>
-            <span :class="['px-2.5 py-0.5 rounded-full text-xs font-medium', statusConfig[rec.status]?.color ?? 'text-gray-600 dark:text-gray-500 bg-gray-50']">
+            <span class="text-sm text-gray-600 dark:text-gray-400 font-medium">{{ rec.hours_worked?.toFixed(1) ?? '—' }}h</span>
+            <span :class="['rounded-full px-2.5 py-0.5 text-xs font-medium', statusConfig[rec.status]?.color ?? 'bg-gray-50 text-gray-600 dark:bg-gray-800 dark:text-gray-400']">
               {{ statusConfig[rec.status]?.label ?? rec.status }}
             </span>
           </div>

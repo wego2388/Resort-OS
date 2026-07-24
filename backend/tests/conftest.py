@@ -188,10 +188,12 @@ def _reset_gate1_containment_switches():
     settings.DINING_SELF_ORDER_ENABLED = False
     settings.GUEST_ALERTS_ENABLED = False
     settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 0
+    settings.PUBLIC_REGISTRATION_ENABLED = False
     yield
     settings.DINING_SELF_ORDER_ENABLED = False
     settings.GUEST_ALERTS_ENABLED = False
     settings.RATE_LIMIT_TRUSTED_PROXY_HOPS = 0
+    settings.PUBLIC_REGISTRATION_ENABLED = False
 
 
 # ─── DB Fixture ───────────────────────────────────────────────────────

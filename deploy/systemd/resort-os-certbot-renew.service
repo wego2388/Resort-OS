@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew Resort OS short-lived IP TLS certificate
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/snap/bin/certbot renew --quiet
