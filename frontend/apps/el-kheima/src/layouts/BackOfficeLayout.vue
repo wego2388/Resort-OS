@@ -320,7 +320,15 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
 
       <!-- Content -->
       <main class="flex-1 overflow-auto bg-stone-50 p-4 dark:bg-gray-950 sm:p-6">
-        <RouterView />
+        <RouterView v-slot="{ Component, route: r }">
+          <Transition
+            name="page"
+            mode="out-in"
+            :duration="{ enter: 160, leave: 80 }"
+          >
+            <component :is="Component" :key="r.fullPath" />
+          </Transition>
+        </RouterView>
       </main>
     </div>
   </div>
@@ -340,3 +348,27 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
     @close="showCommandPalette = false"
   />
 </template>
+
+<style scoped>
+/*
+  Page transition — سريع وخفيف (fade + رفع بسيط).
+  motion-safe: بيوقفها للمستخدمين اللي شغّلوا prefers-reduced-motion.
+  out-in mode: الصفحة القديمة تختفي أول، بعدين الجديدة تظهر — مفيش تداخل.
+*/
+@media (prefers-reduced-motion: no-preference) {
+  .page-enter-active {
+    transition: opacity 160ms ease, transform 160ms ease;
+  }
+  .page-leave-active {
+    transition: opacity 80ms ease, transform 80ms ease;
+  }
+  .page-enter-from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  .page-leave-to {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+</style>

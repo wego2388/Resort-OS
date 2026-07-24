@@ -204,10 +204,9 @@ function cancelStepUp() {
   stepUpError.value = ''
 }
 
-function goBack() {
-  // '/' redirects to the user's role-based home (see router catch-all).
-  router.push('/')
-}
+import { useSmartBack } from '../../composables/useSmartBack'
+
+const { goBack } = useSmartBack('/portal/profile')
 
 onMounted(() => {
   loadSessions()

@@ -53,7 +53,20 @@ function logout() {
       </div>
     </header>
     <main class="flex-1 overflow-auto">
-      <RouterView />
+      <RouterView v-slot="{ Component, route: r }">
+        <Transition name="page" mode="out-in" :duration="{ enter: 160, leave: 80 }">
+          <component :is="Component" :key="r.fullPath" />
+        </Transition>
+      </RouterView>
     </main>
   </div>
 </template>
+
+<style scoped>
+@media (prefers-reduced-motion: no-preference) {
+  .page-enter-active { transition: opacity 160ms ease; }
+  .page-leave-active { transition: opacity 80ms ease; }
+  .page-enter-from   { opacity: 0; }
+  .page-leave-to     { opacity: 0; }
+}
+</style>

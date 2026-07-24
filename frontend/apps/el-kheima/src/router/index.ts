@@ -66,8 +66,8 @@ const routes: RouteRecordRaw[] = [
   // (app/core/kernel/email_service.py::send_password_reset_email). Both call
   // the existing app/core/kernel/auth/router.py password-reset endpoints —
   // no backend changes needed for either.
-  { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue') },
-  { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue') },
+  { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue'), meta: { title: 'نسيت كلمة المرور' } },
+  { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue'), meta: { title: 'إعادة تعيين كلمة المرور' } },
 
   {
     path: '/change-temporary-password',
@@ -94,7 +94,7 @@ const routes: RouteRecordRaw[] = [
     path: '/account/sessions',
     name: 'account-sessions',
     component: () => import('../views/account/SessionsView.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, titleKey: 'account.sessions.navLink' },
   },
 
   // ── /pos — FieldLayout (lightweight, tablet/phone, on-floor cashier use) ──
@@ -104,8 +104,8 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredRole: 'cashier' },
     children: [
       { path: '', redirect: '/pos/beach' },
-      { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue') },
-      { path: 'beach-map', name: 'pos-beach-map', component: () => import('../views/pos/BeachMapView.vue') },
+      { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue'), meta: { title: 'كاشير الشاطئ' } },
+      { path: 'beach-map', name: 'pos-beach-map', component: () => import('../views/pos/BeachMapView.vue'), meta: { title: 'خريطة الشاطئ' } },
       // DINING_CUTOVER_PLAN.md Batch 4 — dining هو الـ POS الافتراضي دلوقتي
       // (مش manager-only preview بقى). requiredRole مخفّض لـ 'waiter' هنا
       // عشان يفوّت بوابة الأب (cashier) — نادل يقدر ياخد طلبات ويبعتها
@@ -113,10 +113,10 @@ const routes: RouteRecordRaw[] = [
       // إند نفسه، مستقل تمامًا عن الـ route gate ده). الروترات القديمة
       // (restaurant/cafe) اتسابت كـ redirect بدل حذف فوري — مفيش رابط حي
       // بيوصلها تاني، لكن أي bookmark قديم لسه بيشتغل صح.
-      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'waiter' } },
+      { path: 'dining', name: 'pos-dining', component: () => import('../views/pos/UnifiedPOSView.vue'), meta: { requiredRole: 'waiter', title: 'POS الدايننج' } },
       { path: 'restaurant', redirect: '/pos/dining' },
       { path: 'cafe', redirect: '/pos/dining' },
-      { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue') },
+      { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue'), meta: { title: 'تقرير الوردية' } },
     ],
   },
 
@@ -132,7 +132,7 @@ const routes: RouteRecordRaw[] = [
       // (راجع DiningKDSView.vue's STATIONS)، نفس رؤية "نفس المطبخ لكل الـ
       // outlets" الموثّقة في dining.models.DiningKDSScreen. requiredRole
       // بيرث من الأب (waiter، level 30) — نفس مستوى kitchen/chef بالظبط.
-      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue') },
+      { path: 'dining',  name: 'kds-dining',  component: () => import('../views/kds/DiningKDSView.vue'), meta: { title: 'شاشة المطبخ' } },
       // ?stations=... يخلي جهاز مثبّت فعليًا في المطبخ/البار يفتح على
       // فلتره الأصلي بالظبط (راجع DiningKDSView.vue's initialStationFilter)
       // بدل ما يفضل يبدأ بـ "كل المحطات" كل مرة.
@@ -252,11 +252,19 @@ const routes: RouteRecordRaw[] = [
     path: '/',
     redirect: () => homeRouteFor(useAuthStore().role),
   },
-  { path: '/:pathMatch(.*)*', redirect: '/' },
+  { path: '/:pathMatch(.*)*', component: () => import('../views/account/NotFoundView.vue') },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
+  scrollBehavior(to, _from, savedPosition) {
+    // الـ savedPosition موجود لما المستخدم يضغط back/forward في المتصفح
+    // — يرجع لنفس المكان اللي كان فيه (سلوك المتصفح الطبيعي).
+    // لو مفيش saved position، نبدأ من الأعلى دايمًا عند التنقل لصفحة جديدة.
+    if (savedPosition) return savedPosition
+    if (to.hash) return { el: to.hash, behavior: 'smooth' }
+    return { top: 0, behavior: 'smooth' }
+  },
   routes,
 })
 

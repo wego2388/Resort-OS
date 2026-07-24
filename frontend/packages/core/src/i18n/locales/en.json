@@ -6752,5 +6752,11 @@
       "confirm": "Confirm",
       "confirming": "Switching..."
     }
+  },
+  "notFound": {
+    "title": "Page not found",
+    "subtitle": "The link may be wrong or expired",
+    "back": "Go back",
+    "home": "Go home"
   }
 }
