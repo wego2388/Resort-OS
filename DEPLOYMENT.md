@@ -406,10 +406,124 @@ rebuild) — no separate disaster-recovery procedure to remember.
 
 ```bash
 cd /opt/wegosharm/resort-os
-DEPLOY_BRANCH=release/vps-ready-2026-07-22 bash scripts/deploy.sh
+bash scripts/deploy.sh
 ```
 
 The deployment script refuses a dirty worktree, takes a point-in-time backup,
 fast-forwards only the selected branch, builds, applies Alembic migrations
 before replacing services, selects IP TLS automatically when its certificate
 exists, and fails if the backend health check does not recover.
+
+---
+
+## 11. VPS — معلومات السيرفر الفعلي (El Kheima Beach)
+
+> هذا القسم مرجع للعمليات اليومية — كل بيانات السيرفر الحقيقي في مكان واحد.
+
+### بيانات الاتصال
+
+| | |
+|---|---|
+| **IP العام** | `187.124.170.249` |
+| **مسار المشروع** | `/opt/wegosharm/resort-os` |
+| **GitHub Repo** | `git@github.com:wego2388/Resort-OS.git` |
+| **الفرع الرئيسي** | `main` |
+
+### الـ SSH
+
+```bash
+ssh root@187.124.170.249
+# أو إذا كان يوزر مخصص:
+ssh resortos@187.124.170.249
+```
+
+### الـ Compose Files المستخدمة على الـ VPS
+
+| الوضع | الأمر |
+|---|---|
+| **HTTP فقط** (مؤقت/ACME challenge) | `docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-only.yml` |
+| **HTTPS بشهادة IP TLS** (الوضع الدائم) | `docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml` |
+
+### الـ URLs الفعلية
+
+| التطبيق | الرابط |
+|---|---|
+| **Staff App** (el-kheima) | `https://187.124.170.249/` |
+| **Public/Guest Site** | `https://187.124.170.249:8443/` |
+| **Health Check** | `https://187.124.170.249/health` |
+| **API** | `https://187.124.170.249/api/v1/` |
+| **HTTP redirect** | `http://187.124.170.249:8081/` → يعمل redirect لـ 8443 |
+
+### الـ `.env.prod` الفعلي — القيم الحالية
+
+ملف `backend/.env.prod` موجود على المشروع المحلي وعلى الـ VPS في نفس المسار.
+القيم المهمة الحالية:
+
+```
+DATABASE_URL=postgresql+psycopg://postgres:resort_dev_pass@db_postgres:5432/resort_os
+DB_PASSWORD=resort_dev_pass          ← غيّرها لقيمة قوية في الإنتاج الحقيقي
+ENVIRONMENT=production
+RESORT_NAME=WegoSharm Resort
+DEFAULT_CURRENCY=EGP
+VAT_PERCENTAGE=14.0
+SERVICE_CHARGE_PERCENTAGE=12.0
+TIMEZONE=Africa/Cairo
+CORS_ORIGINS=http://187.124.170.249,http://187.124.170.249:80,http://localhost
+PUBLIC_SITE_URL=http://187.124.170.249    ← غيّرها لـ https://187.124.170.249:8443 بعد TLS
+LOGIN_2FA_ENFORCED=false               ← شغّلها true قبل الإنتاج الحقيقي
+```
+
+> ⚠️ **تنبيه أمني:** `DB_PASSWORD=resort_dev_pass` و `LOGIN_2FA_ENFORCED=false`
+> مناسبين للـ staging فقط. قبل استقبال بيانات حقيقية، غيّر كلمة مرور الـ DB
+> وفعّل الـ 2FA.
+
+### الـ Certbot / TLS
+
+```bash
+# الشهادة مخزنة في:
+/etc/letsencrypt/live/187.124.170.249/
+
+# email المستخدم في التسجيل:
+theagaty@gmail.com
+
+# تجديد يدوي:
+sudo /snap/bin/certbot renew
+
+# فحص التجديد التلقائي:
+systemctl list-timers resort-os-certbot-renew.timer
+```
+
+### أوامر التشغيل السريع على الـ VPS
+
+```bash
+# الوضع الحالي
+cd /opt/wegosharm/resort-os
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml ps
+
+# Deploy آخر تحديث
+bash scripts/deploy.sh
+
+# لوجات الـ backend
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml logs backend --tail=100 -f
+
+# لوجات كل الخدمات
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml logs --tail=50
+
+# إعادة تشغيل كاملة
+docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml restart
+
+# backup يدوي
+ENV_FILE=backend/.env.prod bash scripts/backup_db.sh
+```
+
+### الـ Ports على الـ VPS
+
+| Port | الاستخدام |
+|---|---|
+| `80` | HTTP (ACME challenge + redirect) |
+| `443` | HTTPS — staff app (el-kheima) |
+| `8443` | HTTPS — public/guest site |
+| `8081` | HTTP redirect → 8443 |
+| `127.0.0.1:5436` | PostgreSQL (host-only، للـ backup scripts) |
+| `127.0.0.1:6379` | Redis (host-only) |
+| `8005` | Backend FastAPI (داخلي فقط، عبر nginx) |
