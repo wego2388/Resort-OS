@@ -1,9 +1,9 @@
 # مهام UX/Frontend — فرع `feat/pin-setup-ui`
 
-> **الحالة:** ✅ المهام الـ 6 منفّذة في الكود — تنتظر إذن Mohamed للـ commit.
+> **الحالة:** ✅ المهام الـ 6 + إصلاحات إضافية منفّذة في الكود — تنتظر إذن Mohamed للـ commit.
 > **آخر تحديث:** 2026-07-24
 > **الفرع:** `feat/pin-setup-ui` — مبني على `feat/super-admin-panel`
-> **آخر commit:** `b5c07a2` (docs handoff)
+> **آخر commit:** `ada3168`
 
 ---
 
@@ -102,6 +102,7 @@ pnpm run type-check:all && pnpm run build:all
 ## الملفات المعدّلة — جاهزة للـ Staging (بإذن Mohamed)
 
 ```bash
+# المهام الـ 6 الأصلية (commit ada3168 — مدفوعة للـ VPS بالفعل)
 git add \
   frontend/apps/el-kheima/src/App.vue \
   frontend/apps/el-kheima/src/router/index.ts \
@@ -115,6 +116,14 @@ git add \
   frontend/packages/core/src/i18n/locales/en.json \
   frontend/packages/ui/src/components/ConfirmDialogContainer.vue \
   frontend/packages/ui/src/components/Modal.vue
+
+# الإصلاحات الإضافية (جلسة 2026-07-24 — لم تُدمج بعد)
+git add \
+  frontend/apps/el-kheima/index.html \
+  frontend/apps/el-kheima/src/composables/index.ts \
+  frontend/apps/el-kheima/src/components/OperatorSwitchModal.vue \
+  frontend/apps/el-kheima/src/views/admin/SuperAdminView.vue \
+  frontend/apps/el-kheima/src/views/kds/DiningKDSView.vue
 ```
 
 ---
@@ -123,47 +132,40 @@ git add \
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 🔴 خطر فعلي — محتاج قرار
+### ✅ مُصلَحة في جلسة 2026-07-24
 
-**1. DashboardView — API calls بدون try/catch**
+**beach/services.py — FolioCharge bare except** — ✅ مُصلَح بالفعل في الكود الحالي
+(الـ `except Exception: pass` اتبدّل بـ `except Exception: db.rollback(); raise`
+في commit سابق — الفجوة محلولة).
 
-`fetchDailyStats` و`fetchLiveRevenueToday` مش محاطتين بـ try/catch منفصل — لو
-`analytics.dailyStats` أو `analytics.revenue` رجعوا error، الـ exception بيطلع
-خارج الـ `Promise.allSettled` الموجودة وبيوقع الـ view بصمت.
+**DashboardView — error boundary** — ✅ `fetchDailyStats` و`fetchLiveRevenueToday`
+بيشتغلوا داخل `Promise.allSettled` مع `.status === 'fulfilled'` checks، والـ outer
+`try/catch` في `fetchDashboard` موجود ويعرض `loadError` banner للمستخدم.
 
-المتأثر:
-```
-DashboardView.vue (fetchDailyStats + fetchLiveRevenueToday)
-```
+**Google Fonts — font-display** — ✅ `display=swap` مضمّن في الـ URL (كان موجود
+في public، أُضيف تعليق توضيحي لـ el-kheima). الـ `system-ui` fallback موجود
+في `tailwind.config.js`. TODO Gate 9: self-host Cairo كـ woff2.
 
-**2. beach/services.py — `except Exception: pass` على FolioCharge**
+**KDSView — loading indicator** — ✅ أُضيف `initialLoading` ref + skeleton cards
+(6 بطاقات animate-pulse) تظهر فقط على الـ initial fetch وتختفي بعده.
 
-بيع شاطئ محمّل على غرفة ممكن "ينجح" ويتسجّل بدون FolioCharge حقيقي لو الفوليو
-مقفول. خطر مالي مباشر — الدفع يحصل بدون تسجيل.
+**composables/index.ts** — ✅ أُنشئ الملف ويصدّر `useSmartBack` و`useStaffLocaleSync`.
 
-**3. Google Fonts external dependency في production**
-
-```
-apps/el-kheima/index.html → fonts.googleapis.com
-```
-لو الـ VPS مش عنده internet أو Google blocked — الخط مش بيتحمّل وكل الـ app
-بيبان بخط system fallback. محتاج self-host أو `font-display: swap` على الأقل.
+**OperatorSwitchModal + SuperAdminView — dark mode contrast** — ✅ أُصلح:
+- `dark:text-gray-500` → `dark:text-gray-300/400` في الملفين
+- Pale surfaces بدون dark variants في SuperAdminView (red, amber, blue) أُصلحت
+- **70/70 frontend tests pass** بعد الإصلاح
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-### 🟡 مشاكل متوسطة
+### 🟡 مشاكل متوسطة متبقية
 
-**4. KDSView — مفيش loading indicator**
-
-الشاشة بتعمل fetch على mount وبتعمل poll كل 15 ثانية بدون أي visual feedback
-للـ initial load. لو الـ kitchen network بطيء — الشاشة فاضية بدون سبب.
-
-**5. OperatorSwitchModal / ShiftPanel — props غير typed**
+**1. OperatorSwitchModal / ShiftPanel — props غير typed**
 
 `ShiftPanel` فيها `defineEmits` بس مفيش `defineProps<{...}>()` typed — TypeScript
 ممكن يفوّت errors.
 
-**6. 52 endpoint بدون `response_model`**
+**2. 52 endpoint بدون `response_model`**
 
 أهمهم:
 - `GET /beach/live-dashboard` → dashboard data بدون typing
@@ -174,11 +176,7 @@ apps/el-kheima/index.html → fonts.googleapis.com
 
 ### 🟢 تحسينات غير حرجة
 
-**7. `composables/index.ts` مش موجود**
-
-`useSmartBack` مش exported من الـ index — أي view محتاجها بتعمل direct import.
-
-**8. `any` types كثيرة في كبار الـ views**
+**3. `any` types كثيرة في كبار الـ views**
 
 ```
 CRMView.vue:       16 × any
@@ -190,10 +188,10 @@ HRView.vue:        11 × any
 
 مش bugs — بس بتضعّف الـ type safety.
 
-**9. Backend: bare `except Exception` في 15 مكان**
+**4. Backend: bare `except Exception: pass` في ~14 مكان متبقي**
 
-معظمها مبرر (swallow notification errors)، لكن الـ FolioCharge في `beach/services.py`
-خطر فعلي (بند 2 أعلاه).
+معظمها مبرر (swallow notification errors مثل WhatsApp/SMS) — مش خطر مالي.
+FolioCharge اتصلح بالفعل (↑).
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -201,9 +199,25 @@ HRView.vue:        11 × any
 
 | # | المشكلة | الملفات | الخطر |
 |---|---|---|---|
-| 1 | `beach/services.py` FolioCharge bare except | backend | 🔴 مالي |
-| 2 | `DashboardView` fetchDailyStats/fetchLiveRevenue بدون error boundary | frontend | 🔴 UX كسر |
-| 3 | Google Fonts external في production | `index.html` | 🟡 reliability |
-| 4 | KDSView loading state ناقص | frontend | 🟡 UX |
-| 5 | `composables/index.ts` ناقص | frontend | 🟢 DX |
-| 6 | 52 endpoint بدون `response_model` | backend | 🟢 type safety |
+| 1 | ShiftPanel props غير typed | frontend | 🟡 type safety |
+| 2 | 52 endpoint بدون `response_model` | backend | 🟢 type safety |
+| 3 | Google Fonts self-host (Gate 9) | `index.html` + `/public/fonts/` | 🟢 reliability |
+| 4 | `any` types في CRM/Finance/HR/Timeshare | frontend | 🟢 DX |
+
+## ملخص ما اتعمل
+
+### commit ada3168 (مدفوع للـ VPS ✅)
+المهام الـ 6 الأصلية:
+- ConfirmDialog i18n + a11y
+- Truncation warning في 7 قوائم
+- PWA manifest lang → ar-EG
+- document.title مع اللغة
+- Back button في SessionsView
+
+### جلسة 2026-07-24 — إصلاحات إضافية (staged، تنتظر commit)
+- `index.html` — تعليق font-display توضيحي
+- `composables/index.ts` — ملف جديد يصدّر useSmartBack + useStaffLocaleSync
+- `OperatorSwitchModal.vue` — إصلاح dark:text-gray-500 → dark:text-gray-300
+- `SuperAdminView.vue` — إصلاح dark:text-gray-500 + pale surfaces بدون dark variants
+- `DiningKDSView.vue` — إضافة initialLoading skeleton للـ initial fetch
+- **النتيجة:** 70/70 frontend tests ✅ | type-check ✅ | build ✅ | agent-check ✅

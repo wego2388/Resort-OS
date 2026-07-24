@@ -493,7 +493,7 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
                     <AppBadge v-else-if="pinStatuses.get(row.id)!.has_pin" variant="success">{{ t('backoffice.superAdmin.pin.ready') }}</AppBadge>
                     <AppBadge v-else variant="neutral">{{ t('backoffice.superAdmin.pin.notSet') }}</AppBadge>
                   </template>
-                  <span v-else class="text-xs text-gray-400 dark:text-gray-500">—</span>
+                  <span v-else class="text-xs text-gray-400 dark:text-gray-300">—</span>
                 </td>
                 <td class="px-4 py-3">
                   <AppBadge :variant="row.is_active ? 'success' : 'danger'">
@@ -628,7 +628,7 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
 
     <!-- ═══ TAB: PERMISSIONS ═══ -->
     <div v-show="activeTab === 'permissions'" class="space-y-4">
-      <div v-if="permError" class="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">⚠️ {{ permError }}</div>
+      <div v-if="permError" class="bg-red-50 dark:bg-red-950/40 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 rounded-xl px-4 py-3 text-sm">⚠️ {{ permError }}</div>
       <div class="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-5">
         <AppCard :title="t('backoffice.permissions.employees')" padding="none">
           <div class="p-3 border-b border-stone-100 dark:border-border/50">
@@ -640,7 +640,7 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
           </div>
           <ul v-else class="max-h-[60vh] overflow-y-auto divide-y divide-stone-100">
             <li v-for="u in filteredPermUsers" :key="u.id" @click="selectPermUser(u.id)"
-              :class="['px-4 py-3 cursor-pointer transition-colors', selectedPermUserId === u.id ? 'bg-blue-50' : 'hover:bg-stone-50 dark:hover:bg-gray-800/40']">
+              :class="['px-4 py-3 cursor-pointer transition-colors', selectedPermUserId === u.id ? 'bg-blue-50 dark:bg-blue-950/40' : 'hover:bg-stone-50 dark:hover:bg-gray-800/40']">
               <div class="font-medium text-gray-800 dark:text-gray-200 text-sm">{{ u.full_name }}</div>
               <div class="flex items-center gap-2 mt-1">
                 <span class="text-xs text-gray-400">{{ u.email }}</span>
@@ -685,7 +685,7 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
 
     <!-- ═══ TAB: SETTINGS ═══ -->
     <div v-show="activeTab === 'settings'" class="space-y-4">
-      <p class="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+      <p class="text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3">
         ⚠️ {{ t('backoffice.superAdmin.settings.globalNote') }}
       </p>
       <div v-if="settingsLoading" class="p-10 flex justify-center"><AppSpinner /></div>

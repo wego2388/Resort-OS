@@ -14,7 +14,16 @@ import { AppModal, AppButton, AppInput, useToast } from '@resort-os/ui'
 
 const auth = useAuthStore()
 const toast = useToast()
-const branchId = computed(() => auth.branchId ?? 1)
+
+// branchId اختياري — لو مش ممرور يُقرأ من auth store (السلوك الافتراضي).
+// تصريحه صريحًا هنا يسمح بـ: (1) استخدام الـ component في سياق branch محدد
+// مختلف عن branch المستخدم الحالي (مثلًا: super admin يراقب فرع معين)،
+// (2) unit tests تمرر branchId من غير ما تحتاج mock للـ store.
+const props = withDefaults(defineProps<{ branchId?: number }>(), {
+  branchId: undefined,
+})
+
+const resolvedBranchId = computed(() => props.branchId ?? auth.branchId ?? 1)
 
 // بيتأشّر لأي parent مهتم (زي ShiftDashboardView، S-01) إن الوردية اتفتحت/
 // اتقفلت — عشان يعيد تحميل ملخص المبيعات/سجل الفواتير بتاعه، من غير ما
@@ -88,7 +97,7 @@ const lastCloseResult = ref<{
 async function fetchCurrentShift() {
   loading.value = true
   try {
-    const { data } = await api.get('/api/v1/finance/shifts/current', { params: { branch_id: branchId.value } })
+    const { data } = await api.get('/api/v1/finance/shifts/current', { params: { branch_id: resolvedBranchId.value } })
     shift.value = data
   } catch (e: any) {
     if (e?.response?.status === 404) shift.value = null
@@ -98,7 +107,7 @@ async function fetchCurrentShift() {
 
 async function openOpenModal() {
   try {
-    const { data } = await api.get('/api/v1/finance/shifts/handover-note', { params: { branch_id: branchId.value } })
+    const { data } = await api.get('/api/v1/finance/shifts/handover-note', { params: { branch_id: resolvedBranchId.value } })
     handoverNote.value = data?.handover_note ?? null
   } catch { handoverNote.value = null }
   openingFloat.value = '0'
@@ -110,7 +119,7 @@ async function confirmOpen() {
   opening.value = true
   try {
     const { data } = await api.post('/api/v1/finance/shifts/open', {
-      branch_id: branchId.value,
+      branch_id: resolvedBranchId.value,
       opening_float: Number(openingFloat.value) || 0,
       notes: openNotes.value || undefined,
     })

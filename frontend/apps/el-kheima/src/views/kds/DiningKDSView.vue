@@ -85,6 +85,9 @@ const stationFilter = ref<string[] | null>(initialStationFilter())
 const { formatTime } = useStaffFormat()
 const now = ref(new Date())
 const isConnected = ref(true)
+// initialLoading: true فقط وقت أول fetch عند الـ mount — بيخفي الـ empty state
+// الزائف لحد ما الطلب الأول يرجع، بدون ما يبين skeleton وهمي على كل poll
+const initialLoading = ref(true)
 let refreshInterval: ReturnType<typeof setInterval>
 let clockInterval: ReturnType<typeof setInterval>
 
@@ -178,6 +181,8 @@ async function fetchTickets() {
     isConnected.value = true
   } catch {
     isConnected.value = false
+  } finally {
+    initialLoading.value = false
   }
 }
 
@@ -274,14 +279,26 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
     </div>
 
     <div class="flex-1 overflow-y-auto p-4">
-      <div v-if="filteredTickets.length === 0" class="flex items-center justify-center h-64 text-slate-500">
+      <!-- Initial loading skeleton — يظهر فقط وقت أول fetch عند mount -->
+      <div v-if="initialLoading" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        <div v-for="n in 6" :key="n" class="rounded-2xl border-2 border-slate-600 bg-slate-800 p-4 animate-pulse">
+          <div class="h-8 w-20 bg-slate-700 rounded mb-3" />
+          <div class="space-y-2">
+            <div class="h-4 bg-slate-700 rounded w-full" />
+            <div class="h-4 bg-slate-700 rounded w-4/5" />
+            <div class="h-4 bg-slate-700 rounded w-3/5" />
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="filteredTickets.length === 0" class="flex items-center justify-center h-64 text-slate-500">
         <div class="text-center">
           <div class="text-5xl mb-3">✅</div>
           <p class="text-lg">{{ t('backoffice.kds.noPendingOrders') }}</p>
         </div>
       </div>
 
-      <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+      <div v-else class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
         <div v-for="ticket in filteredTickets" :key="ticket.id" :class="['rounded-2xl border-2 p-4 flex flex-col transition-all', ticketClasses(ticket)]">
           <div class="flex items-center justify-between mb-2">
             <div>

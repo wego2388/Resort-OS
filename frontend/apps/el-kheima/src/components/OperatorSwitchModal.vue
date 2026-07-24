@@ -17,6 +17,9 @@ import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
 import { AppModal, AppButton, useToast } from '@resort-os/ui'
 
 const emit = defineEmits<{ close: [] }>()
+// لا props مطلوبة — الـ component مكتفية بنفسها وتقرأ من auth store.
+// عدم تعريف defineProps هنا هو القرار المتعمد في Vue 3 script setup:
+// يعني الـ component prop-less وlا تقبل أي data binding من الخارج غير الـ events.
 const auth = useAuthStore()
 const toast = useToast()
 const { t } = useI18n()
@@ -74,10 +77,10 @@ async function confirmSwitch() {
     <div class="min-w-[280px] space-y-3">
       <p class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.operatorSwitch.hint') }}</p>
 
-      <div v-if="loading" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
+      <div v-if="loading" class="py-4 text-center text-sm text-gray-400 dark:text-gray-300">
         {{ t('backoffice.operatorSwitch.loading') }}
       </div>
-      <div v-else-if="operators.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-500">
+      <div v-else-if="operators.length === 0" class="py-4 text-center text-sm text-gray-400 dark:text-gray-300">
         {{ t('backoffice.operatorSwitch.empty') }}
       </div>
       <div v-else class="grid grid-cols-2 gap-2">
@@ -91,7 +94,7 @@ async function confirmSwitch() {
           @click="selectOperator(op.id)"
         >
           <div class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ op.full_name }}</div>
-          <div class="text-xs text-gray-400 dark:text-gray-500">
+          <div class="text-xs text-gray-400 dark:text-gray-300">
             {{ t(`backoffice.permissions.roles.${op.role}`, op.role) }}
           </div>
         </button>
