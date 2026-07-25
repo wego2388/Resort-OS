@@ -40,7 +40,7 @@
 #  verifying this file — see DEPLOYMENT.md's note and project memory.
 # ─────────────────────────────────────────────────────────────────────────────
 
-name: resort-os-prod
+name: resort-os
 
 services:
 
