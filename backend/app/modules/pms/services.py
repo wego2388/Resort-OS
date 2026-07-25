@@ -200,6 +200,14 @@ def checkin_booking(
         ))
         booking.folio_id = folio.id
 
+    # قيد الإيراد المستحق عند الدخول: Dr. ذمم الفوليو (1150) / Cr. إيراد الغرف (4100)
+    # — يُثبّت الإيراد الكامل للإقامة فور تسجيل الدخول الفعلي (accrual basis).
+    # Night Audit يُكرّر نفس القيد يومياً بالقيم اليومية؛ المبلغ الكامل هنا
+    # هو "الاعتراف الأولي" بالإيراد، واليومي هو الاعتراف التدريجي الدقيق.
+    # لو بيئة مش مهيّأة (حسابات ناقصة) — نتجاوز بصمت (strict=False) عشان
+    # check-in ميتوقفش.
+    _post_checkin_journal(db, booking)
+
     db.commit()
     db.refresh(booking)
     return booking
@@ -270,26 +278,67 @@ def checkout_booking(db: Session, booking_id: int) -> Booking:
     return booking
 
 
-def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
-    """Dr. Cash (1100) / Cr. Room Revenue (4100).
+def _post_checkin_journal(db: "Session", booking: "Booking") -> None:
+    """قيد الاعتراف بالإيراد عند الدخول: Dr. ذمم الفوليو (1150) / Cr. إيراد الغرف (4100).
 
-    ⚠️ باج توقيت حقيقي كان هنا: كانت بتستخدم date.today() (تاريخ السيرفر،
-    UTC غالبًا في الإنتاج) كتاريخ قيد الإيراد بدل تاريخ اليوم بتوقيت المنتجع
-    (Africa/Cairo). أي تسجيل مغادرة بين منتصف ليل القاهرة ولحد ما UTC نفسه
-    يعدي لليوم التالي (فرق UTC+3 القاهرة) كان بيسجّل الإيراد بتاريخ الأمس في
-    دفتر اليومية — يوم محاسبي غلط لعملية حقيقية. اتصلح باستخدام نفس الدالة
-    المشتركة المستخدمة في المطعم/الكافيه (app.resort_os.timezone_utils)."""
+    يُثبّت الإيراد الكامل للإقامة فور check-in (accrual basis) — الضيف صار
+    مدياناً بالمبلغ الكامل منذ لحظة دخوله. Night Audit يُكرّر القيد يومياً
+    بالقيمة اليومية للمراقبة التشغيلية؛ checkout_booking يُسوّي الذمة.
+    strict=False عمداً: checkin ميتوقفش لو الحسابات مش مهيّأة.
+    """
     from decimal import Decimal as _D  # noqa: PLC0415
     from app.core.config import settings  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
     from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
 
+    amount = booking.total_rate or _D("0")
+    if amount <= 0:
+        return
+
     post_simple_revenue_journal(
         db, booking.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code="4100",
+        debit_account_code="1150",   # Dr. ذمم الفوليو — الضيف صار مديناً
+        credit_account_code="4100",  # Cr. إيراد الغرف — الإيراد اتحقق
+        amount=amount,
+        reference=f"CI-{booking.booking_number}",
+        description=f"اعتراف بإيراد الغرف عند الدخول — {booking.booking_number}",
+        source="pms_checkin", source_id=booking.id,
+        cost_center_code="ROOM",
+        strict=False,
+    )
+
+
+def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
+    """تسوية الذمة عند مغادرة الضيف: Dr. كاش/بنك (1100/1110) / Cr. ذمم الفوليو (1150).
+
+    الإيراد (Cr. 4100) يُسجَّل يومياً في Night Audit بـ Dr.1150/Cr.4100.
+    checkout_booking يُسوّي الذمة فقط — بيسدد ما سبق تسجيله تراكمياً
+    طوال الإقامة. ده هو السلوك الصح في أي PMS (Opera/Mews/Cloudbeds).
+
+    حساب الخصم يتحدد من booking.payment_method (كاش→1100، كارت→1110،
+    حوالة→1120). لو مش محدد أو غير معروف: 1100 كافتراضي.
+    """
+    from decimal import Decimal as _D  # noqa: PLC0415
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    # اختيار حساب القبض حسب طريقة دفع الضيف المسجّلة عند check-in
+    _METHOD_TO_ACCOUNT = {
+        "cash":          "1100",
+        "card":          "1110",
+        "bank_transfer": "1110",  # حوالة بنكية → نفس حساب البنك/كارت
+        "room":          "1150",  # edge-case: محمّل على فوليو تاني
+    }
+    debit_code = _METHOD_TO_ACCOUNT.get(booking.payment_method or "cash", "1100")
+
+    post_simple_revenue_journal(
+        db, booking.branch_id, local_today(settings.TIMEZONE),
+        debit_account_code=debit_code,
+        credit_account_code="1150",   # Cr. ذمم الفوليو — تسوية ما سبق تسجيله
         amount=booking.total_rate or _D("0"),
         reference=f"CHK-{booking.booking_number}",
-        description=f"إيرادات غرف — {booking.booking_number}",
+        description=f"تسوية فوليو — {booking.booking_number}",
         source="pms", source_id=booking.id,
         cost_center_code="ROOM",
     )

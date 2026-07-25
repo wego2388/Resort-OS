@@ -198,6 +198,51 @@ def _outlet_cost_center_code(outlet: Optional[Outlet]) -> Optional[str]:
     return _OUTLET_TYPE_TO_COST_CENTER.get(outlet.outlet_type)
 
 
+def _build_outlet_revenue_splits(
+    db: Session, order: "DiningOrder", fallback_outlet_id: int
+) -> list[tuple["Outlet", Decimal]]:
+    """يحسب توزيع الإيراد per-outlet من أصناف الطلب.
+
+    لكل صنف نشيط (غير ملغي/مردود)، نجمع unit_price*quantity حسب outlet_id
+    الصنف (DiningOrderItem.outlet_id) — إذا كان NULL أو الـ outlet غير موجود
+    نرجع لـ order.outlet_id (التوافق مع القديم).
+
+    يرجع list of (outlet, subtotal_share) — الـ subtotal_share بدون VAT/SVC
+    (بيتحسب للإيراد الصافي فقط). VAT/SVC والخصم بيتوزّعوا نسبياً وقت تسجيل
+    القيد في `_settle_direct_tender` و`_settle_room_tender`.
+
+    لو كل الأصناف من نفس الـ outlet — يرجع list بعنصر واحد (المسار العادي).
+    """
+    from collections import defaultdict  # noqa: PLC0415
+
+    # جمع subtotal per outlet_id (الأصناف النشطة فقط)
+    outlet_subtotals: dict[int, Decimal] = defaultdict(Decimal)
+    for item in order.items:
+        if item.status in ("cancelled", "refunded"):
+            continue
+        effective_outlet_id = item.outlet_id if item.outlet_id else fallback_outlet_id
+        line_total = item.unit_price * item.quantity
+        outlet_subtotals[effective_outlet_id] += line_total
+
+    if not outlet_subtotals:
+        # لو مفيش أصناف نشطة — رجّع الـ outlet الأصلي بالمجموع الكامل
+        fallback = crud.get_outlet(db, fallback_outlet_id)
+        return [(fallback, order.subtotal or Decimal("0"))] if fallback else []
+
+    result = []
+    for oid, sub in outlet_subtotals.items():
+        outlet = crud.get_outlet(db, oid)
+        if outlet:
+            result.append((outlet, sub))
+        else:
+            # outlet محذوف — رجّع للـ fallback
+            fallback = crud.get_outlet(db, fallback_outlet_id)
+            if fallback:
+                result.append((fallback, sub))
+
+    return result
+
+
 def _resolve_extras(
     db: Session, item: DiningItem, extra_ids: list[int],
     extra_texts: Optional[dict[int, str]] = None,
@@ -1104,11 +1149,22 @@ def settle_order(
         outlet = crud.get_outlet(db, order.outlet_id)
         revenue_account = outlet.revenue_account_code if outlet else "4200"
 
+        # حساب توزيع الإيراد per-outlet (cross-outlet support):
+        # لو كل الأصناف من نفس الـ outlet → قيد واحد (المسار العادي).
+        # لو فيه أصناف من outlets مختلفة → كل outlet بيتقيّد إيراده منفصل.
+        outlet_splits = _build_outlet_revenue_splits(db, order, order.outlet_id)
+
         for t in room:
-            _settle_room_tender(db, order, t, revenue_account, single_tender=single_tender)
+            _settle_room_tender(
+                db, order, t, revenue_account,
+                single_tender=single_tender,
+                outlet_splits=outlet_splits,
+            )
         for t in direct:
             _settle_direct_tender(
-                db, order, t, revenue_account, cashier_id=settled_by, shift_id=shift_id,
+                db, order, t, revenue_account,
+                cashier_id=settled_by, shift_id=shift_id,
+                outlet_splits=outlet_splits,
             )
 
         # خصم المخزون مرة واحدة للطلب كله جوه المعاملة الصارمة.
@@ -1159,12 +1215,11 @@ def settle_order(
 def _settle_room_tender(
     db: Session, order: DiningOrder, tender: dict, revenue_account_code: str,
     *, single_tender: bool,
+    outlet_splits: "list[tuple] | None" = None,
 ) -> None:
     """جزء الطلب المحمّل على فوليو غرفة — شحنة فوليو + قيد Dr ذمم(1150)/Cr
-    إيراد. tender واحد كامل: نفس شكل Gate 1B بالظبط (amount=net_subtotal،
-    القيد بـ order.total). split: حصة متناسبة، ومجموع (amount+vat+svc) =
-    tender.amount بالظبط (البواقي بتتحط في amount) عشان الإيراد المرحّل =
-    order.total بالضبط."""
+    إيراد. outlet_splits: لو فيه cross-outlet — كل split بيتقيّد على حساب
+    الـ outlet الخاص به بدل حساب order.outlet فقط."""
     from app.modules.finance import services as finance_services  # noqa: PLC0415
     from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
 
@@ -1179,7 +1234,8 @@ def _settle_room_tender(
             posted_at=datetime.utcnow(), ref_order_id=order.id,
         )
         finance_services.add_folio_charge(db, folio_id, charge_data)
-        _post_order_folio_charge_journal(db, order, revenue_account_code, commit_cost_centers=False, strict=True)
+        # قيد الإيراد per-outlet
+        _post_folio_revenue_splits(db, order, outlet_splits, revenue_account_code)
         return
 
     amount = tender["amount"]
@@ -1193,26 +1249,76 @@ def _settle_room_tender(
         posted_at=datetime.utcnow(), ref_order_id=order.id,
     )
     finance_services.add_folio_charge(db, folio_id, charge_data)
-    outlet = crud.get_outlet(db, order.outlet_id)
-    finance_services.post_simple_revenue_journal(
-        db, order.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code="1150", credit_account_code=revenue_account_code,
-        amount=amount, reference=f"ORD-{order.order_number}",
-        description=f"إيرادات دايننج (محمّل على الغرفة، split) — {order.order_number}",
-        source="dining_folio_charge", source_id=order.id,
-        cost_center_code=_outlet_cost_center_code(outlet),
-        commit_cost_centers=False, strict=True,
+    # split tender — نوزّع القيد per-outlet بنسبة حصة الـ tender
+    _post_folio_revenue_splits(
+        db, order, outlet_splits, revenue_account_code,
+        tender_ratio=ratio,
     )
+
+
+def _post_folio_revenue_splits(
+    db: Session, order: DiningOrder,
+    outlet_splits: "list[tuple] | None",
+    fallback_revenue_code: str,
+    tender_ratio: "Decimal | None" = None,
+) -> None:
+    """يُرحّل قيود Dr.1150/Cr.إيراد per-outlet — يدعم single وsplit tenders.
+    tender_ratio=None → قيد كامل (single_tender). tender_ratio=X → نسبة X من كل split."""
+    from app.modules.finance import services as finance_services  # noqa: PLC0415
+    one = Decimal("1")
+    ratio = tender_ratio if tender_ratio is not None else one
+
+    if not outlet_splits or len(outlet_splits) == 1:
+        # المسار العادي — قيد واحد
+        outlet = outlet_splits[0][0] if outlet_splits else None
+        rev_code = outlet.revenue_account_code if outlet else fallback_revenue_code
+        base_amount = (outlet_splits[0][1] if outlet_splits else (order.subtotal or Decimal("0")))
+        vat_share = (order.vat_amount * ratio).quantize(Decimal("0.01"))
+        svc_share = (order.service_charge * ratio).quantize(Decimal("0.01"))
+        disc_share = ((order.discount_amount or Decimal("0")) * ratio).quantize(Decimal("0.01"))
+        total_share = (base_amount * ratio + vat_share + svc_share - disc_share).quantize(Decimal("0.01"))
+        if total_share > 0:
+            finance_services.post_simple_revenue_journal(
+                db, order.branch_id, local_today(settings.TIMEZONE),
+                debit_account_code="1150", credit_account_code=rev_code,
+                amount=total_share, reference=f"ORD-{order.order_number}",
+                description=f"إيرادات دايننج (فوليو) — {order.order_number}",
+                source="dining_folio_charge", source_id=order.id,
+                cost_center_code=_outlet_cost_center_code(outlet),
+                commit_cost_centers=False, strict=True,
+            )
+        return
+
+    # cross-outlet — قيد لكل outlet بنسبة subtotal
+    total_subtotal = sum(s for _, s in outlet_splits) or Decimal("1")
+    for idx, (outlet, sub) in enumerate(outlet_splits):
+        sub_ratio = (sub / total_subtotal * ratio).quantize(Decimal("0.0001"))
+        vat_share = (order.vat_amount * sub_ratio).quantize(Decimal("0.01"))
+        svc_share = (order.service_charge * sub_ratio).quantize(Decimal("0.01"))
+        disc_share = ((order.discount_amount or Decimal("0")) * sub_ratio).quantize(Decimal("0.01"))
+        amount_share = (sub * ratio + vat_share + svc_share - disc_share).quantize(Decimal("0.01"))
+        if amount_share <= 0:
+            continue
+        finance_services.post_simple_revenue_journal(
+            db, order.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code="1150",
+            credit_account_code=outlet.revenue_account_code,
+            amount=amount_share,
+            reference=f"ORD-{order.order_number}",
+            description=f"إيرادات دايننج (فوليو/{outlet.name}) — {order.order_number}",
+            source="dining_folio_charge", source_id=order.id,
+            cost_center_code=_outlet_cost_center_code(outlet),
+            commit_cost_centers=False, strict=True,
+        )
 
 
 def _settle_direct_tender(
     db: Session, order: DiningOrder, tender: dict, revenue_account_code: str,
     *, cashier_id: Optional[int], shift_id: Optional[int],
+    outlet_splits: "list[tuple] | None" = None,
 ) -> None:
-    """tender مباشر (cash/card/wallet) — Payment حقيقي منسوب للكاشير/الوردية
-    (عشان يظهر في تقرير الوردية) + قيد Dr <حساب الطريقة>/Cr إيراد. حساب
-    الطريقة اتحل fail-closed في settle_order (cash→1100، card/wallet→حساب
-    مهيّأ أو رفض)."""
+    """tender مباشر (cash/card/wallet) — Payment حقيقي + قيد Dr <حساب>/Cr إيراد.
+    outlet_splits: لو cross-outlet — قيود per-outlet بدل قيد واحد."""
     from app.modules.finance import crud as finance_crud  # noqa: PLC0415
     from app.modules.finance import services as finance_services  # noqa: PLC0415
 
@@ -1225,16 +1331,44 @@ def _settle_direct_tender(
         posted_at=datetime.utcnow(), shift_id=shift_id, cashier_id=cashier_id,
         reference=f"ORD-{order.order_number}", ref_order_id=order.id, source="dining",
     )
-    outlet = crud.get_outlet(db, order.outlet_id)
-    finance_services.post_simple_revenue_journal(
-        db, order.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code=account, credit_account_code=revenue_account_code,
-        amount=amount, reference=f"ORD-{order.order_number}",
-        description=f"إيرادات دايننج ({method}) — {order.order_number}",
-        source="dining", source_id=order.id,
-        cost_center_code=_outlet_cost_center_code(outlet),
-        commit_cost_centers=False, strict=True,
-    )
+
+    if not outlet_splits or len(outlet_splits) == 1:
+        # المسار العادي — قيد واحد
+        outlet = outlet_splits[0][0] if outlet_splits else None
+        rev_code = outlet.revenue_account_code if outlet else revenue_account_code
+        cost_cc = _outlet_cost_center_code(outlet)
+        finance_services.post_simple_revenue_journal(
+            db, order.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code=account, credit_account_code=rev_code,
+            amount=amount, reference=f"ORD-{order.order_number}",
+            description=f"إيرادات دايننج ({method}) — {order.order_number}",
+            source="dining", source_id=order.id,
+            cost_center_code=cost_cc,
+            commit_cost_centers=False, strict=True,
+        )
+        return
+
+    # cross-outlet — نوزّع القيد per-outlet بنسبة الـ subtotals
+    total_subtotal = sum(s for _, s in outlet_splits) or Decimal("1")
+    remaining = amount
+    for idx, (outlet, sub) in enumerate(outlet_splits):
+        is_last = idx == len(outlet_splits) - 1
+        # آخر outlet بياخد الباقي لتجنب فروق التقريب
+        share = remaining if is_last else (amount * sub / total_subtotal).quantize(Decimal("0.01"))
+        if share <= 0:
+            continue
+        finance_services.post_simple_revenue_journal(
+            db, order.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code=account,
+            credit_account_code=outlet.revenue_account_code,
+            amount=share,
+            reference=f"ORD-{order.order_number}",
+            description=f"إيرادات دايننج ({method}/{outlet.name}) — {order.order_number}",
+            source="dining", source_id=order.id,
+            cost_center_code=_outlet_cost_center_code(outlet),
+            commit_cost_centers=False, strict=True,
+        )
+        remaining -= share
 
 
 def _mark_order_paid(

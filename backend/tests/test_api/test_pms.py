@@ -52,13 +52,18 @@ def make_room(db, branch, room_type):
 
 
 def make_finance_accounts(db, branch):
-    """يزرع 1100 (نقدية) و4100 (إيرادات الغرف) — الحسابين اللي
-    pms.services._post_checkout_journal بيدوّر عليهم بالكود عند ترحيل قيد
-    إيراد الغرف وقت الخروج."""
+    """يزرع الحسابات المحاسبية المطلوبة لدورة PMS:
+      1100 — كاش (Dr في checkout لو payment_method=cash)
+      1110 — بنك/كارت (Dr في checkout لو payment_method=card)
+      1150 — ذمم الفوليو (Cr في checkin Dr.1150/Cr.4100 + Dr في checkout Dr.1100/Cr.1150)
+      4100 — إيراد الغرف (Cr في checkin Dr.1150/Cr.4100)
+    """
     from app.modules.finance.models import Account
-    cash = Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset")
-    revenue = Account(branch_id=branch.id, code="4100", name="Room Revenue", account_type="revenue")
-    db.add_all([cash, revenue])
+    cash    = Account(branch_id=branch.id, code="1100", name="Cash",        account_type="asset")
+    bank    = Account(branch_id=branch.id, code="1110", name="Bank/Card",   account_type="asset")
+    folio   = Account(branch_id=branch.id, code="1150", name="Folio AR",    account_type="asset")
+    revenue = Account(branch_id=branch.id, code="4100", name="Room Revenue",account_type="revenue")
+    db.add_all([cash, bank, folio, revenue])
     db.commit()
     return cash, revenue
 
@@ -591,8 +596,13 @@ class TestTimezoneBugFixes:
 
     def test_checkout_journal_uses_resort_local_date_not_server_utc(self, db, monkeypatch):
         """لو السيرفر (UTC) لسه فاتح على تاريخ الأمس بينما توقيت القاهرة
-        بالفعل دخل يوم جديد، قيد إيراد الغرف عند الخروج لازم يتسجّل بتاريخ
-        القاهرة (اليوم الجديد) مش بتاريخ الـ UTC القديم."""
+        بالفعل دخل يوم جديد، قيد تسوية الفوليو عند الخروج لازم يتسجّل بتاريخ
+        القاهرة (اليوم الجديد) مش بتاريخ الـ UTC القديم.
+
+        الدورة الجديدة:
+          checkin  → Dr.1150 / Cr.4100  source="pms_checkin"
+          checkout → Dr.1100 / Cr.1150  source="pms"
+        """
         import app.resort_os.timezone_utils as tzutils
         from app.modules.finance.models import JournalEntry
 
@@ -607,13 +617,23 @@ class TestTimezoneBugFixes:
         services.checkin_booking(db, booking.id)
         services.checkout_booking(db, booking.id)
 
-        entry = (
+        # قيد checkout: Dr.1100 / Cr.1150 — تسوية ذمم الفوليو
+        checkout_entry = (
             db.query(JournalEntry)
             .filter(JournalEntry.source == "pms", JournalEntry.source_id == booking.id)
             .first()
         )
-        assert entry is not None
-        assert entry.entry_date == forced_date
+        assert checkout_entry is not None, "لازم يكون فيه قيد checkout (Dr.1100/Cr.1150)"
+        assert checkout_entry.entry_date == forced_date
+
+        # قيد checkin: Dr.1150 / Cr.4100 — اعتراف بالإيراد
+        checkin_entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "pms_checkin", JournalEntry.source_id == booking.id)
+            .first()
+        )
+        assert checkin_entry is not None, "لازم يكون فيه قيد checkin (Dr.1150/Cr.4100)"
+        assert checkin_entry.entry_date == forced_date
 
     def test_local_today_returns_cairo_date_when_server_utc_is_still_yesterday(self, monkeypatch):
         """اختبار مباشر للدالة المشتركة نفسها: 2026-07-05 23:30 UTC = فعليًا

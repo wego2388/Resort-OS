@@ -1434,3 +1434,191 @@ class TestGate4FinalReviewRegressions:
         db.rollback()
         db.refresh(ticket)
         assert ticket.status == ticket_status
+
+
+class TestCrossOutletRevenueAllocation:
+    """اختبارات توزيع الإيراد per-outlet (cross-outlet revenue allocation).
+
+    الهدف: التحقق من أن settle_order يوزّع قيود الإيراد على حسابات الـ outlets
+    الصحيحة لما تكون أصناف الطلب من منافذ مختلفة (dining + cafe).
+
+    الحالات:
+      1. طلب عادي (أصناف من outlet واحد) → قيد واحد على حساب الـ outlet
+      2. طلب cross-outlet (أصناف من outlet_id مختلفة) → قيد لكل outlet
+      3. أصناف بدون outlet_id (NULL) → تُعامَل كأنها تتبع order.outlet_id
+
+    نستخدم room-tender (charge to folio) في كل الاختبارات عشان نتجنب
+    اشتراط وردية كاشير مفتوحة — الاختبار بيتركّز على توزيع الإيراد مش
+    على آلية الدفع.
+    """
+
+    @staticmethod
+    def _make_folio(db, branch):
+        from datetime import datetime, timedelta
+        from app.modules.finance.models import Folio
+        folio = Folio(
+            branch_id=branch.id, guest_name="ضيف اختبار cross-outlet",
+            check_in=datetime.utcnow(),
+            check_out=datetime.utcnow() + timedelta(days=1),
+            status="open",
+        )
+        db.add(folio)
+        db.commit()
+        db.refresh(folio)
+        return folio
+
+    def test_single_outlet_order_posts_one_journal_entry(self, db):
+        """الطلب العادي: كل الأصناف من outlet واحد → قيد إيراد واحد."""
+        from app.modules.finance.models import JournalEntry
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, outlet_type="restaurant", revenue_account_code="4200")
+        make_finance_accounts(db, branch, revenue_code="4200")
+        item = make_item(db, branch, outlet, price=Decimal("100.00"))
+        folio = self._make_folio(db, branch)
+
+        order = make_order(db, branch, outlet, item, quantity=1)
+        order.folio_id = folio.id
+        db.commit()
+        services.update_order_status(db, order.id, "served")
+
+        services.settle_order(
+            db, order.id,
+            tenders=[{"method": "room", "amount": order.total, "charge_to_room_id": None}],
+            settled_by=1,
+        )
+        db.refresh(order)
+        assert order.status == "paid"
+
+        entries = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "dining_folio_charge",
+                JournalEntry.source_id == order.id,
+            )
+            .all()
+        )
+        # قيد واحد فقط — Dr.1150 / Cr.4200
+        assert len(entries) == 1
+        credit_codes = {line.account.code for line in entries[0].lines if line.credit > 0}
+        assert "4200" in credit_codes
+
+    def test_cross_outlet_order_posts_per_outlet_journals(self, db):
+        """طلب cross-outlet: أصناف من مطعم (4200) وكافيه (4400) → قيدان منفصلان."""
+        from app.modules.dining.models import DiningOrderItem
+        from app.modules.finance.models import JournalEntry, Account
+        from app.modules.dining.schemas import OrderCreate, OrderItemCreate
+
+        branch = make_branch(db)
+        restaurant = make_outlet(db, branch, outlet_type="restaurant", revenue_account_code="4200")
+        cafe = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+
+        # زرع حسابات المطعم والكافيه
+        make_finance_accounts(db, branch, revenue_code="4200")
+        cafe_rev = db.query(Account).filter_by(branch_id=branch.id, code="4400").first()
+        if not cafe_rev:
+            cafe_rev = Account(branch_id=branch.id, code="4400", name="Cafe Revenue", account_type="revenue")
+            db.add(cafe_rev)
+            db.commit()
+
+        r_item = make_item(db, branch, restaurant, price=Decimal("100.00"))
+        c_item = make_item(db, branch, cafe, price=Decimal("50.00"))
+        folio = self._make_folio(db, branch)
+
+        # أنشئ أوردر على المطعم
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(
+                outlet_id=restaurant.id,
+                order_type="takeaway", guests_count=1,
+                items=[OrderItemCreate(item_id=r_item.id, quantity=1)],
+            ),
+            waiter_id=1,
+        )
+        order.folio_id = folio.id
+        # أضف صنف الكافيه مع outlet_id=cafe.id (cross-outlet)
+        cafe_order_item = DiningOrderItem(
+            order_id=order.id, item_id=c_item.id,
+            outlet_id=cafe.id,
+            name=c_item.name, unit_price=c_item.price, quantity=1,
+            status="pending",
+        )
+        db.add(cafe_order_item)
+        db.commit()
+        db.refresh(order)
+
+        services.update_order_status(db, order.id, "served")
+
+        services.settle_order(
+            db, order.id,
+            tenders=[{"method": "room", "amount": order.total, "charge_to_room_id": None}],
+            settled_by=1,
+        )
+        db.refresh(order)
+        assert order.status == "paid"
+
+        entries = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "dining_folio_charge",
+                JournalEntry.source_id == order.id,
+            )
+            .all()
+        )
+        # لازم يكون فيه قيدان — واحد لكل outlet
+        assert len(entries) == 2, (
+            f"المتوقع 2 قيود (مطعم + كافيه)، الموجود {len(entries)}"
+        )
+
+        # استخراج أكواد حسابات الإيراد (credit lines)
+        credit_codes = set()
+        for entry in entries:
+            for line in entry.lines:
+                if line.credit > 0:
+                    credit_codes.add(line.account.code)
+
+        assert "4200" in credit_codes, "لازم يكون فيه قيد على حساب إيراد المطعم (4200)"
+        assert "4400" in credit_codes, "لازم يكون فيه قيد على حساب إيراد الكافيه (4400)"
+
+    def test_null_outlet_id_on_item_falls_back_to_order_outlet(self, db):
+        """صنف بدون outlet_id (NULL) يُعامَل كأنه من order.outlet_id — توافق مع القديم."""
+        from app.modules.finance.models import JournalEntry
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch, outlet_type="restaurant", revenue_account_code="4200")
+        make_finance_accounts(db, branch, revenue_code="4200")
+        item = make_item(db, branch, outlet, price=Decimal("80.00"))
+        folio = self._make_folio(db, branch)
+
+        order = make_order(db, branch, outlet, item, quantity=1)
+        order.folio_id = folio.id
+        db.commit()  # احفظ folio_id قبل refresh
+
+        # اجعل outlet_id على الـ order items هو NULL (backward-compat scenario)
+        db.refresh(order)
+        for oi in order.items:
+            oi.outlet_id = None
+        db.commit()
+
+        services.update_order_status(db, order.id, "served")
+        services.settle_order(
+            db, order.id,
+            tenders=[{"method": "room", "amount": order.total, "charge_to_room_id": None}],
+            settled_by=1,
+        )
+        db.refresh(order)
+        assert order.status == "paid"
+
+        entries = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "dining_folio_charge",
+                JournalEntry.source_id == order.id,
+            )
+            .all()
+        )
+        # قيد واحد على حساب الـ outlet الأصلي (fallback)
+        assert len(entries) == 1
+        credit_codes = {line.account.code for line in entries[0].lines if line.credit > 0}
+        assert "4200" in credit_codes
+

@@ -479,18 +479,26 @@ class DiningOrderItem(Base, TimestampMixin):
     """يدمج restaurant.OrderItem + cafe.CafeOrderItem — نفس الأعمدة، بما
     فيها snapshot الاسم/السعر وقت الطلب (name/unit_price) ومين ألغى/رجّع
     الصنف (voided_by/voided_reason/voided_at، للحالتين cancelled وrefunded
-    — راجع restaurant.schemas.OrderItemRead)."""
+    — راجع restaurant.schemas.OrderItemRead).
+
+    outlet_id: منفذ الصنف (مطعم/كافيه) — قد يختلف عن order.outlet_id لو
+    أُضيف صنف من منفذ آخر على نفس الطلب (cross-outlet). يُستخدم وقت
+    تسوية الإيراد لتوزيع كل صنف على الحساب الصح. NULL للأصناف القديمة
+    (قبل هذا التعديل) — تُعامَل كأنها تتبع order.outlet_id."""
     __tablename__ = "dining_order_items"
     __table_args__ = (
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_order_item_legacy"),
         Index("ix_dining_order_items_order_id", "order_id"),
         Index("ix_dining_order_items_item_id", "item_id"),
+        Index("ix_dining_order_items_outlet_id", "outlet_id"),
     )
 
     id:           Mapped[int]        = mapped_column(primary_key=True)
     order_id:     Mapped[int]        = mapped_column(ForeignKey("dining_orders.id", ondelete="CASCADE"))
     item_id:      Mapped[int]        = mapped_column(ForeignKey("dining_items.id", ondelete="RESTRICT"))
     variant_id:   Mapped[int | None] = mapped_column(ForeignKey("dining_item_variants.id", ondelete="SET NULL"), nullable=True)
+    # outlet_id: منفذ الصنف — NULLable للتوافق مع الأصناف القديمة
+    outlet_id:    Mapped[int | None] = mapped_column(ForeignKey("dining_outlets.id", ondelete="SET NULL"), nullable=True)
     name:         Mapped[str]        = mapped_column(String(200))          # snapshot
     unit_price:   Mapped[Decimal]    = mapped_column(Numeric(10, 2))       # snapshot
     quantity:     Mapped[int]        = mapped_column(Integer, default=1)
