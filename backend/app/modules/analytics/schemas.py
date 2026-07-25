@@ -7,12 +7,15 @@ for a read-only aggregation module. These 2 schemas exist only because
 UtilityReading is a genuine write path (Task B audit finding: the model +
 migration existed, but there was no way anywhere in the system to ever create
 a reading) and FastAPI request-body validation needs a real Pydantic model.
+
+Update: response_model schemas added for all JSON-returning endpoints so
+OpenAPI docs are complete and FastAPI can validate response shapes.
 """
 from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,3 +43,211 @@ class UtilityReadingRead(BaseModel):
     notes:         Optional[str]
     recorded_by:   Optional[int]
     created_at:    datetime
+
+
+# ── Simple fixed-shape response schemas ──────────────────────────────────────
+class ReviewSubmitResponse(BaseModel):
+    id:             int
+    overall_rating: float
+
+class SurveyTokenResponse(BaseModel):
+    token:          str
+    expires_in_days: int
+
+class SurveySendResponse(BaseModel):
+    queued: bool
+
+
+# ── Revenue Dashboard ─────────────────────────────────────────────────────────
+
+class RevenueBucket(BaseModel):
+    """إيراد موديول واحد (مطعم/كافيه/فندق/شاطئ/إيجار/تايم شير)."""
+    orders: Optional[int] = None        # dining buckets
+    bookings: Optional[int] = None      # pms
+    visits: Optional[int] = None        # beach
+    payments: Optional[int] = None      # leasing / timeshare
+    total: float = 0.0
+
+class RevenuePeriod(BaseModel):
+    from_: str = Field(alias="from")
+    to: str
+
+    model_config = ConfigDict(populate_by_name=True)
+
+class RevenueSummary(BaseModel):
+    """GET /analytics/revenue"""
+    period:     RevenuePeriod
+    branch_id:  int
+    restaurant: Optional[RevenueBucket] = None
+    cafe:       Optional[RevenueBucket] = None
+    pms:        Optional[RevenueBucket] = None
+    beach:      Optional[RevenueBucket] = None
+    leasing:    Optional[RevenueBucket] = None
+    timeshare:  Optional[RevenueBucket] = None
+    total:      float = 0.0
+
+
+# ── Occupancy ─────────────────────────────────────────────────────────────────
+
+class PMSOccupancy(BaseModel):
+    nights_audited:       int
+    avg_occupancy_pct:    float
+    total_room_revenue:   Decimal
+
+class OccupancySummary(BaseModel):
+    """GET /analytics/occupancy"""
+    month:  int
+    year:   int
+    pms:    Optional[PMSOccupancy] = None
+    beach:  None = None   # حاليًا لا يُحسب
+
+
+# ── HR Summary ────────────────────────────────────────────────────────────────
+
+class LastPayrollSummary(BaseModel):
+    period:     str           # "YYYY-MM"
+    status:     str
+    total_net:  Decimal
+
+class HRSummary(BaseModel):
+    """GET /analytics/hr"""
+    active_employees: int = 0
+    last_payroll:     Optional[LastPayrollSummary] = None
+
+
+# ── Maintenance KPIs ──────────────────────────────────────────────────────────
+
+class MaintenanceSummary(BaseModel):
+    """GET /analytics/maintenance"""
+    open_work_orders:     int = 0
+    critical_work_orders: int = 0
+
+
+# ── CRM Pipeline ─────────────────────────────────────────────────────────────
+
+class PipelineStage(BaseModel):
+    stage: str
+    count: int
+    value: Optional[Decimal] = None
+
+class CRMSummary(BaseModel):
+    """GET /analytics/crm"""
+    total_customers: int = 0
+    pipeline:        list[PipelineStage] = Field(default_factory=list)
+
+
+# ── Inventory Alerts ──────────────────────────────────────────────────────────
+
+class InventoryAlerts(BaseModel):
+    """GET /analytics/inventory"""
+    low_stock_count:   int = 0
+    out_of_stock_count: int = 0
+
+
+# ── DailyStats ────────────────────────────────────────────────────────────────
+
+class DailyStatsRead(BaseModel):
+    """GET /analytics/daily-stats"""
+    stat_date:          str
+    occupancy_pct:      float = 0
+    adr:                float = 0
+    revpar:             float = 0
+    room_revenue:       float = 0
+    beach_visitors:     int   = 0
+    beach_revenue:      float = 0
+    restaurant_covers:  int   = 0
+    restaurant_revenue: float = 0
+    cafe_revenue:       float = 0
+    total_revenue:      float = 0
+    # حالة "لا توجد بيانات" — نرجع message بدل الأرقام
+    message:            Optional[str] = None
+
+
+# ── Energy KPIs ───────────────────────────────────────────────────────────────
+
+class EnergyKPIs(BaseModel):
+    """GET /analytics/energy — يطابق شكل get_energy_kpis() في services.py"""
+    period:                            str
+    by_type:                           dict[str, float] = Field(default_factory=dict)
+    total_cost:                        float = 0.0
+    guest_nights:                      int   = 0
+    electricity_cost_per_guest_night:  Optional[float] = None
+
+
+# ── Energy Trend ──────────────────────────────────────────────────────────────
+# get_energy_trend() ترجع list[dict] (كل عنصر بنفس شكل EnergyKPIs)
+# نستخدم list[EnergyKPIs] مباشرة كـ response_model
+
+EnergyTrendResponse = list[EnergyKPIs]
+
+
+# ── Guest Reviews ─────────────────────────────────────────────────────────────
+
+class GuestReviewItem(BaseModel):
+    id:             int
+    guest_name:     Optional[str] = None
+    overall_rating: float
+    comment:        Optional[str] = None
+    source:         Optional[str] = None
+    reviewed_at:    str
+
+class GuestReviewListResponse(BaseModel):
+    """GET /analytics/reviews"""
+    total:      int
+    avg_rating: float = 0
+    items:      list[GuestReviewItem] = Field(default_factory=list)
+
+
+# ── Review Category Insights ──────────────────────────────────────────────────
+
+class CategoryInsightItem(BaseModel):
+    category:   str
+    avg_rating: float
+    count:      int
+
+class ReviewCategoryInsights(BaseModel):
+    """GET /analytics/reviews/insights — يطابق get_review_category_insights()"""
+    overall_avg:        Optional[float] = None
+    gss_score:          Optional[float] = None
+    review_count:       int = 0
+    category_breakdown: list[CategoryInsightItem] = Field(default_factory=list)
+
+
+# ── Full Dashboard ─────────────────────────────────────────────────────────────
+
+class DashboardRevenue(BaseModel):
+    restaurant: float = 0
+    cafe:       float = 0
+    pms:        float = 0
+    beach:      float = 0
+    leasing:    float = 0
+    timeshare:  float = 0
+    total:      float = 0
+
+class DashboardHR(BaseModel):
+    active_employees:   int   = 0
+    last_payroll_period: Optional[str] = None
+
+class DashboardMaintenance(BaseModel):
+    open_work_orders: int = 0
+
+class DashboardCRM(BaseModel):
+    total_customers: int = 0
+
+class DashboardInventory(BaseModel):
+    low_stock_count: int = 0
+
+class DashboardReviews(BaseModel):
+    count:      int   = 0
+    avg_rating: Optional[float] = None
+
+class FullDashboard(BaseModel):
+    """GET /analytics/dashboard"""
+    branch_id:   int
+    as_of:       str
+    revenue_30d: Optional[DashboardRevenue]    = None
+    hr:          Optional[DashboardHR]         = None
+    maintenance: Optional[DashboardMaintenance] = None
+    crm:         Optional[DashboardCRM]        = None
+    inventory:   Optional[DashboardInventory]  = None
+    reviews:     Optional[DashboardReviews]    = None

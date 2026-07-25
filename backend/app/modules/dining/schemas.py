@@ -98,6 +98,7 @@ class DiningItemCreate(BaseModel):
     category_id:         Optional[int] = None
     name:                str  = Field(..., max_length=200)
     name_ar:             Optional[str] = Field(None, max_length=200)
+    description:         Optional[str] = Field(None, max_length=500)
     price:               Decimal = Field(..., gt=0)
     cost:                Optional[Decimal] = Field(None, ge=0)
     is_available:        bool = True
@@ -112,6 +113,7 @@ class DiningItemCreate(BaseModel):
 class DiningItemUpdate(BaseModel):
     name:                Optional[str]     = None
     name_ar:             Optional[str]     = None
+    description:         Optional[str]     = Field(None, max_length=500)
     price:               Optional[Decimal] = Field(None, gt=0)
     cost:                Optional[Decimal] = None
     is_available:        Optional[bool]    = None
@@ -630,6 +632,7 @@ class PublicMenuItemRead(BaseModel):
     id:                  int
     name:                str
     name_ar:             Optional[str]
+    description:         Optional[str]
     price:               Decimal
     is_available:        bool
     preparation_minutes: int
@@ -709,3 +712,33 @@ class GuestOrderRead(BaseModel):
     total:        Decimal
     items_count:  int
     message:      str
+
+
+# ── Outlet Sales Report ───────────────────────────────────────────────────────
+
+class SalesReportPeriod(BaseModel):
+    from_: str = Field(alias="from")
+    to: str
+    model_config = ConfigDict(populate_by_name=True)
+
+class PaymentBreakdownItem(BaseModel):
+    orders: int
+    total:  float
+
+class TopSalesItem(BaseModel):
+    name:    str
+    qty:     int
+    revenue: float
+
+class OutletSalesReport(BaseModel):
+    """GET /dining/outlets/{outlet_id}/reports/sales"""
+    period:           SalesReportPeriod
+    outlet_id:        int
+    branch_id:        int
+    total_orders:     int
+    total_revenue:    float
+    total_vat:        float
+    total_discount:   float
+    avg_order_value:  float
+    payment_breakdown: dict[str, PaymentBreakdownItem] = Field(default_factory=dict)
+    top_items:        list[TopSalesItem] = Field(default_factory=list)

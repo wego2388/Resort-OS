@@ -19,7 +19,13 @@ from app.core.config import settings
 from app.core.deps import DbDep, get_current_active_user, get_manager_user, get_websocket_user
 from app.core.database import SessionLocal
 from app.modules.analytics import services
-from app.modules.analytics.schemas import UtilityReadingCreate, UtilityReadingRead
+from app.modules.analytics.schemas import (
+    UtilityReadingCreate, UtilityReadingRead,
+    ReviewSubmitResponse, SurveyTokenResponse, SurveySendResponse,
+    RevenueSummary, OccupancySummary, HRSummary, MaintenanceSummary,
+    CRMSummary, InventoryAlerts, DailyStatsRead, EnergyKPIs, EnergyTrendResponse,
+    GuestReviewListResponse, ReviewCategoryInsights, FullDashboard,
+)
 from app.resort_os.timezone_utils import business_today, local_date_to_utc_range
 
 router = APIRouter(tags=["analytics"])
@@ -43,7 +49,7 @@ def _safe_query(func, *args, **kwargs):
 
 # ── Revenue Dashboard ─────────────────────────────────────────────────
 
-@router.get("/analytics/revenue")
+@router.get("/analytics/revenue", response_model=RevenueSummary)
 def revenue_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -135,7 +141,7 @@ def revenue_summary(
 
 # ── Occupancy ─────────────────────────────────────────────────────────
 
-@router.get("/analytics/occupancy")
+@router.get("/analytics/occupancy", response_model=OccupancySummary)
 def occupancy_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -171,7 +177,7 @@ def occupancy_summary(
 
 # ── HR Summary ────────────────────────────────────────────────────────
 
-@router.get("/analytics/hr")
+@router.get("/analytics/hr", response_model=HRSummary)
 def hr_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -200,7 +206,7 @@ def hr_summary(
 
 # ── Maintenance KPIs ──────────────────────────────────────────────────
 
-@router.get("/analytics/maintenance")
+@router.get("/analytics/maintenance", response_model=MaintenanceSummary)
 def maintenance_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -224,7 +230,7 @@ def maintenance_summary(
 
 # ── CRM Pipeline ─────────────────────────────────────────────────────
 
-@router.get("/analytics/crm")
+@router.get("/analytics/crm", response_model=CRMSummary)
 def crm_summary(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -260,7 +266,7 @@ def crm_summary(
 
 # ── Inventory Alerts ──────────────────────────────────────────────────
 
-@router.get("/analytics/inventory")
+@router.get("/analytics/inventory", response_model=InventoryAlerts)
 def inventory_alerts(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -285,7 +291,7 @@ def inventory_alerts(
 
 # ── DailyStats ────────────────────────────────────────────────────────
 
-@router.get("/analytics/daily-stats")
+@router.get("/analytics/daily-stats", response_model=DailyStatsRead)
 def get_daily_stats(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -335,7 +341,7 @@ def list_utility_readings(
     return services.list_utility_readings(db, branch_id, utility_type, period)
 
 
-@router.get("/analytics/energy")
+@router.get("/analytics/energy", response_model=EnergyKPIs)
 def energy_kpis(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -346,7 +352,7 @@ def energy_kpis(
     return services.get_energy_kpis(db, branch_id, period)
 
 
-@router.get("/analytics/energy/trend")
+@router.get("/analytics/energy/trend", response_model=EnergyTrendResponse)
 def energy_trend(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -358,7 +364,7 @@ def energy_trend(
     return services.get_energy_trend(db, branch_id, end_period, months)
 
 
-@router.get("/analytics/energy/trend/export")
+@router.get("/analytics/energy/trend/export", response_model=None)
 def download_energy_trend_excel(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -451,7 +457,7 @@ async def kpi_websocket(websocket: WebSocket, branch_id: int, db: DbDep):
 
 # ── Guest Reviews ─────────────────────────────────────────────────────
 
-@router.get("/analytics/reviews")
+@router.get("/analytics/reviews", response_model=GuestReviewListResponse)
 def list_reviews(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -496,7 +502,7 @@ def list_reviews(
     }
 
 
-@router.get("/analytics/reviews/insights")
+@router.get("/analytics/reviews/insights", response_model=ReviewCategoryInsights)
 def review_category_insights(db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...)):
     """Task B audit: ReviewCategory كان بيتسجّل فعلاً مع كل تقييم (submit_review)
     بس مفيش أي مكان بيقراه أو يجمّعه — السبيك بيطلب 'GSS score + per-category
@@ -506,7 +512,7 @@ def review_category_insights(db: DbDep, _=Depends(get_manager_user), branch_id: 
 
 # ── Full Dashboard ────────────────────────────────────────────────────
 
-@router.get("/analytics/dashboard")
+@router.get("/analytics/dashboard", response_model=FullDashboard)
 def full_dashboard(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -613,7 +619,7 @@ def _review_avg(db, branch_id):
 
 # ── Survey Token + Review Submission ─────────────────────────────────
 
-@router.post("/analytics/reviews/submit")
+@router.post("/analytics/reviews/submit", response_model=ReviewSubmitResponse)
 async def submit_guest_review(
     db: DbDep,
     token: str = Query(..., description="survey JWT from checkout"),
@@ -634,7 +640,7 @@ async def submit_guest_review(
     return {"id": review.id, "overall_rating": review.overall_rating}
 
 
-@router.get("/analytics/reviews/survey-token/{booking_id}")
+@router.get("/analytics/reviews/survey-token/{booking_id}", response_model=SurveyTokenResponse)
 async def get_survey_token(
     booking_id: int,
     db: DbDep,
@@ -647,7 +653,7 @@ async def get_survey_token(
     return {"token": token, "expires_in_days": 7}
 
 
-@router.get("/analytics/reviews/survey-token/timeshare/{visit_id}")
+@router.get("/analytics/reviews/survey-token/timeshare/{visit_id}", response_model=SurveyTokenResponse)
 async def get_timeshare_survey_token(
     visit_id: int,
     db: DbDep,
@@ -664,6 +670,7 @@ async def get_timeshare_survey_token(
 
 @router.post(
     "/analytics/reviews/survey-token/timeshare/{visit_id}/send",
+    response_model=SurveySendResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
 async def send_timeshare_survey(

@@ -45,6 +45,7 @@ from app.modules.dining.schemas import (
     GuestOrderCreate, GuestOrderRead, GuestServiceMenuResponse,
     PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
     PublicOutletRead,
+    OutletSalesReport,
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
@@ -200,7 +201,7 @@ def update_category(category_id: int, data: DiningCategoryUpdate, db: DbDep, _=D
     return DiningCategoryRead.model_validate(cat)
 
 
-@router.delete("/dining/categories/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/dining/categories/{category_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_category(category_id: int, db: DbDep, _=Depends(get_manager_user)):
     if not crud.delete_category(db, category_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الفئة غير موجودة")
@@ -240,7 +241,7 @@ def update_item(item_id: int, data: DiningItemUpdate, db: DbDep, _=Depends(get_m
     return DiningItemRead.model_validate(obj)
 
 
-@router.delete("/dining/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/dining/items/{item_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_item(item_id: int, db: DbDep, _=Depends(get_manager_user)):
     if not crud.delete_item(db, item_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الصنف غير موجود")
@@ -300,7 +301,7 @@ def create_extra_group(item_id: int, data: DiningItemExtraGroupCreate, db: DbDep
     return DiningItemExtraGroupRead.model_validate(group)
 
 
-@router.delete("/dining/extra-groups/{group_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/dining/extra-groups/{group_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_extra_group(group_id: int, db: DbDep, _=Depends(get_manager_user)):
     if not crud.delete_extra_group(db, group_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المجموعة غير موجودة")
@@ -328,7 +329,7 @@ def update_recipe_line(line_id: int, data: DiningItemRecipeLineUpdate, db: DbDep
     return DiningItemRecipeLineRead.model_validate(services.build_recipe_line_read(line))
 
 
-@router.delete("/dining/recipe-lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/dining/recipe-lines/{line_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         services.remove_recipe_line(db, line_id)
@@ -357,7 +358,7 @@ def update_variant(variant_id: int, data: DiningItemVariantUpdate, db: DbDep, _=
     return DiningItemVariantRead.model_validate(services.build_variant_read(variant))
 
 
-@router.delete("/dining/variants/{variant_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/dining/variants/{variant_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_variant(variant_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         services.remove_variant(db, variant_id)
@@ -384,7 +385,7 @@ def update_variant_recipe_line(line_id: int, data: DiningItemVariantRecipeLineUp
     return DiningItemVariantRecipeLineRead.model_validate(services.build_variant_recipe_line_read(line))
 
 
-@router.delete("/dining/variant-recipe-lines/{line_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/dining/variant-recipe-lines/{line_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_variant_recipe_line(line_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         services.remove_variant_recipe_line(db, line_id)
@@ -409,7 +410,7 @@ def get_food_cost_report(
     return services.get_food_cost_report(db, outlet.branch_id, date_from, date_to, outlet_id, threshold_pct)
 
 
-@router.get("/dining/outlets/{outlet_id}/reports/food-cost/export")
+@router.get("/dining/outlets/{outlet_id}/reports/food-cost/export", response_model=None)
 def download_food_cost_report_excel(
     outlet_id: int, db: DbDep, _=Depends(get_manager_user),
     date_from: date = Query(default_factory=lambda: business_today(settings.TIMEZONE) - timedelta(days=30)),
@@ -485,7 +486,7 @@ async def update_table_grid(table_id: int, data: DiningTableGridUpdate, db: DbDe
     return DiningTableRead.model_validate(table)
 
 
-@router.delete("/dining/tables/{table_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/dining/tables/{table_id}", response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_table(table_id: int, db: DbDep, _=Depends(get_manager_user)):
     table = crud.get_table(db, table_id)
     if not table:
@@ -780,7 +781,7 @@ def refund_order_item(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/dining/orders/{order_id}/receipt")
+@router.get("/dining/orders/{order_id}/receipt", response_model=None)
 def download_receipt(order_id: int, db: DbDep, user=Depends(get_cashier_user)):
     _assert_order_branch(db, user, order_id, "طباعة إيصال هذا الطلب")
     try:
@@ -997,7 +998,7 @@ def create_kds_screen(data: KDSScreenCreate, db: DbDep, _=Depends(get_manager_us
 
 # ── Sales Dashboard (موحّد — راجع cafe.api.router.get_cafe_sales_report) ──
 
-@router.get("/dining/outlets/{outlet_id}/reports/sales")
+@router.get("/dining/outlets/{outlet_id}/reports/sales", response_model=OutletSalesReport)
 def get_outlet_sales_report(
     outlet_id: int, db: DbDep, _=Depends(get_manager_user),
     date_from: date = Query(default_factory=lambda: business_today(settings.TIMEZONE) - timedelta(days=7)),
