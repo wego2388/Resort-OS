@@ -14,7 +14,7 @@
  * Batch 6 — كانت restaurant+cafe منفصلين، دلوقتي مصدر واحد مجمّع حسب
  * outlet بدل موديول ثابت، عشان يفضل يشتغل صح لأي outlet_type مستقبلي).
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import { api, useAuthStore, ENDPOINTS } from '@resort-os/core'
@@ -52,10 +52,19 @@ async function fetchShift() {
 // ── ملخص المبيعات — نفس تقرير X/Z-Report (S-04)، بيتقرا وسط الوردية من
 // غير ما يحتاج قفلها (GET .../report مش محتاج status=closed) ──────────────
 interface ShiftReport {
-  total_cash: number | string; total_card: number | string; total_credit: number | string
-  total_other: number | string; total_sales: number | string
+  // أساسي
+  total_cash: number | string; total_card: number | string
+  total_credit: number | string; total_other: number | string
+  total_sales: number | string; total_room: number | string
   invoice_count: number; voided_count: number; voided_amount: number | string
-  opening_float: number | string
+  opening_float: number | string; expected_cash: number | string
+  // مرتجعات
+  refunds_total: number | string; refunds_count: number
+  // مقارنة بالوردية السابقة
+  previous_shift_id: number | null; previous_total_sales: number | string | null
+  delta_vs_previous: number | string | null
+  // حركات كاش يدوية
+  cash_movements_effect: number | string; cash_movements_warning: string | null
 }
 const report = ref<ShiftReport | null>(null)
 const loadingReport = ref(false)
@@ -155,18 +164,75 @@ function openOrder(orderId: number) {
 // ── سجل الفواتير (S-02) — بوابة PIN مدير+ داخل InvoiceLogModal نفسها ─────
 const showInvoiceLog = ref(false)
 
+// refreshReport: يحدّث الأرقام فقط بدون إعادة تحميل الطلبات الجارية —
+// بيتنادى من WS shift_sale وبعد كل عملية في CashControlPanel
+async function refreshReport() {
+  await loadReport()
+}
+
+// refreshAll: عند تغيير حالة الوردية (فتح/قفل) — يعيد تحميل كل حاجة
 function refreshAll() {
   fetchShift()
 }
 
-onMounted(fetchShift)
+// ── WebSocket — تحديث تلقائي للـ report عند كل بيعة جديدة ───────────────
+let ws: WebSocket | null = null
+let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
+const wsConnected = ref(false)
+
+function connectWs() {
+  if (!shift.value || !auth.token) return
+  if (ws) { ws.onclose = null; ws.close() }
+
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  const url = `${proto}://${window.location.host}${ENDPOINTS.finance.shiftsWs(branchId.value)}?token=${auth.token}`
+  ws = new WebSocket(url)
+
+  ws.onopen = () => { wsConnected.value = true }
+
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data)
+      // shift_sale → حدّث الأرقام فقط (مش الطلبات — هي بتتحدث بـ WS خاص بيها)
+      if (msg.type === 'shift_sale') refreshReport()
+      // shift_closed → وردية اتقفلت خارجيًا (مدير أقفلها) → أعد تحميل الكل
+      if (msg.type === 'shift_closed') refreshAll()
+    } catch { /* ignore malformed */ }
+  }
+
+  ws.onclose = () => {
+    wsConnected.value = false
+    wsReconnectTimer = setTimeout(connectWs, 15_000)
+  }
+  ws.onerror = () => ws?.close()
+}
+
+onUnmounted(() => {
+  if (ws) { ws.onclose = null; ws.close(); ws = null }
+  if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
+})
+
+onMounted(async () => {
+  await fetchShift()
+  connectWs()
+})
 </script>
 
 <template>
   <div class="page-container">
     <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
-      <h1 class="section-title mb-0">{{ t('backoffice.shiftDashboard.title') }}</h1>
-      <AppButton variant="outline" :loading="loadingShift" @click="refreshAll">
+      <div class="flex items-center gap-2">
+        <h1 class="section-title mb-0">{{ t('backoffice.shiftDashboard.title') }}</h1>
+        <!-- مؤشر WS -->
+        <span
+          v-if="shift"
+          :class="wsConnected
+            ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300'
+            : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'"
+          class="text-xs font-bold px-2 py-0.5 rounded-full"
+        >{{ wsConnected ? '🟢 ' + t('shiftMonitor.live') : '🟡' }}</span>
+      </div>
+      <AppButton variant="outline" :loading="loadingShift || loadingReport" @click="refreshAll">
         🔄 {{ t('backoffice.shiftDashboard.refresh') }}
       </AppButton>
     </div>
@@ -199,6 +265,7 @@ onMounted(fetchShift)
       <AppCard :title="t('backoffice.shiftDashboard.salesSummary')" class="mb-4">
         <div v-if="loadingReport" class="text-center text-sm text-gray-400 py-4">{{ t('backoffice.shiftDashboard.loading') }}</div>
         <template v-else-if="report">
+          <!-- الصف الأول: إجمالي المبيعات + كاش + كارت + فواتير -->
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div class="rounded-xl border border-emerald-100 bg-emerald-50 p-3 text-center dark:border-emerald-900 dark:bg-emerald-950/30">
               <div class="text-lg font-black text-emerald-700 dark:text-emerald-300">{{ formatMoney(report.total_sales, 'EGP') }}</div>
@@ -217,9 +284,49 @@ onMounted(fetchShift)
               <div class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.shiftDashboard.invoiceCount') }}</div>
             </div>
           </div>
-          <p v-if="report.voided_count > 0" class="text-xs text-red-500 mt-2">
-            ⚠️ {{ t('backoffice.shiftDashboard.voidedInvoices', { count: report.voided_count, amount: formatMoney(report.voided_amount, 'EGP') }) }}
-          </p>
+
+          <!-- الصف الثاني: كاش متوقع + محمّل على غرف + مرتجعات + مقارنة -->
+          <div class="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <!-- الكاش المتوقع في الدرج — الأهم للكاشير -->
+            <div class="rounded-lg border border-teal-100 bg-teal-50 p-2.5 text-center dark:border-teal-900 dark:bg-teal-950/30">
+              <div class="text-base font-bold text-teal-700 dark:text-teal-300">{{ formatMoney(report.expected_cash, 'EGP') }}</div>
+              <div class="text-xs text-teal-600 dark:text-teal-400">{{ t('backoffice.shiftDashboard.expectedCash') }}</div>
+            </div>
+            <!-- محمّل على غرف (folio) — مش كاش في الدرج -->
+            <div v-if="Number(report.total_room) > 0" class="rounded-lg border border-indigo-100 bg-indigo-50 p-2.5 text-center dark:border-indigo-900 dark:bg-indigo-950/30">
+              <div class="text-base font-bold text-indigo-700 dark:text-indigo-300">{{ formatMoney(report.total_room, 'EGP') }}</div>
+              <div class="text-xs text-indigo-600 dark:text-indigo-400">{{ t('backoffice.shiftDashboard.totalRoom') }}</div>
+            </div>
+            <!-- مرتجعات -->
+            <div v-if="Number(report.refunds_count) > 0" class="rounded-lg border border-red-100 bg-red-50 p-2.5 text-center dark:border-red-900 dark:bg-red-950/30">
+              <div class="text-base font-bold text-red-600 dark:text-red-400">-{{ formatMoney(report.refunds_total, 'EGP') }}</div>
+              <div class="text-xs text-red-500 dark:text-red-400">{{ t('backoffice.shiftDashboard.refunds', { count: report.refunds_count }) }}</div>
+            </div>
+            <!-- مقارنة بالوردية السابقة -->
+            <div v-if="report.delta_vs_previous != null" class="rounded-lg border border-stone-200 bg-stone-50 p-2.5 text-center dark:border-border dark:bg-gray-800/60">
+              <div
+                class="text-base font-bold"
+                :class="Number(report.delta_vs_previous) >= 0 ? 'text-emerald-600 dark:text-emerald-300' : 'text-red-600 dark:text-red-400'"
+              >
+                {{ Number(report.delta_vs_previous) >= 0 ? '▲' : '▼' }} {{ formatMoney(Math.abs(Number(report.delta_vs_previous)), 'EGP') }}
+              </div>
+              <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.shiftDashboard.deltaVsPrevious') }}</div>
+            </div>
+          </div>
+
+          <!-- تحذيرات -->
+          <div class="mt-2 space-y-1">
+            <p v-if="report.voided_count > 0" class="text-xs text-red-500">
+              ⚠️ {{ t('backoffice.shiftDashboard.voidedInvoices', { count: report.voided_count, amount: formatMoney(report.voided_amount, 'EGP') }) }}
+            </p>
+            <p v-if="report.cash_movements_warning" class="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+              ⚠️ {{ report.cash_movements_warning }}
+            </p>
+            <p v-if="Number(report.cash_movements_effect) !== 0" class="text-xs text-gray-500">
+              {{ t('backoffice.shiftDashboard.cashMovementsEffect', { amount: formatMoney(report.cash_movements_effect, 'EGP') }) }}
+            </p>
+          </div>
+
           <div class="flex gap-2 mt-3">
             <button
               @click="showInvoiceLog = true"

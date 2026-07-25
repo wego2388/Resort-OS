@@ -60,6 +60,7 @@ const movementType = ref<string>('cash_in')
 const amount = ref('')
 const reason = ref('')
 const destination = ref<string>('')
+const direction = ref<string>('')
 const costCenterId = ref<string>('')
 const formError = ref('')
 const submitting = ref(false)
@@ -69,6 +70,14 @@ const showPinGuard = ref(false)
 // بس)، بقية الأنواع محتاجة مبلغ حقيقي > 0.
 const amountRequired = computed(() => movementType.value !== 'drawer_open')
 const showDestination = computed(() => movementType.value === 'safe_drop')
+// correction لازم تحدد الاتجاه صراحةً — الباك إند يرفض بدونه بـ 400
+const showDirection = computed(() => movementType.value === 'correction')
+
+const directionOptions = computed<SelectOption[]>(() => [
+  { value: '', label: t('backoffice.shiftDashboard.cashControl.directionPlaceholder') },
+  { value: 'increase', label: `📈 ${t('backoffice.shiftDashboard.cashControl.directionIncrease')}` },
+  { value: 'decrease', label: `📉 ${t('backoffice.shiftDashboard.cashControl.directionDecrease')}` },
+])
 
 interface CostCenter { id: number; code: string; name: string }
 const costCenters = ref<CostCenter[]>([])
@@ -93,6 +102,11 @@ function requestRecordMovement() {
     formError.value = t('backoffice.shiftDashboard.cashControl.invalidAmount')
     return
   }
+  // correction: direction إجباري — الباك إند يرفض بدونه بـ 400
+  if (showDirection.value && !direction.value) {
+    formError.value = t('backoffice.shiftDashboard.cashControl.directionRequired')
+    return
+  }
   showPinGuard.value = true
 }
 
@@ -108,6 +122,7 @@ async function performRecordMovement(approverUserId: number | null, approverPin:
       amount: amount.value || '0',
       reason: reason.value.trim(),
       ...(showDestination.value && destination.value ? { destination: destination.value } : {}),
+      ...(showDirection.value && direction.value ? { direction: direction.value } : {}),
       ...(costCenterId.value ? { cost_center_id: Number(costCenterId.value) } : {}),
       ...(approverUserId ? { approver_user_id: approverUserId, approver_pin: approverPin } : {}),
     })
@@ -115,6 +130,7 @@ async function performRecordMovement(approverUserId: number | null, approverPin:
     amount.value = ''
     reason.value = ''
     destination.value = ''
+    direction.value = ''
     costCenterId.value = ''
     toast.success(t('backoffice.shiftDashboard.cashControl.recorded'))
     if (canViewLedger.value) await loadLedger()
@@ -129,6 +145,7 @@ interface CashMovement {
   id: number; movement_type: string; amount: number | string; reason: string
   performed_by: number; approved_by: number | null; created_at: string
   destination: string | null; cost_center_id: number | null
+  direction: string | null
 }
 const ledger = ref<CashMovement[]>([])
 const loadingLedger = ref(false)
@@ -162,6 +179,17 @@ function fmtTime(iso: string): string {
         <AppSelect v-model="movementType" :label="t('backoffice.shiftDashboard.cashControl.type')" :options="movementTypes" class="col-span-2 sm:col-span-1" />
         <MoneyInput v-model="amount" currency="EGP" :label="amountRequired ? t('backoffice.shiftDashboard.cashControl.amount') : t('backoffice.shiftDashboard.cashControl.optionalAmount')" />
       </div>
+      <!-- direction — إجباري فقط لـ correction (زيادة/نقصان في الكاش المتوقع) -->
+      <div v-if="showDirection" class="space-y-1">
+        <AppSelect
+          v-model="direction"
+          :label="t('backoffice.shiftDashboard.cashControl.direction')"
+          :options="directionOptions"
+        />
+        <p class="text-xs text-amber-600 dark:text-amber-400">
+          {{ t('backoffice.shiftDashboard.cashControl.directionHint') }}
+        </p>
+      </div>
       <div v-if="showDestination" class="grid grid-cols-2 gap-2">
         <AppSelect v-model="destination" :label="t('backoffice.shiftDashboard.cashControl.destination')" :options="destinations" class="col-span-2 sm:col-span-1" />
       </div>
@@ -179,17 +207,30 @@ function fmtTime(iso: string): string {
           <EmptyState v-else-if="!ledger.length" icon="📭" :title="t('backoffice.shiftDashboard.cashControl.empty')" />
           <div v-else class="max-h-64 divide-y divide-stone-100 overflow-y-auto dark:divide-border">
             <div v-for="m in ledger" :key="m.id" class="py-2 flex items-center justify-between gap-2">
-              <div>
+              <div class="flex-1 min-w-0">
                 <div class="text-sm font-semibold text-gray-800 dark:text-gray-200">
                   {{ movementLabel[m.movement_type] ?? m.movement_type }}
-                  <span v-if="m.destination" class="text-xs font-normal text-gray-500 dark:text-gray-400">← {{ destinationLabel[m.destination] ?? m.destination }}</span>
+                  <!-- destination: فين رايح الكاش (safe_drop فقط) -->
+                  <span v-if="m.destination" class="text-xs font-normal text-gray-500 dark:text-gray-400">
+                    → {{ destinationLabel[m.destination] ?? m.destination }}
+                  </span>
+                  <!-- direction: اتجاه التصحيح (correction فقط) -->
+                  <span v-if="m.direction === 'increase'" class="ms-1 text-xs font-bold text-emerald-600 dark:text-emerald-400">📈 {{ t('backoffice.shiftDashboard.cashControl.directionIncrease') }}</span>
+                  <span v-else-if="m.direction === 'decrease'" class="ms-1 text-xs font-bold text-red-500 dark:text-red-400">📉 {{ t('backoffice.shiftDashboard.cashControl.directionDecrease') }}</span>
                 </div>
-                <div class="text-xs text-gray-400">
+                <div class="text-xs text-gray-400 truncate">
                   {{ m.reason }} — {{ fmtTime(m.created_at) }}
                   <span v-if="m.approved_by" class="text-emerald-600 dark:text-emerald-300">— {{ t('backoffice.shiftDashboard.cashControl.managerApproved') }}</span>
                 </div>
               </div>
-              <span class="text-sm font-bold text-blue-700 dark:text-blue-300">{{ formatMoney(m.amount, 'EGP') }}</span>
+              <span
+                class="shrink-0 text-sm font-bold"
+                :class="m.movement_type === 'cash_in' || m.direction === 'increase'
+                  ? 'text-emerald-700 dark:text-emerald-300'
+                  : m.movement_type === 'cash_out' || m.movement_type === 'safe_drop' || m.direction === 'decrease'
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-blue-700 dark:text-blue-300'"
+              >{{ formatMoney(m.amount, 'EGP') }}</span>
             </div>
           </div>
         </div>

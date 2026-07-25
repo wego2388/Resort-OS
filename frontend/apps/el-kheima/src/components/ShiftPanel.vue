@@ -148,7 +148,7 @@ const lastCloseResult = ref<{
 async function fetchCurrentShift() {
   loading.value = true
   try {
-    const { data } = await api.get('/api/v1/finance/shifts/current', { params: { branch_id: resolvedBranchId.value } })
+    const { data } = await api.get(ENDPOINTS.finance.shiftsCurrent, { params: { branch_id: resolvedBranchId.value } })
     shift.value = data
   } catch (e: any) {
     if (e?.response?.status === 404) shift.value = null
@@ -158,7 +158,7 @@ async function fetchCurrentShift() {
 
 async function openOpenModal() {
   try {
-    const { data } = await api.get('/api/v1/finance/shifts/handover-note', { params: { branch_id: resolvedBranchId.value } })
+    const { data } = await api.get(ENDPOINTS.finance.shiftHandoverNote, { params: { branch_id: resolvedBranchId.value } })
     handoverNote.value = data?.handover_note ?? null
   } catch { handoverNote.value = null }
   openingFloat.value = '0'
@@ -176,7 +176,7 @@ async function confirmOpen() {
     return
   }
   try {
-    const { data } = await api.post('/api/v1/finance/shifts/open', {
+    const { data } = await api.post(ENDPOINTS.finance.shiftsOpen, {
       branch_id: resolvedBranchId.value,
       opening_float: floatVal,
       notes: openNotes.value || undefined,
@@ -240,7 +240,7 @@ async function confirmClose() {
       notes: closeNotes.value || undefined,
       handover_note: closeHandoverNote.value || undefined,
     }
-    const { data } = await api.post(`/api/v1/finance/shifts/${shift.value.id}/close`, payload)
+    const { data } = await api.post(ENDPOINTS.finance.shiftClose(shift.value.id), payload)
     applyCloseResult(data)
   } catch (e: any) {
     // الوردية بتُقفل دايمًا الآن (مفيش رفض بسبب الفرق) — أي خطأ هنا حقيقي
