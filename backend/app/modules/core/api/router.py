@@ -96,6 +96,7 @@ from app.modules.core.schemas import (
     UserPermissionRead,
     UserRead,
     UserRoleUpdate,
+    MarkedReadResponse,
 )
 
 router = APIRouter(tags=["core"])
@@ -278,6 +279,7 @@ def update_branch(
 
 @router.delete(
     "/branches/{branch_id}",
+    response_model=None,
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def delete_branch(
@@ -431,6 +433,7 @@ def mark_notification_read(
 
 @router.post(
     "/notifications/read-all",
+    response_model=MarkedReadResponse,
 )
 def mark_all_notifications_read(
     db: DbDep,
@@ -478,30 +481,10 @@ def list_audit_logs(
 
 
 # ─────────────────────── Users ───────────────────────────────────────
-# POST /users   super_admin فقط — إنشاء حساب موظف جديد.
+# POST /users   super_admin فقط — إنشاء حساب موظف جديد (provision مع step-up).
 # GET  /users   مدير+ (شاشة الصلاحيات محتاجة قائمة المستخدمين).
 # GET  /users/{id} super_admin فقط.
 # PATCH /users/{id}/role super_admin + step-up.
-
-@router.post(
-    "/users",
-    response_model=UserRead,
-    status_code=status.HTTP_201_CREATED,
-)
-def create_user(
-    data: UserCreate,
-    db: DbDep,
-    user=Depends(get_super_admin_user),
-):
-    """super_admin فقط — إنشاء حساب موظف جديد بباسورد مؤقت.
-    الموظف مُجبَر على تغيير الباسورد عند أول تسجيل دخول (must_change_password=True).
-    لا يقبل role=super_admin — الحسابات الإدارية تُنشأ بـ admin_bootstrap فقط.
-    مش محتاج step-up (إنشاء حساب أقل خطورة من تغيير role حساب موجود)."""
-    try:
-        created = services.create_staff_account(db, data, created_by=user.id)
-        return UserRead.model_validate(created)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 @router.post(
     "/users",
@@ -777,6 +760,7 @@ def get_my_effective_permissions(db: DbDep, user=Depends(get_current_active_user
 
 @router.delete(
     "/permissions/{permission_id}",
+    response_model=None,
     status_code=status.HTTP_204_NO_CONTENT,
 )
 def revoke_user_permission(

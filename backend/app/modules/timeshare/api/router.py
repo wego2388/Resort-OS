@@ -44,6 +44,7 @@ from app.modules.timeshare.schemas import (
     TimeshareUnitRead,
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
     WaitlistCreate, WaitlistRead,
+    ImportContractsResponse,
 )
 from app.modules.core.schemas import PaginatedResponse
 
@@ -96,7 +97,7 @@ def update_contract(contract_id: int, data: TimeshareContractUpdate, db: DbDep,
 
 # ── Installments ─────────────────────────────────────────────────────
 
-@router.get("/timeshare/installments")
+@router.get("/timeshare/installments", response_model=None)
 def list_installments(
     db: DbDep, _=Depends(get_timeshare_user),
     branch_id: int = Query(...),
@@ -132,7 +133,7 @@ def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/timeshare/installments/monthly-report")
+@router.get("/timeshare/installments/monthly-report", response_model=None)
 def download_monthly_collection_report(
     db: DbDep,
     _=Depends(get_manager_user),
@@ -174,7 +175,7 @@ def add_to_waitlist(data: WaitlistCreate, db: DbDep, _=Depends(get_timeshare_use
 
 # ── Contract PDF ─────────────────────────────────────────────────────
 
-@router.get("/timeshare/contracts/{contract_id}/pdf")
+@router.get("/timeshare/contracts/{contract_id}/pdf", response_model=None)
 def download_contract_pdf(contract_id: int, db: DbDep, _=Depends(get_timeshare_user)):
     try:
         pdf = services.generate_contract_pdf(db, contract_id)
@@ -189,17 +190,17 @@ def download_contract_pdf(contract_id: int, db: DbDep, _=Depends(get_timeshare_u
 
 # ── CS Dashboard ─────────────────────────────────────────────────────
 
-@router.get("/timeshare/cs-summary")
+@router.get("/timeshare/cs-summary", response_model=None)
 def get_cs_summary(db: DbDep, _=Depends(get_timeshare_user), branch_id: int = Query(...)):
     return services.get_cs_summary(db, branch_id)
 
 
-@router.get("/timeshare/sales-dashboard")
+@router.get("/timeshare/sales-dashboard", response_model=None)
 def get_sales_dashboard(db: DbDep, _=Depends(get_timeshare_user), branch_id: int = Query(...)):
     return services.get_sales_dashboard(db, branch_id)
 
 
-@router.get("/timeshare/sales-dashboard/export")
+@router.get("/timeshare/sales-dashboard/export", response_model=None)
 def download_sales_dashboard_excel(db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...)):
     xlsx = services.generate_sales_dashboard_excel(db, branch_id)
     return Response(
@@ -211,7 +212,7 @@ def download_sales_dashboard_excel(db: DbDep, _=Depends(get_manager_user), branc
 
 # ── Calendar & Availability ───────────────────────────────────────────
 
-@router.get("/timeshare/calendar")
+@router.get("/timeshare/calendar", response_model=None)
 def get_calendar(
     db: DbDep, _=Depends(get_timeshare_user),
     branch_id: int = Query(...), year: Optional[int] = Query(None),
@@ -219,7 +220,7 @@ def get_calendar(
     return services.get_calendar(db, branch_id, year)
 
 
-@router.get("/timeshare/available-weeks")
+@router.get("/timeshare/available-weeks", response_model=None)
 def get_available_weeks(
     db: DbDep, _=Depends(get_timeshare_user),
     branch_id: int = Query(...),
@@ -229,7 +230,7 @@ def get_available_weeks(
     return services.get_available_weeks(db, branch_id, year, room_type)
 
 
-@router.get("/timeshare/upcoming-visits")
+@router.get("/timeshare/upcoming-visits", response_model=None)
 def get_upcoming_visits(
     db: DbDep, _=Depends(get_timeshare_user),
     branch_id: int = Query(...), days: int = Query(30, ge=1, le=365),
@@ -239,7 +240,7 @@ def get_upcoming_visits(
 
 # ── Stats ─────────────────────────────────────────────────────────────
 
-@router.get("/timeshare/stats")
+@router.get("/timeshare/stats", response_model=None)
 def get_stats(db: DbDep, _=Depends(get_timeshare_user), branch_id: int = Query(...)):
     return services.get_stats(db, branch_id)
 
@@ -317,7 +318,7 @@ def list_units(
 
 # ── Excel Import ──────────────────────────────────────────────────────
 
-@router.post("/timeshare/contracts/import-excel")
+@router.post("/timeshare/contracts/import-excel", response_model=ImportContractsResponse)
 async def import_contracts_excel(
     file: UploadFile, db: DbDep,
     branch_id: int = Query(...),

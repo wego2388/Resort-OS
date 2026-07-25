@@ -16,6 +16,7 @@ from app.modules.finance.models import (
     ExchangeRate, Folio, FolioCharge, JournalEntry, Payment,
 )
 from app.modules.finance.schemas import (
+    ActiveShiftSummary, ActiveShiftsResponse,
     AssetDepreciationEntryRead,
     BalanceSheetLine, BalanceSheetReport,
     BankAccountCreate, BankAccountUpdate, BankReconciliationSummary, BankStatementImportRequest,
@@ -682,7 +683,14 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
         variance=shift.variance,
         cash_count=[CashCountLineRead.model_validate(line) for line in cash_count_lines],
         foreign_currency_summary=foreign_summary,
-        counted_cash_egp=counted_cash_egp if cash_count_lines else shift.counted_cash,
+        # لو الوردية مقفولة وعندها cash_count_lines، نستخدم المجموع المحسوب منها.
+        # لو الوردية مقفولة بـ counted_cash مباشر (بدون فئات)، نستخدمه.
+        # لو الوردية لسه مفتوحة وما فيش عدّ بعد، نرجع Decimal("0") بدل None
+        # لأن null في ملخص المبيعات مربك للكاشير اللي بيتابع مبيعاته خلال اليوم.
+        counted_cash_egp=(
+            counted_cash_egp if cash_count_lines
+            else (shift.counted_cash if shift.counted_cash is not None else Decimal("0"))
+        ),
         previous_shift_id=prev.id if prev else None,
         previous_total_sales=previous_total_sales,
         delta_vs_previous=delta_vs_previous,
@@ -785,6 +793,12 @@ def close_shift(
     عن كاشير غائب/عطلان — قرار محمد صراحةً: "من صلاحيات المدير إنه يعمل
     كده")، نفس نمط ``build_shift_end_report``/``list_shift_invoices``.
     """
+    # نضمن وجود أسعار صرف افتراضية قبل القفل — هنا قبل lock_shift_for_update
+    # عشان ensure_default_exchange_rates بتعمل db.commit() خاص بيها لو زرعت
+    # بيانات جديدة، فلازم تتنفّذ خارج transaction القفل الأساسي تمامًا وإلا
+    # ممكن يحصل commit مبكر جوه transaction القفل لو الـ session مفتوحة.
+    ensure_default_exchange_rates(db)
+
     # Gate 4B: نقفل صف الوردية (blocking FOR UPDATE) قبل أي فحص/كتابة —
     # إغلاقان متزامنان لنفس الوردية بيتسلسلوا، فالتاني بيشوف status='closed'
     # تحت القفل ويترفض، بدل ما يكتب count lines أو variance مرتين (double-close).
@@ -840,12 +854,12 @@ def close_shift(
             if currency == "EGP":
                 fx_rate = Decimal("1")
             else:
-                rate_row = crud.get_latest_exchange_rate(db, currency, "EGP", today)
-                if rate_row is None:
-                    raise ValueError(
-                        f"لا يوجد سعر صرف مسجّل لـ {currency}/EGP — "                        f"أضفه من إعدادات أسعار الصرف أولاً"
-                    )
-                fx_rate = rate_row.rate
+                # get_rate يجرّب السعر المباشر ثم المعكوس (inverse fallback)
+                # ويزرع الأسعار الافتراضية تلقائيًا لو ما فيش أي سعر مسجّل —
+                # أكثر مرونة من crud.get_latest_exchange_rate مباشرةً التي كانت
+                # ترفض القفل لو السعر مسجّل بالاتجاه المعكوس فقط.
+                # ValueError من get_rate بتطلع رسالة واضحة بالعملة الناقصة.
+                fx_rate = get_rate(db, currency, "EGP", today)
             lines_for_db.append({
                 "denomination": line.denomination,
                 "currency":     currency,
@@ -931,6 +945,66 @@ def get_latest_handover_note(db: Session, branch_id: int) -> Optional[str]:
     الوردية الجاية قبل ما يبدأ، عشان يعرف أي حاجة معلّقة من الوردية اللي قبله."""
     shift = crud.get_latest_closed_shift(db, branch_id)
     return shift.handover_note if shift else None
+
+
+def build_active_shifts_response(db: Session, branch_id: int) -> ActiveShiftsResponse:
+    """ملخص كل الورديات المفتوحة في الفرع — للمراقبة اللحظية (مدير+).
+    بيجيب كل وردية مفتوحة مع إجماليات مبيعاتها الحالية بدون قفل أو تعديل.
+    خفيف عمداً: لا يحسب cash_count_lines أو journal entries — بس الـ Payments.
+    """
+    from app.core.kernel.database import SessionLocal  # noqa: PLC0415 — not imported at top to avoid circular
+    from app.core.kernel import models as kernel_models  # noqa: PLC0415
+
+    open_shifts = crud.get_all_open_shifts(db, branch_id)
+
+    # نجيب أسماء الكاشيرين بـ query واحدة بدل N queries
+    cashier_ids = list({s.cashier_id for s in open_shifts})
+    cashier_names: dict[int, str] = {}
+    if cashier_ids:
+        users = (
+            db.query(kernel_models.user.User)
+            .filter(kernel_models.user.User.id.in_(cashier_ids))
+            .all()
+        )
+        cashier_names = {u.id: (u.full_name or u.username) for u in users}
+
+    summaries: list[ActiveShiftSummary] = []
+    for shift in open_shifts:
+        payments = crud.payments_for_shift(db, shift.id)
+        active = [p for p in payments if p.voided_at is None]
+        positive = [p for p in active if p.amount > 0]
+        reversals = [p for p in active if p.amount < 0]
+
+        total_sales = sum((p.amount for p in positive), Decimal("0"))
+        total_cash  = sum((p.amount for p in positive if p.method == "cash"), Decimal("0"))
+        total_card  = sum((p.amount for p in positive if p.method == "card"), Decimal("0"))
+        cash_refunds = -sum((p.amount for p in reversals if p.method == "cash"), Decimal("0"))
+        net_cash = total_cash - cash_refunds
+
+        movements = crud.list_cash_movements(db, shift.id)
+        movements_effect = sum((_cash_movement_expected_effect(m) for m in movements), Decimal("0"))
+        expected_cash = shift.opening_float + net_cash + movements_effect
+
+        summaries.append(ActiveShiftSummary(
+            shift_id=shift.id,
+            branch_id=shift.branch_id,
+            cashier_id=shift.cashier_id,
+            cashier_name=cashier_names.get(shift.cashier_id, f"#{shift.cashier_id}"),
+            opened_at=shift.opened_at,
+            opening_float=shift.opening_float,
+            total_sales=total_sales,
+            total_cash=total_cash,
+            total_card=total_card,
+            expected_cash=expected_cash,
+            invoice_count=len(positive),
+        ))
+
+    return ActiveShiftsResponse(
+        branch_id=branch_id,
+        shift_count=len(summaries),
+        shifts=summaries,
+        as_of=datetime.utcnow(),
+    )
 
 
 def list_shift_invoices(

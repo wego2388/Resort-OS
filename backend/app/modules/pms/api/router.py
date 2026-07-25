@@ -15,7 +15,8 @@ from app.core.deps import (
 )
 from app.modules.pms import crud, services
 from app.modules.pms.schemas import (
-    BookingCreate, BookingRead, EarlyLateRequest, HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
+    BookingCreate, BookingRead, CheckinRequest, EarlyLateRequest, HousekeepingTaskRead,
+    HousekeepingTaskStatusUpdate,
     NightAuditLogRead, RatePlanCreate, RatePlanRead, RatePlanUpdate, RoomCreate, RoomRead,
     RoomStatusUpdate, RoomTypeCreate, RoomTypeRead,
 )
@@ -214,9 +215,18 @@ def get_booking(booking_id: int, db: DbDep, _=Depends(get_current_active_user)):
 
 @router.post("/pms/bookings/{booking_id}/checkin",
              response_model=BookingRead)
-async def checkin(booking_id: int, db: DbDep, _=Depends(get_cashier_user)):
+async def checkin(
+    booking_id: int,
+    db: DbDep,
+    _=Depends(get_cashier_user),
+    body: Optional[CheckinRequest] = None,
+):
     try:
-        booking = services.checkin_booking(db, booking_id)
+        booking = services.checkin_booking(
+            db, booking_id,
+            id_number=body.id_number if body else None,
+            payment_method=body.payment_method if body else None,
+        )
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     await pms_rooms_manager.broadcast(str(booking.branch_id), {"type": "rooms_changed"})

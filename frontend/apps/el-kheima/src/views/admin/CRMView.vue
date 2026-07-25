@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, parseApiTimestamp, useAuthStore, ENDPOINTS } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
+
+type ApiErr = { response?: { data?: { detail?: string; message?: string }; status?: number } }
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const { t } = useI18n()
@@ -186,7 +188,7 @@ const customerNameById = computed<Record<number, string>>(() => {
   return map
 })
 
-const tabsList = computed(() => [
+const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
   { val: 'leads', label: t('backoffice.crm.tabs.leads') },
   { val: 'customers', label: t('backoffice.crm.tabs.customers') },
   { val: 'opportunities', label: t('backoffice.crm.tabs.opportunities') },
@@ -277,8 +279,8 @@ async function saveGroup() {
     }
     openCreateGroup()
     await loadGroups()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.groupSaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.groupSaveError'))
   } finally {
     savingGroup.value = false
   }
@@ -288,8 +290,8 @@ async function toggleGroupActive(g: CustomerGroup) {
   try {
     await api.patch(`/api/v1/crm/customer-groups/${g.id}`, { is_active: !g.is_active })
     await loadGroups()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.groupStatusUpdateError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.groupStatusUpdateError'))
   }
 }
 
@@ -301,8 +303,8 @@ async function assignGroup(customer: Customer, groupId: number | '') {
     const idx = customers.value.findIndex(c => c.id === customer.id)
     if (idx !== -1) customers.value[idx] = data
     toast.success(t('backoffice.crm.msg.customerGroupUpdated'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.customerGroupUpdateError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.customerGroupUpdateError'))
   }
 }
 
@@ -409,8 +411,8 @@ async function saveLoyaltyProgram() {
     }
     showLoyaltySetup.value = false
     toast.success(t('backoffice.crm.msg.loyaltySettingsSaved'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.saveFailed'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.saveFailed'))
   }
 }
 
@@ -441,8 +443,8 @@ async function redeemPoints() {
     toast.success(t('backoffice.crm.msg.pointsRedeemed'))
     redeemForm.value = { customer_id: '', points: '', reference: '' }
     if (loyaltyAccount.value) await lookupLoyaltyAccount()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.redeemPointsError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.redeemPointsError'))
   } finally { redeemLoading.value = false }
 }
 
@@ -466,8 +468,8 @@ async function createLead() {
     showLeadForm.value = false
     leadForm.value = { full_name: '', phone: '', email: '', nationality: '', source_id: '', interest: 'other', expected_value: '0', notes: '' }
     await loadLeads()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.leadAddError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.leadAddError'))
   } finally {
     savingLead.value = false
   }
@@ -527,8 +529,8 @@ async function addCallNote() {
     toast.success(t('backoffice.crm.msg.callNoteSaved'))
     callNoteForm.value = { direction: 'outbound', duration_min: '', summary: '', outcome: 'no_decision' }
     await loadCallNotes(selectedLead.value.id)
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.callNoteSaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.callNoteSaveError'))
   } finally {
     savingCallNote.value = false
   }
@@ -547,8 +549,8 @@ async function saveLeadDetails() {
     Object.assign(selectedLead.value, res.data)
     const idx = leads.value.findIndex(l => l.id === selectedLead.value!.id)
     if (idx !== -1) leads.value[idx] = { ...leads.value[idx], ...res.data }
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.editsSaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.editsSaveError'))
   } finally {
     savingLeadEdit.value = false
   }
@@ -568,8 +570,8 @@ async function markLeadLost() {
     Object.assign(selectedLead.value, res.data)
     const idx = leads.value.findIndex(l => l.id === selectedLead.value!.id)
     if (idx !== -1) leads.value[idx] = { ...leads.value[idx], ...res.data }
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.leadStatusUpdateError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.leadStatusUpdateError'))
   } finally {
     savingLost.value = false
   }
@@ -619,8 +621,8 @@ async function convertLeadToBooking() {
     if (idx !== -1) leads.value[idx] = { ...leads.value[idx], ...res.data.lead }
     convertForm.value = { check_in: '', check_out: '', room_id: '' }
     availableRoomsForConvert.value = []
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.convertLeadError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.convertLeadError'))
   } finally {
     convertingLead.value = false
   }
@@ -645,9 +647,9 @@ async function createCustomer() {
     showCustomerForm.value = false
     customerForm.value = { full_name: '', phone: '', email: '', nationality: '', segment: 'regular', notes: '' }
     await loadCustomers()
-  } catch (e: any) {
+  } catch (e: unknown) {
     // رسالة الباك إند بتوضّح اسم/رقم العميل المكرر فعليًا — نعرضها زي ما هي
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.customerAddError'))
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.customerAddError'))
   } finally {
     savingCustomer.value = false
   }
@@ -673,8 +675,8 @@ async function createOpportunity() {
     showOpportunityForm.value = false
     opportunityForm.value = { customer_id: '', title: '', product_type: 'other', expected_value: '0', probability: '20', expected_close: '', notes: '' }
     await loadOpportunities()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.oppAddError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.oppAddError'))
   } finally {
     savingOpportunity.value = false
   }
@@ -700,8 +702,8 @@ async function confirmOpportunityLost() {
     const opp = opportunities.value.find(o => o.id === lostOpportunityId.value)
     if (opp) { opp.stage = res.data.stage; opp.lost_reason = res.data.lost_reason }
     lostOpportunityId.value = null
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.oppStatusUpdateError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.oppStatusUpdateError'))
   }
 }
 
@@ -732,8 +734,8 @@ async function createActivity() {
     showActivityForm.value = false
     activityForm.value = { customer_id: '', activity_type: 'follow_up', title: '', due_date: '', due_time: '', notes: '' }
     await loadActivities()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.activityAddError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.activityAddError'))
   } finally {
     savingActivity.value = false
   }
@@ -766,8 +768,8 @@ async function createCampaign() {
     showCampaignForm.value = false
     campaignForm.value = { name: '', campaign_type: 'social_media', start_date: '', end_date: '', budget: '0' }
     await loadCampaigns()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.crm.msg.campaignCreateError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.crm.msg.campaignCreateError'))
   } finally {
     savingCampaign.value = false
   }
@@ -790,7 +792,7 @@ onMounted(loadLeads)
     <div class="flex items-center justify-between mb-6 flex-wrap gap-3">
       <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl w-fit">
         <button v-for="tabDef in tabsList"
-          :key="tabDef.val" @click="loadTab(tabDef.val as any)"
+          :key="tabDef.val" @click="loadTab(tabDef.val)"
           :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
         >{{ tabDef.label }}</button>
       </div>

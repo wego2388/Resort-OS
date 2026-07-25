@@ -361,6 +361,20 @@ def list_revenue_audit_logs(
 
 # ── CashierShift (POS Day / Safe) ──────────────────────────────────────
 
+def get_all_open_shifts(db: Session, branch_id: int) -> list[CashierShift]:
+    """كل الورديات المفتوحة في الفرع — للمراقبة اللحظية (مدير+).
+    مرتّبة بتاريخ الفتح تصاعديًا (الأقدم أولاً)."""
+    return (
+        db.query(CashierShift)
+        .filter(
+            CashierShift.branch_id == branch_id,
+            CashierShift.status == "open",
+        )
+        .order_by(CashierShift.opened_at.asc())
+        .all()
+    )
+
+
 def get_open_shift(db: Session, branch_id: int, cashier_id: int) -> Optional[CashierShift]:
     return (
         db.query(CashierShift)

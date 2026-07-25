@@ -55,7 +55,7 @@ interface ExtraGroup   { id: number; name: string; name_ar: string | null; group
 // UnifiedPOSView.vue لنفس المنطق بالظبط)، مش رسم إضافي فوق سعر ثابت زي
 // ExtraOption. الباك إند (PublicMenuItemRead) بيرجّعهم بالفعل.
 interface Variant      { id: number; name: string; name_ar: string | null; price: number; is_available: boolean }
-interface MenuItem     { id: number; name: string; name_ar: string | null; price: number; category_id: number | null; extra_groups: ExtraGroup[]; variants: Variant[] }
+interface MenuItem     { id: number; name: string; name_ar: string | null; description: string | null; price: number; category_id: number | null; image_url: string | null; extra_groups: ExtraGroup[]; variants: Variant[] }
 interface Category     { id: number; name: string; name_ar: string | null }
 
 interface CartItem {
@@ -659,7 +659,14 @@ onUnmounted(() => {
             class="bg-white rounded-2xl border border-stone-200 p-4 flex gap-3 shadow-sm active:scale-[0.99] transition-transform"
           >
             <div class="relative w-14 h-14 flex-shrink-0">
-              <div class="w-14 h-14 bg-stone-100 rounded-xl flex items-center justify-center text-2xl">
+              <!-- صورة الصنف لو موجودة، fallback للـ emoji -->
+              <img
+                v-if="item.image_url"
+                :src="item.image_url"
+                :alt="itemDisplayName(item)"
+                class="w-14 h-14 rounded-xl object-cover"
+              />
+              <div v-else class="w-14 h-14 bg-stone-100 rounded-xl flex items-center justify-center text-2xl">
                 🍽️
               </div>
               <!-- badge كمية: يظهر فقط لو الصنف في السلة -->
@@ -671,6 +678,7 @@ onUnmounted(() => {
 
             <div class="flex-1 min-w-0">
               <div class="font-bold text-gray-900 text-sm">{{ itemDisplayName(item) }}</div>
+              <div v-if="item.description" class="text-xs text-gray-400 mt-0.5 line-clamp-2">{{ item.description }}</div>
               <div v-if="item.variants.filter(v => v.is_available).length" class="text-xs text-blue-500 mt-0.5">
                 {{ t('qr.has_variants') }}
               </div>

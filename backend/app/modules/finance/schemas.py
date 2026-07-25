@@ -183,6 +183,9 @@ class CashierShiftOpen(BaseModel):
     branch_id:     int
     opening_float: Decimal = Field(Decimal("0"), ge=0)
     notes:         Optional[str] = Field(None, max_length=1000)
+    # مدير+ يقدر يفتح وردية لكاشير تاني (نيابةً عنه لو كاشير بدأ وردية
+    # يدوياً خارج النظام مثلاً). لو None، الكاشير هو المستخدم المرسِل نفسه.
+    cashier_id:    Optional[int] = None
 
 
 class CashCountLine(BaseModel):
@@ -220,15 +223,14 @@ class CashierShiftClose(BaseModel):
     notes:         Optional[str] = Field(None, max_length=1000)
     handover_note: Optional[str] = Field(None, max_length=1000)
     # ملاحظة تسليم — بتظهر لصاحب الوردية الجاية في نفس الفرع (راجع
-    # GET /finance/shifts/handover-note) قبل ما يفتح ورديته
+    # GET /finance/shifts/handover-note) قبل ما يفتح ورديته.
+    # قرار Mohamed 2026-07-14: الوردية تُقفل دايماً بغض النظر عن الفرق،
+    # آلية force_close أُلغيت — لو client قديم بعتها Pydantic بيتجاهلها.
+    model_config = ConfigDict(extra="ignore")
 
-    # فرق كاش أكبر من الحد المسموح (راجع services.close_shift —
-    # CASH_VARIANCE_REJECT_PCT/FLOOR) بيترفض القفل تلقائيًا بـ 400. لو مدير
-    # حاضر فعليًا وعايز يعتمد الفرق ده بدل ما يفضل الكاشير معلّق لحد ما مدير
-    # يتفرّغ لاحقًا، force_close=true + موافقة PIN (نفس نمط
-    # core.services.resolve_pin_approval المستخدم في إلغاء صنف الطلب) بيسمحوا
-    # بالقفل — مع AuditLog إجباري يوثّق مين وافق (راجع wagdy.md بند S-06).
-    force_close:      bool = False
+    # موافقة PIN مدير+ — مطلوبة لو مدير بيقفل وردية كاشير تاني (M3).
+    # مدير+ مؤهّل بنفسه (acting_user_level >= 60) فمش محتاج PIN في الغالب،
+    # لكن لو approver_* اتبعتوا بيتحققوا (راجع core.services.resolve_pin_approval).
     approver_user_id: Optional[int] = None
     approver_pin:     Optional[str] = Field(None, pattern=r"^\d{4,6}$")
 
@@ -351,6 +353,31 @@ class ShiftEndReport(BaseModel):
     reporting_currency:    str = "EGP"
     # كل الإجماليات هنا EGP equivalent — أي دفعة بعملة غير EGP بتتحوّل بسعر
     # الصرف وقت تاريخ الدفعة قبل الجمع (راجع build_shift_end_report).
+
+
+class ActiveShiftSummary(BaseModel):
+    """ملخص خفيف لوردية مفتوحة — للمراقبة اللحظية (مدير+).
+    لا يتضمّن تفاصيل حساسة (فئات العدّ / سجل الفواتير الكاملة).
+    يُبنى من get_all_open_shifts + payments_for_shift في الـ service."""
+    shift_id:      int
+    branch_id:     int
+    cashier_id:    int
+    cashier_name:  str          # اسم الكاشير من جدول users
+    opened_at:     datetime
+    opening_float: Decimal
+    total_sales:   Decimal      # إجمالي المبيعات حتى الآن (payments موجبة)
+    total_cash:    Decimal      # مبيعات كاش فقط
+    total_card:    Decimal      # مبيعات كارت فقط
+    expected_cash: Decimal      # الكاش المتوقع في الدرج = float + cash - refunds + movements
+    invoice_count: int          # عدد الفواتير المدفوعة
+
+
+class ActiveShiftsResponse(BaseModel):
+    """رد endpoint مراقبة الورديات المفتوحة."""
+    branch_id:    int
+    shift_count:  int
+    shifts:       list[ActiveShiftSummary]
+    as_of:        datetime      # وقت البناء — لعرض "آخر تحديث" في الـ frontend
 
 
 class ShiftInvoiceLine(BaseModel):
@@ -837,3 +864,20 @@ class RevenueAuditLogRead(BaseModel):
     changed_by:  int
     approved_by: Optional[int]
     created_at:  datetime
+
+
+# ── Simple fixed-shape response schemas ──────────────────────────────────────
+class HandoverNoteResponse(BaseModel):
+    handover_note: Optional[str]
+
+class DiscountCalcResponse(BaseModel):
+    applied:        bool
+    rule_id:        Optional[int]
+    discount_type:  Optional[str]
+    discount_value: Decimal
+    amount_saved:   Decimal
+    final_amount:   Decimal
+    reason:         str
+
+class AutoMatchResponse(BaseModel):
+    matched_count: int

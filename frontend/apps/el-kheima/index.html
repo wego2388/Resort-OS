@@ -4,17 +4,14 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <!--
-    Cairo font — external Google Fonts dependency.
-    `display=swap` مضمّن في الـ URL (بيخلي المتصفح يعرض النص بفونت system fallback
-    فورًا ويحوّل لـ Cairo لما يتحمّل — بدل ما النص يختفي كليًا لحد ما الفونت يوصل).
-    لو السيرفر مش عنده internet (VPS بدون خروج) أو Google blocked في الشبكة،
-    التطبيق هيشتغل بـ system-ui (نفس خط النظام) من غير أي كسر مرئي.
-    TODO (Gate 9): self-host Cairo كـ woff2 داخل /public/fonts/ عشان نتخلص
-    من الـ external dependency بالكامل ونضمن الخط حتى في VPS بدون internet.
+    Cairo — self-hosted woff2 (Gate 9: no external network dependency).
+    Fonts downloaded from Google Fonts 2026-07-25 and stored in /fonts/.
+    font-display:swap في fonts.css — المتصفح يعرض بـ system fallback فورًا
+    ويحوّل لـ Cairo بعد تحميله، بدون أي blocking.
   -->
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="preload" href="/fonts/cairo-arabic.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/cairo-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/fonts/fonts.css" />
   <title>Resort OS</title>
 </head>
 <body class="bg-resort-bg font-sans">

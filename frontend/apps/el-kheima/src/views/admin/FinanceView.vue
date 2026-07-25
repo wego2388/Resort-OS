@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore, useResortWebSocket } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
+
+type ApiErr = { response?: { data?: { detail?: string; message?: string }; status?: number } }
 import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
@@ -45,9 +47,9 @@ const filteredShifts = computed(() =>
     : shifts.value,
 )
 
-function parseShift(s: any): ShiftItem {
+function parseShift(s: Record<string, unknown>): ShiftItem {
   return {
-    ...s,
+    ...(s as unknown as ShiftItem),
     opening_float:  s.opening_float  != null ? Number(s.opening_float)  : 0,
     expected_cash:  s.expected_cash  != null ? Number(s.expected_cash)  : null,
     counted_cash:   s.counted_cash   != null ? Number(s.counted_cash)   : null,
@@ -63,8 +65,8 @@ async function loadShifts() {
     const { data } = await api.get(ENDPOINTS.finance.shifts, { params })
     shifts.value      = (data.items ?? []).map(parseShift)
     shiftsTotal.value = data.total ?? 0
-  } catch(e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.loadShiftsError'))
+  } catch(e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.loadShiftsError'))
   } finally {
     loadingShifts.value = false
   }
@@ -96,6 +98,14 @@ interface ShiftInvoiceLine {
   payment_id: number; folio_id: number | null; guest_name: string; amount: number; method: string
   posted_at: string; is_voided: boolean
 }
+// Raw API shapes — backend returns Decimal fields as strings
+interface RawCashCountLine {
+  denomination: unknown; currency: unknown
+  quantity: unknown; subtotal: unknown; fx_rate: unknown; egp_equivalent: unknown
+}
+interface RawFxSummaryLine { currency: unknown; total_foreign: unknown; fx_rate: unknown; egp_equivalent: unknown }
+interface RawInvoiceLine { amount: unknown; [key: string]: unknown }
+interface ShiftWsMessage { type?: string; shift_id?: number; [key: string]: unknown }
 const detailShift    = ref<ShiftItem | null>(null)
 const detailReport   = ref<ShiftDetailReport | null>(null)
 const detailInvoices = ref<ShiftInvoiceLine[]>([])
@@ -122,28 +132,28 @@ async function openShiftDetail(s: ShiftItem) {
       total_sales:   Number(r.total_sales   ?? 0),
       voided_amount: Number(r.voided_amount ?? 0),
       // cash_count: الـ backend بيرجّع Decimal كـ string — نحوّل كل الحقول العددية
-      cash_count: (r.cash_count ?? []).map((line: any) => ({
+      cash_count: (r.cash_count ?? []).map((line: RawCashCountLine) => ({
         denomination:   Number(line.denomination   ?? 0),
-        currency:       line.currency ?? 'EGP',
+        currency:       String(line.currency ?? 'EGP'),
         quantity:       Number(line.quantity       ?? 0),
         subtotal:       Number(line.subtotal       ?? 0),
         fx_rate:        Number(line.fx_rate        ?? 1),
         egp_equivalent: Number(line.egp_equivalent ?? 0),
       })),
-      foreign_currency_summary: (r.foreign_currency_summary ?? []).map((fc: any) => ({
-        currency:       fc.currency,
+      foreign_currency_summary: (r.foreign_currency_summary ?? []).map((fc: RawFxSummaryLine) => ({
+        currency:       String(fc.currency),
         total_foreign:  Number(fc.total_foreign  ?? 0),
         fx_rate:        Number(fc.fx_rate        ?? 1),
         egp_equivalent: Number(fc.egp_equivalent ?? 0),
       })),
       counted_cash_egp: r.counted_cash_egp != null ? Number(r.counted_cash_egp) : null,
     }
-    detailInvoices.value = (invoicesRes.data ?? []).map((inv: any) => ({
+    detailInvoices.value = (invoicesRes.data ?? []).map((inv: RawInvoiceLine) => ({
       ...inv,
       amount: Number(inv.amount ?? 0),
     }))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.loadShiftDetailError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.loadShiftDetailError'))
   } finally {
     detailLoading.value = false
   }
@@ -157,9 +167,10 @@ function closeShiftDetail() { detailShift.value = null }
 // الباك إند نفسه (get_websocket_user min_level=60)، متسق مع باقي شاشة
 // الحسابات دي كلها.
 const { onMessage: onShiftWsMessage } = useResortWebSocket(ENDPOINTS.finance.shiftsWs(branchId.value))
-onShiftWsMessage((data: any) => {
+onShiftWsMessage((data: unknown) => {
+  const msg = data as ShiftWsMessage
   const openShift = detailShift.value
-  if (data?.type === 'shift_sale' && openShift && openShift.id === data.shift_id) {
+  if (msg?.type === 'shift_sale' && openShift && openShift.id === msg.shift_id) {
     openShiftDetail(openShift)
   }
 })
@@ -226,8 +237,8 @@ async function runDepreciation() {
     }
     toast.success(t('backoffice.finance.depreciationPostedToast', { count: data.entries.length, amount: formatNumber(Number(data.total_amount)) }))
     await loadDepreciation()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.runDepreciationError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.runDepreciationError'))
   } finally {
     runningDepreciation.value = false
   }
@@ -287,8 +298,8 @@ async function createBankAccount() {
     showBankAccountForm.value = false
     bankAccountForm.value = { bank_name: '', account_name: '', account_number: '', opening_balance: '0' }
     await loadBankAccounts()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.bankAccountCreateError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.bankAccountCreateError'))
   }
 }
 
@@ -348,8 +359,8 @@ async function loadBalanceSheet() {
     const { data } = await api.get(ENDPOINTS.finance.reportsBalanceSheet, {
       params: { branch_id: branchId.value, as_of: bsAsOf.value },
     })
-    const toLines = (lines: any[]): BalanceSheetLine[] =>
-      (lines ?? []).map((l: any) => ({ ...l, amount: Number(l.amount) }))
+    const toLines = (lines: { amount?: unknown; [k: string]: unknown }[]): BalanceSheetLine[] =>
+      (lines ?? []).map((l) => ({ ...l, amount: Number(l.amount) } as BalanceSheetLine))
     bsData.value = {
       as_of: data.as_of,
       asset_lines: toLines(data.asset_lines),
@@ -362,8 +373,8 @@ async function loadBalanceSheet() {
       total_liabilities_and_equity: Number(data.total_liabilities_and_equity),
       is_balanced: Boolean(data.is_balanced),
     }
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.finance.loadBalanceSheetError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.loadBalanceSheetError'))
   } finally {
     loading.value = false
   }
@@ -445,6 +456,23 @@ async function markCheckBounced(check: Check) {
 }
 
 onMounted(() => loadTab('overview'))
+
+const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
+  { val: 'overview',             label: t('backoffice.finance.tabs.overview') },
+  { val: 'checks',               label: t('backoffice.finance.tabs.checks') },
+  { val: 'accounts',             label: t('backoffice.finance.tabs.accounts') },
+  { val: 'cost-centers',         label: t('backoffice.finance.tabs.costCenters') },
+  { val: 'balance-sheet',        label: t('backoffice.finance.tabs.balanceSheet') },
+  { val: 'depreciation',         label: t('backoffice.finance.tabs.depreciation') },
+  { val: 'bank-reconciliation',  label: t('backoffice.finance.tabs.bankReconciliation') },
+  { val: 'shifts',               label: t('backoffice.finance.tabs.shifts') },
+])
+
+const shiftStatusList = computed<{ v: 'all' | 'open' | 'closed'; l: string }[]>(() => [
+  { v: 'all',    l: t('backoffice.finance.all') },
+  { v: 'open',   l: t('backoffice.finance.shiftOpen') },
+  { v: 'closed', l: t('backoffice.finance.shiftClosed') },
+])
 </script>
 
 <template>
@@ -452,17 +480,8 @@ onMounted(() => loadTab('overview'))
     <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">{{ t('backoffice.finance.title') }}</h2>
 
     <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit flex-wrap">
-      <button v-for="tabDef in [
-        { val: 'overview', label: t('backoffice.finance.tabs.overview') },
-        { val: 'checks', label: t('backoffice.finance.tabs.checks') },
-        { val: 'accounts', label: t('backoffice.finance.tabs.accounts') },
-        { val: 'cost-centers', label: t('backoffice.finance.tabs.costCenters') },
-        { val: 'balance-sheet', label: t('backoffice.finance.tabs.balanceSheet') },
-        { val: 'depreciation', label: t('backoffice.finance.tabs.depreciation') },
-        { val: 'bank-reconciliation', label: t('backoffice.finance.tabs.bankReconciliation') },
-        { val: 'shifts', label: t('backoffice.finance.tabs.shifts') },
-      ]"
-        :key="tabDef.val" @click="loadTab(tabDef.val as any)"
+      <button v-for="tabDef in tabsList"
+        :key="tabDef.val" @click="loadTab(tabDef.val)"
         :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
       >{{ tabDef.label }}</button>
     </div>
@@ -895,12 +914,8 @@ onMounted(() => loadTab('overview'))
     <div v-if="tab === 'shifts'" class="space-y-4">
       <div class="flex items-center gap-3 flex-wrap">
         <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl">
-          <button v-for="s in [
-            { v: 'all', l: t('backoffice.finance.all') },
-            { v: 'open', l: t('backoffice.finance.shiftOpen') },
-            { v: 'closed', l: t('backoffice.finance.shiftClosed') },
-          ]"
-            :key="s.v" @click="shiftStatus = s.v as any; loadShifts()"
+          <button v-for="s in shiftStatusList"
+            :key="s.v" @click="shiftStatus = s.v; loadShifts()"
             :class="['px-3 py-1 rounded-lg text-xs font-semibold transition-all', shiftStatus === s.v ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400']">
             {{ s.l }}
           </button>

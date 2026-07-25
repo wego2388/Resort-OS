@@ -94,3 +94,8 @@ class TenantCashLogRead(BaseModel):
     notes:          Optional[str]
     recorded_by:    Optional[int]
     created_at:     datetime
+
+
+# ── Simple fixed-shape response schemas ──────────────────────────────────────
+class ApplyPenaltiesResponse(BaseModel):
+    updated: int

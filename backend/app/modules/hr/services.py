@@ -643,10 +643,12 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
         source_id=run.id,
         lines=lines,
     )
-    try:
-        create_journal_entry(db, entry_data, user_id)
-    except Exception:
-        pass  # لا نوقف الاعتماد إذا فشل القيد
+    # ⚠️ Finance-first (CLAUDE.md §5.2): فشل القيد يرفع — approve_payroll_run
+    # يلفّ الاستدعاء كله في transaction واحد مع db.flush() قبل هنا، فأي
+    # استثناء هنا سيُفقد التغييرات (run.status = "approved") تلقائيًا.
+    # لو الحسابات غير مهيّأة للفرع: FinancialConfigurationError → ValueError
+    # في approve_payroll_run → 400 للواجهة (لا commit، لا approved run).
+    create_journal_entry(db, entry_data, user_id)
 
 
 # ── SalaryAdvance (wagdy.md H-01) ────────────────────────────────────────

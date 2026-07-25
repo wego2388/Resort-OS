@@ -160,12 +160,25 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
     return booking
 
 
-def checkin_booking(db: Session, booking_id: int) -> Booking:
+def checkin_booking(
+    db: Session,
+    booking_id: int,
+    id_number: Optional[str] = None,
+    payment_method: Optional[str] = None,
+) -> Booking:
     booking = get_booking_or_404(db, booking_id)
     if booking.status != "confirmed":
         raise ValueError(f"لا يمكن تسجيل الدخول لحجز بحالة '{booking.status}'")
 
     booking = crud.update_booking_status(db, booking, "checked_in")
+
+    # حفظ رقم الهوية لو موجود (EncryptedString — بيتخزن مشفّر)
+    if id_number:
+        booking.guest_national_id = id_number
+
+    # حفظ طريقة الدفع المتوقعة للمحاسبة
+    if payment_method:
+        booking.payment_method = payment_method
 
     # تحديث حالة الغرف → occupied
     for br in booking.rooms:

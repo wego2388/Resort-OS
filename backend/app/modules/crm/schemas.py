@@ -482,3 +482,9 @@ class LoyaltyRedeemResponse(BaseModel):
     discount_amount:   Decimal    # بالجنيه
     new_balance:       int
     transaction_id:    int
+
+
+# ── Simple fixed-shape response schemas ──────────────────────────────────────
+class AdjustLoyaltyResponse(BaseModel):
+    """alias — router يستخدم LoyaltyAccountRead مباشرةً"""
+    pass  # مش محتاجة — نستخدم LoyaltyAccountRead في الـ router

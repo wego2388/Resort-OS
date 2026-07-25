@@ -80,6 +80,8 @@ class Booking(Base, TimestampMixin):
     late_checkout_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     extra_charge:      Mapped[Decimal]         = mapped_column(Numeric(10, 2), default=Decimal("0"))
     # رسوم الوصول المبكر + المغادرة المتأخرة — بتُضاف لـ total_rate وتُحمَّل على الفوليو
+    payment_method:    Mapped[str | None]       = mapped_column(String(30), nullable=True)
+    # cash|card|bank_transfer — بيتسجّل وقت الـ check-in ويُستخدم كمرجع للمحاسبة
 
     rooms: Mapped[list["BookingRoom"]] = relationship("BookingRoom", back_populates="booking", lazy="select")
 

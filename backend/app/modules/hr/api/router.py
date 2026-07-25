@@ -825,7 +825,7 @@ def get_rota(
     return [RotaAssignmentRead.model_validate(a) for a in items]
 
 
-@router.get("/hr/payroll/{run_id}/payslip/{employee_id}")
+@router.get("/hr/payroll/{run_id}/payslip/{employee_id}", response_model=None)
 def download_payslip(run_id: int, employee_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:
         pdf = services.generate_payslip_pdf(db, run_id, employee_id)
@@ -838,7 +838,7 @@ def download_payslip(run_id: int, employee_id: int, db: DbDep, _=Depends(get_cur
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
-@router.get("/hr/payroll/{run_id}/excel")
+@router.get("/hr/payroll/{run_id}/excel", response_model=None)
 def download_payroll_excel(run_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         xlsx = services.generate_payroll_excel(db, run_id)
@@ -851,7 +851,7 @@ def download_payroll_excel(run_id: int, db: DbDep, _=Depends(get_manager_user)):
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
-@router.get("/hr/payroll/{run_id}/pdf")
+@router.get("/hr/payroll/{run_id}/pdf", response_model=None)
 def download_payroll_bulk_pdf(run_id: int, db: DbDep, _=Depends(get_manager_user)):
     """H-06 — PDF كشف مرتبات جماعي لطباعة الكشف الرسمي."""
     try:

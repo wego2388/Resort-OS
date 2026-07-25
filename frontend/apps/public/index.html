@@ -5,9 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="El Kheima Beach Resort — private beachfront resort in Sharm El Maya Bay, Sharm El Sheikh. Sea view rooms, Italian dining, water sports." />
   <link rel="icon" type="image/png" href="/favicon.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800&family=Tajawal:wght@400;500;700&family=Montserrat:wght@500;600;700;800;900&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet" />
+  <!--
+    All fonts self-hosted (Gate 9: no external network dependency).
+    Cairo + Tajawal (Arabic UI/body) + Montserrat + Open Sans (Latin headings/body).
+    Downloaded from Google Fonts 2026-07-25, stored in /fonts/.
+    Preload the two most-used subsets (Arabic + Latin) for fastest first paint.
+  -->
+  <link rel="preload" href="/fonts/cairo-arabic.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/cairo-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/montserrat-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/fonts/fonts.css" />
   <title>El Kheima Beach Resort | منتجع الخيمة الشاطئي</title>
 </head>
 <body class="bg-resort-bg font-sans">

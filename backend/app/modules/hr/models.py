@@ -11,7 +11,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Integer, JSON,
+    Boolean, Date, DateTime, ForeignKey, Index, Integer, JSON,
     Numeric, String, Text, UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -224,6 +224,9 @@ class SalaryAdvance(Base, TimestampMixin):
     (60,066 ج شهريًا، 26% من المستحق) — منفصلة عمدًا عن AdvancePayment تحت
     (H-02، دفعات يومية بسيطة بتتخصم بالكامل في نفس شهرها، مش قرض بأقساط)."""
     __tablename__ = "salary_advances"
+    __table_args__ = (
+        Index("ix_salary_advances_employee_id", "employee_id"),
+    )
 
     id:                        Mapped[int]        = mapped_column(primary_key=True)
     employee_id:               Mapped[int]        = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))
@@ -249,6 +252,9 @@ class AdvancePayment(Base, TimestampMixin):
     لمين اتخصم فين، مش شرط لصحة الحساب نفسه (تشغيل كشف رواتب لنفس الفترة
     مرتين ممنوع أصلاً عبر UniqueConstraint على payroll_runs)."""
     __tablename__ = "advance_payments"
+    __table_args__ = (
+        Index("ix_advance_payments_employee_id", "employee_id"),
+    )
 
     id:               Mapped[int]        = mapped_column(primary_key=True)
     employee_id:      Mapped[int]        = mapped_column(ForeignKey("employees.id", ondelete="CASCADE"))

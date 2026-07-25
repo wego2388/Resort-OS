@@ -1,12 +1,14 @@
 """app/modules/finance/api/router.py"""
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import date
 from decimal import Decimal
 from typing import Optional
 
 from fastapi import (
-    APIRouter, Depends, Header, HTTPException, Query, Request,
+    APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request,
     WebSocket, WebSocketDisconnect, status,
 )
 from fastapi.responses import Response
@@ -23,7 +25,7 @@ from app.modules.finance import crud, services
 from app.resort_os.timezone_utils import business_today
 from app.modules.finance.schemas import (
     AccountCreate, AccountRead,
-    AccountingPeriodRead, AssetDepreciationEntryRead, BalanceSheetReport,
+    AccountingPeriodRead, AssetDepreciationEntryRead, ActiveShiftsResponse, BalanceSheetReport,
     BankAccountCreate, BankAccountRead, BankAccountUpdate, BankReconciliationSummary,
     BankStatementImportRequest, BankStatementLineRead, BankStatementMatchRequest,
     CashierShiftClose, CashierShiftOpen,
@@ -39,6 +41,7 @@ from app.modules.finance.schemas import (
     PaymentCreate, PaymentRead,
     RevenueAuditLogRead,
     ShiftEndReport, ShiftInvoiceLine, TrialBalanceReport, VoidPaymentRequest,
+    HandoverNoteResponse, DiscountCalcResponse, AutoMatchResponse,
 )
 from app.modules.core.schemas import PaginatedResponse
 from app.modules.core import services as core_services
@@ -50,6 +53,7 @@ def _assert_shift_branch(db, user, shift, action_desc: str):
     Decision 0003). يُنادى بعد ما الـ service يتأكد إن الوردية موجودة."""
     core_services.assert_branch_access(db, user, shift.branch_id, action_desc)
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["finance"])
 
 
@@ -86,6 +90,20 @@ class ShiftConnectionManager:
 
 
 shift_manager = ShiftConnectionManager()
+
+
+def _broadcast_shift_event(branch_id: int, event_type: str, shift_id: int) -> None:
+    """يبعت حدث WS خفيف لكل المتصلين بفرع معين — بيشغّلها الراوتر كـ
+    background task بعد الـ commit عشان البيانات تكون متاحة للقراءة.
+    الـ frontend بيستخدمها كـ signal لإعادة تحميل /finance/shifts/active."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(
+                shift_manager.broadcast(str(branch_id), {"type": event_type, "shift_id": shift_id})
+            )
+    except Exception:  # noqa: BLE001
+        pass  # لا نكسر الـ response لو WS broadcast فشل
 
 
 @router.websocket("/finance/ws/shifts/{branch_id}")
@@ -202,7 +220,7 @@ def void_payment(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/finance/folios/{folio_id}/statement/pdf")
+@router.get("/finance/folios/{folio_id}/statement/pdf", response_model=None)
 def download_folio_statement_pdf(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         pdf = services.generate_folio_statement_pdf(db, folio_id)
@@ -215,7 +233,7 @@ def download_folio_statement_pdf(folio_id: int, db: DbDep, _=Depends(get_cashier
     )
 
 
-@router.get("/finance/folios/report/export")
+@router.get("/finance/folios/report/export", response_model=None)
 def download_folios_report_excel(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),
@@ -241,15 +259,28 @@ def open_shift(data: CashierShiftOpen, db: DbDep, user=Depends(get_cashier_user)
         core_services.assert_branch_access(db, user, data.branch_id, "فتح وردية")
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    # مدير+ يقدر يحدد cashier_id مختلف (فتح وردية لكاشير تاني نيابةً عنه).
+    # كاشير عادي لا يقدر يفتح وردية باسم شخص تاني.
+    target_cashier_id = data.cashier_id
+    if target_cashier_id is not None and target_cashier_id != user.id:
+        if user_level(user) < 60:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "فتح وردية لكاشير تاني يتطلب صلاحية مدير أو أعلى",
+            )
+    else:
+        target_cashier_id = user.id
     try:
-        return services.open_shift(db, user.id, user.id, data)
+        shift = services.open_shift(db, target_cashier_id, user.id, data)
+        _broadcast_shift_event(data.branch_id, "shift_opened", shift.id)
+        return shift
     except services.OpenShiftConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "OPEN_SHIFT_CONFLICT", "message": str(exc)})
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/finance/shifts/handover-note")
+@router.get("/finance/shifts/handover-note", response_model=HandoverNoteResponse)
 def get_handover_note(db: DbDep, user=Depends(get_cashier_user), branch_id: int = Query(...)):
     """آخر ملاحظة تسليم من آخر وردية مقفولة في الفرع — يشوفها الكاشير قبل
     ما يفتح ورديته الجديدة."""
@@ -270,6 +301,22 @@ def get_current_shift(db: DbDep, user=Depends(get_cashier_user), branch_id: int 
     if not shift:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "لا توجد وردية مفتوحة")
     return CashierShiftRead.model_validate(shift)
+
+
+@router.get("/finance/shifts/active", response_model=ActiveShiftsResponse)
+def get_active_shifts(
+    db: DbDep,
+    user=Depends(get_manager_user),
+    branch_id: int = Query(...),
+):
+    """كل الورديات المفتوحة في الفرع مع ملخص مبيعاتها اللحظي — مدير+ فقط.
+    يُستخدم من ShiftMonitorView للمراقبة اللحظية (HTTP snapshot + WS للتحديث).
+    Gate 4B: branch isolation — مدير يشوف فرعه بس (super_admin بيتخطى)."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, "مراقبة الورديات المفتوحة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return services.build_active_shifts_response(db, branch_id)
 
 
 @router.get("/finance/shifts", response_model=PaginatedResponse)
@@ -310,7 +357,7 @@ def shift_end_report(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
-@router.get("/finance/shifts/{shift_id}/report/pdf")
+@router.get("/finance/shifts/{shift_id}/report/pdf", response_model=None)
 def download_shift_end_report_pdf(shift_id: int, db: DbDep, user=Depends(get_cashier_user)):
     # Gate 4 (جولة مراجعة Codex الأولى — High 5): branch isolation كانت مفقودة
     # هنا — الـ service بيفرض ملكية الكاشير بس (كاشير مايشوفش وردية كاشير تاني)،
@@ -396,8 +443,12 @@ def close_shift(shift_id: int, data: CashierShiftClose, db: DbDep, user=Depends(
         report = services.build_shift_end_report(db, shift_id)
         result.foreign_currency_summary = report.foreign_currency_summary or []
         result.counted_cash_egp = report.counted_cash_egp
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001
+        # لا نفشل الـ response الكاملة بسبب مشكلة في ملخص العملات — الوردية اتقفلت فعليًا
+        logger.warning("close_shift: فشل بناء ملخص العملات بعد القفل shift_id=%s — %s", shift_id, exc)
+
+    # نبعت WS event للمراقبة اللحظية — الوردية اتقفلت، المراقبون يحدّثوا الشاشة
+    _broadcast_shift_event(shift_row.branch_id, "shift_closed", shift_id)
 
     return result
 
@@ -425,6 +476,8 @@ def create_cash_movement(shift_id: int, data: CashMovementCreate, db: DbDep, use
         return services.record_cash_movement(
             db, shift_id, data, performed_by=user.id, acting_user_level=user_level(user),
         )
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -493,7 +546,7 @@ def update_discount(
 
 
 @router.delete("/finance/discounts/{discount_id}",
-               status_code=status.HTTP_204_NO_CONTENT)
+               response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_discount(discount_id: int, db: DbDep, _=Depends(get_admin_user)):
     discount = crud.get_discount(db, discount_id)
     if not discount:
@@ -502,7 +555,7 @@ def delete_discount(discount_id: int, db: DbDep, _=Depends(get_admin_user)):
     db.commit()
 
 
-@router.post("/finance/calculate-discount")
+@router.post("/finance/calculate-discount", response_model=DiscountCalcResponse)
 def calculate_discount_endpoint(
     data: DiscountCalculateRequest, db: DbDep, _=Depends(get_current_active_user)
 ):
@@ -941,7 +994,7 @@ def list_bank_statement_lines(
                              items=[BankStatementLineRead.model_validate(row) for row in items])
 
 
-@router.post("/finance/bank-accounts/{bank_account_id}/statement-lines/auto-match")
+@router.post("/finance/bank-accounts/{bank_account_id}/statement-lines/auto-match", response_model=AutoMatchResponse)
 def auto_match_bank_statement_lines(bank_account_id: int, db: DbDep, user=Depends(get_manager_user)):
     """مطابقة أوتوماتيكية محافظة — بس لو مرشح دفعة واحد بالظبط لكل سطر،
     غير كده بيسيبه للمطابقة اليدوية. يرجّع عدد السطور اللي اتطابقت."""

@@ -233,7 +233,10 @@ async function confirmCheckIn() {
   if (!ciBooking.value) return
   ciLoading.value = true
   try {
-    await api.post(ENDPOINTS.pms.bookingCheckin(ciBooking.value.id))
+    await api.post(ENDPOINTS.pms.bookingCheckin(ciBooking.value.id), {
+      id_number:      ciIdNumber.value  || null,
+      payment_method: ciPayMethod.value || null,
+    })
     toast.success(t('backoffice.reception.checkedInToast', { name: ciBooking.value.guest_name }))
     ciOpen.value = false
     await fetchAll()

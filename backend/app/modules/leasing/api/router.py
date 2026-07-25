@@ -12,6 +12,7 @@ from app.modules.leasing import crud, services
 from app.modules.leasing.schemas import (
     LeaseContractCreate, LeaseContractRead, LeaseContractUpdate,
     LeasePaymentRead, PayLeaseRequest, TenantCashLogCreate, TenantCashLogRead,
+    ApplyPenaltiesResponse,
 )
 from app.modules.core.schemas import PaginatedResponse
 from app.resort_os.timezone_utils import local_today
@@ -92,7 +93,7 @@ def pay_payment(payment_id: int, req: PayLeaseRequest, db: DbDep,
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.post("/leasing/contracts/{contract_id}/apply-penalties")
+@router.post("/leasing/contracts/{contract_id}/apply-penalties", response_model=ApplyPenaltiesResponse)
 def apply_penalties(contract_id: int, db: DbDep, _=Depends(get_manager_user)):
     updated = services.apply_penalties(db, contract_id)
     return {"updated": len(updated)}
@@ -124,7 +125,7 @@ def list_cash_logs(contract_id: int, db: DbDep, _=Depends(get_current_active_use
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
-@router.get("/leasing/payments/{payment_id}/receipt")
+@router.get("/leasing/payments/{payment_id}/receipt", response_model=None)
 def download_receipt(payment_id: int, db: DbDep, _=Depends(get_current_active_user)):
     try:
         pdf = services.generate_rent_receipt_pdf(db, payment_id)

@@ -68,7 +68,7 @@ def create_product(data: ProductCreate, db: DbDep, _=Depends(get_manager_user)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/inventory/products/barcode-labels")
+@router.get("/inventory/products/barcode-labels", response_model=None)
 def download_barcode_labels_pdf(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...),

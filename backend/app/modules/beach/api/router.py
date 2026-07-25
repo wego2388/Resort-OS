@@ -186,7 +186,7 @@ def list_transactions(
                              items=[BeachTransactionRead.model_validate(t) for t in items])
 
 
-@router.get("/beach/transactions/{tx_id}/ticket")
+@router.get("/beach/transactions/{tx_id}/ticket", response_model=None)
 def download_ticket(tx_id: int, db: DbDep, _=Depends(get_cashier_user)):
     try:
         pdf = services.generate_ticket_pdf(db, tx_id)
@@ -237,7 +237,7 @@ def daily_summary(
 
 # ── Daily EOD Report ────────────────────────────────────────────────────
 
-@router.get("/beach/eod-report")
+@router.get("/beach/eod-report", response_model=None)
 def get_eod_report(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...), report_date: Optional[date] = Query(None),
@@ -247,7 +247,7 @@ def get_eod_report(
     return services.get_eod_report(db, branch_id, report_date)
 
 
-@router.get("/beach/eod-report/pdf")
+@router.get("/beach/eod-report/pdf", response_model=None)
 def download_eod_report_pdf(
     db: DbDep, _=Depends(get_manager_user),
     branch_id: int = Query(...), report_date: Optional[date] = Query(None),
@@ -270,7 +270,7 @@ def list_contracts(db: DbDep, _=Depends(get_manager_user),
             for c in crud.list_b2b_contracts(db, branch_id, active_only)]
 
 
-@router.get("/beach/b2b-contracts/status")
+@router.get("/beach/b2b-contracts/status", response_model=None)
 def get_b2b_quota_status(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...), day: Optional[date] = Query(None),
@@ -282,7 +282,7 @@ def get_b2b_quota_status(
 
 # ── Live Dashboard ────────────────────────────────────────────────────
 
-@router.get("/beach/live-dashboard")
+@router.get("/beach/live-dashboard", response_model=None)
 def get_live_dashboard(
     db: DbDep, _=Depends(get_current_active_user),
     branch_id: int = Query(...),

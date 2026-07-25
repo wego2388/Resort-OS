@@ -145,3 +145,22 @@ class OnlineBookingRead(BaseModel):
     pms_booking_id:  Optional[int]  = None
     created_at:      datetime
     updated_at:      datetime
+
+
+# ── Simple fixed-shape response schemas ──────────────────────────────────────
+from pydantic import BaseModel as _Base  # noqa: E402 — avoid circular at top
+
+class ContactFormResponse(_Base):
+    message: str
+    form_id: int
+
+class BlogPostItem(_Base):
+    id:           int
+    title:        str
+    slug:         str
+    excerpt:      Optional[str]
+    published_at: Optional[str]
+    views_count:  int
+
+class BlogPostsResponse(_Base):
+    posts: list[BlogPostItem]

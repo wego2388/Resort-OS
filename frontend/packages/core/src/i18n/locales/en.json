@@ -3477,6 +3477,7 @@
       "beachPos": "Beach",
       "beachMap": "Beach Map",
       "shift": "Shift",
+      "shiftMonitor": "Shift Monitor",
       "qrCodes": "QR Codes",
       "development": "Development",
       "projectCockpit": "Project Cockpit"
@@ -6713,6 +6714,32 @@
         "loadShiftError": "Couldn't load shift status",
         "loadReportError": "Couldn't load the sales summary",
         "loadOrdersError": "Couldn't load live orders"
+      }
+    },
+    "shiftMonitor": {
+      "title": "Open Shifts Monitor",
+      "live": "Live",
+      "polling": "Polling",
+      "refresh": "Refresh",
+      "loading": "Loading...",
+      "asOf": "Last updated",
+      "noShifts": "No open shifts",
+      "noShiftsHint": "When a cashier opens a shift it will appear here automatically",
+      "loadError": "Couldn't load shifts — please try again",
+      "openShifts": "Open shifts",
+      "totalSales": "Total sales",
+      "totalCash": "Total cash",
+      "totalInvoices": "Total invoices",
+      "shiftHash": "Shift #{id}",
+      "col": {
+        "cashier": "Cashier",
+        "openedAt": "Opened",
+        "duration": "Duration",
+        "sales": "Sales",
+        "cash": "Cash",
+        "card": "Card",
+        "expectedCash": "Expected cash",
+        "invoices": "Invoices"
       }
     },
     "payroll": {

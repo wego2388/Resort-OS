@@ -21,7 +21,21 @@ import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
-import { AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
+import {
+  AppButton,
+  AppInput,
+  AppModal,
+  AppSelect,
+  AppSpinner,
+  AppTextarea,
+  DatePicker,
+  EmptyState,
+  SearchInput,
+  TimePicker,
+  useConfirm,
+  useToast,
+  type SelectOption,
+} from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -227,6 +241,12 @@ watch(() => form.value.room_ids, () => {
   }
 }, { deep: true })
 
+// AppSelect يعمل بـ string — بنحوّل من/إلى number|null
+const ratePlanIdStr = computed({
+  get: () => form.value.rate_plan_id === null ? '' : String(form.value.rate_plan_id),
+  set: (v: string) => { form.value.rate_plan_id = v ? Number(v) : null },
+})
+
 async function createBooking() {
   if (!form.value.guest_name.trim()) { createError.value = t('backoffice.bookings.guestNameRequired'); return }
   if (!form.value.check_in)           { createError.value = t('backoffice.bookings.checkInDateRequired'); return }
@@ -358,24 +378,17 @@ onMounted(() => {
     <div class="flex items-center justify-between mb-4">
       <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.bookings.title') }}</h1>
       <div class="flex gap-2">
-        <button
-          @click="() => fetchBookings()"
-          class="rounded-lg bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-        >🔄</button>
-        <button
-          @click="openCreateModal"
-          class="px-4 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors"
-        >{{ t('backoffice.bookings.newBooking') }}</button>
+        <AppButton variant="secondary" size="sm" @click="() => fetchBookings()">🔄</AppButton>
+        <AppButton variant="primary" size="sm" @click="openCreateModal">{{ t('backoffice.bookings.newBooking') }}</AppButton>
       </div>
     </div>
 
     <!-- Search -->
     <div class="mb-3">
-      <input
+      <SearchInput
         v-model="searchQuery"
-        type="search"
         :placeholder="t('backoffice.bookings.searchPlaceholder')"
-        class="w-full md:w-80 px-3 py-2 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        class="w-full md:w-80"
       />
     </div>
 
@@ -439,28 +452,36 @@ onMounted(() => {
               </span>
             </td>
             <td class="px-4 py-3">
-              <button
-                v-if="b.status === 'confirmed'"
-                @click="checkIn(b)"
-                class="px-3 py-1 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors"
-              >{{ t('backoffice.bookings.checkIn') }}</button>
-              <button
-                v-else-if="b.status === 'checked_in'"
-                @click="checkOut(b)"
-                class="px-3 py-1 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors"
-              >{{ t('backoffice.bookings.checkOut') }}</button>
-              <button
-                v-if="b.status === 'confirmed' || b.status === 'checked_in'"
-                @click="openEarlyLate(b)"
-                class="ms-1 rounded-lg bg-purple-100 px-2 py-1 text-xs font-bold text-purple-700 transition-colors hover:bg-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:hover:bg-purple-900/60"
-                :title="t('backoffice.bookings.earlyLateTitle')"
-              >🕐</button>
-              <button
-                v-if="b.status === 'pending' || b.status === 'confirmed'"
-                @click="cancelBooking(b)"
-                class="ms-1 rounded-lg bg-red-100 px-2 py-1 text-xs font-bold text-red-700 transition-colors hover:bg-red-200 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-900/60"
-                :title="t('backoffice.bookings.cancelTitle')"
-              >{{ t('backoffice.bookings.cancel') }}</button>
+              <div class="flex gap-1">
+                <AppButton
+                  v-if="b.status === 'confirmed'"
+                  variant="primary"
+                  size="sm"
+                  @click="checkIn(b)"
+                >{{ t('backoffice.bookings.checkIn') }}</AppButton>
+                <AppButton
+                  v-else-if="b.status === 'checked_in'"
+                  size="sm"
+                  style="--btn-bg: theme('colors.amber.600'); --btn-hover: theme('colors.amber.700')"
+                  class="bg-amber-600 hover:bg-amber-700 text-white"
+                  @click="checkOut(b)"
+                >{{ t('backoffice.bookings.checkOut') }}</AppButton>
+                <AppButton
+                  v-if="b.status === 'confirmed' || b.status === 'checked_in'"
+                  variant="ghost"
+                  size="sm"
+                  class="bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:hover:bg-purple-900/60"
+                  :aria-label="t('backoffice.bookings.earlyLateTitle')"
+                  @click="openEarlyLate(b)"
+                >🕐</AppButton>
+                <AppButton
+                  v-if="b.status === 'pending' || b.status === 'confirmed'"
+                  variant="danger"
+                  size="sm"
+                  :aria-label="t('backoffice.bookings.cancelTitle')"
+                  @click="cancelBooking(b)"
+                >{{ t('backoffice.bookings.cancel') }}</AppButton>
+              </div>
             </td>
           </tr>
           <tr v-if="filteredBookings.length === 0">
@@ -494,26 +515,33 @@ onMounted(() => {
           <div><span class="text-gray-400 dark:text-gray-400">{{ t('backoffice.bookings.departureShort') }}</span>{{ formatDate(b.check_out) }}</div>
         </div>
         <div class="flex gap-2">
-          <button
+          <AppButton
             v-if="b.status === 'confirmed'"
+            variant="primary"
+            size="sm"
+            block
             @click="checkIn(b)"
-            class="flex-1 py-1.5 bg-green-600 text-white text-xs font-bold rounded-lg hover:bg-green-700 transition-colors"
-          >{{ t('backoffice.bookings.checkIn') }}</button>
-          <button
+          >{{ t('backoffice.bookings.checkIn') }}</AppButton>
+          <AppButton
             v-else-if="b.status === 'checked_in'"
+            size="sm"
+            block
+            class="bg-amber-600 hover:bg-amber-700 text-white"
             @click="checkOut(b)"
-            class="flex-1 py-1.5 bg-amber-600 text-white text-xs font-bold rounded-lg hover:bg-amber-700 transition-colors"
-          >{{ t('backoffice.bookings.checkOut') }}</button>
-          <button
+          >{{ t('backoffice.bookings.checkOut') }}</AppButton>
+          <AppButton
             v-if="b.status === 'confirmed' || b.status === 'checked_in'"
+            variant="ghost"
+            size="sm"
+            class="bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300"
             @click="openEarlyLate(b)"
-            class="rounded-lg bg-purple-100 px-3 py-1.5 text-xs font-bold text-purple-700 dark:bg-purple-950/50 dark:text-purple-300"
-          >🕐 {{ t('backoffice.bookings.earlyLateShort') }}</button>
-          <button
+          >🕐 {{ t('backoffice.bookings.earlyLateShort') }}</AppButton>
+          <AppButton
             v-if="b.status === 'pending' || b.status === 'confirmed'"
+            variant="danger"
+            size="sm"
             @click="cancelBooking(b)"
-            class="rounded-lg bg-red-100 px-3 py-1.5 text-xs font-bold text-red-700 transition-colors hover:bg-red-200 dark:bg-red-950/50 dark:text-red-300 dark:hover:bg-red-900/60"
-          >{{ t('backoffice.bookings.cancel') }}</button>
+          >{{ t('backoffice.bookings.cancel') }}</AppButton>
         </div>
       </div>
 
@@ -526,209 +554,185 @@ onMounted(() => {
         {{ t('common.showingOf', { shown: filteredBookings.length, total: totalBookings }) }}
       </span>
       <div class="flex gap-2">
-        <button
+        <AppButton
+          variant="secondary"
+          size="sm"
           :disabled="currentPage <= 1"
           @click="fetchBookings(currentPage - 1)"
-          class="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-40 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium"
-        >{{ t('common.prevPage') }}</button>
+        >{{ t('common.prevPage') }}</AppButton>
         <span class="px-3 py-1.5 text-gray-600 dark:text-gray-400">{{ currentPage }}</span>
-        <button
+        <AppButton
+          variant="secondary"
+          size="sm"
           :disabled="bookings.length < PAGE_SIZE"
           @click="fetchBookings(currentPage + 1)"
-          class="px-3 py-1.5 rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 disabled:opacity-40 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors font-medium"
-        >{{ t('common.nextPage') }}</button>
+        >{{ t('common.nextPage') }}</AppButton>
       </div>
     </div>
 
     <!-- Early / Late modal -->
-    <Teleport to="body">
-      <div
-        v-if="showEarlyLateModal"
-        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-        @click.self="showEarlyLateModal = false"
-      >
-        <div class="bg-white dark:bg-surface rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4">
-          <h3 class="text-lg font-bold text-gray-900 dark:text-gray-100">🕐 {{ t('backoffice.bookings.earlyLateModalTitle') }}</h3>
-          <p class="text-sm text-gray-500 dark:text-gray-400">{{ earlyLateBooking?.guest_name }}</p>
-          <div class="space-y-3">
-            <div>
-              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.bookings.earlyCheckinTime') }}</label>
-              <input type="datetime-local" v-model="earlyCheckinAt"
-                class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.bookings.lateCheckoutTime') }}</label>
-              <input type="datetime-local" v-model="lateCheckoutAt"
-                class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.bookings.extraChargeEgp') }}</label>
-              <input type="number" min="0" step="50" v-model="earlyLateCharge"
-                class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
-              <p class="text-xs text-gray-400 dark:text-gray-400 mt-0.5">{{ t('backoffice.bookings.extraChargeHint') }}</p>
-            </div>
-            <div>
-              <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">{{ t('backoffice.bookings.notesOptional') }}</label>
-              <input type="text" v-model="earlyLateNotes" placeholder="—"
-                class="w-full rounded-lg border border-stone-200 dark:border-border px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div class="flex justify-end gap-2 pt-2">
-            <button @click="showEarlyLateModal = false"
-              class="px-4 py-2 text-sm rounded-lg border border-stone-200 dark:border-border hover:bg-stone-50 dark:bg-gray-800/60">
-              {{ t('backoffice.bookings.cancel') }}
-            </button>
-            <button @click="submitEarlyLate" :disabled="earlyLateSubmitting"
-              class="px-4 py-2 text-sm font-bold rounded-lg bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50">
-              {{ earlyLateSubmitting ? '...' : t('backoffice.bookings.save') }}
-            </button>
-          </div>
+    <AppModal
+      :open="showEarlyLateModal"
+      :title="`🕐 ${t('backoffice.bookings.earlyLateModalTitle')}`"
+      size="sm"
+      @close="showEarlyLateModal = false"
+    >
+      <div class="space-y-4">
+        <p class="text-sm text-gray-500 dark:text-gray-400">{{ earlyLateBooking?.guest_name }}</p>
+        <div class="space-y-3">
+          <AppInput
+            type="datetime-local"
+            v-model="earlyCheckinAt"
+            :label="t('backoffice.bookings.earlyCheckinTime')"
+          />
+          <AppInput
+            type="datetime-local"
+            v-model="lateCheckoutAt"
+            :label="t('backoffice.bookings.lateCheckoutTime')"
+          />
+          <AppInput
+            type="number"
+            v-model="earlyLateCharge"
+            :label="t('backoffice.bookings.extraChargeEgp')"
+            inputmode="numeric"
+          />
+          <p class="text-xs text-gray-400 dark:text-gray-400 -mt-2">{{ t('backoffice.bookings.extraChargeHint') }}</p>
+          <AppInput
+            type="text"
+            v-model="earlyLateNotes"
+            :label="t('backoffice.bookings.notesOptional')"
+            placeholder="—"
+          />
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <AppButton variant="secondary" @click="showEarlyLateModal = false">
+            {{ t('backoffice.bookings.cancel') }}
+          </AppButton>
+          <AppButton
+            variant="primary"
+            :disabled="earlyLateSubmitting"
+            :loading="earlyLateSubmitting"
+            @click="submitEarlyLate"
+          >
+            {{ t('backoffice.bookings.save') }}
+          </AppButton>
         </div>
       </div>
-    </Teleport>
+    </AppModal>
 
     <!-- Create booking modal -->
-    <Teleport to="body">
-      <div
-        v-if="showCreateModal"
-        class="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
-        @click.self="showCreateModal = false"
-      >
-        <div class="bg-white dark:bg-surface rounded-2xl p-6 w-full max-w-md shadow-2xl">
-          <div class="flex items-center justify-between mb-5">
-            <h2 class="text-lg font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.bookings.newBookingModalTitle') }}</h2>
-            <button
-              @click="showCreateModal = false"
-              class="text-gray-400 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300 text-2xl leading-none"
-            >×</button>
-          </div>
+    <AppModal
+      :open="showCreateModal"
+      :title="t('backoffice.bookings.newBookingModalTitle')"
+      size="md"
+      @close="showCreateModal = false"
+    >
+      <div class="space-y-4">
+        <!-- Guest name -->
+        <AppInput
+          v-model="form.guest_name"
+          :label="t('backoffice.bookings.guestNameRequiredLabel')"
+          :placeholder="t('backoffice.bookings.fullName')"
+          required
+        />
 
-          <div class="space-y-4">
-            <!-- Guest name -->
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.bookings.guestNameRequiredLabel') }}</label>
+        <!-- Phone -->
+        <AppInput
+          v-model="form.guest_phone"
+          type="tel"
+          :label="t('backoffice.bookings.phoneNumber')"
+          placeholder="01xxxxxxxxx"
+          autocomplete="tel"
+        />
+
+        <!-- Dates (first — the room list below depends on this range) -->
+        <div class="grid grid-cols-2 gap-3">
+          <DatePicker
+            v-model="form.check_in"
+            :label="t('backoffice.bookings.checkInDateRequiredLabel')"
+            required
+          />
+          <DatePicker
+            v-model="form.check_out"
+            :label="t('backoffice.bookings.checkOutDateRequiredLabel')"
+            required
+          />
+        </div>
+
+        <!-- Room selection — multi-select checklist so one booking can cover
+             several rooms at once (e.g. a suite + an adjacent room). Depends
+             on the dates above. -->
+        <div>
+          <p class="mb-1 text-sm font-semibold text-gray-700 dark:text-gray-300">
+            {{ t('backoffice.bookings.roomsRequiredLabel') }}
+            <span v-if="form.room_ids.length" class="font-normal text-blue-600 dark:text-blue-300">{{ t('backoffice.bookings.roomsSelectedCount', { count: form.room_ids.length }) }}</span>
+          </p>
+          <div
+            v-if="form.check_in && form.check_out && !roomsLoading && rooms.length > 0"
+            class="divide-y divide-stone-100 rounded-xl border border-stone-300 max-h-40 overflow-y-auto dark:divide-border dark:border-border"
+          >
+            <label
+              v-for="room in rooms"
+              :key="room.id"
+              class="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-stone-50 dark:hover:bg-gray-800/60"
+            >
               <input
-                v-model="form.guest_name"
-                type="text"
-                :placeholder="t('backoffice.bookings.fullName')"
-                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                type="checkbox"
+                :value="room.id"
+                v-model="form.room_ids"
+                class="rounded border-stone-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:text-blue-400"
               />
-            </div>
-
-            <!-- Phone -->
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.bookings.phoneNumber') }}</label>
-              <input
-                v-model="form.guest_phone"
-                type="tel"
-                placeholder="01xxxxxxxxx"
-                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                dir="ltr"
-              />
-            </div>
-
-            <!-- Dates (first — the room list below depends on this range) -->
-            <div class="grid grid-cols-2 gap-3">
-              <div>
-                <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.bookings.checkInDateRequiredLabel') }}</label>
-                <input
-                  v-model="form.check_in"
-                  type="date"
-                  class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  dir="ltr"
-                />
-              </div>
-              <div>
-                <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.bookings.checkOutDateRequiredLabel') }}</label>
-                <input
-                  v-model="form.check_out"
-                  type="date"
-                  class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  dir="ltr"
-                />
-              </div>
-            </div>
-
-            <!-- Room selection — multi-select checklist so one booking can cover
-                 several rooms at once (e.g. a suite + an adjacent room). Depends
-                 on the dates above. -->
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                {{ t('backoffice.bookings.roomsRequiredLabel') }}
-                <span v-if="form.room_ids.length" class="font-normal text-blue-600 dark:text-blue-300">{{ t('backoffice.bookings.roomsSelectedCount', { count: form.room_ids.length }) }}</span>
-              </label>
-              <div
-                v-if="form.check_in && form.check_out && !roomsLoading && rooms.length > 0"
-                class="border border-stone-300 dark:border-gray-600 rounded-xl max-h-40 overflow-y-auto divide-y divide-stone-100"
-              >
-                <label
-                  v-for="room in rooms"
-                  :key="room.id"
-                  class="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-stone-50 dark:bg-gray-800/60"
-                >
-                  <input
-                    type="checkbox"
-                    :value="room.id"
-                    v-model="form.room_ids"
-                    class="rounded border-stone-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:text-blue-400"
-                  />
-                  <span>{{ room.name }}</span>
-                </label>
-              </div>
-              <p v-if="!form.check_in || !form.check_out" class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.bookings.selectDatesFirst') }}</p>
-              <p v-else-if="roomsLoading" class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.bookings.loadingAvailableRooms') }}</p>
-              <p v-else-if="rooms.length === 0" class="mt-1 text-xs text-amber-600 dark:text-amber-300">{{ t('backoffice.bookings.noAvailableRoomsPeriod') }}</p>
-            </div>
-
-            <!-- Rate plan — optional, only plans that actually apply to the
-                 chosen rooms' types show up (see applicableRatePlans above) -->
-            <div v-if="form.room_ids.length > 0">
-              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.bookings.ratePlanOptional') }}</label>
-              <select
-                v-model="form.rate_plan_id"
-                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-surface"
-              >
-                <option :value="null">{{ t('backoffice.bookings.baseRateNoPlan') }}</option>
-                <option
-                  v-for="plan in applicableRatePlans"
-                  :key="plan.id"
-                  :value="plan.id"
-                >{{ plan.name }}</option>
-              </select>
-              <p v-if="applicableRatePlans.length === 0" class="text-xs text-gray-400 dark:text-gray-400 mt-1">{{ t('backoffice.bookings.noApplicableRatePlans') }}</p>
-            </div>
-
-            <!-- Notes -->
-            <div>
-              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ t('backoffice.bookings.notes') }}</label>
-              <textarea
-                v-model="form.notes"
-                rows="2"
-                :placeholder="t('backoffice.bookings.specialInstructions')"
-                class="w-full border border-stone-300 dark:border-gray-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
-              />
-            </div>
-
-            <!-- Error -->
-            <div v-if="createError" class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
-              ⚠️ {{ createError }}
-            </div>
+              <span class="text-gray-800 dark:text-gray-200">{{ room.name }}</span>
+            </label>
           </div>
+          <p v-if="!form.check_in || !form.check_out" class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.bookings.selectDatesFirst') }}</p>
+          <p v-else-if="roomsLoading" class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.bookings.loadingAvailableRooms') }}</p>
+          <p v-else-if="rooms.length === 0" class="mt-1 text-xs text-amber-600 dark:text-amber-300">{{ t('backoffice.bookings.noAvailableRoomsPeriod') }}</p>
+        </div>
 
-          <!-- Actions -->
-          <div class="flex gap-3 mt-6">
-            <button
-              @click="showCreateModal = false"
-              class="flex-1 rounded-xl bg-gray-100 py-2.5 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700"
-            >{{ t('backoffice.bookings.cancel') }}</button>
-            <button
-              @click="createBooking"
-              :disabled="submitting"
-              class="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 rounded-xl text-sm font-bold text-white transition-colors"
-            >{{ submitting ? t('backoffice.bookings.saving') : t('backoffice.bookings.saveBooking') }}</button>
-          </div>
+        <!-- Rate plan — optional, only plans that actually apply to the
+             chosen rooms' types show up (see applicableRatePlans above) -->
+        <AppSelect
+          v-if="form.room_ids.length > 0"
+          v-model="ratePlanIdStr"
+          :label="t('backoffice.bookings.ratePlanOptional')"
+          :options="[
+            { value: '', label: t('backoffice.bookings.baseRateNoPlan') },
+            ...applicableRatePlans.map(p => ({ value: String(p.id), label: p.name }))
+          ]"
+        />
+        <p
+          v-if="form.room_ids.length > 0 && applicableRatePlans.length === 0"
+          class="-mt-2 text-xs text-gray-400 dark:text-gray-500"
+        >{{ t('backoffice.bookings.noApplicableRatePlans') }}</p>
+
+        <!-- Notes -->
+        <AppTextarea
+          v-model="form.notes"
+          :label="t('backoffice.bookings.notes')"
+          :placeholder="t('backoffice.bookings.specialInstructions')"
+          :rows="2"
+        />
+
+        <!-- Error -->
+        <div v-if="createError" class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
+          ⚠️ {{ createError }}
         </div>
       </div>
-    </Teleport>
+
+      <!-- Actions -->
+      <div class="flex gap-3 mt-6">
+        <AppButton variant="secondary" block @click="showCreateModal = false">
+          {{ t('backoffice.bookings.cancel') }}
+        </AppButton>
+        <AppButton
+          variant="primary"
+          block
+          :disabled="submitting"
+          :loading="submitting"
+          @click="createBooking"
+        >{{ t('backoffice.bookings.saveBooking') }}</AppButton>
+      </div>
+    </AppModal>
   </div>
 </template>

@@ -8,7 +8,7 @@
 // باج "الموديل والـ API موجودين، الفرونت إند صفر" الموثّقة قبل كده لموديولات
 // تانية — هنا الفجوة في الفرونت إند مش الباك إند.
 import { ref, computed, onMounted } from 'vue'
-import { api } from '@resort-os/core'
+import { api, ENDPOINTS } from '@resort-os/core'
 import { useAuthStore } from '@resort-os/core'
 import { AppModal, AppButton, AppInput, useToast } from '@resort-os/ui'
 
@@ -68,17 +68,68 @@ const counts = ref<Record<string, Record<number, number>>>(
   )
 )
 
+// أسعار الصرف الحالية — تُجلب عند فتح modal القفل لعرض EGP equivalent تقريبي
+// قبل التأكيد (القيمة الحقيقية تحسبها الباك إند عند القفل الفعلي)
+const fxRates = ref<Record<string, number>>({})
+
+async function fetchFxRates() {
+  try {
+    // نجلب كل أسعار الصرف (pagination كامل — size=200 يكفي لأي عدد عملات متوقع)
+    const { data } = await api.get(ENDPOINTS.finance.exchangeRates, { params: { size: 200 } })
+    const items: { from_currency: string; to_currency: string; rate: string | number }[] = data?.items ?? data ?? []
+    const map: Record<string, number> = {}
+    for (const r of items) {
+      // السعر المباشر: USD→EGP
+      if (r.to_currency === 'EGP' && !map[r.from_currency]) {
+        map[r.from_currency] = Number(r.rate)
+      }
+      // السعر المعكوس: EGP→USD → نقلبه (inverse fallback مطابق للباك إند)
+      if (r.from_currency === 'EGP' && r.to_currency !== 'EGP' && !map[r.to_currency]) {
+        const invRate = Number(r.rate)
+        if (invRate > 0) map[r.to_currency] = 1 / invRate
+      }
+    }
+    fxRates.value = map
+  } catch {
+    // تجاهل هادئ — الـ EGP equivalent سيظهر فقط لو الأسعار متاحة
+    fxRates.value = {}
+  }
+}
+
 // إجمالي EGP فقط (للعرض السريع قبل القفل — الإجمالي الحقيقي يحسبه الباك إند بأسعار الصرف)
 const countedTotalEGP = computed(() =>
   CURRENCY_GROUPS.find((g) => g.code === 'EGP')!.denominations
     .reduce((sum, d) => sum + d * (Number(counts.value['EGP'][d]) || 0), 0)
 )
-// هل في عملات أجنبية تم إدخالها؟
-const hasForeignCash = computed(() =>
-  CURRENCY_GROUPS.filter((g) => g.code !== 'EGP').some((g) =>
-    g.denominations.some((d) => (Number(counts.value[g.code][d]) || 0) > 0)
-  )
+// هل في عملات أجنبية بلا سعر صرف معروف؟ — يمنع القفل قبل أن يفاجأ الكاشير بـ 400
+const hasMissingFxRate = computed(() =>
+  foreignCashPreview.value.some((fc) => fc.egp == null)
 )
+
+// إجمالي كل عملة أجنبية مع الـ EGP equivalent التقريبي (بناءً على أسعار الصرف المجلوبة)
+// هذا تقريب للعرض فقط — القيمة الرسمية تحسبها الباك إند عند القفل
+const foreignCashPreview = computed(() =>
+  CURRENCY_GROUPS.filter((g) => g.code !== 'EGP').flatMap((g) => {
+    const total = g.denominations.reduce(
+      (sum, d) => sum + d * (Number(counts.value[g.code][d]) || 0),
+      0
+    )
+    if (total === 0) return []
+    const rate = fxRates.value[g.code]
+    return [{ code: g.code, label: g.label, total, egp: rate ? total * rate : null }]
+  })
+)
+
+// الإجمالي الكلي التقريبي بالجنيه (EGP + ما يعادله من العملات الأجنبية)
+const grandTotalEGPApprox = computed(() => {
+  const foreign = foreignCashPreview.value.reduce(
+    (sum, fc) => (fc.egp != null ? sum + fc.egp : sum),
+    0
+  )
+  const allForeignHaveRates = foreignCashPreview.value.every((fc) => fc.egp != null)
+  if (!allForeignHaveRates) return null
+  return countedTotalEGP.value + foreign
+})
 const lastCloseResult = ref<{
   variance: number; expected: number
   foreign_currency_summary?: { currency: string; total_foreign: number; egp_equivalent: number }[]
@@ -117,10 +168,17 @@ async function openOpenModal() {
 
 async function confirmOpen() {
   opening.value = true
+  // تحقق صريح: opening_float لازم يكون رقم صحيح >= 0
+  const floatVal = parseFloat(openingFloat.value)
+  if (isNaN(floatVal) || floatVal < 0) {
+    toast.error('رصيد الافتتاح لازم يكون رقم صحيح 0 أو أكبر')
+    opening.value = false
+    return
+  }
   try {
     const { data } = await api.post('/api/v1/finance/shifts/open', {
       branch_id: resolvedBranchId.value,
-      opening_float: Number(openingFloat.value) || 0,
+      opening_float: floatVal,
       notes: openNotes.value || undefined,
     })
     shift.value = data
@@ -141,6 +199,8 @@ function openCloseModalFn() {
   closeHandoverNote.value = ''
   lastCloseResult.value = null
   closeModal.value = true
+  // نجلب أسعار الصرف بالتوازي لعرض EGP equivalent تقريبي
+  fetchFxRates()
 }
 
 function applyCloseResult(data: any) {
@@ -184,9 +244,9 @@ async function confirmClose() {
     applyCloseResult(data)
   } catch (e: any) {
     // الوردية بتُقفل دايمًا الآن (مفيش رفض بسبب الفرق) — أي خطأ هنا حقيقي
-    // (عدّ ناقص، سعر صرف مفقود، صلاحية) بيتعرض كتوست مباشر.
+    // (عدّ ناقص، سعر صرف مفقود، صلاحية) بيتعرض كتوست مباشر بالرسالة الكاملة.
     const detail: string = e?.response?.data?.detail ?? ''
-    toast.error(detail || 'تعذّر قفل الوردية — تأكد من عدّ الكاش')
+    toast.error(detail || 'تعذّر قفل الوردية — تحقق من الاتصال أو تواصل مع المدير')
   } finally { closing.value = false }
 }
 
@@ -288,15 +348,20 @@ onMounted(fetchCurrentShift)
               </tr>
             </thead>
             <tbody>
-              <tr v-for="d in group.denominations" :key="d" class="border-t border-stone-100">
+              <tr v-for="d in group.denominations" :key="d" class="border-t border-stone-100 dark:border-stone-800">
                 <td class="py-1 font-semibold text-gray-700 dark:text-gray-300">
                   {{ d }} {{ group.code === 'EGP' ? 'ج' : group.code }}
                 </td>
                 <td class="py-1">
-                  <input type="number" min="0" v-model.number="counts[group.code][d]"
-                    class="w-20 px-2 py-1 rounded-lg border border-stone-200 text-center" />
+                  <AppInput
+                    type="number"
+                    :model-value="String(counts[group.code][d])"
+                    @update:model-value="counts[group.code][d] = Number($event) || 0"
+                    min="0"
+                    class="w-20 text-center"
+                  />
                 </td>
-                <td class="py-1 text-gray-500">
+                <td class="py-1 text-gray-500 dark:text-gray-400">
                   {{ (d * (Number(counts[group.code][d]) || 0)).toFixed(2) }}
                   {{ group.code === 'EGP' ? 'ج' : group.code }}
                 </td>
@@ -311,9 +376,27 @@ onMounted(fetchCurrentShift)
             <span>إجمالي الجنيه المصري</span>
             <span>{{ countedTotalEGP.toFixed(2) }} ج</span>
           </div>
-          <p v-if="hasForeignCash" class="rounded bg-blue-50 px-2 py-1 text-xs text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
-            💱 يوجد عملات أجنبية — الإجمالي الكلي بالجنيه سيحسبه النظام بأسعار الصرف عند القفل
-          </p>
+          <!-- عرض EGP equivalent تقريبي للعملات الأجنبية -->
+          <template v-if="foreignCashPreview.length > 0">
+            <div v-for="fc in foreignCashPreview" :key="fc.code"
+              class="flex justify-between items-center text-sm text-blue-700 dark:text-blue-300">
+              <span>{{ fc.code }}: {{ fc.total.toFixed(2) }}</span>
+              <span v-if="fc.egp != null">≈ {{ fc.egp.toFixed(2) }} ج</span>
+              <span v-else class="text-xs text-amber-600 dark:text-amber-400">سعر الصرف غير متاح</span>
+            </div>
+            <div v-if="grandTotalEGPApprox != null"
+              class="flex justify-between items-center font-bold text-green-700 dark:text-green-300 border-t border-stone-200 pt-1 mt-1">
+              <span>الإجمالي الكلي التقريبي</span>
+              <span>≈ {{ grandTotalEGPApprox.toFixed(2) }} ج</span>
+            </div>
+            <p v-if="foreignCashPreview.some(fc => fc.egp == null)"
+              class="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
+              ⚠️ سعر صرف غير مسجّل لبعض العملات — أضفه من إعدادات أسعار الصرف قبل القفل
+            </p>
+            <p v-else class="rounded bg-blue-50 px-2 py-1 text-xs text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
+              💱 الأرقام تقريبية — القيمة الرسمية تحسبها الباك إند بأسعار الصرف عند القفل
+            </p>
+          </template>
         </div>
         <AppInput v-model="closeNotes" label="ملاحظات (اختياري)" placeholder="—" />
         <AppInput v-model="closeHandoverNote" label="ملاحظة تسليم للوردية الجاية (اختياري)" placeholder="—" />
@@ -321,7 +404,7 @@ onMounted(fetchCurrentShift)
       <template #footer>
         <div class="flex justify-end gap-2">
           <AppButton variant="ghost" size="sm" @click="closeModal = false">{{ lastCloseResult ? 'إغلاق' : 'إلغاء' }}</AppButton>
-          <AppButton v-if="!lastCloseResult" size="sm" :loading="closing" @click="confirmClose">تأكيد القفل</AppButton>
+          <AppButton v-if="!lastCloseResult" size="sm" :loading="closing" :disabled="hasMissingFxRate" @click="confirmClose">تأكيد القفل</AppButton>
         </div>
       </template>
     </AppModal>

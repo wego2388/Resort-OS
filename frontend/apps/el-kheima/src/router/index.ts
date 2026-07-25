@@ -117,6 +117,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'restaurant', redirect: '/pos/dining' },
       { path: 'cafe', redirect: '/pos/dining' },
       { path: 'shift', name: 'pos-shift', component: () => import('../views/pos/ShiftDashboardView.vue'), meta: { titleKey: 'backoffice.nav.shift' } },
+      { path: 'shift-monitor', name: 'pos-shift-monitor', component: () => import('../views/pos/ShiftMonitorView.vue'), meta: { requiredRole: 'manager', titleKey: 'backoffice.nav.shiftMonitor' } },
     ],
   },
 

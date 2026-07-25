@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, parseApiTimestamp, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
+
+type ApiErr = { response?: { data?: { detail?: string; message?: string }; status?: number } }
 import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, AppInput, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
@@ -101,8 +103,8 @@ async function fetchAttendancePolicy() {
     const res = await api.get('/api/v1/hr/attendance-policy', { params: { branch_id: branchId } })
     attendancePolicy.value = res.data
     policyConfigured.value = true
-  } catch (e: any) {
-    if (e?.response?.status === 404) {
+  } catch (e: unknown) {
+    if ((e as ApiErr)?.response?.status === 404) {
       attendancePolicy.value = { ...DEFAULT_POLICY }
       policyConfigured.value = false
     } else {
@@ -203,8 +205,8 @@ async function approvePayrollRun(run: PayrollRun) {
     const updated = res.data as PayrollRun
     payrollRuns.value = payrollRuns.value.map(r => (r.id === run.id ? { ...r, ...updated } : r))
     toast.success(t('backoffice.hr.msg.payrollRunApproved'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.hr.msg.payrollApproveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.payrollApproveError'))
   } finally { approvingRunId.value = null }
 }
 
@@ -285,8 +287,8 @@ async function submitAllowance() {
     employeeAllowances.value = [...employeeAllowances.value, data]
     allowanceForm.value = { name: '', amount: 0, is_taxable: true, is_pensionable: false }
     toast.success(t('backoffice.hr.msg.allowanceAdded'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.hr.msg.allowanceSaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.allowanceSaveError'))
   } finally { savingAllowance.value = false }
 }
 
@@ -326,8 +328,8 @@ async function submitPenalty() {
     })
     toast.success(t('backoffice.hr.msg.penaltyLogged'))
     penaltyModalEmployee.value = null
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.hr.msg.penaltySaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.penaltySaveError'))
   } finally { savingPenalty.value = false }
 }
 
@@ -371,8 +373,8 @@ async function submitComp() {
     employees.value = employees.value.map(e => (e.id === empId ? { ...e, ...data } : e))
     toast.success(t('backoffice.hr.msg.compUpdated'))
     compModalEmployee.value = null
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.hr.msg.compSaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.compSaveError'))
   } finally { savingComp.value = false }
 }
 
@@ -420,8 +422,8 @@ async function submitAdvance() {
     employeeAdvances.value = [data, ...employeeAdvances.value]
     advanceForm.value = { amount: 0, disbursed_date: localDateStr(new Date()), monthly_deduction_amount: 0, notes: '' }
     toast.success(t('backoffice.hr.msg.advanceLogged'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.hr.msg.advanceSaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.advanceSaveError'))
   } finally { savingAdvance.value = false }
 }
 
@@ -436,8 +438,8 @@ async function cancelAdvance(advance: SalaryAdvance) {
     await api.patch(`/api/v1/hr/salary-advances/${advance.id}/cancel`, {})
     employeeAdvances.value = employeeAdvances.value.map(a => (a.id === advance.id ? { ...a, status: 'cancelled' } : a))
     toast.success(t('backoffice.hr.msg.advanceCancelled'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.hr.msg.advanceCancelError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.advanceCancelError'))
   }
 }
 
@@ -482,8 +484,8 @@ async function submitPayment() {
     employeePayments.value = [data, ...employeePayments.value]
     paymentForm.value = { amount: 0, payment_date: localDateStr(new Date()), notes: '' }
     toast.success(t('backoffice.hr.msg.paymentLogged'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.hr.msg.paymentSaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.paymentSaveError'))
   } finally { savingPayment.value = false }
 }
 
@@ -645,8 +647,8 @@ async function saveAttendanceEdit() {
     toast.success(t('backoffice.hr.msg.attendanceEditSaved'))
     editingAttendance.value = null
     await fetchAttendance()
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.hr.msg.attendanceEditSaveError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.attendanceEditSaveError'))
   } finally {
     savingAttendanceEdit.value = false
   }
@@ -684,8 +686,8 @@ async function submitAttendanceImport() {
     importResult.value = res.data
     toast.success(t('backoffice.hr.msg.attendanceImported', { count: res.data.imported }))
     await fetchAttendance()
-  } catch (e: any) {
-    const msg = e?.response?.data?.detail ?? t('backoffice.hr.msg.importError')
+  } catch (e: unknown) {
+    const msg = (e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.importError')
     importResult.value = { error: msg }
     toast.error(msg)
   } finally {
@@ -699,7 +701,7 @@ function openImportModal() {
   showImportModal.value = true
 }
 
-const tabsList = computed(() => [
+const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
   { val: 'employees', label: t('backoffice.hr.tabs.employees') },
   { val: 'attendance', label: t('backoffice.hr.tabs.attendance') },
   { val: 'payroll', label: t('backoffice.hr.tabs.payroll') },
@@ -717,7 +719,7 @@ onMounted(fetchEmployees)
     <!-- Tabs -->
     <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
       <button v-for="tabDef in tabsList" :key="tabDef.val"
-        @click="loadTab(tabDef.val as any)"
+        @click="loadTab(tabDef.val)"
         :class="['px-4 py-2 rounded-lg text-sm font-semibold transition-all', tab === tabDef.val ? 'bg-white dark:bg-surface shadow-sm text-gray-900 dark:text-gray-100' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:text-gray-300']"
       >{{ tabDef.label }}</button>
     </div>

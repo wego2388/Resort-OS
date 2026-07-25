@@ -134,6 +134,7 @@ export const ENDPOINTS = {
     folioStatementPdf: (id: number) => `/api/v1/finance/folios/${id}/statement/pdf`,
     shiftsOpen: '/api/v1/finance/shifts/open',
     shiftsCurrent: '/api/v1/finance/shifts/current',
+    shiftsActive: '/api/v1/finance/shifts/active',
     shifts: '/api/v1/finance/shifts',
     shiftReport: (id: number) => `/api/v1/finance/shifts/${id}/report`,
     shiftReportPdf: (id: number) => `/api/v1/finance/shifts/${id}/report/pdf`,

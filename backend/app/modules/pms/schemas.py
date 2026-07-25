@@ -82,6 +82,7 @@ class BookingRead(BaseModel):
     guest_name:       str
     guest_phone:      Optional[str]
     guest_email:      Optional[str]
+    guest_national_id: Optional[str] = None
     check_in:         date
     check_out:        date
     adults:           int
@@ -93,11 +94,20 @@ class BookingRead(BaseModel):
     total_rate:         Decimal
     extra_charge:       Decimal = Decimal("0")
     notes:              Optional[str]
+    payment_method:     Optional[str] = None
     early_checkin_at:   Optional[datetime] = None
     late_checkout_at:   Optional[datetime] = None
     rooms:              list[BookingRoomRead] = []
     created_at:         datetime
     updated_at:         datetime
+
+
+class CheckinRequest(BaseModel):
+    """بيانات تسجيل الدخول — id_number وطريقة الدفع المتوقعة.
+    كلاهما اختياري لضمان التوافق مع حجوزات أنشئت بدون بيانات كاملة.
+    """
+    id_number:      Optional[str] = Field(None, max_length=50)
+    payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|bank_transfer)$")
 
 
 class BookingStatusUpdate(BaseModel):

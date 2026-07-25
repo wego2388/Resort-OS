@@ -3477,6 +3477,7 @@
       "beachPos": "الشاطئ",
       "beachMap": "خريطة الشاطئ",
       "shift": "الوردية",
+      "shiftMonitor": "مراقبة الورديات",
       "qrCodes": "QR Codes",
       "development": "التطوير",
       "projectCockpit": "غرفة قيادة المشروع"
@@ -6713,6 +6714,32 @@
         "loadShiftError": "تعذّر تحميل حالة الوردية",
         "loadReportError": "تعذّر تحميل ملخص المبيعات",
         "loadOrdersError": "تعذّر تحميل الطلبات الجارية"
+      }
+    },
+    "shiftMonitor": {
+      "title": "مراقبة الورديات المفتوحة",
+      "live": "مباشر",
+      "polling": "دوري",
+      "refresh": "تحديث",
+      "loading": "جاري التحميل...",
+      "asOf": "آخر تحديث",
+      "noShifts": "لا توجد ورديات مفتوحة",
+      "noShiftsHint": "لما يفتح أي كاشير وردية هتظهر هنا تلقائياً",
+      "loadError": "تعذّر تحميل الورديات — حاول تاني",
+      "openShifts": "ورديات مفتوحة",
+      "totalSales": "إجمالي المبيعات",
+      "totalCash": "إجمالي الكاش",
+      "totalInvoices": "إجمالي الفواتير",
+      "shiftHash": "وردية #{id}",
+      "col": {
+        "cashier": "الكاشير",
+        "openedAt": "فُتحت",
+        "duration": "المدة",
+        "sales": "المبيعات",
+        "cash": "كاش",
+        "card": "كارت",
+        "expectedCash": "الكاش المتوقع",
+        "invoices": "الفواتير"
       }
     },
     "payroll": {

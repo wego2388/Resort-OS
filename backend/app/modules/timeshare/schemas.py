@@ -167,3 +167,10 @@ class TimeshareUnitRead(BaseModel):
     id: int; branch_id: int; unit_number: str; unit_type: str
     status: str; notes: Optional[str]
     created_at: datetime
+
+
+# ── Simple fixed-shape response schemas ──────────────────────────────────────
+class ImportContractsResponse(BaseModel):
+    imported: int
+    skipped:  int
+    errors:   list[str] = []

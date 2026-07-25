@@ -15,6 +15,7 @@ from app.modules.hub.schemas import (
     HubOfferCreate, HubOfferRead, HubOfferUpdate,
     HubPageCreate, HubPageRead, HubPageUpdate,
     OnlineBookingCreate, OnlineBookingRead,
+    ContactFormResponse, BlogPostsResponse,
 )
 from app.modules.core.schemas import PaginatedResponse
 
@@ -73,7 +74,7 @@ def update_page(page_id: int, data: HubPageUpdate, db: DbDep, _=Depends(get_mana
 
 
 @router.delete("/hub/pages/{page_id}",
-               status_code=status.HTTP_204_NO_CONTENT)
+               response_model=None, status_code=status.HTTP_204_NO_CONTENT)
 def delete_page(page_id: int, db: DbDep, _=Depends(get_admin_user)):
     try:
         services.delete_page(db, page_id)
@@ -181,7 +182,7 @@ def cancel_booking(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 # ── Contact Form → CRM Lead ───────────────────────────────────────────
 
-@router.post("/hub/contact")
+@router.post("/hub/contact", response_model=ContactFormResponse)
 async def submit_contact_form(
     db: DbDep,
     data: dict,
@@ -225,7 +226,7 @@ async def submit_contact_form(
 
 # ── Blog Posts ────────────────────────────────────────────────────────
 
-@router.get("/hub/blog/posts")
+@router.get("/hub/blog/posts", response_model=BlogPostsResponse)
 async def list_blog_posts(
     db: DbDep,
     branch_id: int = Query(...),

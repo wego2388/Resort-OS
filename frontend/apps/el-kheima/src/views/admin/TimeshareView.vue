@@ -3,6 +3,8 @@ import { ref, computed, onMounted, reactive } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
+
+type ApiErr = { response?: { data?: { detail?: string; message?: string }; status?: number } }
 import {
   AppBadge,
   AppButton,
@@ -34,7 +36,7 @@ interface Installment {
 }
 interface Contract {
   id: number; contract_number: string; customer_name: string; customer_phone: string | null
-  customer_email: string | null; room_type: string; week_number: number | null
+  customer_email: string | null; customer_national_id?: string | null; room_type: string; week_number: number | null
   nights_per_year: number; season: string; total_value: number; down_payment: number
   installments: number; status: string; booking_frozen: boolean
   start_date: string; end_date: string | null; notes: string | null
@@ -44,12 +46,29 @@ interface Contract {
   collected?: number; overdue_amount?: number
   unit_id: number | null
 }
-interface CalendarWeek { week: number; start_date: string; end_date: string; is_current: boolean; is_past: boolean; contracts: any[] }
+interface CalendarWeek { week: number; start_date: string; end_date: string; is_current: boolean; is_past: boolean; contracts: CalendarContract[] }
+interface CalendarContract { id: number; customer_name: string; rci_included: boolean; status: string; contract_number?: string; room_type: string }
+interface ImportResult { error?: string; imported?: number; skipped?: number; errors?: string[] }
+interface SummaryData {
+  active_contracts?: number; collection_rate_pct?: number; total_collected?: number
+  total_value?: number; total_overdue?: number; overdue_contracts_count?: number
+  this_month_due?: number; upcoming_visits?: Visit[]; overdue_clients?: OverdueClient[]
+}
 interface CalendarMonth { month: number; month_name: string; weeks: CalendarWeek[] }
 interface TimeshareUnit { id: number; unit_number: string; unit_type: string; status: string }
 interface Visit {
   id: number; contract_id: number; unit_id: number | null
   check_in: string; check_out: string; nights: number; status: string
+  // fields returned from the summary/upcoming-visits endpoint
+  customer_name?: string; customer_phone?: string; room_type?: string
+  week_number?: number; visit_start?: string
+  days_until: number
+}
+// Overdue client summary shape returned by the dashboard endpoint
+interface OverdueClient {
+  id: number; customer_name: string; customer_phone?: string | null
+  room_type: string; overdue_amount?: number
+  pending_count?: number; next_due?: string
 }
 interface GuestReview {
   id: number; guest_name: string; overall_rating: number; comment: string | null
@@ -67,7 +86,7 @@ const activeTab = ref('dashboard')
 const loading = ref(false)
 
 // ── Dashboard ────────────────────────────────────────────────────────────
-const summary = ref<any>({})
+const summary = ref<SummaryData>({})
 
 // ── Calendar ─────────────────────────────────────────────────────────────
 const calYear = ref(new Date().getFullYear())
@@ -93,7 +112,7 @@ const unitNumberById = computed<Record<number, string>>(() =>
 // صف عقد) — فبنجمّع حسب customer_phone (الأكثر ثباتاً ووجوداً) وإلا
 // customer_national_id، وإلا كل عقد بروفايله لوحده (مفيش حاجة تجمعه بحاجة تانية).
 function customerKey(c: Contract): string {
-  return c.customer_phone?.trim() || (c as any).customer_national_id?.trim() || `contract-${c.id}`
+  return c.customer_phone?.trim() || c.customer_national_id?.trim() || `contract-${c.id}`
 }
 
 const profileModal = reactive({
@@ -105,7 +124,7 @@ const profileModal = reactive({
 
 const profileCustomerName = computed(() => profileModal.contracts[0]?.customer_name ?? '')
 const profileAllInstallments = computed(() =>
-  profileModal.contracts.flatMap(c => (c.installments_list ?? []).map(i => ({ ...i, contract_number: (c as any).contract_number }))),
+  profileModal.contracts.flatMap(c => (c.installments_list ?? []).map(i => ({ ...i, contract_number: c.contract_number }))),
 )
 const profileTotals = computed(() => {
   const totals = { total_value: 0, collected: 0, overdue: 0, pending: 0 }
@@ -187,8 +206,8 @@ async function sendSurvey(v: Visit) {
     })
     sentSurveyIds.value.add(v.id)
     toast.success(t('backoffice.timeshare.msg.surveySent'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.msg.surveyError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.surveyError'))
   } finally {
     sendingSurveyId.value = null
   }
@@ -209,7 +228,7 @@ const scheduleModal = reactive({
 
 function openScheduleVisit() {
   // اختر أول عقد نشط في البروفايل الحالي
-  const active = profileModal.contracts.find(c => (c as any).status === 'active') ?? profileModal.contracts[0]
+  const active = profileModal.contracts.find(c => c.status === 'active') ?? profileModal.contracts[0]
   scheduleModal.contractId = active?.id ?? undefined
   scheduleModal.checkIn  = ''
   scheduleModal.checkOut = ''
@@ -221,7 +240,7 @@ function openScheduleVisit() {
 const contractOptions = computed<SelectOption[]>(() =>
   profileModal.contracts.map(c => ({
     value: c.id,
-    label: `${(c as any).contract_number ?? '#' + c.id} — ${c.nights_per_year ?? ''}n/yr`,
+    label: `${c.contract_number ?? '#' + c.id} — ${c.nights_per_year ?? ''}n/yr`,
   })),
 )
 
@@ -249,8 +268,8 @@ async function confirmScheduleVisit() {
           .then(r => r.data as Visit[]).catch(() => [] as Visit[])),
     )
     profileModal.visits = visitLists.flat().sort((a, b) => b.check_in.localeCompare(a.check_in))
-  } catch (e: any) {
-    scheduleModal.error = e?.response?.data?.detail ?? t('backoffice.timeshare.scheduleVisit.errorToast')
+  } catch (e: unknown) {
+    scheduleModal.error = (e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.scheduleVisit.errorToast')
   } finally {
     scheduleModal.loading = false
   }
@@ -276,8 +295,8 @@ async function updateVisitStatus(v: Visit, newStatus: string) {
     const idx = profileModal.visits.findIndex(x => x.id === v.id)
     if (idx !== -1) profileModal.visits[idx] = { ...profileModal.visits[idx], status: (res.data as Visit).status }
     toast.success(t('backoffice.timeshare.scheduleVisit.statusUpdated'))
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.scheduleVisit.statusError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.scheduleVisit.statusError'))
   } finally {
     updatingVisitId.value = null
   }
@@ -309,7 +328,7 @@ const payModal = reactive({
 })
 
 // ── Import Modal ─────────────────────────────────────────────────────────
-const importModal = reactive({ open: false, uploading: false, result: null as any, file: null as File | null })
+const importModal = reactive({ open: false, uploading: false, result: null as ImportResult | null, file: null as File | null })
 
 const fmt = (v: number | string | null | undefined) => formatMoney(v, 'EGP')
 const formatDateValue = (d?: string) => {
@@ -351,7 +370,7 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => map[ch])
 }
 
-function calContractPrintClass(c: any): string {
+function calContractPrintClass(c: CalendarContract): string {
   if (c.rci_included) return 'rci'
   const m: Record<string, string> = { '2R': 'r2', '4R': 'r4', '6R': 'r6' }
   return m[c.room_type] || 'other'
@@ -374,7 +393,7 @@ function printCalendarView() {
             <span class="week-date">${escapeHtml(week.start_date?.slice(5) ?? '')}</span>
             <span class="week-contracts">
               ${week.contracts.length
-                ? week.contracts.map((c: any) => `<span class="tag ${calContractPrintClass(c)}">${escapeHtml((c.customer_name ?? '').split(' ').slice(0, 2).join(' '))}${c.rci_included ? ' ✦' : ''}</span>`).join('')
+                ? week.contracts.map((c: CalendarContract) => `<span class="tag ${calContractPrintClass(c)}">${escapeHtml((c.customer_name ?? '').split(' ').slice(0, 2).join(' '))}${c.rci_included ? ' ✦' : ''}</span>`).join('')
                 : '<span class="empty">—</span>'}
             </span>
           </div>
@@ -470,7 +489,7 @@ async function loadClients() {
 async function loadInstallments() {
   installLoading.value = true
   try {
-    const params: Record<string, any> = { branch_id: branchId, limit: 300 }
+    const params: Record<string, string | number | undefined> = { branch_id: branchId, limit: 300 }
     if (installStatus.value) params.status = installStatus.value
     if (installMonth.value) params.month = installMonth.value
     if (installSearch.value) params.search = installSearch.value
@@ -513,7 +532,7 @@ async function submitPayment() {
     payModal.open = false
     toast.success(t('backoffice.timeshare.msg.paymentRecorded'))
     await Promise.all([loadSummary(), loadInstallments(), loadClients()])
-  } catch (e: any) { toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.msg.paymentError')) }
+  } catch (e: unknown) { toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.paymentError')) }
   finally { payModal.saving = false }
 }
 
@@ -527,7 +546,7 @@ async function toggleStatus(c: Contract) {
     c.status = next
     toast.success(next === 'active' ? t('backoffice.timeshare.msg.contractActivated') : t('backoffice.timeshare.msg.contractSuspended'))
     await loadSummary()
-  } catch (e: any) { toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.msg.statusChangeError')) }
+  } catch (e: unknown) { toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.statusChangeError')) }
   finally { statusSaving.value = null }
 }
 
@@ -542,7 +561,7 @@ async function cancelContract(c: Contract) {
     c.status = 'cancelled'
     toast.success(t('backoffice.timeshare.msg.contractCancelled'))
     await loadSummary()
-  } catch (e: any) { toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.msg.cancelError')) }
+  } catch (e: unknown) { toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.cancelError')) }
 }
 
 // ── #10: نقل وحدة ────────────────────────────────────────────────────────
@@ -581,8 +600,8 @@ async function saveTransfer() {
     transferModal.contract.unit_id = data.unit_id
     toast.success(t('backoffice.timeshare.msg.unitTransferred'))
     transferModal.open = false
-  } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.msg.transferError'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.transferError'))
   } finally {
     transferModal.saving = false
   }
@@ -605,8 +624,8 @@ async function submitImport() {
     })
     importModal.result = r.data
     await Promise.all([loadClients(), loadSummary()])
-  } catch (e: any) {
-    const msg = e?.response?.data?.detail ?? t('backoffice.timeshare.msg.importError')
+  } catch (e: unknown) {
+    const msg = (e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.importError')
     importModal.result = { error: msg }
     toast.error(msg)
   } finally { importModal.uploading = false }
@@ -645,7 +664,7 @@ function payLabel(s: string) {
   }
   return labels[s] ? `${icons[s]} ${labels[s]}` : s
 }
-function calContractClass(c: any) {
+function calContractClass(c: CalendarContract) {
   if (c.rci_included) return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800'
   const m: Record<string, string> = {
     '2R': 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800',
@@ -725,9 +744,9 @@ onMounted(refreshAll)
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1 flex-wrap">
                   <span class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ v.customer_name }}</span>
-                  <span :class="roomTypeBadge(v.room_type)">{{ v.room_type }}</span>
+                  <span v-if="v.room_type" :class="roomTypeBadge(v.room_type)">{{ v.room_type }}</span>
                 </div>
-                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.weekNumber', { week: v.week_number }) }} · {{ formatDateValue(v.visit_start) }}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.weekNumber', { week: v.week_number }) }} · {{ v.visit_start ? formatDateValue(v.visit_start) : '—' }}</div>
               </div>
               <div class="text-end flex-shrink-0">
                 <div :class="['text-sm font-black', v.days_until === 0 ? 'text-red-500 dark:text-red-300' : v.days_until <= 7 ? 'text-amber-500 dark:text-amber-300' : 'text-green-600 dark:text-green-300']">

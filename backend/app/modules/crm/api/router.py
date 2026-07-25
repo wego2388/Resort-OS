@@ -500,7 +500,7 @@ def redeem_loyalty_points(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.post("/crm/loyalty/adjust")
+@router.post("/crm/loyalty/adjust", response_model=LoyaltyAccountRead)
 def adjust_loyalty_points(
     data: LoyaltyAdjustRequest,
     db: DbDep,

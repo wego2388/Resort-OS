@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Index, Integer, JSON,
-    Numeric, String, Time, UniqueConstraint, text,
+    Numeric, String, Text, Time, UniqueConstraint, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -61,6 +61,7 @@ class Outlet(Base, TimestampMixin):
     __tablename__ = "dining_outlets"
     __table_args__ = (
         UniqueConstraint("branch_id", "name", name="uq_dining_outlet_branch_name"),
+        Index("ix_dining_outlets_branch_id", "branch_id"),
     )
 
     id:           Mapped[int]        = mapped_column(primary_key=True)
@@ -118,6 +119,7 @@ class DiningCategory(Base, TimestampMixin):
     __tablename__ = "dining_categories"
     __table_args__ = (
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_category_legacy"),
+        Index("ix_dining_categories_outlet_id", "outlet_id"),
     )
 
     id:            Mapped[int]        = mapped_column(primary_key=True)
@@ -147,6 +149,8 @@ class DiningItem(Base, TimestampMixin):
     __tablename__ = "dining_items"
     __table_args__ = (
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_item_legacy"),
+        Index("ix_dining_items_outlet_id", "outlet_id"),
+        Index("ix_dining_items_category_id", "category_id"),
     )
 
     id:                  Mapped[int]         = mapped_column(primary_key=True)
@@ -160,6 +164,8 @@ class DiningItem(Base, TimestampMixin):
     is_available:        Mapped[bool]        = mapped_column(Boolean, default=True)
     preparation_minutes: Mapped[int]         = mapped_column(Integer, default=10)
     image_url:           Mapped[str | None]  = mapped_column(String(500), nullable=True)
+    description:         Mapped[str | None]  = mapped_column(Text, nullable=True)
+    # وصف قصير للصنف — بيظهر في قائمة الضيف QR (OrderView) تحت الاسم
     station:             Mapped[str]         = mapped_column(String(50), default="hot")
     # hot|grill|cold|bar|dessert — لتوجيه الـ KDS تلقائياً (راجع docstring
     # الكلاس فوق). إجباري بعمود حقيقي على كل صنف من كل outlet — مفيش أي
@@ -218,6 +224,7 @@ class DiningItemExtraGroup(Base, TimestampMixin):
     __tablename__ = "dining_item_extra_groups"
     __table_args__ = (
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_item_extra_group_legacy"),
+        Index("ix_dining_item_extra_groups_item_id", "item_id"),
     )
 
     id:         Mapped[int]        = mapped_column(primary_key=True)
@@ -289,6 +296,7 @@ class DiningItemVariant(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("item_id", "name", name="uq_dining_item_variant_name"),
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_item_variant_legacy"),
+        Index("ix_dining_item_variants_item_id", "item_id"),
     )
 
     id:           Mapped[int]        = mapped_column(primary_key=True)
@@ -391,6 +399,9 @@ class DiningOrder(Base, TimestampMixin):
     __tablename__ = "dining_orders"
     __table_args__ = (
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_order_legacy"),
+        Index("ix_dining_orders_branch_id", "branch_id"),
+        Index("ix_dining_orders_outlet_id", "outlet_id"),
+        Index("ix_dining_orders_status", "status"),
         # Gate 4C: طلب واحد نشط بالكثير لكل طاولة على مستوى الـ DB نفسه —
         # الحالات النشطة (held|open|in_kitchen|served) بس؛ paid/cancelled/
         # refunded مستبعدة عشان تاريخ الطاولة يفضل مسموح. طاولة NULL مستبعدة
@@ -472,6 +483,8 @@ class DiningOrderItem(Base, TimestampMixin):
     __tablename__ = "dining_order_items"
     __table_args__ = (
         UniqueConstraint("legacy_module", "legacy_id", name="uq_dining_order_item_legacy"),
+        Index("ix_dining_order_items_order_id", "order_id"),
+        Index("ix_dining_order_items_item_id", "item_id"),
     )
 
     id:           Mapped[int]        = mapped_column(primary_key=True)
@@ -524,6 +537,9 @@ class DiningKitchenTicket(Base, TimestampMixin):
     ماكانش يقدر يشاور على جدولين مختلفين). هنا order_id FK حقيقي على
     dining_orders (تحسين حقيقي: مفيش أي ambiguity زي الأصل)."""
     __tablename__ = "dining_kitchen_tickets"
+    __table_args__ = (
+        Index("ix_dining_kitchen_tickets_branch_status", "branch_id", "status"),
+    )
 
     id:             Mapped[int]  = mapped_column(primary_key=True)
     branch_id:      Mapped[int]  = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))

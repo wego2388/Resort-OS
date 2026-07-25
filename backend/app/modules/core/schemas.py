@@ -606,3 +606,7 @@ class PaginatedResponse(BaseModel):
     page:    int
     size:    int
     items:   list  # يُستبدل بـ Generic في Python 3.12+
+
+# ── Simple fixed-shape response schemas ──────────────────────────────────────
+class MarkedReadResponse(BaseModel):
+    marked_read: int
