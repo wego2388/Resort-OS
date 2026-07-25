@@ -306,9 +306,9 @@ onMounted(fetchLocations)
         <div class="text-2xl font-black text-red-700 dark:text-red-300">{{ stats.occupied }}</div>
         <div class="mt-0.5 text-xs text-red-600 dark:text-red-400">{{ t('backoffice.beachMap.occupied') }}</div>
       </div>
-      <div class="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-700 dark:bg-gray-800/60">
-        <div class="text-2xl font-black text-gray-500">{{ stats.outOfService }}</div>
-        <div class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.beachMap.outOfService') }}</div>
+      <div class="rounded-xl border border-gray-200 bg-gray-50 p-3 text-center dark:border-gray-600 dark:bg-gray-800/80">
+        <div class="text-2xl font-black text-gray-700 dark:text-gray-200">{{ stats.outOfService }}</div>
+        <div class="text-xs text-gray-600 dark:text-gray-300 mt-0.5">{{ t('backoffice.beachMap.outOfService') }}</div>
       </div>
     </div>
 
