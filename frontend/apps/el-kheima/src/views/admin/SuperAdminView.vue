@@ -337,7 +337,7 @@ async function loadAuditLogs() {
     const params: Record<string, unknown> = { page: auditPage.value, size: 50 }
     if (auditActionFilter.value) params.action = auditActionFilter.value
     if (auditEntityFilter.value) params.entity_type = auditEntityFilter.value
-    const res = await api.get('/api/v1/audit-logs', { params })
+    const res = await api.get(ENDPOINTS.core.auditLogs, { params })
     auditLogs.value = res.data.items; auditTotal.value = res.data.total
   } catch { auditError.value = t('backoffice.superAdmin.audit.loadError') }
   finally { auditLoading.value = false }

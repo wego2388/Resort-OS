@@ -38,6 +38,8 @@ export const ENDPOINTS = {
     pinMe: '/api/v1/pins/me',
     // admin: GET حالة PIN موظف / POST لضبطه له (manager+ — راجع router.py)
     pinUser: (userId: number) => `/api/v1/pins/${userId}`,
+    // Audit logs — manager+ فقط (GET /api/v1/audit-logs)
+    auditLogs: '/api/v1/audit-logs',
   },
   beach: {
     inventory: '/api/v1/beach/inventory',
