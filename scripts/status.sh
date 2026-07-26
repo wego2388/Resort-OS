@@ -50,8 +50,15 @@ pid_status "Celery beat" "celery_beat.pid"
 
 echo
 echo "  ── Frontend apps ──"
-pid_status "el-kheima" "frontend-el-kheima.pid" "http://127.0.0.1:3001"
-pid_status "public" "frontend-public.pid" "http://127.0.0.1:3007"
+pid_status "el-kheima (staff)" "frontend-el-kheima.pid" "http://127.0.0.1:3001"
+echo
+echo "  ── الموقع العام الجديد (مستقل) ──"
+if curl -s -o /dev/null --max-time 1 "http://127.0.0.1:5174"; then
+  echo "  ${GREEN}● elkheima-marketing-website  http://127.0.0.1:5174  (شغّال)${RESET}"
+else
+  echo "  ${DIM}○ elkheima-marketing-website  http://127.0.0.1:5174  (متوقف)${RESET}"
+  echo "    ${DIM}شغّله: cd /home/wego/projects/elkheima-marketing-website && npm run dev${RESET}"
+fi
 
 echo
 echo "  ── Demo accounts (one per role, seeded automatically on first run) ──"

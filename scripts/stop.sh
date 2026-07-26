@@ -47,7 +47,9 @@ done
 
 # Safety net: kill anything still bound to known ports (covers processes
 # started outside this script, e.g. a previous session's start.sh at root).
-for port in 8005 3001 3005 3007; do
+# ملاحظة: 3007 أُزيل (apps/public أُرشف 2026-07-26) — الموقع العام الجديد
+# على 5174 مستقل ولا يديره هذا السكريبت.
+for port in 8005 3001 3005; do
   fuser -k "${port}/tcp" 2>/dev/null && info "Killed stray process on port $port" || true
 done
 pkill -f "celery -A app.celery_app" 2>/dev/null && info "Killed stray Celery processes" || true

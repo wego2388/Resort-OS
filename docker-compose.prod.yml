@@ -165,11 +165,32 @@ services:
         condition: service_healthy
 
   public_site:
+    # ⚠️ LEGACY — يُبقى مؤقتاً كـ fallback أثناء فترة التحقق من marketing_site (48h).
+    # بعد التأكد من استقرار marketing_site، احذف هذا الـ service بالكامل
+    # واحذف public_site من depends_on في nginx أدناه.
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
         APP_NAME: public
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  marketing_site:
+    # الموقع التسويقي الجديد — يحل محل public_site كموقع عام للدومين الرئيسي.
+    # Build context: مجلد elkheima-marketing-website المستقل (npm، مش pnpm monorepo).
+    # VITE_API_URL فارغ عمداً → nginx.spa.conf يعمل proxy لـ /api → backend:8005.
+    build:
+      context: /home/wego/projects/elkheima-marketing-website
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ""
+        VITE_SITE_URL: "https://alkhaymaresort.com"
+        VITE_CHATBOT_ENABLED: "true"
+        VITE_CONTACT_WHATSAPP: "201004444300"
+        VITE_CONTACT_PHONE: "01004444300"
     restart: unless-stopped
     depends_on:
       backend:
@@ -189,6 +210,7 @@ services:
     depends_on:
       - el_kheima
       - public_site
+      - marketing_site
       - backend
 
 volumes:

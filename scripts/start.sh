@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 #  Resort OS — Start Dev Environment
-#  Usage: bash scripts/start.sh [--no-frontend] [--no-worker] [--apps="el-kheima public"]
+#  Usage: bash scripts/start.sh [--no-frontend] [--no-worker]
 # =============================================================================
 set -euo pipefail
 
@@ -19,17 +19,15 @@ mkdir -p "$PID_DIR" "$LOG_DIR"
 START_FRONTEND=true
 START_WORKER=true
 # 2026-07-01: pos/kds/ops/admin/waiter/portal merged into a single `el-kheima`
-# app (frontend/apps/el-kheima, port 3001) — one login, one build, client-side
-# role/module gating in the router instead of 6 separate SPAs. `public` stays
-# separate (unauthenticated, different audience/security model) — it also
-# absorbed the old `qr` app (2026-07-06): both were unauthenticated
-# guest-facing apps, no reason to ship/deploy them as two separate SPAs.
-APPS="el-kheima public"
+# app (frontend/apps/el-kheima, port 3001).
+# 2026-07-26: apps/public أُزيل وأُرشف — الموقع العام الجديد هو
+# elkheima-marketing-website (مستقل، dev على port 5174، production عبر
+# marketing_site Docker container).
+APPS="el-kheima"
 for arg in "$@"; do
   case "$arg" in
     --no-frontend) START_FRONTEND=false ;;
     --no-worker)   START_WORKER=false ;;
-    --apps=*)      APPS="${arg#--apps=}" ;;
   esac
 done
 
@@ -41,13 +39,17 @@ info() { echo "  ${CYAN}→${RESET} $*"; }
 warn() { echo "  ${YELLOW}⚠${RESET}  $*"; }
 die()  { echo "  ${RED}✗${RESET} $*"; exit 1; }
 
-declare -A APP_PORTS=( [el-kheima]=3001 [public]=3007 )
+declare -A APP_PORTS=( [el-kheima]=3001 )
+# ملاحظة: الموقع العام الجديد (elkheima-marketing-website) يشتغل بشكل مستقل
+# على port 5174 — شغّله بـ: cd /home/wego/projects/elkheima-marketing-website && npm run dev
 
 echo
 echo "${GOLD}${BOLD}╔══════════════════════════════════════════════════════╗${RESET}"
 echo "${GOLD}${BOLD}║          🏖️  Resort OS — Starting Dev Environment     ║${RESET}"
 echo "${GOLD}${BOLD}║                  El Kheima Beach · شرم الشيخ          ║${RESET}"
 echo "${GOLD}${BOLD}╚══════════════════════════════════════════════════════╝${RESET}"
+echo
+echo "  ${DIM}💡 الموقع العام الجديد: cd /home/wego/projects/elkheima-marketing-website && npm run dev (port 5174)${RESET}"
 echo
 
 # ── Guard: already running? ───────────────────────────────────────────────────

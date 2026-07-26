@@ -74,8 +74,11 @@ class Settings(CoreSettings):
     # ── Survey Token (مفتاح منفصل لعزل الأمان) ───────────────────────
     SURVEY_TOKEN_SECRET: str = ""
 
-    # ── Public guest site (لبناء روابط /order, /survey, /beach/checkin
-    # المُرسَلة فعليًا للضيف عبر واتساب — بدون / في الآخر) ─────────────
+    # ── Public guest site (لبناء رابط /survey المُرسَل فعليًا للضيف عبر
+    # واتساب — بدون / في الآخر). ⚠️ 2026-07-26: apps/public أُرشف واستُبدل
+    # بموقع مستقل (elkheima-marketing-website) — BeachCheckinView.vue لم
+    # يُنقل عمدًا، فمسار /beach/checkin غير موجود حاليًا في أي موقع
+    # (ولم يكن مبنيًا فعليًا من أي كود هنا أصلاً — تحقّق قبل إضافته).
     PUBLIC_SITE_URL: str = ""
 
     # ── Field Encryption (national_id, passport) ──────────────────────

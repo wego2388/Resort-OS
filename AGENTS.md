@@ -237,7 +237,169 @@ test command. Do not report those checks as passed. If adding such tooling is a
 task, introduce it separately with configuration, a clean baseline, and an
 explicit dependency justification.
 
-## 8. Required handoff
+## 8. Migration Session — 2026-07-26 (Kiro Agent)
+
+### ما الذي تغيّر في هذه الجلسة
+
+#### الخلاصة
+تم استبدال الموقع العام القديم (`frontend/apps/public`) بمشروع تسويقي جديد أكثر نضجًا (`/home/wego/projects/elkheima-marketing-website`)، مع الحفاظ الكامل على الـ backend بدون أي تعديل.
+
+---
+
+#### أولاً — ما أُزيل من resort-os
+
+**`frontend/apps/public/` — أُرشف ولم يُحذف من التاريخ**
+- المجلد مضغوط في: `backups/apps-public-archive-20260726_062054.tar.gz` (21MB)
+- الاستعادة: `cd frontend && tar -xzf ../backups/apps-public-archive-20260726_062054.tar.gz`
+- script `dev:public` حُذف من `frontend/package.json`
+- الـ `apps/*` glob في `pnpm-workspace.yaml` لم يحتج تغييراً
+
+**السبب:** الموقع الجديد يحتوي على كل ما كان في القديم وأكثر بكثير (i18n متقدم، PWA، SEO، صفحات أكثر، تصميم أفضل).
+
+---
+
+#### ثانياً — ما أُضيف لـ elkheima-marketing-website
+
+المشروع في `/home/wego/projects/elkheima-marketing-website` — **مستقل تماماً عن الـ monorepo** (npm، ليس pnpm).
+
+**ملفات جديدة:**
+
+| الملف | الوظيفة |
+|---|---|
+| `src/apps/ops/QrOrder.vue` | نُقل من `apps/public/src/views/OrderView.vue` — يتكلم مع **dining module** (`/api/v1/dining/public`) بالكامل بدون أي تغيير في الـ endpoints أو الـ logic. فقط `axios` استُبدل بـ `client` من `@/api/client`. الـ template أُعيد تصميمه بتصميم Hub الداكن. |
+| `src/apps/ops/GuestSurvey.vue` | نُقل من `apps/public/src/views/SurveyView.vue` — يتكلم مع `/api/v1/analytics/reviews/submit`. نفس التعديل فقط. |
+| `Dockerfile` | Multi-stage build مستقل (node:20-slim → nginx:1.27-alpine). `VITE_API_URL` فارغ عمداً في production. |
+| `nginx.spa.conf` | نسخة من `resort-os/frontend/nginx.spa.conf` — SPA fallback + proxy `/api/` → `backend:8005`. |
+
+**تعديلات على ملفات موجودة:**
+
+| الملف | التعديل |
+|---|---|
+| `src/router/routes/public.routes.ts` | أُضيف `/s/:token` و `/survey/:token` **خارج** `withLocalePrefix` عمداً — QR codes المطبوعة لا تحتوي locale prefix |
+| `src/i18n/locales/ar.json` | أُضيف قسم `qr.*` كامل (38 مفتاح) |
+| `src/i18n/locales/en.json` | نفس الـ keys بالإنجليزية |
+
+---
+
+#### ثالثاً — ما تغيّر في resort-os
+
+**`docker-compose.prod.yml`**
+- أُضيف service جديد `marketing_site` يبني من `/home/wego/projects/elkheima-marketing-website`
+- `public_site` أُبقي مؤقتاً كـ fallback — **لا يصله traffic من nginx** — يُحذف بعد 48h من استقرار production
+
+**`deploy/nginx/edge.conf`**
+- `yourdomain.com` و `www.yourdomain.com` يُحوَّلان لـ `marketing_site:80` بدلاً من `public_site:80`
+- `app.yourdomain.com` لم يتغير → `el_kheima:80`
+
+**`scripts/start.sh`**
+- `APPS="el-kheima public"` → `APPS="el-kheima"`
+- حُذف `--apps=` flag
+- أُضيفت ملاحظة: الموقع الجديد يُشغَّل بشكل مستقل على port 5174
+
+**`scripts/stop.sh`**
+- حُذف port 3007 من safety net
+
+**`scripts/status.sh`**
+- استُبدل `pid_status "public"` بـ curl check مباشر على `http://127.0.0.1:5174`
+
+**`scripts/logs.sh`**
+- حُذف `frontend-public.log` من الـ tail
+
+---
+
+#### رابعاً — ما لم يتغير خالص
+
+- `backend/` — صفر تعديل
+- `frontend/apps/el-kheima/` — صفر تعديل
+- `frontend/packages/core/` و `packages/ui/` — صفر تعديل
+- `docker-compose.yml` (dev) — صفر تعديل
+- كل الـ backend API endpoints — صفر تعديل
+- قاعدة البيانات والـ migrations — صفر تعديل
+
+---
+
+#### خامساً — نقاط حرجة يجب أن يعرفها أي agent يعمل بعد هذه الجلسة
+
+**1. نظامان للمنيو — مختلفان تماماً:**
+- `dining` module → `dining_items` / `dining_categories` / `dining_outlets` في الـ DB → يُستخدم في `/s/:token` (QrOrder.vue)
+- `products` module (inventory) → `products` table → يُستخدم في `/hub` (DigitalHub.vue و DigitalMenu.vue)
+- **لا تخلطهم** — كل واحد له endpoints ونظام سلة مستقل
+
+**2. `/s/:token` flow لم يتغير منطقياً:**
+```
+QR code → /s/{token} → resolveGuestContext() →
+GET /api/v1/public/service-location?token={token} →
+POST /api/v1/public/guest-sessions →
+GET /api/v1/dining/public/service-menu →
+POST /api/v1/dining/public/orders
+```
+فقط التصميم البصري تغيّر (dark Hub theme بدلاً من light stone theme).
+
+**3. `BeachCheckinView.vue` لم يُنقل عمداً:**
+كان يستخدم `@resort-os/core` (monorepo package غير موجود في elkheima-marketing-website). القرار: هذا الروت (`/beach/checkin/:reservationId`) غير موجود في الموقع الجديد حالياً. لو احتجت تضيفه لاحقاً: انسخ `BeachCheckinView.vue` واستبدل `import { api, useAuthStore } from '@resort-os/core'` بـ `import client from '@/api/client'` و `import { useAuthStore } from '@/stores/auth'`.
+
+**4. VITE_API_URL في production يجب أن يكون فارغاً:**
+```
+VITE_API_URL="" → client.ts baseURL = '' → relative /api/ → nginx proxy → backend:8005
+```
+لو اتبنى بـ `http://localhost:8000` = كارثة في production.
+
+**5. public_site container:**
+لا يزال موجوداً في `docker-compose.prod.yml` كـ fallback. لا يصله أي traffic من nginx. احذفه بعد 48h من التأكد من استقرار `marketing_site` في production، مع حذف مرجعه من `depends_on` في service `nginx`.
+
+**6. الـ Docker build context للـ marketing_site:**
+```yaml
+build:
+  context: /home/wego/projects/elkheima-marketing-website  # مسار مطلق
+  dockerfile: Dockerfile
+```
+هذا مسار مطلق على الـ VPS — تأكد أن المجلد موجود على الـ VPS قبل الـ deploy.
+
+---
+
+#### سادساً — أوامر التحقق
+
+```bash
+# تأكد من الـ build الجديد
+cd /home/wego/projects/elkheima-marketing-website
+npm run build
+
+# تأكد من الـ Docker
+cd /home/wego/projects/resort-os
+docker compose -f docker-compose.prod.yml build marketing_site
+docker compose -f docker-compose.prod.yml config --quiet
+
+# تأكد من الـ pnpm workspace
+cd frontend
+pnpm install
+
+# اختبر الـ marketing_site container محلياً
+docker run --rm -p 3099:80 resort-os-marketing_site:latest
+curl -s -o /dev/null -w "%{http_code}" http://localhost:3099/s/test
+# المتوقع: 200
+```
+
+---
+
+#### سابعاً — للـ deploy على VPS
+
+```bash
+# 1. نقل المشروع الجديد للـ VPS (لو مش موجود)
+rsync -av /home/wego/projects/elkheima-marketing-website/ user@vps:/home/wego/projects/elkheima-marketing-website/
+
+# 2. build وتشغيل
+cd /home/wego/projects/resort-os
+docker compose -f docker-compose.prod.yml up -d --build marketing_site
+
+# 3. بعد 48h من الاستقرار — احذف public_site
+# في docker-compose.prod.yml: احذف service public_site
+# و احذف public_site من depends_on في service nginx
+docker compose -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+---
+
+## 9. Required handoff
 
 Every implementation handoff must state:
 
