@@ -41,6 +41,12 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.timeshare_tasks.send_installment_reminders",
         "schedule": crontab(hour=9, minute=15),
     },
+    "timeshare-generate-annual-maintenance-dues": {
+        # زي hr-accrue-leave بالظبط (1 يناير) — فارق 5 دقايق عشان تتجنب
+        # التكدّس مع night-audit (00:01) وباقي مهام منتصف الليل.
+        "task": "app.tasks.timeshare_tasks.generate_annual_maintenance_dues",
+        "schedule": crontab(hour=0, minute=5, month_of_year=1, day_of_month=1),
+    },
 
     # ─── Leasing ──────────────────────────────────────────────────────
     "leasing-mark-overdue": {

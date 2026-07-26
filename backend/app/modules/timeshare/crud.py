@@ -9,11 +9,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.modules.timeshare.models import (
-    TimeshareContract, TimeshareInstallment, TimeshareUnit, TimeshareVisit, TimeshareWaitlist,
+    TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
+    TimeshareUnit, TimeshareVisit, TimeshareWaitlist,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate,
-    PayInstallmentRequest, TimeshareVisitCreate, TimeshareVisitUpdate, WaitlistCreate,
+    PayInstallmentRequest, PayMaintenanceDueRequest,
+    TimeshareVisitCreate, TimeshareVisitUpdate, WaitlistCreate,
 )
 from app.core.config import settings
 from app.resort_os.timezone_utils import business_today
@@ -111,6 +113,55 @@ def pay_installment(db: Session, inst: TimeshareInstallment, req: PayInstallment
         inst.status = "partial"
     db.flush()
     return inst
+
+
+# ── Maintenance dues (رسوم الصيانة السنوية) ───────────────────────────
+
+def create_maintenance_due(
+    db: Session, contract_id: int, fee_year: int, due_date: date, amount: Decimal,
+) -> TimeshareMaintenanceDue:
+    due = TimeshareMaintenanceDue(
+        contract_id=contract_id, fee_year=fee_year, due_date=due_date, amount=amount,
+    )
+    db.add(due)
+    db.flush()
+    return due
+
+
+def get_maintenance_due(db: Session, due_id: int) -> Optional[TimeshareMaintenanceDue]:
+    return db.query(TimeshareMaintenanceDue).filter(TimeshareMaintenanceDue.id == due_id).first()
+
+
+def get_maintenance_due_for_year(db: Session, contract_id: int, fee_year: int) -> Optional[TimeshareMaintenanceDue]:
+    return db.query(TimeshareMaintenanceDue).filter(
+        TimeshareMaintenanceDue.contract_id == contract_id,
+        TimeshareMaintenanceDue.fee_year == fee_year,
+    ).first()
+
+
+def list_maintenance_dues(db: Session, contract_id: int) -> list[TimeshareMaintenanceDue]:
+    return (
+        db.query(TimeshareMaintenanceDue)
+        .filter(TimeshareMaintenanceDue.contract_id == contract_id)
+        .order_by(TimeshareMaintenanceDue.fee_year.desc())
+        .all()
+    )
+
+
+def pay_maintenance_due(
+    db: Session, due: TimeshareMaintenanceDue, req: PayMaintenanceDueRequest,
+) -> TimeshareMaintenanceDue:
+    due.paid_amount += req.paid_amount
+    due.payment_method = req.payment_method
+    due.receipt_number = req.receipt_number
+    due.notes = req.notes
+    if due.paid_amount >= due.amount:
+        due.status = "paid"
+        due.paid_at = datetime.utcnow()
+    else:
+        due.status = "partial"
+    db.flush()
+    return due
 
 
 # ── CS Dashboard aggregates ──────────────────────────────────────────

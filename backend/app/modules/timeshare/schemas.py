@@ -61,6 +61,10 @@ class TimeshareContractUpdate(BaseModel):
     notes:             Optional[str]  = None
     nationality:       Optional[str]  = None
     address:           Optional[str]  = None
+    # rسم الصيانة السنوي — كان موجود في الموديل بدون أي طريقة للتعديل عبر الـ
+    # API خالص (باج حقيقي: الحقل موجود ومُخزَّن من وقت الاستيراد، لكن محدّش كان
+    # يقدر يحدّثه لما تعميم صيانة جديد يصدر). ge=0 عشان مايتحطش سالب بالغلط.
+    maintenance_fee:   Optional[Decimal] = Field(None, ge=0)
 
 
 class InstallmentRead(BaseModel):
@@ -73,6 +77,20 @@ class InstallmentRead(BaseModel):
     # بيانات العميل للعرض في جدول الأقساط (لوحة متابعة المتأخرات) — تُملأ فقط في
     # list_installments حيث الـ join على العقد متاح، وإلا None (مثلاً عند
     # pay_installment اللي بيرجّع القسط لوحده بدون العقد).
+    customer_name:  Optional[str] = None
+    customer_phone: Optional[str] = None
+    room_type:      Optional[str] = None
+
+
+class TimeshareMaintenanceDueRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; contract_id: int; fee_year: int; due_date: date
+    amount: Decimal; paid_amount: Decimal; status: str
+    paid_at: Optional[datetime]; payment_method: Optional[str]
+    receipt_number: Optional[str]; notes: Optional[str]
+    created_at: datetime
+    # نفس نمط InstallmentRead — بتتملى بس في list_maintenance_dues حيث الـ
+    # join على العقد متاح
     customer_name:  Optional[str] = None
     customer_phone: Optional[str] = None
     room_type:      Optional[str] = None
@@ -100,6 +118,7 @@ class TimeshareContractRead(BaseModel):
     years_count: int; payment_type: str
     cancelled_at: Optional[date]; cancel_amount: Decimal
     installments_list: list[InstallmentRead] = []
+    maintenance_dues_list: list[TimeshareMaintenanceDueRead] = []
     created_at: datetime; updated_at: datetime
 
 
@@ -118,6 +137,13 @@ class TimeshareUnitTransferRequest(BaseModel):
 
 
 class PayInstallmentRequest(BaseModel):
+    paid_amount:    Decimal = Field(..., gt=0)
+    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")
+    receipt_number: Optional[str] = None
+    notes:          Optional[str] = None
+
+
+class PayMaintenanceDueRequest(BaseModel):
     paid_amount:    Decimal = Field(..., gt=0)
     payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")
     receipt_number: Optional[str] = None

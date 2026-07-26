@@ -1,7 +1,8 @@
 """
 app/modules/timeshare/models.py
 Timeshare Module — عقود التايم شير
-Tables: timeshare_contracts, timeshare_installments, timeshare_waitlist
+Tables: timeshare_contracts, timeshare_installments, timeshare_maintenance_dues,
+timeshare_waitlist
 """
 from __future__ import annotations
 
@@ -81,6 +82,10 @@ class TimeshareContract(Base, TimestampMixin):
         "TimeshareInstallment", back_populates="contract", lazy="select",
         foreign_keys="TimeshareInstallment.contract_id",
     )
+    maintenance_dues_list: Mapped[list["TimeshareMaintenanceDue"]] = relationship(
+        "TimeshareMaintenanceDue", back_populates="contract", lazy="select",
+        foreign_keys="TimeshareMaintenanceDue.contract_id",
+    )
     waitlist: Mapped[list["TimeshareWaitlist"]] = relationship(
         "TimeshareWaitlist", back_populates="contract", lazy="select"
     )
@@ -107,6 +112,40 @@ class TimeshareInstallment(Base, TimestampMixin):
 
     contract: Mapped["TimeshareContract"] = relationship(
         "TimeshareContract", back_populates="installments_list",
+        foreign_keys=[contract_id],
+    )
+
+
+class TimeshareMaintenanceDue(Base, TimestampMixin):
+    """رسم الصيانة السنوي المستحق على عقد لسنة تقويمية معيّنة (fee_year) —
+    دورة سداد واحدة موحّدة (يناير-ديسمبر) لكل العقود، تطابق شكل التعميم
+    الرسمي ("مصروفات الصيانة عام 2026"). المبلغ يُنسخ من
+    TimeshareContract.maintenance_fee وقت التوليد (لقطة/snapshot) — تغيير
+    maintenance_fee لاحقًا (تعميم سنة جديدة) لا يُعدِّل مستحقات سنوات سابقة
+    مولَّدة بالفعل، بالضبط زي جدول أقساط العقد نفسه. لا تُستخدم
+    maintenance_increase في أي حساب تلقائي — الزيادات الحقيقية قفزات غير
+    منتظمة بقرار خارجي (لجنة فض منازعات + وزارة السياحة)، مش نسبة سنوية
+    ثابتة، فالمبلغ الجديد كل سنة بيتحدد يدويًا في maintenance_fee."""
+    __tablename__ = "timeshare_maintenance_dues"
+    __table_args__ = (
+        UniqueConstraint("contract_id", "fee_year", name="uq_maintenance_due_contract_year"),
+    )
+
+    id:              Mapped[int]            = mapped_column(primary_key=True)
+    contract_id:     Mapped[int]            = mapped_column(ForeignKey("timeshare_contracts.id", ondelete="CASCADE"))
+    fee_year:        Mapped[int]            = mapped_column(Integer, index=True)
+    due_date:        Mapped[date]           = mapped_column(Date, index=True)
+    amount:          Mapped[Decimal]        = mapped_column(Numeric(14, 2))
+    paid_amount:     Mapped[Decimal]        = mapped_column(Numeric(14, 2), default=Decimal("0"))
+    status:          Mapped[str]            = mapped_column(String(20), default="pending")
+    # pending|paid|partial|overdue
+    paid_at:         Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    payment_method:  Mapped[str | None]     = mapped_column(String(30), nullable=True)
+    receipt_number:  Mapped[str | None]     = mapped_column(String(50), nullable=True)
+    notes:           Mapped[str | None]     = mapped_column(String(300), nullable=True)
+
+    contract: Mapped["TimeshareContract"] = relationship(
+        "TimeshareContract", back_populates="maintenance_dues_list",
         foreign_keys=[contract_id],
     )
 

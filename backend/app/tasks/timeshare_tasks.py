@@ -42,14 +42,16 @@ def mark_overdue(self):
 
 def _mark_overdue(db, today: date) -> int:
     """
-    الجزء القابل للاختبار: يُحدِّث حالة الأقساط المتأخرة إلى overdue ثم يُجمِّد
-    حق الحجز (booking_frozen) لأي عقد نشط لديه أقساط متأخرة.
+    الجزء القابل للاختبار: يُحدِّث حالة الأقساط ومستحقات الصيانة المتأخرة إلى
+    overdue ثم يُجمِّد حق الحجز (booking_frozen) لأي عقد نشط عنده أي متأخرات
+    من النوعين — نفس آلية should_freeze_booking الموجودة، بس على رصيد مجمّع
+    من الأقساط + الصيانة مع بعض بدل الأقساط لوحدها.
 
     ⚠️ لا تستخدم `contract.installments` هنا — ده عمود عدد الأقساط (int)،
     العلاقة الصحيحة هي `contract.installments_list`.
     """
     from app.modules.timeshare.models import (  # noqa: PLC0415
-        TimeshareInstallment, TimeshareContract,
+        TimeshareInstallment, TimeshareMaintenanceDue, TimeshareContract,
     )
     from app.resort_os.timeshare_engine import should_freeze_booking  # noqa: PLC0415
     from decimal import Decimal  # noqa: PLC0415
@@ -68,19 +70,100 @@ def _mark_overdue(db, today: date) -> int:
     for inst in overdue_insts:
         inst.status = "overdue"
 
-    # حساب المبالغ المتأخرة لكل عقد وتجميد الحجز
+    # نفس المنطق بالظبط على مستحقات الصيانة السنوية
+    overdue_dues = (
+        db.query(TimeshareMaintenanceDue)
+        .filter(
+            TimeshareMaintenanceDue.due_date < today,
+            TimeshareMaintenanceDue.status.in_(["pending", "partial"]),
+        )
+        .all()
+    )
+    for due in overdue_dues:
+        due.status = "overdue"
+
+    # حساب المبالغ المتأخرة (أقساط + صيانة) لكل عقد وتجميد الحجز
     contracts = db.query(TimeshareContract).filter(
         TimeshareContract.status == "active"
     ).all()
     for contract in contracts:
-        overdue_total = sum(
-            i.amount for i in contract.installments_list
-            if i.status == "overdue"
-        ) or Decimal("0")
+        overdue_total = (
+            sum((i.amount for i in contract.installments_list if i.status == "overdue"), Decimal("0"))
+            + sum((d.amount for d in contract.maintenance_dues_list if d.status == "overdue"), Decimal("0"))
+        )
         if should_freeze_booking(overdue_total):
             contract.booking_frozen = True
 
-    return len(overdue_insts)
+    return len(overdue_insts) + len(overdue_dues)
+
+
+@celery_app.task(name="app.tasks.timeshare_tasks.generate_annual_maintenance_dues", bind=True, max_retries=3)
+def generate_annual_maintenance_dues(self):
+    """
+    كل 1 يناير — يولّد مستحق صيانة واحد لكل عقد نشط عنده maintenance_fee > 0
+    للسنة التقويمية الجديدة (fee_year = السنة الحالية بتوقيت المنتجع). قابل
+    لإعادة التشغيل يدويًا من POST /timeshare/maintenance-dues/generate (نفس
+    نمط run_night_audit في PMS).
+    """
+    try:
+        from app.core.database import SessionLocal  # noqa: PLC0415
+        today = business_today(settings.TIMEZONE)
+
+        with SessionLocal() as db:
+            try:
+                from app.modules.core.models import Branch  # noqa: PLC0415
+                created_total = 0
+                for (branch_id,) in db.query(Branch.id).all():
+                    created_total += _generate_annual_maintenance_dues(db, branch_id, today.year)
+                db.commit()
+                logger.info(
+                    "Annual maintenance dues generated: fee_year=%s created=%s",
+                    today.year, created_total,
+                )
+            except ImportError:
+                logger.debug("Timeshare module not yet built — skipped")
+
+    except Exception as exc:
+        logger.error("generate_annual_maintenance_dues failed: %s", exc)
+        notify_task_failure("app.tasks.timeshare_tasks.generate_annual_maintenance_dues", exc)
+        raise self.retry(exc=exc, countdown=600)
+
+
+def _generate_annual_maintenance_dues(db, branch_id: int, fee_year: int) -> int:
+    """الجزء القابل للاختبار والقابل لإعادة الاستخدام من services.
+    generate_annual_maintenance_dues — لكل عقد active بـ maintenance_fee > 0
+    في الفرع ده: يولّد مستحق واحد لسنة fee_year لو مش موجود بالفعل
+    (idempotent — UniqueConstraint(contract_id, fee_year) هي الحارس النهائي،
+    الفحص هنا بيتفادى IntegrityError مزعج في اللوج عند إعادة التشغيل)."""
+    from decimal import Decimal  # noqa: PLC0415
+    from app.modules.timeshare.models import TimeshareContract, TimeshareMaintenanceDue  # noqa: PLC0415
+
+    contracts = db.query(TimeshareContract).filter(
+        TimeshareContract.branch_id == branch_id,
+        TimeshareContract.status == "active",
+        TimeshareContract.maintenance_fee > Decimal("0"),
+    ).all()
+
+    existing_pairs = {
+        contract_id for (contract_id,) in db.query(TimeshareMaintenanceDue.contract_id).filter(
+            TimeshareMaintenanceDue.fee_year == fee_year,
+            TimeshareMaintenanceDue.contract_id.in_([c.id for c in contracts]),
+        ).all()
+    }
+
+    created = 0
+    for contract in contracts:
+        if contract.id in existing_pairs:
+            continue
+        due = TimeshareMaintenanceDue(
+            contract_id=contract.id, fee_year=fee_year,
+            due_date=date(fee_year, 1, 1),
+            amount=contract.maintenance_fee,
+        )
+        db.add(due)
+        created += 1
+    db.flush()
+    return created
 
 
 @celery_app.task(name="app.tasks.timeshare_tasks.send_visit_reminders", bind=True)

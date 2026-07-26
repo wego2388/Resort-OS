@@ -502,6 +502,7 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "5200", "name": "تكلفة البضاعة المباعة (COGS)", "account_type": "expense"},
         {"code": "2300", "name": "إيرادات مؤجَّلة (تايم شير) — قديم، لا يُستخدم في قيود جديدة", "account_type": "liability"},
         {"code": "4600", "name": "إيرادات عقود التايم شير",      "account_type": "revenue"},
+        {"code": "4650", "name": "إيرادات صيانة عقود التايم شير", "account_type": "revenue"},
         {"code": "1260", "name": "ذمم مستأجرين (إيجارات)",      "account_type": "asset"},
         {"code": "2150", "name": "تأمينات مستأجرين",            "account_type": "liability"},
         {"code": "4500", "name": "إيرادات إيجارات تجارية",      "account_type": "revenue"},

@@ -7,10 +7,13 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.modules.timeshare import crud
-from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment, TimeshareVisit
+from app.modules.timeshare.models import (
+    TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue, TimeshareVisit,
+)
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate, TimeshareUnitTransferRequest,
-    PayInstallmentRequest, TimeshareVisitCreate, TimeshareVisitUpdate, WaitlistCreate,
+    PayInstallmentRequest, PayMaintenanceDueRequest,
+    TimeshareVisitCreate, TimeshareVisitUpdate, WaitlistCreate,
 )
 from app.resort_os.timeshare_engine import (
     generate_installment_schedule,
@@ -52,9 +55,34 @@ def create_contract(db: Session, data: TimeshareContractCreate, signed_by: int) 
     # قيد إيرادات مؤجَّلة (deferred revenue)
     _post_deferred_revenue_journal(db, contract)
 
+    # مستحق الصيانة الأول للعقد — لو التوليد الجماعي السنوي (1 يناير) كان
+    # اشتغل بالفعل قبل ما العقد ده يتوقّع، كان هيفضل من غير مستحق صيانة
+    # للسنة الحالية خالص. راجع _generate_maintenance_due_for_new_contract.
+    _generate_maintenance_due_for_new_contract(db, contract)
+
     db.commit()
     db.refresh(contract)
     return contract
+
+
+def _generate_maintenance_due_for_new_contract(db: "Session", contract: "TimeshareContract") -> None:
+    """يولّد مستحق صيانة لسنة التوقيع نفسها فور إنشاء العقد — بالمبلغ الكامل
+    (بدون تناسب زمني، قرار Mohamed) وموعد استحقاق = تاريخ التوقيع نفسه، **مش**
+    1 يناير الثابت اللي التوليد الجماعي السنوي بيستخدمه — عشان عقد اتوقّع نص
+    السنة (مثلاً يونيو) ميبقاش "متأخر" فورًا من لحظة إنشائه لو استخدمنا تاريخ
+    فات بالفعل. idempotent: مبيعملش حاجة لو مستحق نفس السنة موجود بالفعل
+    (مهم لو التوليد الجماعي اشتغل بعد إنشاء العقد في نفس السنة بالغلط)."""
+    from decimal import Decimal as _D  # noqa: PLC0415
+
+    if not contract.maintenance_fee or contract.maintenance_fee <= _D("0"):
+        return
+    signing_date = contract.contract_date or contract.start_date
+    fee_year = signing_date.year
+    if crud.get_maintenance_due_for_year(db, contract.id, fee_year):
+        return
+    crud.create_maintenance_due(
+        db, contract.id, fee_year, due_date=signing_date, amount=contract.maintenance_fee,
+    )
 
 
 def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract") -> None:
@@ -134,18 +162,35 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
     # سجل تدقيق — تاريخ التحصيل قابل للمراجعة والتصحيح لاحقاً
     _audit_installment_payment(db, contract, inst, req)
 
-    # إلغاء تجميد الحجز إن كانت كل الأقساط المتأخرة سُدِّدت
-    if contract.booking_frozen:
-        overdue_count = sum(
-            1 for i in contract.installments_list
-            if i.status in ("overdue", "partial") and i.id != inst_id
-        )
-        if overdue_count == 0:
-            contract.booking_frozen = False
+    # إلغاء تجميد الحجز إن كان مفيش أي رصيد متأخر تاني (أقساط أو صيانة)
+    if contract.booking_frozen and not _has_any_overdue_balance(contract):
+        contract.booking_frozen = False
 
     db.commit()
     db.refresh(obj)
     return obj
+
+
+def _has_any_overdue_balance(contract: TimeshareContract) -> bool:
+    """هل عند العقد أي رصيد متأخر — أقساط أو صيانة — لسه غير مسدَّد؟ مصدر
+    الحقيقة الوحيد لقرار إلغاء تجميد الحجز، يستخدمه pay_installment و
+    pay_maintenance_due الاتنين بدل منطق منفصل لكل واحد.
+
+    ⚠️ باج كامن حقيقي كان في pay_installment قبل التوحيد ده: الفحص القديم
+    كان بيستبعد صراحة القسط اللي اتدفع لسه (`i.id != inst_id`) — يعني لو
+    دفعة جزئية سابت القسط "partial" (لسه مش مسدَّد بالكامل) وكان هو القسط
+    الوحيد المتأخر، العقد كان بيتفك تجميده غلط رغم إنه لسه مديون بيه. هنا
+    بنفحص الحالة الفعلية الحالية لكل الأقساط/المستحقات من غير أي استبعاد —
+    وده صح لأن crud.pay_installment/pay_maintenance_due بيحدّثوا status في
+    نفس الـ object (identity map) قبل ما الفحص ده يتنادى، فالحالة المعروضة
+    هنا هي الحالة الصحيحة بعد الدفعة مباشرة."""
+    has_overdue_installment = any(
+        i.status in ("overdue", "partial") for i in contract.installments_list
+    )
+    has_overdue_maintenance = any(
+        d.status in ("overdue", "partial") for d in contract.maintenance_dues_list
+    )
+    return has_overdue_installment or has_overdue_maintenance
 
 
 def _post_installment_payment_journal(
@@ -207,6 +252,114 @@ def _audit_installment_payment(
     except ValueError:
         # لو AuditLog فشل (branch مش موجود مثلاً في test env) — لا يوقف العملية
         pass
+
+
+def pay_maintenance_due(db: Session, due_id: int, req: PayMaintenanceDueRequest) -> TimeshareMaintenanceDue:
+    """تحصيل مستحق صيانة سنوي — مرآة كاملة لـ pay_installment (نفس تسلسل
+    التحقق بالضبط: موجود؟ مدفوع بالفعل؟ العقد ملغي/منتهي؟ المبلغ زيادة عن
+    المتبقي؟) بس على TimeshareMaintenanceDue بدل TimeshareInstallment."""
+    due = crud.get_maintenance_due(db, due_id)
+    if not due:
+        raise ValueError(f"مستحق الصيانة {due_id} غير موجود")
+    if due.status == "paid":
+        raise ValueError("مستحق الصيانة مدفوع بالكامل مسبقاً")
+
+    contract = crud.get_contract(db, due.contract_id)
+    if not contract:
+        raise ValueError(f"العقد المرتبط بمستحق الصيانة {due_id} غير موجود")
+    if contract.status == "cancelled":
+        raise ValueError(f"العقد {contract.contract_number} ملغي — لا يمكن تحصيل صيانة عليه")
+    if contract.status == "expired":
+        raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل صيانة عليه")
+
+    remaining = due.amount - due.paid_amount
+    if req.paid_amount > remaining:
+        raise ValueError(
+            f"المبلغ المُدخَل ({req.paid_amount:,.2f} ج) أكبر من المتبقي على "
+            f"مستحق صيانة سنة {due.fee_year} ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
+        )
+
+    obj = crud.pay_maintenance_due(db, due, req)
+    _post_maintenance_payment_journal(db, contract, req.paid_amount, due)
+    _audit_maintenance_payment(db, contract, due, req)
+
+    if contract.booking_frozen and not _has_any_overdue_balance(contract):
+        contract.booking_frozen = False
+
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
+def _post_maintenance_payment_journal(
+    db: "Session", contract: "TimeshareContract", paid_amount, due: "TimeshareMaintenanceDue",
+) -> None:
+    """Dr. Cash (1100) / Cr. إيرادات صيانة عقود التايم شير (4650) — حساب
+    منفصل عمدًا عن 4600 (إيراد سعر الشراء): إيراد الصيانة رسم خدمة سنوي
+    مرتبط بسنة محدَّدة (fee_year)، مختلف في طبيعته المحاسبية عن إيراد بيع
+    العقد لمرة واحدة."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, contract.branch_id, business_today(settings.TIMEZONE),
+        debit_account_code="1100", credit_account_code="4650",
+        amount=paid_amount,
+        reference=f"TS-MAINT-{contract.contract_number}-{due.fee_year}",
+        description=f"تحصيل صيانة سنة {due.fee_year} — {contract.contract_number}",
+        source="timeshare", source_id=contract.id,
+        created_by=0,
+        cost_center_code="TS",
+    )
+
+
+def _audit_maintenance_payment(
+    db: "Session",
+    contract: "TimeshareContract",
+    due: "TimeshareMaintenanceDue",
+    req: "PayMaintenanceDueRequest",
+) -> None:
+    """يسجّل AuditLog لكل تحصيل صيانة — مرآة _audit_installment_payment."""
+    import json as _json  # noqa: PLC0415
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+    old_data = _json.dumps({
+        "status": "pending" if due.status == "partial" else due.status,
+        "paid_amount": float(due.paid_amount - req.paid_amount),
+    }, ensure_ascii=False)
+    new_data = _json.dumps({
+        "status": due.status,
+        "paid_amount": float(due.paid_amount),
+        "payment_method": req.payment_method,
+        "receipt_number": req.receipt_number,
+        "amount_paid_now": float(req.paid_amount),
+    }, ensure_ascii=False)
+
+    try:
+        create_audit_log(db, AuditLogCreate(
+            branch_id=contract.branch_id,
+            action="pay_maintenance_due",
+            entity_type="timeshare_maintenance_due",
+            entity_id=due.id,
+            old_data=old_data,
+            new_data=new_data,
+        ))
+    except ValueError:
+        pass
+
+
+def generate_annual_maintenance_dues(db: Session, branch_id: int, fee_year: int) -> int:
+    """نقطة الدخول الوحيدة اللي الـ router بيكلّمها — بتفوّض للمنطق الفعلي
+    في app.tasks.timeshare_tasks (نفس مكان _mark_overdue بالظبط، الاتفاقية
+    القائمة في الموديول ده) عشان يبقى فيه تنفيذ واحد بس يستخدمه الـ Celery
+    task والـ endpoint اليدوي، زي run_night_audit في pms."""
+    from app.tasks.timeshare_tasks import _generate_annual_maintenance_dues  # noqa: PLC0415
+
+    created = _generate_annual_maintenance_dues(db, branch_id, fee_year)
+    db.commit()
+    return created
 
 
 def add_to_waitlist(db: Session, data: WaitlistCreate) -> object:
@@ -793,7 +946,15 @@ def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
             f"({contract.end_date.isoformat()}) — العقد منتهي لهذه الفترة"
         )
     if contract.booking_frozen:
-        raise ValueError("الحجز مجمَّد لوجود أقساط متأخرة — سدِّد المتأخرات أولاً")
+        # سبب التجميد بيتحدد فعليًا وقت الرفض (أقساط/صيانة/الاتنين) — بدون
+        # أي تغيير في البنية (booking_frozen يفضل flag واحد على العقد).
+        reasons = []
+        if any(i.status in ("overdue", "partial") for i in contract.installments_list):
+            reasons.append("أقساط متأخرة")
+        if any(d.status in ("overdue", "partial") for d in contract.maintenance_dues_list):
+            reasons.append("رسوم صيانة متأخرة")
+        reason_text = " و".join(reasons) if reasons else "متأخرات"
+        raise ValueError(f"الحجز مجمَّد لوجود {reason_text} — سدِّد المتأخرات أولاً")
     nights = (data.check_out - data.check_in).days
 
     if contract.unit_id:

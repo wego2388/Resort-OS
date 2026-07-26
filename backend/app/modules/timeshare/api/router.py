@@ -39,6 +39,7 @@ from app.core.deps import (
 from app.modules.timeshare import crud, services
 from app.modules.timeshare.schemas import (
     PayInstallmentRequest, InstallmentRead,
+    PayMaintenanceDueRequest, TimeshareMaintenanceDueRead,
     TimeshareCancelRequest, TimeshareUnitTransferRequest,
     TimeshareContractCreate, TimeshareContractRead, TimeshareContractUpdate,
     TimeshareUnitRead,
@@ -154,6 +155,38 @@ def download_monthly_collection_report(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+# ── Maintenance Dues (رسوم الصيانة السنوية) ───────────────────────────
+
+@router.get("/timeshare/contracts/{contract_id}/maintenance-dues", response_model=list[TimeshareMaintenanceDueRead])
+def list_maintenance_dues(contract_id: int, db: DbDep, _=Depends(get_timeshare_user)):
+    return [TimeshareMaintenanceDueRead.model_validate(d) for d in crud.list_maintenance_dues(db, contract_id)]
+
+
+@router.post("/timeshare/maintenance-dues/{due_id}/pay", response_model=TimeshareMaintenanceDueRead,
+             dependencies=[Depends(require_permission("timeshare.maintenance_dues", "collect", min_role_level=40))])
+def pay_maintenance_due(due_id: int, req: PayMaintenanceDueRequest, db: DbDep,
+                        _=Depends(get_timeshare_user)):
+    try:
+        return services.pay_maintenance_due(db, due_id, req)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/timeshare/maintenance-dues/generate", response_model=None,
+             dependencies=[Depends(require_permission("timeshare.maintenance_dues", "generate", min_role_level=60))])
+def generate_maintenance_dues(
+    db: DbDep, _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    fee_year: int = Query(..., ge=2026, le=2100),
+):
+    """تشغيل يدوي لتوليد مستحقات الصيانة السنوية — نفس دور Celery task
+    generate_annual_maintenance_dues (1 يناير تلقائيًا)، هنا لإعادة التشغيل
+    أو التوليد الفوري لسنة معيّنة. fee_year >= 2026 عمدًا — بلا أي تتبّع
+    تاريخي قبل كده (قرار Mohamed)."""
+    created = services.generate_annual_maintenance_dues(db, branch_id, fee_year)
+    return {"fee_year": fee_year, "created": created}
 
 
 # ── Waitlist ─────────────────────────────────────────────────────────
