@@ -5791,7 +5791,8 @@
         "dashboard": "لوحة التحكم",
         "calendar": "الكالندر",
         "clients": "العملاء",
-        "installments": "الأقساط"
+        "installments": "الأقساط",
+        "maintenance": "الصيانة"
       },
       "activeContracts": "عقود نشطة",
       "collectionRate": "نسبة التحصيل",
@@ -5850,7 +5851,8 @@
         "amount": "المبلغ",
         "status": "الحالة",
         "customer": "العميل",
-        "contract": "العقد"
+        "contract": "العقد",
+        "year": "السنة"
       },
       "pay": "دفع",
       "recordPayment": "تسجيل دفعة",
@@ -5896,6 +5898,11 @@
       "sentDone": "تم الإرسال",
       "installmentsCount": "الأقساط ({count})",
       "noInstallments": "لا توجد أقساط",
+      "maintenanceDuesCount": "مستحقات الصيانة ({count})",
+      "noMaintenanceDues": "لا توجد مستحقات صيانة",
+      "maintenanceDuesSchedule": "جدول مستحقات الصيانة",
+      "loadingMaintenanceDues": "جاري تحميل مستحقات الصيانة...",
+      "recordMaintenancePayment": "تسجيل دفعة صيانة",
       "reviewsCount": "التقييمات ({count})",
       "noReviewsRecorded": "لا توجد تقييمات مسجّلة",
       "confirmSendSurvey": "إرسال رابط استبيان رضا لصاحب هذه الزيارة عبر واتساب؟",
@@ -5919,6 +5926,7 @@
         "popupBlocked": "المتصفح منع فتح نافذة الطباعة — فعّل النوافذ المنبثقة",
         "loadClientsError": "فشل تحميل بيانات العملاء",
         "loadInstallmentsError": "فشل تحميل الأقساط",
+        "loadMaintenanceDuesError": "فشل تحميل مستحقات الصيانة",
         "paymentRecorded": "تم تسجيل الدفعة بنجاح",
         "paymentError": "فشل في تسجيل الدفعة",
         "contractActivated": "تم تفعيل العقد",

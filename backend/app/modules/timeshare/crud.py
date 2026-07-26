@@ -351,6 +351,54 @@ def installments_summary(db: Session, branch_id: int) -> dict:
     return {"overdue_total": overdue or Decimal("0"), "pending_total": pending or Decimal("0")}
 
 
+def list_all_maintenance_dues(
+    db: Session, branch_id: int,
+    status: Optional[str] = None,
+    contract_id: Optional[int] = None,
+    fee_year: Optional[int] = None,
+    search: Optional[str] = None,
+    limit: int = 200,
+) -> list[TimeshareMaintenanceDue]:
+    """مرآة list_all_installments — نفس نمط الـ join/contains_eager بالظبط،
+    بس فلتر fee_year بدل month (مستحقات الصيانة سنوية مش شهرية)."""
+    from sqlalchemy.orm import contains_eager  # noqa: PLC0415
+
+    q = (
+        db.query(TimeshareMaintenanceDue)
+        .join(TimeshareContract, TimeshareContract.id == TimeshareMaintenanceDue.contract_id)
+        .options(contains_eager(TimeshareMaintenanceDue.contract))
+        .filter(TimeshareContract.branch_id == branch_id)
+    )
+    if status:
+        q = q.filter(TimeshareMaintenanceDue.status == status)
+    if contract_id:
+        q = q.filter(TimeshareMaintenanceDue.contract_id == contract_id)
+    if fee_year:
+        q = q.filter(TimeshareMaintenanceDue.fee_year == fee_year)
+    if search:
+        q = q.filter(TimeshareContract.customer_name.ilike(f"%{search}%"))
+    return q.order_by(TimeshareMaintenanceDue.due_date.desc()).limit(limit).all()
+
+
+def maintenance_dues_summary(db: Session, branch_id: int) -> dict:
+    """مرآة installments_summary."""
+    from sqlalchemy import func  # noqa: PLC0415
+
+    overdue = (
+        db.query(func.coalesce(func.sum(TimeshareMaintenanceDue.amount), 0))
+        .join(TimeshareContract, TimeshareContract.id == TimeshareMaintenanceDue.contract_id)
+        .filter(TimeshareContract.branch_id == branch_id, TimeshareMaintenanceDue.status == "overdue")
+        .scalar()
+    )
+    pending = (
+        db.query(func.coalesce(func.sum(TimeshareMaintenanceDue.amount), 0))
+        .join(TimeshareContract, TimeshareContract.id == TimeshareMaintenanceDue.contract_id)
+        .filter(TimeshareContract.branch_id == branch_id, TimeshareMaintenanceDue.status == "pending")
+        .scalar()
+    )
+    return {"overdue_total": overdue or Decimal("0"), "pending_total": pending or Decimal("0")}
+
+
 def stats_by_partner(db: Session, branch_id: int) -> list:
     """
     عقود نشطة (غير ملغاة) مجمّعة حسب الشريك — مع صافي حصة المنتجع

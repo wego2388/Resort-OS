@@ -5791,7 +5791,8 @@
         "dashboard": "Dashboard",
         "calendar": "Calendar",
         "clients": "Clients",
-        "installments": "Installments"
+        "installments": "Installments",
+        "maintenance": "Maintenance"
       },
       "activeContracts": "Active contracts",
       "collectionRate": "Collection rate",
@@ -5850,7 +5851,8 @@
         "amount": "Amount",
         "status": "Status",
         "customer": "Customer",
-        "contract": "Contract"
+        "contract": "Contract",
+        "year": "Year"
       },
       "pay": "Pay",
       "recordPayment": "Record payment",
@@ -5896,6 +5898,11 @@
       "sentDone": "Sent",
       "installmentsCount": "Installments ({count})",
       "noInstallments": "No installments",
+      "maintenanceDuesCount": "Maintenance dues ({count})",
+      "noMaintenanceDues": "No maintenance dues",
+      "maintenanceDuesSchedule": "Maintenance dues schedule",
+      "loadingMaintenanceDues": "Loading maintenance dues...",
+      "recordMaintenancePayment": "Record maintenance payment",
       "reviewsCount": "Reviews ({count})",
       "noReviewsRecorded": "No reviews recorded",
       "confirmSendSurvey": "Send a satisfaction survey link to this visit's guest via WhatsApp?",
@@ -5919,6 +5926,7 @@
         "popupBlocked": "The browser blocked the print window — enable pop-ups",
         "loadClientsError": "Failed to load client data",
         "loadInstallmentsError": "Failed to load installments",
+        "loadMaintenanceDuesError": "Failed to load maintenance dues",
         "paymentRecorded": "Payment recorded successfully",
         "paymentError": "Failed to record the payment",
         "contractActivated": "Contract activated",

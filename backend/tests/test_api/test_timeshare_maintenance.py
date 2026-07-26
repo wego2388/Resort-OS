@@ -291,6 +291,41 @@ class TestPayInstallmentUnfreezeBugFix:
         )
 
 
+class TestListMaintenanceDuesForBranch:
+    """مرآة list_installments — قايمة عبر الفرع كله (شاشة تاب "الصيانة")،
+    بعكس crud.list_maintenance_dues اللي بتاعة عقد واحد بس."""
+
+    def test_lists_all_dues_across_contracts(self, db, branch):
+        c1 = make_contract_with_maintenance(db, branch, maintenance_fee=Decimal("2000"), contract_date=date(2026, 1, 10))
+        c2 = make_contract_with_maintenance(db, branch, maintenance_fee=Decimal("3000"), contract_date=date(2026, 2, 5))
+
+        result = services.list_maintenance_dues_for_branch(db, branch.id)
+        assert result["total"] == 2
+        contract_ids = {d.contract_id for d in result["maintenance_dues"]}
+        assert contract_ids == {c1.id, c2.id}
+
+    def test_filters_by_status(self, db, branch):
+        contract = make_contract_with_maintenance(db, branch, contract_date=date(2026, 1, 10))
+        due = crud.list_maintenance_dues(db, contract.id)[0]
+        services.pay_maintenance_due(db, due.id, PayMaintenanceDueRequest(paid_amount=due.amount, payment_method="cash"))
+
+        result = services.list_maintenance_dues_for_branch(db, branch.id, status="paid")
+        assert result["total"] == 1
+        result_pending = services.list_maintenance_dues_for_branch(db, branch.id, status="pending")
+        assert result_pending["total"] == 0
+
+    def test_summary_overdue_total(self, db, branch):
+        contract = make_contract_with_maintenance(db, branch, contract_date=date(2020, 1, 10))
+        due = crud.list_maintenance_dues(db, contract.id)[0]
+        due.due_date = date(2020, 1, 10)
+        db.flush()
+        _mark_overdue(db, date.today())
+        db.commit()
+
+        result = services.list_maintenance_dues_for_branch(db, branch.id)
+        assert result["summary"]["overdue_total"] == due.amount
+
+
 class TestCreateVisitRejectsForMaintenanceOverdue:
 
     def test_rejected_with_maintenance_specific_message(self, db, branch):

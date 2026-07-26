@@ -159,6 +159,34 @@ def download_monthly_collection_report(
 
 # ── Maintenance Dues (رسوم الصيانة السنوية) ───────────────────────────
 
+@router.get("/timeshare/maintenance-dues", response_model=None)
+def list_maintenance_dues_for_branch(
+    db: DbDep, _=Depends(get_timeshare_user),
+    branch_id: int = Query(...),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    contract_id: Optional[int] = Query(None),
+    fee_year: Optional[int] = Query(None),
+    search: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=1000),
+):
+    """مرآة GET /timeshare/installments — قايمة مستحقات صيانة عبر الفرع كله
+    لشاشة تاب "الصيانة" الإدارية."""
+    result = services.list_maintenance_dues_for_branch(db, branch_id, status_filter, contract_id, fee_year, search, limit)
+    dues = []
+    for d in result["maintenance_dues"]:
+        read = TimeshareMaintenanceDueRead.model_validate(d)
+        if d.contract is not None:
+            read.customer_name = d.contract.customer_name
+            read.customer_phone = d.contract.customer_phone
+            read.room_type = d.contract.room_type
+        dues.append(read)
+    return {
+        "maintenance_dues": dues,
+        "total": result["total"],
+        "summary": {k: float(v) for k, v in result["summary"].items()},
+    }
+
+
 @router.get("/timeshare/contracts/{contract_id}/maintenance-dues", response_model=list[TimeshareMaintenanceDueRead])
 def list_maintenance_dues(contract_id: int, db: DbDep, _=Depends(get_timeshare_user)):
     return [TimeshareMaintenanceDueRead.model_validate(d) for d in crud.list_maintenance_dues(db, contract_id)]

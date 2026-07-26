@@ -34,6 +34,11 @@ interface Installment {
   amount: number; paid_amount: number; status: string
   customer_name?: string; customer_phone?: string; room_type?: string
 }
+interface MaintenanceDue {
+  id: number; contract_id: number; fee_year: number; due_date: string
+  amount: number; paid_amount: number; status: string
+  customer_name?: string; customer_phone?: string; room_type?: string
+}
 interface Contract {
   id: number; contract_number: string; customer_name: string; customer_phone: string | null
   customer_email: string | null; customer_national_id?: string | null; room_type: string; week_number: number | null
@@ -43,6 +48,7 @@ interface Contract {
   nationality: string | null; address: string | null; rci_included: boolean
   partner_company: string | null; maintenance_fee: number
   installments_list: Installment[]
+  maintenance_dues_list: MaintenanceDue[]
   collected?: number; overdue_amount?: number
   unit_id: number | null
 }
@@ -81,6 +87,7 @@ const TABS = computed(() => [
   { id: 'calendar', icon: '📅', label: t('backoffice.timeshare.tabs.calendar') },
   { id: 'clients', icon: '👤', label: t('backoffice.timeshare.tabs.clients') },
   { id: 'installments', icon: '💰', label: t('backoffice.timeshare.tabs.installments') },
+  { id: 'maintenance', icon: '🛠️', label: t('backoffice.timeshare.tabs.maintenance') },
 ])
 const activeTab = ref('dashboard')
 const loading = ref(false)
@@ -125,6 +132,9 @@ const profileModal = reactive({
 const profileCustomerName = computed(() => profileModal.contracts[0]?.customer_name ?? '')
 const profileAllInstallments = computed(() =>
   profileModal.contracts.flatMap(c => (c.installments_list ?? []).map(i => ({ ...i, contract_number: c.contract_number }))),
+)
+const profileAllMaintenanceDues = computed(() =>
+  profileModal.contracts.flatMap(c => (c.maintenance_dues_list ?? []).map(d => ({ ...d, contract_number: c.contract_number }))),
 )
 const profileTotals = computed(() => {
   const totals = { total_value: 0, collected: 0, overdue: 0, pending: 0 }
@@ -327,6 +337,19 @@ const payModal = reactive({
   amount: 0, method: 'cash', receipt_number: '',
 })
 
+// ── Maintenance Dues ─────────────────────────────────────────────────────
+const maintenanceDues = ref<MaintenanceDue[]>([])
+const maintSummary = ref({ overdue_total: 0, pending_total: 0 })
+const maintLoading = ref(false)
+const maintStatus = ref('overdue')
+const maintSearch = ref('')
+
+// ── Maintenance Pay Modal ────────────────────────────────────────────────
+const maintPayModal = reactive({
+  open: false, saving: false, due_id: 0, customer_name: '', due_amount: 0,
+  amount: 0, method: 'cash', receipt_number: '',
+})
+
 // ── Import Modal ─────────────────────────────────────────────────────────
 const importModal = reactive({ open: false, uploading: false, result: null as ImportResult | null, file: null as File | null })
 
@@ -499,9 +522,21 @@ async function loadInstallments() {
   } catch (e) { toast.error(t('backoffice.timeshare.msg.loadInstallmentsError')) } finally { installLoading.value = false }
 }
 
+async function loadMaintenanceDues() {
+  maintLoading.value = true
+  try {
+    const params: Record<string, string | number | undefined> = { branch_id: branchId, limit: 300 }
+    if (maintStatus.value) params.status = maintStatus.value
+    if (maintSearch.value) params.search = maintSearch.value
+    const r = await api.get('/api/v1/timeshare/maintenance-dues', { params })
+    maintenanceDues.value = r.data.maintenance_dues ?? []
+    maintSummary.value = r.data.summary ?? { overdue_total: 0, pending_total: 0 }
+  } catch (e) { toast.error(t('backoffice.timeshare.msg.loadMaintenanceDuesError')) } finally { maintLoading.value = false }
+}
+
 async function refreshAll() {
   loading.value = true
-  await Promise.all([loadSummary(), loadCalendar(), loadClients(), loadInstallments(), loadUnits()])
+  await Promise.all([loadSummary(), loadCalendar(), loadClients(), loadInstallments(), loadMaintenanceDues(), loadUnits()])
   loading.value = false
 }
 
@@ -534,6 +569,37 @@ async function submitPayment() {
     await Promise.all([loadSummary(), loadInstallments(), loadClients()])
   } catch (e: unknown) { toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.paymentError')) }
   finally { payModal.saving = false }
+}
+
+// ── Maintenance Pay ──────────────────────────────────────────────────────
+function openMaintenancePayModal(due: MaintenanceDue) {
+  Object.assign(maintPayModal, {
+    open: true, saving: false, due_id: due.id,
+    customer_name: due.customer_name ?? '',
+    due_amount: due.amount - due.paid_amount,
+    amount: due.amount - due.paid_amount, method: 'cash', receipt_number: '',
+  })
+}
+
+function openMaintenancePayModalForContract(c: Contract) {
+  const next = c.maintenance_dues_list?.find(d => d.status !== 'paid')
+  if (!next) return
+  openMaintenancePayModal({ ...next, customer_name: c.customer_name })
+}
+
+async function submitMaintenancePayment() {
+  if (!maintPayModal.amount || maintPayModal.saving) return
+  maintPayModal.saving = true
+  try {
+    await api.post(`/api/v1/timeshare/maintenance-dues/${maintPayModal.due_id}/pay`, {
+      paid_amount: maintPayModal.amount, payment_method: maintPayModal.method,
+      receipt_number: maintPayModal.receipt_number || undefined,
+    })
+    maintPayModal.open = false
+    toast.success(t('backoffice.timeshare.msg.paymentRecorded'))
+    await Promise.all([loadSummary(), loadMaintenanceDues(), loadClients()])
+  } catch (e: unknown) { toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.paymentError')) }
+  finally { maintPayModal.saving = false }
 }
 
 // ── Status / Cancel ──────────────────────────────────────────────────────
@@ -927,8 +993,33 @@ onMounted(refreshAll)
               </div>
             </div>
 
+            <div v-if="c.maintenance_dues_list?.length">
+              <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.maintenanceDuesSchedule') }}</p>
+              <div class="overflow-x-auto">
+                <table class="w-full min-w-[520px] text-xs">
+                  <thead><tr class="text-gray-500 dark:text-gray-400 border-b border-stone-100 dark:border-border/50">
+                    <th class="text-start py-2 ps-1">{{ t('backoffice.timeshare.column.year') }}</th><th class="text-start py-2">{{ t('backoffice.timeshare.column.dueDate') }}</th>
+                    <th class="text-start py-2">{{ t('backoffice.timeshare.column.amount') }}</th><th class="text-start py-2">{{ t('backoffice.timeshare.column.status') }}</th><th></th>
+                  </tr></thead>
+                  <tbody class="divide-y divide-stone-100">
+                    <tr v-for="d in c.maintenance_dues_list" :key="d.id">
+                      <td class="py-2 ps-1 text-gray-500 dark:text-gray-400">{{ d.fee_year }}</td>
+                      <td class="py-2 text-gray-600 dark:text-gray-300">{{ formatDateValue(d.due_date) }}</td>
+                      <td class="py-1.5 font-bold">{{ fmt(d.amount) }}</td>
+                      <td class="py-1.5"><AppBadge size="sm" :variant="payStatusVariant[d.status] ?? 'neutral'">{{ payLabel(d.status) }}</AppBadge></td>
+                      <td class="py-1.5">
+                        <button v-if="d.status !== 'paid'" @click="openMaintenancePayModal({ ...d, customer_name: c.customer_name })"
+                          class="min-h-[44px] px-3 py-2 rounded-lg bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60">{{ t('backoffice.timeshare.pay') }}</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             <div class="flex flex-wrap gap-2 pt-2 border-t border-stone-100 dark:border-border/50">
               <button @click="openPayModalForContract(c)" class="min-h-[44px] px-4 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-sm font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60">💰 {{ t('backoffice.timeshare.recordPayment') }}</button>
+              <button v-if="c.maintenance_dues_list?.some(d => d.status !== 'paid')" @click="openMaintenancePayModalForContract(c)" class="min-h-[44px] px-4 py-2 rounded-xl bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300 text-sm font-bold border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-950/60">🛠️ {{ t('backoffice.timeshare.recordMaintenancePayment') }}</button>
               <a v-if="c.customer_phone" :href="`tel:${c.customer_phone}`" class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-xl bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 text-sm font-bold border border-sky-200 dark:border-sky-800 hover:bg-sky-100 dark:hover:bg-sky-950/60">📞 {{ t('backoffice.timeshare.call') }}</a>
               <button v-if="auth.hasRole('manager') && c.status === 'active'" @click="toggleStatus(c)" :disabled="statusSaving === c.id"
                 class="min-h-[44px] px-4 py-2 rounded-xl bg-yellow-50 text-yellow-700 dark:bg-yellow-950/40 dark:text-yellow-300 text-sm font-bold border border-yellow-200 dark:border-yellow-800 hover:bg-yellow-100 dark:hover:bg-yellow-950/60 disabled:opacity-40">⏸️ {{ t('backoffice.timeshare.suspend') }}</button>
@@ -991,6 +1082,55 @@ onMounted(refreshAll)
       </AppCard>
     </div>
 
+    <!-- ══ MAINTENANCE DUES ══ -->
+    <div v-if="activeTab === 'maintenance'" class="space-y-4">
+      <div class="flex flex-wrap gap-3">
+        <div class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-900 text-sm font-bold text-red-700 dark:text-red-300">🔴 {{ t('backoffice.timeshare.overdueColon', { amount: fmt(maintSummary.overdue_total) }) }}</div>
+        <div class="min-h-[44px] inline-flex items-center px-4 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 text-sm font-bold text-amber-700 dark:text-amber-300">⏳ {{ t('backoffice.timeshare.pendingColon', { amount: fmt(maintSummary.pending_total) }) }}</div>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <input v-model="maintSearch" @keyup.enter="loadMaintenanceDues" :placeholder="t('backoffice.timeshare.searchByCustomerName')"
+          class="min-h-[44px] flex-1 min-w-48 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2 outline-none" />
+        <select v-model="maintStatus" :aria-label="t('backoffice.timeshare.filterByStatus')" @change="loadMaintenanceDues" class="min-h-[44px] bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2">
+          <option value="">{{ t('backoffice.timeshare.allStatuses') }}</option><option value="overdue">🔴 {{ t('backoffice.timeshare.payStatus.overdue') }}</option>
+          <option value="pending">⏳ {{ t('backoffice.timeshare.payStatus.pending') }}</option><option value="paid">✅ {{ t('backoffice.timeshare.payStatus.paid') }}</option><option value="partial">🔵 {{ t('backoffice.timeshare.payStatus.partial') }}</option>
+        </select>
+      </div>
+
+      <LoadingState v-if="maintLoading" :label="t('backoffice.timeshare.loadingMaintenanceDues')" />
+      <AppCard v-else padding="none">
+        <EmptyState v-if="!maintenanceDues.length" icon="🛠️" :title="t('backoffice.timeshare.noResults')" />
+        <div v-else class="overflow-x-auto">
+        <table class="w-full min-w-[720px] text-sm">
+          <thead class="bg-stone-50 dark:bg-gray-800/60"><tr>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.customer') }}</th>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.year') }}</th>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.dueDate') }}</th>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.amount') }}</th>
+            <th class="text-start px-4 py-3 text-gray-500 dark:text-gray-400 font-bold">{{ t('backoffice.timeshare.column.status') }}</th>
+            <th class="px-4 py-3"></th>
+          </tr></thead>
+          <tbody class="divide-y divide-stone-100 dark:divide-border">
+            <tr v-for="d in maintenanceDues" :key="d.id" :class="d.status === 'overdue' ? 'bg-red-50/50 dark:bg-red-950/20' : ''">
+              <td class="px-4 py-3">
+                <div class="font-bold text-gray-900 dark:text-gray-100">{{ d.customer_name }}</div>
+                <div class="text-xs text-gray-500 dark:text-gray-400">{{ d.customer_phone }}</div>
+              </td>
+              <td class="px-4 py-3 text-gray-600 dark:text-gray-300">{{ d.fee_year }}</td>
+              <td class="px-4 py-3"><span :class="d.status === 'overdue' ? 'text-red-600 dark:text-red-300 font-bold' : 'text-gray-600 dark:text-gray-300'">{{ formatDateValue(d.due_date) }}</span></td>
+              <td class="px-4 py-3 font-bold">{{ fmt(d.amount) }}</td>
+              <td class="px-4 py-3"><AppBadge size="sm" :variant="payStatusVariant[d.status] ?? 'neutral'">{{ payLabel(d.status) }}</AppBadge></td>
+              <td class="px-4 py-3">
+                <button v-if="d.status !== 'paid'" @click="openMaintenancePayModal(d)"
+                  class="min-h-[44px] px-3 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-xs font-bold border border-green-200 dark:border-green-800 hover:bg-green-100">💰 {{ t('backoffice.timeshare.pay') }}</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </AppCard>
+    </div>
+
     <!-- ══ TRANSFER UNIT MODAL (#10) ══ -->
     <AppModal :open="transferModal.open" :title="`🔑 ${t('backoffice.timeshare.transferUnit')}`" size="sm" @close="transferModal.open = false">
       <div v-if="transferModal.contract" class="space-y-3">
@@ -1038,6 +1178,37 @@ onMounted(refreshAll)
             ✅ {{ t('backoffice.timeshare.confirmPayment') }}
           </AppButton>
           <AppButton variant="ghost" @click="payModal.open = false">{{ t('backoffice.timeshare.cancelAction') }}</AppButton>
+        </div>
+      </template>
+    </AppModal>
+
+    <!-- ══ MAINTENANCE PAY MODAL ══ -->
+    <AppModal :open="maintPayModal.open" :title="`🛠️ ${t('backoffice.timeshare.recordMaintenancePayment')}`" size="sm" @close="maintPayModal.open = false">
+      <p class="text-sm text-gray-600 dark:text-gray-300 mb-4">{{ maintPayModal.customer_name }}</p>
+      <div class="space-y-3">
+        <div>
+          <label class="text-xs text-gray-600 dark:text-gray-300 font-semibold block mb-1">{{ t('backoffice.timeshare.amountPaid') }}</label>
+          <input v-model.number="maintPayModal.amount" type="number" min="1" :placeholder="t('backoffice.timeshare.duePlaceholder', { amount: fmt(maintPayModal.due_amount) })"
+            class="min-h-[44px] w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none focus:border-primary-500" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-600 dark:text-gray-300 font-semibold block mb-1">{{ t('backoffice.timeshare.paymentMethod') }}</label>
+          <select v-model="maintPayModal.method" class="min-h-[44px] w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none">
+            <option value="cash">{{ t('backoffice.timeshare.paymentMethodCash') }}</option><option value="card">{{ t('backoffice.timeshare.paymentMethodCard') }}</option>
+            <option value="bank_transfer">{{ t('backoffice.timeshare.paymentMethodBankTransfer') }}</option><option value="other">{{ t('backoffice.timeshare.paymentMethodOther') }}</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs text-gray-600 dark:text-gray-300 font-semibold block mb-1">{{ t('backoffice.timeshare.receiptNumberOptional') }}</label>
+          <input v-model="maintPayModal.receipt_number" class="min-h-[44px] w-full bg-stone-50 dark:bg-gray-800/60 border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 text-sm rounded-xl px-4 py-2.5 outline-none" />
+        </div>
+      </div>
+      <template #footer>
+        <div class="flex gap-3">
+          <AppButton variant="primary" block :loading="maintPayModal.saving" :disabled="!maintPayModal.amount" @click="submitMaintenancePayment">
+            ✅ {{ t('backoffice.timeshare.confirmPayment') }}
+          </AppButton>
+          <AppButton variant="ghost" @click="maintPayModal.open = false">{{ t('backoffice.timeshare.cancelAction') }}</AppButton>
         </div>
       </template>
     </AppModal>
@@ -1164,6 +1335,28 @@ onMounted(refreshAll)
                 <td class="py-2 text-gray-600 dark:text-gray-300">{{ formatDateValue(p.due_date) }}</td>
                 <td class="py-2 font-bold">{{ fmt(p.amount) }}</td>
                 <td class="py-2"><AppBadge size="sm" :variant="payStatusVariant[p.status] ?? 'neutral'">{{ payLabel(p.status) }}</AppBadge></td>
+              </tr>
+            </tbody>
+          </table>
+          </div>
+        </div>
+
+        <!-- Maintenance dues across all contracts -->
+        <div>
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mb-2">{{ t('backoffice.timeshare.maintenanceDuesCount', { count: profileAllMaintenanceDues.length }) }}</p>
+          <EmptyState v-if="!profileAllMaintenanceDues.length" icon="🛠️" :title="t('backoffice.timeshare.noMaintenanceDues')" />
+          <div v-else class="overflow-x-auto">
+          <table class="w-full min-w-[520px] text-xs">
+            <thead><tr class="text-gray-500 dark:text-gray-400 border-b border-stone-100 dark:border-border/50">
+              <th class="text-start py-2 ps-1">{{ t('backoffice.timeshare.column.contract') }}</th><th class="text-start py-2">{{ t('backoffice.timeshare.column.year') }}</th>
+              <th class="text-start py-2">{{ t('backoffice.timeshare.column.amount') }}</th><th class="text-start py-2">{{ t('backoffice.timeshare.column.status') }}</th>
+            </tr></thead>
+            <tbody class="divide-y divide-stone-100 dark:divide-border">
+              <tr v-for="d in profileAllMaintenanceDues" :key="d.id">
+                <td class="py-2 ps-1 text-gray-500 dark:text-gray-400">{{ d.contract_number }}</td>
+                <td class="py-2 text-gray-600 dark:text-gray-300">{{ d.fee_year }}</td>
+                <td class="py-2 font-bold">{{ fmt(d.amount) }}</td>
+                <td class="py-2"><AppBadge size="sm" :variant="payStatusVariant[d.status] ?? 'neutral'">{{ payLabel(d.status) }}</AppBadge></td>
               </tr>
             </tbody>
           </table>

@@ -350,6 +350,22 @@ def _audit_maintenance_payment(
         pass
 
 
+def list_maintenance_dues_for_branch(
+    db: Session, branch_id: int,
+    status: Optional[str] = None, contract_id: Optional[int] = None,
+    fee_year: Optional[int] = None, search: Optional[str] = None, limit: int = 200,
+) -> dict:
+    """مرآة list_installments — قايمة مستحقات صيانة عبر الفرع كله (لشاشة
+    تاب "الصيانة" الإدارية)، بعكس crud.list_maintenance_dues اللي بتاعة
+    عقد واحد بس (مستخدمة في بروفايل العميل)."""
+    items = crud.list_all_maintenance_dues(db, branch_id, status, contract_id, fee_year, search, limit)
+    return {
+        "maintenance_dues": items,
+        "total": len(items),
+        "summary": crud.maintenance_dues_summary(db, branch_id),
+    }
+
+
 def generate_annual_maintenance_dues(db: Session, branch_id: int, fee_year: int) -> int:
     """نقطة الدخول الوحيدة اللي الـ router بيكلّمها — بتفوّض للمنطق الفعلي
     في app.tasks.timeshare_tasks (نفس مكان _mark_overdue بالظبط، الاتفاقية
