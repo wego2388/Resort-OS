@@ -55,8 +55,8 @@ def make_finance_accounts(db, branch):
     """يزرع الحسابات المحاسبية المطلوبة لدورة PMS:
       1100 — كاش (Dr في checkout لو payment_method=cash)
       1110 — بنك/كارت (Dr في checkout لو payment_method=card)
-      1150 — ذمم الفوليو (Cr في checkin Dr.1150/Cr.4100 + Dr في checkout Dr.1100/Cr.1150)
-      4100 — إيراد الغرف (Cr في checkin Dr.1150/Cr.4100)
+      1150 — ذمم الفوليو (Cr يوميًا في Night Audit Dr.1150/Cr.4100 + Dr في checkout Dr.1100/Cr.1150)
+      4100 — إيراد الغرف (Cr يوميًا في Night Audit — مفيش قيد عند check-in نفسه)
     """
     from app.modules.finance.models import Account
     cash    = Account(branch_id=branch.id, code="1100", name="Cash",        account_type="asset")
@@ -577,6 +577,65 @@ class TestNightAudit:
         with pytest.raises(ValueError, match="مكتمل مسبقاً"):
             services.run_night_audit(db, branch.id, audit_date)
 
+    def test_full_stay_cycle_does_not_double_count_room_revenue(self, db):
+        """باج ازدواج إيراد حقيقي كان هنا (اتصلح 2026-07-26): check-in كان
+        بيسجّل Dr.1150/Cr.4100 بقيمة total_rate الكاملة **بالإضافة** لقيود
+        Night Audit اليومية اللي بتسجّل نفس الشيء تدريجيًا — فإيراد إقامة
+        بتعدّي دورة Night Audit واحدة على الأقل كان بيتضاعف تقريبًا في 4100،
+        و1150 كانت بتفضل عندها رصيد متبقي دايم بعد الـ checkout لأنه بيسوّي
+        قيمة total_rate مرة واحدة بس مقابل رصيد اتبني مرتين. هنا نعمل دورة
+        إقامة كاملة (checkin → Night Audit لكل ليلة → checkout) ونتحقق إن
+        4100 اتقيّد بالظبط بقيمة total_rate، و1150 رجع صفر تمامًا بعد
+        التسوية."""
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
+
+        branch = make_branch(db)
+        make_finance_accounts(db, branch)
+        rt = make_room_type(db, branch)  # base_rate = 500.00
+        room = make_room(db, branch, rt)
+
+        ci = date.today()
+        data = BookingCreate(
+            branch_id=branch.id, guest_name="ضيف اختبار الازدواج",
+            check_in=ci, check_out=ci + timedelta(days=2),  # ليلتين
+            adults=1, room_ids=[room.id],
+        )
+        booking = services.create_booking(db, data)
+        assert booking.total_rate == Decimal("1000.00")  # 500 × 2 ليالي
+
+        services.checkin_booking(db, booking.id)
+        services.run_night_audit(db, branch.id, ci)                       # ليلة 1
+        services.run_night_audit(db, branch.id, ci + timedelta(days=1))   # ليلة 2
+        services.checkout_booking(db, booking.id)
+
+        revenue_account = db.query(Account).filter_by(branch_id=branch.id, code="4100").first()
+        folio_account = db.query(Account).filter_by(branch_id=branch.id, code="1150").first()
+
+        total_revenue_credited = (
+            db.query(JournalLine)
+            .join(JournalEntry, JournalLine.entry_id == JournalEntry.id)
+            .filter(JournalEntry.branch_id == branch.id, JournalLine.account_id == revenue_account.id)
+            .with_entities(JournalLine.credit)
+            .all()
+        )
+        assert sum(c for (c,) in total_revenue_credited) == booking.total_rate, (
+            "إيراد الغرف (4100) لازم يتقيّد بقيمة total_rate بالظبط — مرة واحدة فقط عبر "
+            "Night Audit، مش مضاعف بقيد check-in منفصل"
+        )
+
+        folio_lines = (
+            db.query(JournalLine)
+            .join(JournalEntry, JournalLine.entry_id == JournalEntry.id)
+            .filter(JournalEntry.branch_id == branch.id, JournalLine.account_id == folio_account.id)
+            .with_entities(JournalLine.debit, JournalLine.credit)
+            .all()
+        )
+        net_folio_balance = sum(d - c for d, c in folio_lines)
+        assert net_folio_balance == Decimal("0.00"), (
+            "ذمم الفوليو (1150) لازم ترجع صفر تمامًا بعد checkout — أي رصيد متبقي يعني "
+            "checkout ما سوّاش كل اللي Night Audit سجّله"
+        )
+
 
 class TestTimezoneBugFixes:
     """باج توقيت حقيقي (نفس فئة KDS "urgent"/dashboard "إيراد اليوم"): أي
@@ -599,9 +658,10 @@ class TestTimezoneBugFixes:
         بالفعل دخل يوم جديد، قيد تسوية الفوليو عند الخروج لازم يتسجّل بتاريخ
         القاهرة (اليوم الجديد) مش بتاريخ الـ UTC القديم.
 
-        الدورة الجديدة:
-          checkin  → Dr.1150 / Cr.4100  source="pms_checkin"
-          checkout → Dr.1100 / Cr.1150  source="pms"
+        الدورة: Night Audit يومي → Dr.1150/Cr.4100 (الاعتراف بالإيراد) |
+        checkout → Dr.1100/Cr.1150 source="pms" (تسوية الذمة فقط). مفيش قيد
+        عند check-in نفسه — راجع تعليق checkin_booking لسبب حذفه (باج ازدواج
+        إيراد حقيقي).
         """
         import app.resort_os.timezone_utils as tzutils
         from app.modules.finance.models import JournalEntry
@@ -626,14 +686,13 @@ class TestTimezoneBugFixes:
         assert checkout_entry is not None, "لازم يكون فيه قيد checkout (Dr.1100/Cr.1150)"
         assert checkout_entry.entry_date == forced_date
 
-        # قيد checkin: Dr.1150 / Cr.4100 — اعتراف بالإيراد
+        # مفيش قيد إيراد عند check-in — الإيراد بيتسجّل بس عبر Night Audit
         checkin_entry = (
             db.query(JournalEntry)
             .filter(JournalEntry.source == "pms_checkin", JournalEntry.source_id == booking.id)
             .first()
         )
-        assert checkin_entry is not None, "لازم يكون فيه قيد checkin (Dr.1150/Cr.4100)"
-        assert checkin_entry.entry_date == forced_date
+        assert checkin_entry is None, "check-in ميفروضش يسجّل أي قيد إيراد (ده مصدر الازدواج)"
 
     def test_local_today_returns_cairo_date_when_server_utc_is_still_yesterday(self, monkeypatch):
         """اختبار مباشر للدالة المشتركة نفسها: 2026-07-05 23:30 UTC = فعليًا

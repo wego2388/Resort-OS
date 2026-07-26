@@ -200,13 +200,16 @@ def checkin_booking(
         ))
         booking.folio_id = folio.id
 
-    # قيد الإيراد المستحق عند الدخول: Dr. ذمم الفوليو (1150) / Cr. إيراد الغرف (4100)
-    # — يُثبّت الإيراد الكامل للإقامة فور تسجيل الدخول الفعلي (accrual basis).
-    # Night Audit يُكرّر نفس القيد يومياً بالقيم اليومية؛ المبلغ الكامل هنا
-    # هو "الاعتراف الأولي" بالإيراد، واليومي هو الاعتراف التدريجي الدقيق.
-    # لو بيئة مش مهيّأة (حسابات ناقصة) — نتجاوز بصمت (strict=False) عشان
-    # check-in ميتوقفش.
-    _post_checkin_journal(db, booking)
+    # ⚠️ مقصودًا مفيش قيد إيراد هنا عند check-in. الإيراد بيتسجّل تدريجيًا
+    # يوميًا في run_night_audit (Dr.1150/Cr.4100 لكل ليلة إقامة فعلية) —
+    # ده هو الاعتراف المحاسبي الوحيد بالإيراد. قيد check-in منفصل كان بيسجّل
+    # نفس المبلغ مرتين (باج حقيقي اتصلح 2026-07-26: كان بيحط total_rate
+    # كامل هنا **زيادة** على ما يسجّله Night Audit يوميًا، فإيراد الغرف كان
+    # بيتضاعف تقريبًا لأي إقامة بتعدّي دورة Night Audit واحدة على الأقل،
+    # وذمم الفوليو 1150 كانت بتفضل عندها رصيد متبقي دايم بعد كل checkout
+    # لأن checkout_booking بيسوّي بس قيمة total_rate مرة واحدة). راجع §18
+    # في CLAUDE.md — التصميم النهائي (تمييز إيراد التايم شير عن إيراد
+    # الحجز الفندقي في نفس الحساب) لسه محتاج مراجعة صريحة مع Mohamed.
 
     db.commit()
     db.refresh(booking)
@@ -276,36 +279,6 @@ def checkout_booking(db: Session, booking_id: int) -> Booking:
     db.commit()
     db.refresh(booking)
     return booking
-
-
-def _post_checkin_journal(db: "Session", booking: "Booking") -> None:
-    """قيد الاعتراف بالإيراد عند الدخول: Dr. ذمم الفوليو (1150) / Cr. إيراد الغرف (4100).
-
-    يُثبّت الإيراد الكامل للإقامة فور check-in (accrual basis) — الضيف صار
-    مدياناً بالمبلغ الكامل منذ لحظة دخوله. Night Audit يُكرّر القيد يومياً
-    بالقيمة اليومية للمراقبة التشغيلية؛ checkout_booking يُسوّي الذمة.
-    strict=False عمداً: checkin ميتوقفش لو الحسابات مش مهيّأة.
-    """
-    from decimal import Decimal as _D  # noqa: PLC0415
-    from app.core.config import settings  # noqa: PLC0415
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
-    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
-
-    amount = booking.total_rate or _D("0")
-    if amount <= 0:
-        return
-
-    post_simple_revenue_journal(
-        db, booking.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code="1150",   # Dr. ذمم الفوليو — الضيف صار مديناً
-        credit_account_code="4100",  # Cr. إيراد الغرف — الإيراد اتحقق
-        amount=amount,
-        reference=f"CI-{booking.booking_number}",
-        description=f"اعتراف بإيراد الغرف عند الدخول — {booking.booking_number}",
-        source="pms_checkin", source_id=booking.id,
-        cost_center_code="ROOM",
-        strict=False,
-    )
 
 
 def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
