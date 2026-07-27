@@ -27,8 +27,9 @@ Authority, from highest to lowest:
 5. `wagdy.md` for current human priorities and explanation (not as proof of
    implementation).
 6. `PROJECT_STATUS.md` as a dated operational record.
-7. Historical plans such as `MASTER_TODO.md`, `FRONTEND_GAPS.md`,
-   `RESORT_OS_FULL_ANALYSIS.md`, and old sections of status documents.
+7. Historical plans such as `docs/archive/MASTER_TODO.md`,
+   `docs/archive/FRONTEND_GAPS.md`, `docs/archive/RESORT_OS_FULL_ANALYSIS.md`,
+   and old sections of status documents.
 
 Historical plans are context, not an automatically approved backlog. If a
 document conflicts with current code or a newer decision, report the conflict

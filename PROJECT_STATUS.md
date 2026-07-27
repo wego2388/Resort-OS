@@ -1613,7 +1613,8 @@ void payment) · Timeshare (`timeshare_agent` role + calendar/visits/report) · 
 
 **تحديث توثيقي:** `wagdy.md` كان لسه بيقول C-01/T-01/T-05/GuestAlertsBell "لم تبدأ" رغم
 إنها خلصت فعليًا في جلسة Kiro — اتصحّح. `MASTER_TODO.md`/`FRONTEND_GAPS.md`/`.kiro/AGENT.md`
-اتسابوا كمرجع تاريخي لنفس الجلسة (72/73 بند مُنجز في MASTER_TODO). نقطة الدخول
+اتسابوا كمرجع تاريخي لنفس الجلسة (72/73 بند مُنجز في MASTER_TODO؛ نُقلوا لاحقًا
+لـ`docs/archive/` في تنظيف 2026-07-28). نقطة الدخول
 الحالية لأي جلسة هي **`AGENTS.md` ثم `CLAUDE.md`**، والحالة التقنية المؤرخة هنا،
 وقرارات Mohamed في `docs/decisions/`، والشرح البشري الحالي في `wagdy.md` — مش
 ملفات الخطط التاريخية.
