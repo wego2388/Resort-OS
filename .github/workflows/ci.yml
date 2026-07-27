@@ -104,11 +104,17 @@ jobs:
 
       - name: Build (all apps — production)
         run: pnpm run build:all
+        env:
+          # CI verifies the production fail-closed contract without claiming a
+          # real resort domain. Deployment supplies the owner-confirmed origin.
+          VITE_PUBLIC_SITE_URL: https://public.example.invalid
 
   # ── Docker Compose Config Validation ──────────────────────────────────────
   docker-config:
     name: Docker Compose Config
     runs-on: ubuntu-22.04
+    env:
+      PUBLIC_SITE_URL: https://public.example.invalid
 
     steps:
       - uses: actions/checkout@v4

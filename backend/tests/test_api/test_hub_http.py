@@ -204,38 +204,63 @@ class TestOnlineBookingsEndpoints:
 class TestContactForm:
     """المنطق كله جوّه الراوتر نفسه (مش services.py) — لازم تست HTTP حقيقي."""
 
-    def test_submits_form_and_creates_crm_lead(self, client: TestClient, db):
+    def test_submits_service_form_without_silent_crm_lead(
+        self, client: TestClient, db, monkeypatch,
+    ):
+        from app.core.config import settings
+
         branch = make_branch_committed(db)
+        monkeypatch.setattr(
+            settings,
+            "CHAT_PUBLIC_HOST_BRANCH_MAP",
+            {"hub-http.test": branch.id},
+        )
         resp = client.post(
             "/api/v1/hub/contact",
+            headers={
+                "host": "hub-http.test",
+                "Idempotency-Key": "hub-http-service-0001",
+            },
             json={
-                "branch_id": branch.id, "full_name": "زائر مهتم", "phone": "+201009998888",
+                "full_name": "زائر مهتم", "phone": "+201009998888",
                 "subject": "استفسار عن الأسعار", "message": "عايز أعرف أسعار الغرف من فضلكم",
+                "source_page": "/contact", "purpose": "general_inquiry",
+                "service_contact_authorized": True,
+                "service_disclosure_version": "service-contact-2026-07-26.v1",
             },
         )
-        assert resp.status_code == 200
-        assert "form_id" in resp.json()
+        assert resp.status_code == 202
+        assert resp.json()["reference"].startswith("contact_")
 
         from app.modules.hub.models import ContactForm
-        form = db.query(ContactForm).filter(ContactForm.id == resp.json()["form_id"]).first()
+        form = db.query(ContactForm).filter(
+            ContactForm.public_reference == resp.json()["reference"]
+        ).first()
         assert form is not None
-        assert form.status == "converted"
-        assert form.lead_id is not None
+        assert form.status == "accepted"
+        assert form.lead_id is None
+        assert form.crm_sync_status == "not_requested"
 
-        from app.modules.crm.models import Lead
-        lead = db.query(Lead).filter(Lead.id == form.lead_id).first()
-        assert lead is not None
-        assert lead.full_name == "زائر مهتم"
+    def test_missing_required_field_returns_422(
+        self, client: TestClient, db, monkeypatch,
+    ):
+        from app.core.config import settings
 
-    def test_missing_required_field_returns_422(self, client: TestClient, db):
         branch = make_branch_committed(db)
+        monkeypatch.setattr(
+            settings,
+            "CHAT_PUBLIC_HOST_BRANCH_MAP",
+            {"hub-http.test": branch.id},
+        )
         resp = client.post(
             "/api/v1/hub/contact",
-            json={"branch_id": branch.id, "full_name": "بدون موضوع"},  # missing subject/message
+            headers={
+                "host": "hub-http.test",
+                "Idempotency-Key": "hub-http-invalid-0001",
+            },
+            json={"full_name": "بدون موضوع"},
         )
-        assert resp.status_code == 500 or resp.status_code == 422
-        # يقرأ data["subject"]/data["message"] مباشرة (dict خام مش Pydantic model)
-        # فبيرمي KeyError → 500 عام، مش 422 — موثّق هنا كسلوك حالي، مش تحسين مطلوب
+        assert resp.status_code == 422
 
 
 class TestBlogPosts:

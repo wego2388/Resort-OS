@@ -8,12 +8,16 @@
 // باج "الموديل والـ API موجودين، الفرونت إند صفر" الموثّقة قبل كده لموديولات
 // تانية — هنا الفجوة في الفرونت إند مش الباك إند.
 import { ref, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS } from '@resort-os/core'
 import { useAuthStore } from '@resort-os/core'
+import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppModal, AppButton, AppInput, useToast } from '@resort-os/ui'
 
 const auth = useAuthStore()
 const toast = useToast()
+const { t } = useI18n()
+const { formatMoney, formatTime } = useStaffFormat()
 
 // branchId اختياري — لو مش ممرور يُقرأ من auth store (السلوك الافتراضي).
 // تصريحه صريحًا هنا يسمح بـ: (1) استخدام الـ component في سياق branch محدد
@@ -52,14 +56,17 @@ const closeHandoverNote = ref('')
 // كل عملة لها قائمة فئات خاصة بها وعدد منفصل
 interface CurrencyGroup {
   code: string
-  label: string
   denominations: number[]
 }
 const CURRENCY_GROUPS: CurrencyGroup[] = [
-  { code: 'EGP', label: 'جنيه مصري',    denominations: [200, 100, 50, 20, 10, 5, 1] },
-  { code: 'USD', label: 'دولار أمريكي', denominations: [100, 50, 20, 10, 5, 1] },
-  { code: 'EUR', label: 'يورو',         denominations: [100, 50, 20, 10, 5, 1] },
+  { code: 'EGP', denominations: [200, 100, 50, 20, 10, 5, 1] },
+  { code: 'USD', denominations: [100, 50, 20, 10, 5, 1] },
+  { code: 'EUR', denominations: [100, 50, 20, 10, 5, 1] },
 ]
+// اسم العملة المترجم (مش رمزها ISO — الرمز نفسه بيتعرض زي ما هو دايمًا)
+function currencyLabel(code: string): string {
+  return t(`backoffice.shiftPanel.currency.${code}`, code)
+}
 
 // counts[currency][denomination] = quantity
 const counts = ref<Record<string, Record<number, number>>>(
@@ -116,7 +123,7 @@ const foreignCashPreview = computed(() =>
     )
     if (total === 0) return []
     const rate = fxRates.value[g.code]
-    return [{ code: g.code, label: g.label, total, egp: rate ? total * rate : null }]
+    return [{ code: g.code, total, egp: rate ? total * rate : null }]
   })
 )
 
@@ -152,7 +159,7 @@ async function fetchCurrentShift() {
     shift.value = data
   } catch (e: any) {
     if (e?.response?.status === 404) shift.value = null
-    else { toast.error('تعذّر تحميل حالة الوردية') }
+    else { toast.error(t('backoffice.shiftPanel.loadError')) }
   } finally { loading.value = false }
 }
 
@@ -171,7 +178,7 @@ async function confirmOpen() {
   // تحقق صريح: opening_float لازم يكون رقم صحيح >= 0
   const floatVal = parseFloat(openingFloat.value)
   if (isNaN(floatVal) || floatVal < 0) {
-    toast.error('رصيد الافتتاح لازم يكون رقم صحيح 0 أو أكبر')
+    toast.error(t('backoffice.shiftPanel.invalidOpeningFloat'))
     opening.value = false
     return
   }
@@ -183,10 +190,10 @@ async function confirmOpen() {
     })
     shift.value = data
     openModal.value = false
-    toast.success('تم فتح الوردية')
+    toast.success(t('backoffice.shiftPanel.openedSuccess'))
     emit('shift-changed')
   } catch (e: any) {
-    toast.error(e?.response?.data?.detail ?? 'تعذّر فتح الوردية')
+    toast.error(e?.response?.data?.detail ?? t('backoffice.shiftPanel.openError'))
   } finally { opening.value = false }
 }
 
@@ -218,7 +225,7 @@ function applyCloseResult(data: any) {
   if (data.reconciliation_ok === false && data.reconciliation_warning) {
     toast.warning(data.reconciliation_warning)
   } else {
-    toast.success('تم قفل الوردية')
+    toast.success(t('backoffice.shiftPanel.closedSuccess'))
   }
   emit('shift-changed')
 }
@@ -246,13 +253,8 @@ async function confirmClose() {
     // الوردية بتُقفل دايمًا الآن (مفيش رفض بسبب الفرق) — أي خطأ هنا حقيقي
     // (عدّ ناقص، سعر صرف مفقود، صلاحية) بيتعرض كتوست مباشر بالرسالة الكاملة.
     const detail: string = e?.response?.data?.detail ?? ''
-    toast.error(detail || 'تعذّر قفل الوردية — تحقق من الاتصال أو تواصل مع المدير')
+    toast.error(detail || t('backoffice.shiftPanel.closeError'))
   } finally { closing.value = false }
-}
-
-function fmtTime(iso?: string) {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
 }
 
 onMounted(fetchCurrentShift)
@@ -265,42 +267,42 @@ onMounted(fetchCurrentShift)
     </template>
     <template v-else-if="shift">
       <span class="hidden items-center gap-1.5 rounded-full bg-green-50 px-2.5 py-1 text-xs font-bold text-green-700 dark:bg-green-950/40 dark:text-green-300 md:flex">
-        🟢 وردية مفتوحة — {{ fmtTime(shift.opened_at) }}
+        🟢 {{ t('backoffice.shiftPanel.openLabel', { time: formatTime(shift.opened_at) }) }}
       </span>
-      <AppButton size="sm" variant="outline" @click="openCloseModalFn">قفل الوردية</AppButton>
+      <AppButton size="sm" variant="outline" @click="openCloseModalFn">{{ t('backoffice.shiftPanel.closeButton') }}</AppButton>
     </template>
     <template v-else>
       <span class="hidden items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-400 dark:bg-gray-800 dark:text-gray-400 md:flex">
-        🔒 لا توجد وردية مفتوحة
+        🔒 {{ t('backoffice.shiftDashboard.noOpenShift') }}
       </span>
-      <AppButton size="sm" variant="primary" @click="openOpenModal">فتح وردية</AppButton>
+      <AppButton size="sm" variant="primary" @click="openOpenModal">{{ t('backoffice.shiftPanel.openButton') }}</AppButton>
     </template>
 
     <!-- Open shift -->
-    <AppModal :open="openModal" title="فتح وردية جديدة" size="sm" @close="openModal = false">
+    <AppModal :open="openModal" :title="t('backoffice.shiftPanel.openModalTitle')" size="sm" @close="openModal = false">
       <div class="space-y-3">
         <div v-if="handoverNote" class="rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300">
-          📋 ملاحظة تسليم من آخر وردية: {{ handoverNote }}
+          📋 {{ t('backoffice.shiftPanel.handoverNote', { note: handoverNote }) }}
         </div>
-        <AppInput v-model="openingFloat" type="number" label="رصيد الافتتاح (كاش)" placeholder="0" />
-        <AppInput v-model="openNotes" label="ملاحظات (اختياري)" placeholder="—" />
+        <AppInput v-model="openingFloat" type="number" :label="t('backoffice.shiftPanel.openingFloatLabel')" placeholder="0" />
+        <AppInput v-model="openNotes" :label="t('backoffice.shiftPanel.notesOptionalLabel')" placeholder="—" />
       </div>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <AppButton variant="ghost" size="sm" @click="openModal = false">إلغاء</AppButton>
-          <AppButton size="sm" :loading="opening" @click="confirmOpen">فتح الوردية</AppButton>
+          <AppButton variant="ghost" size="sm" @click="openModal = false">{{ t('common.cancel') }}</AppButton>
+          <AppButton size="sm" :loading="opening" @click="confirmOpen">{{ t('backoffice.shiftPanel.confirmOpenButton') }}</AppButton>
         </div>
       </template>
     </AppModal>
 
     <!-- Close shift — cash count by denomination -->
-    <AppModal :open="closeModal" title="قفل الوردية — عدّ الكاش" size="md" @close="closeModal = false">
+    <AppModal :open="closeModal" :title="t('backoffice.shiftPanel.closeModalTitle')" size="md" @close="closeModal = false">
       <div v-if="lastCloseResult" class="space-y-3 py-2">
         <!-- ملخص الخزينة -->
         <div class="text-center space-y-1">
-          <p class="text-sm text-gray-500">الكاش المتوقع: {{ lastCloseResult.expected.toFixed(2) }} ج</p>
+          <p class="text-sm text-gray-500">{{ t('backoffice.shiftPanel.expectedCashLabel', { amount: formatMoney(lastCloseResult.expected, 'EGP') }) }}</p>
           <p v-if="lastCloseResult.counted_cash_egp != null" class="text-sm text-gray-500">
-            إجمالي الخزينة (EGP): {{ lastCloseResult.counted_cash_egp.toFixed(2) }} ج
+            {{ t('backoffice.shiftPanel.totalTreasuryEGP', { amount: formatMoney(lastCloseResult.counted_cash_egp, 'EGP') }) }}
           </p>
           <p class="text-2xl font-black"
             :class="lastCloseResult.variance === 0
@@ -308,8 +310,8 @@ onMounted(fetchCurrentShift)
               : lastCloseResult.variance > 0
                 ? 'text-blue-600 dark:text-blue-300'
                 : 'text-red-600 dark:text-red-300'">
-            {{ lastCloseResult.variance > 0 ? '▲ زيادة' : lastCloseResult.variance < 0 ? '▼ عجز' : '✓ مطابق' }}
-            {{ Math.abs(lastCloseResult.variance).toFixed(2) }} ج
+            {{ lastCloseResult.variance > 0 ? t('backoffice.shiftPanel.varianceIncrease') : lastCloseResult.variance < 0 ? t('backoffice.shiftPanel.varianceShortage') : t('backoffice.shiftPanel.varianceMatch') }}
+            {{ formatMoney(Math.abs(lastCloseResult.variance), 'EGP') }}
           </p>
         </div>
         <!-- تحذير مطابقة الكاش — فرق أكبر من الطبيعي، الوردية اتقفلت لكن
@@ -319,11 +321,11 @@ onMounted(fetchCurrentShift)
         </div>
         <!-- ملخص العملات الأجنبية لو موجودة -->
         <div v-if="lastCloseResult.foreign_currency_summary?.length" class="space-y-1 rounded-lg bg-blue-50 p-2.5 dark:bg-blue-950/40">
-          <p class="text-xs font-bold text-blue-700 dark:text-blue-300">💱 العملات الأجنبية المعدودة</p>
+          <p class="text-xs font-bold text-blue-700 dark:text-blue-300">{{ t('backoffice.shiftPanel.foreignCurrenciesCounted') }}</p>
           <div v-for="fc in lastCloseResult.foreign_currency_summary" :key="fc.currency"
             class="flex justify-between text-xs text-blue-800 dark:text-blue-300">
-            <span>{{ fc.currency }}: {{ fc.total_foreign.toFixed(2) }}</span>
-            <span>= {{ fc.egp_equivalent.toFixed(2) }} ج</span>
+            <span>{{ fc.currency }}: {{ formatMoney(fc.total_foreign, fc.currency) }}</span>
+            <span>= {{ formatMoney(fc.egp_equivalent, 'EGP') }}</span>
           </div>
         </div>
       </div>
@@ -337,20 +339,20 @@ onMounted(fetchCurrentShift)
                 : 'bg-blue-100 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300'">
               {{ group.code }}
             </span>
-            <span class="text-xs text-gray-500">{{ group.label }}</span>
+            <span class="text-xs text-gray-500">{{ currencyLabel(group.code) }}</span>
           </div>
           <table class="w-full text-sm">
             <thead>
               <tr class="text-gray-400 text-xs">
-                <th class="text-right py-1">الفئة</th>
-                <th class="text-right py-1">العدد</th>
-                <th class="text-right py-1">الإجمالي</th>
+                <th class="text-right py-1">{{ t('backoffice.shiftPanel.denominationCol') }}</th>
+                <th class="text-right py-1">{{ t('backoffice.shiftPanel.countCol') }}</th>
+                <th class="text-right py-1">{{ t('backoffice.shiftPanel.totalCol') }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="d in group.denominations" :key="d" class="border-t border-stone-100 dark:border-stone-800">
                 <td class="py-1 font-semibold text-gray-700 dark:text-gray-300">
-                  {{ d }} {{ group.code === 'EGP' ? 'ج' : group.code }}
+                  {{ formatMoney(d, group.code) }}
                 </td>
                 <td class="py-1">
                   <AppInput
@@ -362,8 +364,7 @@ onMounted(fetchCurrentShift)
                   />
                 </td>
                 <td class="py-1 text-gray-500 dark:text-gray-400">
-                  {{ (d * (Number(counts[group.code][d]) || 0)).toFixed(2) }}
-                  {{ group.code === 'EGP' ? 'ج' : group.code }}
+                  {{ formatMoney(d * (Number(counts[group.code][d]) || 0), group.code) }}
                 </td>
               </tr>
             </tbody>
@@ -373,38 +374,38 @@ onMounted(fetchCurrentShift)
         <!-- إجمالي الجنيه + تنبيه لو في عملات أجنبية -->
         <div class="border-t border-stone-200 pt-2 space-y-1">
           <div class="flex justify-between items-center font-bold">
-            <span>إجمالي الجنيه المصري</span>
-            <span>{{ countedTotalEGP.toFixed(2) }} ج</span>
+            <span>{{ t('backoffice.shiftPanel.totalEGP') }}</span>
+            <span>{{ formatMoney(countedTotalEGP, 'EGP') }}</span>
           </div>
           <!-- عرض EGP equivalent تقريبي للعملات الأجنبية -->
           <template v-if="foreignCashPreview.length > 0">
             <div v-for="fc in foreignCashPreview" :key="fc.code"
               class="flex justify-between items-center text-sm text-blue-700 dark:text-blue-300">
-              <span>{{ fc.code }}: {{ fc.total.toFixed(2) }}</span>
-              <span v-if="fc.egp != null">≈ {{ fc.egp.toFixed(2) }} ج</span>
-              <span v-else class="text-xs text-amber-600 dark:text-amber-400">سعر الصرف غير متاح</span>
+              <span>{{ fc.code }}: {{ formatMoney(fc.total, fc.code) }}</span>
+              <span v-if="fc.egp != null">≈ {{ formatMoney(fc.egp, 'EGP') }}</span>
+              <span v-else class="text-xs text-amber-600 dark:text-amber-400">{{ t('backoffice.shiftPanel.missingFxRate') }}</span>
             </div>
             <div v-if="grandTotalEGPApprox != null"
               class="flex justify-between items-center font-bold text-green-700 dark:text-green-300 border-t border-stone-200 pt-1 mt-1">
-              <span>الإجمالي الكلي التقريبي</span>
-              <span>≈ {{ grandTotalEGPApprox.toFixed(2) }} ج</span>
+              <span>{{ t('backoffice.shiftPanel.grandTotalApprox') }}</span>
+              <span>≈ {{ formatMoney(grandTotalEGPApprox, 'EGP') }}</span>
             </div>
             <p v-if="foreignCashPreview.some(fc => fc.egp == null)"
               class="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700 dark:bg-amber-950/40 dark:text-amber-300">
-              ⚠️ سعر صرف غير مسجّل لبعض العملات — أضفه من إعدادات أسعار الصرف قبل القفل
+              ⚠️ {{ t('backoffice.shiftPanel.missingFxRateWarning') }}
             </p>
             <p v-else class="rounded bg-blue-50 px-2 py-1 text-xs text-blue-600 dark:bg-blue-950/40 dark:text-blue-300">
-              💱 الأرقام تقريبية — القيمة الرسمية تحسبها الباك إند بأسعار الصرف عند القفل
+              💱 {{ t('backoffice.shiftPanel.approxNote') }}
             </p>
           </template>
         </div>
-        <AppInput v-model="closeNotes" label="ملاحظات (اختياري)" placeholder="—" />
-        <AppInput v-model="closeHandoverNote" label="ملاحظة تسليم للوردية الجاية (اختياري)" placeholder="—" />
+        <AppInput v-model="closeNotes" :label="t('backoffice.shiftPanel.notesOptionalLabel')" placeholder="—" />
+        <AppInput v-model="closeHandoverNote" :label="t('backoffice.shiftPanel.handoverNoteOptionalLabel')" placeholder="—" />
       </div>
       <template #footer>
         <div class="flex justify-end gap-2">
-          <AppButton variant="ghost" size="sm" @click="closeModal = false">{{ lastCloseResult ? 'إغلاق' : 'إلغاء' }}</AppButton>
-          <AppButton v-if="!lastCloseResult" size="sm" :loading="closing" :disabled="hasMissingFxRate" @click="confirmClose">تأكيد القفل</AppButton>
+          <AppButton variant="ghost" size="sm" @click="closeModal = false">{{ lastCloseResult ? t('common.close') : t('common.cancel') }}</AppButton>
+          <AppButton v-if="!lastCloseResult" size="sm" :loading="closing" :disabled="hasMissingFxRate" @click="confirmClose">{{ t('backoffice.shiftPanel.confirmCloseButton') }}</AppButton>
         </div>
       </template>
     </AppModal>

@@ -237,3 +237,60 @@ def test_check_leasing_dues_no_message_if_paid(db):
         assert len(sent_messages) == 0
     finally:
         wa_module.send_whatsapp_message = original_fn
+
+
+def test_check_timeshare_dues_does_not_leak_across_branches(db):
+    """_check_timeshare_dues كان بياخد branch_id بدون أي استخدام فعلي في
+    الاستعلام — check_due_reminders (الـCelery task الأب) بينادي الدالة دي
+    مرة لكل فرع نشط، يعني كل فرع كان بيعيد إرسال تذكير واتساب لكل الأقساط
+    المستحقة في *كل الفروع* بدل فرعه بس. مع فرعين نشطين، العميل كان هياخد
+    رسالة مكررة مرتين بدل مرة واحدة. اتصلح بـjoin + فلترة بـbranch_id عبر
+    TimeshareContract — هذا التست يثبت العزل بين فرعين حقيقيين، مش بس إنه
+    مايبعتش لقسط مدفوع (test_check_timeshare_dues_no_message_if_paid فوق)."""
+    import app.core.kernel.whatsapp as wa_module
+    from app.tasks.finance_tasks import _check_timeshare_dues
+    from app.modules.timeshare import crud as ts_crud
+    from app.modules.timeshare.schemas import TimeshareContractCreate
+    from app.modules.timeshare.models import TimeshareInstallment
+
+    sent_messages = []
+    original_fn = wa_module.send_whatsapp_message
+    wa_module.send_whatsapp_message = lambda phone, msg: sent_messages.append(
+        {"phone": phone, "message": msg}
+    )
+    try:
+        branch_a = _make_branch(db, "TSBranchA")
+        branch_b = _make_branch(db, "TSBranchB")
+        signed_by = _get_or_create_manager(db)
+        remind_date = date.today() + timedelta(days=9)
+
+        def _make_due_installment(branch, phone):
+            contract = ts_crud.create_contract(db, TimeshareContractCreate(
+                branch_id=branch.id,
+                customer_name="Cross Branch Test",
+                customer_phone=phone,
+                room_type="2R",
+                total_value=Decimal("40000"),
+                down_payment=Decimal("10000"),
+                installments=12,
+                installment_period=1,
+                first_installment_date=remind_date,
+                start_date=date.today(),
+                season="high",
+            ), signed_by=signed_by)
+            db.flush()
+            db.add(TimeshareInstallment(
+                contract_id=contract.id, installment_no=1,
+                due_date=remind_date, amount=Decimal("4000"), status="pending",
+            ))
+            db.commit()
+
+        _make_due_installment(branch_a, "01011111111")
+        _make_due_installment(branch_b, "01022222222")
+
+        _check_timeshare_dues(db, branch_a.id, remind_date)
+
+        assert len(sent_messages) == 1
+        assert sent_messages[0]["phone"] == "01011111111"
+    finally:
+        wa_module.send_whatsapp_message = original_fn

@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { useToast } from '@resort-os/ui'
+import { resolvePublicSiteUrl } from '@/config/publicSite'
 
 interface Table {
   id: number
@@ -30,11 +31,11 @@ const toast = useToast()
 const { locale, t } = useI18n()
 
 const branchId = computed(() => auth.branchId)
-const publicBase = computed(() => {
-  const configured = (import.meta.env.VITE_PUBLIC_SITE_URL as string | undefined)?.replace(/\/$/, '')
-  if (configured) return configured
-  return window.location.origin.replace(':5173', ':5174').replace(':5175', ':5174')
-})
+const publicBase = resolvePublicSiteUrl(
+  import.meta.env.VITE_PUBLIC_SITE_URL,
+  window.location,
+  import.meta.env.PROD,
+)
 
 const tables = ref<Table[]>([])
 const tokens = ref<LocationToken[]>([])
@@ -56,7 +57,7 @@ const grouped = computed(() => {
 
 function guestUrl(tableId: number): string | null {
   const token = tokenByTable.value.get(tableId)?.token
-  return token ? `${publicBase.value}/s/${encodeURIComponent(token)}` : null
+  return token ? `${publicBase}/s/${encodeURIComponent(token)}` : null
 }
 
 async function renderTableQr(tableId: number) {

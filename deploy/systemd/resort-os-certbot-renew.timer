@@ -1,5 +1,5 @@
 [Unit]
-Description=Check Resort OS IP TLS certificate twice daily
+Description=Check Resort OS short-lived IP TLS certificate twice daily
 
 [Timer]
 OnCalendar=*-*-* 03,15:20:00

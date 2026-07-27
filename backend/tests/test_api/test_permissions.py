@@ -37,6 +37,7 @@ def _link_user_to_branch(db, user_id: int, branch_id: int) -> None:
     الطلب، وإلا 403 قبل ما يوصل لمنطق الصلاحية/الـ PIN اللي التست بيختبره."""
     from datetime import date, timedelta
     from decimal import Decimal as _D
+    from app.modules.core.models import UserBranchMembership
     from app.modules.hr.models import Employee
 
     emp = db.query(Employee).filter(Employee.user_id == user_id).first()
@@ -49,6 +50,22 @@ def _link_user_to_branch(db, user_id: int, branch_id: int) -> None:
             position="waiter", department="F&B", basic_salary=_D("4000.00"),
             hire_date=date.today() - timedelta(days=365), user_id=user_id,
         ))
+    membership = db.query(UserBranchMembership).filter(
+        UserBranchMembership.user_id == user_id,
+        UserBranchMembership.branch_id == branch_id,
+    ).first()
+    if membership is None:
+        db.add(UserBranchMembership(
+            user_id=user_id,
+            branch_id=branch_id,
+            is_default=True,
+            is_active=True,
+        ))
+    else:
+        membership.is_active = True
+        membership.is_default = True
+        membership.revoked_at = None
+        membership.revoked_by = None
     db.commit()
 
 

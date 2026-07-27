@@ -18,9 +18,43 @@ from fastapi.testclient import TestClient
 # ═══════════════════════════════════════════════════════════════════════
 
 def _branch(db):
+    from app.core.kernel.models.user import User
     from app.modules.core.models import Branch
+    from app.modules.hr.models import Employee
+    from tests.conftest import assign_test_user_to_branch
+
     b = Branch(name=f"PMS-Cov-{uuid.uuid4().hex[:6]}", code=f"PMC-{uuid.uuid4().hex[:6].upper()}")
-    db.add(b); db.commit(); return b
+    db.add(b)
+    db.commit()
+
+    # PMS is now fail-closed by branch. The shared manager/cashier fixtures
+    # create auth users only, so make this test's sole branch their real HR
+    # branch. Existing rows are reset because the in-memory test DB is shared
+    # for the whole session and these helpers commit their setup.
+    users = (
+        db.query(User)
+        .filter(User.email.in_({"manager@test.local", "cashier@test.local"}))
+        .all()
+    )
+    for user in users:
+        employee = db.query(Employee).filter(Employee.user_id == user.id).first()
+        if employee:
+            employee.branch_id = b.id
+        else:
+            db.add(Employee(
+                branch_id=b.id,
+                employee_code=f"PMC-{uuid.uuid4().hex[:12].upper()}",
+                full_name=user.full_name,
+                position=user.role,
+                basic_salary=Decimal("0"),
+                hire_date=date.today(),
+                status="active",
+                email=user.email,
+                user_id=user.id,
+            ))
+        assign_test_user_to_branch(db, user.id, b.id)
+    db.commit()
+    return b
 
 
 def _room_type(db, branch_id, name="Standard"):
@@ -73,6 +107,37 @@ def _hk_task(db, branch_id, room_id, task_type="checkout_clean", status="dirty")
     from app.modules.pms.models import HousekeepingTask
     t = HousekeepingTask(branch_id=branch_id, room_id=room_id, task_type=task_type, status=status)
     db.add(t); db.commit(); return t
+
+
+def _employee(db, branch_id, name):
+    from app.modules.hr.models import Employee
+
+    employee = Employee(
+        branch_id=branch_id,
+        employee_code=f"PMC-{uuid.uuid4().hex[:12].upper()}",
+        full_name=name,
+        position="housekeeping",
+        basic_salary=Decimal("0"),
+        hire_date=date.today(),
+        status="active",
+    )
+    db.add(employee)
+    db.commit()
+    return employee
+
+
+def _selected_super_admin_headers(db, branch_id: int) -> dict[str, str]:
+    from app.core.kernel.models.user import User
+    from tests.conftest import _make_token
+
+    user = db.query(User).filter(
+        User.role == "super_admin",
+        User.two_factor_enabled.is_(True),
+    ).first()
+    assert user is not None
+    return {
+        "Authorization": f"Bearer {_make_token(user.email, branch_id=branch_id)}"
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -240,19 +305,21 @@ def test_pms_update_hk_task_assigns_employee(client: TestClient, manager_headers
     rt = _room_type(db, br.id)
     room = _room(db, br.id, rt.id, "802")
     task = _hk_task(db, br.id, room.id, "checkout_clean", "dirty")
+    first_employee = _employee(db, br.id, "عامل تنظيف أول")
+    second_employee = _employee(db, br.id, "عامل تنظيف ثان")
 
     resp = client.patch(f"/api/v1/pms/housekeeping/tasks/{task.id}",
-                        json={"status": "dirty", "assigned_to": 42},
+                        json={"status": "dirty", "assigned_to": first_employee.id},
                         headers=manager_headers)
     assert resp.status_code == 200, resp.text
-    assert resp.json()["assigned_to"] == 42
+    assert resp.json()["assigned_to"] == first_employee.id
 
     # تعيين موظف تاني ميغيّرش الحالة لو مش مبعوتة تغيير حقيقي
     resp2 = client.patch(f"/api/v1/pms/housekeeping/tasks/{task.id}",
-                         json={"status": "dirty", "assigned_to": 7},
+                         json={"status": "dirty", "assigned_to": second_employee.id},
                          headers=manager_headers)
     assert resp2.status_code == 200, resp2.text
-    assert resp2.json()["assigned_to"] == 7
+    assert resp2.json()["assigned_to"] == second_employee.id
     assert resp2.json()["status"] == "dirty"
 
 
@@ -356,7 +423,11 @@ def test_pms_create_rate_plan(client: TestClient, super_admin_headers, db):
         "base_rate_override": "750.00",
         "rate_multiplier": "1.0000",
     }
-    resp = client.post("/api/v1/pms/rate-plans", json=payload, headers=super_admin_headers)
+    resp = client.post(
+        "/api/v1/pms/rate-plans",
+        json=payload,
+        headers=_selected_super_admin_headers(db, br.id),
+    )
     assert resp.status_code == 201
     data = resp.json()
     assert data["name"] == "Summer Rate"
@@ -413,7 +484,7 @@ def test_pms_night_audit_creates_log(client: TestClient, super_admin_headers, db
     # تشغيل الـ night audit عبر query params (مش request body)
     resp = client.post(
         f"/api/v1/pms/night-audit/run?branch_id={br.id}&audit_date={date.today()}",
-        headers=super_admin_headers,
+        headers=_selected_super_admin_headers(db, br.id),
     )
     # ممكن 200 أو 400 لو في audit log موجود بالفعل
     assert resp.status_code in (200, 201, 400)

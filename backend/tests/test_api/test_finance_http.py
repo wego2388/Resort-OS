@@ -52,6 +52,7 @@ def _link_shared_users_to_branch(db, branch_id: int) -> None:
     from decimal import Decimal as _D
     from app.core.kernel.models.user import User
     from app.modules.hr.models import Employee
+    from tests.conftest import assign_test_user_to_branch
 
     # ⚠️ super_admin@test.local مقصود مستبعد: بيتخطى assert_branch_access
     # أصلاً (level 100، Decision 0003)، ولو ربطناه بموظف هيكسر تستات
@@ -73,6 +74,7 @@ def _link_shared_users_to_branch(db, branch_id: int) -> None:
                 position="cashier", department="F&B", basic_salary=_D("4000.00"),
                 hire_date=_date.today() - _td(days=365), user_id=user.id,
             ))
+        assign_test_user_to_branch(db, user.id, branch_id)
     db.commit()
 
 

@@ -1254,7 +1254,7 @@
     "phone": "+201004444300",
     "phoneAlt": "+201004444300",
     "whatsapp": "+201004444300",
-    "email": "info@alkhaymaresort.com",
+    "email": "info{'@'}alkhaymaresort.com",
     "location": "ул. Мохамед Эль-Ямани, Шарм-эль-Шейх",
     "hours": "Ежедневно 8:00 - 22:00",
     "contact_us": "СВЯЗАТЬСЯ",
@@ -2621,7 +2621,7 @@
     "Your Special": "Ваш особый",
     "Your perfect destination for relaxation and beautiful beaches": "Ваше идеальное место для отдыха и красивых пляжей",
     "example@email": {
-      "com": "example@email.com"
+      "com": "example{'@'}email.com"
     },
     "for Every Occasion": "для каждого случая",
     "images": "изображения",

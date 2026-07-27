@@ -19,7 +19,6 @@
  * Direction is inherited from the app root — this screen never forces dir.
  */
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
@@ -30,7 +29,6 @@ import StepUpConfirmModal from '../../components/StepUpConfirmModal.vue'
 const { t, te } = useI18n()
 const { formatDateTime } = useStaffFormat()
 const toast = useToast()
-const router = useRouter()
 
 // ── Active sessions ─────────────────────────────────────────────────────────
 interface SessionRow {

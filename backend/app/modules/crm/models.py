@@ -150,9 +150,9 @@ class Lead(Base, TimestampMixin):
 
     id:             Mapped[int]            = mapped_column(primary_key=True)
     branch_id:      Mapped[int]            = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
-    full_name:      Mapped[str]            = mapped_column(String(200))
-    phone:          Mapped[str | None]     = mapped_column(String(20), nullable=True)
-    email:          Mapped[str | None]     = mapped_column(String(150), nullable=True)
+    full_name:      Mapped[str | None]     = mapped_column(EncryptedString(512), nullable=True)
+    phone:          Mapped[str | None]     = mapped_column(EncryptedString(255), nullable=True)
+    email:          Mapped[str | None]     = mapped_column(EncryptedString(512), nullable=True)
     nationality:    Mapped[str | None]     = mapped_column(String(50), nullable=True)
     source_id:      Mapped[int | None]     = mapped_column(ForeignKey("lead_sources.id", ondelete="SET NULL"), nullable=True)
     interest:       Mapped[str]            = mapped_column(String(50), default="other")
@@ -166,7 +166,22 @@ class Lead(Base, TimestampMixin):
     lost_reason:    Mapped[str | None]     = mapped_column(String(300), nullable=True)
     booking_id:     Mapped[int | None]     = mapped_column(Integer, nullable=True)
     # يُعبأ عند won → إنشاء حجز تلقائي
-    notes:          Mapped[str | None]     = mapped_column(Text, nullable=True)
+    notes:          Mapped[str | None]     = mapped_column(EncryptedString(), nullable=True)
+
+    # Provenance/lifecycle for leads created from a public contact form.
+    # Non-public/staff-created leads keep these nullable.
+    public_contact_form_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contact_forms.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+    purpose: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    marketing_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    marketing_consent_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    marketing_consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    retention_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     source:     Mapped["LeadSource | None"] = relationship("LeadSource", lazy="select")
     call_notes: Mapped[list["CallNote"]]    = relationship("CallNote", back_populates="lead", lazy="select")

@@ -39,6 +39,7 @@ def make_branch_linked_cashier(db, branch):
     لازم تستخدم كاشير حقيقي مرتبط بالفرع بدل أي bypass، حتى وهي بتختبر
     قواعد تجارية تانية غير الصلاحيات نفسها."""
     from app.core.kernel.models.user import User
+    from app.modules.core.models import UserBranchMembership
     from app.modules.hr.models import Employee
     from tests.conftest import _create_test_user
 
@@ -51,7 +52,15 @@ def make_branch_linked_cashier(db, branch):
         basic_salary=Decimal("4000.00"), hire_date=date.today() - timedelta(days=365),
         user_id=user_id,
     )
-    db.add(emp)
+    db.add_all([
+        emp,
+        UserBranchMembership(
+            user_id=user_id,
+            branch_id=branch.id,
+            is_default=True,
+            is_active=True,
+        ),
+    ])
     db.commit()
     db.refresh(user)
     return user

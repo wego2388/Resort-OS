@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, ENDPOINTS, useAuthStore, parseApiTimestamp } from '@resort-os/core'
+import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import {
   AppCard, AppBadge, AppButton, AppModal, AppInput, AppSelect, AppSpinner,
-  EmptyState, StatCard, StatusBadge, SearchInput, useToast, useConfirm,
+  EmptyState, StatCard, StatusBadge, SearchInput, useToast,
   type SelectOption,
 } from '@resort-os/ui'
 
 const toast  = useToast()
-const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth   = useAuthStore()
@@ -448,12 +447,14 @@ onUnmounted(() => {
     </div>
 
     <!-- ══ KPI STATS ══ -->
-    <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-4">
       <StatCard :label="t('backoffice.reception.checkedInToday')"  :value="checkedInToday"  icon="login"   variant="success" />
       <StatCard :label="t('backoffice.reception.checkedOutToday')" :value="checkedOutToday" icon="logout"  variant="info" />
       <StatCard :label="t('backoffice.reception.upcomingArrivals')" :value="arrivalsToday"   icon="calendar" variant="warning" />
       <StatCard :label="t('backoffice.reception.availableRoomsKpi')" :value="availableRooms"  icon="building" variant="success" />
       <StatCard :label="t('backoffice.reception.occupiedRoomsKpi')" :value="occupiedRooms"   icon="users"   variant="info" />
+      <StatCard :label="t('backoffice.reception.reservedRoomsKpi')" :value="reservedRooms"   icon="calendar" variant="warning" />
+      <StatCard :label="t('backoffice.reception.cleaningRoomsKpi')" :value="cleaningRooms"   icon="refresh"  variant="neutral" />
       <StatCard :label="t('backoffice.reception.pendingCleaning')" :value="pendingHK"       icon="refresh"
         :variant="urgentHK > 0 ? 'danger' : 'neutral'" />
     </div>

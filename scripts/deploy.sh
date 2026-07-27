@@ -3,6 +3,10 @@
 #  deploy.sh — Resort OS production deploy script
 #  شغّله على الـ VPS:  bash scripts/deploy.sh
 #
+#  ملاحظة: السكريبت ده بيتطلب worktree نضيف (committed) وبيعمل git pull —
+#  مش مناسب للنشر من كود محلي لسه مش committed. لنشر مستهدف لخدمة أو
+#  اتنين من worktree غير committed، استخدم scripts/sync-deploy.sh بدل كده.
+#
 #  ما بيعمله:
 #    1. نسخة احتياطية قبل التغيير
 #    2. تحديث fast-forward للفرع الحالي/المحدد فقط
@@ -15,8 +19,8 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$REPO_DIR/docker-compose.prod.yml"
 ENV_FILE="$REPO_DIR/backend/.env.prod"
-IP_CERT="$([ -n "${RESORT_IP_ADDRESS:-}" ] && printf '%s' "$RESORT_IP_ADDRESS" || printf '%s' '187.124.170.249')"
-TLS_CERT_PATH="/etc/letsencrypt/live/$IP_CERT/fullchain.pem"
+TLS_CERT_NAME="${RESORT_TLS_NAME:-191.218.161.133}"
+TLS_CERT_PATH="/etc/letsencrypt/live/$TLS_CERT_NAME/fullchain.pem"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -34,23 +38,48 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 # ── Preconditions ─────────────────────────────────────────────────────────
 [[ -f "$ENV_FILE" ]] || err "$ENV_FILE غير موجود"
 [[ -z "$(git status --porcelain)" ]] || err "الـ worktree فيه تغييرات غير محفوظة — أوقف النشر وراجعها"
+python3 "$REPO_DIR/scripts/validate_prod_env.py" --env "$ENV_FILE" \
+  || err "فحص إعدادات الإنتاج فشل"
+
+# Compose needs the same database password used by DATABASE_URL.  Derive it
+# in-memory so production never carries a second, drift-prone copy.
+DATABASE_URL_VALUE="$(grep -E '^DATABASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+[[ -n "$DATABASE_URL_VALUE" ]] || err "DATABASE_URL غير موجود في $ENV_FILE"
+DB_PASSWORD="$(RESORT_DATABASE_URL="$DATABASE_URL_VALUE" python3 -c '
+import os
+from urllib.parse import urlparse
+
+url = os.environ["RESORT_DATABASE_URL"].replace(
+    "postgresql+psycopg://", "postgresql://", 1
+)
+password = urlparse(url).password
+if not password:
+    raise SystemExit("DATABASE_URL has no password")
+print(password)
+')"
+export DB_PASSWORD
 
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-$(git branch --show-current)}"
 [[ -n "$DEPLOY_BRANCH" ]] || err "لا يمكن النشر من detached HEAD — حدد DEPLOY_BRANCH"
 
 if [[ -f "$TLS_CERT_PATH" ]]; then
   COMPOSE_OVERRIDE="$REPO_DIR/docker-compose.prod.ip-tls.yml"
-  log "سيُستخدم IP TLS certificate لـ $IP_CERT"
+  log "سيُستخدم TLS certificate لـ $TLS_CERT_NAME"
 else
   COMPOSE_OVERRIDE="$REPO_DIR/docker-compose.prod.ip-only.yml"
   warn "لا توجد شهادة IP بعد؛ سيستمر HTTP مؤقتًا لإتمام ACME"
 fi
 
-COMPOSE=(docker compose -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE")
+COMPOSE=(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" -f "$COMPOSE_OVERRIDE")
 
 # ── 1. Backup before code/schema changes ──────────────────────────────────
 log "Step 1/5 — نسخة PostgreSQL احتياطية"
-ENV_FILE="$ENV_FILE" "$REPO_DIR/scripts/backup_db.sh" || err "النسخ الاحتياطي فشل"
+if docker container inspect resort-os-prod-db_postgres-1 >/dev/null 2>&1; then
+  ENV_FILE="$ENV_FILE" COMPOSE_PROJECT_NAME=resort-os-prod \
+    "$REPO_DIR/scripts/backup_db.sh" || err "النسخ الاحتياطي فشل"
+else
+  warn "أول نشر: لا توجد قاعدة إنتاج سابقة لنسخها احتياطيًا"
+fi
 
 # ── 2. Fast-forward the selected branch ───────────────────────────────────
 log "Step 2/5 — تحديث origin/$DEPLOY_BRANCH"

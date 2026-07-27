@@ -83,4 +83,41 @@ describe('staff theme contrast guardrails', () => {
 
     expect(violations, `Pale surfaces without dark variants found in:\n${violations.join('\n')}`).toEqual([])
   })
+
+  it('never uses :global(ancestor) .descendant inside a scoped <style> block', () => {
+    // Real bug found live (2026-07-27, dark-mode contrast browser audit) in
+    // FieldLayout.vue's `:global(.dark) .field-shell { background: #1e2530 }`
+    // — the exact same root cause already documented and fixed once before in
+    // Drawer.vue (see that file's trailing comment): Vue's scoped-CSS
+    // compiler drops the descendant part of the selector entirely from any
+    // rule shaped `:global(ancestor) .descendant` inside <style scoped>, so
+    // the compiled output becomes the bare, unscoped `.dark { ... }` — never
+    // matching `.field-shell` at all. Concretely this meant `.field-shell`
+    // (FieldLayout's root, used by every /pos/* and /waiter/* screen) never
+    // received its dark background, so any child view without its own
+    // dark-aware background (ShiftDashboardView's empty state, for example)
+    // fell through to <body>'s permanently-light `bg-resort-bg` class —
+    // near-white text on a near-white background, effectively illegible.
+    // The fix in both cases: move the rule to a separate, non-scoped
+    // <style> block (no :global() needed there — plain CSS is already
+    // global), never re-add this shape inside <style scoped>.
+    const GLOBAL_ANCESTOR_DESCENDANT = /:global\([^)]*\)\s+[^{},]/
+
+    const violations = [...vueFiles(appSourceRoot), ...vueFiles(sharedUiRoot)]
+      .flatMap((path) => {
+        // Strip HTML comments first — this file's own history documents this
+        // exact bug in prose inside a <!-- --> block, which would otherwise
+        // false-positive on the literal example text.
+        const source = readFileSync(path, 'utf8').replace(/<!--[\s\S]*?-->/g, '')
+        return [...source.matchAll(/<style\s+scoped[^>]*>([\s\S]*?)<\/style>/g)]
+          .filter((block) => GLOBAL_ANCESTOR_DESCENDANT.test(block[1]))
+          .map(() => path)
+      })
+
+    expect(
+      violations,
+      `:global(ancestor) .descendant found inside <style scoped> (gets silently dropped by Vue's ` +
+        `scoped-CSS compiler — move the rule to a plain, non-scoped <style> block instead) in:\n${violations.join('\n')}`,
+    ).toEqual([])
+  })
 })

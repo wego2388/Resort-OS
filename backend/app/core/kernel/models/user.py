@@ -13,6 +13,7 @@ from sqlalchemy import (
     BigInteger,
     Column,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
@@ -149,6 +150,14 @@ class RefreshToken(Base):
     """
 
     __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        Index(
+            "ix_refresh_tokens_user_family_active_branch",
+            "user_id",
+            "family_public_id",
+            "active_branch_id",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
@@ -179,6 +188,14 @@ class RefreshToken(Base):
     successor_token_hash = Column(String(64), nullable=True)
     # Limited, sanitized device description for the self-service session list.
     user_agent = Column(String(255), nullable=True)
+    # CX-02C: branch context is scoped to this refresh family/session.  It is
+    # deliberately not stored on User, and switching it never changes the
+    # employee's HR/payroll branch.
+    active_branch_id = Column(
+        Integer,
+        ForeignKey("branches.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 class TwoFactorRecoveryCode(Base):

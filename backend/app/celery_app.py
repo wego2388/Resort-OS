@@ -147,6 +147,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.hub_tasks.process_pending_bookings_reminder",
         "schedule": crontab(hour=10, minute=0),
     },
+    "hub-purge-expired-public-contact-pii": {
+        "task": "app.tasks.hub_tasks.purge_expired_public_contact_pii",
+        "schedule": crontab(hour=3, minute=30),
+    },
 }
 
 celery_app.conf.timezone = settings.TIMEZONE

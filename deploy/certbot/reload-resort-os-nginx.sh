@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-cd /opt/wegosharm/resort-os
-/usr/bin/docker compose \
-  -f docker-compose.prod.yml \
-  -f docker-compose.prod.ip-tls.yml \
-  exec -T nginx nginx -s reload
+container_name="resort-os-prod-nginx-1"
+
+/usr/bin/docker container inspect "$container_name" >/dev/null
+/usr/bin/docker exec "$container_name" nginx -t
+/usr/bin/docker exec "$container_name" nginx -s reload

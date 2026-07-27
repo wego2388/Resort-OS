@@ -91,7 +91,6 @@ from app.modules.core.schemas import (
     SettingUpdate,
     StaffUserCreate,
     StaffUserProvisioned,
-    UserCreate,
     UserPermissionGrantRequest,
     UserPermissionRead,
     UserRead,
@@ -1067,7 +1066,17 @@ def pin_switch(data: PinSwitchRequest, db: DbDep, _user=Depends(get_waiter_user)
     فعليًا لـ get_user_pin_status/set_user_pin بدل الـ endpoint ده، برسالة
     403 "يتطلب صلاحية مدير" مضلّلة بدل السلوك الصحيح)."""
     try:
-        result = services.pin_switch_login(db, data.user_id, data.pin)
+        result = services.pin_switch_login(
+            db,
+            data.user_id,
+            data.pin,
+            active_branch_id=services.get_user_branch_id(db, _user),
+        )
+    except services.PinBranchMismatchError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {"error_code": "PIN_BRANCH_MISMATCH", "message": str(exc)},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     return PinSwitchResponse(

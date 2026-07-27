@@ -10,6 +10,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
 from app.core.kernel.auth.router import build_auth_router
 from app.core.kernel.errors import setup_error_handlers
 from app.core.kernel.health import build_health_router
@@ -23,6 +25,16 @@ from app.core.rate_limit import RateLimitMiddleware
 
 logger = logging.getLogger(__name__)
 
+
+class ChatNoStoreMiddleware(BaseHTTPMiddleware):
+    """Prevent browser/proxy caching for every chat response, including 4xx."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/v1/chat"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
 # كل الموديولات دايمًا مفعّلة — مفيش نظام تفعيل/تعطيل. القايمة هنا بس لتحديد
 # ترتيب الـ router registration، مش لأي قرار وصول.
 # DINING_CUTOVER_PLAN.md Batch 6 — restaurant/cafe اتشالوا (dining هو
@@ -30,6 +42,7 @@ logger = logging.getLogger(__name__)
 _MODULE_KEYS = (
     "core", "finance", "inventory", "hr", "dining", "pms",
     "timeshare", "beach", "maintenance", "crm", "analytics", "hub", "leasing",
+    "chat",
 )
 
 
@@ -86,6 +99,7 @@ def create_app() -> FastAPI:
     app.add_middleware(CorrelationMiddleware)
     app.add_middleware(RequestTimingMiddleware)
     app.add_middleware(RateLimitMiddleware)
+    app.add_middleware(ChatNoStoreMiddleware)
 
     # ── Error Handling ─────────────────────────────────────────────────
     setup_error_handlers(app)

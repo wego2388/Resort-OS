@@ -170,27 +170,53 @@ async function refreshReport() {
   await loadReport()
 }
 
-// refreshAll: عند تغيير حالة الوردية (فتح/قفل) — يعيد تحميل كل حاجة
-function refreshAll() {
-  fetchShift()
-}
-
 // ── WebSocket — تحديث تلقائي للـ report عند كل بيعة جديدة ───────────────
 let ws: WebSocket | null = null
 let wsReconnectTimer: ReturnType<typeof setTimeout> | null = null
+let wsScope: string | null = null
+let isUnmounted = false
 const wsConnected = ref(false)
 
+function disconnectWs() {
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer)
+    wsReconnectTimer = null
+  }
+  if (ws) {
+    ws.onclose = null
+    ws.close()
+    ws = null
+  }
+  wsScope = null
+  wsConnected.value = false
+}
+
 function connectWs() {
-  if (!shift.value || !auth.token) return
-  if (ws) { ws.onclose = null; ws.close() }
+  if (isUnmounted || !shift.value || !auth.token) {
+    disconnectWs()
+    return
+  }
+
+  const nextScope = `${branchId.value}:${shift.value.id}`
+  if (
+    ws
+    && wsScope === nextScope
+    && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)
+  ) return
+
+  disconnectWs()
+  wsScope = nextScope
 
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
   const url = `${proto}://${window.location.host}${ENDPOINTS.finance.shiftsWs(branchId.value)}?token=${auth.token}`
-  ws = new WebSocket(url)
+  const socket = new WebSocket(url)
+  ws = socket
 
-  ws.onopen = () => { wsConnected.value = true }
+  socket.onopen = () => {
+    if (ws === socket) wsConnected.value = true
+  }
 
-  ws.onmessage = (event) => {
+  socket.onmessage = (event) => {
     try {
       const msg = JSON.parse(event.data)
       // shift_sale → حدّث الأرقام فقط (مش الطلبات — هي بتتحدث بـ WS خاص بيها)
@@ -200,21 +226,32 @@ function connectWs() {
     } catch { /* ignore malformed */ }
   }
 
-  ws.onclose = () => {
+  socket.onclose = () => {
+    if (ws !== socket) return
+    ws = null
     wsConnected.value = false
-    wsReconnectTimer = setTimeout(connectWs, 15_000)
+    if (!isUnmounted && shift.value && auth.token) {
+      wsReconnectTimer = setTimeout(connectWs, 15_000)
+    }
   }
-  ws.onerror = () => ws?.close()
+  socket.onerror = () => socket.close()
+}
+
+// refreshAll: عند تغيير حالة الوردية (فتح/قفل) — يعيد تحميل كل حاجة،
+// ثم يطابق اتصال الـ WS مع الوردية الجديدة. الشاشة قد تبدأ بلا وردية،
+// لذلك connectWs مرة واحدة في onMounted لا يكفي عند فتح وردية لاحقًا.
+async function refreshAll() {
+  await fetchShift()
+  connectWs()
 }
 
 onUnmounted(() => {
-  if (ws) { ws.onclose = null; ws.close(); ws = null }
-  if (wsReconnectTimer) clearTimeout(wsReconnectTimer)
+  isUnmounted = true
+  disconnectWs()
 })
 
 onMounted(async () => {
-  await fetchShift()
-  connectWs()
+  await refreshAll()
 })
 </script>
 
@@ -230,7 +267,7 @@ onMounted(async () => {
             ? 'bg-green-100 text-green-700 dark:bg-green-950/40 dark:text-green-300'
             : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'"
           class="text-xs font-bold px-2 py-0.5 rounded-full"
-        >{{ wsConnected ? '🟢 ' + t('shiftMonitor.live') : '🟡' }}</span>
+        >{{ wsConnected ? '🟢 ' + t('backoffice.shiftMonitor.live') : '🟡' }}</span>
       </div>
       <AppButton variant="outline" :loading="loadingShift || loadingReport" @click="refreshAll">
         🔄 {{ t('backoffice.shiftDashboard.refresh') }}

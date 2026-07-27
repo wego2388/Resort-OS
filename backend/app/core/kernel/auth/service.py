@@ -599,6 +599,36 @@ class AuthService(BaseService):
     def _hash_token(token: str) -> str:
         return hashlib.sha256(token.encode()).hexdigest()
 
+    def _initial_active_branch_id(self, user) -> Optional[int]:
+        """Choose only an unambiguous live branch for a new login family."""
+        from app.modules.core.models import Branch, UserBranchMembership  # noqa: PLC0415
+
+        if user.role == "super_admin":
+            branch_ids = [
+                row[0]
+                for row in self.db.query(Branch.id)
+                .filter(Branch.is_active.is_(True))
+                .order_by(Branch.id)
+                .all()
+            ]
+            return branch_ids[0] if len(branch_ids) == 1 else None
+
+        memberships = (
+            self.db.query(UserBranchMembership)
+            .join(Branch, Branch.id == UserBranchMembership.branch_id)
+            .filter(
+                UserBranchMembership.user_id == user.id,
+                UserBranchMembership.is_active.is_(True),
+                Branch.is_active.is_(True),
+            )
+            .order_by(UserBranchMembership.branch_id)
+            .all()
+        )
+        defaults = [row.branch_id for row in memberships if row.is_default]
+        if len(defaults) == 1:
+            return defaults[0]
+        return memberships[0].branch_id if len(memberships) == 1 else None
+
     def create_refresh_token(self, user_id: int, device_fingerprint: Optional[str] = None) -> str:
         """Start a brand-new refresh-token *family* for one login (Gate 2B3B).
 
@@ -628,6 +658,7 @@ class AuthService(BaseService):
             family_public_id=secrets.token_hex(16),
             family_started_at=now,
             user_agent=self._audit_user_agent,
+            active_branch_id=self._initial_active_branch_id(user),
         ))
         self.db.commit()
         return token
@@ -803,6 +834,7 @@ class AuthService(BaseService):
         family_public_id = rt.family_public_id
         family_started_at = rt.family_started_at or rt.created_at
         rt_user_agent = rt.user_agent
+        active_branch_id = rt.active_branch_id
         user_id = rt.user_id
 
         if (
@@ -859,6 +891,7 @@ class AuthService(BaseService):
             family_public_id=family_public_id,
             family_started_at=family_started_at,
             user_agent=self._audit_user_agent or rt_user_agent,
+            active_branch_id=active_branch_id,
         ))
         # Bounded cleanup: only this user's own expired rows (never a global
         # sweep) — keeps tombstones alive for replay detection until natural
@@ -881,8 +914,8 @@ class AuthService(BaseService):
         refresh_token: Optional[str],
         *,
         expected_user_id: Optional[int] = None,
-    ) -> Optional[tuple[str, str]]:
-        """Resolve (family_id, family_public_id) of the live session that
+    ) -> Optional[tuple[str, str, Optional[int]]]:
+        """Resolve (family_id, family_public_id, active_branch_id) of the live session that
         presented this refresh token, or None. Used only to flag the caller's
         own 'current' session and to protect 'revoke others'."""
         from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
@@ -898,7 +931,11 @@ class AuthService(BaseService):
         if expected_user_id is not None:
             query = query.filter(RefreshToken.user_id == expected_user_id)
         rt = query.first()
-        return (rt.family_id, rt.family_public_id) if rt else None
+        return (
+            rt.family_id,
+            rt.family_public_id,
+            rt.active_branch_id,
+        ) if rt else None
 
     def list_active_sessions(self, user_id: int, *, current_family_id: Optional[str] = None) -> list[dict]:
         """Return the user's live refresh families as non-secret DTO dicts —

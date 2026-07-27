@@ -316,6 +316,58 @@ class TestGuestReviewInsights:
         assert review.booking_id is None
         assert review.timeshare_visit_id == visit.id
 
+    def test_survey_token_rejects_booking_from_a_different_branch(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """get_survey_token كان بيولّد token صالح لأي (booking_id, branch_id)
+        من غير أي تحقق إن الحجز فعلاً بتاع الفرع ده — create_survey_token
+        نفسها JWT signing بحت من غير تحقق، والـ/submit العام (بدون auth)
+        بيثق في محتوى التوكن بالكامل. يعني مستخدم مسجّل دخول بأي صلاحية
+        كان يقدر يولّد token لحجز فرع تاني ويلوّث إحصائيات تقييماته."""
+        real_branch = make_branch_committed(db)
+        other_branch = make_branch_committed(db)
+        booking = make_booking_committed(db, real_branch)
+
+        resp = client.get(
+            f"/api/v1/analytics/reviews/survey-token/{booking.id}",
+            params={"branch_id": other_branch.id},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_timeshare_survey_token_rejects_visit_from_a_different_branch(
+        self, client: TestClient, db, manager_headers,
+    ):
+        """نفس test_survey_token_rejects_booking_from_a_different_branch —
+        لكن لـ get_timeshare_survey_token."""
+        from decimal import Decimal
+        from app.modules.timeshare.models import TimeshareUnit
+        from app.modules.timeshare.schemas import TimeshareContractCreate, TimeshareVisitCreate
+        from app.modules.timeshare import services as ts_services
+
+        real_branch = make_branch_committed(db)
+        other_branch = make_branch_committed(db)
+        unit = TimeshareUnit(branch_id=real_branch.id, unit_number="A-103", unit_type="2R")
+        db.add(unit); db.commit()
+        contract = ts_services.create_contract(db, TimeshareContractCreate(
+            branch_id=real_branch.id, customer_name="عميل تايم شير آخر", room_type="2R",
+            total_value=Decimal("120000"), down_payment=Decimal("20000"),
+            installments=12, installment_period=1,
+            first_installment_date=date(2026, 8, 1),
+            partner_share_pct=Decimal("0"), start_date=date(2026, 7, 1),
+        ), signed_by=1)
+        visit = ts_services.create_visit(db, TimeshareVisitCreate(
+            branch_id=real_branch.id, contract_id=contract.id,
+            check_in=date(2026, 8, 1), check_out=date(2026, 8, 8),
+        ))
+
+        resp = client.get(
+            f"/api/v1/analytics/reviews/survey-token/timeshare/{visit.id}",
+            params={"branch_id": other_branch.id},
+            headers=manager_headers,
+        )
+        assert resp.status_code == 404
+
     def test_send_timeshare_survey_queues_whatsapp(self, client: TestClient, db, manager_headers):
         """POST .../survey-token/timeshare/{visit_id}/send — قبل ده، مفيش أي
         طريقة حقيقية توصّل التوكن للضيف (GET .../survey-token/timeshare بس

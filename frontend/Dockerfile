@@ -2,9 +2,8 @@
 #
 # Resort OS (El Kheima Beach) — frontend app image
 # ─────────────────────────────────────────────────────────────────────────────
-# One shared, parameterized Dockerfile builds both frontend apps
-# (el-kheima / public) rather than two near-identical copies — they're
-# all part of the same pnpm workspace and share `packages/core` +
+# This parameterized Dockerfile builds the selected workspace app. The current
+# production staff target is `el-kheima`; it shares `packages/core` +
 # `packages/ui`, so the build needs the *whole* `frontend/` directory as
 # context regardless of which single app is being built (pnpm needs to see
 # every workspace member to resolve `workspace:*` deps).
@@ -13,12 +12,8 @@
 # e.g. from the repo root:
 #
 #   docker build -f frontend/Dockerfile --build-arg APP_NAME=el-kheima \
+#     --build-arg VITE_PUBLIC_SITE_URL=https://guest.example.com \
 #     -t resort-os-el-kheima:latest frontend
-#   docker build -f frontend/Dockerfile --build-arg APP_NAME=public \
-#     -t resort-os-public:latest frontend
-#
-# docker-compose.prod.yml builds both from this one file with different
-# `build.args.APP_NAME` values — see that file + DEPLOYMENT.md.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: install the full pnpm workspace ──────────────────────────────────
@@ -42,19 +37,25 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 
 ARG APP_NAME
-RUN test -n "$APP_NAME" || (echo "APP_NAME build-arg is required (el-kheima|public)" && exit 1)
+ARG VITE_PUBLIC_SITE_URL
+RUN test -n "$APP_NAME" || (echo "APP_NAME build-arg is required" && exit 1)
+RUN if [ "$APP_NAME" = "el-kheima" ]; then \
+      test -n "$VITE_PUBLIC_SITE_URL" \
+      || (echo "VITE_PUBLIC_SITE_URL build-arg is required for el-kheima" && exit 1); \
+    fi
 
 RUN pnpm --filter "${APP_NAME}" build
 
 
 # ── Stage 3: serve the built static files via nginx ───────────────────────────
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.30.4-alpine AS runtime
 
 ARG APP_NAME
 ENV APP_NAME=${APP_NAME}
 
 COPY --from=build /workspace/apps/${APP_NAME}/dist /usr/share/nginx/html
 COPY nginx.spa.conf /etc/nginx/conf.d/default.conf
+COPY security-headers.conf /etc/nginx/snippets/security-headers.conf
 
 EXPOSE 80
 

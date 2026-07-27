@@ -3,7 +3,7 @@
 // leading search icon, trailing clear button once there's text, and an
 // optional built-in debounce so screens stop hand-rolling setTimeout logic
 // (a genuine business-logic-in-component smell wagdy.md explicitly forbids).
-import { ref, watch, onBeforeUnmount } from 'vue'
+import { onBeforeUnmount } from 'vue'
 import AppIcon from './Icon.vue'
 import { fieldClasses } from '../utils/inputClasses'
 

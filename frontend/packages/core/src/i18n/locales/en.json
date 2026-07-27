@@ -1580,7 +1580,7 @@
     "phone": "+201004444300",
     "phoneAlt": "+201004444300",
     "whatsapp": "+201004444300",
-    "email": "info@alkhaymaresort.com",
+    "email": "info{'@'}alkhaymaresort.com",
     "location": "Mohamed El Yamany St, EL MAYAH, Sharm El Sheikh",
     "hours": "Daily 8 AM - 10 PM",
     "contact_us": "CONTACT US",
@@ -2724,7 +2724,7 @@
     "Your Special": "extra.Your Special",
     "Your perfect destination for relaxation and beautiful beaches": "extra.Your perfect destination for relaxation and beautiful beaches",
     "example@email": {
-      "com": "extra.example@email.com"
+      "com": "extra.example{'@'}email.com"
     },
     "for Every Occasion": "extra.for Every Occasion",
     "images": "extra.images",
@@ -3478,9 +3478,7 @@
       "beachMap": "Beach Map",
       "shift": "Shift",
       "shiftMonitor": "Shift Monitor",
-      "qrCodes": "QR Codes",
-      "development": "Development",
-      "projectCockpit": "Project Cockpit"
+      "qrCodes": "QR Codes"
     },
     "login": {
       "title": "Sign In",
@@ -3563,7 +3561,7 @@
       "title": "Forgot Password?",
       "subtitle": "We'll send a reset link to your email address",
       "email": "Email Address",
-      "emailPlaceholder": "your@email.com",
+      "emailPlaceholder": "your{'@'}email.com",
       "submit": "Send Reset Link",
       "submitting": "Sending...",
       "successTitle": "Email Sent",
@@ -4887,6 +4885,8 @@
       "upcomingArrivals": "Upcoming arrivals",
       "availableRoomsKpi": "Available rooms",
       "occupiedRoomsKpi": "Occupied rooms",
+      "reservedRoomsKpi": "Reserved rooms",
+      "cleaningRoomsKpi": "Rooms being cleaned",
       "pendingCleaning": "Pending cleaning",
       "todaysArrivals": "Today's arrivals",
       "searchPlaceholder": "Search by name or booking number...",
@@ -6737,6 +6737,44 @@
         "card": "Card",
         "expectedCash": "Expected cash",
         "invoices": "Invoices"
+      }
+    },
+    "shiftPanel": {
+      "loadError": "Couldn't load shift status",
+      "invalidOpeningFloat": "Opening float must be a valid number, 0 or greater",
+      "openedSuccess": "Shift opened",
+      "openError": "Couldn't open the shift",
+      "closedSuccess": "Shift closed",
+      "closeError": "Couldn't close the shift — check your connection or contact a manager",
+      "openLabel": "Shift open — {time}",
+      "closeButton": "Close Shift",
+      "openButton": "Open Shift",
+      "openModalTitle": "Open New Shift",
+      "handoverNote": "Handover note from last shift: {note}",
+      "openingFloatLabel": "Opening Float (Cash)",
+      "notesOptionalLabel": "Notes (optional)",
+      "handoverNoteOptionalLabel": "Handover note for next shift (optional)",
+      "confirmOpenButton": "Open Shift",
+      "closeModalTitle": "Close Shift — Cash Count",
+      "expectedCashLabel": "Expected cash: {amount}",
+      "totalTreasuryEGP": "Total treasury (EGP): {amount}",
+      "varianceIncrease": "▲ Over",
+      "varianceShortage": "▼ Short",
+      "varianceMatch": "✓ Matched",
+      "foreignCurrenciesCounted": "💱 Foreign currencies counted",
+      "denominationCol": "Denomination",
+      "countCol": "Count",
+      "totalCol": "Total",
+      "totalEGP": "Total EGP",
+      "missingFxRate": "Exchange rate unavailable",
+      "grandTotalApprox": "Approximate grand total",
+      "missingFxRateWarning": "Exchange rate not set for some currencies — add it in Exchange Rate settings before closing",
+      "approxNote": "These figures are approximate — the server calculates the official value using exchange rates at closing",
+      "confirmCloseButton": "Confirm Close",
+      "currency": {
+        "EGP": "Egyptian Pound",
+        "USD": "US Dollar",
+        "EUR": "Euro"
       }
     },
     "payroll": {

@@ -72,10 +72,25 @@ def _validate_rate_plan_dates(valid_from: date, valid_until: date) -> None:
         raise ValueError("valid_until يجب أن يكون بعد valid_from")
 
 
+def _validate_room_type_branch(
+    db: Session,
+    room_type_id: Optional[int],
+    branch_id: int,
+) -> Optional[RoomType]:
+    """Reject cross-branch room-type links before a row is written."""
+    if room_type_id is None:
+        return None
+    room_type = crud.get_room_type(db, room_type_id)
+    if not room_type or room_type.branch_id != branch_id:
+        raise ValueError("نوع الغرفة لا ينتمي لهذا الفرع")
+    return room_type
+
+
 def create_rate_plan(db: Session, data: RatePlanCreate) -> RatePlan:
     """إنشاء خطة أسعار موسمية — راجع models.RatePlan/_resolve_rate_plan
     للتفاصيل الكاملة عن كيفية تأثيرها على سعر الحجز الفعلي."""
     _validate_rate_plan_dates(data.valid_from, data.valid_until)
+    _validate_room_type_branch(db, data.room_type_id, data.branch_id)
     plan = crud.create_rate_plan(db, data)
     db.commit()
     db.refresh(plan)
@@ -93,6 +108,8 @@ def update_rate_plan(db: Session, plan_id: int, data: RatePlanUpdate) -> RatePla
     new_valid_from = data.valid_from if data.valid_from is not None else plan.valid_from
     new_valid_until = data.valid_until if data.valid_until is not None else plan.valid_until
     _validate_rate_plan_dates(new_valid_from, new_valid_until)
+    if "room_type_id" in data.model_fields_set:
+        _validate_room_type_branch(db, data.room_type_id, plan.branch_id)
 
     plan = crud.update_rate_plan(db, plan, data)
     db.commit()
@@ -106,6 +123,13 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
         raise ValueError("check_out يجب أن يكون بعد check_in")
 
     nights = (data.check_out - data.check_in).days
+
+    if data.customer_id is not None:
+        from app.modules.crm.models import Customer  # noqa: PLC0415
+
+        customer = db.query(Customer).filter(Customer.id == data.customer_id).first()
+        if not customer or customer.branch_id != data.branch_id:
+            raise ValueError("العميل لا ينتمي لهذا الفرع")
 
     # تحقق من خطة الأسعار (لو اتبعتت) قبل أي قفل غرف
     rate_plan = _resolve_rate_plan(db, data, nights)
@@ -142,6 +166,8 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
             raise BookingConflictError(f"الغرفة {room.name} غير متاحة في هذه الفترة")
 
         room_type = crud.get_room_type(db, room.room_type_id)
+        if not room_type or room_type.branch_id != data.branch_id:
+            raise ValueError(f"نوع الغرفة المرتبط بالغرفة {room_id} لا ينتمي لهذا الفرع")
         applies = rate_plan and (rate_plan.room_type_id is None or rate_plan.room_type_id == room.room_type_id)
         daily_rate = _room_rate_for(room_type, rate_plan, room.room_type_id)
         room_rates.append((room_id, daily_rate, nights, rate_plan.id if applies else None))
@@ -420,6 +446,17 @@ def update_housekeeping_task_status(
     if not task:
         raise ValueError(f"مهمة التنظيف {task_id} غير موجودة")
 
+    room = crud.get_room(db, task.room_id)
+    if not room or room.branch_id != task.branch_id:
+        raise ValueError("الغرفة المرتبطة بمهمة التنظيف لا تنتمي لنفس الفرع")
+
+    if assigned_to is not None:
+        from app.modules.hr.models import Employee  # noqa: PLC0415
+
+        employee = db.query(Employee).filter(Employee.id == assigned_to).first()
+        if not employee or employee.branch_id != task.branch_id:
+            raise ValueError("الموظف المعيّن لا ينتمي لفرع مهمة التنظيف")
+
     update_data: dict = {"status": new_status}
     if notes is not None:
         update_data["notes"] = notes
@@ -433,8 +470,7 @@ def update_housekeeping_task_status(
     task = crud.update_housekeeping_task(db, task, update_data)
 
     if new_status == "available":
-        room = crud.get_room(db, task.room_id)
-        if room and room.status in ("checkout_pending", "maintenance"):
+        if room.status in ("checkout_pending", "maintenance"):
             crud.update_room_status(db, room, "available")
 
     db.commit()

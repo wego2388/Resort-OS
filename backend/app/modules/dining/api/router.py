@@ -258,7 +258,6 @@ async def upload_item_image(
     """T-05 — رفع صورة لصنف في قائمة الطعام (مدير+).
     يقبل: image/jpeg, image/png, image/webp — حد أقصى 2 ميجابايت."""
     import os, uuid  # noqa: PLC0415
-    from fastapi import UploadFile  # noqa: PLC0415
 
     item = crud.get_item(db, item_id)
     if not item:

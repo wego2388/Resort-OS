@@ -743,6 +743,7 @@ class TestRouterErrorCodeMapping:
     def _make_branch_linked_headers(self, db, branch, role="cashier") -> dict[str, str]:
         from datetime import date, timedelta
         from tests.conftest import _create_test_user, _make_token, open_cashier_shift
+        from app.modules.core.models import UserBranchMembership
         from app.modules.hr.models import Employee
 
         email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
@@ -753,7 +754,15 @@ class TestRouterErrorCodeMapping:
             position=role, department="F&B", basic_salary=Decimal("4000.00"),
             hire_date=date.today() - timedelta(days=365), user_id=user_id,
         )
-        db.add(emp)
+        db.add_all([
+            emp,
+            UserBranchMembership(
+                user_id=user_id,
+                branch_id=branch.id,
+                is_default=True,
+                is_active=True,
+            ),
+        ])
         db.commit()
         # Gate 4A: الكاشير اللي بيحصّل دفع مباشر لازم يكون له وردية مفتوحة.
         open_cashier_shift(db, branch.id, user_id)
@@ -842,9 +851,10 @@ class TestRouterErrorCodeMapping:
         )
         assert resp.status_code == 403
 
-    def test_super_admin_bypasses_branch_check(self, client: TestClient, db, super_admin_headers):
-        """راجع خطة Gate 1B — تخطي super_admin الكامل (Decision 0003) لازم
-        يفضل شغال حتى بعد فرض assert_branch_access على الـ endpoint كله."""
+    def test_super_admin_bypasses_membership_after_selecting_branch(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        """Decision 0003 bypasses membership, not explicit session context."""
         branch = make_branch(db)
         outlet = make_outlet(db, branch)
         make_finance_accounts(db, branch)
@@ -853,15 +863,18 @@ class TestRouterErrorCodeMapping:
 
         # Gate 4A: تحصيل الدفع المباشر بيتطلب وردية مفتوحة للكاشير المسدّد —
         # هنا الـ super_admin هو اللي بيسدّد؛ نفتح له وردية على فرع الطلب.
-        from tests.conftest import open_cashier_shift
+        from tests.conftest import _make_token, open_cashier_shift
         from app.core.kernel.models.user import User
         sa_user = db.query(User).filter(User.email == "super_admin@test.local").first()
         assert sa_user is not None
         open_cashier_shift(db, branch.id, sa_user.id)
+        selected_headers = {
+            "Authorization": f"Bearer {_make_token(sa_user.email, branch_id=branch.id)}"
+        }
 
         resp = client.patch(
             f"/api/v1/dining/orders/{order.id}/status",
-            json={"status": "paid"}, headers=super_admin_headers,
+            json={"status": "paid"}, headers=selected_headers,
         )
         assert resp.status_code == 200, resp.text
 

@@ -15,7 +15,7 @@ import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import {
-  AppButton, AppInput, AppTextarea, AppSelect, MoneyInput, AppTabs,
+  AppButton, AppInput, AppSelect, MoneyInput, AppTabs,
   AppBadge, StatusBadge, AppDrawer, DataTable, SearchInput, IconButton,
   EmptyState, LoadingState, useToast, useConfirm,
 } from '@resort-os/ui'

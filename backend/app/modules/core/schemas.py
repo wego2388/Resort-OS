@@ -24,6 +24,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _REASON_MIN_LENGTH = 3
 _REASON_MAX_LENGTH = 500
+PERMISSION_ACTION_PATTERN = (
+    r"^(approve|check_in|check_out|collect|create|delete|early_late|edit|"
+    r"execute|generate|manage|run|update|update_status|view|void)$"
+)
 
 
 def _validate_reason(value: str) -> str:
@@ -369,7 +373,7 @@ class UserPermissionBase(BaseModel):
     resource:  str  = Field(..., max_length=100,
                              description='مثال: "finance.void_payment"، "restaurant.void_item"')
     action:    str  = Field(..., max_length=30,
-                             pattern=r"^(view|create|edit|delete|void|approve|execute)$")
+                             pattern=PERMISSION_ACTION_PATTERN)
     allowed:   bool = Field(True, description="True=منح صريح، False=منع صريح")
     branch_id: Optional[int] = Field(None, description="None = كل الفروع")
 
@@ -433,6 +437,51 @@ class EffectivePermission(BaseModel):
     module:         str
     allowed:        bool
     source:         str  # "role" | "explicit" (فيه استثناء صريح) | "super_admin" (نشط، يعدّي أي منع)
+
+
+class AllowedBranchRead(BaseModel):
+    """Minimal branch directory exposed by the authenticated bootstrap."""
+
+    id:         int
+    code:       str
+    name:       str
+    name_ar:    Optional[str]
+    timezone:   str
+    is_default: bool = False
+
+
+class UserBranchMembershipRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id:         int
+    user_id:    int
+    branch_id:  int
+    is_default: bool
+    is_active:  bool
+    created_by: Optional[int]
+    revoked_at: Optional[datetime]
+    revoked_by: Optional[int]
+    created_at: datetime
+    updated_at: datetime
+
+
+class ActiveBranchSwitchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    branch_id: int = Field(..., ge=1)
+
+
+class AuthBootstrapRead(BaseModel):
+    """Single source of truth used to mount the authenticated staff UI."""
+
+    contract_version: Literal[1] = 1
+    user: UserRead
+    branches: list[AllowedBranchRead]
+    allowed_branch_ids: list[int]
+    default_branch_id: Optional[int]
+    active_branch_id: Optional[int]
+    requires_branch_selection: bool
+    effective_permissions: list[EffectivePermission]
 
 
 # ─────────────────────── GuestAlert ──────────────────────────────────

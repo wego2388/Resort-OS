@@ -6,7 +6,6 @@ import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useOfflineQueue, useOrderDiscount, usePrintDocument } from '@resort-os/core/composables'
 import {
   AppBadge,
-  AppButton,
   AppIcon,
   AppSelect,
   EmptyState,

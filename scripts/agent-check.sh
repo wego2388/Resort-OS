@@ -80,7 +80,12 @@ check_compose_development() {
 
 check_compose_production() {
   cd "$ROOT_DIR"
-  docker compose -f docker-compose.prod.yml config --quiet
+  # Syntax-only check: deliberately use non-routable/non-secret sentinels.
+  # Real deployments run scripts/validate_prod_env.py first and supply the
+  # actual env file through scripts/deploy.sh.
+  DB_PASSWORD="${DB_PASSWORD:-agent-check-not-a-production-secret}" \
+  PUBLIC_SITE_URL="${PUBLIC_SITE_URL:-https://public.example.invalid}" \
+    docker compose -f docker-compose.prod.yml config --quiet
 }
 
 run_backend_tests() {

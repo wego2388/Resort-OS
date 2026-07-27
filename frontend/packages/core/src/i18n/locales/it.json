@@ -2658,7 +2658,7 @@
     "Your Special": "extra.Your Special",
     "Your perfect destination for relaxation and beautiful beaches": "extra.Your perfect destination for relaxation and beautiful beaches",
     "example@email": {
-      "com": "extra.example@email.com"
+      "com": "extra.example{'@'}email.com"
     },
     "for Every Occasion": "extra.for Every Occasion",
     "images": "extra.images",

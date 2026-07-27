@@ -1,7 +1,6 @@
 """app/modules/finance/services.py — Business logic"""
 from __future__ import annotations
 
-import json
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
@@ -952,7 +951,6 @@ def build_active_shifts_response(db: Session, branch_id: int) -> ActiveShiftsRes
     بيجيب كل وردية مفتوحة مع إجماليات مبيعاتها الحالية بدون قفل أو تعديل.
     خفيف عمداً: لا يحسب cash_count_lines أو journal entries — بس الـ Payments.
     """
-    from app.core.kernel.database import SessionLocal  # noqa: PLC0415 — not imported at top to avoid circular
     from app.core.kernel import models as kernel_models  # noqa: PLC0415
 
     open_shifts = crud.get_all_open_shifts(db, branch_id)

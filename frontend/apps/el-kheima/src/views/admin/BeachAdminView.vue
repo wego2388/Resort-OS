@@ -3,10 +3,9 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
-import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast, useConfirm } from '@resort-os/ui'
+import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
-const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth = useAuthStore()

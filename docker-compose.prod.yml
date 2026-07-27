@@ -40,7 +40,7 @@
 #  verifying this file — see DEPLOYMENT.md's note and project memory.
 # ─────────────────────────────────────────────────────────────────────────────
 
-name: resort-os
+name: resort-os-prod
 
 services:
 
@@ -55,7 +55,7 @@ services:
     environment:
       POSTGRES_DB: resort_os
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-resort_dev_pass}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set for production}
     volumes: ["resort_pgdata:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
@@ -159,20 +159,9 @@ services:
       dockerfile: Dockerfile
       args:
         APP_NAME: el-kheima
-    restart: unless-stopped
-    depends_on:
-      backend:
-        condition: service_healthy
-
-  public_site:
-    # ⚠️ LEGACY — يُبقى مؤقتاً كـ fallback أثناء فترة التحقق من marketing_site (48h).
-    # بعد التأكد من استقرار marketing_site، احذف هذا الـ service بالكامل
-    # واحذف public_site من depends_on في nginx أدناه.
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        APP_NAME: public
+        # Deliberately no default: an incorrect value is printed into physical
+        # QR codes and cannot be repaired by changing a runtime environment.
+        VITE_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be the confirmed HTTPS guest origin}
     restart: unless-stopped
     depends_on:
       backend:
@@ -180,17 +169,22 @@ services:
 
   marketing_site:
     # الموقع التسويقي الجديد — يحل محل public_site كموقع عام للدومين الرئيسي.
-    # Build context: مجلد elkheima-marketing-website المستقل (npm، مش pnpm monorepo).
+    # Build context: the independently versioned sibling repository.  The
+    # relative default is portable between the workstation and /opt on the VPS;
+    # MARKETING_SITE_CONTEXT remains available for an explicit checkout path.
     # VITE_API_URL فارغ عمداً → nginx.spa.conf يعمل proxy لـ /api → backend:8005.
     build:
-      context: /home/wego/projects/elkheima-marketing-website
+      context: ${MARKETING_SITE_CONTEXT:-../elkheima-marketing-website}
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ""
-        VITE_SITE_URL: "https://alkhaymaresort.com"
-        VITE_CHATBOT_ENABLED: "true"
-        VITE_CONTACT_WHATSAPP: "201004444300"
-        VITE_CONTACT_PHONE: "01004444300"
+        VITE_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be the confirmed public origin}
+        # Chat is non-blocking and therefore disabled by default.  Enable it
+        # only after CL-01R's production gate has passed.
+        VITE_CHATBOT_ENABLED: ${CHATBOT_ENABLED:-false}
+        # Empty is safer than publishing invented contact details.
+        VITE_CONTACT_WHATSAPP: ${CONTACT_WHATSAPP:-}
+        VITE_CONTACT_PHONE: ${CONTACT_PHONE:-}
     restart: unless-stopped
     depends_on:
       backend:
@@ -198,7 +192,7 @@ services:
 
   # ── Edge reverse proxy (TLS termination + subdomain routing) ────────────────
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.30.4-alpine
     restart: unless-stopped
     ports:
       - "80:80"
@@ -209,7 +203,6 @@ services:
       - certbot_certs:/etc/letsencrypt:ro
     depends_on:
       - el_kheima
-      - public_site
       - marketing_site
       - backend
 

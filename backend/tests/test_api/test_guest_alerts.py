@@ -102,7 +102,11 @@ def make_branch_linked_waiter_headers(db, branch) -> dict[str, str]:
     from datetime import date, timedelta
     from decimal import Decimal
 
-    from tests.conftest import _create_test_user, _make_token
+    from tests.conftest import (
+        _create_test_user,
+        _make_token,
+        assign_test_user_to_branch,
+    )
     from app.modules.hr.models import Employee
 
     email = f"waiter-{uuid.uuid4().hex[:10]}@test.local"
@@ -114,6 +118,7 @@ def make_branch_linked_waiter_headers(db, branch) -> dict[str, str]:
         hire_date=date.today() - timedelta(days=365), user_id=user_id,
     )
     db.add(emp)
+    assign_test_user_to_branch(db, user_id, branch.id)
     db.commit()
     return {"Authorization": f"Bearer {_make_token(email)}"}
 
@@ -389,12 +394,23 @@ class TestStaffAlertsFeed:
         )
         assert resp.status_code == 403, resp.text
 
-    def test_list_alerts_super_admin_bypasses_branch_check(self, client: TestClient, db, super_admin_headers):
-        """super_admin (level=100) هو الاستثناء المعتمد الوحيد للتخطي
-        الكامل عبر الفروع (Decision 0003) — يفضل 200 حتى بلا Employee مرتبط."""
+    def test_list_alerts_super_admin_bypasses_membership_after_selecting_branch(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        """super_admin bypasses membership after an explicit branch choice."""
+        from app.core.kernel.models.user import User
+        from tests.conftest import _make_token
+
         branch = make_branch(db)
+        super_admin = db.query(User).filter(
+            User.role == "super_admin",
+            User.two_factor_enabled.is_(True),
+        ).first()
+        selected_headers = {
+            "Authorization": f"Bearer {_make_token(super_admin.email, branch_id=branch.id)}"
+        }
         resp = client.get(
-            "/api/v1/alerts", params={"branch_id": branch.id}, headers=super_admin_headers,
+            "/api/v1/alerts", params={"branch_id": branch.id}, headers=selected_headers,
         )
         assert resp.status_code == 200, resp.text
 

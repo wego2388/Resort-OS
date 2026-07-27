@@ -245,7 +245,7 @@ class LeadRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:             int
     branch_id:      int
-    full_name:      str
+    full_name:      Optional[str]
     phone:          Optional[str]
     email:          Optional[str]
     nationality:    Optional[str]
@@ -258,6 +258,13 @@ class LeadRead(BaseModel):
     lost_at:        Optional[datetime]
     lost_reason:    Optional[str]
     booking_id:     Optional[int]
+    public_contact_form_id: Optional[int]
+    purpose:        Optional[str]
+    marketing_consent: bool
+    marketing_consent_version: Optional[str]
+    marketing_consent_at: Optional[datetime]
+    retention_until: Optional[datetime]
+    purged_at:      Optional[datetime]
     notes:          Optional[str]
     created_at:     datetime
     updated_at:     datetime

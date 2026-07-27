@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+import re
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 # ── HubPage ───────────────────────────────────────────────────────────
@@ -147,14 +148,144 @@ class OnlineBookingRead(BaseModel):
     updated_at:      datetime
 
 
-# ── Simple fixed-shape response schemas ──────────────────────────────────────
-from pydantic import BaseModel as _Base  # noqa: E402 — avoid circular at top
+# ── Public contact ───────────────────────────────────────────────────────────
 
-class ContactFormResponse(_Base):
+SERVICE_CONTACT_DISCLOSURE_VERSION = "service-contact-2026-07-26.v1"
+MARKETING_CONSENT_VERSION = "marketing-contact-2026-07-26.v1"
+
+ContactPurpose = Literal[
+    "general_inquiry",
+    "booking_request",
+    "activity_request",
+    "beach_service",
+    "spa_request",
+    "room_service",
+    "housekeeping",
+    "maintenance_request",
+]
+
+
+class ContactFormCreate(BaseModel):
+    """Strict public contract; browser-controlled branch IDs are forbidden."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    full_name: str = Field(..., min_length=2, max_length=120)
+    phone: Optional[str] = Field(None, max_length=32)
+    email: Optional[str] = Field(None, max_length=254)
+    subject: str = Field(..., min_length=3, max_length=160)
+    message: str = Field(..., min_length=3, max_length=2000)
+    source_page: str = Field(
+        ...,
+        min_length=1,
+        max_length=100,
+        pattern=r"^/[A-Za-z0-9/_-]*$",
+    )
+    purpose: ContactPurpose
+    language: Literal["ar", "en", "ru", "it"] = "ar"
+    service_contact_authorized: Literal[True]
+    service_disclosure_version: Literal[
+        SERVICE_CONTACT_DISCLOSURE_VERSION
+    ]
+    marketing_consent: bool = False
+    marketing_consent_version: Optional[str] = Field(None, max_length=40)
+    # Intentionally accepted but never persisted. A non-empty value is a bot
+    # signal and receives a generic accepted response without creating a row.
+    website: str = Field("", max_length=200)
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def normalise_phone(cls, value):
+        if value is None:
+            return None
+        clean = re.sub(r"[\s().-]+", "", str(value))
+        if not clean:
+            return None
+        if clean.startswith("00"):
+            clean = f"+{clean[2:]}"
+        elif clean.startswith("01") and len(clean) == 11:
+            clean = f"+2{clean}"
+        elif clean.startswith("201") and len(clean) == 12:
+            clean = f"+{clean}"
+        if not re.fullmatch(r"\+[1-9]\d{7,14}", clean):
+            raise ValueError("phone must be a valid international number")
+        return clean
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalise_email(cls, value):
+        if value is None:
+            return None
+        clean = str(value).strip().lower()
+        if not clean:
+            return None
+        if not re.fullmatch(
+            r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
+            r"@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+            r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
+            clean,
+        ):
+            raise ValueError("email must be valid")
+        return clean
+
+    @field_validator("full_name", "subject", "message")
+    @classmethod
+    def reject_control_characters(cls, value: str) -> str:
+        if any(ord(char) < 32 and char not in "\n\t" for char in value):
+            raise ValueError("control characters are not allowed")
+        return value
+
+    @model_validator(mode="after")
+    def validate_contact_and_consent(self):
+        if not self.phone and not self.email:
+            raise ValueError("phone or email is required")
+        if self.marketing_consent:
+            if self.marketing_consent_version != MARKETING_CONSENT_VERSION:
+                raise ValueError(
+                    "current marketing consent version is required"
+                )
+        elif self.marketing_consent_version is not None:
+            raise ValueError(
+                "marketing consent version requires marketing consent"
+            )
+        return self
+
+
+class ContactFormResponse(BaseModel):
     message: str
-    form_id: int
+    reference: str
 
-class BlogPostItem(_Base):
+
+class ContactFormListItem(BaseModel):
+    """Staff-facing view of one public contact submission.
+
+    A CRM Lead is only created when the guest opts into marketing_consent
+    (see app.modules.hub.public_contact); every submission — consenting or
+    not — is a real, explicit "please contact me" request and must stay
+    visible to staff here regardless of that separate marketing choice.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+    id:                  int
+    public_reference:    str
+    full_name:           Optional[str]
+    phone:               Optional[str]
+    email:               Optional[str]
+    subject:             Optional[str]
+    message:             Optional[str]
+    source_page:         Optional[str]
+    purpose:             str
+    language:            str
+    marketing_consent:   bool
+    crm_sync_status:     str
+    lead_id:             Optional[int]
+    status:              str
+    created_at:           datetime
+
+
+# ── Simple fixed-shape response schemas ──────────────────────────────────────
+
+class BlogPostItem(BaseModel):
     id:           int
     title:        str
     slug:         str
@@ -162,5 +293,5 @@ class BlogPostItem(_Base):
     published_at: Optional[str]
     views_count:  int
 
-class BlogPostsResponse(_Base):
+class BlogPostsResponse(BaseModel):
     posts: list[BlogPostItem]

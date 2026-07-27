@@ -56,7 +56,7 @@ async function fetchActiveShifts() {
     })
     data.value = res.data
   } catch (e: any) {
-    const msg = e?.response?.data?.detail ?? t('shiftMonitor.loadError')
+    const msg = e?.response?.data?.detail ?? t('backoffice.shiftMonitor.loadError')
     lastError.value = msg
     toast.error(msg)
   } finally {
@@ -141,7 +141,7 @@ onUnmounted(() => {
     <!-- Header -->
     <div class="flex items-center justify-between mb-4 gap-2 flex-wrap">
       <div class="flex items-center gap-2">
-        <h1 class="section-title mb-0">{{ t('shiftMonitor.title') }}</h1>
+        <h1 class="section-title mb-0">{{ t('backoffice.shiftMonitor.title') }}</h1>
         <!-- مؤشر اتصال WS -->
         <span
           :class="wsConnected
@@ -149,28 +149,28 @@ onUnmounted(() => {
             : 'bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300'"
           class="text-xs font-bold px-2 py-0.5 rounded-full"
         >
-          {{ wsConnected ? '🟢 ' + t('shiftMonitor.live') : '🟡 ' + t('shiftMonitor.polling') }}
+          {{ wsConnected ? '🟢 ' + t('backoffice.shiftMonitor.live') : '🟡 ' + t('backoffice.shiftMonitor.polling') }}
         </span>
       </div>
       <div class="flex items-center gap-2">
         <span v-if="data" class="text-xs text-gray-400">
-          {{ t('shiftMonitor.asOf') }}: {{ formatDateTime(data.as_of) }}
+          {{ t('backoffice.shiftMonitor.asOf') }}: {{ formatDateTime(data.as_of) }}
         </span>
         <AppButton variant="outline" size="sm" :loading="loading" @click="fetchActiveShifts">
-          🔄 {{ t('shiftMonitor.refresh') }}
+          🔄 {{ t('backoffice.shiftMonitor.refresh') }}
         </AppButton>
       </div>
     </div>
 
     <!-- Loading -->
-    <LoadingState v-if="loading && !data" :label="t('shiftMonitor.loading')" />
+    <LoadingState v-if="loading && !data" :label="t('backoffice.shiftMonitor.loading')" />
 
     <!-- Empty -->
     <EmptyState
       v-else-if="!loading && data && data.shift_count === 0"
       icon="🔒"
-      :title="t('shiftMonitor.noShifts')"
-      :subtitle="t('shiftMonitor.noShiftsHint')"
+      :title="t('backoffice.shiftMonitor.noShifts')"
+      :subtitle="t('backoffice.shiftMonitor.noShiftsHint')"
     />
 
     <!-- Error -->
@@ -187,25 +187,25 @@ onUnmounted(() => {
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
         <AppCard padding="sm" class="text-center">
           <p class="text-2xl font-black text-gray-800 dark:text-gray-100">{{ data.shift_count }}</p>
-          <p class="text-xs text-gray-500 mt-0.5">{{ t('shiftMonitor.openShifts') }}</p>
+          <p class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.shiftMonitor.openShifts') }}</p>
         </AppCard>
         <AppCard padding="sm" class="text-center">
           <p class="text-2xl font-black text-emerald-600 dark:text-emerald-300">
             {{ formatMoney(data.shifts.reduce((s, r) => s + num(r.total_sales), 0), 'EGP') }}
           </p>
-          <p class="text-xs text-gray-500 mt-0.5">{{ t('shiftMonitor.totalSales') }}</p>
+          <p class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.shiftMonitor.totalSales') }}</p>
         </AppCard>
         <AppCard padding="sm" class="text-center">
           <p class="text-2xl font-black text-blue-600 dark:text-blue-300">
             {{ formatMoney(data.shifts.reduce((s, r) => s + num(r.total_cash), 0), 'EGP') }}
           </p>
-          <p class="text-xs text-gray-500 mt-0.5">{{ t('shiftMonitor.totalCash') }}</p>
+          <p class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.shiftMonitor.totalCash') }}</p>
         </AppCard>
         <AppCard padding="sm" class="text-center">
           <p class="text-2xl font-black text-purple-600 dark:text-purple-300">
             {{ data.shifts.reduce((s, r) => s + r.invoice_count, 0) }}
           </p>
-          <p class="text-xs text-gray-500 mt-0.5">{{ t('shiftMonitor.totalInvoices') }}</p>
+          <p class="text-xs text-gray-500 mt-0.5">{{ t('backoffice.shiftMonitor.totalInvoices') }}</p>
         </AppCard>
       </div>
 
@@ -214,14 +214,14 @@ onUnmounted(() => {
         <table class="w-full text-sm">
           <thead>
             <tr class="text-xs text-gray-400 border-b border-stone-100 dark:border-stone-800">
-              <th class="text-right py-2 px-3 font-medium">{{ t('shiftMonitor.col.cashier') }}</th>
-              <th class="text-right py-2 px-3 font-medium">{{ t('shiftMonitor.col.openedAt') }}</th>
-              <th class="text-right py-2 px-3 font-medium">{{ t('shiftMonitor.col.duration') }}</th>
-              <th class="text-right py-2 px-3 font-medium">{{ t('shiftMonitor.col.sales') }}</th>
-              <th class="text-right py-2 px-3 font-medium">{{ t('shiftMonitor.col.cash') }}</th>
-              <th class="text-right py-2 px-3 font-medium">{{ t('shiftMonitor.col.card') }}</th>
-              <th class="text-right py-2 px-3 font-medium">{{ t('shiftMonitor.col.expectedCash') }}</th>
-              <th class="text-right py-2 px-3 font-medium">{{ t('shiftMonitor.col.invoices') }}</th>
+              <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.cashier') }}</th>
+              <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.openedAt') }}</th>
+              <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.duration') }}</th>
+              <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.sales') }}</th>
+              <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.cash') }}</th>
+              <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.card') }}</th>
+              <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.expectedCash') }}</th>
+              <th class="text-right py-2 px-3 font-medium">{{ t('backoffice.shiftMonitor.col.invoices') }}</th>
             </tr>
           </thead>
           <tbody>
@@ -270,7 +270,7 @@ onUnmounted(() => {
           <div class="flex items-start justify-between mb-2">
             <div>
               <p class="font-bold text-gray-800 dark:text-gray-200">{{ s.cashier_name }}</p>
-              <p class="text-xs text-gray-400">{{ t('shiftMonitor.shiftHash', { id: s.shift_id }) }} · {{ formatTime(s.opened_at) }}</p>
+              <p class="text-xs text-gray-400">{{ t('backoffice.shiftMonitor.shiftHash', { id: s.shift_id }) }} · {{ formatTime(s.opened_at) }}</p>
             </div>
             <span class="font-mono text-xs bg-gray-100 dark:bg-gray-800 rounded px-2 py-0.5">
               ⏱ {{ shiftDuration(s.opened_at) }}
@@ -278,19 +278,19 @@ onUnmounted(() => {
           </div>
           <div class="grid grid-cols-2 gap-2 text-sm">
             <div class="rounded bg-emerald-50 dark:bg-emerald-950/30 px-2 py-1.5">
-              <p class="text-xs text-gray-500">{{ t('shiftMonitor.col.sales') }}</p>
+              <p class="text-xs text-gray-500">{{ t('backoffice.shiftMonitor.col.sales') }}</p>
               <p class="font-bold text-emerald-700 dark:text-emerald-300">{{ formatMoney(num(s.total_sales), 'EGP') }}</p>
             </div>
             <div class="rounded bg-blue-50 dark:bg-blue-950/30 px-2 py-1.5">
-              <p class="text-xs text-gray-500">{{ t('shiftMonitor.col.cash') }}</p>
+              <p class="text-xs text-gray-500">{{ t('backoffice.shiftMonitor.col.cash') }}</p>
               <p class="font-bold text-blue-700 dark:text-blue-300">{{ formatMoney(num(s.total_cash), 'EGP') }}</p>
             </div>
             <div class="rounded bg-purple-50 dark:bg-purple-950/30 px-2 py-1.5">
-              <p class="text-xs text-gray-500">{{ t('shiftMonitor.col.card') }}</p>
+              <p class="text-xs text-gray-500">{{ t('backoffice.shiftMonitor.col.card') }}</p>
               <p class="font-bold text-purple-700 dark:text-purple-300">{{ formatMoney(num(s.total_card), 'EGP') }}</p>
             </div>
             <div class="rounded bg-gray-50 dark:bg-gray-800/50 px-2 py-1.5">
-              <p class="text-xs text-gray-500">{{ t('shiftMonitor.col.invoices') }}</p>
+              <p class="text-xs text-gray-500">{{ t('backoffice.shiftMonitor.col.invoices') }}</p>
               <p class="font-bold text-gray-700 dark:text-gray-300">{{ s.invoice_count }}</p>
             </div>
           </div>

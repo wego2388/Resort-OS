@@ -4,6 +4,26 @@ import { api, setApiToken, registerAuthClearHandler } from '../api/client'
 import { ENDPOINTS } from '../api/endpoints'
 import type { User } from '../types'
 
+type IdentityTransitionHandler = () => void | Promise<void>
+let identityTransitionHandler: IdentityTransitionHandler | null = null
+
+/**
+ * Apps can register cleanup for browser state that must not cross an
+ * authenticated identity boundary (for example legacy staff API caches).
+ */
+export function registerAuthIdentityTransitionHandler(handler: IdentityTransitionHandler): void {
+  identityTransitionHandler = handler
+}
+
+async function clearIdentityBoundClientState(): Promise<void> {
+  try {
+    await identityTransitionHandler?.()
+  } catch {
+    // Cache/storage cleanup must be best-effort and may be unavailable in
+    // private browsing. It must never keep a user signed in or block logout.
+  }
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   // T-01: access_token في memory فقط (مش localStorage) — يتجدّد من httpOnly
@@ -18,7 +38,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   // client.ts's 401→refresh-fails path calls this to clear our state without
   // importing this store back (that would be circular — see client.ts).
-  registerAuthClearHandler(() => {
+  registerAuthClearHandler(async () => {
+    await clearIdentityBoundClientState()
     user.value = null
     token.value = null
     pendingEnrollmentToken.value = ''
@@ -41,18 +62,23 @@ export const useAuthStore = defineStore('auth', () => {
     waiter: 30,
     chef: 30,
     kitchen: 30,
+    timeshare_agent: 25,
     employee: 20,
     customer: 0,
     guest: 0,
   }
 
   function hasRole(minRole: string): boolean {
-    const userLevel = ROLE_LEVELS[role.value] ?? 0
-    const minLevel = ROLE_LEVELS[minRole] ?? 0
+    const userLevel = ROLE_LEVELS[role.value]
+    const minLevel = ROLE_LEVELS[minRole]
+    // Unknown roles and misspelled requirements must fail closed. Treating an
+    // unknown minimum as level 0 previously made every authenticated account
+    // pass the frontend guard.
+    if (userLevel == null || minLevel == null) return false
     return userLevel >= minLevel
   }
 
-  const roleLevel = computed(() => ROLE_LEVELS[role.value] ?? 0)
+  const roleLevel = computed(() => ROLE_LEVELS[role.value] ?? -1)
 
   // Mirrors backend app/core/deps.py::MANDATORY_2FA_ROLES
   const MANDATORY_2FA_ROLES = new Set(['super_admin', 'accountant'])
@@ -113,6 +139,7 @@ export const useAuthStore = defineStore('auth', () => {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         withCredentials: true,
       })
+      await clearIdentityBoundClientState()
       _setToken(res.data.access_token)
       pendingEnrollmentToken.value = enrollmentToken?.trim() ?? ''
       await fetchUser()
@@ -126,6 +153,7 @@ export const useAuthStore = defineStore('auth', () => {
   async function initAuth(): Promise<boolean> {
     try {
       const res = await api.post(ENDPOINTS.auth.refresh, {}, { withCredentials: true })
+      await clearIdentityBoundClientState()
       _setToken(res.data.access_token)
       await fetchUser()
       return true
@@ -142,6 +170,7 @@ export const useAuthStore = defineStore('auth', () => {
     isLoading.value = true
     try {
       const res = await api.post(ENDPOINTS.core.pinSwitch, { user_id: targetUserId, pin })
+      await clearIdentityBoundClientState()
       _setToken(res.data.access_token)
       user.value = res.data.user
     } finally {
@@ -163,6 +192,7 @@ export const useAuthStore = defineStore('auth', () => {
     } catch {
       // Offline/server failure: local credentials still must disappear.
     } finally {
+      await clearIdentityBoundClientState()
       _setToken(null)
       user.value = null
       pendingEnrollmentToken.value = ''

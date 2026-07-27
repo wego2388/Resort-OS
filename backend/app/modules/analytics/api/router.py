@@ -647,7 +647,22 @@ async def get_survey_token(
     branch_id: int = Query(...),
     current_user=Depends(get_current_active_user),
 ):
-    """يُولِّد survey token لحجز فندقي — يُستدعى من checkout screen."""
+    """يُولِّد survey token لحجز فندقي — يُستدعى من checkout screen.
+
+    لازم يتأكد إن booking_id فعلاً بتاع branch_id قبل ما يولّد token —
+    create_survey_token نفسها بتوقّع القيم صح من غير أي تحقق (JWT signing
+    بحت)، وde endpoint /analytics/reviews/submit العام (بدون auth) بيثق في
+    محتوى الـtoken بالكامل. من غير التحقق ده هنا، أي مستخدم مسجّل دخول
+    (حتى بأقل صلاحية) كان يقدر يولّد token صحيح لحجز مش بتاع الفرع اللي
+    مررّه، فيلوّث إحصائيات تقييمات فرع تاني. نفس النمط اللي send_timeshare_survey
+    تحت طبّقه بالفعل — هنا كان ناقص."""
+    from app.modules.pms.models import Booking  # noqa: PLC0415
+    booking = db.query(Booking).filter(
+        Booking.id == booking_id, Booking.branch_id == branch_id,
+    ).first()
+    if not booking:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الحجز غير موجود")
+
     from app.modules.analytics.services import create_survey_token  # noqa: PLC0415
     token = create_survey_token(branch_id=branch_id, booking_id=booking_id)
     return {"token": token, "expires_in_days": 7}
@@ -662,7 +677,15 @@ async def get_timeshare_survey_token(
 ):
     """يُولِّد survey token لزيارة تايم شير — نفس شكل استجابة الحجز الفندقي
     بالظبط، endpoint موازٍ مش تعديل على القديم (الحجز الفندقي والتايم شير
-    مصدرين مختلفين تمامًا، مش نفس الجدول)."""
+    مصدرين مختلفين تمامًا، مش نفس الجدول). نفس تحقق الملكية اللي فوق —
+    راجع تعليق get_survey_token."""
+    from app.modules.timeshare.models import TimeshareVisit  # noqa: PLC0415
+    visit = db.query(TimeshareVisit).filter(
+        TimeshareVisit.id == visit_id, TimeshareVisit.branch_id == branch_id,
+    ).first()
+    if not visit:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الزيارة غير موجودة")
+
     from app.modules.analytics.services import create_survey_token  # noqa: PLC0415
     token = create_survey_token(branch_id=branch_id, timeshare_visit_id=visit_id)
     return {"token": token, "expires_in_days": 7}

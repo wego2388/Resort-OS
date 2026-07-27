@@ -45,24 +45,31 @@ def check_due_reminders(self):
 
 def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
     """تذكيرات أقساط التايم شير (نداء مبكر 3 أيام قبل الاستحقاق — النداء التاني
-    عند 7 أيام موجود في timeshare_tasks.send_installment_reminders)."""
+    عند 7 أيام موجود في timeshare_tasks.send_installment_reminders).
+
+    check_due_reminders بينادي الدالة دي مرة لكل فرع نشط. branch_id كان
+    متاخد كـ parameter من غير ما يتستخدم في الاستعلام فعليًا — يعني في أي
+    منتجع بأكتر من فرع، كل فرع كان بيعيد إرسال تذكير لكل الأقساط المستحقة
+    في *كل الفروع* (مش بس فروعه)، فالعميل كان هياخد رسالة واتساب مكررة مرة
+    لكل فرع نشط بدل مرة واحدة. اتصلح بـjoin على العقد وفلترة بـbranch_id،
+    وده كمان شال N+1 query (كان بيجيب العقد لكل قسط في loop منفصل).
+    """
     try:
         from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment  # noqa: PLC0415
         from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
         dues = (
-            db.query(TimeshareInstallment)
+            db.query(TimeshareInstallment, TimeshareContract)
+            .join(TimeshareContract, TimeshareInstallment.contract_id == TimeshareContract.id)
             .filter(
+                TimeshareContract.branch_id == branch_id,
                 TimeshareInstallment.due_date == remind_date,
                 TimeshareInstallment.status == "pending",
             )
             .all()
         )
-        for inst in dues:
+        for inst, contract in dues:
             logger.info("Timeshare installment due reminder: id=%s due=%s", inst.id, inst.due_date)
-            contract = db.query(TimeshareContract).filter(
-                TimeshareContract.id == inst.contract_id
-            ).first()
-            if contract and contract.customer_phone:
+            if contract.customer_phone:
                 send_whatsapp_message(
                     contract.customer_phone,
                     f"تذكير أخير: قسط بقيمة {inst.amount:,.2f} ج.م مستحق بعد 3 أيام ({inst.due_date:%Y-%m-%d}).",
@@ -72,22 +79,27 @@ def _check_timeshare_dues(db, branch_id: int, remind_date: date) -> None:
 
 
 def _check_leasing_dues(db, branch_id: int, remind_date: date) -> None:
-    """تذكيرات دفعات الإيجار."""
+    """تذكيرات دفعات الإيجار.
+
+    نفس باج `_check_timeshare_dues` فوق بالظبط (branch_id متاخد بدون استخدام
+    فعلي) — اتصلح بنفس الطريقة: join على العقد وفلترة بـbranch_id.
+    """
     try:
         from app.modules.leasing.models import LeaseContract, LeasePayment  # noqa: PLC0415
         from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
         dues = (
-            db.query(LeasePayment)
+            db.query(LeasePayment, LeaseContract)
+            .join(LeaseContract, LeasePayment.contract_id == LeaseContract.id)
             .filter(
+                LeaseContract.branch_id == branch_id,
                 LeasePayment.due_date == remind_date,
                 LeasePayment.status == "pending",
             )
             .all()
         )
-        for p in dues:
+        for p, contract in dues:
             logger.info("Lease payment due reminder: id=%s due=%s", p.id, p.due_date)
-            contract = db.query(LeaseContract).filter(LeaseContract.id == p.contract_id).first()
-            if contract and contract.tenant_phone:
+            if contract.tenant_phone:
                 send_whatsapp_message(
                     contract.tenant_phone,
                     f"تذكير: دفعة إيجار بقيمة {p.amount:,.2f} ج.م مستحقة يوم {p.due_date:%Y-%m-%d}.",

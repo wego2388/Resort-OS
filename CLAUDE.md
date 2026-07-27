@@ -5,6 +5,12 @@
 > المشروع اليومية في `PROJECT_STATUS.md`، وشرحها البشري لمحمد في `wagdy.md`،
 > والقرارات المقبولة في `docs/decisions/`. لا تنفّذ أي تعديل قبل قراءة المراجع
 > المناسبة للمهمة.
+>
+> **استئناف تنفيذ 26 يوليو 2026:** بعد القراءة الإلزامية أعلاه، اقرأ
+> `docs/agent-workflow/CODEX_TO_CLAUDE_CONTINUATION_AR.md` قبل أي تعديل.
+> هذا هو checkpoint الانتقال من Codex إلى Claude ويشمل حالة الـVPS والتغييرات
+> غير المرئية في Git. لا تعتمد على أقسام الشات/الخادم الأقدم إذا خالفت هذا
+> checkpoint أو handoff أحدث.
 
 ---
 
@@ -292,7 +298,7 @@ resort-os/
 │   │   │   ├── rate_limit.py      ← IP-keyed middleware
 │   │   │   └── kernel/            ← البنية التحتية المملوكة بالكامل (auth/security/cache/...) — راجع §13
 │   │   │
-│   │   ├── modules/               ← 13 module، كل منهم دايمًا شغال (مفيش تفعيل/تعطيل):
+│   │   ├── modules/               ← 14 module، كل منهم دايمًا شغال (مفيش تفعيل/تعطيل):
 │   │   │   │                         models → schemas → crud → services → api/router
 │   │   │   ├── core/              ← branches, settings, users, audit
 │   │   │   ├── finance/           ← folios, payments, journal, shifts, ETA
@@ -311,7 +317,8 @@ resort-os/
 │   │   │   ├── crm/
 │   │   │   ├── analytics/
 │   │   │   ├── hub/
-│   │   │   └── leasing/
+│   │   │   ├── leasing/
+│   │   │   └── chat/               ← الشات بوت الذكي (Gemini) — عام، بدون تسجيل دخول، راجع §18
 │   │   │
 │   │   ├── resort_os/             ← Pure Domain Engines (لا FastAPI، لا DB)
 │   │   │   ├── hr_engine.py       ← راتب مصري: قانون العمل 12/2003 + ضريبة 91/2005
@@ -580,7 +587,7 @@ requirements.txt` من غير ما `wego-core` يكون متثبّت خالص) �
 > — هذا الملف (CLAUDE.md) بيوثّق القواعد والمعمارية والدستور الثابت، مش الحالة اليومية المتغيرة.
 
 ### ✅ مكتمل
-- 13 module (models/schemas/crud/services/router)، **كلهم دايمًا شغالين — مفيش نظام تفعيل/تعطيل** (§12)
+- 14 module (models/schemas/crud/services/router)، **كلهم دايمًا شغالين — مفيش نظام تفعيل/تعطيل** (§12)
 - Domain engines: HR (راتب مصري)، Beach، Timeshare، Discount، Folio
 - Double-entry accounting (Journal/Account/Period) + financial reports (trial balance، income
   statement، balance sheet)
@@ -946,6 +953,98 @@ migrations) في `PROJECT_STATUS.md`.
   إنشاء→تحقق→حذف، بما فيها دورة downgrade/upgrade، و`python -m app.seed` end-to-end بعد Batch 3.
   `pytest tests/ -v` → 1748 اختبار (كان 1721)، `pnpm type-check`/`build` نضاف.
 
+- **موديول `chat` جديد — الشات بوت الذكي (Gemini)** (2026-07-26) — الفرونت إند العام
+  (`elkheima-marketing-website`، `useChatbot.ts`/`HubConcierge.vue`) كان بينادي `/chat`
+  و`/concierge/*` من غير أي backend حقيقي في resort-os خالص. مُرحَّل من
+  `elkheima-beach-resort` (كان شغال هناك فعليًا بـGemini API) — مش نسخ حرفي، `build_system_prompt()`
+  اتبنى من الصفر يقرأ بيانات resort-os الحقيقية (dining outlets/items، beach base prices،
+  pms room availability لتلميح الندرة) بدل كتالوج `Product` القديم اللي مالوش وجود هنا.
+  `ChatConversation`/`ChatMessage` (migration `dc6bfb5b79e8`)، `POST /api/v1/chat` (عام،
+  rate-limited 20/60s — أضيق من التصفح العادي لأنه نداء AI بتكلفة حقيقية)،
+  `GET /chat/welcome`، `POST /chat/conversations/start`، `POST /chat/conversations/{id}/end`.
+  `GEMINI_API_KEY` — مفتاح مشترك مؤقت من `.env.production` بتاع elkheima-beach-resort (قرار
+  Mohamed صريح 2026-07-26، هيتغيّر لمفتاح مخصوص لـresort-os لاحقًا لفصل الفوترة/الـquota).
+
+  **باج حقيقي اتكشف واتصلح وقت الاختبار الحي** (مش افتراض): Gemini بيرفض أي `contents` بينتهي
+  بـ"model" turn — أول نسخة كانت بتخلص كده لما `history` فاضية (نفس شكل النظام القديم بالظبط،
+  يبدو إنه كان يعتمد على تكرار السؤال في نهاية الـcontents اللي أنا استبدلته بترتيب أنضف). الحل:
+  turn تمهيدي واحد ثابت (البرومبت + رد ترحيبي) بعدين التاريخ الحقيقي لو موجود، وفي الآخر السؤال
+  الحالي دايمًا كـuser turn أخير. **باج تاني**: `maxOutputTokens=500` (زي النظام القديم بالظبط)
+  كان بيقطع الرد نص الجملة تقريبًا كل مرة — `gemini-flash-latest` بيصرف جزء كبير من الميزانية على
+  "thinking" tokens غير مرئية قبل الرد الفعلي (`thinkingConfig` لتعطيلها رجّعت 400 على النموذج ده).
+  اتصلح برفع الحد لـ2048. الاتنين اتأكدوا بنداء حي حقيقي لـGemini API (مش mock) قبل ما يتكتب أي test.
+
+  تكامل الموقع: `HubConcierge.vue` (widget مكرر — `ChatbotButton`/`ChatbotWindow` العامة في
+  `App.vue` أصلاً بتظهر في كل صفحة بما فيها `/hub/:token`، يعني كان فيه زرارين شات فوق بعض على
+  صفحة الـHub) اتشال بالكامل بدل ما يتصلح، `useChatbot.ts`'s 4 نداءات اتصلحت لـ`/api/v1/chat/...`
+  (كانت بتنادي `/chat/...` بدون prefix — باج مسار زي باقي الموقع). اكتُشف كمان وقت الفحص: ملف
+  `.env` المحلي بتاع الموقع كان معرّف متغيّر اسمه `VITE_API_BASE_URL` بينما `client.ts` بيقرا
+  `VITE_API_URL` — اسم غلط يعني أي نداء في dev بيسقط لـfallback بورت 8000 غلط وبدون `/v1` (الإنتاج
+  سليم، `VITE_API_URL=""` بتتحط صح عبر Dockerfile build arg) — اتصلح الاسم والقيمة (بورت 8005
+  الحقيقي)، وfallback `client.ts` نفسه اتصلح لنفس السبب. سياق موقع الضيف (`location_type`/
+  `location_number` من Gate 8 session، كان معرّف في schema الفرونت إند من الأول بس مالوش أي
+  استهلاك في الباك إند) اتوصّل فعليًا — الشات بوت بيعرف دلوقتي لو الضيف قاعد على طاولة/أوضة/شمسية
+  معيّنة ويقترح عليه حسب موقعه (اتأكد بنداء حي حقيقي).
+
+  30 اختبار جديد (mocked Gemini، نفس نمط `test_eta_service.py`، زائد نداءات حية حقيقية للتأكد قبل
+  كتابة التستات) = 2114 اختبار إجمالي، صفر رجوع. `pnpm build` (الموقع التسويقي) نضاف.
+
+  **مؤجَّل عمدًا**: الشات بوت مالوش UI إداري لتعديل قاعدة المعرفة أو الإعدادات (كان موجود في
+  النظام القديم) — النطاق اتحصر في تشغيل الميزة الأساسية الفعلية بدل بناء أدوات إدارية مش مطلوبة
+  دلوقتي. `HubConcierge.vue` كان بيستخدم نفس الموديلات (`ChatbotConversation`/`ChatbotResponse`)
+  في المشروع القديم — هنا موديلات `chat` مبسّطة (مفيش knowledge base قابلة للتعديل من الأدمن).
+
+- **`chat` — تحصين CL-01 حسب بروتوكول Codex/Claude المزدوج** (2026-07-26، نفس اليوم، دفعة تانية) —
+  Mohamed بعتلي برومت رسمي لتشغيل بروتوكول التنفيذ المزدوج (`docs/agent-workflow/
+  DUAL_AGENT_EXECUTION_PROTOCOL_AR.md` + `docs/audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`، كتبهم
+  Codex) — مهمة CL-01 صراحةً هي "أكمل الشات بوت باحترافية" بقائمة أمنية محددة (Gate 3). قارنت شغلي
+  السابق بالقائمة ولقيت فجوات حقيقية مش نظرية:
+  - **XSS حقيقي، مش نظري**: `ChatbotMessage.vue` كان بيعمل `v-html="renderMarkdown(message.text)"`
+    على رد الشات بوت (بيانات نموذج AI عام، غير موثوقة تمامًا) — الدفاع الوحيد كان regex بيشيل
+    `<[^>]*>` قبل تركيب tags الماركداون، مش sanitizer موثوق. اتصلح بـescaping حقيقي عبر
+    `document.createElement('div').textContent=...` (encoder المتصفح نفسه، مش pattern matching
+    يدوي) قبل أي تركيب tag — صفر dependency جديدة.
+  - **بيانات ضيف كانت متعرَّفة في schema بدون تنفيذ**: `guest_phone`/`user_name` في `ChatContext`
+    كانوا معرَّفين من البداية (مطابقة للنظام القديم) لكن مالهومش أي قراءة فعلية في الكود — ومع
+    ذلك وجودهم في العقد نفسه يخالف قرار Gate 3 الصريح "مفيش بيانات ضيف تتبعت لنموذج AI طرف
+    ثالث". اتشالوا من الـschema والفرونت إند (كانا `null`/غير موجودين فعليًا في المستهلك الوحيد).
+  - **rate limit بالدقيقة بس، بلا سقف يومي**: نداء AI حقيقي بتكلفة فعلية لكل رسالة — حد الدقيقة
+    (20/60s، موجود بالفعل) بيمنع burst سريع بس مش استنزاف بطيء (نداء كل دقيقتين 24 ساعة = 720
+    نداء). اتضاف `check_daily_cap()` (300/يوم لكل IP) كطبقة مستقلة جوه الـendpoint، بتستخدم نفس
+    `rate_limit()` primitive الموجود.
+  - **مفيش circuit breaker**: عند انقطاع Gemini، كل طلب كان بيستنى الـtimeout كامل (15s) قبل ما
+    يفشل — استنزاف وقت/تكلفة على مزود عارفين إنه واقع. اتضاف circuit breaker بسيط (`rate_limit()`
+    نفسها كعداد فشل بدل عداد موازٍ — 5 فشل خلال 60 ثانية بيفتح الدائرة 30 ثانية تهدئة، أي طلب وقتها
+    بيترفض فورًا من غير ما ينادي Gemini خالص). **باج حقيقي في تصميمي الأول اتصلح بتست فاشل**:
+    `rate_limit(key, max_requests=N)` بترجع True لما العدّاد `<= N` (يعني تسمح بـN فشل قبل ما
+    ترفض) — يعني `max_requests=THRESHOLD` كان بيفتح الدائرة بعد THRESHOLD+1 فشل فعليًا مش THRESHOLD.
+    اتصلح بـ`max_requests=THRESHOLD-1`.
+  - **`_client_ip` — محاولة rename ارتدت**: حبّيت أصدّر الدالة (تشيل الـunderscore) عشان الشات
+    بوت يعيد استخدام نفس منطق ثقة الـproxy الآمن بدل تكرار كوده. اكتشفت وقت التشغيل إن الدالة
+    مستخدمة كمان في `app/core/me_router.py` و`kernel/auth/router.py` وليها test file مخصوص
+    (`test_auth_security_http.py`، 7 استخدامات) — دول ملفات auth حساسة برّه نطاق CL-01 صراحةً
+    (البروتوكول: auth ملك Codex). رجّعت الاسم زي ما كان، والشات بوت بيستورد `_client_ip` مباشرة
+    (نفس نمط `kernel/auth/router.py` بالظبط) بدل ما يعيد تسمية دالة مشتركة.
+  - **12 اختبار red-team جديد** يغطي بالظبط قائمة Gate 3: رسالة/history/context أكبر من الحد
+    (422)، لغة غير مدعومة (422)، role غريب في history (422)، تسريب أسرار في الـprompt (SECRET_KEY/
+    GEMINI_API_KEY/DATABASE_URL مش موجودين)، حقول schema بيانات الضيف (تأكيد صراحة إنها الأربعة
+    المسموحة بس)، سقف يومي (يمنع بعد الحد، مستقل لكل IP)، circuit breaker (بيفتح بعد الفشل
+    الصحيح، وبيرجع 503 عبر HTTP)، وطلبات متكررة سريعة (retry loops) من غير آثار جانبية متراكمة.
+  - **باج تست حقيقي منفصل**: `_FakeAsyncClient.post` كان بيتعدَّل مباشرة (`fake_gemini.post =
+    _capture`) في 3 تستات من غير استرجاع — بيسرّب التعديل لتستات بعدها في نفس الملف. اتصلح
+    بـ`monkeypatch.setattr` (بيرجع تلقائي) بدل الإسناد المباشر.
+  - **تلوّث كاش عبر التستات**: `chat_circuit_*`/`chat_daily:*` مخزّنين في نفس كاش الـprocess
+    (redis/fake) اللي مش بيتصفّر مع rollback الـdb fixture — تست فشل ممكن يفتح الدائرة على تست
+    تاني بعده من غير علاقة. اتضاف autouse fixture واحد على مستوى الملف كله (`invalidate_pattern
+    ("chat_")`) بديل الفيكستشر الأضيق اللي كان بيغطي prompt cache بس.
+  - نتيجة نهائية: **2126 اختبار، صفر فشل** (34 skipped)، Alembic still single head + downgrade/
+    upgrade round-trip اتأكد تاني، `npm run build` (الموقع التسويقي) نضاف، نداء حي حقيقي أخير
+    لـGemini API بعد كل التعديلات فوق أكد إن الـhappy path لسه شغال صح.
+  - **مؤجَّل صراحةً برّه نطاق CL-01** (مذكور في التسليم الرسمي
+    `docs/agent-workflow/handoffs/2026-07-26_CL-01_claude_handoff.md`): تشفير `ChatMessage.message`
+    (نص حر من الضيف ممكن يحتوي PII عرضًا — قرار retention/encryption محتاج موافقة Mohamed صريحة،
+    مش قرار وكيل منفرد)، ومفتاح Gemini مخصوص لـresort-os بدل المشترك المؤقت.
+
 ### 🔴 حرجة (تمنع VPS deployment)
 1. ~~`wego-core` editable local path~~ — **اتحل بالكامل 2026-07-03**: resort-os بقى مستقل 100%، مفيش
    أي اعتماد على `wego_core` خالص (راجع §14). اتأكد live ببيئة Python نضيفة تمامًا (`wego-core` مش
@@ -1064,6 +1163,7 @@ SERVICE_CHARGE_PERCENTAGE=12.0
 TIMEZONE=Africa/Cairo
 DEFAULT_CURRENCY=EGP
 ETA_ENABLED=false
+GEMINI_API_KEY=<from https://aistudio.google.com/apikey>  # None = /chat يرجّع 503
 ```
 
 ---

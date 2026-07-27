@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import timedelta
 
 from app.celery_app import celery_app
 from app.core.config import settings

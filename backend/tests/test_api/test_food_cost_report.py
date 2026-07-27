@@ -370,7 +370,12 @@ def make_branch_linked_headers(db, branch, role="manager") -> dict[str, str]:
     (conftest.py) بلا Employee/فرع خالص، فمحتاج مستخدم Employee-linked جديد."""
     from datetime import date, timedelta
     from decimal import Decimal as _D
-    from tests.conftest import _create_test_user, _make_token, open_cashier_shift
+    from tests.conftest import (
+        _create_test_user,
+        _make_token,
+        assign_test_user_to_branch,
+        open_cashier_shift,
+    )
     from app.modules.hr.models import Employee
 
     email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
@@ -382,6 +387,7 @@ def make_branch_linked_headers(db, branch, role="manager") -> dict[str, str]:
         hire_date=date.today() - timedelta(days=365), user_id=user_id,
     )
     db.add(emp)
+    assign_test_user_to_branch(db, user_id, branch.id)
     db.commit()
     # Gate 4A: أي مشغّل POS بيحصّل دفع مباشر لازم يكون له وردية مفتوحة.
     open_cashier_shift(db, branch.id, user_id)

@@ -66,8 +66,8 @@ const routes: RouteRecordRaw[] = [
   // (app/core/kernel/email_service.py::send_password_reset_email). Both call
   // the existing app/core/kernel/auth/router.py password-reset endpoints —
   // no backend changes needed for either.
-  { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue'), meta: { title: 'نسيت كلمة المرور' } },
-  { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue'), meta: { title: 'إعادة تعيين كلمة المرور' } },
+  { path: '/forgot-password', name: 'forgot-password', component: () => import('../views/account/ForgotPasswordView.vue'), meta: { titleKey: 'backoffice.forgotPassword.title' } },
+  { path: '/reset-password', name: 'reset-password', component: () => import('../views/account/ResetPasswordView.vue'), meta: { titleKey: 'backoffice.resetPassword.title' } },
 
   {
     path: '/change-temporary-password',
@@ -199,22 +199,10 @@ const routes: RouteRecordRaw[] = [
       { path: 'cafe-menu',   redirect: '/admin/dining-menu' },
       { path: 'tables',      redirect: '/admin/dining-menu' },
       { path: 'cafe-sales',  redirect: '/admin/analytics' },
-      { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', title: 'الصلاحيات' } },
+      { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', titleKey: 'backoffice.permissions.title' } },
       { path: 'users', name: 'admin-users', component: () => import('../views/admin/UsersView.vue'), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.accounts.title' } },
-      { path: 'super-admin', name: 'admin-super-admin', component: () => import('../views/admin/SuperAdminView.vue'), meta: { requiredRole: 'super_admin', title: 'لوحة تحكم Super Admin' } },
-      { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { title: 'الموقع والحجوزات الأونلاين' } },
-      // Mohamed's temporary project control room. The route is compiled into
-      // development only and remains role-gated even there. Production builds
-      // contain neither the route nor its lazy-loaded snapshot chunk.
-      ...(import.meta.env.DEV ? [{
-        path: 'project-cockpit',
-        name: 'dev-project-cockpit',
-        component: () => import('../views/dev/ProjectCockpitView.vue'),
-        meta: {
-          requiredRole: 'super_admin',
-          titleKey: 'backoffice.nav.projectCockpit',
-        },
-      }] : []),
+      { path: 'super-admin', name: 'admin-super-admin', component: () => import('../views/admin/SuperAdminView.vue'), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.superAdmin.title' } },
+      { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { titleKey: 'backoffice.hub.title' } },
     ],
   },
 

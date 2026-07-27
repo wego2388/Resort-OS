@@ -98,17 +98,6 @@ const allSections = computed<NavSection[]>(() => [
       { path: '/admin/hub', label: t('backoffice.nav.hubManagement'), icon: '🌐', requiredRole: 'manager' },
     ],
   },
-  ...(import.meta.env.DEV ? [{
-    label: t('backoffice.nav.development'),
-    items: [
-      {
-        path: '/admin/project-cockpit',
-        label: t('backoffice.nav.projectCockpit'),
-        icon: '🧭',
-        requiredRole: 'super_admin',
-      },
-    ],
-  }] : []),
   {
     label: t('backoffice.nav.settings'),
     items: [

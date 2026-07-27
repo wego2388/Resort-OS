@@ -5,4 +5,4 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/snap/bin/certbot renew --quiet
+ExecStart=/snap/bin/certbot renew --quiet --no-random-sleep-on-renew

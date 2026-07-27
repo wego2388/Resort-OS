@@ -7,6 +7,8 @@ htmlcov/
 .coverage
 celerybeat-schedule
 .env
+.env.*
+!.env.example
 *.log
 test.db
 *.sqlite3

@@ -25,7 +25,7 @@
 #  lost too).
 #      BACKUP_REMOTE_ENABLED=true
 #      BACKUP_RCLONE_REMOTE=b2:my-bucket/resort-os-backups   # or s3:bucket/path, etc.
-#      BACKUP_RCLONE_CONFIG=/opt/wegosharm/.config/rclone/rclone.conf   # optional, defaults to rclone's own default config location
+#      BACKUP_RCLONE_CONFIG=/opt/resort-os/.config/rclone/rclone.conf   # optional, defaults to rclone's own default config location
 #  Requires `rclone` installed + the remote already configured
 #  (`rclone config` — the part before the colon above, e.g. `b2`/`s3`, is
 #  the configured remote's name).

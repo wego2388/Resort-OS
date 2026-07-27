@@ -27,6 +27,7 @@ from typing import Callable, Optional
 
 from app.core.kernel.auth.service import AuthService
 from app.core.kernel.database import get_db
+from app.modules.core.schemas import PERMISSION_ACTION_PATTERN
 
 # ── Cookie helpers ────────────────────────────────────────────────────────────
 # refresh_token يُخزَّن في httpOnly SameSite=Strict cookie (T-01).
@@ -323,7 +324,7 @@ class _PermissionOverrideUpsertIntent(BaseModel):
     user_id: int = Field(gt=0, strict=True)
     resource: str = Field(min_length=1, max_length=100)
     action: str = Field(
-        pattern=r"^(view|create|edit|delete|void|approve|execute)$",
+        pattern=PERMISSION_ACTION_PATTERN,
         max_length=30,
     )
     allowed: bool = Field(strict=True)
@@ -456,7 +457,11 @@ def build_auth_router(
 
     _get_current_user = get_current_user or _no_auth
 
-    def _session_bound_access_token(user, session_ref: Optional[str] = None) -> str:
+    def _session_bound_access_token(
+        user,
+        session_ref: Optional[str] = None,
+        active_branch_id: Optional[int] = None,
+    ) -> str:
         """Mint an access token for the authenticated HTTP session.
 
         ``sid`` is a non-secret public session reference. The shared auth
@@ -469,6 +474,8 @@ def build_auth_router(
         claims = {"sub": user.email}
         if session_ref:
             claims["sid"] = session_ref
+        if active_branch_id is not None:
+            claims["bid"] = active_branch_id
         return create_access_token(
             data=claims,
             secret_key=settings.SECRET_KEY,
@@ -505,7 +512,11 @@ def build_auth_router(
                 # is an internal invariant violation. Fail closed rather than
                 # issuing an access token that cannot be revoked by session.
                 raise RuntimeError("New refresh session could not be resolved")
-            result["access_token"] = _session_bound_access_token(user, current[1])
+            result["access_token"] = _session_bound_access_token(
+                user,
+                current[1],
+                current[2],
+            )
             _set_refresh_cookie(
                 response,
                 refresh,
@@ -568,7 +579,7 @@ def build_auth_router(
         current = auth.current_session(new_refresh_token, expected_user_id=user.id)
         if current is None:
             raise RuntimeError("Rotated refresh session could not be resolved")
-        access = _session_bound_access_token(user, current[1])
+        access = _session_bound_access_token(user, current[1], current[2])
         # refresh_token الجديد في cookie (T-01) — لا يُعاد في body
         _set_refresh_cookie(
             response,
@@ -888,7 +899,7 @@ def build_auth_router(
                 "error_code": "NO_CURRENT_SESSION",
                 "message": "لا توجد جلسة حالية صالحة لتنفيذ هذا الإجراء",
             })
-        current_family_id, current_public_id = current
+        current_family_id, current_public_id = current[0], current[1]
         scope_hash = step_up_scopes.other_sessions_revoke_scope(keep_session_ref=current_public_id)
         _consume_session_step_up_or_raise(
             auth, request, current_user,

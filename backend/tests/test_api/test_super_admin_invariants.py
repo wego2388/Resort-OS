@@ -30,7 +30,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.conftest import _fresh_super_admin, _issue_step_up
+from tests.conftest import _fresh_super_admin, _issue_step_up, _make_token
 from tests.test_api.test_permissions import (
     _branch_committed,
     _create_order,
@@ -57,6 +57,12 @@ class TestActiveSuperAdminBypassesExplicitDeny:
         another_sa_id, _another_sa_headers, _ = _fresh_super_admin("deny-granter")
 
         branch = _branch_committed(db)
+        from app.core.kernel.models.user import User
+
+        sa = db.query(User).filter(User.id == sa_id).one()
+        sa_headers = {
+            "Authorization": f"Bearer {_make_token(sa.email, branch_id=branch.id)}"
+        }
         outlet, item = _outlet_and_item_committed(db, branch)
         order = _create_order(client, outlet.id, item.id, sa_headers)
         order_item_id = order["items"][0]["id"]

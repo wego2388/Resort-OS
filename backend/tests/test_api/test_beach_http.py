@@ -35,6 +35,7 @@ def make_branch_linked_cashier_headers(db, branch) -> dict[str, str]:
     from decimal import Decimal
 
     from tests.conftest import _create_test_user, _make_token
+    from app.modules.core.models import UserBranchMembership
     from app.modules.hr.models import Employee
 
     email = f"cashier-{uuid.uuid4().hex[:10]}@test.local"
@@ -45,7 +46,15 @@ def make_branch_linked_cashier_headers(db, branch) -> dict[str, str]:
         position="Cashier", department="Beach", basic_salary=Decimal("4000.00"),
         hire_date=date.today() - timedelta(days=365), user_id=user_id,
     )
-    db.add(emp)
+    db.add_all([
+        emp,
+        UserBranchMembership(
+            user_id=user_id,
+            branch_id=branch.id,
+            is_default=True,
+            is_active=True,
+        ),
+    ])
     db.commit()
     return {"Authorization": f"Bearer {_make_token(email)}"}
 
@@ -152,9 +161,15 @@ class TestBeachReservationFlow:
         )
         assert resp.status_code == 403, resp.text
 
-    def test_checkin_super_admin_bypasses_branch_check(self, client: TestClient, db, fake_redis, cashier_headers, super_admin_headers):
+    def test_checkin_super_admin_bypasses_membership_check_after_selecting_branch(
+        self, client: TestClient, db, fake_redis, cashier_headers, super_admin_headers,
+    ):
         """super_admin (level=100) هو الاستثناء المعتمد الوحيد للتخطي
-        الكامل عبر الفروع (Decision 0003) — يفضل 200 حتى بلا Employee مرتبط."""
+        الكامل عبر العضويات (Decision 0003)، لكنه ما زال يختار سياق فرع
+        صريحًا للجلسة بدل fallback لأول فرع."""
+        from app.core.kernel.models.user import User
+        from tests.conftest import _make_token
+
         branch = make_branch_committed(db)
         reservation = client.post(
             "/api/v1/beach/reservations",
@@ -165,9 +180,16 @@ class TestBeachReservationFlow:
             headers=cashier_headers,
         ).json()
 
+        super_admin = db.query(User).filter(
+            User.role == "super_admin",
+            User.two_factor_enabled.is_(True),
+        ).first()
+        selected_headers = {
+            "Authorization": f"Bearer {_make_token(super_admin.email, branch_id=branch.id)}"
+        }
         resp = client.post(
             f"/api/v1/beach/reservations/{reservation['id']}/checkin",
-            headers=super_admin_headers,
+            headers=selected_headers,
         )
         assert resp.status_code == 200, resp.text
 

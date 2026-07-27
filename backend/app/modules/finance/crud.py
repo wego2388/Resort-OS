@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.config import settings
-from app.resort_os.timezone_utils import local_today, utc_naive_to_local_date
+from app.resort_os.timezone_utils import local_today
 
 from app.modules.finance.models import (
     Account, AccountingPeriod, AssetDepreciationEntry, BankAccount, BankStatementLine,

@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.database import SessionLocal
@@ -41,6 +43,150 @@ LEGACY_DEMO_EMAILS = frozenset({
     "lifeguard@resortos.local",
     "maintenance@resortos.local",
 })
+
+
+def bootstrap_first_branch(
+    db,
+    *,
+    super_admin_email: str,
+    code: str,
+    name: str,
+    name_ar: str | None,
+    timezone_name: str,
+) -> dict:
+    """Create the first production branch without demo/business data.
+
+    The named super-admin row is the serialization lock, which makes two
+    concurrent invocations safe even while the branches table is empty.
+    Re-running the exact same command is a no-op; any conflicting existing
+    branch fails closed and must use the normal control plane instead.
+    """
+    from app.core.kernel.models.user import RefreshToken  # noqa: PLC0415
+    from app.modules.core.models import (  # noqa: PLC0415
+        AuditLog,
+        Branch,
+        UserBranchMembership,
+    )
+    from app.modules.core.schemas import BranchCreate  # noqa: PLC0415
+
+    email = super_admin_email.strip().casefold()
+    if email in LEGACY_DEMO_EMAILS:
+        raise ValueError("A named non-demo super-admin is required")
+    payload = BranchCreate(
+        code=code.strip().upper(),
+        name=name.strip(),
+        name_ar=(name_ar or "").strip() or None,
+        timezone=timezone_name.strip(),
+    )
+    try:
+        ZoneInfo(payload.timezone)
+    except Exception as exc:
+        raise ValueError(f"Unknown IANA timezone: {payload.timezone}") from exc
+
+    actor = (
+        db.query(User)
+        .filter(
+            User.email == email,
+            User.role == "super_admin",
+            User.is_active.is_(True),
+            User.deleted_at.is_(None),
+        )
+        .with_for_update()
+        .first()
+    )
+    if actor is None:
+        raise ValueError("Named active super-admin account was not found")
+
+    branches = db.query(Branch).order_by(Branch.id).with_for_update().all()
+    created = False
+    if not branches:
+        branch = Branch(**payload.model_dump())
+        db.add(branch)
+        db.flush()
+        created = True
+    elif len(branches) == 1 and branches[0].code == payload.code:
+        branch = branches[0]
+        expected = {
+            "name": payload.name,
+            "name_ar": payload.name_ar,
+            "timezone": payload.timezone,
+        }
+        actual = {field: getattr(branch, field) for field in expected}
+        if actual != expected or not branch.is_active:
+            raise ValueError(
+                "The existing first branch conflicts with the requested values; "
+                "use the authenticated branch control plane"
+            )
+    else:
+        raise ValueError(
+            "Branches already exist; first-branch bootstrap is no longer allowed"
+        )
+
+    membership = db.query(UserBranchMembership).filter(
+        UserBranchMembership.user_id == actor.id,
+        UserBranchMembership.branch_id == branch.id,
+    ).first()
+    membership_changed = False
+    if membership is None:
+        membership = UserBranchMembership(
+            user_id=actor.id,
+            branch_id=branch.id,
+            is_default=True,
+            is_active=True,
+            created_by=actor.id,
+        )
+        db.add(membership)
+        membership_changed = True
+    elif not membership.is_active or not membership.is_default:
+        membership.is_active = True
+        membership.is_default = True
+        membership.revoked_at = None
+        membership.revoked_by = None
+        membership_changed = True
+
+    now = datetime.now(timezone.utc)
+    sessions_bound = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.user_id == actor.id,
+            RefreshToken.consumed_at.is_(None),
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > now,
+            RefreshToken.active_branch_id.is_(None),
+        )
+        .update(
+            {RefreshToken.active_branch_id: branch.id},
+            synchronize_session=False,
+        )
+    )
+    if created or membership_changed or sessions_bound:
+        db.add(AuditLog(
+            user_id=actor.id,
+            branch_id=branch.id,
+            action="first_branch_bootstrapped",
+            entity_type="branch",
+            entity_id=branch.id,
+            old_data=None,
+            new_data=json.dumps({
+                "branch_code": branch.code,
+                "super_admin_id": actor.id,
+                "membership_default": True,
+                "live_sessions_bound": sessions_bound,
+            }, sort_keys=True),
+        ))
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {
+        "branch_id": branch.id,
+        "branch_code": branch.code,
+        "super_admin_id": actor.id,
+        "created": created,
+        "membership_changed": membership_changed,
+        "live_sessions_bound": sessions_bound,
+    }
 
 
 def disable_legacy_demo_accounts(db) -> int:
@@ -153,6 +299,19 @@ def _parser() -> argparse.ArgumentParser:
         "disable-legacy-demo",
         help="Disable seed identities after a named super-admin completes 2FA",
     )
+    first_branch = subparsers.add_parser(
+        "init-first-branch",
+        help="Create the first named production branch and bind a named super-admin",
+    )
+    first_branch.add_argument("--email", help="Named super-admin email (prompted when omitted)")
+    first_branch.add_argument("--code", help="Branch code, e.g. WSR-001 (prompted when omitted)")
+    first_branch.add_argument("--name", help="Branch name (prompted when omitted)")
+    first_branch.add_argument("--name-ar", help="Optional Arabic branch name")
+    first_branch.add_argument(
+        "--timezone",
+        default="Africa/Cairo",
+        help="IANA timezone (default: Africa/Cairo)",
+    )
     return parser
 
 
@@ -168,6 +327,30 @@ def main(argv: list[str] | None = None) -> int:
             with SessionLocal() as db:
                 disabled_count = disable_legacy_demo_accounts(db)
             print(f"Disabled {disabled_count} active legacy demo account(s).")
+            return 0
+
+        if args.command == "init-first-branch":
+            email = (args.email or _required_input("Named super-admin email: ")).strip().casefold()
+            code = (args.code or _required_input("Branch code: ")).strip().upper()
+            name = args.name or _required_input("Branch name: ")
+            _confirm_identity(email)
+            confirmation = input(f"Type the branch code to confirm ({code}): ").strip().upper()
+            if confirmation != code:
+                raise ValueError("Branch confirmation did not match; nothing was changed")
+            with SessionLocal() as db:
+                result = bootstrap_first_branch(
+                    db,
+                    super_admin_email=email,
+                    code=code,
+                    name=name,
+                    name_ar=args.name_ar,
+                    timezone_name=args.timezone,
+                )
+            state = "created" if result["created"] else "already initialized"
+            print(
+                f"First branch {result['branch_code']} {state}; "
+                f"membership bound to super-admin id {result['super_admin_id']}."
+            )
             return 0
 
         email = (args.email or _required_input("Account email: ")).strip().casefold()

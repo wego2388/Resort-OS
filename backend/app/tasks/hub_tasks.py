@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import datetime
 
 from app.celery_app import celery_app
 from app.core.config import settings
@@ -10,6 +10,39 @@ from app.core.kernel.worker import notify_task_failure
 from app.resort_os.timezone_utils import local_today
 
 logger = logging.getLogger(__name__)
+
+
+@celery_app.task(
+    name="app.tasks.hub_tasks.purge_expired_public_contact_pii",
+    bind=True,
+    max_retries=3,
+)
+def purge_expired_public_contact_pii(self):
+    """Daily bounded purge for expired public-contact and public-lead PII."""
+    try:
+        from app.core.database import SessionLocal  # noqa: PLC0415
+        from app.modules.hub.public_contact import (  # noqa: PLC0415
+            purge_expired_public_contact_pii as purge_batch,
+        )
+
+        totals = {"contacts": 0, "leads": 0}
+        with SessionLocal() as db:
+            for _ in range(20):  # at most 10,000 rows per daily run
+                changed = purge_batch(db, now=datetime.utcnow(), batch_size=500)
+                db.commit()
+                totals["contacts"] += changed["contacts"]
+                totals["leads"] += changed["leads"]
+                if changed["contacts"] + changed["leads"] < 500:
+                    break
+        logger.info(
+            "Public-contact PII purge complete: contacts=%s leads=%s",
+            totals["contacts"],
+            totals["leads"],
+        )
+        return totals
+    except Exception as exc:
+        logger.error("public-contact PII purge failed: %s", exc)
+        raise self.retry(exc=exc, countdown=600)
 
 
 @celery_app.task(

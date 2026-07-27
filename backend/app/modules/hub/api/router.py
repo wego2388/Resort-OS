@@ -4,7 +4,9 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter, Depends, Header, HTTPException, Query, Request, Response, status,
+)
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
@@ -15,7 +17,7 @@ from app.modules.hub.schemas import (
     HubOfferCreate, HubOfferRead, HubOfferUpdate,
     HubPageCreate, HubPageRead, HubPageUpdate,
     OnlineBookingCreate, OnlineBookingRead,
-    ContactFormResponse, BlogPostsResponse,
+    ContactFormCreate, ContactFormResponse, ContactFormListItem, BlogPostsResponse,
 )
 from app.modules.core.schemas import PaginatedResponse
 
@@ -182,46 +184,83 @@ def cancel_booking(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 # ── Contact Form → CRM Lead ───────────────────────────────────────────
 
-@router.post("/hub/contact", response_model=ContactFormResponse)
+@router.post(
+    "/hub/contact",
+    response_model=ContactFormResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def submit_contact_form(
     db: DbDep,
-    data: dict,
+    data: ContactFormCreate,
+    request: Request,
+    response: Response,
+    idempotency_key: str = Header(
+        ...,
+        alias="Idempotency-Key",
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
 ):
-    """استفسار عام من الموقع → يُنشئ ContactForm + Lead في CRM تلقائياً."""
-    from app.modules.hub.models import ContactForm  # noqa: PLC0415
-    from app.modules.crm.crud import create_lead    # noqa: PLC0415
-
-    # Save contact form
-    form = ContactForm(
-        branch_id=data.get("branch_id", 1),
-        full_name=data["full_name"],
-        phone=data.get("phone"),
-        email=data.get("email"),
-        subject=data["subject"],
-        message=data["message"],
-        source_page=data.get("source_page"),
+    """Public service contact; CRM conversion requires separate marketing opt-in."""
+    from app.core.rate_limit import _client_ip  # noqa: PLC0415
+    from app.modules.hub.public_contact import (  # noqa: PLC0415
+        ContactSubmissionFailure,
+        resolve_public_site_branch,
+        submit_public_contact,
     )
-    db.add(form)
-    db.flush()
 
-    # Auto-create CRM Lead
+    branch = resolve_public_site_branch(db, request.url.hostname)
+    if branch is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            {
+                "code": "public_site_not_configured",
+                "message": "Public contact site is not configured.",
+            },
+        )
+
     try:
-        lead = create_lead(db, {
-            "branch_id": form.branch_id,
-            "full_name": form.full_name,
-            "phone": form.phone,
-            "email": form.email,
-            "interest": "other",
-            "stage": "new",
-            "notes": f"من نموذج التواصل: {form.subject}\n\n{form.message}",
-        })
-        form.lead_id = lead.id
-        form.status = "converted"
-    except Exception:
-        pass  # graceful — lead creation failure doesn't block form submission
+        result = submit_public_contact(
+            db,
+            branch=branch,
+            data=data,
+            idempotency_key=idempotency_key,
+            client_ip=_client_ip(request),
+        )
+    except ContactSubmissionFailure as exc:
+        raise HTTPException(
+            exc.status_code,
+            {"code": exc.code, "message": exc.message},
+        ) from exc
 
-    db.commit()
-    return {"message": "شكراً! سيتواصل معك فريقنا قريباً.", "form_id": form.id}
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@router.get("/hub/contact-forms", response_model=PaginatedResponse)
+def list_contact_forms(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    crm_sync_status: Optional[str] = Query(
+        None, description="not_requested|created|failed",
+    ),
+    status_filter: Optional[str] = Query(
+        None, alias="status", description="accepted|purged|spam",
+    ),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    """Every public contact submission, consenting or not — see ContactFormListItem."""
+    items, total = crud.list_contact_forms(
+        db, branch_id, crm_sync_status, status_filter,
+        skip=(page - 1) * size, limit=size,
+    )
+    return PaginatedResponse(
+        total=total, page=page, size=size,
+        items=[ContactFormListItem.model_validate(f) for f in items],
+    )
 
 
 # ── Blog Posts ────────────────────────────────────────────────────────

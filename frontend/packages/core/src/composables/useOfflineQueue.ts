@@ -29,9 +29,10 @@
  * طلب معلّق نفسه — مش قيمة عامة واحدة للطابور كله — عشان لو الكاشير غيّر
  * المنفذ المختار وهو offline، كل طلب يتزامن على المنفذ اللي اتعمل بيه فعليًا.
  */
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { openDB, type IDBPDatabase } from 'idb'
 import { api } from '../api/client'
+import { useAuthStore } from '../stores/auth'
 
 const DB_NAME = 'resort-os-offline'
 // لسه v2 — إضافة 'beach'/'dining' كـ قيم تالتة/رابعة ممكنة لحقل module نص
@@ -66,6 +67,13 @@ const MODULE_CONFIG: Record<OfflineQueueModule, {
 export interface PendingOrder {
   localId: string
   branchId: number
+  /**
+   * The authenticated employee who created the offline operation.
+   *
+   * Old records without an owner are deliberately quarantined: attributing
+   * them to whoever next signs in would corrupt the audit trail.
+   */
+  ownerUserId: number | null
   module: OfflineQueueModule   // #4: تمييز وجهة الـ sync
   outletId?: number            // dining فقط — المنفذ اللي اتعمل فيه الطلب ده تحديدًا
   payload: Record<string, unknown>
@@ -82,10 +90,18 @@ export interface RejectedItem {
 
 export interface SyncLogEntry {
   localId: string
+  ownerUserId: number | null
   status: 'partially_synced' | 'rejected'
   rejectedItems?: RejectedItem[]
   reason?: string
   timestamp: string
+}
+
+export function isOfflineRecordOwnedBy(
+  record: Pick<PendingOrder, 'ownerUserId'>,
+  activeUserId: number | null | undefined,
+): boolean {
+  return activeUserId != null && record.ownerUserId === activeUserId
 }
 
 let dbPromise: Promise<IDBPDatabase> | null = null
@@ -127,6 +143,7 @@ function isNetworkError(err: unknown): boolean {
 
 // #4: module parameter — default 'restaurant' للـ backward compat
 export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
+  const auth = useAuthStore()
   const cfg = MODULE_CONFIG[module]
   const isOnline = ref(navigator.onLine)
   const pendingCount = ref(0)
@@ -134,17 +151,37 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
   const lastPartialRejection = ref<RejectedItem[] | null>(null)
 
   async function refreshPendingCount() {
+    const activeUserId = auth.user?.id
+    if (activeUserId == null) {
+      pendingCount.value = 0
+      return
+    }
+
     const db = await getDb()
     // #2 fix: بنعد بس الـ records الخاصة بالـ module ده — مش كل الـ DB
     const all = (await db.getAllFromIndex(STORE_PENDING, 'by_created')) as PendingOrder[]
-    pendingCount.value = all.filter(o => (o.module ?? 'restaurant') === module).length
+    pendingCount.value = all.filter(
+      order => (order.module ?? 'restaurant') === module
+        && isOfflineRecordOwnedBy(order, activeUserId),
+    ).length
   }
 
   async function queueOrder(branchId: number, payload: Record<string, unknown>, outletId?: number): Promise<string> {
+    const ownerUserId = auth.user?.id
+    if (ownerUserId == null) {
+      throw new Error('An authenticated employee is required to queue an offline operation')
+    }
+
     const localId = crypto.randomUUID()
     const db = await getDb()
     await db.put(STORE_PENDING, {
-      localId, branchId, module, outletId, payload, createdAt: new Date().toISOString(),
+      localId,
+      branchId,
+      ownerUserId,
+      module,
+      outletId,
+      payload,
+      createdAt: new Date().toISOString(),
     } satisfies PendingOrder)
     await refreshPendingCount()
     return localId
@@ -173,15 +210,27 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
 
   async function syncPendingOrders() {
     if (!navigator.onLine || syncing.value) return
+    const syncOwnerUserId = auth.user?.id
+    if (syncOwnerUserId == null) return
+
     syncing.value = true
     try {
       const db = await getDb()
       const all = (await db.getAllFromIndex(STORE_PENDING, 'by_created')) as PendingOrder[]
-      // #2 fix: بنبعت بس الـ records الخاصة بالـ module الحالي (restaurant أو cafe)
-      // منع تداخل instances — شاشة المطعم مش هتبعت طلبات الكافيه والعكس
-      const pending = all.filter(o => (o.module ?? 'restaurant') === module)
+      // Scope by module AND creator identity. A shared POS may switch operator
+      // while offline; the next operator must never submit or review another
+      // employee's queued work under their own access token.
+      const pending = all.filter(
+        order => (order.module ?? 'restaurant') === module
+          && isOfflineRecordOwnedBy(order, syncOwnerUserId),
+      )
 
       for (const order of pending) {
+        // A PIN switch can happen while a request is in flight. Stop before
+        // sending the next record if the active access token now belongs to a
+        // different employee.
+        if (auth.user?.id !== syncOwnerUserId) break
+
         // beach: بيع فردي بسيط — نفس /beach/sell (مش /sync منفصل)، idempotency
         // عبر local_id في الجسم، ومفيش partial/rejected على مستوى الطلب
         // (كل بيع إما نجح أو اترفض بالكامل، مفيش "أصناف" داخله).
@@ -197,7 +246,9 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
             // السيرفر رفضه صراحة (زي تجاوز السعة بعد ما اتحفظ محليًا) — امسحه
             // عشان ميقفلش الطابور للأبد، وسجّله في sync_log عشان الكاشير يراجعه
             await db.put(STORE_SYNC_LOG, {
-              localId: order.localId, status: 'rejected',
+              localId: order.localId,
+              ownerUserId: order.ownerUserId,
+              status: 'rejected',
               reason: 'invalid_request', timestamp: new Date().toISOString(),
             } satisfies SyncLogEntry)
             await db.delete(STORE_PENDING, order.localId)
@@ -214,7 +265,9 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
         } catch (err) {
           if (isNetworkError(err)) break
           await db.put(STORE_SYNC_LOG, {
-            localId: order.localId, status: 'rejected',
+            localId: order.localId,
+            ownerUserId: order.ownerUserId,
+            status: 'rejected',
             reason: 'invalid_request', timestamp: new Date().toISOString(),
           } satisfies SyncLogEntry)
           await db.delete(STORE_PENDING, order.localId)
@@ -226,14 +279,18 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
           await db.delete(STORE_PENDING, order.localId)
         } else if (status === 'partial') {
           await db.put(STORE_SYNC_LOG, {
-            localId: order.localId, status: 'partially_synced',
+            localId: order.localId,
+            ownerUserId: order.ownerUserId,
+            status: 'partially_synced',
             rejectedItems: rejected_items, timestamp: new Date().toISOString(),
           } satisfies SyncLogEntry)
           await db.delete(STORE_PENDING, order.localId)
           lastPartialRejection.value = rejected_items
         } else if (status === 'rejected') {
           await db.put(STORE_SYNC_LOG, {
-            localId: order.localId, status: 'rejected',
+            localId: order.localId,
+            ownerUserId: order.ownerUserId,
+            status: 'rejected',
             rejectedItems: rejected_items, timestamp: new Date().toISOString(),
           } satisfies SyncLogEntry)
           await db.delete(STORE_PENDING, order.localId)
@@ -243,12 +300,19 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
     } finally {
       await refreshPendingCount()
       syncing.value = false
+      if (navigator.onLine && auth.user?.id !== syncOwnerUserId) {
+        void syncPendingOrders()
+      }
     }
   }
 
   async function getSyncLog(): Promise<SyncLogEntry[]> {
+    const activeUserId = auth.user?.id
+    if (activeUserId == null) return []
+
     const db = await getDb()
-    return db.getAll(STORE_SYNC_LOG)
+    const entries = await db.getAll(STORE_SYNC_LOG) as SyncLogEntry[]
+    return entries.filter(entry => entry.ownerUserId === activeUserId)
   }
 
   function handleOnline() {
@@ -272,6 +336,16 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
       if (navigator.onLine && pendingCount.value > 0) syncPendingOrders()
     }, 30_000)
   })
+
+  watch(
+    () => auth.user?.id,
+    () => {
+      lastPartialRejection.value = null
+      void refreshPendingCount().then(() => {
+        if (navigator.onLine) void syncPendingOrders()
+      })
+    },
+  )
 
   onUnmounted(() => {
     window.removeEventListener('online', handleOnline)

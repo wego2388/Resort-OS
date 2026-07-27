@@ -4,7 +4,7 @@
  * الفرق عن Combobox: القيمة string حر (مش مقيّد بالـ options)، يسمح بـ free text.
  * الاستخدام الرئيسي: CRM customer search، PMS booking search.
  */
-import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import AppIcon from './Icon.vue'
 import Skeleton from './Skeleton.vue'
 import { fieldClasses, fieldLabelClasses, fieldErrorClasses, fieldHintClasses } from '../utils/inputClasses'

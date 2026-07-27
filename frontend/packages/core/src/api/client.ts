@@ -31,8 +31,8 @@ export function getApiToken(): string | null {
 // module can't import the store back without a circular import — it registers
 // a clear-handler here instead, once, right after the store is first created
 // in main.ts (always before any request can 401).
-let _clearAuthHandler: (() => void) | null = null
-export function registerAuthClearHandler(fn: () => void) {
+let _clearAuthHandler: (() => void | Promise<void>) | null = null
+export function registerAuthClearHandler(fn: () => void | Promise<void>) {
   _clearAuthHandler = fn
 }
 
@@ -51,9 +51,9 @@ function _processQueue(err: unknown, token: string | null) {
   _queue = []
 }
 
-function _clearAuthAndRedirect() {
+async function _clearAuthAndRedirect() {
   setApiToken(null)
-  _clearAuthHandler?.()
+  await _clearAuthHandler?.()
   window.location.href = '/login'
 }
 
@@ -93,7 +93,7 @@ api.interceptors.response.use(
         return api(err.config)
       } catch (refreshErr) {
         _processQueue(refreshErr, null)
-        _clearAuthAndRedirect()
+        await _clearAuthAndRedirect()
         return Promise.reject(refreshErr)
       } finally {
         _isRefreshing = false

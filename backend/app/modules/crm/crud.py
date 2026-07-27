@@ -20,8 +20,7 @@ from app.modules.crm.schemas import (
     CampaignCreate, CampaignUpdate,
     CustomerCreate, CustomerGroupCreate, CustomerGroupUpdate, CustomerUpdate,
     InteractionCreate,
-    LoyaltyAdjustRequest, LoyaltyProgramCreate, LoyaltyProgramUpdate, LoyaltyRedeemRequest,
-    OpportunityCreate, OpportunityUpdate,
+    LoyaltyAdjustRequest, LoyaltyProgramCreate, LoyaltyProgramUpdate, OpportunityCreate, OpportunityUpdate,
 )
 
 

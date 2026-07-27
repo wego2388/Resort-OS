@@ -117,8 +117,9 @@ def _resolve_user_from_token(token: str, db: Session):
     # Tokens without ``sid`` remain valid for backward compatibility and for
     # the short-lived POS PIN-switch flow, which has no refresh session.
     session_ref = payload.get("sid")
+    live_session = None
     if session_ref:
-        live_session = db.query(RefreshToken.id).filter(
+        live_session = db.query(RefreshToken).filter(
             RefreshToken.user_id == user.id,
             RefreshToken.family_public_id == session_ref,
             RefreshToken.consumed_at.is_(None),
@@ -132,6 +133,36 @@ def _resolve_user_from_token(token: str, db: Session):
     if revoked_at and payload.get("iat", 0) < revoked_at:
         return None
 
+    # CX-02C: resolve branch context exclusively from the live refresh family,
+    # or from a signed PIN token ``bid``.  Every request then revalidates the
+    # membership and branch state; a stale/revoked claim is never trusted.
+    from app.modules.core import services as core_services  # noqa: PLC0415
+
+    candidate_branch_id = (
+        live_session.active_branch_id
+        if live_session is not None
+        else payload.get("bid")
+    )
+    try:
+        candidate_branch_id = (
+            int(candidate_branch_id)
+            if candidate_branch_id is not None
+            else core_services.get_default_branch_id(db, user)
+        )
+    except (TypeError, ValueError):
+        return None
+    if (
+        candidate_branch_id is not None
+        and not core_services._can_enter_branch(db, user, candidate_branch_id)
+    ):
+        candidate_branch_id = None
+
+    # Transient request-scoped context only; these are not mapped User fields.
+    user._active_branch_id = candidate_branch_id
+    user._auth_session_ref = session_ref
+    user._auth_mode = "refresh_family" if live_session is not None else (
+        "pin" if payload.get("bid") is not None else "legacy"
+    )
     return user
 
 

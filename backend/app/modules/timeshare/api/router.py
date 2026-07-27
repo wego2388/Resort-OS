@@ -30,8 +30,6 @@ from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep,
-    get_cashier_user,
-    get_current_active_user,
     get_manager_user,
     get_timeshare_user,
     require_permission,

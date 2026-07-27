@@ -379,7 +379,6 @@ def get_overdue_activities(db: Session, branch_id: int) -> list[Activity]:
 
 def get_or_create_loyalty_program(db: Session, branch_id: int) -> "LoyaltyProgram | None":
     """يجيب برنامج النقاط للفرع. لو مش موجود يرجع None (مش نشط بعد)."""
-    from app.modules.crm.models import LoyaltyProgram  # noqa: PLC0415
     return crud.get_loyalty_program(db, branch_id)
 
 

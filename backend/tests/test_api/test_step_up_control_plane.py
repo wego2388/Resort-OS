@@ -55,6 +55,7 @@ def _branch_linked_manager(db, branch) -> tuple[int, dict[str, str]]:
     """manager مربوط فعليًا بـHR.Employee.branch_id — لازم لاختبار عزل
     الفروع الحقيقي (assert_branch_access)."""
     from app.modules.hr.models import Employee
+    from tests.conftest import assign_test_user_to_branch
 
     email = f"branch-mgr-{uuid.uuid4().hex[:8]}@test.local"
     user_id = _create_test_user(email, "manager")
@@ -65,8 +66,18 @@ def _branch_linked_manager(db, branch) -> tuple[int, dict[str, str]]:
         user_id=user_id,
     )
     db.add(emp)
+    assign_test_user_to_branch(db, user_id, branch.id)
     db.commit()
     return user_id, {"Authorization": f"Bearer {_make_token(email)}"}
+
+
+def _select_branch(db, user_id: int, branch_id: int) -> dict[str, str]:
+    from app.core.kernel.models.user import User
+
+    user = db.query(User).filter(User.id == user_id).one()
+    return {
+        "Authorization": f"Bearer {_make_token(user.email, branch_id=branch_id)}"
+    }
 
 
 def _sample_role_update_intent(user_id: int, reason: str) -> dict:
@@ -637,6 +648,7 @@ class TestSettingsBranchIsolation:
     def test_manager_can_read_and_write_own_branch_settings(self, client: TestClient, db):
         branch = _branch(db, "Own Branch")
         sa_id, sa_headers, sa_secret = _fresh_super_admin("settings-own-branch-actor")
+        sa_headers = _select_branch(db, sa_id, branch.id)
         _mgr_id, mgr_headers = _branch_linked_manager(db, branch)
 
         key = f"branch-setting-{uuid.uuid4().hex[:6]}"
@@ -687,6 +699,7 @@ class TestSettingsBranchIsolation:
         branch_a = _branch(db, "Branch A")
         branch_b = _branch(db, "Branch B")
         sa_id, sa_headers, sa_secret = _fresh_super_admin("settings-sa-bypass")
+        sa_headers = _select_branch(db, sa_id, branch_b.id)
 
         key = f"cross-branch-setting-{uuid.uuid4().hex[:6]}"
         reason = "super_admin بيقدر يعدّل إعدادات أي فرع"

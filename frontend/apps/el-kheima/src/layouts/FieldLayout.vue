@@ -155,6 +155,30 @@ function logout() {
 </template>
 
 <style scoped>
+@media (prefers-reduced-motion: no-preference) {
+  .page-enter-active { transition: opacity 160ms ease, transform 160ms ease; }
+  .page-leave-active { transition: opacity 80ms ease, transform 80ms ease; }
+  .page-enter-from   { opacity: 0; transform: translateY(6px); }
+  .page-leave-to     { opacity: 0; transform: translateY(-4px); }
+}
+</style>
+
+<!--
+  ⚠️ باج حقيقي اتكشف حي (2026-07-27، فحص تباين الوضع الداكن بمتصفح حقيقي):
+  نفس فئة الباج الموثّقة في Drawer.vue تحت — `:global(.dark) .field-shell`
+  كان جوه <style scoped> فوق، فـVue's scoped-CSS compiler فقد جزء
+  `.field-shell` بالكامل من الـ selector وطلع الناتج المُصرَّف حرفيًا
+  `.dark { background: #1e2530; ... }` (بدون أي تقييد بـ.field-shell خالص).
+  يعني `.field-shell` في الوضع الداكن فضلت عالقة على خلفيتها الفاتحة
+  الافتراضية (#f8fafc) للأبد — أي شاشة جوه FieldLayout من غير خلفية خاصة بيها
+  (زي ShiftDashboardView وقت "لا توجد وردية مفتوحة") كانت بتوّرث الخلفية
+  الفاتحة العالقة دي، فالنص الأبيض/الفاتح المُعدّ للوضع الداكن (زي
+  .section-title's dark:text-gray-100) كان بيترسم على خلفية فاتحة تقريبًا
+  بنفس درجته — تباين شبه معدوم، نص غير مقروء عمليًا. الإصلاح: نقل قاعدتي
+  .field-shell (الفاتحة والداكنة) لـ<style> غير scoped منفصل، بعيد عن الباج
+  ده تمامًا — زي Drawer.vue بالظبط.
+-->
+<style>
 .field-shell {
   background: #f8fafc;
   --pos-bg: #f8fafc;
@@ -169,7 +193,7 @@ function logout() {
   --pos-danger: #dc2626;
 }
 
-:global(.dark) .field-shell {
+.dark .field-shell {
   background: #1e2530;
   --pos-bg: #1e2530;
   --pos-surface: #252d3a;
@@ -181,12 +205,5 @@ function logout() {
   --pos-accent-bg: rgb(201 150 60 / 15%);
   --pos-success: #34d399;
   --pos-danger: #fca5a5;
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .page-enter-active { transition: opacity 160ms ease, transform 160ms ease; }
-  .page-leave-active { transition: opacity 80ms ease, transform 80ms ease; }
-  .page-enter-from   { opacity: 0; transform: translateY(6px); }
-  .page-leave-to     { opacity: 0; transform: translateY(-4px); }
 }
 </style>

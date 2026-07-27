@@ -29,11 +29,14 @@ from app.modules.core.models import (
     Notification,
     PinCredential,
     ServiceLocationToken,
+    UserBranchMembership,
     UserPermission,
 )
 from app.modules.core.permission_catalog import PERMISSION_CATALOG
 from app.modules.core.schemas import (
     AuditLogCreate,
+    AllowedBranchRead,
+    AuthBootstrapRead,
     BranchCreate,
     BranchUpdate,
     EffectivePermission,
@@ -304,7 +307,17 @@ def resolve_pin_approval(
 PIN_SWITCH_MAX_ROLE_LEVEL = 60
 
 
-def pin_switch_login(db: Session, target_user_id: int, pin: str) -> dict:
+class PinBranchMismatchError(ValueError):
+    """The requested POS identity is not authorized in the terminal branch."""
+
+
+def pin_switch_login(
+    db: Session,
+    target_user_id: int,
+    pin: str,
+    *,
+    active_branch_id: Optional[int],
+) -> dict:
     """تبديل هوية المشغّل على جهاز كاشير واحد بدون logout/login كامل — نفس
     الـ JWT infra الموجودة بالظبط (create_access_token)، مش نظام مصادقة
     مواز. **لازم caller يكون مسجّل دخوله فعليًا بالفعل** (الـ router بيحطّه
@@ -325,13 +338,19 @@ def pin_switch_login(db: Session, target_user_id: int, pin: str) -> dict:
         raise ValueError("الحساب غير نشط")
     if user_level(target) > PIN_SWITCH_MAX_ROLE_LEVEL:
         raise ValueError("الحساب ده محتاج تسجيل دخول كامل (إيميل/كلمة سر) — مش عبر PIN")
+    if active_branch_id is None:
+        raise ValueError("اختر فرعًا نشطًا قبل تبديل المشغّل")
+    if not _can_enter_branch(db, target, active_branch_id):
+        raise PinBranchMismatchError(
+            "المستخدم المطلوب غير مصرح له بالفرع النشط على الجهاز"
+        )
 
     if not verify_pin(db, target_user_id, pin):
         raise ValueError("رقم PIN غلط أو الحساب مقفول مؤقتًا بعد محاولات فاشلة")
 
     settings = get_settings()
     token = create_access_token(
-        data={"sub": target.email},
+        data={"sub": target.email, "bid": active_branch_id},
         secret_key=settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
         expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
@@ -801,7 +820,15 @@ def _resolve_permission(
     if user.role == "super_admin" and user.is_active:
         return True, "super_admin"
 
-    effective_branch_id = branch_id if branch_id is not None else getattr(user, "branch_id", None)
+    # User نفسه لا يملك branch_id؛ فرع الموظف الحالي موجود في
+    # HR.Employee.user_id. الاعتماد القديم على getattr كان يرجّع None دائمًا،
+    # وبالتالي أي UserPermission مقيّد بفرع لم يكن يُطبّق فعليًا عبر
+    # require_permission — الـglobal override فقط هو الذي يعمل. نستخدم مصدر
+    # العضوية الحقيقي الحالي إلى أن يكتمل جدول user_branch_memberships
+    # الإضافي في الحزمة التالية.
+    effective_branch_id = (
+        branch_id if branch_id is not None else get_user_branch_id(db, user)
+    )
     explicit = crud.find_explicit_permission(
         db, user.id, resource, action, effective_branch_id,
     )
@@ -837,7 +864,11 @@ def list_user_permissions(db: Session, user_id: int) -> list[UserPermission]:
     return crud.list_user_permissions(db, user_id)
 
 
-def get_effective_permissions(db: Session, user) -> list[EffectivePermission]:
+def get_effective_permissions(
+    db: Session,
+    user,
+    branch_id: Optional[int] = None,
+) -> list[EffectivePermission]:
     """
     يحسب كل صف من كتالوج الصلاحيات (PERMISSION_CATALOG) للمستخدم الحالي —
     عبر _resolve_permission() المركزية (نفس القرار اللي has_permission()
@@ -853,7 +884,8 @@ def get_effective_permissions(db: Session, user) -> list[EffectivePermission]:
         role_fallback = user_level(user) >= entry["min_role_level"]
         allowed, source = _resolve_permission(
             db, user, entry["resource"], entry["action"],
-            getattr(user, "branch_id", None), role_fallback=role_fallback,
+            branch_id=branch_id,
+            role_fallback=role_fallback,
         )
         result.append(EffectivePermission(
             resource=entry["resource"], action=entry["action"],
@@ -863,47 +895,228 @@ def get_effective_permissions(db: Session, user) -> list[EffectivePermission]:
     return result
 
 
-# ─────────────────────── Branch Access (Gate 1 containment) ───────────
-# جذر المشكلة (اتأكد منه بالبحث قبل الكتابة): User (app.core.kernel.
-# models.user) معندوش عمود branch_id خالص — الطريق الوحيد الموجود فعليًا
-# لمعرفة فرع المستخدم هو HR.Employee.branch_id عبر Employee.user_id
-# (اختياري/nullable، ومش مستخدم في app.core.deps خالص لحد دلوقتي).
-# نمط المقارنة (fetch resource → قارن owner/branch field → PermissionError
-# يترجمها الـ router لـ 403) مستوحى من finance.services.build_shift_end_report،
-# لكن التخطي الكامل هنا مقصور على super_admin فقط (Decision 0003) — راجع
-# تصحيح assert_branch_access تحت لسبب الاختلاف عن سابقة build_shift_end_report.
+# ─────────────────────── Branch authorization (CX-02C) ───────────────
+
+class BranchAccessDeniedError(PermissionError):
+    """The requested branch is not inside the caller's live authorization."""
+
+
+class BranchContextRequiredError(PermissionError):
+    """A branch choice is ambiguous or no live branch context exists."""
+
+
+class SessionChangedError(PermissionError):
+    """The access token's refresh family is no longer live."""
+
+
+def _active_memberships(db: Session, user_id: int) -> list[UserBranchMembership]:
+    """Return memberships that are live *and* point at a live branch."""
+    return (
+        db.query(UserBranchMembership)
+        .join(Branch, Branch.id == UserBranchMembership.branch_id)
+        .filter(
+            UserBranchMembership.user_id == user_id,
+            UserBranchMembership.is_active.is_(True),
+            Branch.is_active.is_(True),
+        )
+        .order_by(UserBranchMembership.branch_id)
+        .all()
+    )
+
+
+def get_allowed_branches(db: Session, user) -> list[AllowedBranchRead]:
+    """Return the non-enumerating branch directory visible to this user."""
+    from app.core.deps import user_level  # noqa: PLC0415
+
+    if user_level(user) >= 100:
+        rows = (
+            db.query(Branch)
+            .filter(Branch.is_active.is_(True))
+            .order_by(Branch.id)
+            .all()
+        )
+        return [
+            AllowedBranchRead(
+                id=row.id,
+                code=row.code,
+                name=row.name,
+                name_ar=row.name_ar,
+                timezone=row.timezone,
+                is_default=False,
+            )
+            for row in rows
+        ]
+
+    memberships = _active_memberships(db, user.id)
+    branches = {
+        row.id: row
+        for row in db.query(Branch)
+        .filter(Branch.id.in_([m.branch_id for m in memberships]))
+        .all()
+    } if memberships else {}
+    return [
+        AllowedBranchRead(
+            id=branch.id,
+            code=branch.code,
+            name=branch.name,
+            name_ar=branch.name_ar,
+            timezone=branch.timezone,
+            is_default=membership.is_default,
+        )
+        for membership in memberships
+        if (branch := branches.get(membership.branch_id)) is not None
+    ]
+
+
+def get_default_branch_id(db: Session, user) -> Optional[int]:
+    """Resolve an unambiguous account preference; never pick the first id."""
+    allowed = get_allowed_branches(db, user)
+    defaults = [branch.id for branch in allowed if branch.is_default]
+    if len(defaults) == 1:
+        return defaults[0]
+    if len(allowed) == 1:
+        return allowed[0].id
+    return None
+
 
 def get_user_branch_id(db: Session, user) -> Optional[int]:
-    """فرع المستخدم الفعلي عبر HR.Employee.user_id — None لو مفيش سجل
-    Employee مرتبط (حسابات super_admin/admin التجريبية مثلاً)."""
-    from app.modules.hr.models import Employee  # noqa: PLC0415
+    """Return the server-resolved active branch.
 
-    employee = db.query(Employee).filter(Employee.user_id == user.id).first()
-    return employee.branch_id if employee else None
+    Auth dependencies attach ``_active_branch_id`` from a live refresh family
+    (or a validated PIN ``bid``).  A direct service invocation can only derive
+    a branch when the membership/default choice is unambiguous.  HR Employee
+    is deliberately never consulted.
+    """
+    if hasattr(user, "_active_branch_id"):
+        return user._active_branch_id
+    return get_default_branch_id(db, user)
+
+
+def _can_enter_branch(db: Session, user, branch_id: int) -> bool:
+    from app.core.deps import user_level  # noqa: PLC0415
+
+    branch = db.query(Branch).filter(
+        Branch.id == branch_id,
+        Branch.is_active.is_(True),
+    ).first()
+    if branch is None:
+        return False
+    if user_level(user) >= 100:
+        return True
+    return (
+        db.query(UserBranchMembership.id)
+        .filter(
+            UserBranchMembership.user_id == user.id,
+            UserBranchMembership.branch_id == branch_id,
+            UserBranchMembership.is_active.is_(True),
+        )
+        .first()
+        is not None
+    )
 
 
 def assert_branch_access(db: Session, user, target_branch_id: int, action_desc: str) -> None:
-    """يمنع مستخدم من فرع تنفيذ إجراء حسّاس على مورد فرع تاني.
+    """Require the target to equal the live session/PIN branch.
 
-    **تصحيح (جولة مراجعة Codex الثانية، 2026-07-17):** النسخة الأولى كانت
-    بتدّي أي level>=60 (manager/accountant/hr_manager) تخطي الفحص كامل،
-    بالقياس الخاطئ على build_shift_end_report's owner-check bypass — ده
-    فحص ملكية سجل (مين الكاشير) مالوش أي بعد فرع أصلًا، مش سابقة لثقة
-    عبر الفروع. القرار المعتمد الوحيد لتخطي كامل عبر الفروع هو
-    super_admin حصريًا (docs/decisions/0003-super-admin-control-plane.md).
-    أي دور تاني (بما فيه manager) لازم يطابق Employee.branch_id فعليًا،
-    أو صلاحية صريحة موثّقة عبر has_permission/UserPermission لاحقًا — مفيش
-    استثناء ضمني لمستوى الدور بس. حساب بلا Employee مرتبط بيتمنع صراحةً
-    (fail-closed) بدل ما يتسمحله ضمنيًا."""
-    from app.core.deps import user_level  # noqa: PLC0415
-
-    if user_level(user) >= 100:  # super_admin حصريًا — Decision 0003
-        return
+    Even super-admin must select a live active context first; its bypass is
+    membership-only, not context-free access.  This prevents a client-supplied
+    branch id from silently becoming the active authorization scope.
+    """
     acting_branch_id = get_user_branch_id(db, user)
     if acting_branch_id is None:
-        raise PermissionError(f"حسابك غير مرتبط بفرع — تواصل مع الإدارة قبل {action_desc}")
+        raise BranchContextRequiredError(
+            f"اختر فرعًا نشطًا قبل {action_desc}"
+        )
     if acting_branch_id != target_branch_id:
-        raise PermissionError(f"لا يمكنك {action_desc} في فرع آخر")
+        raise BranchAccessDeniedError(f"لا يمكنك {action_desc} في فرع غير الجلسة الحالية")
+    if not _can_enter_branch(db, user, target_branch_id):
+        raise BranchAccessDeniedError(f"لا يمكنك {action_desc} في هذا الفرع")
+
+
+def build_auth_bootstrap(db: Session, user) -> AuthBootstrapRead:
+    """Build the complete staff auth contract from live database state."""
+    allowed = get_allowed_branches(db, user)
+    allowed_ids = [branch.id for branch in allowed]
+    default_branch_id = get_default_branch_id(db, user)
+    active_branch_id = get_user_branch_id(db, user)
+    if active_branch_id not in allowed_ids:
+        active_branch_id = None
+    return AuthBootstrapRead(
+        user=user,
+        branches=allowed,
+        allowed_branch_ids=allowed_ids,
+        default_branch_id=default_branch_id,
+        active_branch_id=active_branch_id,
+        requires_branch_selection=active_branch_id is None and bool(allowed_ids),
+        effective_permissions=(
+            get_effective_permissions(db, user, branch_id=active_branch_id)
+            if active_branch_id is not None
+            else []
+        ),
+    )
+
+
+def switch_active_branch(
+    db: Session,
+    user,
+    branch_id: int,
+    *,
+    ip_address: Optional[str] = None,
+    user_agent: Optional[str] = None,
+) -> AuthBootstrapRead:
+    """Atomically update only the caller's live refresh family context."""
+    from datetime import timezone  # noqa: PLC0415
+    from app.core.kernel.models.user import RefreshToken, User  # noqa: PLC0415
+
+    session_ref = getattr(user, "_auth_session_ref", None)
+    if not session_ref:
+        raise BranchContextRequiredError(
+            "تبديل الفرع متاح فقط من جلسة تسجيل دخول قابلة للتحديث"
+        )
+    if not _can_enter_branch(db, user, branch_id):
+        raise BranchAccessDeniedError("الفرع غير متاح لهذا الحساب")
+
+    # Same lock order as refresh rotation: User first, then the live family.
+    db.query(User.id).filter(User.id == user.id).with_for_update().first()
+    session = (
+        db.query(RefreshToken)
+        .filter(
+            RefreshToken.user_id == user.id,
+            RefreshToken.family_public_id == session_ref,
+            RefreshToken.consumed_at.is_(None),
+            RefreshToken.revoked_at.is_(None),
+            RefreshToken.expires_at > datetime.now(timezone.utc),
+        )
+        .with_for_update()
+        .first()
+    )
+    if session is None:
+        db.rollback()
+        raise SessionChangedError("الجلسة تغيّرت أو انتهت؛ سجّل الدخول مجددًا")
+
+    old_branch_id = session.active_branch_id
+    if old_branch_id != branch_id:
+        session.active_branch_id = branch_id
+        crud.create_audit_log(db, AuditLogCreate(
+            user_id=user.id,
+            branch_id=branch_id,
+            action="active_branch_switched",
+            entity_type="refresh_session",
+            entity_id=session.id,
+            old_data=json.dumps({
+                "active_branch_id": old_branch_id,
+                "session_ref": session_ref,
+            }),
+            new_data=json.dumps({
+                "active_branch_id": branch_id,
+                "session_ref": session_ref,
+            }),
+            ip_address=ip_address,
+            user_agent=(user_agent or "")[:500] or None,
+        ))
+        db.commit()
+    user._active_branch_id = branch_id
+    return build_auth_bootstrap(db, user)
 
 
 def list_guest_alerts(

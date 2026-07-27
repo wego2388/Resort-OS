@@ -1,11 +1,154 @@
 # حالة المشروع — El Kheima Beach Resort OS
 
-> **آخر تحديث حقيقي:** 2026-07-22 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست أو فحص آلي)،
+> **آخر تحديث حقيقي:** 2026-07-27 — كل رقم في الملف ده اتأكد منه فعليًا (تشغيل تست أو فحص آلي)،
 > مش افتراض ولا خطة. لو لقيت رقم يبان قديم، قول لـ Claude "الملف مش محدّث" وهو يراجعه من الكود
 > مباشرة قبل ما يصدّقه.
 >
 > **الملف القديم `PROMPT_FOR_CLAUDE.md` اتمسح** — كان فيه توصيات بقت غلط بعد ما اتراجعنا عنها. الملف
 > ده هيتحدّث كل ما يحصل شغل حقيقي، وبيفصل بوضوح بين "اتأكدنا منه دلوقتي" و"خطة لسه ما بدأناش فيها".
+
+---
+
+## 🟩 أول Super Admin + أول فرع حقيقي على الـVPS + إصلاحات إنتاج حرجة (2026-07-27)
+
+بعد نشر IP-only (2026-07-26)، محمد جرّب فعليًا يدخل `/login` على الإنتاج — الصفحة وقعت بالكامل.
+سلسلة إصلاحات حقيقية متتالية، كل واحدة اتأكدت بمتصفح حي (Playwright) على الـVPS نفسه بعد كل نشر،
+مش بس curl (درس مهم: فحص `grep "new Function"` وحده مش كفاية، لازم تشغيل فعلي في متصفح):
+
+1. **CSP/eval كسر `/login` بالكامل** (`el-kheima` + الموقع التسويقي) — vue-i18n's runtime message
+   compiler بيستخدم `new Function()`، والـCSP الصحيح (`script-src 'self'`, من غير `unsafe-eval`)
+   بيمنعه، فـ`EvalError` كانت بتمنع أي mount للتطبيق خالص. الحل الصحيح: `@intlify/unplugin-vue-i18n`
+   بيحوّل رسائل الترجمة لـAST objects وقت البناء (مش دوال `new Function`)، لكن الـruntime لازم يظل
+   قادر "يفسّر" الـAST ده — وده بالظبط اللي فلاج `__INTLIFY_JIT_COMPILATION__` بيتحكم فيه (الاسم
+   مضلّل: مش معناه "استخدم eval"، معناه "سجّل المفسّر"). **محاولة أولى غلط**: حطيته `false` ظنًا إنه
+   بيمنع الـeval — ده منع تسجيل المفسّر خالص، فأي `t()` كان بيرجع الـAST object الخام بدل نص، ويرمي
+   `SyntaxError: Unexpected return type in composer` — يعني كل صفحة كانت بتقع تمامًا زي الأول، بس
+   بخطأ مختلف. اتصلح فعليًا بـ`true` (الصح)، واتأكد بمتصفح حي إن `/login` والموقع التسويقي بيرندروا
+   صح من غير أي console error، وإن صفر `new Function` لسه موجود في الـbundle.
+2. **نفس الباج بالظبط منتشر تاني** — `tm()` (بترجع array/object رسائل خام) في `Packages.vue`،
+   `FAQ.vue`، `ReviewsSection.vue` كانت بتتعرض من غير `rt()` (بيحوّل الـAST node لنص فعلي) — قسم
+   "اختار باقتك المثالية" كان بيعرض `{{"t":0,"b":{...}}}` بدل النص، وفي `FAQ.vue` كان الباج أخطر
+   لأن `f.cat`/`cat.id` (مش بس نص معروض) بيتستخدموا في مقارنات `===` للفلترة و`.replace()` — كانت
+   هتفشل بصمت أو تكسر. اتصلح الـ3 ملفات بتطبيق `rt()` على كل حقل جاي من `tm()`.
+3. **صور حقيقية متبدلة بين فولدرين** (اكتشاف مستقل، مش نفس الباج) — محمد بعت screenshots لصور
+   غرف/باقات شاطئ/أنشطة غلط. المراجعة الفعلية لكل صورة (مش تخمين) كشفت خلط حقيقي وقت الرفع الأول:
+   صور أوض حقيقية (سرير، شرفة بإطلالة بحر) متحطوطة في `public/images/beach/views/` باسم
+   `beach-view-01..10`, و صور شاطئ/محيط المنتجع الحقيقية متحطوطة في `public/images/rooms/` باسم
+   `room-04..24`. اتصلح `Rooms.vue`/`Beach.vue`/`Activities.vue` (`boat_trips`/`snorkeling` كانوا
+   بيستخدموا نفس صورة الغطس بالظبط — باج حقيقي، اتصلح بصور حقيقية من `gallery/` مش متستخدمة قبل
+   كده). **فجوة أصول حقيقية باقية (مش باج كود)**: `banana_boat`/`parasailing`/`tube_boat` مالهمش أي
+   صورة مخصوصة في مكتبة الصور كلها (>100 صورة اتفحصت) — لسه بيتشاركوا صورة واحدة، محتاجين تصوير
+   جديد فعلي لو عايزين تمييز بينهم.
+4. **بنية نشر جديدة للـworktree غير الـcommitted** — `scripts/deploy.sh` القديم بيفترض `git pull`
+   من branch نضيف، وده مش شكل النشر الحالي (نسخة عمل مباشرة زي VPS-02). `scripts/sync-deploy.sh`
+   جديد: rsync مستهدف (استبعاد `.env*`/`.git`/`backups`/`logs`/`node_modules`، من غير `--delete`
+   عشان ميمسحش حاجة VPS-only) + اشتقاق `DB_PASSWORD` من `.env.prod` (نفس منطق `deploy.sh`، بدون طبع
+   القيمة أبدًا) + `docker compose build`/`up -d --no-deps` لخدمة أو اتنين بس. استُخدم فعليًا في كل
+   عمليات النشر فوق.
+5. **أول Super Admin + أول فرع** — `python -m app.admin_bootstrap create/recover/init-first-branch`
+   بيحتاج تأكيدات تفاعلية (retype email/code) بترمي `Confirmation did not match` بسهولة مع
+   copy-paste في تيرمنال. `scripts/vps-create-admin.sh`/`vps-recover-admin.sh`/
+   `vps-init-first-branch.sh` (تشغّل على الـVPS، ياخدوا القيم كـarguments + heredoc بدل type يدوي)
+   بديل موثوق. الحساب: `theagaty@gmail.com` (Khaled El Agaty) — إنشاء → دخول → تغيير باسورد مؤقت →
+   تفعيل 2FA، كله اتأكد بلوج السيرفر الحي (`200 OK` على كل خطوة). أول فرع: `ELK-001` (El Kheima
+   Beach Resort)، مربوط بحساب السوبر أدمن.
+
+**متبقي معروف** (لسه ما اتنفذش):
+- **بيانات الأوض الفعلية** — الفرع موجود بس صفر room type/room حقيقي؛ إدخال يدوي من شاشة الإدارة،
+  مش حاجة تُفبرَك.
+- **قرار مؤجَّل من محمد**: فورم الحجز/الاسبا/التواصل العام بيعمل CRM Lead بس لو الضيف علّم على
+  "موافقة تسويق" الاختيارية — أي طلب من غير التعليم ده محفوظ في الداتابيز بس **مش ظاهر لأي موظف
+  خالص** (مفيش staff-facing list لـ`ContactForm` الخام). الحل المقترح (فصل ظهور الطلب عن موافقة
+  التسويق) في نطاق `crm`/`hub` — موديولات تحت تعديل نشط من Codex وقت الاكتشاف، فاتسابت كـfinding
+  موثّق مش تعديل منفرد.
+- ~~الشات بوت لسه معطّل عمدًا~~ — **تحديث فوري نفس اليوم**: فحص `.env.prod` الفعلي كشف إن
+  `CHAT_PUBLIC_HOST_BRANCH_MAP` كان فاضي تمامًا — ده معناه فورم الحجز/التواصل (اتنشر النهاردة) **مكانش
+  بيستقبل أي طلب حقيقي خالص** لحد وقت الاكتشاف ده، مش بس الشات بوت. بموافقة محمد صريحة: اتضاف سطر
+  `CHAT_PUBLIC_HOST_BRANCH_MAP={"191.218.161.133": 1}` لـ`.env.prod` وريستارت للـbackend. اتأكد حي
+  (`POST /api/v1/hub/contact` برجّع `202` بدل `404 public_site_not_configured`، اتفحص عبر مسار الـ
+  honeypot الموجود أصلاً فالكود عشان صفر بيانات وهمية تتخزّن). **الشات بوت نفسه لسه معطّل عمدًا** —
+  لازم كمان `CHAT_PROVIDER_DATA_GOVERNANCE_VERIFIED=true`، وده يتطلب تحقق بشري فعلي من إعدادات
+  الخصوصية/الـlogging في مشروع Gemini على Google — قرار محمد، مش حاجة أقدر أتحقق منها أو أفعّلها
+  بنفسي.
+- **UAT/مراقبة/نسخ احتياطي خارج السيرفر** — من قائمة VPS-02 المؤجَّلة الأصلية، محتاج تأكيد حالة
+  حالية (ممكن يكون Codex عمل منها حاجة من وقتها).
+
+---
+
+## 🟩 نشر IP-only على VPS الجديد (2026-07-26)
+
+قرار Mohamed الناسخ: لا اعتماد على `elkheimabeachresort.com` أو DNS؛
+التشغيل على `191.218.161.133` فقط، مع تأجيل بقية التحسينات.
+
+- الموظفون: `https://191.218.161.133`
+- التسويق/الضيف: `https://191.218.161.133:8443`
+- شهادة Let's Encrypt موثوقة للـIP، short-lived حتى `2026-08-02`،
+  وتجديد webroot المحاكى ناجح.
+- Compose `resort-os-prod`: ثماني حاويات running، healthchecks ناجحة، صفر
+  restart وصفر runtime error في الفحص.
+- PostgreSQL فارغ رُحّل كاملًا إلى `c4d8e2f6a901`.
+- Backend: `2151 passed, 38 skipped, 0 failed`.
+- Marketing: truth/typecheck/build ناجحة، وnpm audit صفر.
+- backup timer فعّال؛ dump حقيقي ثم restore إلى DB مؤقتة نجح (`135` جدولًا
+  والرأس الصحيح) ثم نُظفت قاعدة الاختبار.
+- users=0، branches=0، demo users=0، ولم يُشغّل `app.seed`.
+- الشات وpublic branch-bound intake مغلقان حتى named admin + 2FA + first
+  branch + IP Host mapping.
+- لا commit ولا push. هوية لقطة المصدر والتفاصيل/المتبقي في
+  `docs/agent-workflow/handoffs/2026-07-26_VPS-02_ip_deployment_codex_handoff.md`.
+
+---
+
+## 🟩 موديول `chat` جديد — الشات بوت الذكي شغّال فعليًا (2026-07-26)
+
+الموقع التسويقي العام (`elkheima-marketing-website`) كان فيه فرونت إند شات بوت كامل
+(`useChatbot.ts`/`HubConcierge.vue`) بينادي `/chat`/`/concierge/*` من غير أي backend حقيقي في
+resort-os خالص — مُرحَّل من مشروع قديم (`elkheima-beach-resort`) وقت بناء الموقع التسويقي، بدون
+أي كود مقابل هنا. اتبنى موديول `chat` جديد كامل (models/schemas/crud/services/router) مُرحَّل من
+نفس المشروع القديم (كان شغال هناك فعليًا بـGemini API) لكن `build_system_prompt()` اتبنى من
+الصفر يقرأ بيانات resort-os الحقيقية (dining/beach/pms) بدل كتالوج قديم مالوش وجود هنا.
+
+`POST /api/v1/chat` (عام، rate-limited)، `GET /chat/welcome`، `POST /chat/conversations/start|
+{id}/end`. `GEMINI_API_KEY` مفتاح مشترك مؤقت من المشروع القديم (قرار Mohamed صريح، هيتغيّر
+لمفتاح مخصوص لاحقًا). اتنقّى `HubConcierge.vue` بالكامل (widget مكرر — الـChatbot العام في
+`App.vue` أصلاً بيظهر بكل صفحة). سياق موقع الضيف (طاولة/أوضة/شمسية من Gate 8) بيوصل فعليًا
+للـprompt دلوقتي. باجين حقيقيين اتكشفوا واتصلحوا وقت اختبار حي فعلي لـGemini API (مش mock):
+ترتيب الـcontents (Gemini بيرفض ينتهي بـ"model" turn)، وmaxOutputTokens قليل جدًا (كان بيقطع
+الرد نص الجملة بسبب "thinking" tokens غير مرئية في `gemini-flash-latest`). 30 اختبار جديد
+(mocked Gemini + نداءات حية حقيقية قبل كتابة التستات). تفاصيل كاملة في `CLAUDE.md` §18.
+
+**التحقق النهائي (النسخة الأولى)**: `pytest tests/ -v` → **2114 اختبار، صفر فشل** (34 skipped —
+نفس الاختبارات المتخطاة القديمة، Postgres-only)، `alembic upgrade head`/`downgrade -1`/`upgrade
+head` (round-trip كامل) اتأكدوا فعليًا على Postgres حقيقي، `npm run build` (الموقع التسويقي) نضاف.
+
+---
+
+## 🟩 CL-01 — تحصين الشات بوت حسب بروتوكول Codex/Claude المزدوج (2026-07-26)
+
+نفس اليوم، دفعة تانية — Mohamed فعّل بروتوكول تنفيذ مزدوج رسمي مع Codex
+(`docs/agent-workflow/DUAL_AGENT_EXECUTION_PROTOCOL_AR.md`) وطلب إكمال الشات بوت باحترافية حسب
+قائمة أمنية محددة (Gate 3 في `docs/audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`). قارنت الشغل
+السابق بالقائمة ولقيت فجوات حقيقية: **XSS حقيقي** (`ChatbotMessage.vue`'s `v-html` على رد نموذج
+AI غير موثوق، دفاعه الوحيد regex هش) اتصلح بـescaping حقيقي عبر encoder المتصفح؛ **بيانات ضيف
+معرَّفة في الـschema بدون تنفيذ** (`guest_phone`/`user_name`) اتشالت (تخالف قرار "مفيش بيانات ضيف
+تتبعت لنموذج طرف ثالث")؛ **سقف يومي للتكلفة** (300/يوم لكل IP، فوق حد الدقيقة الموجود)؛ **circuit
+breaker** حقيقي (5 فشل خلال 60 ثانية = 30 ثانية تهدئة، صفر نداء لـGemini وقتها) — باج حقيقي في
+تصميمه الأول (off-by-one في فهم `rate_limit()`) اتصلح بتست فاشل قبل ما يوصل لأي حد. محاولة تصدير
+`_client_ip` للاستخدام المشترك ارتدّت لما اتضح إنها مستخدمة في auth code حساس برّه نطاق CL-01 —
+اتراجعت والشات بوت بيستوردها مباشرة بدل rename. 12 اختبار red-team جديد يغطي القائمة بالكامل.
+
+**التحقق النهائي (بعد التحصين)**: `pytest tests/ -v` → **2126 اختبار، صفر فشل** (34 skipped)،
+Alembic single head + round-trip اتأكد تاني، نداء حي حقيقي أخير لـGemini بعد كل التعديلات أكد إن
+الـhappy path لسه شغال. تفاصيل كاملة في `CLAUDE.md` §18 والتسليم الرسمي
+`docs/agent-workflow/handoffs/2026-07-26_CL-01_claude_handoff.md`. **مؤجَّل صراحةً**: تشفير
+`ChatMessage.message` (قرار retention/PII محتاج موافقة Mohamed)، مفتاح Gemini مخصوص لـresort-os.
+
+**⚠️ ملاحظة تنسيق مهمة**: وقت الشغل ده، Codex كان شغال بالتوازي في **نفس working directory**
+(مش worktree منفصل) على `frontend/apps/el-kheima/**`، `docker-compose.prod.yml`،
+`.github/workflows/ci.yml` وملفات تانية — كلها **متلمستش خالص**، برّه نطاق CL-01 تمامًا. الـboard
+نفسه (`EL_KHEIMA_EXECUTION_BOARD.md`) كان بيتعدّل من الاتنين في نفس الوقت — كل تعديل اتعمل بحذر
+(قراءة قبل الكتابة) لتفادي تعارض. لسه مفيش commit — التغييرات كلها غير محفوظة، بانتظار مراجعة
+Codex (CX-01) ثم قرار Mohamed بخصوص الـcommit.
 
 ---
 
@@ -35,9 +178,9 @@ finance/HR/CRM/analytics/inventory/settings/account/portal وغيرها).
 |---|---|
 | **الاسم التجاري** | El Kheima Beach |
 | **اسم الباكدج** | resort-os |
-| **الاختبارات** | **2,046 backend ناجح، 33 skipped، صفر فشل (2,079 collected)** ✅ + **69/69 frontend** + Gate 8 races حقيقية سابقة على PostgreSQL: active QR وactive request كل سباق منهما انتهى `committed + conflict` (2026-07-22) |
+| **الاختبارات** | **2,114 backend ناجح، 34 skipped، صفر فشل** ✅ + **69/69 frontend** + Gate 8 races حقيقية سابقة على PostgreSQL: active QR وactive request كل سباق منهما انتهى `committed + conflict` (2026-07-22) |
 | **الـ Coverage** | **95%+ إجمالي** (دايننج/شاطئ/حسابات/موارد بشرية اتدفعت لـ 91-100%) |
-| **الموديولات** | **13 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (cutover كامل D-05→D-08، 2026-07-13) |
+| **الموديولات** | **14 موديول** — `dining` حلّ محل `restaurant`+`cafe` نهائيًا (2026-07-13)، `chat` جديد للشات بوت الذكي (2026-07-26) |
 | **الـ Git** | `github.com/wego2388/Resort-OS` |
 | **الاستضافة** | هيكل VPS موجود (Compose + Dockerfiles + DEPLOYMENT.md)، لكنه **غير مُثبت على سيرفر حقيقي** وتهيئة reference data للإنتاج ما زالت بوابة مفتوحة |
 | **الاعتماديات** | **مستقل 100%** — مفيش أي اعتماد على `wego_core` أو أي باكدج خارجي مشترك (اتأكد منه live 2026-07-03) |
@@ -2777,7 +2920,7 @@ cd backend
 اقرأ /home/wego/projects/resort-os/AGENTS.md ثم CLAUDE.md بالكامل، وبعدهم بداية وأحدث الأقسام
 المرتبطة بالمهمة من PROJECT_STATUS.md والقرارات المقبولة في docs/decisions/. راجع wagdy.md لفهم
 أولويات Mohamed بلغة بشرية. المشروع اسمه التجاري "El Kheima Beach"، مبني بـ FastAPI + Vue 3،
-وفيه 13 موديول دائم (`dining` حل محل `restaurant`/`cafe`). لا تعتمد على رقم اختبارات مكتوب؛ اجمع
+وفيه 14 موديول دائم (`dining` حل محل `restaurant`/`cafe`، `chat` جديد للشات بوت). لا تعتمد على رقم اختبارات مكتوب؛ اجمع
 أو شغّل الاختبارات المناسبة وتحقق من الكود الفعلي قبل أي ادعاء أو تعديل.
 ```
 

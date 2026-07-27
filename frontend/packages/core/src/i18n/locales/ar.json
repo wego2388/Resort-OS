@@ -1580,7 +1580,7 @@
     "phone": "+201004444300",
     "phoneAlt": "+201004444300",
     "whatsapp": "+201004444300",
-    "email": "info@alkhaymaresort.com",
+    "email": "info{'@'}alkhaymaresort.com",
     "location": "شارع محمد اليماني، الماية، شرم الشيخ",
     "hours": "يومياً من 8 صباحاً - 10 مساءً",
     "contact_us": "كلمنا",
@@ -2724,7 +2724,7 @@
     "Your Special": "extra.Your Special",
     "Your perfect destination for relaxation and beautiful beaches": "extra.Your perfect destination for relaxation and beautiful beaches",
     "example@email": {
-      "com": "extra.example@email.com"
+      "com": "extra.example{'@'}email.com"
     },
     "for Every Occasion": "extra.for Every Occasion",
     "images": "extra.images",
@@ -3478,9 +3478,7 @@
       "beachMap": "خريطة الشاطئ",
       "shift": "الوردية",
       "shiftMonitor": "مراقبة الورديات",
-      "qrCodes": "QR Codes",
-      "development": "التطوير",
-      "projectCockpit": "غرفة قيادة المشروع"
+      "qrCodes": "QR Codes"
     },
     "login": {
       "title": "تسجيل الدخول",
@@ -3563,7 +3561,7 @@
       "title": "نسيت كلمة السر؟",
       "subtitle": "هنبعتلك رابط إعادة تعيين على بريدك الإلكتروني",
       "email": "البريد الإلكتروني",
-      "emailPlaceholder": "your@email.com",
+      "emailPlaceholder": "your{'@'}email.com",
       "submit": "إرسال رابط إعادة التعيين",
       "submitting": "جاري الإرسال...",
       "successTitle": "تم الإرسال",
@@ -4887,6 +4885,8 @@
       "upcomingArrivals": "وصول قادم",
       "availableRoomsKpi": "غرف شاغرة",
       "occupiedRoomsKpi": "غرف مشغولة",
+      "reservedRoomsKpi": "غرف محجوزة",
+      "cleaningRoomsKpi": "غرف تحت التنظيف",
       "pendingCleaning": "تنظيف معلق",
       "todaysArrivals": "وصول اليوم",
       "searchPlaceholder": "بحث بالاسم أو رقم الحجز...",
@@ -6737,6 +6737,44 @@
         "card": "كارت",
         "expectedCash": "الكاش المتوقع",
         "invoices": "الفواتير"
+      }
+    },
+    "shiftPanel": {
+      "loadError": "تعذّر تحميل حالة الوردية",
+      "invalidOpeningFloat": "رصيد الافتتاح لازم يكون رقم صحيح 0 أو أكبر",
+      "openedSuccess": "تم فتح الوردية",
+      "openError": "تعذّر فتح الوردية",
+      "closedSuccess": "تم قفل الوردية",
+      "closeError": "تعذّر قفل الوردية — تحقق من الاتصال أو تواصل مع المدير",
+      "openLabel": "وردية مفتوحة — {time}",
+      "closeButton": "قفل الوردية",
+      "openButton": "فتح وردية",
+      "openModalTitle": "فتح وردية جديدة",
+      "handoverNote": "ملاحظة تسليم من آخر وردية: {note}",
+      "openingFloatLabel": "رصيد الافتتاح (كاش)",
+      "notesOptionalLabel": "ملاحظات (اختياري)",
+      "handoverNoteOptionalLabel": "ملاحظة تسليم للوردية الجاية (اختياري)",
+      "confirmOpenButton": "فتح الوردية",
+      "closeModalTitle": "قفل الوردية — عدّ الكاش",
+      "expectedCashLabel": "الكاش المتوقع: {amount}",
+      "totalTreasuryEGP": "إجمالي الخزينة (EGP): {amount}",
+      "varianceIncrease": "▲ زيادة",
+      "varianceShortage": "▼ عجز",
+      "varianceMatch": "✓ مطابق",
+      "foreignCurrenciesCounted": "💱 العملات الأجنبية المعدودة",
+      "denominationCol": "الفئة",
+      "countCol": "العدد",
+      "totalCol": "الإجمالي",
+      "totalEGP": "إجمالي الجنيه المصري",
+      "missingFxRate": "سعر الصرف غير متاح",
+      "grandTotalApprox": "الإجمالي الكلي التقريبي",
+      "missingFxRateWarning": "سعر صرف غير مسجّل لبعض العملات — أضفه من إعدادات أسعار الصرف قبل القفل",
+      "approxNote": "الأرقام تقريبية — القيمة الرسمية تحسبها الباك إند بأسعار الصرف عند القفل",
+      "confirmCloseButton": "تأكيد القفل",
+      "currency": {
+        "EGP": "جنيه مصري",
+        "USD": "دولار أمريكي",
+        "EUR": "يورو"
       }
     },
     "payroll": {

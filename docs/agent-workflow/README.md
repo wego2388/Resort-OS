@@ -3,6 +3,18 @@
 This directory turns broad product ideas into small, reviewable engineering
 changes. It supplements `AGENTS.md` and `CLAUDE.md`; it does not replace them.
 
+For the full El Kheima production program, where Codex and Claude both own
+separate implementation packets and review each other, also read:
+
+- `DUAL_AGENT_EXECUTION_PROTOCOL_AR.md`
+- `EL_KHEIMA_EXECUTION_BOARD.md`
+- `CODEX_TO_CLAUDE_CONTINUATION_AR.md` — durable takeover checkpoint,
+  including VPS state that Git cannot show
+- `../audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`
+
+That plan-specific protocol supersedes the one-directional implementer/reviewer
+assignment below only for those explicitly claimed packets.
+
 ## Team responsibilities
 
 | Role | Responsibility | Must not do by default |

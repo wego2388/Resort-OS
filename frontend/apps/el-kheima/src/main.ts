@@ -1,10 +1,15 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import { useAuthStore, initTheme } from '@resort-os/core'
+import {
+  useAuthStore,
+  initTheme,
+  registerAuthIdentityTransitionHandler,
+} from '@resort-os/core'
 import { staffI18n, staffLocale } from '@resort-os/core/i18n/staff'
 import router from './router'
 import App from './App.vue'
 import './assets/main.css'
+import { clearLegacyStaffApiCaches } from './security/staffClientState'
 
 // Applies the saved/system dark-mode preference to <html class="dark"> before
 // first paint — see packages/core/src/composables/useTheme.ts. Back-office and
@@ -30,6 +35,12 @@ initTheme()
  * becomes the source of truth (kept applied by useStaffLocaleSync in App.vue).
  */
 async function main() {
+  registerAuthIdentityTransitionHandler(clearLegacyStaffApiCaches)
+
+  // Remove sensitive API responses left by pre-CX-03 service workers before
+  // restoring any authenticated session. Static Workbox precaches are kept.
+  await clearLegacyStaffApiCaches()
+
   const app = createApp(App)
   app.use(createPinia())
   app.use(staffI18n)

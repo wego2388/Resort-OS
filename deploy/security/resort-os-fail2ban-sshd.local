@@ -1,0 +1,14 @@
+# Resort OS production brute-force protection.
+# Installed as /etc/fail2ban/jail.d/resort-os-sshd.local.
+
+[sshd]
+enabled = true
+backend = systemd
+port = ssh
+mode = aggressive
+findtime = 10m
+maxretry = 5
+bantime = 1h
+bantime.increment = true
+bantime.factor = 2
+bantime.maxtime = 24h

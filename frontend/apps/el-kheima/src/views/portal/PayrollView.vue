@@ -26,9 +26,6 @@ function monthLabel(m: number) {
   return t(`backoffice.payroll.month.${monthNames[m]}`)
 }
 
-function totalDeductions(slip: Payslip) {
-  return slip.employee_si + slip.monthly_tax + slip.penalty_deduction + slip.unpaid_leave_deduction
-}
 function totalAllowances(slip: Payslip) {
   return slip.gross_salary - slip.basic_salary
 }

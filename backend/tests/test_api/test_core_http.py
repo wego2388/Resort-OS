@@ -398,8 +398,31 @@ class TestPinCredentials:
         دخوله) — التوكن الجديد لازم يمثّل الكاشير فعليًا، مش الواتر."""
         from app.core.kernel.models.user import User
         from app.modules.core import services as core_services
+        from app.modules.core.models import Branch, UserBranchMembership
 
         cashier = db.query(User).filter(User.email == "cashier@test.local").first()
+        waiter = db.query(User).filter(User.email == "waiter@test.local").first()
+        branch = Branch(
+            name="PIN Terminal Branch",
+            name_ar="فرع جهاز PIN",
+            code=f"PIN-{uuid.uuid4().hex[:8].upper()}",
+        )
+        db.add(branch)
+        db.flush()
+        db.add_all([
+            UserBranchMembership(
+                user_id=waiter.id,
+                branch_id=branch.id,
+                is_default=True,
+                is_active=True,
+            ),
+            UserBranchMembership(
+                user_id=cashier.id,
+                branch_id=branch.id,
+                is_default=True,
+                is_active=True,
+            ),
+        ])
         core_services.set_pin(db, cashier.id, "2468", created_by=cashier.id)
         db.commit()
 

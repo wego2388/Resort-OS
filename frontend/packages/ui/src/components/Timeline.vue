@@ -4,7 +4,6 @@
 // "list of dated events" markup gets this instead once migrated. Each item
 // owns its own icon/variant so a caller can distinguish e.g. a void from a
 // normal status change without the component needing to know the domain.
-import { computed } from 'vue'
 import AppIcon from './Icon.vue'
 import type { IconName } from '../icons/registry'
 
@@ -17,7 +16,7 @@ export interface TimelineItem {
   variant?: 'primary' | 'success' | 'warning' | 'danger' | 'neutral'
 }
 
-const props = defineProps<{ items: TimelineItem[] }>()
+defineProps<{ items: TimelineItem[] }>()
 
 const dotClass = (variant: TimelineItem['variant'] = 'neutral') => ({
   primary: 'bg-primary-700 text-white',

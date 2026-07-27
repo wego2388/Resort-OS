@@ -5,17 +5,27 @@ Tables: hub_pages, hub_offers, hub_online_bookings, hub_sitemap_logs
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+import secrets
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Integer,
-    Numeric, String, Text,
+    Boolean, Date, DateTime, ForeignKey, Index, Integer,
+    Numeric, String, Text, text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
+from app.core.encryption import EncryptedString
+
+
+def _new_contact_reference() -> str:
+    return f"contact_{secrets.token_urlsafe(16)}"
+
+
+def _default_contact_retention() -> datetime:
+    return datetime.utcnow() + timedelta(days=180)
 
 
 class HubPage(Base, TimestampMixin):
@@ -131,18 +141,66 @@ class BlogPost(Base, TimestampMixin):
 
 
 class ContactForm(Base, TimestampMixin):
-    """استفسار من موقع الويب → يتحول لـ Lead في CRM."""
+    """Privacy-scoped public service contact.
+
+    Contact details and free text are encrypted at rest.  A CRM lead is a
+    separate, optional outcome that requires explicit marketing consent.
+    """
     __tablename__ = "contact_forms"
+    __table_args__ = (
+        Index(
+            "uq_contact_forms_branch_idempotency",
+            "branch_id",
+            "idempotency_key_hash",
+            unique=True,
+            postgresql_where=text("idempotency_key_hash IS NOT NULL"),
+            sqlite_where=text("idempotency_key_hash IS NOT NULL"),
+        ),
+        Index(
+            "ix_contact_forms_retention_due",
+            "retention_until",
+            "purged_at",
+        ),
+    )
 
     id:          Mapped[int]         = mapped_column(primary_key=True)
     branch_id:   Mapped[int]         = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
-    full_name:   Mapped[str]         = mapped_column(String(200))
-    phone:       Mapped[str | None]  = mapped_column(String(20), nullable=True)
-    email:       Mapped[str | None]  = mapped_column(String(150), nullable=True)
-    subject:     Mapped[str]         = mapped_column(String(200))
-    message:     Mapped[str]         = mapped_column(Text)
+    public_reference: Mapped[str]     = mapped_column(
+        String(48),
+        unique=True,
+        index=True,
+        default=_new_contact_reference,
+    )
+    full_name:   Mapped[str | None]  = mapped_column(EncryptedString(512), nullable=True)
+    phone:       Mapped[str | None]  = mapped_column(EncryptedString(255), nullable=True)
+    email:       Mapped[str | None]  = mapped_column(EncryptedString(512), nullable=True)
+    subject:     Mapped[str | None]  = mapped_column(EncryptedString(512), nullable=True)
+    message:     Mapped[str | None]  = mapped_column(EncryptedString(), nullable=True)
     source_page: Mapped[str | None]  = mapped_column(String(100), nullable=True)
+    source:      Mapped[str]         = mapped_column(String(30), default="public_website")
+    purpose:     Mapped[str]         = mapped_column(String(40), default="general_inquiry")
+    language:    Mapped[str]         = mapped_column(String(5), default="ar")
+
+    service_contact_authorized: Mapped[bool] = mapped_column(Boolean, default=False)
+    service_disclosure_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    service_contact_authorized_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    marketing_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+    marketing_consent_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    marketing_consent_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    idempotency_key_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    payload_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    requester_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    retention_until: Mapped[datetime] = mapped_column(
+        DateTime,
+        index=True,
+        default=_default_contact_retention,
+    )
+    purged_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
     lead_id:     Mapped[int | None]  = mapped_column(Integer, nullable=True)
-    # يُعبأ تلقائياً عند إنشاء Lead من هذا النموذج
-    status:      Mapped[str]         = mapped_column(String(20), default="new")
-    # new|converted|spam
+    # lead_id is populated only after explicit marketing consent.
+    crm_sync_status: Mapped[str] = mapped_column(String(20), default="not_requested")
+    # not_requested|created|failed
+    status:      Mapped[str]         = mapped_column(String(20), default="accepted")
+    # accepted|purged|spam

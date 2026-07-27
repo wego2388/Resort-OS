@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
 
-from app.modules.hub.models import HubOffer, HubOnlineBooking, HubPage, HubSitemapLog
+from app.modules.hub.models import ContactForm, HubOffer, HubOnlineBooking, HubPage, HubSitemapLog
 from app.modules.hub.schemas import (
     HubOfferCreate, HubOfferUpdate,
     HubPageCreate, HubPageUpdate,
@@ -197,3 +197,27 @@ def log_sitemap(
     db.add(obj)
     db.flush()
     return obj
+
+
+# ── ContactForm (staff-facing read) ──────────────────────────────────────
+# Submission stays here whether or not the guest opted into marketing_consent
+# — see app.modules.hub.public_contact for why a CRM Lead is a separate,
+# consent-gated outcome. Staff still need to see every explicit "contact me"
+# request, consenting or not.
+
+def list_contact_forms(
+    db: Session,
+    branch_id: int,
+    crm_sync_status: Optional[str] = None,
+    status: Optional[str] = None,
+    skip: int = 0,
+    limit: int = 50,
+) -> tuple[list[ContactForm], int]:
+    q = db.query(ContactForm).filter(ContactForm.branch_id == branch_id)
+    if crm_sync_status:
+        q = q.filter(ContactForm.crm_sync_status == crm_sync_status)
+    if status:
+        q = q.filter(ContactForm.status == status)
+    total = q.count()
+    items = q.order_by(ContactForm.created_at.desc()).offset(skip).limit(limit).all()
+    return items, total

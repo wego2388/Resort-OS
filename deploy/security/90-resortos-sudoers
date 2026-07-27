@@ -1,0 +1,2 @@
+# Key-only deployment administrator. Keep this file mode 0440 on the VPS.
+resortos ALL=(ALL:ALL) NOPASSWD: ALL

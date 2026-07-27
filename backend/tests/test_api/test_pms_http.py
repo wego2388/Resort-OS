@@ -24,13 +24,100 @@ from fastapi.testclient import TestClient
 from tests.conftest import ws_url
 
 
-def make_branch_committed(db):
+def selected_super_admin_headers(db, branch) -> dict[str, str]:
+    from app.core.kernel.models.user import User
+    from tests.conftest import _make_token
+
+    user = db.query(User).filter(
+        User.role == "super_admin",
+        User.two_factor_enabled.is_(True),
+    ).first()
+    assert user is not None
+    return {
+        "Authorization": f"Bearer {_make_token(user.email, branch_id=branch.id)}"
+    }
+
+
+def make_branch_committed(db, *, link_fixture_users: bool = True):
     from app.modules.core.models import Branch
+    from app.core.kernel.models.user import User
+    from app.modules.hr.models import Employee
+    from tests.conftest import assign_test_user_to_branch
+
     b = Branch(name="PMS HTTP Branch", name_ar="فرع فندقي",
                code=f"PMS-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
+
+    # HTTP PMS routes are branch-scoped. The shared auth fixtures predate that
+    # contract and create users only, so link whichever fixed staff fixture this
+    # test requested to the *first* branch it creates. A second branch in the
+    # same test remains foreign, which preserves real A/B isolation coverage.
+    fixture_emails = {
+        "manager@test.local",
+        "cashier@test.local",
+        "waiter@test.local",
+        "accountant@test.local",
+    }
+    fixture_users = db.query(User).filter(User.email.in_(fixture_emails)).all()
+    if link_fixture_users:
+        for user in fixture_users:
+            employee = db.query(Employee).filter(Employee.user_id == user.id).first()
+            if employee:
+                # The test database session outlives an individual test. Reset
+                # fixed auth fixtures to this test's primary branch so earlier
+                # branch assignments cannot leak into later cases.
+                employee.branch_id = b.id
+                continue
+            db.add(Employee(
+                branch_id=b.id,
+                employee_code=f"TST-{uuid.uuid4().hex[:12].upper()}",
+                full_name=user.full_name,
+                position=user.role,
+                basic_salary=Decimal("0"),
+                hire_date=date.today(),
+                status="active",
+                email=user.email,
+                user_id=user.id,
+            ))
+            assign_test_user_to_branch(db, user.id, b.id)
+        # Existing Employee rows need the same explicit membership transfer.
+        for user in fixture_users:
+            assign_test_user_to_branch(db, user.id, b.id)
+    db.commit()
     return b
+
+
+def link_user_to_branch(db, user_id: int, branch) -> None:
+    """Explicit helper for dynamically-created auth users in branch tests."""
+    from app.core.kernel.models.user import User
+    from app.modules.hr.models import Employee
+    from tests.conftest import assign_test_user_to_branch
+
+    existing = db.query(Employee).filter(Employee.user_id == user_id).first()
+    if existing:
+        if existing.branch_id != branch.id:
+            raise AssertionError(
+                f"test user {user_id} already belongs to branch {existing.branch_id}"
+            )
+        assign_test_user_to_branch(db, user_id, branch.id)
+        db.commit()
+        return
+    user = db.query(User).filter(User.id == user_id).first()
+    assert user is not None
+    db.add(Employee(
+        branch_id=branch.id,
+        employee_code=f"TST-{uuid.uuid4().hex[:12].upper()}",
+        full_name=user.full_name,
+        position=user.role,
+        basic_salary=Decimal("0"),
+        hire_date=date.today(),
+        status="active",
+        email=user.email,
+        user_id=user.id,
+    ))
+    assign_test_user_to_branch(db, user_id, branch.id)
+    db.commit()
 
 
 def make_room_type_committed(db, branch):
@@ -297,6 +384,7 @@ class TestRatePlans:
 
     def test_create_and_list_rate_plan(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
         branch = make_branch_committed(db)
+        selected_admin = selected_super_admin_headers(db, branch)
         room_type = make_room_type_committed(db, branch)
 
         create_resp = client.post(
@@ -308,7 +396,7 @@ class TestRatePlans:
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=90)),
                 "min_nights": 3,
             },
-            headers=super_admin_headers,
+            headers=selected_admin,
         )
         assert create_resp.status_code == 201, create_resp.text
         plan = create_resp.json()
@@ -345,7 +433,7 @@ class TestRatePlans:
                 "branch_id": branch.id, "name": "Bad Range",
                 "valid_from": str(date.today()), "valid_until": str(date.today() - timedelta(days=1)),
             },
-            headers=super_admin_headers,
+            headers=selected_super_admin_headers(db, branch),
         )
         assert resp.status_code == 400
 
@@ -360,6 +448,7 @@ class TestRatePlanUpdate:
 
     def test_update_rate_plan_fields(self, client: TestClient, db, fake_redis, super_admin_headers):
         branch = make_branch_committed(db)
+        selected_admin = selected_super_admin_headers(db, branch)
         create_resp = client.post(
             "/api/v1/pms/rate-plans",
             json={
@@ -367,7 +456,7 @@ class TestRatePlanUpdate:
                 "rate_multiplier": "0.8000",
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=60)),
             },
-            headers=super_admin_headers,
+            headers=selected_admin,
         )
         assert create_resp.status_code == 201, create_resp.text
         plan_id = create_resp.json()["id"]
@@ -375,7 +464,7 @@ class TestRatePlanUpdate:
         patch_resp = client.patch(
             f"/api/v1/pms/rate-plans/{plan_id}",
             json={"name": "Low Season Updated", "rate_multiplier": "0.7500"},
-            headers=super_admin_headers,
+            headers=selected_admin,
         )
         assert patch_resp.status_code == 200, patch_resp.text
         updated = patch_resp.json()
@@ -386,20 +475,21 @@ class TestRatePlanUpdate:
 
     def test_deactivate_rate_plan_via_patch(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
         branch = make_branch_committed(db)
+        selected_admin = selected_super_admin_headers(db, branch)
         create_resp = client.post(
             "/api/v1/pms/rate-plans",
             json={
                 "branch_id": branch.id, "name": "To Deactivate",
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
             },
-            headers=super_admin_headers,
+            headers=selected_admin,
         )
         plan_id = create_resp.json()["id"]
 
         patch_resp = client.patch(
             f"/api/v1/pms/rate-plans/{plan_id}",
             json={"is_active": False},
-            headers=super_admin_headers,
+            headers=selected_admin,
         )
         assert patch_resp.status_code == 200
         assert patch_resp.json()["is_active"] is False
@@ -412,13 +502,14 @@ class TestRatePlanUpdate:
 
     def test_update_rate_plan_rejects_invalid_date_range(self, client: TestClient, db, fake_redis, super_admin_headers):
         branch = make_branch_committed(db)
+        selected_admin = selected_super_admin_headers(db, branch)
         create_resp = client.post(
             "/api/v1/pms/rate-plans",
             json={
                 "branch_id": branch.id, "name": "Range Test",
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
             },
-            headers=super_admin_headers,
+            headers=selected_admin,
         )
         plan_id = create_resp.json()["id"]
 
@@ -426,7 +517,7 @@ class TestRatePlanUpdate:
         patch_resp = client.patch(
             f"/api/v1/pms/rate-plans/{plan_id}",
             json={"valid_until": str(date.today() - timedelta(days=1))},
-            headers=super_admin_headers,
+            headers=selected_admin,
         )
         assert patch_resp.status_code == 400
 
@@ -436,7 +527,7 @@ class TestRatePlanUpdate:
             json={"name": "Nope"},
             headers=super_admin_headers,
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_update_rate_plan_requires_admin(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
         branch = make_branch_committed(db)
@@ -446,7 +537,7 @@ class TestRatePlanUpdate:
                 "branch_id": branch.id, "name": "Admin Only",
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
             },
-            headers=super_admin_headers,
+            headers=selected_super_admin_headers(db, branch),
         )
         plan_id = create_resp.json()["id"]
 
@@ -530,16 +621,26 @@ class TestRoomsWebSocketBroadcast:
             assert resp.status_code == 200, resp.text
             assert ws.receive_json()["type"] == "rooms_changed"
 
-    def test_broadcast_is_scoped_to_branch(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_broadcast_is_scoped_to_branch(
+        self, client: TestClient, db, fake_redis, manager_headers, super_admin_headers,
+    ):
         """فرع تاني متصل بالخريطة الحية بتاعته مش المفروض يستقبل حاجة لما
         غرفة في فرع مختلف تتغيّر — نفس عزل الفروع اللي beach_map_manager
         بيطبّقه (dict مفتاحه branch_id، مش broadcast عام)."""
         branch_a = make_branch_committed(db)
-        branch_b = make_branch_committed(db)
+        branch_b = make_branch_committed(db, link_fixture_users=False)
         room_type_a = make_room_type_committed(db, branch_a)
         room_a = make_room_committed(db, branch_a, room_type_a)
 
-        with client.websocket_connect(ws_url(f"/api/v1/pms/ws/rooms/{branch_b.id}", manager_headers)) as ws_b:
+        # super-admin is intentionally global and can monitor branch B; the
+        # branch-A manager performs the mutation. This tests broadcast routing
+        # without granting the manager unauthorized WS access to branch B.
+        with client.websocket_connect(
+            ws_url(
+                f"/api/v1/pms/ws/rooms/{branch_b.id}",
+                selected_super_admin_headers(db, branch_b),
+            )
+        ) as ws_b:
             resp = client.patch(
                 f"/api/v1/pms/rooms/{room_a.id}/status",
                 json={"status": "maintenance"},

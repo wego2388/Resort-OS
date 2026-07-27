@@ -11,7 +11,18 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.kernel.models.mixins import TimestampMixin
@@ -35,6 +46,83 @@ class Branch(Base, TimestampMixin):
     phone: Mapped[str | None] = mapped_column(String(20))
     address: Mapped[str | None] = mapped_column(Text)
     gm_phone: Mapped[str | None] = mapped_column(String(20))  # للـ Night Audit WhatsApp
+
+
+# ─────────────────── User ↔ Branch membership ────────────────────────
+
+class UserBranchMembership(Base, TimestampMixin):
+    """Authorization membership, distinct from ``hr_employees.branch_id``.
+
+    ``Employee.branch_id`` describes the employee's HR/payroll placement.
+    This row is the only authorization source for which branches an account
+    may enter.  Selecting a branch never rewrites the employee record.
+    """
+
+    __tablename__ = "user_branch_memberships"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "branch_id",
+            name="uq_user_branch_membership",
+        ),
+        CheckConstraint(
+            "NOT is_default OR is_active",
+            name="ck_user_branch_membership_default_active",
+        ),
+        CheckConstraint(
+            (
+                "(is_active AND revoked_at IS NULL AND revoked_by IS NULL) OR "
+                "((NOT is_active) AND revoked_at IS NOT NULL)"
+            ),
+            name="ck_user_branch_membership_revocation_state",
+        ),
+        Index(
+            "uq_user_branch_membership_active_default",
+            "user_id",
+            unique=True,
+            postgresql_where=text("is_active AND is_default"),
+            sqlite_where=text("is_active = 1 AND is_default = 1"),
+        ),
+        Index(
+            "ix_user_branch_memberships_active_lookup",
+            "user_id",
+            "branch_id",
+            "is_active",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    branch_id: Mapped[int] = mapped_column(
+        ForeignKey("branches.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    is_default: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false"),
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default=text("true"),
+    )
+    created_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
 
 # ────────────────────────── Settings ─────────────────────────────────

@@ -65,6 +65,7 @@ def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
     from datetime import date, timedelta
     from decimal import Decimal as _D
     from tests.conftest import _create_test_user, _make_token, open_cashier_shift
+    from app.modules.core.models import UserBranchMembership
     from app.modules.hr.models import Employee
 
     email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
@@ -75,7 +76,15 @@ def make_branch_linked_headers(db, branch, role="waiter") -> dict[str, str]:
         position=role, department="F&B", basic_salary=_D("4000.00"),
         hire_date=date.today() - timedelta(days=365), user_id=user_id,
     )
-    db.add(emp)
+    db.add_all([
+        emp,
+        UserBranchMembership(
+            user_id=user_id,
+            branch_id=branch.id,
+            is_default=True,
+            is_active=True,
+        ),
+    ])
     db.commit()
     # Gate 4A: أي مشغّل POS بيحصّل دفع مباشر لازم يكون له وردية مفتوحة.
     open_cashier_shift(db, branch.id, user_id)

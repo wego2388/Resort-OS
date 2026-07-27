@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import (
-    APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request,
+    APIRouter, Depends, Header, HTTPException, Query, Request,
     WebSocket, WebSocketDisconnect, status,
 )
 from fastapi.responses import Response

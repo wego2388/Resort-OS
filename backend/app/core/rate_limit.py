@@ -31,6 +31,11 @@ from app.core.kernel.cache import rate_limit
 
 def _client_ip(request: Request) -> str:
     """المفتاح الحقيقي اللي rate_limit() بيتحدد بيه — لازم يبقى موثوق.
+    ملاحظة: chat.api.router بيستورد الدالة دي مباشرة (نفس نمط
+    kernel/auth/router.py) بدل ما يعيد بناء منطق ثقة الـproxy — عمدًا
+    مسبتاش الاسم "private" يمنع إعادة الاستخدام جوه نفس المستودع/حدود الثقة،
+    بس مش هنغيّر اسمها هنا عشان دالة auth الحساسة ليها test file مخصوص
+    (test_auth_security_http.py) برّه نطاق CL-01 خالص.
 
     **تصحيح أمني (Codex security review، 2026-07-17):** النسخة القديمة
     كانت بتثق في أول قيمة (leftmost) في X-Forwarded-For بلا أي تحقق —
@@ -144,6 +149,13 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("POST", "/api/v1/public/guest-sessions"): ("public", 30, 60),
     ("GET",  "/api/v1/public/service-location"): ("public", 30, 60),
     ("GET",  "/api/v1/dining/public/service-menu"): ("public", 60, 60),
+    # الشات بوت — أضيق من التصفح العادي (20 مش 30) لأنه نداء AI حقيقي بتكلفة
+    # فعلية لكل رسالة (Gemini API)، مش قراءة داتا مجانية.
+    ("POST", "/api/v1/chat"):                       ("chat", 20, 60),
+    ("GET",  "/api/v1/chat/welcome"):                ("public", 30, 60),
+    ("POST", "/api/v1/chat/conversations/start"):    ("public", 30, 60),
+    ("POST", "/api/v1/chat/conversations/rate"):     ("public", 20, 60),
+    ("POST", "/api/v1/chat/conversations/end"):      ("public", 20, 60),
 }
 
 

@@ -16,7 +16,7 @@
  *   dataset[5] → indigo        #6366F1
  *   dataset[6+]→ cycles back
  */
-import { computed, ref, watch, onMounted, onBeforeUnmount } from 'vue'
+import { computed } from 'vue'
 import {
   Chart as ChartJS,
   CategoryScale,

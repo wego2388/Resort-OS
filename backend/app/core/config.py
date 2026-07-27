@@ -103,6 +103,35 @@ class Settings(CoreSettings):
     ETA_TAXPAYER_NAME: Optional[str] = None
     ETA_BRANCH_CODE: str = "0"                   # كود الفرع عند ETA — "0" للفرع الرئيسي
 
+    # ── AI Chatbot (Gemini) ─────────────────────────────────────────────
+    # None = /chat يرجّع 503 "Chat service not configured" (fail-closed، زي
+    # باقي المفاتيح الاختيارية هنا). راجع app/modules/chat لباقي المنطق.
+    GEMINI_API_KEY: Optional[str] = None
+    # Stable GA identifier verified against Google's model documentation on
+    # 2026-07-26. Production preflight rejects latest/preview/experimental
+    # aliases even if this value is overridden.
+    GEMINI_MODEL: str = "gemini-3.6-flash"
+    # Explicit host -> branch mapping. No implicit branch 1 fallback exists.
+    # Environment value is JSON, e.g. {"www.example.com": 7}.
+    CHAT_PUBLIC_HOST_BRANCH_MAP: dict[str, int] = Field(default_factory=dict)
+    # Production gate: the deployer must verify project-level Gemini logging /
+    # data-sharing settings. Each request also sets store=false.
+    CHAT_PROVIDER_DATA_GOVERNANCE_VERIFIED: bool = False
+    # Distributed cost controls. Production requires Redis and fails closed if
+    # it is unavailable; development/tests may use the in-process fallback.
+    CHAT_DAILY_CAP_PER_IP: int = Field(300, ge=1)
+    CHAT_DAILY_CAP_PER_SESSION: int = Field(150, ge=1)
+    CHAT_DAILY_GLOBAL_REQUEST_BUDGET: int = Field(2000, ge=1)
+    CHAT_DAILY_GLOBAL_COST_USD: float = Field(20.0, gt=0)
+    CHAT_MAX_CONCURRENT_REQUESTS: int = Field(20, ge=1, le=500)
+    CHAT_SESSION_TTL_MINUTES: int = Field(120, ge=5, le=1440)
+    CHAT_MAX_OUTPUT_TOKENS: int = Field(1024, ge=64, le=8192)
+    CHAT_MAX_RESPONSE_CHARS: int = Field(4000, ge=200, le=16000)
+    # Gemini 3.6 Flash list prices checked on 2026-07-26. They are settings,
+    # not code constants, so a pricing change can be deployed safely.
+    CHAT_INPUT_USD_PER_MILLION_TOKENS: float = Field(1.50, gt=0)
+    CHAT_OUTPUT_USD_PER_MILLION_TOKENS: float = Field(7.50, gt=0)
+
     # ── Rate Limiting (login) ──────────────────────────────────────────
     # الافتراضي (5 محاولات/300 ثانية) هو المعتمد أمنيًا للإنتاج (§15 CLAUDE.md)
     # — ما اتغيّرش هنا. قابل للتوسيع في `.env` المحلي بس (مش القيمة الافتراضية

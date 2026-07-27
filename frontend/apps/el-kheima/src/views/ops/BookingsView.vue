@@ -31,10 +31,8 @@ import {
   DatePicker,
   EmptyState,
   SearchInput,
-  TimePicker,
   useConfirm,
   useToast,
-  type SelectOption,
 } from '@resort-os/ui'
 
 const toast = useToast()
@@ -685,8 +683,8 @@ onMounted(() => {
               <span class="text-gray-800 dark:text-gray-200">{{ room.name }}</span>
             </label>
           </div>
-          <p v-if="!form.check_in || !form.check_out" class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.bookings.selectDatesFirst') }}</p>
-          <p v-else-if="roomsLoading" class="mt-1 text-xs text-gray-400 dark:text-gray-500">{{ t('backoffice.bookings.loadingAvailableRooms') }}</p>
+          <p v-if="!form.check_in || !form.check_out" class="mt-1 text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.bookings.selectDatesFirst') }}</p>
+          <p v-else-if="roomsLoading" class="mt-1 text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.bookings.loadingAvailableRooms') }}</p>
           <p v-else-if="rooms.length === 0" class="mt-1 text-xs text-amber-600 dark:text-amber-300">{{ t('backoffice.bookings.noAvailableRoomsPeriod') }}</p>
         </div>
 
@@ -703,7 +701,7 @@ onMounted(() => {
         />
         <p
           v-if="form.room_ids.length > 0 && applicableRatePlans.length === 0"
-          class="-mt-2 text-xs text-gray-400 dark:text-gray-500"
+          class="-mt-2 text-xs text-gray-400 dark:text-gray-400"
         >{{ t('backoffice.bookings.noApplicableRatePlans') }}</p>
 
         <!-- Notes -->

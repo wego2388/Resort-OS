@@ -12,7 +12,7 @@ Endpoints:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -20,6 +20,8 @@ from app.core.deps import get_current_active_user
 from app.core.rate_limit import _client_ip
 from app.modules.core import services as core_services
 from app.modules.core.schemas import (
+    ActiveBranchSwitchRequest,
+    AuthBootstrapRead,
     UserPreferencesUpdate,
     UserRead,
 )
@@ -30,6 +32,52 @@ router = APIRouter()
 @router.get("/me", response_model=UserRead)
 def me(user=Depends(get_current_active_user)):
     return UserRead.model_validate(user)
+
+
+@router.get("/bootstrap", response_model=AuthBootstrapRead)
+def auth_bootstrap(
+    response: Response,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_active_user),
+):
+    """Return identity, allowed branches and permissions as one live contract."""
+    response.headers["Cache-Control"] = "no-store"
+    return core_services.build_auth_bootstrap(db, user)
+
+
+@router.put("/active-branch", response_model=AuthBootstrapRead)
+def change_active_branch(
+    payload: ActiveBranchSwitchRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_active_user),
+):
+    """Switch only this refresh family; other devices keep their own branch."""
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return core_services.switch_active_branch(
+            db,
+            user,
+            payload.branch_id,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+    except core_services.SessionChangedError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "SESSION_CHANGED", "message": str(exc)},
+        ) from exc
+    except core_services.BranchContextRequiredError as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"error_code": "BRANCH_CONTEXT_REQUIRED", "message": str(exc)},
+        ) from exc
+    except core_services.BranchAccessDeniedError as exc:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            {"error_code": "BRANCH_ACCESS_DENIED", "message": str(exc)},
+        ) from exc
 
 
 @router.patch("/me/preferences", response_model=UserRead)

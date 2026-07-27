@@ -41,7 +41,11 @@ def make_branch_linked_headers(db, branch, role="manager") -> dict[str, str]:
     """نفس نمط test_guest_alerts.py's make_branch_linked_waiter_headers —
     مستخدم Employee-linked جديد لكل تست بدل الـ fixture المشترك، عشان
     assert_branch_access يقدر يحدد فرع المستخدم فعليًا."""
-    from tests.conftest import _create_test_user, _make_token
+    from tests.conftest import (
+        _create_test_user,
+        _make_token,
+        assign_test_user_to_branch,
+    )
     from app.modules.hr.models import Employee
 
     email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
@@ -53,6 +57,7 @@ def make_branch_linked_headers(db, branch, role="manager") -> dict[str, str]:
         hire_date=date.today() - timedelta(days=365), user_id=user_id,
     )
     db.add(emp)
+    assign_test_user_to_branch(db, user_id, branch.id)
     db.commit()
     return {"Authorization": f"Bearer {_make_token(email)}"}
 

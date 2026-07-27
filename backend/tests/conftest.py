@@ -251,12 +251,14 @@ def client(app) -> TestClient:
 # لصف User حقيقي في نفس الـ DB اللي الـ app fixture بتستخدمها (get_test_db)،
 # مش بس تولّد توكن بادعاءات. راجع CLAUDE.md § 5 لتفاصيل الـ gotcha ده.
 
-def _make_token(email: str) -> str:
+def _make_token(email: str, *, branch_id: int | None = None) -> str:
     """ينشئ JWT token متوافق مع get_current_user — sub=email + iat حقيقي."""
     from jose import jwt  # noqa: PLC0415
     secret = os.environ["SECRET_KEY"]
     now = datetime.utcnow()
     payload = {"sub": email, "iat": now, "exp": now + timedelta(hours=1)}
+    if branch_id is not None:
+        payload["bid"] = branch_id
     return jwt.encode(payload, secret, algorithm="HS256")
 
 
@@ -359,6 +361,47 @@ def _create_test_user(
         return user.id
     finally:
         db.close()
+
+
+def assign_test_user_to_branch(db, user_id: int, branch_id: int) -> None:
+    """Represent a completed test-data branch assignment under CX-02C.
+
+    Older fixtures moved ``Employee.branch_id`` between tests.  Authorization
+    now uses memberships, so this helper performs the equivalent explicit
+    membership transfer without teaching production code an Employee
+    fallback.  It intentionally leaves the HR row to each fixture.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+    from app.modules.core.models import UserBranchMembership  # noqa: PLC0415
+
+    now = datetime.now(timezone.utc)
+    target = None
+    for membership in db.query(UserBranchMembership).filter(
+        UserBranchMembership.user_id == user_id,
+    ).all():
+        if membership.branch_id == branch_id:
+            target = membership
+            membership.is_active = True
+            membership.is_default = False
+            membership.revoked_at = None
+            membership.revoked_by = None
+        else:
+            membership.is_active = False
+            membership.is_default = False
+            membership.revoked_at = membership.revoked_at or now
+            membership.revoked_by = None
+    # Release the partial unique default before assigning the new one.
+    db.flush()
+    if target is None:
+        db.add(UserBranchMembership(
+            user_id=user_id,
+            branch_id=branch_id,
+            is_default=True,
+            is_active=True,
+        ))
+    else:
+        target.is_default = True
+    db.flush()
 
 
 def _issue_step_up(
