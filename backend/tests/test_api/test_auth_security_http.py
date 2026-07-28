@@ -421,7 +421,14 @@ class TestContainmentSwitchValidation:
 
     def test_both_switches_default_false_and_accepted_in_production(self):
         from app.core.config import Settings
+        # _env_file=None: this checks the code-level default, not whatever
+        # happens to be in the real backend/.env on whoever's machine runs
+        # the suite (e.g. it's =true in local dev right now, on purpose,
+        # since Gate 8 guest alerts are deliberately on — see PROJECT_STATUS.md).
+        # Without this the test's result depends on ambient dev-environment
+        # state instead of actual application behavior.
         s = Settings(
+            _env_file=None,
             ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
             DATABASE_URL="sqlite://", LOGIN_2FA_ENFORCED=True,
             FIELD_ENCRYPTION_KEY=_FERNET_KEY,
