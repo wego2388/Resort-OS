@@ -1,6 +1,6 @@
 # دليل التوثيق الحالي — El Kheima Resort OS
 
-**آخر تحديث:** 2026-07-29
+**آخر تحديث:** 2026-07-30
 **قائد التنفيذ والمراجع النهائي:** Codex، بتكليف Mohamed
 
 هذا الملف هو بوابة التوثيق الوحيدة. أي وكيل أو مطور يبدأ من هنا بعد
@@ -36,9 +36,12 @@
 - Codex يقود التنفيذ والمراجعة النهائية.
 - الإنتاج IP-only على `191.218.161.133`.
 - لا DNS أو domain switch دون قرار صريح جديد من Mohamed.
-- الإصدار الفعال هو release immutable مرتبط بـ`ac7764f`؛ أي نشر لاحق يحتاج
-  backup وrollback وhealth evidence جديدًا.
-- لا أسرار أو بيانات تجريبية أو master data مختلقة.
+- baseline الفعال `ac7764f` وBackend data release `32eb0f8`؛ أي نشر لاحق
+  يحتاج backup وrollback وhealth evidence جديدًا.
+- البيانات synthetic المعتمدة للعرض موجودة عبر importer محكوم وموسومة؛
+  لا تُعامل كـmaster data حقيقية ولا تُنشأ بيانات demo عشوائية خارج مساره.
+- Chatbot فعال ومتحقق حيًا؛ تعديل provider أو facts يحتاج governance review.
+- DNS ما زال على العنوان القديم `2.57.91.91` ولم يحدث cutover.
 - `scripts/wait-dns-then-switch.sh` ملف مستخدم غير نشط؛ لا يُشغّل أو يُعدّل
   ضمن الخطة الحالية.
 

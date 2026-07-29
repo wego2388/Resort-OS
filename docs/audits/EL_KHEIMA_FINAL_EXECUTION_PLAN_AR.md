@@ -1,9 +1,9 @@
 # الخطة التنفيذية النهائية الحية — El Kheima Resort OS
 
-**آخر تحديث مثبت:** 2026-07-29
+**آخر تحديث مثبت:** 2026-07-30
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**الحالة:** REL-02 منشور وhealthy؛ المرحلة الحالية UAT/monitoring قبل Go/No-Go
+**الحالة:** REL-02 + DATA-01-DEMO + CHAT-01 مكتملة؛ UAT قبل Go/No-Go
 
 ## 1. القرارات غير القابلة للالتباس
 
@@ -13,7 +13,8 @@
 4. لا DNS أو domain switch بلا قرار صريح جديد من Mohamed.
 5. لا `git pull` أو reset أو rsync أو rebuild فوق الإنتاج قبل حفظ exact source.
 6. لا أسرار في Git أو logs أو handoffs، ولا قراءة لقيم `backend/.env.prod`.
-7. لا `app.seed` ولا بيانات demo أو master data غير معتمدة.
+7. لا `app.seed`. البيانات synthetic لا تُضاف إلا عبر importer المحكوم
+   `production_demo_seed` وبعد قرار المالك؛ البيانات الحقيقية تحتاج اعتمادًا.
 8. كل نشر يحتاج backup، rollback، health check، وإثبات image/source digest.
 9. أي تعليمات تحت `docs/archive/` تاريخية وممنوع تنفيذها.
 10. `scripts/wait-dns-then-switch.sh` خارج النطاق الحالي ولا يُلمس.
@@ -23,7 +24,7 @@
 ### الكود المحلي
 
 - branch: `claude/CX-02C-frontend-auth-bootstrap`
-- release source commit: `ac7764f`؛ إصلاحات الكود الأساسية في `6c9f09e`.
+- baseline release: `ac7764f`؛ Backend data release: `32eb0f8`.
 - الفرع مدفوع إلى `origin/claude/CX-02C-frontend-auth-bootstrap`؛ `main` لم يتغير.
 - frontend auth/bootstrap/permissions/route gates: مكتملة ومنشورة.
 - single-branch UX: لا selector ظاهر، ومسار اختيار الفرع للطوارئ fail-closed.
@@ -38,7 +39,8 @@
 
 - SSH بالمفتاح كمستخدم `resortos` مع sudo وDocker.
 - root login وpassword auth مغلقان؛ UFW وFail2ban يعملان.
-- release الفعال: `/opt/resort-os-releases/ac7764f`.
+- Backend release الفعال: `/opt/resort-os-releases/32eb0f8`؛ baseline باقي
+  الخدمات: `/opt/resort-os-releases/ac7764f`.
 - 8 حاويات تعمل؛ Backend/Celery/El Kheima healthy و`/health` = 200 وصفر restart.
 - PostgreSQL/Backend/Redis host ports loopback-only.
 - staff HTTPS على 443 والموقع التسويقي على 8443 يعيدان 200 من خارج الخادم.
@@ -46,7 +48,10 @@
 - Certbot IP renewal dry-run ناجح، والمؤقت يعمل كل 12 ساعة.
 - Hostinger provider snapshots/backups: صفر وقت الفحص.
 - مجلد Git القديم `0a13c97` غير النظيف محفوظ لكنه لم يعد مصدر الحاويات المحدثة.
-- الصور الفعالة مرتبطة بـcommit وdigests موثقة في تسليم REL-02.
+- Backend يعمل من release `32eb0f8`؛ بقية صور التطبيق بقيت من baseline
+  `ac7764f` لأنها لم تتأثر.
+- البيانات التجريبية الواقعية منشورة وموسومة، وChatbot اجتاز E2E حيًا.
+- DNS ما زال يشير إلى `2.57.91.91` القديم؛ لم يحدث cutover.
 
 ## 3. حالة البوابات
 
@@ -55,9 +60,10 @@
 | Gate 0 — baseline | COMPLETE | الأدلة الحالية خضراء |
 | Gate 1 — auth/permissions/branch | DEPLOYED — UAT PENDING | قبول الأدوار على جهاز فعلي |
 | Gate 2 — QR/PWA/public | PARTIAL | device UAT والعقد العام النهائي |
-| Gate 3 — chat/consent/truth | DEPLOYED CONTAINMENT | governance وapproved facts قبل التفعيل |
+| Gate 3 — chat/consent/truth | ACTIVE + LIVE VERIFIED | مراجعة دورية للحقائق والـprovider |
 | Gate 4 — content/SEO | PARTIAL | بيانات مالك موثقة |
-| Gate 5 — production data | BLOCKED ON INPUT | master data واعتماد مالي |
+| Gate 5A — synthetic demo data | COMPLETE | importer idempotent + safety counts |
+| Gate 5B — real master data | PENDING REVIEW | اعتماد التشغيل والمالية |
 | Gate 6 — VPS hardening | COMPLETE + VERIFIED | مراجعة دورية فقط |
 | Gate 7 — deploy/backup/monitoring | BASELINE COMPLETE | external alert channel وburn-in |
 | Gate 8 — TLS/UAT | PARTIAL | UAT جهاز/عمل وتشغيل |
@@ -95,7 +101,7 @@
 
 ### P0-03 — تثبيت المصدر المحلي
 
-**الحالة:** COMPLETE — code `6c9f09e` + docs `56e7219` + DR `ac7764f`
+**الحالة:** COMPLETE — baseline `ac7764f` + data code `32eb0f8`
 
 - روجع diff النهائي واستُبعدت الأسرار وملف المستخدم الخاص بالـDNS.
 - حزمة الكود ثُبتت في commit واضح من gates خضراء.
@@ -127,12 +133,47 @@
 - اعتماد ممثل التشغيل والمالية والمالك.
 - تسجيل defects وقرار Go/No-Go مؤرخ.
 
-### P1 — البيانات والمراقبة
+### P0-06 — بيانات العرض الواقعية وChatbot
 
-- استيراد master data عبر dry-run/validation/audit فقط.
+**الحالة:** COMPLETE — 2026-07-30
+
+- أنشئ importer صريح بواجهة dry-run افتراضية وconfirmation حرفي وقفل
+  PostgreSQL وaudit marker للإصدار `2026-07-30.1`.
+- نُشر على الفرع الوحيد `ELK-001`: 3 مخازن، 10 تصنيفات، 114 منتجًا،
+  6 موردين، 5 أوامر و3 طلبات شراء، 104 أصناف مطعم، 52 غرفة، وبيانات
+  مترابطة للصيانة وCRM وtimeshare وlease وbeach وHub.
+- الموردون بلا هاتف أو بريد، والمحتوى draft/inactive، والعقود التجريبية
+  draft أو inactive، وأوامر الصيانة completed/cancelled.
+- لم تتغير جداول المستخدمين أو المدفوعات أو الحجوزات أو الرواتب أو
+  المعاملات الحساسة؛ ملفات العد قبل/بعد متطابقة.
+- second apply أعاد `added={}`، وتجربة clean PostgreSQL وrestore من dump
+  الإنتاج نجحت ثم نُظفت قواعد الاختبار.
+- نُشر Backend image من `32eb0f8` فقط بعد dump وrollback tag.
+- Chatbot E2E: session + disclosure + سؤال عربي + Gemini reply + end.
+
+**القبول:** PASSED — البيانات موجودة وآمنة للعرض؛ ليست اعتماد master data.
+
+### P1 — البيانات الحقيقية والمراقبة
+
+- مراجعة بيانات العرض واستبدالها تدريجيًا بـmaster data معتمدة عبر
+  dry-run/validation/audit فقط.
 - health gate كل 5 دقائق للحاويات وHTTP وbackup وTLS وdisk: منفذ ومثبت.
 - المطلوب المتبقي: قناة خارجية لفشل الفحص وburn-in ممتد.
-- لا تفعيل Chatbot أو analytics أو facts عامة قبل governance واعتماد المحتوى.
+- Chatbot فعال؛ أي إضافة facts عامة أو analytics تحتاج مراجعة governance
+  ومحتوى جديدة.
+
+### P1-DNS — تجهيز domain دون تنفيذ
+
+**الحالة:** REVIEWED / PAUSED
+
+- `A @` الحالي يشير إلى `2.57.91.91` القديم.
+- `www CNAME` يشير إلى `elkheima.com` ويصل إلى القديم نفسه.
+- لا AAAA؛ لا يُضاف قبل وجود IPv6 فعلي.
+- HTTP يعمل من المضيف القديم، لكن HTTPS يفشل في TLS على الجذر و`www`.
+- لا MX/TXT/DMARC/DKIM ظاهرة؛ تُجهز فقط إن كان بريد النطاق مطلوبًا.
+- عند قرار cutover فقط: تجهيز شهادة domain وNginx، والتحقق من البريد، ثم
+  تغيير `A @` إلى `191.218.161.133` والإبقاء على CNAME الخاص بـ`www`.
+- ممنوع استخدام Reset DNS أو تشغيل سكربت التحويل دون قرار المالك.
 
 ## 5. قواعد التراجع
 
@@ -147,6 +188,8 @@
 - لوحة التنفيذ: `docs/agent-workflow/EL_KHEIMA_EXECUTION_BOARD.md`
 - تدقيق VPS: `docs/agent-workflow/handoffs/2026-07-29_VPS-03_codex_handoff.md`
 - تسليم النشر: `docs/agent-workflow/handoffs/2026-07-29_REL-02_codex_handoff.md`
+- تسليم البيانات وChatbot وDNS:
+  `docs/agent-workflow/handoffs/2026-07-30_DATA-01_CHAT-01_codex_handoff.md`
 - حالة المشروع: `PROJECT_STATUS.md`
 - ملخص المالك: `wagdy.md`
 - التاريخ القديم: `docs/archive/2026-07-execution/`
