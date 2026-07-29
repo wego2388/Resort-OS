@@ -27,7 +27,7 @@ const toast = useToast()
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface Room {
   id: number
@@ -82,7 +82,7 @@ const counts = computed(() =>
 
 async function fetchRoomTypes() {
   try {
-    const res = await api.get('/api/v1/pms/room-types', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/pms/room-types', { params: { branch_id: branchId.value } })
     const list: RoomTypeOption[] = res.data.items ?? res.data
     roomTypesById.value = Object.fromEntries(list.map((rt) => [rt.id, rt]))
   } catch (e: any) {
@@ -96,7 +96,7 @@ async function fetchRoomTypes() {
 async function fetchCurrentBookings() {
   try {
     const res = await api.get('/api/v1/pms/bookings', {
-      params: { branch_id: branchId, status: 'checked_in', page: 1, size: 100 },
+      params: { branch_id: branchId.value, status: 'checked_in', page: 1, size: 100 },
     })
     const items: { rooms?: { room_id: number }[]; guest_name: string; check_out: string }[] =
       res.data.items ?? res.data
@@ -115,7 +115,7 @@ async function fetchCurrentBookings() {
 async function fetchRooms() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/pms/rooms', { params: { branch_id: branchId.value } })
     rooms.value = res.data.rooms ?? res.data.items ?? res.data
     await fetchCurrentBookings()
   } catch(e) {
@@ -176,7 +176,7 @@ async function runNightAudit() {
   nightAuditError.value = ''
   try {
     const res = await api.post('/api/v1/pms/night-audit/run', null, {
-      params: { branch_id: branchId, audit_date: nightAuditDate.value },
+      params: { branch_id: branchId.value, audit_date: nightAuditDate.value },
     })
     nightAuditResult.value = res.data
     toast.success(t('backoffice.rooms.nightAuditSuccess'))

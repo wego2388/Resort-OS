@@ -40,7 +40,7 @@ const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatDate: fmtDateFn } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface Booking {
   id: number
@@ -149,7 +149,7 @@ const applicableRatePlans = computed(() => {
 async function fetchRatePlans() {
   try {
     const res = await api.get(ENDPOINTS.pms_extra.ratePlans, {
-      params: { branch_id: branchId, active_only: true },
+      params: { branch_id: branchId.value, active_only: true },
     })
     ratePlans.value = res.data.items ?? res.data
   } catch (e: any) {
@@ -174,7 +174,7 @@ async function fetchBookings(page = 1) {
   currentPage.value = page
   try {
     const res = await api.get(ENDPOINTS.pms.bookings, {
-      params: { branch_id: branchId, page, size: PAGE_SIZE }
+      params: { branch_id: branchId.value, page, size: PAGE_SIZE }
     })
     bookings.value  = res.data.items ?? res.data
     totalBookings.value = res.data.total ?? bookings.value.length
@@ -189,7 +189,7 @@ const allRoomsById = ref<Record<number, RoomOption>>({})
 
 async function fetchAllRooms() {
   try {
-    const res = await api.get(ENDPOINTS.pms.rooms, { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.pms.rooms, { params: { branch_id: branchId.value } })
     const list: RoomOption[] = res.data.items ?? res.data
     allRoomsById.value = Object.fromEntries(list.map((r) => [r.id, r]))
   } catch (e: any) {
@@ -214,7 +214,7 @@ async function fetchAvailableRooms() {
   roomsLoading.value = true
   try {
     const res = await api.get(ENDPOINTS.pms.roomsAvailable, {
-      params: { branch_id: branchId, check_in: form.value.check_in, check_out: form.value.check_out },
+      params: { branch_id: branchId.value, check_in: form.value.check_in, check_out: form.value.check_out },
     })
     rooms.value = res.data
     // الغرف المختارة سابقًا ممكن يبقى بعضها مش متاح بعد تغيير التواريخ

@@ -42,7 +42,7 @@ const toast = useToast()
 const { confirm } = useConfirm()
 const { printBlob } = usePrintDocument()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 const currency = 'EGP'
 const {
   isOnline,
@@ -86,7 +86,7 @@ const directPaymentOrder = ref<DiningOrderDetail | null>(null)
 const paymentOpen = ref(false)
 const searchInputEl = ref<InstanceType<typeof SearchInput> | null>(null)
 
-const { status: wsStatus, onMessage: onWsMessage } = useResortWebSocket(ENDPOINTS.dining.tablesWs(branchId))
+const { status: wsStatus, onMessage: onWsMessage } = useResortWebSocket(ENDPOINTS.dining.tablesWs(branchId.value ?? 0))
 onWsMessage((message: any) => {
   if (message?.type === 'table_updated' || message?.type === 'tables_updated') {
     loadTables()
@@ -159,7 +159,7 @@ function itemPrice(item: DiningItemRow): number {
 async function loadOutlets() {
   try {
     const { data } = await api.get(ENDPOINTS.dining.outlets, {
-      params: { branch_id: branchId, active_only: true },
+      params: { branch_id: branchId.value, active_only: true },
     })
     outlets.value = data
     if (data.length && selectedOutletId.value === null) selectedOutletId.value = data[0].id
@@ -188,7 +188,7 @@ async function loadMenu() {
 
 async function loadTables() {
   try {
-    const { data } = await api.get(ENDPOINTS.dining.tables(branchId))
+    const { data } = await api.get(ENDPOINTS.dining.tables(branchId.value ?? 0))
     tables.value = data
   } catch {
     toast.error(t('backoffice.pos.errors.loadTables'))
@@ -204,7 +204,7 @@ async function loadActiveOrders() {
       const pageSize = 100
       while (true) {
         const { data } = await api.get(ENDPOINTS.dining.orders, {
-          params: { branch_id: branchId, status, page, size: pageSize },
+          params: { branch_id: branchId.value, status, page, size: pageSize },
         })
         const pageItems: ActiveOrder[] = data?.items ?? []
         result.push(...pageItems)
@@ -452,7 +452,7 @@ async function sendOrderToKitchen() {
         stageServerOrder(data, 'open')
       }
     } else {
-      const data = await submitOrderOnlineOrQueue(branchId, buildOrderPayload(), selectedOutletId.value)
+      const data = await submitOrderOnlineOrQueue(branchId.value ?? 0, buildOrderPayload(), selectedOutletId.value)
       if (data === null) {
         resetDraft()
         workspace.value = orderType.value === 'dine_in' ? 'tables' : 'order'

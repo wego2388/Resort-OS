@@ -20,7 +20,8 @@ const toast = useToast()
 const { t }  = useI18n()
 const { formatMoney, formatTime, formatDateTime } = useStaffFormat()
 
-const branchId = computed(() => auth.branchId ?? 1)
+// CX-02C: branchId comes from bootstrap (session-scoped, no ?? 1 fallback).
+const branchId = computed(() => auth.activeBranchId)
 
 // ── Data ──────────────────────────────────────────────────────────────
 interface ShiftSummary {
@@ -88,7 +89,7 @@ function connectWs() {
   if (!token) return
 
   const proto  = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const wsUrl  = `${proto}://${window.location.host}${ENDPOINTS.finance.shiftsWs(branchId.value)}?token=${token}`
+  const wsUrl  = `${proto}://${window.location.host}${ENDPOINTS.finance.shiftsWs(branchId.value ?? 0)}?token=${token}`
   ws = new WebSocket(wsUrl)
 
   ws.onopen = () => {

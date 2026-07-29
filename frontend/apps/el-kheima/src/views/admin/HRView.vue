@@ -12,7 +12,7 @@ const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard'>('employees')
 
 interface Employee {
@@ -100,7 +100,7 @@ const policySaving = ref(false)
 async function fetchAttendancePolicy() {
   policyLoading.value = true
   try {
-    const res = await api.get('/api/v1/hr/attendance-policy', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/hr/attendance-policy', { params: { branch_id: branchId.value } })
     attendancePolicy.value = res.data
     policyConfigured.value = true
   } catch (e: unknown) {
@@ -116,7 +116,7 @@ async function fetchAttendancePolicy() {
 async function saveAttendancePolicy() {
   policySaving.value = true
   try {
-    const res = await api.put('/api/v1/hr/attendance-policy', attendancePolicy.value, { params: { branch_id: branchId } })
+    const res = await api.put('/api/v1/hr/attendance-policy', attendancePolicy.value, { params: { branch_id: branchId.value } })
     attendancePolicy.value = res.data
     policyConfigured.value = true
     toast.success(t('backoffice.hr.msg.policySaved'))
@@ -139,7 +139,7 @@ const leaveTypeNameById = computed(() => {
 async function fetchEmployees() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/hr/employees', { params: { branch_id: branchId, size: 100 } })
+    const res = await api.get('/api/v1/hr/employees', { params: { branch_id: branchId.value, size: 100 } })
     employees.value = res.data.employees ?? res.data.items ?? res.data
     employeesTotal.value = res.data.total ?? employees.value.length
   } catch (e) {
@@ -149,7 +149,7 @@ async function fetchEmployees() {
 
 async function fetchLeaveTypes() {
   try {
-    const res = await api.get('/api/v1/hr/leave-types', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/hr/leave-types', { params: { branch_id: branchId.value } })
     leaveTypes.value = res.data ?? []
   } catch (e) {
     // غير حرج: أسماء أنواع الإجازات مجرد تسمية للعرض، بترجع لرقم النوع لو فشلت
@@ -159,7 +159,7 @@ async function fetchLeaveTypes() {
 async function fetchPayroll() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/hr/payroll/runs', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/hr/payroll/runs', { params: { branch_id: branchId.value } })
     payrollRuns.value = res.data.runs ?? res.data.items ?? res.data
     if (!employees.value.length) await fetchEmployees()
   } catch (e) {
@@ -213,7 +213,7 @@ async function approvePayrollRun(run: PayrollRun) {
 async function fetchLeaves() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/hr/leaves', { params: { branch_id: branchId, status: 'pending' } })
+    const res = await api.get('/api/v1/hr/leaves', { params: { branch_id: branchId.value, status: 'pending' } })
     leaveRequests.value = res.data.requests ?? res.data.items ?? res.data
     if (!employees.value.length) await fetchEmployees()
     if (!leaveTypes.value.length) await fetchLeaveTypes()
@@ -227,7 +227,7 @@ async function fetchAttendance() {
   try {
     const res = await api.get('/api/v1/hr/attendance', {
       params: {
-        branch_id: branchId,
+        branch_id: branchId.value,
         date_from: attendanceDateFrom.value,
         date_to: attendanceDateTo.value,
         size: 200,
@@ -296,7 +296,7 @@ async function openPenaltyModal(emp: Employee) {
   penaltyModalEmployee.value = emp
   penaltyForm.value = { penalty_type_id: null, penalty_days: 1, reason: '' }
   try {
-    const res = await api.get('/api/v1/hr/penalty-types', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/hr/penalty-types', { params: { branch_id: branchId.value } })
     penaltyTypes.value = res.data ?? []
   } catch (e) {
     toast.error(t('backoffice.hr.msg.loadPenaltyTypesError'))
@@ -319,7 +319,7 @@ async function submitPenalty() {
   try {
     const empId = penaltyModalEmployee.value.id
     await api.post('/api/v1/hr/penalties', {
-      employee_id: empId, branch_id: branchId,
+      employee_id: empId, branch_id: branchId.value,
       penalty_type_id: penaltyForm.value.penalty_type_id,
       penalty_date: localDateStr(new Date()),
       penalty_days: penaltyDays,
@@ -414,7 +414,7 @@ async function submitAdvance() {
   try {
     const empId = advanceModalEmployee.value.id
     const { data } = await api.post('/api/v1/hr/salary-advances', {
-      employee_id: empId, branch_id: branchId,
+      employee_id: empId, branch_id: branchId.value,
       amount, disbursed_date: advanceForm.value.disbursed_date,
       monthly_deduction_amount: monthlyDeduction,
       notes: advanceForm.value.notes || undefined,
@@ -477,7 +477,7 @@ async function submitPayment() {
   try {
     const empId = paymentModalEmployee.value.id
     const { data } = await api.post('/api/v1/hr/advance-payments', {
-      employee_id: empId, branch_id: branchId,
+      employee_id: empId, branch_id: branchId.value,
       amount, payment_date: paymentForm.value.payment_date,
       notes: paymentForm.value.notes || undefined,
     })
@@ -539,7 +539,7 @@ async function fetchLeaderboard() {
   leaderboardLoading.value = true
   try {
     const res = await api.get('/api/v1/hr/leaderboard', {
-      params: { branch_id: branchId, date_from: leaderboardFrom.value, date_to: leaderboardTo.value },
+      params: { branch_id: branchId.value, date_from: leaderboardFrom.value, date_to: leaderboardTo.value },
     })
     leaderboard.value = res.data
   } catch (e) {
@@ -681,7 +681,7 @@ async function submitAttendanceImport() {
     form.append('file', importFile.value)
     const res = await api.post('/api/v1/hr/attendance/import-excel', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
-      params: { branch_id: branchId, period_year: importPeriodYear.value, period_month: importPeriodMonth.value },
+      params: { branch_id: branchId.value, period_year: importPeriodYear.value, period_month: importPeriodMonth.value },
     })
     importResult.value = res.data
     toast.success(t('backoffice.hr.msg.attendanceImported', { count: res.data.imported }))

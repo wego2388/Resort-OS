@@ -14,7 +14,7 @@ const toast = useToast()
 const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber, formatDate } = useStaffFormat()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface Payment {
   id: number; contract_id: number; due_date: string; amount: number
@@ -75,7 +75,7 @@ const expiringSoonContracts = ref<Contract[]>([])
 async function loadExpiringSoon() {
   try {
     const { data } = await api.get('/api/v1/leasing/contracts', {
-      params: { branch_id: branchId, expiring_within_days: 30 },
+      params: { branch_id: branchId.value, expiring_within_days: 30 },
     })
     expiringSoonContracts.value = data.items ?? []
   } catch { /* بانر ثانوي — فشله ما يمنعش الشاشة تشتغل */ }
@@ -84,7 +84,7 @@ async function loadExpiringSoon() {
 async function loadContracts() {
   loading.value = true
   try {
-    const params: Record<string, any> = { branch_id: branchId, size: 100 }
+    const params: Record<string, any> = { branch_id: branchId.value, size: 100 }
     if (statusFilter.value) params.status = statusFilter.value
     const { data } = await api.get('/api/v1/leasing/contracts', { params })
     contracts.value = data.items
@@ -150,7 +150,7 @@ async function saveContract() {
       toast.success(t('backoffice.leasing.msg.contractUpdated'))
     } else {
       await api.post('/api/v1/leasing/contracts', {
-        branch_id: branchId,
+        branch_id: branchId.value,
         tenant_name: contractForm.value.tenant_name,
         tenant_phone: contractForm.value.tenant_phone || null,
         tenant_national_id: contractForm.value.tenant_national_id || null,
@@ -246,7 +246,7 @@ async function saveCashLog() {
   savingCashLog.value = true
   try {
     await api.post(`/api/v1/leasing/contracts/${cashLogModal.value.contractId}/cash-logs`, {
-      branch_id: branchId, contract_id: cashLogModal.value.contractId,
+      branch_id: branchId.value, contract_id: cashLogModal.value.contractId,
       amount: cashLogForm.value.amount, activity_type: cashLogForm.value.activity_type,
       payment_method: cashLogForm.value.payment_method || null,
       reference: cashLogForm.value.reference || null,

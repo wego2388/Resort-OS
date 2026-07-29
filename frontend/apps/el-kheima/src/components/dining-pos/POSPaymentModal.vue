@@ -52,7 +52,7 @@ interface CheckedInBooking {
 const props = defineProps<{
   open: boolean
   order: DiningOrderDetail | null
-  branchId: number
+  branchId: number | null
 }>()
 const emit = defineEmits<{
   close: []

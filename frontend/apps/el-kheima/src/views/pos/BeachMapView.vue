@@ -23,7 +23,8 @@ const toast = useToast()
 const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatTime: fmtTimeFn } = useStaffFormat()
-const branchId = computed(() => auth.branchId ?? 1)
+// CX-02C: branchId comes from bootstrap (session-scoped, no ?? 1 fallback).
+const branchId = computed(() => auth.activeBranchId)
 const isManager = computed(() => auth.hasRole('manager'))
 
 interface BeachLocation {
@@ -96,9 +97,12 @@ function upsertLocation(loc: BeachLocation) {
 
 // اتصال لحظي — نفس نمط KDS/تنبيهات الضيوف (useResortWebSocket بيعيد
 // الاتصال تلقائيًا لو النت اتقطع).
+// CX-02C: WS URL requires a resolved branchId — skip if no branch context yet.
 const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
 const { status: wsStatus, onMessage } = useResortWebSocket(
-  `${wsProtocol}//${location.host}/api/v1/beach/ws/map/${branchId.value}`,
+  branchId.value != null
+    ? `${wsProtocol}//${location.host}/api/v1/beach/ws/map/${branchId.value}`
+    : '',
 )
 onMessage((data: any) => {
   if (data?.type === 'map_update' && data.location) {

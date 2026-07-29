@@ -9,7 +9,7 @@ const toast = useToast()
 const { t } = useI18n()
 const { formatDate } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface Leave {
   id: number; leave_type_id: number; start_date: string; end_date: string
@@ -48,7 +48,7 @@ function calcDays() {
 
 async function fetchLeaveTypes() {
   try {
-    const res = await api.get(ENDPOINTS.hr.leaveTypes, { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.hr.leaveTypes, { params: { branch_id: branchId.value } })
     leaveTypes.value = res.data
     if (leaveTypes.value.length && form.value.leave_type_id === null) {
       form.value.leave_type_id = leaveTypes.value[0].id

@@ -27,7 +27,7 @@ const { t, locale } = useI18n()
 const { formatDateTime } = useStaffFormat()
 const toast = useToast()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 // حساب بلا branch_id حقيقي في استجابة /auth/me — تحذير بس، مش حظر (نفس
 // السلوك القديم فعليًا لسه شغال، بدون ادّعاء إنه صحيح 100%).
 const hasRealBranchContext = computed(() => auth.user?.branch_id != null)
@@ -197,7 +197,7 @@ async function loadSettings() {
   loading.value = true
   loadError.value = ''
   try {
-    const res = await api.get(ENDPOINTS.settings.get, { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.settings.get, { params: { branch_id: branchId.value } })
     settings.value = res.data
     for (const row of res.data as SettingRow[]) {
       edited[row.key] = row.value
@@ -240,7 +240,7 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
     const res = await api.put(
       ENDPOINTS.settings.set(pending.key),
       { value: pending.value, reason },
-      { params: { branch_id: branchId }, headers: { 'X-Step-Up-Token': stepUpToken } },
+      { params: { branch_id: branchId.value }, headers: { 'X-Step-Up-Token': stepUpToken } },
     )
     const updated: SettingRow = res.data
     const idx = settings.value.findIndex((s) => s.key === updated.key)
@@ -291,7 +291,7 @@ const stepUpDescription = computed(() => {
 const stepUpIntent = computed(() => {
   const pending = pendingStepUp.value
   if (!pending) return {}
-  return { key: pending.key, branch_id: branchId, value: pending.value }
+  return { key: pending.key, branch_id: branchId.value, value: pending.value }
 })
 
 onMounted(loadSettings)

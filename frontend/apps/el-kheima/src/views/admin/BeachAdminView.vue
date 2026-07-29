@@ -9,7 +9,7 @@ const toast = useToast()
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 const tab = ref<'summary' | 'transactions' | 'b2b' | 'eod'>('summary')
 
 // ── Interfaces ────────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ const capacityTextColor = computed(() => {
 async function loadInventory() {
   try {
     const { data } = await api.get(ENDPOINTS.beach.inventory, {
-      params: { branch_id: branchId }
+      params: { branch_id: branchId.value }
     })
     inventory.value = data
     surgePct.value = String(data.surge_pct ?? 0)
@@ -123,7 +123,7 @@ async function loadInventory() {
 async function loadSummary(date?: string) {
   try {
     const { data } = await api.get(ENDPOINTS.beach.summary, {
-      params: { branch_id: branchId, tx_date: date ?? txDate.value }
+      params: { branch_id: branchId.value, tx_date: date ?? txDate.value }
     })
     summary.value = data
   } catch { summary.value = null }
@@ -133,7 +133,7 @@ async function loadTransactions() {
   loading.value = true
   try {
     const { data } = await api.get(ENDPOINTS.beach.transactions, {
-      params: { branch_id: branchId, tx_date: txDate.value, page: txPage.value, size: 50 }
+      params: { branch_id: branchId.value, tx_date: txDate.value, page: txPage.value, size: 50 }
     })
     transactions.value = data.items ?? []
     txTotal.value = data.total ?? 0
@@ -145,8 +145,8 @@ async function loadB2B() {
   loading.value = true
   try {
     const [contractsRes, statusRes] = await Promise.all([
-      api.get(ENDPOINTS.beach.b2bContracts, { params: { branch_id: branchId, active_only: false } }),
-      api.get(ENDPOINTS.beach.b2bQuotaStatus, { params: { branch_id: branchId } }),
+      api.get(ENDPOINTS.beach.b2bContracts, { params: { branch_id: branchId.value, active_only: false } }),
+      api.get(ENDPOINTS.beach.b2bQuotaStatus, { params: { branch_id: branchId.value } }),
     ])
     b2bContracts.value = contractsRes.data ?? []
     b2bStatus.value = statusRes.data ?? []
@@ -158,7 +158,7 @@ async function loadEod() {
   eodLoading.value = true
   try {
     const { data } = await api.get(ENDPOINTS.beach.eodReport, {
-      params: { branch_id: branchId, report_date: eodDate.value }
+      params: { branch_id: branchId.value, report_date: eodDate.value }
     })
     eodReport.value = data
   } catch { eodReport.value = null }
@@ -178,7 +178,7 @@ async function saveSurge() {
   savingSurge.value = true
   try {
     await api.patch(ENDPOINTS.beach.surge, { surge_pct: surgePct.value }, {
-      params: { branch_id: branchId }
+      params: { branch_id: branchId.value }
     })
     toast.success(t('backoffice.beachAdmin.surgeUpdated'))
     surgeModal.value = false
@@ -201,7 +201,7 @@ async function downloadEodPdf() {
   downloadingPdf.value = true
   try {
     const { data } = await api.get(ENDPOINTS.beach.eodReportPdf, {
-      params: { branch_id: branchId, report_date: eodDate.value }, responseType: 'blob'
+      params: { branch_id: branchId.value, report_date: eodDate.value }, responseType: 'blob'
     })
     const url = URL.createObjectURL(data)
     const a = document.createElement('a'); a.href = url; a.download = `beach-eod-${eodDate.value}.pdf`; a.click()
@@ -217,7 +217,7 @@ async function createB2BContract() {
   savingB2b.value = true
   try {
     await api.post(ENDPOINTS.beach.b2bContracts, {
-      branch_id: branchId,
+      branch_id: branchId.value,
       hotel_name: b2bForm.value.hotel_name,
       hotel_name_ar: b2bForm.value.hotel_name_ar || null,
       contact_phone: b2bForm.value.contact_phone || null,

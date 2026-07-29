@@ -28,7 +28,7 @@ const toast = useToast()
 const { t } = useI18n()
 const { formatNumber, formatDate } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface Revenue30d {
   restaurant: number
@@ -133,8 +133,8 @@ async function loadRevenueComparison() {
     const prevTo   = new Date(now.getFullYear(), now.getMonth(), 0)
     const fmt = (d: Date) => d.toISOString().slice(0, 10)
     const [curRes, prevRes] = await Promise.all([
-      api.get(ENDPOINTS.analytics.revenue, { params: { branch_id: branchId, date_from: fmt(thisFrom), date_to: fmt(thisTo) } }),
-      api.get(ENDPOINTS.analytics.revenue, { params: { branch_id: branchId, date_from: fmt(prevFrom), date_to: fmt(prevTo) } }),
+      api.get(ENDPOINTS.analytics.revenue, { params: { branch_id: branchId.value, date_from: fmt(thisFrom), date_to: fmt(thisTo) } }),
+      api.get(ENDPOINTS.analytics.revenue, { params: { branch_id: branchId.value, date_from: fmt(prevFrom), date_to: fmt(prevTo) } }),
     ])
     revCurrent.value  = curRes.data
     revPrevious.value = prevRes.data
@@ -167,7 +167,7 @@ const utilityForm = reactive({
 
 async function loadDashboard() {
   try {
-    const res = await api.get('/api/v1/analytics/dashboard', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/analytics/dashboard', { params: { branch_id: branchId.value } })
     dashboard.value = res.data
   } catch {
     toast.error(t('backoffice.analytics.msg.loadDashboardError'))
@@ -177,7 +177,7 @@ async function loadDashboard() {
 
 async function loadOccupancy() {
   try {
-    const res = await api.get('/api/v1/analytics/occupancy', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/analytics/occupancy', { params: { branch_id: branchId.value } })
     occupancy.value = res.data
   } catch {
     toast.error(t('backoffice.analytics.msg.loadOccupancyError'))
@@ -187,7 +187,7 @@ async function loadOccupancy() {
 
 async function loadDailyStats() {
   try {
-    const res = await api.get('/api/v1/analytics/daily-stats', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/analytics/daily-stats', { params: { branch_id: branchId.value } })
     dailyStats.value = res.data
   } catch {
     toast.error(t('backoffice.analytics.msg.loadDailyStatsError'))
@@ -197,7 +197,7 @@ async function loadDailyStats() {
 
 async function loadReviews() {
   try {
-    const res = await api.get('/api/v1/analytics/reviews', { params: { branch_id: branchId, size: 5 } })
+    const res = await api.get('/api/v1/analytics/reviews', { params: { branch_id: branchId.value, size: 5 } })
     reviews.value = res.data
   } catch {
     toast.error(t('backoffice.analytics.msg.loadReviewsError'))
@@ -207,7 +207,7 @@ async function loadReviews() {
 
 async function loadReviewInsights() {
   try {
-    const res = await api.get('/api/v1/analytics/reviews/insights', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/analytics/reviews/insights', { params: { branch_id: branchId.value } })
     reviewInsights.value = res.data
   } catch {
     toast.error(t('backoffice.analytics.msg.loadReviewInsightsError'))
@@ -217,7 +217,7 @@ async function loadReviewInsights() {
 
 async function loadUtilities() {
   try {
-    const res = await api.get('/api/v1/analytics/utilities', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/analytics/utilities', { params: { branch_id: branchId.value } })
     utilityReadings.value = res.data
   } catch {
     toast.error(t('backoffice.analytics.msg.loadUtilitiesError'))
@@ -227,7 +227,7 @@ async function loadUtilities() {
 
 async function loadEnergy() {
   try {
-    const res = await api.get('/api/v1/analytics/energy', { params: { branch_id: branchId, period: currentPeriod } })
+    const res = await api.get('/api/v1/analytics/energy', { params: { branch_id: branchId.value, period: currentPeriod } })
     energyKpi.value = res.data
   } catch {
     energyKpi.value = null
@@ -263,7 +263,7 @@ const yoyChangePct = computed(() => {
 async function loadEnergyTrend() {
   try {
     const res = await api.get('/api/v1/analytics/energy/trend', {
-      params: { branch_id: branchId, end_period: currentPeriod, months: 24 },
+      params: { branch_id: branchId.value, end_period: currentPeriod, months: 24 },
     })
     energyTrend.value = res.data
   } catch {
@@ -275,7 +275,7 @@ async function exportEnergyTrend() {
   exportingEnergyTrend.value = true
   try {
     const res = await api.get('/api/v1/analytics/energy/trend/export', {
-      params: { branch_id: branchId, end_period: currentPeriod, months: 24 },
+      params: { branch_id: branchId.value, end_period: currentPeriod, months: 24 },
       responseType: 'blob',
     })
     const url = URL.createObjectURL(res.data)
@@ -299,7 +299,7 @@ async function submitUtilityReading() {
   savingUtility.value = true
   try {
     await api.post('/api/v1/analytics/utilities', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       reading_date: utilityForm.reading_date,
       utility_type: utilityForm.utility_type,
       reading_value: utilityForm.reading_value,

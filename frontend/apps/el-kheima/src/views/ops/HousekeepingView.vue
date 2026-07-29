@@ -7,7 +7,7 @@ import { AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 const toast = useToast()
 const { t } = useI18n()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface HKTask {
   id: number
@@ -84,7 +84,7 @@ const statusCounts = computed(() =>
 
 async function fetchRoomNames() {
   try {
-    const res = await api.get(ENDPOINTS.pms.rooms, { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.pms.rooms, { params: { branch_id: branchId.value } })
     const list: { id: number; name: string }[] = res.data.items ?? res.data
     roomNameById.value = Object.fromEntries(list.map((r) => [r.id, r.name]))
   } catch (e: any) {
@@ -101,7 +101,7 @@ const assigningTaskId = ref<number | null>(null)
 async function fetchEmployees() {
   try {
     const res = await api.get(ENDPOINTS.hr.employees, {
-      params: { branch_id: branchId, status: 'active', size: 100 },
+      params: { branch_id: branchId.value, status: 'active', size: 100 },
     })
     employees.value = res.data.items ?? []
     employeeNameById.value = Object.fromEntries(employees.value.map((e) => [e.id, e.full_name]))
@@ -130,7 +130,7 @@ async function fetchTasks() {
   loading.value = true
   try {
     const res = await api.get(ENDPOINTS.pms.housekeeping, {
-      params: { branch_id: branchId }
+      params: { branch_id: branchId.value }
     })
     tasks.value = res.data.tasks ?? res.data.items ?? res.data
   } catch(e) {

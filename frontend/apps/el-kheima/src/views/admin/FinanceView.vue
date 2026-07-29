@@ -12,7 +12,10 @@ const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatDateTime: fmtDateTimeFn } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = computed(() => auth.branchId ?? 1)
+// CX-02C: branchId comes from bootstrap (session-scoped, no ?? 1 fallback).
+// activeBranchId is null when requires_branch_selection=true — in that case
+// API calls carry no branch_id and the server returns 409 BRANCH_CONTEXT_REQUIRED.
+const branchId = computed(() => auth.activeBranchId)
 const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts'>('overview')
 
 interface Check { id: number; check_number: string; amount: number; drawer_name: string; due_date: string; status: string; bank_name: string }
@@ -166,7 +169,12 @@ function closeShiftDetail() { detailShift.value = null }
 // تحميل التقرير/سجل الفواتير تلقائيًا من غير أي polling. مقفول مدير+ من
 // الباك إند نفسه (get_websocket_user min_level=60)، متسق مع باقي شاشة
 // الحسابات دي كلها.
-const { onMessage: onShiftWsMessage } = useResortWebSocket(ENDPOINTS.finance.shiftsWs(branchId.value))
+// CX-02C: WebSocket URL is built from activeBranchId. If null (no branch
+// context yet), the WS hook still initialises but will receive no events
+// until a branch is selected and the component remounts.
+const { onMessage: onShiftWsMessage } = useResortWebSocket(
+  branchId.value != null ? ENDPOINTS.finance.shiftsWs(branchId.value) : '',
+)
 onShiftWsMessage((data: unknown) => {
   const msg = data as ShiftWsMessage
   const openShift = detailShift.value

@@ -15,7 +15,7 @@ import { StatCard } from '@resort-os/ui'
 const { t } = useI18n()
 const { formatDate, formatNumber } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface DashboardData {
   today_revenue: number; yesterday_revenue: number
@@ -39,11 +39,11 @@ const alertsTotal = () => alerts.value.lowStock + alerts.value.overdueMaintenanc
 async function fetchUrgentAlerts() {
   const today = isoDate(new Date())
   const [stockRes, maintOpenRes, maintInProgressRes, tsRes, checksRes] = await Promise.allSettled([
-    api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId, low_stock_only: true, size: 1 } }),
-    api.get(ENDPOINTS.maintenance.workOrders, { params: { branch_id: branchId, status: 'open', size: 100 } }),
-    api.get(ENDPOINTS.maintenance.workOrders, { params: { branch_id: branchId, status: 'in_progress', size: 100 } }),
-    api.get(ENDPOINTS.timeshare.csSummary, { params: { branch_id: branchId } }),
-    api.get(ENDPOINTS.finance.checks, { params: { branch_id: branchId, status: 'bounced' } }),
+    api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId.value, low_stock_only: true, size: 1 } }),
+    api.get(ENDPOINTS.maintenance.workOrders, { params: { branch_id: branchId.value, status: 'open', size: 100 } }),
+    api.get(ENDPOINTS.maintenance.workOrders, { params: { branch_id: branchId.value, status: 'in_progress', size: 100 } }),
+    api.get(ENDPOINTS.timeshare.csSummary, { params: { branch_id: branchId.value } }),
+    api.get(ENDPOINTS.finance.checks, { params: { branch_id: branchId.value, status: 'bounced' } }),
   ])
 
   // أوامر صيانة متأخرة — نفس تعريف notify_overdue_work_orders (scheduled_date
@@ -67,7 +67,7 @@ function isoDate(d: Date) {
 }
 
 async function fetchDailyStats(stat_date: string) {
-  const { data } = await api.get(ENDPOINTS.analytics.dailyStats, { params: { branch_id: branchId, stat_date } })
+  const { data } = await api.get(ENDPOINTS.analytics.dailyStats, { params: { branch_id: branchId.value, stat_date } })
   // DailyStats is a nightly-computed snapshot — if today's row hasn't been
   // built yet the endpoint returns `{stat_date, message}` with no numeric
   // fields at all (see AnalyticsView.vue for the same contract).
@@ -88,7 +88,7 @@ async function fetchDailyStats(stat_date: string) {
 async function fetchLiveRevenueToday() {
   const today = isoDate(new Date())
   const { data } = await api.get(ENDPOINTS.analytics.revenue, {
-    params: { branch_id: branchId, date_from: today, date_to: today },
+    params: { branch_id: branchId.value, date_from: today, date_to: today },
   })
   return {
     total_revenue: Number(data?.total ?? 0),
@@ -105,8 +105,8 @@ async function fetchDashboard() {
     const [todayRes, yesterdayRes, bookingsRes, hkRes, liveRevenueRes] = await Promise.allSettled([
       fetchDailyStats(isoDate(new Date())),
       fetchDailyStats(isoDate(yesterday)),
-      api.get(ENDPOINTS.pms.bookings, { params: { branch_id: branchId, status: 'checked_in', page: 1, size: 1 } }),
-      api.get(ENDPOINTS.pms.housekeeping, { params: { branch_id: branchId, status: 'pending' } }),
+      api.get(ENDPOINTS.pms.bookings, { params: { branch_id: branchId.value, status: 'checked_in', page: 1, size: 1 } }),
+      api.get(ENDPOINTS.pms.housekeeping, { params: { branch_id: branchId.value, status: 'pending' } }),
       fetchLiveRevenueToday(),
     ])
 
@@ -168,7 +168,7 @@ function updateLastUpdatedLabel() {
 // ── WebSocket — تحديثات لحظية للإيرادات عبر قناة KDS ────────────────────
 // tickets_updated يُبث عند كل أوردر جديد/دفع — فرصة لإعادة تحميل KPIs
 // (الباكند مالوش WS مخصص للـ dashboard — نفس القناة الوحيدة المتاحة هي KDS)
-const { onMessage: onKdsMessage } = useResortWebSocket(ENDPOINTS.dining.kdsWs(branchId))
+const { onMessage: onKdsMessage } = useResortWebSocket(ENDPOINTS.dining.kdsWs(branchId.value ?? 0))
 onKdsMessage((data: any) => {
   if (data?.type === 'tickets_updated') {
     fetchDashboard()
@@ -197,10 +197,10 @@ const analyticsSummary = ref<AnalyticsSummary>({ hr: null, maintenance: null, cr
 
 async function fetchAnalyticsSummary() {
   const [hrRes, maintRes, crmRes, invRes] = await Promise.allSettled([
-    api.get(ENDPOINTS.analytics.hr, { params: { branch_id: branchId } }),
-    api.get(ENDPOINTS.analytics.maintenance, { params: { branch_id: branchId } }),
-    api.get(ENDPOINTS.analytics.crm, { params: { branch_id: branchId } }),
-    api.get(ENDPOINTS.analytics.inventory, { params: { branch_id: branchId } }),
+    api.get(ENDPOINTS.analytics.hr, { params: { branch_id: branchId.value } }),
+    api.get(ENDPOINTS.analytics.maintenance, { params: { branch_id: branchId.value } }),
+    api.get(ENDPOINTS.analytics.crm, { params: { branch_id: branchId.value } }),
+    api.get(ENDPOINTS.analytics.inventory, { params: { branch_id: branchId.value } }),
   ])
   analyticsSummary.value = {
     hr:          hrRes.status === 'fulfilled'   ? hrRes.value.data   : null,
@@ -219,7 +219,7 @@ const upcomingVisits = ref<UpcomingVisit[]>([])
 
 async function fetchUpcomingVisits() {
   try {
-    const { data } = await api.get(ENDPOINTS.timeshare.upcomingVisits, { params: { branch_id: branchId, size: 5 } })
+    const { data } = await api.get(ENDPOINTS.timeshare.upcomingVisits, { params: { branch_id: branchId.value, size: 5 } })
     upcomingVisits.value = data.items ?? data ?? []
   } catch { /* non-critical widget */ }
 }

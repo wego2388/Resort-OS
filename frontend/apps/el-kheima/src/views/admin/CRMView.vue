@@ -12,7 +12,7 @@ const { formatNumber, formatDate: fmtDateFn, formatDateTime: fmtDateTimeFn } = u
 const toast = useToast()
 const authStore = useAuthStore()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 const tab = ref<'leads' | 'customers' | 'opportunities' | 'activities' | 'campaigns' | 'guests' | 'loyalty'>('leads')
 
 interface LeadSource { id: number; name: string; is_active: boolean }
@@ -227,7 +227,7 @@ function fmtDateTime(d?: string | null) {
 
 async function loadLeadSources() {
   try {
-    const res = await api.get('/api/v1/crm/lead-sources', { params: { branch_id: branchId, active_only: false } })
+    const res = await api.get('/api/v1/crm/lead-sources', { params: { branch_id: branchId.value, active_only: false } })
     leadSources.value = res.data
   } catch { /* المصادر مش حرجة لعرض القائمة نفسها */ }
 }
@@ -235,7 +235,7 @@ async function loadLeadSources() {
 async function loadLeads() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/crm/leads', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/crm/leads', { params: { branch_id: branchId.value } })
     leads.value = res.data.leads ?? res.data.items ?? res.data
     if (leadSources.value.length === 0) await loadLeadSources()
   } catch { toast.error(t('backoffice.crm.msg.loadLeadsError')) }
@@ -245,7 +245,7 @@ async function loadLeads() {
 async function loadCustomers() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/crm/customers', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/crm/customers', { params: { branch_id: branchId.value } })
     customers.value = res.data.customers ?? res.data.items ?? res.data
     if (authStore.roleLevel >= 60) await loadGroups()
   } catch { toast.error(t('backoffice.crm.msg.loadCustomersError')) }
@@ -254,7 +254,7 @@ async function loadCustomers() {
 
 async function loadGroups() {
   try {
-    const res = await api.get('/api/v1/crm/customer-groups', { params: { branch_id: branchId, active_only: false } })
+    const res = await api.get('/api/v1/crm/customer-groups', { params: { branch_id: branchId.value, active_only: false } })
     groups.value = res.data ?? []
   } catch {
     // غير حرج لعرض قائمة العملاء — بس هيمنع تعيين/عرض المجموعات لو فشل
@@ -274,7 +274,7 @@ async function saveGroup() {
       await api.patch(`/api/v1/crm/customer-groups/${editingGroup.value.id}`, payload)
       toast.success(t('backoffice.crm.msg.groupUpdated'))
     } else {
-      await api.post('/api/v1/crm/customer-groups', { branch_id: branchId, ...payload })
+      await api.post('/api/v1/crm/customer-groups', { branch_id: branchId.value, ...payload })
       toast.success(t('backoffice.crm.msg.groupAdded'))
     }
     openCreateGroup()
@@ -312,7 +312,7 @@ async function loadOpportunities() {
   loading.value = true
   try {
     if (customers.value.length === 0) await loadCustomers()
-    const res = await api.get('/api/v1/crm/opportunities', { params: { branch_id: branchId, size: 100 } })
+    const res = await api.get('/api/v1/crm/opportunities', { params: { branch_id: branchId.value, size: 100 } })
     opportunities.value = res.data.items ?? res.data
     opportunitiesTotal.value = res.data.total ?? opportunities.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadOpportunitiesError')) }
@@ -323,7 +323,7 @@ async function loadActivities() {
   loading.value = true
   try {
     if (customers.value.length === 0) await loadCustomers()
-    const res = await api.get('/api/v1/crm/activities', { params: { branch_id: branchId, size: 100 } })
+    const res = await api.get('/api/v1/crm/activities', { params: { branch_id: branchId.value, size: 100 } })
     activities.value = res.data.items ?? res.data
     activitiesTotal.value = res.data.total ?? activities.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadActivitiesError')) }
@@ -333,7 +333,7 @@ async function loadActivities() {
 async function loadCampaigns() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/crm/campaigns', { params: { branch_id: branchId, size: 100 } })
+    const res = await api.get('/api/v1/crm/campaigns', { params: { branch_id: branchId.value, size: 100 } })
     campaigns.value = res.data.items ?? res.data
     campaignsTotal.value = res.data.total ?? campaigns.value.length
   } catch { toast.error(t('backoffice.crm.msg.loadCampaignsError')) }
@@ -343,7 +343,7 @@ async function loadCampaigns() {
 async function loadGuestProfiles() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/crm/guest-profiles', { params: { branch_id: branchId, vip_only: guestVipOnly.value } })
+    const res = await api.get('/api/v1/crm/guest-profiles', { params: { branch_id: branchId.value, vip_only: guestVipOnly.value } })
     guestProfiles.value = res.data
   } catch { toast.error(t('backoffice.crm.msg.loadGuestsError')) }
   finally { loading.value = false }
@@ -387,7 +387,7 @@ const loyaltySetupForm = ref({ points_per_egp: '1', redeem_rate: '0.5', min_rede
 async function loadLoyaltyProgram() {
   loyaltyLoading.value = true
   try {
-    const res = await api.get(ENDPOINTS.crm.loyaltyProgram, { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.crm.loyaltyProgram, { params: { branch_id: branchId.value } })
     loyaltyProgram.value = res.data
   } catch { loyaltyProgram.value = null }
   finally { loyaltyLoading.value = false }
@@ -396,14 +396,14 @@ async function loadLoyaltyProgram() {
 async function saveLoyaltyProgram() {
   try {
     const payload = {
-      branch_id: branchId,
+      branch_id: branchId.value,
       points_per_egp: parseFloat(loyaltySetupForm.value.points_per_egp),
       redeem_rate: parseFloat(loyaltySetupForm.value.redeem_rate),
       min_redeem_points: parseInt(loyaltySetupForm.value.min_redeem_points),
       is_active: loyaltySetupForm.value.is_active,
     }
     if (loyaltyProgram.value) {
-      const res = await api.patch(ENDPOINTS.crm.loyaltyProgram, payload, { params: { branch_id: branchId } })
+      const res = await api.patch(ENDPOINTS.crm.loyaltyProgram, payload, { params: { branch_id: branchId.value } })
       loyaltyProgram.value = res.data
     } else {
       const res = await api.post(ENDPOINTS.crm.loyaltyProgram, payload)
@@ -422,8 +422,8 @@ async function lookupLoyaltyAccount() {
   loyaltyAccountLoading.value = true
   try {
     const [accRes, txRes] = await Promise.all([
-      api.get(ENDPOINTS.crm.loyaltyAccount, { params: { branch_id: branchId, customer_id: id } }),
-      api.get(ENDPOINTS.crm.loyaltyTransactions, { params: { branch_id: branchId, customer_id: id, limit: 20 } }),
+      api.get(ENDPOINTS.crm.loyaltyAccount, { params: { branch_id: branchId.value, customer_id: id } }),
+      api.get(ENDPOINTS.crm.loyaltyTransactions, { params: { branch_id: branchId.value, customer_id: id, limit: 20 } }),
     ])
     loyaltyAccount.value = accRes.data
     loyaltyTransactions.value = txRes.data ?? []
@@ -435,7 +435,7 @@ async function redeemPoints() {
   redeemLoading.value = true
   try {
     await api.post(ENDPOINTS.crm.loyaltyRedeem, {
-      branch_id: branchId,
+      branch_id: branchId.value,
       customer_id: parseInt(redeemForm.value.customer_id),
       points: parseInt(redeemForm.value.points),
       reference: redeemForm.value.reference || null,
@@ -454,7 +454,7 @@ async function createLead() {
   savingLead.value = true
   try {
     await api.post('/api/v1/crm/leads', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       full_name: leadForm.value.full_name,
       phone: leadForm.value.phone || undefined,
       email: leadForm.value.email || undefined,
@@ -519,7 +519,7 @@ async function addCallNote() {
   savingCallNote.value = true
   try {
     await api.post(`/api/v1/crm/leads/${selectedLead.value.id}/call-notes`, {
-      branch_id: branchId,
+      branch_id: branchId.value,
       lead_id: selectedLead.value.id,
       direction: callNoteForm.value.direction,
       duration_min: callNoteForm.value.duration_min ? Number(callNoteForm.value.duration_min) : undefined,
@@ -592,7 +592,7 @@ async function loadAvailableRoomsForConvert() {
   loadingAvailableRooms.value = true
   try {
     const res = await api.get('/api/v1/pms/rooms/available', {
-      params: { branch_id: branchId, check_in: convertForm.value.check_in, check_out: convertForm.value.check_out },
+      params: { branch_id: branchId.value, check_in: convertForm.value.check_in, check_out: convertForm.value.check_out },
     })
     availableRoomsForConvert.value = res.data ?? []
   } catch (e) {
@@ -634,7 +634,7 @@ async function createCustomer() {
   savingCustomer.value = true
   try {
     await api.post('/api/v1/crm/customers', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       full_name: customerForm.value.full_name,
       phone: customerForm.value.phone || undefined,
       email: customerForm.value.email || undefined,
@@ -662,7 +662,7 @@ async function createOpportunity() {
   savingOpportunity.value = true
   try {
     await api.post('/api/v1/crm/opportunities', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       customer_id: opportunityForm.value.customer_id,
       title: opportunityForm.value.title,
       product_type: opportunityForm.value.product_type,
@@ -722,7 +722,7 @@ async function createActivity() {
   savingActivity.value = true
   try {
     await api.post('/api/v1/crm/activities', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       customer_id: activityForm.value.customer_id,
       activity_type: activityForm.value.activity_type,
       title: activityForm.value.title,
@@ -757,7 +757,7 @@ async function createCampaign() {
   savingCampaign.value = true
   try {
     await api.post('/api/v1/crm/campaigns', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       name: campaignForm.value.name,
       campaign_type: campaignForm.value.campaign_type,
       start_date: campaignForm.value.start_date,

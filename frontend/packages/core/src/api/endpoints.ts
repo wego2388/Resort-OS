@@ -14,6 +14,13 @@ export const ENDPOINTS = {
     regenerateRecoveryCodes: '/api/v1/auth/2fa/recovery-codes/regenerate',
     passwordResetRequest: '/api/v1/auth/password-reset/request',
     passwordResetConfirm: '/api/v1/auth/password-reset/confirm',
+    // CX-02C — session bootstrap: returns active_branch_id, allowed_branch_ids,
+    // effective_permissions scoped to the live refresh-family context.
+    // Cache-Control: no-store on every response (set server-side).
+    bootstrap: '/api/v1/auth/bootstrap',
+    // CX-02C — switch active branch for the current refresh family.
+    // Body: { branch_id: number }. Requires live access token + sid.
+    activeBranch: '/api/v1/auth/active-branch',
     // Gate 2B3A — step-up control plane (docs/decisions/0003-super-admin-control-plane.md)
     stepUp: '/api/v1/auth/step-up',
     // Gate 2B3B — session & security self-service. Single-session DELETE builds

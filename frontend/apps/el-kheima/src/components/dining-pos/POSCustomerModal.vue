@@ -8,7 +8,7 @@ import type { POSCustomer } from './types'
 
 const props = defineProps<{
   open: boolean
-  branchId: number
+  branchId: number | null
   selectedCustomerId: number | null
 }>()
 const emit = defineEmits<{

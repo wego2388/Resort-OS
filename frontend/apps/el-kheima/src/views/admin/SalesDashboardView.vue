@@ -12,7 +12,7 @@ const { formatNumber, formatDate } = useStaffFormat()
 const toast = useToast()
 
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface OverdueClient {
   id: number; customer_name: string; customer_phone: string | null
@@ -60,7 +60,7 @@ async function load() {
   loading.value = true
   loadError.value = false
   try {
-    const r = await api.get('/api/v1/timeshare/sales-dashboard', { params: { branch_id: branchId } })
+    const r = await api.get('/api/v1/timeshare/sales-dashboard', { params: { branch_id: branchId.value } })
     dash.value = r.data
   } catch {
     // من غير حالة خطأ ظاهرة كانت الصفحة بتفضل فاضية تمامًا لو التحميل فشل
@@ -82,7 +82,7 @@ async function exportExcel() {
   exporting.value = true
   try {
     const res = await api.get('/api/v1/timeshare/sales-dashboard/export', {
-      params: { branch_id: branchId },
+      params: { branch_id: branchId.value },
       responseType: 'blob',
     })
     const url = URL.createObjectURL(res.data)

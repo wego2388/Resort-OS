@@ -33,7 +33,7 @@ import { useToast } from '@resort-os/ui'
 
 const { t } = useI18n()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 const toast = useToast()
 const route = useRoute()
 
@@ -115,7 +115,7 @@ let knownTicketIds = new Set<number>()
 
 // relative path — useResortWebSocket بيبني الـ full WS URL داخلياً
 // (ws://host + path) عشان يشتغل صح مع vite proxy في dev ونginx في production
-const { status: wsStatus, onMessage } = useResortWebSocket(ENDPOINTS.dining.kdsWs(branchId))
+const { status: wsStatus, onMessage } = useResortWebSocket(ENDPOINTS.dining.kdsWs(branchId.value ?? 0))
 onMessage((data: any) => { if (data?.type === 'tickets_updated') fetchTickets() })
 
 const filteredTickets = computed(() =>
@@ -169,7 +169,7 @@ function ticketTitleFor(ticket: Ticket): string {
 
 async function fetchTickets() {
   try {
-    const res = await api.get(ENDPOINTS.dining.kitchenTickets, { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.dining.kitchenTickets, { params: { branch_id: branchId.value } })
     const newTickets: Ticket[] = res.data
     // تحقق من تذاكر جديدة (pending فقط) وشغّل الصوت
     if (soundEnabled.value && knownTicketIds.size > 0) {

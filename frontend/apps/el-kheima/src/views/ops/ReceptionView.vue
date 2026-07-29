@@ -13,7 +13,7 @@ const toast  = useToast()
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth   = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interfaces
@@ -152,8 +152,8 @@ async function fetchAll() {
 async function fetchRooms() {
   try {
     const [rRes, rtRes] = await Promise.all([
-      api.get(ENDPOINTS.pms.rooms, { params: { branch_id: branchId } }),
-      api.get(ENDPOINTS.pms_extra.roomTypes,   { params: { branch_id: branchId } }),
+      api.get(ENDPOINTS.pms.rooms, { params: { branch_id: branchId.value } }),
+      api.get(ENDPOINTS.pms_extra.roomTypes,   { params: { branch_id: branchId.value } }),
     ])
     rooms.value = rRes.data ?? []
     allRooms.value = rooms.value
@@ -163,7 +163,7 @@ async function fetchRooms() {
 
     // جلب الحجوزات الحالية (checked_in) لمعرفة من في أي غرفة
     const biRes = await api.get(ENDPOINTS.pms.bookings, {
-      params: { branch_id: branchId, status: 'checked_in', limit: 200 },
+      params: { branch_id: branchId.value, status: 'checked_in', limit: 200 },
     })
     const biMap: Record<number, CurrentBookingInfo> = {}
     for (const b of (biRes.data?.items ?? biRes.data ?? [])) {
@@ -183,7 +183,7 @@ async function fetchTodayBookings() {
   try {
     const today = new Date().toISOString().slice(0, 10)
     const res = await api.get(ENDPOINTS.pms.bookings, {
-      params: { branch_id: branchId, check_in_date: today, limit: 100 },
+      params: { branch_id: branchId.value, check_in_date: today, limit: 100 },
     })
     todayBookings.value = res.data?.items ?? res.data ?? []
   } catch { /* silent */ }
@@ -192,7 +192,7 @@ async function fetchTodayBookings() {
 async function fetchHKTasks() {
   try {
     const res = await api.get(ENDPOINTS.pms.housekeeping, {
-      params: { branch_id: branchId, limit: 200 },
+      params: { branch_id: branchId.value, limit: 200 },
     })
     hkTasks.value = res.data?.items ?? res.data ?? []
   } catch { /* silent */ }
@@ -201,7 +201,7 @@ async function fetchHKTasks() {
 async function fetchRatePlans() {
   if (ratePlans.value.length) return
   try {
-    const res = await api.get(ENDPOINTS.pms_extra.ratePlans, { params: { branch_id: branchId } })
+    const res = await api.get(ENDPOINTS.pms_extra.ratePlans, { params: { branch_id: branchId.value } })
     ratePlans.value = res.data ?? []
   } catch { /* silent */ }
 }
@@ -381,7 +381,7 @@ async function runNightAudit() {
   naResult.value  = null
   try {
     const res = await api.post(ENDPOINTS.pms.nightAudit, null, {
-      params: { branch_id: branchId, date: naDate.value },
+      params: { branch_id: branchId.value, date: naDate.value },
     })
     naResult.value = res.data
     toast.success(t('backoffice.reception.nightAuditSuccess'))

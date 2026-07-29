@@ -17,7 +17,7 @@ const { t } = useI18n()
 const { formatDateTime } = useStaffFormat()
 
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface ETAInvoice {
   id: number; branch_id: number; folio_id: number | null
@@ -73,7 +73,7 @@ async function loadInvoices() {
   loading.value = true
   try {
     const res = await api.get('/api/v1/finance/eta/invoices', {
-      params: { branch_id: branchId, status: statusFilter.value || undefined },
+      params: { branch_id: branchId.value, status: statusFilter.value || undefined },
     })
     invoices.value = res.data.items ?? []
     total.value = res.data.total ?? 0
@@ -95,7 +95,7 @@ async function submitInvoice() {
   submitModal.error = ''
   try {
     await api.post('/api/v1/finance/eta/invoices', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       receiver_name: submitModal.receiver_name,
       receiver_rin: submitModal.receiver_rin || null,
       folio_id: submitModal.folio_id ? Number(submitModal.folio_id) : null,

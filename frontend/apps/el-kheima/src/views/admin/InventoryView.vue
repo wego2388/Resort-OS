@@ -9,7 +9,7 @@ const toast = useToast()
 const { t } = useI18n()
 const { formatNumber } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 // أسماء الحقول لازم تطابق ProductRead في الباك إند بالظبط:
 // cost_price / reorder_point / category_id — قبل كده كانت الشاشة بتقرأ
@@ -88,7 +88,7 @@ async function saveProduct() {
       toast.success(t('backoffice.inventory.msg.productUpdated'))
     } else {
       await api.post('/api/v1/inventory/products', {
-        branch_id: branchId,
+        branch_id: branchId.value,
         name: productForm.value.name,
         name_ar: productForm.value.name_ar || undefined,
         sku: productForm.value.sku,
@@ -152,7 +152,7 @@ async function saveReceivePO() {
   savingPO.value = true
   try {
     const { data: po } = await api.post('/api/v1/inventory/purchase-orders', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       supplier_id: poForm.value.supplier_id || undefined,
       supplier_name: poForm.value.supplier_name || undefined,
       supplier_phone: poForm.value.supplier_phone || undefined,
@@ -192,7 +192,7 @@ async function saveAdjustStock() {
   savingAdjust.value = true
   try {
     await api.post('/api/v1/inventory/movements', {
-      branch_id: branchId,
+      branch_id: branchId.value,
       product_id: adjustForm.value.product_id,
       warehouse_id: adjustForm.value.warehouse_id,
       movement_type: 'adjustment',
@@ -225,7 +225,7 @@ const lowStockCount = () => products.value.filter(p => p.current_stock <= p.reor
 
 async function fetchCategories() {
   try {
-    const res = await api.get('/api/v1/inventory/categories', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/inventory/categories', { params: { branch_id: branchId.value } })
     categories.value = res.data ?? []
     categoryNames.value = Object.fromEntries(categories.value.map(c => [c.id, c.name_ar || c.name]))
   } catch {
@@ -235,7 +235,7 @@ async function fetchCategories() {
 
 async function fetchWarehouses() {
   try {
-    const res = await api.get('/api/v1/inventory/warehouses', { params: { branch_id: branchId } })
+    const res = await api.get('/api/v1/inventory/warehouses', { params: { branch_id: branchId.value } })
     warehouses.value = res.data ?? []
   } catch {
     // غير حرج لعرض قائمة المنتجات — بس هيمنع استلام البضاعة/التعديل اليدوي
@@ -245,7 +245,7 @@ async function fetchWarehouses() {
 
 async function fetchSuppliers() {
   try {
-    const res = await api.get('/api/v1/inventory/suppliers', { params: { branch_id: branchId, active_only: false, size: 100 } })
+    const res = await api.get('/api/v1/inventory/suppliers', { params: { branch_id: branchId.value, active_only: false, size: 100 } })
     suppliers.value = res.data.items ?? []
   } catch {
     // غير حرج لعرض المنتجات — بس هيمنع اختيار مورد مسجّل وقت تسجيل استلام
@@ -300,7 +300,7 @@ async function saveSupplier() {
       await api.patch(`/api/v1/inventory/suppliers/${editingSupplier.value.id}`, payload)
       toast.success(t('backoffice.inventory.msg.supplierUpdated'))
     } else {
-      await api.post('/api/v1/inventory/suppliers', { branch_id: branchId, ...payload })
+      await api.post('/api/v1/inventory/suppliers', { branch_id: branchId.value, ...payload })
       toast.success(t('backoffice.inventory.msg.supplierAdded'))
     }
     supplierModal.value = false
@@ -331,7 +331,7 @@ async function fetchProducts() {
     let page = 1
     let all: any[] = []
     while (true) {
-      const res = await api.get('/api/v1/inventory/products', { params: { branch_id: branchId, page, size } })
+      const res = await api.get('/api/v1/inventory/products', { params: { branch_id: branchId.value, page, size } })
       const items = res.data.items ?? []
       all = all.concat(items)
       if (all.length >= res.data.total || items.length < size) break

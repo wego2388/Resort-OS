@@ -204,7 +204,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
         <div v-if="sidebarOpen" class="overflow-hidden">
           <div class="font-bold text-sm text-white">Resort OS</div>
           <div class="text-xs truncate text-gray-500">
-            {{ t('backoffice.layout.branch') }} {{ auth.branchId }}
+            {{ t('backoffice.layout.branch') }} {{ auth.branchId ?? '—' }}
           </div>
         </div>
       </div>

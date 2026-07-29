@@ -27,7 +27,13 @@ const props = withDefaults(defineProps<{ branchId?: number }>(), {
   branchId: undefined,
 })
 
-const resolvedBranchId = computed(() => props.branchId ?? auth.branchId ?? 1)
+// CX-02C: resolvedBranchId comes from bootstrap (session-scoped, no ?? 1 fallback).
+// Props.branchId allows super-admin to scope this panel to a specific branch
+// (e.g. monitoring a different branch from their own session context).
+// When props.branchId is undefined, we fall back to the session bootstrap value.
+// null means no branch context — API calls will carry branch_id=undefined and
+// the server will return 409 BRANCH_CONTEXT_REQUIRED.
+const resolvedBranchId = computed(() => props.branchId ?? auth.activeBranchId)
 
 // بيتأشّر لأي parent مهتم (زي ShiftDashboardView، S-01) إن الوردية اتفتحت/
 // اتقفلت — عشان يعيد تحميل ملخص المبيعات/سجل الفواتير بتاعه، من غير ما

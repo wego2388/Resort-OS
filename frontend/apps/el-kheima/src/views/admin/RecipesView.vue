@@ -20,7 +20,7 @@ const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface Outlet { id: number; name: string; name_ar: string | null; is_active: boolean }
 const outlets = ref<Outlet[]>([])
@@ -86,7 +86,7 @@ const variantLinePath  = (lineId: number)   => ENDPOINTS.dining.variantRecipeLin
 
 async function loadOutlets() {
   try {
-    const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId, active_only: true } })
+    const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId.value, active_only: true } })
     outlets.value = data?.items ?? data ?? []
     activeOutletId.value = outlets.value[0]?.id ?? null
   } catch {
@@ -109,7 +109,7 @@ async function fetchItems() {
 
 async function fetchProducts() {
   try {
-    const res = await api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId, limit: 200 } })
+    const res = await api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId.value, limit: 200 } })
     products.value = res.data.products ?? res.data.items ?? res.data
   } catch {
     // غير حرج للعرض — بس هيفضل الاختيار في فورم الإضافة فاضي

@@ -29,7 +29,8 @@ const toast = useToast()
 const { t, locale } = useI18n()
 const router = useRouter()
 const { formatMoney } = useStaffFormat()
-const branchId = computed(() => auth.branchId ?? 1)
+// CX-02C: branchId comes from bootstrap (session-scoped, no ?? 1 fallback).
+const branchId = computed(() => auth.activeBranchId)
 
 interface CurrentShift { id: number; opened_at: string; opening_float: number | string; status: string }
 const shift = ref<CurrentShift | null>(null)
@@ -208,7 +209,7 @@ function connectWs() {
   wsScope = nextScope
 
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-  const url = `${proto}://${window.location.host}${ENDPOINTS.finance.shiftsWs(branchId.value)}?token=${auth.token}`
+  const url = `${proto}://${window.location.host}${ENDPOINTS.finance.shiftsWs(branchId.value ?? 0)}?token=${auth.token}`
   const socket = new WebSocket(url)
   ws = socket
 

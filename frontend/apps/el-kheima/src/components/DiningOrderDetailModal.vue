@@ -22,7 +22,7 @@ import type { DiningOrderDetail, OrderItem, VenueTable } from './dining-pos/type
 const props = defineProps<{
   orderId: number | null
   tables?: VenueTable[]
-  branchId: number
+  branchId: number | null
 }>()
 const emit = defineEmits<{ close: []; changed: [] }>()
 

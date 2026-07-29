@@ -26,7 +26,7 @@ const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 // ── Types ────────────────────────────────────────────────────────────────
 interface Outlet {
@@ -140,7 +140,7 @@ async function saveOutlet() {
       const idx = outlets.value.findIndex(o => o.id === outletEdit.value!.id)
       if (idx >= 0) outlets.value[idx] = data
     } else {
-      const { data } = await api.post(ENDPOINTS.dining.outlets, { ...payload, branch_id: branchId })
+      const { data } = await api.post(ENDPOINTS.dining.outlets, { ...payload, branch_id: branchId.value })
       outlets.value.push(data)
       if (selectedOutletId.value === null) selectedOutletId.value = data.id
     }
@@ -154,7 +154,7 @@ async function saveOutlet() {
 }
 
 async function loadOutlets() {
-  const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId } })
+  const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId.value } })
   outlets.value = data
   if (data.length && selectedOutletId.value === null) selectedOutletId.value = data[0].id
 }
@@ -184,7 +184,7 @@ async function saveCat() {
       const idx = categories.value.findIndex(c => c.id === catEdit.value!.id)
       if (idx >= 0) categories.value[idx] = data
     } else {
-      const { data } = await api.post(ENDPOINTS.dining.categories(selectedOutletId.value), { ...payload, branch_id: branchId, outlet_id: selectedOutletId.value })
+      const { data } = await api.post(ENDPOINTS.dining.categories(selectedOutletId.value), { ...payload, branch_id: branchId.value, outlet_id: selectedOutletId.value })
       categories.value.push(data)
     }
     catDrawerOpen.value = false
@@ -274,7 +274,7 @@ async function saveItem() {
       const idx = items.value.findIndex(i => i.id === itemEdit.value!.id)
       if (idx >= 0) items.value[idx] = { ...items.value[idx], ...data }
     } else {
-      const { data } = await api.post(ENDPOINTS.dining.items(selectedOutletId.value), { ...payload, branch_id: branchId, outlet_id: selectedOutletId.value })
+      const { data } = await api.post(ENDPOINTS.dining.items(selectedOutletId.value), { ...payload, branch_id: branchId.value, outlet_id: selectedOutletId.value })
       items.value.push(data)
     }
     itemDrawerOpen.value = false
@@ -418,7 +418,7 @@ async function saveTable() {
       const idx = tables.value.findIndex(tbl => tbl.id === tableEdit.value!.id)
       if (idx >= 0) tables.value[idx] = data
     } else {
-      const { data } = await api.post(ENDPOINTS.dining.tables(branchId), { ...payload, branch_id: branchId })
+      const { data } = await api.post(ENDPOINTS.dining.tables(branchId.value ?? 0), { ...payload, branch_id: branchId.value })
       tables.value.push(data)
     }
     tableDrawerOpen.value = false
@@ -459,7 +459,7 @@ const kdsForm = ref({
 async function loadKdsScreens() {
   kdsLoading.value = true
   try {
-    const { data } = await api.get(ENDPOINTS.dining.kdsScreens, { params: { branch_id: branchId } })
+    const { data } = await api.get(ENDPOINTS.dining.kdsScreens, { params: { branch_id: branchId.value } })
     kdsScreens.value = data.items ?? data ?? []
   } catch (e: any) {
     toast.error(e?.response?.data?.detail ?? t('backoffice.diningMenu.msg.loadKdsError'))
@@ -492,7 +492,7 @@ async function saveKdsScreen() {
   savingKds.value = true
   try {
     const payload = {
-      branch_id: branchId,
+      branch_id: branchId.value,
       outlet_id: kdsForm.value.outlet_id !== '' ? Number(kdsForm.value.outlet_id) : null,
       name: kdsForm.value.name.trim(),
       stations: kdsForm.value.stations,
@@ -549,7 +549,7 @@ async function loadOutletScopedData() {
 
 async function loadTables() {
   try {
-    const { data } = await api.get(ENDPOINTS.dining.tables(branchId))
+    const { data } = await api.get(ENDPOINTS.dining.tables(branchId.value ?? 0))
     tables.value = data
   } catch {
     toast.error(t('backoffice.diningMenu.msg.loadOutletDataError'))

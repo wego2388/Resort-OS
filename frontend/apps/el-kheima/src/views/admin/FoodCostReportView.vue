@@ -25,7 +25,7 @@ const toast = useToast()
 const { t } = useI18n()
 const { formatNumber, formatDate } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface Outlet { id: number; name: string; name_ar: string | null; is_active: boolean }
 const outlets = ref<Outlet[]>([])
@@ -92,7 +92,7 @@ function itemKey(line: ReportLine) {
 
 async function loadOutlets() {
   try {
-    const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId, active_only: true } })
+    const { data } = await api.get(ENDPOINTS.dining.outlets, { params: { branch_id: branchId.value, active_only: true } })
     outlets.value = data?.items ?? data ?? []
     activeOutletId.value = outlets.value[0]?.id ?? null
   } catch {

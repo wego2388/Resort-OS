@@ -24,6 +24,19 @@ async function clearIdentityBoundClientState(): Promise<void> {
   }
 }
 
+// CX-02C — bootstrap response shape mirrors GET /api/v1/auth/bootstrap.
+// contract_version=1 is the only stable version; callers must not assume
+// the shape is stable without checking the version field.
+export interface BootstrapData {
+  contract_version: number
+  user: User
+  active_branch_id: number | null
+  default_branch_id: number | null
+  allowed_branch_ids: number[]
+  requires_branch_selection: boolean
+  effective_permissions: string[]
+}
+
 export const useAuthStore = defineStore('auth', () => {
   const user = ref<User | null>(null)
   // T-01: access_token في memory فقط (مش localStorage) — يتجدّد من httpOnly
@@ -36,6 +49,22 @@ export const useAuthStore = defineStore('auth', () => {
   const pendingEnrollmentToken = ref('')
   const isLoading = ref(false)
 
+  // CX-02C — session-scoped branch context. These are populated by
+  // fetchBootstrap() immediately after login/initAuth. They are NEVER derived
+  // from user.branch_id (which is a legacy Employee FK, not an auth source).
+  //
+  // activeBranchId:   the branch this refresh family is currently scoped to.
+  //                   null means the session has no branch context yet
+  //                   (requires_branch_selection=true on the bootstrap response).
+  // allowedBranchIds: every branch this account holds an active membership in.
+  //                   super_admin receives all active branches from the server.
+  // effectivePermissions: server-evaluated permission set for activeBranchId.
+  //                   Empty array = no branch context yet, all policy gates fail.
+  const activeBranchId = ref<number | null>(null)
+  const allowedBranchIds = ref<number[]>([])
+  const effectivePermissions = ref<string[]>([])
+  const requiresBranchSelection = ref(false)
+
   // client.ts's 401→refresh-fails path calls this to clear our state without
   // importing this store back (that would be circular — see client.ts).
   registerAuthClearHandler(async () => {
@@ -43,11 +72,20 @@ export const useAuthStore = defineStore('auth', () => {
     user.value = null
     token.value = null
     pendingEnrollmentToken.value = ''
+    activeBranchId.value = null
+    allowedBranchIds.value = []
+    effectivePermissions.value = []
+    requiresBranchSelection.value = false
   })
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
   const role = computed(() => user.value?.role ?? '')
-  const branchId = computed(() => user.value?.branch_id ?? 1)
+
+  // CX-02C: branchId is now the session-scoped activeBranchId from bootstrap.
+  // There is NO fallback to 1. A null value means the session has no branch
+  // context — callers must handle null explicitly and must not default to 1.
+  // The old `user.branch_id ?? 1` pattern is prohibited (no live auth source).
+  const branchId = computed(() => activeBranchId.value)
 
   // Mirrors backend ROLE_LEVELS (app/core/deps.py)
   const ROLE_LEVELS: Record<string, number> = {
@@ -78,6 +116,13 @@ export const useAuthStore = defineStore('auth', () => {
     return userLevel >= minLevel
   }
 
+  // CX-02C — server-evaluated permission check.
+  // effectivePermissions are scoped to the active branch from bootstrap.
+  // Falls back to false (fail-closed) when no branch context exists.
+  function hasPermission(permission: string): boolean {
+    return effectivePermissions.value.includes(permission)
+  }
+
   const roleLevel = computed(() => ROLE_LEVELS[role.value] ?? -1)
 
   // Mirrors backend app/core/deps.py::MANDATORY_2FA_ROLES
@@ -97,10 +142,50 @@ export const useAuthStore = defineStore('auth', () => {
     setApiToken(t)
   }
 
+  // CX-02C — clears bootstrap state on identity/session transitions.
+  function _clearBootstrap() {
+    activeBranchId.value = null
+    allowedBranchIds.value = []
+    effectivePermissions.value = []
+    requiresBranchSelection.value = false
+  }
+
+  function _applyBootstrap(data: BootstrapData) {
+    // contract_version check: fail gracefully on unknown future shapes.
+    if (data.contract_version !== 1) {
+      console.warn('[auth] Unknown bootstrap contract_version:', data.contract_version)
+    }
+    user.value = data.user
+    activeBranchId.value = data.active_branch_id
+    allowedBranchIds.value = data.allowed_branch_ids ?? []
+    effectivePermissions.value = data.effective_permissions ?? []
+    requiresBranchSelection.value = data.requires_branch_selection ?? false
+  }
+
   async function fetchUser() {
     if (!token.value) return
     const res = await api.get(ENDPOINTS.auth.me)
     user.value = res.data
+  }
+
+  // CX-02C — primary post-login/post-refresh bootstrap. Fetches session
+  // context (active branch, allowed branches, effective permissions) from
+  // GET /auth/bootstrap. Must be called after every token acquisition.
+  // Failures are rethrown so callers can decide whether to redirect to /login.
+  async function fetchBootstrap(): Promise<void> {
+    if (!token.value) return
+    const res = await api.get(ENDPOINTS.auth.bootstrap)
+    _applyBootstrap(res.data as BootstrapData)
+  }
+
+  // CX-02C — switch the active branch for this refresh family.
+  // Persisted server-side on the refresh token row — survives page reload.
+  // Returns the updated bootstrap data so callers can react to the new context.
+  async function switchActiveBranch(branchId: number): Promise<void> {
+    await api.put(ENDPOINTS.auth.activeBranch, { branch_id: branchId })
+    // Re-fetch full bootstrap to get updated effective_permissions for the
+    // new branch. A stale permission set would silently pass UI guards.
+    await fetchBootstrap()
   }
 
   // Gate 3A — persist the signed-in user's own display language server-side.
@@ -140,9 +225,12 @@ export const useAuthStore = defineStore('auth', () => {
         withCredentials: true,
       })
       await clearIdentityBoundClientState()
+      _clearBootstrap()
       _setToken(res.data.access_token)
       pendingEnrollmentToken.value = enrollmentToken?.trim() ?? ''
-      await fetchUser()
+      // CX-02C: bootstrap replaces the old fetchUser() call — it returns the
+      // user record plus branch context in one shot (Cache-Control: no-store).
+      await fetchBootstrap()
     } finally {
       isLoading.value = false
     }
@@ -154,13 +242,17 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await api.post(ENDPOINTS.auth.refresh, {}, { withCredentials: true })
       await clearIdentityBoundClientState()
+      _clearBootstrap()
       _setToken(res.data.access_token)
-      await fetchUser()
+      // CX-02C: single bootstrap call after token refresh — replaces
+      // the separate fetchUser() + branch-guessing that was here before.
+      await fetchBootstrap()
       return true
     } catch {
       _setToken(null)
       user.value = null
       pendingEnrollmentToken.value = ''
+      _clearBootstrap()
       return false
     }
   }
@@ -171,8 +263,13 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const res = await api.post(ENDPOINTS.core.pinSwitch, { user_id: targetUserId, pin })
       await clearIdentityBoundClientState()
+      _clearBootstrap()
       _setToken(res.data.access_token)
       user.value = res.data.user
+      // CX-02C: PIN switch carries a signed `bid` — re-bootstrap to pick up
+      // the new branch context (backend validates membership and rejects
+      // cross-branch switches with PIN_BRANCH_MISMATCH before we reach here).
+      await fetchBootstrap()
     } finally {
       isLoading.value = false
     }
@@ -196,14 +293,18 @@ export const useAuthStore = defineStore('auth', () => {
       _setToken(null)
       user.value = null
       pendingEnrollmentToken.value = ''
+      _clearBootstrap()
       window.location.replace('/login')
     }
   }
 
   return {
     user, token, isAuthenticated, role, branchId, isLoading,
+    // CX-02C — branch context from bootstrap (session-scoped, no ?? 1 fallback)
+    activeBranchId, allowedBranchIds, effectivePermissions, requiresBranchSelection,
     pendingEnrollmentToken,
-    login, logout, fetchUser, initAuth, hasRole, roleLevel,
+    login, logout, fetchUser, fetchBootstrap, switchActiveBranch, initAuth,
+    hasRole, hasPermission, roleLevel,
     needsTwoFactorSetup, needsPasswordChange, pinSwitch,
     updatePreferredLanguage,
   }

@@ -25,7 +25,7 @@ const { isOnline, pendingCount } = useOfflineQueue()
 
 const showOperatorSwitch = ref(false)
 
-const branchName = computed(() => `${t('backoffice.layout.branch')} ${auth.branchId}`)
+const branchName = computed(() => auth.branchId ? `${t('backoffice.layout.branch')} ${auth.branchId}` : t('backoffice.layout.branch'))
 
 const currentTime = ref('')
 function updateClock() {

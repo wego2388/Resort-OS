@@ -12,7 +12,7 @@ const { formatNumber } = useStaffFormat()
 const toast = useToast()
 const { confirm } = useConfirm()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 interface B2BStatus {
   contract_id: number; hotel_name: string; daily_quota: number
@@ -61,7 +61,7 @@ async function saveCreditLimit(c: B2BStatus) {
   try {
     const value = creditLimitInput.value.trim()
     const payload = { credit_limit: value === '' ? null : Number(value) }
-    await api.patch(`/api/v1/beach/b2b-contracts/${c.contract_id}`, payload, { params: { branch_id: branchId } })
+    await api.patch(`/api/v1/beach/b2b-contracts/${c.contract_id}`, payload, { params: { branch_id: branchId.value } })
     toast.success(t('backoffice.beachLive.creditLimitUpdated', { name: c.hotel_name }))
     editingCreditId.value = null
     await load()
@@ -80,7 +80,7 @@ async function settleContract(c: B2BStatus) {
   if (!ok) return
   settlingId.value = c.contract_id
   try {
-    await api.post(`/api/v1/beach/b2b-contracts/${c.contract_id}/settle`, {}, { params: { branch_id: branchId } })
+    await api.post(`/api/v1/beach/b2b-contracts/${c.contract_id}/settle`, {}, { params: { branch_id: branchId.value } })
     toast.success(t('backoffice.beachLive.settleSuccess', { name: c.hotel_name }))
     await load()
   } catch (e: any) {
@@ -122,7 +122,7 @@ function pctLabel(pct: number | null): string {
 async function loadEod() {
   eodLoading.value = true
   try {
-    const r = await api.get('/api/v1/beach/eod-report', { params: { branch_id: branchId } })
+    const r = await api.get('/api/v1/beach/eod-report', { params: { branch_id: branchId.value } })
     eod.value = r.data
   } catch (e: any) {
     toast.error(e?.response?.data?.detail ?? t('backoffice.beachLive.eodLoadError'))
@@ -135,7 +135,7 @@ async function downloadEodPdf() {
   downloadingPdf.value = true
   try {
     const res = await api.get('/api/v1/beach/eod-report/pdf', {
-      params: { branch_id: branchId }, responseType: 'blob',
+      params: { branch_id: branchId.value }, responseType: 'blob',
     })
     const url = URL.createObjectURL(res.data)
     const w = window.open(url, '_blank')
@@ -161,7 +161,7 @@ const gaugeColor = computed(() => {
 
 async function load() {
   try {
-    const r = await api.get('/api/v1/beach/live-dashboard', { params: { branch_id: branchId } })
+    const r = await api.get('/api/v1/beach/live-dashboard', { params: { branch_id: branchId.value } })
     dash.value = r.data
     if (!isConnected.value) toast.success(t('backoffice.beachLive.reconnected'))
     isConnected.value = true

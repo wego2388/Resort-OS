@@ -41,7 +41,7 @@ interface BeachInventory {
 }
 
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 const inventory = ref<BeachInventory | null>(null)
 const loading = ref(false)
 const submitting = ref(false)
@@ -118,7 +118,7 @@ async function fetchInventory() {
     // بياخد branch_id كـ query param، مش path segment، فالطلب كان بيرجع 404
     // بصمت (console.error بس، من غير toast) في كل مرة الكاشير يفتح شاشة
     // الشاطئ — يعني سعة/إشغال الشاطئ ما كانتش بتظهر أبداً.
-    const { data } = await api.get(ENDPOINTS.beach.inventory, { params: { branch_id: branchId } })
+    const { data } = await api.get(ENDPOINTS.beach.inventory, { params: { branch_id: branchId.value } })
     inventory.value = data
   } catch (e) {
     toast.error(t('backoffice.beachPos.loadInventoryError'))
@@ -170,7 +170,7 @@ async function completeSale() {
       // لحظي)، ويرمي الخطأ نفسه لو السيرفر رفضه صراحة (زي تجاوز السعة) —
       // نوقف هنا في الحالة دي، الأصناف اللي اتباعت قبل كده فعلاً اتسجّلت
       // (مش rollback جماعي، كل عملية مستقلة).
-      const data = await submitBeachSale(branchId, { tx_type: item.tx_type, quantity: item.quantity })
+      const data = await submitBeachSale(branchId.value ?? 0, { tx_type: item.tx_type, quantity: item.quantity })
       if (data === null) { anyQueued = true; continue }
       soldTxIds.push(data.id)
     }

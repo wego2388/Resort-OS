@@ -10,7 +10,7 @@ const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber, formatDate } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 const tab = ref<'bookings' | 'offers' | 'pages' | 'blog' | 'contact'>('bookings')
 
 // ── Interfaces ────────────────────────────────────────────────────────
@@ -102,7 +102,7 @@ async function loadBookings() {
   loading.value = true
   try {
     const params: Record<string, unknown> = {
-      branch_id: branchId, page: bookingPage.value, size: 30,
+      branch_id: branchId.value, page: bookingPage.value, size: 30,
     }
     if (bookingStatus.value) params.status = bookingStatus.value
     if (bookingDateFrom.value) params.date_from = bookingDateFrom.value
@@ -118,7 +118,7 @@ async function loadOffers() {
   loading.value = true
   try {
     const { data } = await api.get(ENDPOINTS.hub.offers, {
-      params: { branch_id: branchId, active_only: offerActiveOnly.value, size: 100 }
+      params: { branch_id: branchId.value, active_only: offerActiveOnly.value, size: 100 }
     })
     offers.value = data.items ?? []
     offersTotal.value = data.total ?? offers.value.length
@@ -130,7 +130,7 @@ async function loadPages() {
   loading.value = true
   try {
     const { data } = await api.get(ENDPOINTS.hub.pages, {
-      params: { branch_id: branchId, size: 100 }
+      params: { branch_id: branchId.value, size: 100 }
     })
     pages.value = data.items ?? []
     pagesTotal.value = data.total ?? pages.value.length
@@ -162,7 +162,7 @@ const blogForm = ref({ title: '', title_ar: '', slug: '', excerpt: '', is_publis
 async function loadBlogPosts() {
   loading.value = true
   try {
-    const { data } = await api.get(ENDPOINTS.hub.blogPosts, { params: { branch_id: branchId, size: 50 } })
+    const { data } = await api.get(ENDPOINTS.hub.blogPosts, { params: { branch_id: branchId.value, size: 50 } })
     blogPosts.value = data.items ?? data ?? []
   } catch { blogPosts.value = [] }
   finally { loading.value = false }
@@ -197,7 +197,7 @@ async function saveBlogPost() {
       toast.success(t('backoffice.hub.msg.postUpdated'))
     } else {
       const { data } = await api.post(ENDPOINTS.hub.blogPosts, {
-        branch_id: branchId,
+        branch_id: branchId.value,
         title: blogForm.value.title,
         title_ar: blogForm.value.title_ar || null,
         slug: blogForm.value.slug,
@@ -233,7 +233,7 @@ const contactUnread = ref(0)
 async function loadContactMessages() {
   loading.value = true
   try {
-    const { data } = await api.get(ENDPOINTS.hub.contact, { params: { branch_id: branchId, size: 50 } })
+    const { data } = await api.get(ENDPOINTS.hub.contact, { params: { branch_id: branchId.value, size: 50 } })
     contactMessages.value = data.items ?? data ?? []
     contactUnread.value = contactMessages.value.filter(m => !m.is_read).length
   } catch { contactMessages.value = [] }
@@ -296,7 +296,7 @@ async function saveOffer() {
       toast.success(t('backoffice.hub.msg.offerUpdated'))
     } else {
       await api.post(ENDPOINTS.hub.offers, {
-        branch_id: branchId,
+        branch_id: branchId.value,
         title: offerForm.value.title,
         title_ar: offerForm.value.title_ar || null,
         offer_type: offerForm.value.offer_type,
@@ -347,7 +347,7 @@ async function savePage() {
       toast.success(t('backoffice.hub.msg.pageUpdated'))
     } else {
       await api.post(ENDPOINTS.hub.pages, {
-        branch_id: branchId,
+        branch_id: branchId.value,
         slug: pageForm.value.slug,
         title: pageForm.value.title,
         title_ar: pageForm.value.title_ar || null,

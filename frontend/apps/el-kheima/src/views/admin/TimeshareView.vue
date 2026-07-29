@@ -26,7 +26,7 @@ const { confirm } = useConfirm()
 const { t, locale } = useI18n()
 const { formatDate, formatMoney } = useStaffFormat()
 const auth = useAuthStore()
-const branchId = auth.branchId
+const branchId = computed(() => auth.branchId)
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface Installment {
@@ -149,7 +149,7 @@ const profileTotals = computed(() => {
 
 async function loadUnits() {
   try {
-    const r = await api.get('/api/v1/timeshare/units', { params: { branch_id: branchId } })
+    const r = await api.get('/api/v1/timeshare/units', { params: { branch_id: branchId.value } })
     units.value = r.data ?? []
   } catch { toast.error(t('backoffice.timeshare.msg.loadUnitsError')) }
 }
@@ -164,7 +164,7 @@ async function openProfile(c: Contract) {
   try {
     const visitLists = await Promise.all(
       profileModal.contracts.map(ct =>
-        api.get('/api/v1/timeshare/visits', { params: { branch_id: branchId, contract_id: ct.id } })
+        api.get('/api/v1/timeshare/visits', { params: { branch_id: branchId.value, contract_id: ct.id } })
           .then(r => r.data as Visit[]).catch(() => [] as Visit[])),
     )
     profileModal.visits = visitLists.flat().sort((a, b) => b.check_in.localeCompare(a.check_in))
@@ -175,7 +175,7 @@ async function openProfile(c: Contract) {
     if (auth.hasRole('manager') && profileModal.visits.length) {
       const reviewLists = await Promise.all(
         profileModal.visits.map(v =>
-          api.get('/api/v1/analytics/reviews', { params: { branch_id: branchId, timeshare_visit_id: v.id } })
+          api.get('/api/v1/analytics/reviews', { params: { branch_id: branchId.value, timeshare_visit_id: v.id } })
             .then(r => (r.data?.items ?? []) as GuestReview[]).catch(() => [] as GuestReview[])),
       )
       profileModal.reviews = reviewLists.flat()
@@ -212,7 +212,7 @@ async function sendSurvey(v: Visit) {
   sendingSurveyId.value = v.id
   try {
     await api.post(`/api/v1/analytics/reviews/survey-token/timeshare/${v.id}/send`, null, {
-      params: { branch_id: branchId },
+      params: { branch_id: branchId.value },
     })
     sentSurveyIds.value.add(v.id)
     toast.success(t('backoffice.timeshare.msg.surveySent'))
@@ -274,7 +274,7 @@ async function confirmScheduleVisit() {
     // أعد تحميل الزيارات في البروفايل المفتوح
     const visitLists = await Promise.all(
       profileModal.contracts.map(ct =>
-        api.get('/api/v1/timeshare/visits', { params: { branch_id: branchId, contract_id: ct.id } })
+        api.get('/api/v1/timeshare/visits', { params: { branch_id: branchId.value, contract_id: ct.id } })
           .then(r => r.data as Visit[]).catch(() => [] as Visit[])),
     )
     profileModal.visits = visitLists.flat().sort((a, b) => b.check_in.localeCompare(a.check_in))
@@ -373,14 +373,14 @@ const filteredClients = computed(() => {
 
 // ── Loaders ──────────────────────────────────────────────────────────────
 async function loadSummary() {
-  try { const r = await api.get('/api/v1/timeshare/cs-summary', { params: { branch_id: branchId } }); summary.value = r.data }
+  try { const r = await api.get('/api/v1/timeshare/cs-summary', { params: { branch_id: branchId.value } }); summary.value = r.data }
   catch (e) { toast.error(t('backoffice.timeshare.msg.loadSummaryError')) }
 }
 
 async function loadCalendar() {
   calLoading.value = true
   try {
-    const r = await api.get('/api/v1/timeshare/calendar', { params: { branch_id: branchId, year: calYear.value } })
+    const r = await api.get('/api/v1/timeshare/calendar', { params: { branch_id: branchId.value, year: calYear.value } })
     calendar.value = r.data
   } catch (e) { toast.error(t('backoffice.timeshare.msg.loadCalendarError')) } finally { calLoading.value = false }
 }
@@ -498,7 +498,7 @@ async function loadClients() {
     const size = 100
     while (true) {
       const response = await api.get('/api/v1/timeshare/contracts', {
-        params: { branch_id: branchId, page, size },
+        params: { branch_id: branchId.value, page, size },
       })
       const pageItems: Contract[] = response.data?.items ?? []
       clients.push(...pageItems)
@@ -512,7 +512,7 @@ async function loadClients() {
 async function loadInstallments() {
   installLoading.value = true
   try {
-    const params: Record<string, string | number | undefined> = { branch_id: branchId, limit: 300 }
+    const params: Record<string, string | number | undefined> = { branch_id: branchId.value ?? undefined, limit: 300 }
     if (installStatus.value) params.status = installStatus.value
     if (installMonth.value) params.month = installMonth.value
     if (installSearch.value) params.search = installSearch.value
@@ -525,7 +525,7 @@ async function loadInstallments() {
 async function loadMaintenanceDues() {
   maintLoading.value = true
   try {
-    const params: Record<string, string | number | undefined> = { branch_id: branchId, limit: 300 }
+    const params: Record<string, string | number | undefined> = { branch_id: branchId.value ?? undefined, limit: 300 }
     if (maintStatus.value) params.status = maintStatus.value
     if (maintSearch.value) params.search = maintSearch.value
     const r = await api.get('/api/v1/timeshare/maintenance-dues', { params })
@@ -686,7 +686,7 @@ async function submitImport() {
     const form = new FormData()
     form.append('file', importModal.file)
     const r = await api.post('/api/v1/timeshare/contracts/import-excel', form, {
-      headers: { 'Content-Type': 'multipart/form-data' }, params: { branch_id: branchId },
+      headers: { 'Content-Type': 'multipart/form-data' }, params: { branch_id: branchId.value },
     })
     importModal.result = r.data
     await Promise.all([loadClients(), loadSummary()])
