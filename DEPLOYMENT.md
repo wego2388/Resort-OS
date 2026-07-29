@@ -306,15 +306,13 @@ path is the current design.
 ## 10. Super-admin recovery
 
 Prefer a second active super-admin and recovery codes. If server-side recovery
-is required, resolve the active release and use the maintained wrapper scripts:
+is required, use the root-owned wrappers installed from the reviewed source:
 
 ```bash
-RESORT_ACTIVE_RELEASE=$(docker inspect resort-os-prod-backend-1 \
-  --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')
-cd "$RESORT_ACTIVE_RELEASE"
-
-bash scripts/vps-recover-admin.sh operator@example.com
-bash scripts/vps-create-admin.sh operator@example.com "Operator Full Name"
+sudo -u resortos /usr/local/lib/resort-os/vps-recover-admin.sh \
+  operator@example.com
+sudo -u resortos /usr/local/lib/resort-os/vps-create-admin.sh \
+  operator@example.com "Operator Full Name"
 ```
 
 Do not place a password, recovery code, enrollment token, or TOTP secret in a

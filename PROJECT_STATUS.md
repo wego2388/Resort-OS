@@ -49,6 +49,9 @@
 - لا توجد قاعدة restore مؤقتة باقية.
 - لا `Traceback` أو `CRITICAL` أو `FATAL` أو Nginx emergency/alert في فحص
   السجلات بعد النشر.
+- `resort-os-healthcheck.timer` enabled/active كل 5 دقائق؛ الفحص اليدوي
+  عبر systemd نجح بـ14/14، وأول trigger تلقائي نجح
+  `2026-07-29 20:45:55 UTC`؛ يغطي health وHTTPS والحاويات والنسخ وTLS والمساحة.
 - PostgreSQL `5436` وRedis `6381` وBackend `8005` مربوطة بالـloopback؛
   المنافذ العامة هي SSH و80 و443 و8443.
 - شهادة TLS تحمل SAN للـIP `191.218.161.133` وتنتهي
@@ -95,7 +98,7 @@
 | REL-02 — controlled deploy | COMPLETE |
 | UAT-01 — device/roles/workflow acceptance | PENDING |
 | DATA-01 — approved production master data | BLOCKED ON OWNER/OPERATIONS INPUT |
-| OPS-01 — alerting and burn-in | IN PROGRESS |
+| OPS-01 — monitoring and burn-in | BASELINE COMPLETE؛ external delivery pending |
 | DNS/domain cutover | PAUSED BY OWNER — IP-only |
 | provider snapshot | RECOMMENDED، ليس مانعًا بعد إثبات off-server restore |
 

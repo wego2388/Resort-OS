@@ -59,7 +59,7 @@
 | Gate 4 — content/SEO | PARTIAL | بيانات مالك موثقة |
 | Gate 5 — production data | BLOCKED ON INPUT | master data واعتماد مالي |
 | Gate 6 — VPS hardening | COMPLETE + VERIFIED | مراجعة دورية فقط |
-| Gate 7 — deploy/backup/monitoring | DEPLOY + DR COMPLETE | alerts وburn-in |
+| Gate 7 — deploy/backup/monitoring | BASELINE COMPLETE | external alert channel وburn-in |
 | Gate 8 — TLS/UAT | PARTIAL | UAT جهاز/عمل وتشغيل |
 | Gate 9 — cutover | PAUSED — IP-ONLY | قرار مالك جديد فقط |
 
@@ -130,7 +130,8 @@
 ### P1 — البيانات والمراقبة
 
 - استيراد master data عبر dry-run/validation/audit فقط.
-- monitoring للحاويات، HTTP، backup، TLS، disk/memory، وأخطاء التطبيق.
+- health gate كل 5 دقائق للحاويات وHTTP وbackup وTLS وdisk: منفذ ومثبت.
+- المطلوب المتبقي: قناة خارجية لفشل الفحص وburn-in ممتد.
 - لا تفعيل Chatbot أو analytics أو facts عامة قبل governance واعتماد المحتوى.
 
 ## 5. قواعد التراجع

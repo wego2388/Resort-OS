@@ -28,7 +28,7 @@
 | REL-01 — reviewed release source | COMPLETE | commits حتى `ac7764f` مدفوعة على فرع العمل | — |
 | DR-01 — off-server recovery point | COMPLETE | encrypted DB + full isolated restore evidence | — |
 | REL-02 — controlled deploy | COMPLETE | immutable release + digests + health + rollback | — |
-| OPS-01 — burn-in and alerting | IN PROGRESS | HTTP/container/backup/TLS/disk alerts | اختيار قناة التنبيه |
+| OPS-01 — burn-in and alerting | BASELINE COMPLETE | health gate كل 5 دقائق؛ إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
 | DATA-01 — approved master data | BLOCKED ON INPUT | غرف/أسعار/مخزون/مالية معتمدة | المالك والتشغيل |
 
@@ -63,6 +63,7 @@
 - [x] staff 443 وmarketing 8443 و`/health` يعيدون 200 من خارج الخادم.
 - [x] فحص DB/Redis/counts/TLS/listeners/recent severe logs ناجح.
 - [x] نقل `wagdy.md` و`PROJECT_STATUS.md` التاريخيين للأرشيف وإنشاء نسخ حية مختصرة.
+- [x] تثبيت `resort-os-healthcheck.timer` كل 5 دقائق؛ manual systemd run = 14/14.
 
 ## حالة الإنتاج المثبتة
 
@@ -80,6 +81,7 @@
 | Offsite/provider | encrypted verified restore موجود؛ Hostinger snapshot count = 0 |
 | TLS | IP cert حتى 2026-08-02؛ dry-run success |
 | Database | Alembic `88d1c505a9dc`؛ users=1، branches=1، online bookings=0 |
+| Monitoring | timer enabled/active؛ 14 health checks؛ journal يحتفظ بالفشل |
 | Failed units | 0 |
 
 ## الأدلة التشغيلية
@@ -101,7 +103,7 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-07-29_REL-02_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-07-29_OPS-01_codex_handoff.md`
 
 ## التحديث التالي المطلوب
 

@@ -300,10 +300,8 @@
 للسيرفر (SSH إلى الـ VPS):
 
 ```bash
-RESORT_ACTIVE_RELEASE=$(docker inspect resort-os-prod-backend-1 \
-  --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')
-cd "$RESORT_ACTIVE_RELEASE"
-bash scripts/vps-recover-admin.sh operator@example.com
+sudo -u resortos /usr/local/lib/resort-os/vps-recover-admin.sh \
+  operator@example.com
 ```
 
 الـwrapper يغيّر كلمة المرور المؤقتة ورمز التسجيل للحساب المحدد دون تغيير
