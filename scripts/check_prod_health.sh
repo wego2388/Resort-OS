@@ -24,9 +24,9 @@ timestamp="$(date --iso-8601=seconds)"
 echo "RESORT_HEALTHCHECK_START timestamp=$timestamp"
 
 if health_payload=$(curl -fsS --max-time 8 "http://127.0.0.1:8005/health" 2>/dev/null); then
-  if grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$health_payload" &&
-     grep -Eq '"database"[[:space:]]*:[[:space:]]*\\{[^}]*"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$health_payload" &&
-     grep -Eq '"redis"[[:space:]]*:[[:space:]]*\\{[^}]*"status"[[:space:]]*:[[:space:]]*"ok"' <<<"$health_payload"; then
+  if grep -Fq '"status":"ok"' <<<"$health_payload" &&
+     grep -Fq '"database":{"status":"ok"' <<<"$health_payload" &&
+     grep -Fq '"redis":{"status":"ok"' <<<"$health_payload"; then
     pass "backend-db-redis"
   else
     fail "backend health payload is not fully healthy"
