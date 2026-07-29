@@ -20,7 +20,21 @@ def make_branch_committed(db):
                code=f"LSE-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
+    # Gate 4B: عمليات الإيجار بقت تفرض branch isolation server-side
+    # (2026-07-28) — نفس نمط test_timeshare_http.py's make_branch_committed.
+    _link_shared_users_to_branch(db, b.id)
     return b
+
+
+def _link_shared_users_to_branch(db, branch_id: int) -> None:
+    from app.core.kernel.models.user import User
+    from tests.conftest import assign_test_user_to_branch
+
+    for email in ("cashier@test.local", "manager@test.local"):
+        user = db.query(User).filter(User.email == email).first()
+        if user:
+            assign_test_user_to_branch(db, user.id, branch_id)
+    db.commit()
 
 
 def contract_payload(branch_id: int) -> dict:

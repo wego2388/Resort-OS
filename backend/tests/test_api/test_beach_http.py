@@ -59,6 +59,44 @@ def make_branch_linked_cashier_headers(db, branch) -> dict[str, str]:
     return {"Authorization": f"Bearer {_make_token(email)}"}
 
 
+def make_branch_linked_headers(db, branch, role: str) -> dict[str, str]:
+    """مرآة make_branch_linked_cashier_headers لأي دور — بعد ما فحص الفرع
+    (2026-07-28) بقى مطبَّق على كل عمليات الشاطئ تقريبًا، معظم تستات
+    الـHTTP هنا محتاجة مستخدم مربوط فعليًا بالفرع (مش fixture مشترك بلا
+    أي عضوية) عشان تعكس سلوك حقيقي، مش بس تتجاوز الفحص."""
+    from datetime import date as _date, timedelta as _td
+    from decimal import Decimal as _D
+    from tests.conftest import _create_test_user, _make_token
+    from app.modules.core.models import UserBranchMembership
+    from app.modules.hr.models import Employee
+
+    email = f"{role}-{uuid.uuid4().hex[:10]}@test.local"
+    user_id = _create_test_user(email, role)
+    db.add_all([
+        Employee(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name=f"{role} اختبار الشاطئ", national_id=f"2900101{uuid.uuid4().hex[:7]}",
+            position=role, department="Beach", basic_salary=_D("4000.00"),
+            hire_date=_date.today() - _td(days=365), user_id=user_id,
+        ),
+        UserBranchMembership(user_id=user_id, branch_id=branch.id, is_default=True, is_active=True),
+    ])
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email)}"}
+
+
+def super_admin_headers_for_branch(db, branch) -> dict[str, str]:
+    """super_admin (level≥100) بيتخطى فحص العضوية تمامًا لكن لازم يختار
+    سياق فرع صريح في التوكن نفسه (claim bid) — العضويات مش بتتفحص له خالص
+    (core.services.get_allowed_branches). لازم يستخدم حساب
+    super_admin@test.local المشترك نفسه (عنده 2FA مفعّل فعليًا، شرط إجباري
+    لدخوله أصلاً — حساب جديد من غيره هيترفض قبل ما يوصل لفحص الفرع خالص)."""
+    from app.core.kernel.models.user import User
+    from tests.conftest import _make_token
+    user = db.query(User).filter(User.email == "super_admin@test.local").first()
+    return {"Authorization": f"Bearer {_make_token(user.email, branch_id=branch.id)}"}
+
+
 class TestBeachReservationFlow:
     def test_reservation_checkin_consumes_inventory(self, client: TestClient, db, fake_redis, cashier_headers):
         """Full round-trip: create reservation -> checkin -> capacity_used goes up."""
@@ -66,7 +104,7 @@ class TestBeachReservationFlow:
         branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
 
         before = client.get(
-            "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert before.status_code == 200, before.text
         cap_before = before.json()["capacity_used"]
@@ -80,7 +118,7 @@ class TestBeachReservationFlow:
                 "guests_count": 2,
                 "with_towel": False,
             },
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         reservation = create_resp.json()
@@ -97,7 +135,7 @@ class TestBeachReservationFlow:
         assert checked_in["tx_id"] is not None
 
         after = client.get(
-            "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert after.json()["capacity_used"] == cap_before + 2
 
@@ -110,7 +148,7 @@ class TestBeachReservationFlow:
                 "branch_id": branch.id, "guest_name": "سارة علي",
                 "reservation_date": str(date.today()), "guests_count": 1,
             },
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         ).json()
 
         client.post(f"/api/v1/beach/reservations/{reservation['id']}/checkin", headers=branch_cashier_headers)
@@ -123,6 +161,7 @@ class TestBeachReservationFlow:
         مختلف — ده هو الباج الأصلي اللي Codex اكتشفه في تدقيق Public Phase 0."""
         home_branch  = make_branch_committed(db)
         other_branch = make_branch_committed(db)
+        home_branch_cashier_headers = make_branch_linked_cashier_headers(db, home_branch)
         other_branch_cashier_headers = make_branch_linked_cashier_headers(db, other_branch)
 
         reservation = client.post(
@@ -131,7 +170,7 @@ class TestBeachReservationFlow:
                 "branch_id": home_branch.id, "guest_name": "ضيف الفرع الأصلي",
                 "reservation_date": str(date.today()), "guests_count": 1,
             },
-            headers=cashier_headers,
+            headers=home_branch_cashier_headers,
         ).json()
 
         resp = client.post(
@@ -146,13 +185,14 @@ class TestBeachReservationFlow:
         (Decision 0003). manager_headers المشترك بلا Employee/فرع، فيترفض
         403 زي أي دور تاني بدون فرع مطابق."""
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         reservation = client.post(
             "/api/v1/beach/reservations",
             json={
                 "branch_id": branch.id, "guest_name": "ضيف",
                 "reservation_date": str(date.today()), "guests_count": 1,
             },
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         ).json()
 
         resp = client.post(
@@ -171,13 +211,14 @@ class TestBeachReservationFlow:
         from tests.conftest import _make_token
 
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         reservation = client.post(
             "/api/v1/beach/reservations",
             json={
                 "branch_id": branch.id, "guest_name": "ضيف",
                 "reservation_date": str(date.today()), "guests_count": 1,
             },
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         ).json()
 
         super_admin = db.query(User).filter(
@@ -198,13 +239,14 @@ class TestBeachReservationFlow:
         (فجوة بيانات حقيقية، مش نظرية — نفس حالة حسابي admin/super_admin
         التجريبيين) لازم يتمنع صراحةً (fail-closed) بدل ما يتسمحله ضمنيًا."""
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         reservation = client.post(
             "/api/v1/beach/reservations",
             json={
                 "branch_id": branch.id, "guest_name": "ضيف",
                 "reservation_date": str(date.today()), "guests_count": 1,
             },
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         ).json()
 
         # cashier_headers نفسه بلا Employee مرتبط (راجع docstring
@@ -249,6 +291,7 @@ class TestBeachInventoryPricing:
     def test_inventory_includes_configured_prices(self, client: TestClient, db, fake_redis, cashier_headers):
         from app.modules.core.crud import upsert_setting
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         upsert_setting(db, "beach.price.adult", "250", branch_id=branch.id)
         upsert_setting(db, "beach.price.child", "120", branch_id=branch.id)
         upsert_setting(db, "beach.price.resident", "180", branch_id=branch.id)
@@ -256,7 +299,7 @@ class TestBeachInventoryPricing:
         db.commit()
 
         resp = client.get(
-            "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/inventory", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -267,9 +310,10 @@ class TestBeachInventoryPricing:
 
     def test_inventory_surge_multiplier_reflects_surge_pct(self, client: TestClient, db, fake_redis, manager_headers):
         branch = make_branch_committed(db)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
         surge_resp = client.patch(
             "/api/v1/beach/surge", params={"branch_id": branch.id},
-            json={"surge_pct": 50}, headers=manager_headers,
+            json={"surge_pct": 50}, headers=branch_manager_headers,
         )
         assert surge_resp.status_code == 200, surge_resp.text
         assert surge_resp.json()["surge_active"] is True
@@ -305,11 +349,13 @@ class TestBeachSellPermissions:
 
     def test_surge_set_by_manager_reflected_in_price(self, client: TestClient, db, fake_redis, manager_headers, cashier_headers):
         branch = make_branch_committed(db)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         surge_resp = client.patch(
             "/api/v1/beach/surge",
             params={"branch_id": branch.id},
             json={"surge_pct": "50"},
-            headers=manager_headers,
+            headers=branch_manager_headers,
         )
         assert surge_resp.status_code == 200, surge_resp.text
         assert Decimal(str(surge_resp.json()["surge_pct"])) == Decimal("50")
@@ -318,7 +364,7 @@ class TestBeachSellPermissions:
             "/api/v1/beach/sell",
             params={"branch_id": branch.id},
             json={"tx_type": "entry", "quantity": 1},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert sell_resp.status_code == 201, sell_resp.text
         assert sell_resp.json()["surge_applied"] is True
@@ -348,11 +394,12 @@ class TestBeachValidation:
 
     def test_sell_exceeding_capacity_rejected(self, client: TestClient, db, fake_redis, cashier_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         resp = client.post(
             "/api/v1/beach/sell",
             params={"branch_id": branch.id},
             json={"tx_type": "entry", "quantity": 999999},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert resp.status_code == 400
 
@@ -362,21 +409,22 @@ class TestBeachValidation:
         replayed after a lost response — same local_id must return the exact
         same transaction, not create a second one."""
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         payload = {"tx_type": "entry", "quantity": 2, "local_id": "offline-retry-abc123"}
 
         first = client.post(
-            "/api/v1/beach/sell", params={"branch_id": branch.id}, json=payload, headers=cashier_headers,
+            "/api/v1/beach/sell", params={"branch_id": branch.id}, json=payload, headers=branch_cashier_headers,
         )
         assert first.status_code == 201, first.text
 
         retry = client.post(
-            "/api/v1/beach/sell", params={"branch_id": branch.id}, json=payload, headers=cashier_headers,
+            "/api/v1/beach/sell", params={"branch_id": branch.id}, json=payload, headers=branch_cashier_headers,
         )
         assert retry.status_code == 201, retry.text
         assert retry.json()["id"] == first.json()["id"]
 
         list_resp = client.get(
-            "/api/v1/beach/transactions", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/transactions", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert list_resp.json()["total"] == 1  # مش 2 — الـ retry مارجعش يعمل بيع جديد
 
@@ -384,6 +432,8 @@ class TestBeachValidation:
 class TestBeachB2BContracts:
     def test_b2b_checkin_and_quota_status_via_http(self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers):
         branch = make_branch_committed(db)
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         create_resp = client.post(
             "/api/v1/beach/b2b-contracts",
             json={
@@ -394,7 +444,7 @@ class TestBeachB2BContracts:
                 "valid_from": str(date.today()),
                 "valid_until": str(date.today() + timedelta(days=30)),
             },
-            headers=super_admin_headers,
+            headers=branch_super_admin_headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         contract = create_resp.json()
@@ -403,14 +453,14 @@ class TestBeachB2BContracts:
             "/api/v1/beach/b2b-checkin",
             params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 3, "with_towel": False},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert checkin_resp.status_code == 201, checkin_resp.text
 
         status_resp = client.get(
             "/api/v1/beach/b2b-contracts/status",
             params={"branch_id": branch.id},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert status_resp.status_code == 200
         entry = next(s for s in status_resp.json() if s["contract_id"] == contract["id"])
@@ -442,6 +492,8 @@ class TestBeachB2BContracts:
         daily quota — overselling it means checking in guests the resort
         never agreed/priced capacity for."""
         branch = make_branch_committed(db)
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         contract = client.post(
             "/api/v1/beach/b2b-contracts",
             json={
@@ -449,14 +501,14 @@ class TestBeachB2BContracts:
                 "daily_quota": 5, "entry_price": "150.00",
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
             },
-            headers=super_admin_headers,
+            headers=branch_super_admin_headers,
         ).json()
 
         # Uses 4 of the 5-guest quota — should succeed.
         first = client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 4},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert first.status_code == 201, first.text
 
@@ -465,7 +517,7 @@ class TestBeachB2BContracts:
         over_resp = client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 2},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert over_resp.status_code == 400
         assert "الحصة" in over_resp.json()["detail"]
@@ -474,7 +526,7 @@ class TestBeachB2BContracts:
         # the rejected attempt.
         status_resp = client.get(
             "/api/v1/beach/b2b-contracts/status",
-            params={"branch_id": branch.id}, headers=cashier_headers,
+            params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         entry = next(s for s in status_resp.json() if s["contract_id"] == contract["id"])
         assert entry["checked_in_today"] == 4
@@ -482,6 +534,8 @@ class TestBeachB2BContracts:
 
     def test_list_b2b_contracts(self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers):
         branch = make_branch_committed(db)
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
         client.post(
             "/api/v1/beach/b2b-contracts",
             json={
@@ -489,10 +543,10 @@ class TestBeachB2BContracts:
                 "daily_quota": 20, "entry_price": "100.00",
                 "valid_from": str(date.today()), "valid_until": str(date.today() + timedelta(days=30)),
             },
-            headers=super_admin_headers,
+            headers=branch_super_admin_headers,
         )
         resp = client.get(
-            "/api/v1/beach/b2b-contracts", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/beach/b2b-contracts", params={"branch_id": branch.id}, headers=branch_manager_headers,
         )
         assert resp.status_code == 200
         assert any(c["hotel_name"] == "Listed Hotel" for c in resp.json())
@@ -518,12 +572,14 @@ class TestB2BCredit:
         self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
     ):
         branch = make_branch_committed(db)
-        contract = self._create_contract(client, branch, super_admin_headers, credit_limit="300.00")
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        contract = self._create_contract(client, branch, branch_super_admin_headers, credit_limit="300.00")
 
         over_resp = client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 5},  # 500 ج.م > 300 حد
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert over_resp.status_code == 400
         assert "حد الائتمان" in over_resp.json()["detail"]
@@ -532,12 +588,14 @@ class TestB2BCredit:
         self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
     ):
         branch = make_branch_committed(db)
-        contract = self._create_contract(client, branch, super_admin_headers, credit_limit="1000.00")
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        contract = self._create_contract(client, branch, branch_super_admin_headers, credit_limit="1000.00")
 
         resp = client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 3},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert resp.status_code == 201, resp.text
 
@@ -545,7 +603,8 @@ class TestB2BCredit:
         self, client: TestClient, db, fake_redis, super_admin_headers, manager_headers,
     ):
         branch = make_branch_committed(db)
-        contract = self._create_contract(client, branch, super_admin_headers)
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        contract = self._create_contract(client, branch, branch_super_admin_headers)
 
         resp = client.patch(
             f"/api/v1/beach/b2b-contracts/{contract['id']}",
@@ -558,12 +617,13 @@ class TestB2BCredit:
         self, client: TestClient, db, fake_redis, super_admin_headers,
     ):
         branch = make_branch_committed(db)
-        contract = self._create_contract(client, branch, super_admin_headers)
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        contract = self._create_contract(client, branch, branch_super_admin_headers)
 
         resp = client.patch(
             f"/api/v1/beach/b2b-contracts/{contract['id']}",
             json={"credit_limit": "2500.00", "payment_terms_days": 15},
-            headers=super_admin_headers,
+            headers=branch_super_admin_headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -576,12 +636,13 @@ class TestB2BCredit:
         """بعت credit_limit=None صراحةً لازم يمسح الحد (مش يتجاهله) — نفس
         الفرق بين "الحقل اتبعت بقيمة None" و"الحقل ما اتبعتش خالص"."""
         branch = make_branch_committed(db)
-        contract = self._create_contract(client, branch, super_admin_headers, credit_limit="1000.00")
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        contract = self._create_contract(client, branch, branch_super_admin_headers, credit_limit="1000.00")
 
         resp = client.patch(
             f"/api/v1/beach/b2b-contracts/{contract['id']}",
             json={"credit_limit": None},
-            headers=super_admin_headers,
+            headers=branch_super_admin_headers,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["credit_limit"] is None
@@ -590,7 +651,8 @@ class TestB2BCredit:
         self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers,
     ):
         branch = make_branch_committed(db)
-        contract = self._create_contract(client, branch, super_admin_headers)
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        contract = self._create_contract(client, branch, branch_super_admin_headers)
 
         resp = client.post(
             f"/api/v1/beach/b2b-contracts/{contract['id']}/settle", json={},
@@ -602,16 +664,19 @@ class TestB2BCredit:
         self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers, manager_headers,
     ):
         branch = make_branch_committed(db)
-        contract = self._create_contract(client, branch, super_admin_headers, credit_limit="300.00")
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
+        contract = self._create_contract(client, branch, branch_super_admin_headers, credit_limit="300.00")
         client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 2},  # 200 ج.م
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
 
         settle_resp = client.post(
             f"/api/v1/beach/b2b-contracts/{contract['id']}/settle", json={},
-            headers=manager_headers,
+            headers=branch_manager_headers,
         )
         assert settle_resp.status_code == 200, settle_resp.text
         assert settle_resp.json()["last_settled_at"] == str(date.today())
@@ -620,7 +685,7 @@ class TestB2BCredit:
         second = client.post(
             "/api/v1/beach/b2b-checkin", params={"branch_id": branch.id},
             json={"contract_id": contract["id"], "guests_count": 2},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert second.status_code == 201, second.text
 
@@ -628,8 +693,9 @@ class TestB2BCredit:
         self, client: TestClient, db, fake_redis, cashier_headers,
     ):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         resp = client.get(
-            "/api/v1/beach/live-dashboard", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/live-dashboard", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -644,17 +710,18 @@ class TestBeachTicketPdf:
 
     def test_ticket_pdf_is_thermal_sized_not_a4(self, client: TestClient, db, fake_redis, cashier_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
 
         sell_resp = client.post(
             "/api/v1/beach/sell",
             params={"branch_id": branch.id},
             json={"tx_type": "entry", "quantity": 2},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert sell_resp.status_code == 201, sell_resp.text
         tx = sell_resp.json()
 
-        resp = client.get(f"/api/v1/beach/transactions/{tx['id']}/ticket", headers=cashier_headers)
+        resp = client.get(f"/api/v1/beach/transactions/{tx['id']}/ticket", headers=branch_cashier_headers)
         assert resp.status_code == 200, resp.text
         assert resp.headers["content-type"] == "application/pdf"
 
@@ -676,14 +743,15 @@ class TestBeachTransactionsListAndVoidHTTP:
 
     def test_list_transactions_via_http(self, client: TestClient, db, fake_redis, cashier_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         sell_resp = client.post(
             "/api/v1/beach/sell", params={"branch_id": branch.id},
-            json={"tx_type": "entry", "quantity": 2}, headers=cashier_headers,
+            json={"tx_type": "entry", "quantity": 2}, headers=branch_cashier_headers,
         )
         assert sell_resp.status_code == 201, sell_resp.text
 
         list_resp = client.get(
-            "/api/v1/beach/transactions", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/transactions", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert list_resp.status_code == 200
         assert list_resp.json()["total"] >= 1
@@ -702,9 +770,10 @@ class TestBeachTransactionsListAndVoidHTTP:
         a plain cashier (level 40) must be rejected even though cashier can
         sell/list."""
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         sell_resp = client.post(
             "/api/v1/beach/sell", params={"branch_id": branch.id},
-            json={"tx_type": "entry", "quantity": 1}, headers=cashier_headers,
+            json={"tx_type": "entry", "quantity": 1}, headers=branch_cashier_headers,
         )
         tx_id = sell_resp.json()["id"]
 
@@ -718,15 +787,17 @@ class TestBeachTransactionsListAndVoidHTTP:
         self, client: TestClient, db, fake_redis, cashier_headers, manager_headers,
     ):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
         sell_resp = client.post(
             "/api/v1/beach/sell", params={"branch_id": branch.id},
-            json={"tx_type": "entry", "quantity": 1}, headers=cashier_headers,
+            json={"tx_type": "entry", "quantity": 1}, headers=branch_cashier_headers,
         )
         tx_id = sell_resp.json()["id"]
 
         resp = client.post(
             f"/api/v1/beach/transactions/{tx_id}/void",
-            json={"reason": "طلب الضيف الإلغاء"}, headers=manager_headers,
+            json={"reason": "طلب الضيف الإلغاء"}, headers=branch_manager_headers,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["voided_at"] is not None
@@ -735,7 +806,7 @@ class TestBeachTransactionsListAndVoidHTTP:
         # at the service layer.
         second = client.post(
             f"/api/v1/beach/transactions/{tx_id}/void",
-            json={"reason": "تاني"}, headers=manager_headers,
+            json={"reason": "تاني"}, headers=branch_manager_headers,
         )
         assert second.status_code == 400
 
@@ -746,45 +817,52 @@ class TestBeachReportsHTTP:
 
     def test_daily_summary_reflects_real_sale(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
         client.post(
             "/api/v1/beach/sell", params={"branch_id": branch.id},
-            json={"tx_type": "entry", "quantity": 3}, headers=cashier_headers,
+            json={"tx_type": "entry", "quantity": 3}, headers=branch_cashier_headers,
         )
         resp = client.get(
             "/api/v1/beach/summary",
             params={"branch_id": branch.id, "tx_date": str(date.today())},
-            headers=manager_headers,
+            headers=branch_manager_headers,
         )
         assert resp.status_code == 200
         assert resp.json()["total_entries"] >= 3
 
     def test_eod_report_via_http(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
         client.post(
             "/api/v1/beach/sell", params={"branch_id": branch.id},
-            json={"tx_type": "entry", "quantity": 1}, headers=cashier_headers,
+            json={"tx_type": "entry", "quantity": 1}, headers=branch_cashier_headers,
         )
         resp = client.get(
-            "/api/v1/beach/eod-report", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/beach/eod-report", params={"branch_id": branch.id}, headers=branch_manager_headers,
         )
         assert resp.status_code == 200
 
     def test_eod_report_pdf_via_http(self, client: TestClient, db, fake_redis, cashier_headers, manager_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
         client.post(
             "/api/v1/beach/sell", params={"branch_id": branch.id},
-            json={"tx_type": "entry", "quantity": 1}, headers=cashier_headers,
+            json={"tx_type": "entry", "quantity": 1}, headers=branch_cashier_headers,
         )
         resp = client.get(
-            "/api/v1/beach/eod-report/pdf", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/beach/eod-report/pdf", params={"branch_id": branch.id}, headers=branch_manager_headers,
         )
         assert resp.status_code == 200
         assert resp.headers["content-type"] == "application/pdf"
 
     def test_live_dashboard_via_http(self, client: TestClient, db, fake_redis, cashier_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         resp = client.get(
-            "/api/v1/beach/live-dashboard", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/live-dashboard", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert resp.status_code == 200
         body = resp.json()
@@ -795,14 +873,15 @@ class TestBeachReportsHTTP:
 class TestBeachReservationsListHTTP:
     def test_list_reservations_via_http(self, client: TestClient, db, fake_redis, cashier_headers):
         branch = make_branch_committed(db)
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         client.post(
             "/api/v1/beach/reservations",
             json={"branch_id": branch.id, "guest_name": "ضيف اختبار القائمة",
                   "reservation_date": str(date.today()), "guests_count": 2},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         resp = client.get(
-            "/api/v1/beach/reservations", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/reservations", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert resp.status_code == 200
         names = [r["guest_name"] for r in resp.json()["items"]]
@@ -826,11 +905,13 @@ class TestBeachLocationsHTTP:
         self, client: TestClient, db, fake_redis, manager_headers, cashier_headers,
     ):
         branch = make_branch_committed(db)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
 
         add_resp = client.post(
             "/api/v1/beach/locations/bulk",
             json={"branch_id": branch.id, "location_type": "umbrella", "count": 4},
-            headers=manager_headers,
+            headers=branch_manager_headers,
         )
         assert add_resp.status_code == 201, add_resp.text
         created = add_resp.json()
@@ -838,7 +919,7 @@ class TestBeachLocationsHTTP:
         assert all(loc["status"] == "available" for loc in created)
 
         list_resp = client.get(
-            "/api/v1/beach/locations", params={"branch_id": branch.id}, headers=cashier_headers,
+            "/api/v1/beach/locations", params={"branch_id": branch.id}, headers=branch_cashier_headers,
         )
         assert list_resp.status_code == 200
         assert len(list_resp.json()) == 4
@@ -848,7 +929,7 @@ class TestBeachLocationsHTTP:
             f"/api/v1/beach/locations/{loc_id}/checkin",
             params={"branch_id": branch.id},
             json={"guest_name": "هدى كمال", "guests_count": 2, "with_towel": True},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert checkin_resp.status_code == 201, checkin_resp.text
         occupied = checkin_resp.json()
@@ -861,14 +942,14 @@ class TestBeachLocationsHTTP:
             f"/api/v1/beach/locations/{loc_id}/checkin",
             params={"branch_id": branch.id},
             json={"guests_count": 1},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert second_checkin.status_code == 409
 
         checkout_resp = client.post(
             f"/api/v1/beach/locations/{loc_id}/checkout",
             params={"branch_id": branch.id},
-            headers=cashier_headers,
+            headers=branch_cashier_headers,
         )
         assert checkout_resp.status_code == 200, checkout_resp.text
         freed = checkout_resp.json()
@@ -879,30 +960,33 @@ class TestBeachLocationsHTTP:
         self, client: TestClient, db, fake_redis, manager_headers, cashier_headers,
     ):
         branch = make_branch_committed(db)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
         add_resp = client.post(
             "/api/v1/beach/locations/bulk",
             json={"branch_id": branch.id, "location_type": "pergola", "count": 2},
-            headers=manager_headers,
+            headers=branch_manager_headers,
         )
         loc_id = add_resp.json()[0]["id"]
         client.post(
             f"/api/v1/beach/locations/{loc_id}/checkin",
-            params={"branch_id": branch.id}, json={"guests_count": 1}, headers=cashier_headers,
+            params={"branch_id": branch.id}, json={"guests_count": 1}, headers=branch_cashier_headers,
         )
 
         reduce_resp = client.post(
             "/api/v1/beach/locations/reduce",
             json={"branch_id": branch.id, "location_type": "pergola", "count": 2},
-            headers=manager_headers,
+            headers=branch_manager_headers,
         )
         assert reduce_resp.status_code == 409
 
     def test_update_location_requires_manager(self, client: TestClient, db, fake_redis, manager_headers, cashier_headers):
         branch = make_branch_committed(db)
+        branch_manager_headers = make_branch_linked_headers(db, branch, "manager")
         add_resp = client.post(
             "/api/v1/beach/locations/bulk",
             json={"branch_id": branch.id, "location_type": "cabana", "count": 1},
-            headers=manager_headers,
+            headers=branch_manager_headers,
         )
         loc_id = add_resp.json()[0]["id"]
 
@@ -916,7 +1000,7 @@ class TestBeachLocationsHTTP:
         allowed = client.patch(
             f"/api/v1/beach/locations/{loc_id}",
             params={"branch_id": branch.id}, json={"status": "out_of_service"},
-            headers=manager_headers,
+            headers=branch_manager_headers,
         )
         assert allowed.status_code == 200
         assert allowed.json()["status"] == "out_of_service"

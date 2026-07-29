@@ -17,6 +17,18 @@ def mark_overdue(self):
     ⚠️ باج توقيت حقيقي (نفس الفئة الموثّقة في resort_os/timezone_utils.py):
     `date.today()` بترجع تاريخ السيرفر (UTC غالبًا في الإنتاج) مش تاريخ
     المنتجع (Africa/Cairo) — تحديدًا هنا بيأثّر على شريحة الغرامة (8/30 يوم).
+
+    ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-29): الفلتر كان ``status == "pending"``
+    بس — دفعة اتسدّدت جزئيًا (``status="partial"``، فيها ``paid_amount>0``)
+    كانت بتتخطى فحص التأخر للأبد، فمفيهاش غرامة اتحسبت خالص ولو فضل جزء كبير
+    من المبلغ مش متحصّل من شهور. وبمجرد ما دفعة توصف "overdue" مرة، كانت
+    بتتخطى برضو في الأيام الجاية — يعني شريحة الغرامة (5% لـ8-30 يوم، 10%
+    لأكتر من 30) كانت بتتجمّد على أول قيمة اتحسبت بدل ما تتصاعد مع الوقت.
+    اتصلح بتوسيع الفلتر لـ(pending/partial/overdue) واستخدام
+    ``leasing.services.calculate_penalty`` (نفس المصدر الوحيد اللي
+    ``apply_penalties`` بيستخدمه) بدل تكرار حساب الشريحة هنا — عشان مفيش
+    نسختين من نفس القاعدة تتفرقوا زي الباج الموثّق في ``calculate_penalty``
+    نفسها.
     """
     try:
         from app.core.config import settings                       # noqa: PLC0415
@@ -27,27 +39,32 @@ def mark_overdue(self):
         with SessionLocal() as db:
             try:
                 from app.modules.leasing.models import LeasePayment  # noqa: PLC0415
-                from app.resort_os.timeshare_engine import calculate_lease_penalty  # noqa: PLC0415
+                from app.modules.leasing.services import calculate_penalty  # noqa: PLC0415
 
                 overdue_payments = (
                     db.query(LeasePayment)
                     .filter(
                         LeasePayment.due_date < today,
-                        LeasePayment.status == "pending",
+                        LeasePayment.status.in_(("pending", "partial", "overdue")),
                     )
                     .all()
                 )
+                updated = 0
                 for p in overdue_payments:
-                    penalty = calculate_lease_penalty(p.amount, p.due_date, today)
-                    p.status  = "overdue"
+                    penalty = calculate_penalty(p, today)
+                    if penalty == p.penalty and p.status == "overdue":
+                        continue
                     p.penalty = penalty
+                    if penalty > 0:
+                        p.status = "overdue"
+                    updated += 1
                     logger.info(
                         "Lease payment overdue: id=%s amount=%s penalty=%s",
                         p.id, p.amount, penalty,
                     )
 
                 db.commit()
-                logger.info("Leasing overdue processed: count=%s", len(overdue_payments))
+                logger.info("Leasing overdue processed: checked=%s updated=%s", len(overdue_payments), updated)
 
             except ImportError:
                 logger.debug("Leasing module not yet built — skipped")

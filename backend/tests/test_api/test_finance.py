@@ -149,6 +149,22 @@ class TestPayment:
         with pytest.raises(ValueError):
             services.void_payment(db, 9999, voided_by=1)
 
+    def test_cannot_void_direct_payment_via_folio_void(self, db, branch):
+        """باج حقيقي اتصلح (2026-07-28): void_payment كانت بترحّل نفس عكس
+        قيد تحصيل الفوليو (Dr 1150/Cr 1100) لأي دفعة، حتى دفعة بيع مباشر
+        (folio_id=None — بيع نقدي فوري من dining/beach عبر
+        create_direct_payment) اللي أصلها مالوش تحصيل فوليو خالص. النظير
+        كان بيروح لذمم فوليو وهمية بدل عكس الإيراد الحقيقي — إلغاء بيع مباشر
+        لازم يعدّي من إلغاء الصنف/الطلب في الموديول نفسه، مش من هنا."""
+        from app.modules.finance import crud as fin_crud
+        payment = fin_crud.create_direct_payment(
+            db, branch_id=branch.id, amount=Decimal("100"), method="cash",
+            posted_at=datetime.utcnow(), reference="ORD-99", ref_order_id=99, source="dining",
+        )
+        db.commit()
+        with pytest.raises(ValueError, match="بيع مباشر"):
+            services.void_payment(db, payment.id, voided_by=1)
+
 
 class TestPaymentSettlementJournalPosting:
     """⚠️ باج محاسبي حقيقي اتصلح (2026-07-07، فجوة معمارية موثّقة في

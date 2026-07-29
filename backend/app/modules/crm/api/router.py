@@ -27,9 +27,21 @@ from app.modules.crm.schemas import (
     LoyaltyProgramUpdate, LoyaltyRedeemRequest, LoyaltyRedeemResponse, LoyaltyTransactionRead,
     OpportunityCreate, OpportunityRead, OpportunityUpdate,
 )
+from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["crm"])
+
+
+def _assert_crm_branch(db, user, branch_id: int, action_desc: str) -> None:
+    """Gate 4B-style branch isolation — كانت غايبة بالكامل من موديول CRM
+    (اتكشف 2026-07-28، اتأكد بريبرو حي: كاشير فرع B كان يقدر يقرا/يعدّل
+    عملاء/leads فرع A بمجرد تخمين الـid، حتى GET /crm/customers?branch_id=
+    كان بيقبل أي branch_id من غير أي تحقق)."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
 # ── Customer Groups (standing discount) ─────────────────────────────────
@@ -39,20 +51,26 @@ router = APIRouter(tags=["crm"])
 
 @router.get("/crm/customer-groups", response_model=list[CustomerGroupRead])
 def list_customer_groups(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...), active_only: bool = Query(True),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض مجموعات العملاء")
     return crud.list_customer_groups(db, branch_id, active_only)
 
 
 @router.post("/crm/customer-groups", response_model=CustomerGroupRead,
              status_code=status.HTTP_201_CREATED)
-def create_customer_group(data: CustomerGroupCreate, db: DbDep, _=Depends(get_admin_user)):
+def create_customer_group(data: CustomerGroupCreate, db: DbDep, user=Depends(get_admin_user)):
+    _assert_crm_branch(db, user, data.branch_id, "إنشاء مجموعة عملاء")
     return services.create_customer_group(db, data)
 
 
 @router.patch("/crm/customer-groups/{group_id}", response_model=CustomerGroupRead)
-def update_customer_group(group_id: int, data: CustomerGroupUpdate, db: DbDep, _=Depends(get_admin_user)):
+def update_customer_group(group_id: int, data: CustomerGroupUpdate, db: DbDep, user=Depends(get_admin_user)):
+    group = crud.get_customer_group(db, group_id)
+    if not group:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "المجموعة غير موجودة")
+    _assert_crm_branch(db, user, group.branch_id, "تعديل مجموعة عملاء")
     try:
         return services.update_customer_group(db, group_id, data)
     except ValueError as exc:
@@ -64,7 +82,7 @@ def update_customer_group(group_id: int, data: CustomerGroupUpdate, db: DbDep, _
 @router.get("/crm/customers", response_model=PaginatedResponse)
 def list_customers(
     db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     segment: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
@@ -72,6 +90,7 @@ def list_customers(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض العملاء")
     items, total = crud.list_customers(db, branch_id, segment, search, blacklisted,
                                        skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -80,24 +99,33 @@ def list_customers(
 
 @router.post("/crm/customers", response_model=CustomerRead,
              status_code=status.HTTP_201_CREATED)
-def create_customer(data: CustomerCreate, db: DbDep, _=Depends(get_current_active_user)):
+def create_customer(data: CustomerCreate, db: DbDep, user=Depends(get_current_active_user)):
+    _assert_crm_branch(db, user, data.branch_id, "إنشاء عميل")
     try:
         return services.create_customer(db, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/crm/customers/{customer_id}", response_model=CustomerRead)
-def get_customer(customer_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def _get_customer_or_404(db, customer_id: int):
     c = crud.get_customer(db, customer_id)
     if not c:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "العميل غير موجود")
+    return c
+
+
+@router.get("/crm/customers/{customer_id}", response_model=CustomerRead)
+def get_customer(customer_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    c = _get_customer_or_404(db, customer_id)
+    _assert_crm_branch(db, user, c.branch_id, "عرض عميل")
     return CustomerRead.model_validate(c)
 
 
 @router.patch("/crm/customers/{customer_id}", response_model=CustomerRead)
 def update_customer(customer_id: int, data: CustomerUpdate, db: DbDep,
-                    _=Depends(get_current_active_user)):
+                    user=Depends(get_current_active_user)):
+    c = _get_customer_or_404(db, customer_id)
+    _assert_crm_branch(db, user, c.branch_id, "تعديل عميل")
     try:
         return services.update_customer(db, customer_id, data)
     except ValueError as exc:
@@ -106,9 +134,11 @@ def update_customer(customer_id: int, data: CustomerUpdate, db: DbDep,
 
 @router.patch("/crm/customers/{customer_id}/group", response_model=CustomerRead)
 def assign_customer_group(customer_id: int, req: AssignCustomerGroupRequest, db: DbDep,
-                          _=Depends(get_manager_user)):
+                          user=Depends(get_manager_user)):
     """مقفول على مدير+ عمدًا (مش get_current_active_user زي PATCH العادي) —
     راجع تعليق AssignCustomerGroupRequest في schemas.py."""
+    c = _get_customer_or_404(db, customer_id)
+    _assert_crm_branch(db, user, c.branch_id, "تعيين مجموعة عميل")
     try:
         return services.assign_customer_group(db, customer_id, req.customer_group_id)
     except ValueError as exc:
@@ -118,7 +148,9 @@ def assign_customer_group(customer_id: int, req: AssignCustomerGroupRequest, db:
 @router.post("/crm/customers/{customer_id}/blacklist",
              response_model=CustomerRead)
 def blacklist_customer(customer_id: int, req: BlacklistRequest, db: DbDep,
-                       _=Depends(get_manager_user)):
+                       user=Depends(get_manager_user)):
+    c = _get_customer_or_404(db, customer_id)
+    _assert_crm_branch(db, user, c.branch_id, "إضافة عميل للقائمة السوداء")
     try:
         return services.blacklist_customer(db, customer_id, req)
     except ValueError as exc:
@@ -128,7 +160,9 @@ def blacklist_customer(customer_id: int, req: BlacklistRequest, db: DbDep,
 @router.delete("/crm/customers/{customer_id}/blacklist",
                response_model=CustomerRead,
                dependencies=[Depends(require_permission("crm.unblacklist_customer", "execute", min_role_level=60))])
-def unblacklist_customer(customer_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def unblacklist_customer(customer_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    c = _get_customer_or_404(db, customer_id)
+    _assert_crm_branch(db, user, c.branch_id, "إزالة عميل من القائمة السوداء")
     try:
         return services.unblacklist_customer(db, customer_id)
     except ValueError as exc:
@@ -143,7 +177,7 @@ def unblacklist_customer(customer_id: int, db: DbDep, _=Depends(get_current_acti
 @router.get("/crm/campaigns", response_model=PaginatedResponse)
 def list_campaigns(
     db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     campaign_type: Optional[str] = Query(None),
@@ -152,6 +186,7 @@ def list_campaigns(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض الحملات التسويقية")
     items, total = crud.list_campaigns(db, branch_id, status_filter, campaign_type,
                                        start_from, start_to,
                                        skip=(page - 1) * size, limit=size)
@@ -162,23 +197,32 @@ def list_campaigns(
 @router.post("/crm/campaigns", response_model=CampaignRead,
              status_code=status.HTTP_201_CREATED)
 def create_campaign(data: CampaignCreate, db: DbDep, user=Depends(get_manager_user)):
+    _assert_crm_branch(db, user, data.branch_id, "إنشاء حملة تسويقية")
     try:
         return services.create_campaign(db, data, created_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/crm/campaigns/{campaign_id}", response_model=CampaignRead)
-def get_campaign(campaign_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def _get_campaign_or_404(db, campaign_id: int):
     campaign = crud.get_campaign(db, campaign_id)
     if not campaign:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الحملة غير موجودة")
     return campaign
 
 
+@router.get("/crm/campaigns/{campaign_id}", response_model=CampaignRead)
+def get_campaign(campaign_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    campaign = _get_campaign_or_404(db, campaign_id)
+    _assert_crm_branch(db, user, campaign.branch_id, "عرض حملة تسويقية")
+    return campaign
+
+
 @router.patch("/crm/campaigns/{campaign_id}", response_model=CampaignRead)
 def update_campaign(campaign_id: int, data: CampaignUpdate, db: DbDep,
-                     _=Depends(get_manager_user)):
+                     user=Depends(get_manager_user)):
+    campaign = _get_campaign_or_404(db, campaign_id)
+    _assert_crm_branch(db, user, campaign.branch_id, "تعديل حملة تسويقية")
     try:
         return services.update_campaign(db, campaign_id, data)
     except ValueError as exc:
@@ -192,16 +236,18 @@ def update_campaign(campaign_id: int, data: CampaignUpdate, db: DbDep,
 
 @router.get("/crm/lead-sources", response_model=list[LeadSourceRead])
 def list_lead_sources(
-    db: DbDep, _=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض مصادر العملاء المحتملين")
     return [LeadSourceRead.model_validate(s) for s in crud.list_lead_sources(db, branch_id, active_only)]
 
 
 @router.post("/crm/lead-sources", response_model=LeadSourceRead,
              status_code=status.HTTP_201_CREATED)
-def create_lead_source(data: LeadSourceCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_lead_source(data: LeadSourceCreate, db: DbDep, user=Depends(get_manager_user)):
+    _assert_crm_branch(db, user, data.branch_id, "إنشاء مصدر عملاء محتملين")
     return LeadSourceRead.model_validate(crud.create_lead_source(db, data.model_dump()))
 
 
@@ -213,30 +259,40 @@ def create_lead_source(data: LeadSourceCreate, db: DbDep, _=Depends(get_manager_
 
 @router.get("/crm/leads", response_model=list[LeadRead])
 def list_leads(
-    db: DbDep, _=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     stage: Optional[str] = Query(None),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض العملاء المحتملين")
     return [LeadRead.model_validate(lead) for lead in crud.list_leads(db, branch_id, stage)]
 
 
 @router.post("/crm/leads", response_model=LeadRead,
              status_code=status.HTTP_201_CREATED)
-def create_lead(data: LeadCreate, db: DbDep, _=Depends(get_current_active_user)):
+def create_lead(data: LeadCreate, db: DbDep, user=Depends(get_current_active_user)):
+    _assert_crm_branch(db, user, data.branch_id, "إنشاء عميل محتمل")
     return LeadRead.model_validate(services.create_lead(db, data))
 
 
-@router.get("/crm/leads/{lead_id}", response_model=LeadRead)
-def get_lead(lead_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def _get_lead_or_404(db, lead_id: int):
     lead = crud.get_lead(db, lead_id)
     if not lead:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"العميل المحتمل {lead_id} غير موجود")
+    return lead
+
+
+@router.get("/crm/leads/{lead_id}", response_model=LeadRead)
+def get_lead(lead_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    lead = _get_lead_or_404(db, lead_id)
+    _assert_crm_branch(db, user, lead.branch_id, "عرض عميل محتمل")
     return LeadRead.model_validate(lead)
 
 
 @router.patch("/crm/leads/{lead_id}", response_model=LeadRead)
 def update_lead_stage(lead_id: int, data: LeadStageUpdate, db: DbDep,
-                      _=Depends(get_current_active_user)):
+                      user=Depends(get_current_active_user)):
+    lead = _get_lead_or_404(db, lead_id)
+    _assert_crm_branch(db, user, lead.branch_id, "تعديل مرحلة عميل محتمل")
     try:
         return LeadRead.model_validate(services.update_lead_stage(db, lead_id, data))
     except ValueError as exc:
@@ -245,9 +301,11 @@ def update_lead_stage(lead_id: int, data: LeadStageUpdate, db: DbDep,
 
 @router.patch("/crm/leads/{lead_id}/details", response_model=LeadRead)
 def update_lead_details(lead_id: int, data: LeadUpdate, db: DbDep,
-                        _=Depends(get_current_active_user)):
+                        user=Depends(get_current_active_user)):
     """يعدّل بيانات الـ lead الأساسية (الاسم/الهاتف/المصدر/الاهتمام...) —
     منفصل عمدًا عن تعديل الـ stage فوق (endpoint مختلف بمسؤولية مختلفة)."""
+    lead = _get_lead_or_404(db, lead_id)
+    _assert_crm_branch(db, user, lead.branch_id, "تعديل بيانات عميل محتمل")
     try:
         return LeadRead.model_validate(services.update_lead_details(db, lead_id, data))
     except ValueError as exc:
@@ -257,11 +315,13 @@ def update_lead_details(lead_id: int, data: LeadUpdate, db: DbDep,
 @router.post("/crm/leads/{lead_id}/convert", response_model=LeadConvertResponse,
              status_code=status.HTTP_201_CREATED)
 async def convert_lead(lead_id: int, data: LeadConvertRequest, db: DbDep,
-                       _=Depends(get_cashier_user)):
+                       user=Depends(get_cashier_user)):
     """wagdy.md C-03 — تحويل lead لحجز مباشرة بضغطة واحدة. نفس مستوى صلاحية
     إنشاء حجز في PMS نفسه (get_cashier_user) عشان الطريق البديل ده (عبر CRM)
     ميبقاش أضعف أمنيًا من المسار المباشر POST /pms/bookings."""
     from app.modules.pms.services import BookingConflictError  # noqa: PLC0415
+    lead_for_check = _get_lead_or_404(db, lead_id)
+    _assert_crm_branch(db, user, lead_for_check.branch_id, "تحويل عميل محتمل لحجز")
     try:
         lead, booking = services.convert_lead_to_booking(db, lead_id, data)
     except BookingConflictError as exc:
@@ -289,9 +349,9 @@ async def convert_lead(lead_id: int, data: LeadConvertRequest, db: DbDep,
 # router خالص — 404 دايمًا على أي محاولة استخدام حقيقية.
 
 @router.get("/crm/leads/{lead_id}/call-notes", response_model=list[CallNoteRead])
-def list_call_notes(lead_id: int, db: DbDep, _=Depends(get_current_active_user)):
-    if not crud.get_lead(db, lead_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العميل المحتمل {lead_id} غير موجود")
+def list_call_notes(lead_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    lead = _get_lead_or_404(db, lead_id)
+    _assert_crm_branch(db, user, lead.branch_id, "عرض مذكرات مكالمات")
     return [CallNoteRead.model_validate(n) for n in crud.list_call_notes_for_lead(db, lead_id)]
 
 
@@ -299,8 +359,8 @@ def list_call_notes(lead_id: int, db: DbDep, _=Depends(get_current_active_user))
              status_code=status.HTTP_201_CREATED)
 def create_call_note(lead_id: int, data: CallNoteCreate, db: DbDep,
                      user=Depends(get_current_active_user)):
-    if not crud.get_lead(db, lead_id):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العميل المحتمل {lead_id} غير موجود")
+    lead = _get_lead_or_404(db, lead_id)
+    _assert_crm_branch(db, user, lead.branch_id, "تسجيل مذكرة مكالمة")
     if data.lead_id != lead_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "lead_id غير مطابق للمسار")
     return CallNoteRead.model_validate(crud.create_call_note(db, data, called_by=user.id))
@@ -315,17 +375,19 @@ def create_call_note(lead_id: int, data: CallNoteCreate, db: DbDep,
 
 @router.get("/crm/guest-profiles", response_model=list[GuestProfileRead])
 def list_guest_profiles(
-    db: DbDep, _=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     vip_only: bool = Query(False),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض ملفات الضيوف")
     return [GuestProfileRead.model_validate(p) for p in crud.list_guest_profiles(db, branch_id, vip_only)]
 
 
 @router.get("/crm/guest-profiles/by-phone/{phone}", response_model=GuestProfileRead)
 def get_guest_profile_by_phone(phone: str, db: DbDep,
-                               _=Depends(get_current_active_user),
+                               user=Depends(get_current_active_user),
                                branch_id: int = Query(...)):
+    _assert_crm_branch(db, user, branch_id, "البحث عن ملف ضيف")
     profile = crud.get_guest_profile_by_phone(db, branch_id, phone)
     if not profile:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "لا يوجد ملف ضيف بهذا الرقم")
@@ -338,10 +400,12 @@ def get_guest_profile_by_phone(phone: str, db: DbDep,
             response_model=PaginatedResponse)
 def list_interactions(
     customer_id: int, db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    c = _get_customer_or_404(db, customer_id)
+    _assert_crm_branch(db, user, c.branch_id, "عرض تفاعلات عميل")
     items, total = crud.list_interactions(db, customer_id,
                                           skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -351,6 +415,7 @@ def list_interactions(
 @router.post("/crm/interactions", response_model=InteractionRead,
              status_code=status.HTTP_201_CREATED)
 def log_interaction(data: InteractionCreate, db: DbDep, user=Depends(get_current_active_user)):
+    _assert_crm_branch(db, user, data.branch_id, "تسجيل تفاعل عميل")
     try:
         return services.log_interaction(db, data, handled_by=user.id)
     except ValueError as exc:
@@ -362,13 +427,14 @@ def log_interaction(data: InteractionCreate, db: DbDep, user=Depends(get_current
 @router.get("/crm/opportunities", response_model=PaginatedResponse)
 def list_opportunities(
     db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     stage: Optional[str] = Query(None),
     assigned_to: Optional[int] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض الفرص البيعية")
     items, total = crud.list_opportunities(db, branch_id, stage, assigned_to,
                                            skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -377,7 +443,8 @@ def list_opportunities(
 
 @router.post("/crm/opportunities", response_model=OpportunityRead,
              status_code=status.HTTP_201_CREATED)
-def create_opportunity(data: OpportunityCreate, db: DbDep, _=Depends(get_current_active_user)):
+def create_opportunity(data: OpportunityCreate, db: DbDep, user=Depends(get_current_active_user)):
+    _assert_crm_branch(db, user, data.branch_id, "إنشاء فرصة بيعية")
     try:
         return services.create_opportunity(db, data)
     except ValueError as exc:
@@ -386,7 +453,11 @@ def create_opportunity(data: OpportunityCreate, db: DbDep, _=Depends(get_current
 
 @router.patch("/crm/opportunities/{opp_id}", response_model=OpportunityRead)
 def update_opportunity(opp_id: int, data: OpportunityUpdate, db: DbDep,
-                       _=Depends(get_current_active_user)):
+                       user=Depends(get_current_active_user)):
+    opp = crud.get_opportunity(db, opp_id)
+    if not opp:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الفرصة غير موجودة")
+    _assert_crm_branch(db, user, opp.branch_id, "تعديل فرصة بيعية")
     try:
         return services.update_opportunity(db, opp_id, data)
     except ValueError as exc:
@@ -398,7 +469,7 @@ def update_opportunity(opp_id: int, data: OpportunityUpdate, db: DbDep,
 @router.get("/crm/activities", response_model=PaginatedResponse)
 def list_activities(
     db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     customer_id: Optional[int] = Query(None),
     assigned_to: Optional[int] = Query(None),
@@ -407,6 +478,7 @@ def list_activities(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض الأنشطة")
     items, total = crud.list_activities(
         db, branch_id, customer_id, assigned_to, status, due_before,
         skip=(page - 1) * size, limit=size,
@@ -417,7 +489,8 @@ def list_activities(
 
 @router.post("/crm/activities", response_model=ActivityRead,
              status_code=status.HTTP_201_CREATED)
-def create_activity(data: ActivityCreate, db: DbDep, _=Depends(get_current_active_user)):
+def create_activity(data: ActivityCreate, db: DbDep, user=Depends(get_current_active_user)):
+    _assert_crm_branch(db, user, data.branch_id, "إنشاء نشاط")
     try:
         return services.create_activity(db, data)
     except ValueError as exc:
@@ -426,7 +499,11 @@ def create_activity(data: ActivityCreate, db: DbDep, _=Depends(get_current_activ
 
 @router.patch("/crm/activities/{activity_id}", response_model=ActivityRead)
 def update_activity(activity_id: int, data: ActivityUpdate, db: DbDep,
-                    _=Depends(get_current_active_user)):
+                    user=Depends(get_current_active_user)):
+    activity = crud.get_activity(db, activity_id)
+    if not activity:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "النشاط غير موجود")
+    _assert_crm_branch(db, user, activity.branch_id, "تعديل نشاط")
     try:
         return services.update_activity(db, activity_id, data)
     except ValueError as exc:
@@ -437,14 +514,16 @@ def update_activity(activity_id: int, data: ActivityUpdate, db: DbDep,
 
 @router.get("/crm/loyalty/program", response_model=Optional[LoyaltyProgramRead])
 def get_loyalty_program(branch_id: int = Query(...), db: DbDep = ...,
-                        _=Depends(get_manager_user)):
+                        user=Depends(get_manager_user)):
+    _assert_crm_branch(db, user, branch_id, "عرض برنامج النقاط")
     return services.get_or_create_loyalty_program(db, branch_id)
 
 
 @router.post("/crm/loyalty/program", response_model=LoyaltyProgramRead,
              status_code=status.HTTP_201_CREATED)
 def create_loyalty_program(data: LoyaltyProgramCreate, db: DbDep,
-                           _=Depends(get_admin_user)):
+                           user=Depends(get_admin_user)):
+    _assert_crm_branch(db, user, data.branch_id, "إنشاء برنامج نقاط")
     try:
         return services.setup_loyalty_program(db, data)
     except ValueError as exc:
@@ -455,7 +534,8 @@ def create_loyalty_program(data: LoyaltyProgramCreate, db: DbDep,
 def update_loyalty_program(branch_id: int = Query(...),
                            data: LoyaltyProgramUpdate = ...,
                            db: DbDep = ...,
-                           _=Depends(get_admin_user)):
+                           user=Depends(get_admin_user)):
+    _assert_crm_branch(db, user, branch_id, "تعديل برنامج نقاط")
     try:
         return services.update_loyalty_program(db, branch_id, data)
     except ValueError as exc:
@@ -469,8 +549,9 @@ def get_customer_loyalty(
     customer_id: int = Query(...),
     branch_id: int = Query(...),
     db: DbDep = ...,
-    _=Depends(get_cashier_user),
+    user=Depends(get_cashier_user),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض رصيد نقاط عميل")
     return services.get_customer_loyalty_account(db, branch_id, customer_id)
 
 
@@ -480,8 +561,9 @@ def get_loyalty_transactions(
     branch_id: int = Query(...),
     limit: int = Query(50, ge=1, le=200),
     db: DbDep = ...,
-    _=Depends(get_cashier_user),
+    user=Depends(get_cashier_user),
 ):
+    _assert_crm_branch(db, user, branch_id, "عرض حركات نقاط عميل")
     return services.get_loyalty_transactions(db, branch_id, customer_id, limit)
 
 
@@ -494,6 +576,7 @@ def redeem_loyalty_points(
     user=Depends(get_cashier_user),
 ):
     """يسترد نقاط عميل ويرجع قيمة الخصم — كاشير+."""
+    _assert_crm_branch(db, user, data.branch_id, "استرداد نقاط عميل")
     try:
         return services.redeem_loyalty_points(db, data, created_by=user.id)
     except ValueError as exc:
@@ -507,6 +590,7 @@ def adjust_loyalty_points(
     user=Depends(get_manager_user),
 ):
     """تعديل يدوي على رصيد النقاط — مدير+."""
+    _assert_crm_branch(db, user, data.branch_id, "تعديل رصيد نقاط عميل")
     try:
         account = services.adjust_loyalty_points(db, data, created_by=user.id)
         return LoyaltyAccountRead.model_validate(account)

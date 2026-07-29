@@ -148,6 +148,58 @@ class TestLeasingMarkOverdueLogic:
             from app.tasks.leasing_tasks import mark_overdue
             mark_overdue()
 
+    def test_partial_payment_still_flagged_overdue_with_growing_penalty(self, db):
+        """باج حقيقي اتصلح: الفلتر القديم كان ``status == "pending"`` بس —
+        دفعة اتسدّدت جزئيًا (status="partial") كانت بتتخطى فحص التأخر
+        للأبد، فمفيهاش غرامة اتحسبت خالص حتى لو باقي المبلغ فضل شهور من
+        غير تحصيل. المهمة الحقيقية (مش استعلام مكرر يدوي) لازم تلقط
+        وتحدّث الغرامة حتى لو الدفعة "partial"."""
+        from unittest.mock import patch, MagicMock
+
+        branch = _make_branch(db)
+        contract = _make_contract(db, branch)
+        overdue_date = date.today() - timedelta(days=10)  # داخل شريحة 5%
+        payment = _make_payment(db, contract, due_date=overdue_date, status="partial")
+        payment.paid_amount = Decimal("1000")
+        db.commit()
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.leasing_tasks import mark_overdue
+            mark_overdue()
+
+        db.refresh(payment)
+        assert payment.status == "overdue"
+        assert payment.penalty > Decimal("0")
+        assert payment.paid_amount == Decimal("1000")  # المبلغ المدفوع فعلاً ميتلمسش
+
+    def test_already_overdue_payment_penalty_escalates_with_time(self, db):
+        """باج حقيقي اتصلح: دفعة اتوسمت "overdue" مرة كانت بتتخطى للأبد —
+        يعني شريحة الغرامة كانت بتتجمّد على أول قيمة اتحسبت (5%) بدل ما
+        تتصاعد لـ10% بعد ما التأخير يعدي 30 يوم."""
+        from unittest.mock import patch, MagicMock
+        from app.resort_os.timeshare_engine import calculate_lease_penalty
+
+        branch = _make_branch(db)
+        contract = _make_contract(db, branch)
+        due = date.today() - timedelta(days=35)  # داخل شريحة 10%
+        payment = _make_payment(db, contract, due_date=due, status="overdue")
+        payment.penalty = calculate_lease_penalty(payment.amount, due, date.today() - timedelta(days=25))
+        db.commit()
+        stale_penalty = payment.penalty
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.leasing_tasks import mark_overdue
+            mark_overdue()
+
+        db.refresh(payment)
+        assert payment.penalty > stale_penalty
+
 
 # ─── send_due_reminders logic ────────────────────────────────────────────────
 

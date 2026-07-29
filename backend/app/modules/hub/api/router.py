@@ -19,9 +19,21 @@ from app.modules.hub.schemas import (
     OnlineBookingCreate, OnlineBookingRead,
     ContactFormCreate, ContactFormResponse, ContactFormListItem, BlogPostsResponse,
 )
+from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["hub"])
+
+
+def _assert_hub_branch(db, user, branch_id: int, action_desc: str) -> None:
+    """Gate 4B-style branch isolation — كانت غايبة من endpoints الإدارة في
+    hub (pages/offers/online-bookings — اتكشف 2026-07-28، نفس فئة الباج في
+    CRM/timeshare/leasing/beach). لا علاقة لها بالـendpoints العامة الحقيقية
+    (hub/contact، hub/blog/posts) اللي مفيهاش auth أصلاً بتصميم مقصود."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
 # ── Pages ─────────────────────────────────────────────────────────────
@@ -29,13 +41,14 @@ router = APIRouter(tags=["hub"])
 @router.get("/hub/pages", response_model=PaginatedResponse)
 def list_pages(
     db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     published_only: bool = Query(False),
     page_type: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    _assert_hub_branch(db, user, branch_id, "عرض صفحات الموقع")
     items, total = crud.list_pages(db, branch_id, published_only, page_type,
                                    skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -44,31 +57,41 @@ def list_pages(
 
 @router.post("/hub/pages", response_model=HubPageRead,
              status_code=status.HTTP_201_CREATED)
-def create_page(data: HubPageCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_page(data: HubPageCreate, db: DbDep, user=Depends(get_manager_user)):
+    _assert_hub_branch(db, user, data.branch_id, "إنشاء صفحة موقع")
     try:
         return services.create_page(db, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/hub/pages/{page_id}", response_model=HubPageRead)
-def get_page(page_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def _get_page_or_404(db, page_id: int):
     p = crud.get_page(db, page_id)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الصفحة غير موجودة")
+    return p
+
+
+@router.get("/hub/pages/{page_id}", response_model=HubPageRead)
+def get_page(page_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    p = _get_page_or_404(db, page_id)
+    _assert_hub_branch(db, user, p.branch_id, "عرض صفحة موقع")
     return HubPageRead.model_validate(p)
 
 
 @router.get("/hub/pages/slug/{slug}", response_model=HubPageRead)
-def get_page_by_slug(slug: str, db: DbDep, _=Depends(get_current_active_user)):
+def get_page_by_slug(slug: str, db: DbDep, user=Depends(get_current_active_user)):
     p = crud.get_page_by_slug(db, slug)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الصفحة غير موجودة")
+    _assert_hub_branch(db, user, p.branch_id, "عرض صفحة موقع")
     return HubPageRead.model_validate(p)
 
 
 @router.patch("/hub/pages/{page_id}", response_model=HubPageRead)
-def update_page(page_id: int, data: HubPageUpdate, db: DbDep, _=Depends(get_manager_user)):
+def update_page(page_id: int, data: HubPageUpdate, db: DbDep, user=Depends(get_manager_user)):
+    p = _get_page_or_404(db, page_id)
+    _assert_hub_branch(db, user, p.branch_id, "تعديل صفحة موقع")
     try:
         return services.update_page(db, page_id, data)
     except ValueError as exc:
@@ -77,7 +100,9 @@ def update_page(page_id: int, data: HubPageUpdate, db: DbDep, _=Depends(get_mana
 
 @router.delete("/hub/pages/{page_id}",
                response_model=None, status_code=status.HTTP_204_NO_CONTENT)
-def delete_page(page_id: int, db: DbDep, _=Depends(get_admin_user)):
+def delete_page(page_id: int, db: DbDep, user=Depends(get_admin_user)):
+    p = _get_page_or_404(db, page_id)
+    _assert_hub_branch(db, user, p.branch_id, "حذف صفحة موقع")
     try:
         services.delete_page(db, page_id)
     except ValueError as exc:
@@ -89,13 +114,14 @@ def delete_page(page_id: int, db: DbDep, _=Depends(get_admin_user)):
 @router.get("/hub/offers", response_model=PaginatedResponse)
 def list_offers(
     db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     active_only: bool = Query(True),
     offer_type: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    _assert_hub_branch(db, user, branch_id, "عرض العروض")
     items, total = crud.list_offers(db, branch_id, active_only, offer_type,
                                     skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -104,23 +130,32 @@ def list_offers(
 
 @router.post("/hub/offers", response_model=HubOfferRead,
              status_code=status.HTTP_201_CREATED)
-def create_offer(data: HubOfferCreate, db: DbDep, _=Depends(get_manager_user)):
+def create_offer(data: HubOfferCreate, db: DbDep, user=Depends(get_manager_user)):
+    _assert_hub_branch(db, user, data.branch_id, "إنشاء عرض")
     try:
         return services.create_offer(db, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/hub/offers/{offer_id}", response_model=HubOfferRead)
-def get_offer(offer_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def _get_offer_or_404(db, offer_id: int):
     o = crud.get_offer(db, offer_id)
     if not o:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "العرض غير موجود")
+    return o
+
+
+@router.get("/hub/offers/{offer_id}", response_model=HubOfferRead)
+def get_offer(offer_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    o = _get_offer_or_404(db, offer_id)
+    _assert_hub_branch(db, user, o.branch_id, "عرض تفاصيل عرض")
     return HubOfferRead.model_validate(o)
 
 
 @router.patch("/hub/offers/{offer_id}", response_model=HubOfferRead)
-def update_offer(offer_id: int, data: HubOfferUpdate, db: DbDep, _=Depends(get_manager_user)):
+def update_offer(offer_id: int, data: HubOfferUpdate, db: DbDep, user=Depends(get_manager_user)):
+    o = _get_offer_or_404(db, offer_id)
+    _assert_hub_branch(db, user, o.branch_id, "تعديل عرض")
     try:
         return services.update_offer(db, offer_id, data)
     except ValueError as exc:
@@ -132,7 +167,7 @@ def update_offer(offer_id: int, data: HubOfferUpdate, db: DbDep, _=Depends(get_m
 @router.get("/hub/online-bookings", response_model=PaginatedResponse)
 def list_online_bookings(
     db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     status: Optional[str] = Query(None),
     date_from: Optional[date] = Query(None),
@@ -140,6 +175,7 @@ def list_online_bookings(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
+    _assert_hub_branch(db, user, branch_id, "عرض الحجوزات الإلكترونية")
     items, total = crud.list_online_bookings(db, branch_id, status, date_from, date_to,
                                              skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -149,24 +185,33 @@ def list_online_bookings(
 @router.post("/hub/online-bookings", response_model=OnlineBookingRead,
              status_code=status.HTTP_201_CREATED)
 def create_online_booking(data: OnlineBookingCreate, db: DbDep,
-                          _=Depends(get_current_active_user)):
+                          user=Depends(get_current_active_user)):
+    _assert_hub_branch(db, user, data.branch_id, "إنشاء حجز إلكتروني")
     try:
         return services.create_online_booking(db, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
-@router.get("/hub/online-bookings/{booking_id}", response_model=OnlineBookingRead)
-def get_online_booking(booking_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def _get_online_booking_or_404(db, booking_id: int):
     b = crud.get_online_booking(db, booking_id)
     if not b:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "الحجز غير موجود")
+    return b
+
+
+@router.get("/hub/online-bookings/{booking_id}", response_model=OnlineBookingRead)
+def get_online_booking(booking_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    b = _get_online_booking_or_404(db, booking_id)
+    _assert_hub_branch(db, user, b.branch_id, "عرض حجز إلكتروني")
     return OnlineBookingRead.model_validate(b)
 
 
 @router.post("/hub/online-bookings/{booking_id}/confirm",
              response_model=OnlineBookingRead)
 def confirm_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
+    b = _get_online_booking_or_404(db, booking_id)
+    _assert_hub_branch(db, user, b.branch_id, "تأكيد حجز إلكتروني")
     try:
         return services.confirm_booking(db, booking_id, confirmed_by=user.id)
     except ValueError as exc:
@@ -175,7 +220,9 @@ def confirm_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
 
 @router.post("/hub/online-bookings/{booking_id}/cancel",
              response_model=OnlineBookingRead)
-def cancel_booking(booking_id: int, db: DbDep, _=Depends(get_manager_user)):
+def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
+    b = _get_online_booking_or_404(db, booking_id)
+    _assert_hub_branch(db, user, b.branch_id, "إلغاء حجز إلكتروني")
     try:
         return services.cancel_booking(db, booking_id)
     except ValueError as exc:
@@ -241,7 +288,7 @@ async def submit_contact_form(
 @router.get("/hub/contact-forms", response_model=PaginatedResponse)
 def list_contact_forms(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
     crm_sync_status: Optional[str] = Query(
         None, description="not_requested|created|failed",
@@ -253,6 +300,7 @@ def list_contact_forms(
     size: int = Query(20, ge=1, le=100),
 ):
     """Every public contact submission, consenting or not — see ContactFormListItem."""
+    _assert_hub_branch(db, user, branch_id, "عرض نماذج التواصل")
     items, total = crud.list_contact_forms(
         db, branch_id, crm_sync_status, status_filter,
         skip=(page - 1) * size, limit=size,

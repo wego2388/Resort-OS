@@ -43,6 +43,25 @@ def get_contract_by_form_number(db: Session, branch_id: int, form_number: str) -
     ).first()
 
 
+def get_contract_by_natural_key(
+    db: Session, branch_id: int, customer_name: str,
+    unit_id: Optional[int], start_date: date, total_value: Decimal,
+) -> Optional[TimeshareContract]:
+    """يستخدم كـ fallback لكشف التكرار وقت استيراد Excel لما ``form_number``
+    فاضي — بدونه أي صفوف بدون رقم فورمة كانت بتتفادى فحص التكرار خالص، فرفع
+    نفس الملف مرتين كان بيضاعف كل عقودها. المفتاح الطبيعي هنا (اسم العميل +
+    الوحدة + تاريخ البداية + القيمة الإجمالية) مش مفتاح فريد قاعديًا (مفيش
+    UniqueConstraint عليه)، بس تطابق الأربعة مع بعض عمليًا شبه مؤكد إنه نفس
+    الصف بالظبط اتكرر، مش عقدين مختلفين بمصادفة."""
+    return db.query(TimeshareContract).filter(
+        TimeshareContract.branch_id == branch_id,
+        TimeshareContract.customer_name == customer_name,
+        TimeshareContract.unit_id == unit_id,
+        TimeshareContract.start_date == start_date,
+        TimeshareContract.total_value == total_value,
+    ).first()
+
+
 def list_contracts(
     db: Session, branch_id: int,
     status: Optional[str] = None,
@@ -99,6 +118,35 @@ def create_installments(db: Session, contract_id: int, schedule: list[dict]) -> 
 
 def get_installment(db: Session, inst_id: int) -> Optional[TimeshareInstallment]:
     return db.query(TimeshareInstallment).filter(TimeshareInstallment.id == inst_id).first()
+
+
+def lock_installment_for_update(db: Session, inst_id: int) -> Optional[TimeshareInstallment]:
+    """SELECT ... FOR UPDATE NOWAIT — باج حقيقي اتصلح (2026-07-28، اتأكد
+    بريبرو حي): pay_installment كانت بتقرا/تعدّل paid_amount من غير أي قفل
+    صف خالص — تحصيلين متزامنين على نفس القسط ممكن يقروا نفس paid_amount
+    القديم، وآخر واحد يعمل commit يمسح أثر التاني بصمت (فلوس محصّلة فعليًا
+    بتختفي من غير أي خطأ). نفس نمط beach.crud.lock_inventory_for_update/
+    timeshare.crud.lock_unit_for_visit — .populate_existing() لازم هنا نفس
+    السبب الموثّق في lock_unit_for_visit فوق."""
+    return (
+        db.query(TimeshareInstallment)
+        .filter(TimeshareInstallment.id == inst_id)
+        .with_for_update(nowait=True)
+        .populate_existing()
+        .first()
+    )
+
+
+def lock_maintenance_due_for_update(db: Session, due_id: int) -> Optional[TimeshareMaintenanceDue]:
+    """مرآة lock_installment_for_update — pay_maintenance_due نفس فئة الباج
+    بالظبط (نفس نمط read-then-write من غير قفل)."""
+    return (
+        db.query(TimeshareMaintenanceDue)
+        .filter(TimeshareMaintenanceDue.id == due_id)
+        .with_for_update(nowait=True)
+        .populate_existing()
+        .first()
+    )
 
 
 def pay_installment(db: Session, inst: TimeshareInstallment, req: PayInstallmentRequest) -> TimeshareInstallment:

@@ -1,6 +1,6 @@
 # لوحة تنفيذ الخطة النهائية للخيمة
 
-**آخر تحديث:** 2026-07-26  
+**آخر تحديث:** 2026-07-29 — Kiro (فحص مباشر VPS + DNS + domain plan)  
 **الخطة:** `docs/audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`  
 **البروتوكول:** `docs/agent-workflow/DUAL_AGENT_EXECUTION_PROTOCOL_AR.md`  
 **المرحلة الحالية:** IP-only release online؛ bootstrap/data/UAT مؤجلة
@@ -25,7 +25,10 @@
 | Gate 6 VPS access/hardening | COMPLETE | Codex | SSH/firewalls/updates |
 | Gate 7 deploy/backup/monitoring | PARTIAL | Codex | deploy+restore done؛ offsite/monitoring باقي |
 | Gate 8 IP TLS/UAT | PARTIAL | Codex | IP TLS done؛ device/business UAT باقي |
-| Gate 9 cutover | IP RELEASE ONLINE | Codex | operational bootstrap وGo/No-Go باقي |
+| Gate 9 cutover | IP RELEASE ONLINE → DOMAIN READY | Kiro | DNS records جاهزة للإضافة، switch-to-domain.sh جاهز، ينتظر DNS propagation |
+
+> **⚠️ عاجل:** TLS الحالي للـ IP ينتهي **2026-08-02** (3 أيام). يجب تفعيل elkheima.com قبلها.  
+> **الخطة التفصيلية:** `docs/audits/EL_KHEIMA_DOMAIN_LAUNCH_PLAN_AR.md`
 
 ## حالة Claude — يحررها Claude فقط
 

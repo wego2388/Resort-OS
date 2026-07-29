@@ -20,7 +20,25 @@ def make_branch_committed(db):
                code=f"TS-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
+    # Gate 4B: عمليات التايم شير بقت تفرض branch isolation server-side
+    # (2026-07-28) — نفس نمط test_finance_http.py's _link_shared_users_to_branch.
+    # الـheaders fixtures المشتركة (cashier/manager) بلا عضوية فرع أصلاً،
+    # فبنربطها (upsert) بالفرع الجديد ده عشان تستات الـHTTP تفضل تمثّل
+    # مشغّل حقيقي مربوط بفرعه. waiter_headers عمدًا مش متربط — مستخدَم فقط
+    # لتستات رفض المستوى (role level)، اللي بترفض قبل ما توصل لفحص الفرع خالص.
+    _link_shared_users_to_branch(db, b.id)
     return b
+
+
+def _link_shared_users_to_branch(db, branch_id: int) -> None:
+    from app.core.kernel.models.user import User
+    from tests.conftest import assign_test_user_to_branch
+
+    for email in ("cashier@test.local", "manager@test.local"):
+        user = db.query(User).filter(User.email == email).first()
+        if user:
+            assign_test_user_to_branch(db, user.id, branch_id)
+    db.commit()
 
 
 def contract_payload(branch_id: int) -> dict:
@@ -567,12 +585,16 @@ class TestTimeshareRouterMiscHttp:
         resp = client.get("/api/v1/timeshare/contracts/999999", headers=manager_headers)
         assert resp.status_code == 404
 
-    def test_update_nonexistent_contract_returns_400(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_update_nonexistent_contract_returns_404(self, client: TestClient, db, fake_redis, manager_headers):
+        """Gate 4B branch-isolation fix (2026-07-28): the router now resolves
+        the contract itself (for the branch check) before calling the
+        service, so a missing contract 404s at the router instead of a
+        generic 400 from the service's own get_contract_or_404."""
         make_branch_committed(db)
         resp = client.patch(
             "/api/v1/timeshare/contracts/999999", json={"notes": "x"}, headers=manager_headers,
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_pay_already_paid_installment_returns_400(self, client: TestClient, db, fake_redis, manager_headers):
         branch = make_branch_committed(db)

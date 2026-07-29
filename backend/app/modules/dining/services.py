@@ -631,29 +631,39 @@ def create_order(
 
     order_number = crud.generate_order_number(db, branch_id)
 
-    order = crud.create_order_with_items(
-        db=db,
-        branch_id=branch_id,
-        outlet_id=outlet.id,
-        order_number=order_number,
-        order_type=data.order_type,
-        table_id=data.table_id,
-        guests_count=data.guests_count,
-        notes=data.notes,
-        subtotal=subtotal,
-        vat_amount=vat_amount,
-        service_charge=svc_charge,
-        total=total,
-        waiter_id=waiter_id,
-        items_data=items_data,
-        status="held" if hold else "open",
-        customer_id=data.customer_id,
-        discount_amount=discount_amount,
-        delivery_fee=delivery_fee,
-        created_by=waiter_id,
-        guest_session_id=guest_session_id,
-        guest_public_reference=guest_public_reference,
-    )
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): crud.create_order_with_items
+    # بتعمل db.flush() فورًا بعد db.add(order) (لازم عشان تجيب order.id
+    # للأصناف) — يعني أي IntegrityError (order_number المكرر، أو
+    # uq_active_order_per_table الـbackstop اللي التعليق تحت كان بيدّعي إنه
+    # بيتلقط) بيتفجّر هنا جوه try كان بيلف db.commit() بس تحت، مش هنا —
+    # الـbackstop كان عمليًا ميوصلش له أبدًا، وأي تصادم كان بيطلع 500 خام.
+    try:
+        order = crud.create_order_with_items(
+            db=db,
+            branch_id=branch_id,
+            outlet_id=outlet.id,
+            order_number=order_number,
+            order_type=data.order_type,
+            table_id=data.table_id,
+            guests_count=data.guests_count,
+            notes=data.notes,
+            subtotal=subtotal,
+            vat_amount=vat_amount,
+            service_charge=svc_charge,
+            total=total,
+            waiter_id=waiter_id,
+            items_data=items_data,
+            status="held" if hold else "open",
+            customer_id=data.customer_id,
+            discount_amount=discount_amount,
+            delivery_fee=delivery_fee,
+            created_by=waiter_id,
+            guest_session_id=guest_session_id,
+            guest_public_reference=guest_public_reference,
+        )
+    except IntegrityError as exc:
+        db.rollback()
+        _raise_order_integrity_error(exc)
 
     if guest_session_id is not None:
         from app.modules.core import crud as core_crud  # noqa: PLC0415
@@ -678,15 +688,25 @@ def create_order(
     try:
         db.commit()
     except IntegrityError as exc:
-        # backstop: partial unique index منع طلبين نشطين على نفس الطاولة
-        # (سباق فات فحص get_active_order_for_table تحت القفل) — رسالة واضحة
-        # بدل خطأ DB خام.
         db.rollback()
-        if "uq_active_order_per_table" in str(getattr(exc, "orig", exc)):
-            raise ValueError("الطاولة مشغولة بطلب نشط بالفعل (سباق فتح مزدوج)") from exc
-        raise
+        _raise_order_integrity_error(exc)
     db.refresh(order)
     return order
+
+
+def _raise_order_integrity_error(exc: IntegrityError) -> None:
+    """رسالة واضحة (→400) بدل خطأ DB خام لسباقات إنشاء الطلب الحقيقية:
+    (أ) partial unique index بيمنع طلبين نشطين على نفس الطاولة (سباق فات
+    فحص get_active_order_for_table تحت القفل)، (ب) order_number المتكرر —
+    أول طلبين في نفس اليوم (SELECT FOR UPDATE في generate_order_number
+    مالوش صفوف تتقفل لسه، راجع تعليق الدالة نفسها). أي IntegrityError تانية
+    غير متوقعة بتتصعّد زي ما هي."""
+    detail = str(getattr(exc, "orig", exc))
+    if "uq_active_order_per_table" in detail:
+        raise ValueError("الطاولة مشغولة بطلب نشط بالفعل (سباق فتح مزدوج)") from exc
+    if "order_number" in detail:
+        raise ValueError("رقم الطلب اتكرر بسبب طلب متزامن — أعد المحاولة") from exc
+    raise exc
 
 
 def _create_kitchen_tickets_for_items(

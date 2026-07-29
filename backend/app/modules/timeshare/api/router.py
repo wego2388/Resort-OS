@@ -45,21 +45,42 @@ from app.modules.timeshare.schemas import (
     WaitlistCreate, WaitlistRead,
     ImportContractsResponse,
 )
+from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
 
 router = APIRouter(tags=["timeshare"])
 
 
+def _assert_timeshare_branch(db, user, branch_id: int, action_desc: str) -> None:
+    """Gate 4B-style branch isolation — كانت غايبة بالكامل من موديول
+    التايم شير (اتكشف 2026-07-28: get_contract/get_installment/get_visit
+    كل واحد فيهم بيدوّر بالـid بس من غير أي فلترة فرع، ومفيش أي
+    assert_branch_access في الراوتر كله). كاشير فرع A كان يقدر يحصّل قسط/
+    يلغي عقد/ينقل وحدة فرع B بمجرد تخمين الرقم."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+
 # ── Contracts ────────────────────────────────────────────────────────
+
+def _get_contract_or_404(db, contract_id: int):
+    c = crud.get_contract(db, contract_id)
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "العقد غير موجود")
+    return c
+
 
 @router.get("/timeshare/contracts", response_model=PaginatedResponse)
 def list_contracts(
-    db: DbDep, _=Depends(get_timeshare_user),
+    db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...),
     contract_status: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "عرض عقود التايم شير")
     items, total = crud.list_contracts(db, branch_id, contract_status, search,
                                        skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -70,6 +91,7 @@ def list_contracts(
              status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_permission("timeshare.contracts", "create", min_role_level=60))])
 def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_manager_user)):
+    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء عقد تايم شير")
     try:
         return services.create_contract(db, data, signed_by=user.id)
     except ValueError as exc:
@@ -77,17 +99,18 @@ def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_m
 
 
 @router.get("/timeshare/contracts/{contract_id}", response_model=TimeshareContractRead)
-def get_contract(contract_id: int, db: DbDep, _=Depends(get_timeshare_user)):
-    c = crud.get_contract(db, contract_id)
-    if not c:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "العقد غير موجود")
+def get_contract(contract_id: int, db: DbDep, user=Depends(get_timeshare_user)):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_timeshare_branch(db, user, c.branch_id, "عرض عقد تايم شير")
     return TimeshareContractRead.model_validate(c)
 
 
 @router.patch("/timeshare/contracts/{contract_id}", response_model=TimeshareContractRead,
               dependencies=[Depends(require_permission("timeshare.contracts", "edit", min_role_level=60))])
 def update_contract(contract_id: int, data: TimeshareContractUpdate, db: DbDep,
-                    _=Depends(get_manager_user)):
+                    user=Depends(get_manager_user)):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_timeshare_branch(db, user, c.branch_id, "تعديل عقد تايم شير")
     try:
         return services.update_contract(db, contract_id, data)
     except ValueError as exc:
@@ -98,7 +121,7 @@ def update_contract(contract_id: int, data: TimeshareContractUpdate, db: DbDep,
 
 @router.get("/timeshare/installments", response_model=None)
 def list_installments(
-    db: DbDep, _=Depends(get_timeshare_user),
+    db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     contract_id: Optional[int] = Query(None),
@@ -106,6 +129,7 @@ def list_installments(
     search: Optional[str] = Query(None),
     limit: int = Query(200, ge=1, le=1000),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "عرض أقساط التايم شير")
     result = services.list_installments(db, branch_id, status_filter, contract_id, month, search, limit)
     installments = []
     for i in result["installments"]:
@@ -125,9 +149,15 @@ def list_installments(
 @router.post("/timeshare/installments/{inst_id}/pay", response_model=InstallmentRead,
              dependencies=[Depends(require_permission("timeshare.installments", "collect", min_role_level=40))])
 def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
-                    _=Depends(get_timeshare_user)):
+                    user=Depends(get_timeshare_user)):
+    inst = crud.get_installment(db, inst_id)
+    if not inst:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"القسط {inst_id} غير موجود")
+    _assert_timeshare_branch(db, user, inst.contract.branch_id, "تحصيل قسط تايم شير")
     try:
         return services.pay_installment(db, inst_id, req)
+    except services.PaymentConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -135,10 +165,11 @@ def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
 @router.get("/timeshare/installments/monthly-report", response_model=None)
 def download_monthly_collection_report(
     db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
     month: str = Query(..., pattern=r"^\d{4}-\d{2}$", description="YYYY-MM"),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "تحميل تقرير التحصيل الشهري")
     try:
         year_s, month_s = month.split("-")
         if not (1 <= int(month_s) <= 12):
@@ -159,7 +190,7 @@ def download_monthly_collection_report(
 
 @router.get("/timeshare/maintenance-dues", response_model=None)
 def list_maintenance_dues_for_branch(
-    db: DbDep, _=Depends(get_timeshare_user),
+    db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
     contract_id: Optional[int] = Query(None),
@@ -169,6 +200,7 @@ def list_maintenance_dues_for_branch(
 ):
     """مرآة GET /timeshare/installments — قايمة مستحقات صيانة عبر الفرع كله
     لشاشة تاب "الصيانة" الإدارية."""
+    _assert_timeshare_branch(db, user, branch_id, "عرض مستحقات صيانة")
     result = services.list_maintenance_dues_for_branch(db, branch_id, status_filter, contract_id, fee_year, search, limit)
     dues = []
     for d in result["maintenance_dues"]:
@@ -186,16 +218,24 @@ def list_maintenance_dues_for_branch(
 
 
 @router.get("/timeshare/contracts/{contract_id}/maintenance-dues", response_model=list[TimeshareMaintenanceDueRead])
-def list_maintenance_dues(contract_id: int, db: DbDep, _=Depends(get_timeshare_user)):
+def list_maintenance_dues(contract_id: int, db: DbDep, user=Depends(get_timeshare_user)):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_timeshare_branch(db, user, c.branch_id, "عرض مستحقات صيانة عقد")
     return [TimeshareMaintenanceDueRead.model_validate(d) for d in crud.list_maintenance_dues(db, contract_id)]
 
 
 @router.post("/timeshare/maintenance-dues/{due_id}/pay", response_model=TimeshareMaintenanceDueRead,
              dependencies=[Depends(require_permission("timeshare.maintenance_dues", "collect", min_role_level=40))])
 def pay_maintenance_due(due_id: int, req: PayMaintenanceDueRequest, db: DbDep,
-                        _=Depends(get_timeshare_user)):
+                        user=Depends(get_timeshare_user)):
+    due = crud.get_maintenance_due(db, due_id)
+    if not due:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"مستحق الصيانة {due_id} غير موجود")
+    _assert_timeshare_branch(db, user, due.contract.branch_id, "تحصيل مستحق صيانة")
     try:
         return services.pay_maintenance_due(db, due_id, req)
+    except services.PaymentConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -203,7 +243,7 @@ def pay_maintenance_due(due_id: int, req: PayMaintenanceDueRequest, db: DbDep,
 @router.post("/timeshare/maintenance-dues/generate", response_model=None,
              dependencies=[Depends(require_permission("timeshare.maintenance_dues", "generate", min_role_level=60))])
 def generate_maintenance_dues(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...),
     fee_year: int = Query(..., ge=2026, le=2100),
 ):
@@ -211,6 +251,7 @@ def generate_maintenance_dues(
     generate_annual_maintenance_dues (1 يناير تلقائيًا)، هنا لإعادة التشغيل
     أو التوليد الفوري لسنة معيّنة. fee_year >= 2026 عمدًا — بلا أي تتبّع
     تاريخي قبل كده (قرار Mohamed)."""
+    _assert_timeshare_branch(db, user, branch_id, "توليد مستحقات صيانة")
     created = services.generate_annual_maintenance_dues(db, branch_id, fee_year)
     return {"fee_year": fee_year, "created": created}
 
@@ -218,14 +259,16 @@ def generate_maintenance_dues(
 # ── Waitlist ─────────────────────────────────────────────────────────
 
 @router.get("/timeshare/waitlist", response_model=list[WaitlistRead])
-def list_waitlist(db: DbDep, _=Depends(get_timeshare_user), branch_id: int = Query(...)):
+def list_waitlist(db: DbDep, user=Depends(get_timeshare_user), branch_id: int = Query(...)):
+    _assert_timeshare_branch(db, user, branch_id, "عرض قائمة الانتظار")
     return [WaitlistRead.model_validate(w) for w in crud.list_waitlist(db, branch_id)]
 
 
 @router.post("/timeshare/waitlist", response_model=WaitlistRead,
              status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_permission("timeshare.waitlist", "create", min_role_level=40))])
-def add_to_waitlist(data: WaitlistCreate, db: DbDep, _=Depends(get_timeshare_user)):
+def add_to_waitlist(data: WaitlistCreate, db: DbDep, user=Depends(get_timeshare_user)):
+    _assert_timeshare_branch(db, user, data.branch_id, "إضافة لقائمة الانتظار")
     try:
         return services.add_to_waitlist(db, data)
     except ValueError as exc:
@@ -235,7 +278,9 @@ def add_to_waitlist(data: WaitlistCreate, db: DbDep, _=Depends(get_timeshare_use
 # ── Contract PDF ─────────────────────────────────────────────────────
 
 @router.get("/timeshare/contracts/{contract_id}/pdf", response_model=None)
-def download_contract_pdf(contract_id: int, db: DbDep, _=Depends(get_timeshare_user)):
+def download_contract_pdf(contract_id: int, db: DbDep, user=Depends(get_timeshare_user)):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_timeshare_branch(db, user, c.branch_id, "تحميل PDF عقد تايم شير")
     try:
         pdf = services.generate_contract_pdf(db, contract_id)
         return Response(
@@ -250,17 +295,20 @@ def download_contract_pdf(contract_id: int, db: DbDep, _=Depends(get_timeshare_u
 # ── CS Dashboard ─────────────────────────────────────────────────────
 
 @router.get("/timeshare/cs-summary", response_model=None)
-def get_cs_summary(db: DbDep, _=Depends(get_timeshare_user), branch_id: int = Query(...)):
+def get_cs_summary(db: DbDep, user=Depends(get_timeshare_user), branch_id: int = Query(...)):
+    _assert_timeshare_branch(db, user, branch_id, "عرض لوحة خدمة العملاء")
     return services.get_cs_summary(db, branch_id)
 
 
 @router.get("/timeshare/sales-dashboard", response_model=None)
-def get_sales_dashboard(db: DbDep, _=Depends(get_timeshare_user), branch_id: int = Query(...)):
+def get_sales_dashboard(db: DbDep, user=Depends(get_timeshare_user), branch_id: int = Query(...)):
+    _assert_timeshare_branch(db, user, branch_id, "عرض لوحة المبيعات")
     return services.get_sales_dashboard(db, branch_id)
 
 
 @router.get("/timeshare/sales-dashboard/export", response_model=None)
-def download_sales_dashboard_excel(db: DbDep, _=Depends(get_manager_user), branch_id: int = Query(...)):
+def download_sales_dashboard_excel(db: DbDep, user=Depends(get_manager_user), branch_id: int = Query(...)):
+    _assert_timeshare_branch(db, user, branch_id, "تصدير لوحة المبيعات")
     xlsx = services.generate_sales_dashboard_excel(db, branch_id)
     return Response(
         content=xlsx,
@@ -273,34 +321,38 @@ def download_sales_dashboard_excel(db: DbDep, _=Depends(get_manager_user), branc
 
 @router.get("/timeshare/calendar", response_model=None)
 def get_calendar(
-    db: DbDep, _=Depends(get_timeshare_user),
+    db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...), year: Optional[int] = Query(None),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "عرض كالندر التايم شير")
     return services.get_calendar(db, branch_id, year)
 
 
 @router.get("/timeshare/available-weeks", response_model=None)
 def get_available_weeks(
-    db: DbDep, _=Depends(get_timeshare_user),
+    db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...),
     year: int = Query(..., ge=2020, le=2100),
     room_type: Optional[str] = Query(None, pattern=r"^(2R|4R|6R)$"),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "عرض الأسابيع المتاحة")
     return services.get_available_weeks(db, branch_id, year, room_type)
 
 
 @router.get("/timeshare/upcoming-visits", response_model=None)
 def get_upcoming_visits(
-    db: DbDep, _=Depends(get_timeshare_user),
+    db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...), days: int = Query(30, ge=1, le=365),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "عرض الزيارات القادمة")
     return services.get_upcoming_visits(db, branch_id, days)
 
 
 # ── Stats ─────────────────────────────────────────────────────────────
 
 @router.get("/timeshare/stats", response_model=None)
-def get_stats(db: DbDep, _=Depends(get_timeshare_user), branch_id: int = Query(...)):
+def get_stats(db: DbDep, user=Depends(get_timeshare_user), branch_id: int = Query(...)):
+    _assert_timeshare_branch(db, user, branch_id, "عرض إحصائيات التايم شير")
     return services.get_stats(db, branch_id)
 
 
@@ -310,10 +362,12 @@ def get_stats(db: DbDep, _=Depends(get_timeshare_user), branch_id: int = Query(.
              dependencies=[Depends(require_permission("timeshare.cancel_contract", "execute", min_role_level=60))])
 def cancel_contract(
     contract_id: int, data: TimeshareCancelRequest, db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
 ):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_timeshare_branch(db, user, c.branch_id, "إلغاء عقد تايم شير")
     try:
-        return services.cancel_contract(db, contract_id, data.cancel_amount)
+        return services.cancel_contract(db, contract_id, data.cancel_amount, cancelled_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -323,6 +377,8 @@ def transfer_unit(
     contract_id: int, data: TimeshareUnitTransferRequest, db: DbDep,
     user=Depends(get_manager_user),
 ):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_timeshare_branch(db, user, c.branch_id, "نقل وحدة عقد تايم شير")
     try:
         return services.transfer_unit(db, contract_id, data, transferred_by=user.id)
     except ValueError as exc:
@@ -333,18 +389,20 @@ def transfer_unit(
 
 @router.get("/timeshare/visits", response_model=list[TimeshareVisitRead])
 def list_visits(
-    db: DbDep, _=Depends(get_timeshare_user),
+    db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...),
     contract_id: Optional[int] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "عرض زيارات التايم شير")
     return [TimeshareVisitRead.model_validate(v) for v in crud.list_visits(db, branch_id, contract_id, status_filter)]
 
 
 @router.post("/timeshare/visits", response_model=TimeshareVisitRead,
              status_code=status.HTTP_201_CREATED,
              dependencies=[Depends(require_permission("timeshare.visits", "create", min_role_level=40))])
-def create_visit(data: TimeshareVisitCreate, db: DbDep, _=Depends(get_timeshare_user)):
+def create_visit(data: TimeshareVisitCreate, db: DbDep, user=Depends(get_timeshare_user)):
+    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء زيارة تايم شير")
     try:
         return services.create_visit(db, data)
     except services.VisitConflictError as exc:
@@ -356,7 +414,11 @@ def create_visit(data: TimeshareVisitCreate, db: DbDep, _=Depends(get_timeshare_
 @router.patch("/timeshare/visits/{visit_id}", response_model=TimeshareVisitRead,
               dependencies=[Depends(require_permission("timeshare.visits", "edit", min_role_level=25))])
 def update_visit(visit_id: int, data: TimeshareVisitUpdate, db: DbDep,
-                 _=Depends(get_timeshare_user)):
+                 user=Depends(get_timeshare_user)):
+    visit = crud.get_visit(db, visit_id)
+    if not visit:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الزيارة {visit_id} غير موجودة")
+    _assert_timeshare_branch(db, user, visit.branch_id, "تعديل زيارة تايم شير")
     try:
         return services.update_visit(db, visit_id, data)
     except ValueError as exc:
@@ -367,11 +429,12 @@ def update_visit(visit_id: int, data: TimeshareVisitUpdate, db: DbDep,
 
 @router.get("/timeshare/units", response_model=list[TimeshareUnitRead])
 def list_units(
-    db: DbDep, _=Depends(get_timeshare_user),
+    db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...),
     unit_type: Optional[str] = Query(None),
     status_filter: Optional[str] = Query(None, alias="status"),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "عرض وحدات التايم شير")
     return [TimeshareUnitRead.model_validate(u) for u in crud.list_units(db, branch_id, unit_type, status_filter)]
 
 
@@ -383,6 +446,7 @@ async def import_contracts_excel(
     branch_id: int = Query(...),
     user=Depends(get_manager_user),
 ):
+    _assert_timeshare_branch(db, user, branch_id, "استيراد عقود من Excel")
     try:
         content = await file.read()
         return services.import_contracts_excel(db, branch_id, content, signed_by=user.id)

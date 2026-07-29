@@ -1,0 +1,19 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  Domain-based TLS override — elkheima.com
+#
+#  يستبدل edge-ip-tls.conf بعد انتشار الـ DNS.
+#  كل الـ subdomains على port 443 (مش 8443).
+#
+#  Usage:
+#    docker compose -f docker-compose.prod.yml \
+#      -f docker-compose.prod.domain.yml up -d
+# ─────────────────────────────────────────────────────────────────────────────
+services:
+  nginx:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx/edge-domain.conf:/etc/nginx/conf.d/default.conf:ro
+      - /var/www/certbot:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro

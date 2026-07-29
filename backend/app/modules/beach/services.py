@@ -517,8 +517,15 @@ def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> Be
     if tx.voided_at:
         raise ValueError("العملية ملغاة مسبقاً")
 
-    # عكس الـ inventory
+    # عكس الـ inventory — ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): بعكس
+    # sell_ticket/b2b_checkin (بيقفلوا الصف قبل أي تعديل، راجع
+    # _lock_inventory_or_raise)، void_transaction كانت بتقرا وتعدّل
+    # capacity_used/towels_used من غير أي قفل خالص — لو عملية بيع جديدة
+    # حصلت في نفس اللحظة بالظبط على نفس الفرع/اليوم، الإلغاء ده كان ممكن
+    # يبني على قراءة قديمة ويمسح أثر البيع الجديد بصمت (lost update، نفس
+    # فئة الباج الموثّقة في lock_inventory_for_update's docstring بالظبط).
     inv_row = crud.get_or_create_inventory(db, tx.branch_id, tx.tx_date)
+    inv_row = _lock_inventory_or_raise(db, inv_row)
     cap_delta, towel_delta = calculate_inventory_delta(tx.tx_type, tx.quantity)
     crud.apply_inventory_delta(db, inv_row, -cap_delta, -towel_delta)
 
@@ -546,9 +553,35 @@ def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> Be
 
     # عكس رصيد B2B المستحق لو العملية كانت تشيك-إن فندق شريك — راجع تعليق
     # crud.decrement_b2b_checkins: باج حقيقي كان هنا قبل إضافة حد الائتمان
-    # (الإلغاء كان بيعكس كل حاجة إلا رصيد الفندق نفسه).
+    # (الإلغاء كان بيعكس كل حاجة إلا رصيد الفندق نفسه). ⚠️ باج تاني اتصلح
+    # هنا (2026-07-28): decrement_b2b_checkins بتعمل قراءة/تعديل غير مقفولة
+    # لصف B2BContractDay — نفس فئة باج الـinventory فوق بالظبط، لو تشيك-إن
+    # B2B جديد حصل في نفس اللحظة، الإلغاء كان ممكن يمسح أثره بصمت.
     if tx.b2b_contract_id:
+        day_row = crud.get_or_create_contract_day(db, tx.b2b_contract_id, tx.tx_date)
+        _lock_contract_day_or_raise(db, day_row)
         crud.decrement_b2b_checkins(db, tx.b2b_contract_id, tx.tx_date, tx.quantity, tx.total_amount)
+
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): إلغاء معاملة اتسجّلت عن طريق
+    # خريطة الشاطئ الحية (checkin_location) كان بيعكس كل الأثر المالي/المخزني
+    # بس مايلمسش BeachLocation خالص — الموقع كان يفضل "مشغول" ببيانات ضيف
+    # وهمية للأبد بعد ما البيع نفسه اتلغى. بنصفّره فقط لو لسه بيأشّر على نفس
+    # المعاملة دي بالظبط (current_transaction_id == tx.id) — لو الموقع
+    # اتفضّى (checkout عادي) أو اتاح لضيف تاني بعدين، مالوش أي علاقة بالإلغاء
+    # المتأخر ده، فمينفعش نلمسه.
+    if tx.location_id:
+        loc = crud.get_location(db, tx.location_id)
+        if loc:
+            loc = _lock_location_or_raise(db, loc)
+            if loc.current_transaction_id == tx.id:
+                loc.status = "available"
+                loc.current_transaction_id = None
+                loc.guest_name = None
+                loc.guest_phone = None
+                loc.guests_count = 0
+                loc.towels_given = 0
+                loc.checked_in_at = None
+                loc.checked_in_by = None
 
     tx = crud.void_transaction(db, tx, voided_by, reason)
     db.commit()

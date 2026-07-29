@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate, PayInstallmentRequest,
 )
-from app.modules.timeshare import services, crud
+from app.modules.timeshare import services, crud, models
 
 
 @pytest.fixture
@@ -424,6 +424,38 @@ class TestCancelContract:
         with pytest.raises(ValueError):
             services.cancel_contract(db, 999999, Decimal("0"))
 
+    def test_cancel_with_refund_posts_reversal_journal_entry(self, db: Session, contract, branch):
+        """باج حقيقي اتصلح: إلغاء عقد بمبلغ استرداد (cancel_amount>0) كان
+        بيسجّل الرقم على العقد نفسه بس من غير أي قيد يومية — كاش حقيقي
+        بيتدفع للعميل من غير أي أثر محاسبي، والإيراد اللي اتسجّل وقت
+        الدفعة الأولى كان يفضل مبالغ فيه للأبد."""
+        from app.modules.finance import crud as finance_crud
+
+        cash, revenue = make_finance_accounts(db, branch)
+        services.cancel_contract(db, contract.id, Decimal("5000"), cancelled_by=1)
+
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
+        cancel_entries = [e for e in entries if e.reference == f"TS-CANCEL-{contract.contract_number}"]
+        assert len(cancel_entries) == 1
+        lines = cancel_entries[0].lines
+        debit_line = next(l for l in lines if l.debit > 0)
+        credit_line = next(l for l in lines if l.credit > 0)
+        assert debit_line.account_id == revenue.id
+        assert debit_line.debit == Decimal("5000")
+        assert credit_line.account_id == cash.id
+        assert credit_line.credit == Decimal("5000")
+
+    def test_cancel_with_zero_refund_posts_no_journal_entry(self, db: Session, contract, branch):
+        """إلغاء بمصادرة كاملة (cancel_amount=0، مفيش كاش بيرجع للعميل)
+        مفيهوش أثر محاسبي جديد — مفيش حاجة تترحّل."""
+        from app.modules.finance import crud as finance_crud
+
+        services.cancel_contract(db, contract.id, Decimal("0"), cancelled_by=1)
+
+        entries, total = finance_crud.list_journal_entries(db, branch.id, source="timeshare")
+        cancel_entries = [e for e in entries if e.reference == f"TS-CANCEL-{contract.contract_number}"]
+        assert len(cancel_entries) == 0
+
 
 class TestTimeshareVisit:
 
@@ -678,6 +710,31 @@ class TestExcelImport:
         result = services.import_contracts_excel(db, branch.id, content, signed_by=1)
         assert result["imported"] == 1
         assert result["skipped"] == 1
+
+    def test_import_skips_duplicate_row_with_blank_form_number(self, db: Session, branch):
+        """باج حقيقي اتصلح: form_number فاضي كان بيتخطى فحص التكرار بالكامل
+        (الشرط كان ``if form_number and ...``) — رفع نفس الملف مرتين (شائع
+        في الملفات القديمة اللي مالهاش رقم فورمة خالص) كان بيضاعف كل عقد."""
+        headers = [
+            "customer_name", "room_type", "total_value", "down_payment",
+            "installments", "start_date", "first_installment_date",
+        ]
+        rows = [["ياسمين علي", "2R", 90000, 10000, 10, "2026-07-01", "2026-08-01"]]
+        content = self._build_workbook(headers, rows)
+
+        first = services.import_contracts_excel(db, branch.id, content, signed_by=1)
+        assert first["imported"] == 1
+        assert first["skipped"] == 0
+
+        second = services.import_contracts_excel(db, branch.id, content, signed_by=1)
+        assert second["imported"] == 0
+        assert second["skipped"] == 1
+
+        contracts = db.query(models.TimeshareContract).filter(
+            models.TimeshareContract.branch_id == branch.id,
+            models.TimeshareContract.customer_name == "ياسمين علي",
+        ).all()
+        assert len(contracts) == 1
 
     def test_import_row_error_does_not_abort_whole_batch(self, db: Session, branch):
         """صف بقيمة فاسدة (down_payment أكبر من total_value) يتسجّل كـ error

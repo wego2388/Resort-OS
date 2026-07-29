@@ -196,6 +196,25 @@ class TestOrder:
         with pytest.raises(ValueError, match="خارج الخدمة"):
             services.create_order(db, branch.id, data)
 
+    def test_duplicate_order_number_race_raises_value_error_not_500(self, db):
+        """باج حقيقي اتصلح (2026-07-28): generate_order_number بيقفل الصفوف
+        المطابقة للبادئة الحالية بـFOR UPDATE، لكن أول طلبين في اليوم
+        مفيش صفوف تتقفل أصلاً (السباق نفسه غير قابل للتغطية على SQLite —
+        راجع CLAUDE.md §13 ⓫ — فبنحاكيه هنا بتثبيت order_number يدويًا
+        عشان نتأكد إن الـIntegrityError بيتحوّل لرسالة واضحة (400) بدل
+        500 خام لو الرقمين اتصادفوا فعليًا على Postgres حقيقي."""
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = make_item(db, branch, outlet)
+        data = OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway",
+            items=[OrderItemCreate(item_id=item.id, quantity=1)],
+        )
+        with patch("app.modules.dining.services.crud.generate_order_number", return_value="ORD-TESTRACE-0001"):
+            services.create_order(db, branch.id, data, waiter_id=1)
+            with pytest.raises(ValueError, match="رقم الطلب اتكرر"):
+                services.create_order(db, branch.id, data, waiter_id=1)
+
     def test_subtotal_correct(self, db):
         branch = make_branch(db)
         outlet = make_outlet(db, branch)

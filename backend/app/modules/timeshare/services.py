@@ -24,6 +24,43 @@ class VisitConflictError(Exception):
     """وحدة تايم شير مقفولة فعلاً أو ماسكاها transaction تانية الآن — 409، مش 400."""
 
 
+class PaymentConflictError(Exception):
+    """قسط/مستحق صيانة مقفول بعملية تحصيل تانية شغالة عليه دلوقتي — 409، مش 400."""
+
+
+def _lock_installment_or_raise(db: Session, inst_id: int) -> TimeshareInstallment:
+    """⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28، اتأكد بريبرو حي على حالتين
+    منفصلتين تدويًا قبل الإصلاح): pay_installment كانت بتقرا/تعدّل paid_amount
+    من غير أي قفل صف خالص — تحصيلين متزامنين (كاشيرين مختلفين بيسجّلوا دفعة
+    على نفس القسط في نفس اللحظة) كانوا يقروا نفس paid_amount القديم، وآخر
+    commit يمسح أثر التحصيل التاني بصمت من غير أي خطأ — فلوس محصّلة فعليًا
+    كانت بتختفي من الدفاتر. راجع beach._lock_inventory_or_raise لنفس النمط."""
+    try:
+        locked = crud.lock_installment_for_update(db, inst_id)
+    except OperationalError as exc:
+        db.rollback()
+        raise PaymentConflictError(
+            "القسط مقفول الآن بعملية تحصيل أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    if not locked:
+        raise ValueError(f"القسط {inst_id} غير موجود")
+    return locked
+
+
+def _lock_maintenance_due_or_raise(db: Session, due_id: int) -> TimeshareMaintenanceDue:
+    """مرآة _lock_installment_or_raise — pay_maintenance_due نفس فئة الباج بالظبط."""
+    try:
+        locked = crud.lock_maintenance_due_for_update(db, due_id)
+    except OperationalError as exc:
+        db.rollback()
+        raise PaymentConflictError(
+            "مستحق الصيانة مقفول الآن بعملية تحصيل أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    if not locked:
+        raise ValueError(f"مستحق الصيانة {due_id} غير موجود")
+    return locked
+
+
 def get_contract_or_404(db: Session, contract_id: int) -> TimeshareContract:
     c = crud.get_contract(db, contract_id)
     if not c:
@@ -135,9 +172,7 @@ def pay_installment(db: Session, inst_id: int, req: PayInstallmentRequest) -> Ti
        العقد) كانت غايبة تمامًا عن الدفاتر المحاسبية — مخالفة مباشرة لـ
        "Finance First" (§5.2 في CLAUDE.md بيذكر أقساط التايم شير بالاسم صراحةً).
     """
-    inst = crud.get_installment(db, inst_id)
-    if not inst:
-        raise ValueError(f"القسط {inst_id} غير موجود")
+    inst = _lock_installment_or_raise(db, inst_id)
     if inst.status == "paid":
         raise ValueError("القسط مدفوع بالكامل مسبقاً")
 
@@ -258,9 +293,7 @@ def pay_maintenance_due(db: Session, due_id: int, req: PayMaintenanceDueRequest)
     """تحصيل مستحق صيانة سنوي — مرآة كاملة لـ pay_installment (نفس تسلسل
     التحقق بالضبط: موجود؟ مدفوع بالفعل؟ العقد ملغي/منتهي؟ المبلغ زيادة عن
     المتبقي؟) بس على TimeshareMaintenanceDue بدل TimeshareInstallment."""
-    due = crud.get_maintenance_due(db, due_id)
-    if not due:
-        raise ValueError(f"مستحق الصيانة {due_id} غير موجود")
+    due = _lock_maintenance_due_or_raise(db, due_id)
     if due.status == "paid":
         raise ValueError("مستحق الصيانة مدفوع بالكامل مسبقاً")
 
@@ -858,14 +891,47 @@ def get_stats(db: Session, branch_id: int) -> dict:
     }
 
 
-def cancel_contract(db: Session, contract_id: int, cancel_amount) -> TimeshareContract:
+def cancel_contract(
+    db: Session, contract_id: int, cancel_amount, cancelled_by: Optional[int] = None,
+) -> TimeshareContract:
     contract = get_contract_or_404(db, contract_id)
     if contract.status == "cancelled":
         raise ValueError("العقد ملغي بالفعل")
     obj = crud.cancel_contract(db, contract, cancel_amount)
+    # ⚠️ باج محاسبي حقيقي كان هنا: إلغاء العقد بمبلغ استرداد (cancel_amount)
+    # كان بيسجّل الرقم على العقد نفسه بس من غير أي قيد يومية — يعني كاش
+    # حقيقي بيتدفع للعميل (استرداد) كان بيخرج من الخزينة من غير ما يترحّل
+    # محاسبيًا خالص، والإيراد اللي اتسجّل وقت الدفعة الأولى/الأقساط
+    # (_post_deferred_revenue_journal/_post_installment_payment_journal) كان
+    # يفضل مبالغ فيه للأبد رغم إن جزء منه اترد فعليًا للعميل.
+    if cancel_amount and cancel_amount > 0:
+        _post_contract_cancellation_refund_journal(db, obj, cancel_amount, cancelled_by or 0)
     db.commit()
     db.refresh(obj)
     return obj
+
+
+def _post_contract_cancellation_refund_journal(
+    db: "Session", contract: "TimeshareContract", refund_amount, cancelled_by: int,
+) -> None:
+    """Dr. إيرادات عقود التايم شير (4600) / Cr. نقدية (1100) — عكس الإيراد
+    المسجَّل سابقًا بمقدار المبلغ المسترد فعليًا للعميل عند إلغاء العقد
+    (نفس فلسفة عكس القيد وقت إلغاء عملية شاطئ، راجع
+    beach.services._post_beach_revenue_reversal_journal)."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import business_today  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, contract.branch_id, business_today(settings.TIMEZONE),
+        debit_account_code="4600", credit_account_code="1100",
+        amount=refund_amount,
+        reference=f"TS-CANCEL-{contract.contract_number}",
+        description=f"استرداد إلغاء عقد تايم شير — {contract.contract_number}",
+        source="timeshare", source_id=contract.id,
+        created_by=cancelled_by,
+        cost_center_code="TS",
+    )
 
 
 def transfer_unit(
@@ -1092,6 +1158,17 @@ def import_contracts_excel(
                 continue
 
             data = TimeshareContractCreate(**{k: v for k, v in payload.items() if v is not None or k == "branch_id"})
+
+            # ⚠️ باج حقيقي كان هنا: form_number فاضي (شائع في الملفات
+            # القديمة) كان بيتخطى فحص التكرار بالكامل — رفع نفس الملف مرتين
+            # كان بيضاعف كل عقوده اللي من غير رقم فورمة. راجع
+            # crud.get_contract_by_natural_key لتفاصيل المفتاح البديل.
+            if not form_number and crud.get_contract_by_natural_key(
+                db, branch_id, data.customer_name, data.unit_id, data.start_date, data.total_value,
+            ):
+                skipped += 1
+                continue
+
             create_contract(db, data, signed_by)
             imported += 1
         except Exception as exc:

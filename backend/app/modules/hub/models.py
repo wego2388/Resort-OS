@@ -81,9 +81,15 @@ class HubOnlineBooking(Base, TimestampMixin):
     id:            Mapped[int]          = mapped_column(primary_key=True)
     branch_id:     Mapped[int]          = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
     offer_id:      Mapped[int | None]   = mapped_column(ForeignKey("hub_offers.id", ondelete="SET NULL"), nullable=True)
-    guest_name:    Mapped[str]          = mapped_column(String(200))
-    guest_phone:   Mapped[str]          = mapped_column(String(20))
-    guest_email:   Mapped[str | None]   = mapped_column(String(150), nullable=True)
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): بيانات ضيف واردة من الموقع
+    # العام كانت متخزّنة عادي (plaintext) — عكس Lead/ContactForm في نفس
+    # الموديول اللي بيشفّروا نفس نوع البيانات دي بالظبط. مفيش أي فلترة/بحث
+    # WHERE على الحقول دي في crud.py، فالتشفير آمن من غير كسر أي استعلام.
+    # الأطوال (512/255) نفس ContactForm تحت بالظبط — ناتج Fernet أطول بكتير
+    # من النص الأصلي، String(20) العادي كان هيقطع أي رقم تليفون مشفّر فعليًا.
+    guest_name:    Mapped[str]          = mapped_column(EncryptedString(512))
+    guest_phone:   Mapped[str]          = mapped_column(EncryptedString(255))
+    guest_email:   Mapped[str | None]   = mapped_column(EncryptedString(512), nullable=True)
     guests_count:  Mapped[int]          = mapped_column(Integer, default=1)
     requested_date: Mapped[date]        = mapped_column(Date)
     notes:         Mapped[str | None]   = mapped_column(Text, nullable=True)

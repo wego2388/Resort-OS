@@ -261,6 +261,14 @@ def add_payment(db: Session, folio_id: int, data: PaymentCreate, cashier_id: Opt
     Dr ذمم الفوليو(1150)/Cr إيراد الموديول اللي بيترحّل وقت إنشاء الشحنة
     نفسها (راجع restaurant/cafe/beach services._post_*_folio_charge_journal)."""
     folio = get_folio_or_404(db, folio_id)
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): folio_id/branch_id بيتحققوا
+    # ويتسعّروا هنا من الـ path (folio_id فوق، folio.currency تحت) لكن
+    # crud.create_payment كانت بتخزّن وترحّل بـ data.folio_id/data.branch_id
+    # الخام من جسم الطلب — لو مختلفين عن الـ path، الدفعة بتتسجّل وتترحّل
+    # على فوليو/فرع مختلف تمامًا عن اللي اتحقق منه فعليًا فوق (نفس فئة باج
+    # cashier_id تحت اللي كان متصلح من قبل). نوفّق الاتنين على قيمة الـ path
+    # الموثوقة دايمًا، بالظبط زي cashier_id.
+    data = data.model_copy(update={"folio_id": folio_id, "branch_id": folio.branch_id})
     if cashier_id and not data.cashier_id:
         data = data.model_copy(update={"cashier_id": cashier_id})
     shift_id = None
@@ -297,6 +305,21 @@ def void_payment(db: Session, payment_id: int, voided_by: int, reason: str = "vo
     # سطرين تدقيق لعملية إلغاء واحدة فعلية.
     if payment.voided_at is not None:
         raise ValueError(f"الدفعة {payment_id} ملغاة بالفعل")
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): الدالة دي بتفترض إن كل دفعة
+    # لازم يكون ليها folio_id — عكس reversal ثابت Dr 1150/Cr 1100 (نظير
+    # add_payment فوق بالظبط). دفعة POS مباشرة (folio_id=None — بيع نقدي
+    # فوري من dining/beach عبر crud.create_direct_payment، مش تحصيل فوليو)
+    # كان بيدخل هنا يعدّي من غير أي رفض (get_folio(db, None) بترجع None،
+    # فحص الفوليو المغلق بيتخطّى بصمت) ويرحّل نفس القيد الغلط — الكاش يترد
+    # صح، لكن النظير بيروح لذمم فوليو مش موجودة بدل حساب الإيراد الحقيقي
+    # اللي اتسجّل وقت البيع، فيتضخّم رصيد "ذمم فوليو" وهمي والإيراد يفضل
+    # متضخّم. إلغاء بيع مباشر لازم يعدّي من مسار الموديول نفسه (زي
+    # dining.services.void_order_item) اللي بيعكس المخزون كمان، مش من هنا.
+    if payment.folio_id is None:
+        raise ValueError(
+            f"الدفعة {payment_id} دفعة بيع مباشر (مش تحصيل فوليو) — "
+            "استخدم إلغاء الصنف/الطلب من الموديول نفسه (دايننج/شاطئ)"
+        )
     folio = crud.get_folio(db, payment.folio_id)
     if folio and folio.status == "closed":
         raise ValueError("لا يمكن إلغاء دفعة من فوليو مغلق")

@@ -478,7 +478,11 @@ class TestFolioHTTPFlow:
         assert resp.status_code == 200
         assert any(f["id"] == folio_id for f in resp.json()["items"])
 
-    def test_add_payment_to_nonexistent_folio_400(self, client: TestClient, db, cashier_headers):
+    def test_add_payment_to_nonexistent_folio_404(self, client: TestClient, db, cashier_headers):
+        """Gate 4B branch-isolation fix (2026-07-28): the router now resolves
+        the folio itself (for the branch check) before calling the service,
+        so a missing folio 404s at the router instead of a generic 400 from
+        the service's own get_folio_or_404."""
         branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/finance/folios/999999/payments",
@@ -488,8 +492,88 @@ class TestFolioHTTPFlow:
             },
             headers=cashier_headers,
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
+    def test_cross_branch_cashier_cannot_charge_pay_or_settle_foreign_folio(
+        self, client: TestClient, db, cashier_headers,
+    ):
+        """باج حقيقي اتصلح (2026-07-28): على عكس كل عمليات الوردية المجاورة
+        (Gate 4B)، endpoints الفوليو (charges/payments/settle) ماكانش عندهم
+        أي فحص فرع خالص — كاشير مربوط بفرع A كان يقدر يضيف رسوم/يحصّل/يسوّي
+        فوليو فرع B بمجرد معرفة folio_id."""
+        branch_a = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/folios",
+            json={
+                "branch_id": branch_a.id, "guest_name": "ضيف فرع A",
+                "check_in": datetime.utcnow().isoformat(),
+                "check_out": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        folio_id = create_resp.json()["id"]
+
+        # فرع تاني بيعيد ربط الكاشير المشترك ليه (upsert) — بقى بره فرع الفوليو.
+        make_branch_committed(db)
+
+        charge_resp = client.post(
+            f"/api/v1/finance/folios/{folio_id}/charges",
+            json={
+                "charge_type": "room", "description": "إيجار ليلة",
+                "amount": "500.00", "vat_amount": "70.00",
+                "posted_at": datetime.utcnow().isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert charge_resp.status_code == 403
+
+        pay_resp = client.post(
+            f"/api/v1/finance/folios/{folio_id}/payments",
+            json={
+                "folio_id": folio_id, "branch_id": branch_a.id, "amount": "570.00",
+                "method": "cash", "posted_at": datetime.utcnow().isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert pay_resp.status_code == 403
+
+        settle_resp = client.post(f"/api/v1/finance/folios/{folio_id}/settle", headers=cashier_headers)
+        assert settle_resp.status_code == 403
+
+    def test_add_payment_reconciles_body_folio_and_branch_id_to_path(
+        self, client: TestClient, db, cashier_headers,
+    ):
+        """باج حقيقي اتصلح (2026-07-28): add_payment كانت بتتحقق من/تسعّر
+        بـfolio_id بتاع الـpath، لكن crud.create_payment كانت بتخزّن
+        data.folio_id/data.branch_id الخام من جسم الطلب. لو الاتنين
+        مختلفين، الدفعة كانت بتتسجّل وترحّل على فوليو/فرع تاني تمامًا عن
+        اللي اتحقق منه فعليًا. دلوقتي الـpath هو المصدر الوحيد للحقيقة."""
+        branch = make_branch_committed(db)
+        create_resp = client.post(
+            "/api/v1/finance/folios",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف",
+                "check_in": datetime.utcnow().isoformat(),
+                "check_out": (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        folio_id = create_resp.json()["id"]
+
+        pay_resp = client.post(
+            f"/api/v1/finance/folios/{folio_id}/payments",
+            json={
+                # folio_id/branch_id هنا مختلفين عمدًا عن الـpath — لازم يتجاهلوا.
+                "folio_id": 999999, "branch_id": 999999, "amount": "100.00",
+                "method": "cash", "posted_at": datetime.utcnow().isoformat(),
+            },
+            headers=cashier_headers,
+        )
+        assert pay_resp.status_code == 201, pay_resp.text
+        body = pay_resp.json()
+        assert body["folio_id"] == folio_id
+        assert body["branch_id"] == branch.id
 
 class TestVoidPaymentAndRevenueAuditLogHTTP:
     """Regression coverage — services.void_payment/crud.void_payment existed
@@ -590,14 +674,18 @@ class TestVoidPaymentAndRevenueAuditLogHTTP:
         )
         assert resp.status_code == 422
 
-    def test_void_nonexistent_payment_400(self, client: TestClient, db, manager_headers):
+    def test_void_nonexistent_payment_404(self, client: TestClient, db, manager_headers):
+        """Gate 4B branch-isolation fix (2026-07-28): the router now resolves
+        the payment itself (for the branch check) before consuming step-up/
+        calling the service, so a missing payment 404s at the router instead
+        of a generic 400 from the service's own lookup."""
         reason = "دفعة غير موجودة"
         resp = client.post(
             "/api/v1/finance/payments/999999/void",
             json={"reason": reason},
             headers=_void_payment_headers(client, manager_headers, payment_id=999999, reason=reason),
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
     def test_void_payment_requires_manager(self, client: TestClient, db, cashier_headers):
         branch = make_branch_committed(db)

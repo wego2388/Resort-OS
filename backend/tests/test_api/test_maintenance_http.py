@@ -18,7 +18,21 @@ def make_branch_committed(db):
                code=f"MNT-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
+    # Gate 4B: عمليات الصيانة بقت تفرض branch isolation server-side
+    # (2026-07-28) — نفس نمط test_timeshare_http.py's make_branch_committed.
+    _link_shared_users_to_branch(db, b.id)
     return b
+
+
+def _link_shared_users_to_branch(db, branch_id: int) -> None:
+    from app.core.kernel.models.user import User
+    from tests.conftest import assign_test_user_to_branch
+
+    for email in ("waiter@test.local", "manager@test.local"):
+        user = db.query(User).filter(User.email == email).first()
+        if user:
+            assign_test_user_to_branch(db, user.id, branch_id)
+    db.commit()
 
 
 def make_employee_committed(db, branch, phone: str | None = None):
@@ -87,11 +101,13 @@ class TestAssetsEndpoints:
         assert resp.status_code == 403
 
     def test_dispose_as_admin_succeeds(self, client: TestClient, db, manager_headers):
-        from tests.conftest import _create_test_user, _make_token
+        from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
         branch = make_branch_committed(db)
         asset = create_asset(client, branch.id, manager_headers)
         email = f"maint-admin-{uuid.uuid4().hex[:6]}@test.local"
-        _create_test_user(email, "admin")
+        user_id = _create_test_user(email, "admin")
+        assign_test_user_to_branch(db, user_id, branch.id)
+        db.commit()
         headers = {"Authorization": f"Bearer {_make_token(email)}"}
 
         resp = client.post(f"/api/v1/maintenance/assets/{asset['id']}/dispose", headers=headers)
@@ -259,6 +275,45 @@ class TestWorkOrdersEndpoints:
             headers=waiter_headers,
         )
         assert resp.status_code == 201, resp.text
+
+    def test_add_inventory_linked_part_deducts_stock(self, client: TestClient, db, waiter_headers):
+        """باج حقيقي اتصلح (2026-07-28): إضافة قطعة غيار مرتبطة بصنف مخزون
+        حقيقي (product_id) كانت بترجع 400 دايمًا — product.unit_cost مش
+        عمود موجود أصلاً (الاسم الصح cost_price)، وStockMovementCreate كانت
+        بتتبنى بحقول ناقصة/غلط. اتصلحت باستخدام inventory.consume_stock
+        (نفس دالة استهلاك وصفات dining بالظبط)."""
+        from decimal import Decimal
+        from app.modules.inventory.models import Product, Warehouse
+
+        branch = make_branch_committed(db)
+        warehouse = Warehouse(branch_id=branch.id, name="مخزن الصيانة", code=f"WH-{uuid.uuid4().hex[:6].upper()}")
+        db.add(warehouse)
+        db.commit()
+        product = Product(
+            branch_id=branch.id, warehouse_id=warehouse.id,
+            name="فلتر زيت", sku=f"SKU-{uuid.uuid4().hex[:8].upper()}",
+            unit="piece", cost_price=Decimal("75.00"), current_stock=Decimal("20"),
+        )
+        db.add(product)
+        db.commit()
+
+        wo = client.post(
+            "/api/v1/maintenance/work-orders",
+            json={"branch_id": branch.id, "title": "تغيير فلتر الزيت"},
+            headers=waiter_headers,
+        ).json()
+
+        resp = client.post(
+            f"/api/v1/maintenance/work-orders/{wo['id']}/parts",
+            json={"product_id": product.id, "part_name": "فلتر زيت", "quantity": "3"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert any(p["product_id"] == product.id and float(p["unit_cost"]) == 75.0 for p in body["parts"])
+
+        db.refresh(product)
+        assert product.current_stock == Decimal("17")  # 20 - 3
 
 
 class TestPreventiveSchedulesEndpoints:

@@ -1,9 +1,12 @@
 """app/modules/maintenance/services.py — Business logic"""
 from __future__ import annotations
 
+from decimal import Decimal
+
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.modules.inventory.services import InventoryConcurrencyError
 from app.modules.maintenance import crud
 from app.modules.maintenance.models import Asset, PreventiveSchedule, WorkOrder
 from app.modules.maintenance.schemas import (
@@ -156,34 +159,46 @@ def add_part_to_wo(db: Session, order_id: int, data: WorkOrderPartCreate, added_
         raise ValueError("لا يمكن إضافة قطع لأمر صيانة مكتمل أو ملغى")
 
     if data.product_id:
+        # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28، اتأكد بريبرو حي: الميزة دي
+        # كانت 400 دايمًا في كل مرة تُستخدم): (١) product.unit_cost مش عمود
+        # موجود على Product خالص (الاسم الصح cost_price)، (٢) StockMovementCreate
+        # كانت بتتبنى بـmovement_type="out" (غير موجود في الـpattern المسموح)
+        # ومن غير warehouse_id/moved_at الإجباريين، و"reference" مش حقل
+        # حقيقي (reference_type/reference_id هما الصح). الحل: استخدام
+        # inv_svc.consume_stock — نفس الدالة اللي dining بيستخدمها لخصم
+        # مكوّنات الوصفات، بتعمل القفل الصحيح وتقرا cost_price من النسخة
+        # المقفولة، وترحّل قيد COGS تلقائيًا (كان مفقود هنا تمامًا من الأول).
         try:
             from app.modules.inventory import crud as inv_crud   # noqa: PLC0415
             from app.modules.inventory import services as inv_svc  # noqa: PLC0415
-            from app.modules.inventory.schemas import StockMovementCreate  # noqa: PLC0415
 
             product = inv_crud.get_product(db, data.product_id)
             if not product:
                 raise ValueError(f"المنتج {data.product_id} غير موجود في المخزن")
             if product.branch_id != wo.branch_id:
                 raise ValueError("المنتج يعود لفرع مختلف عن أمر الصيانة")
+            if not product.warehouse_id:
+                raise ValueError(f"المنتج {data.product_id} من غير مخزن مرتبط")
+            warehouse = inv_crud.get_warehouse(db, product.warehouse_id)
+            if not warehouse or warehouse.branch_id != wo.branch_id:
+                raise ValueError(f"مخزن المنتج {data.product_id} غير صالح لفرع أمر الصيانة")
 
             # اجلب part_name + unit_cost من المنتج لو مش محدد يدوياً
             resolved_name = data.part_name or product.name
-            resolved_cost = data.unit_cost if data.unit_cost > 0 else (product.unit_cost or 0)
+            resolved_cost = data.unit_cost if data.unit_cost > 0 else (product.cost_price or Decimal("0"))
 
-            # اخصم من المخزن
-            inv_svc.record_movement(
+            # اخصم من المخزن (نفس دالة استهلاك وصفات dining بالظبط)
+            inv_svc.consume_stock(
                 db,
-                StockMovementCreate(
-                    product_id=data.product_id,
-                    branch_id=wo.branch_id,
-                    movement_type="out",
-                    quantity=-data.quantity,           # سالب = خروج
-                    reference=wo.order_number,
-                    notes=f"صرف لأمر صيانة {wo.order_number} — {wo.title}",
-                ),
+                branch_id=wo.branch_id,
+                product_id=data.product_id,
+                warehouse_id=product.warehouse_id,
+                quantity=data.quantity,
+                reference_type="maintenance_work_order",
+                reference_id=wo.id,
                 moved_by=added_by,
                 allow_negative=True,   # نفس سياسة المطعم: رصيد سالب مؤقت أفضل من إيقاف العمل
+                commit=False,          # نفس commit موحّد واحد في نهاية الدالة تحت
             )
 
             # أنشئ النسخة المعدّلة من data
@@ -196,6 +211,8 @@ def add_part_to_wo(db: Session, order_id: int, data: WorkOrderPartCreate, added_
                 unit_cost=resolved_cost,
             )
         except ValueError:
+            raise
+        except InventoryConcurrencyError:
             raise
         except Exception as exc:
             raise ValueError(f"فشل خصم المخزن للمنتج {data.product_id}: {exc}") from exc

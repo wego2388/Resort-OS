@@ -9,7 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_date_to_utc_range
@@ -526,7 +526,14 @@ def list_orders(
         start, end = local_date_to_utc_range(order_date, settings.TIMEZONE)
         q = q.filter(DiningOrder.created_at.between(start, end))
     total = q.count()
-    items = q.order_by(DiningOrder.created_at.desc()).offset(skip).limit(limit).all()
+    # ⚠️ باج N+1 حقيقي كان هنا (اتصلح 2026-07-28): DiningOrder.items وDiningOrderItem.extras
+    # كلاهم lazy="select" — OrderRead بيسريلايز items وextras كل واحد فيهم، فاستدعاء
+    # هذا الـendpoint (شاشة الكاشير/المدير للطلبات) كان بيولّد استعلام منفصل لكل طلب
+    # وواحد تاني لكل سطر طلب، مش استعلام واحد بس زي الشاشات الأتقل استخدامًا (KDS).
+    items = (
+        q.options(selectinload(DiningOrder.items).selectinload(DiningOrderItem.extras))
+        .order_by(DiningOrder.created_at.desc()).offset(skip).limit(limit).all()
+    )
     return items, total
 
 

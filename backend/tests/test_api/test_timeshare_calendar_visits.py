@@ -25,7 +25,23 @@ def _make_branch(db):
     )
     db.add(b)
     db.commit()
+    # Gate 4B: عمليات التايم شير بقت تفرض branch isolation server-side
+    # (2026-07-28) — manager_headers المشترك بيتربط (upsert) تلقائيًا بأحدث
+    # فرع اتعمل، زي test_timeshare_http.py's make_branch_committed بالظبط.
+    # test_calendar_other_branch_isolated (بتعمل فرعين) بترجّع الربط يدويًا
+    # لـbranch_a بعد إنشاء branch_b — راجع تعليقها هناك.
+    _link_shared_users_to_branch(db, b.id)
     return b
+
+
+def _link_shared_users_to_branch(db, branch_id: int) -> None:
+    from app.core.kernel.models.user import User
+    from tests.conftest import assign_test_user_to_branch
+
+    user = db.query(User).filter(User.email == "manager@test.local").first()
+    if user:
+        assign_test_user_to_branch(db, user.id, branch_id)
+    db.commit()
 
 
 def _make_contract(db, branch_id, week_number=None, status="active", room_type="2R"):
@@ -209,6 +225,9 @@ class TestCalendarIncludesVisits:
         """زيارات فرع آخر لا تظهر في الكالندر."""
         branch_a = _make_branch(db)
         branch_b = _make_branch(db)
+        # _make_branch بتربط manager_headers تلقائيًا بأحدث فرع (branch_b) —
+        # هنا محتاجينه يستعلم عن branch_a تحديدًا فبنرجّع الربط له صراحةً.
+        _link_shared_users_to_branch(db, branch_a.id)
         contract_b = _make_contract(db, branch_b.id, week_number=None)
         year = date.today().year
         check_in = date.fromisocalendar(year, 40, 1)

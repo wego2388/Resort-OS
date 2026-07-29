@@ -168,6 +168,25 @@ class TestHRPermissions:
         )
         assert resp.status_code == 403
 
+    def test_create_leave_request_requires_manager(self, client: TestClient, db, cashier_headers):
+        """A low-privilege account must not be able to file a leave request in
+        an arbitrary employee's name via the admin-style path — self-service
+        goes through /hr/me/leaves/request instead, which derives employee_id
+        from the authenticated user rather than trusting the request body."""
+        branch = make_branch_committed(db)
+        employee = make_employee_committed(db, branch)
+        leave_type = make_leave_type_committed(db, branch)
+        resp = client.post(
+            "/api/v1/hr/leave-requests",
+            json={
+                "employee_id": employee.id, "branch_id": branch.id, "leave_type_id": leave_type.id,
+                "start_date": str(date.today() + timedelta(days=5)),
+                "end_date": str(date.today() + timedelta(days=7)),
+            },
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
 
 class TestHRValidation:
     def test_create_employee_rejects_zero_salary(self, client: TestClient, db, super_admin_headers):
@@ -422,15 +441,24 @@ class TestEmployeeCrudHttp:
         assert resp.status_code == 400
         assert "مستخدم مسبقاً" in resp.text
 
-    def test_get_employee_by_id_success(self, client: TestClient, db, waiter_headers):
+    def test_get_employee_by_id_success(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
-        resp = client.get(f"/api/v1/hr/employees/{emp.id}", headers=waiter_headers)
+        resp = client.get(f"/api/v1/hr/employees/{emp.id}", headers=manager_headers)
         assert resp.status_code == 200, resp.text
         assert resp.json()["id"] == emp.id
 
-    def test_get_employee_404(self, client: TestClient, db, waiter_headers):
-        resp = client.get("/api/v1/hr/employees/999999", headers=waiter_headers)
+    def test_get_employee_by_id_requires_manager(self, client: TestClient, db, waiter_headers):
+        """A waiter/cashier must not be able to read another employee's salary
+        and decrypted national_id by guessing a sequential employee_id — this
+        endpoint leaked exactly that until it was gated to manager+ (2026-07-28)."""
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.get(f"/api/v1/hr/employees/{emp.id}", headers=waiter_headers)
+        assert resp.status_code == 403
+
+    def test_get_employee_404(self, client: TestClient, db, manager_headers):
+        resp = client.get("/api/v1/hr/employees/999999", headers=manager_headers)
         assert resp.status_code == 404
 
     def test_update_employee_success(self, client: TestClient, db, super_admin_headers):
@@ -1081,6 +1109,19 @@ class TestPayrollDownloadsHttp:
     def test_download_payslip_pdf_404_run_missing(self, client: TestClient, db, manager_headers):
         resp = client.get("/api/v1/hr/payroll/999999/payslip/1", headers=manager_headers)
         assert resp.status_code == 404
+
+    def test_download_payslip_pdf_requires_manager(
+        self, client: TestClient, db, super_admin_headers, waiter_headers,
+    ):
+        """باج حقيقي اتصلح (2026-07-28): الـendpoint ده كان مقفول بأوسع
+        بوابة صلاحيات (get_current_active_user) رغم إنه بياخد employee_id
+        من الـclient ويرجّع مرتب/تفاصيل راتب PDF حقيقية — أي موظف كان يقدر
+        يحمّل قسيمة راتب أي زميل بمجرد تخمين employee_id."""
+        _, emp, run = self._make_approved_run(client, db, super_admin_headers)
+        resp = client.get(
+            f"/api/v1/hr/payroll/{run['id']}/payslip/{emp.id}", headers=waiter_headers,
+        )
+        assert resp.status_code == 403
 
     def test_download_payslip_pdf_404_employee_not_in_run(
         self, client: TestClient, db, super_admin_headers, manager_headers,

@@ -1,0 +1,17 @@
+; elkheima.com — DNS Zone File (BIND format RFC 1035)
+; VPS IP: 191.218.161.133
+; Generated: 2026-07-29
+; Upload this file in Hostinger → Domains → elkheima.com → Manage DNS → Import
+; Check "Replace existing DNS records" before importing
+
+$ORIGIN elkheima.com.
+$TTL 300
+
+; Apex — الموقع الرئيسي والموقع التسويقي
+@    IN  A     191.218.161.133
+
+; www — redirect إلى الموقع الرئيسي
+www  IN  A     191.218.161.133
+
+; app — تطبيق الموظفين (Staff App / POS)
+app  IN  A     191.218.161.133

@@ -1530,6 +1530,53 @@ class TestBeachLocations:
                 db, branch.id, loc.id, BeachLocationCheckinRequest(guests_count=1),
             )
 
+    def test_void_transaction_frees_occupied_location(self, db):
+        """باج حقيقي اتصلح (2026-07-28): إلغاء معاملة اتسجّلت عن طريق خريطة
+        الشاطئ الحية كان بيعكس كل الأثر المالي/المخزني بس مايلمسش
+        BeachLocation خالص — الموقع كان يفضل "مشغول" ببيانات ضيف وهمية
+        للأبد بعد ما البيع نفسه اتلغى."""
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        occupied = services.checkin_location(
+            db, branch.id, loc.id,
+            BeachLocationCheckinRequest(guest_name="نورا سعيد", guests_count=2, with_towel=True),
+        )
+        tx_id = occupied.current_transaction_id
+        assert tx_id is not None
+
+        services.void_transaction(db, tx_id, voided_by=1, reason="غلط في التسجيل")
+
+        db.refresh(loc)
+        assert loc.status == "available"
+        assert loc.current_transaction_id is None
+        assert loc.guest_name is None
+        assert loc.guests_count == 0
+        assert loc.towels_given == 0
+
+    def test_void_transaction_does_not_disturb_location_reused_since(self, db):
+        """لو الموقع اتفضّى فعليًا (checkout عادي) واتاح لضيف تاني بعد كده،
+        إلغاء المعاملة القديمة (المتأخر) لازم مايلمسش حالة الموقع الحالية —
+        current_transaction_id بقى بيأشّر على معاملة تانية تمامًا دلوقتي."""
+        branch = make_branch(db)
+        loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]
+        first = services.checkin_location(
+            db, branch.id, loc.id, BeachLocationCheckinRequest(guest_name="ضيف أول", guests_count=1),
+        )
+        first_tx_id = first.current_transaction_id
+        services.checkout_location(db, branch.id, loc.id)
+
+        second = services.checkin_location(
+            db, branch.id, loc.id, BeachLocationCheckinRequest(guest_name="ضيف ثاني", guests_count=3),
+        )
+        assert second.current_transaction_id != first_tx_id
+
+        services.void_transaction(db, first_tx_id, voided_by=1, reason="تصحيح متأخر")
+
+        db.refresh(loc)
+        assert loc.guest_name == "ضيف ثاني"  # مالمسناش الموقع، لسه على الضيف الحالي
+        assert loc.guests_count == 3
+        assert loc.current_transaction_id == second.current_transaction_id
+
     def test_checkout_frees_location_and_returns_towels_without_touching_capacity(self, db):
         branch = make_branch(db)
         loc = services.bulk_add_locations(db, branch.id, "umbrella", 1)[0]

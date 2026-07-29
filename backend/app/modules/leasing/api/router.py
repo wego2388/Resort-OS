@@ -14,6 +14,7 @@ from app.modules.leasing.schemas import (
     LeasePaymentRead, PayLeaseRequest, TenantCashLogCreate, TenantCashLogRead,
     ApplyPenaltiesResponse,
 )
+from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
 from app.resort_os.timezone_utils import local_today
 
@@ -27,9 +28,25 @@ def _to_read(contract, today) -> LeaseContractRead:
     return LeaseContractRead(**data)
 
 
+def _assert_leasing_branch(db, user, branch_id: int, action_desc: str) -> None:
+    """Gate 4B-style branch isolation — كانت غايبة بالكامل من موديول
+    الإيجارات (اتكشف 2026-07-28، نفس فئة الباج في timeshare/beach/CRM)."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
+
+def _get_contract_or_404(db, contract_id: int):
+    c = crud.get_contract(db, contract_id)
+    if not c:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "العقد غير موجود")
+    return c
+
+
 @router.get("/leasing/contracts", response_model=PaginatedResponse)
 def list_contracts(
-    db: DbDep, _=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_current_active_user),
     branch_id: int = Query(...),
     contract_status: Optional[str] = Query(None, alias="status"),
     search: Optional[str] = Query(None),
@@ -40,6 +57,7 @@ def list_contracts(
     ),
     page: int = Query(1, ge=1), size: int = Query(20, ge=1, le=100),
 ):
+    _assert_leasing_branch(db, user, branch_id, "عرض عقود الإيجار")
     today = local_today(settings.TIMEZONE)
     if expiring_within_days is not None:
         items = services.list_expiring_soon(db, branch_id, expiring_within_days)
@@ -54,6 +72,7 @@ def list_contracts(
 @router.post("/leasing/contracts", response_model=LeaseContractRead,
              status_code=status.HTTP_201_CREATED)
 def create_contract(data: LeaseContractCreate, db: DbDep, user=Depends(get_manager_user)):
+    _assert_leasing_branch(db, user, data.branch_id, "إنشاء عقد إيجار")
     try:
         contract = services.create_contract(db, data, signed_by=user.id)
         return _to_read(contract, local_today(settings.TIMEZONE))
@@ -62,16 +81,17 @@ def create_contract(data: LeaseContractCreate, db: DbDep, user=Depends(get_manag
 
 
 @router.get("/leasing/contracts/{contract_id}", response_model=LeaseContractRead)
-def get_contract(contract_id: int, db: DbDep, _=Depends(get_current_active_user)):
-    c = crud.get_contract(db, contract_id)
-    if not c:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "العقد غير موجود")
+def get_contract(contract_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_leasing_branch(db, user, c.branch_id, "عرض عقد إيجار")
     return _to_read(c, local_today(settings.TIMEZONE))
 
 
 @router.patch("/leasing/contracts/{contract_id}", response_model=LeaseContractRead)
 def update_contract(contract_id: int, data: LeaseContractUpdate, db: DbDep,
-                    _=Depends(get_manager_user)):
+                    user=Depends(get_manager_user)):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_leasing_branch(db, user, c.branch_id, "تعديل عقد إيجار")
     try:
         contract = services.update_contract(db, contract_id, data)
         return _to_read(contract, local_today(settings.TIMEZONE))
@@ -86,15 +106,23 @@ def pay_payment(payment_id: int, req: PayLeaseRequest, db: DbDep,
                 # finance.add_payment (العملية المكافئة بالظبط — تسجيل دفعة
                 # فعلية) — أي حساب عميل/ضيف كان يقدر نظريًا يسجّل دفعة إيجار
                 # لأي عقد برقم إيصال ومبلغ مُلفَّق.
-                _=Depends(get_cashier_user)):
+                user=Depends(get_cashier_user)):
+    payment = crud.get_payment(db, payment_id)
+    if not payment:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الدفعة {payment_id} غير موجودة")
+    _assert_leasing_branch(db, user, payment.contract.branch_id, "تحصيل دفعة إيجار")
     try:
         return services.pay_payment(db, payment_id, req)
+    except services.PaymentConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 @router.post("/leasing/contracts/{contract_id}/apply-penalties", response_model=ApplyPenaltiesResponse)
-def apply_penalties(contract_id: int, db: DbDep, _=Depends(get_manager_user)):
+def apply_penalties(contract_id: int, db: DbDep, user=Depends(get_manager_user)):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_leasing_branch(db, user, c.branch_id, "تطبيق غرامات تأخير")
     updated = services.apply_penalties(db, contract_id)
     return {"updated": len(updated)}
 
@@ -111,6 +139,8 @@ def create_cash_log(contract_id: int, data: TenantCashLogCreate, db: DbDep,
                     user=Depends(get_manager_user)):
     if data.contract_id != contract_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "contract_id في الـ body لازم يطابق الـ path")
+    c = _get_contract_or_404(db, contract_id)
+    _assert_leasing_branch(db, user, c.branch_id, "تسجيل حركة كاش مستأجر")
     try:
         return services.record_cash_log(db, data, recorded_by=user.id)
     except ValueError as exc:
@@ -118,7 +148,9 @@ def create_cash_log(contract_id: int, data: TenantCashLogCreate, db: DbDep,
 
 
 @router.get("/leasing/contracts/{contract_id}/cash-logs", response_model=list[TenantCashLogRead])
-def list_cash_logs(contract_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def list_cash_logs(contract_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    c = _get_contract_or_404(db, contract_id)
+    _assert_leasing_branch(db, user, c.branch_id, "عرض حركات كاش مستأجر")
     try:
         return services.list_cash_logs(db, contract_id)
     except ValueError as exc:
@@ -126,7 +158,11 @@ def list_cash_logs(contract_id: int, db: DbDep, _=Depends(get_current_active_use
 
 
 @router.get("/leasing/payments/{payment_id}/receipt", response_model=None)
-def download_receipt(payment_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def download_receipt(payment_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    payment = crud.get_payment(db, payment_id)
+    if not payment:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الدفعة {payment_id} غير موجودة")
+    _assert_leasing_branch(db, user, payment.contract.branch_id, "تحميل إيصال إيجار")
     try:
         pdf = services.generate_rent_receipt_pdf(db, payment_id)
         return Response(

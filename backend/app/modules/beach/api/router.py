@@ -25,10 +25,23 @@ from app.modules.beach.schemas import (
     BeachSellRequest, BeachSurgeSet, BeachTransactionRead,
     VoidTransactionRequest,
 )
+from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
 from app.resort_os.timezone_utils import local_today
 
 router = APIRouter(tags=["beach"])
+
+
+def _assert_beach_branch(db, user, branch_id: int, action_desc: str) -> None:
+    """Gate 4B-style branch isolation — كانت موجودة في PMS/finance/dining بس
+    غايبة تقريبًا بالكامل من موديول الشاطئ (اتكشف 2026-07-28، مؤكَّد حي عن
+    طريق تستات المشروع نفسها: مدير بلا أي عضوية فرع كان ينجح في إلغاء
+    معاملة/تسوية عقد B2B فرع تاني). كل عملية شاطئ بتاخد branch_id لازم
+    تعدّي من هنا قبل أي تنفيذ فعلي."""
+    try:
+        core_services.assert_branch_access(db, user, branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
 
 
 # ── WebSocket Live Map Manager ──────────────────────────────────────────
@@ -97,10 +110,11 @@ def _business_today() -> date:
 @router.get("/beach/inventory", response_model=BeachInventoryRead)
 def get_inventory(
     db: DbDep,
-    _=Depends(get_current_active_user),
+    user=Depends(get_current_active_user),
     branch_id: int  = Query(...),
     inv_date:  date = Query(default_factory=_business_today),
 ):
+    _assert_beach_branch(db, user, branch_id, "عرض مخزون الشاطئ")
     row = crud.get_or_create_inventory(db, branch_id, inv_date)
     db.commit()
     prices = services.get_base_prices(db, branch_id)
@@ -120,9 +134,10 @@ def get_inventory(
 @router.patch("/beach/surge", response_model=BeachInventoryRead)
 def set_surge(
     data: BeachSurgeSet, db: DbDep,
-    _=Depends(get_manager_user),
+    user=Depends(get_manager_user),
     branch_id: int = Query(...),
 ):
+    _assert_beach_branch(db, user, branch_id, "تفعيل Surge")
     try:
         row = services.set_surge(db, branch_id, data.surge_pct, data.inv_date)
         return BeachInventoryRead.model_validate(row)
@@ -139,6 +154,7 @@ async def sell_ticket(
     user=Depends(get_cashier_user),
     branch_id: int = Query(...),
 ):
+    _assert_beach_branch(db, user, branch_id, "بيع تذكرة شاطئ")
     if not data.cashier_id:
         data = data.model_copy(update={"cashier_id": user.id})
     try:
@@ -162,6 +178,7 @@ def b2b_checkin(
     user=Depends(get_cashier_user),
     branch_id: int = Query(...),
 ):
+    _assert_beach_branch(db, user, branch_id, "تشيك-إن B2B")
     if not data.cashier_id:
         data = data.model_copy(update={"cashier_id": user.id})
     try:
@@ -176,18 +193,28 @@ def b2b_checkin(
 
 @router.get("/beach/transactions", response_model=PaginatedResponse)
 def list_transactions(
-    db: DbDep, _=Depends(get_cashier_user),
+    db: DbDep, user=Depends(get_cashier_user),
     branch_id: int           = Query(...),
     tx_date:   Optional[date] = Query(None),
     page: int = Query(1, ge=1), size: int = Query(100, ge=1, le=500),
 ):
+    _assert_beach_branch(db, user, branch_id, "عرض معاملات الشاطئ")
     items, total = crud.list_transactions(db, branch_id, tx_date, (page-1)*size, size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[BeachTransactionRead.model_validate(t) for t in items])
 
 
+def _get_transaction_or_404(db, tx_id: int):
+    tx = crud.get_transaction(db, tx_id)
+    if not tx:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"المعاملة {tx_id} غير موجودة")
+    return tx
+
+
 @router.get("/beach/transactions/{tx_id}/ticket", response_model=None)
-def download_ticket(tx_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def download_ticket(tx_id: int, db: DbDep, user=Depends(get_cashier_user)):
+    tx = _get_transaction_or_404(db, tx_id)
+    _assert_beach_branch(db, user, tx.branch_id, "تحميل إيصال معاملة شاطئ")
     try:
         pdf = services.generate_ticket_pdf(db, tx_id)
         return Response(
@@ -203,8 +230,12 @@ def download_ticket(tx_id: int, db: DbDep, _=Depends(get_cashier_user)):
              dependencies=[Depends(require_permission("beach.void_transaction", "execute", min_role_level=60))],
              response_model=BeachTransactionRead)
 def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=Depends(get_current_active_user)):
+    tx = _get_transaction_or_404(db, tx_id)
+    _assert_beach_branch(db, user, tx.branch_id, "إلغاء معاملة شاطئ")
     try:
         return services.void_transaction(db, tx_id, voided_by=user.id, reason=data.reason)
+    except services.BeachConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -213,10 +244,11 @@ def void_transaction(tx_id: int, data: VoidTransactionRequest, db: DbDep, user=D
 
 @router.get("/beach/summary", response_model=BeachDailySummary)
 def daily_summary(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int  = Query(...),
     tx_date:   date = Query(default_factory=_business_today),
 ):
+    _assert_beach_branch(db, user, branch_id, "عرض ملخص الشاطئ اليومي")
     inv = crud.get_or_create_inventory(db, branch_id, tx_date)
     summary = crud.get_daily_summary(db, branch_id, tx_date)
     cap_pct = (
@@ -239,19 +271,21 @@ def daily_summary(
 
 @router.get("/beach/eod-report", response_model=None)
 def get_eod_report(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...), report_date: Optional[date] = Query(None),
 ):
     """تقرير نهاية اليوم — إجمالي الدخول حسب النوع، إيرادات الفوط، مقارنة
     بالأمس وبالأسبوع الماضي."""
+    _assert_beach_branch(db, user, branch_id, "عرض تقرير نهاية اليوم")
     return services.get_eod_report(db, branch_id, report_date)
 
 
 @router.get("/beach/eod-report/pdf", response_model=None)
 def download_eod_report_pdf(
-    db: DbDep, _=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_manager_user),
     branch_id: int = Query(...), report_date: Optional[date] = Query(None),
 ):
+    _assert_beach_branch(db, user, branch_id, "تحميل تقرير نهاية اليوم")
     pdf = services.generate_eod_report_pdf(db, branch_id, report_date)
     fname = f"beach-eod-{report_date or _business_today()}.pdf"
     return Response(
@@ -264,19 +298,21 @@ def download_eod_report_pdf(
 # ── B2B Contracts ─────────────────────────────────────────────────────
 
 @router.get("/beach/b2b-contracts", response_model=list[B2BContractRead])
-def list_contracts(db: DbDep, _=Depends(get_manager_user),
+def list_contracts(db: DbDep, user=Depends(get_manager_user),
                    branch_id: int = Query(...), active_only: bool = Query(True)):
+    _assert_beach_branch(db, user, branch_id, "عرض عقود B2B")
     return [B2BContractRead.model_validate(c)
             for c in crud.list_b2b_contracts(db, branch_id, active_only)]
 
 
 @router.get("/beach/b2b-contracts/status", response_model=None)
 def get_b2b_quota_status(
-    db: DbDep, _=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_current_active_user),
     branch_id: int = Query(...), day: Optional[date] = Query(None),
 ):
     """حالة حصة كل فندق B2B اليوم — بيظهر quota_warning (≤5 متبقين) لعرضه
     كتنبيه في اللوحة الحيّة."""
+    _assert_beach_branch(db, user, branch_id, "عرض حصص عقود B2B")
     return services.get_b2b_quota_status(db, branch_id, day)
 
 
@@ -284,10 +320,11 @@ def get_b2b_quota_status(
 
 @router.get("/beach/live-dashboard", response_model=None)
 def get_live_dashboard(
-    db: DbDep, _=Depends(get_current_active_user),
+    db: DbDep, user=Depends(get_current_active_user),
     branch_id: int = Query(...),
 ):
     """السعة الحالية + حصص فنادق B2B + تنبيهات — للوحة حيّة (polling كل شوية)."""
+    _assert_beach_branch(db, user, branch_id, "عرض اللوحة الحيّة")
     inv = crud.get_or_create_inventory(db, branch_id, _business_today())
     db.commit()
     b2b_status = services.get_b2b_quota_status(db, branch_id)
@@ -310,7 +347,8 @@ def get_live_dashboard(
 
 @router.post("/beach/b2b-contracts", response_model=B2BContractRead,
              status_code=status.HTTP_201_CREATED)
-def create_contract(data: B2BContractCreate, db: DbDep, _=Depends(get_admin_user)):
+def create_contract(data: B2BContractCreate, db: DbDep, user=Depends(get_admin_user)):
+    _assert_beach_branch(db, user, data.branch_id, "إنشاء عقد B2B")
     obj = crud.create_b2b_contract(db, data)
     db.commit(); db.refresh(obj)
     return B2BContractRead.model_validate(obj)
@@ -318,13 +356,14 @@ def create_contract(data: B2BContractCreate, db: DbDep, _=Depends(get_admin_user
 
 @router.patch("/beach/b2b-contracts/{contract_id}", response_model=B2BContractRead)
 def update_contract_credit(
-    contract_id: int, data: B2BContractUpdate, db: DbDep, _=Depends(get_admin_user),
+    contract_id: int, data: B2BContractUpdate, db: DbDep, user=Depends(get_admin_user),
 ):
     """تعديل إعدادات ائتمان عقد B2B (حد الائتمان/مهلة السداد) — راجع شاشة
     إدارة عقود B2B في الفرونت إند."""
     obj = crud.get_b2b_contract(db, contract_id)
     if not obj:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"العقد {contract_id} غير موجود")
+    _assert_beach_branch(db, user, obj.branch_id, "تعديل ائتمان عقد B2B")
     fields = data.model_dump(exclude_unset=True)
     obj = crud.update_b2b_contract_credit(
         db, obj,
@@ -338,10 +377,14 @@ def update_contract_credit(
 
 @router.post("/beach/b2b-contracts/{contract_id}/settle", response_model=B2BContractRead)
 def settle_contract(
-    contract_id: int, data: B2BSettleRequest, db: DbDep, _=Depends(get_manager_user),
+    contract_id: int, data: B2BSettleRequest, db: DbDep, user=Depends(get_manager_user),
 ):
     """يسجّل إن رصيد الفندق الشريك اتحصّل (تسوية دورية) — بيصفّر الرصيد
     المستحق فعليًا وبيلغي علم التأخر."""
+    contract = crud.get_b2b_contract(db, contract_id)
+    if not contract:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"العقد {contract_id} غير موجود")
+    _assert_beach_branch(db, user, contract.branch_id, "تسوية عقد B2B")
     try:
         obj = services.settle_b2b_contract(db, contract_id, data.settled_through)
         return B2BContractRead.model_validate(obj)
@@ -353,12 +396,13 @@ def settle_contract(
 
 @router.get("/beach/reservations", response_model=PaginatedResponse)
 def list_reservations(
-    db: DbDep, _=Depends(get_cashier_user),
+    db: DbDep, user=Depends(get_cashier_user),
     branch_id:    int           = Query(...),
     res_date:     Optional[date] = Query(None),
     status_filter:Optional[str]  = Query(None, alias="status"),
     page: int = Query(1, ge=1), size: int = Query(50, ge=1, le=200),
 ):
+    _assert_beach_branch(db, user, branch_id, "عرض حجوزات الشاطئ")
     items, total = crud.list_reservations(db, branch_id, res_date, status_filter,
                                           (page-1)*size, size)
     return PaginatedResponse(total=total, page=page, size=size,
@@ -367,7 +411,8 @@ def list_reservations(
 
 @router.post("/beach/reservations", response_model=BeachReservationRead,
              status_code=status.HTTP_201_CREATED)
-def create_reservation(data: BeachReservationCreate, db: DbDep, _=Depends(get_cashier_user)):
+def create_reservation(data: BeachReservationCreate, db: DbDep, user=Depends(get_cashier_user)):
+    _assert_beach_branch(db, user, data.branch_id, "إنشاء حجز شاطئ")
     try:
         return services.create_reservation(db, data)
     except ValueError as exc:
@@ -409,16 +454,18 @@ def checkin_reservation(reservation_id: int, db: DbDep, user=Depends(get_cashier
 
 @router.get("/beach/locations", response_model=list[BeachLocationRead])
 def list_locations(
-    db: DbDep, _=Depends(get_cashier_user),
+    db: DbDep, user=Depends(get_cashier_user),
     branch_id: int = Query(...), location_type: Optional[str] = Query(None),
 ):
+    _assert_beach_branch(db, user, branch_id, "عرض خريطة الشاطئ")
     return [BeachLocationRead.model_validate(loc)
             for loc in services.list_locations(db, branch_id, location_type)]
 
 
 @router.post("/beach/locations/bulk", response_model=list[BeachLocationRead],
              status_code=status.HTTP_201_CREATED)
-async def bulk_add_locations(data: BeachLocationBulkCreate, db: DbDep, _=Depends(get_manager_user)):
+async def bulk_add_locations(data: BeachLocationBulkCreate, db: DbDep, user=Depends(get_manager_user)):
+    _assert_beach_branch(db, user, data.branch_id, "إضافة مواقع شاطئ")
     try:
         created = services.bulk_add_locations(db, data.branch_id, data.location_type, data.count)
     except ValueError as exc:
@@ -428,7 +475,8 @@ async def bulk_add_locations(data: BeachLocationBulkCreate, db: DbDep, _=Depends
 
 
 @router.post("/beach/locations/reduce", response_model=list[BeachLocationRead])
-async def reduce_locations(data: BeachLocationBulkRemove, db: DbDep, _=Depends(get_manager_user)):
+async def reduce_locations(data: BeachLocationBulkRemove, db: DbDep, user=Depends(get_manager_user)):
+    _assert_beach_branch(db, user, data.branch_id, "حذف مواقع شاطئ")
     try:
         removed = services.bulk_remove_locations(db, data.branch_id, data.location_type, data.count)
     except ValueError as exc:
@@ -440,8 +488,9 @@ async def reduce_locations(data: BeachLocationBulkRemove, db: DbDep, _=Depends(g
 @router.patch("/beach/locations/{location_id}", response_model=BeachLocationRead)
 async def update_location(
     location_id: int, data: BeachLocationUpdate, db: DbDep,
-    _=Depends(get_manager_user), branch_id: int = Query(...),
+    user=Depends(get_manager_user), branch_id: int = Query(...),
 ):
+    _assert_beach_branch(db, user, branch_id, "تعديل موقع شاطئ")
     try:
         loc = services.update_location(
             db, location_id,
@@ -459,6 +508,7 @@ async def checkin_location(
     location_id: int, data: BeachLocationCheckinRequest, db: DbDep,
     user=Depends(get_cashier_user), branch_id: int = Query(...),
 ):
+    _assert_beach_branch(db, user, branch_id, "تشيك-إن موقع شاطئ")
     if not data.cashier_id:
         data = data.model_copy(update={"cashier_id": user.id})
     try:
@@ -476,6 +526,7 @@ async def checkout_location(
     location_id: int, db: DbDep,
     user=Depends(get_cashier_user), branch_id: int = Query(...),
 ):
+    _assert_beach_branch(db, user, branch_id, "تشيك-أوت موقع شاطئ")
     try:
         loc = services.checkout_location(db, branch_id, location_id, cashier_id=user.id)
     except services.BeachConcurrencyError as exc:

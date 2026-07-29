@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.modules.leasing.models import LeaseContract, LeasePayment, TenantCashLog
@@ -46,7 +46,13 @@ def list_contracts(
             LeaseContract.contract_number.ilike(like)
         )
     total = q.count()
-    items = q.order_by(LeaseContract.created_at.desc()).offset(skip).limit(limit).all()
+    # ⚠️ باج N+1 حقيقي كان هنا (اتصلح 2026-07-28): LeaseContractRead.payments
+    # بيتسريلايز من contract.payments (lazy="select") لكل عقد في القايمة —
+    # صفحة من 20 عقد كانت بتولّد 20 استعلام إضافي بدل استعلام واحد.
+    items = (
+        q.options(selectinload(LeaseContract.payments))
+        .order_by(LeaseContract.created_at.desc()).offset(skip).limit(limit).all()
+    )
     return items, total
 
 
@@ -117,6 +123,20 @@ def list_payments(db: Session, contract_id: int) -> list[LeasePayment]:
 
 def get_payment(db: Session, payment_id: int) -> Optional[LeasePayment]:
     return db.query(LeasePayment).filter(LeasePayment.id == payment_id).first()
+
+
+def lock_payment_for_update(db: Session, payment_id: int) -> Optional[LeasePayment]:
+    """SELECT ... FOR UPDATE NOWAIT — باج حقيقي اتصلح (2026-07-28، مرآة نفس
+    الباج في timeshare.crud.lock_installment_for_update): pay_payment كانت
+    بتقرا/تعدّل paid_amount من غير أي قفل صف، فتحصيلين متزامنين على نفس
+    القسط الإيجاري كانوا يمسحوا بعض بصمت."""
+    return (
+        db.query(LeasePayment)
+        .filter(LeasePayment.id == payment_id)
+        .with_for_update(nowait=True)
+        .populate_existing()
+        .first()
+    )
 
 
 def pay_payment(db: Session, payment: LeasePayment, req: PayLeaseRequest) -> LeasePayment:

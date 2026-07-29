@@ -238,6 +238,63 @@ class TestPayroll:
         assert line.penalty_deduction == expected
         assert line.net_salary < baseline_line.net_salary
 
+    def test_run_payroll_for_branch_does_not_n_plus_one_shared_config(
+        self, db, branch, si_config, tax_brackets,
+    ):
+        """⚡ باج أداء حقيقي: SocialInsuranceConfig/TaxBracketConfig
+        (social_insurance_configs/tax_bracket_configs) وEmployeePenalty
+        (employee_penalties) نفس القيمة لكل موظفي الفرع في نفس الفترة —
+        مش بيانات خاصة بموظف — لكن كانوا بيتقروا بالكامل من جديد جوه حلقة
+        الموظفين في run_payroll_for_branch (لحد استعلامين لكل موظف لو عنده
+        سلفة نشطة). اتصلح (2026-07-29) بتحميلهم مرة واحدة قبل الحلقة، زي
+        policy_orm/map_rota_shifts_for_period أصلاً. هنا نتأكد فعليًا (مش
+        افتراضًا) إن عدد استعلامات الجداول التلاتة دي ثابت (≤ 2) بغض النظر
+        عن عدد الموظفين، مش متناسب معاهم."""
+        from sqlalchemy import event
+
+        from app.modules.hr.schemas import EmployeePenaltyCreate
+        from tests.conftest import engine
+
+        for i in range(5):
+            services.create_employee(db, EmployeeCreate(
+                branch_id=branch.id,
+                employee_code=f"EMP-NPO-{i}-{uuid.uuid4().hex[:4].upper()}",
+                full_name=f"موظف {i}",
+                position="كاشير",
+                basic_salary=Decimal("4000.00"),
+                hire_date=date(2023, 1, 1),
+            ))
+        db.commit()
+
+        crud.create_penalty(db, EmployeePenaltyCreate(
+            employee_id=crud.list_employees(db, branch.id)[0][0].id, branch_id=branch.id,
+            penalty_date=date(2026, 6, 10), penalty_days=1, reason="تأخر", applied_by=1,
+        ))
+        db.commit()
+
+        counts = {"social_insurance_configs": 0, "tax_bracket_configs": 0, "employee_penalties": 0}
+
+        def _count_statement(_conn, _cursor, statement, *_args):
+            lowered = statement.lower()
+            if "select" not in lowered:
+                return
+            for table in counts:
+                if table in lowered:
+                    counts[table] += 1
+
+        event.listen(engine, "before_cursor_execute", _count_statement)
+        try:
+            run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        finally:
+            event.remove(engine, "before_cursor_execute", _count_statement)
+
+        assert len(crud.list_lines_for_run(db, run.id)) == 5
+        # كان بيبقى ≈ 5 (عدد الموظفين) أو أكتر لكل جدول قبل الإصلاح — دلوقتي
+        # ثابت (مرة واحدة) بغض النظر عن عدد الموظفين.
+        assert counts["social_insurance_configs"] <= 2, counts
+        assert counts["tax_bracket_configs"] <= 2, counts
+        assert counts["employee_penalties"] <= 2, counts
+
     def test_payroll_uses_employee_insurance_base_salary(self, db, branch, si_config, tax_brackets):
         """wagdy.md H-04 — موظف براتب أساسي 20,000 لكن وعاء تأميني 13,500
         مسجّل على الـ Employee نفسه (مش parameter لكل تشغيلة) — calculate_
@@ -1078,6 +1135,46 @@ class TestPayrollAdvanceDeductionIntegration:
         run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
         line = crud.list_lines_for_run(db, run.id)[0]
         assert line.advance_deduction == Decimal("700.00")  # 500 + 200
+
+    def test_aggregate_advance_deductions_capped_so_net_never_negative(
+        self, db, branch, employee, si_config, tax_brackets,
+    ):
+        """باج حقيقي: كل سلفة لوحدها كانت محدودة بـ remaining_balance
+        بتاعها، لكن إجمالي عدة سلف مع بعض (هنا 2 × قسط 3000) مكانش له أي
+        سقف — كان ممكن يدفع net_salary تحت الصفر رغم إن كل سلفة فرديًا
+        'قانونية'. الإصلاح: الإجمالي الفعلي يتقصّ على الصافي المتاح قبل خصم
+        أي سلفة، السلفة الأولى تاخد حقها كامل والتانية تاخد الباقي بس، والفرق
+        يفضل مستحق لشهر جاي (زي سلفة واحدة أكبر من رصيدها بالظبط)."""
+        adv1 = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("3000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("3000"),
+        ), created_by=1)
+        adv2 = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=employee.id, branch_id=branch.id,
+            amount=Decimal("3000"), disbursed_date=date(2026, 1, 5),
+            monthly_deduction_amount=Decimal("3000"),
+        ), created_by=1)
+
+        net_before = services.calculate_employee_payroll(
+            db, employee.id, 2026, 6, advance_deduction_amount=Decimal("0"),
+        ).net_salary
+        assert Decimal("3000") < net_before < Decimal("6000")
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 6)
+        line = crud.list_lines_for_run(db, run.id)[0]
+
+        assert line.net_salary >= Decimal("0")
+        assert line.advance_deduction == net_before.quantize(Decimal("0.01"))
+
+        db.refresh(adv1)
+        db.refresh(adv2)
+        assert adv1.remaining_balance == Decimal("0.00")  # الأولوية أخدت حقها كامل (3000)
+        assert adv1.status == "settled"
+        # الباقي (net_before - 3000) خُصم من التانية، والفرق فضل مستحق لشهر جاي
+        second_deduct = net_before.quantize(Decimal("0.01")) - Decimal("3000")
+        assert adv2.remaining_balance == Decimal("3000") - second_deduct
+        assert adv2.status == "active"
 
     def test_cancelled_advance_not_deducted(self, db, branch, employee, si_config, tax_brackets):
         advance = services.create_salary_advance(db, SalaryAdvanceCreate(

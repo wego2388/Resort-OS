@@ -12,7 +12,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.modules.hr import crud
-from app.modules.hr.models import AttendancePolicy, AttendanceRecord, Employee, LeaveRequest, PayrollRun
+from app.modules.hr.models import (
+    AttendancePolicy, AttendanceRecord, Employee, LeaveRequest,
+    PayrollRun, SocialInsuranceConfig, TaxBracketConfig,
+)
 from app.modules.hr.schemas import (
     AdvancePaymentCreate,
     AttendanceRecordCreate, EmployeeCreate, EmployeeUpdate,
@@ -265,7 +268,16 @@ def calculate_employee_payroll(
     overtime_amount: Decimal = Decimal("0"),
     late_penalty_amount: Decimal = Decimal("0"),
     advance_deduction_amount: Decimal = Decimal("0"),
+    si_config_orm: Optional[SocialInsuranceConfig] = None,
+    tax_brackets_orm: Optional[list[TaxBracketConfig]] = None,
 ) -> PayrollResultRead:
+    """si_config_orm/tax_brackets_orm — تحميل مسبق اختياري (N+1 fix): نفس
+    التأمينات/الشرائح صحيحة لكل موظفي الفرع في نفس الفترة، فـ
+    run_payroll_for_branch بيجيبهم مرة واحدة قبل حلقة الموظفين ويبعتهم هنا
+    بدل ما كل موظف يعمل نفس الاستعلامين من جديد (كان ٢×عدد الموظفين استعلام
+    زيادة على فرع فيه، مثلاً، 60 موظف). الاستدعاء المباشر (زي GET
+    /hr/employees/{id}/payslip لموظف واحد) لسه بيجيب بنفسه زي الأول لو
+    الباراميترين مش متمررين."""
     emp = get_employee_or_404(db, employee_id)
 
     # ⚠️ لازم as_of = أول يوم في فترة الرواتب المطلوبة، مش "دلوقتي" — راجع
@@ -274,11 +286,11 @@ def calculate_employee_payroll(
     # حساب كل الفترات (الماضية والحاضرة) فورًا، مش بس الفترات المستقبلية.
     period_start = date(period_year, period_month, 1)
 
-    si_orm = crud.get_active_si_config(db, as_of=period_start)
+    si_orm = si_config_orm if si_config_orm is not None else crud.get_active_si_config(db, as_of=period_start)
     if not si_orm:
         raise ValueError("لا يوجد إعداد تأمينات اجتماعية نشط لهذه الفترة — أضف SocialInsuranceConfig في DB")
 
-    brackets_orm = crud.get_active_tax_brackets(db, as_of=period_start)
+    brackets_orm = tax_brackets_orm if tax_brackets_orm is not None else crud.get_active_tax_brackets(db, as_of=period_start)
     if not brackets_orm:
         raise ValueError("لا توجد شرائح ضريبية نشطة لهذه الفترة — أضف TaxBracketConfig في DB")
 
@@ -399,12 +411,43 @@ def _compute_advance_deductions(
     return total.quantize(Decimal("0.01")), advances, payments
 
 
-def _apply_advance_deductions(db: Session, advances: list, payments: list, payroll_line_id: int) -> None:
-    """يطبّق فعليًا أثر الخصم المحسوب في _compute_advance_deductions — بيتنادى
-    بعد ما سطر كشف الرواتب يتسجّل بنجاح فقط (نفس الـ transaction، commit
-    واحد في الآخر مع باقي run_payroll_for_branch)."""
+def _cap_advance_deductions(
+    requested_total: Decimal, cap: Decimal, advances: list, payments: list,
+) -> tuple[Decimal, list[tuple], list]:
+    """كل سلفة لوحدها كانت محدودة بـ remaining_balance بتاعها، لكن إجمالي عدة
+    سلف/دفعات مع بعض مكانش له أي سقف — كان ممكن يدفع net_salary تحت الصفر
+    (باج حقيقي اتكشف 2026-07-28). لو الإجمالي المطلوب أكبر من الصافي المتاح
+    (cap = الصافي قبل خصم أي سلفة)، نوزّع المتاح بالأولوية: السلف أولاً
+    (تخصيص جزئي مسموح، الباقي يفضل في remaining_balance لشهر جاي — بالظبط زي
+    سلفة واحدة أكبر من رصيدها)، بعدين الدفعات (كل دفعة كاملة أو تفضل غير
+    مخصومة لشهر جاي، مالهاش مفهوم تخصيص جزئي)."""
+    remaining = max(cap, Decimal("0"))
+    allocated_advances: list[tuple] = []
     for adv in advances:
-        deduct = min(adv.monthly_deduction_amount, adv.remaining_balance)
+        requested = min(adv.monthly_deduction_amount, adv.remaining_balance)
+        take = min(requested, remaining)
+        if take > Decimal("0"):
+            allocated_advances.append((adv, take))
+        remaining -= take
+
+    allocated_payments = []
+    for payment in payments:
+        if payment.amount <= remaining:
+            allocated_payments.append(payment)
+            remaining -= payment.amount
+
+    applied_total = (max(cap, Decimal("0")) - remaining).quantize(Decimal("0.01"))
+    return applied_total, allocated_advances, allocated_payments
+
+
+def _apply_advance_deductions(db: Session, advances: list[tuple], payments: list, payroll_line_id: int) -> None:
+    """يطبّق فعليًا أثر الخصم المحسوب في _compute_advance_deductions/
+    _cap_advance_deductions — بيتنادى بعد ما سطر كشف الرواتب يتسجّل بنجاح
+    فقط (نفس الـ transaction، commit واحد في الآخر مع باقي
+    run_payroll_for_branch). `advances` دايمًا (SalaryAdvance, deduct_amount)
+    tuples — المبلغ الفعلي المطبَّق، ممكن يكون أقل من monthly_deduction_amount
+    لو اتقصّ عن طريق _cap_advance_deductions."""
+    for adv, deduct in advances:
         adv.remaining_balance -= deduct
         if adv.remaining_balance <= Decimal("0"):
             adv.remaining_balance = Decimal("0")
@@ -432,6 +475,17 @@ def run_payroll_for_branch(
     employees, _ = crud.list_employees(db, branch_id, status="active", limit=1000)
     policy_orm = crud.get_attendance_policy(db, branch_id)  # مرة واحدة للفرع، مش لكل موظف
 
+    # ⚡ N+1 fix (2026-07-29): التأمينات/الشرائح الضريبية ثابتة لكل موظفي
+    # الفرع في نفس الفترة (مش بيانات خاصة بموظف)، وكانت بتتقرا من جديد جوه
+    # calculate_employee_payroll لكل موظف (لحد مرتين لو عنده سلفة نشطة — راجع
+    # _cap_advance_deductions تحت) بدل مرة واحدة للفرع كله، زي
+    # policy_orm فوق بالظبط. لو مش موجودة، سيبها None وخلّي calculate_
+    # employee_payroll يرفع نفس الـ ValueError القديم بنفسه لكل موظف (نفس
+    # سلوك "تجاهل كل الموظفين" الأصلي، مش تغيير سلوك).
+    period_start = date(period_year, period_month, 1)
+    si_config_orm = crud.get_active_si_config(db, as_of=period_start)
+    tax_brackets_orm = crud.get_active_tax_brackets(db, as_of=period_start) or None
+
     total_gross = Decimal("0")
     total_net   = Decimal("0")
     total_tax   = Decimal("0")
@@ -442,6 +496,14 @@ def run_payroll_for_branch(
 
     period_str = f"{period_year}-{period_month:02d}"
 
+    # ⚡ نفس فكرة الـN+1 fix فوق: جزاءات الشهر لكل موظفي الفرع بيتقروا باستعلام
+    # واحد بدل استعلام لكل موظف داخل الحلقة، وبيتجمّعوا هنا حسب employee_id.
+    penalties_by_employee: dict[int, int] = {}
+    for penalty in crud.list_penalties(db, branch_id, month=period_str):
+        penalties_by_employee[penalty.employee_id] = (
+            penalties_by_employee.get(penalty.employee_id, 0) + penalty.penalty_days
+        )
+
     for emp in employees:
         # ⚠️ باج حقيقي: EmployeePenalty (POST /hr/penalties) كان بيتسجّل في
         # الداتابيز فعلاً، لكن run_payroll_for_branch كان بينادي
@@ -450,8 +512,7 @@ def run_payroll_for_branch(
         # تمامًا وقت تشغيل كشف الرواتب الفعلي (كان بيشتغل بس لو الأدمن كتب
         # الرقم يدويًا في GET /hr/employees/{id}/payslip?penalty_days=). دلوقتي
         # بنجمع جزاءات الشهر الفعلية المسجّلة للموظف ونبعتها فعليًا للحساب.
-        penalties = crud.list_penalties(db, branch_id, employee_id=emp.id, month=period_str)
-        penalty_days = sum(p.penalty_days for p in penalties)
+        penalty_days = penalties_by_employee.get(emp.id, 0)
 
         # حساب تلقائي جديد: overtime_amount/late_penalty_amount من بصمات
         # الحضور الفعلية + سياسة الفرع (لو موجودة) — يتخصم/يتضاف فوق الجزاءات
@@ -466,12 +527,37 @@ def run_payroll_for_branch(
         )
 
         try:
+            if advance_deduction_amount > Decimal("0"):
+                # نحسب الصافي *قبل* خصم أي سلفة أولاً، عشان نعرف نقص إجمالي
+                # السلف/الدفعات لو هيدفع الصافي تحت الصفر (راجع تعليق
+                # _cap_advance_deductions فوق).
+                net_before_advances = calculate_employee_payroll(
+                    db, emp.id, period_year, period_month,
+                    penalty_days=penalty_days,
+                    overtime_amount=overtime_amount,
+                    late_penalty_amount=late_penalty_amount,
+                    advance_deduction_amount=Decimal("0"),
+                    si_config_orm=si_config_orm, tax_brackets_orm=tax_brackets_orm,
+                ).net_salary
+                if advance_deduction_amount > net_before_advances:
+                    advance_deduction_amount, active_advances, undeducted_payments = _cap_advance_deductions(
+                        advance_deduction_amount, net_before_advances, active_advances, undeducted_payments,
+                    )
+                else:
+                    active_advances = [
+                        (adv, min(adv.monthly_deduction_amount, adv.remaining_balance))
+                        for adv in active_advances
+                    ]
+            else:
+                active_advances = []
+
             result = calculate_employee_payroll(
                 db, emp.id, period_year, period_month,
                 penalty_days=penalty_days,
                 overtime_amount=overtime_amount,
                 late_penalty_amount=late_penalty_amount,
                 advance_deduction_amount=advance_deduction_amount,
+                si_config_orm=si_config_orm, tax_brackets_orm=tax_brackets_orm,
             )
         except ValueError:
             continue  # تجاهل الموظفين الذين لا تتوفر لهم بيانات

@@ -20,7 +20,33 @@ def make_branch_committed(db):
                code=f"CRME-{uuid.uuid4().hex[:8].upper()}")
     db.add(b)
     db.commit()
+    # Gate 4B: عمليات CRM بقت تفرض branch isolation server-side (2026-07-28)
+    # — نفس نمط test_timeshare_http.py's make_branch_committed. waiter هنا
+    # (عكس beach/timeshare) بيستخدم لعمليات حقيقية مش رفض بس، لأن أوسع
+    # بوابة CRM (get_current_active_user) بتسمح له.
+    _link_shared_users_to_branch(db, b.id)
     return b
+
+
+def _link_shared_users_to_branch(db, branch_id: int) -> None:
+    from app.core.kernel.models.user import User
+    from tests.conftest import assign_test_user_to_branch
+
+    for email in ("waiter@test.local", "cashier@test.local", "manager@test.local"):
+        user = db.query(User).filter(User.email == email).first()
+        if user:
+            assign_test_user_to_branch(db, user.id, branch_id)
+    db.commit()
+
+
+def super_admin_headers_for_branch(db, branch) -> dict[str, str]:
+    """super_admin (level≥100) بيتخطى فحص العضوية تمامًا لكن لازم يختار
+    سياق فرع صريح في التوكن نفسه (claim bid) — راجع نفس الدالة في
+    test_beach_http.py لتفاصيل السبب."""
+    from app.core.kernel.models.user import User
+    from tests.conftest import _make_token
+    user = db.query(User).filter(User.email == "super_admin@test.local").first()
+    return {"Authorization": f"Bearer {_make_token(user.email, branch_id=branch.id)}"}
 
 
 def create_customer(client: TestClient, branch_id: int, headers: dict, **overrides) -> dict:
@@ -152,8 +178,9 @@ class TestCustomerGroupEndpoints:
 
     def test_create_list_and_update(self, client: TestClient, db, manager_headers, super_admin_headers):
         branch = make_branch_committed(db)
+        branch_super_admin_headers = super_admin_headers_for_branch(db, branch)
         group = create_customer_group(
-            client, branch.id, super_admin_headers, name="موظفين", name_ar="موظفين", discount_percentage="15",
+            client, branch.id, branch_super_admin_headers, name="موظفين", name_ar="موظفين", discount_percentage="15",
         )
         assert group["discount_percentage"] == "15.00" or float(group["discount_percentage"]) == 15
         assert group["is_active"] is True
@@ -165,7 +192,7 @@ class TestCustomerGroupEndpoints:
         update_resp = client.patch(
             f"/api/v1/crm/customer-groups/{group['id']}",
             json={"discount_percentage": "20", "is_active": False},
-            headers=super_admin_headers,
+            headers=branch_super_admin_headers,
         )
         assert update_resp.status_code == 200, update_resp.text
         assert float(update_resp.json()["discount_percentage"]) == 20
@@ -194,7 +221,7 @@ class TestAssignCustomerGroup:
     def test_assign_and_unassign_round_trip(self, client: TestClient, db, waiter_headers, manager_headers, super_admin_headers):
         branch = make_branch_committed(db)
         customer = create_customer(client, branch.id, waiter_headers)
-        group = create_customer_group(client, branch.id, super_admin_headers)
+        group = create_customer_group(client, branch.id, super_admin_headers_for_branch(db, branch))
 
         assign_resp = client.patch(
             f"/api/v1/crm/customers/{customer['id']}/group",
@@ -213,8 +240,12 @@ class TestAssignCustomerGroup:
     def test_assign_rejects_group_from_other_branch(self, client: TestClient, db, waiter_headers, manager_headers, super_admin_headers):
         branch_a = make_branch_committed(db)
         branch_b = make_branch_committed(db)
+        # make_branch_committed بتربط waiter_headers تلقائيًا بأحدث فرع
+        # (branch_b) — هنا محتاجينه ينشئ عميل على branch_a تحديدًا فبنرجّع
+        # الربط له صراحةً.
+        _link_shared_users_to_branch(db, branch_a.id)
         customer = create_customer(client, branch_a.id, waiter_headers)
-        other_group = create_customer_group(client, branch_b.id, super_admin_headers)
+        other_group = create_customer_group(client, branch_b.id, super_admin_headers_for_branch(db, branch_b))
 
         resp = client.patch(
             f"/api/v1/crm/customers/{customer['id']}/group",
@@ -243,11 +274,12 @@ class TestInteractionsEndpoints:
         assert list_resp.status_code == 200
         assert list_resp.json()["total"] == 1
 
-    def test_log_interaction_for_missing_customer_returns_400(self, client: TestClient, waiter_headers):
+    def test_log_interaction_for_missing_customer_returns_400(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/crm/interactions",
             json={
-                "customer_id": 999999999, "branch_id": 1,
+                "customer_id": 999999999, "branch_id": branch.id,
                 "interaction_type": "call", "summary": "test",
                 "occurred_at": datetime.utcnow().isoformat(),
             },

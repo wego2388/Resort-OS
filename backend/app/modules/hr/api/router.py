@@ -72,7 +72,7 @@ def create_employee(data: EmployeeCreate, db: DbDep, _=Depends(get_admin_user)):
 
 
 @router.get("/hr/employees/{employee_id}", response_model=EmployeeRead)
-def get_employee(employee_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def get_employee(employee_id: int, db: DbDep, _=Depends(get_manager_user)):
     emp = crud.get_employee(db, employee_id)
     if not emp:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
@@ -459,7 +459,7 @@ def create_leave_type(data: LeaveTypeCreate, db: DbDep, _=Depends(get_manager_us
 
 @router.post("/hr/leave-requests", response_model=LeaveRequestRead,
              status_code=status.HTTP_201_CREATED)
-def create_leave_request(data: LeaveRequestCreate, db: DbDep, _=Depends(get_current_active_user)):
+def create_leave_request(data: LeaveRequestCreate, db: DbDep, _=Depends(get_manager_user)):
     try:
         req = services.request_leave(
             db,
@@ -826,7 +826,7 @@ def get_rota(
 
 
 @router.get("/hr/payroll/{run_id}/payslip/{employee_id}", response_model=None)
-def download_payslip(run_id: int, employee_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def download_payslip(run_id: int, employee_id: int, db: DbDep, _=Depends(get_manager_user)):
     try:
         pdf = services.generate_payslip_pdf(db, run_id, employee_id)
         return Response(

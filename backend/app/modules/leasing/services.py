@@ -6,6 +6,7 @@ import logging
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -201,6 +202,27 @@ def apply_penalties(db: Session, contract_id: int) -> list[LeasePayment]:
     return updated
 
 
+class PaymentConflictError(Exception):
+    """دفعة إيجار مقفولة بعملية تحصيل تانية شغالة عليها دلوقتي — 409، مش 400."""
+
+
+def _lock_payment_or_raise(db: Session, payment_id: int) -> LeasePayment:
+    """⚠️ باج حقيقي اتصلح (2026-07-28، مرآة timeshare.services._lock_installment_or_raise):
+    pay_payment كانت بتقرا/تعدّل paid_amount من غير أي قفل صف — تحصيلين
+    متزامنين على نفس الدفعة كانوا يمسحوا بعض بصمت (فلوس محصّلة فعليًا
+    بتختفي من غير أي خطأ)."""
+    try:
+        locked = crud.lock_payment_for_update(db, payment_id)
+    except OperationalError as exc:
+        db.rollback()
+        raise PaymentConflictError(
+            "الدفعة مقفولة الآن بعملية تحصيل أخرى — حاول تاني خلال لحظات"
+        ) from exc
+    if not locked:
+        raise ValueError(f"الدفعة {payment_id} غير موجودة")
+    return locked
+
+
 def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePayment:
     """⚠️ نفس فئة الباجين اللي اتصلحوا قبل كده في `timeshare.services.pay_installment`
     (الموديول الشقيق)، اتكشفوا هنا كمان أثناء اختبار حي كمدير إيجارات — الكود كان
@@ -211,9 +233,7 @@ def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePaym
        بيتقبل بصمت (paid_amount بيبقى أكبر من amount+penalty، والحالة بتبقى
        "paid" من غير أي تنبيه أو تسجيل فرق) — باج مالي حقيقي، مش نظري.
     """
-    payment = crud.get_payment(db, payment_id)
-    if not payment:
-        raise ValueError(f"الدفعة {payment_id} غير موجودة")
+    payment = _lock_payment_or_raise(db, payment_id)
     if payment.status == "paid":
         raise ValueError("الدفعة مسددة بالكامل مسبقاً")
     contract = get_contract_or_404(db, payment.contract_id)

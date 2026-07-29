@@ -28,12 +28,28 @@ def _reset_public_contact_limits(monkeypatch):
 def _site(monkeypatch, db, host: str = "public-contact.test"):
     branch = make_branch(db)
     db.commit()
+    # Gate 4B: GET /hub/contact-forms بقى بيفرض branch isolation server-side
+    # (2026-07-28، راجع hub/api/router.py's _assert_hub_branch) — نفس نمط
+    # test_hub_http.py/test_crm_http.py's make_branch_committed. manager@
+    # test.local هو المستخدم الوحيد المستخدَم مع branch_id هنا فعليًا
+    # (cashier_headers مستخدَم بس لتست رفض المستوى، فمش محتاج ربط).
+    _link_manager_to_branch(db, branch.id)
     monkeypatch.setattr(
         settings,
         "CHAT_PUBLIC_HOST_BRANCH_MAP",
         {host: branch.id},
     )
     return branch, host
+
+
+def _link_manager_to_branch(db, branch_id: int) -> None:
+    from app.core.kernel.models.user import User
+    from tests.conftest import assign_test_user_to_branch
+
+    user = db.query(User).filter(User.email == "manager@test.local").first()
+    if user:
+        assign_test_user_to_branch(db, user.id, branch_id)
+    db.commit()
 
 
 def _headers(host: str, key: str = "contact-request-00000001") -> dict[str, str]:

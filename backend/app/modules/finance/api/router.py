@@ -150,18 +150,35 @@ def create_folio(data: FolioCreate, db: DbDep, _=Depends(get_cashier_user)):
     return services.create_folio(db, data)
 
 
-@router.get("/finance/folios/{folio_id}", response_model=FolioRead)
-def get_folio(folio_id: int, db: DbDep, _=Depends(get_current_active_user)):
+def _assert_folio_branch(db, user, folio_id: int, action_desc: str):
+    """Gate 4B-style branch isolation على عمليات الفوليو — كانت مفقودة هنا
+    (اتكشف 2026-07-28) رغم وجودها على كل عمليات الوردية المجاورة. من غيرها
+    مستخدم من فرع يقدر يضيف رسوم/يحصّل/يسوّي فوليو فرع تاني بمجرد تخمين
+    folio_id، لأن crud.get_folio بيدوّر بالـ id بس من غير أي فلترة فرع."""
     folio = crud.get_folio(db, folio_id)
     if not folio:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الفوليو {folio_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, folio.branch_id, action_desc)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    return folio
+
+
+@router.get("/finance/folios/{folio_id}", response_model=FolioRead)
+def get_folio(folio_id: int, db: DbDep, user=Depends(get_current_active_user)):
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): نظير قراءة لباج الكتابة اللي
+    # اتصلح في نفس اليوم — أي مستخدم مسجّل دخول كان يقدر يقرا بيانات ضيف/
+    # فلوس فوليو فرع تاني بمجرد تخمين folio_id.
+    folio = _assert_folio_branch(db, user, folio_id, "عرض فوليو")
     return FolioRead.model_validate(folio)
 
 
 @router.post("/finance/folios/{folio_id}/charges",
              response_model=FolioChargeRead,
              status_code=status.HTTP_201_CREATED)
-def post_charge(folio_id: int, data: FolioChargeCreate, db: DbDep, _=Depends(get_cashier_user)):
+def post_charge(folio_id: int, data: FolioChargeCreate, db: DbDep, user=Depends(get_cashier_user)):
+    _assert_folio_branch(db, user, folio_id, "إضافة رسوم على فوليو")
     try:
         return services.post_charge(db, folio_id, data)
     except ValueError as exc:
@@ -170,7 +187,8 @@ def post_charge(folio_id: int, data: FolioChargeCreate, db: DbDep, _=Depends(get
 
 @router.post("/finance/folios/{folio_id}/settle",
              response_model=FolioRead)
-def settle_folio(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def settle_folio(folio_id: int, db: DbDep, user=Depends(get_cashier_user)):
+    _assert_folio_branch(db, user, folio_id, "تسوية فوليو")
     try:
         return services.settle_folio(db, folio_id)
     except ValueError as exc:
@@ -181,6 +199,7 @@ def settle_folio(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
              response_model=PaymentRead,
              status_code=status.HTTP_201_CREATED)
 async def add_payment(folio_id: int, data: PaymentCreate, db: DbDep, user=Depends(get_cashier_user)):
+    _assert_folio_branch(db, user, folio_id, "تحصيل دفعة فوليو")
     try:
         payment = services.add_payment(db, folio_id, data, cashier_id=user.id)
     except services.ShiftCloseInProgressError as exc:
@@ -209,6 +228,14 @@ def void_payment(
     from app.core.kernel.auth.step_up import payment_void_scope  # noqa: PLC0415
     from app.modules.core.api.step_up_utils import consume_step_up_or_raise  # noqa: PLC0415
 
+    payment = crud.get_payment(db, payment_id)
+    if not payment:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"الدفعة {payment_id} غير موجودة")
+    try:
+        core_services.assert_branch_access(db, user, payment.branch_id, "إلغاء دفعة")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+
     scope_hash = payment_void_scope(payment_id=payment_id, reason=data.reason)
     consume_step_up_or_raise(
         db, user, request,
@@ -221,7 +248,10 @@ def void_payment(
 
 
 @router.get("/finance/folios/{folio_id}/statement/pdf", response_model=None)
-def download_folio_statement_pdf(folio_id: int, db: DbDep, _=Depends(get_cashier_user)):
+def download_folio_statement_pdf(folio_id: int, db: DbDep, user=Depends(get_cashier_user)):
+    # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-28): كشف حساب ضيف كامل (PDF) كان
+    # بيتحمّل لأي فرع بمجرد تخمين folio_id، من غير أي فحص فرع.
+    _assert_folio_branch(db, user, folio_id, "تحميل كشف حساب فوليو")
     try:
         pdf = services.generate_folio_statement_pdf(db, folio_id)
     except ValueError as exc:
