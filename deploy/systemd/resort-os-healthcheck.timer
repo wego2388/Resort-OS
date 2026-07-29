@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Resort OS production health gate every five minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+RandomizedDelaySec=15s
+Persistent=true
+Unit=resort-os-healthcheck.service
+
+[Install]
+WantedBy=timers.target

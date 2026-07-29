@@ -141,12 +141,7 @@ Run a read-only environment baseline before a task:
 bash scripts/agent-check.sh
 ```
 
-During local development, a signed-in `super_admin` can open the temporary
-project control room at `/admin/project-cockpit`. It visualizes the curated
-`wagdy.md` snapshot, the 360-degree readiness audit, the role-based UI/UX
-quality contract, and the risk/dependency roadmap, then builds a copyable chat
-instruction from approved decisions. The route and both curated data payloads
-are excluded from production builds and the page never calls an AI service or
-writes to Git/the database. The underlying review and roadmap are in
-`docs/audits/PRODUCTION_READINESS_AUDIT.md` and
-`docs/audits/SMART_EXECUTION_ROADMAP.md`.
+Historical project-cockpit notes and dated execution plans are archived under
+`docs/archive/`. The live plan and task board are linked from
+[`docs/README.md`](./docs/README.md); do not use an old UI snapshot or archived
+task file as acceptance evidence.

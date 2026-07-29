@@ -1,0 +1,29 @@
+[Unit]
+Description=Resort OS production read-only health gate
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=resortos
+Group=resortos
+SupplementaryGroups=docker
+ExecStart=/usr/local/lib/resort-os/check-prod-health.sh
+Environment=RESORT_PUBLIC_IP=191.218.161.133
+Environment=RESORT_BACKUP_DIR=/var/backups/resort-os
+Environment=RESORT_BACKUP_MAX_AGE_MINUTES=1560
+Environment=RESORT_CERT_MIN_VALID_SECONDS=172800
+Environment=RESORT_DISK_WARN_PERCENT=85
+TimeoutStartSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

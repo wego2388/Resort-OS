@@ -3,7 +3,7 @@
 **آخر تحديث مثبت:** 2026-07-29
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**الحالة:** IP-only يعمل؛ النشر التالي متوقف لحماية ومصالحة مصدر الإنتاج
+**الحالة:** REL-02 منشور وhealthy؛ المرحلة الحالية UAT/monitoring قبل Go/No-Go
 
 ## 1. القرارات غير القابلة للالتباس
 
@@ -23,8 +23,9 @@
 ### الكود المحلي
 
 - branch: `claude/CX-02C-frontend-auth-bootstrap`
-- reviewed code commit: `6c9f09e`
-- frontend auth/bootstrap/permissions/route gates: مكتملة محليًا.
+- release source commit: `ac7764f`؛ إصلاحات الكود الأساسية في `6c9f09e`.
+- الفرع مدفوع إلى `origin/claude/CX-02C-frontend-auth-bootstrap`؛ `main` لم يتغير.
+- frontend auth/bootstrap/permissions/route gates: مكتملة ومنشورة.
 - single-branch UX: لا selector ظاهر، ومسار اختيار الفرع للطوارئ fail-closed.
 - offline queue: مربوط بالمستخدم والفرع والموديول.
 - Alembic head: `88d1c505a9dc`.
@@ -37,26 +38,28 @@
 
 - SSH بالمفتاح كمستخدم `resortos` مع sudo وDocker.
 - root login وpassword auth مغلقان؛ UFW وFail2ban يعملان.
-- 8 حاويات تعمل؛ Backend healthy و`/health` = 200 وصفر restart.
+- release الفعال: `/opt/resort-os-releases/ac7764f`.
+- 8 حاويات تعمل؛ Backend/Celery/El Kheima healthy و`/health` = 200 وصفر restart.
 - PostgreSQL/Backend/Redis host ports loopback-only.
-- backup timer ناجح، وأحدث dump يمر `pg_restore --list`.
+- staff HTTPS على 443 والموقع التسويقي على 8443 يعيدان 200 من خارج الخادم.
+- backup timer ناجح، وpre-deploy dump ونقطة rollback للصور محفوظان.
 - Certbot IP renewal dry-run ناجح، والمؤقت يعمل كل 12 ساعة.
 - Hostinger provider snapshots/backups: صفر وقت الفحص.
-- Git على الإنتاج: `0a13c97` مع 79 tracked modified وملفات untracked.
-- الصور الحالية بُنيت من الشجرة غير النظيفة؛ SHA وحده لا يصف الإصدار الحي.
+- مجلد Git القديم `0a13c97` غير النظيف محفوظ لكنه لم يعد مصدر الحاويات المحدثة.
+- الصور الفعالة مرتبطة بـcommit وdigests موثقة في تسليم REL-02.
 
 ## 3. حالة البوابات
 
 | Gate | الحالة | شرط الإغلاق |
 |---|---|---|
 | Gate 0 — baseline | COMPLETE | الأدلة الحالية خضراء |
-| Gate 1 — auth/permissions/branch | CODE COMPLETE — LOCAL | مصالحة المصدر ثم deploy/UAT |
+| Gate 1 — auth/permissions/branch | DEPLOYED — UAT PENDING | قبول الأدوار على جهاز فعلي |
 | Gate 2 — QR/PWA/public | PARTIAL | device UAT والعقد العام النهائي |
 | Gate 3 — chat/consent/truth | DEPLOYED CONTAINMENT | governance وapproved facts قبل التفعيل |
 | Gate 4 — content/SEO | PARTIAL | بيانات مالك موثقة |
 | Gate 5 — production data | BLOCKED ON INPUT | master data واعتماد مالي |
 | Gate 6 — VPS hardening | COMPLETE + VERIFIED | مراجعة دورية فقط |
-| Gate 7 — deploy/backup/monitoring | IN PROGRESS | source reconciliation + offsite + alerts |
+| Gate 7 — deploy/backup/monitoring | DEPLOY + DR COMPLETE | alerts وburn-in |
 | Gate 8 — TLS/UAT | PARTIAL | UAT جهاز/عمل وتشغيل |
 | Gate 9 — cutover | PAUSED — IP-ONLY | قرار مالك جديد فقط |
 
@@ -92,23 +95,27 @@
 
 ### P0-03 — تثبيت المصدر المحلي
 
-**الحالة:** COMPLETE — code `6c9f09e` + documentation consolidation commit
+**الحالة:** COMPLETE — code `6c9f09e` + docs `56e7219` + DR `ac7764f`
 
 - روجع diff النهائي واستُبعدت الأسرار وملف المستخدم الخاص بالـDNS.
 - حزمة الكود ثُبتت في commit واضح من gates خضراء.
-- التوثيق الحي والأرشيف يُثبتان في commit منفصل.
-- push إجراء منفصل بعد إثبات نقطة التراجع.
+- التوثيق الحي والأرشيف ثُبتا في commits منفصلة.
+- الفرع دُفع بعد إثبات نقطة التراجع؛ `origin/main` لم يُمس.
 
 ### P0-04 — نشر محكوم
 
-**الحالة:** IN PROGRESS — preflight فقط؛ لا deploy قبل نتيجة صريحة
+**الحالة:** COMPLETE — 2026-07-29
 
-- pre-deploy backup.
-- build من commit مثبت مع image digests.
-- migrations expand-safe.
-- نشر أقل مجموعة خدمات لازمة.
-- health/smoke/permissions/branch checks.
-- rollback فوري عند فشل شرط قبول.
+- بُني commit `ac7764f` داخل release immutable بعد نجاح preflight.
+- حُفظ dump قبل النشر وrollback tags للصور القديمة.
+- Alembic عند `88d1c505a9dc`؛ أمر upgrade نجح بلا تغيير إضافي.
+- نُشرت backend ثم Celery ثم El Kheima، وأُعيد إنشاء Nginx لإعادة الربط.
+- الصور الأربع الفعالة تطابق digests المسجلة، وكلها restarts=0.
+- HTTPS 443/8443 وhealth وDB/Redis وcounts والسجلات اجتازت smoke checks.
+- لم تُستبدل PostgreSQL أو Redis أو marketing site، ولم يُستخدم مجلد Git
+  القديم كمصدر بناء.
+
+**القبول:** PASSED — لا يوجد سبب تقني للـrollback وقت التحقق.
 
 ### P0-05 — UAT وGo/No-Go
 
@@ -116,6 +123,7 @@
 
 - جهاز وهاتف حقيقيان، عربي/إنجليزي، QR، انقطاع شبكة، logout/login.
 - استقبال/غرف/housekeeping/night audit/POS/guest alerts حسب الأدوار.
+- فترة burn-in مع alerts للـHTTP/containers/backup/TLS/disk.
 - اعتماد ممثل التشغيل والمالية والمالك.
 - تسجيل defects وقرار Go/No-Go مؤرخ.
 
@@ -137,6 +145,7 @@
 
 - لوحة التنفيذ: `docs/agent-workflow/EL_KHEIMA_EXECUTION_BOARD.md`
 - تدقيق VPS: `docs/agent-workflow/handoffs/2026-07-29_VPS-03_codex_handoff.md`
+- تسليم النشر: `docs/agent-workflow/handoffs/2026-07-29_REL-02_codex_handoff.md`
 - حالة المشروع: `PROJECT_STATUS.md`
 - ملخص المالك: `wagdy.md`
 - التاريخ القديم: `docs/archive/2026-07-execution/`

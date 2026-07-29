@@ -1,529 +1,321 @@
-# Deployment Guide — El Kheima Beach (resort-os)
+# Production Operations — El Kheima Beach Resort OS
 
-Step-by-step instructions for standing this up on a fresh Ubuntu VPS.
-`resort-os` is fully self-contained — one repo, one build context, no
-external shared-package dependency. `git clone` and go.
+**Current model:** immutable releases on the IP-only VPS
+**Current host:** `191.218.161.133`
+**SSH alias:** `resort-os-vps`
+**Compose project:** `resort-os-prod`
 
-## 1. Install Docker + Docker Compose (Ubuntu 22.04/24.04)
+This is the only live deployment runbook. The previous host/runbook is
+archived in
+`docs/archive/2026-07-execution/DEPLOYMENT_OLD_HOST_AND_LEGACY_RUNBOOK.md`
+and must not be executed.
+
+Current commit, release directory, image IDs, backup paths, and rollback
+evidence are recorded in `PROJECT_STATUS.md` and the latest release handoff.
+Never substitute values from an old handoff.
+
+## 1. Production layout
+
+```text
+/opt/resort-os/                       legacy source snapshot; not a deploy target
+/opt/resort-os-releases/<commit>/     immutable application release
+/opt/elkheima-marketing-website/      marketing-site build context
+/var/backups/resort-os/
+  source-releases/                    release archives and rollback manifests
+  source-snapshots/                   preserved legacy production source
+/etc/letsencrypt/                     IP certificate
+/var/www/certbot/                     ACME webroot
+```
+
+The active Compose files are:
+
+```text
+docker-compose.prod.yml
+docker-compose.prod.ip-tls.yml
+```
+
+Do not use a domain override while the IP-only decision is active.
+
+## 2. Safety rules
+
+- Connect as `resortos` with the SSH key; use `sudo` only where required.
+- Do not enable root/password SSH or weaken UFW/Fail2ban.
+- Never print `backend/.env.prod` or Docker container environment values.
+- Do not clean, reset, pull, or rebuild inside `/opt/resort-os`.
+- Every release needs a reviewed commit, archive SHA-256, DB backup, previous
+  image tags, migration compatibility check, and external smoke tests.
+- Never run `app.seed` in production.
+- Never run `scripts/wait-dns-then-switch.sh` without a new owner decision.
+- A compatible application rollback does not justify restoring the database.
+
+## 3. Daily status
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y ca-certificates curl gnupg
+ssh resort-os-vps
 
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
+docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}' | sort
+curl -fsS http://127.0.0.1:8005/health
+curl -fsS https://191.218.161.133/health
+curl -fsSI https://191.218.161.133:8443/
 
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-sudo apt-get update
-sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-
-# Run docker without sudo (log out/in afterwards for this to take effect)
-sudo usermod -aG docker "$USER"
-
-docker --version
-docker compose version
+systemctl --failed
+systemctl status resort-os-backup.timer --no-pager
+systemctl status resort-os-certbot-renew.timer --no-pager
+df -h /
+free -h
 ```
 
-## 2. Clone `resort-os`
+Resolve the currently active release from the running backend instead of
+guessing a path:
 
 ```bash
-sudo mkdir -p /opt/wegosharm && sudo chown "$USER":"$USER" /opt/wegosharm
-cd /opt/wegosharm
-git clone <your-resort-os-remote-url> resort-os
-cd resort-os
+RESORT_ACTIVE_RELEASE=$(docker inspect resort-os-prod-backend-1 \
+  --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')
+test -n "$RESORT_ACTIVE_RELEASE"
+printf '%s\n' "$RESORT_ACTIVE_RELEASE"
 ```
 
-> **⚠️ If you also run local dev on this same machine/checkout**:
-> `docker-compose.prod.yml` pins `name: resort-os-prod` at its top specifically
-> so its volumes/network never collide with `docker-compose.yml`'s (which
-> default to the `resort-os` project name — the checkout's directory name).
-> Without that pin, `docker compose -f docker-compose.prod.yml down -v` would
-> tear down and silently wipe the *dev* Postgres/Redis volumes too, since
-> Compose scopes volumes by project name and both files would otherwise
-> resolve to the same one. On a real, dedicated VPS this scenario doesn't
-> arise (there's no dev stack to collide with), but the pin costs nothing and
-> stays as a permanent guard rail.
-
-## 3. Create `backend/.env.prod` with real production secrets
+The read-only systemd health gate runs every five minutes:
 
 ```bash
-cp backend/.env.example backend/.env.prod
+systemctl status resort-os-healthcheck.timer --no-pager
+systemctl status resort-os-healthcheck.service --no-pager
+journalctl -u resort-os-healthcheck.service --since today --no-pager
+sudo systemctl start resort-os-healthcheck.service
 ```
 
-Generate real values for the secrets below and edit them into `backend/.env.prod`
-(never commit this file — it's gitignored):
+It checks backend/DB/Redis health, both HTTPS applications, all eight
+containers, daily-backup freshness, at least 48 hours of certificate validity,
+and root-disk usage below 85%. A failed check exits non-zero and is retained in
+the systemd journal. External delivery still requires a separately approved
+notification channel.
+
+## 4. Compose environment without exposing secrets
+
+Compose needs the database password used inside `DATABASE_URL`. Derive it in
+memory from the active release; never echo it:
 
 ```bash
-# SECRET_KEY — 64 random hex chars
-openssl rand -hex 32
+cd "$RESORT_ACTIVE_RELEASE"
 
-# FIELD_ENCRYPTION_KEY — Fernet key (encrypts PII columns: national_id, etc.)
-python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+RESORT_DATABASE_URL=$(sed -n 's/^DATABASE_URL=//p' backend/.env.prod | head -n 1)
+RESORT_DB_PASSWORD=$(RESORT_DATABASE_URL="$RESORT_DATABASE_URL" python3 -c '
+import os
+from urllib.parse import urlparse
 
-# SURVEY_TOKEN_SECRET — 32 random hex chars
-openssl rand -hex 16
+url = os.environ["RESORT_DATABASE_URL"].replace(
+    "postgresql+psycopg://", "postgresql://", 1
+)
+password = urlparse(url).password
+if not password:
+    raise SystemExit("DATABASE_URL has no password")
+print(password)
+')
+export DB_PASSWORD="$RESORT_DB_PASSWORD"
+
+RESORT_COMPOSE=(
+  docker compose
+  --env-file backend/.env.prod
+  -f docker-compose.prod.yml
+  -f docker-compose.prod.ip-tls.yml
+)
+
+"${RESORT_COMPOSE[@]}" config --quiet
 ```
 
-At minimum, also set for production:
-
-```env
-ENVIRONMENT=production
-DATABASE_URL=postgresql+psycopg://postgres:<DB_PASSWORD>@db_postgres:5432/resort_os
-REDIS_URL=redis://redis_cache:6379/0
-CELERY_BROKER_URL=redis://redis_cache:6379/1
-CELERY_RESULT_BACKEND=redis://redis_cache:6379/2
-CORS_ORIGINS=https://app.yourdomain.com,https://yourdomain.com
-RESORT_NAME=El Kheima Beach
-
-# Mandatory outside development/test/testing. Startup fails closed if either
-# this flag or a valid FIELD_ENCRYPTION_KEY is missing.
-LOGIN_2FA_ENFORCED=true
-TWO_FACTOR_ENROLLMENT_TOKEN_TTL_MINUTES=30
-# Anonymous customer registration is off unless a deployment explicitly needs it.
-PUBLIC_REGISTRATION_ENABLED=false
-
-# Optional but recommended for production — see §9 and §10
-SENTRY_DSN=https://xxxx@oXXXXXX.ingest.sentry.io/XXXXXXX
-```
-
-Note the hostnames: inside `docker-compose.prod.yml`, Postgres and Redis are
-reached by their **service names** (`db_postgres`, `redis_cache`), not
-`localhost` — that only worked in local dev because those ports were
-published to the host. They're still *also* published to `127.0.0.1` on the
-host in prod (see docker-compose.prod.yml) — that's deliberate, it's what
-lets `scripts/backup_db.sh` run directly on the host (§10) without going
-through `docker compose exec`.
-
-Also set a real `DB_PASSWORD` (used by both `docker-compose.prod.yml`'s
-`db_postgres` service and your `DATABASE_URL` above) — either export it in
-your shell before `docker compose up`, or put `DB_PASSWORD=...` in a
-`.env` file at the repo root (Compose reads that automatically).
-
-## 4. Build and initialize the stack
+Unset the derived shell values when the operation ends:
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d db_postgres redis_cache
-docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml run --rm backend alembic upgrade head
-docker compose -f docker-compose.prod.yml run --rm backend python -m app.admin_bootstrap create
+unset DB_PASSWORD RESORT_DB_PASSWORD RESORT_DATABASE_URL
 ```
 
-The bootstrap command is interactive. It asks for a named operator and email,
-then prints a random temporary password plus a separate enrollment token once.
-Keep them separately and deliver them out-of-band. Neither secret can be
-provided as a command-line argument or stored in deployment configuration.
+## 5. Controlled immutable release
 
-For operational resilience, create a second named super-admin owned by a
-different person and complete both onboarding journeys before go-live:
+### A. Local release gate
+
+From the reviewed branch:
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm backend python -m app.admin_bootstrap create
+bash scripts/agent-check.sh
+git diff --check
+git status --short --branch
+git rev-parse HEAD
+
+cd backend
+.venv/bin/pytest tests/ -q
+.venv/bin/alembic heads
+
+cd ../frontend
+pnpm --filter el-kheima test:frontend
+pnpm run type-check:all
+pnpm run build:all
 ```
 
-Then start the complete stack:
+The release commit must be pushed to its explicit branch. Do not move `main`
+as an incidental deployment step.
+
+### B. Release artifact
+
+Create a Git archive from the exact commit, calculate its SHA-256, copy it to
+`/var/backups/resort-os/source-releases/`, and verify the same checksum on the
+VPS. Extract it only into a new `/opt/resort-os-releases/<commit>` directory.
+Never overwrite an existing release directory.
+
+Copy the current production `.env.prod` to the new release with mode `0600`
+without displaying it. Make `MARKETING_SITE_CONTEXT` point to the existing
+absolute marketing checkout if the copied relative value does not resolve
+from the new directory. Run:
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d
+python3 scripts/validate_prod_env.py --env backend/.env.prod
 ```
 
-`app.seed` is deliberately unavailable here, so migrations and the privileged
-bootstrap do **not** create a resort branch, outlets, taxes, payment methods,
-or other operational reference data. Configure and verify that reference data
-through approved administrative/data-migration procedures before serving real
-traffic. A dedicated production reference-data initializer remains an open
-deployment gate; do not copy the demo seed as a shortcut.
+### C. Rollback point
 
-This builds, in order as dependencies require:
-- `db_postgres`, `redis_cache` — same images as local dev
-- `backend` — via `backend/Dockerfile` (self-contained, `backend/` is the
-  entire build context)
-- `celery_worker`, `celery_beat` — same image as `backend`, different command
-- `el_kheima`, `public_site` — via `frontend/Dockerfile`, one build per
-  app (`--build-arg APP_NAME=...`), each producing a small nginx image
-  serving that app's static build
-- `nginx` — the public edge proxy (see §7)
+Before any build retags an image name, tag the currently running images under:
 
-Check everything came up healthy:
+```text
+resort-os-rollback/backend:pre-<commit>
+resort-os-rollback/celery-worker:pre-<commit>
+resort-os-rollback/celery-beat:pre-<commit>
+resort-os-rollback/el-kheima:pre-<commit>
+```
+
+Record their full image IDs under
+`/var/backups/resort-os/source-releases/<commit>-rollback-images.txt`.
+
+Create a fresh database dump:
 
 ```bash
-docker compose -f docker-compose.prod.yml ps
+ENV_FILE=backend/.env.prod COMPOSE_PROJECT_NAME=resort-os-prod \
+  bash scripts/backup_db.sh
 ```
 
-## 5. Existing-account recovery and first login
+Do not continue unless the dump exists and `pg_restore --list` can read it.
 
-Never run `app.seed` in production. It creates a complete synthetic business
-dataset and known development identities, and now fails explicitly outside
-`development`, `test`, or `testing`.
+### D. Build and preflight
 
-To recover an existing account (including a legacy seeded super-admin or
-accountant) without changing its role:
+With `RESORT_COMPOSE` configured for the new release:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec backend python -m app.admin_bootstrap recover
+"${RESORT_COMPOSE[@]}" build --parallel \
+  backend celery_worker celery_beat el_kheima
+
+"${RESORT_COMPOSE[@]}" run --rm --no-deps backend \
+  python -c 'from app.main import app; print(app.title)'
+
+"${RESORT_COMPOSE[@]}" run --rm --no-deps backend alembic heads
+"${RESORT_COMPOSE[@]}" run --rm backend alembic upgrade head
 ```
 
-Recovery preserves the existing role, rotates the password, disables the old
-factor, clears refresh/recovery sessions, and issues a new short-lived
-enrollment token. It cannot promote an ordinary account.
+Stop if import, Compose validation, backup, or migration fails. A build alone
+does not change the running containers.
 
-The user-visible onboarding sequence is:
+### E. Controlled replacement
 
-1. Sign in with the temporary password and enrollment token.
-2. Replace the temporary password (all prior sessions are revoked).
-3. Sign in again with the new password and the same unexpired token.
-4. Bind an authenticator, verify the six-digit code, and save all eight
-   one-time recovery codes separately from the phone.
-5. Sign in again with a fresh TOTP code. A bootstrap session never receives a
-   seven-day refresh cookie.
-
-If the enrollment token expires, run `recover` again. Do not disable
-`LOGIN_2FA_ENFORCED` as a recovery shortcut.
-
-After the named super-admin has completed password replacement and 2FA, use
-**Settings → Staff Accounts** to create ordinary staff identities. Creation
-requires a fresh password + 2FA step-up and returns a random temporary
-password plus a separate enrollment token once; neither secret is stored in
-browser storage. Optionally select an existing HR employee record during
-creation so attendance, leave, payroll, and profile self-service resolve to
-the same login. The web control plane cannot create a `super_admin`; create a
-second named super-admin only with the local bootstrap command above.
-
-After at least one named super-admin has completed password replacement and
-2FA and successfully signed in, disable the explicitly reviewed seed and
-synthetic employee-portal identities:
+Replace in dependency order and wait for health after each stage:
 
 ```bash
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml \
-  exec backend python -m app.admin_bootstrap disable-legacy-demo
+"${RESORT_COMPOSE[@]}" up -d --no-deps backend
+"${RESORT_COMPOSE[@]}" up -d --no-deps celery_worker celery_beat
+"${RESORT_COMPOSE[@]}" up -d --no-deps el_kheima
+"${RESORT_COMPOSE[@]}" up -d --no-deps --force-recreate nginx
 ```
 
-The command refuses to run before that replacement account is fully enrolled,
-requires an exact interactive confirmation, revokes demo sessions, and writes
-one audit event.
+Do not recreate PostgreSQL, Redis, or the marketing site when they are outside
+the release scope.
 
-## 6. DNS
+## 6. Post-release acceptance
 
-This deployment routes by **subdomain**, not path, because neither of the two
-frontend apps have a configured base path (see the routing-decision comment
-at the top of `docker-compose.prod.yml`). Point DNS A records at your VPS's IP:
-
-| Hostname | App |
-|---|---|
-| `app.yourdomain.com` | `el-kheima` (staff) |
-| `yourdomain.com` + `www.yourdomain.com` | `public` (guest booking site + QR ordering/beach-checkin/survey) |
-
-## 7. TLS with certbot
-
-`docker-compose.prod.yml`'s `nginx` service mounts two volumes that certbot
-needs: `certbot_www` (for the HTTP-01 challenge, already wired into
-`deploy/nginx/edge.conf`'s `/.well-known/acme-challenge/` location) and
-`certbot_certs` (mounted read-only at `/etc/letsencrypt`, where
-`deploy/nginx/edge.conf` expects each domain's cert). Simplest path — install
-certbot on the **host** (not in a container) and let it write directly into
-the same path the `certbot_certs` named volume backs:
+Verify all of the following:
 
 ```bash
-sudo apt-get install -y certbot
+docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}' | sort
+curl -fsS https://191.218.161.133/health
+curl -fsSI https://191.218.161.133/
+curl -fsSI https://191.218.161.133:8443/
 
-# Find where the certbot_certs volume actually lives on disk:
-docker volume inspect resort-os-prod_certbot_certs --format '{{ .Mountpoint }}'
-# then either:
-#   (a) symlink /etc/letsencrypt on the host to that mountpoint, or
-#   (b) stop nginx, run certbot standalone, copy certs into that mountpoint, restart nginx
-
-# Easiest in practice — stop the edge nginx briefly, use certbot's standalone
-# mode (it binds port 80 itself), then restart:
-docker compose -f docker-compose.prod.yml stop nginx
-sudo certbot certonly --standalone \
-  -d app.yourdomain.com -d yourdomain.com -d www.yourdomain.com
-# certbot writes to /etc/letsencrypt on the host by default — bind-mount that
-# instead of a named volume if you go this route (edit docker-compose.prod.yml:
-# change `certbot_certs:/etc/letsencrypt:ro` to `/etc/letsencrypt:/etc/letsencrypt:ro`)
-docker compose -f docker-compose.prod.yml start nginx
+docker exec resort-os-prod-backend-1 alembic current
+docker exec resort-os-prod-db_postgres-1 \
+  psql -U postgres -d resort_os -Atc \
+  "SELECT 'users='||count(*) FROM users UNION ALL SELECT 'branches='||count(*) FROM branches;"
 ```
 
-Before any of this, edit **`deploy/nginx/edge.conf`** and replace every
-`yourdomain.com` placeholder with your real domain (two server blocks +
-the shared HTTP→HTTPS redirect block).
+Also verify:
 
-Set up renewal (`certbot renew` twice daily via cron/systemd timer is
-standard) and have it reload the `nginx` container after renewal:
+- full image IDs and `RestartCount=0`;
+- updated containers use the new release `working_dir` label;
+- staff and marketing titles render from outside the VPS;
+- TLS SAN matches `191.218.161.133`;
+- DB/Redis ports remain loopback-only;
+- backend/Celery/Nginx logs contain no new traceback, critical, fatal, or
+  emergency event;
+- no temporary restore database remains.
+
+Document the evidence in a release handoff before declaring REL complete.
+
+## 7. Application rollback
+
+Rollback only when a release acceptance condition fails or a verified
+regression requires it.
+
+1. Read the exact rollback manifest for the active release.
+2. Retag the preserved rollback images to the normal Compose image names.
+3. Recreate backend, Celery, El Kheima, and Nginx in the same controlled order.
+4. Re-run every health, TLS, DB, listener, and log check.
+
+For `ac7764f`, the preserved tags are recorded in
+`docs/agent-workflow/handoffs/2026-07-29_REL-02_codex_handoff.md`.
+
+The current encryption migration widens columns and has a no-op downgrade.
+Do not shrink those columns during application rollback. Restore the database
+only after proving actual data corruption and selecting a dated dump with the
+owner.
+
+## 8. Backup and disaster recovery
+
+- The production timer creates daily local PostgreSQL dumps.
+- An encrypted AES-256 copy exists off the VPS and has passed a full isolated
+  restore drill.
+- Provider snapshots remain recommended but do not replace the tested
+  database copy.
+- Never write a decrypted production dump to an unprotected local path.
+- Test restores in a uniquely named temporary database, compare expected
+  schema/version/counts, then remove it and independently confirm removal.
+
+See `docs/agent-workflow/handoffs/2026-07-29_DR-01_codex_handoff.md`.
+
+## 9. TLS
+
+The public certificate is an IP certificate for `191.218.161.133`.
 
 ```bash
-# /etc/cron.d/certbot-renew
-0 3,15 * * * root certbot renew --quiet --deploy-hook \
-  "docker compose -f /opt/wegosharm/resort-os/docker-compose.prod.yml exec -T nginx nginx -s reload"
+sudo certbot certificates
+sudo certbot renew --dry-run
+systemctl status resort-os-certbot-renew.timer --no-pager
+
+echo | openssl s_client \
+  -connect 127.0.0.1:443 \
+  -servername 191.218.161.133 2>/dev/null |
+  openssl x509 -noout -issuer -dates -ext subjectAltName
 ```
 
-### 7A. Publicly trusted TLS when only the VPS IP is available
+Do not introduce a domain to solve certificate renewal; the tested IP renewal
+path is the current design.
 
-Let's Encrypt supports short-lived IP certificates. Certbot 5.4 or newer is
-required for the webroot/IP flow. These certificates last about six days, so
-the included twice-daily renewal timer is mandatory rather than optional.
+## 10. Super-admin recovery
 
-Start the HTTP edge first so the ACME challenge path is reachable:
+Prefer a second active super-admin and recovery codes. If server-side recovery
+is required, resolve the active release and use the maintained wrapper scripts:
 
 ```bash
-sudo install -d -m 0755 /var/www/certbot /etc/letsencrypt
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-only.yml up -d nginx
+RESORT_ACTIVE_RELEASE=$(docker inspect resort-os-prod-backend-1 \
+  --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')
+cd "$RESORT_ACTIVE_RELEASE"
 
-sudo snap install core
-sudo snap refresh core
-sudo snap install --classic certbot
-/snap/bin/certbot --version   # must be 5.4+
-
-sudo /snap/bin/certbot certonly \
-  --webroot --webroot-path /var/www/certbot \
-  --preferred-profile shortlived \
-  --ip-address 187.124.170.249 \
-  --cert-name 187.124.170.249 \
-  --email theagaty@gmail.com --agree-tos --non-interactive
+bash scripts/vps-recover-admin.sh operator@example.com
+bash scripts/vps-create-admin.sh operator@example.com "Operator Full Name"
 ```
 
-Install renewal and switch the edge to TLS:
-
-```bash
-sudo install -m 0755 deploy/certbot/reload-resort-os-nginx.sh \
-  /etc/letsencrypt/renewal-hooks/deploy/reload-resort-os-nginx.sh
-sudo install -m 0644 deploy/systemd/resort-os-certbot-renew.service \
-  deploy/systemd/resort-os-certbot-renew.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now resort-os-certbot-renew.timer
-sudo ufw allow 8443/tcp
-
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml up -d nginx
-curl -fsS https://187.124.170.249/health
-curl -fsSI https://187.124.170.249:8443/
-sudo /snap/bin/certbot renew --dry-run
-```
-
-The staff app is `https://187.124.170.249/`; the guest/public app is
-`https://187.124.170.249:8443/`. Set `PUBLIC_SITE_URL` to the latter in
-`backend/.env.prod`. Port 8081 remains only as an HTTP redirect to 8443.
-
-## 8. Health check verification
-
-```bash
-curl -s https://app.yourdomain.com/health
-# → {"status": "ok", "checks": {"database": {...}, "redis": {...}}, ...}
-
-docker compose -f docker-compose.prod.yml ps            # all healthy?
-docker compose -f docker-compose.prod.yml logs backend --tail 100
-```
-
-If `/health` doesn't respond: check `docker compose -f docker-compose.prod.yml
-logs backend`, confirm `alembic upgrade head` succeeded (step 5), and confirm
-`db_postgres`/`redis_cache` show `healthy` in `docker compose ps`.
-
-## 9. Error tracking (Sentry)
-
-Set `SENTRY_DSN` in `backend/.env.prod` (get one free at sentry.io — a new
-project of type "FastAPI"/"Python") and restart the backend:
-
-```bash
-docker compose -f docker-compose.prod.yml restart backend celery_worker celery_beat
-docker compose -f docker-compose.prod.yml logs backend | grep Sentry
-# → [Sentry] initialized for 'Resort OS' env='production'
-```
-
-Without `SENTRY_DSN` set, the app runs fine — errors just aren't reported
-anywhere except the container logs (`docker compose logs backend`), which is
-fine for local dev but means real production errors go unnoticed until a
-user reports them. Setting this is cheap and worth doing before go-live.
-
-## 10. Database backups — set this up before real guest data exists
-
-`scripts/backup_db.sh` and `scripts/restore_db.sh` (repo root) run directly
-against Postgres on `127.0.0.1:5436` (published to the host by both
-docker-compose.yml and docker-compose.prod.yml — see the note in §3) using
-the same `DATABASE_URL` from the environment file the app itself reads, so there's
-nothing extra to configure.
-
-**Manual test run** (do this once after first deploy to confirm it actually
-works on this server, not just in theory):
-
-```bash
-ENV_FILE=backend/.env.prod ./scripts/backup_db.sh
-# → backups/resort_os_<timestamp>.dump
-
-# Prove it restores cleanly, into a throwaway DB (never overwrites anything real):
-./scripts/restore_db.sh latest resort_os_restore_test
-docker compose -f docker-compose.prod.yml exec db_postgres \
-  psql -U postgres -d resort_os_restore_test -c "SELECT count(*) FROM users;"
-# compare against the real DB's user count — should match exactly
-
-docker compose -f docker-compose.prod.yml exec db_postgres \
-  psql -U postgres -c "DROP DATABASE resort_os_restore_test;"   # clean up
-```
-
-**Real disaster recovery** (restoring over the actual `resort_os` database,
-e.g. after a server rebuild) uses the same script — it detects the target
-already has tables and requires you to type the database name back as
-confirmation before it touches anything:
-
-```bash
-./scripts/restore_db.sh backups/resort_os_20260703_030000.dump resort_os
-```
-
-**Schedule it** — a systemd timer is provided (daily at 03:00, deliberately
-clear of the app's own scheduled jobs in `app/celery_app.py`):
-
-```bash
-sudo cp deploy/systemd/resort-os-backup.service deploy/systemd/resort-os-backup.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now resort-os-backup.timer
-systemctl list-timers resort-os-backup.timer   # confirm it's scheduled
-```
-
-Edit `WorkingDirectory=`/`User=` in `resort-os-backup.service` first if your
-checkout path or run user differs from `/opt/wegosharm/resort-os` / `resortos`.
-
-Retention defaults to 14 days (`BACKUP_RETENTION_DAYS` env var to change).
-Backups land in `backups/` at the repo root — gitignored.
-
-**Offsite sync** (wagdy.md T-04) — for real disaster recovery (the server
-itself dying, not just the database), `backup_db.sh` can also push every
-fresh dump to S3/Backblaze B2/any `rclone`-supported remote in the same run.
-Set in `backend/.env.prod` (unset by default — the local-only flow above works
-exactly the same either way):
-
-```bash
-# requires: rclone installed + `rclone config` already run once for the remote
-BACKUP_REMOTE_ENABLED=true
-BACKUP_RCLONE_REMOTE=b2:my-bucket/resort-os-backups   # or s3:bucket/path, etc.
-```
-
-`restore_db.sh latest` automatically falls back to pulling the newest dump
-from this same remote if `backups/` is empty (e.g. after a full server
-rebuild) — no separate disaster-recovery procedure to remember.
-
-## Updating / redeploying
-
-```bash
-cd /opt/wegosharm/resort-os
-bash scripts/deploy.sh
-```
-
-The deployment script refuses a dirty worktree, takes a point-in-time backup,
-fast-forwards only the selected branch, builds, applies Alembic migrations
-before replacing services, selects IP TLS automatically when its certificate
-exists, and fails if the backend health check does not recover.
-
----
-
-## 11. VPS — معلومات السيرفر الفعلي (El Kheima Beach)
-
-> هذا القسم مرجع للعمليات اليومية — كل بيانات السيرفر الحقيقي في مكان واحد.
-
-### بيانات الاتصال
-
-| | |
-|---|---|
-| **IP العام** | `187.124.170.249` |
-| **مسار المشروع** | `/opt/wegosharm/resort-os` |
-| **GitHub Repo** | `git@github.com:wego2388/Resort-OS.git` |
-| **الفرع الرئيسي** | `main` |
-
-### الـ SSH
-
-```bash
-ssh root@187.124.170.249
-# أو إذا كان يوزر مخصص:
-ssh resortos@187.124.170.249
-```
-
-### الـ Compose Files المستخدمة على الـ VPS
-
-| الوضع | الأمر |
-|---|---|
-| **HTTP فقط** (مؤقت/ACME challenge) | `docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-only.yml` |
-| **HTTPS بشهادة IP TLS** (الوضع الدائم) | `docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml` |
-
-### الـ URLs الفعلية
-
-| التطبيق | الرابط |
-|---|---|
-| **Staff App** (el-kheima) | `https://187.124.170.249/` |
-| **Public/Guest Site** | `https://187.124.170.249:8443/` |
-| **Health Check** | `https://187.124.170.249/health` |
-| **API** | `https://187.124.170.249/api/v1/` |
-| **HTTP redirect** | `http://187.124.170.249:8081/` → يعمل redirect لـ 8443 |
-
-### الـ `.env.prod` الفعلي — القيم الحالية
-
-ملف `backend/.env.prod` موجود على المشروع المحلي وعلى الـ VPS في نفس المسار.
-القيم المهمة الحالية:
-
-```
-DATABASE_URL=postgresql+psycopg://postgres:resort_dev_pass@db_postgres:5432/resort_os
-DB_PASSWORD=resort_dev_pass          ← غيّرها لقيمة قوية في الإنتاج الحقيقي
-ENVIRONMENT=production
-RESORT_NAME=WegoSharm Resort
-DEFAULT_CURRENCY=EGP
-VAT_PERCENTAGE=14.0
-SERVICE_CHARGE_PERCENTAGE=12.0
-TIMEZONE=Africa/Cairo
-CORS_ORIGINS=http://187.124.170.249,http://187.124.170.249:80,http://localhost
-PUBLIC_SITE_URL=http://187.124.170.249    ← غيّرها لـ https://187.124.170.249:8443 بعد TLS
-LOGIN_2FA_ENFORCED=false               ← شغّلها true قبل الإنتاج الحقيقي
-```
-
-> ⚠️ **تنبيه أمني:** `DB_PASSWORD=resort_dev_pass` و `LOGIN_2FA_ENFORCED=false`
-> مناسبين للـ staging فقط. قبل استقبال بيانات حقيقية، غيّر كلمة مرور الـ DB
-> وفعّل الـ 2FA.
-
-### الـ Certbot / TLS
-
-```bash
-# الشهادة مخزنة في:
-/etc/letsencrypt/live/187.124.170.249/
-
-# email المستخدم في التسجيل:
-theagaty@gmail.com
-
-# تجديد يدوي:
-sudo /snap/bin/certbot renew
-
-# فحص التجديد التلقائي:
-systemctl list-timers resort-os-certbot-renew.timer
-```
-
-### أوامر التشغيل السريع على الـ VPS
-
-```bash
-# الوضع الحالي
-cd /opt/wegosharm/resort-os
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml ps
-
-# Deploy آخر تحديث
-bash scripts/deploy.sh
-
-# لوجات الـ backend
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml logs backend --tail=100 -f
-
-# لوجات كل الخدمات
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml logs --tail=50
-
-# إعادة تشغيل كاملة
-docker compose -f docker-compose.prod.yml -f docker-compose.prod.ip-tls.yml restart
-
-# backup يدوي
-ENV_FILE=backend/.env.prod bash scripts/backup_db.sh
-```
-
-### الـ Ports على الـ VPS
-
-| Port | الاستخدام |
-|---|---|
-| `80` | HTTP (ACME challenge + redirect) |
-| `443` | HTTPS — staff app (el-kheima) |
-| `8443` | HTTPS — public/guest site |
-| `8081` | HTTP redirect → 8443 |
-| `127.0.0.1:5436` | PostgreSQL (host-only، للـ backup scripts) |
-| `127.0.0.1:6379` | Redis (host-only) |
-| `8005` | Backend FastAPI (داخلي فقط، عبر nginx) |
+Do not place a password, recovery code, enrollment token, or TOTP secret in a
+handoff, shell history, command line, or chat transcript.

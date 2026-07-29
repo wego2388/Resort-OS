@@ -36,7 +36,8 @@
 - Codex يقود التنفيذ والمراجعة النهائية.
 - الإنتاج IP-only على `191.218.161.133`.
 - لا DNS أو domain switch دون قرار صريح جديد من Mohamed.
-- لا deploy حتى حفظ ومصالحة exact source للشجرة غير النظيفة على الإنتاج.
+- الإصدار الفعال هو release immutable مرتبط بـ`ac7764f`؛ أي نشر لاحق يحتاج
+  backup وrollback وhealth evidence جديدًا.
 - لا أسرار أو بيانات تجريبية أو master data مختلقة.
 - `scripts/wait-dns-then-switch.sh` ملف مستخدم غير نشط؛ لا يُشغّل أو يُعدّل
   ضمن الخطة الحالية.

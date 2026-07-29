@@ -312,14 +312,15 @@ If there is no second super-admin available, recovery requires direct server
 access (SSH to the VPS):
 
 ```bash
-cd /opt/wegosharm/resort-os
-docker compose -f docker-compose.prod.yml exec backend \
-  python -m app.admin_bootstrap
+RESORT_ACTIVE_RELEASE=$(docker inspect resort-os-prod-backend-1 \
+  --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}')
+cd "$RESORT_ACTIVE_RELEASE"
+bash scripts/vps-recover-admin.sh operator@example.com
 ```
 
-The script creates a new super-admin account with a temporary password and
-enrollment token. Use these to log in, complete TOTP setup, then deactivate
-the previously locked account.
+The wrapper rotates that named account's temporary password and enrollment
+token without changing its role. Its one-time output is sensitive: use it to
+log in and complete TOTP setup, then handle it out-of-band.
 
 ### Suspected account compromise
 

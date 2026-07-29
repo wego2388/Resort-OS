@@ -3,7 +3,7 @@
 **آخر تحديث:** 2026-07-29
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**المرحلة الحالية:** REL-02 — production preflight قبل push/deploy المحكوم
+**المرحلة الحالية:** OPS-01 + UAT-01 — burn-in وقبول تشغيلي بعد REL-02
 **قرار الإطلاق:** IP-only؛ domain/DNS paused
 
 > هذه اللوحة تعرض المهمة الحالية فقط. التفاصيل والبوابات في
@@ -15,7 +15,7 @@
 - فرع تشغيلي واحد للخيمة؛ لا Branch Switcher ظاهر.
 - العزل والصلاحيات fail-closed في الـBackend والواجهة والطابور غير المتصل.
 - Codex ينفذ ويراجع نهائيًا؛ Mohamed يعتمد القرارات التجارية والبيانات وGo/No-Go.
-- لا deploy قبل source reconciliation وoffsite rollback point.
+- أي تغيير إنتاج جديد يحتاج backup وrollback وhealth evidence.
 - لا DNS/domain switch بلا قرار جديد.
 - ملف `scripts/wait-dns-then-switch.sh` غير نشط ولا يُلمس.
 
@@ -25,10 +25,12 @@
 |---|---|---|---|
 | SRC-01 — production exact-source preservation | COMPLETE | bundle+patch+untracked+checksums أُعيد تركيبها | — |
 | SRC-02 — reconcile live/local/Git | COMPLETE | لا source مجهول؛ 77/88 متطابق والباقي مصنف | — |
-| REL-01 — local final commit | COMPLETE | code `6c9f09e` + documentation commit | — |
+| REL-01 — reviewed release source | COMPLETE | commits حتى `ac7764f` مدفوعة على فرع العمل | — |
 | DR-01 — off-server recovery point | COMPLETE | encrypted DB + full isolated restore evidence | — |
-| REL-02 — controlled deploy | IN PROGRESS | preflight ثم image digests + health + rollback | preflight |
-| UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | REL-02 + ممثلي UAT |
+| REL-02 — controlled deploy | COMPLETE | immutable release + digests + health + rollback | — |
+| OPS-01 — burn-in and alerting | IN PROGRESS | HTTP/container/backup/TLS/disk alerts | اختيار قناة التنبيه |
+| UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
+| DATA-01 — approved master data | BLOCKED ON INPUT | غرف/أسعار/مخزون/مالية معتمدة | المالك والتشغيل |
 
 ## ما اكتمل في الجولة الحالية
 
@@ -52,6 +54,15 @@
 - [x] commit الكود النهائي `6c9f09e` بعد final gate أخضر.
 - [x] encrypted off-server DB backup مع matching decrypted hash.
 - [x] isolated full restore: 135 tables، Alembic `c4d8e2f6a901`، cleanup confirmed.
+- [x] push لفرع العمل حتى `ac7764f` مع بقاء `origin/main` بلا تغيير.
+- [x] immutable release archive وSHA-256 مثبتان على الـVPS.
+- [x] pre-deploy DB dump وrollback image tags قبل استبدال الخدمات.
+- [x] preflight للصورة الجديدة وAlembic head `88d1c505a9dc`.
+- [x] نشر متدرج للـBackend وCelery وEl Kheima ثم إعادة إنشاء Nginx.
+- [x] 8/8 containers running؛ الصور الجديدة restarts=0.
+- [x] staff 443 وmarketing 8443 و`/health` يعيدون 200 من خارج الخادم.
+- [x] فحص DB/Redis/counts/TLS/listeners/recent severe logs ناجح.
+- [x] نقل `wagdy.md` و`PROJECT_STATUS.md` التاريخيين للأرشيف وإنشاء نسخ حية مختصرة.
 
 ## حالة الإنتاج المثبتة
 
@@ -62,13 +73,16 @@
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Backend | healthy، `/health` 200، restarts=0 |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443/8443 public |
-| Git | `0a13c97` + 79 tracked modified + untracked |
-| Backup | daily local success؛ structural check passed |
-| Offsite/provider | غير مثبت؛ Hostinger count = 0 |
+| Release | `/opt/resort-os-releases/ac7764f`؛ compose IP-TLS |
+| Active images | backend/Celery/El Kheima من digests REL-02؛ restarts=0 |
+| Legacy Git tree | `0a13c97` dirty محفوظ وغير مستخدم كمصدر للحاويات الجديدة |
+| Backup | daily local + fresh pre-deploy dump |
+| Offsite/provider | encrypted verified restore موجود؛ Hostinger snapshot count = 0 |
 | TLS | IP cert حتى 2026-08-02؛ dry-run success |
+| Database | Alembic `88d1c505a9dc`؛ users=1، branches=1، online bookings=0 |
 | Failed units | 0 |
 
-## أدلة SRC-01/SRC-02
+## الأدلة التشغيلية
 
 - VPS archive:
   `/var/backups/resort-os/source-snapshots/20260729T194312Z.tar.gz`
@@ -78,12 +92,18 @@
   `71b7bb408b2e0be822d4f2e212fa26c37f32f8761b770d0585efd37e76ed50b3`
 - Reconciliation:
   `/home/wego/backups/resort-os/production-source/reconciliation-20260729T194312Z/`
+- Release archive:
+  `/var/backups/resort-os/source-releases/ac7764f.tar.gz`
+- Release archive SHA-256:
+  `17251e23660d7f84d6e89bdb0e2a0b5986ff637f2768a2cbf82589462984d6e6`
+- Rollback images:
+  `/var/backups/resort-os/source-releases/ac7764f-rollback-images.txt`
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-07-29_DR-01_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-07-29_REL-02_codex_handoff.md`
 
 ## التحديث التالي المطلوب
 
-افحص production counts/config-presence وrunbook/compose exact commands دون
-عرض أسرار، ثم قرر Go/No-Go للنشر. لا domain/DNS ضمن REL-02.
+راقب الإصدار بعد النشر، ثبّت قناة alerts، ثم نفّذ UAT بالأجهزة والأدوار
+والبيانات المعتمدة. لا domain/DNS ولا Chatbot activation ضمن هذه الحزمة.

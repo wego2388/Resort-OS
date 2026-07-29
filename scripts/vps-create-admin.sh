@@ -21,7 +21,15 @@ fi
 EMAIL="$1"
 FULL_NAME="$2"
 
-cd /opt/resort-os
+RESORT_RELEASE_DIR="${RESORT_RELEASE_DIR:-$(docker inspect \
+  resort-os-prod-backend-1 \
+  --format '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' \
+  2>/dev/null || true)}"
+if [[ -z "$RESORT_RELEASE_DIR" || ! -d "$RESORT_RELEASE_DIR" ]]; then
+  echo "Active Resort OS release directory could not be resolved" >&2
+  exit 1
+fi
+cd "$RESORT_RELEASE_DIR"
 
 DATABASE_URL_VALUE=$(grep -E '^DATABASE_URL=' backend/.env.prod | head -1 | cut -d= -f2-)
 DB_PASSWORD=$(RESORT_DATABASE_URL="$DATABASE_URL_VALUE" python3 -c '
