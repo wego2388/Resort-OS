@@ -33,16 +33,35 @@ def _get_cats(db: Session, branch_id: int) -> dict[str, int | None]:
 # 1.  INVENTORY PRODUCTS
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _seed_inventory_products_full(db: Session) -> None:
-    """100+ raw-material products for restaurant + cafe, with opening stock."""
+def _seed_inventory_products_full(
+    db: Session,
+    *,
+    branch_id: int | None = None,
+    warehouse_id: int | None = None,
+    moved_by: int | None = 1,
+    movement_reference_type: str = "manual",
+    movement_notes: str = "Opening stock — initial seed",
+) -> None:
+    """100+ raw-material products for restaurant + cafe, with opening stock.
+
+    Optional scope/actor arguments keep development behavior unchanged while
+    allowing the controlled production-demo importer to bind every opening
+    movement to its validated branch, warehouse, and actor.
+    """
     from app.modules.inventory.models import Product, Warehouse, StockMovement
     from app.modules.core.models import Branch
 
-    branch = db.query(Branch).first()
+    branch_query = db.query(Branch)
+    if branch_id is not None:
+        branch_query = branch_query.filter(Branch.id == branch_id)
+    branch = branch_query.first()
     if not branch:
         return
     BID = branch.id
-    WH  = db.query(Warehouse).filter(Warehouse.branch_id == BID).first()
+    warehouse_query = db.query(Warehouse).filter(Warehouse.branch_id == BID)
+    if warehouse_id is not None:
+        warehouse_query = warehouse_query.filter(Warehouse.id == warehouse_id)
+    WH = warehouse_query.first()
     if not WH:
         return
     WH_ID = WH.id
@@ -200,9 +219,9 @@ def _seed_inventory_products_full(db: Session) -> None:
                 movement_type="adjustment",
                 quantity=Decimal(str(init_stock)),
                 unit_cost=Decimal(str(cost)),
-                reference_type="manual",
-                notes="Opening stock — initial seed",
-                moved_by=1,
+                reference_type=movement_reference_type,
+                notes=movement_notes,
+                moved_by=moved_by,
                 moved_at=now,
             ))
             movements_added += 1
