@@ -80,13 +80,15 @@
 
 ### P0-02 — نقطة تراجع خارج الخادم
 
-**الحالة:** PENDING
+**الحالة:** COMPLETE — encrypted off-server DB + isolated restore drill
 
-- provider snapshot أو backup offsite مشفر ومثبت.
-- restore drill في بيئة معزولة، لا مجرد `pg_restore --list`.
-- توثيق RPO/RTO والاحتفاظ والتنبيه عند فشل النسخ.
+- أحدث dump محفوظ كـGPG/AES-256 خارج الـVPS دون plaintext محلي.
+- source/decrypted SHA-256 متطابقان، وencrypted artifact checksum محفوظ.
+- restore كامل نجح في قاعدة مؤقتة: 135 جدولًا وAlembic `c4d8e2f6a901`.
+- حُذفت قاعدة الاختبار وتأكدت صحة حاويات/DB/Redis/HTTP بعدها.
+- provider snapshot ونسخة منفصلة للمفتاح يظلان تحسينين دفاعيين.
 
-**القبول:** فقد الـVPS كاملًا لا يفقد البيانات أو مصدر الإصدار.
+**القبول:** PASSED للحد الأدنى خارج الخادم؛ RPO الحالي يقارب 24 ساعة.
 
 ### P0-03 — تثبيت المصدر المحلي
 
@@ -99,7 +101,7 @@
 
 ### P0-04 — نشر محكوم
 
-**الحالة:** BLOCKED BY P0-02
+**الحالة:** IN PROGRESS — preflight فقط؛ لا deploy قبل نتيجة صريحة
 
 - pre-deploy backup.
 - build من commit مثبت مع image digests.

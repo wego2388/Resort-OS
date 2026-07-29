@@ -3,7 +3,7 @@
 **آخر تحديث:** 2026-07-29
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**المرحلة الحالية:** DR-01 — نقطة تراجع للبيانات خارج الخادم قبل push/deploy
+**المرحلة الحالية:** REL-02 — production preflight قبل push/deploy المحكوم
 **قرار الإطلاق:** IP-only؛ domain/DNS paused
 
 > هذه اللوحة تعرض المهمة الحالية فقط. التفاصيل والبوابات في
@@ -26,8 +26,8 @@
 | SRC-01 — production exact-source preservation | COMPLETE | bundle+patch+untracked+checksums أُعيد تركيبها | — |
 | SRC-02 — reconcile live/local/Git | COMPLETE | لا source مجهول؛ 77/88 متطابق والباقي مصنف | — |
 | REL-01 — local final commit | COMPLETE | code `6c9f09e` + documentation commit | — |
-| DR-01 — offsite/provider recovery point | PENDING | snapshot/backup خارج الخادم + restore evidence | وصول provider/وجهة offsite |
-| REL-02 — controlled deploy | BLOCKED | image digests + health + rollback | DR-01 |
+| DR-01 — off-server recovery point | COMPLETE | encrypted DB + full isolated restore evidence | — |
+| REL-02 — controlled deploy | IN PROGRESS | preflight ثم image digests + health + rollback | preflight |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | REL-02 + ممثلي UAT |
 
 ## ما اكتمل في الجولة الحالية
@@ -50,6 +50,8 @@
 - [x] إعادة تركيب production worktree byte-for-byte في clone مؤقت.
 - [x] مصالحة 674 live source path مع 682 local path بلا mode drift أو source مجهول.
 - [x] commit الكود النهائي `6c9f09e` بعد final gate أخضر.
+- [x] encrypted off-server DB backup مع matching decrypted hash.
+- [x] isolated full restore: 135 tables، Alembic `c4d8e2f6a901`، cleanup confirmed.
 
 ## حالة الإنتاج المثبتة
 
@@ -79,9 +81,9 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-07-29_SRC-01-02_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-07-29_DR-01_codex_handoff.md`
 
 ## التحديث التالي المطلوب
 
-لا push أو deploy حتى إغلاق DR-01 بنسخة بيانات خارج الخادم أو provider
-snapshot، ثم أعد health/rollback preflight قبل REL-02.
+افحص production counts/config-presence وrunbook/compose exact commands دون
+عرض أسرار، ثم قرر Go/No-Go للنشر. لا domain/DNS ضمن REL-02.

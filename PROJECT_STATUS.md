@@ -19,9 +19,10 @@
 - **TLS:** شهادة IP صالحة حتى 2026-08-02، ومؤقت التجديد يعمل كل 12 ساعة؛ `certbot renew --dry-run` نجح في 2026-07-29.
 - **مصالحة المصدر:** حُفظ الإصدار الحي كـGit bundle + binary patch + untracked tar + runtime metadata، ونُقل محليًا وتحقق SHA-256 وأُعيد تركيبه byte-for-byte. 77/88 من مسارات تغييرات الإنتاج متطابقة محليًا؛ الفروق الباقية إصلاحات أحدث أو ملفات مؤرشفة، ولا يوجد كود production-only مجهول.
 - **النسخ خارج الخادم:** Hostinger يعرض صفر provider snapshots/backups؛ النسخ المحلية اليومية لا تغطي فقد الـVPS.
+- **DR-01:** نُقلت أحدث نسخة DB إلى ملف GPG/AES-256 مشفر خارج الـVPS، وتطابق hash بعد فك التشفير، ونجح restore كامل في قاعدة مؤقتة (135 جدولًا، Alembic `c4d8e2f6a901`) ثم حُذفت وتأكدت صحة الإنتاج.
 - **الإطلاق:** IP-only. DNS/domain paused حتى قرار صريح من Mohamed؛ `scripts/wait-dns-then-switch.sh` ملف مستخدم غير مشغّل وغير معدل.
 
-المتبقي قبل Go/No-Go: offsite DB backup/provider snapshot قبل push/deploy، master data المعتمدة، UAT جهاز فعلي، ومراقبة وتنبيهات.
+المتبقي قبل Go/No-Go: preflight ثم push/deploy محكوم، master data المعتمدة، UAT جهاز فعلي، ومراقبة وتنبيهات. provider snapshot يظل تحسين دفاعي إضافي.
 
 ## سجل 2026-07-27 — اكتشاف حرج: دليل الحسابات كان فاضي بالكامل على الإنتاج — صفر قيد يومية من أول تشغيل
 
