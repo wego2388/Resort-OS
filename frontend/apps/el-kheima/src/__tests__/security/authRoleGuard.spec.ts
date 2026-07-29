@@ -42,4 +42,46 @@ describe('frontend role guard', () => {
 
     expect(auth.hasRole('misspelled_requirement')).toBe(false)
   })
+
+  it('uses allowed permission objects from the active branch bootstrap', () => {
+    const auth = useAuthStore()
+    auth.user = userWithRole('receptionist')
+    auth.activeBranchId = 3
+    auth.effectivePermissions = [
+      {
+        resource: 'pms.bookings',
+        action: 'view',
+        label_ar: 'عرض الحجوزات',
+        module: 'pms',
+        allowed: true,
+        source: 'role',
+      },
+      {
+        resource: 'pms.bookings',
+        action: 'create',
+        label_ar: 'إنشاء حجز',
+        module: 'pms',
+        allowed: false,
+        source: 'explicit',
+      },
+    ]
+
+    expect(auth.hasPermission('pms.bookings:view')).toBe(true)
+    expect(auth.hasPermission('pms.bookings:create')).toBe(false)
+    expect(auth.hasPermission('pms.bookings:check_in')).toBe(false)
+  })
+
+  it('fails permission checks without an active branch', () => {
+    const auth = useAuthStore()
+    auth.effectivePermissions = [{
+      resource: 'pms.rooms',
+      action: 'view',
+      label_ar: 'عرض الغرف',
+      module: 'pms',
+      allowed: true,
+      source: 'role',
+    }]
+
+    expect(auth.hasPermission('pms.rooms:view')).toBe(false)
+  })
 })

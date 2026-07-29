@@ -24,17 +24,44 @@ async function clearIdentityBoundClientState(): Promise<void> {
   }
 }
 
+export interface AllowedBranch {
+  id: number
+  code: string
+  name: string
+  name_ar: string | null
+  timezone: string
+  is_default: boolean
+}
+
+export interface EffectivePermission {
+  resource: string
+  action: string
+  label_ar: string
+  module: string
+  allowed: boolean
+  source: string
+}
+
+export type PermissionKey = `${string}:${string}`
+
+export function permissionKey(
+  permission: Pick<EffectivePermission, 'resource' | 'action'>,
+): PermissionKey {
+  return `${permission.resource}:${permission.action}`
+}
+
 // CX-02C — bootstrap response shape mirrors GET /api/v1/auth/bootstrap.
-// contract_version=1 is the only stable version; callers must not assume
-// the shape is stable without checking the version field.
+// contract_version=1 is the only stable version; callers fail closed on an
+// unknown shape instead of mounting the staff UI with guessed authorization.
 export interface BootstrapData {
   contract_version: number
   user: User
+  branches: AllowedBranch[]
   active_branch_id: number | null
   default_branch_id: number | null
   allowed_branch_ids: number[]
   requires_branch_selection: boolean
-  effective_permissions: string[]
+  effective_permissions: EffectivePermission[]
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -61,8 +88,9 @@ export const useAuthStore = defineStore('auth', () => {
   // effectivePermissions: server-evaluated permission set for activeBranchId.
   //                   Empty array = no branch context yet, all policy gates fail.
   const activeBranchId = ref<number | null>(null)
+  const branches = ref<AllowedBranch[]>([])
   const allowedBranchIds = ref<number[]>([])
-  const effectivePermissions = ref<string[]>([])
+  const effectivePermissions = ref<EffectivePermission[]>([])
   const requiresBranchSelection = ref(false)
 
   // client.ts's 401→refresh-fails path calls this to clear our state without
@@ -73,6 +101,7 @@ export const useAuthStore = defineStore('auth', () => {
     token.value = null
     pendingEnrollmentToken.value = ''
     activeBranchId.value = null
+    branches.value = []
     allowedBranchIds.value = []
     effectivePermissions.value = []
     requiresBranchSelection.value = false
@@ -86,6 +115,9 @@ export const useAuthStore = defineStore('auth', () => {
   // context — callers must handle null explicitly and must not default to 1.
   // The old `user.branch_id ?? 1` pattern is prohibited (no live auth source).
   const branchId = computed(() => activeBranchId.value)
+  const activeBranch = computed(
+    () => branches.value.find((branch) => branch.id === activeBranchId.value) ?? null,
+  )
 
   // Mirrors backend ROLE_LEVELS (app/core/deps.py)
   const ROLE_LEVELS: Record<string, number> = {
@@ -116,11 +148,20 @@ export const useAuthStore = defineStore('auth', () => {
     return userLevel >= minLevel
   }
 
-  // CX-02C — server-evaluated permission check.
-  // effectivePermissions are scoped to the active branch from bootstrap.
-  // Falls back to false (fail-closed) when no branch context exists.
-  function hasPermission(permission: string): boolean {
-    return effectivePermissions.value.includes(permission)
+  const effectivePermissionKeys = computed(
+    () => new Set(
+      effectivePermissions.value
+        .filter((permission) => permission.allowed)
+        .map(permissionKey),
+    ),
+  )
+
+  // CX-02C — server-evaluated permission check scoped to activeBranchId.
+  // Permission keys use "resource:action" because resources already contain
+  // dots (for example "pms.rooms:view"). Unknown/denied keys fail closed.
+  function hasPermission(permission: PermissionKey): boolean {
+    return activeBranchId.value != null
+      && effectivePermissionKeys.value.has(permission)
   }
 
   const roleLevel = computed(() => ROLE_LEVELS[role.value] ?? -1)
@@ -145,20 +186,44 @@ export const useAuthStore = defineStore('auth', () => {
   // CX-02C — clears bootstrap state on identity/session transitions.
   function _clearBootstrap() {
     activeBranchId.value = null
+    branches.value = []
     allowedBranchIds.value = []
     effectivePermissions.value = []
     requiresBranchSelection.value = false
   }
 
   function _applyBootstrap(data: BootstrapData) {
-    // contract_version check: fail gracefully on unknown future shapes.
     if (data.contract_version !== 1) {
-      console.warn('[auth] Unknown bootstrap contract_version:', data.contract_version)
+      _clearBootstrap()
+      throw new Error(`Unsupported auth bootstrap contract: ${data.contract_version}`)
     }
+
+    const nextBranches = Array.isArray(data.branches) ? data.branches : []
+    const nextAllowedIds = Array.isArray(data.allowed_branch_ids)
+      ? data.allowed_branch_ids
+      : []
+    const branchDirectoryIds = new Set(nextBranches.map((branch) => branch.id))
+    const directoryMatchesAllowList = nextAllowedIds.every((id) => branchDirectoryIds.has(id))
+      && nextBranches.every((branch) => nextAllowedIds.includes(branch.id))
+    if (!directoryMatchesAllowList) {
+      _clearBootstrap()
+      throw new Error('Invalid auth bootstrap branch directory')
+    }
+    if (
+      data.active_branch_id != null
+      && !nextAllowedIds.includes(data.active_branch_id)
+    ) {
+      _clearBootstrap()
+      throw new Error('Invalid active branch in auth bootstrap')
+    }
+
     user.value = data.user
+    branches.value = nextBranches
     activeBranchId.value = data.active_branch_id
-    allowedBranchIds.value = data.allowed_branch_ids ?? []
-    effectivePermissions.value = data.effective_permissions ?? []
+    allowedBranchIds.value = nextAllowedIds
+    effectivePermissions.value = Array.isArray(data.effective_permissions)
+      ? data.effective_permissions
+      : []
     requiresBranchSelection.value = data.requires_branch_selection ?? false
   }
 
@@ -182,10 +247,15 @@ export const useAuthStore = defineStore('auth', () => {
   // Persisted server-side on the refresh token row — survives page reload.
   // Returns the updated bootstrap data so callers can react to the new context.
   async function switchActiveBranch(branchId: number): Promise<void> {
-    await api.put(ENDPOINTS.auth.activeBranch, { branch_id: branchId })
-    // Re-fetch full bootstrap to get updated effective_permissions for the
-    // new branch. A stale permission set would silently pass UI guards.
-    await fetchBootstrap()
+    if (!allowedBranchIds.value.includes(branchId)) {
+      throw new Error('Branch is not available to this account')
+    }
+    const res = await api.put(ENDPOINTS.auth.activeBranch, { branch_id: branchId })
+    // A branch change is also a sensitive browser-context boundary. Clear
+    // legacy API caches before exposing data from the new branch; offline POS
+    // records are deliberately preserved and scoped separately by branch.
+    await clearIdentityBoundClientState()
+    _applyBootstrap(res.data as BootstrapData)
   }
 
   // Gate 3A — persist the signed-in user's own display language server-side.
@@ -301,7 +371,8 @@ export const useAuthStore = defineStore('auth', () => {
   return {
     user, token, isAuthenticated, role, branchId, isLoading,
     // CX-02C — branch context from bootstrap (session-scoped, no ?? 1 fallback)
-    activeBranchId, allowedBranchIds, effectivePermissions, requiresBranchSelection,
+    activeBranchId, activeBranch, branches, allowedBranchIds,
+    effectivePermissions, effectivePermissionKeys, requiresBranchSelection,
     pendingEnrollmentToken,
     login, logout, fetchUser, fetchBootstrap, switchActiveBranch, initAuth,
     hasRole, hasPermission, roleLevel,

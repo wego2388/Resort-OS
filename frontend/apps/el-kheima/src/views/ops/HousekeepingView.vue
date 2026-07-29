@@ -8,6 +8,10 @@ const toast = useToast()
 const { t } = useI18n()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
+const canUpdateHousekeeping = computed(
+  () => auth.hasPermission('pms.housekeeping:update'),
+)
+const canAssignHousekeeping = computed(() => canUpdateHousekeeping.value && auth.hasRole('manager'))
 
 interface HKTask {
   id: number
@@ -111,6 +115,7 @@ async function fetchEmployees() {
 }
 
 async function assignTask(task: HKTask, employeeId: number | null) {
+  if (!canAssignHousekeeping.value) return
   const previous = task.assigned_to
   task.assigned_to = employeeId
   try {
@@ -139,6 +144,7 @@ async function fetchTasks() {
 }
 
 async function advanceStatus(task: HKTask) {
+  if (!canUpdateHousekeeping.value) return
   const next = statusFlow[task.status]
   if (!next) return
   try {
@@ -156,7 +162,7 @@ async function advanceStatus(task: HKTask) {
 
 onMounted(() => {
   fetchRoomNames()
-  fetchEmployees()
+  if (canAssignHousekeeping.value) fetchEmployees()
   fetchTasks()
 })
 </script>
@@ -237,11 +243,15 @@ onMounted(() => {
           <!-- تعيين موظف — عرض عادي بيتحول لـ select عند الضغط -->
           <div v-if="assigningTaskId !== task.id" class="text-xs mt-0.5">
             <button
+              v-if="canAssignHousekeeping"
               @click="assigningTaskId = task.id"
               class="text-gray-400 dark:text-gray-400 hover:text-blue-600 underline decoration-dotted"
             >
               👤 {{ task.assigned_to ? (employeeNameById[task.assigned_to] ?? t('backoffice.housekeeping.employeeHash', { id: task.assigned_to })) : t('backoffice.housekeeping.assignEmployee') }}
             </button>
+            <span v-else class="text-gray-400 dark:text-gray-400">
+              👤 {{ task.assigned_to ? t('backoffice.housekeeping.employeeHash', { id: task.assigned_to }) : t('backoffice.housekeeping.unassigned') }}
+            </span>
           </div>
           <select
             v-else
@@ -257,7 +267,7 @@ onMounted(() => {
 
         <div class="flex-shrink-0">
           <button
-            v-if="statusFlow[task.status]"
+            v-if="canUpdateHousekeeping && statusFlow[task.status]"
             @click="advanceStatus(task)"
             :class="[
               'px-4 py-2 rounded-xl text-sm font-bold text-white transition-colors',
@@ -265,7 +275,7 @@ onMounted(() => {
             ]"
           >{{ nextActionLabel[task.status] }}</button>
           <span
-            v-else
+            v-else-if="!statusFlow[task.status]"
             class="rounded-xl bg-green-100 px-4 py-2 text-sm font-bold text-green-700 dark:bg-green-950/50 dark:text-green-300"
           >✓ {{ t('backoffice.housekeeping.completed') }}</span>
         </div>

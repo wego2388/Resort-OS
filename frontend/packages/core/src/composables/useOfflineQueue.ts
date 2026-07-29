@@ -35,11 +35,10 @@ import { api } from '../api/client'
 import { useAuthStore } from '../stores/auth'
 
 const DB_NAME = 'resort-os-offline'
-// لسه v2 — إضافة 'beach'/'dining' كـ قيم تالتة/رابعة ممكنة لحقل module نص
-// عادي (مش enum حقيقي جوه IndexedDB)، وoutletId عمود إضافي اختياري على
-// نفس الـ record — ولا واحد فيهم يغيّر شكل الـ stores/indices نفسها، فمفيش
-// داعي لأي DB_VERSION bump أو upgrade handler جديد.
-const DB_VERSION = 2
+// v3 adds a compound identity scope. A shared terminal may keep valid pending
+// work for several employees and branches, but only the current
+// user+branch+module scope may see or submit its own records.
+const DB_VERSION = 3
 const STORE_PENDING = 'pending_orders'
 const STORE_SYNC_LOG = 'sync_log'
 
@@ -91,6 +90,8 @@ export interface RejectedItem {
 export interface SyncLogEntry {
   localId: string
   ownerUserId: number | null
+  branchId: number | null
+  module: OfflineQueueModule | null
   status: 'partially_synced' | 'rejected'
   rejectedItems?: RejectedItem[]
   reason?: string
@@ -102,6 +103,19 @@ export function isOfflineRecordOwnedBy(
   activeUserId: number | null | undefined,
 ): boolean {
   return activeUserId != null && record.ownerUserId === activeUserId
+}
+
+export function isOfflineRecordInScope(
+  record: Pick<PendingOrder, 'ownerUserId' | 'branchId' | 'module'>,
+  activeUserId: number | null | undefined,
+  activeBranchId: number | null | undefined,
+  module: OfflineQueueModule,
+): boolean {
+  return activeUserId != null
+    && activeBranchId != null
+    && record.ownerUserId === activeUserId
+    && record.branchId === activeBranchId
+    && record.module === module
 }
 
 let dbPromise: Promise<IDBPDatabase> | null = null
@@ -129,6 +143,12 @@ function getDb(): Promise<IDBPDatabase> {
           }
         })()
       }
+      // ── v3 → user + branch + module scope for safe shared terminals ──
+      if (oldVersion < 3) {
+        tx.objectStore(STORE_PENDING).createIndex(
+          'by_scope', ['ownerUserId', 'branchId', 'module'],
+        )
+      }
     },
   })
   return dbPromise
@@ -152,24 +172,28 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
 
   async function refreshPendingCount() {
     const activeUserId = auth.user?.id
-    if (activeUserId == null) {
+    const activeBranchId = auth.branchId
+    if (activeUserId == null || activeBranchId == null) {
       pendingCount.value = 0
       return
     }
 
     const db = await getDb()
-    // #2 fix: بنعد بس الـ records الخاصة بالـ module ده — مش كل الـ DB
-    const all = (await db.getAllFromIndex(STORE_PENDING, 'by_created')) as PendingOrder[]
-    pendingCount.value = all.filter(
-      order => (order.module ?? 'restaurant') === module
-        && isOfflineRecordOwnedBy(order, activeUserId),
-    ).length
+    const scoped = await db.getAllFromIndex(
+      STORE_PENDING,
+      'by_scope',
+      [activeUserId, activeBranchId, module],
+    ) as PendingOrder[]
+    pendingCount.value = scoped.length
   }
 
   async function queueOrder(branchId: number, payload: Record<string, unknown>, outletId?: number): Promise<string> {
     const ownerUserId = auth.user?.id
     if (ownerUserId == null) {
       throw new Error('An authenticated employee is required to queue an offline operation')
+    }
+    if (auth.branchId == null || branchId !== auth.branchId) {
+      throw new Error('The offline operation must match the active branch')
     }
 
     const localId = crypto.randomUUID()
@@ -211,25 +235,26 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
   async function syncPendingOrders() {
     if (!navigator.onLine || syncing.value) return
     const syncOwnerUserId = auth.user?.id
-    if (syncOwnerUserId == null) return
+    const syncBranchId = auth.branchId
+    if (syncOwnerUserId == null || syncBranchId == null) return
 
     syncing.value = true
     try {
       const db = await getDb()
-      const all = (await db.getAllFromIndex(STORE_PENDING, 'by_created')) as PendingOrder[]
-      // Scope by module AND creator identity. A shared POS may switch operator
-      // while offline; the next operator must never submit or review another
-      // employee's queued work under their own access token.
-      const pending = all.filter(
-        order => (order.module ?? 'restaurant') === module
-          && isOfflineRecordOwnedBy(order, syncOwnerUserId),
-      )
+      const pending = await db.getAllFromIndex(
+        STORE_PENDING,
+        'by_scope',
+        [syncOwnerUserId, syncBranchId, module],
+      ) as PendingOrder[]
 
       for (const order of pending) {
-        // A PIN switch can happen while a request is in flight. Stop before
-        // sending the next record if the active access token now belongs to a
-        // different employee.
-        if (auth.user?.id !== syncOwnerUserId) break
+        // A PIN or branch switch can happen while a request is in flight. Stop
+        // before sending the next record under a different authorization
+        // context. Records remain quarantined for their original scope.
+        if (
+          auth.user?.id !== syncOwnerUserId
+          || auth.branchId !== syncBranchId
+        ) break
 
         // beach: بيع فردي بسيط — نفس /beach/sell (مش /sync منفصل)، idempotency
         // عبر local_id في الجسم، ومفيش partial/rejected على مستوى الطلب
@@ -248,6 +273,8 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
             await db.put(STORE_SYNC_LOG, {
               localId: order.localId,
               ownerUserId: order.ownerUserId,
+              branchId: order.branchId,
+              module: order.module,
               status: 'rejected',
               reason: 'invalid_request', timestamp: new Date().toISOString(),
             } satisfies SyncLogEntry)
@@ -267,6 +294,8 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
           await db.put(STORE_SYNC_LOG, {
             localId: order.localId,
             ownerUserId: order.ownerUserId,
+            branchId: order.branchId,
+            module: order.module,
             status: 'rejected',
             reason: 'invalid_request', timestamp: new Date().toISOString(),
           } satisfies SyncLogEntry)
@@ -281,6 +310,8 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
           await db.put(STORE_SYNC_LOG, {
             localId: order.localId,
             ownerUserId: order.ownerUserId,
+            branchId: order.branchId,
+            module: order.module,
             status: 'partially_synced',
             rejectedItems: rejected_items, timestamp: new Date().toISOString(),
           } satisfies SyncLogEntry)
@@ -290,6 +321,8 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
           await db.put(STORE_SYNC_LOG, {
             localId: order.localId,
             ownerUserId: order.ownerUserId,
+            branchId: order.branchId,
+            module: order.module,
             status: 'rejected',
             rejectedItems: rejected_items, timestamp: new Date().toISOString(),
           } satisfies SyncLogEntry)
@@ -300,7 +333,13 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
     } finally {
       await refreshPendingCount()
       syncing.value = false
-      if (navigator.onLine && auth.user?.id !== syncOwnerUserId) {
+      if (
+        navigator.onLine
+        && (
+          auth.user?.id !== syncOwnerUserId
+          || auth.branchId !== syncBranchId
+        )
+      ) {
         void syncPendingOrders()
       }
     }
@@ -308,11 +347,16 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
 
   async function getSyncLog(): Promise<SyncLogEntry[]> {
     const activeUserId = auth.user?.id
-    if (activeUserId == null) return []
+    const activeBranchId = auth.branchId
+    if (activeUserId == null || activeBranchId == null) return []
 
     const db = await getDb()
     const entries = await db.getAll(STORE_SYNC_LOG) as SyncLogEntry[]
-    return entries.filter(entry => entry.ownerUserId === activeUserId)
+    return entries.filter(
+      entry => entry.ownerUserId === activeUserId
+        && entry.branchId === activeBranchId
+        && entry.module === module,
+    )
   }
 
   function handleOnline() {
@@ -338,7 +382,7 @@ export function useOfflineQueue(module: OfflineQueueModule = 'restaurant') {
   })
 
   watch(
-    () => auth.user?.id,
+    () => [auth.user?.id, auth.branchId] as const,
     () => {
       lastPartialRejection.value = null
       void refreshPendingCount().then(() => {

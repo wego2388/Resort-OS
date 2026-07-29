@@ -263,7 +263,7 @@ async function confirmScheduleVisit() {
   scheduleModal.error   = ''
   try {
     await api.post('/api/v1/timeshare/visits', {
-      branch_id:   branchId,
+      branch_id:   branchId.value,
       contract_id: scheduleModal.contractId!,
       check_in:    scheduleModal.checkIn,
       check_out:   scheduleModal.checkOut,

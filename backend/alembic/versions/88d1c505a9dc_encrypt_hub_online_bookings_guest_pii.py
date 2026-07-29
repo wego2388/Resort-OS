@@ -39,10 +39,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    for column, old_len, new_len, nullable in _COLUMNS:
-        op.alter_column(
-            "hub_online_bookings", column,
-            existing_type=sa.String(length=new_len),
-            type_=sa.String(length=old_len),
-            existing_nullable=nullable,
-        )
+    # Deliberately keep the widened columns. Once the upgraded application has
+    # written Fernet ciphertext, shrinking back to the plaintext-era lengths
+    # can fail the downgrade or truncate PII. The previous application version
+    # remains schema-compatible with wider VARCHAR columns, so the safe
+    # rollback is application-only rather than destructive DDL.
+    pass

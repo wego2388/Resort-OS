@@ -14,6 +14,10 @@ const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth   = useAuthStore()
 const branchId = computed(() => auth.branchId)
+const canCreateBooking = computed(() => auth.hasPermission('pms.bookings:create'))
+const canCheckIn = computed(() => auth.hasPermission('pms.bookings:check_in'))
+const canCheckOut = computed(() => auth.hasPermission('pms.bookings:check_out'))
+const canRunNightAudit = computed(() => auth.hasPermission('pms.night_audit:run'))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Interfaces
@@ -222,6 +226,7 @@ const payOptions = computed<SelectOption[]>(() => [
 ])
 
 function openCheckIn(booking: Booking) {
+  if (!canCheckIn.value) return
   ciBooking.value  = booking
   ciIdNumber.value = booking.guest_id_number ?? ''
   ciPayMethod.value = 'cash'
@@ -229,6 +234,7 @@ function openCheckIn(booking: Booking) {
 }
 
 async function confirmCheckIn() {
+  if (!canCheckIn.value) return
   if (!ciBooking.value) return
   ciLoading.value = true
   try {
@@ -259,6 +265,7 @@ const coFolio   = ref<FolioSummary | null>(null)
 const coFolioLoading = ref(false)
 
 function openCheckOut(booking: Booking) {
+  if (!canCheckOut.value) return
   coBooking.value = booking
   coFolio.value   = null
   coOpen.value    = true
@@ -273,6 +280,7 @@ function openCheckOut(booking: Booking) {
 }
 
 function openCheckOutFromRoom(roomId: number) {
+  if (!canCheckOut.value) return
   const info = bookingByRoomId.value[roomId]
   if (!info) return
   // ابحث في todayBookings أو اعمل booking مبسوط من المعلومات المتاحة
@@ -293,6 +301,7 @@ function openCheckOutFromRoom(roomId: number) {
 }
 
 async function confirmCheckOut() {
+  if (!canCheckOut.value) return
   if (!coBooking.value) return
   coLoading.value = true
   try {
@@ -329,6 +338,7 @@ const applicableRatePlans = computed<SelectOption[]>(() =>
   ratePlans.value.map(p => ({ value: p.id, label: p.name })))
 
 function openNewBooking() {
+  if (!canCreateBooking.value) return
   const today = new Date().toISOString().slice(0, 10)
   const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
   nbForm.value = {
@@ -340,6 +350,7 @@ function openNewBooking() {
 }
 
 async function saveNewBooking() {
+  if (!canCreateBooking.value) return
   if (!nbForm.value.guest_name.trim()) { toast.error(t('backoffice.reception.guestNameRequired')); return }
   if (!nbForm.value.room_ids.length)   { toast.error(t('backoffice.reception.selectRoomRequired')); return }
   if (!nbForm.value.check_in)          { toast.error(t('backoffice.reception.checkInDateRequired')); return }
@@ -347,7 +358,7 @@ async function saveNewBooking() {
   nbLoading.value = true
   try {
     await api.post(ENDPOINTS.pms.bookings, {
-      branch_id:    branchId,
+      branch_id:    branchId.value,
       guest_name:   nbForm.value.guest_name,
       guest_phone:  nbForm.value.guest_phone || undefined,
       check_in:     nbForm.value.check_in,
@@ -376,12 +387,13 @@ const naResult  = ref<{ rooms_updated: number; revenue: number } | null>(null)
 const naError   = ref('')
 
 async function runNightAudit() {
+  if (!canRunNightAudit.value) return
   naLoading.value = true
   naError.value   = ''
   naResult.value  = null
   try {
-    const res = await api.post(ENDPOINTS.pms.nightAudit, null, {
-      params: { branch_id: branchId.value, date: naDate.value },
+    const res = await api.post(ENDPOINTS.pms_extra.nightAuditRun, null, {
+      params: { branch_id: branchId.value, audit_date: naDate.value },
     })
     naResult.value = res.data
     toast.success(t('backoffice.reception.nightAuditSuccess'))
@@ -432,11 +444,11 @@ onUnmounted(() => {
         <AppButton variant="secondary" size="sm" @click="fetchAll" :loading="loading">
           {{ t('backoffice.reception.refresh') }}
         </AppButton>
-        <AppButton size="sm" @click="openNewBooking">
+        <AppButton v-if="canCreateBooking" size="sm" @click="openNewBooking">
           {{ t('backoffice.reception.newBooking') }}
         </AppButton>
         <AppButton
-          v-if="auth.hasRole('admin')"
+          v-if="canRunNightAudit"
           variant="outline"
           size="sm"
           @click="naOpen = true"
@@ -510,7 +522,7 @@ onUnmounted(() => {
                 <div class="flex items-center justify-between text-xs text-muted">
                   <span>{{ b.check_in }} → {{ b.check_out }}</span>
                 </div>
-                <AppButton size="sm" class="w-full" @click="openCheckIn(b)">
+                <AppButton v-if="canCheckIn" size="sm" class="w-full" @click="openCheckIn(b)">
                   {{ t('backoffice.reception.checkInAction') }}
                 </AppButton>
               </div>
@@ -587,6 +599,7 @@ onUnmounted(() => {
                     {{ t('backoffice.reception.checkOutLabel', { date: bookingByRoomId[room.id].check_out }) }}
                   </span>
                   <AppButton
+                    v-if="canCheckOut"
                     size="sm"
                     variant="danger"
                     class="mt-1 text-xs py-0.5"
@@ -839,7 +852,7 @@ onUnmounted(() => {
       <template v-slot:footer>
         <AppButton variant="ghost" @click="naOpen = false">{{ t('backoffice.reception.close') }}</AppButton>
         <AppButton
-          v-if="!naResult"
+          v-if="canRunNightAudit && !naResult"
           variant="danger"
           @click="runNightAudit"
           :loading="naLoading"

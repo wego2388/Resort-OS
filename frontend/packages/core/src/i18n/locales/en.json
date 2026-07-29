@@ -3586,6 +3586,10 @@
     },
     "layout": {
       "branch": "Branch",
+      "chooseBranchTitle": "Operational branch could not be resolved",
+      "chooseBranchHint": "Select an authorized branch to continue. The current El Kheima deployment should expose one branch only.",
+      "noAssignedBranches": "No operational branch is assigned to this account. Contact a system administrator.",
+      "branchSwitchFailed": "Could not set the operational branch. Please sign in again.",
       "logout": "Sign Out",
       "pos": "Point of Sale",
       "orderTaker": "Order Taker",

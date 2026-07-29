@@ -5,7 +5,20 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAuthStore } from '@resort-os/core'
+import type { User } from '@resort-os/core'
 import router, { homeRouteFor } from '../../router'
+
+function authenticatedReceptionist(auth: ReturnType<typeof useAuthStore>) {
+  auth.token = 'test-token'
+  auth.user = {
+    id: 91,
+    username: 'router-test',
+    email: 'router-test@example.invalid',
+    full_name: 'Router Test',
+    role: 'receptionist',
+    branch_id: 1,
+  } satisfies User
+}
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -54,5 +67,39 @@ describe('auth guard', () => {
     await router.push('/login')
     await router.isReady()
     expect(router.currentRoute.value.path).toBe('/login')
+  })
+
+  it('redirects operational routes to the fail-closed branch screen', async () => {
+    const auth = useAuthStore()
+    authenticatedReceptionist(auth)
+
+    await router.push('/ops/rooms')
+    expect(router.currentRoute.value.path).toBe('/select-branch')
+  })
+
+  it('redirects a branch user without the route permission', async () => {
+    const auth = useAuthStore()
+    authenticatedReceptionist(auth)
+    auth.activeBranchId = 1
+
+    await router.push('/ops/rooms')
+    expect(router.currentRoute.value.path).toBe('/portal/profile')
+  })
+
+  it('allows a branch user with the server-evaluated route permission', async () => {
+    const auth = useAuthStore()
+    authenticatedReceptionist(auth)
+    auth.activeBranchId = 1
+    auth.effectivePermissions = [{
+      resource: 'pms.rooms',
+      action: 'view',
+      label_ar: 'عرض الغرف',
+      module: 'pms',
+      allowed: true,
+      source: 'role',
+    }]
+
+    await router.push('/ops/rooms')
+    expect(router.currentRoute.value.path).toBe('/ops/rooms')
   })
 })

@@ -28,6 +28,7 @@ const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
+const canRunNightAudit = computed(() => auth.hasPermission('pms.night_audit:run'))
 
 interface Room {
   id: number
@@ -129,7 +130,7 @@ async function fetchRooms() {
 // اللي الشاشة أصلاً بتستخدمها، فمفيش منطق state-merge جديد يحتاج اختبار.
 const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
 const { onMessage } = useResortWebSocket(
-  `${wsProtocol}//${location.host}/api/v1/pms/ws/rooms/${branchId}`,
+  `${wsProtocol}//${location.host}/api/v1/pms/ws/rooms/${branchId.value}`,
 )
 onMessage((data: any) => {
   if (data?.type === 'rooms_changed') fetchRooms()
@@ -165,6 +166,7 @@ const nightAuditResult = ref<NightAuditResult | null>(null)
 const nightAuditError = ref('')
 
 function openNightAudit() {
+  if (!canRunNightAudit.value) return
   nightAuditResult.value = null
   nightAuditError.value = ''
   nightAuditDate.value = yesterdayStr()
@@ -172,6 +174,7 @@ function openNightAudit() {
 }
 
 async function runNightAudit() {
+  if (!canRunNightAudit.value) return
   nightAuditLoading.value = true
   nightAuditError.value = ''
   try {
@@ -207,7 +210,7 @@ onUnmounted(() => clearInterval(refreshInterval))
       <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.rooms.title') }}</h1>
       <div class="flex items-center gap-2">
         <button
-          v-if="auth.hasRole('admin')"
+          v-if="canRunNightAudit"
           @click="openNightAudit"
           class="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors"
         >🌙 {{ t('backoffice.rooms.nightAudit') }}</button>

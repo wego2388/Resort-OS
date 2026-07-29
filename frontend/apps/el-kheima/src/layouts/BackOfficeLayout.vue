@@ -10,7 +10,7 @@
 // via a 403 after clicking through.
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { useAuthStore } from '@resort-os/core'
+import { useAuthStore, type PermissionKey } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { useI18n } from 'vue-i18n'
 import GuestAlertsBell from '../components/GuestAlertsBell.vue'
@@ -21,8 +21,14 @@ import type { CommandItem } from '@resort-os/ui'
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { formatDate } = useStaffFormat()
+
+const activeBranchLabel = computed(() => {
+  const branch = auth.activeBranch
+  if (!branch) return '—'
+  return locale.value === 'ar' && branch.name_ar ? branch.name_ar : branch.name
+})
 
 // #23: حفظ حالة الـ sidebar في localStorage — بيتذكر اختيار المستخدم بين الجلسات
 const SIDEBAR_KEY = 'resort-os-sidebar-open'
@@ -38,6 +44,7 @@ interface NavItem {
   label: string
   icon: string
   requiredRole?: string
+  requiredPermission?: PermissionKey | PermissionKey[]
 }
 interface NavSection {
   label: string
@@ -48,10 +55,22 @@ const allSections = computed<NavSection[]>(() => [
   {
     label: t('backoffice.nav.operations'),
     items: [
-      { path: '/ops/reception',   label: t('backoffice.nav.reception'),   icon: '🛎️' },
-      { path: '/ops/rooms',       label: t('backoffice.nav.rooms'),       icon: '🛏️' },
-      { path: '/ops/bookings',    label: t('backoffice.nav.bookings'),    icon: '📋' },
-      { path: '/ops/housekeeping',label: t('backoffice.nav.housekeeping'),icon: '🧹' },
+      {
+        path: '/ops/reception', label: t('backoffice.nav.reception'), icon: '🛎️',
+        requiredPermission: ['pms.rooms:view', 'pms.bookings:view', 'pms.housekeeping:view'],
+      },
+      {
+        path: '/ops/rooms', label: t('backoffice.nav.rooms'), icon: '🛏️',
+        requiredPermission: 'pms.rooms:view',
+      },
+      {
+        path: '/ops/bookings', label: t('backoffice.nav.bookings'), icon: '📋',
+        requiredPermission: 'pms.bookings:view',
+      },
+      {
+        path: '/ops/housekeeping', label: t('backoffice.nav.housekeeping'), icon: '🧹',
+        requiredPermission: 'pms.housekeeping:view',
+      },
     ],
   },
   {
@@ -125,7 +144,14 @@ const navSections = computed(() =>
     .map((section) => ({
       ...section,
       items: section.items.filter(
-        (item) => !item.requiredRole || auth.hasRole(item.requiredRole),
+        (item) => {
+          if (item.requiredRole && !auth.hasRole(item.requiredRole)) return false
+          if (!item.requiredPermission) return true
+          const permissions = Array.isArray(item.requiredPermission)
+            ? item.requiredPermission
+            : [item.requiredPermission]
+          return permissions.every((permission) => auth.hasPermission(permission))
+        },
       ),
     }))
     .filter((section) => section.items.length > 0),
@@ -204,7 +230,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
         <div v-if="sidebarOpen" class="overflow-hidden">
           <div class="font-bold text-sm text-white">Resort OS</div>
           <div class="text-xs truncate text-gray-500">
-            {{ t('backoffice.layout.branch') }} {{ auth.branchId ?? '—' }}
+            {{ t('backoffice.layout.branch') }}: {{ activeBranchLabel }}
           </div>
         </div>
       </div>

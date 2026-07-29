@@ -1,12 +1,16 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
-import { useAuthStore } from '@resort-os/core'
+import { useAuthStore, type PermissionKey } from '@resort-os/core'
 
 declare module 'vue-router' {
   interface RouteMeta {
     requiresAuth?: boolean
+    requiresBranch?: boolean
     // Minimum role required, checked against the numeric ROLE_LEVELS map in
     // @resort-os/core's useAuthStore (mirrors backend app/core/deps.py).
     requiredRole?: string
+    // Server-evaluated permissions from /auth/bootstrap. Arrays require every
+    // listed permission; unknown values fail closed in the auth store.
+    requiredPermission?: PermissionKey | PermissionKey[]
     title?: string
     titleKey?: string
   }
@@ -76,6 +80,13 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
   },
 
+  {
+    path: '/select-branch',
+    name: 'select-branch',
+    component: () => import('../views/account/BranchSelectionView.vue'),
+    meta: { requiresAuth: true, titleKey: 'backoffice.layout.chooseBranchTitle' },
+  },
+
   // Standalone (no layout) — same tier as /login. Reached either by force
   // (router guard below, for MANDATORY_2FA_ROLES with two_factor_enabled=false)
   // or voluntarily by any authenticated user who wants to turn 2FA on/off.
@@ -101,7 +112,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/pos',
     component: () => import('../layouts/FieldLayout.vue'),
-    meta: { requiresAuth: true, requiredRole: 'cashier' },
+    meta: { requiresAuth: true, requiresBranch: true, requiredRole: 'cashier' },
     children: [
       { path: '', redirect: '/pos/beach' },
       { path: 'beach', name: 'pos-beach', component: () => import('../views/pos/BeachPOSView.vue'), meta: { titleKey: 'backoffice.nav.beachPos' } },
@@ -125,7 +136,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/kds',
     component: () => import('../layouts/KioskLayout.vue'),
-    meta: { requiresAuth: true, requiredRole: 'waiter' },
+    meta: { requiresAuth: true, requiresBranch: true, requiredRole: 'waiter' },
     children: [
       { path: '', redirect: '/kds/dining' },
       // DINING_CUTOVER_PLAN.md Batch 4 — شاشة موحّدة واحدة بدل station-specific
@@ -147,13 +158,22 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/ops',
     component: () => import('../layouts/BackOfficeLayout.vue'),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, requiresBranch: true },
     children: [
       { path: '', redirect: '/ops/reception' },
-      { path: 'reception', name: 'ops-reception', component: () => import('../views/ops/ReceptionView.vue'), meta: { titleKey: 'backoffice.nav.reception' } },
-      { path: 'rooms', name: 'ops-rooms', component: () => import('../views/ops/RoomsView.vue'), meta: { titleKey: 'backoffice.nav.rooms' } },
-      { path: 'bookings', name: 'ops-bookings', component: () => import('../views/ops/BookingsView.vue'), meta: { titleKey: 'backoffice.nav.bookings' } },
-      { path: 'housekeeping', name: 'ops-housekeeping', component: () => import('../views/ops/HousekeepingView.vue'), meta: { titleKey: 'backoffice.nav.housekeeping' } },
+      { path: 'reception', name: 'ops-reception', component: () => import('../views/ops/ReceptionView.vue'), meta: {
+        titleKey: 'backoffice.nav.reception',
+        requiredPermission: ['pms.rooms:view', 'pms.bookings:view', 'pms.housekeeping:view'],
+      } },
+      { path: 'rooms', name: 'ops-rooms', component: () => import('../views/ops/RoomsView.vue'), meta: {
+        titleKey: 'backoffice.nav.rooms', requiredPermission: 'pms.rooms:view',
+      } },
+      { path: 'bookings', name: 'ops-bookings', component: () => import('../views/ops/BookingsView.vue'), meta: {
+        titleKey: 'backoffice.nav.bookings', requiredPermission: 'pms.bookings:view',
+      } },
+      { path: 'housekeeping', name: 'ops-housekeeping', component: () => import('../views/ops/HousekeepingView.vue'), meta: {
+        titleKey: 'backoffice.nav.housekeeping', requiredPermission: 'pms.housekeeping:view',
+      } },
     ],
   },
 
@@ -161,7 +181,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin',
     component: () => import('../layouts/BackOfficeLayout.vue'),
-    meta: { requiresAuth: true, requiredRole: 'manager' },
+    meta: { requiresAuth: true, requiresBranch: true, requiredRole: 'manager' },
     children: [
       { path: '', redirect: '/admin/dashboard' },
       { path: 'dashboard', name: 'admin-dashboard', component: () => import('../views/admin/DashboardView.vue'), meta: { titleKey: 'backoffice.nav.dashboard' } },
@@ -294,9 +314,24 @@ router.beforeEach((to) => {
     return '/2fa-setup'
   }
 
-  // 4. Role gate — redirect to the user's own home, not a raw 403 page.
+  // 4. Branch gate — operational screens never mount with a guessed/default
+  // branch. The selector itself and account recovery screens stay reachable.
+  if (auth.isAuthenticated && to.meta.requiresBranch && auth.branchId == null) {
+    return '/select-branch'
+  }
+
+  // 5. Role gate — redirect to the user's own home, not a raw 403 page.
   if (to.meta.requiredRole && !auth.hasRole(to.meta.requiredRole)) {
     return homeRouteFor(auth.role)
+  }
+
+  // 6. Fine-grained permission gate. /portal/profile is the safe destination
+  // for a valid employee whose branch role has no access to the requested UI.
+  const requirements = to.meta.requiredPermission
+    ? (Array.isArray(to.meta.requiredPermission) ? to.meta.requiredPermission : [to.meta.requiredPermission])
+    : []
+  if (requirements.some((permission) => !auth.hasPermission(permission))) {
+    return '/portal/profile'
   }
 
   return true

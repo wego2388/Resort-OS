@@ -41,6 +41,11 @@ const { t } = useI18n()
 const { formatDate: fmtDateFn } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
+const canCreateBooking = computed(() => auth.hasPermission('pms.bookings:create'))
+const canCheckIn = computed(() => auth.hasPermission('pms.bookings:check_in'))
+const canCheckOut = computed(() => auth.hasPermission('pms.bookings:check_out'))
+const canCancelBooking = computed(() => auth.hasPermission('pms.cancel_booking:execute'))
+const canEditEarlyLate = computed(() => auth.hasPermission('pms.bookings:early_late'))
 
 interface Booking {
   id: number
@@ -158,6 +163,7 @@ async function fetchRatePlans() {
 }
 
 function openCreateModal() {
+  if (!canCreateBooking.value) return
   form.value = {
     guest_name: '', guest_phone: '', room_ids: [],
     check_in: '', check_out: '', notes: '', rate_plan_id: null,
@@ -246,6 +252,7 @@ const ratePlanIdStr = computed({
 })
 
 async function createBooking() {
+  if (!canCreateBooking.value) return
   if (!form.value.guest_name.trim()) { createError.value = t('backoffice.bookings.guestNameRequired'); return }
   if (!form.value.check_in)           { createError.value = t('backoffice.bookings.checkInDateRequired'); return }
   if (!form.value.check_out)          { createError.value = t('backoffice.bookings.checkOutDateRequired'); return }
@@ -261,7 +268,7 @@ async function createBooking() {
       check_out:    form.value.check_out,
       notes:        form.value.notes || undefined,
       room_ids:     form.value.room_ids,
-      branch_id:    branchId,
+      branch_id:    branchId.value,
       rate_plan_id: form.value.rate_plan_id || undefined,
     })
     showCreateModal.value = false
@@ -276,6 +283,7 @@ async function createBooking() {
 }
 
 async function checkOut(booking: Booking) {
+  if (!canCheckOut.value) return
   const ok = await confirm({ message: t('backoffice.bookings.confirmCheckOutMessage', { name: booking.guest_name }), danger: true })
   if (!ok) return
   try {
@@ -288,6 +296,7 @@ async function checkOut(booking: Booking) {
 }
 
 async function checkIn(booking: Booking) {
+  if (!canCheckIn.value) return
   try {
     const res = await api.post(ENDPOINTS.pms.bookingCheckin(booking.id))
     booking.status = res.data.status
@@ -298,6 +307,7 @@ async function checkIn(booking: Booking) {
 }
 
 async function cancelBooking(booking: Booking) {
+  if (!canCancelBooking.value) return
   const ok = await confirm({
     message: t('backoffice.bookings.confirmCancelMessage', { name: booking.guest_name }),
     danger: true,
@@ -324,6 +334,7 @@ const earlyLateNotes     = ref('')
 const earlyLateSubmitting = ref(false)
 
 function openEarlyLate(booking: Booking) {
+  if (!canEditEarlyLate.value) return
   earlyLateBooking.value  = booking
   earlyCheckinAt.value    = booking.early_checkin_at
     ? new Date(booking.early_checkin_at).toISOString().slice(0,16) : ''
@@ -335,6 +346,7 @@ function openEarlyLate(booking: Booking) {
 }
 
 async function submitEarlyLate() {
+  if (!canEditEarlyLate.value) return
   if (!earlyLateBooking.value) return
   earlyLateSubmitting.value = true
   try {
@@ -377,7 +389,7 @@ onMounted(() => {
       <h1 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ t('backoffice.bookings.title') }}</h1>
       <div class="flex gap-2">
         <AppButton variant="secondary" size="sm" @click="() => fetchBookings()">🔄</AppButton>
-        <AppButton variant="primary" size="sm" @click="openCreateModal">{{ t('backoffice.bookings.newBooking') }}</AppButton>
+        <AppButton v-if="canCreateBooking" variant="primary" size="sm" @click="openCreateModal">{{ t('backoffice.bookings.newBooking') }}</AppButton>
       </div>
     </div>
 
@@ -452,20 +464,20 @@ onMounted(() => {
             <td class="px-4 py-3">
               <div class="flex gap-1">
                 <AppButton
-                  v-if="b.status === 'confirmed'"
+                  v-if="canCheckIn && b.status === 'confirmed'"
                   variant="primary"
                   size="sm"
                   @click="checkIn(b)"
                 >{{ t('backoffice.bookings.checkIn') }}</AppButton>
                 <AppButton
-                  v-else-if="b.status === 'checked_in'"
+                  v-else-if="canCheckOut && b.status === 'checked_in'"
                   size="sm"
                   style="--btn-bg: theme('colors.amber.600'); --btn-hover: theme('colors.amber.700')"
                   class="bg-amber-600 hover:bg-amber-700 text-white"
                   @click="checkOut(b)"
                 >{{ t('backoffice.bookings.checkOut') }}</AppButton>
                 <AppButton
-                  v-if="b.status === 'confirmed' || b.status === 'checked_in'"
+                  v-if="canEditEarlyLate && (b.status === 'confirmed' || b.status === 'checked_in')"
                   variant="ghost"
                   size="sm"
                   class="bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-950/50 dark:text-purple-300 dark:hover:bg-purple-900/60"
@@ -473,7 +485,7 @@ onMounted(() => {
                   @click="openEarlyLate(b)"
                 >🕐</AppButton>
                 <AppButton
-                  v-if="b.status === 'pending' || b.status === 'confirmed'"
+                  v-if="canCancelBooking && (b.status === 'pending' || b.status === 'confirmed')"
                   variant="danger"
                   size="sm"
                   :aria-label="t('backoffice.bookings.cancelTitle')"
@@ -514,28 +526,28 @@ onMounted(() => {
         </div>
         <div class="flex gap-2">
           <AppButton
-            v-if="b.status === 'confirmed'"
+            v-if="canCheckIn && b.status === 'confirmed'"
             variant="primary"
             size="sm"
             block
             @click="checkIn(b)"
           >{{ t('backoffice.bookings.checkIn') }}</AppButton>
           <AppButton
-            v-else-if="b.status === 'checked_in'"
+            v-else-if="canCheckOut && b.status === 'checked_in'"
             size="sm"
             block
             class="bg-amber-600 hover:bg-amber-700 text-white"
             @click="checkOut(b)"
           >{{ t('backoffice.bookings.checkOut') }}</AppButton>
           <AppButton
-            v-if="b.status === 'confirmed' || b.status === 'checked_in'"
+            v-if="canEditEarlyLate && (b.status === 'confirmed' || b.status === 'checked_in')"
             variant="ghost"
             size="sm"
             class="bg-purple-100 text-purple-700 dark:bg-purple-950/50 dark:text-purple-300"
             @click="openEarlyLate(b)"
           >🕐 {{ t('backoffice.bookings.earlyLateShort') }}</AppButton>
           <AppButton
-            v-if="b.status === 'pending' || b.status === 'confirmed'"
+            v-if="canCancelBooking && (b.status === 'pending' || b.status === 'confirmed')"
             variant="danger"
             size="sm"
             @click="cancelBooking(b)"
