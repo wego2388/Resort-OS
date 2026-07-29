@@ -1,5 +1,21 @@
 # نقطة استئناف Claude بعد Codex — El Kheima
 
+## Checkpoint ناسخ — Codex 2026-07-29
+
+- Mohamed أكد single operational branch وعيّن Codex قائد التنفيذ والمراجع النهائي.
+- الفرع المحلي `claude/CX-02C-frontend-auth-bootstrap` عند `598938e`؛ تعديلات frontend/auth/offline queue والمراجعة النهائية غير committed وغير deployed.
+- full backend انتهى 100% بصفر failure؛ 63 targeted و93/93 frontend وtype-check/build/Alembic/agent-check كلها ناجحة.
+- SSH alias `resort-os-vps` يعمل كمستخدم `resortos` بصلاحيات sudo/Docker؛ root/password auth مغلقان.
+- 8 حاويات production تعمل؛ backend healthy و`/health`=200؛ backup يومي ناجح وفهرس pg_restore مقروء.
+- Certbot IP dry-run ناجح والمؤقت كل 12 ساعة. القرار IP-only؛ domain/DNS paused.
+- `/opt/resort-os` production dirty عند `0a13c97` مع 79 tracked modified + untracked؛ لا deploy قبل exact-source preservation/reconciliation.
+- Hostinger يعرض صفر provider snapshots/backups؛ offsite recovery مطلوب.
+- المرجع الحي: `handoffs/2026-07-29_VPS-03_codex_handoff.md`.
+
+كل ما يلي سجل 2026-07-26 فقط؛ أي تعارض يُحسم لصالح checkpoint أعلاه.
+
+## سجل 2026-07-26 التاريخي
+
 **آخر تحديث:** 2026-07-26 22:35 Africa/Cairo  
 **الهدف:** تمكين Claude من مواصلة التنفيذ فور انتهاء حصة Codex، بلا إعادة
 عمل أو تخمين أو اعتماد على ملخص المحادثة.  

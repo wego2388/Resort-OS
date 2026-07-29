@@ -117,9 +117,10 @@ gotchas, security rules) see [`CLAUDE.md`](./CLAUDE.md).
 
 ## Agent-assisted development
 
-All engineering agents start with [`AGENTS.md`](./AGENTS.md). Claude also reads
-`CLAUDE.md` in full. The phased Claude/Codex workflow and copy/paste task
-prompts live in [`docs/agent-workflow/`](./docs/agent-workflow/README.md).
+All engineering agents start with [`AGENTS.md`](./AGENTS.md) and the stable
+engineering charter in [`CLAUDE.md`](./CLAUDE.md). The current documentation
+map is [`docs/README.md`](./docs/README.md), and the Codex-led execution
+workflow lives in [`docs/agent-workflow/`](./docs/agent-workflow/README.md).
 
 Mohamed's plain-language project dashboard is [`wagdy.md`](./wagdy.md). It
 explains current decisions, risks, work in progress, and validation results
