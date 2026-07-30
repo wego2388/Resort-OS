@@ -1,6 +1,6 @@
 # لوحة محمد الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 30 يوليو 2026 بعد نشر مسار الموظفين ومركز السوبر أدمن
+**آخر تحديث:** 30 يوليو 2026 بعد نشر صفحة Timeshare وتحديث Marketing
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -18,7 +18,7 @@
 | الموقع التسويقي | `https://elkheima.com` و`https://www.elkheima.com` — HTTP 200 |
 | تطبيق الموظفين | `https://app.elkheima.com` — HTTP 200 |
 | نموذج التشغيل | فرع تشغيلي واحد؛ لا Branch Switcher ظاهر |
-| الإصدار الفعال | Resort OS `679f76e`؛ Marketing `e5e122a` |
+| الإصدار الفعال | Resort OS `679f76e`؛ Marketing `16f8f2c` |
 | قاعدة البيانات | Alembic `88d1c505a9dc`؛ سليمة ومتاحة |
 | الحاويات | 8/8 Running؛ خدمات التطبيق `restarts=0` |
 | النسخ الاحتياطي | DB يومي + نسخة مشفرة خارج الخادم + restore ناجح |
@@ -43,7 +43,7 @@
 - نشر Backend وCelery وتطبيق الموظفين والـedge من
   `/opt/resort-os-releases/679f76e` وربط
   `/opt/resort-os-current` به.
-- تثبيت مصدر الموقع التسويقي المستقل عند `e5e122a` وربطه عبر
+- تحديث مصدر الموقع التسويقي المستقل إلى `16f8f2c` وربطه عبر
   `/opt/elkheima-marketing-current`.
 - إزالة كل مراجع IP القديمة من bundle وHTML وrobots وsitemap؛ فحص النسخة
   المنشورة أعاد صفر مراجع للـIP.
@@ -66,6 +66,10 @@
 - توحيد شاشات المستخدمين والصلاحيات داخل مركز السوبر أدمن، وإزالة تكرار
   الصفحات، وتنظيم القائمة الجانبية حسب التشغيل والمالية والمخزون والنظام
   مع تحسين عرض الهاتف.
+- نشر صفحة Timeshare بأربع لغات وربط طلباتها بالـCRM، وإظهار Blue Bay
+  كجهة إدارة الملكية الجزئية وفق نموذج الحجز الداخلي المقدم من المالك.
+  النصوص تطلب تأكيد التوفر والتكلفة والشروط من الفريق ولا تنشر سعرًا أو
+  وعدًا تعاقديًا غير معتمد.
 
 ## ما لم يُعتمد تشغيليًا بعد
 
@@ -93,6 +97,6 @@ IPv6 فعلي.
 - الخطة الحية: `docs/audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`
 - المهمة الحالية: `docs/agent-workflow/EL_KHEIMA_EXECUTION_BOARD.md`
 - أحدث تسليم:
-  `docs/agent-workflow/handoffs/2026-07-30_ACC-01_REL-04_codex_handoff.md`
+  `docs/agent-workflow/handoffs/2026-07-30_MKT-02_codex_handoff.md`
 - دليل الإدارة وتدريب الموظفين: `docs/STAFF_APP_GUIDE_AR.md`
 - دليل السوبر أدمن الأمني: `docs/SUPER_ADMIN_GUIDE_AR.md`

@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-07-30 بعد نشر مسار الموظفين ومركز السوبر أدمن
+**آخر تحديث:** 2026-07-30 بعد نشر Timeshare وإصدار Marketing الجديد
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
@@ -33,6 +33,7 @@
 | CHAT-01 — live chatbot | COMPLETE | disclosure + Gemini E2E من الدومين | — |
 | DNS-01 — domain/TLS cutover | COMPLETE | DNS + SAN cert + edge + rollback | — |
 | DOC-OPS — management/staff training | COMPLETE | دليل عربي للأدوار ودورات العمل وUAT | — |
+| MKT-02 — Timeshare + multilingual Marketing | COMPLETE | Blue Bay + CRM inquiry + reviewed images/i18n | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -53,7 +54,7 @@
 - [x] Chatbot live E2E بالعربية.
 - [x] rollback للصور وDB والشهادات قبل domain cutover.
 - [x] إصلاح backup retention واختبار nested protected rollback directory.
-- [x] Resort release `679f76e` وMarketing release `e5e122a` مع SHA-256.
+- [x] Resort release `679f76e` وMarketing release `16f8f2c` مع SHA-256.
 - [x] Hostinger DNS snapshot `167902017`.
 - [x] `@ A` و`app A` إلى `191.218.161.133`، و`www CNAME` محفوظ.
 - [x] شهادة SAN للدومينات الثلاثة وتجديد dry-run ناجح.
@@ -73,6 +74,8 @@
   وStep-Up وAudit وعزل fail-closed.
 - [x] دمج المستخدمين والصلاحيات في مركز إدارة واحد وتنظيم sidebar حسب
   الموديولات وتحسين عرض الهاتف.
+- [x] صفحة Timeshare بأربع لغات، Blue Bay كجهة إدارة، ونموذج CRM محكوم
+  بالموافقة دون أسعار أو وعود تعاقدية غير معتمدة.
 
 ## حالة الإنتاج المثبتة
 
@@ -84,7 +87,7 @@
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
 | Resort release | `/opt/resort-os-current -> .../679f76e` |
-| Marketing release | `/opt/elkheima-marketing-current -> .../e5e122a` |
+| Marketing release | `/opt/elkheima-marketing-current -> .../16f8f2c` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
@@ -104,16 +107,16 @@
 - Pre-cutover DB:
   `/var/backups/resort-os/database/resort_os_20260730_062529.dump`
 - Marketing release archive:
-  `/var/backups/resort-os/marketing-source-releases/e5e122a.tar.gz`
+  `/var/backups/resort-os/marketing-source-releases/16f8f2c.tar.gz`
 - Marketing SHA-256:
-  `357d28e5a4fab05650f19ba0b9f5f82ea6f10e13e29633d47cad388b45e2aaa2`
+  `ba3d8d5c25c8487fb75906ce17ca3ffe8c0df9f0a087c0afefb478c9129cf7a9`
 - Domain rollback directory:
   `/var/backups/resort-os-domain-cutover-aed94a0`
 - DNS rollback snapshot: `167902017`
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-07-30_ACC-01_REL-04_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-07-30_MKT-02_codex_handoff.md`
 
 ## التحديث التالي المطلوب
 

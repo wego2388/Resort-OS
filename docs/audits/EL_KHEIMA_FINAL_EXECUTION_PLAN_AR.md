@@ -1,6 +1,6 @@
 # الخطة التنفيذية النهائية الحية — El Kheima Resort OS
 
-**آخر تحديث مثبت:** 2026-07-30 بعد نشر مسار الموظفين ومركز السوبر أدمن
+**آخر تحديث مثبت:** 2026-07-30 بعد نشر Timeshare وإصدار Marketing الجديد
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **الحالة:** النشر والبيانات وChatbot وDNS ومسار الحسابات مكتملة؛ الحسابات
@@ -15,7 +15,7 @@
 4. DNS cutover أُجيز صراحةً في 30 يوليو 2026 واكتمل. أي تعديل DNS جديد
    يحتاج نطاقًا واضحًا ونقطة تراجع؛ لا Reset DNS ولا AAAA دون IPv6 فعلي.
 5. مصدر الإنتاج Resort OS هو release immutable `679f76e`، ومصدر الموقع
-   التسويقي المستقل هو `e5e122a`.
+   التسويقي المستقل هو `16f8f2c`.
 6. لا `git pull` أو reset أو تنظيف أو rebuild فوق مجلدات المصدر القديمة.
 7. لا أسرار في Git أو logs أو handoffs؛ أسرار Compose تُشتق في الذاكرة.
 8. البيانات synthetic لا تُضاف إلا عبر importer المحكوم
@@ -31,7 +31,7 @@
 
 - branch: `claude/CX-02C-frontend-auth-bootstrap`.
 - Resort source release: `679f76e`، مدفوع على فرع العمل.
-- Marketing source release: `e5e122a`، مدفوع على `main` في مستودعه المستقل.
+- Marketing source release: `16f8f2c`، مدفوع على `main` في مستودعه المستقل.
 - `origin/main` في Resort OS بقي عند `598938e`.
 - Alembic single head: `88d1c505a9dc`.
 - full backend: 2181 passed و40 skipped من 2221 collected، صفر failure.
@@ -47,9 +47,9 @@
   لم تُضعف.
 - `/opt/resort-os-current -> /opt/resort-os-releases/679f76e`.
 - `/opt/elkheima-marketing-current ->
-  /opt/elkheima-marketing-releases/e5e122a`.
+  /opt/elkheima-marketing-releases/16f8f2c`.
 - Backend وCelery وتطبيق الموظفين والـedge تستخدم release `679f76e`.
-  Marketing لم يتغير وبقي على صورته المراجعة ومصدره المستقل `e5e122a`.
+  Marketing يستخدم مصدره المستقل `16f8f2c`.
 - الحاويات الثماني `restarts=0`، وكل healthchecks المعرّفة سليمة.
 - 8 حاويات تعمل؛ الخدمات ذات healthcheck سليمة.
 - PostgreSQL وRedis لم يُعاد إنشاؤهما أثناء النشر.
@@ -127,7 +127,7 @@
 - الجذر و`www` و`app` = 200، وHTTP→HTTPS صحيح.
 - أزيلت مراجع IP القديمة من Marketing bundle وSEO files.
 - خدمات Resort التي شملها القطع موحدة على `679f76e`؛ Marketing source
-  بقي عند `e5e122a` ولم يُعد بناؤه.
+  عند `16f8f2c`.
 
 ### P0-06 — دليل الإدارة وتدريب الموظفين
 
@@ -168,6 +168,22 @@
 - مراجعة بيانات العرض واستبدال المطلوب ببيانات master معتمدة.
 - فترة burn-in مع توصيل alerts لقناة خارجية.
 - اعتماد ممثل التشغيل والمالية والمالك، ثم قرار Go/No-Go مؤرخ.
+
+### P0-09 — Timeshare وMarketing multilingual
+
+**الحالة:** COMPLETE — 2026-07-30
+
+- صفحة `/timeshare` منشورة بأربع لغات وترسل الطلب إلى عقد
+  `/api/v1/hub/contact` الآمن مع consent وidempotency.
+- Blue Bay موثقة على الصفحة كجهة إدارة الملكية الجزئية وفق نموذج الحجز
+  الداخلي الذي قدمه المالك.
+- لا أسعار منشورة؛ `publicTruth.publish.prices=false` لم يتغير.
+- وعود الملكية والتوريث والتوفر والرد خلال 24 ساعة أزيلت من النسخة العامة؛
+  الفريق يؤكد التكلفة والتوفر والشروط بعد الاستفسار.
+- exact location section يبقى خلف `publicTruth.publish.exactLocation=false`.
+- ترجمات العربية والإنجليزية والروسية والإيطالية متطابقة عند 2919 مفتاحًا.
+- Marketing release `16f8f2c` نُشر بعد build canary وDB backup وrollback
+  image، واجتاز الدومين والـhealth gate.
 
 ## 5. العمل الحالي بالترتيب
 
@@ -212,6 +228,8 @@
   `docs/agent-workflow/handoffs/2026-07-30_DNS-01_codex_handoff.md`
 - تسليم مسار الموظفين والإصدار الحالي:
   `docs/agent-workflow/handoffs/2026-07-30_ACC-01_REL-04_codex_handoff.md`
+- تسليم Marketing وTimeshare:
+  `docs/agent-workflow/handoffs/2026-07-30_MKT-02_codex_handoff.md`
 - تسليم البيانات وChatbot:
   `docs/agent-workflow/handoffs/2026-07-30_DATA-01_CHAT-01_codex_handoff.md`
 - التاريخ القديم: `docs/archive/2026-07-execution/`

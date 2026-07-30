@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-07-30 بعد نشر مسار الموظفين ومركز السوبر أدمن
+**آخر تحقق:** 2026-07-30 بعد نشر Timeshare وإصدار Marketing الجديد
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -13,13 +13,13 @@
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
 | Resort OS source release | `679f76e` |
-| Marketing source release | `e5e122a` من المستودع المستقل |
+| Marketing source release | `16f8f2c` من المستودع المستقل |
 | remote | فرع العمل يحتوي `679f76e` ثم تحديثات توثيق ما بعد النشر |
 | `origin/main` | `598938e` — لم يُغيّر |
 | active Resort release | `/opt/resort-os-releases/679f76e` |
 | Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/679f76e` |
-| active Marketing release | `/opt/elkheima-marketing-releases/e5e122a` |
-| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/e5e122a` |
+| active Marketing release | `/opt/elkheima-marketing-releases/16f8f2c` |
+| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/16f8f2c` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
@@ -28,9 +28,9 @@ SHA-256
 `3e8b9a2b88746f93dd578d17dc2f010c0c63e21ccb9a5f82c1c40bff856110a8`.
 
 أرشيف Marketing:
-`/var/backups/resort-os/marketing-source-releases/e5e122a.tar.gz`،
+`/var/backups/resort-os/marketing-source-releases/16f8f2c.tar.gz`،
 SHA-256
-`357d28e5a4fab05650f19ba0b9f5f82ea6f10e13e29633d47cad388b45e2aaa2`.
+`ba3d8d5c25c8487fb75906ce17ca3ffe8c0df9f0a087c0afefb478c9129cf7a9`.
 
 مجلدا المصدر القديمان `/opt/resort-os` و
 `/opt/elkheima-marketing-website` محفوظان كما كانا، وغير مستخدمين كمصدر
@@ -41,9 +41,8 @@ SHA-256
 - الخدمات التي شملها الإصدار (`backend`, `celery_worker`, `celery_beat`,
   `el_kheima`, `nginx`) تحمل
   `com.docker.compose.project.working_dir=/opt/resort-os-releases/679f76e`.
-- `marketing_site` لم يُعد بناؤه لأنه مستقل ولم يتغير؛ بقي على الصورة
-  المراجعة نفسها ووسم working directory السابق `05ee627`، ومصدره الفعلي
-  ثابت عبر `/opt/elkheima-marketing-current -> .../e5e122a`.
+- `marketing_site` مبني من المصدر المستقل `16f8f2c` عبر
+  `/opt/elkheima-marketing-current`.
 - Backend image:
   `sha256:7d27ae3a4b7daa38fe878b95c322bd1a7a1f2d5088990aa642163945441d73bc`.
 - Celery worker:
@@ -53,7 +52,7 @@ SHA-256
 - El Kheima staff app:
   `sha256:b638351fb3abebea2fa038cb39d26ab3c7632bf71f2e677b0830f27591e8feb1`.
 - Marketing image:
-  `sha256:ceffe9aff37f51cdf3a566d144eedad3acb94ab2665acf59f6fe0c04169cb0db`.
+  `sha256:277ff191eb630c4313ff728aabfda5e3fbc205c72432e97408b13c03d7358d2e`.
 - Nginx:
   `sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46`.
 - 8 حاويات Running وكل healthchecks المعرّفة سليمة. الحاويات الثماني
@@ -103,6 +102,11 @@ SHA-256
   العامة مقصورة على الجذر و`www`.
 - Chatbot E2E من الدومين: welcome عربي، إنشاء session، قبول disclosure،
   رد Gemini عربي غير فارغ، وإنهاء session بنجاح.
+- `/ar/timeshare` و`/en/timeshare` يعيدان 200. الصفحة تعرض Blue Bay كجهة
+  إدارة الملكية الجزئية، وترسل الاستفسار إلى `/api/v1/hub/contact` مع
+  consent وidempotency. لا تعرض أسعارًا أو تضمن توفرًا أو شروطًا تعاقدية.
+- ترجمات Marketing متطابقة: 2919 مفتاحًا في كل من العربية والإنجليزية
+  والروسية والإيطالية، وصور الأنشطة والفعاليات راجعها Codex بصريًا.
 - فحص logs النهائي لخدمات backend/worker/beat/staff/marketing/nginx:
   صفر أنماط severe ضمن نافذة الفحص.
 
@@ -192,6 +196,9 @@ SHA-256
 - صورة Marketing السابقة محفوظة تحت
   `resort-os-rollback/marketing-site:pre-e5e122a`
   (`sha256:014777142d8cae6074b13dfee5493f5e7e08f6901797164104292a1b05121c5b`).
+- صورة Marketing السابقة مباشرة لـ`16f8f2c` محفوظة تحت
+  `resort-os-rollback/marketing-site:pre-16f8f2c`، والـmanifest:
+  `/var/backups/resort-os/marketing-source-releases/16f8f2c-rollback-image.txt`.
 - النسخة المشفرة خارج الخادم واستعادة 135 جدولًا ما زالتا دليل DR الأساسي.
 - `resort-os-backup.timer`, `resort-os-certbot-renew.timer`,
   `resort-os-healthcheck.timer` مثبتة ومفعلة.
@@ -206,6 +213,11 @@ SHA-256
   `/var/backups/resort-os/database/resort_os_20260730_062529.dump`،
   SHA-256
   `bce5553a9b58d7a930c650c3f8618b7714a9a1db557e067977cc23beec10ab5a`؛
+  اجتازت `pg_restore --list`.
+- نسخة DB السابقة مباشرة لنشر Marketing:
+  `/var/backups/resort-os/database/resort_os_20260730_143944.dump`،
+  SHA-256
+  `1358f16a526240b447bff98570a93eda9ee8933d8a94580ee5e8ec12c3987e04`؛
   اجتازت `pg_restore --list`.
 - شُغلت خدمة healthcheck يدويًا بعد النشر ونجحت
   (`Result=success`, `ExecMainStatus=0`).
