@@ -137,19 +137,22 @@ to continue.
 
 ## 5. Managing Users
 
-Go to **Admin → 🛡️ Super Admin Panel → Users tab** or **Admin → 👤 Staff
-Accounts**.
+Go to **System Administration → 🛡️ Super Admin Control Center → Users**.
+Legacy account and permission bookmarks redirect into this same control center.
 
 ### Creating a new staff account
 
-1. Fill in full name, email, role, and preferred language. Phone and HR
-   employee link are optional.
-2. Click **Create Account**.
-3. Complete step-up (password + TOTP + reason).
-4. A credentials panel appears showing:
+1. Confirm HR created the employee record in the active branch.
+2. Select that active, unlinked employee record. Name, email, and phone are
+   prefilled; review the email and choose the role and language.
+3. Click **Create Account Securely**.
+4. Complete step-up (password + TOTP + reason).
+5. The server creates the user, employee link, and default branch membership
+   atomically. Cross-branch and terminated employee records are rejected.
+6. A credentials panel appears showing:
    - **Temporary password** — the employee must change it on first login.
    - **Enrollment token** — required to complete TOTP setup on first login.
-5. **Copy and send these credentials securely to the employee. They are shown
+7. **Copy and send these credentials securely to the employee. They are shown
    exactly once.** After closing the panel they cannot be recovered from the
    UI.
 
@@ -190,8 +193,7 @@ immediately invalidates all their active sessions and tokens.
 
 ## 6. Managing Permissions
 
-Go to **Admin → 🛡️ Super Admin Panel → Permissions tab** or **Admin → 🔐
-Permissions**.
+Go to **System Administration → 🛡️ Super Admin Control Center → Permissions**.
 
 ### The three states
 

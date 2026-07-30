@@ -248,6 +248,22 @@ def get_manager_user(user=Depends(get_current_active_user)):
     return user
 
 
+def get_hr_manager_user(user=Depends(get_current_active_user)):
+    """Named HR write capability.
+
+    ``accountant`` and ``hr_manager`` intentionally share numeric level 70,
+    while a general ``manager`` is level 60. Employee master-data writes
+    therefore cannot safely use a numeric threshold: they belong only to HR
+    or the administrative control plane.
+    """
+    if user.role not in {"hr_manager", "admin", "super_admin"}:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "يتطلب دور الموارد البشرية أو الإدارة",
+        )
+    return user
+
+
 def get_admin_user(user=Depends(get_current_active_user)):
     if user_level(user) < 80:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية admin")

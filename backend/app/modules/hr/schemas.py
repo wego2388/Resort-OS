@@ -51,7 +51,7 @@ class EmployeeRead(EmployeeCreate):
 
 
 class EmployeeLinkUserRequest(BaseModel):
-    """PATCH /hr/employees/{id}/link-user body — ربط موظف بحساب دخول موجود."""
+    """Super-admin recovery link for an account already authorized in branch."""
     user_id: int
 
 

@@ -3447,6 +3447,10 @@
       "dashboard": "لوحة التحكم",
       "analytics": "التحليلات",
       "management": "الإدارة",
+      "peopleAndFinance": "الأفراد والمالية",
+      "guestManagement": "إدارة الضيوف والأصول",
+      "inventoryAndCost": "المخزون والتكلفة",
+      "systemAdministration": "إدارة النظام",
       "hr": "الموارد البشرية",
       "finance": "المالية",
       "eInvoice": "الفاتورة الإلكترونية",
@@ -3609,7 +3613,8 @@
       "commandNavigate": "تنقل",
       "commandExecute": "فتح",
       "commandClose": "إغلاق",
-      "toggleSidebar": "إظهار أو إخفاء القائمة الجانبية"
+      "toggleSidebar": "إظهار أو إخفاء القائمة الجانبية",
+      "closeSidebar": "إغلاق القائمة الجانبية"
     },
     "pinGuard": {
       "title": "يتطلب موافقة مدير",
@@ -3729,8 +3734,12 @@
       "fullName": "الاسم الكامل",
       "email": "البريد الإلكتروني",
       "phone": "رقم الهاتف (اختياري)",
-      "employeeRecord": "ملف الموارد البشرية (اختياري)",
+      "employeeRecord": "ملف الموظف في الموارد البشرية",
       "noEmployeeRecord": "بدون ربط بملف موظف",
+      "chooseEmployeeRecord": "اختر ملف الموظف أولًا",
+      "employeeRequired": "اختر ملف الموظف من الموارد البشرية قبل إنشاء حساب الدخول.",
+      "noPendingEmployeeRecords": "لا توجد ملفات موظفين نشطة بانتظار حساب دخول في هذا الفرع.",
+      "openHr": "فتح الموارد البشرية",
       "role": "الدور الوظيفي",
       "language": "لغة الواجهة",
       "arabic": "العربية",
@@ -3827,6 +3836,21 @@
       "navLabel": "لوحة تحكم Super Admin",
       "title": "مركز تحكم Super Admin",
       "subtitle": "إدارة المستخدمين، الصلاحيات، الإعدادات، وسجل التدقيق من مكان واحد",
+      "singleAdminWarning": "يوجد Super Admin نشط واحد فقط. لا توقف هذا الحساب، واحتفظ بإجراء الاسترداد الإداري الآمن.",
+      "summary": {
+        "totalUsers": "إجمالي الحسابات",
+        "activeUsers": "الحسابات النشطة",
+        "pendingAccounts": "موظفون بانتظار حساب",
+        "securitySetup": "تهيئة أمنية غير مكتملة"
+      },
+      "onboarding": {
+        "hrTitle": "1. الموارد البشرية",
+        "hrBody": "تنشئ ملف الموظف والبيانات الوظيفية والراتب داخل الفرع.",
+        "accountTitle": "2. السوبر أدمن",
+        "accountBody": "يختار الملف ويحدد الدور والصلاحيات؛ عضوية الفرع تُنشأ تلقائيًا.",
+        "handoverTitle": "3. التسليم الآمن",
+        "handoverBody": "يسلّم البيانات المؤقتة مرة واحدة، والموظف يغيّر كلمة المرور ويكمل 2FA."
+      },
       "tabs": {
         "users": "👥 المستخدمون",
         "permissions": "🔐 الصلاحيات",
@@ -4689,6 +4713,30 @@
     },
     "hr": {
       "title": "الموارد البشرية",
+      "subtitle": "ملفات الموظفين، الحضور، الاستحقاقات والرواتب داخل الفرع النشط.",
+      "addEmployee": "إضافة موظف",
+      "createEmployeeTitle": "إنشاء ملف موظف",
+      "identityAndJob": "الهوية والبيانات الوظيفية",
+      "compensationAndContact": "الراتب وبيانات التواصل",
+      "employeeCode": "كود الموظف",
+      "fullName": "الاسم الكامل",
+      "nationalIdOptional": "الرقم القومي (اختياري ومشفّر)",
+      "hireDate": "تاريخ التعيين",
+      "birthDateOptional": "تاريخ الميلاد (اختياري)",
+      "saveEmployee": "حفظ ملف الموظف",
+      "createEmployeeHint": "بعد الحفظ سيظهر الملف للسوبر أدمن لإنشاء حساب الدخول والدور وعضوية الفرع.",
+      "accountStatus": "حساب الدخول",
+      "accountLinked": "مرتبط",
+      "accountPending": "بانتظار السوبر أدمن",
+      "createAccount": "إنشاء حساب",
+      "onboarding": {
+        "step1Title": "1. ملف الموظف",
+        "step1Body": "الموارد البشرية تثبت الهوية والوظيفة والراتب.",
+        "step2Title": "2. حساب الدخول",
+        "step2Body": "السوبر أدمن يحدد الدور والصلاحيات ويربط الفرع.",
+        "step3Title": "3. بدء العمل",
+        "step3Body": "الموظف يستلم بيانات مؤقتة ويكمل التهيئة الآمنة."
+      },
       "tabs": {
         "employees": "الموظفون",
         "attendance": "الحضور",
@@ -4836,6 +4884,9 @@
       "noSalesRecorded": "لا توجد مبيعات مسجّلة",
       "noSalesRecordedHint": "لا يوجد مبيعات مرتبطة بموظفين خلال المدى المحدد",
       "msg": {
+        "employeeRequiredFields": "أكمل كود الموظف والاسم والوظيفة والراتب وتاريخ التعيين.",
+        "employeeCreated": "تم إنشاء ملف الموظف وأصبح جاهزًا لمرحلة إنشاء الحساب.",
+        "employeeCreateError": "تعذر إنشاء ملف الموظف.",
         "loadPolicyError": "فشل تحميل سياسة الحضور",
         "policySaved": "تم حفظ سياسة الحضور",
         "policySaveError": "فشل حفظ سياسة الحضور",

@@ -42,6 +42,16 @@ def make_employee_committed(db, branch):
     return emp
 
 
+def super_admin_headers_for_branch(branch):
+    from tests.conftest import _make_token
+
+    return {
+        "Authorization": (
+            f"Bearer {_make_token('super_admin@test.local', branch_id=branch.id)}"
+        )
+    }
+
+
 def make_leave_type_committed(db, branch):
     from app.modules.hr.models import LeaveType
     lt = LeaveType(branch_id=branch.id, name="Annual", name_ar="سنوية", max_days_per_year=21)
@@ -147,8 +157,8 @@ class TestHRLeaveRequestFlow:
 
 
 class TestHRPermissions:
-    def test_create_employee_requires_admin(self, client: TestClient, db, manager_headers):
-        """manager (60) must not create employees — admin (80) required."""
+    def test_create_employee_requires_hr_or_admin(self, client: TestClient, db, manager_headers):
+        """A general manager must not create employee master records."""
         branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/hr/employees",
@@ -157,6 +167,60 @@ class TestHRPermissions:
                 "position": "Cashier", "basic_salary": "3000.00", "hire_date": str(date.today()),
             },
             headers=manager_headers,
+        )
+        assert resp.status_code == 403
+
+    def test_hr_manager_can_create_employee_in_assigned_branch(self, client: TestClient, db):
+        from tests.conftest import (
+            _create_test_user,
+            _make_token,
+            assign_test_user_to_branch,
+        )
+        from app.modules.core.models import AuditLog
+
+        branch = make_branch_committed(db)
+        email = f"hr-create-{uuid.uuid4().hex[:8]}@test.local"
+        user_id = _create_test_user(email, "hr_manager")
+        assign_test_user_to_branch(db, user_id, branch.id)
+        db.commit()
+        headers = {
+            "Authorization": f"Bearer {_make_token(email, branch_id=branch.id)}"
+        }
+        employee_code = f"EMP-{uuid.uuid4().hex[:6].upper()}"
+        resp = client.post(
+            "/api/v1/hr/employees",
+            json={
+                "branch_id": branch.id,
+                "employee_code": employee_code,
+                "full_name": "مسؤول استقبال جديد",
+                "position": "Receptionist",
+                "basic_salary": "5000.00",
+                "hire_date": str(date.today()),
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        audit = db.query(AuditLog).filter(
+            AuditLog.action == "employee_record_created",
+            AuditLog.entity_id == resp.json()["id"],
+        ).one()
+        assert audit.user_id == user_id
+        assert audit.branch_id == branch.id
+
+    def test_accountant_cannot_create_employee(self, client: TestClient, db, accountant_headers):
+        """Numeric level 70 is shared, so named-role enforcement matters."""
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/hr/employees",
+            json={
+                "branch_id": branch.id,
+                "employee_code": f"EMP-{uuid.uuid4().hex[:6].upper()}",
+                "full_name": "محاسب غير مصرح",
+                "position": "Accountant",
+                "basic_salary": "5000.00",
+                "hire_date": str(date.today()),
+            },
+            headers=accountant_headers,
         )
         assert resp.status_code == 403
 
@@ -411,6 +475,7 @@ class TestEmployeeCrudHttp:
 
     def test_create_employee_success(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
+        headers = super_admin_headers_for_branch(branch)
         resp = client.post(
             "/api/v1/hr/employees",
             json={
@@ -418,7 +483,7 @@ class TestEmployeeCrudHttp:
                 "full_name": "سارة محمود", "position": "Receptionist",
                 "basic_salary": "3500.00", "hire_date": str(date.today()),
             },
-            headers=super_admin_headers,
+            headers=headers,
         )
         assert resp.status_code == 201, resp.text
         body = resp.json()
@@ -429,6 +494,7 @@ class TestEmployeeCrudHttp:
     def test_create_employee_duplicate_code_returns_400(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
+        headers = super_admin_headers_for_branch(branch)
         resp = client.post(
             "/api/v1/hr/employees",
             json={
@@ -436,10 +502,36 @@ class TestEmployeeCrudHttp:
                 "full_name": "نسخة مكررة", "position": "Waiter",
                 "basic_salary": "3000.00", "hire_date": str(date.today()),
             },
-            headers=super_admin_headers,
+            headers=headers,
         )
         assert resp.status_code == 400
         assert "مستخدم مسبقاً" in resp.text
+
+    def test_create_employee_cannot_bypass_account_control_plane(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        from tests.conftest import _create_test_user
+
+        branch = make_branch_committed(db)
+        target_user_id = _create_test_user(
+            f"employee-link-bypass-{uuid.uuid4().hex[:8]}@test.local",
+            "employee",
+        )
+        resp = client.post(
+            "/api/v1/hr/employees",
+            json={
+                "branch_id": branch.id,
+                "employee_code": f"EMP-{uuid.uuid4().hex[:6].upper()}",
+                "full_name": "محاولة ربط مباشر",
+                "position": "Employee",
+                "basic_salary": "3000.00",
+                "hire_date": str(date.today()),
+                "user_id": target_user_id,
+            },
+            headers=super_admin_headers_for_branch(branch),
+        )
+        assert resp.status_code == 400
+        assert "مركز Super Admin" in resp.text
 
     def test_get_employee_by_id_success(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
@@ -464,10 +556,11 @@ class TestEmployeeCrudHttp:
     def test_update_employee_success(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
+        headers = super_admin_headers_for_branch(branch)
         resp = client.patch(
             f"/api/v1/hr/employees/{emp.id}",
             json={"position": "Head Waiter", "basic_salary": "4500.00"},
-            headers=super_admin_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
@@ -919,12 +1012,13 @@ class TestEmployeeAllowanceHttp:
     def test_create_list_and_update_allowance(self, client: TestClient, db, super_admin_headers, manager_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
+        branch_admin_headers = super_admin_headers_for_branch(branch)
 
         create_resp = client.post(
             f"/api/v1/hr/employees/{emp.id}/allowances",
             json={"employee_id": emp.id, "name": "بدل سكن", "amount": "500.00",
                   "is_taxable": True, "is_pensionable": False},
-            headers=super_admin_headers,
+            headers=branch_admin_headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         allowance_id = create_resp.json()["id"]
@@ -940,7 +1034,7 @@ class TestEmployeeAllowanceHttp:
         update_resp = client.patch(
             f"/api/v1/hr/allowances/{allowance_id}",
             json={"amount": "600.00", "is_active": False},
-            headers=super_admin_headers,
+            headers=branch_admin_headers,
         )
         assert update_resp.status_code == 200, update_resp.text
         assert update_resp.json()["is_active"] is False
@@ -980,11 +1074,12 @@ class TestEmployeeAllowanceHttp:
         ensure_payroll_config_committed(db)
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
+        branch_admin_headers = super_admin_headers_for_branch(branch)
         client.post(
             f"/api/v1/hr/employees/{emp.id}/allowances",
             json={"employee_id": emp.id, "name": "بدل انتقالات", "amount": "300.00",
                   "is_taxable": True, "is_pensionable": False},
-            headers=super_admin_headers,
+            headers=branch_admin_headers,
         )
         today = date.today()
         resp = client.get(
@@ -1206,6 +1301,7 @@ class TestSalaryAdvanceHttp:
     def test_create_and_list_salary_advance(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
+        branch_admin_headers = super_admin_headers_for_branch(branch)
 
         create_resp = client.post(
             "/api/v1/hr/salary-advances",
@@ -1214,7 +1310,7 @@ class TestSalaryAdvanceHttp:
                 "amount": "3000.00", "disbursed_date": "2026-01-05",
                 "monthly_deduction_amount": "500.00",
             },
-            headers=super_admin_headers,
+            headers=branch_admin_headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         advance = create_resp.json()
@@ -1227,7 +1323,7 @@ class TestSalaryAdvanceHttp:
         assert list_resp.status_code == 200
         assert any(a["id"] == advance["id"] for a in list_resp.json())
 
-    def test_create_requires_admin_not_manager(self, client: TestClient, db, manager_headers):
+    def test_create_requires_hr_or_admin_not_manager(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
         resp = client.post(
@@ -1244,6 +1340,7 @@ class TestSalaryAdvanceHttp:
     def test_cancel_untouched_advance(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
+        branch_admin_headers = super_admin_headers_for_branch(branch)
         create_resp = client.post(
             "/api/v1/hr/salary-advances",
             json={
@@ -1251,13 +1348,13 @@ class TestSalaryAdvanceHttp:
                 "amount": "1000.00", "disbursed_date": "2026-01-05",
                 "monthly_deduction_amount": "200.00",
             },
-            headers=super_admin_headers,
+            headers=branch_admin_headers,
         )
         advance_id = create_resp.json()["id"]
 
         cancel_resp = client.patch(
             f"/api/v1/hr/salary-advances/{advance_id}/cancel",
-            json={"reason": "غلط"}, headers=super_admin_headers,
+            json={"reason": "غلط"}, headers=branch_admin_headers,
         )
         assert cancel_resp.status_code == 200
         assert cancel_resp.json()["status"] == "cancelled"
@@ -1265,6 +1362,7 @@ class TestSalaryAdvanceHttp:
     def test_monthly_deduction_exceeds_amount_rejected(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
+        branch_admin_headers = super_admin_headers_for_branch(branch)
         resp = client.post(
             "/api/v1/hr/salary-advances",
             json={
@@ -1272,7 +1370,7 @@ class TestSalaryAdvanceHttp:
                 "amount": "500.00", "disbursed_date": "2026-01-05",
                 "monthly_deduction_amount": "800.00",
             },
-            headers=super_admin_headers,
+            headers=branch_admin_headers,
         )
         assert resp.status_code == 400
 

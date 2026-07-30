@@ -33,8 +33,14 @@ const activeBranchLabel = computed(() => {
 // #23: حفظ حالة الـ sidebar في localStorage — بيتذكر اختيار المستخدم بين الجلسات
 const SIDEBAR_KEY = 'resort-os-sidebar-open'
 const sidebarOpen = ref(localStorage.getItem(SIDEBAR_KEY) !== 'false')
+const mobileSidebarOpen = ref(false)
+const sidebarExpanded = computed(() => sidebarOpen.value || mobileSidebarOpen.value)
 
 function toggleSidebar() {
+  if (window.innerWidth < 1024) {
+    mobileSidebarOpen.value = !mobileSidebarOpen.value
+    return
+  }
   sidebarOpen.value = !sidebarOpen.value
   localStorage.setItem(SIDEBAR_KEY, String(sidebarOpen.value))
 }
@@ -81,21 +87,31 @@ const allSections = computed<NavSection[]>(() => [
     ],
   },
   {
-    label: t('backoffice.nav.management'),
+    label: t('backoffice.nav.peopleAndFinance'),
     items: [
       { path: '/admin/hr',           label: t('backoffice.nav.hr'),             icon: '👥',  requiredRole: 'manager' },
       { path: '/admin/finance',      label: t('backoffice.nav.finance'),        icon: '💰',  requiredRole: 'manager' },
       { path: '/admin/e-invoice',    label: t('backoffice.nav.eInvoice'),       icon: '🧾',  requiredRole: 'manager' },
+    ],
+  },
+  {
+    label: t('backoffice.nav.guestManagement'),
+    items: [
       { path: '/admin/timeshare',    label: t('backoffice.nav.timeshare'),      icon: '🏨',  requiredRole: 'cashier' },
       { path: '/admin/sales',        label: t('backoffice.nav.sales'),          icon: '📞',  requiredRole: 'manager' },
+      { path: '/admin/crm',          label: t('backoffice.nav.crm'),            icon: '🤝',  requiredRole: 'manager' },
       { path: '/admin/beach-live',   label: t('backoffice.nav.beachLive'),      icon: '🏖️',  requiredRole: 'manager' },
       { path: '/admin/beach-admin',  label: t('backoffice.nav.beachAdmin'),     icon: '🏄',  requiredRole: 'manager' },
+      { path: '/admin/maintenance',  label: t('backoffice.nav.maintenance'),    icon: '🔧',  requiredRole: 'supervisor' },
+      { path: '/admin/leasing',      label: t('backoffice.nav.leasing'),        icon: '🏢',  requiredRole: 'supervisor' },
+    ],
+  },
+  {
+    label: t('backoffice.nav.inventoryAndCost'),
+    items: [
       { path: '/admin/inventory',    label: t('backoffice.nav.inventory'),      icon: '📦',  requiredRole: 'manager' },
       { path: '/admin/recipes',      label: t('backoffice.nav.recipes'),        icon: '🧾',  requiredRole: 'manager' },
       { path: '/admin/food-cost',    label: t('backoffice.nav.foodCost'),       icon: '📉',  requiredRole: 'manager' },
-      { path: '/admin/crm',          label: t('backoffice.nav.crm'),            icon: '🤝',  requiredRole: 'manager' },
-      { path: '/admin/maintenance',  label: t('backoffice.nav.maintenance'),    icon: '🔧',  requiredRole: 'supervisor' },
-      { path: '/admin/leasing',      label: t('backoffice.nav.leasing'),        icon: '🏢',  requiredRole: 'supervisor' },
     ],
   },
   {
@@ -118,11 +134,9 @@ const allSections = computed<NavSection[]>(() => [
     ],
   },
   {
-    label: t('backoffice.nav.settings'),
+    label: t('backoffice.nav.systemAdministration'),
     items: [
       { path: '/admin/settings',    label: t('backoffice.nav.settings'),    icon: '⚙️', requiredRole: 'admin' },
-      { path: '/admin/users',       label: t('backoffice.nav.users'),       icon: '👤', requiredRole: 'super_admin' },
-      { path: '/admin/permissions', label: t('backoffice.nav.permissions'), icon: '🔐', requiredRole: 'super_admin' },
       { path: '/admin/super-admin', label: t('backoffice.superAdmin.navLabel'), icon: '🛡️', requiredRole: 'super_admin' },
     ],
   },
@@ -204,6 +218,10 @@ const commandItems = computed<CommandItem[]>(() => {
 })
 
 function handleGlobalKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && mobileSidebarOpen.value) {
+    mobileSidebarOpen.value = false
+    return
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
     e.preventDefault()
     showCommandPalette.value = !showCommandPalette.value
@@ -217,17 +235,28 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
 <template>
   <!-- Direction inherited from <html dir> (central staff locale controller). -->
   <div class="min-h-screen bg-stone-50 dark:bg-gray-950 flex">
+    <button
+      v-if="mobileSidebarOpen"
+      type="button"
+      class="fixed inset-0 z-30 bg-black/50 lg:hidden"
+      :aria-label="t('backoffice.layout.closeSidebar')"
+      @click="mobileSidebarOpen = false"
+    />
 
     <!-- ── Sidebar ── -->
     <aside
-      :class="['flex-shrink-0 flex flex-col transition-all duration-300 bg-gray-900 dark:bg-gray-950', sidebarOpen ? 'w-60' : 'w-16']"
+      :class="[
+        'sidebar-shell flex w-72 flex-shrink-0 flex-col bg-gray-900 transition-all duration-300 dark:bg-gray-950',
+        mobileSidebarOpen && 'sidebar-mobile-open',
+        sidebarOpen ? 'lg:w-60' : 'lg:w-16',
+      ]"
     >
       <!-- Logo -->
       <div class="flex items-center gap-3 px-4 py-5 border-b border-white/10">
         <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 bg-gold-DEFAULT">
           <span class="text-white font-black text-sm">RO</span>
         </div>
-        <div v-if="sidebarOpen" class="overflow-hidden">
+        <div v-if="sidebarExpanded" class="overflow-hidden">
           <div class="font-bold text-sm text-white">Resort OS</div>
           <div class="text-xs truncate text-gray-500">
             {{ t('backoffice.layout.branch') }}: {{ activeBranchLabel }}
@@ -238,31 +267,32 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
       <!-- Nav -->
       <nav class="flex-1 py-4 overflow-y-auto">
         <div v-for="section in navSections" :key="section.label" class="mb-4">
-          <div v-if="sidebarOpen"
+          <div v-if="sidebarExpanded"
             class="px-4 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-400">
             {{ section.label }}
           </div>
           <router-link
             v-for="item in section.items" :key="item.path"
             :to="item.path"
-            :title="!sidebarOpen ? item.label : undefined"
+            @click="mobileSidebarOpen = false"
+            :title="!sidebarExpanded ? item.label : undefined"
             :class="[
               'flex items-center gap-3 px-4 py-2.5 text-sm font-medium transition-colors rounded-lg mx-2 my-0.5',
-              !sidebarOpen && 'justify-center',
+              !sidebarExpanded && 'justify-center',
               isActive(item.path)
                 ? 'bg-gold-DEFAULT text-white'
                 : 'text-gray-300 hover:text-white hover:bg-white/10',
             ]"
           >
             <span class="text-base flex-shrink-0">{{ item.icon }}</span>
-            <span v-if="sidebarOpen" class="truncate">{{ item.label }}</span>
+            <span v-if="sidebarExpanded" class="truncate">{{ item.label }}</span>
           </router-link>
         </div>
       </nav>
 
       <!-- User + Logout -->
       <div class="p-4 border-t border-white/10">
-        <div v-if="sidebarOpen" class="flex items-center gap-3 mb-3">
+        <div v-if="sidebarExpanded" class="flex items-center gap-3 mb-3">
           <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold bg-gray-700 text-gray-100">
             {{ (auth.user?.full_name ?? '?').charAt(0) }}
           </div>
@@ -272,10 +302,10 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
           </div>
         </div>
         <button @click="logout"
-          :class="['w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors text-red-400 hover:bg-red-400/10', !sidebarOpen && 'justify-center']"
+          :class="['w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors text-red-400 hover:bg-red-400/10', !sidebarExpanded && 'justify-center']"
         >
           <span>🚪</span>
-          <span v-if="sidebarOpen">{{ t('backoffice.layout.logout') }}</span>
+          <span v-if="sidebarExpanded">{{ t('backoffice.layout.logout') }}</span>
         </button>
       </div>
     </aside>
@@ -341,7 +371,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
             mode="out-in"
             :duration="{ enter: 160, leave: 80 }"
           >
-            <component :is="Component" :key="r.fullPath" />
+            <component :is="Component" :key="r.path" />
           </Transition>
         </RouterView>
       </main>
@@ -365,6 +395,33 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleGlobalKey))
 </template>
 
 <style scoped>
+.sidebar-shell {
+  inset-block: 0;
+  inset-inline-start: 0;
+  position: fixed;
+  z-index: 40;
+  transform: translateX(-100%);
+}
+
+:global(html:dir(rtl)) .sidebar-shell {
+  transform: translateX(100%);
+}
+
+.sidebar-mobile-open,
+:global(html:dir(rtl)) .sidebar-mobile-open {
+  transform: translateX(0);
+}
+
+@media (min-width: 1024px) {
+  .sidebar-shell,
+  :global(html:dir(rtl)) .sidebar-shell {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    transform: none;
+  }
+}
+
 /*
   Page transition — سريع وخفيف (fade + رفع بسيط).
   motion-safe: بيوقفها للمستخدمين اللي شغّلوا prefers-reduced-motion.

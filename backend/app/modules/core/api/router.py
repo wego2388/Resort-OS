@@ -513,6 +513,12 @@ def provision_staff_user(
         preferred_language=data.preferred_language,
         reason=data.reason,
     )
+    branch_id = services.get_user_branch_id(db, user)
+    if branch_id is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "اختر الفرع النشط قبل إنشاء حساب الموظف",
+        )
     step_up = _consume_step_up_or_raise(
         db, user, request,
         purpose="user_provision", scope_hash=scope_hash,
@@ -526,6 +532,7 @@ def provision_staff_user(
             employee_id=data.employee_id,
             role=data.role,
             preferred_language=data.preferred_language,
+            branch_id=branch_id,
             actor_id=user.id,
             reason=data.reason,
             step_up_public_reference=step_up["public_reference"],

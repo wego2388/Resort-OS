@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { api, parseApiTimestamp, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
@@ -12,12 +13,17 @@ const { confirm } = useConfirm()
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth = useAuthStore()
+const router = useRouter()
 const branchId = computed(() => auth.branchId)
+const canManageEmployeeRecords = computed(() =>
+  ['hr_manager', 'admin', 'super_admin'].includes(auth.role ?? ''),
+)
 const tab = ref<'employees' | 'attendance' | 'payroll' | 'leaves' | 'leaderboard'>('employees')
 
 interface Employee {
-  id: number; full_name: string; position: string; department?: string
+  id: number; employee_code: string; full_name: string; position: string; department?: string
   hire_date: string; basic_salary: number; status: string; phone?: string
+  email?: string; user_id?: number | null
   insurance_base_salary?: number | null; holiday_bonus?: number
 }
 interface PayrollRun {
@@ -72,6 +78,92 @@ const leaveTypes = ref<LeaveType[]>([])
 const attendanceRecords = ref<AttendanceRecord[]>([])
 const loading = ref(false)
 const attendanceLoading = ref(false)
+
+// ملف الموظف يسبق حساب الدخول عمدًا: HR يثبت البيانات الوظيفية والمالية،
+// ثم السوبر أدمن يختار السجل نفسه ويمنحه الدور وعضوية الفرع من مركز التحكم.
+const showEmployeeCreate = ref(false)
+const savingEmployee = ref(false)
+const employeeForm = ref({
+  employee_code: '',
+  full_name: '',
+  national_id: '',
+  position: '',
+  department: '',
+  basic_salary: '' as number | string,
+  insurance_base_salary: '' as number | string,
+  holiday_bonus: 0 as number | string,
+  hire_date: localDateStr(new Date()),
+  birth_date: '',
+  phone: '',
+  email: '',
+})
+
+function openEmployeeCreate() {
+  employeeForm.value = {
+    employee_code: '',
+    full_name: '',
+    national_id: '',
+    position: '',
+    department: '',
+    basic_salary: '',
+    insurance_base_salary: '',
+    holiday_bonus: 0,
+    hire_date: localDateStr(new Date()),
+    birth_date: '',
+    phone: '',
+    email: '',
+  }
+  showEmployeeCreate.value = true
+}
+
+async function submitEmployee() {
+  const form = employeeForm.value
+  const salary = Number(form.basic_salary)
+  if (
+    !branchId.value || !form.employee_code.trim() || form.full_name.trim().length < 3
+    || !form.position.trim() || !form.hire_date || !(salary > 0)
+  ) {
+    toast.error(t('backoffice.hr.msg.employeeRequiredFields'))
+    return
+  }
+  savingEmployee.value = true
+  try {
+    const insuranceBase = form.insurance_base_salary === ''
+      ? null
+      : Number(form.insurance_base_salary)
+    const { data } = await api.post('/api/v1/hr/employees', {
+      branch_id: branchId.value,
+      employee_code: form.employee_code.trim().toUpperCase(),
+      full_name: form.full_name.trim(),
+      national_id: form.national_id.trim() || null,
+      position: form.position.trim(),
+      department: form.department.trim() || null,
+      basic_salary: salary,
+      insurance_base_salary: insuranceBase,
+      holiday_bonus: Number(form.holiday_bonus) || 0,
+      hire_date: form.hire_date,
+      birth_date: form.birth_date || null,
+      phone: form.phone.trim() || null,
+      email: form.email.trim().toLowerCase() || null,
+      user_id: null,
+    })
+    employees.value = [data, ...employees.value]
+    employeesTotal.value += 1
+    showEmployeeCreate.value = false
+    toast.success(t('backoffice.hr.msg.employeeCreated'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.employeeCreateError'))
+  } finally {
+    savingEmployee.value = false
+  }
+}
+
+function openAccountProvisioning(emp: Employee) {
+  router.push({
+    path: '/admin/super-admin',
+    query: { tab: 'users', employee: String(emp.id) },
+  })
+}
 
 // toISOString() بترجّع تاريخ UTC مش التاريخ المحلي (توقيت القاهرة) — بالقرب
 // من منتصف الليل المحلي كانت بترجع يوم مختلف عن اليوم الحقيقي. نفس فئة باج
@@ -714,7 +806,15 @@ onMounted(fetchEmployees)
 
 <template>
   <div>
-    <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100 mb-6">{{ t('backoffice.hr.title') }}</h2>
+    <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h2 class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ t('backoffice.hr.title') }}</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.hr.subtitle') }}</p>
+      </div>
+      <AppButton v-if="canManageEmployeeRecords" variant="primary" @click="openEmployeeCreate">
+        + {{ t('backoffice.hr.addEmployee') }}
+      </AppButton>
+    </div>
 
     <!-- Tabs -->
     <div class="flex gap-1 bg-stone-100 dark:bg-gray-700 p-1 rounded-xl mb-6 w-fit">
@@ -725,7 +825,21 @@ onMounted(fetchEmployees)
     </div>
 
     <!-- Employees Tab -->
-    <div v-if="tab === 'employees'">
+    <div v-if="tab === 'employees'" class="space-y-4">
+      <div class="grid gap-3 md:grid-cols-3">
+        <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+          <div class="text-xs font-bold text-blue-700 dark:text-blue-300">{{ t('backoffice.hr.onboarding.step1Title') }}</div>
+          <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.hr.onboarding.step1Body') }}</p>
+        </div>
+        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+          <div class="text-xs font-bold text-amber-700 dark:text-amber-300">{{ t('backoffice.hr.onboarding.step2Title') }}</div>
+          <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.hr.onboarding.step2Body') }}</p>
+        </div>
+        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+          <div class="text-xs font-bold text-emerald-700 dark:text-emerald-300">{{ t('backoffice.hr.onboarding.step3Title') }}</div>
+          <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.hr.onboarding.step3Body') }}</p>
+        </div>
+      </div>
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
         <span class="text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</span>
@@ -740,6 +854,7 @@ onMounted(fetchEmployees)
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.department') }}</th>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.salary') }}</th>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.statusCol') }}</th>
+                <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.accountStatus') }}</th>
                 <th class="px-4 py-3 text-start text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.actions') }}</th>
               </tr>
             </thead>
@@ -752,7 +867,7 @@ onMounted(fetchEmployees)
                     </div>
                     <div>
                       <div class="font-semibold text-gray-900 dark:text-gray-100 text-sm">{{ emp.full_name }}</div>
-                      <div v-if="emp.phone" class="text-xs text-gray-400 dark:text-gray-400">{{ emp.phone }}</div>
+                      <div class="text-xs text-gray-400 dark:text-gray-400">{{ emp.employee_code }}<span v-if="emp.phone"> · {{ emp.phone }}</span></div>
                     </div>
                   </div>
                 </td>
@@ -763,18 +878,26 @@ onMounted(fetchEmployees)
                   <AppBadge size="sm" :variant="statusVariant[emp.status] ?? 'neutral'">{{ statusLabel(emp.status) }}</AppBadge>
                 </td>
                 <td class="px-4 py-3">
-                  <div class="flex items-center gap-2">
-                    <button @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200">{{ t('backoffice.hr.addAllowanceShort') }}</button>
+                  <AppBadge v-if="emp.user_id" size="sm" variant="success">{{ t('backoffice.hr.accountLinked') }}</AppBadge>
+                  <button v-else-if="auth.role === 'super_admin'" class="text-xs font-bold text-primary-700 hover:underline dark:text-primary-300"
+                    @click="openAccountProvisioning(emp)">
+                    {{ t('backoffice.hr.createAccount') }}
+                  </button>
+                  <AppBadge v-else size="sm" variant="warning">{{ t('backoffice.hr.accountPending') }}</AppBadge>
+                </td>
+                <td class="px-4 py-3">
+                  <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <button v-if="canManageEmployeeRecords" @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200">{{ t('backoffice.hr.addAllowanceShort') }}</button>
                     <button @click="openPenaltyModal(emp)" class="text-xs font-semibold text-red-600 hover:text-red-800 dark:text-red-300 dark:hover:text-red-200">{{ t('backoffice.hr.addPenaltyShort') }}</button>
-                    <button v-if="auth.hasRole('admin')" @click="openAdvanceModal(emp)" class="text-xs font-semibold text-amber-600 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200">💰 {{ t('backoffice.hr.advanceShort') }}</button>
+                    <button v-if="canManageEmployeeRecords" @click="openAdvanceModal(emp)" class="text-xs font-semibold text-amber-600 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200">💰 {{ t('backoffice.hr.advanceShort') }}</button>
                     <button @click="openPaymentModal(emp)" class="text-xs font-semibold text-teal-600 hover:text-teal-800">📅 {{ t('backoffice.hr.paymentShort') }}</button>
                     <button @click="openBalanceModal(emp)" class="text-xs font-semibold text-purple-600 hover:text-purple-800 dark:text-purple-300 dark:hover:text-purple-200">📊 {{ t('backoffice.hr.leaveBalanceShort') }}</button>
-                    <button v-if="auth.hasRole('admin')" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:text-gray-100">✏️ {{ t('backoffice.hr.salaryShort') }}</button>
+                    <button v-if="canManageEmployeeRecords" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:text-gray-100">✏️ {{ t('backoffice.hr.salaryShort') }}</button>
                   </div>
                 </td>
               </tr>
               <tr v-if="employees.length === 0">
-                <td colspan="6" class="px-4 py-12 text-center text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.noEmployees') }}</td>
+                <td colspan="7" class="px-4 py-12 text-center text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.noEmployees') }}</td>
               </tr>
             </tbody>
           </table>
@@ -788,6 +911,44 @@ onMounted(fetchEmployees)
         </div>
       </AppCard>
     </div>
+
+    <!-- HR employee master-data creation -->
+    <AppModal :open="showEmployeeCreate" :title="t('backoffice.hr.createEmployeeTitle')" size="lg"
+      @close="showEmployeeCreate = false">
+      <div class="space-y-5">
+        <div>
+          <h3 class="mb-3 text-sm font-bold text-gray-800 dark:text-gray-100">{{ t('backoffice.hr.identityAndJob') }}</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            <AppInput v-model="employeeForm.employee_code" :label="t('backoffice.hr.employeeCode')" required />
+            <AppInput v-model="employeeForm.full_name" :label="t('backoffice.hr.fullName')" required />
+            <AppInput v-model="employeeForm.national_id" :label="t('backoffice.hr.nationalIdOptional')" inputmode="numeric" />
+            <AppInput v-model="employeeForm.position" :label="t('backoffice.hr.position')" required />
+            <AppInput v-model="employeeForm.department" :label="t('backoffice.hr.department')" />
+            <AppInput v-model="employeeForm.hire_date" :label="t('backoffice.hr.hireDate')" type="date" required />
+            <AppInput v-model="employeeForm.birth_date" :label="t('backoffice.hr.birthDateOptional')" type="date" />
+          </div>
+        </div>
+        <div class="border-t border-stone-200 pt-4 dark:border-border">
+          <h3 class="mb-3 text-sm font-bold text-gray-800 dark:text-gray-100">{{ t('backoffice.hr.compensationAndContact') }}</h3>
+          <div class="grid gap-3 md:grid-cols-2">
+            <AppInput v-model="employeeForm.basic_salary" :label="t('backoffice.hr.basicSalary')" type="number" required />
+            <AppInput v-model="employeeForm.insurance_base_salary" :label="t('backoffice.hr.insuranceBaseOptional')" type="number" />
+            <AppInput v-model="employeeForm.holiday_bonus" :label="t('backoffice.hr.holidayBonus')" type="number" />
+            <AppInput v-model="employeeForm.phone" :label="t('backoffice.accounts.phone')" inputmode="tel" />
+            <AppInput v-model="employeeForm.email" :label="t('backoffice.accounts.email')" type="email" />
+          </div>
+        </div>
+        <p class="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-700 dark:bg-blue-950/30 dark:text-blue-300">
+          {{ t('backoffice.hr.createEmployeeHint') }}
+        </p>
+      </div>
+      <template #footer>
+        <div class="flex justify-end gap-2">
+          <AppButton variant="outline" :disabled="savingEmployee" @click="showEmployeeCreate = false">{{ t('backoffice.hr.cancel') }}</AppButton>
+          <AppButton variant="primary" :loading="savingEmployee" @click="submitEmployee">{{ t('backoffice.hr.saveEmployee') }}</AppButton>
+        </div>
+      </template>
+    </AppModal>
 
     <!-- Allowance Modal -->
     <AppModal :open="!!allowanceModalEmployee" :title="t('backoffice.hr.allowancesTitle', { name: allowanceModalEmployee?.full_name ?? '' })"

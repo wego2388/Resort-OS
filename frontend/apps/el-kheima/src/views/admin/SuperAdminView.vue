@@ -1,8 +1,9 @@
 <script setup lang="ts">
 // SuperAdminView — لوحة تحكم الـ super_admin الموحّدة (Decision 0003).
-// Users tab → UsersView logic (step-up + StaffUserProvisioned API).
-// Permissions, Settings, Audit → inline.
-import { ref, computed, onMounted } from 'vue'
+// Accounts, permissions, settings, and audit share one authoritative control
+// plane so security behavior cannot drift between duplicate screens.
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { AppCard, AppBadge, AppSpinner, AppInput, AppButton, AppModal, AppSelect, useToast } from '@resort-os/ui'
 import { useI18n } from 'vue-i18n'
@@ -11,14 +12,26 @@ import StepUpConfirmModal from '../../components/StepUpConfirmModal.vue'
 const { t, locale } = useI18n()
 const toast = useToast()
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 
 // ── Tabs ──────────────────────────────────────────────────────────────
 type Tab = 'users' | 'permissions' | 'settings' | 'audit'
 const activeTab = ref<Tab>('users')
 const tabsLoaded = ref<Set<Tab>>(new Set())
 
-function activateTab(tab: Tab) {
+function activateTab(tab: Tab, syncRoute = true) {
   activeTab.value = tab
+  if (syncRoute && route.query.tab !== tab) {
+    router.replace({
+      path: route.path,
+      query: {
+        ...route.query,
+        tab,
+        employee: tab === 'users' ? route.query.employee : undefined,
+      },
+    })
+  }
   if (!tabsLoaded.value.has(tab)) {
     tabsLoaded.value.add(tab)
     if (tab === 'users') { loadUsers(); loadEmployees() }
@@ -29,7 +42,7 @@ function activateTab(tab: Tab) {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// TAB 1 — USERS  (mirrors UsersView.vue, adapted for release API)
+// TAB 1 — USERS
 // ══════════════════════════════════════════════════════════════════════
 interface UserRow {
   id: number; email: string; full_name: string; phone: string | null
@@ -41,7 +54,11 @@ interface BootstrapResult {
   user: UserRow; temporary_password: string
   enrollment_token: string; enrollment_expires_at: string
 }
-interface EmployeeOption { id: number; full_name: string; employee_code: string; user_id: number | null }
+interface EmployeeOption {
+  id: number; full_name: string; employee_code: string; user_id: number | null
+  email?: string | null; phone?: string | null; position?: string; department?: string | null
+  status: string
+}
 type PendingAction = { kind: 'create' } | { kind: 'status'; user: UserRow; nextActive: boolean }
 
 const users = ref<UserRow[]>([])
@@ -69,8 +86,18 @@ const languageOptions = computed(() => [
   { value: 'en', label: t('backoffice.accounts.english') },
 ])
 const employeeOptions = computed(() => employees.value
-  .filter(e => e.user_id === null)
+  .filter(e => e.user_id === null && e.status !== 'terminated')
   .map(e => ({ value: String(e.id), label: `${e.full_name} (${e.employee_code})` })))
+const activeUsersCount = computed(() => users.value.filter(user => user.is_active).length)
+const pendingSecurityCount = computed(() => users.value.filter(user =>
+  user.must_change_password || user.two_factor_bootstrap_required,
+).length)
+const pendingEmployeeAccounts = computed(() => employees.value.filter(employee =>
+  employee.user_id === null && employee.status !== 'terminated',
+).length)
+const activeSuperAdminCount = computed(() => users.value.filter(user =>
+  user.role === 'super_admin' && user.is_active,
+).length)
 const filteredUsers = computed(() => {
   const q = usersSearch.value.trim().toLowerCase()
   if (!q) return users.value
@@ -92,11 +119,31 @@ async function loadEmployees() {
   try {
     const res = await api.get(ENDPOINTS.hr.employees, { params: { branch_id: auth.branchId, page: 1, size: 100 } })
     employees.value = res.data.items ?? []
+    const requestedEmployee = String(route.query.employee ?? '')
+    if (requestedEmployee && employees.value.some(employee =>
+      String(employee.id) === requestedEmployee && employee.user_id === null
+    )) {
+      form.value.employee_id = requestedEmployee
+    }
   } catch { employees.value = [] }
 }
 
+function applyEmployeeRecord(employeeId: string) {
+  if (!employeeId) return
+  const employee = employees.value.find(row => String(row.id) === employeeId)
+  if (!employee) return
+  form.value.full_name = employee.full_name
+  form.value.email = employee.email ?? ''
+  form.value.phone = employee.phone ?? ''
+}
+
+watch(() => form.value.employee_id, applyEmployeeRecord)
+
 function requestCreate() {
   formError.value = ''
+  if (!form.value.employee_id) {
+    formError.value = t('backoffice.accounts.employeeRequired'); return
+  }
   if (form.value.full_name.trim().length < 3 || !form.value.email.includes('@')) {
     formError.value = t('backoffice.accounts.requiredFields'); return
   }
@@ -145,6 +192,11 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
       }, { headers: { 'X-Step-Up-Token': stepUpToken } })
       bootstrap.value = res.data
       users.value = [...users.value, res.data.user]
+      employees.value = employees.value.map(employee =>
+        String(employee.id) === form.value.employee_id
+          ? { ...employee, user_id: res.data.user.id }
+          : employee
+      )
       form.value = { full_name: '', email: '', phone: '', employee_id: '', role: 'employee', preferred_language: 'ar' }
       toast.success(t('backoffice.accounts.created'))
     } else {
@@ -412,7 +464,13 @@ async function submitSetPin() {
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
-onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
+onMounted(() => {
+  const requested = String(route.query.tab ?? 'users')
+  const initialTab: Tab = ['users', 'permissions', 'settings', 'audit'].includes(requested)
+    ? requested as Tab
+    : 'users'
+  activateTab(initialTab, false)
+})
 </script>
 
 <template>
@@ -423,8 +481,33 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
       <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.superAdmin.subtitle') }}</p>
     </div>
 
+    <!-- Control-plane health at a glance -->
+    <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <AppCard padding="sm">
+        <div class="text-xs font-semibold text-gray-500">{{ t('backoffice.superAdmin.summary.totalUsers') }}</div>
+        <div class="mt-1 text-2xl font-black text-gray-900 dark:text-gray-100">{{ usersTotal }}</div>
+      </AppCard>
+      <AppCard padding="sm">
+        <div class="text-xs font-semibold text-gray-500">{{ t('backoffice.superAdmin.summary.activeUsers') }}</div>
+        <div class="mt-1 text-2xl font-black text-emerald-700 dark:text-emerald-300">{{ activeUsersCount }}</div>
+      </AppCard>
+      <AppCard padding="sm">
+        <div class="text-xs font-semibold text-gray-500">{{ t('backoffice.superAdmin.summary.pendingAccounts') }}</div>
+        <div class="mt-1 text-2xl font-black text-amber-700 dark:text-amber-300">{{ pendingEmployeeAccounts }}</div>
+      </AppCard>
+      <AppCard padding="sm">
+        <div class="text-xs font-semibold text-gray-500">{{ t('backoffice.superAdmin.summary.securitySetup') }}</div>
+        <div class="mt-1 text-2xl font-black text-blue-700 dark:text-blue-300">{{ pendingSecurityCount }}</div>
+      </AppCard>
+    </div>
+
+    <div v-if="activeSuperAdminCount === 1 && !usersLoading"
+      class="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+      {{ t('backoffice.superAdmin.singleAdminWarning') }}
+    </div>
+
     <!-- Tabs -->
-    <div class="flex gap-1 border-b border-stone-200 dark:border-border">
+    <div class="flex gap-1 overflow-x-auto border-b border-stone-200 dark:border-border">
       <button v-for="tab in (['users','permissions','settings','audit'] as Tab[])" :key="tab"
         @click="activateTab(tab)"
         :class="['px-4 py-2.5 text-sm font-semibold rounded-t-lg transition-colors',
@@ -435,13 +518,33 @@ onMounted(() => { tabsLoaded.value.add('users'); loadUsers(); loadEmployees() })
 
     <!-- ═══ TAB: USERS ═══ -->
     <div v-show="activeTab === 'users'" class="space-y-5">
+      <div class="grid gap-3 md:grid-cols-3">
+        <div class="rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-900 dark:bg-blue-950/30">
+          <div class="text-xs font-bold text-blue-700 dark:text-blue-300">{{ t('backoffice.superAdmin.onboarding.hrTitle') }}</div>
+          <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.superAdmin.onboarding.hrBody') }}</p>
+        </div>
+        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30">
+          <div class="text-xs font-bold text-amber-700 dark:text-amber-300">{{ t('backoffice.superAdmin.onboarding.accountTitle') }}</div>
+          <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.superAdmin.onboarding.accountBody') }}</p>
+        </div>
+        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+          <div class="text-xs font-bold text-emerald-700 dark:text-emerald-300">{{ t('backoffice.superAdmin.onboarding.handoverTitle') }}</div>
+          <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.superAdmin.onboarding.handoverBody') }}</p>
+        </div>
+      </div>
+
       <!-- Create form -->
       <AppCard :title="t('backoffice.accounts.createTitle')">
+        <div v-if="employeeOptions.length === 0"
+          class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+          <span>{{ t('backoffice.accounts.noPendingEmployeeRecords') }}</span>
+          <RouterLink to="/admin/hr" class="font-bold underline">{{ t('backoffice.accounts.openHr') }}</RouterLink>
+        </div>
         <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <AppSelect v-model="form.employee_id" :label="t('backoffice.accounts.employeeRecord')" :placeholder="t('backoffice.accounts.chooseEmployeeRecord')" :options="employeeOptions" required />
           <AppInput v-model="form.full_name" :label="t('backoffice.accounts.fullName')" autocomplete="name" required />
           <AppInput v-model="form.email" type="email" inputmode="email" :label="t('backoffice.accounts.email')" autocomplete="off" required />
           <AppInput v-model="form.phone" inputmode="tel" :label="t('backoffice.accounts.phone')" autocomplete="off" />
-          <AppSelect v-model="form.employee_id" :label="t('backoffice.accounts.employeeRecord')" :placeholder="t('backoffice.accounts.noEmployeeRecord')" :options="employeeOptions" />
           <AppSelect v-model="form.role" :label="t('backoffice.accounts.role')" :options="roleOptions" required />
           <AppSelect v-model="form.preferred_language" :label="t('backoffice.accounts.language')" :options="languageOptions" required />
           <div class="flex items-end">

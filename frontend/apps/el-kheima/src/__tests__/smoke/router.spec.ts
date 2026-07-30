@@ -52,6 +52,22 @@ describe('reference routes are registered', () => {
     expect(resolved.matched.length).toBeGreaterThan(0)
     expect(resolved.name).not.toBe('not-found')
   })
+
+  it.each([
+    ['/admin/users', 'users'],
+    ['/admin/permissions', 'permissions'],
+  ])('keeps legacy %s bookmarks but redirects into the unified control center', async (path, tab) => {
+    const resolved = router.resolve(path)
+    const redirect = resolved.matched[resolved.matched.length - 1]?.redirect
+    expect(redirect).toBeTruthy()
+    const destination = typeof redirect === 'function'
+      ? redirect(resolved as any, resolved as any)
+      : redirect
+    expect(destination).toMatchObject({
+      path: '/admin/super-admin',
+      query: { tab },
+    })
+  })
 })
 
 describe('auth guard', () => {

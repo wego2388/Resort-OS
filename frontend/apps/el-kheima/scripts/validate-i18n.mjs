@@ -131,8 +131,7 @@ const STRICT_FILES = [
   'src/views/kds/DiningKDSView.vue',
   // Gate 5 Batch 2 (2026-07-20): already fully migrated by Gate 2B3A, just
   // never promoted out of the "not yet migrated" bucket.
-  'src/views/admin/PermissionsView.vue',
-  'src/views/admin/UsersView.vue',
+  'src/views/admin/SuperAdminView.vue',
   'src/views/admin/DashboardView.vue',
   'src/views/admin/SalesDashboardView.vue',
   'src/views/admin/BeachLiveDashboardView.vue',

@@ -3447,6 +3447,10 @@
       "dashboard": "Dashboard",
       "analytics": "Analytics",
       "management": "Management",
+      "peopleAndFinance": "People & Finance",
+      "guestManagement": "Guests & Assets",
+      "inventoryAndCost": "Inventory & Cost",
+      "systemAdministration": "System Administration",
       "hr": "Human Resources",
       "finance": "Finance",
       "eInvoice": "E-Invoice",
@@ -3609,7 +3613,8 @@
       "commandNavigate": "Navigate",
       "commandExecute": "Open",
       "commandClose": "Close",
-      "toggleSidebar": "Toggle navigation sidebar"
+      "toggleSidebar": "Toggle navigation sidebar",
+      "closeSidebar": "Close navigation sidebar"
     },
     "pinGuard": {
       "title": "Manager approval required",
@@ -3729,8 +3734,12 @@
       "fullName": "Full name",
       "email": "Email address",
       "phone": "Phone number (optional)",
-      "employeeRecord": "HR employee record (optional)",
+      "employeeRecord": "HR employee record",
       "noEmployeeRecord": "Do not link an employee record",
+      "chooseEmployeeRecord": "Select the employee record first",
+      "employeeRequired": "Select the employee's HR record before creating a sign-in account.",
+      "noPendingEmployeeRecords": "There are no active employee records awaiting an account in this branch.",
+      "openHr": "Open Human Resources",
       "role": "Staff role",
       "language": "Interface language",
       "arabic": "العربية",
@@ -3827,6 +3836,21 @@
       "navLabel": "Super Admin Panel",
       "title": "Super Admin Control Center",
       "subtitle": "Manage users, permissions, settings, and audit logs from one place",
+      "singleAdminWarning": "Only one active Super Admin exists. Do not disable this account, and retain the secure administrative recovery procedure.",
+      "summary": {
+        "totalUsers": "Total accounts",
+        "activeUsers": "Active accounts",
+        "pendingAccounts": "Employees awaiting accounts",
+        "securitySetup": "Incomplete security setup"
+      },
+      "onboarding": {
+        "hrTitle": "1. Human Resources",
+        "hrBody": "Creates the employee record, job details, and compensation inside the branch.",
+        "accountTitle": "2. Super Admin",
+        "accountBody": "Selects the record and assigns role and permissions; branch membership is created automatically.",
+        "handoverTitle": "3. Secure handover",
+        "handoverBody": "Delivers one-time credentials; the employee changes the password and completes 2FA."
+      },
       "tabs": {
         "users": "👥 Users",
         "permissions": "🔐 Permissions",
@@ -4689,6 +4713,30 @@
     },
     "hr": {
       "title": "Human Resources",
+      "subtitle": "Employee records, attendance, entitlements, and payroll for the active branch.",
+      "addEmployee": "Add Employee",
+      "createEmployeeTitle": "Create Employee Record",
+      "identityAndJob": "Identity & Job Details",
+      "compensationAndContact": "Compensation & Contact",
+      "employeeCode": "Employee code",
+      "fullName": "Full name",
+      "nationalIdOptional": "National ID (optional and encrypted)",
+      "hireDate": "Hire date",
+      "birthDateOptional": "Birth date (optional)",
+      "saveEmployee": "Save Employee Record",
+      "createEmployeeHint": "After saving, the record becomes available to the Super Admin for account, role, and branch assignment.",
+      "accountStatus": "Sign-in account",
+      "accountLinked": "Linked",
+      "accountPending": "Awaiting Super Admin",
+      "createAccount": "Create Account",
+      "onboarding": {
+        "step1Title": "1. Employee record",
+        "step1Body": "HR records identity, job assignment, and compensation.",
+        "step2Title": "2. Sign-in account",
+        "step2Body": "The Super Admin assigns role, permissions, and branch access.",
+        "step3Title": "3. Start work",
+        "step3Body": "The employee receives temporary credentials and completes secure setup."
+      },
       "tabs": {
         "employees": "Employees",
         "attendance": "Attendance",
@@ -4836,6 +4884,9 @@
       "noSalesRecorded": "No sales recorded",
       "noSalesRecordedHint": "No sales linked to employees during the selected range",
       "msg": {
+        "employeeRequiredFields": "Complete the employee code, name, position, salary, and hire date.",
+        "employeeCreated": "Employee record created and ready for account provisioning.",
+        "employeeCreateError": "Could not create the employee record.",
         "loadPolicyError": "Failed to load attendance policy",
         "policySaved": "Attendance policy saved",
         "policySaveError": "Failed to save attendance policy",

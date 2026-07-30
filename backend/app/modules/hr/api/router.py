@@ -9,9 +9,11 @@ from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep, get_admin_user, get_current_active_user,
-    get_manager_user, require_permission,
+    get_hr_manager_user, get_manager_user, get_super_admin_user,
+    require_permission,
 )
 from app.modules.hr import crud, services
+from app.modules.core import services as core_services
 from app.modules.hr.schemas import (
     AdvancePaymentCreate, AdvancePaymentRead,
     AllowanceRead,
@@ -64,9 +66,22 @@ def list_employees(
 
 @router.post("/hr/employees", response_model=EmployeeRead,
              status_code=status.HTTP_201_CREATED)
-def create_employee(data: EmployeeCreate, db: DbDep, _=Depends(get_admin_user)):
+def create_employee(
+    data: EmployeeCreate,
+    db: DbDep,
+    user=Depends(get_hr_manager_user),
+):
     try:
-        return services.create_employee(db, data)
+        if data.user_id is not None:
+            raise ValueError(
+                "إنشاء ملف الموظف لا يربط حساب دخول؛ أنشئ الحساب من مركز Super Admin"
+            )
+        core_services.assert_branch_access(
+            db, user, data.branch_id, "إنشاء موظف",
+        )
+        return services.create_employee(db, data, created_by=user.id)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -80,22 +95,58 @@ def get_employee(employee_id: int, db: DbDep, _=Depends(get_manager_user)):
 
 
 @router.patch("/hr/employees/{employee_id}", response_model=EmployeeRead)
-def update_employee(employee_id: int, data: EmployeeUpdate, db: DbDep, user=Depends(get_admin_user)):
+def update_employee(
+    employee_id: int,
+    data: EmployeeUpdate,
+    db: DbDep,
+    user=Depends(get_hr_manager_user),
+):
     try:
+        employee = services.get_employee_or_404(db, employee_id)
+        core_services.assert_branch_access(
+            db, user, employee.branch_id, "تعديل بيانات موظف",
+        )
         return services.update_employee(db, employee_id, data, updated_by=user.id)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 @router.patch("/hr/employees/{employee_id}/link-user", response_model=EmployeeRead)
 def link_employee_user(
-    employee_id: int, body: EmployeeLinkUserRequest, db: DbDep, _=Depends(get_manager_user),
+    employee_id: int,
+    body: EmployeeLinkUserRequest,
+    db: DbDep,
+    user=Depends(get_super_admin_user),
 ):
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+    from app.modules.core.models import UserBranchMembership  # noqa: PLC0415
+
     emp = crud.get_employee(db, employee_id)
     if not emp:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
     try:
-        return services.link_employee_to_user(db, emp, body.user_id)
+        core_services.assert_branch_access(
+            db, user, emp.branch_id, "ربط ملف موظف بحساب دخول",
+        )
+        target = db.query(User).filter(User.id == body.user_id).first()
+        if not target:
+            raise ValueError(f"المستخدم {body.user_id} غير موجود")
+        if not target.is_active or target.role == "super_admin":
+            raise ValueError("لا يمكن ربط هذا الحساب بملف موظف تشغيلي")
+        membership = db.query(UserBranchMembership.id).filter(
+            UserBranchMembership.user_id == target.id,
+            UserBranchMembership.branch_id == emp.branch_id,
+            UserBranchMembership.is_active.is_(True),
+        ).first()
+        if membership is None:
+            raise ValueError("الحساب لا يملك عضوية نشطة في فرع الموظف")
+        return services.link_employee_to_user(
+            db, emp, body.user_id, linked_by=user.id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -141,12 +192,22 @@ def list_employee_allowances(
 @router.post("/hr/employees/{employee_id}/allowances", response_model=AllowanceRead,
              status_code=status.HTTP_201_CREATED)
 def create_employee_allowance(
-    employee_id: int, data: EmployeeAllowanceCreate, db: DbDep, _=Depends(get_admin_user),
+    employee_id: int,
+    data: EmployeeAllowanceCreate,
+    db: DbDep,
+    user=Depends(get_hr_manager_user),
 ):
     if data.employee_id != employee_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "employee_id في الجسم لازم يطابق الـ path")
-    if not crud.get_employee(db, employee_id):
+    employee = crud.get_employee(db, employee_id)
+    if not employee:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
+    try:
+        core_services.assert_branch_access(
+            db, user, employee.branch_id, "إضافة بدل لموظف",
+        )
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     allowance = crud.create_allowance(db, data)
     db.commit()
     db.refresh(allowance)
@@ -155,11 +216,21 @@ def create_employee_allowance(
 
 @router.patch("/hr/allowances/{allowance_id}", response_model=AllowanceRead)
 def update_employee_allowance(
-    allowance_id: int, data: EmployeeAllowanceUpdate, db: DbDep, _=Depends(get_admin_user),
+    allowance_id: int,
+    data: EmployeeAllowanceUpdate,
+    db: DbDep,
+    user=Depends(get_hr_manager_user),
 ):
     allowance = crud.get_allowance(db, allowance_id)
     if not allowance:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"البدل {allowance_id} غير موجود")
+    employee = crud.get_employee(db, allowance.employee_id)
+    try:
+        core_services.assert_branch_access(
+            db, user, employee.branch_id, "تعديل بدل موظف",
+        )
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     allowance = crud.update_allowance(db, allowance, data)
     db.commit()
     db.refresh(allowance)
@@ -168,14 +239,22 @@ def update_employee_allowance(
 
 # ── Salary Advances (wagdy.md H-01) ─────────────────────────────────────
 # سلفة راتب — قرض بيُخصم على أقساط شهرية ثابتة (راجع hr.models.SalaryAdvance).
-# admin-only للإنشاء/الإلغاء (نفس مستوى تعديل الراتب الأساسي — بيانات مالية
-# حساسة عن موظف)، manager+ للقراءة.
+# HR/admin-only للإنشاء/الإلغاء (نفس قدرة تعديل بيانات الموظف المالية)،
+# manager+ للقراءة.
 
 @router.post("/hr/salary-advances", response_model=SalaryAdvanceRead,
              status_code=status.HTTP_201_CREATED)
-def create_salary_advance(data: SalaryAdvanceCreate, db: DbDep, user=Depends(get_admin_user)):
+def create_salary_advance(data: SalaryAdvanceCreate, db: DbDep, user=Depends(get_hr_manager_user)):
     try:
+        employee = services.get_employee_or_404(db, data.employee_id)
+        if employee.branch_id != data.branch_id:
+            raise ValueError("فرع الموظف لا يطابق فرع السلفة")
+        core_services.assert_branch_access(
+            db, user, data.branch_id, "إنشاء سلفة لموظف",
+        )
         return services.create_salary_advance(db, data, created_by=user.id)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -192,9 +271,22 @@ def list_salary_advances(
 
 
 @router.patch("/hr/salary-advances/{advance_id}/cancel", response_model=SalaryAdvanceRead)
-def cancel_salary_advance(advance_id: int, data: SalaryAdvanceCancel, db: DbDep, _=Depends(get_admin_user)):
+def cancel_salary_advance(
+    advance_id: int,
+    data: SalaryAdvanceCancel,
+    db: DbDep,
+    user=Depends(get_hr_manager_user),
+):
     try:
+        advance = crud.get_salary_advance(db, advance_id)
+        if not advance:
+            raise ValueError(f"السلفة {advance_id} غير موجودة")
+        core_services.assert_branch_access(
+            db, user, advance.branch_id, "إلغاء سلفة موظف",
+        )
         return services.cancel_salary_advance(db, advance_id, data.reason)
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

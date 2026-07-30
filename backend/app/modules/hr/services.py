@@ -49,10 +49,35 @@ def get_employee_or_404(db: Session, employee_id: int) -> Employee:
     return emp
 
 
-def create_employee(db: Session, data: EmployeeCreate) -> Employee:
+def create_employee(
+    db: Session,
+    data: EmployeeCreate,
+    created_by: Optional[int] = None,
+) -> Employee:
     if crud.get_employee_by_code(db, data.employee_code):
         raise ValueError(f"كود الموظف '{data.employee_code}' مستخدم مسبقاً")
     emp = crud.create_employee(db, data)
+    db.flush()
+
+    # Employee creation is the first half of the staff-onboarding workflow.
+    # Keep an attributable event before the super-admin later provisions the
+    # login identity and branch membership.
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    create_audit_log(db, AuditLogCreate(
+        user_id=created_by,
+        branch_id=emp.branch_id,
+        action="employee_record_created",
+        entity_type="employee",
+        entity_id=emp.id,
+        new_data=json.dumps({
+            "employee_code": emp.employee_code,
+            "full_name": emp.full_name,
+            "position": emp.position,
+            "department": emp.department,
+            "account_status": "pending",
+        }, ensure_ascii=False, sort_keys=True),
+    ))
     db.commit()
     db.refresh(emp)
     return emp
@@ -79,7 +104,12 @@ def update_employee(db: Session, employee_id: int, data: EmployeeUpdate, updated
     return emp
 
 
-def link_employee_to_user(db: Session, emp: Employee, user_id: int) -> Employee:
+def link_employee_to_user(
+    db: Session,
+    emp: Employee,
+    user_id: int,
+    linked_by: Optional[int] = None,
+) -> Employee:
     """يربط Employee موجود بحساب User موجود — يسمح للموظف بالدخول على
     /hr/me/* الخاصة به. emp لازم يكون موجود فعلاً (يتحقق منه الـ router قبل
     النداء هنا، نفس نمط باقي الـ endpoints)."""
@@ -94,6 +124,20 @@ def link_employee_to_user(db: Session, emp: Employee, user_id: int) -> Employee:
         raise ValueError(f"المستخدم مرتبط بالفعل بموظف آخر (id={existing.id})")
 
     emp.user_id = user_id
+    if linked_by is not None:
+        from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+        from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+        create_audit_log(db, AuditLogCreate(
+            user_id=linked_by,
+            branch_id=emp.branch_id,
+            action="employee_account_linked",
+            entity_type="employee",
+            entity_id=emp.id,
+            new_data=json.dumps({
+                "user_id": user_id,
+                "employee_code": emp.employee_code,
+            }, ensure_ascii=False, sort_keys=True),
+        ))
     db.commit()
     db.refresh(emp)
     return emp

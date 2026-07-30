@@ -219,8 +219,14 @@ const routes: RouteRecordRaw[] = [
       { path: 'cafe-menu',   redirect: '/admin/dining-menu' },
       { path: 'tables',      redirect: '/admin/dining-menu' },
       { path: 'cafe-sales',  redirect: '/admin/analytics' },
-      { path: 'permissions', name: 'admin-permissions', component: () => import('../views/admin/PermissionsView.vue'),  meta: { requiredRole: 'super_admin', titleKey: 'backoffice.permissions.title' } },
-      { path: 'users', name: 'admin-users', component: () => import('../views/admin/UsersView.vue'), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.accounts.title' } },
+      // Legacy bookmarks stay valid, but user/account/permission management
+      // now has one authoritative screen instead of three diverging copies.
+      { path: 'permissions', name: 'admin-permissions', redirect: to => ({
+        path: '/admin/super-admin', query: { ...to.query, tab: 'permissions' },
+      }), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.permissions.title' } },
+      { path: 'users', name: 'admin-users', redirect: to => ({
+        path: '/admin/super-admin', query: { ...to.query, tab: 'users' },
+      }), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.accounts.title' } },
       { path: 'super-admin', name: 'admin-super-admin', component: () => import('../views/admin/SuperAdminView.vue'), meta: { requiredRole: 'super_admin', titleKey: 'backoffice.superAdmin.title' } },
       { path: 'hub', name: 'admin-hub', component: () => import('../views/admin/HubManagementView.vue'), meta: { titleKey: 'backoffice.hub.title' } },
     ],

@@ -7,8 +7,8 @@ Context: Employee (HR module) previously had no way to point back to the
 User a staff member logs in with — so a logged-in waiter/cashier/
 whoever had no way to see their own attendance/leave/payslip data. Fixed by
 adding Employee.user_id (nullable, unique FK → users.id) plus:
-  - PATCH /hr/employees/{id}/link-user   (manager+, links an existing Employee
-    to an existing User)
+  - PATCH /hr/employees/{id}/link-user   (super_admin recovery path; target
+    account must already hold a live membership in the employee's branch)
   - GET  /hr/me/profile
   - GET  /hr/me/attendance
   - GET  /hr/me/leaves + POST /hr/me/leaves/request
@@ -29,7 +29,11 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from tests.conftest import _create_test_user, _make_token
+from tests.conftest import (
+    _create_test_user,
+    _make_token,
+    assign_test_user_to_branch,
+)
 
 
 def make_branch_committed(db):
@@ -102,20 +106,27 @@ def make_payroll_run_and_line(db, branch, employee, *, status: str, year: int, m
 # ── PATCH /hr/employees/{id}/link-user ────────────────────────────────
 
 class TestEmployeeLinkUser:
-    def test_manager_links_employee_to_user(self, client: TestClient, db, manager_headers):
+    def test_super_admin_links_member_account_to_employee(
+        self, client: TestClient, db, super_admin_headers,
+    ):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
         user_id, _ = make_linked_user_headers(db)
+        assign_test_user_to_branch(db, user_id, branch.id)
+        db.commit()
+        headers = {
+            "Authorization": f"Bearer {_make_token('super_admin@test.local', branch_id=branch.id)}"
+        }
 
         resp = client.patch(
             f"/api/v1/hr/employees/{emp.id}/link-user",
             json={"user_id": user_id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["user_id"] == user_id
 
-    def test_link_user_requires_manager(self, client: TestClient, db, waiter_headers):
+    def test_link_user_requires_super_admin(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
         user_id, _ = make_linked_user_headers(db)
@@ -123,40 +134,50 @@ class TestEmployeeLinkUser:
         resp = client.patch(
             f"/api/v1/hr/employees/{emp.id}/link-user",
             json={"user_id": user_id},
-            headers=waiter_headers,
+            headers=manager_headers,
         )
         assert resp.status_code == 403
 
-    def test_link_user_404_when_employee_missing(self, client: TestClient, db, manager_headers):
+    def test_link_user_404_when_employee_missing(self, client: TestClient, db, super_admin_headers):
         user_id, _ = make_linked_user_headers(db)
         resp = client.patch(
             "/api/v1/hr/employees/999999/link-user",
             json={"user_id": user_id},
-            headers=manager_headers,
+            headers=super_admin_headers,
         )
         assert resp.status_code == 404
 
-    def test_link_user_400_when_user_missing(self, client: TestClient, db, manager_headers):
+    def test_link_user_400_when_user_missing(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
+        headers = {
+            "Authorization": f"Bearer {_make_token('super_admin@test.local', branch_id=branch.id)}"
+        }
         resp = client.patch(
             f"/api/v1/hr/employees/{emp.id}/link-user",
             json={"user_id": 999999},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 400
 
-    def test_link_user_400_when_already_linked_to_other_employee(self, client: TestClient, db, manager_headers):
+    def test_link_user_400_when_already_linked_to_other_employee(
+        self, client: TestClient, db, super_admin_headers,
+    ):
         branch = make_branch_committed(db)
         emp1 = make_employee_committed(db, branch)
         emp2 = make_employee_committed(db, branch)
         user_id, _ = make_linked_user_headers(db)
+        assign_test_user_to_branch(db, user_id, branch.id)
+        db.commit()
         link(db, emp1, user_id)
+        headers = {
+            "Authorization": f"Bearer {_make_token('super_admin@test.local', branch_id=branch.id)}"
+        }
 
         resp = client.patch(
             f"/api/v1/hr/employees/{emp2.id}/link-user",
             json={"user_id": user_id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 400
 

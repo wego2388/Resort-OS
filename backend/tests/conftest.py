@@ -446,7 +446,11 @@ SUPER_ADMIN_TOTP_SECRET = "JBSWY3DPEHPK3PXP"
 ACCOUNTANT_TOTP_SECRET = "KRSXG5CTMVRXEZLU"
 
 
-def _fresh_super_admin(email_prefix: str = "sa") -> tuple[int, dict[str, str], str]:
+def _fresh_super_admin(
+    email_prefix: str = "sa",
+    *,
+    branch_id: int | None = None,
+) -> tuple[int, dict[str, str], str]:
     """super_admin جديد ومعزول (uuid عشوائي، سرّ TOTP خاص بيه) — لازم لأي
     اختبار Gate 2B3A محتاج يصدر أكتر من step-up token واحد خلال نفس نافذة
     الـ30 ثانية (شارك حساب super_admin@test.local الثابت هيصطدم بحماية
@@ -459,7 +463,9 @@ def _fresh_super_admin(email_prefix: str = "sa") -> tuple[int, dict[str, str], s
     email = f"{email_prefix}-{uuid.uuid4().hex[:8]}@test.local"
     secret = pyotp.random_base32()
     user_id = _create_test_user(email, "super_admin", two_factor_secret=secret)
-    headers = {"Authorization": f"Bearer {_make_token(email)}"}
+    headers = {
+        "Authorization": f"Bearer {_make_token(email, branch_id=branch_id)}"
+    }
     return user_id, headers, secret
 
 

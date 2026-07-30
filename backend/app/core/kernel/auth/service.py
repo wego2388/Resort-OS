@@ -1595,6 +1595,7 @@ class AuthService(BaseService):
         employee_id: Optional[int],
         role: str,
         preferred_language: str,
+        branch_id: int,
         actor_id: int,
         reason: str,
         step_up_public_reference: str,
@@ -1607,7 +1608,11 @@ class AuthService(BaseService):
         creation deliberately remains out-of-band in ``app.admin_bootstrap``.
         """
         from app.modules.core import crud  # noqa: PLC0415
-        from app.modules.core.models import AuditLog  # noqa: PLC0415
+        from app.modules.core.models import (  # noqa: PLC0415
+            AuditLog,
+            Branch,
+            UserBranchMembership,
+        )
 
         normalized_email = (email or "").strip().casefold()
         normalized_name = (full_name or "").strip()
@@ -1630,6 +1635,13 @@ class AuthService(BaseService):
         active_super_admins = crud.lock_active_super_admins(self.db)
         if actor_id not in {user.id for user in active_super_admins}:
             raise PermissionError("Your super-admin privileges changed; reload and try again")
+
+        branch = self.db.query(Branch).filter(
+            Branch.id == branch_id,
+            Branch.is_active.is_(True),
+        ).with_for_update().first()
+        if branch is None:
+            raise ValueError("The active branch is no longer available")
 
         existing = self.db.query(self.repo.model).filter(
             func.lower(self.repo.model.email) == normalized_email,
@@ -1668,10 +1680,25 @@ class AuthService(BaseService):
                 raise ValueError("The selected employee record does not exist")
             if employee.user_id is not None:
                 raise ValueError("The selected employee record is already linked to an account")
+            if employee.branch_id != branch_id:
+                raise PermissionError(
+                    "The selected employee record belongs to another branch"
+                )
+            if employee.status == "terminated":
+                raise ValueError(
+                    "A terminated employee record cannot receive an active account"
+                )
             employee.user_id = user.id
+        self.db.add(UserBranchMembership(
+            user_id=user.id,
+            branch_id=branch_id,
+            is_default=True,
+            is_active=True,
+            created_by=actor_id,
+        ))
         self.db.add(AuditLog(
             user_id=actor_id,
-            branch_id=None,
+            branch_id=branch_id,
             action="staff_account_provisioned",
             entity_type="user",
             entity_id=user.id,
@@ -1681,6 +1708,7 @@ class AuthService(BaseService):
                 "full_name": normalized_name,
                 "phone": normalized_phone,
                 "employee_id": employee_id,
+                "branch_id": branch_id,
                 "role": role,
                 "preferred_language": preferred_language,
                 "reason": normalized_reason,

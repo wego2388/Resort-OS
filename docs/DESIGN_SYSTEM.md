@@ -148,8 +148,9 @@ primitives, covered by `validate:i18n` strict checks):
   direction-clean; ~25 strings under `backoffice.kds.*`, reuses
   `backoffice.pos.orderTypes`/`tableLabel`/`elapsedUnits` rather than
   duplicating the same taxonomy under a second namespace)
-- `views/admin/PermissionsView.vue` (Gate 5 Batch 2, 2026-07-20 — already
-  fully migrated by Gate 2B3A, just never promoted out of "not yet migrated")
+- `views/admin/SuperAdminView.vue` (unified users/permissions/settings/audit
+  control center; the former duplicate `UsersView` and `PermissionsView`
+  routes now redirect here)
 - `views/admin/DashboardView.vue` (Gate 5 Batch 2, 2026-07-20 — also removed
   a hard-coded `dir="rtl"` and `ar-EG` locale calls that predated Gate 3)
 - `views/admin/SalesDashboardView.vue` (Gate 5 Batch 2, 2026-07-20 — same

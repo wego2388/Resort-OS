@@ -70,18 +70,42 @@ class TestBranchesEndpoints:
 
 
 class TestStaffProvisioningEndpoints:
-    def test_super_admin_can_provision_staff_with_one_time_bootstrap(self, client: TestClient):
+    def test_super_admin_can_provision_staff_with_one_time_bootstrap(self, client: TestClient, db):
         from tests.conftest import TestingSessionLocal, _fresh_super_admin, _issue_step_up
         from app.core.kernel.models.user import User
-        from app.modules.core.models import AuditLog
+        from app.modules.core.models import AuditLog, Branch, UserBranchMembership
+        from app.modules.hr.models import Employee
+        from datetime import date
+        from decimal import Decimal
 
-        _sa_id, sa_headers, sa_secret = _fresh_super_admin("staff-provision")
+        branch = Branch(
+            name="Staff Provision Branch",
+            code=f"SP-{uuid.uuid4().hex[:8].upper()}",
+            is_active=True,
+        )
+        db.add(branch)
+        db.commit()
+        employee = Employee(
+            branch_id=branch.id,
+            employee_code=f"EMP-{uuid.uuid4().hex[:8].upper()}",
+            full_name="Named Cashier",
+            position="Cashier",
+            basic_salary=Decimal("5000"),
+            hire_date=date.today(),
+            phone="+201000000000",
+        )
+        db.add(employee)
+        db.commit()
+
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin(
+            "staff-provision", branch_id=branch.id,
+        )
         email = f"staff-{uuid.uuid4().hex}@test.local"
         body = {
             "email": email,
             "full_name": "Named Cashier",
             "phone": "+201000000000",
-            "employee_id": None,
+            "employee_id": employee.id,
             "role": "cashier",
             "preferred_language": "ar",
             "reason": "تعيين موظف كاشير جديد",
@@ -111,12 +135,22 @@ class TestStaffProvisioningEndpoints:
         try:
             created = db.query(User).filter(User.email == email).one()
             assert payload["temporary_password"] not in created.password_hash
+            membership = db.query(UserBranchMembership).filter(
+                UserBranchMembership.user_id == created.id,
+                UserBranchMembership.branch_id == branch.id,
+            ).one()
+            assert membership.is_active is True
+            assert membership.is_default is True
+            assert membership.created_by == _sa_id
+            linked_employee = db.get(Employee, employee.id)
+            assert linked_employee.user_id == created.id
             audit = db.query(AuditLog).filter(
                 AuditLog.action == "staff_account_provisioned",
                 AuditLog.entity_id == created.id,
             ).one()
             assert payload["temporary_password"] not in (audit.new_data or "")
             assert payload["enrollment_token"] not in (audit.new_data or "")
+            assert audit.branch_id == branch.id
         finally:
             db.close()
 
@@ -130,6 +164,69 @@ class TestStaffProvisioningEndpoints:
         )
         assert login.status_code == 200, login.text
         assert "refresh_token" not in login.cookies
+
+    def test_staff_provision_rejects_employee_from_another_branch(self, client: TestClient, db):
+        from datetime import date
+        from decimal import Decimal
+
+        from tests.conftest import _fresh_super_admin, _issue_step_up
+        from app.core.kernel.models.user import User
+        from app.modules.core.models import Branch
+        from app.modules.hr.models import Employee
+
+        active_branch = Branch(
+            name="Active Context Branch",
+            code=f"AC-{uuid.uuid4().hex[:8].upper()}",
+            is_active=True,
+        )
+        other_branch = Branch(
+            name="Other Employee Branch",
+            code=f"OE-{uuid.uuid4().hex[:8].upper()}",
+            is_active=True,
+        )
+        db.add_all([active_branch, other_branch])
+        db.commit()
+        employee = Employee(
+            branch_id=other_branch.id,
+            employee_code=f"EMP-{uuid.uuid4().hex[:8].upper()}",
+            full_name="Cross Branch Employee",
+            position="Waiter",
+            basic_salary=Decimal("5000"),
+            hire_date=date.today(),
+        )
+        db.add(employee)
+        db.commit()
+
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin(
+            "staff-cross-branch", branch_id=active_branch.id,
+        )
+        email = f"cross-branch-{uuid.uuid4().hex}@test.local"
+        body = {
+            "email": email,
+            "full_name": employee.full_name,
+            "phone": None,
+            "employee_id": employee.id,
+            "role": "waiter",
+            "preferred_language": "ar",
+            "reason": "اختبار عزل الفرع أثناء إنشاء الحساب",
+        }
+        token = _issue_step_up(
+            client,
+            sa_headers,
+            purpose="user_provision",
+            intent=body,
+            totp_secret=sa_secret,
+        )
+        response = client.post(
+            "/api/v1/users",
+            json=body,
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert response.status_code == 409
+        assert "another branch" in response.text
+        db.expire_all()
+        assert db.query(User).filter(User.email == email).first() is None
+        assert db.get(Employee, employee.id).user_id is None
 
     def test_staff_provision_rejects_super_admin_and_mass_assignment(self, client: TestClient):
         from tests.conftest import _fresh_super_admin
@@ -552,10 +649,20 @@ class TestCreateUserEndpoint:
         assert resp.status_code == 403
 
     def test_creates_staff_account_with_must_change_password(
-        self, client: TestClient, super_admin_headers
+        self, client: TestClient, super_admin_headers, db
     ):
         from tests.conftest import _fresh_super_admin, _issue_step_up
-        _sa_id, sa_headers, sa_secret = _fresh_super_admin("create-staff-basic")
+        from app.modules.core.models import Branch, UserBranchMembership
+        branch = Branch(
+            name="Basic Staff Branch",
+            code=f"BS-{uuid.uuid4().hex[:8].upper()}",
+            is_active=True,
+        )
+        db.add(branch)
+        db.commit()
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin(
+            "create-staff-basic", branch_id=branch.id,
+        )
         email = f"staff-create-{uuid.uuid4().hex[:6]}@test.local"
         payload = {
             "email": email,
@@ -582,6 +689,11 @@ class TestCreateUserEndpoint:
         assert len(body["temporary_password"]) >= 20
         assert len(body["enrollment_token"]) >= 20
         assert "password_hash" not in body["user"]
+        membership = db.query(UserBranchMembership).filter(
+            UserBranchMembership.user_id == body["user"]["id"],
+            UserBranchMembership.branch_id == branch.id,
+        ).one()
+        assert membership.is_default is True
 
     def test_rejects_duplicate_email(self, client: TestClient, super_admin_headers):
         """الـ provision endpoint يرفض إيميل مكرر بـ 409.
@@ -610,9 +722,19 @@ class TestCreateUserEndpoint:
         resp = client.post("/api/v1/users", json=payload, headers=super_admin_headers)
         assert resp.status_code == 422
 
-    def test_list_users_supports_search_filter(self, client: TestClient, super_admin_headers):
+    def test_list_users_supports_search_filter(self, client: TestClient, super_admin_headers, db):
         from tests.conftest import _fresh_super_admin, _issue_step_up
-        _sa_id, sa_headers, sa_secret = _fresh_super_admin("create-staff-search")
+        from app.modules.core.models import Branch
+        branch = Branch(
+            name="Search Staff Branch",
+            code=f"SS-{uuid.uuid4().hex[:8].upper()}",
+            is_active=True,
+        )
+        db.add(branch)
+        db.commit()
+        _sa_id, sa_headers, sa_secret = _fresh_super_admin(
+            "create-staff-search", branch_id=branch.id,
+        )
         unique = uuid.uuid4().hex[:8]
         email = f"searchable-{unique}@test.local"
         payload = {
