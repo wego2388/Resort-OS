@@ -178,7 +178,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_URL: ""
-        VITE_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be the confirmed public origin}
+        VITE_PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:?PUBLIC_SITE_URL must be the confirmed public origin}
         # Chat is non-blocking and therefore disabled by default.  Enable it
         # only after CL-01R's production gate has passed.
         VITE_CHATBOT_ENABLED: ${CHATBOT_ENABLED:-false}

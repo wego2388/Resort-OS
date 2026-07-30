@@ -31,7 +31,7 @@ services:
   marketing_site:
     build:
       args:
-        VITE_SITE_URL: https://elkheima.com
+        VITE_PUBLIC_SITE_URL: https://elkheima.com
         VITE_CHATBOT_ENABLED: "true"
 
   nginx:
