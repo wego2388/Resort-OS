@@ -1,9 +1,10 @@
 # الخطة التنفيذية النهائية الحية — El Kheima Resort OS
 
-**آخر تحديث مثبت:** 2026-07-30 بعد domain cutover
+**آخر تحديث مثبت:** 2026-07-30 بعد نشر مسار الموظفين ومركز السوبر أدمن
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**الحالة:** النشر والبيانات وChatbot وDNS مكتملة؛ UAT قبل Go/No-Go
+**الحالة:** النشر والبيانات وChatbot وDNS ومسار الحسابات مكتملة؛ الحسابات
+الحقيقية وUAT قبل Go/No-Go
 
 ## 1. القرارات السارية
 
@@ -13,7 +14,7 @@
    `https://app.elkheima.com`.
 4. DNS cutover أُجيز صراحةً في 30 يوليو 2026 واكتمل. أي تعديل DNS جديد
    يحتاج نطاقًا واضحًا ونقطة تراجع؛ لا Reset DNS ولا AAAA دون IPv6 فعلي.
-5. مصدر الإنتاج Resort OS هو release immutable `05ee627`، ومصدر الموقع
+5. مصدر الإنتاج Resort OS هو release immutable `679f76e`، ومصدر الموقع
    التسويقي المستقل هو `e5e122a`.
 6. لا `git pull` أو reset أو تنظيف أو rebuild فوق مجلدات المصدر القديمة.
 7. لا أسرار في Git أو logs أو handoffs؛ أسرار Compose تُشتق في الذاكرة.
@@ -29,12 +30,13 @@
 ### الكود
 
 - branch: `claude/CX-02C-frontend-auth-bootstrap`.
-- Resort source release: `05ee627`، مدفوع على فرع العمل.
+- Resort source release: `679f76e`، مدفوع على فرع العمل.
 - Marketing source release: `e5e122a`، مدفوع على `main` في مستودعه المستقل.
 - `origin/main` في Resort OS بقي عند `598938e`.
 - Alembic single head: `88d1c505a9dc`.
-- full backend: 2217 collected، exit 0، صفر failure.
-- targeted backend: 63 passed؛ frontend: 93/93.
+- full backend: 2181 passed و40 skipped من 2221 collected، صفر failure.
+- onboarding/HR/auth focused backend: 228 passed و1 skipped؛ frontend:
+  95/95.
 - Resort `agent-check` وtype-check/build وdiff-check: ناجحة.
 - Marketing truth/type-check/build: ناجحة.
 
@@ -43,10 +45,12 @@
 - SSH بالمفتاح كمستخدم `resortos` مع sudo وDocker.
 - root login وpassword auth مغلقان؛ UFW وFail2ban والـloopback bindings
   لم تُضعف.
-- `/opt/resort-os-current -> /opt/resort-os-releases/05ee627`.
+- `/opt/resort-os-current -> /opt/resort-os-releases/679f76e`.
 - `/opt/elkheima-marketing-current ->
   /opt/elkheima-marketing-releases/e5e122a`.
-- خدمات التطبيق الست تستخدم release `05ee627`، وكلها restarts=0.
+- Backend وCelery وتطبيق الموظفين والـedge تستخدم release `679f76e`.
+  Marketing لم يتغير وبقي على صورته المراجعة ومصدره المستقل `e5e122a`.
+- الحاويات الثماني `restarts=0`، وكل healthchecks المعرّفة سليمة.
 - 8 حاويات تعمل؛ الخدمات ذات healthcheck سليمة.
 - PostgreSQL وRedis لم يُعاد إنشاؤهما أثناء النشر.
 - المنافذ العامة 80/443؛ 8443 القديم غير منشور.
@@ -122,7 +126,8 @@
 - authoritative DNS وثلاثة public resolvers أعادوا عنوان VPS.
 - الجذر و`www` و`app` = 200، وHTTP→HTTPS صحيح.
 - أزيلت مراجع IP القديمة من Marketing bundle وSEO files.
-- كل خدمات التطبيق موحدة على `05ee627`؛ Marketing source عند `e5e122a`.
+- خدمات Resort التي شملها القطع موحدة على `679f76e`؛ Marketing source
+  بقي عند `e5e122a` ولم يُعد بناؤه.
 
 ### P0-06 — دليل الإدارة وتدريب الموظفين
 
@@ -136,7 +141,25 @@
 - `docs/SUPER_ADMIN_GUIDE_AR.md` هو المرجع الأمني المكمل لإدارة الحسابات
   و2FA وStep-Up والطوارئ.
 
-### P0-07 — UAT وGo/No-Go
+### P0-07 — مسار الموظفين ومركز السوبر أدمن
+
+**الحالة:** DEPLOYED — ACCOUNTS PENDING ROSTER
+
+- HR ينشئ سجل الموظف في الفرع الفعال ولا يستطيع تمرير `user_id` أو إنشاء
+  حساب دخول ضمنيًا.
+- السوبر أدمن يختار الموظف من مركز موحد، يحدد الدور، ثم ينشئ الحساب تحت
+  Step-Up. الخدمة تربط الحساب بسجل HR وتضيف عضوية الفرع الافتراضية وتكتب
+  Audit داخل العملية نفسها.
+- المحاسب وبقية الموظفين حسابات عادية من الواجهة بعد إنشاء سجل HR. حساب
+  `super_admin` احتياطي فقط هو الذي يُنشأ من الطرفية عبر bootstrap موثق.
+- عزل الفروع fail-closed. الربط اليدوي القديم أصبح استعادة للسوبر أدمن فقط
+  ولا يقبل حسابًا بلا عضوية فعالة في الفرع نفسه.
+- شاشتا المستخدمين والصلاحيات القديمتان تحولان إلى مركز الإدارة الموحد،
+  والقائمة الجانبية منظمة حسب مجالات العمل مع تحسين الهاتف.
+- إنتاجيًا ما زالت الحالة الآمنة: مستخدم واحد `super_admin`، فرع واحد،
+  عضوية فعالة واحدة، وصفر سجلات/حسابات موظفين.
+
+### P0-08 — UAT وGo/No-Go
 
 **الحالة:** PENDING
 
@@ -150,9 +173,9 @@
 
 ### P1-UAT
 
-1. اعتماد roster الحسابات: الاسم والبريد وسجل HR والدور والمدير، وإنشاء
-   الحسابات الشخصية من الواجهة. إنشاء super_admin احتياطي يتم عبر bootstrap
-   التقني فقط بعد تسمية مالكه.
+1. اعتماد roster الحسابات: الاسم والبريد والدور والمدير. ينشئ HR سجل
+   الموظف أولًا، ثم ينشئ السوبر أدمن حسابه من الواجهة. إنشاء
+   `super_admin` احتياطي يتم عبر bootstrap التقني فقط بعد تسمية مالكه.
 2. توزيع `docs/STAFF_APP_GUIDE_AR.md` على رؤساء الأقسام وتنفيذ مصفوفة
    device/role/language/workflow وسيناريوهات الاعتماد الموجودة فيه.
 3. تسجيل defects مع severity وowner ونتيجة retest.
@@ -187,6 +210,8 @@
 - لوحة التنفيذ: `docs/agent-workflow/EL_KHEIMA_EXECUTION_BOARD.md`
 - تسليم النشر والـDNS:
   `docs/agent-workflow/handoffs/2026-07-30_DNS-01_codex_handoff.md`
+- تسليم مسار الموظفين والإصدار الحالي:
+  `docs/agent-workflow/handoffs/2026-07-30_ACC-01_REL-04_codex_handoff.md`
 - تسليم البيانات وChatbot:
   `docs/agent-workflow/handoffs/2026-07-30_DATA-01_CHAT-01_codex_handoff.md`
 - التاريخ القديم: `docs/archive/2026-07-execution/`

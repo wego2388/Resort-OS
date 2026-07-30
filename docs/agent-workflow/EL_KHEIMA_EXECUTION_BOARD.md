@@ -1,9 +1,9 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-07-30 بعد تشغيل الدومينات
+**آخر تحديث:** 2026-07-30 بعد نشر مسار الموظفين ومركز السوبر أدمن
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**المرحلة الحالية:** UAT-01 + DATA-02 + OPS-01
+**المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
 **قرار الإطلاق:** domain production فعال؛ Go/No-Go التشغيلي ينتظر UAT
 
 > هذه اللوحة تعرض العمل الحالي فقط. التفاصيل في
@@ -28,12 +28,12 @@
 | الحزمة | الحالة | النتيجة المطلوبة | المانع |
 |---|---|---|---|
 | SRC-01 — exact-source preservation | COMPLETE | أرشيفات وchecksums قابلة لإعادة البناء | — |
-| REL-02 — controlled immutable deploy | COMPLETE | `05ee627` فعال على كل خدمات التطبيق | — |
+| REL-04 — staff control-plane deploy | COMPLETE | `679f76e` فعال على خدمات Resort المتغيرة | — |
 | DATA-01-DEMO — realistic synthetic data | COMPLETE | بيانات مترابطة وآمنة وقابلة للتكرار | — |
 | CHAT-01 — live chatbot | COMPLETE | disclosure + Gemini E2E من الدومين | — |
 | DNS-01 — domain/TLS cutover | COMPLETE | DNS + SAN cert + edge + rollback | — |
 | DOC-OPS — management/staff training | COMPLETE | دليل عربي للأدوار ودورات العمل وUAT | — |
-| ACC-01 — named staff accounts | PENDING | حساب شخصي لكل موظف + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
+| ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
 | DATA-02 — approved real master data | PENDING REVIEW | استبدال demo بما تعتمده العمليات | المالك والتشغيل |
@@ -41,8 +41,9 @@
 ## ما اكتمل
 
 - [x] مراجعة auth والصلاحيات وعزل الفرع وOffline Queue.
-- [x] full backend 2217 collected بصفر failure.
-- [x] 63 targeted backend و93/93 frontend.
+- [x] full backend: 2181 passed و40 skipped من 2221 collected، بصفر failure.
+- [x] onboarding/HR/auth focused backend: 228 passed و1 skipped؛
+  frontend 95/95.
 - [x] type-check/build/agent-check/Alembic single-head/diff-check.
 - [x] SSH key-only، sudo/Docker، UFW/Fail2ban والـloopback listeners.
 - [x] حفظ exact production source وإعادة تركيبه، ونسخة DB مشفرة مع restore.
@@ -52,7 +53,7 @@
 - [x] Chatbot live E2E بالعربية.
 - [x] rollback للصور وDB والشهادات قبل domain cutover.
 - [x] إصلاح backup retention واختبار nested protected rollback directory.
-- [x] Resort release `05ee627` وMarketing release `e5e122a` مع SHA-256.
+- [x] Resort release `679f76e` وMarketing release `e5e122a` مع SHA-256.
 - [x] Hostinger DNS snapshot `167902017`.
 - [x] `@ A` و`app A` إلى `191.218.161.133`، و`www CNAME` محفوظ.
 - [x] شهادة SAN للدومينات الثلاثة وتجديد dry-run ناجح.
@@ -60,13 +61,18 @@
 - [x] DNS authoritative + Cloudflare + Google + Quad9 جميعها على VPS.
 - [x] apex/www/app وhealth يعيدون 200 من خارج الخادم.
 - [x] Marketing bundle وHTML وrobots وsitemap بلا أي IP قديم.
-- [x] خدمات التطبيق الست موحدة على `/opt/resort-os-releases/05ee627`
-  وكلها restarts=0.
+- [x] Backend وCelery وتطبيق الموظفين والـedge على
+  `/opt/resort-os-releases/679f76e`؛ Marketing المستقل لم يُعد بناؤه؛
+  الحاويات الثماني restarts=0.
 - [x] المنافذ العامة 80/443 فقط؛ 8443 القديم أُغلق.
 - [x] ملفات المصدر القديمة على VPS محفوظة وغير مستخدمة كمصدر للنشر.
 - [x] دليل عربي شامل للإدارة وتدريب الموظفين مع الحسابات والأدوار والمالية
   والتكلفة والمخزون والموردين وHR والتايم شير وCRM وخدمة العملاء.
 - [x] مراجعة دليل السوبر أدمن وتصحيح إنشاء الحساب و2FA وStep-Up والطوارئ.
+- [x] دورة HR record ثم Super Admin account منشورة مع عضوية فرع تلقائية
+  وStep-Up وAudit وعزل fail-closed.
+- [x] دمج المستخدمين والصلاحيات في مركز إدارة واحد وتنظيم sidebar حسب
+  الموديولات وتحسين عرض الهاتف.
 
 ## حالة الإنتاج المثبتة
 
@@ -77,22 +83,26 @@
 | Staff app | `https://app.elkheima.com` |
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../05ee627` |
+| Resort release | `/opt/resort-os-current -> .../679f76e` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../e5e122a` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
 | Chatbot | Active؛ live Gemini E2E passed من `elkheima.com` |
-| Accounts | `super_admin` واحد نشط؛ صفر حسابات موظفين |
+| Accounts | `super_admin` واحد، عضوية فعالة واحدة؛ صفر سجلات/حسابات موظفين |
 | Monitoring | health/backup/certbot timers مفعلة |
 | Legacy source | محفوظ وغير مستخدم كمصدر للحاويات |
 
 ## أدلة التشغيل
 
 - Resort release archive:
-  `/var/backups/resort-os/source-releases/05ee627.tar.gz`
+  `/var/backups/resort-os/source-releases/679f76e.tar.gz`
 - Resort SHA-256:
-  `d8354ec5b48e69a284dc6a6194967ca788f290fe508ba4fd30af0c5bf6946c5b`
+  `3e8b9a2b88746f93dd578d17dc2f010c0c63e21ccb9a5f82c1c40bff856110a8`
+- Rollback image manifest:
+  `/var/backups/resort-os/source-releases/679f76e-rollback-images.txt`
+- Pre-cutover DB:
+  `/var/backups/resort-os/database/resort_os_20260730_062529.dump`
 - Marketing release archive:
   `/var/backups/resort-os/marketing-source-releases/e5e122a.tar.gz`
 - Marketing SHA-256:
@@ -103,11 +113,13 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-07-30_DNS-01_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-07-30_ACC-01_REL-04_codex_handoff.md`
 
 ## التحديث التالي المطلوب
 
-اعتمد قائمة الموظفين (الاسم والبريد وسجل HR والدور) وأنشئ حساباتهم الشخصية،
+اعتمد قائمة الموظفين (الاسم والبريد والدور والمدير). ينشئ HR سجل الموظف
+أولًا ثم ينشئ السوبر أدمن حسابه الشخصي من مركز الإدارة. يُنشأ حساب
+`super_admin` الاحتياطي عبر bootstrap من الطرفية فقط،
 ثم وزّع `docs/STAFF_APP_GUIDE_AR.md` على رؤساء الأقسام ونفّذ سيناريوهات
 UAT بالأجهزة والأدوار. راجع بيانات العرض واعتمد بدائلها الحقيقية، واختر
 قناة alerts خارجية. بعد burn-in وretest، يسجل Mohamed قرار Go/No-Go

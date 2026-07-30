@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-07-30 بعد DNS cutover ونشر الدومينات
+**آخر تحقق:** 2026-07-30 بعد نشر مسار الموظفين ومركز السوبر أدمن
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -12,20 +12,20 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `05ee627` |
+| Resort OS source release | `679f76e` |
 | Marketing source release | `e5e122a` من المستودع المستقل |
-| remote | فرع العمل يحتوي `05ee627` ثم تحديثات توثيق ما بعد النشر |
+| remote | فرع العمل يحتوي `679f76e` ثم تحديثات توثيق ما بعد النشر |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/05ee627` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/05ee627` |
+| active Resort release | `/opt/resort-os-releases/679f76e` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/679f76e` |
 | active Marketing release | `/opt/elkheima-marketing-releases/e5e122a` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/e5e122a` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
-`/var/backups/resort-os/source-releases/05ee627.tar.gz`،
+`/var/backups/resort-os/source-releases/679f76e.tar.gz`،
 SHA-256
-`d8354ec5b48e69a284dc6a6194967ca788f290fe508ba4fd30af0c5bf6946c5b`.
+`3e8b9a2b88746f93dd578d17dc2f010c0c63e21ccb9a5f82c1c40bff856110a8`.
 
 أرشيف Marketing:
 `/var/backups/resort-os/marketing-source-releases/e5e122a.tar.gz`،
@@ -38,23 +38,26 @@ SHA-256
 
 ## 2. الخدمات الفعالة
 
-- كل خدمات التطبيق (`backend`, `celery_worker`, `celery_beat`, `el_kheima`,
-  `marketing_site`, `nginx`) تحمل
-  `com.docker.compose.project.working_dir=/opt/resort-os-releases/05ee627`.
+- الخدمات التي شملها الإصدار (`backend`, `celery_worker`, `celery_beat`,
+  `el_kheima`, `nginx`) تحمل
+  `com.docker.compose.project.working_dir=/opt/resort-os-releases/679f76e`.
+- `marketing_site` لم يُعد بناؤه لأنه مستقل ولم يتغير؛ بقي على الصورة
+  المراجعة نفسها ووسم working directory السابق `05ee627`، ومصدره الفعلي
+  ثابت عبر `/opt/elkheima-marketing-current -> .../e5e122a`.
 - Backend image:
-  `sha256:17f27751b3cc8855c9fc936b281db58a81f80232ab2669b1eadf5190d6d0b4b4`.
+  `sha256:7d27ae3a4b7daa38fe878b95c322bd1a7a1f2d5088990aa642163945441d73bc`.
 - Celery worker:
-  `sha256:5b074f225b4ed4dfedb27478f4e55b2738a9510756e0f09b18f8264c36ad6e1b`.
+  `sha256:371eb2eab1dac5ad18de738a30bd522daa916b412d4e9b4883ba2a148f9e18ea`.
 - Celery beat:
-  `sha256:033e8413d972c29aed8836818e1b35e282c51a0ff76c67857907d15049071d20`.
+  `sha256:df6030ab9d1679f0f16ca655c43d42bd99d16260d3f584bceb7664d4955bd794`.
 - El Kheima staff app:
-  `sha256:f6045dd466411eb6bd600910b4c9ef610cd074e685882116fd5f2f8d1e2a73d2`.
+  `sha256:b638351fb3abebea2fa038cb39d26ab3c7632bf71f2e677b0830f27591e8feb1`.
 - Marketing image:
   `sha256:ceffe9aff37f51cdf3a566d144eedad3acb94ab2665acf59f6fe0c04169cb0db`.
 - Nginx:
   `sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46`.
-- 8 حاويات Running وكل healthchecks سليمة. خدمات التطبيق كلها
-  `RestartCount=0` بعد التوحيد على الإصدار النهائي.
+- 8 حاويات Running وكل healthchecks المعرّفة سليمة. الحاويات الثماني
+  `RestartCount=0` بعد القطع.
 - PostgreSQL وRedis بقيا على volumes والحاويات طويلة العمر ولم يُعاد
   إنشاؤهما أثناء cutover.
 
@@ -103,7 +106,27 @@ SHA-256
 - فحص logs النهائي لخدمات backend/worker/beat/staff/marketing/nginx:
   صفر أنماط severe ضمن نافذة الفحص.
 
-## 5. البيانات التجريبية المنشورة
+## 5. مسار الموظفين والحسابات المنشور
+
+- الموارد البشرية (`hr_manager` أو الإدارة) تنشئ سجل الموظف داخل الفرع
+  الفعال؛ لا تقبل نقطة الإنشاء `user_id` ولا تسمح للمحاسب بإدارة HR.
+- السوبر أدمن يفتح مركز الإدارة الموحد، يختار سجل الموظف، ثم ينشئ حساب
+  الدخول ويحدد الدور. Backend يربط الحساب بالموظف ويضيف عضوية الفرع
+  الافتراضية الفعالة داخل transaction واحدة.
+- إنشاء الحساب محمي بـStep-Up ومسجل في Audit. العزل بين الفروع fail-closed،
+  ومسار الربط اليدوي القديم محصور في السوبر أدمن كاستعادة مدققة ولا يمنح
+  عضوية فرع.
+- صفحات المستخدمين والصلاحيات القديمة تحوّل إلى مركز السوبر أدمن بدل
+  ازدواج الشاشات، والقائمة الجانبية منظمة إلى مجموعات تشغيلية مع عرض هاتف
+  off-canvas.
+- حسابات الموظفين العاديين، ومنها المحاسب، تُنشأ من هذا المسار بعد سجل HR.
+  إنشاء `super_admin` احتياطي يبقى bootstrap من الطرفية فقط.
+
+حالة الإنتاج بعد النشر: `users=1`, `active_superadmins=1`, `branches=1`,
+`employees=0`, `active_memberships=1`. لم تُنشأ هويات أو كلمات مرور
+تجريبية.
+
+## 6. البيانات التجريبية المنشورة
 
 البيانات synthetic وموسومة وليست اعتمادًا ماليًا أو تشغيليًا نهائيًا.
 اقتصر التطبيق على الفرع الفعال الوحيد `ELK-001` وبهوية
@@ -132,18 +155,20 @@ SHA-256
 - `/var/backups/resort-os/source-releases/32eb0f8-post-seed-safety-counts.txt`
 
 قراءة الإنتاج في آخر فحص أظهرت حسابًا واحدًا فقط:
-`super_admin: total=1, active=1`. لا توجد حسابات موظفين منشأة حتى الآن،
-ولم تُعرض أي بيانات اعتماد في التوثيق أو الفحص. إنشاء الحسابات ينتظر
+`super_admin: total=1, active=1`. لا توجد سجلات أو حسابات موظفين حتى
+الآن، ولم تُعرض أي بيانات اعتماد في التوثيق أو الفحص. إنشاء الحسابات ينتظر
 أسماء وبريد وأدوار أشخاص حقيقيين، وفق `docs/STAFF_APP_GUIDE_AR.md`.
 
-## 6. أدلة الجودة
+## 7. أدلة الجودة
 
-- full backend suite: 2217 tests collected، exit 0، صفر failure.
+- full backend suite: 2181 passed و40 skipped من 2221 collected، صفر
+  failure.
 - production demo seed tests: 9 passed.
 - PostgreSQL clean-schema apply + idempotency + safety checks: passed.
 - استعادة dump حقيقية واختبار importer عليها ثم تنظيف DB المؤقتة: passed.
-- targeted backend security/PMS/public/encryption: 63 passed.
-- frontend: 93/93 عبر 13 ملف اختبار.
+- onboarding/HR/auth focused backend: 228 passed و1 skipped؛ وآخر فحص
+  أمني بعد تعديل الربط: 31 passed.
+- frontend: 95/95 عبر 13 ملف اختبار.
 - frontend type-check وproduction build: passed.
 - Marketing `truth`, `type-check`, `build`: passed.
 - `agent-check`: passed بعد تغييرات النشر؛ Alembic single head
@@ -151,7 +176,7 @@ SHA-256
 - دليل الإدارة وتدريب الموظفين العربي محدث، ودليل السوبر أدمن مصحح بحسب
   مسار إنشاء الحسابات و2FA وStep-Up الحالي.
 
-## 7. النسخ والتراجع
+## 8. النسخ والتراجع
 
 - DNS rollback: Hostinger snapshot `167902017`.
 - domain-cutover rollback directory:
@@ -170,27 +195,35 @@ SHA-256
 - النسخة المشفرة خارج الخادم واستعادة 135 جدولًا ما زالتا دليل DR الأساسي.
 - `resort-os-backup.timer`, `resort-os-certbot-renew.timer`,
   `resort-os-healthcheck.timer` مثبتة ومفعلة.
-- آخر نسخة DB بعد الفحص النهائي:
-  `/var/backups/resort-os/resort_os_20260730_043330.dump`،
+- أرشيف الإصدار الحالي:
+  `/var/backups/resort-os/source-releases/679f76e.tar.gz`،
   SHA-256
-  `a31e43e74d777ec41a93ca30a4ec3270b2f1995fb34846b36591498a4e23b72d`؛
-  اجتازت `pg_restore --list` داخل PostgreSQL 16 معزول.
-- شُغلت خدمتا backup وhealthcheck يدويًا بعد النشر ونجحتا.
+  `3e8b9a2b88746f93dd578d17dc2f010c0c63e21ccb9a5f82c1c40bff856110a8`.
+- صور ما قبل `679f76e` محفوظة تحت
+  `resort-os-rollback/*:pre-679f76e`، والـmanifest المحمي:
+  `/var/backups/resort-os/source-releases/679f76e-rollback-images.txt`.
+- نسخة DB السابقة مباشرة للقطع:
+  `/var/backups/resort-os/database/resort_os_20260730_062529.dump`،
+  SHA-256
+  `bce5553a9b58d7a930c650c3f8618b7714a9a1db557e067977cc23beec10ab5a`؛
+  اجتازت `pg_restore --list`.
+- شُغلت خدمة healthcheck يدويًا بعد النشر ونجحت
+  (`Result=success`, `ExecMainStatus=0`).
 - أزيل فقط release staging غير الفعال
   `/opt/resort-os-releases/0b430fb` بعد إثبات عدم وجود symlink أو container
   يشير إليه. أرشيفه القابل للاستعادة ما زال محفوظًا تحت
   `/var/backups/resort-os/source-releases/0b430fb.tar.gz`.
 
-## 8. الحالة المتبقية
+## 9. الحالة المتبقية
 
 | الحزمة | الحالة |
 |---|---|
-| REL-02 — controlled deploy | COMPLETE |
+| REL-04 — staff-control-plane deploy | COMPLETE |
 | DATA-01-DEMO — realistic synthetic dataset | COMPLETE |
 | CHAT-01 — chatbot activation/live verification | COMPLETE |
 | DNS-01 — domain/TLS cutover | COMPLETE |
 | DOC-OPS — management/staff Arabic training guide | COMPLETE |
-| ACC-01 — named staff accounts + backup super-admin | PENDING OWNER LIST |
+| ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING ROSTER |
 | UAT-01 — device/roles/workflow acceptance | PENDING |
 | DATA-02 — approved real master data | PENDING OWNER/OPERATIONS REVIEW |
 | OPS-01 — monitoring and burn-in | BASELINE COMPLETE؛ external delivery pending |
