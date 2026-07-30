@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Read-only production health gate for the IP-only Resort OS deployment.
+# Read-only production health gate for the Resort OS deployment.
 # Intended for resort-os-healthcheck.service; safe to run manually.
 set -uo pipefail
 
 RESORT_PUBLIC_IP="${RESORT_PUBLIC_IP:-191.218.161.133}"
+RESORT_STAFF_URL="${RESORT_STAFF_URL:-https://${RESORT_PUBLIC_IP}/}"
+RESORT_MARKETING_URL="${RESORT_MARKETING_URL:-https://${RESORT_PUBLIC_IP}:8443/}"
+RESORT_TLS_HOST="${RESORT_TLS_HOST:-$RESORT_PUBLIC_IP}"
+RESORT_TLS_PORT="${RESORT_TLS_PORT:-443}"
 RESORT_BACKUP_DIR="${RESORT_BACKUP_DIR:-/var/backups/resort-os}"
 RESORT_BACKUP_MAX_AGE_MINUTES="${RESORT_BACKUP_MAX_AGE_MINUTES:-1560}"
 RESORT_CERT_MIN_VALID_SECONDS="${RESORT_CERT_MIN_VALID_SECONDS:-172800}"
@@ -36,7 +40,7 @@ else
 fi
 
 staff_status=$(curl -fsS --max-time 10 -o /dev/null -w '%{http_code}' \
-  "https://${RESORT_PUBLIC_IP}/" 2>/dev/null || true)
+  "$RESORT_STAFF_URL" 2>/dev/null || true)
 if [[ "$staff_status" == "200" ]]; then
   pass "staff-https"
 else
@@ -44,7 +48,7 @@ else
 fi
 
 marketing_status=$(curl -fsS --max-time 10 -o /dev/null -w '%{http_code}' \
-  "https://${RESORT_PUBLIC_IP}:8443/" 2>/dev/null || true)
+  "$RESORT_MARKETING_URL" 2>/dev/null || true)
 if [[ "$marketing_status" == "200" ]]; then
   pass "marketing-https"
 else
@@ -96,8 +100,8 @@ else
 fi
 
 if certificate_chain=$(timeout 10 openssl s_client \
-  -connect "127.0.0.1:443" \
-  -servername "$RESORT_PUBLIC_IP" </dev/null 2>/dev/null); then
+  -connect "127.0.0.1:${RESORT_TLS_PORT}" \
+  -servername "$RESORT_TLS_HOST" </dev/null 2>/dev/null); then
   if openssl x509 -noout -checkend "$RESORT_CERT_MIN_VALID_SECONDS" \
     <<<"$certificate_chain" >/dev/null 2>&1; then
     pass "tls-validity"

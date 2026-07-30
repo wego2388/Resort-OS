@@ -1,8 +1,8 @@
 [Unit]
-Description=Renew Resort OS short-lived IP TLS certificate
+Description=Renew Resort OS TLS certificates
 After=network-online.target docker.service
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/snap/bin/certbot renew --quiet --no-random-sleep-on-renew
+ExecStart=/snap/bin/certbot renew --quiet --no-random-sleep-on-renew --deploy-hook /usr/local/sbin/reload-resort-os-nginx
