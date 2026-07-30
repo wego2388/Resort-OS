@@ -131,11 +131,16 @@ DELETED=0
 while IFS= read -r -d '' old_file; do
   rm -f "$old_file"
   DELETED=$((DELETED + 1))
-done < <(find "$BACKUP_DIR" -name "${DB_NAME}_*.dump" -mtime "+${RETENTION_DAYS}" -print0)
+done < <(
+  find "$BACKUP_DIR" -maxdepth 1 -type f \
+    -name "${DB_NAME}_*.dump" -mtime "+${RETENTION_DAYS}" -print0
+)
 
 if [[ "$DELETED" -gt 0 ]]; then
   echo "✓ Retention: deleted $DELETED backup(s) older than ${RETENTION_DAYS} days"
 fi
 
-REMAINING="$(find "$BACKUP_DIR" -name "${DB_NAME}_*.dump" | wc -l)"
+REMAINING="$(
+  find "$BACKUP_DIR" -maxdepth 1 -type f -name "${DB_NAME}_*.dump" | wc -l
+)"
 echo "→ $REMAINING backup(s) retained in $BACKUP_DIR"

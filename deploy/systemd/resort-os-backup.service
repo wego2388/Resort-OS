@@ -24,9 +24,9 @@ After=docker.service
 [Service]
 Type=oneshot
 User=resortos
-WorkingDirectory=/opt/resort-os
-ExecStart=/opt/resort-os/scripts/backup_db.sh
-Environment=ENV_FILE=/opt/resort-os/backend/.env.prod
+WorkingDirectory=/opt/resort-os-current
+ExecStart=/opt/resort-os-current/scripts/backup_db.sh
+Environment=ENV_FILE=/opt/resort-os-current/backend/.env.prod
 Environment=BACKUP_DIR=/var/backups/resort-os
 Environment=BACKUP_RETENTION_DAYS=14
 UMask=0077
