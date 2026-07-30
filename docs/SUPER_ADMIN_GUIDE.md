@@ -1,8 +1,9 @@
 # Super Admin Guide — El Kheima Resort OS
 
 > **Audience:** Resort owner and designated super-admin operators.
-> **Version:** 2026-07 (Gate 2B3A / 2B3B complete)
-> **Arabic version:** `docs/SUPER_ADMIN_GUIDE_AR.md`
+> **Version:** 2026-07
+> **Authoritative current guide:** `docs/SUPER_ADMIN_GUIDE_AR.md` (30 July
+> 2026). If a detail differs, follow the Arabic guide.
 
 ---
 
@@ -28,10 +29,10 @@
 `admin` at 80). It sits outside the normal role hierarchy and cannot be
 overridden by any explicit permission denial.
 
-**There must always be at least two active super-admin accounts.** If you have
-only one and it is locked or compromised, recovery requires direct server
-access. The system enforces this — it will refuse to deactivate or demote the
-last remaining active super-admin.
+**The operational recommendation is at least two named active super-admin
+accounts.** If you have only one and it is locked or compromised, recovery
+requires direct server access. The system enforces at least one active
+super-admin; it does not automatically create the recommended backup account.
 
 `super_admin` is a **named personal account, never a shared login.** Each
 operator has their own credentials, their own TOTP device, and their own
@@ -45,9 +46,10 @@ recovery codes.
 
 1. Receive your temporary credentials from the system administrator (email +
    temporary password + enrollment token).
-2. Navigate to `https://[your-resort-domain]/login` and sign in.
-3. You will be forced to change your password immediately (minimum 12
-   characters).
+2. Navigate to `https://app.elkheima.com/login` and sign in.
+3. You will be forced to change your password immediately. It must have at
+   least 8 characters with upper-case, lower-case, numeric, and special
+   characters.
 4. After the password change you are redirected to `/2fa-setup`.
 5. Scan the QR code with an authenticator app (Google Authenticator, Aegis,
    Authy, or any TOTP-compatible app).
@@ -114,9 +116,9 @@ authentication** in addition to your active login session.
    - **Current password.**
    - **Current TOTP code** (mandatory for `super_admin`).
    - **Reason** — plain text, minimum 3 characters, stored in the audit log.
-3. The system issues a single-use step-up token valid for approximately
-   5 minutes. The token is cryptographically bound to the exact operation you
-   declared — it cannot be reused for a different action.
+3. The system issues a short-lived, single-use step-up token. The token is
+   cryptographically bound to the exact operation you declared — it cannot be
+   reused for a different action.
 4. The token is consumed atomically at the moment the mutation executes.
 
 ### Why a reason is required
@@ -127,9 +129,9 @@ with no exceptions.
 
 ### Token expiry
 
-If more than ~5 minutes pass between confirming step-up and submitting the
-action, the token expires. The operation is rejected with `STEP_UP_REQUIRED`.
-Re-confirm your identity to continue.
+If the grant expires between confirming step-up and submitting the action,
+the operation is rejected with `STEP_UP_REQUIRED`. Re-confirm your identity
+to continue.
 
 ---
 
@@ -165,7 +167,12 @@ Accounts**.
 | `cashier` | 40 | POS / shift cashier |
 | `waiter` | 30 | Floor service, order entry |
 | `chef` / `kitchen` | 30 | Kitchen display |
+| `timeshare_agent` | 25 | Specialist role when technically provisioned; not offered by the current UI form |
 | `employee` | 20 | Self-service portal only |
+
+The web UI cannot create `super_admin`. A named account with that role is
+created only through the audited server-side bootstrap by the technical
+operator.
 
 ### Changing a role
 
@@ -304,9 +311,10 @@ Security**.
 
 ### Lost authenticator, no recovery codes
 
-Contact the second super-admin operator. They should:
-1. Create a new account for you via **Staff Accounts → Create**.
-2. Deactivate the locked account.
+Contact the second super-admin operator. The UI cannot create a new
+`super_admin`; recovery of the locked named account requires the audited
+server procedure below. A second operator may deactivate a compromised
+account only while another active super-admin remains.
 
 If there is no second super-admin available, recovery requires direct server
 access (SSH to the VPS):
@@ -325,15 +333,19 @@ log in and complete TOTP setup, then handle it out-of-band.
 1. From a second super-admin account: revoke all sessions for the compromised
    account (Users tab → find user → Deactivate).
 2. Review the audit log for the period in question.
-3. Create a new account for the affected person only after the incident is
+3. Recover or replace the affected account only after the incident is
    understood.
-4. If system-wide credentials may be exposed, rotate `SECRET_KEY` in
-   `backend/.env` on the VPS and restart the backend service — this
-   immediately invalidates all sessions for all users system-wide:
+4. If server-side secrets may be exposed, escalate to the technical operator.
+   The operator takes a backup and follows the incident procedure; rotating
+   session secrets may invalidate every user session.
 
 ```bash
-# On the VPS — edit .env first, then:
-docker compose -f docker-compose.prod.yml restart backend celery_worker celery_beat
+# Read-only production status; operational staff must not change secrets.
+readlink -f /opt/resort-os-current
+docker compose \
+  -f /opt/resort-os-current/docker-compose.prod.yml \
+  -f /opt/resort-os-current/docker-compose.prod.domain.yml \
+  ps
 ```
 
 ---

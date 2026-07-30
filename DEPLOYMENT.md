@@ -1,7 +1,9 @@
 # Production Operations — El Kheima Beach Resort OS
 
-**Current model:** immutable releases on the IP-only VPS
+**Current model:** immutable releases with domain TLS on the VPS
 **Current host:** `191.218.161.133`
+**Public origins:** `elkheima.com`, `www.elkheima.com`,
+`app.elkheima.com`
 **SSH alias:** `resort-os-vps`
 **Compose project:** `resort-os-prod`
 
@@ -19,11 +21,15 @@ Never substitute values from an old handoff.
 ```text
 /opt/resort-os/                       legacy source snapshot; not a deploy target
 /opt/resort-os-releases/<commit>/     immutable application release
-/opt/elkheima-marketing-website/      marketing-site build context
+/opt/resort-os-current                symlink to the active application release
+/opt/elkheima-marketing-website/      preserved legacy checkout; not a deploy target
+/opt/elkheima-marketing-releases/     immutable marketing releases
+/opt/elkheima-marketing-current       active marketing build-context symlink
 /var/backups/resort-os/
   source-releases/                    release archives and rollback manifests
+  marketing-source-releases/          exact marketing source archives
   source-snapshots/                   preserved legacy production source
-/etc/letsencrypt/                     IP certificate
+/etc/letsencrypt/                     domain certificate
 /var/www/certbot/                     ACME webroot
 ```
 
@@ -31,10 +37,11 @@ The active Compose files are:
 
 ```text
 docker-compose.prod.yml
-docker-compose.prod.ip-tls.yml
+docker-compose.prod.domain.yml
 ```
 
-Do not use a domain override while the IP-only decision is active.
+The legacy IP overrides are not the production runtime. Do not switch away
+from the domain override without an explicit reviewed rollback.
 
 ## 2. Safety rules
 
@@ -45,7 +52,9 @@ Do not use a domain override while the IP-only decision is active.
 - Every release needs a reviewed commit, archive SHA-256, DB backup, previous
   image tags, migration compatibility check, and external smoke tests.
 - Never run `app.seed` in production.
-- Never run `scripts/wait-dns-then-switch.sh` without a new owner decision.
+- Never run or edit the user-owned `scripts/wait-dns-then-switch.sh`.
+- Never use a provider "Reset DNS" operation. Update reviewed RRsets only and
+  preserve a provider snapshot before a later DNS change.
 - A compatible application rollback does not justify restoring the database.
 
 ## 3. Daily status
@@ -55,8 +64,9 @@ ssh resort-os-vps
 
 docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}' | sort
 curl -fsS http://127.0.0.1:8005/health
-curl -fsS https://191.218.161.133/health
-curl -fsSI https://191.218.161.133:8443/
+curl -fsSI https://elkheima.com/
+curl -fsSI https://www.elkheima.com/
+curl -fsS https://app.elkheima.com/health
 
 systemctl --failed
 systemctl status resort-os-backup.timer --no-pager
@@ -117,7 +127,7 @@ RESORT_COMPOSE=(
   docker compose
   --env-file backend/.env.prod
   -f docker-compose.prod.yml
-  -f docker-compose.prod.ip-tls.yml
+  -f docker-compose.prod.domain.yml
 )
 
 "${RESORT_COMPOSE[@]}" config --quiet
@@ -162,9 +172,10 @@ VPS. Extract it only into a new `/opt/resort-os-releases/<commit>` directory.
 Never overwrite an existing release directory.
 
 Copy the current production `.env.prod` to the new release with mode `0600`
-without displaying it. Make `MARKETING_SITE_CONTEXT` point to the existing
-absolute marketing checkout if the copied relative value does not resolve
-from the new directory. Run:
+without displaying it. `MARKETING_SITE_CONTEXT` must point to
+`/opt/elkheima-marketing-current`, which in turn must reference an exact
+reviewed Marketing release. Never build from the preserved dirty checkout.
+Run:
 
 ```bash
 python3 scripts/validate_prod_env.py --env backend/.env.prod
@@ -179,6 +190,8 @@ resort-os-rollback/backend:pre-<commit>
 resort-os-rollback/celery-worker:pre-<commit>
 resort-os-rollback/celery-beat:pre-<commit>
 resort-os-rollback/el-kheima:pre-<commit>
+resort-os-rollback/marketing-site:pre-<commit>
+resort-os-rollback/nginx:pre-<commit>
 ```
 
 Record their full image IDs under
@@ -199,7 +212,7 @@ With `RESORT_COMPOSE` configured for the new release:
 
 ```bash
 "${RESORT_COMPOSE[@]}" build --parallel \
-  backend celery_worker celery_beat el_kheima
+  backend celery_worker celery_beat el_kheima marketing_site
 
 "${RESORT_COMPOSE[@]}" run --rm --no-deps backend \
   python -c 'from app.main import app; print(app.title)'
@@ -218,12 +231,13 @@ Replace in dependency order and wait for health after each stage:
 ```bash
 "${RESORT_COMPOSE[@]}" up -d --no-deps backend
 "${RESORT_COMPOSE[@]}" up -d --no-deps celery_worker celery_beat
-"${RESORT_COMPOSE[@]}" up -d --no-deps el_kheima
+"${RESORT_COMPOSE[@]}" up -d --no-deps el_kheima marketing_site
 "${RESORT_COMPOSE[@]}" up -d --no-deps --force-recreate nginx
 ```
 
-Do not recreate PostgreSQL, Redis, or the marketing site when they are outside
-the release scope.
+Do not recreate PostgreSQL or Redis for an application-only release. Do not
+rebuild Marketing when its independent source commit is outside the release
+scope.
 
 ## 6. Post-release acceptance
 
@@ -231,9 +245,10 @@ Verify all of the following:
 
 ```bash
 docker ps --format '{{.Names}}|{{.Image}}|{{.Status}}' | sort
-curl -fsS https://191.218.161.133/health
-curl -fsSI https://191.218.161.133/
-curl -fsSI https://191.218.161.133:8443/
+curl -fsSI https://elkheima.com/
+curl -fsSI https://www.elkheima.com/
+curl -fsSI https://app.elkheima.com/
+curl -fsS https://app.elkheima.com/health
 
 docker exec resort-os-prod-backend-1 alembic current
 docker exec resort-os-prod-db_postgres-1 \
@@ -246,7 +261,8 @@ Also verify:
 - full image IDs and `RestartCount=0`;
 - updated containers use the new release `working_dir` label;
 - staff and marketing titles render from outside the VPS;
-- TLS SAN matches `191.218.161.133`;
+- TLS SAN contains `elkheima.com`, `www.elkheima.com`, and
+  `app.elkheima.com`;
 - DB/Redis ports remain loopback-only;
 - backend/Celery/Nginx logs contain no new traceback, critical, fatal, or
   emergency event;
@@ -264,8 +280,8 @@ regression requires it.
 3. Recreate backend, Celery, El Kheima, and Nginx in the same controlled order.
 4. Re-run every health, TLS, DB, listener, and log check.
 
-For `ac7764f`, the preserved tags are recorded in
-`docs/agent-workflow/handoffs/2026-07-29_REL-02_codex_handoff.md`.
+The current cutover tags and provider DNS snapshot are recorded in
+`docs/agent-workflow/handoffs/2026-07-30_DNS-01_codex_handoff.md`.
 
 The current encryption migration widens columns and has a no-op downgrade.
 Do not shrink those columns during application rollback. Restore the database
@@ -287,7 +303,8 @@ See `docs/agent-workflow/handoffs/2026-07-29_DR-01_codex_handoff.md`.
 
 ## 9. TLS
 
-The public certificate is an IP certificate for `191.218.161.133`.
+The public certificate is the `elkheima.com` SAN certificate and includes
+the apex, `www`, and `app`.
 
 ```bash
 sudo certbot certificates
@@ -296,12 +313,13 @@ systemctl status resort-os-certbot-renew.timer --no-pager
 
 echo | openssl s_client \
   -connect 127.0.0.1:443 \
-  -servername 191.218.161.133 2>/dev/null |
+  -servername elkheima.com 2>/dev/null |
   openssl x509 -noout -issuer -dates -ext subjectAltName
 ```
 
-Do not introduce a domain to solve certificate renewal; the tested IP renewal
-path is the current design.
+Renewal is handled by `resort-os-certbot-renew.timer`; its deploy hook reloads
+the running edge only after a successful renewal. Keep at least 48 hours of
+certificate validity in the automated health gate.
 
 ## 10. Super-admin recovery
 

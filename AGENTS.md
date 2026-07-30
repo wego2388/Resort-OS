@@ -50,8 +50,10 @@ commit, deploy, DNS, data, or VPS instructions from it.
   retired monorepo public app.
 - QR guest-service, bilingual staff UX, and super-admin invariants are defined
   in `docs/decisions/0001-*`, `0002-*`, and `0003-*`.
-- Production is IP-only until Mohamed explicitly changes that decision. Do not
-  run or edit `scripts/wait-dns-then-switch.sh` as part of current work.
+- Production is domain-based: `elkheima.com` and `www.elkheima.com` serve the
+  marketing site, while `app.elkheima.com` serves the staff app. Do not run or
+  edit the user-owned `scripts/wait-dns-then-switch.sh`; the cutover was
+  completed through the reviewed provider/API workflow.
 
 ## 3. Working mode
 
@@ -152,11 +154,13 @@ existing implementation and preserve user-owned changes.
 - Before schema/application changes, create a fresh DB backup and preserve the
   prior image IDs/tags.
 - Derive required Compose secrets in memory; never duplicate or print them.
-- Use the active IP-TLS Compose override while the IP-only decision stands.
+- Use the active `docker-compose.prod.domain.yml` override and resolve the
+  exact current release through `/opt/resort-os-current`.
 - Replace the smallest service set, wait for health, then verify externally.
 - Do not restore a database merely to roll back compatible application code.
-- Do not change DNS, enable Chatbot governance flags, or import real data
-  without the relevant owner decision.
+- Do not reset or broadly replace DNS, change Chatbot governance/provider
+  flags, or import real data without the relevant owner decision. The current
+  DNS records and rollback snapshot are documented in `PROJECT_STATUS.md`.
 
 The current host, release, image IDs, backup paths, and rollback evidence are
 in `PROJECT_STATUS.md` and the latest handoff. Do not copy stale values from

@@ -1,8 +1,12 @@
 # El Kheima Resort OS — Staff App Guide
 
+> **Translation status:** This English guide is a legacy summary and does not
+> describe every current screen. The authoritative operating and training
+> guide dated 30 July 2026 is `docs/STAFF_APP_GUIDE_AR.md`. If the two differ,
+> follow the Arabic guide and record the English translation gap during UAT.
 > Find your role below. Read only your section.
 > Arabic version: `docs/STAFF_APP_GUIDE_AR.md`
-> App URL: `https://[your-resort-domain]/login`
+> App URL: `https://app.elkheima.com/login`
 
 ---
 
@@ -18,8 +22,8 @@
 | Beach Cashier / POS | `cashier` | [→ Cashier](#cashier) |
 | Waiter / Floor Service | `waiter` | [→ Waiter](#waiter) |
 | Chef / Kitchen Staff | `chef` / `kitchen` | [→ Kitchen](#chef--kitchen) |
-| Inventory / Purchasing | `supervisor` | [→ Inventory](#inventory--purchasing-supervisor) |
-| Timeshare Agent | `timeshare_agent` | [→ Timeshare Agent](#timeshare_agent) |
+| Inventory / Purchasing | `manager` or above | [→ Inventory](#inventory--purchasing-supervisor) |
+| Timeshare Collection | `cashier` | [→ Timeshare Agent](#timeshare_agent) |
 | Employee (self-service) | `employee` | [→ Employee](#employee) |
 
 ---
@@ -29,7 +33,7 @@
 1. Open the app link and enter your email + temporary password.
 2. You will be forced to change your password. Choose something you will
    remember — minimum 8 characters.
-3. **Accountant, hr\_manager, admin, super\_admin:** after changing your
+3. **Accountant and super\_admin:** after changing your
    password you will be taken to the 2FA setup screen. Scan the QR code with
    Google Authenticator or Authy. Write down the recovery codes and keep them
    safe. You will need a 6-digit code from the app every time you log in.
