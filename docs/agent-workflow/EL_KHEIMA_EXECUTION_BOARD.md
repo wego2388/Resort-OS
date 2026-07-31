@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-07-30 بعد نشر Timeshare وإصدار Marketing الجديد
+**آخر تحديث:** 2026-07-31 بعد نشر إصلاح تبديل منافذ الـPOS
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
@@ -21,7 +21,6 @@
   و`app.elkheima.com` للموظفين.
 - أي تغيير إنتاج جديد يحتاج backup وrollback وhealth evidence.
 - أي تغيير DNS لاحق محدد ومراجع؛ لا Reset DNS ولا AAAA دون IPv6.
-- ملف `scripts/wait-dns-then-switch.sh` مملوك للمستخدم ولا يُلمس.
 
 ## المهمة الجارية
 
@@ -29,6 +28,7 @@
 |---|---|---|---|
 | SRC-01 — exact-source preservation | COMPLETE | أرشيفات وchecksums قابلة لإعادة البناء | — |
 | REL-04 — staff control-plane deploy | COMPLETE | `679f76e` فعال على خدمات Resort المتغيرة | — |
+| REL-05 — multi-outlet POS fix | COMPLETE | `a3e8abb` فعال على تطبيق الموظفين والـedge | — |
 | DATA-01-DEMO — realistic synthetic data | COMPLETE | بيانات مترابطة وآمنة وقابلة للتكرار | — |
 | CHAT-01 — live chatbot | COMPLETE | disclosure + Gemini E2E من الدومين | — |
 | DNS-01 — domain/TLS cutover | COMPLETE | DNS + SAN cert + edge + rollback | — |
@@ -54,7 +54,7 @@
 - [x] Chatbot live E2E بالعربية.
 - [x] rollback للصور وDB والشهادات قبل domain cutover.
 - [x] إصلاح backup retention واختبار nested protected rollback directory.
-- [x] Resort release `679f76e` وMarketing release `16f8f2c` مع SHA-256.
+- [x] Resort release `a3e8abb` وMarketing release `16f8f2c` مع SHA-256.
 - [x] Hostinger DNS snapshot `167902017`.
 - [x] `@ A` و`app A` إلى `191.218.161.133`، و`www CNAME` محفوظ.
 - [x] شهادة SAN للدومينات الثلاثة وتجديد dry-run ناجح.
@@ -62,9 +62,11 @@
 - [x] DNS authoritative + Cloudflare + Google + Quad9 جميعها على VPS.
 - [x] apex/www/app وhealth يعيدون 200 من خارج الخادم.
 - [x] Marketing bundle وHTML وrobots وsitemap بلا أي IP قديم.
-- [x] Backend وCelery وتطبيق الموظفين والـedge على
-  `/opt/resort-os-releases/679f76e`؛ Marketing المستقل لم يُعد بناؤه؛
+- [x] تطبيق الموظفين والـedge على `/opt/resort-os-releases/a3e8abb`؛
+  Backend وCelery بقيا على `679f76e`، وMarketing المستقل لم يُعد بناؤه؛
   الحاويات الثماني restarts=0.
+- [x] تبديل المنفذ داخل طلب POS قائم لا يلغي الطلب؛ Bundle الإنتاج طابق
+  البناء المحلي وhealth gate نجح.
 - [x] المنافذ العامة 80/443 فقط؛ 8443 القديم أُغلق.
 - [x] ملفات المصدر القديمة على VPS محفوظة وغير مستخدمة كمصدر للنشر.
 - [x] دليل عربي شامل للإدارة وتدريب الموظفين مع الحسابات والأدوار والمالية
@@ -86,7 +88,7 @@
 | Staff app | `https://app.elkheima.com` |
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../679f76e` |
+| Resort release | `/opt/resort-os-current -> .../a3e8abb` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../16f8f2c` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
@@ -99,11 +101,11 @@
 ## أدلة التشغيل
 
 - Resort release archive:
-  `/var/backups/resort-os/source-releases/679f76e.tar.gz`
+  `/var/backups/resort-os/source-releases/a3e8abb.tar.gz`
 - Resort SHA-256:
-  `3e8b9a2b88746f93dd578d17dc2f010c0c63e21ccb9a5f82c1c40bff856110a8`
+  `2ff370284727ae57688c4efda9dad22db2729abf45fbbfe3dc276e78d7388bad`
 - Rollback image manifest:
-  `/var/backups/resort-os/source-releases/679f76e-rollback-images.txt`
+  `/var/backups/resort-os/source-releases/a3e8abb-rollback-images.txt`
 - Pre-cutover DB:
   `/var/backups/resort-os/database/resort_os_20260730_062529.dump`
 - Marketing release archive:
@@ -116,7 +118,7 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-07-30_MKT-02_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-07-31_POS-01_REL-05_codex_handoff.md`
 
 ## التحديث التالي المطلوب
 

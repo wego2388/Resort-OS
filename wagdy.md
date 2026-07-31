@@ -1,6 +1,6 @@
 # لوحة محمد الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 30 يوليو 2026 بعد نشر صفحة Timeshare وتحديث Marketing
+**آخر تحديث:** 31 يوليو 2026 بعد نشر إصلاح تبديل منافذ الـPOS
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -18,7 +18,7 @@
 | الموقع التسويقي | `https://elkheima.com` و`https://www.elkheima.com` — HTTP 200 |
 | تطبيق الموظفين | `https://app.elkheima.com` — HTTP 200 |
 | نموذج التشغيل | فرع تشغيلي واحد؛ لا Branch Switcher ظاهر |
-| الإصدار الفعال | Resort OS `679f76e`؛ Marketing `16f8f2c` |
+| الإصدار الفعال | Resort OS `a3e8abb`؛ Marketing `16f8f2c` |
 | قاعدة البيانات | Alembic `88d1c505a9dc`؛ سليمة ومتاحة |
 | الحاويات | 8/8 Running؛ خدمات التطبيق `restarts=0` |
 | النسخ الاحتياطي | DB يومي + نسخة مشفرة خارج الخادم + restore ناجح |
@@ -40,9 +40,8 @@
 - تغيير سجلي `A @` و`A app` فقط عبر Hostinger، مع إبقاء
   `www CNAME -> elkheima.com` وعدم استخدام Reset DNS أو إضافة AAAA.
 - حفظ Hostinger DNS rollback snapshot رقم `167902017`.
-- نشر Backend وCelery وتطبيق الموظفين والـedge من
-  `/opt/resort-os-releases/679f76e` وربط
-  `/opt/resort-os-current` به.
+- نشر Backend وCelery من `679f76e`، ثم نشر تطبيق الموظفين والـedge من
+  `/opt/resort-os-releases/a3e8abb` وربط `/opt/resort-os-current` به.
 - تحديث مصدر الموقع التسويقي المستقل إلى `16f8f2c` وربطه عبر
   `/opt/elkheima-marketing-current`.
 - إزالة كل مراجع IP القديمة من bundle وHTML وrobots وsitemap؛ فحص النسخة
@@ -70,6 +69,9 @@
   كجهة إدارة الملكية الجزئية وفق نموذج الحجز الداخلي المقدم من المالك.
   النصوص تطلب تأكيد التوفر والتكلفة والشروط من الفريق ولا تنشر سعرًا أو
   وعدًا تعاقديًا غير معتمد.
+- إصلاح تبديل منفذ البيع داخل طلب POS قائم: ينتقل الكاشير بين منيو الكافيه
+  والمطعم دون إلغاء الطلب الموجود في الـBackend، بينما السلة المحلية غير
+  المرسلة ما زالت محمية بنافذة التأكيد.
 
 ## ما لم يُعتمد تشغيليًا بعد
 
@@ -87,7 +89,8 @@
 6. Provider snapshot دوري يظل تحسينًا دفاعيًا؛ DNS snapshot ونسخة DB
    المشفرة خارج الخادم موجودان بالفعل.
 
-ملف `scripts/wait-dns-then-switch.sh` مملوك للمستخدم، ولم يُعدّل أو يُشغّل.
+حُذف سكربت انتظار DNS القديم بعد تأكيد المالك أن التحويل اكتمل والدومين
+مستقر؛ لم يكن متتبعًا في Git ولم يدخل أي release.
 أي تعديل DNS لاحق يجب أن يكون محددًا ومراجعًا؛ لا Reset DNS ولا AAAA دون
 IPv6 فعلي.
 
@@ -97,6 +100,6 @@ IPv6 فعلي.
 - الخطة الحية: `docs/audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`
 - المهمة الحالية: `docs/agent-workflow/EL_KHEIMA_EXECUTION_BOARD.md`
 - أحدث تسليم:
-  `docs/agent-workflow/handoffs/2026-07-30_MKT-02_codex_handoff.md`
+  `docs/agent-workflow/handoffs/2026-07-31_POS-01_REL-05_codex_handoff.md`
 - دليل الإدارة وتدريب الموظفين: `docs/STAFF_APP_GUIDE_AR.md`
 - دليل السوبر أدمن الأمني: `docs/SUPER_ADMIN_GUIDE_AR.md`

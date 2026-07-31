@@ -1,6 +1,6 @@
 # الخطة التنفيذية النهائية الحية — El Kheima Resort OS
 
-**آخر تحديث مثبت:** 2026-07-30 بعد نشر Timeshare وإصدار Marketing الجديد
+**آخر تحديث مثبت:** 2026-07-31 بعد نشر إصلاح تبديل منافذ الـPOS
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **الحالة:** النشر والبيانات وChatbot وDNS ومسار الحسابات مكتملة؛ الحسابات
@@ -14,7 +14,7 @@
    `https://app.elkheima.com`.
 4. DNS cutover أُجيز صراحةً في 30 يوليو 2026 واكتمل. أي تعديل DNS جديد
    يحتاج نطاقًا واضحًا ونقطة تراجع؛ لا Reset DNS ولا AAAA دون IPv6 فعلي.
-5. مصدر الإنتاج Resort OS هو release immutable `679f76e`، ومصدر الموقع
+5. مصدر الإنتاج Resort OS هو release immutable `a3e8abb`، ومصدر الموقع
    التسويقي المستقل هو `16f8f2c`.
 6. لا `git pull` أو reset أو تنظيف أو rebuild فوق مجلدات المصدر القديمة.
 7. لا أسرار في Git أو logs أو handoffs؛ أسرار Compose تُشتق في الذاكرة.
@@ -22,15 +22,13 @@
    `production_demo_seed`؛ البيانات الحقيقية تحتاج اعتماد المالك والتشغيل.
 9. كل نشر يحتاج backup وrollback وhealth evidence وsource digest.
 10. أي تعليمات تحت `docs/archive/` تاريخية وممنوع تنفيذها.
-11. `scripts/wait-dns-then-switch.sh` ملف مستخدم خارج التشغيل؛ لا يُعدّل
-    أو يُشغّل.
 
 ## 2. خط الأساس المثبت
 
 ### الكود
 
 - branch: `claude/CX-02C-frontend-auth-bootstrap`.
-- Resort source release: `679f76e`، مدفوع على فرع العمل.
+- Resort source release: `a3e8abb`، مدفوع على فرع العمل.
 - Marketing source release: `16f8f2c`، مدفوع على `main` في مستودعه المستقل.
 - `origin/main` في Resort OS بقي عند `598938e`.
 - Alembic single head: `88d1c505a9dc`.
@@ -45,11 +43,12 @@
 - SSH بالمفتاح كمستخدم `resortos` مع sudo وDocker.
 - root login وpassword auth مغلقان؛ UFW وFail2ban والـloopback bindings
   لم تُضعف.
-- `/opt/resort-os-current -> /opt/resort-os-releases/679f76e`.
+- `/opt/resort-os-current -> /opt/resort-os-releases/a3e8abb`.
 - `/opt/elkheima-marketing-current ->
   /opt/elkheima-marketing-releases/16f8f2c`.
-- Backend وCelery وتطبيق الموظفين والـedge تستخدم release `679f76e`.
-  Marketing يستخدم مصدره المستقل `16f8f2c`.
+- تطبيق الموظفين والـedge يستخدمان release `a3e8abb`؛ Backend وCelery
+  بقيا على `679f76e` لأن الإصدار الأخير Frontend-only. Marketing يستخدم
+  مصدره المستقل `16f8f2c`.
 - الحاويات الثماني `restarts=0`، وكل healthchecks المعرّفة سليمة.
 - 8 حاويات تعمل؛ الخدمات ذات healthcheck سليمة.
 - PostgreSQL وRedis لم يُعاد إنشاؤهما أثناء النشر.
@@ -185,6 +184,18 @@
 - Marketing release `16f8f2c` نُشر بعد build canary وDB backup وrollback
   image، واجتاز الدومين والـhealth gate.
 
+### P0-10 — إصلاح الطلب متعدد المنافذ في الـPOS
+
+**الحالة:** COMPLETE — 2026-07-31
+
+- عند وجود طلب محفوظ في الـBackend، يغيّر الكاشير المنفذ والمنيو دون
+  إلغاء الطلب أو إظهار نافذة التحذير.
+- السلة المحلية غير المرسلة فقط ما زالت تطلب التأكيد قبل تغيير المنفذ.
+- release `a3e8abb` نُشر كتغيير Frontend محدود بعد full regression، build
+  canary، DB backup وrollback tags.
+- الدومينات والحاويات وDB/Redis وTLS وhealth timer اجتازت قبول ما بعد
+  النشر، وملف Bundle المنشور طابق البناء المحلي بالـSHA-256.
+
 ## 5. العمل الحالي بالترتيب
 
 ### P1-UAT
@@ -230,6 +241,8 @@
   `docs/agent-workflow/handoffs/2026-07-30_ACC-01_REL-04_codex_handoff.md`
 - تسليم Marketing وTimeshare:
   `docs/agent-workflow/handoffs/2026-07-30_MKT-02_codex_handoff.md`
+- تسليم إصلاح الـPOS والإصدار الحالي:
+  `docs/agent-workflow/handoffs/2026-07-31_POS-01_REL-05_codex_handoff.md`
 - تسليم البيانات وChatbot:
   `docs/agent-workflow/handoffs/2026-07-30_DATA-01_CHAT-01_codex_handoff.md`
 - التاريخ القديم: `docs/archive/2026-07-execution/`

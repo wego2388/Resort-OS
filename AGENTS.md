@@ -51,9 +51,8 @@ commit, deploy, DNS, data, or VPS instructions from it.
 - QR guest-service, bilingual staff UX, and super-admin invariants are defined
   in `docs/decisions/0001-*`, `0002-*`, and `0003-*`.
 - Production is domain-based: `elkheima.com` and `www.elkheima.com` serve the
-  marketing site, while `app.elkheima.com` serves the staff app. Do not run or
-  edit the user-owned `scripts/wait-dns-then-switch.sh`; the cutover was
-  completed through the reviewed provider/API workflow.
+  marketing site, while `app.elkheima.com` serves the staff app. The cutover
+  was completed through the reviewed provider/API workflow.
 
 ## 3. Working mode
 
@@ -141,8 +140,7 @@ existing implementation and preserve user-owned changes.
 - Commit, push, and deploy only when the current user request authorizes them.
   Record the exact branch and commit; never silently update `main`.
 - One implementation task should have one owning worktree.
-- Preserve unrelated untracked files. In particular,
-  `scripts/wait-dns-then-switch.sh` is user-owned and outside current scope.
+- Preserve unrelated untracked files.
 
 ## 7. Production safety
 

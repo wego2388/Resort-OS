@@ -52,7 +52,6 @@ from the domain override without an explicit reviewed rollback.
 - Every release needs a reviewed commit, archive SHA-256, DB backup, previous
   image tags, migration compatibility check, and external smoke tests.
 - Never run `app.seed` in production.
-- Never run or edit the user-owned `scripts/wait-dns-then-switch.sh`.
 - Never use a provider "Reset DNS" operation. Update reviewed RRsets only and
   preserve a provider snapshot before a later DNS change.
 - A compatible application rollback does not justify restoring the database.

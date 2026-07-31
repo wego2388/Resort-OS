@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-07-30 بعد نشر Timeshare وإصدار Marketing الجديد
+**آخر تحقق:** 2026-07-31 بعد نشر إصلاح تبديل منافذ الـPOS
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -12,20 +12,20 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `679f76e` |
+| Resort OS source release | `a3e8abb` |
 | Marketing source release | `16f8f2c` من المستودع المستقل |
-| remote | فرع العمل يحتوي `679f76e` ثم تحديثات توثيق ما بعد النشر |
+| remote | فرع العمل يحتوي `a3e8abb` ثم تحديثات توثيق ما بعد النشر |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/679f76e` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/679f76e` |
+| active Resort release | `/opt/resort-os-releases/a3e8abb` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/a3e8abb` |
 | active Marketing release | `/opt/elkheima-marketing-releases/16f8f2c` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/16f8f2c` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
-`/var/backups/resort-os/source-releases/679f76e.tar.gz`،
+`/var/backups/resort-os/source-releases/a3e8abb.tar.gz`،
 SHA-256
-`3e8b9a2b88746f93dd578d17dc2f010c0c63e21ccb9a5f82c1c40bff856110a8`.
+`2ff370284727ae57688c4efda9dad22db2729abf45fbbfe3dc276e78d7388bad`.
 
 أرشيف Marketing:
 `/var/backups/resort-os/marketing-source-releases/16f8f2c.tar.gz`،
@@ -38,9 +38,10 @@ SHA-256
 
 ## 2. الخدمات الفعالة
 
-- الخدمات التي شملها الإصدار (`backend`, `celery_worker`, `celery_beat`,
-  `el_kheima`, `nginx`) تحمل
-  `com.docker.compose.project.working_dir=/opt/resort-os-releases/679f76e`.
+- `el_kheima` و`nginx` يحملان
+  `com.docker.compose.project.working_dir=/opt/resort-os-releases/a3e8abb`.
+  Backend وCelery بقيا على الإصدار المتوافق `679f76e` لأن التغيير Frontend
+  فقط، ولم يُعاد بناؤهما أو تشغيلهما.
 - `marketing_site` مبني من المصدر المستقل `16f8f2c` عبر
   `/opt/elkheima-marketing-current`.
 - Backend image:
@@ -50,7 +51,7 @@ SHA-256
 - Celery beat:
   `sha256:df6030ab9d1679f0f16ca655c43d42bd99d16260d3f584bceb7664d4955bd794`.
 - El Kheima staff app:
-  `sha256:b638351fb3abebea2fa038cb39d26ab3c7632bf71f2e677b0830f27591e8feb1`.
+  `sha256:397ae1ab6fb44c34b2d27b95f2313a1ee43d126ec6f7aed52a2b017d5de78fb8`.
 - Marketing image:
   `sha256:277ff191eb630c4313ff728aabfda5e3fbc205c72432e97408b13c03d7358d2e`.
 - Nginx:
@@ -58,7 +59,7 @@ SHA-256
 - 8 حاويات Running وكل healthchecks المعرّفة سليمة. الحاويات الثماني
   `RestartCount=0` بعد القطع.
 - PostgreSQL وRedis بقيا على volumes والحاويات طويلة العمر ولم يُعاد
-  إنشاؤهما أثناء cutover.
+  إنشاؤهما أثناء النشر.
 
 ## 3. DNS وTLS والـedge
 
@@ -107,6 +108,11 @@ SHA-256
   consent وidempotency. لا تعرض أسعارًا أو تضمن توفرًا أو شروطًا تعاقدية.
 - ترجمات Marketing متطابقة: 2919 مفتاحًا في كل من العربية والإنجليزية
   والروسية والإيطالية، وصور الأنشطة والفعاليات راجعها Codex بصريًا.
+- تطبيق الموظفين المنشور يحتوي إصلاح تبديل المنفذ للطلب القائم: وجود
+  `pendingOrderId` يغيّر المنيو دون إلغاء الطلب، أما السلة المحلية وحدها
+  فتحتفظ بنافذة التأكيد. ملف `UnifiedPOSView` المنشور طابق البناء المحلي
+  عند SHA-256
+  `0339d0eb7ca8c93a9a9fa081d74e13c6b47a6bc78d9940bfa8b2a024388dea87`.
 - فحص logs النهائي لخدمات backend/worker/beat/staff/marketing/nginx:
   صفر أنماط severe ضمن نافذة الفحص.
 
@@ -174,6 +180,8 @@ SHA-256
   أمني بعد تعديل الربط: 31 passed.
 - frontend: 95/95 عبر 13 ملف اختبار.
 - frontend type-check وproduction build: passed.
+- full backend release regression: 2181 passed و40 skipped، صفر failure؛
+  Alembic بقي عند head واحد `88d1c505a9dc`.
 - Marketing `truth`, `type-check`, `build`: passed.
 - `agent-check`: passed بعد تغييرات النشر؛ Alembic single head
   `88d1c505a9dc`؛ `git diff --check`: passed.
@@ -203,12 +211,19 @@ SHA-256
 - `resort-os-backup.timer`, `resort-os-certbot-renew.timer`,
   `resort-os-healthcheck.timer` مثبتة ومفعلة.
 - أرشيف الإصدار الحالي:
-  `/var/backups/resort-os/source-releases/679f76e.tar.gz`،
+  `/var/backups/resort-os/source-releases/a3e8abb.tar.gz`،
   SHA-256
-  `3e8b9a2b88746f93dd578d17dc2f010c0c63e21ccb9a5f82c1c40bff856110a8`.
-- صور ما قبل `679f76e` محفوظة تحت
-  `resort-os-rollback/*:pre-679f76e`، والـmanifest المحمي:
-  `/var/backups/resort-os/source-releases/679f76e-rollback-images.txt`.
+  `2ff370284727ae57688c4efda9dad22db2729abf45fbbfe3dc276e78d7388bad`.
+- صور ما قبل `a3e8abb` محفوظة تحت
+  `resort-os-rollback/*:pre-a3e8abb`، والـmanifest المحمي:
+  `/var/backups/resort-os/source-releases/a3e8abb-rollback-images.txt`،
+  SHA-256
+  `f904b6922081b17630814893708e39a543614d8652c2ce974922ec0fbd8f8fec`.
+- نسخة DB السابقة مباشرة لنشر إصلاح الـPOS:
+  `/var/backups/resort-os/database/resort_os_20260731_210536.dump`،
+  SHA-256
+  `5dd553f00433f0d7b70e3fcd54518c3c0c1770494efe6c4429dbd2858720aa1d`؛
+  اجتازت `pg_restore --list`.
 - نسخة DB السابقة مباشرة للقطع:
   `/var/backups/resort-os/database/resort_os_20260730_062529.dump`،
   SHA-256
@@ -231,6 +246,7 @@ SHA-256
 | الحزمة | الحالة |
 |---|---|
 | REL-04 — staff-control-plane deploy | COMPLETE |
+| REL-05 — multi-outlet POS fix deploy | COMPLETE |
 | DATA-01-DEMO — realistic synthetic dataset | COMPLETE |
 | CHAT-01 — chatbot activation/live verification | COMPLETE |
 | DNS-01 — domain/TLS cutover | COMPLETE |
