@@ -525,7 +525,14 @@ async function onDirectPaymentCompleted(order: DiningOrderDetail) {
 async function selectOutlet(value: string | number) {
   const nextId = Number(value)
   if (nextId === selectedOutletId.value) return
-  if (hasItems.value || pendingOrderId.value !== null) {
+
+  if (pendingOrderId.value !== null) {
+    selectedOutletId.value = nextId
+    await loadMenu()
+    return
+  }
+
+  if (hasItems.value) {
     const accepted = await confirm({
       title: t('backoffice.pos.switchOutlet.title'),
       message: t('backoffice.pos.switchOutlet.message'),
