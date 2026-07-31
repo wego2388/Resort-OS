@@ -1,8 +1,8 @@
 # POS-01 / REL-05 — Multi-outlet order fix and production release
 
-**التاريخ:** 2026-07-31  
-**المالك:** Mohamed  
-**المنفذ والمراجع النهائي:** Codex  
+**التاريخ:** 2026-07-31
+**المالك:** Mohamed
+**المنفذ والمراجع النهائي:** Codex
 **الحالة:** COMPLETE
 
 ## 1. النتيجة
