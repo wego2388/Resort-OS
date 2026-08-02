@@ -235,6 +235,44 @@ class TestResolveServiceLocationPublic:
         resp = client.get("/api/v1/public/service-location", params={"token": "does-not-exist"})
         assert resp.status_code == 404
 
+    def test_room_location_exposes_dining_outlets_for_room_service(self, client: TestClient, db):
+        """⚠️ باج حقيقي اتصلح (2026-08-02): core.services._guest_service_
+        outlets كان محصور على dining_table بس — ضيف في أوضته (DigitalHub.
+        vue's تاب "روم سيرفس") كان بيوصله outlets=[] فارغة تمامًا، يعني
+        منيو الأكل بيفضل فاضي من الأساس. الأوضة لازم تشوف نفس منافذ
+        المطعم/الكافيه النشطة زي طاولة الدايننج بالظبط."""
+        from app.modules.pms.models import Room, RoomType
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.schemas import OutletCreate
+
+        branch = make_branch(db)
+        dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم الأوضة", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        rt = RoomType(branch_id=branch.id, name="Standard", base_rate=Decimal("500.00"), max_occupancy=2)
+        db.add(rt)
+        db.flush()
+        room = Room(branch_id=branch.id, room_type_id=rt.id, name="R-101", floor=1, status="available")
+        db.add(room)
+        db.commit()
+        db.refresh(room)
+
+        headers = make_branch_linked_headers(db, branch, role="manager")
+        minted = client.post(
+            "/api/v1/service-location-tokens",
+            json={"branch_id": branch.id, "location_type": "room", "location_id": room.id},
+            headers=headers,
+        ).json()
+
+        resp = client.get("/api/v1/public/service-location", params={"token": minted["token"]})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["location_type"] == "room"
+        assert room.name in body["location_label"]
+        assert len(body["outlets"]) == 1
+        assert body["outlets"][0]["name"] == "مطعم الأوضة"
+
     def test_guest_session_is_hashed_and_rotation_revokes_it(self, client: TestClient, db):
         import hashlib
         from app.modules.core.models import GuestSession

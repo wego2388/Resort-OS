@@ -3648,6 +3648,10 @@
         "readyToOrder": "Ready to order",
         "assistance": "Assistance",
         "requestBill": "Request bill",
+        "breakfast": "Room breakfast request",
+        "towels": "Extra towels request",
+        "lateCheckout": "Late checkout request",
+        "dnd": "Do not disturb",
         "other": "Other request"
       }
     },

@@ -1632,7 +1632,16 @@ def _lock_service_location(
 
 
 def _guest_service_outlets(db: Session, location: ServiceLocationToken) -> list[GuestServiceOutletRead]:
-    if location.location_type != "dining_table":
+    """⚠️ باج حقيقي اتصلح (2026-08-02): كان محصور على dining_table بس —
+    يعني ضيف في أوضة (location_type="room") كان بيوصله من GET
+    /public/service-location قايمة outlets فاضية تمامًا، فمنيو الأكل في
+    DigitalHub.vue (تاب "روم سيرفس") كان بيفضل فاضي من غير أي طريقة يعرض
+    بيها صنف واحد — قبل حتى ما يوصل لخطوة الطلب نفسها (اللي كانت مرفوضة
+    هي كمان، راجع create_guest_order في dining/api/router.py). أوضة
+    الضيف بتطلب من نفس منافذ المطعم/الكافيه النشطة في الفرع بالظبط زي
+    طاولة الدايننج — "روم سيرفس" مفهوميًا هو نفس المنيو، بس التسليم
+    للأوضة بدل الطاولة."""
+    if location.location_type not in ("dining_table", "room"):
         return []
     from app.modules.dining import crud as dining_crud  # noqa: PLC0415
     return [

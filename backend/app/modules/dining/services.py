@@ -552,7 +552,20 @@ def create_order(
     guest_session_id: Optional[int] = None,
     guest_public_reference: Optional[str] = None,
     allow_cross_outlet: bool = False,
+    client_local_id: Optional[str] = None,
 ) -> DiningOrder:
+    """⚠️ باج حقيقي اتصلح (2026-08-02): POST /dining/public/orders (الضيف
+    بيطلب من QR الطاولة، بدون auth) ماكانش عنده أي حماية idempotency خالص
+    — رد فقد بعد timeout/network drop، وبعدين إعادة إرسال من الضيف (تلقائي
+    أو يدوي)، كان بينشئ طلب طعام حقيقي تاني (تذكرة مطبخ تانية، إيراد
+    مزدوج محتمل). نفس آلية client_local_id المستخدمة بالفعل في
+    sync_offline_order (POS بدون إنترنت) — عمود موجود بالفعل على
+    DiningOrder بقيد UNIQUE عام، مفيش migration جديدة محتاجة."""
+    if client_local_id:
+        existing = crud.get_order_by_local_id(db, client_local_id)
+        if existing is not None:
+            return existing
+
     outlet = _get_outlet_or_404(db, data.outlet_id)
     if outlet.branch_id != branch_id:
         # Gate 1 containment (جولة تصحيح ثانية): دايمًا صحيح للمسار
@@ -673,6 +686,7 @@ def create_order(
             created_by=waiter_id,
             guest_session_id=guest_session_id,
             guest_public_reference=guest_public_reference,
+            client_local_id=client_local_id,
         )
     except IntegrityError as exc:
         db.rollback()
@@ -719,6 +733,12 @@ def _raise_order_integrity_error(exc: IntegrityError) -> None:
         raise ValueError("الطاولة مشغولة بطلب نشط بالفعل (سباق فتح مزدوج)") from exc
     if "order_number" in detail:
         raise ValueError("رقم الطلب اتكرر بسبب طلب متزامن — أعد المحاولة") from exc
+    if "client_local_id" in detail:
+        # سباق حقيقي: نفس client_local_id اتبعت مرتين في نفس اللحظة بالظبط
+        # (بين فحص get_order_by_local_id في بداية create_order والـcommit
+        # هنا) — الفحص المبدئي مايكفيش لوحده تحت تزامن حقيقي، والقيد على
+        # مستوى الـDB هو الـbackstop النهائي. رسالة واضحة بدل IntegrityError خام.
+        raise ValueError("الطلب ده اتسجّل بالفعل (retry متزامن) — تحقق من حالة الطلب الحالية") from exc
     raise exc
 
 

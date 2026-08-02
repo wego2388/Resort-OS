@@ -3648,6 +3648,10 @@
         "readyToOrder": "جاهز للطلب",
         "assistance": "طلب مساعدة",
         "requestBill": "طلب فاتورة",
+        "breakfast": "طلب فطار للأوضة",
+        "towels": "طلب فوط إضافية",
+        "lateCheckout": "طلب تأخير الـ checkout",
+        "dnd": "عدم إزعاج",
         "other": "طلب آخر"
       }
     },

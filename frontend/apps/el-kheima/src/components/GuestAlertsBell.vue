@@ -47,6 +47,13 @@ const ALERT_UI: Record<string, { icon: string; key: string }> = {
   ready_to_order:{ icon: '🍽️', key: 'readyToOrder' },
   assistance:    { icon: '🙋', key: 'assistance' },
   request_bill:  { icon: '🧾', key: 'requestBill' },
+  // طلبات الأوضة السريعة (DigitalHub.vue) — كانت كلها بتتبعت كـ"assistance"
+  // واحد فيدّوب بعضها في بعض (باج اتصلح 2026-08-02)، دلوقتي كل واحد نوعه
+  // مستقل فلازم أيقونة/تسمية مستقلة هنا برضو.
+  breakfast:     { icon: '🍳', key: 'breakfast' },
+  towels:        { icon: '🛁', key: 'towels' },
+  late_checkout: { icon: '🕐', key: 'lateCheckout' },
+  dnd:           { icon: '🔕', key: 'dnd' },
   other:         { icon: '❗', key: 'other' },
 }
 

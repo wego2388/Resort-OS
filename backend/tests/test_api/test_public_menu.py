@@ -317,6 +317,86 @@ class TestPublicOrderEndpoint:
         }, headers=headers)
         assert resp.status_code == 201, resp.text
 
+    def test_idempotency_key_replay_returns_same_order_not_a_duplicate(self, client: TestClient, db):
+        """باج حقيقي اتصلح (2026-08-02): POST /dining/public/orders ماكانش
+        عنده أي حماية idempotency خالص — رد فقد بعد timeout/network drop
+        (بعد ما الباك إند كتب الطلب فعلاً) وبعدين إعادة إرسال من الضيف كان
+        بينشئ طلب طعام حقيقي تاني (تذكرة مطبخ مكررة). نفس Idempotency-Key
+        مرتين لازم يرجّع نفس الطلب بالظبط (نفس public_reference/order_number)،
+        مش يفتح طلب تاني."""
+        from app.modules.dining.models import DiningOrder
+        branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
+        table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
+        headers["Idempotency-Key"] = "guest-retry-key-" + uuid.uuid4().hex
+
+        payload = {"outlet_id": outlet.id, "items": [{"item_id": item.id, "quantity": 1}]}
+        resp1 = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
+        assert resp1.status_code == 201, resp1.text
+        resp2 = client.post("/api/v1/dining/public/orders", json=payload, headers=headers)
+        assert resp2.status_code == 201, resp2.text
+
+        assert resp1.json()["public_reference"] == resp2.json()["public_reference"]
+        assert resp1.json()["order_number"] == resp2.json()["order_number"]
+
+        orders = db.query(DiningOrder).filter(DiningOrder.branch_id == branch.id).all()
+        assert len(orders) == 1, (
+            f"لازم يفضل طلب واحد بس في الـDB بعد إعادة إرسال بنفس المفتاح — "
+            f"الموجود: {len(orders)}"
+        )
+
+    def test_missing_idempotency_key_still_works(self, client: TestClient, db):
+        """الحقل اختياري — طلب من غير Idempotency-Key خالص لازم يفضل يشتغل
+        عادي (توافق خلفي مع أي عميل قديم/تاني مبيبعتوش الهيدر ده)."""
+        branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
+        table  = make_table(db, branch, outlet)
+        headers = guest_session_headers(client, db, branch, table)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        }, headers=headers)
+        assert resp.status_code == 201, resp.text
+
+    def test_different_idempotency_keys_create_separate_orders(self, client: TestClient, db):
+        """مفتاحين مختلفين لازم يبقوا طلبين حقيقيين منفصلين فعلاً — الحماية
+        دي مش المفروض تمنع طلبات شرعية متتالية بالغلط. طاولتين منفصلتين
+        عشان نتجنّب قيد uq_active_order_per_table (طلب نشط واحد بس لكل
+        طاولة) اللي مش موضوع التست ده."""
+        from app.modules.dining.models import DiningOrder
+        branch  = make_branch(db)
+        enable_self_order(db, branch)
+        outlet  = make_outlet(db, branch)
+        cat     = make_category(db, branch, outlet)
+        item    = make_item(db, branch, outlet, cat)
+        from app.modules.dining.models import VenueTable
+        table_a = make_table(db, branch, outlet)
+        table_b = VenueTable(branch_id=branch.id, table_number="T6", capacity=4, status="available")
+        db.add(table_b)
+        db.commit()
+
+        resp1 = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id, "items": [{"item_id": item.id, "quantity": 1}],
+        }, headers={**guest_session_headers(client, db, branch, table_a), "Idempotency-Key": "key-a-" + uuid.uuid4().hex})
+        assert resp1.status_code == 201, resp1.text
+
+        resp2 = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id, "items": [{"item_id": item.id, "quantity": 1}],
+        }, headers={**guest_session_headers(client, db, branch, table_b), "Idempotency-Key": "key-b-" + uuid.uuid4().hex})
+        assert resp2.status_code == 201, resp2.text
+
+        assert resp1.json()["public_reference"] != resp2.json()["public_reference"]
+        orders = db.query(DiningOrder).filter(DiningOrder.branch_id == branch.id).all()
+        assert len(orders) == 2
+
     def test_table_from_different_branch_rejected(self, client: TestClient, db):
         """Gate 1 containment: الطاولة لازم تتبع نفس الفرع على الأقل — منع
         ضيف يخمّن table_id تابع لفرع تاني تمامًا (الحماية الحقيقية المتبقية)."""
@@ -452,6 +532,103 @@ class TestPublicOrderEndpoint:
         headers = guest_session_headers(client, db, branch, table)
         resp = client.post("/api/v1/dining/public/orders", json={
             "outlet_id": 999999, "items": [{"item_id": 1, "quantity": 1}],
+        }, headers=headers)
+        assert resp.status_code == 400
+
+
+def make_room(db, branch):
+    from app.modules.pms.models import Room, RoomType
+    rt = RoomType(branch_id=branch.id, name="Standard", base_rate=Decimal("500.00"), max_occupancy=2)
+    db.add(rt)
+    db.flush()
+    r = Room(branch_id=branch.id, room_type_id=rt.id,
+              name=f"R-{uuid.uuid4().hex[:6].upper()}", floor=1, status="available")
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return r
+
+
+def guest_room_session_headers(client: TestClient, db, branch, room) -> dict[str, str]:
+    import secrets
+    from app.modules.core import crud as core_crud
+
+    token = secrets.token_urlsafe(24)
+    core_crud.create_service_location_token(
+        db, token=token, branch_id=branch.id,
+        location_type="room", location_id=room.id, created_by=None,
+    )
+    db.commit()
+    response = client.post("/api/v1/public/guest-sessions", json={"token": token})
+    assert response.status_code == 201, response.text
+    return {"X-Guest-Session": response.json()["session_token"]}
+
+
+class TestPublicOrderRoomServiceEndpoint:
+    """⚠️ باج حقيقي اتصلح (2026-08-02): POST /dining/public/orders كان
+    بيرفض location_type != "dining_table" صراحةً — يعني ضيف في أوضته
+    (DigitalHub.vue's تاب "روم سيرفس") كان مستحيل يطلب أكل خالص، رغم إن
+    الفرونت إند بيبعت لنفس الـendpoint ده بالظبط. راجع core.services.
+    _guest_service_outlets للفجوة الموازية (المنيو نفسه كان بيوصل فاضي)."""
+
+    def test_room_guest_can_place_order(self, client: TestClient, db):
+        branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
+        room   = make_room(db, branch)
+        headers = guest_room_session_headers(client, db, branch, room)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "items": [{"item_id": item.id, "quantity": 1}],
+        }, headers=headers)
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["public_reference"].startswith("ord_")
+
+    def test_room_service_order_has_no_table_and_carries_room_label(self, client: TestClient, db):
+        """table_id لازم يفضل None (مفيش طاولة فعلية)، order_type يبقى
+        room_service، ورقم الأوضة يوصل النادل/المطبخ عبر notes."""
+        from app.modules.dining.models import DiningOrder
+
+        branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet = make_outlet(db, branch)
+        cat    = make_category(db, branch, outlet)
+        item   = make_item(db, branch, outlet, cat)
+        room   = make_room(db, branch)
+        headers = guest_room_session_headers(client, db, branch, room)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet.id,
+            "notes": "من غير بصل",
+            "items": [{"item_id": item.id, "quantity": 1}],
+        }, headers=headers)
+        assert resp.status_code == 201, resp.text
+
+        order = db.query(DiningOrder).filter(
+            DiningOrder.guest_public_reference == resp.json()["public_reference"],
+        ).one()
+        assert order.table_id is None
+        assert order.order_type == "room_service"
+        assert room.name in order.notes
+        assert "من غير بصل" in order.notes
+
+    def test_room_guest_cannot_order_cross_outlet(self, client: TestClient, db):
+        """Gate 1 containment لسه سارٍ برضو للأوضة — نفس قيد الطاولة بالظبط."""
+        branch = make_branch(db)
+        enable_self_order(db, branch)
+        outlet_a = make_outlet(db, branch, name="مطعم أ")
+        outlet_b = make_outlet(db, branch, name="مطعم ب")
+        cat_b    = make_category(db, branch, outlet_b)
+        item_b   = make_item(db, branch, outlet_b, cat_b)
+        room     = make_room(db, branch)
+        headers = guest_room_session_headers(client, db, branch, room)
+
+        resp = client.post("/api/v1/dining/public/orders", json={
+            "outlet_id": outlet_a.id,
+            "items": [{"item_id": item_b.id, "quantity": 1}],
         }, headers=headers)
         assert resp.status_code == 400
 

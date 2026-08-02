@@ -362,6 +362,86 @@ class TestCreateGuestAlertPublic:
         assert row.status == "expired"
 
 
+def make_room(db, branch):
+    """context_type="room" location للأربع "طلبات الأوضة السريعة"
+    (breakfast/towels/late_checkout/dnd من DigitalHub.vue) — نفس نمط
+    test_pms.py's make_room بس من غير RoomType (مش محتاجينه هنا)."""
+    from app.modules.pms.models import Room, RoomType
+    rt = RoomType(branch_id=branch.id, name="Standard", base_rate=500, max_occupancy=2)
+    db.add(rt)
+    db.flush()
+    r = Room(branch_id=branch.id, room_type_id=rt.id,
+              name=f"R-{uuid.uuid4().hex[:6].upper()}", floor=1, status="available")
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return r
+
+
+class TestRoomQuickActions:
+    """⚠️ باج حقيقي اتصلح (2026-08-02): الأربع طلبات السريعة من الأوضة
+    (breakfast/towels/late_checkout/dnd، DigitalHub.vue) كانوا كلهم بيتبعتوا
+    بـalert_type="assistance" واحد مشترك — create_guest_alert's dedup بيقارن
+    على (context, alert_type) بس، مش الرسالة، فطلب "فوط" لسه مفتوح كان بيبلع
+    طلب "تأخير checkout" اللي بعده صامتًا (بيرجّع نفس صف الفوط القديم).
+    كل نوع بقى alert_type مستقل."""
+
+    def test_two_different_quick_actions_same_room_both_created(self, client: TestClient, db):
+        branch = make_branch(db)
+        room = make_room(db, branch)
+        enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, room.id, location_type="room")
+        headers = guest_session_headers(client, token)
+
+        towels = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "towels", "message": "طلب فوط إضافية",
+        }, headers=headers)
+        assert towels.status_code == 201, towels.text
+
+        late_checkout = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "late_checkout", "message": "طلب تأخير الـ checkout",
+        }, headers=headers)
+        assert late_checkout.status_code == 201, late_checkout.text
+
+        assert towels.json()["public_reference"] != late_checkout.json()["public_reference"]
+        assert not towels.json()["deduplicated"]
+        assert not late_checkout.json()["deduplicated"]
+
+    def test_repeating_same_quick_action_still_dedups(self, client: TestClient, db):
+        """كل نوع مستقل بذاته، بس الـdedup الأصلي لسه شغال لنفس النوع —
+        ضغط "فوط" مرتين بالغلط لسه بيرجّع نفس الطلب المفتوح، مش صف جديد."""
+        branch = make_branch(db)
+        room = make_room(db, branch)
+        enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, room.id, location_type="room")
+        headers = guest_session_headers(client, token)
+
+        first = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "dnd", "message": "عدم الإزعاج",
+        }, headers=headers)
+        assert first.status_code == 201, first.text
+
+        second = client.post("/api/v1/public/guest-requests", json={
+            "alert_type": "dnd", "message": "عدم الإزعاج",
+        }, headers=headers)
+        assert second.status_code == 201, second.text
+        assert second.json()["public_reference"] == first.json()["public_reference"]
+        assert second.json()["deduplicated"] is True
+
+    def test_all_four_quick_action_types_accepted(self, client: TestClient, db):
+        branch = make_branch(db)
+        room = make_room(db, branch)
+        enable_guest_alerts(db, branch)
+        token = make_service_location_token(db, branch, room.id, location_type="room")
+        headers = guest_session_headers(client, token)
+
+        for alert_type in ("breakfast", "towels", "late_checkout", "dnd"):
+            resp = client.post("/api/v1/public/guest-requests", json={
+                "alert_type": alert_type,
+            }, headers=headers)
+            assert resp.status_code == 201, resp.text
+
+
 class TestStaffAlertsFeed:
     def test_list_alerts_requires_auth(self, client: TestClient, db):
         branch = make_branch(db)

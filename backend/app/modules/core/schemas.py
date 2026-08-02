@@ -496,7 +496,18 @@ class AuthBootstrapRead(BaseModel):
 # ENABLED اتفعّل. راجع docs/decisions/0001-qr-guest-service-mode.md's
 # "known current gaps" — نفس الباج الموثّق هناك، دلوقتي مُصلَّح فعليًا.
 _CONTEXT_TYPE_PATTERN = r"^(dining_table|beach_location|room|other)$"
-_ALERT_TYPE_PATTERN = r"^(call_waiter|ready_to_order|assistance|request_bill|other)$"
+# baseline الأربعة + baseline الأربع "طلبات الأوضة السريعة" (breakfast/
+# towels/late_checkout/dnd من DigitalHub.vue). ⚠️ باج حقيقي اتصلح
+# (2026-08-02): الأربعة دول كانوا بيتبعتوا كلهم بـalert_type="assistance"
+# واحد — والـdedup في create_guest_alert() بيقارن على (context, alert_type)
+# بس، مش الرسالة. يعني لو ضيف طلب "فوط" ولسه الطلب مفتوح، طلب "تأخير
+# checkout" بعدها كان بيترجّع نفس تنبيه الفوط القديم من غير ما يتسجّل خالص
+# — الضيف يشوف "تم ✅" والموظف عمره ما يستلم الطلب التاني. كل نوع بقى له
+# alert_type مستقل فيتم تتبعه/dedup بشكل صحيح.
+_ALERT_TYPE_PATTERN = (
+    r"^(call_waiter|ready_to_order|assistance|request_bill|"
+    r"breakfast|towels|late_checkout|dnd|other)$"
+)
 
 
 class GuestAlertCreate(BaseModel):

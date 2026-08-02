@@ -1212,38 +1212,94 @@ def get_guest_service_menu(
     tags=["dining-public"],
     summary="تقديم طلب من الضيف (QR) — بدون auth",
 )
-def create_guest_order(
+async def create_guest_order(
     data: GuestOrderCreate,
     db: DbDep,
     x_guest_session: str = Header(..., alias="X-Guest-Session"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
-    """Public endpoint — لا يحتاج login. الضيف يطلب من القائمة عبر QR الطاولة.
-    - order_type ثابت dine_in
+    """Public endpoint — لا يحتاج login. الضيف يطلب من القائمة عبر QR
+    الطاولة (dine_in) أو QR الأوضة (room_service — راجع باج ⚠️ تحت).
     - waiter_id = None (النادل يتولى التذكرة من KDS/POS بعدين)
-    - مفيش customer_id (ضيف مجهول، مفيش تسجيل دخول)"""
+    - مفيش customer_id (ضيف مجهول، مفيش تسجيل دخول)
+
+    ⚠️ باج حقيقي اتصلح (2026-08-02): مفيش أي حماية idempotency كانت موجودة
+    خالص — رد فقد بعد timeout/network drop (بعد ما الباك إند كتب الطلب
+    فعلاً) وبعدين إعادة إرسال من الضيف كان بينشئ طلب طعام حقيقي تاني
+    (تذكرة مطبخ مكررة). Idempotency-Key (اختياري لكن الفرونت إند بيبعته
+    دايمًا) بيتخزّن على DiningOrder.client_local_id (نفس العمود المستخدم
+    فعلاً في مزامنة POS بدون إنترنت، UNIQUE عام) — تطابق المفتاح كافي
+    (نفس نموذج ثقة guest_public_reference: مرجع عشوائي 128-bit كفاية،
+    مفيش أي تحقق ملكية إضافي على أي مسار عام تاني في الملف ده). الفحص
+    الفعلي والـreplay بالكامل جوه services.create_order (مصدر واحد
+    للمنطق، مش مكرر هنا).
+
+    ⚠️ باج حقيقي أوسع اتصلح في نفس الجولة (2026-08-02): الـendpoint ده كان
+    بيرفض location_type != "dining_table" صراحةً — يعني تاب "روم سيرفس"
+    في DigitalHub.vue (الضيف في أوضته بيطلب من منيو المطعم/الكافيه) كان
+    بيترفض 400 دايمًا "الطلب الذاتي متاح من QR الطاولة فقط"، رغم إن
+    الفرونت إند بيبعت لنفس الـendpoint ده بالظبط (وقايمة المنيو نفسها
+    كانت فاضية من الأساس — راجع core.services._guest_service_outlets's
+    إصلاح المرافق). دلوقتي "room" مقبول: table_id يفضل None (مفيش طاولة
+    فعلية)، order_type بقى "room_service"، ورقم الأوضة بيتحط في notes
+    عشان النادل/المطبخ يعرفوا يوصّلوا فين — الطلب ده هيظهر لهم في "الطلبات
+    النشطة" (POSActiveOrdersWorkspace.vue بيعرض tableLabel = نوع الطلب
+    المترجم لما table_id يبقى None، مش لازم تعديل فرونت إند إضافي)."""
     try:
         session, location = core_services.resolve_guest_session(db, x_guest_session)
-        if location.location_type != "dining_table":
-            raise ValueError("الطلب الذاتي متاح من QR الطاولة فقط")
+        if location.location_type not in ("dining_table", "room"):
+            raise ValueError("الطلب الذاتي متاح من QR الطاولة أو الأوضة فقط")
         outlet = crud.get_outlet(db, data.outlet_id)
         if not outlet or not outlet.is_active or outlet.branch_id != location.branch_id:
             raise ValueError("المنفذ غير متاح لهذا الموقع")
         services.assert_guest_self_order_enabled(db, location.branch_id)
-        public_reference = f"ord_{secrets.token_urlsafe(18)}"
+
+        if location.location_type == "dining_table":
+            table_id, order_type, notes = location.location_id, "dine_in", data.notes
+        else:
+            from app.modules.pms.models import Room  # noqa: PLC0415
+            room = db.query(Room).filter(Room.id == location.location_id).first()
+            room_label = f"🛎️ خدمة غرف — غرفة {room.name}" if room else "🛎️ خدمة غرف"
+            notes = f"{room_label}\n{data.notes}" if data.notes else room_label
+            table_id, order_type = None, "room_service"
+
         order_data = OrderCreate(
             outlet_id=data.outlet_id,
-            table_id=location.location_id,
-            order_type="dine_in",
+            table_id=table_id,
+            order_type=order_type,
             guests_count=data.guests_count,
-            notes=data.notes,
+            notes=notes,
             items=[OrderItemCreate(**i.model_dump()) for i in data.items],
         )
         order = services.create_order(
             db, branch_id=location.branch_id, data=order_data, waiter_id=None,
-            guest_session_id=session.id, guest_public_reference=public_reference,
+            guest_session_id=session.id, guest_public_reference=f"ord_{secrets.token_urlsafe(18)}",
+            client_local_id=idempotency_key,
         )
+        # ⚠️ باج حقيقي كان هنا وقت كتابة الإصلاح: لو create_order رجّعت طلب
+        # قديم (replay بنفس idempotency_key)، الرد كان المفروض يستخدم
+        # public_reference الطلب الفعلي المخزّن (order.guest_public_reference)
+        # مش المتغيّر المحلي الجديد اللي اتولّد فوق واتجاهل فعليًا — استخدام
+        # المتغيّر المحلي كان هيرجّع مرجع عام مش مرتبط بأي طلب حقيقي في الـDB،
+        # فمحاولة الضيف يتابع حالة الطلب بيه (GET .../orders/{public_reference})
+        # كانت هترجع 404 دايمًا على أي replay.
+        #
+        # ⚠️ باج تكامل حقيقي اتصلح في نفس الجولة: مفيش أي بث WebSocket كان
+        # بيحصل هنا خالص — طلب ضيف حقيقي (من طاولة أو أوضة) كان بيتسجّل صح
+        # في الداتابيز (الطاولة تبقى occupied، تذكرة مطبخ تتعمل) بس شاشة
+        # النادل/الكاشير (خريطة الطاولات + الطلبات النشطة) ماكانتش تتحدّث
+        # لحظيًا — لازم refresh يدوي/تنقّل بين الشاشات عشان يظهر. KDS لوحده
+        # كان بيلحقها خلال 15 ثانية (polling fallback موجود أصلاً)، لكن
+        # خريطة الطاولات والطلبات النشطة معندهمش أي polling — بث لحظي زي
+        # نفس نمط create_order الداخلي (نادل) بقى هنا كمان.
+        if order.table_id:
+            await dining_manager.broadcast(f"tables-{order.branch_id}", {
+                "type": "table_updated", "table_id": order.table_id,
+            })
+        else:
+            await dining_manager.broadcast(f"tables-{order.branch_id}", {"type": "tables_updated"})
         return GuestOrderRead(
-            public_reference=public_reference,
+            public_reference=order.guest_public_reference or "",
             order_number=order.order_number,
             status=order.status,
             total=order.total,
