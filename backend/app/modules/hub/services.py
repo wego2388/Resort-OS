@@ -122,7 +122,18 @@ def confirm_booking(db: Session, booking_id: int, confirmed_by: int) -> HubOnlin
       → الريسبشن يشوف الحجز فوراً في شاشة الحجوزات
     لو البيانات ناقصة:
       → بيُؤكِّد فقط بدون PMS — المدير يعمل الحجز يدوياً لاحقاً
-    """
+
+    ⚠️ باج حقيقي اتصلح (2026-08-02): كان فيه سطرين مكررين (pms_booking_id
+    = pms_b.id + logger.info) بعد كتلة if/else مباشرة بنفس مستوى الإزاحة
+    — بيتنفذوا دايمًا بغض النظر عن الفرع اللي اتنفذ فعليًا. لما مفيش غرف
+    متاحة (فرع "if not available" اللي المفروض يسجّل تحذير واضح ويكمل
+    عادي زي ما التوثيق فوق بيقول)، السطرين المكررين كانوا بيحاولوا
+    يستخدموا `pms_b` اللي أصلاً مالهاش قيمة في الفرع ده خالص —
+    UnboundLocalError حقيقي كان بيتبلع بصمت في except Exception الأوسع
+    تحت، ويتسجّل كـ"فشل إنشاء PMS booking" مربك بدل التحذير الواضح
+    "لا توجد غرف متاحة" اللي كان مفروض يظهر. النتيجة النهائية العملية
+    (booking يتأكد من غير pms_booking_id) ماتغيّرتش، بس اللوج كان بيضلل
+    تمامًا عن السبب الحقيقي."""
     booking = get_booking_or_404(db, booking_id)
     if booking.status != "pending":
         raise ValueError(f"الحجز في حالة '{booking.status}' ولا يمكن تأكيده")
@@ -170,11 +181,6 @@ def confirm_booking(db: Session, booking_id: int, confirmed_by: int) -> HubOnlin
                         "Hub booking #%s → PMS booking #%s (room #%s) created automatically",
                         booking.id, pms_b.id, available[0].id,
                     )
-                pms_booking_id = pms_b.id
-                logger.info(
-                    "Hub booking #%s → PMS booking #%s created automatically",
-                    booking.id, pms_b.id,
-                )
         except Exception:
             logger.error(
                 "confirm_booking: فشل إنشاء PMS booking لـ Hub #%s — يحتاج إنشاء يدوي",

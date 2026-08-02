@@ -223,6 +223,43 @@ class TestOnlineBooking:
         assert confirmed.status == "confirmed"
         assert confirmed.confirmed_by == 1
 
+    def test_confirm_booking_with_no_available_rooms_logs_clean_warning_not_error(
+        self, db, branch, caplog,
+    ):
+        """باج حقيقي اتصلح (2026-08-02): كود مكرر بعد كتلة if/else كان بينفّذ
+        دايمًا بغض النظر عن الفرع اللي اتنفّذ فعليًا. لما مفيش غرف متاحة
+        (فرع "if not available")، السطرين المكررين كانوا بيحاولوا يستخدموا
+        `pms_b` غير معرَّفة أصلًا في الفرع ده — UnboundLocalError حقيقي كان
+        بيتبلع بصمت في except Exception الأوسع تحت، ويتسجّل كـ"فشل إنشاء
+        PMS booking" مربك (مع exc_info كامل) بدل التحذير الواضح "لا توجد
+        غرف متاحة" اللي التوثيق بيقول إنه المفروض يحصل. الحالة النهائية
+        (status=confirmed, pms_booking_id=None) كانت بتطلع صح غلطًا في
+        الحالتين — لازم نتأكد من محتوى اللوج نفسه عشان نفرّق بينهم."""
+        import logging
+        data = OnlineBookingCreate(
+            branch_id=branch.id,
+            guest_name="ضيف بدون غرف متاحة",
+            guest_phone="01005000000",
+            guests_count=2,
+            requested_date=date.today() + timedelta(days=15),
+            check_in=date.today() + timedelta(days=15),
+            check_out=date.today() + timedelta(days=17),
+            room_type_id=999999,  # نوع غرفة غير موجود — get_available_rooms هترجع فاضية
+        )
+        booking = services.create_online_booking(db, data)
+        with caplog.at_level(logging.WARNING, logger="app.modules.hub.services"):
+            confirmed = services.confirm_booking(db, booking.id, confirmed_by=1)
+
+        assert confirmed.status == "confirmed"
+        assert confirmed.pms_booking_id is None
+        assert any("لا توجد غرف متاحة" in r.message for r in caplog.records), (
+            f"لازم يظهر تحذير واضح لا توجد غرف متاحة، الموجود: {[r.message for r in caplog.records]}"
+        )
+        assert not any(r.levelno >= logging.ERROR for r in caplog.records), (
+            f"مفروض مفيش أي خطأ يتسجّل — الحالة دي متوقعة تمامًا مش استثناء، "
+            f"الموجود: {[(r.levelname, r.message) for r in caplog.records if r.levelno >= logging.ERROR]}"
+        )
+
     def test_cannot_confirm_already_confirmed(self, db, branch):
         data = OnlineBookingCreate(
             branch_id=branch.id,
