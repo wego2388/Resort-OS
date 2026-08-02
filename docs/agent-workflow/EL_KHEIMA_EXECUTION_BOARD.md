@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-02 بعد نشر دعم الطلب متعدد المنافذ في الـPOS
+**آخر تحديث:** 2026-08-02 بعد نشر إصلاح حساب ضريبة الدخل في الرواتب
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
@@ -35,7 +35,8 @@
 | DOC-OPS — management/staff training | COMPLETE | دليل عربي للأدوار ودورات العمل وUAT | — |
 | MKT-02 — Timeshare + multilingual Marketing | COMPLETE | Blue Bay + CRM inquiry + reviewed images/i18n | — |
 | MKT-03 — locale-aware nav links + View Transitions race fix | COMPLETE | `0b0321f` فعال؛ صفر InvalidStateError، محتوى يظهر فورًا بدون ريفريش | — |
-| POS-02 — cross-outlet order support + refund revenue-account fix | COMPLETE | `ddfbaaa` فعال (Backend+Frontend)؛ صنف من منفذ تاني على نفس الفاتورة + مرتجع يعكس الحساب الصح | — |
+| POS-02 — cross-outlet order support + refund revenue-account fix | COMPLETE | `ddfbaaa` فعال؛ صنف من منفذ تاني على نفس الفاتورة + مرتجع يعكس الحساب الصح | — |
+| HR-01 — income tax bracket calculation fix | COMPLETE | `4a0a777` فعال؛ حساب الشرائح الضريبية بيعامل الفجوة القانونية كعرض بس | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -90,7 +91,7 @@
 | Staff app | `https://app.elkheima.com` |
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../ddfbaaa` |
+| Resort release | `/opt/resort-os-current -> .../4a0a777` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../0b0321f` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
@@ -103,13 +104,13 @@
 ## أدلة التشغيل
 
 - Resort release archive:
-  `/var/backups/resort-os/source-releases/ddfbaaa.tar.gz`
+  `/var/backups/resort-os/source-releases/4a0a777.tar.gz`
 - Resort SHA-256:
-  `8aafedfd109a59e7ed72ea2c4ecc30b248d51af63f09198d0b0cd1629c1390d6`
+  `a2638b2a0609cc3931e5e379a28e60823c5886b2213c472419672223227c6405`
 - Rollback image manifest:
-  `/var/backups/resort-os/source-releases/ddfbaaa-rollback-images.txt`
-- Pre-deploy DB (`ddfbaaa`):
-  `/var/backups/resort-os/database/resort_os_20260802_031105.dump`
+  `/var/backups/resort-os/source-releases/4a0a777-rollback-images.txt`
+- Pre-deploy DB (`4a0a777`):
+  `/var/backups/resort-os/database/resort_os_20260802_034252.dump`
 - Marketing release archive:
   `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`
 - Marketing SHA-256:
@@ -120,7 +121,7 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-02_POS-02_cross_outlet_order_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-02_HR-01_income_tax_bracket_fix_handoff.md`
 
 ## التحديث التالي المطلوب
 

@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد نشر دعم الطلب متعدد المنافذ في الـPOS وإصلاح مرتجع الإيراد cross-outlet
+**آخر تحقق:** 2026-08-02 بعد نشر إصلاح حساب ضريبة الدخل في الرواتب
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -12,21 +12,21 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `ddfbaaa` |
+| Resort OS source release | `4a0a777` |
 | Marketing source release | `0b0321f` من المستودع المستقل (`main` يطابق الالتزام) |
-| remote | فرع العمل يحتوي `ddfbaaa` (يشمل `9579c2f` + `ddfbaaa`) |
+| remote | فرع العمل يحتوي `4a0a777` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/ddfbaaa` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/ddfbaaa` |
+| active Resort release | `/opt/resort-os-releases/4a0a777` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/4a0a777` |
 | active Marketing release | `/opt/elkheima-marketing-releases/0b0321f` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/0b0321f` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
-`/var/backups/resort-os/source-releases/ddfbaaa.tar.gz`،
+`/var/backups/resort-os/source-releases/4a0a777.tar.gz`،
 SHA-256
-`8aafedfd109a59e7ed72ea2c4ecc30b248d51af63f09198d0b0cd1629c1390d6`.
-(أرشيف `a3e8abb` السابق ما زال محفوظًا كما هو.)
+`a2638b2a0609cc3931e5e379a28e60823c5886b2213c472419672223227c6405`.
+(أرشيفا `a3e8abb` و`ddfbaaa` السابقان ما زالا محفوظان كما هما.)
 
 أرشيف Marketing:
 `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`،
@@ -40,20 +40,21 @@ SHA-256
 
 ## 2. الخدمات الفعالة
 
-- `backend`, `celery_worker`, `celery_beat`, `el_kheima` كلهم بُنوا ونُشروا
-  من `ddfbaaa` معًا — أول نشر منذ `679f76e` يغيّر الـBackend فعليًا (دعم
-  الطلب متعدد المنافذ + إصلاح مرتجع الإيراد، cross-outlet). صفر migration
-  (عمود `outlet_id` كان موجود من قبل، Alembic head واحد لم يتغيّر
-  `88d1c505a9dc`).
+- `backend`, `celery_worker`, `celery_beat` بُنوا ونُشروا من `4a0a777`
+  (إصلاح ضريبة الدخل في الرواتب — hr_engine.calculate_annual_tax، مراجعة
+  ذاتية منفصلة عن الـcross-outlet). `el_kheima` (frontend) لم يتغيّر في
+  الجولة دي، لسه من `ddfbaaa` (اللي كانت فيها دعم الطلب متعدد المنافذ
+  + إصلاح مرتجع الإيراد، أول نشر Backend فعلي منذ `679f76e`). صفر
+  migration، Alembic head واحد لم يتغيّر `88d1c505a9dc`.
 - `marketing_site` مبني من المصدر المستقل `0b0321f` عبر
   `/opt/elkheima-marketing-current`.
 - Backend image:
-  `sha256:80a027617354ca1231f67680682f0937975b7725698334b01872a70db4e4ecca`.
+  `sha256:0d758f5ea3196074f4cec049474cae5bb7a4a8915dd12e0bcbfcf16eb9a600d7`.
 - Celery worker:
-  `sha256:f8520d47fef5ff4545d64470b7ba1e96b7bf889dd70e5dd9ac03d4a469f165a3`.
+  `sha256:d5eebfa1590437e136ad254d1300ea6d4b1aefb3ac5e62a1021b312a0a97fd98`.
 - Celery beat:
-  `sha256:fc76bd8187507ff5d2a25f236233bc9537c9a334ccc0e6e4ce68f99fb07c6561`.
-- El Kheima staff app:
+  `sha256:11c1a8dc533ef40086991395d9c2a06c88f4ccdc1a4d26c3fefbe57e66b73f23`.
+- El Kheima staff app (من `ddfbaaa`، غير متغيّر هذه الجولة):
   `sha256:2930d20b4116a18d7751314de9bcfaa48cfb798280a783e933ac6aeb536f78eb`.
 - Marketing image:
   `sha256:417bc784605359fdfc9758bffa1445d8eaf959dac740042bd14e3fdc076b3177`.
@@ -260,6 +261,19 @@ SHA-256
   `/var/backups/resort-os/database/resort_os_20260802_031105.dump`،
   SHA-256
   `7f65646441948e4250b9f141f6d01855e5516794507626eb09d5ebe4d97fd238`؛
+  اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
+- أرشيف إصدار `4a0a777` (إصلاح ضريبة الدخل في الرواتب، `backend`/
+  `celery_worker`/`celery_beat` بس — `el_kheima` من `ddfbaaa` لم يتغيّر):
+  `/var/backups/resort-os/source-releases/4a0a777.tar.gz`،
+  SHA-256
+  `a2638b2a0609cc3931e5e379a28e60823c5886b2213c472419672223227c6405`.
+- صور ما قبل `4a0a777` (backend/celery_worker/celery_beat، كانوا `ddfbaaa`)
+  محفوظة تحت `resort-os-rollback/*:pre-4a0a777`، والـmanifest:
+  `/var/backups/resort-os/source-releases/4a0a777-rollback-images.txt`.
+- نسخة DB السابقة مباشرة لنشر `4a0a777`:
+  `/var/backups/resort-os/database/resort_os_20260802_034252.dump`،
+  SHA-256
+  `85f5e5fe300b5f90d49993bc820793e5e5258a2fb37ee35f663efb4784c5f8e7`؛
   اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
 
 ## 9. الحالة المتبقية
