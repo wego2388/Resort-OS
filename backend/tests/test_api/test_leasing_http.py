@@ -478,6 +478,80 @@ class TestLeasingCashLog:
         )
         assert entry is None
 
+    def test_rent_payment_cash_log_rejected_on_terminated_contract(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        """باج حقيقي اتصلح (2026-08-02): pay_payment (تحصيل الدفعة الشهرية
+        العادية) بيرفض العقد terminated، لكن التسوية الكاش اليومية (المسار
+        المواز اللي بيرحّل بالظبط نفس قيد إثبات الإيراد) مكانتش عندها نفس
+        الفحص خالص — عقد مفسوخ كان لسه ممكن "يحصّل إيجار" حقيقي يرحّل إيراد."""
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        patch_resp = client.patch(
+            f"/api/v1/leasing/contracts/{contract['id']}", json={"status": "terminated"}, headers=manager_headers,
+        )
+        assert patch_resp.status_code == 200, patch_resp.text
+
+        resp = client.post(
+            f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "amount": "1500.00", "activity_type": "rent_payment",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "مفسوخ" in resp.json()["detail"]
+
+    def test_rent_payment_cash_log_rejected_on_expired_contract(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        client.patch(
+            f"/api/v1/leasing/contracts/{contract['id']}", json={"status": "expired"}, headers=manager_headers,
+        )
+
+        resp = client.post(
+            f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "amount": "1500.00", "activity_type": "revenue_share",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 400
+        assert "منتهي" in resp.json()["detail"]
+
+    def test_deposit_refund_cash_log_still_allowed_on_terminated_contract(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        """الحظر مقصور على rent_payment/revenue_share بس — رد تأمين بعد فسخ
+        العقد سيناريو تشغيلي طبيعي لازم يفضل شغال."""
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        client.patch(
+            f"/api/v1/leasing/contracts/{contract['id']}", json={"status": "terminated"}, headers=manager_headers,
+        )
+
+        resp = client.post(
+            f"/api/v1/leasing/contracts/{contract['id']}/cash-logs",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "amount": "3000.00", "activity_type": "refund",
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+
     def test_list_cash_logs_via_http(self, client: TestClient, db, fake_redis, manager_headers):
         branch = make_branch_committed(db)
         contract = client.post(

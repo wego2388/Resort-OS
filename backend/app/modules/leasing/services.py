@@ -259,8 +259,22 @@ def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePaym
 def record_cash_log(db: Session, data: TenantCashLogCreate, recorded_by: int) -> TenantCashLog:
     """تسجيل تسوية كاش يومية مع مستأجر (مركز غوص/واتر سبورت) — خارج دورة
     الاستحقاق الشهرية العادية. لو النوع rent_payment أو revenue_share، بيرحّل
-    قيد محاسبي زي تحصيل الإيجار العادي (نفس حسابات 1100/1260/4500)."""
+    قيد محاسبي زي تحصيل الإيجار العادي (نفس حسابات 1100/1260/4500).
+
+    ⚠️ باج حقيقي اتصلح (2026-08-02): pay_payment (تحصيل الدفعة الشهرية
+    العادية) بيرفض العقد terminated/expired، لكن المسار المواز ده — اللي
+    بيرحّل بالظبط نفس قيد إثبات الإيراد لـrent_payment/revenue_share —
+    مكانش عنده نفس الفحص خالص. يعني عقد مفسوخ فعليًا كان لسه ممكن يتسجّل
+    عليه "تحصيل إيجار" حقيقي يرحّل إيراد في الدفاتر. الأنواع التانية
+    (deposit/refund/penalty/maintenance/other) مسموحة عمدًا حتى بعد
+    الفسخ/الانتهاء — رد تأمين أو غرامة تسوية نهائية سيناريو تشغيلي طبيعي
+    بعد إقفال العقد، عكس تحصيل إيراد إيجار جديد."""
     contract = get_contract_or_404(db, data.contract_id)
+    if data.activity_type in ("rent_payment", "revenue_share"):
+        if contract.status == "terminated":
+            raise ValueError(f"العقد {contract.contract_number} مفسوخ — لا يمكن تحصيل إيجار عليه")
+        if contract.status == "expired":
+            raise ValueError(f"العقد {contract.contract_number} منتهي — لا يمكن تحصيل إيجار عليه")
     log = crud.create_cash_log(db, data, recorded_by)
 
     if data.activity_type in ("rent_payment", "revenue_share"):
