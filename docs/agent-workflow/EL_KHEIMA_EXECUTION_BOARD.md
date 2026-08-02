@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-02 بعد تأمين إرسال تقييم الضيف العام في موديول التحليلات (Analytics)
+**آخر تحديث:** 2026-08-02 بعد إغلاق فجوة تحصيل إيجار على عقد مفسوخ/منتهي في موديول الإيجارات (Leasing)
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
@@ -40,6 +40,7 @@
 | CRM-01 — loyalty redeem row-lock fix | COMPLETE | `8597535` فعال؛ قفل صف حساب النقاط يمنع خصم استرداد مزدوج متزامن | — |
 | MNT-01 — work-order completion bypass + asset-release-on-cancel fix | COMPLETE | `b1db886` فعال؛ إغلاق "مكتمل" لازم /complete المخصص، والإلغاء بيحرر الأصل زي الإكمال | — |
 | ANL-01 — guest review submit input validation | COMPLETE | `0d55717` فعال؛ endpoint عام بدون auth بقى محمي بـschema بدل dict خام | — |
+| LSE-01 — cash-log rent collection blocked on terminated/expired lease | COMPLETE | `4ca10c1` فعال؛ التسوية الكاش اليومية بقت تفرض نفس فحص حالة العقد زي التحصيل العادي | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -94,7 +95,7 @@
 | Staff app | `https://app.elkheima.com` |
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../0d55717` |
+| Resort release | `/opt/resort-os-current -> .../4ca10c1` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../0b0321f` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
@@ -107,13 +108,13 @@
 ## أدلة التشغيل
 
 - Resort release archive:
-  `/var/backups/resort-os/source-releases/0d55717.tar.gz`
+  `/var/backups/resort-os/source-releases/4ca10c1.tar.gz`
 - Resort SHA-256:
-  `ba9788b147e44c0b19f03edd5541acfb54744d576a89cab71d249fba7ca3fc21`
+  `e6c73575e7020a5676b6233777808211b0979bf55f87be1f986150ac9c945906`
 - Rollback image manifest:
-  `/var/backups/resort-os/source-releases/0d55717-rollback-images.txt`
-- Pre-deploy DB (`0d55717`):
-  `/var/backups/resort-os/database/resort_os_20260802_111432.dump`
+  `/var/backups/resort-os/source-releases/4ca10c1-rollback-images.txt`
+- Pre-deploy DB (`4ca10c1`):
+  `/var/backups/resort-os/database/resort_os_20260802_113200.dump`
 - Marketing release archive:
   `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`
 - Marketing SHA-256:
@@ -124,7 +125,7 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-02_ANL-01_guest_review_validation_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-02_LSE-01_lease_cash_log_status_check_handoff.md`
 
 ## التحديث التالي المطلوب
 
