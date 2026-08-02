@@ -144,6 +144,37 @@ class TestCalculateAnnualTax:
         result = calculate_annual_tax(Decimal("30000"), brackets_reversed)
         assert result == Decimal("1500.00")
 
+    @staticmethod
+    def _real_seeded_brackets() -> list[TaxBracket]:
+        """نفس القيم الحقيقية المزروعة فعليًا في TaxBracketConfig (تحقّقت
+        منها مباشرة من قاعدة البيانات، مش تخمين) — الصياغة القانونية
+        المعتادة بـ"15,001 → 30,000" (فجوة وحدة واحدة بين كل شريحتين)، عكس
+        الشرائح المتصلة اللي بتستخدمها بقية التستات هنا (_tax_brackets()).
+        الفرق ده مهم: الباج المُصلَح (2026-08-02) كان بيظهر بس مع الصياغة
+        دي، فالتستات التانية في الملف كانت بتعدّي رغم الباج."""
+        return [
+            TaxBracket(Decimal("0"),      Decimal("15000"),  Decimal("0.00")),
+            TaxBracket(Decimal("15001"),  Decimal("30000"),  Decimal("0.10")),
+            TaxBracket(Decimal("30001"),  Decimal("45000"),  Decimal("0.15")),
+            TaxBracket(Decimal("45001"),  Decimal("60000"),  Decimal("0.20")),
+            TaxBracket(Decimal("60001"),  Decimal("200000"), Decimal("0.225")),
+            TaxBracket(Decimal("200001"), Decimal("400000"), Decimal("0.25")),
+            TaxBracket(Decimal("400001"), None,               Decimal("0.275")),
+        ]
+
+    def test_real_seeded_bracket_gap_does_not_skew_tax(self):
+        """باج حقيقي اتصلح 2026-08-02: مع الشرائح المزروعة فعليًا (فجوة
+        وحدة واحدة بين كل شريحتين)، كانت الدالة بتحسب سعة كل شريحة
+        (upper − lower) بدل العرض الحقيقي المتصل — نتيجتها ضريبة غلط
+        (زيادة أو نقصان بسيط بيتراكم مع كل شريحة تتعدّى). النتائج هنا
+        لازم تطابق نفس نتائج _tax_brackets() المتصلة بالظبط — الفجوة
+        القانونية للعرض بس، مالهاش أثر على الحساب الفعلي."""
+        real = self._real_seeded_brackets()
+        assert calculate_annual_tax(Decimal("30000"), real) == Decimal("1500.00")
+        assert calculate_annual_tax(Decimal("35000"), real) == Decimal("2250.00")
+        assert calculate_annual_tax(Decimal("100000"), real) == Decimal("15750.00")
+        assert calculate_annual_tax(Decimal("500000"), real) == Decimal("115750.00")
+
 
 # ─── calculate_penalty_deduction ─────────────────────────────────────
 

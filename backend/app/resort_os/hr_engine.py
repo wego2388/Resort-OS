@@ -140,30 +140,38 @@ def calculate_annual_tax(
     if annual_taxable_base <= Decimal("0"):
         return Decimal("0")
 
+    # ⚠️ باج حقيقي اتصلح (2026-08-02): الشرائح الحقيقية المخزّنة في DB
+    # (TaxBracketConfig، راجع hr/services.py) بتُكتب بالصياغة القانونية
+    # المعتادة "15,001 → 30,000"، يعني bracket.lower = upper الشريحة اللي
+    # قبلها + 1 (فجوة وحدة واحدة بين كل شريحتين متتاليتين). الكود القديم
+    # كان بيحسب سعة كل شريحة بـ (bracket.upper − bracket.lower) — يعني
+    # وحدة جنيه واحدة أضيق من العرض الحقيقي المتصل للشريحة — وكمان بيوقف
+    # الحلقة بشرط (annual_taxable_base <= bracket.lower) بدل ما يتابع
+    # remaining. النتيجة: أي وعاء ضريبي يعدّي أول شريحة كان بيتحصّل عليه
+    # ضريبة غلط (زيادة أو نقصان بسيط، بيتراكم مع كل شريحة يعبرها) — اتأكد
+    # حيًا بأرقام الشرائح الحقيقية المزروعة فعليًا (15001/30001/45001...):
+    # وعاء 35,000 كان بيديّ 2250.05 بدل 2250.00 الصحيحة، و500,000 كان بيديّ
+    # 115750.45 بدل 115750.00. الحل: نتابع "المستهلك" (consumed) كمؤشر
+    # مستقل بدل الاعتماد على bracket.lower في حساب السعة أو وقف الحلقة —
+    # كده الفجوة القانونية بين الشرائح (لغرض العرض/الكتابة بس) متأثرش على
+    # الحساب الفعلي، اللي المفروض يعامل الشرائح كمتصلة حقيقةً.
     total_tax = Decimal("0")
-    remaining = annual_taxable_base
+    consumed = Decimal("0")
 
     sorted_brackets = sorted(brackets, key=lambda b: b.lower)
 
     for bracket in sorted_brackets:
-        if remaining <= Decimal("0"):
+        if consumed >= annual_taxable_base:
             break
 
-        bracket_start = bracket.lower
         bracket_end = bracket.upper
-
-        if annual_taxable_base <= bracket_start:
-            break
-
-        # الجزء الخاضع لهذه الشريحة
-        if bracket_end is None:
-            taxable_in_bracket = remaining
-        else:
-            bracket_size = bracket_end - bracket_start
-            taxable_in_bracket = min(remaining, bracket_size)
+        bracket_ceiling = annual_taxable_base if bracket_end is None else min(annual_taxable_base, bracket_end)
+        taxable_in_bracket = bracket_ceiling - consumed
+        if taxable_in_bracket <= Decimal("0"):
+            continue
 
         total_tax += taxable_in_bracket * bracket.rate
-        remaining -= taxable_in_bracket
+        consumed += taxable_in_bracket
 
     return total_tax.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
