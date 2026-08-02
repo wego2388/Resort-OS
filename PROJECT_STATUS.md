@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-07-31 بعد نشر إصلاح تبديل منافذ الـPOS
+**آخر تحقق:** 2026-08-02 بعد نشر إصلاح روابط الـlocale وrace في الـView Transitions API على الموقع التسويقي
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -13,13 +13,13 @@
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
 | Resort OS source release | `a3e8abb` |
-| Marketing source release | `16f8f2c` من المستودع المستقل |
+| Marketing source release | `8dc95d8` من المستودع المستقل (`main` يطابق الالتزام) |
 | remote | فرع العمل يحتوي `a3e8abb` ثم تحديثات توثيق ما بعد النشر |
 | `origin/main` | `598938e` — لم يُغيّر |
 | active Resort release | `/opt/resort-os-releases/a3e8abb` |
 | Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/a3e8abb` |
-| active Marketing release | `/opt/elkheima-marketing-releases/16f8f2c` |
-| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/16f8f2c` |
+| active Marketing release | `/opt/elkheima-marketing-releases/8dc95d8` |
+| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/8dc95d8` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
@@ -28,9 +28,10 @@ SHA-256
 `2ff370284727ae57688c4efda9dad22db2729abf45fbbfe3dc276e78d7388bad`.
 
 أرشيف Marketing:
-`/var/backups/resort-os/marketing-source-releases/16f8f2c.tar.gz`،
+`/var/backups/resort-os/marketing-source-releases/8dc95d8.tar.gz`،
 SHA-256
-`ba3d8d5c25c8487fb75906ce17ca3ffe8c0df9f0a087c0afefb478c9129cf7a9`.
+`d390a2aa0a6fc025d323a6e9442330d28092d90ef1d260fb1920410f4a85b40d`.
+(أرشيف `16f8f2c` السابق ما زال محفوظًا كما هو.)
 
 مجلدا المصدر القديمان `/opt/resort-os` و
 `/opt/elkheima-marketing-website` محفوظان كما كانا، وغير مستخدمين كمصدر
@@ -42,7 +43,7 @@ SHA-256
   `com.docker.compose.project.working_dir=/opt/resort-os-releases/a3e8abb`.
   Backend وCelery بقيا على الإصدار المتوافق `679f76e` لأن التغيير Frontend
   فقط، ولم يُعاد بناؤهما أو تشغيلهما.
-- `marketing_site` مبني من المصدر المستقل `16f8f2c` عبر
+- `marketing_site` مبني من المصدر المستقل `8dc95d8` عبر
   `/opt/elkheima-marketing-current`.
 - Backend image:
   `sha256:7d27ae3a4b7daa38fe878b95c322bd1a7a1f2d5088990aa642163945441d73bc`.
@@ -207,6 +208,12 @@ SHA-256
 - صورة Marketing السابقة مباشرة لـ`16f8f2c` محفوظة تحت
   `resort-os-rollback/marketing-site:pre-16f8f2c`، والـmanifest:
   `/var/backups/resort-os/marketing-source-releases/16f8f2c-rollback-image.txt`.
+- صورة Marketing السابقة مباشرة لـ`8dc95d8` محفوظة تحت
+  `resort-os-rollback/marketing-site:pre-8dc95d8`، والـmanifest:
+  `/var/backups/resort-os/marketing-source-releases/8dc95d8-rollback-image.txt`.
+  release القديم `/opt/elkheima-marketing-releases/16f8f2c` لسه موجود كامل
+  على القرص، مش متحذوف. لا migration ولا تغيير DB في هذه الحزمة (frontend
+  فقط) فمفيش نسخة DB مخصوصة ليها.
 - النسخة المشفرة خارج الخادم واستعادة 135 جدولًا ما زالتا دليل DR الأساسي.
 - `resort-os-backup.timer`, `resort-os-certbot-renew.timer`,
   `resort-os-healthcheck.timer` مثبتة ومفعلة.

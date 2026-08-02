@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-07-31 بعد نشر إصلاح تبديل منافذ الـPOS
+**آخر تحديث:** 2026-08-02 بعد نشر إصلاح روابط الـlocale وباج الموقع التسويقي
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
@@ -34,6 +34,7 @@
 | DNS-01 — domain/TLS cutover | COMPLETE | DNS + SAN cert + edge + rollback | — |
 | DOC-OPS — management/staff training | COMPLETE | دليل عربي للأدوار ودورات العمل وUAT | — |
 | MKT-02 — Timeshare + multilingual Marketing | COMPLETE | Blue Bay + CRM inquiry + reviewed images/i18n | — |
+| MKT-03 — locale-aware nav links + View Transitions race fix | COMPLETE | `8dc95d8` فعال؛ صفر InvalidStateError، محتوى يظهر فورًا بدون ريفريش | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -89,7 +90,7 @@
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
 | Resort release | `/opt/resort-os-current -> .../a3e8abb` |
-| Marketing release | `/opt/elkheima-marketing-current -> .../16f8f2c` |
+| Marketing release | `/opt/elkheima-marketing-current -> .../8dc95d8` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
@@ -109,16 +110,16 @@
 - Pre-cutover DB:
   `/var/backups/resort-os/database/resort_os_20260730_062529.dump`
 - Marketing release archive:
-  `/var/backups/resort-os/marketing-source-releases/16f8f2c.tar.gz`
+  `/var/backups/resort-os/marketing-source-releases/8dc95d8.tar.gz`
 - Marketing SHA-256:
-  `ba3d8d5c25c8487fb75906ce17ca3ffe8c0df9f0a087c0afefb478c9129cf7a9`
+  `d390a2aa0a6fc025d323a6e9442330d28092d90ef1d260fb1920410f4a85b40d`
 - Domain rollback directory:
   `/var/backups/resort-os-domain-cutover-aed94a0`
 - DNS rollback snapshot: `167902017`
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-07-31_POS-01_REL-05_codex_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-02_MKT-03_marketing_locale_nav_fix_handoff.md`
 
 ## التحديث التالي المطلوب
 
