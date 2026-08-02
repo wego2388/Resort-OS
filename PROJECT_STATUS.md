@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد إغلاق فجوة تحصيل إيجار على عقد مفسوخ/منتهي في موديول الإيجارات (Leasing)
+**آخر تحقق:** 2026-08-02 بعد إصلاح باج في تأكيد الحجوزات الأونلاين (Hub)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -12,21 +12,21 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `4ca10c1` |
+| Resort OS source release | `5b02010` |
 | Marketing source release | `0b0321f` من المستودع المستقل (`main` يطابق الالتزام) |
-| remote | فرع العمل يحتوي `4ca10c1` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1`) |
+| remote | فرع العمل يحتوي `5b02010` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1`، `5b02010`) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/4ca10c1` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/4ca10c1` |
+| active Resort release | `/opt/resort-os-releases/5b02010` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/5b02010` |
 | active Marketing release | `/opt/elkheima-marketing-releases/0b0321f` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/0b0321f` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
-`/var/backups/resort-os/source-releases/4ca10c1.tar.gz`،
+`/var/backups/resort-os/source-releases/5b02010.tar.gz`،
 SHA-256
-`e6c73575e7020a5676b6233777808211b0979bf55f87be1f986150ac9c945906`.
-(أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717` السابقة ما زالت محفوظة كما هي.)
+`50538820d9b9e4ef9e3d724e45b09dfca4dfc86e25154a852fab98765900b673`.
+(أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1` السابقة ما زالت محفوظة كما هي.)
 
 أرشيف Marketing:
 `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`،
@@ -40,21 +40,22 @@ SHA-256
 
 ## 2. الخدمات الفعالة
 
-- `backend`, `celery_worker`, `celery_beat` بُنوا ونُشروا من `4ca10c1`
-  (موديول الإيجارات: `record_cash_log` — مسار التسوية الكاش اليومية —
-  بقى يرفض `rent_payment`/`revenue_share` على عقد `terminated`/`expired`
-  زي `pay_payment` بالظبط، مع إبقاء الأنواع التانية "deposit/refund/
-  penalty/maintenance/other" مسموحة. مكتشف أثناء مراجعة ذاتية شاملة
-  طلبها Mohamed). `el_kheima` (frontend) لم يتغيّر في الجولة دي، لسه من
-  `b1db886`. صفر migration، Alembic head واحد لم يتغيّر `88d1c505a9dc`.
+- `backend`, `celery_worker`, `celery_beat` بُنوا ونُشروا من `5b02010`
+  (موديول Hub: `confirm_booking` كان فيه كود مكرر بعد كتلة if/else بيتنفذ
+  دايمًا — يسبب `UnboundLocalError` حقيقي (مبتلوع بصمت) لما مفيش غرف
+  متاحة للتأكيد التلقائي، ويتسجّل كـ"فشل" مربك بدل التحذير الصح. الحالة
+  النهائية العملية ماتغيّرتش، بس اللوجات كانت مضللة. مكتشف أثناء مراجعة
+  ذاتية شاملة طلبها Mohamed). `el_kheima` (frontend) لم يتغيّر في الجولة
+  دي، لسه من `b1db886`. صفر migration، Alembic head واحد لم يتغيّر
+  `88d1c505a9dc`.
 - `marketing_site` مبني من المصدر المستقل `0b0321f` عبر
   `/opt/elkheima-marketing-current`.
 - Backend image:
-  `sha256:3d9a8fe0ff495cd41e1b98d096c1082b4365279e5e092cf0d88c01a410c8b1f2`.
+  `sha256:abbd5f245b5e3d84efc2e5c9215f06c08576a465f316e89e26fcf0842655b28a`.
 - Celery worker:
-  `sha256:a8e319a61c8c59c72a4c5face01cd30f6b41fe1e236e1bedeb3ef72385ac8225`.
+  `sha256:c58a764a0c87475db671e8e7d1e9302e8ef1979b9da65f1bf4025a2cee6a2fd6`.
 - Celery beat:
-  `sha256:335f0bf95a419266e516b79c91edf96ee229e8944678d5b3052f375e8727837c`.
+  `sha256:9e304ad5e074762707aaab2097a273f31f0aeaba5713ddda7bd95e393da3c1d0`.
 - El Kheima staff app (من `b1db886`، غير متغيّر هذه الجولة):
   `sha256:f135b11a4d2d7799afd011934a093eb14ed14921b86bbd807d31582a1082c673`.
 - Marketing image:
@@ -332,6 +333,20 @@ SHA-256
   `/var/backups/resort-os/database/resort_os_20260802_113200.dump`،
   SHA-256
   `d74442b6b78e52dd721b35b8427f6af0a354ef3e8f49fa61a2021e123418b870`؛
+  اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
+- أرشيف إصدار `5b02010` (موديول Hub: حذف كود مكرر كان بيسبب
+  UnboundLocalError صامت في تأكيد الحجوزات الأونلاين — `backend`/
+  `celery_worker`/`celery_beat` بس، `el_kheima` لم يتغيّر، صفر migration):
+  `/var/backups/resort-os/source-releases/5b02010.tar.gz`،
+  SHA-256
+  `50538820d9b9e4ef9e3d724e45b09dfca4dfc86e25154a852fab98765900b673`.
+- صور ما قبل `5b02010` (backend/celery_worker/celery_beat، كانوا
+  `4ca10c1`) محفوظة تحت `resort-os-rollback/*:pre-5b02010`، والـmanifest:
+  `/var/backups/resort-os/source-releases/5b02010-rollback-images.txt`.
+- نسخة DB السابقة مباشرة لنشر `5b02010`:
+  `/var/backups/resort-os/database/resort_os_20260802_115042.dump`،
+  SHA-256
+  `f2547e1b089c7e9706931536218be92868faf4622f0519e60c6870e364330f91`؛
   اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
 
 ## 9. الحالة المتبقية
