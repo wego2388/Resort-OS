@@ -223,6 +223,67 @@ class TestUtilityReadingValidation:
         assert resp.status_code == 422
 
 
+class TestGuestReviewSubmitValidation:
+    """باج حقيقي اتصلح (2026-08-02): POST /reviews/submit كان بياخد
+    `data: dict = Body(...)` خام من غير أي تحقق — الـendpoint ده عام
+    بالكامل (بدون auth، token JWT بس)، فأي حد ماسك لينك استبيان كان يقدر
+    يبعت مدخلات عدائية (overall_rating برّه المدى 1-5، عنصر categories
+    ناقص "rating") وتوصل لـDB error خام أو تتخزّن بصمت وتلوّث الإحصائيات."""
+
+    def _get_token(self, client, db, manager_headers):
+        branch = make_branch_committed(db)
+        booking = make_booking_committed(db, branch)
+        token_resp = client.get(
+            f"/api/v1/analytics/reviews/survey-token/{booking.id}",
+            params={"branch_id": branch.id},
+            headers=manager_headers,
+        )
+        assert token_resp.status_code == 200, token_resp.text
+        return token_resp.json()["token"]
+
+    def test_rejects_overall_rating_out_of_range(self, client: TestClient, db, manager_headers):
+        token = self._get_token(client, db, manager_headers)
+        resp = client.post(
+            "/api/v1/analytics/reviews/submit",
+            params={"token": token},
+            json={"guest_name": "ضيف", "overall_rating": 999},
+        )
+        assert resp.status_code == 422
+
+    def test_rejects_category_item_missing_rating(self, client: TestClient, db, manager_headers):
+        token = self._get_token(client, db, manager_headers)
+        resp = client.post(
+            "/api/v1/analytics/reviews/submit",
+            params={"token": token},
+            json={
+                "guest_name": "ضيف", "overall_rating": 4,
+                "categories": [{"category": "cleanliness"}],
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_rejects_category_rating_out_of_range(self, client: TestClient, db, manager_headers):
+        token = self._get_token(client, db, manager_headers)
+        resp = client.post(
+            "/api/v1/analytics/reviews/submit",
+            params={"token": token},
+            json={
+                "guest_name": "ضيف", "overall_rating": 4,
+                "categories": [{"category": "service", "rating": 50}],
+            },
+        )
+        assert resp.status_code == 422
+
+    def test_rejects_guest_name_exceeding_column_length(self, client: TestClient, db, manager_headers):
+        token = self._get_token(client, db, manager_headers)
+        resp = client.post(
+            "/api/v1/analytics/reviews/submit",
+            params={"token": token},
+            json={"guest_name": "س" * 300, "overall_rating": 4},
+        )
+        assert resp.status_code == 422
+
+
 class TestGuestReviewInsights:
     def test_review_insights_surfaces_category_breakdown(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)

@@ -45,6 +45,26 @@ class UtilityReadingRead(BaseModel):
     created_at:    datetime
 
 
+# ── Guest review submission (public, token-gated — راجع submit_guest_review) ──
+# ⚠️ باج حقيقي اتصلح (2026-08-02): الـ endpoint ده كان بياخد `data: dict = Body(...)`
+# خام من غير أي تحقق — أي طلب فاسد (categories عنصر ناقص "rating"، overall_rating
+# برّه المدى 1-5، guest_name أطول من العمود String(200)) كان بيوصل لـDB error خام
+# (500) أو بيتخزّن قيمة غير منطقية تماماً (زي overall_rating=999) بتلوّث كل
+# إحصائيات GSS ومتوسط التقييمات — والـendpoint ده عام بالكامل (بدون auth، بس
+# token JWT)، فأي حد ماسك لينك الاستبيان (أو حتى بيجرّب توكن عشوائي) كان يقدر
+# يبعت مدخلات عدائية بحرية تامة.
+class GuestReviewCategoryInput(BaseModel):
+    category: str = Field(..., min_length=1, max_length=30)
+    rating:   int = Field(..., ge=1, le=5)
+
+
+class GuestReviewSubmitRequest(BaseModel):
+    guest_name:     str = Field("ضيف", max_length=200)
+    overall_rating: int = Field(3, ge=1, le=5)
+    comment:        Optional[str] = Field(None, max_length=2000)
+    categories:     list[GuestReviewCategoryInput] = Field(default_factory=list)
+
+
 # ── Simple fixed-shape response schemas ──────────────────────────────────────
 class ReviewSubmitResponse(BaseModel):
     id:             int

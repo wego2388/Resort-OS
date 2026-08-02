@@ -11,7 +11,7 @@ from typing import Optional
 import asyncio
 import json
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
@@ -21,7 +21,7 @@ from app.core.database import SessionLocal
 from app.modules.analytics import services
 from app.modules.analytics.schemas import (
     UtilityReadingCreate, UtilityReadingRead,
-    ReviewSubmitResponse, SurveyTokenResponse, SurveySendResponse,
+    GuestReviewSubmitRequest, ReviewSubmitResponse, SurveyTokenResponse, SurveySendResponse,
     RevenueSummary, OccupancySummary, HRSummary, MaintenanceSummary,
     CRMSummary, InventoryAlerts, DailyStatsRead, EnergyKPIs, EnergyTrendResponse,
     GuestReviewListResponse, ReviewCategoryInsights, FullDashboard,
@@ -622,21 +622,24 @@ def _review_avg(db, branch_id):
 @router.post("/analytics/reviews/submit", response_model=ReviewSubmitResponse)
 async def submit_guest_review(
     db: DbDep,
+    data: GuestReviewSubmitRequest,
     token: str = Query(..., description="survey JWT from checkout"),
-    data: dict = Body(...),
 ):
     """يستقبل تقييم الضيف بعد checkout (حجز فندقي) أو بعد زيارة تايم شير —
-    يتحقق من JWT أولاً، ويحدِّد نوع المرجع (ref_type) من التوكن نفسه."""
+    يتحقق من JWT أولاً، ويحدِّد نوع المرجع (ref_type) من التوكن نفسه.
+    endpoint عام بالكامل (بدون auth، token JWT بس) — GuestReviewSubmitRequest
+    (راجع schemas.py) بيفرض حدود المدخلات بدل dict خام."""
     from app.modules.analytics.services import verify_survey_token, submit_review  # noqa: PLC0415
     payload = verify_survey_token(token)
     ref_id = int(payload["sub"])
     branch_id = payload["branch_id"]
     ref_type = payload.get("ref_type", "booking")  # توكنات قديمة بدون ref_type = حجز فندقي دايمًا
 
+    review_data = data.model_dump()
     if ref_type == "timeshare_visit":
-        review = submit_review(db, branch_id, booking_id=None, data=data, timeshare_visit_id=ref_id)
+        review = submit_review(db, branch_id, booking_id=None, data=review_data, timeshare_visit_id=ref_id)
     else:
-        review = submit_review(db, branch_id, booking_id=ref_id, data=data)
+        review = submit_review(db, branch_id, booking_id=ref_id, data=review_data)
     return {"id": review.id, "overall_rating": review.overall_rating}
 
 
