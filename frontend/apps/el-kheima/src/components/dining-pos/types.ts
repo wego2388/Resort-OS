@@ -83,6 +83,7 @@ export interface OrderItemExtra {
   id: number
   extra_id: number | null
   extra_name: string
+  extra_name_ar?: string | null
   price_addition: number | string
   text_value: string | null
 }
@@ -91,6 +92,7 @@ export interface OrderItem {
   id: number
   item_id: number
   name: string
+  name_ar?: string | null
   unit_price: number | string
   quantity: number
   notes: string | null

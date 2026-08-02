@@ -27,7 +27,7 @@ const props = defineProps<{
 const emit = defineEmits<{ close: []; changed: [] }>()
 
 const { t } = useI18n()
-const { formatDateTime, formatMoney } = useStaffFormat()
+const { formatDateTime, formatMoney, name } = useStaffFormat()
 const auth = useAuthStore()
 const currency = 'EGP'
 
@@ -494,11 +494,11 @@ function paymentMethodLabel(method: string): string {
             <div class="flex items-start justify-between gap-3">
               <div class="min-w-0 flex-1">
                 <div :class="['font-bold text-gray-950 dark:text-gray-100', ['cancelled', 'refunded'].includes(item.status) ? 'line-through' : '']">
-                  {{ item.quantity }}× {{ item.name }}
+                  {{ item.quantity }}× {{ name(item) }}
                 </div>
                 <div v-if="item.extras.length" class="text-sm text-gray-500 dark:text-gray-400 mt-2 space-y-1">
                   <div v-for="extra in item.extras" :key="extra.id">
-                    {{ extra.extra_name }}<template v-if="extra.text_value">: {{ extra.text_value }}</template>
+                    {{ name({ name: extra.extra_name, name_ar: extra.extra_name_ar }) }}<template v-if="extra.text_value">: {{ extra.text_value }}</template>
                   </div>
                 </div>
                 <div v-if="item.notes" class="text-sm text-gray-500 dark:text-gray-400 mt-2">📝 {{ item.notes }}</div>

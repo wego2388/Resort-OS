@@ -372,6 +372,7 @@ class OrderItemExtraRead(BaseModel):
     id:             int
     extra_id:       Optional[int]
     extra_name:     str
+    extra_name_ar:  Optional[str] = None
     price_addition: Decimal
     text_value:     Optional[str] = None
 
@@ -383,6 +384,7 @@ class OrderItemRead(BaseModel):
     item_id:      int
     variant_id:   Optional[int] = None
     name:         str
+    name_ar:      Optional[str] = None
     unit_price:   Decimal
     quantity:     int
     notes:        Optional[str]
@@ -627,12 +629,25 @@ class PublicMenuVariantRead(BaseModel):
 
 
 class PublicMenuItemRead(BaseModel):
-    """للضيف عبر QR — بدون cost أو station أو بيانات داخلية."""
+    """للضيف عبر QR — بدون cost أو station أو بيانات داخلية.
+
+    name_ru/name_it/description_ru/description_it (2026-08-03، منيو 2026):
+    الموقع العام بيدعم 4 لغات فعلاً (ar/en/ru/it) لكن كان بيرجع اسم/وصف
+    الصنف بالإنجليزي/العربي بس — ضيف روسي أو إيطالي كان شايف واجهة الموقع
+    بلغته لكن أسماء الأصناف نفسها بالإنجليزي دايمًا. راجع
+    core.services._guest_service_outlets/create_guest_order's ملاحظة عن
+    نظام الموظفين اللي فاضل عربي/إنجليزي بس عمدًا (القرار مختلف تمامًا —
+    الضيف 4 لغات، الموظف لغتين، راجع DiningOrderItem.name_ar)."""
     model_config = ConfigDict(from_attributes=True)
     id:                  int
     name:                str
     name_ar:             Optional[str]
+    name_ru:             Optional[str] = None
+    name_it:             Optional[str] = None
     description:         Optional[str]
+    description_ar:      Optional[str] = None
+    description_ru:      Optional[str] = None
+    description_it:      Optional[str] = None
     price:               Decimal
     is_available:        bool
     preparation_minutes: int
@@ -647,6 +662,8 @@ class PublicMenuCategoryRead(BaseModel):
     id:      int
     name:    str
     name_ar: Optional[str]
+    name_ru: Optional[str] = None
+    name_it: Optional[str] = None
 
 
 class PublicMenuResponse(BaseModel):

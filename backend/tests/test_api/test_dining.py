@@ -253,6 +253,81 @@ class TestOrder:
         with pytest.raises(ValueError):
             services.add_items_to_order(db, order.id, [OrderItemCreate(item_id=item.id, quantity=1)])
 
+    def test_order_item_snapshots_name_ar_regardless_of_variant(self, db):
+        """⚠️ باج حقيقي اتصلح (2026-08-03): الضيف ممكن يطلب بأي لغة من
+        الأربعة (ar/en/ru/it)، لكن نظام الموظفين (KDS/POS) عربي/إنجليزي
+        بس عمدًا — بند الطلب كان بيسجّل الاسم الإنجليزي بس وقت الإنشاء،
+        فلو الموظف حوّل شاشته عربي، اسم الصنف على الطلب المُقدَّم كان
+        يفضل إنجليزي."""
+        from app.modules.dining.models import DiningItem
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = DiningItem(
+            branch_id=branch.id, outlet_id=outlet.id,
+            name="Grilled Chicken", name_ar="فراخ مشوية",
+            price=Decimal("55.00"), is_available=True,
+        )
+        db.add(item)
+        db.commit()
+
+        order = make_order(db, branch, outlet, item, quantity=1)
+        order_item = order.items[0]
+        assert order_item.name == "Grilled Chicken"
+        assert order_item.name_ar == "فراخ مشوية"
+
+    def test_add_items_to_order_snapshots_name_ar_too(self, db):
+        from app.modules.dining.models import DiningItem
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = DiningItem(
+            branch_id=branch.id, outlet_id=outlet.id,
+            name="Grilled Chicken", name_ar="فراخ مشوية",
+            price=Decimal("55.00"), is_available=True,
+        )
+        db.add(item)
+        db.commit()
+        order = make_order(db, branch, outlet, item, quantity=1)
+
+        updated = services.add_items_to_order(db, order.id, [OrderItemCreate(item_id=item.id, quantity=1)])
+        new_item = [i for i in updated.items if i.id != order.items[0].id][0]
+        assert new_item.name_ar == "فراخ مشوية"
+
+    def test_order_item_extra_snapshots_name_ar(self, db):
+        from app.modules.dining.models import DiningItem, DiningItemExtraGroup, DiningItemExtra
+
+        branch = make_branch(db)
+        outlet = make_outlet(db, branch)
+        item = DiningItem(
+            branch_id=branch.id, outlet_id=outlet.id,
+            name="Grilled Chicken", name_ar="فراخ مشوية",
+            price=Decimal("55.00"), is_available=True,
+        )
+        db.add(item)
+        db.flush()
+        group = DiningItemExtraGroup(
+            item_id=item.id, name="Sauce", name_ar="صوص",
+            group_type="pick_list", min_select=0, max_select=1,
+        )
+        db.add(group)
+        db.flush()
+        extra = DiningItemExtra(
+            group_id=group.id, name="Garlic Sauce", name_ar="صوص ثوم",
+            price_addition=Decimal("10.00"),
+        )
+        db.add(extra)
+        db.commit()
+
+        data = OrderCreate(
+            outlet_id=outlet.id, order_type="takeaway",
+            items=[OrderItemCreate(item_id=item.id, quantity=1, extra_ids=[extra.id])],
+        )
+        order = services.create_order(db, branch.id, data)
+        order_extra = order.items[0].extras[0]
+        assert order_extra.extra_name == "Garlic Sauce"
+        assert order_extra.extra_name_ar == "صوص ثوم"
+
 
 def make_scheduled_item(db, branch, outlet, from_time=None, until_time=None):
     from app.modules.dining.models import DiningItem

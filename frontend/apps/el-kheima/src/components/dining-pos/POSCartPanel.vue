@@ -35,8 +35,8 @@ const emit = defineEmits<{
   pay: []
 }>()
 
-const { t, locale } = useI18n()
-const { formatMoney } = useStaffFormat()
+const { t } = useI18n()
+const { formatMoney, name } = useStaffFormat()
 const itemCount = computed(() => props.cart.reduce((sum, line) => sum + line.quantity, 0))
 const displayedTotal = computed(() => props.serverSummary?.total ?? props.itemSubtotal)
 const payPrimary = computed(() => props.orderType !== 'dine_in')
@@ -143,7 +143,7 @@ const cartGroups = computed(() => {
             <div class="flex items-start justify-between gap-2">
               <div class="min-w-0 flex-1">
                 <div class="font-bold text-gray-900 dark:text-gray-100 leading-snug">
-                  {{ locale === 'ar' ? (line.nameAr || line.name) : line.name }}
+                  {{ name({ name: line.name, name_ar: line.nameAr }) }}
                 </div>
                 <div v-if="line.variantLabel" class="text-xs text-primary-700 dark:text-primary-300 mt-1">{{ line.variantLabel }}</div>
                 <div v-if="line.extrasLabel" class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">{{ line.extrasLabel }}</div>

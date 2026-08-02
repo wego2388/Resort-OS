@@ -39,7 +39,7 @@ const route = useRoute()
 
 type TicketStatus = 'pending' | 'in_progress' | 'done'
 type ItemStatus = 'pending' | 'in_kitchen' | 'ready' | 'served' | 'cancelled'
-interface TicketItem { order_item_id: number; name: string; quantity: number; notes?: string | null; status?: ItemStatus }
+interface TicketItem { order_item_id: number; name: string; name_ar?: string | null; quantity: number; notes?: string | null; status?: ItemStatus }
 interface Ticket {
   id: number; order_id: number; outlet_id: number; station: string
   items_snapshot: TicketItem[]; status: TicketStatus; created_at: string
@@ -82,7 +82,7 @@ function initialStationFilter(): string[] | null {
 
 const tickets = ref<Ticket[]>([])
 const stationFilter = ref<string[] | null>(initialStationFilter())
-const { formatTime } = useStaffFormat()
+const { formatTime, name } = useStaffFormat()
 const now = ref(new Date())
 const isConnected = ref(true)
 // initialLoading: true فقط وقت أول fetch عند الـ mount — بيخفي الـ empty state
@@ -339,7 +339,7 @@ onUnmounted(() => { clearInterval(refreshInterval); clearInterval(clockInterval)
                 ]"
               >
                 <span class="bg-white dark:bg-surface/20 text-white rounded px-1.5 py-0.5 text-xs font-bold flex-shrink-0">{{ item.quantity }}</span>
-                <span :class="['leading-tight flex-1', ITEM_DONE_STATUSES.includes(item.status ?? 'pending') && 'line-through text-slate-400']">{{ item.name }}</span>
+                <span :class="['leading-tight flex-1', ITEM_DONE_STATUSES.includes(item.status ?? 'pending') && 'line-through text-slate-400']">{{ name(item) }}</span>
                 <span v-if="ITEM_DONE_STATUSES.includes(item.status ?? 'pending')" class="text-green-400 text-xs flex-shrink-0">✓</span>
               </button>
               <p v-if="item.notes" class="text-xs text-amber-300 ms-6 mt-0.5">⚠️ {{ item.notes }}</p>

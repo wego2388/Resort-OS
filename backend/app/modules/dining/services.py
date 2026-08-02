@@ -277,6 +277,7 @@ def _resolve_extras(
             extras_data.append({
                 "extra_id":       None,
                 "extra_name":     group.name,
+                "extra_name_ar":  group.name_ar,
                 "price_addition": Decimal("0"),
                 "text_value":     text_value,
             })
@@ -293,6 +294,7 @@ def _resolve_extras(
             extras_data.append({
                 "extra_id":       opt.id,
                 "extra_name":     opt.name,
+                "extra_name_ar":  opt.name_ar,
                 "price_addition": opt.price_addition,
             })
             price_addition += opt.price_addition
@@ -619,6 +621,10 @@ def create_order(
         variant = _resolve_variant(db, item, item_req.variant_id)
         base_price = variant.price if variant else item.price
         item_name = f"{item.name} - {variant.name}" if variant else item.name
+        # name_ar snapshot (2026-08-03): بغض النظر عن لغة الضيف اللي طلب
+        # بيها (ar/en/ru/it) — راجع docstring DiningOrderItem.name_ar.
+        item_name_ar = f"{item.name_ar} - {variant.name_ar}" if variant and item.name_ar and variant.name_ar \
+            else (item.name_ar if not variant else None)
 
         extras_data, extra_price_per_unit = _resolve_extras(db, item, item_req.extra_ids, item_req.extra_texts)
 
@@ -629,6 +635,7 @@ def create_order(
             "outlet_id":  item.outlet_id,
             "variant_id": variant.id if variant else None,
             "name":       item_name,
+            "name_ar":    item_name_ar,
             "unit_price": base_price,
             "quantity":   item_req.quantity,
             "notes":      item_req.notes,
@@ -769,6 +776,7 @@ def _create_kitchen_tickets_for_items(
         items_by_ticket.setdefault((outlet_id, station), []).append({
             "order_item_id": order_item.id,
             "name": order_item.name,
+            "name_ar": order_item.name_ar,
             "quantity": order_item.quantity,
             "notes": order_item.notes,
         })
@@ -830,6 +838,8 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
         variant = _resolve_variant(db, item, item_req.variant_id)
         base_price = variant.price if variant else item.price
         item_name  = f"{item.name} - {variant.name}" if variant else item.name
+        item_name_ar = f"{item.name_ar} - {variant.name_ar}" if variant and item.name_ar and variant.name_ar \
+            else (item.name_ar if not variant else None)
         extras_data, extra_price = _resolve_extras(db, item, item_req.extra_ids, item_req.extra_texts)
 
         new_item = DiningOrderItem(
@@ -838,6 +848,7 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
             outlet_id = item.outlet_id,
             variant_id= variant.id if variant else None,
             name      = item_name,
+            name_ar   = item_name_ar,
             unit_price= base_price,
             quantity  = item_req.quantity,
             notes     = item_req.notes,
@@ -853,6 +864,7 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
                 order_item_id  = new_item.id,
                 extra_id       = e["extra_id"],
                 extra_name     = e["extra_name"],
+                extra_name_ar  = e.get("extra_name_ar"),
                 price_addition = e["price_addition"],
                 text_value     = e.get("text_value"),
             ))

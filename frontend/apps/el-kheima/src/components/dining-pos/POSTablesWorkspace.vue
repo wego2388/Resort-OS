@@ -15,8 +15,8 @@ const emit = defineEmits<{
   open: [orderId: number]
 }>()
 
-const { t, locale } = useI18n()
-const { formatMoney } = useStaffFormat()
+const { t } = useI18n()
+const { formatMoney, name } = useStaffFormat()
 const query = ref('')
 const statusFilter = ref('all')
 const now = ref(Date.now())
@@ -68,9 +68,7 @@ const groupedTables = computed(() => {
 
 function outletName(id: number | null): string {
   if (id === null) return ''
-  const outlet = props.outlets.find(item => item.id === id)
-  if (!outlet) return ''
-  return locale.value === 'ar' ? (outlet.name_ar || outlet.name) : outlet.name
+  return name(props.outlets.find(item => item.id === id))
 }
 
 function elapsed(occupiedAt: string | null): string {

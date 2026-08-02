@@ -127,6 +127,8 @@ class DiningCategory(Base, TimestampMixin):
     outlet_id:     Mapped[int]        = mapped_column(ForeignKey("dining_outlets.id", ondelete="CASCADE"))
     name:          Mapped[str]        = mapped_column(String(100))
     name_ar:       Mapped[str | None] = mapped_column(String(100), nullable=True)
+    name_ru:       Mapped[str | None] = mapped_column(String(100), nullable=True)
+    name_it:       Mapped[str | None] = mapped_column(String(100), nullable=True)
     sort_order:    Mapped[int]        = mapped_column(Integer, default=0)
     is_active:     Mapped[bool]       = mapped_column(Boolean, default=True)
     legacy_module: Mapped[str | None] = mapped_column(String(20), nullable=True)
@@ -159,12 +161,23 @@ class DiningItem(Base, TimestampMixin):
     category_id:         Mapped[int | None]  = mapped_column(ForeignKey("dining_categories.id", ondelete="SET NULL"), nullable=True)
     name:                Mapped[str]         = mapped_column(String(200))
     name_ar:             Mapped[str | None]  = mapped_column(String(200), nullable=True)
+    name_ru:             Mapped[str | None]  = mapped_column(String(200), nullable=True)
+    name_it:             Mapped[str | None]  = mapped_column(String(200), nullable=True)
+    # name_ru/name_it (2026-08-03، منيو 2026): مش مقروءين في أي schema/router
+    # عام لسه — PublicMenuItemRead بيرجع name/name_ar بس. تفعيلهم للضيف
+    # محتاج تعديل schemas.py + router.py منفصل (راجع data/menu/README.md).
+    sort_order:          Mapped[int]         = mapped_column(Integer, default=0)
+    # ترتيب العرض داخل الفئة (رقم الصنف في المنيو المطبوع، 1-56 مثلاً) —
+    # مفيش أي ترتيب صريح كان موجود قبل كده، الأصناف كانت بترجع بترتيب الـID.
     price:               Mapped[Decimal]     = mapped_column(Numeric(10, 2))
     cost:                Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
     is_available:        Mapped[bool]        = mapped_column(Boolean, default=True)
     preparation_minutes: Mapped[int]         = mapped_column(Integer, default=10)
     image_url:           Mapped[str | None]  = mapped_column(String(500), nullable=True)
     description:         Mapped[str | None]  = mapped_column(Text, nullable=True)
+    description_ar:      Mapped[str | None]  = mapped_column(Text, nullable=True)
+    description_ru:      Mapped[str | None]  = mapped_column(Text, nullable=True)
+    description_it:      Mapped[str | None]  = mapped_column(Text, nullable=True)
     # وصف قصير للصنف — بيظهر في قائمة الضيف QR (OrderView) تحت الاسم
     station:             Mapped[str]         = mapped_column(String(50), default="hot")
     # hot|grill|cold|bar|dessert — لتوجيه الـ KDS تلقائياً (راجع docstring
@@ -499,7 +512,15 @@ class DiningOrderItem(Base, TimestampMixin):
     variant_id:   Mapped[int | None] = mapped_column(ForeignKey("dining_item_variants.id", ondelete="SET NULL"), nullable=True)
     # outlet_id: منفذ الصنف — NULLable للتوافق مع الأصناف القديمة
     outlet_id:    Mapped[int | None] = mapped_column(ForeignKey("dining_outlets.id", ondelete="SET NULL"), nullable=True)
-    name:         Mapped[str]        = mapped_column(String(200))          # snapshot
+    name:         Mapped[str]        = mapped_column(String(200))          # snapshot (EN)
+    name_ar:      Mapped[str | None] = mapped_column(String(200), nullable=True)  # snapshot (AR)
+    # name/name_ar (2026-08-03): قرار متعمد — الطلب ممكن يتقدّم من ضيف
+    # بأي لغة من الأربعة (ar/en/ru/it، راجع PublicMenuItemRead)، لكن نظام
+    # الموظفين (KDS/POS/الطلبات النشطة) عربي/إنجليزي بس عمدًا — فبنسجّل
+    # نسختين بس هنا (مش الأربعة) وقت إنشاء البند، بغض النظر عن لغة الضيف
+    # اللي طلب بيها. قبل كده كان بيتسجّل name (إنجليزي) بس، فلو الموظف
+    # حوّل شاشته عربي، اسم الصنف على الطلب المُقدَّم فعلاً كان بيفضل
+    # إنجليزي (عكس باقي الشاشة اللي بتحترم اللغة المختارة).
     unit_price:   Mapped[Decimal]    = mapped_column(Numeric(10, 2))       # snapshot
     quantity:     Mapped[int]        = mapped_column(Integer, default=1)
     notes:        Mapped[str | None] = mapped_column(String(200), nullable=True)
@@ -530,6 +551,7 @@ class DiningOrderItemExtra(Base, TimestampMixin):
     order_item_id:  Mapped[int]      = mapped_column(ForeignKey("dining_order_items.id", ondelete="CASCADE"))
     extra_id:       Mapped[int | None] = mapped_column(ForeignKey("dining_item_extras.id", ondelete="SET NULL"), nullable=True)
     extra_name:     Mapped[str]      = mapped_column(String(100))
+    extra_name_ar:  Mapped[str | None] = mapped_column(String(100), nullable=True)
     price_addition: Mapped[Decimal]  = mapped_column(Numeric(10, 2), default=Decimal("0"))
     text_value:     Mapped[str | None] = mapped_column(String(500), nullable=True)
 

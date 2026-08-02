@@ -18,8 +18,8 @@ const emit = defineEmits<{
   refresh: []
 }>()
 
-const { t, locale } = useI18n()
-const { formatMoney, formatTime } = useStaffFormat()
+const { t } = useI18n()
+const { formatMoney, formatTime, name } = useStaffFormat()
 const query = ref('')
 const statusFilter = ref('all')
 const outletFilter = ref('all')
@@ -38,7 +38,7 @@ const outletOptions = computed<SelectOption[]>(() => [
   { value: 'all', label: t('backoffice.pos.activeOrders.allOutlets') },
   ...props.outlets.map(outlet => ({
     value: String(outlet.id),
-    label: locale.value === 'ar' ? (outlet.name_ar || outlet.name) : outlet.name,
+    label: name(outlet),
   })),
 ])
 
@@ -68,7 +68,7 @@ const filteredOrders = computed(() => {
 function outletName(outletId: number): string {
   const outlet = props.outlets.find(item => item.id === outletId)
   if (!outlet) return t('backoffice.pos.activeOrders.unknownOutlet')
-  return locale.value === 'ar' ? (outlet.name_ar || outlet.name) : outlet.name
+  return name(outlet)
 }
 
 function tableLabel(order: ActiveOrder): string {

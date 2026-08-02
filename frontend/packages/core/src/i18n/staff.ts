@@ -52,9 +52,24 @@ export function normalizeStaffLocale(value: string | null | undefined): StaffLoc
     : 'ar'
 }
 
+/** Anything with an English base name plus an optional Arabic one — menu
+ * items, outlets, categories, order lines, extras — all share this shape. */
+export interface StaffLocalizable {
+  name: string
+  name_ar?: string | null
+}
+
 /**
  * Composable exposing the active staff locale plus locale-aware formatters
  * bound to it. Currency still comes from the caller — never the language.
+ *
+ * `name()` (2026-08-03): اسم موحّد حسب لغة الموظف (عربي/إنجليزي بس، راجع
+ * docstring الملف) — بديل الترنري `locale === 'ar' ? x.name_ar : x.name`
+ * المكرر يدويًا في كل شاشة (خريطة الطاولات، السلة، الطلبات النشطة، الـKDS...).
+ * باج حقيقي اتصلح: بند الطلب نفسه (DiningOrderItem.name_ar) ماكانش موجود
+ * أصلاً قبل كده، فحتى الشاشات اللي كانت بتستخدم الترنري ده صح مع صنف
+ * المنيو، كانت بترجع للإنجليزي دايمًا لبند طلب مُقدَّم فعليًا — دلوقتي
+ * الحقل موجود، والدالة دي بقت نقطة مركزية واحدة تقرأه صح في كل مكان.
  */
 export function useStaffFormat() {
   const { locale } = useI18n()
@@ -64,6 +79,8 @@ export function useStaffFormat() {
   return {
     locale: current,
     isRTL,
+    name: (entity: StaffLocalizable | null | undefined) =>
+      current.value === 'ar' ? (entity?.name_ar || entity?.name || '') : (entity?.name || ''),
     formatNumber: (value: number | string | null | undefined, options?: Intl.NumberFormatOptions) =>
       formatNumber(value, current.value, options),
     formatMoney: (value: number | string | null | undefined, currency: string) =>

@@ -37,7 +37,7 @@ import type {
 } from '../../components/dining-pos/types'
 
 const { t, locale } = useI18n()
-const { formatMoney } = useStaffFormat()
+const { formatMoney, name } = useStaffFormat()
 const toast = useToast()
 const { confirm } = useConfirm()
 const { printBlob } = usePrintDocument()
@@ -139,7 +139,7 @@ const noteLabel = computed(() => {
 })
 
 function localizedName(value: { name: string; name_ar: string | null }): string {
-  return locale.value === 'ar' ? (value.name_ar || value.name) : value.name
+  return name(value)
 }
 
 function categoryName(category: DiningCategory): string {
