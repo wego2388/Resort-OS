@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد نشر إصلاح باج تزامن استرداد نقاط الولاء (CRM)
+**آخر تحقق:** 2026-08-02 بعد نشر إصلاحين في موديول الصيانة (Maintenance)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -12,21 +12,21 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `8597535` |
+| Resort OS source release | `b1db886` |
 | Marketing source release | `0b0321f` من المستودع المستقل (`main` يطابق الالتزام) |
-| remote | فرع العمل يحتوي `8597535` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`) |
+| remote | فرع العمل يحتوي `b1db886` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/8597535` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/8597535` |
+| active Resort release | `/opt/resort-os-releases/b1db886` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/b1db886` |
 | active Marketing release | `/opt/elkheima-marketing-releases/0b0321f` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/0b0321f` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
-`/var/backups/resort-os/source-releases/8597535.tar.gz`،
+`/var/backups/resort-os/source-releases/b1db886.tar.gz`،
 SHA-256
-`4fcd0da28a3dd6067820315445755be6fcf31beab15114e961e7b5a2c1658320`.
-(أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777` السابقة ما زالت محفوظة كما هي.)
+`da2bb917b3e7646c5635a4be8fe9edcfc5d80301a477385b93264d17b87cc36a`.
+(أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535` السابقة ما زالت محفوظة كما هي.)
 
 أرشيف Marketing:
 `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`،
@@ -40,22 +40,22 @@ SHA-256
 
 ## 2. الخدمات الفعالة
 
-- `backend`, `celery_worker`, `celery_beat` بُنوا ونُشروا من `8597535`
-  (إصلاح باج تزامن استرداد نقاط الولاء في CRM — قفل صف `LoyaltyAccount`
-  بـ`SELECT FOR UPDATE NOWAIT` قبل الخصم، `LoyaltyConcurrencyError` جديد
-  يترجم فشل القفل لـ409، مكتشف أثناء مراجعة ذاتية شاملة طلبها Mohamed).
-  `el_kheima` (frontend) لم يتغيّر في الجولة دي، لسه من `ddfbaaa`. صفر
-  migration، Alembic head واحد لم يتغيّر `88d1c505a9dc`.
+- `backend`, `celery_worker`, `celery_beat`, `el_kheima` بُنوا ونُشروا من
+  `b1db886` (موديول الصيانة: منع إغلاق أمر صيانة "مكتمل" عبر PATCH العادي
+  — لازم يمر بـ/complete المخصص عشان الآثار الجانبية تحصل صح، وربط تحرير
+  الأصل من under_maintenance بمسار إلغاء الأمر مش الإكمال بس. مكتشف أثناء
+  مراجعة ذاتية شاملة طلبها Mohamed). صفر migration، Alembic head واحد لم
+  يتغيّر `88d1c505a9dc`.
 - `marketing_site` مبني من المصدر المستقل `0b0321f` عبر
   `/opt/elkheima-marketing-current`.
 - Backend image:
-  `sha256:3646a30301dc2c2984a20643063d42e858e85ddcd04ffdb2e538966ba89e41b3`.
+  `sha256:a871d0247084804cf17d7c8d313cccf6f0c46906f11e658d33475ecf40a32682`.
 - Celery worker:
-  `sha256:5f8f11fddeb7660001c9444e5141c4da1d1d51cae6c53db80146a64c77662e37`.
+  `sha256:5b3fb0793998926b5ab85fb348a42e1dd5c61f42cb9db19ad971955da0edbcc6`.
 - Celery beat:
-  `sha256:27400a05c5128426c4e89f5a7c09f29fb4cb0a85014b3adeb312794a0aad3e26`.
-- El Kheima staff app (من `ddfbaaa`، غير متغيّر هذه الجولة):
-  `sha256:2930d20b4116a18d7751314de9bcfaa48cfb798280a783e933ac6aeb536f78eb`.
+  `sha256:797fa32d6bb7b485da8c338e99a33fc8cc6adedc4d5efdbdc8b899730c178475`.
+- El Kheima staff app:
+  `sha256:f135b11a4d2d7799afd011934a093eb14ed14921b86bbd807d31582a1082c673`.
 - Marketing image:
   `sha256:417bc784605359fdfc9758bffa1445d8eaf959dac740042bd14e3fdc076b3177`.
 - Nginx:
@@ -288,6 +288,20 @@ SHA-256
   `/var/backups/resort-os/database/resort_os_20260802_103152.dump`،
   SHA-256
   `5ecad84360934af560b617c25cdfa53b3730218342e1bce3f5e098b12196ebdc`؛
+  اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
+- أرشيف إصدار `b1db886` (موديول الصيانة: منع إغلاق أمر "مكتمل" عبر PATCH
+  العادي + ربط تحرير الأصل بمسار الإلغاء — `backend`/`celery_worker`/
+  `celery_beat`/`el_kheima` الأربعة، صفر migration):
+  `/var/backups/resort-os/source-releases/b1db886.tar.gz`،
+  SHA-256
+  `da2bb917b3e7646c5635a4be8fe9edcfc5d80301a477385b93264d17b87cc36a`.
+- صور ما قبل `b1db886` (backend/celery_worker/celery_beat/el_kheima، كانوا
+  `8597535`/`ddfbaaa` بالترتيب) محفوظة تحت `resort-os-rollback/*:pre-b1db886`،
+  والـmanifest: `/var/backups/resort-os/source-releases/b1db886-rollback-images.txt`.
+- نسخة DB السابقة مباشرة لنشر `b1db886`:
+  `/var/backups/resort-os/database/resort_os_20260802_105621.dump`،
+  SHA-256
+  `b838604a4db79f02dc099cfc2ef674eab0b6bc34364f2f344c10631cd8ffe472`؛
   اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
 
 ## 9. الحالة المتبقية

@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-02 بعد نشر إصلاح باج تزامن استرداد نقاط الولاء في CRM
+**آخر تحديث:** 2026-08-02 بعد نشر إصلاحين في موديول الصيانة (Maintenance)
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
@@ -38,6 +38,7 @@
 | POS-02 — cross-outlet order support + refund revenue-account fix | COMPLETE | `ddfbaaa` فعال؛ صنف من منفذ تاني على نفس الفاتورة + مرتجع يعكس الحساب الصح | — |
 | HR-01 — income tax bracket calculation fix | COMPLETE | `4a0a777` فعال؛ حساب الشرائح الضريبية بيعامل الفجوة القانونية كعرض بس | — |
 | CRM-01 — loyalty redeem row-lock fix | COMPLETE | `8597535` فعال؛ قفل صف حساب النقاط يمنع خصم استرداد مزدوج متزامن | — |
+| MNT-01 — work-order completion bypass + asset-release-on-cancel fix | COMPLETE | `b1db886` فعال؛ إغلاق "مكتمل" لازم /complete المخصص، والإلغاء بيحرر الأصل زي الإكمال | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -92,7 +93,7 @@
 | Staff app | `https://app.elkheima.com` |
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../8597535` |
+| Resort release | `/opt/resort-os-current -> .../b1db886` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../0b0321f` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
@@ -105,13 +106,13 @@
 ## أدلة التشغيل
 
 - Resort release archive:
-  `/var/backups/resort-os/source-releases/8597535.tar.gz`
+  `/var/backups/resort-os/source-releases/b1db886.tar.gz`
 - Resort SHA-256:
-  `4fcd0da28a3dd6067820315445755be6fcf31beab15114e961e7b5a2c1658320`
+  `da2bb917b3e7646c5635a4be8fe9edcfc5d80301a477385b93264d17b87cc36a`
 - Rollback image manifest:
-  `/var/backups/resort-os/source-releases/8597535-rollback-images.txt`
-- Pre-deploy DB (`8597535`):
-  `/var/backups/resort-os/database/resort_os_20260802_103152.dump`
+  `/var/backups/resort-os/source-releases/b1db886-rollback-images.txt`
+- Pre-deploy DB (`b1db886`):
+  `/var/backups/resort-os/database/resort_os_20260802_105621.dump`
 - Marketing release archive:
   `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`
 - Marketing SHA-256:
@@ -122,7 +123,7 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-02_CRM-01_loyalty_redeem_lock_fix_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-02_MNT-01_work_order_completion_fix_handoff.md`
 
 ## التحديث التالي المطلوب
 
