@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد جولة مراجعة كاملة لباقي شاشات الموقع التسويقي (idempotency + بوابات PUBLIC_TRUTH + توجيه اللغة)
+**آخر تحقق:** 2026-08-02 بعد إصلاح سكرول أفقي عربي فقط في /contact (باج honeypot/RTL)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -13,13 +13,13 @@
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
 | Resort OS source release | `5b02010` |
-| Marketing source release | `53bf7a3` من المستودع المستقل (`main` يطابق الالتزام) |
+| Marketing source release | `1371975` من المستودع المستقل (`main` يطابق الالتزام) |
 | remote | فرع العمل يحتوي `5b02010` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1`، `5b02010`) |
 | `origin/main` | `598938e` — لم يُغيّر |
 | active Resort release | `/opt/resort-os-releases/5b02010` |
 | Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/5b02010` |
-| active Marketing release | `/opt/elkheima-marketing-releases/53bf7a3` |
-| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/53bf7a3` |
+| active Marketing release | `/opt/elkheima-marketing-releases/1371975` |
+| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/1371975` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
@@ -29,10 +29,10 @@ SHA-256
 (أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1` السابقة ما زالت محفوظة كما هي.)
 
 أرشيف Marketing:
-`/var/backups/resort-os/marketing-source-releases/53bf7a3.tar.gz`،
+`/var/backups/resort-os/marketing-source-releases/1371975.tar.gz`،
 SHA-256
-`6e216b8ae15fda2efcda6d16e3819df9b3cbacb7c07a866c70110aec32962f6a`.
-(أرشيفات `16f8f2c`، `0b0321f`، `4fba5b6` السابقة ما زالت محفوظة كما هي.)
+`21fbf305bc06e038464803e1c51703a3b7bcc899e97acfcc35717ac1b061b903`.
+(أرشيفات `16f8f2c`، `0b0321f`، `4fba5b6`، `53bf7a3` السابقة ما زالت محفوظة كما هي.)
 
 مجلدا المصدر القديمان `/opt/resort-os` و
 `/opt/elkheima-marketing-website` محفوظان كما كانا، وغير مستخدمين كمصدر
@@ -66,7 +66,20 @@ SHA-256
   في Home.vue، وتضارب سعر رومانسي 300ج/$15 حسب اللغة في Rooms.vue) اتأمّنوا
   احتياطيًا قبل ما يتفعّلوا بالغلط لاحقًا. (٣) كاردز Products.vue كانت
   بتستخدم مسارات خام بدل localePath()، عكس باقي الموقع بالكامل. تفاصيل
-  كاملة في handoff resort-os الجديد.
+  كاملة في handoff MKT-05.
+- `marketing_site` بُني ونُشر بعد كده من `1371975` (MKT-06) — Mohamed
+  رفع screenshot لسكرول أفقي فاضي طويل في `/ar/contact` بس (باقي اللغات
+  سليمة). السبب: حقل honeypot مضاد للبوتات كان مخفي بإزاحة فيزيائية ضخمة
+  (`-left-[10000px]`) من غير أي عنصر أب positioned يحتوي الـoverflow —
+  في LTR المتصفح بيتجاهل السكرول للإحداثيات السالبة بصمت، لكن في RTL
+  نقطة بداية السكرول بتتقلب وبتسمح فعليًا بالوصول للمنطقة السالبة دي،
+  فعرض الصفحة الفعلي كان بيتوسّع 10000px. اتصلح بـ`sr-only` (تقنية
+  Tailwind قياسية، clip-based، صفر إزاحة فيزيائية) — نفس التقنية
+  المستخدمة فعلاً في مكان تاني بالموقع. اتفحص باقي الموقع لنفس النمط
+  (`-left-[Npx]`/`-right-[Npx]`) — التطابق الوحيد التاني (blob زخرفي في
+  CTASection.vue) محاط فعليًا بـ`overflow: hidden` صح، مش نفس الباج.
+  اتأكد الإصلاح حيًا: الكود القديم (`10000px`) اختفى تمامًا من الـbundle
+  المنشور، و`sr-only` موجود فعليًا.
 - Backend image:
   `sha256:abbd5f245b5e3d84efc2e5c9215f06c08576a465f316e89e26fcf0842655b28a`.
 - Celery worker:
@@ -254,6 +267,16 @@ SHA-256
   `resort-os-rollback/marketing-site:pre-53bf7a3`، والـmanifest:
   `/var/backups/resort-os/marketing-source-releases/53bf7a3-rollback-image.txt`.
   release القديم `/opt/elkheima-marketing-releases/4fba5b6` لسه موجود كامل
+  على القرص، مش متحذوف. لا migration ولا تغيير DB في هذه الحزمة برضو.
+- أرشيف إصدار Marketing `1371975` (MKT-06 — إصلاح سكرول أفقي عربي فقط في
+  /contact):
+  `/var/backups/resort-os/marketing-source-releases/1371975.tar.gz`،
+  SHA-256
+  `21fbf305bc06e038464803e1c51703a3b7bcc899e97acfcc35717ac1b061b903`.
+- صورة Marketing السابقة مباشرة لـ`1371975` محفوظة تحت
+  `resort-os-rollback/marketing-site:pre-1371975`، والـmanifest:
+  `/var/backups/resort-os/marketing-source-releases/1371975-rollback-image.txt`.
+  release القديم `/opt/elkheima-marketing-releases/53bf7a3` لسه موجود كامل
   على القرص، مش متحذوف. لا migration ولا تغيير DB في هذه الحزمة برضو.
 - النسخة المشفرة خارج الخادم واستعادة 135 جدولًا ما زالتا دليل DR الأساسي.
 - `resort-os-backup.timer`, `resort-os-certbot-renew.timer`,
