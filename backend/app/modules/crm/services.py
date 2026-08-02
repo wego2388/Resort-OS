@@ -5,11 +5,11 @@ import logging
 
 from datetime import date
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
-
 from app.core.config import settings
+from app.core.db_errors import is_lock_not_available
 from app.resort_os.timezone_utils import local_today
 
 from decimal import Decimal
@@ -27,6 +27,14 @@ from app.modules.crm.schemas import (
     LoyaltyAdjustRequest, LoyaltyProgramCreate, LoyaltyProgramUpdate, LoyaltyRedeemRequest,
     OpportunityCreate, OpportunityUpdate,
 )
+
+logger = logging.getLogger(__name__)
+
+
+class LoyaltyConcurrencyError(Exception):
+    """حساب نقاط العميل مقفول دلوقتي بعملية استرداد/تعديل تانية (SELECT FOR
+    UPDATE NOWAIT فشل) — 409، نفس نمط InventoryConcurrencyError/
+    BeachConcurrencyError بالظبط."""
 
 
 # ── CustomerGroup (standing discount) ───────────────────────────────────
@@ -452,7 +460,18 @@ def redeem_loyalty_points(
     if not program or not program.is_active:
         raise ValueError("برنامج النقاط غير مفعّل لهذا الفرع")
 
-    account = crud.get_loyalty_account_by_customer(db, data.branch_id, data.customer_id)
+    # باج تزامن حقيقي اتصلح (2026-08-02): قراءة غير مقفولة هنا كانت بتسمح
+    # بنفس رصيد النقاط يترد مرتين من طلبين متزامنين — راجع docstring
+    # crud.get_loyalty_account_by_customer_for_update للتفصيل الكامل.
+    try:
+        account = crud.get_loyalty_account_by_customer_for_update(db, data.branch_id, data.customer_id)
+    except OperationalError as exc:
+        if not is_lock_not_available(exc):
+            raise
+        db.rollback()
+        raise LoyaltyConcurrencyError(
+            "حساب النقاط ده مشغول الآن بعملية استرداد أخرى — حاول تاني خلال لحظات"
+        ) from exc
     if not account:
         raise ValueError("العميل لا يملك حساب نقاط")
     if account.is_frozen:

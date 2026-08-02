@@ -448,6 +448,25 @@ def get_loyalty_account_by_customer(db: Session, branch_id: int, customer_id: in
     )
 
 
+def get_loyalty_account_by_customer_for_update(
+    db: Session, branch_id: int, customer_id: int,
+) -> Optional[LoyaltyAccount]:
+    """زي get_loyalty_account_by_customer، بس بـSELECT FOR UPDATE NOWAIT —
+    استخدمها أي مسار بيقرا account.points عشان يقرر خصم/استرداد (زي
+    redeem_loyalty_points). قراءة غير مقفولة هنا كانت باج تزامن حقيقي: نفس
+    العميل يقدر يسترد نفس رصيد النقاط مرتين من طلبين متزامنين (كل واحد
+    بيقرا الرصيد القديم قبل ما التاني يعمل commit)، فيتقبل الاتنين ويتخصم
+    نصيب واحد بس فعليًا من الرصيد (lost update) — خصم فعلي مزدوج على فاتورتين
+    حقيقيتين بينما دفتر النقاط بيوريه مرة واحدة بس. نفس فئة الباج اللي
+    اتصلحت قبل كده في المخزون/الشاطئ/التايم شير (راجع CLAUDE.md §13 بند ⓫)."""
+    return (
+        db.query(LoyaltyAccount)
+        .filter(LoyaltyAccount.branch_id == branch_id, LoyaltyAccount.customer_id == customer_id)
+        .with_for_update(nowait=True)
+        .first()
+    )
+
+
 def list_loyalty_transactions(
     db: Session, account_id: int, limit: int = 50, offset: int = 0
 ) -> list[LoyaltyTransaction]:

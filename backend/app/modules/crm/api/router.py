@@ -579,6 +579,8 @@ def redeem_loyalty_points(
     _assert_crm_branch(db, user, data.branch_id, "استرداد نقاط عميل")
     try:
         return services.redeem_loyalty_points(db, data, created_by=user.id)
+    except services.LoyaltyConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
