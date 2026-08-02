@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد إصلاح حدود إدخال استمارة استبيان الضيف في الموقع التسويقي
+**آخر تحقق:** 2026-08-02 بعد جولة مراجعة كاملة لباقي شاشات الموقع التسويقي (idempotency + بوابات PUBLIC_TRUTH + توجيه اللغة)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -13,13 +13,13 @@
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
 | Resort OS source release | `5b02010` |
-| Marketing source release | `4fba5b6` من المستودع المستقل (`main` يطابق الالتزام) |
+| Marketing source release | `53bf7a3` من المستودع المستقل (`main` يطابق الالتزام) |
 | remote | فرع العمل يحتوي `5b02010` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1`، `5b02010`) |
 | `origin/main` | `598938e` — لم يُغيّر |
 | active Resort release | `/opt/resort-os-releases/5b02010` |
 | Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/5b02010` |
-| active Marketing release | `/opt/elkheima-marketing-releases/4fba5b6` |
-| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/4fba5b6` |
+| active Marketing release | `/opt/elkheima-marketing-releases/53bf7a3` |
+| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/53bf7a3` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
@@ -29,10 +29,10 @@ SHA-256
 (أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1` السابقة ما زالت محفوظة كما هي.)
 
 أرشيف Marketing:
-`/var/backups/resort-os/marketing-source-releases/4fba5b6.tar.gz`،
+`/var/backups/resort-os/marketing-source-releases/53bf7a3.tar.gz`،
 SHA-256
-`81018ef5e29577bfeb40c2a299dd37d12b8cf2433c4946a6798cf7b5e83bf641`.
-(أرشيفات `16f8f2c` و`0b0321f` السابقة ما زالت محفوظة كما هي.)
+`6e216b8ae15fda2efcda6d16e3819df9b3cbacb7c07a866c70110aec32962f6a`.
+(أرشيفات `16f8f2c`، `0b0321f`، `4fba5b6` السابقة ما زالت محفوظة كما هي.)
 
 مجلدا المصدر القديمان `/opt/resort-os` و
 `/opt/elkheima-marketing-website` محفوظان كما كانا، وغير مستخدمين كمصدر
@@ -48,13 +48,25 @@ SHA-256
   ذاتية شاملة طلبها Mohamed). `el_kheima` (frontend) لم يتغيّر في الجولة
   دي، لسه من `b1db886`. صفر migration، Alembic head واحد لم يتغيّر
   `88d1c505a9dc`.
-- `marketing_site` بُني ونُشر من `4fba5b6` (استمارة استبيان الضيف
-  `GuestSurvey.vue` مكانش فيها أي حد أقصى لطول أي حقل — بعد ما resort-os
-  backend بقى يفرض حدود صارمة (ANL-01، `5b02010` من الأصل بعد
-  `0d55717`)، ضيف بيكتب تعليق طويل غير عادي كان ممكن يتصادف مع 422 بدل
-  ما يتقبل. اتضاف `maxlength` مطابق لحدود الباك إند الفعلية على كل حقل.
-  مكتشف أثناء مراجعة الموقع التسويقي عقب دورة الميديولات — راجع تعليمة
-  Mohamed "كمل اخيرا علي الويب سايت").
+- `marketing_site` بُني ونُشر من `53bf7a3` — جولة مراجعة كاملة لباقي شاشات
+  الموقع التسويقي (Rooms/Beach/Restaurant/Activities/Events/Packages/
+  Products/FAQ/Home/Contact/Timeshare/booking modal) بعد إغلاق MKT-04،
+  لقيت 3 دفعات باجات حقيقية: (١) 7 استمارات تواصل عامة (booking/contact/
+  timeshare/spa/room-service/sunbed + usePageBooking المشتركة) كانت بتعيد
+  استخدام نفس idempotency key حتى بعد فشل الإرسال — لو رد نجاح ضاع فعليًا
+  بعد ما الباك إند كتب الصف (network drop/timeout)، وبعدين الزائر عدّل
+  حاجة بسيطة وأعاد الإرسال، كان بيتعلّق للأبد على 409 idempotency_conflict
+  من الباك إند من غير أي مخرج غير ريفريش الصفحة — اتصلح بتوليد مفتاح جديد
+  عند أي فشل. (٢) تسريب حقيقي من بوابات PUBLIC_TRUTH: "4.2★" (تقييم مفبرك)
+  و"12,500 m²" في Beach.vue، 4 إجابات FAQ برقم خصم/عربون صريح، كارت "وفّر
+  حتى 30%" في Packages.vue، وبادج سعة "200+ ضيف" في Events.vue — كلهم
+  كانوا ظاهرين لأي زائر حقيقي لأنهم راكبين على بوابة عامة (amenities/
+  packages) مفعّلة بدل بوابتهم الخاصة (prices/promotions/ratings/
+  numericStats، لسه fail-closed). زائد فخين خاملين (تقييم + تصنيف "3 نجوم"
+  في Home.vue، وتضارب سعر رومانسي 300ج/$15 حسب اللغة في Rooms.vue) اتأمّنوا
+  احتياطيًا قبل ما يتفعّلوا بالغلط لاحقًا. (٣) كاردز Products.vue كانت
+  بتستخدم مسارات خام بدل localePath()، عكس باقي الموقع بالكامل. تفاصيل
+  كاملة في handoff resort-os الجديد.
 - Backend image:
   `sha256:abbd5f245b5e3d84efc2e5c9215f06c08576a465f316e89e26fcf0842655b28a`.
 - Celery worker:
@@ -232,6 +244,16 @@ SHA-256
   `resort-os-rollback/marketing-site:pre-4fba5b6`، والـmanifest:
   `/var/backups/resort-os/marketing-source-releases/4fba5b6-rollback-image.txt`.
   release القديم `/opt/elkheima-marketing-releases/0b0321f` لسه موجود كامل
+  على القرص، مش متحذوف. لا migration ولا تغيير DB في هذه الحزمة برضو.
+- أرشيف إصدار Marketing `53bf7a3` (idempotency + بوابات PUBLIC_TRUTH +
+  توجيه اللغة عبر باقي شاشات الموقع):
+  `/var/backups/resort-os/marketing-source-releases/53bf7a3.tar.gz`،
+  SHA-256
+  `6e216b8ae15fda2efcda6d16e3819df9b3cbacb7c07a866c70110aec32962f6a`.
+- صورة Marketing السابقة مباشرة لـ`53bf7a3` محفوظة تحت
+  `resort-os-rollback/marketing-site:pre-53bf7a3`، والـmanifest:
+  `/var/backups/resort-os/marketing-source-releases/53bf7a3-rollback-image.txt`.
+  release القديم `/opt/elkheima-marketing-releases/4fba5b6` لسه موجود كامل
   على القرص، مش متحذوف. لا migration ولا تغيير DB في هذه الحزمة برضو.
 - النسخة المشفرة خارج الخادم واستعادة 135 جدولًا ما زالتا دليل DR الأساسي.
 - `resort-os-backup.timer`, `resort-os-certbot-renew.timer`,
