@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-02 بعد إصلاح باج في تأكيد الحجوزات الأونلاين (Hub)
+**آخر تحديث:** 2026-08-02 بعد إصلاح حدود إدخال استمارة استبيان الضيف في الموقع التسويقي
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
@@ -42,6 +42,7 @@
 | ANL-01 — guest review submit input validation | COMPLETE | `0d55717` فعال؛ endpoint عام بدون auth بقى محمي بـschema بدل dict خام | — |
 | LSE-01 — cash-log rent collection blocked on terminated/expired lease | COMPLETE | `4ca10c1` فعال؛ التسوية الكاش اليومية بقت تفرض نفس فحص حالة العقد زي التحصيل العادي | — |
 | HUB-01 — confirm_booking dead-code UnboundLocalError fix | COMPLETE | `5b02010` فعال؛ حذف كود مكرر كان بيسبب خطأ صامت مضلّل عند عدم توفر غرف | — |
+| MKT-04 — guest survey form maxlength guards | COMPLETE | `4fba5b6` فعال (Marketing)؛ حدود العميل تطابق GuestReviewSubmitRequest الجديدة | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -97,7 +98,7 @@
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
 | Resort release | `/opt/resort-os-current -> .../5b02010` |
-| Marketing release | `/opt/elkheima-marketing-current -> .../0b0321f` |
+| Marketing release | `/opt/elkheima-marketing-current -> .../4fba5b6` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
@@ -117,16 +118,16 @@
 - Pre-deploy DB (`5b02010`):
   `/var/backups/resort-os/database/resort_os_20260802_115042.dump`
 - Marketing release archive:
-  `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`
+  `/var/backups/resort-os/marketing-source-releases/4fba5b6.tar.gz`
 - Marketing SHA-256:
-  `d390a2aa0a6fc025d323a6e9442330d28092d90ef1d260fb1920410f4a85b40d`
+  `81018ef5e29577bfeb40c2a299dd37d12b8cf2433c4946a6798cf7b5e83bf641`
 - Domain rollback directory:
   `/var/backups/resort-os-domain-cutover-aed94a0`
 - DNS rollback snapshot: `167902017`
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-02_HUB-01_confirm_booking_deadcode_fix_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-02_MKT-04_guest_survey_maxlength_handoff.md`
 
 ## التحديث التالي المطلوب
 

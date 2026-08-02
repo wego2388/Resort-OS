@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد إصلاح باج في تأكيد الحجوزات الأونلاين (Hub)
+**آخر تحقق:** 2026-08-02 بعد إصلاح حدود إدخال استمارة استبيان الضيف في الموقع التسويقي
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -13,13 +13,13 @@
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
 | Resort OS source release | `5b02010` |
-| Marketing source release | `0b0321f` من المستودع المستقل (`main` يطابق الالتزام) |
+| Marketing source release | `4fba5b6` من المستودع المستقل (`main` يطابق الالتزام) |
 | remote | فرع العمل يحتوي `5b02010` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1`، `5b02010`) |
 | `origin/main` | `598938e` — لم يُغيّر |
 | active Resort release | `/opt/resort-os-releases/5b02010` |
 | Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/5b02010` |
-| active Marketing release | `/opt/elkheima-marketing-releases/0b0321f` |
-| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/0b0321f` |
+| active Marketing release | `/opt/elkheima-marketing-releases/4fba5b6` |
+| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/4fba5b6` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
@@ -29,10 +29,10 @@ SHA-256
 (أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1` السابقة ما زالت محفوظة كما هي.)
 
 أرشيف Marketing:
-`/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`،
+`/var/backups/resort-os/marketing-source-releases/4fba5b6.tar.gz`،
 SHA-256
-`d390a2aa0a6fc025d323a6e9442330d28092d90ef1d260fb1920410f4a85b40d`.
-(أرشيف `16f8f2c` السابق ما زال محفوظًا كما هو.)
+`81018ef5e29577bfeb40c2a299dd37d12b8cf2433c4946a6798cf7b5e83bf641`.
+(أرشيفات `16f8f2c` و`0b0321f` السابقة ما زالت محفوظة كما هي.)
 
 مجلدا المصدر القديمان `/opt/resort-os` و
 `/opt/elkheima-marketing-website` محفوظان كما كانا، وغير مستخدمين كمصدر
@@ -48,8 +48,13 @@ SHA-256
   ذاتية شاملة طلبها Mohamed). `el_kheima` (frontend) لم يتغيّر في الجولة
   دي، لسه من `b1db886`. صفر migration، Alembic head واحد لم يتغيّر
   `88d1c505a9dc`.
-- `marketing_site` مبني من المصدر المستقل `0b0321f` عبر
-  `/opt/elkheima-marketing-current`.
+- `marketing_site` بُني ونُشر من `4fba5b6` (استمارة استبيان الضيف
+  `GuestSurvey.vue` مكانش فيها أي حد أقصى لطول أي حقل — بعد ما resort-os
+  backend بقى يفرض حدود صارمة (ANL-01، `5b02010` من الأصل بعد
+  `0d55717`)، ضيف بيكتب تعليق طويل غير عادي كان ممكن يتصادف مع 422 بدل
+  ما يتقبل. اتضاف `maxlength` مطابق لحدود الباك إند الفعلية على كل حقل.
+  مكتشف أثناء مراجعة الموقع التسويقي عقب دورة الميديولات — راجع تعليمة
+  Mohamed "كمل اخيرا علي الويب سايت").
 - Backend image:
   `sha256:abbd5f245b5e3d84efc2e5c9215f06c08576a465f316e89e26fcf0842655b28a`.
 - Celery worker:
@@ -59,7 +64,7 @@ SHA-256
 - El Kheima staff app (من `b1db886`، غير متغيّر هذه الجولة):
   `sha256:f135b11a4d2d7799afd011934a093eb14ed14921b86bbd807d31582a1082c673`.
 - Marketing image:
-  `sha256:417bc784605359fdfc9758bffa1445d8eaf959dac740042bd14e3fdc076b3177`.
+  `sha256:fafe1eb8576b3c2b0c2cd2da3346cbe2bf2eb7d98f26a4619df1d81d707a9ad9`.
 - Nginx:
   `sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46`.
 - 8 حاويات Running وكل healthchecks المعرّفة سليمة. الحاويات الثماني
@@ -219,6 +224,15 @@ SHA-256
   release القديم `/opt/elkheima-marketing-releases/16f8f2c` لسه موجود كامل
   على القرص، مش متحذوف. لا migration ولا تغيير DB في هذه الحزمة (frontend
   فقط) فمفيش نسخة DB مخصوصة ليها.
+- أرشيف إصدار Marketing `4fba5b6` (حدود إدخال استمارة استبيان الضيف):
+  `/var/backups/resort-os/marketing-source-releases/4fba5b6.tar.gz`،
+  SHA-256
+  `81018ef5e29577bfeb40c2a299dd37d12b8cf2433c4946a6798cf7b5e83bf641`.
+- صورة Marketing السابقة مباشرة لـ`4fba5b6` محفوظة تحت
+  `resort-os-rollback/marketing-site:pre-4fba5b6`، والـmanifest:
+  `/var/backups/resort-os/marketing-source-releases/4fba5b6-rollback-image.txt`.
+  release القديم `/opt/elkheima-marketing-releases/0b0321f` لسه موجود كامل
+  على القرص، مش متحذوف. لا migration ولا تغيير DB في هذه الحزمة برضو.
 - النسخة المشفرة خارج الخادم واستعادة 135 جدولًا ما زالتا دليل DR الأساسي.
 - `resort-os-backup.timer`, `resort-os-certbot-renew.timer`,
   `resort-os-healthcheck.timer` مثبتة ومفعلة.
