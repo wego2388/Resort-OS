@@ -274,9 +274,12 @@ function addLineToCart(
     return `${group ? localizedName(group) : ''}: ${answer}`
   })
   const extraPrice = extras.reduce((sum, option) => sum + Number(option.price_addition), 0)
+  const currentOutlet = outlets.value.find(o => o.id === selectedOutletId.value)
   cart.value.push({
     key: `${baseKey}:${Date.now()}:${cart.value.length}`,
     itemId: item.id,
+    outletId: selectedOutletId.value ?? 0,
+    outletName: currentOutlet ? localizedName(currentOutlet) : '',
     variantId: choice.variantId,
     variantLabel: variant ? localizedName(variant) : null,
     name: item.name,
@@ -523,25 +526,12 @@ async function onDirectPaymentCompleted(order: DiningOrderDetail) {
 }
 
 async function selectOutlet(value: string | number) {
+  // cross-outlet (2026-08-02): تبديل المنفذ بيغيّر المنيو المعروضة بس —
+  // الطلب/السلة الحاليين يفضلوا زي ما هم دايمًا. الكاشير يقدر يضيف صنف
+  // مطعم وصنف كافيه على نفس الفاتورة من غير إلغاء أو تحذير (الـBackend
+  // بيسجّل outlet كل صنف بنفسه، راجع dining/services.py add_items_to_order).
   const nextId = Number(value)
   if (nextId === selectedOutletId.value) return
-
-  if (pendingOrderId.value !== null) {
-    selectedOutletId.value = nextId
-    await loadMenu()
-    return
-  }
-
-  if (hasItems.value) {
-    const accepted = await confirm({
-      title: t('backoffice.pos.switchOutlet.title'),
-      message: t('backoffice.pos.switchOutlet.message'),
-      confirmText: t('backoffice.pos.switchOutlet.confirm'),
-      cancelText: t('backoffice.pos.cart.keepOrder'),
-      danger: true,
-    })
-    if (!accepted || !(await cancelAndResetDraft())) return
-  }
   selectedOutletId.value = nextId
   await loadMenu()
 }

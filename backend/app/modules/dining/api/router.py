@@ -521,7 +521,7 @@ async def create_order(outlet_id: int, data: OrderCreate, db: DbDep, user=Depend
     if not outlet:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
     try:
-        order = services.create_order(db, outlet.branch_id, data, waiter_id=user.id)
+        order = services.create_order(db, outlet.branch_id, data, waiter_id=user.id, allow_cross_outlet=True)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if order.table_id:
@@ -541,7 +541,7 @@ def hold_order(outlet_id: int, data: OrderCreate, db: DbDep, user=Depends(get_wa
     if not outlet:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "المنفذ غير موجود")
     try:
-        return services.create_order(db, outlet.branch_id, data, waiter_id=user.id, hold=True)
+        return services.create_order(db, outlet.branch_id, data, waiter_id=user.id, hold=True, allow_cross_outlet=True)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

@@ -4177,11 +4177,6 @@
           "generic": "Payment could not be completed — no successful collection was recorded."
         }
       },
-      "switchOutlet": {
-        "title": "Change outlet?",
-        "message": "Changing outlet cancels the current order so menus cannot be mixed.",
-        "confirm": "Cancel order and change outlet"
-      },
       "switchOrderType": {
         "title": "Change order type?",
         "message": "Changing order type cancels the current draft and starts a new order.",

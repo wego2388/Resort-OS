@@ -551,6 +551,7 @@ def create_order(
     hold: bool = False,
     guest_session_id: Optional[int] = None,
     guest_public_reference: Optional[str] = None,
+    allow_cross_outlet: bool = False,
 ) -> DiningOrder:
     outlet = _get_outlet_or_404(db, data.outlet_id)
     if outlet.branch_id != branch_id:
@@ -585,7 +586,18 @@ def create_order(
         item = crud.get_item(db, item_req.item_id)
         if not item:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
-        if item.outlet_id != data.outlet_id or item.branch_id != branch_id:
+        # cross-outlet (staff POS فقط، allow_cross_outlet=True من الـcallers
+        # الداخليين): الصنف مسموح من أي outlet في نفس الفرع، مش لازم يطابق
+        # data.outlet_id — نفس الفاتورة تقدر تحمل مثلاً صنف مطعم وصنف كافيه
+        # مع بعض. راجع docstring DiningOrderItem.outlet_id وnotes
+        # _build_outlet_revenue_splits تحت لتوزيع الإيراد per-outlet.
+        # الطلب الذاتي العام (QR، guest_session_id) يفضل صارم عمدًا — Gate 1
+        # containment: ضيف من غير تسجيل دخول ميقدرش يطلب صنف من outlet
+        # مختلف عن اللي معلنه في الطلب (راجع create_guest_order في الراوتر).
+        if allow_cross_outlet:
+            if item.branch_id != branch_id:
+                raise ValueError(f"الصنف {item_req.item_id} لا يتبع هذا الفرع")
+        elif item.outlet_id != data.outlet_id or item.branch_id != branch_id:
             raise ValueError(f"الصنف {item_req.item_id} لا يتبع هذا المنفذ")
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
@@ -601,6 +613,7 @@ def create_order(
         subtotal += line_total
         items_data.append({
             "item_id":    item_req.item_id,
+            "outlet_id":  item.outlet_id,
             "variant_id": variant.id if variant else None,
             "name":       item_name,
             "unit_price": base_price,
@@ -714,7 +727,9 @@ def _create_kitchen_tickets_for_items(
     order: DiningOrder,
     order_items: list,
 ) -> int:
-    """Create one KDS ticket per station for the supplied, not-yet-ticketed lines."""
+    """Create one KDS ticket per (outlet, station) for the supplied,
+    not-yet-ticketed lines — cross-outlet orders route each line's ticket to
+    its own item's outlet, not order.outlet_id."""
     if not order_items:
         return 0
 
@@ -724,26 +739,30 @@ def _create_kitchen_tickets_for_items(
         for menu_item in db.query(DiningItem).filter(DiningItem.id.in_(menu_item_ids)).all()
     } if menu_item_ids else {}
 
-    items_by_station: dict[str, list[dict]] = {}
+    # cross-outlet: التذكرة بتتوجّه لـoutlet الصنف نفسه (order_item.outlet_id)
+    # مش outlet الطلب — عشان صنف كافيه على طلب مطعم يوصل لشاشة KDS الصح لو
+    # المنتجع بيستخدم شاشات مخصّصة لكل outlet (راجع DiningKDSScreen.outlet_id).
+    items_by_ticket: dict[tuple[int, str], list[dict]] = {}
     for order_item in order_items:
         station = station_by_item.get(order_item.item_id, "hot")
-        items_by_station.setdefault(station, []).append({
+        outlet_id = order_item.outlet_id or order.outlet_id
+        items_by_ticket.setdefault((outlet_id, station), []).append({
             "order_item_id": order_item.id,
             "name": order_item.name,
             "quantity": order_item.quantity,
             "notes": order_item.notes,
         })
 
-    for station, items_snapshot in items_by_station.items():
+    for (outlet_id, station), items_snapshot in items_by_ticket.items():
         crud.create_kitchen_ticket(
             db,
             order_id=order.id,
             branch_id=order.branch_id,
-            outlet_id=order.outlet_id,
+            outlet_id=outlet_id,
             station=station,
             items_snapshot=items_snapshot,
         )
-    return len(items_by_station)
+    return len(items_by_ticket)
 
 
 def _ensure_kitchen_tickets_for_order(db: Session, order: DiningOrder) -> int:
@@ -778,9 +797,11 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
         item = crud.get_item(db, item_req.item_id)
         if not item:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
-        if item.branch_id != order.branch_id or item.outlet_id != order.outlet_id:
+        # cross-outlet: نفس القرار في create_order فوق — الصنف مسموح من أي
+        # outlet في نفس فرع الطلب، مش لازم يطابق order.outlet_id.
+        if item.branch_id != order.branch_id:
             raise ValueError(
-                f"الصنف {item_req.item_id} لا ينتمي لنفس فرع ومنفذ الطلب"
+                f"الصنف {item_req.item_id} لا ينتمي لنفس فرع الطلب"
             )
         if not item.is_available:
             raise ValueError(f"الصنف '{item.name}' غير متاح حالياً")
@@ -794,6 +815,7 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
         new_item = DiningOrderItem(
             order_id  = order.id,
             item_id   = item_req.item_id,
+            outlet_id = item.outlet_id,
             variant_id= variant.id if variant else None,
             name      = item_name,
             unit_price= base_price,

@@ -43,6 +43,8 @@ export interface DiningItemRow extends DiningExtrasItem {
 export interface CartLine {
   key: string
   itemId: number
+  outletId: number          // الـ outlet اللي الصنف ده منه — بيتحدّد وقت الإضافة، لعرض السلة مجمّعة فقط (cross-outlet)
+  outletName: string        // اسم الـ outlet للعرض في السلة (grouping header)
   variantId: number | null
   variantLabel: string | null
   name: string

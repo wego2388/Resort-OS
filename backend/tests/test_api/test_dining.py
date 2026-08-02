@@ -1252,7 +1252,13 @@ class TestSplitBillFolioFailClosed:
 class TestGate4FinalReviewRegressions:
     """Regression coverage for the final independent Gate 4 review."""
 
-    def test_add_items_rejects_item_from_another_outlet(self, db):
+    def test_add_items_allows_item_from_another_outlet_same_branch(self, db):
+        """cross-outlet (2026-08-02، بطلب Mohamed): كاشير يقدر يضيف صنف كافيه
+        على فاتورة مطعم قائمة على نفس الطاولة، من غير إلغاء الطلب أو فتح
+        فاتورة تانية. order.outlet_id يفضل زي ما هو (outlet الإنشاء، بيتحكم
+        في service charge/cost center)؛ كل صنف بيحمل outlet_id الحقيقي بتاعه
+        (يُستخدم في توزيع الإيراد وتوجيه تذكرة المطبخ — راجع
+        TestCrossOutletRevenueAllocation وtest_kitchen_ticket_routes...)."""
         branch = make_branch(db)
         restaurant = make_outlet(db, branch, outlet_type="restaurant")
         cafe = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
@@ -1260,14 +1266,88 @@ class TestGate4FinalReviewRegressions:
         cafe_item = make_item(db, branch, cafe)
         order = make_order(db, branch, restaurant, restaurant_item)
 
+        updated = services.add_items_to_order(
+            db, order.id, [OrderItemCreate(item_id=cafe_item.id, quantity=1)],
+        )
+
+        db.refresh(order)
+        assert len(order.items) == 2
+        assert order.outlet_id == restaurant.id
+        added_item = next(i for i in order.items if i.item_id == cafe_item.id)
+        assert added_item.outlet_id == cafe.id
+        assert updated.subtotal == order.subtotal
+
+    def test_add_items_still_rejects_item_from_another_branch(self, db):
+        """عزل الفرع لسه fail-closed — cross-outlet مسموح بس جوه نفس الفرع."""
+        branch_a = make_branch(db)
+        branch_b = make_branch(db)
+        outlet_a = make_outlet(db, branch_a)
+        outlet_b = make_outlet(db, branch_b)
+        item_a = make_item(db, branch_a, outlet_a)
+        item_b = make_item(db, branch_b, outlet_b)
+        order = make_order(db, branch_a, outlet_a, item_a)
+
         with pytest.raises(ValueError, match="لا ينتمي"):
             services.add_items_to_order(
-                db, order.id, [OrderItemCreate(item_id=cafe_item.id, quantity=1)],
+                db, order.id, [OrderItemCreate(item_id=item_b.id, quantity=1)],
             )
 
         db.refresh(order)
         assert len(order.items) == 1
+
+    def test_create_order_allows_initial_items_from_multiple_outlets(self, db):
+        """نفس منطق cross-outlet لكن على الإنشاء الأول — order.outlet_id
+        بيتحدد من data.outlet_id، وكل صنف بيسجّل outlet_id الحقيقي بتاعه.
+        allow_cross_outlet=True بس — نفس الـflag اللي راوترات الـPOS الداخلية
+        (/dining/outlets/{id}/orders، .../orders/hold) بتبعتها؛ الطلب الذاتي
+        العام (QR) بيفضل صارم بالـdefault، راجع
+        test_public_menu.py::test_item_from_different_outlet_rejected."""
+        branch = make_branch(db)
+        restaurant = make_outlet(db, branch, outlet_type="restaurant")
+        cafe = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        r_item = make_item(db, branch, restaurant, price=Decimal("100.00"))
+        c_item = make_item(db, branch, cafe, price=Decimal("50.00"))
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(
+                outlet_id=restaurant.id, order_type="takeaway", guests_count=1,
+                items=[
+                    OrderItemCreate(item_id=r_item.id, quantity=1),
+                    OrderItemCreate(item_id=c_item.id, quantity=1),
+                ],
+            ),
+            waiter_id=1,
+            allow_cross_outlet=True,
+        )
+
         assert order.outlet_id == restaurant.id
+        outlet_ids = {i.item_id: i.outlet_id for i in order.items}
+        assert outlet_ids[r_item.id] == restaurant.id
+        assert outlet_ids[c_item.id] == cafe.id
+
+    def test_kitchen_ticket_routes_to_each_items_own_outlet(self, db):
+        """باج اتصلح 2026-08-02: تذكرة المطبخ كانت بتاخد outlet_id الطلب
+        دايمًا حتى لو الصنف من outlet تاني — أي شاشة KDS مخصّصة لـoutlet واحد
+        كانت هتفوّت أصناف cross-outlet. دلوقتي كل تذكرة بتاخد outlet الصنف
+        الحقيقي (order_item.outlet_id)."""
+        branch = make_branch(db)
+        restaurant = make_outlet(db, branch, outlet_type="restaurant")
+        cafe = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        r_item = make_item(db, branch, restaurant, station="grill")
+        c_item = make_item(db, branch, cafe, station="bar")
+        order = make_order(db, branch, restaurant, r_item, quantity=1)
+        services.add_items_to_order(
+            db, order.id, [OrderItemCreate(item_id=c_item.id, quantity=1)],
+        )
+
+        services.update_order_status(db, order.id, "in_kitchen")
+
+        tickets = crud.list_tickets_for_order(db, order.id)
+        assert len(tickets) == 2
+        by_outlet = {t.outlet_id: t for t in tickets}
+        assert by_outlet[restaurant.id].station == "grill"
+        assert by_outlet[cafe.id].station == "bar"
 
     def test_settlement_intent_hash_handles_mixed_room_identifiers(self):
         tenders = [

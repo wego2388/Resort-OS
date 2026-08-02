@@ -40,6 +40,17 @@ const { formatMoney } = useStaffFormat()
 const itemCount = computed(() => props.cart.reduce((sum, line) => sum + line.quantity, 0))
 const displayedTotal = computed(() => props.serverSummary?.total ?? props.itemSubtotal)
 const payPrimary = computed(() => props.orderType !== 'dine_in')
+
+// يجمّع أصناف السلة حسب outlet — لو outlet واحد بس، group واحد بدون header
+const cartGroups = computed(() => {
+  const map = new Map<number, { outletId: number; outletName: string; lines: typeof props.cart }>()
+  for (const line of props.cart) {
+    const group = map.get(line.outletId) ?? { outletId: line.outletId, outletName: line.outletName, lines: [] }
+    group.lines.push(line)
+    map.set(line.outletId, group)
+  }
+  return Array.from(map.values())
+})
 </script>
 
 <template>
@@ -112,52 +123,65 @@ const payPrimary = computed(() => props.orderType !== 'dine_in')
       />
 
       <div v-else class="space-y-2">
-        <div
-          v-for="line in cart"
-          :key="line.key"
-          class="rounded-xl border border-stone-200 dark:border-border p-3 bg-white dark:bg-surface"
-        >
-          <div class="flex items-start justify-between gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="font-bold text-gray-900 dark:text-gray-100 leading-snug">
-                {{ locale === 'ar' ? (line.nameAr || line.name) : line.name }}
-              </div>
-              <div v-if="line.variantLabel" class="text-xs text-primary-700 dark:text-primary-300 mt-1">{{ line.variantLabel }}</div>
-              <div v-if="line.extrasLabel" class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">{{ line.extrasLabel }}</div>
-              <div v-if="line.notes" class="text-xs text-gray-500 dark:text-gray-400 mt-1">📝 {{ line.notes }}</div>
-            </div>
-            <IconButton
-              icon="close"
-              :label="t('backoffice.pos.removeItem')"
-              variant="danger"
-              size="sm"
-              :disabled="cartLocked"
-              @click="emit('remove', line.key)"
-            />
-          </div>
-          <div class="flex items-center justify-between gap-3 mt-3">
-            <div class="flex items-center gap-2">
-              <IconButton
-                icon="remove"
-                :label="t('backoffice.pos.decreaseQty')"
-                size="sm"
-                :disabled="cartLocked"
-                @click="emit('quantity', line.key, -1)"
-              />
-              <span class="w-7 text-center font-black tabular-nums">{{ line.quantity }}</span>
-              <IconButton
-                icon="add"
-                :label="t('backoffice.pos.increaseQty')"
-                size="sm"
-                :disabled="cartLocked"
-                @click="emit('quantity', line.key, 1)"
-              />
-            </div>
-            <span class="font-black text-primary-800 dark:text-primary-300 tabular-nums">
-              {{ formatMoney(line.unitPrice * line.quantity, 'EGP') }}
+        <!-- grouping: لو أكتر من outlet في نفس الفاتورة، اعرض header لكل مجموعة -->
+        <template v-for="(group, index) in cartGroups" :key="group.outletId">
+          <div
+            v-if="cartGroups.length > 1"
+            class="flex items-center gap-2 pt-1"
+            :class="index > 0 ? 'mt-3' : ''"
+          >
+            <span class="text-xs font-black text-primary-700 dark:text-primary-300 uppercase tracking-wide bg-primary-50 dark:bg-primary-950/30 px-2 py-0.5 rounded-full">
+              {{ group.outletName }}
             </span>
+            <div class="flex-1 h-px bg-stone-200 dark:bg-border" />
           </div>
-        </div>
+          <div
+            v-for="line in group.lines"
+            :key="line.key"
+            class="rounded-xl border border-stone-200 dark:border-border p-3 bg-white dark:bg-surface"
+          >
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <div class="font-bold text-gray-900 dark:text-gray-100 leading-snug">
+                  {{ locale === 'ar' ? (line.nameAr || line.name) : line.name }}
+                </div>
+                <div v-if="line.variantLabel" class="text-xs text-primary-700 dark:text-primary-300 mt-1">{{ line.variantLabel }}</div>
+                <div v-if="line.extrasLabel" class="text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">{{ line.extrasLabel }}</div>
+                <div v-if="line.notes" class="text-xs text-gray-500 dark:text-gray-400 mt-1">📝 {{ line.notes }}</div>
+              </div>
+              <IconButton
+                icon="close"
+                :label="t('backoffice.pos.removeItem')"
+                variant="danger"
+                size="sm"
+                :disabled="cartLocked"
+                @click="emit('remove', line.key)"
+              />
+            </div>
+            <div class="flex items-center justify-between gap-3 mt-3">
+              <div class="flex items-center gap-2">
+                <IconButton
+                  icon="remove"
+                  :label="t('backoffice.pos.decreaseQty')"
+                  size="sm"
+                  :disabled="cartLocked"
+                  @click="emit('quantity', line.key, -1)"
+                />
+                <span class="w-7 text-center font-black tabular-nums">{{ line.quantity }}</span>
+                <IconButton
+                  icon="add"
+                  :label="t('backoffice.pos.increaseQty')"
+                  size="sm"
+                  :disabled="cartLocked"
+                  @click="emit('quantity', line.key, 1)"
+                />
+              </div>
+              <span class="font-black text-primary-800 dark:text-primary-300 tabular-nums">
+                {{ formatMoney(line.unitPrice * line.quantity, 'EGP') }}
+              </span>
+            </div>
+          </div>
+        </template>
       </div>
 
       <div v-if="cartLocked" class="rounded-xl border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
