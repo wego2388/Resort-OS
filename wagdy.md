@@ -18,7 +18,7 @@
 | الموقع التسويقي | `https://elkheima.com` و`https://www.elkheima.com` — HTTP 200 |
 | تطبيق الموظفين | `https://app.elkheima.com` — HTTP 200 |
 | نموذج التشغيل | فرع تشغيلي واحد؛ لا Branch Switcher ظاهر |
-| الإصدار الفعال | Resort OS `a3e8abb`؛ Marketing `8dc95d8` |
+| الإصدار الفعال | Resort OS `a3e8abb`؛ Marketing `0b0321f` |
 | قاعدة البيانات | Alembic `88d1c505a9dc`؛ سليمة ومتاحة |
 | الحاويات | 8/8 Running؛ خدمات التطبيق `restarts=0` |
 | النسخ الاحتياطي | DB يومي + نسخة مشفرة خارج الخادم + restore ناجح |
@@ -77,7 +77,7 @@
   باج حقيقي كان بيخلي صفحة `/contact` (وأي صفحة تانية أحيانًا) تحتاج
   ريفريش يدوي عشان محتواها يظهر — كان سببه سباق في كود الـView Transitions
   API بيخلي رسم Vue الفعلي يحصل برّه اللقطة اللي المتصفح بياخدها. Marketing
-  release `8dc95d8` منشور.
+  release `0b0321f` منشور.
 
 ## ما لم يُعتمد تشغيليًا بعد
 
@@ -106,6 +106,6 @@ IPv6 فعلي.
 - الخطة الحية: `docs/audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`
 - المهمة الحالية: `docs/agent-workflow/EL_KHEIMA_EXECUTION_BOARD.md`
 - أحدث تسليم:
-  `docs/agent-workflow/handoffs/2026-07-31_POS-01_REL-05_codex_handoff.md`
+  `docs/agent-workflow/handoffs/2026-08-02_MKT-03_marketing_locale_nav_fix_handoff.md`
 - دليل الإدارة وتدريب الموظفين: `docs/STAFF_APP_GUIDE_AR.md`
 - دليل السوبر أدمن الأمني: `docs/SUPER_ADMIN_GUIDE_AR.md`

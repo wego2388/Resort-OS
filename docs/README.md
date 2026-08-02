@@ -39,7 +39,7 @@
 - Codex يقود التنفيذ والمراجعة النهائية.
 - الإنتاج domain-based: `elkheima.com` و`www.elkheima.com` للموقع،
   و`app.elkheima.com` للموظفين، على VPS `191.218.161.133`.
-- Resort release الفعال `a3e8abb` وMarketing release الفعال `8dc95d8`؛
+- Resort release الفعال `a3e8abb` وMarketing release الفعال `0b0321f`؛
   أي نشر لاحق يحتاج backup وrollback وhealth evidence جديدًا.
 - البيانات synthetic المعتمدة للعرض موجودة عبر importer محكوم وموسومة؛
   لا تُعامل كـmaster data حقيقية ولا تُنشأ بيانات demo عشوائية خارج مساره.
