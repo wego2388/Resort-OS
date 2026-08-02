@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد نشر إصلاحين في موديول الصيانة (Maintenance)
+**آخر تحقق:** 2026-08-02 بعد تأمين إرسال تقييم الضيف العام في موديول التحليلات (Analytics)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -12,21 +12,21 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `b1db886` |
+| Resort OS source release | `0d55717` |
 | Marketing source release | `0b0321f` من المستودع المستقل (`main` يطابق الالتزام) |
-| remote | فرع العمل يحتوي `b1db886` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`) |
+| remote | فرع العمل يحتوي `0d55717` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/b1db886` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/b1db886` |
+| active Resort release | `/opt/resort-os-releases/0d55717` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/0d55717` |
 | active Marketing release | `/opt/elkheima-marketing-releases/0b0321f` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/0b0321f` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
-`/var/backups/resort-os/source-releases/b1db886.tar.gz`،
+`/var/backups/resort-os/source-releases/0d55717.tar.gz`،
 SHA-256
-`da2bb917b3e7646c5635a4be8fe9edcfc5d80301a477385b93264d17b87cc36a`.
-(أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535` السابقة ما زالت محفوظة كما هي.)
+`ba9788b147e44c0b19f03edd5541acfb54744d576a89cab71d249fba7ca3fc21`.
+(أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886` السابقة ما زالت محفوظة كما هي.)
 
 أرشيف Marketing:
 `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`،
@@ -40,21 +40,22 @@ SHA-256
 
 ## 2. الخدمات الفعالة
 
-- `backend`, `celery_worker`, `celery_beat`, `el_kheima` بُنوا ونُشروا من
-  `b1db886` (موديول الصيانة: منع إغلاق أمر صيانة "مكتمل" عبر PATCH العادي
-  — لازم يمر بـ/complete المخصص عشان الآثار الجانبية تحصل صح، وربط تحرير
-  الأصل من under_maintenance بمسار إلغاء الأمر مش الإكمال بس. مكتشف أثناء
-  مراجعة ذاتية شاملة طلبها Mohamed). صفر migration، Alembic head واحد لم
-  يتغيّر `88d1c505a9dc`.
+- `backend`, `celery_worker`, `celery_beat` بُنوا ونُشروا من `0d55717`
+  (موديول التحليلات: `POST /analytics/reviews/submit` — endpoint عام
+  بالكامل بدون auth — كان بياخد `data: dict` خام من غير أي تحقق؛ دلوقتي
+  `GuestReviewSubmitRequest` بيفرض حدود واضحة على كل حقل. مكتشف أثناء
+  مراجعة ذاتية شاملة طلبها Mohamed). `el_kheima` (frontend) لم يتغيّر في
+  الجولة دي، لسه من `b1db886`. صفر migration، Alembic head واحد لم يتغيّر
+  `88d1c505a9dc`.
 - `marketing_site` مبني من المصدر المستقل `0b0321f` عبر
   `/opt/elkheima-marketing-current`.
 - Backend image:
-  `sha256:a871d0247084804cf17d7c8d313cccf6f0c46906f11e658d33475ecf40a32682`.
+  `sha256:04b6af88c20d1ae07cb817328b0f36748d3e56bba780cb35eab76ad857305dc8`.
 - Celery worker:
-  `sha256:5b3fb0793998926b5ab85fb348a42e1dd5c61f42cb9db19ad971955da0edbcc6`.
+  `sha256:07703bc92166e03f7184ee669c6e6ab10eca1fdde3603966c9bba1b76f7b1152`.
 - Celery beat:
-  `sha256:797fa32d6bb7b485da8c338e99a33fc8cc6adedc4d5efdbdc8b899730c178475`.
-- El Kheima staff app:
+  `sha256:b829355a5db61c83f126851899e874d47d8a7908ebcf507fee6fd1bcb282d569`.
+- El Kheima staff app (من `b1db886`، غير متغيّر هذه الجولة):
   `sha256:f135b11a4d2d7799afd011934a093eb14ed14921b86bbd807d31582a1082c673`.
 - Marketing image:
   `sha256:417bc784605359fdfc9758bffa1445d8eaf959dac740042bd14e3fdc076b3177`.
@@ -302,6 +303,20 @@ SHA-256
   `/var/backups/resort-os/database/resort_os_20260802_105621.dump`،
   SHA-256
   `b838604a4db79f02dc099cfc2ef674eab0b6bc34364f2f344c10631cd8ffe472`؛
+  اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
+- أرشيف إصدار `0d55717` (موديول التحليلات: تحقق صارم على مدخلات تقييم
+  الضيف العام — `backend`/`celery_worker`/`celery_beat` بس، `el_kheima`
+  لم يتغيّر، صفر migration):
+  `/var/backups/resort-os/source-releases/0d55717.tar.gz`،
+  SHA-256
+  `ba9788b147e44c0b19f03edd5541acfb54744d576a89cab71d249fba7ca3fc21`.
+- صور ما قبل `0d55717` (backend/celery_worker/celery_beat، كانوا
+  `b1db886`) محفوظة تحت `resort-os-rollback/*:pre-0d55717`، والـmanifest:
+  `/var/backups/resort-os/source-releases/0d55717-rollback-images.txt`.
+- نسخة DB السابقة مباشرة لنشر `0d55717`:
+  `/var/backups/resort-os/database/resort_os_20260802_111432.dump`،
+  SHA-256
+  `c07404cc07489f3cd774938986db269ea5556f657a508ecf1cd4a0090979fa3a`؛
   اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
 
 ## 9. الحالة المتبقية
