@@ -2193,11 +2193,17 @@ def _refund_order_item_locked(
             if table:
                 crud.update_table_status(db, table, "available")
 
-    outlet = crud.get_outlet(db, order.outlet_id)
-    revenue_account = outlet.revenue_account_code if outlet else "4200"
+    # cross-outlet (2026-08-02): لازم حساب إيراد *الصنف نفسه* مش المنفذ
+    # الأساسي للطلب — لو الطلب فيه صنف من outlet تاني (راجع add_items_to_order)
+    # ورجّعناه بحساب order.outlet_id، القيد العكسي كان هيتقيد على المنفذ
+    # الغلط (مثلاً يعكس إيراد المطعم بدل الكافيه لصنف كافيه اترجّع)، وده
+    # بيسيب حسابين غلط في نفس الوقت: المنفذ الصح فاضل بإيراد متضخّم لصنف
+    # اترجّع بالفعل، والمنفذ التاني بيتعكس منه إيراد ماكانش له أصلاً.
+    item_outlet = crud.get_outlet(db, item.outlet_id or order.outlet_id)
+    revenue_account = item_outlet.revenue_account_code if item_outlet else "4200"
     # Gate 4 (جولة مراجعة Codex الأولى — High 3/4): العكس بيتقاد بالـ tenders
     # الأصلية الفعلية (مش boolean folio_id)، ولكل جزء بحسابه الصح، وfail-closed.
-    _post_refund_reversals(db, order, refund_amount, revenue_account, refunded_by)
+    _post_refund_reversals(db, order, refund_amount, revenue_account, refunded_by, outlet=item_outlet)
 
     db.commit()
     db.refresh(order)
@@ -2206,7 +2212,7 @@ def _refund_order_item_locked(
 
 def _post_refund_reversals(
     db: Session, order: DiningOrder, refund_amount: Decimal,
-    revenue_account_code: str, refunded_by: int,
+    revenue_account_code: str, refunded_by: int, outlet: Optional[Outlet] = None,
 ) -> None:
     """يعكس مرتجع صنف بالتناسب على *كل* الـ tenders الأصلية اللي حصّلت الطلب
     (Gate 4، جولة مراجعة Codex الأولى — High 3/4).
@@ -2271,7 +2277,9 @@ def _post_refund_reversals(
         if open_shift:
             shift_id = open_shift.id
 
-    cost_center_code = _outlet_cost_center_code(crud.get_outlet(db, order.outlet_id))
+    # cross-outlet: cost center برضو لازم يكون بتاع outlet الصنف نفسه، مش
+    # المنفذ الأساسي للطلب (نفس السبب في اختيار revenue_account_code فوق).
+    cost_center_code = _outlet_cost_center_code(outlet or crud.get_outlet(db, order.outlet_id))
     allocated = Decimal("0")
     last_idx = len(parts) - 1
     for idx, (kind, amount, payment) in enumerate(parts):
@@ -2302,10 +2310,13 @@ def _post_refund_reversals(
                 commit_cost_centers=False, strict=True,
             )
         else:  # room
-            _reduce_folio_charge_for_refund(db, order, share, revenue_account_code)
+            _reduce_folio_charge_for_refund(db, order, share, revenue_account_code, outlet=outlet)
 
 
-def _reduce_folio_charge_for_refund(db: Session, order: DiningOrder, refund_amount: Decimal, revenue_account_code: str) -> None:
+def _reduce_folio_charge_for_refund(
+    db: Session, order: DiningOrder, refund_amount: Decimal,
+    revenue_account_code: str, outlet: Optional[Outlet] = None,
+) -> None:
     """يقلّل شحنة فوليو الطلب بحصة الغرفة من المرتجع + قيد عكسي Dr إيراد / Cr
     1150. Gate 4 (High 4a): fail-closed — لو الشحنة مش موجودة أو الفوليو
     مقفول/مفقود، بيرفع ValueError بدل ما يبتلع الفشل بعد logging (اللي كان
@@ -2340,13 +2351,16 @@ def _reduce_folio_charge_for_refund(db: Session, order: DiningOrder, refund_amou
     charge.service_charge = (charge.service_charge * ratio).quantize(Decimal("0.01"))
     db.flush()
     finance_crud.recalculate_folio_total(db, folio)
-    _post_order_folio_refund_reversal_journal(db, order, refund_amount, revenue_account_code)
+    _post_order_folio_refund_reversal_journal(db, order, refund_amount, revenue_account_code, outlet=outlet)
 
 
-def _post_order_folio_refund_reversal_journal(db: Session, order: DiningOrder, refund_amount: Decimal, revenue_account_code: str) -> None:
+def _post_order_folio_refund_reversal_journal(
+    db: Session, order: DiningOrder, refund_amount: Decimal,
+    revenue_account_code: str, outlet: Optional[Outlet] = None,
+) -> None:
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
-    outlet = crud.get_outlet(db, order.outlet_id)
+    outlet = outlet or crud.get_outlet(db, order.outlet_id)
     # Gate 4 (High 4a): strict=True — فشل ترحيل القيد بيرفع بدل ما يرجّع None
     # بصمت، عشان عكس شحنة الفوليو والقيد المقابل يفشلوا كوحدة واحدة.
     post_simple_revenue_journal(

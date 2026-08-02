@@ -1679,6 +1679,66 @@ class TestCrossOutletRevenueAllocation:
         assert "4200" in credit_codes, "لازم يكون فيه قيد على حساب إيراد المطعم (4200)"
         assert "4400" in credit_codes, "لازم يكون فيه قيد على حساب إيراد الكافيه (4400)"
 
+    def test_cross_outlet_refund_reverses_the_items_own_outlet_account(self, db):
+        """باج حقيقي اتصلح 2026-08-02: مرتجع صنف كافيه على طلب أساسه المطعم
+        كان بيعكس إيراد المطعم (order.outlet_id) بدل الكافيه (outlet الصنف
+        الحقيقي) — يسيب المطعم بإيراد متضخّم والكافيه بإيراد ماتعكسش خالص.
+        المسار هنا حقيقي بالكامل (add_items_to_order، مش DiningOrderItem
+        يدوي) عشان يغطي الطريق اللي الكاشير فعليًا بيمر منه."""
+        from app.modules.finance.models import JournalEntry, Account
+
+        branch = make_branch(db)
+        restaurant = make_outlet(db, branch, outlet_type="restaurant", revenue_account_code="4200")
+        cafe = make_outlet(db, branch, outlet_type="cafe", revenue_account_code="4400")
+        make_finance_accounts(db, branch, revenue_code="4200")
+        cafe_rev = db.query(Account).filter_by(branch_id=branch.id, code="4400").first()
+        if not cafe_rev:
+            db.add(Account(branch_id=branch.id, code="4400", name="Cafe Revenue", account_type="revenue"))
+            db.commit()
+
+        r_item = make_item(db, branch, restaurant, price=Decimal("100.00"))
+        c_item = make_item(db, branch, cafe, price=Decimal("50.00"))
+        folio = self._make_folio(db, branch)
+
+        order = services.create_order(
+            db, branch.id,
+            OrderCreate(
+                outlet_id=restaurant.id, order_type="takeaway", guests_count=1,
+                items=[OrderItemCreate(item_id=r_item.id, quantity=1)],
+            ),
+            waiter_id=1, allow_cross_outlet=True,
+        )
+        order.folio_id = folio.id
+        db.commit()
+        services.add_items_to_order(
+            db, order.id, [OrderItemCreate(item_id=c_item.id, quantity=1)],
+        )
+        db.refresh(order)
+        services.update_order_status(db, order.id, "served")
+        services.settle_order(
+            db, order.id,
+            tenders=[{"method": "room", "amount": order.total, "charge_to_room_id": None}],
+            settled_by=1,
+        )
+        db.refresh(order)
+
+        cafe_item = next(i for i in order.items if i.item_id == c_item.id)
+        services.refund_order_item(db, order.id, cafe_item.id, "طلب العميل", refunded_by=1)
+
+        reversal_entries = (
+            db.query(JournalEntry)
+            .filter(
+                JournalEntry.source == "dining_folio_refund",
+                JournalEntry.source_id == order.id,
+            )
+            .all()
+        )
+        assert len(reversal_entries) == 1
+        debit_codes = {line.account.code for line in reversal_entries[0].lines if line.debit > 0}
+        assert debit_codes == {"4400"}, (
+            f"مرتجع صنف الكافيه لازم يعكس حساب الكافيه (4400) بس، الموجود {debit_codes}"
+        )
+
     def test_null_outlet_id_on_item_falls_back_to_order_outlet(self, db):
         """صنف بدون outlet_id (NULL) يُعامَل كأنه من order.outlet_id — توافق مع القديم."""
         from app.modules.finance.models import JournalEntry
