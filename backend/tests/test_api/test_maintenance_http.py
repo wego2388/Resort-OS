@@ -244,6 +244,88 @@ class TestWorkOrdersEndpoints:
         assert resp.status_code == 200
         assert resp.json()["status"] == "completed"
 
+    def test_generic_patch_cannot_bypass_complete_endpoint(
+        self, client: TestClient, db, waiter_headers, manager_headers,
+    ):
+        """باج حقيقي اتصلح (2026-08-02): PATCH /work-orders/{id} العادي كان
+        بيقبل status="completed" مباشرة (get_employee_user، مستوى 20) —
+        بينما POST .../complete المخصص محتاج مدير+ (مستوى 60، راجع
+        test_complete_requires_manager فوق). أي waiter كان يقدر يستخدم
+        PATCH العادي يتخطى فحص الصلاحية تمامًا، وكمان يتخطى كل الأثر
+        الجانبي الحقيقي (تحرير الأصل من under_maintenance، تقديم next_due
+        لجدول الصيانة الوقائية، تسجيل completed_at) — الأمر كان يفضل
+        "مكتمل" شكليًا بس من غير أي من الآثار دي أبدًا."""
+        branch = make_branch_committed(db)
+        asset = create_asset(client, branch.id, manager_headers)
+        wo = client.post(
+            "/api/v1/maintenance/work-orders",
+            json={
+                "branch_id": branch.id, "title": "صيانة حرجة",
+                "asset_id": asset["id"], "priority": "critical",
+            },
+            headers=waiter_headers,
+        ).json()
+        # priority=critical بيحوّل الأصل لـ under_maintenance وقت الإنشاء
+        asset_after_create = client.get(f"/api/v1/maintenance/assets/{asset['id']}", headers=waiter_headers).json()
+        assert asset_after_create["status"] == "under_maintenance"
+
+        resp = client.patch(
+            f"/api/v1/maintenance/work-orders/{wo['id']}",
+            json={"status": "completed"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 400, (
+            f"PATCH العادي لازم يرفض status=completed كليًا (رسالة توجّه لـ /complete) "
+            f"بغض النظر عن هوية المستخدم — الموجود: {resp.status_code} {resp.text}"
+        )
+
+        # حتى مدير (اللي أصلاً مؤهّل لـ/complete) لازم يوجّه لنفس المسار المخصص،
+        # مش يكمل الأمر عبر PATCH العادي مباشرة — طريقة واحدة بس للإنهاء
+        resp2 = client.patch(
+            f"/api/v1/maintenance/work-orders/{wo['id']}",
+            json={"status": "completed"},
+            headers=manager_headers,
+        )
+        assert resp2.status_code == 400
+
+        # وأمر الصيانة لسه مفتوح فعليًا — التعديل المرفوض ماغيّرش أي حاجة
+        wo_after = client.get(f"/api/v1/maintenance/work-orders/{wo['id']}", headers=waiter_headers).json()
+        assert wo_after["status"] != "completed"
+        assert wo_after["completed_at"] is None
+
+    def test_cancelling_last_open_order_releases_asset(
+        self, client: TestClient, db, waiter_headers, manager_headers,
+    ):
+        """باج حقيقي اتصلح (2026-08-02): تحرير الأصل من under_maintenance
+        كان مربوط بـcomplete_work_order() بس — أمر صيانة critical لو
+        اتلغى (cancelled) عبر PATCH العادي بدل ما يتقفل (completed)، الأصل
+        كان يفضل under_maintenance للأبد من غير أي مسار تاني يعيد الفحص."""
+        branch = make_branch_committed(db)
+        asset = create_asset(client, branch.id, manager_headers)
+        wo = client.post(
+            "/api/v1/maintenance/work-orders",
+            json={
+                "branch_id": branch.id, "title": "صيانة حرجة اتلغت",
+                "asset_id": asset["id"], "priority": "critical",
+            },
+            headers=waiter_headers,
+        ).json()
+        asset_after_create = client.get(f"/api/v1/maintenance/assets/{asset['id']}", headers=waiter_headers).json()
+        assert asset_after_create["status"] == "under_maintenance"
+
+        resp = client.patch(
+            f"/api/v1/maintenance/work-orders/{wo['id']}",
+            json={"status": "cancelled"},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "cancelled"
+
+        asset_after_cancel = client.get(f"/api/v1/maintenance/assets/{asset['id']}", headers=waiter_headers).json()
+        assert asset_after_cancel["status"] == "operational", (
+            "لغاء آخر أمر صيانة مفتوح لازم يحرّر الأصل زي إكماله بالظبط"
+        )
+
     def test_assign_to_nonexistent_employee_rejected_cleanly(self, client: TestClient, db, waiter_headers):
         """Regression: assigned_to had zero validation against the employees
         table — assigning a work order to a made-up employee id used to

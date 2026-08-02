@@ -102,13 +102,42 @@ def create_work_order(db: Session, data: WorkOrderCreate, reported_by: int) -> W
     return wo
 
 
+def _release_asset_if_no_open_orders(db: Session, asset_id: int | None) -> None:
+    """لو مفيش أوامر صيانة مفتوحة تانية على نفس الأصل، رجّعه operational.
+    مُستخدمة من أي مسار بيقفل أمر صيانة نهائيًا (completed أو cancelled) —
+    ⚠️ باج حقيقي اتصلح (2026-08-02): كانت الدالة دي جوه complete_work_order
+    بس، يعني أمر صيانة critical لو اتلغى (cancelled) بدل ما يتقفل (completed)
+    عبر PATCH العادي، الأصل كان يفضل under_maintenance للأبد — مفيش أي مسار
+    تاني بيعيد فحص الأوامر المفتوحة غير complete_work_order نفسها."""
+    if not asset_id:
+        return
+    open_count = db.query(WorkOrder).filter(
+        WorkOrder.asset_id == asset_id,
+        WorkOrder.status.in_(["open", "in_progress", "pending_parts"]),
+    ).count()
+    if open_count == 0:
+        asset = crud.get_asset(db, asset_id)
+        if asset and asset.status == "under_maintenance":
+            asset.status = "operational"
+
+
 def update_work_order(db: Session, order_id: int, data: WorkOrderUpdate) -> WorkOrder:
+    """⚠️ باج حقيقي اتصلح (2026-08-02): PATCH العادي (get_employee_user،
+    مستوى 20) كان بيقبل status="completed" مباشرة من غير أي فحص — بيتخطى
+    صلاحية POST .../complete المخصصة (مدير+، مستوى 60) وكل الأثر الجانبي
+    اللي complete_work_order() بيعمله (تحرير الأصل من under_maintenance،
+    تقديم next_due لجدول الصيانة الوقائية، تسجيل completed_at). أمر
+    الصيانة كان يفضل "مكتمل" شكليًا بس من غير أي من ده أبدًا."""
     wo = get_wo_or_404(db, order_id)
     if wo.status in ("completed", "cancelled"):
         raise ValueError("لا يمكن تعديل أمر صيانة مكتمل أو ملغى")
+    if data.status == "completed":
+        raise ValueError("استخدم POST /work-orders/{id}/complete لإنهاء الأمر — مش التعديل العادي")
     if data.assigned_to is not None:
         _validate_assigned_to(db, data.assigned_to)
     obj = crud.update_work_order(db, wo, data)
+    if data.status == "cancelled":
+        _release_asset_if_no_open_orders(db, obj.asset_id)
     db.commit()
     db.refresh(obj)
     return obj
@@ -119,16 +148,7 @@ def complete_work_order(db: Session, order_id: int) -> WorkOrder:
     if wo.status == "completed":
         raise ValueError("أمر الصيانة مكتمل مسبقاً")
     wo = crud.complete_work_order(db, wo)
-    # إعادة الأصل للتشغيل إن لم يكن هناك أوامر مفتوحة أخرى
-    if wo.asset_id:
-        open_count = db.query(WorkOrder).filter(
-            WorkOrder.asset_id == wo.asset_id,
-            WorkOrder.status.in_(["open", "in_progress", "pending_parts"]),
-        ).count()
-        if open_count == 0:
-            asset = crud.get_asset(db, wo.asset_id)
-            if asset and asset.status == "under_maintenance":
-                asset.status = "operational"
+    _release_asset_if_no_open_orders(db, wo.asset_id)
     # لو الأمر ده وقائي وجاي من جدول دوري، لازم نقدّم next_due — وإلا
     # generate_preventive_work_orders هيفضل يعمل أمر جديد لنفس الجدول كل يوم للأبد
     # ⚠️ local_today (مش date.today() الخام) — نفس فئة الباج المتكررة في

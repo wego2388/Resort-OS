@@ -92,6 +92,15 @@ const woStatusConfig = computed<Record<string, { label: string; variant: Variant
   completed:      { label: t('backoffice.maintenance.woStatus.completed'),       variant: 'success' },
   cancelled:      { label: t('backoffice.maintenance.woStatus.cancelled'),        variant: 'danger' },
 }))
+// الباك إند بيرفض status="completed" عبر PATCH العادي (2026-08-02) — لازم
+// يمر بزرار "إنهاء" المخصص (completeWorkOrder) عشان الآثار الجانبية
+// (تحرير الأصل، تقديم next_due، completed_at) تحصل صح. القيمة دي بتستبعد
+// "completed" من dropdown التعديل بس — woStatusConfig نفسه لسه بيُستخدم
+// لعرض badge الحالة الحالية في كل مكان تاني.
+const editableWoStatusConfig = computed(() => {
+  const { completed: _completed, ...rest } = woStatusConfig.value
+  return rest
+})
 const orderTypeLabels = computed<Record<string, string>>(() => ({
   corrective: t('backoffice.maintenance.orderType.corrective'), preventive: t('backoffice.maintenance.orderType.preventive'),
   inspection: t('backoffice.maintenance.orderType.inspection'),
@@ -753,7 +762,7 @@ onMounted(() => loadTab('assets'))
           <div v-if="woModal.editingId">
             <label class="block text-xs text-gray-400 dark:text-gray-400 mb-1">{{ t('backoffice.maintenance.column.status') }}</label>
             <select v-model="woForm.status" class="w-full border border-stone-200 dark:border-border rounded-xl px-3 py-2 text-sm bg-white dark:bg-surface">
-              <option v-for="(cfg, val) in woStatusConfig" :key="val" :value="val">{{ cfg.label }}</option>
+              <option v-for="(cfg, val) in editableWoStatusConfig" :key="val" :value="val">{{ cfg.label }}</option>
             </select>
           </div>
           <div>
