@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-02 بعد نشر إصلاح روابط الـlocale وباج الموقع التسويقي
+**آخر تحديث:** 2026-08-02 بعد نشر دعم الطلب متعدد المنافذ في الـPOS
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
@@ -35,6 +35,7 @@
 | DOC-OPS — management/staff training | COMPLETE | دليل عربي للأدوار ودورات العمل وUAT | — |
 | MKT-02 — Timeshare + multilingual Marketing | COMPLETE | Blue Bay + CRM inquiry + reviewed images/i18n | — |
 | MKT-03 — locale-aware nav links + View Transitions race fix | COMPLETE | `0b0321f` فعال؛ صفر InvalidStateError، محتوى يظهر فورًا بدون ريفريش | — |
+| POS-02 — cross-outlet order support + refund revenue-account fix | COMPLETE | `ddfbaaa` فعال (Backend+Frontend)؛ صنف من منفذ تاني على نفس الفاتورة + مرتجع يعكس الحساب الصح | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -89,7 +90,7 @@
 | Staff app | `https://app.elkheima.com` |
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../a3e8abb` |
+| Resort release | `/opt/resort-os-current -> .../ddfbaaa` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../0b0321f` |
 | Database | Alembic `88d1c505a9dc`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
@@ -102,13 +103,13 @@
 ## أدلة التشغيل
 
 - Resort release archive:
-  `/var/backups/resort-os/source-releases/a3e8abb.tar.gz`
+  `/var/backups/resort-os/source-releases/ddfbaaa.tar.gz`
 - Resort SHA-256:
-  `2ff370284727ae57688c4efda9dad22db2729abf45fbbfe3dc276e78d7388bad`
+  `8aafedfd109a59e7ed72ea2c4ecc30b248d51af63f09198d0b0cd1629c1390d6`
 - Rollback image manifest:
-  `/var/backups/resort-os/source-releases/a3e8abb-rollback-images.txt`
-- Pre-cutover DB:
-  `/var/backups/resort-os/database/resort_os_20260730_062529.dump`
+  `/var/backups/resort-os/source-releases/ddfbaaa-rollback-images.txt`
+- Pre-deploy DB (`ddfbaaa`):
+  `/var/backups/resort-os/database/resort_os_20260802_031105.dump`
 - Marketing release archive:
   `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`
 - Marketing SHA-256:
@@ -119,7 +120,7 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-02_MKT-03_marketing_locale_nav_fix_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-02_POS-02_cross_outlet_order_handoff.md`
 
 ## التحديث التالي المطلوب
 

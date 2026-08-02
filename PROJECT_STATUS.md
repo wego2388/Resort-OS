@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد نشر إصلاح روابط الـlocale وrace في الـView Transitions API على الموقع التسويقي
+**آخر تحقق:** 2026-08-02 بعد نشر دعم الطلب متعدد المنافذ في الـPOS وإصلاح مرتجع الإيراد cross-outlet
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -12,20 +12,21 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `a3e8abb` |
+| Resort OS source release | `ddfbaaa` |
 | Marketing source release | `0b0321f` من المستودع المستقل (`main` يطابق الالتزام) |
-| remote | فرع العمل يحتوي `a3e8abb` ثم تحديثات توثيق ما بعد النشر |
+| remote | فرع العمل يحتوي `ddfbaaa` (يشمل `9579c2f` + `ddfbaaa`) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/a3e8abb` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/a3e8abb` |
+| active Resort release | `/opt/resort-os-releases/ddfbaaa` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/ddfbaaa` |
 | active Marketing release | `/opt/elkheima-marketing-releases/0b0321f` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/0b0321f` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
-`/var/backups/resort-os/source-releases/a3e8abb.tar.gz`،
+`/var/backups/resort-os/source-releases/ddfbaaa.tar.gz`،
 SHA-256
-`2ff370284727ae57688c4efda9dad22db2729abf45fbbfe3dc276e78d7388bad`.
+`8aafedfd109a59e7ed72ea2c4ecc30b248d51af63f09198d0b0cd1629c1390d6`.
+(أرشيف `a3e8abb` السابق ما زال محفوظًا كما هو.)
 
 أرشيف Marketing:
 `/var/backups/resort-os/marketing-source-releases/0b0321f.tar.gz`،
@@ -39,22 +40,23 @@ SHA-256
 
 ## 2. الخدمات الفعالة
 
-- `el_kheima` و`nginx` يحملان
-  `com.docker.compose.project.working_dir=/opt/resort-os-releases/a3e8abb`.
-  Backend وCelery بقيا على الإصدار المتوافق `679f76e` لأن التغيير Frontend
-  فقط، ولم يُعاد بناؤهما أو تشغيلهما.
+- `backend`, `celery_worker`, `celery_beat`, `el_kheima` كلهم بُنوا ونُشروا
+  من `ddfbaaa` معًا — أول نشر منذ `679f76e` يغيّر الـBackend فعليًا (دعم
+  الطلب متعدد المنافذ + إصلاح مرتجع الإيراد، cross-outlet). صفر migration
+  (عمود `outlet_id` كان موجود من قبل، Alembic head واحد لم يتغيّر
+  `88d1c505a9dc`).
 - `marketing_site` مبني من المصدر المستقل `0b0321f` عبر
   `/opt/elkheima-marketing-current`.
 - Backend image:
-  `sha256:7d27ae3a4b7daa38fe878b95c322bd1a7a1f2d5088990aa642163945441d73bc`.
+  `sha256:80a027617354ca1231f67680682f0937975b7725698334b01872a70db4e4ecca`.
 - Celery worker:
-  `sha256:371eb2eab1dac5ad18de738a30bd522daa916b412d4e9b4883ba2a148f9e18ea`.
+  `sha256:f8520d47fef5ff4545d64470b7ba1e96b7bf889dd70e5dd9ac03d4a469f165a3`.
 - Celery beat:
-  `sha256:df6030ab9d1679f0f16ca655c43d42bd99d16260d3f584bceb7664d4955bd794`.
+  `sha256:fc76bd8187507ff5d2a25f236233bc9537c9a334ccc0e6e4ce68f99fb07c6561`.
 - El Kheima staff app:
-  `sha256:397ae1ab6fb44c34b2d27b95f2313a1ee43d126ec6f7aed52a2b017d5de78fb8`.
+  `sha256:2930d20b4116a18d7751314de9bcfaa48cfb798280a783e933ac6aeb536f78eb`.
 - Marketing image:
-  `sha256:277ff191eb630c4313ff728aabfda5e3fbc205c72432e97408b13c03d7358d2e`.
+  `sha256:417bc784605359fdfc9758bffa1445d8eaf959dac740042bd14e3fdc076b3177`.
 - Nginx:
   `sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46`.
 - 8 حاويات Running وكل healthchecks المعرّفة سليمة. الحاويات الثماني
@@ -247,6 +249,18 @@ SHA-256
   `/opt/resort-os-releases/0b430fb` بعد إثبات عدم وجود symlink أو container
   يشير إليه. أرشيفه القابل للاستعادة ما زال محفوظًا تحت
   `/var/backups/resort-os/source-releases/0b430fb.tar.gz`.
+- أرشيف إصدار `ddfbaaa` (دعم الطلب متعدد المنافذ + إصلاح مرتجع الإيراد):
+  `/var/backups/resort-os/source-releases/ddfbaaa.tar.gz`،
+  SHA-256
+  `8aafedfd109a59e7ed72ea2c4ecc30b248d51af63f09198d0b0cd1629c1390d6`.
+- صور ما قبل `ddfbaaa` (backend/celery_worker/celery_beat/el_kheima، كلها
+  كانت `679f76e`) محفوظة تحت `resort-os-rollback/*:pre-ddfbaaa`، والـmanifest:
+  `/var/backups/resort-os/source-releases/ddfbaaa-rollback-images.txt`.
+- نسخة DB السابقة مباشرة لنشر `ddfbaaa`:
+  `/var/backups/resort-os/database/resort_os_20260802_031105.dump`،
+  SHA-256
+  `7f65646441948e4250b9f141f6d01855e5516794507626eb09d5ebe4d97fd238`؛
+  اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
 
 ## 9. الحالة المتبقية
 
