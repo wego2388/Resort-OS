@@ -352,6 +352,56 @@ def send_maintenance_due_reminders(self):
         notify_task_failure("app.tasks.timeshare_tasks.send_maintenance_due_reminders", exc)
 
 
+@celery_app.task(name="app.tasks.timeshare_tasks.send_contract_expiry_reminders", bind=True)
+def send_contract_expiry_reminders(self):
+    """
+    كل يوم 9:45 صباحاً — تذكير قبل انتهاء مدة العقد بـ30 يوم.
+
+    مقصور عمدًا على عقود end_date مضبوط صراحة — years_count الافتراضي 99
+    سنة (ملكية شبه دائمة) يعني end_date فاضي غالبًا لمعظم العقود، ومفيش
+    داعي لتنبيه انتهاء لعقد زي ده. نفس شكل التذكيرات التانية بالظبط —
+    مطابقة تاريخ واحد بالظبط (end_date == اليوم+30) عشان الرسالة تتبعت
+    مرة واحدة بس، مش كل يوم طول الشهر الأخير.
+    """
+    try:
+        from app.core.database import SessionLocal  # noqa: PLC0415
+        from datetime import timedelta              # noqa: PLC0415
+        today = business_today(settings.TIMEZONE)
+        remind_date = today + timedelta(days=30)
+
+        with SessionLocal() as db:
+            try:
+                from app.modules.timeshare.models import TimeshareContract  # noqa: PLC0415
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+
+                expiring_soon = (
+                    db.query(TimeshareContract)
+                    .filter(
+                        TimeshareContract.end_date == remind_date,
+                        TimeshareContract.status == "active",
+                    )
+                    .all()
+                )
+                for contract in expiring_soon:
+                    logger.info(
+                        "Contract expiry reminder: id=%s end_date=%s",
+                        contract.id, contract.end_date,
+                    )
+                    if contract.customer_phone:
+                        send_whatsapp_message(
+                            contract.customer_phone,
+                            f"تنبيه: مدة عقد التايم شير رقم {contract.contract_number} بتنتهي يوم "
+                            f"{contract.end_date:%Y-%m-%d} — كلّم خدمة العملاء لمناقشة التجديد أو أي استفسار.",
+                        )
+
+            except ImportError:
+                pass
+
+    except Exception as exc:
+        logger.error("send_contract_expiry_reminders failed: %s", exc)
+        notify_task_failure("app.tasks.timeshare_tasks.send_contract_expiry_reminders", exc)
+
+
 @celery_app.task(name="app.tasks.timeshare_tasks.send_visit_survey", bind=True, max_retries=3)
 def send_visit_survey(self, visit_id: int, branch_id: int):
     """

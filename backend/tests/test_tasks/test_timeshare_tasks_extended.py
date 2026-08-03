@@ -306,6 +306,85 @@ class TestTimeshareMaintenanceDueReminders:
             wa_module.send_whatsapp_message = original
 
 
+# ─── send_contract_expiry_reminders logic ────────────────────────────────────
+
+class TestTimeshareContractExpiryReminders:
+    """2026-08-03: مفيش أي تنبيه لاقتراب انتهاء عقد محدود المدة (end_date
+    مضبوط صراحة) خالص — العميل عمره ما كان يعرف قبل ما مدة عقده تخلص."""
+
+    def _run(self, db):
+        from unittest.mock import MagicMock, patch
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.timeshare_tasks import send_contract_expiry_reminders
+            send_contract_expiry_reminders()
+
+    def test_whatsapp_sent_for_contract_expiring_in_30_days(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        sent = []
+        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            contract = _make_ts_contract(db, branch, manager, phone="01077700000")
+            contract.end_date = date.today() + timedelta(days=30)
+            db.commit()
+
+            self._run(db)
+
+            assert "01077700000" in sent
+        finally:
+            wa_module.send_whatsapp_message = original
+
+    def test_no_reminder_for_contract_without_end_date(self, db):
+        """years_count الافتراضي 99 سنة — end_date فاضي، ملكية شبه دائمة."""
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        sent = []
+        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            _make_ts_contract(db, branch, manager, phone="01077700001")  # end_date=None بالافتراضي
+
+            self._run(db)
+
+            assert "01077700001" not in sent
+        finally:
+            wa_module.send_whatsapp_message = original
+
+    def test_no_reminder_for_cancelled_contract(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        sent = []
+        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            contract = _make_ts_contract(db, branch, manager, phone="01077700002")
+            contract.end_date = date.today() + timedelta(days=30)
+            contract.status = "cancelled"
+            db.commit()
+
+            self._run(db)
+
+            assert "01077700002" not in sent
+        finally:
+            wa_module.send_whatsapp_message = original
+
+    def test_task_runs_without_error(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        wa_module.send_whatsapp_message = lambda *a, **kw: None
+        try:
+            self._run(db)
+        finally:
+            wa_module.send_whatsapp_message = original
+
+
 # ─── send_visit_reminders logic ──────────────────────────────────────────────
 
 class TestTimeshareVisitReminders:
