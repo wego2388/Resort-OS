@@ -89,17 +89,25 @@ async function handleLogin() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gradient-to-br from-blue-900 via-blue-800 to-blue-700 dark:from-gray-950 dark:via-gray-900 dark:to-gray-900 flex items-center justify-center p-4">
-    <div class="w-full max-w-md">
+  <div class="relative min-h-screen overflow-hidden flex items-center justify-center p-4 bg-gradient-to-br from-blue-950 via-blue-900 to-blue-800 dark:from-gray-950 dark:via-gray-950 dark:to-gray-900">
+    <!-- خلفية زخرفية (طلب Mohamed 2026-08-03: "حسّن مظهر الصفحة دي") — توهجات
+    غروب دافئة (كهرماني/برتقالي، بألوان اللوجو نفسها) فوق الأزرق الغامق، بدل
+    التدرّج المسطّح القديم اللي مالوش أي عمق بصري. blur-3xl عشان تفضل خلفية
+    ناعمة مش تصميم مزدحم، prefers-reduced-motion بيوقف الحركة بس مش التوهج نفسه. -->
+    <div class="pointer-events-none absolute inset-0" aria-hidden="true">
+      <div class="absolute -top-24 -end-24 w-96 h-96 rounded-full opacity-20 blur-3xl motion-safe:animate-pulse" style="background:radial-gradient(circle, #f59e0b, transparent 70%)" />
+      <div class="absolute -bottom-32 -start-32 w-[28rem] h-[28rem] rounded-full opacity-20 blur-3xl motion-safe:animate-pulse" style="background:radial-gradient(circle, #00d4ff, transparent 70%)" />
+      <div class="absolute inset-0 opacity-[0.03]" style="background-image:radial-gradient(circle, #fff 1px, transparent 1px);background-size:28px 28px" />
+    </div>
+
+    <div class="relative w-full max-w-md">
       <!-- Logo -->
       <div class="text-center mb-8">
-        <div class="w-20 h-20 bg-white dark:bg-surface/10 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur">
-          <svg class="w-10 h-10 text-amber-300" fill="currentColor" viewBox="0 0 24 24">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-          </svg>
+        <div class="w-28 h-28 bg-white rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-2xl ring-1 ring-white/10 p-3">
+          <img src="/el-kheima-logo.png" alt="El Kheima Beach Resort" class="w-full h-full object-contain" />
         </div>
-        <h1 class="text-3xl font-bold text-white mb-1">Resort OS</h1>
-        <p class="text-blue-200 text-sm">{{ t('backoffice.login.subtitle') }}</p>
+        <p class="text-amber-300 text-xs font-black tracking-[0.3em] uppercase mb-1.5">Resort OS</p>
+        <p class="text-blue-200/80 text-sm">{{ t('backoffice.login.subtitle') }}</p>
       </div>
 
       <!-- Form card -->

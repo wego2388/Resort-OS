@@ -171,8 +171,15 @@ def _seed_demo_accounts(db: Session) -> None:
         ("chef@resortos.local",         "شيف تجريبي",         "chef"),
         ("kitchen@resortos.local",      "مطبخ تجريبي",        "kitchen"),
         ("employee@resortos.local",     "موظف تجريبي",        "employee"),
+        # timeshare_admin/timeshare_agent (2026-08-03) — وحدة التايم شير بقت
+        # معزولة تمامًا عن باقي الأدوار (راجع app.core.deps.get_timeshare_user)،
+        # فمحتاجين حسابين تجريبيين مخصوصين ليها بدل ما تتغطى بحساب manager
+        # العادي زي باقي الموديولات.
+        ("timeshare_admin@resortos.local", "مدير تايم شير تجريبي", "timeshare_admin"),
+        ("timeshare_agent@resortos.local", "موظف تايم شير تجريبي", "timeshare_agent"),
     ]
     created = 0
+    created_agent = False
     for email, full_name, role in accounts:
         if repo.get_by_field("email", email):
             continue
@@ -181,8 +188,30 @@ def _seed_demo_accounts(db: Session) -> None:
             "full_name": full_name, "role": role, "is_active": True,
         })
         created += 1
+        if role == "timeshare_agent":
+            created_agent = True
     if created:
         print(f"  ✓ Development demo accounts seeded ({created} roles)")
+
+    if created_agent:
+        # timeshare_agent لوحدها (بعكس timeshare_admin) محتاجة UserPermission
+        # صريح على timeshare.access/view عشان تعدي بوابة get_timeshare_user —
+        # نفس المنح التلقائي اللي services.provision_timeshare_agent بيعمله
+        # للحسابات الحقيقية، بس هنا بنعمله يدويًا لأن الحساب التجريبي بينشأ
+        # مباشرة بالـrepo مش من خلال الـservice function.
+        from app.modules.core.models import UserPermission
+        agent = repo.get_by_field("email", "timeshare_agent@resortos.local")
+        if agent and not db.query(UserPermission).filter(
+            UserPermission.user_id == agent.id,
+            UserPermission.resource == "timeshare.access",
+            UserPermission.action == "view",
+        ).first():
+            db.add(UserPermission(
+                user_id=agent.id, resource="timeshare.access", action="view",
+                allowed=True, branch_id=None, granted_by=None,
+            ))
+            db.flush()
+            print("  ✓ timeshare_agent demo account granted timeshare.access/view")
 
 
 def _seed_social_insurance(db: Session) -> None:
