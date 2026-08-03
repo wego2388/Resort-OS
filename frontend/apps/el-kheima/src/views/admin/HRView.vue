@@ -311,6 +311,53 @@ async function approvePayrollRun(run: PayrollRun) {
   } finally { approvingRunId.value = null }
 }
 
+// تحميل PDF/Excel كشف الرواتب — الـendpoints دي كانت موجودة بالكامل في
+// الباك إند من غير أي زرار بيستدعيها خالص (نفس نمط TimeshareView.vue's
+// downloadContractPdf/downloadMonthlyReport بالظبط — blob response،
+// object URL، تنزيل تلقائي، revoke بعد 5 ثواني).
+function downloadBlobFile(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 5000)
+}
+
+const downloadingRunFileId = ref<number | null>(null)
+
+async function downloadPayrollExcel(run: PayrollRun) {
+  downloadingRunFileId.value = run.id
+  try {
+    const res = await api.get(`/api/v1/hr/payroll/${run.id}/excel`, { responseType: 'blob' })
+    downloadBlobFile(res.data, `payroll-${run.period_year}-${run.period_month}.xlsx`)
+  } catch {
+    toast.error(t('backoffice.hr.msg.payrollDownloadError'))
+  } finally { downloadingRunFileId.value = null }
+}
+
+async function downloadPayrollPdf(run: PayrollRun) {
+  downloadingRunFileId.value = run.id
+  try {
+    const res = await api.get(`/api/v1/hr/payroll/${run.id}/pdf`, { responseType: 'blob' })
+    downloadBlobFile(res.data, `payroll-${run.period_year}-${run.period_month}.pdf`)
+  } catch {
+    toast.error(t('backoffice.hr.msg.payrollDownloadError'))
+  } finally { downloadingRunFileId.value = null }
+}
+
+const downloadingPayslipLineId = ref<number | null>(null)
+
+async function downloadPayslip(run: PayrollRun, line: PayrollLine) {
+  downloadingPayslipLineId.value = line.id
+  try {
+    const res = await api.get(`/api/v1/hr/payroll/${run.id}/payslip/${line.employee_id}`, { responseType: 'blob' })
+    downloadBlobFile(res.data, `payslip-${run.period_year}-${run.period_month}-${line.employee_id}.pdf`)
+  } catch {
+    toast.error(t('backoffice.hr.msg.payrollDownloadError'))
+  } finally { downloadingPayslipLineId.value = null }
+}
+
 async function fetchLeaves() {
   loading.value = true
   try {
@@ -1305,10 +1352,18 @@ onMounted(fetchEmployees)
             </div>
           </div>
 
-          <div class="flex items-center justify-between mt-3 pt-3 border-t border-stone-100 dark:border-border/50">
-            <AppButton size="sm" variant="secondary" @click="togglePayrollRunDetails(run)">
-              {{ expandedRunId === run.id ? t('backoffice.hr.hideLines') : t('backoffice.hr.showLines') }}
-            </AppButton>
+          <div class="flex flex-wrap items-center justify-between gap-2 mt-3 pt-3 border-t border-stone-100 dark:border-border/50">
+            <div class="flex flex-wrap items-center gap-2">
+              <AppButton size="sm" variant="secondary" @click="togglePayrollRunDetails(run)">
+                {{ expandedRunId === run.id ? t('backoffice.hr.hideLines') : t('backoffice.hr.showLines') }}
+              </AppButton>
+              <AppButton size="sm" variant="secondary" :loading="downloadingRunFileId === run.id" @click="downloadPayrollExcel(run)">
+                📊 {{ t('backoffice.hr.downloadExcel') }}
+              </AppButton>
+              <AppButton size="sm" variant="secondary" :loading="downloadingRunFileId === run.id" @click="downloadPayrollPdf(run)">
+                📄 {{ t('backoffice.hr.downloadPdf') }}
+              </AppButton>
+            </div>
             <!-- الاعتماد على مستوى الدفعة كلها دفعة واحدة (نفس صلاحية الباك إند:
                  hr.approve_payroll_run، admin فأعلى فقط) — بضغطة واحدة بيعتمد
                  رواتب كل الموظفين في الدفعة، مش لازم فتح كل قسيمة لوحدها. -->
@@ -1330,7 +1385,13 @@ onMounted(fetchEmployees)
               <div v-for="line in payrollLinesByRun[run.id]" :key="line.id"
                 class="flex items-center justify-between text-sm">
                 <span class="text-gray-700 dark:text-gray-300">{{ employeeNameById[line.employee_id] ?? t('backoffice.hr.employeeHash', { id: line.employee_id }) }}</span>
-                <span class="text-gray-900 dark:text-gray-100 font-semibold">{{ formatNumber(line.net_salary ?? 0) }} {{ t('backoffice.hr.egp') }}</span>
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-900 dark:text-gray-100 font-semibold">{{ formatNumber(line.net_salary ?? 0) }} {{ t('backoffice.hr.egp') }}</span>
+                  <button :disabled="downloadingPayslipLineId === line.id" @click="downloadPayslip(run, line)"
+                    class="text-xs font-semibold text-teal-600 hover:text-teal-800 dark:text-teal-300 dark:hover:text-teal-200 disabled:opacity-50">
+                    📄 {{ t('backoffice.hr.payslipShort') }}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
