@@ -501,6 +501,36 @@ class TestTimeshareReportingHttp:
         assert oc["overdue_amount"] == 20000.0
         assert oc["id"] == contract["id"]
 
+    def test_cs_summary_occupancy_rate(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        """2026-08-03: مؤشر إشغال جديد — وحدة واحدة مشغولة (زيارة scheduled
+        النهاردة) من إجمالي وحدتين (وحدة تحت الصيانة مستبعدة من الإجمالي)
+        → 50%."""
+        from app.modules.timeshare.models import TimeshareUnit, TimeshareVisit
+
+        branch = make_branch_committed(db)
+        occupied_unit = TimeshareUnit(branch_id=branch.id, unit_number="OCC-1", unit_type="2R", status="available")
+        db.add(occupied_unit)
+        db.add(TimeshareUnit(branch_id=branch.id, unit_number="OCC-2", unit_type="2R", status="available"))
+        db.add(TimeshareUnit(branch_id=branch.id, unit_number="OCC-3", unit_type="2R", status="maintenance"))
+        db.flush()
+
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=timeshare_admin_headers,
+        ).json()
+        db.add(TimeshareVisit(
+            branch_id=branch.id, contract_id=contract["id"], unit_id=occupied_unit.id,
+            check_in=date.today() - timedelta(days=1), check_out=date.today() + timedelta(days=3),
+            nights=4, status="scheduled",
+        ))
+        db.commit()
+
+        resp = client.get(f"/api/v1/timeshare/cs-summary?branch_id={branch.id}", headers=timeshare_admin_headers)
+        assert resp.status_code == 200, resp.text
+        data = resp.json()
+        assert data["total_units"] == 2  # الوحدة تحت الصيانة مستبعدة
+        assert data["occupied_units"] == 1
+        assert data["occupancy_rate_pct"] == 50.0
+
     def test_sales_dashboard_pipeline_counts_by_status(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """عقدين نشطين + واحد ملغى → pipeline: active=2, cancelled=1، والمفاتيح
         الأساسية (draft/suspended/expired) موجودة بصفر."""

@@ -658,6 +658,31 @@ def list_units(
     return q.order_by(TimeshareUnit.unit_number).all()
 
 
+def unit_occupancy_today(db: Session, branch_id: int, today: date) -> tuple[int, int]:
+    """(الوحدات المشغولة اليوم، إجمالي المخزون القابل للحجز) — TimeshareUnit.
+    status='occupied' موصوف في الموديل بس مفيش أي كود بيضبطه فعليًا خالص
+    (حالة حية، مش flag يدوي)، فبنحسبها ديناميكيًا من TimeshareVisit
+    المتقاطعة مع اليوم — نفس منطق find_available_unit بالظبط. وحدات
+    maintenance مستبعدة من الإجمالي (مش مخزون قابل للبيع حاليًا)."""
+    total = db.query(TimeshareUnit).filter(
+        TimeshareUnit.branch_id == branch_id,
+        TimeshareUnit.status != "maintenance",
+    ).count()
+    occupied = (
+        db.query(TimeshareVisit.unit_id)
+        .join(TimeshareUnit, TimeshareUnit.id == TimeshareVisit.unit_id)
+        .filter(
+            TimeshareUnit.branch_id == branch_id,
+            TimeshareVisit.status.in_(["scheduled", "active"]),
+            TimeshareVisit.check_in <= today,
+            TimeshareVisit.check_out > today,
+        )
+        .distinct()
+        .count()
+    )
+    return occupied, total
+
+
 def create_unit(db: Session, data: TimeshareUnitCreate) -> TimeshareUnit:
     unit = TimeshareUnit(**data.model_dump())
     db.add(unit)

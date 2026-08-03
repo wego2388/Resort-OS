@@ -5883,6 +5883,8 @@
         "waitlist": "Waitlist"
       },
       "activeContracts": "Active contracts",
+      "occupancyRate": "Unit occupancy rate",
+      "occupancyOfTotal": "{occupied} of {total} units",
       "collectionRate": "Collection rate",
       "ofTotal": "{collected} of {total}",
       "overdueAmounts": "Overdue amounts",

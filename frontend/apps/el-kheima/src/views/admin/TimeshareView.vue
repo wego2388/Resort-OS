@@ -59,6 +59,7 @@ interface SummaryData {
   active_contracts?: number; collection_rate_pct?: number; total_collected?: number
   total_value?: number; total_overdue?: number; overdue_contracts_count?: number
   this_month_due?: number; upcoming_visits?: Visit[]; overdue_clients?: OverdueClient[]
+  occupied_units?: number; total_units?: number; occupancy_rate_pct?: number
 }
 interface CalendarMonth { month: number; month_name: string; weeks: CalendarWeek[] }
 interface TimeshareUnit { id: number; branch_id: number; unit_number: string; unit_type: string; status: string; notes?: string | null }
@@ -1090,10 +1091,15 @@ onMounted(refreshAll)
 
     <!-- ══ DASHBOARD ══ -->
     <div v-if="activeTab === 'dashboard'" class="space-y-5">
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <AppCard padding="md">
           <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.activeContracts') }}</p>
           <p class="text-2xl font-black text-gray-900 dark:text-gray-100">{{ summary.active_contracts || 0 }}</p>
+        </AppCard>
+        <AppCard padding="md">
+          <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.occupancyRate') }}</p>
+          <p class="text-2xl font-black text-sky-600 dark:text-sky-300">{{ summary.occupancy_rate_pct ?? 0 }}%</p>
+          <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ t('backoffice.timeshare.occupancyOfTotal', { occupied: summary.occupied_units || 0, total: summary.total_units || 0 }) }}</p>
         </AppCard>
         <AppCard padding="md">
           <p class="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase tracking-wide mb-2">{{ t('backoffice.timeshare.collectionRate') }}</p>

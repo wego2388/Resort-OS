@@ -634,6 +634,16 @@ def get_cs_summary(db: Session, branch_id: int) -> dict:
     this_month_due = crud.get_this_month_due(db, branch_id, today)
     summary = build_cs_summary(summaries, this_month_due)
     summary["upcoming_visits"] = sorted(upcoming_visits, key=lambda x: x["days_until"])
+
+    # مؤشر إشغال مخزون الوحدات (2026-08-03) — نسبة الوحدات المشغولة فعليًا
+    # النهاردة من إجمالي المخزون القابل للحجز، مؤشر تشغيلي مفيش له مكان
+    # تاني في اللوحة رغم إن كل البيانات اللازمة له موجودة أصلاً.
+    occupied_units, total_units = crud.unit_occupancy_today(db, branch_id, today)
+    summary["occupied_units"] = occupied_units
+    summary["total_units"] = total_units
+    summary["occupancy_rate_pct"] = (
+        round(occupied_units / total_units * 100, 1) if total_units > 0 else 0.0
+    )
     summary["overdue_clients"] = [
         {
             "id": c.contract_id, "customer_name": c.customer_name, "customer_phone": c.customer_phone,

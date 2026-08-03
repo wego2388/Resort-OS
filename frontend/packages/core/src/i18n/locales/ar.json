@@ -5883,6 +5883,8 @@
         "waitlist": "قائمة الانتظار"
       },
       "activeContracts": "عقود نشطة",
+      "occupancyRate": "نسبة إشغال الوحدات",
+      "occupancyOfTotal": "{occupied} من {total} وحدة",
       "collectionRate": "نسبة التحصيل",
       "ofTotal": "{collected} من {total}",
       "overdueAmounts": "متأخرات",
