@@ -73,7 +73,7 @@ from app.modules.timeshare.schemas import (
     TimeshareStaffCreate, TimeshareStaffProvisioned, TimeshareStaffRead, TimeshareStaffStatusUpdate,
     TimeshareSupportTicketCreate, TimeshareSupportTicketRead,
     TimeshareTicketReplyCreate, TimeshareTicketStatusUpdate,
-    TimeshareUnitRead,
+    TimeshareUnitCreate, TimeshareUnitRead, TimeshareUnitUpdate,
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
     TimeshareVisitRequestApprove, TimeshareVisitRequestCreate,
     TimeshareVisitRequestReject, TimeshareVisitRequestRead,
@@ -471,6 +471,30 @@ def list_units(
 ):
     _assert_timeshare_branch(db, user, branch_id, "عرض وحدات التايم شير")
     return [TimeshareUnitRead.model_validate(u) for u in crud.list_units(db, branch_id, unit_type, status_filter)]
+
+
+@router.post("/timeshare/units", response_model=TimeshareUnitRead,
+             status_code=status.HTTP_201_CREATED)
+def create_unit(data: TimeshareUnitCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
+    """2026-08-03: مخزون الوحدات كان بدون أي مسار إنشاء خالص — وحدة جديدة
+    كانت تحتاج تعديل مباشر في قاعدة البيانات."""
+    _assert_timeshare_branch(db, user, data.branch_id, "إضافة وحدة تايم شير")
+    try:
+        return services.create_unit(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.patch("/timeshare/units/{unit_id}", response_model=TimeshareUnitRead)
+def update_unit(unit_id: int, data: TimeshareUnitUpdate, db: DbDep, user=Depends(get_timeshare_admin_user)):
+    unit = crud.get_unit(db, unit_id)
+    if not unit:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الوحدة غير موجودة")
+    _assert_timeshare_branch(db, user, unit.branch_id, "تعديل وحدة تايم شير")
+    try:
+        return services.update_unit(db, unit_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
 
 # ── Excel Import ──────────────────────────────────────────────────────

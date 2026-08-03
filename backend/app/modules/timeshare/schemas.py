@@ -195,6 +195,20 @@ class TimeshareUnitRead(BaseModel):
     created_at: datetime
 
 
+class TimeshareUnitCreate(BaseModel):
+    branch_id: int
+    unit_number: str = Field(..., max_length=20)
+    unit_type: str = Field(..., pattern=r"^(2R|4R|6R)$")
+    notes: Optional[str] = Field(None, max_length=300)
+
+
+class TimeshareUnitUpdate(BaseModel):
+    unit_number: Optional[str] = Field(None, max_length=20)
+    unit_type: Optional[str] = Field(None, pattern=r"^(2R|4R|6R)$")
+    status: Optional[str] = Field(None, pattern=r"^(available|occupied|maintenance)$")
+    notes: Optional[str] = Field(None, max_length=300)
+
+
 # ── Simple fixed-shape response schemas ──────────────────────────────────────
 class ImportContractsResponse(BaseModel):
     imported: int

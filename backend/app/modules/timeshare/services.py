@@ -13,12 +13,13 @@ from sqlalchemy.orm import Session
 from app.modules.timeshare import crud
 from app.modules.timeshare.models import (
     TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
-    TimeshareSupportTicket, TimeshareVisit, TimeshareVisitRequest,
+    TimeshareSupportTicket, TimeshareUnit, TimeshareVisit, TimeshareVisitRequest,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate, TimeshareUnitTransferRequest,
     PayInstallmentRequest, PayMaintenanceDueRequest,
-    TimeshareSupportTicketCreate, TimeshareVisitCreate, TimeshareVisitRequestCreate,
+    TimeshareSupportTicketCreate, TimeshareUnitCreate, TimeshareUnitUpdate,
+    TimeshareVisitCreate, TimeshareVisitRequestCreate,
     TimeshareVisitUpdate, WaitlistCreate,
 )
 from app.resort_os.timeshare_engine import (
@@ -998,6 +999,38 @@ def transfer_unit(
     db.commit()
     db.refresh(contract)
     return contract
+
+
+# ── Units ────────────────────────────────────────────────────────────
+# 2026-08-03: TimeshareUnit (مخزون الوحدات الفعلي) كان بدون أي مسار
+# إنشاء/تعديل خالص — إضافة وحدة جديدة أو تعليمها "تحت الصيانة" مكان
+# ممكن غير عن طريق الداتابيز مباشرة أو app.seed. مفيش DELETE عمدًا (زي
+# باقي الكيانات المرجعية في المشروع — Outlet مثلاً) — تعطيل وحدة بيتم عبر
+# status="maintenance"، مش حذف صف عليه FK حقيقية (عقود/زيارات).
+
+def create_unit(db: Session, data: TimeshareUnitCreate) -> TimeshareUnit:
+    if crud.get_unit_by_number(db, data.branch_id, data.unit_number):
+        raise ValueError(f"الوحدة '{data.unit_number}' موجودة بالفعل في هذا الفرع")
+    unit = crud.create_unit(db, data)
+    db.commit()
+    db.refresh(unit)
+    return unit
+
+
+def update_unit(db: Session, unit_id: int, data: TimeshareUnitUpdate) -> TimeshareUnit:
+    unit = crud.get_unit(db, unit_id)
+    if not unit:
+        raise ValueError(f"الوحدة {unit_id} غير موجودة")
+    changes = data.model_dump(exclude_unset=True)
+    new_number = changes.get("unit_number")
+    if new_number and new_number != unit.unit_number:
+        existing = crud.get_unit_by_number(db, unit.branch_id, new_number)
+        if existing and existing.id != unit.id:
+            raise ValueError(f"الوحدة '{new_number}' موجودة بالفعل في هذا الفرع")
+    unit = crud.update_unit(db, unit, data)
+    db.commit()
+    db.refresh(unit)
+    return unit
 
 
 # ── Visits ───────────────────────────────────────────────────────────

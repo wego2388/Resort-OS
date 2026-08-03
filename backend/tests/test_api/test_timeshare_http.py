@@ -355,6 +355,72 @@ class TestTimeshareVisitAndUnitsHttp:
         assert "B-201" in numbers
 
 
+class TestTimeshareUnitCrud:
+    """POST/PATCH /timeshare/units (2026-08-03) — كان مخزون الوحدات بدون أي
+    مسار إنشاء/تعديل خالص، إضافة وحدة أو تعليمها 'تحت الصيانة' كانت محتاجة
+    تعديل مباشر في قاعدة البيانات."""
+
+    def test_create_unit_success(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/timeshare/units",
+            json={"branch_id": branch.id, "unit_type": "2R", "unit_number": "C-101"},
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        assert body["unit_number"] == "C-101"
+        assert body["status"] == "available"
+
+    def test_create_unit_rejects_duplicate_number_in_same_branch(
+        self, client: TestClient, db, fake_redis, timeshare_admin_headers,
+    ):
+        from app.modules.timeshare.models import TimeshareUnit
+        branch = make_branch_committed(db)
+        db.add(TimeshareUnit(branch_id=branch.id, unit_number="C-101", unit_type="2R"))
+        db.commit()
+
+        resp = client.post(
+            "/api/v1/timeshare/units",
+            json={"branch_id": branch.id, "unit_type": "4R", "unit_number": "C-101"},
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 400
+        assert "موجودة بالفعل" in resp.json()["detail"]
+
+    def test_update_unit_status_to_maintenance(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        from app.modules.timeshare.models import TimeshareUnit
+        branch = make_branch_committed(db)
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="C-102", unit_type="2R", status="available")
+        db.add(unit)
+        db.commit()
+
+        resp = client.patch(
+            f"/api/v1/timeshare/units/{unit.id}",
+            json={"status": "maintenance"},
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "maintenance"
+
+    def test_update_unit_404(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        resp = client.patch(
+            "/api/v1/timeshare/units/999999",
+            json={"status": "maintenance"},
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_create_unit_requires_timeshare_admin(self, client: TestClient, db, fake_redis, cashier_headers):
+        branch = make_branch_committed(db)
+        resp = client.post(
+            "/api/v1/timeshare/units",
+            json={"branch_id": branch.id, "unit_type": "2R", "unit_number": "C-103"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
+
 class TestTimeshareValidation:
     def test_create_contract_rejects_invalid_room_type(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         branch = make_branch_committed(db)

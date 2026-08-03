@@ -5878,7 +5878,8 @@
         "maintenance": "Maintenance",
         "requests": "Visit Requests",
         "support": "Support",
-        "staff": "Staff"
+        "staff": "Staff",
+        "units": "Units"
       },
       "activeContracts": "Active contracts",
       "collectionRate": "Collection rate",
@@ -6003,6 +6004,10 @@
       "printHint": "Press Ctrl+P to print or save as PDF",
       "msg": {
         "loadUnitsError": "Failed to load timeshare units",
+        "unitNumberRequired": "Unit number is required",
+        "unitAdded": "Unit added",
+        "unitSaveError": "Failed to save the unit",
+        "unitStatusUpdated": "Unit status updated",
         "loadProfileError": "Failed to load the full customer profile",
         "surveySent": "Satisfaction survey sent",
         "surveyError": "Couldn't send the survey",
@@ -6098,7 +6103,20 @@
       "staffInactive": "Inactive",
       "deactivate": "Deactivate",
       "downloadMonthlyReport": "Download Excel Report",
-      "downloadPdf": "Contract PDF"
+      "downloadPdf": "Contract PDF",
+      "saving": "Saving...",
+      "save": "Save",
+      "newUnit": "New unit",
+      "unitNumber": "Unit number",
+      "unitType": "Unit type",
+      "unitNotesOptional": "Notes (optional)",
+      "markAvailable": "Reactivate",
+      "markMaintenance": "Under maintenance",
+      "unitStatus": {
+        "available": "Available",
+        "occupied": "Occupied",
+        "maintenance": "Under maintenance"
+      }
     },
     "leasing": {
       "title": "Commercial Lease Contracts",

@@ -5878,7 +5878,8 @@
         "maintenance": "الصيانة",
         "requests": "طلبات الزيارة",
         "support": "خدمة العملاء",
-        "staff": "الموظفين"
+        "staff": "الموظفين",
+        "units": "الوحدات"
       },
       "activeContracts": "عقود نشطة",
       "collectionRate": "نسبة التحصيل",
@@ -6003,6 +6004,10 @@
       "printHint": "اضغط Ctrl+P للطباعة أو الحفظ كـ PDF",
       "msg": {
         "loadUnitsError": "فشل تحميل وحدات التايم شير",
+        "unitNumberRequired": "رقم الوحدة مطلوب",
+        "unitAdded": "تمت إضافة الوحدة",
+        "unitSaveError": "فشل حفظ الوحدة",
+        "unitStatusUpdated": "تم تحديث حالة الوحدة",
         "loadProfileError": "فشل تحميل ملف العميل الشامل",
         "surveySent": "تم إرسال استبيان الرضا",
         "surveyError": "تعذّر إرسال الاستبيان",
@@ -6098,7 +6103,20 @@
       "staffInactive": "غير نشط",
       "deactivate": "تعطيل",
       "downloadMonthlyReport": "تحميل تقرير Excel",
-      "downloadPdf": "PDF العقد"
+      "downloadPdf": "PDF العقد",
+      "saving": "جارٍ الحفظ...",
+      "save": "حفظ",
+      "newUnit": "وحدة جديدة",
+      "unitNumber": "رقم الوحدة",
+      "unitType": "نوع الوحدة",
+      "unitNotesOptional": "ملاحظات (اختياري)",
+      "markAvailable": "إعادة تفعيل",
+      "markMaintenance": "تحت الصيانة",
+      "unitStatus": {
+        "available": "متاحة",
+        "occupied": "مشغولة",
+        "maintenance": "تحت الصيانة"
+      }
     },
     "leasing": {
       "title": "عقود الإيجار التجاري",

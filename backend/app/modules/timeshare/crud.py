@@ -16,7 +16,8 @@ from app.modules.timeshare.models import (
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate,
     PayInstallmentRequest, PayMaintenanceDueRequest,
-    TimeshareSupportTicketCreate, TimeshareVisitCreate, TimeshareVisitRequestCreate,
+    TimeshareSupportTicketCreate, TimeshareUnitCreate, TimeshareUnitUpdate,
+    TimeshareVisitCreate, TimeshareVisitRequestCreate,
     TimeshareVisitUpdate, WaitlistCreate,
 )
 from app.core.config import settings
@@ -605,6 +606,12 @@ def get_unit(db: Session, unit_id: int) -> Optional[TimeshareUnit]:
     return db.query(TimeshareUnit).filter(TimeshareUnit.id == unit_id).first()
 
 
+def get_unit_by_number(db: Session, branch_id: int, unit_number: str) -> Optional[TimeshareUnit]:
+    return db.query(TimeshareUnit).filter(
+        TimeshareUnit.branch_id == branch_id, TimeshareUnit.unit_number == unit_number,
+    ).first()
+
+
 def lock_unit_for_visit(db: Session, unit_id: int) -> Optional[TimeshareUnit]:
     """SELECT ... FOR UPDATE NOWAIT — يقفل صف الوحدة طوال الـ transaction عشان
     يمنع تعارض حجز حقيقي (double-booking) لو حصلت محاولتين متزامنتين لتخصيص
@@ -642,6 +649,20 @@ def list_units(
     if status:
         q = q.filter(TimeshareUnit.status == status)
     return q.order_by(TimeshareUnit.unit_number).all()
+
+
+def create_unit(db: Session, data: TimeshareUnitCreate) -> TimeshareUnit:
+    unit = TimeshareUnit(**data.model_dump())
+    db.add(unit)
+    db.flush()
+    return unit
+
+
+def update_unit(db: Session, unit: TimeshareUnit, data: TimeshareUnitUpdate) -> TimeshareUnit:
+    for field, value in data.model_dump(exclude_unset=True).items():
+        setattr(unit, field, value)
+    db.flush()
+    return unit
 
 
 def has_overlapping_visit(
