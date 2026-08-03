@@ -822,6 +822,13 @@ def list_visit_requests_for_branch(
     return q.order_by(TimeshareVisitRequest.created_at.desc()).all()
 
 
+def count_pending_visit_requests(db: Session, branch_id: int) -> int:
+    return db.query(TimeshareVisitRequest).filter(
+        TimeshareVisitRequest.branch_id == branch_id,
+        TimeshareVisitRequest.status == "pending",
+    ).count()
+
+
 # ── Support Tickets (بوابة العميل العامة) ────────────────────────────
 
 def create_support_ticket(
@@ -867,6 +874,13 @@ def list_support_tickets_for_branch(
     if status:
         q = q.filter(TimeshareSupportTicket.status == status)
     return q.order_by(TimeshareSupportTicket.created_at.desc()).all()
+
+
+def count_open_support_tickets(db: Session, branch_id: int) -> int:
+    return db.query(TimeshareSupportTicket).filter(
+        TimeshareSupportTicket.branch_id == branch_id,
+        TimeshareSupportTicket.status.in_(("open", "in_progress")),
+    ).count()
 
 
 def add_ticket_reply(

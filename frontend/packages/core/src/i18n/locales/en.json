@@ -6021,6 +6021,9 @@
       "yesSend": "Yes, send",
       "confirmCancelContract": "Cancel {name}'s contract? This action cannot be undone.",
       "yesCancel": "Yes, cancel",
+      "generateDues": "Generate this year's dues",
+      "confirmGenerateDues": "Generate {year} maintenance dues for every active contract that doesn't have one for this year yet? Safe to re-run — existing dues are never duplicated.",
+      "yesGenerate": "Yes, generate",
       "currency": "EGP",
       "calendarPrintTitle": "Timeshare Calendar {year}",
       "bookedWeeksPrint": "Booked weeks: {count}",
@@ -6074,7 +6077,9 @@
         "staffStatusUpdated": "Staff account status updated",
         "staffStatusError": "Failed to update staff account status",
         "reportError": "Failed to download the report",
-        "pdfError": "Failed to download the PDF"
+        "pdfError": "Failed to download the PDF",
+        "duesGenerated": "{count} new maintenance due(s) generated",
+        "duesGenerateError": "Failed to generate maintenance dues"
       },
       "scheduleVisit": {
         "btnLabel": "Schedule Visit",

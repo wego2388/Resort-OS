@@ -6021,6 +6021,9 @@
       "yesSend": "نعم، أرسل",
       "confirmCancelContract": "إلغاء عقد {name}؟ لا يمكن التراجع عن هذا الإجراء.",
       "yesCancel": "نعم، ألغِ",
+      "generateDues": "توليد مستحقات السنة",
+      "confirmGenerateDues": "توليد مستحقات صيانة سنة {year} لكل العقود النشطة اللي مفيش لها مستحق للسنة دي بعد؟ العمليات مكرّرة آمنة (idempotent) — مش هيتكرر أي مستحق موجود بالفعل.",
+      "yesGenerate": "نعم، وَلِّد",
       "currency": "ج",
       "calendarPrintTitle": "كالندر التايم شير {year}",
       "bookedWeeksPrint": "أسابيع محجوزة: {count}",
@@ -6074,7 +6077,9 @@
         "staffStatusUpdated": "تم تحديث حالة حساب الموظف",
         "staffStatusError": "تعذّر تحديث حالة حساب الموظف",
         "reportError": "تعذّر تحميل التقرير",
-        "pdfError": "تعذّر تحميل ملف PDF"
+        "pdfError": "تعذّر تحميل ملف PDF",
+        "duesGenerated": "تم توليد {count} مستحق صيانة جديد",
+        "duesGenerateError": "تعذّر توليد مستحقات الصيانة"
       },
       "scheduleVisit": {
         "btnLabel": "جدولة زيارة",

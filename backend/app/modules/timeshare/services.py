@@ -644,6 +644,11 @@ def get_cs_summary(db: Session, branch_id: int) -> dict:
     summary["occupancy_rate_pct"] = (
         round(occupied_units / total_units * 100, 1) if total_units > 0 else 0.0
     )
+    # 2026-08-04: تابا "طلبات الزيارة" و"تذاكر الدعم" مالهومش أي مؤشر في
+    # اللوحة قبل كده — الموظف لازم يفتحهم يدويًا كل مرة يتأكد مفيش حاجة
+    # جديدة، نفس فئة مؤشر الإشغال فوق ده بالظبط.
+    summary["pending_visit_requests"] = crud.count_pending_visit_requests(db, branch_id)
+    summary["open_support_tickets"] = crud.count_open_support_tickets(db, branch_id)
     summary["overdue_clients"] = [
         {
             "id": c.contract_id, "customer_name": c.customer_name, "customer_phone": c.customer_phone,
@@ -1377,7 +1382,20 @@ def request_visit(db: Session, contract_id: int, data: TimeshareVisitRequestCrea
     req = crud.create_visit_request(db, contract, data)
     db.commit()
     db.refresh(req)
+    # 2026-08-04: مفيش أي تنبيه كان بيوصل لحد لما عميل يقدّم طلب زيارة — لازم
+    # موظف يفتح تاب "طلبات الزيارة" بالصدفة يشوفه. باقي الموديول كله (أقساط/
+    # صيانة/انتهاء عقد) بيستخدم واتساب حقيقي، فده كان استثناء غير مقصود.
+    _notify_admin_new_visit_request(contract, req)
     return req
+
+
+def _notify_admin_new_visit_request(contract: "TimeshareContract", req: "TimeshareVisitRequest") -> None:
+    from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
+
+    notify_admin(
+        f"📅 طلب زيارة جديد — {contract.customer_name} (عقد {contract.contract_number})\n"
+        f"من {req.preferred_start.isoformat()} إلى {req.preferred_end.isoformat()}"
+    )
 
 
 def approve_visit_request(
@@ -1402,6 +1420,17 @@ def approve_visit_request(
     req.visit_id = visit.id
     db.commit()
     db.refresh(req)
+    # العميل مالوش أي جلسة دائمة (بوابة OTP بس) — من غير واتساب، الطريقة
+    # الوحيدة إنه يعرف إن طلبه اتوافق عليه هي إنه يرجع يعمل OTP تاني بنفسه.
+    if req.contract.customer_phone:
+        from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+
+        send_whatsapp_message(
+            req.contract.customer_phone,
+            f"تمت الموافقة على طلب زيارتك في El Kheima Beach Resort ✅\n"
+            f"من {check_in.isoformat()} إلى {check_out.isoformat()}\n"
+            f"للتفاصيل، ادخل على بوابة عقدك.",
+        )
     return req
 
 
@@ -1417,6 +1446,15 @@ def reject_visit_request(db: Session, request_id: int, reason: str, reviewed_by:
     req.rejection_reason = reason
     db.commit()
     db.refresh(req)
+    if req.contract.customer_phone:
+        from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+
+        send_whatsapp_message(
+            req.contract.customer_phone,
+            f"للأسف تعذّرت الموافقة على طلب زيارتك في El Kheima Beach Resort.\n"
+            f"السبب: {reason}\n"
+            f"للتواصل مع خدمة العملاء، افتح تذكرة دعم من بوابة عقدك.",
+        )
     return req
 
 
@@ -1427,6 +1465,12 @@ def submit_support_ticket(
     ticket = crud.create_support_ticket(db, contract, data)
     db.commit()
     db.refresh(ticket)
+    from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
+
+    notify_admin(
+        f"🎫 تذكرة دعم جديدة — {contract.customer_name} (عقد {contract.contract_number})\n"
+        f"الموضوع: {ticket.subject}"
+    )
     return ticket
 
 
@@ -1447,6 +1491,25 @@ def reply_to_ticket(
         ticket.status = "in_progress"
     db.commit()
     db.refresh(reply)
+    # 2026-08-04: نفس الفجوة اللي في طلبات الزيارة — مفيش تنبيه في أي اتجاه.
+    # رد الموظف لازم يوصل للعميل واتساب (مفيش جلسة دائمة يشوفها فيها)، ورد
+    # العميل التاني (متابعة على تذكرة موجودة، مش أول رسالة) لازم يوصل
+    # للموظف زي ما التذكرة الجديدة نفسها كانت بتوصّل بالفعل.
+    if author_type == "staff" and ticket.contract.customer_phone:
+        from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+
+        send_whatsapp_message(
+            ticket.contract.customer_phone,
+            f"عندك رد جديد من خدمة العملاء على تذكرتك \"{ticket.subject}\" في El Kheima Beach Resort.\n"
+            f"للاطلاع، ادخل على بوابة عقدك.",
+        )
+    elif author_type == "owner":
+        from app.core.kernel.whatsapp import notify_admin  # noqa: PLC0415
+
+        notify_admin(
+            f"🎫 رد جديد من {ticket.contract.customer_name} على تذكرة \"{ticket.subject}\" "
+            f"(عقد {ticket.contract.contract_number})"
+        )
     return reply
 
 

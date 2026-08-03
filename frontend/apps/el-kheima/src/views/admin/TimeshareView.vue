@@ -60,6 +60,7 @@ interface SummaryData {
   total_value?: number; total_overdue?: number; overdue_contracts_count?: number
   this_month_due?: number; upcoming_visits?: Visit[]; overdue_clients?: OverdueClient[]
   occupied_units?: number; total_units?: number; occupancy_rate_pct?: number
+  pending_visit_requests?: number; open_support_tickets?: number
 }
 interface CalendarMonth { month: number; month_name: string; weeks: CalendarWeek[] }
 interface TimeshareUnit { id: number; branch_id: number; unit_number: string; unit_type: string; status: string; notes?: string | null }
@@ -97,8 +98,8 @@ const TABS = computed(() => [
   // طلبات الزيارة/الدعم (2026-08-03، بوابة العميل العامة الجديدة) — متاحة
   // لـtimeshare_admin وtimeshare_agent الاتنين (نفس نمط جدولة الزيارة).
   // إدارة الموظفين نفسها timeshare_admin بس، زي باقي العمليات الإدارية.
-  { id: 'requests', icon: '📝', label: t('backoffice.timeshare.tabs.requests') },
-  { id: 'support', icon: '💬', label: t('backoffice.timeshare.tabs.support') },
+  { id: 'requests', icon: '📝', label: t('backoffice.timeshare.tabs.requests'), badge: summary.value.pending_visit_requests || 0 },
+  { id: 'support', icon: '💬', label: t('backoffice.timeshare.tabs.support'), badge: summary.value.open_support_tickets || 0 },
   { id: 'waitlist', icon: '⏳', label: t('backoffice.timeshare.tabs.waitlist') },
   ...(auth.hasRole('timeshare_admin') ? [
     { id: 'staff', icon: '🧑‍💼', label: t('backoffice.timeshare.tabs.staff') },
@@ -847,6 +848,31 @@ async function loadMaintenanceDues() {
   } catch (e) { toast.error(t('backoffice.timeshare.msg.loadMaintenanceDuesError')) } finally { maintLoading.value = false }
 }
 
+// 2026-08-04: التوليد التلقائي (توقيع عقد جديد + 1 يناير سنويًا) بيغطي
+// الحالة العادية بالكامل — الزرار ده أداة استرجاع لحالات استثنائية بس
+// (مثلاً maintenance_fee اتغيّر بعد التوليد وعايز تعيد التوليد لسنة قديمة).
+// نفس endpoint الـCelery task بالظبط، idempotent (بيتخطى أي عقد عنده
+// مستحق للسنة دي بالفعل).
+const generatingDues = ref(false)
+async function generateMaintenanceDues() {
+  const fee_year = new Date().getFullYear()
+  const ok = await confirm({
+    message: t('backoffice.timeshare.confirmGenerateDues', { year: fee_year }),
+    confirmText: t('backoffice.timeshare.yesGenerate'),
+  })
+  if (!ok) return
+  generatingDues.value = true
+  try {
+    const r = await api.post('/api/v1/timeshare/maintenance-dues/generate', null, {
+      params: { branch_id: branchId.value, fee_year },
+    })
+    toast.success(t('backoffice.timeshare.msg.duesGenerated', { count: r.data.created }))
+    await loadMaintenanceDues()
+  } catch (e) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.timeshare.msg.duesGenerateError'))
+  } finally { generatingDues.value = false }
+}
+
 async function refreshAll() {
   loading.value = true
   await Promise.all([
@@ -1086,6 +1112,10 @@ onMounted(refreshAll)
         type="button" role="tab" :aria-selected="activeTab === tab.id"
         :class="['min-h-[44px] px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-all', activeTab === tab.id ? 'bg-white dark:bg-surface shadow-sm text-gray-950 dark:text-gray-100' : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white']">
         {{ tab.icon }} {{ tab.label }}
+        <span v-if="('badge' in tab) && (tab.badge ?? 0) > 0"
+          class="ms-1.5 inline-flex min-w-[18px] items-center justify-center rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white">
+          {{ tab.badge }}
+        </span>
       </button>
     </div>
 
@@ -1424,6 +1454,10 @@ onMounted(refreshAll)
           <option value="">{{ t('backoffice.timeshare.allStatuses') }}</option><option value="overdue">🔴 {{ t('backoffice.timeshare.payStatus.overdue') }}</option>
           <option value="pending">⏳ {{ t('backoffice.timeshare.payStatus.pending') }}</option><option value="paid">✅ {{ t('backoffice.timeshare.payStatus.paid') }}</option><option value="partial">🔵 {{ t('backoffice.timeshare.payStatus.partial') }}</option>
         </select>
+        <button v-if="auth.hasRole('timeshare_admin')" @click="generateMaintenanceDues" :disabled="generatingDues"
+          class="min-h-[44px] px-4 py-2 rounded-xl bg-teal-50 text-teal-700 dark:bg-teal-950/40 dark:text-teal-300 text-sm font-bold border border-teal-200 dark:border-teal-800 hover:bg-teal-100 dark:hover:bg-teal-950/60 disabled:opacity-50">
+          🛠️ {{ generatingDues ? t('backoffice.timeshare.saving') : t('backoffice.timeshare.generateDues') }}
+        </button>
       </div>
 
       <LoadingState v-if="maintLoading" :label="t('backoffice.timeshare.loadingMaintenanceDues')" />
