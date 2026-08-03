@@ -218,6 +218,36 @@ class Settings(CoreSettings):
         return self
 
     @model_validator(mode="after")
+    def _validate_token_signing_secrets(self) -> "Settings":
+        """نفس حماية _validate_secret_key بالظبط، بس لـSURVEY_TOKEN_SECRET
+        وTIMESHARE_PORTAL_TOKEN_SECRET — ⚠️ باج أمني حقيقي اتكشف (2026-08-03،
+        وقت مراجعة قبل الرفع): الاتنين بيوقّعوا JWT حقيقي (راجع
+        analytics.services.create_survey_token وtimeshare.services.
+        _issue_owner_portal_token) بس مالهومش أي validator زي SECRET_KEY —
+        لو الإنتاج بدأ بمفتاح فاضي/افتراضي (زي TIMESHARE_PORTAL_TOKEN_SECRET
+        اللي مكانش أصلاً في .env.prod)، أي حد يعرف الكود (المستودع عام على
+        GitHub) يقدر يزوّر توكن صالح لبوابة أي عميل تايم شير — يشوف بياناته
+        المالية ويقدّم طلبات باسمه، من غير ما يعدي أي تحقق OTP خالص."""
+        for field_name, label in (
+            ("SURVEY_TOKEN_SECRET", "SURVEY_TOKEN_SECRET"),
+            ("TIMESHARE_PORTAL_TOKEN_SECRET", "TIMESHARE_PORTAL_TOKEN_SECRET"),
+        ):
+            key = getattr(self, field_name, "") or ""
+            lowered = key.lower()
+            weak = len(key) < 32 or any(marker in lowered for marker in _WEAK_SECRET_MARKERS)
+            if weak:
+                msg = (
+                    f"{label} ضعيف أو افتراضي — لازم يكون 32 حرف عشوائي على الأقل "
+                    "وخالي من كلمات زي CHANGE_ME/example/secret. ولّده بـ: "
+                    "python -c \"import secrets; print(secrets.token_urlsafe(48))\""
+                )
+                if self.ENVIRONMENT == "production":
+                    raise ValueError(msg)
+                import warnings  # noqa: PLC0415
+                warnings.warn(f"[config] {msg}", stacklevel=2)
+        return self
+
+    @model_validator(mode="after")
     def _validate_production_authentication(self) -> "Settings":
         """Fail closed anywhere that is not an explicitly safe local/test env.
 

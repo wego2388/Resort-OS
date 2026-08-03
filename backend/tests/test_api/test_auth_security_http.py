@@ -359,6 +359,15 @@ class TestSecretKeyValidation:
         s = Settings(
             ENVIRONMENT="production",
             SECRET_KEY="Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz",
+            # conftest.py's os.environ.setdefault("SURVEY_TOKEN_SECRET", "test-...")
+            # deliberately contains "test" (a weak marker) — harmless outside
+            # production (warns, doesn't block), but this test forces
+            # ENVIRONMENT="production" specifically, so it needs its own
+            # strong values here — same reasoning as _validate_secret_key's
+            # own coverage below, extended to _validate_token_signing_secrets
+            # (2026-08-03).
+            SURVEY_TOKEN_SECRET="Bq7Wm2Xr9Nt4Ck6Vd1Sf8Yh3Gj5Pl0Zb2Ae7Ru9Io4Mq6Xw",
+            TIMESHARE_PORTAL_TOKEN_SECRET="Tp3Nk8Vc1Bm6Qw9Xz2Yf5Rh7Ld0Ge4As8Fu1Jo6Wk3Ni9Tq",
             DATABASE_URL="sqlite://",
             LOGIN_2FA_ENFORCED=True,
             FIELD_ENCRYPTION_KEY="9g2Hqbw0QQod3CiEaA9MMrWBpXmb3J3Hb6MEdwv2FeQ=",
@@ -371,13 +380,19 @@ class TestSecretKeyValidation:
 
 _STRONG_SECRET = "Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz"
 _FERNET_KEY = "9g2Hqbw0QQod3CiEaA9MMrWBpXmb3J3Hb6MEdwv2FeQ="
+# _validate_token_signing_secrets (2026-08-03) — أي Settings(ENVIRONMENT=
+# "production"...) هنا لازم تمرّر القيمتين دول برضو، وإلا conftest.py's
+# weak test defaults (فيها "test" — marker ضعيف) بتفشّل الفحص ده قبل ما
+# التست يوصل للحاجة اللي فعليًا بيختبرها.
+_STRONG_SURVEY_SECRET = "Bq7Wm2Xr9Nt4Ck6Vd1Sf8Yh3Gj5Pl0Zb2Ae7Ru9Io4Mq6Xw"
+_STRONG_TIMESHARE_SECRET = "Tp3Nk8Vc1Bm6Qw9Xz2Yf5Rh7Ld0Ge4As8Fu1Jo6Wk3Ni9Tq"
 
 
 class TestContainmentSwitchValidation:
     def test_dining_self_order_enabled_accepted_in_production(self):
         from app.core.config import Settings
         s = Settings(
-            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
+            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
             LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
         )
@@ -386,7 +401,7 @@ class TestContainmentSwitchValidation:
     def test_guest_alerts_enabled_accepted_in_production(self):
         from app.core.config import Settings
         s = Settings(
-            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
+            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://", GUEST_ALERTS_ENABLED=True,
             LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
         )
@@ -395,7 +410,7 @@ class TestContainmentSwitchValidation:
     def test_dining_self_order_enabled_accepted_with_capitalized_production(self):
         from app.core.config import Settings
         s = Settings(
-            ENVIRONMENT="Production", SECRET_KEY=_STRONG_SECRET,
+            ENVIRONMENT="Production", SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
             LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
         )
@@ -404,7 +419,7 @@ class TestContainmentSwitchValidation:
     def test_guest_alerts_enabled_accepted_in_staging(self):
         from app.core.config import Settings
         s = Settings(
-            ENVIRONMENT="staging", SECRET_KEY=_STRONG_SECRET,
+            ENVIRONMENT="staging", SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://", GUEST_ALERTS_ENABLED=True,
             LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
         )
@@ -413,7 +428,7 @@ class TestContainmentSwitchValidation:
     def test_dining_self_order_enabled_accepted_in_hardened_unknown_environment(self):
         from app.core.config import Settings
         s = Settings(
-            ENVIRONMENT="some-typo-env", SECRET_KEY=_STRONG_SECRET,
+            ENVIRONMENT="some-typo-env", SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
             LOGIN_2FA_ENFORCED=True, FIELD_ENCRYPTION_KEY=_FERNET_KEY,
         )
@@ -429,7 +444,7 @@ class TestContainmentSwitchValidation:
         # state instead of actual application behavior.
         s = Settings(
             _env_file=None,
-            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET,
+            ENVIRONMENT="production", SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://", LOGIN_2FA_ENFORCED=True,
             FIELD_ENCRYPTION_KEY=_FERNET_KEY,
         )
@@ -441,7 +456,7 @@ class TestContainmentSwitchValidation:
         allow-list صريح."""
         from app.core.config import Settings
         s = Settings(
-            ENVIRONMENT="development", SECRET_KEY=_STRONG_SECRET,
+            ENVIRONMENT="development", SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
             GUEST_ALERTS_ENABLED=True,
         )
@@ -453,7 +468,7 @@ class TestContainmentSwitchValidation:
         الآمنة — الـallow-list بيتطابق بالمعنى مش بالحروف الحرفية."""
         from app.core.config import Settings
         s = Settings(
-            ENVIRONMENT=" Test ", SECRET_KEY=_STRONG_SECRET,
+            ENVIRONMENT=" Test ", SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://", DINING_SELF_ORDER_ENABLED=True,
         )
         assert s.DINING_SELF_ORDER_ENABLED is True
@@ -468,7 +483,7 @@ class TestProductionAuthenticationValidation:
         with pytest.raises(ValidationError, match="LOGIN_2FA_ENFORCED"):
             Settings(
                 ENVIRONMENT=environment,
-                SECRET_KEY=_STRONG_SECRET,
+                SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
                 DATABASE_URL="sqlite://",
                 FIELD_ENCRYPTION_KEY=_FERNET_KEY,
                 LOGIN_2FA_ENFORCED=False,
@@ -481,7 +496,7 @@ class TestProductionAuthenticationValidation:
         with pytest.raises(ValidationError, match="FIELD_ENCRYPTION_KEY"):
             Settings(
                 ENVIRONMENT="production",
-                SECRET_KEY=_STRONG_SECRET,
+                SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
                 DATABASE_URL="sqlite://",
                 LOGIN_2FA_ENFORCED=True,
                 FIELD_ENCRYPTION_KEY="not-a-fernet-key",
@@ -492,7 +507,7 @@ class TestProductionAuthenticationValidation:
 
         configured = Settings(
             ENVIRONMENT="production",
-            SECRET_KEY=_STRONG_SECRET,
+            SECRET_KEY=_STRONG_SECRET, SURVEY_TOKEN_SECRET=_STRONG_SURVEY_SECRET, TIMESHARE_PORTAL_TOKEN_SECRET=_STRONG_TIMESHARE_SECRET,
             DATABASE_URL="sqlite://",
             LOGIN_2FA_ENFORCED=True,
             FIELD_ENCRYPTION_KEY=_FERNET_KEY,

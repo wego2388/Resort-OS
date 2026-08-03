@@ -71,6 +71,11 @@ def _settings(**overrides) -> Settings:
         # strong key so ENVIRONMENT="production" cases pass the SECRET_KEY
         # validator (this test exercises ETA URL selection, not key policy)
         "SECRET_KEY": "Zk9x2Lm7Qw4Tv8Yb1Rn6Pj3Fh5Gd0Sc8Ae2Wu4Io7Kp1Nq9Mz",
+        # ditto for _validate_token_signing_secrets (2026-08-03) — conftest's
+        # weak test defaults contain "test" and only warn outside production,
+        # but ENVIRONMENT="production" below makes that a hard failure.
+        "SURVEY_TOKEN_SECRET": "Bq7Wm2Xr9Nt4Ck6Vd1Sf8Yh3Gj5Pl0Zb2Ae7Ru9Io4Mq6Xw",
+        "TIMESHARE_PORTAL_TOKEN_SECRET": "Tp3Nk8Vc1Bm6Qw9Xz2Yf5Rh7Ld0Ge4As8Fu1Jo6Wk3Ni9Tq",
         # Gate 2B2 production auth prerequisites. These are test-only values;
         # ETA URL selection is intentionally independent from auth policy.
         "LOGIN_2FA_ENFORCED": True,
