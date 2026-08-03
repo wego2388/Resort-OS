@@ -163,17 +163,22 @@ _ORDER_TYPE_SVC_OVERRIDE_ATTR = {
 }
 
 
-def _service_charge_pct(outlet: Optional[Outlet], order_type: str = "dine_in") -> Decimal:
+def _service_charge_pct(db: Session, outlet: Optional[Outlet], order_type: str = "dine_in") -> Decimal:
     """نسبة رسم الخدمة الفعلية للمنفذ + قناة الطلب — override بتاع القناة
     (takeaway/delivery/room_service) لو موجود، وإلا override عام للمنفذ لو
-    موجود، وإلا settings.SERVICE_CHARGE_PERCENTAGE العام.
+    موجود، وإلا إعداد service_charge_percentage الفعلي (شاشة الإعدادات →
+    core.services.get_effective_service_charge_percentage، مش env ثابت).
 
     2026-07-16 (بحث مقارنة Click القديم): Click كان بيفرّق فعليًا في
     التسعير حسب القناة — عادة takeaway/delivery من غير رسم خدمة (مفيش
     خدمة طاولة فعلية) وroom_service أحيانًا أعلى. **القيم دي كلها NULL
     افتراضيًا** — صفر تغيير سلوك على أي منفذ موجود لحد ما مدير يفعّلها
     صراحةً من إعدادات المنفذ (قرار تسعير حي يستاهل موافقة Mohamed، مش
-    افتراض تلقائي)."""
+    افتراض تلقائي).
+
+    2026-08-03: كان بيقرأ settings.SERVICE_CHARGE_PERCENTAGE (env) مباشرة
+    كـfallback أخير — تعديل مدير للنسبة من شاشة الإعدادات مالوش أي أثر
+    فعلي. راجع core.services._effective_percentage_setting للتفاصيل."""
     if outlet is not None:
         override_attr = _ORDER_TYPE_SVC_OVERRIDE_ATTR.get(order_type)
         if override_attr is not None:
@@ -182,7 +187,10 @@ def _service_charge_pct(outlet: Optional[Outlet], order_type: str = "dine_in") -
                 return override / Decimal("100")
         if outlet.default_service_charge_pct is not None:
             return outlet.default_service_charge_pct / Decimal("100")
-    return Decimal(str(settings.SERVICE_CHARGE_PERCENTAGE)) / Decimal("100")
+
+    from app.modules.core.services import get_effective_service_charge_percentage  # noqa: PLC0415
+    branch_id = outlet.branch_id if outlet is not None else None
+    return get_effective_service_charge_percentage(db, branch_id) / Decimal("100")
 
 
 # مركز التكلفة (finance.CostCenter.code — Batch 3) المقابل لـ outlet_type —
@@ -645,8 +653,9 @@ def create_order(
             "extras":     extras_data,
         })
 
-    vat_pct    = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
-    svc_pct    = _service_charge_pct(outlet, data.order_type)
+    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
+    vat_pct    = get_effective_vat_percentage(db, branch_id) / Decimal("100")
+    svc_pct    = _service_charge_pct(db, outlet, data.order_type)
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
 
@@ -876,8 +885,9 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
 
         added_subtotal += (base_price + extra_price) * item_req.quantity
 
-    vat_pct   = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
-    svc_pct   = _service_charge_pct(outlet, order.order_type)
+    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
+    vat_pct   = get_effective_vat_percentage(db, order.branch_id) / Decimal("100")
+    svc_pct   = _service_charge_pct(db, outlet, order.order_type)
     new_sub   = order.subtotal + added_subtotal
     new_vat   = (new_sub * vat_pct).quantize(Decimal("0.01"))
     new_svc   = (new_sub * svc_pct).quantize(Decimal("0.01"))
@@ -1730,8 +1740,9 @@ def void_order_item(
         subtotal += (i.unit_price + extras_total) * i.quantity
 
     outlet = crud.get_outlet(db, order.outlet_id)
-    vat_pct    = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
-    svc_pct    = _service_charge_pct(outlet, order.order_type)
+    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
+    vat_pct    = get_effective_vat_percentage(db, order.branch_id) / Decimal("100")
+    svc_pct    = _service_charge_pct(db, outlet, order.order_type)
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     svc_charge = (subtotal * svc_pct).quantize(Decimal("0.01"))
 
@@ -1856,8 +1867,9 @@ def _recompute_order_totals(db: Session, order: DiningOrder) -> None:
         subtotal += (item.unit_price + extras_total) * item.quantity
 
     outlet = crud.get_outlet(db, order.outlet_id)
-    vat_pct = Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")
-    service_pct = _service_charge_pct(outlet, order.order_type)
+    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
+    vat_pct = get_effective_vat_percentage(db, order.branch_id) / Decimal("100")
+    service_pct = _service_charge_pct(db, outlet, order.order_type)
     vat_amount = (subtotal * vat_pct).quantize(Decimal("0.01"))
     service_charge = (subtotal * service_pct).quantize(Decimal("0.01"))
     discount_amount, rule_id = _resolve_order_discount(db, order, subtotal)

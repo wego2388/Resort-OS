@@ -428,6 +428,28 @@ class TestBeachValidation:
         )
         assert list_resp.json()["total"] == 1  # مش 2 — الـ retry مارجعش يعمل بيع جديد
 
+    def test_vat_percentage_setting_is_live(self, client: TestClient, db, fake_redis, cashier_headers):
+        """2026-08-03: زي dining بالظبط — كان settings.VAT_PERCENTAGE (env)
+        بيتقرأ مباشرة، فتعديل مدير للنسبة من شاشة الإعدادات مالوش أي أثر
+        فعلي على بيع شاطئ حقيقي. الافتراضي 14% — هنا الفرع عنده صف Setting
+        خاص بـ10% بدلًا منه."""
+        from app.modules.core.crud import upsert_setting
+
+        branch = make_branch_committed(db)
+        upsert_setting(db, "vat_percentage", "10", branch_id=branch.id)
+        db.commit()
+        branch_cashier_headers = make_branch_linked_cashier_headers(db, branch)
+
+        resp = client.post(
+            "/api/v1/beach/sell", params={"branch_id": branch.id},
+            json={"tx_type": "entry", "quantity": 1}, headers=branch_cashier_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        # entry الافتراضي = 200 (beach.price.adult seed default) →
+        # vat=10%*200=20.00 مش 14%*200=28.00
+        assert Decimal(str(body["vat_amount"])) == Decimal("20.00")
+
 
 class TestBeachB2BContracts:
     def test_b2b_checkin_and_quota_status_via_http(self, client: TestClient, db, fake_redis, super_admin_headers, cashier_headers):

@@ -154,8 +154,13 @@ def get_base_prices(db: Session, branch_id: int) -> dict[str, Decimal]:
     return _get_base_prices(db, branch_id)
 
 
-def _vat(amount: Decimal) -> Decimal:
-    return (amount * Decimal(str(settings.VAT_PERCENTAGE)) / Decimal("100")).quantize(Decimal("0.01"))
+def _vat(db: Session, branch_id: int, amount: Decimal) -> Decimal:
+    """راجع core.services.get_effective_vat_percentage — 2026-08-03: كان
+    بيقرأ settings.VAT_PERCENTAGE (env) مباشرة، فتعديل مدير للنسبة من
+    شاشة الإعدادات مالوش أي أثر فعلي على بيع شاطئ حقيقي."""
+    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
+    pct = get_effective_vat_percentage(db, branch_id)
+    return (amount * pct / Decimal("100")).quantize(Decimal("0.01"))
 
 
 def _customer_group_discount_amount(db: Session, customer_id: Optional[int], gross_amount: Decimal) -> Decimal:
@@ -244,7 +249,7 @@ def _sell_ticket_no_commit(
     # الـ VAT بيتحسب على gross_total من غير خصم (زي dining بالظبط — الخصم
     # بيقلل الصافي المُحصَّل، مش بيغيّر الإقرار الضريبي على السعر المعلن).
     discount = _customer_group_discount_amount(db, data.customer_id, gross_total)
-    vat      = _vat(gross_total)
+    vat      = _vat(db, branch_id, gross_total)
     total    = max(Decimal("0"), gross_total - discount)
 
     # تحديث inventory
@@ -438,7 +443,7 @@ def b2b_checkin(
         raise ValueError(inv_validation.error)
 
     total = calculate_b2b_price(contract_state, data.guests_count, data.with_towel)
-    vat   = _vat(total)
+    vat   = _vat(db, branch_id, total)
 
     # تحقق من حد الائتمان — قبل أي تعديل فعلي على inventory/checked_in_count
     # عشان لو اتخطى الحد، محدش يتأثر ولا يتحتاج عكس. راجع تعليق B2BContract

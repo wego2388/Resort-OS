@@ -1309,6 +1309,8 @@ async def submit_eta_invoice(db: Session, settings, data) -> ETAInvoice:
     ).count()
     internal_id = f"ETA-{today:%Y%m%d}-{count + 1:04d}"
 
+    from app.modules.core.services import get_effective_vat_percentage  # noqa: PLC0415
+
     try:
         eta = ETAService(settings)
         document = eta.build_invoice_document(
@@ -1316,6 +1318,7 @@ async def submit_eta_invoice(db: Session, settings, data) -> ETAInvoice:
             issued_at_iso=datetime.utcnow().isoformat() + "Z",
             receiver_name=data.receiver_name,
             receiver_rin=data.receiver_rin,
+            default_vat_rate=get_effective_vat_percentage(db, data.branch_id),
             line_items=[item.model_dump() for item in data.line_items],
         )
     except ETAConfigError as exc:

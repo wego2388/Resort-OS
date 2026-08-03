@@ -3870,20 +3870,8 @@
         "colActions": "Actions"
       },
       "settings": {
-        "loadError": "Failed to load settings",
-        "empty": "No settings found",
-        "colKey": "Key",
-        "colValue": "Value",
-        "colScope": "Scope",
-        "colUpdated": "Last Updated",
-        "editBtn": "Edit",
-        "editTitle": "Edit Setting: {key}",
-        "newValue": "New value",
-        "stepUpDesc": "Changing setting \"{key}\" requires identity confirmation",
-        "updateSuccess": "Setting \"{key}\" updated successfully",
-        "updateError": "Failed to update setting",
-        "globalNote": "Global settings affect the entire system — change with care",
-        "global": "Global"
+        "movedNote": "Financial and operational settings (VAT, service charge, beach pricing...) moved to a unified settings screen with a full explanation of each value and its real effect.",
+        "goToSettings": "Go to Settings"
       },
       "audit": {
         "loadError": "Failed to load audit log",

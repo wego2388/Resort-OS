@@ -94,10 +94,22 @@ class ETAService:
         receiver_rin: Optional[str],
         line_items: list[dict[str, Any]],
         # كل عنصر: {description, quantity, unit_price, vat_rate (e.g. 14), total}
+        default_vat_rate: Optional[Decimal] = None,
     ) -> dict[str, Any]:
-        """يبني مستند فاتورة بصيغة ETA e-invoice schema v1.0 (B2C إن لم يوجد receiver_rin)."""
+        """يبني مستند فاتورة بصيغة ETA e-invoice schema v1.0 (B2C إن لم يوجد receiver_rin).
+
+        `default_vat_rate`: نسبة الضريبة الفعلية (من core.services.
+        get_effective_vat_percentage — شاشة الإعدادات، مش env ثابت) —
+        بيُستخدم بس لو الـline نفسه معندوش vat_rate صريح. اختياري عمدًا
+        (مش db session) عشان ETAService يفضل قابل للاختبار بمعزل تام عن
+        قاعدة البيانات (راجع docstring الملف: "pure logic, no live ETA
+        calls") — لو الـcaller ماحددش قيمة، بيرجع لـself.settings.
+        VAT_PERCENTAGE (env) زي ما كان بالظبط، مش يفشل."""
         if not (self.settings.ETA_TAXPAYER_RIN and self.settings.ETA_TAXPAYER_NAME):
             raise ETAConfigError("ETA_TAXPAYER_RIN / ETA_TAXPAYER_NAME غير مهيأين في .env")
+
+        fallback_vat_rate = default_vat_rate if default_vat_rate is not None \
+            else Decimal(str(self.settings.VAT_PERCENTAGE))
 
         invoice_lines = []
         sales_total = Decimal("0")
@@ -107,7 +119,7 @@ class ETAService:
             qty = Decimal(str(item["quantity"]))
             unit_price = Decimal(str(item["unit_price"]))
             line_vat_rate = item.get("vat_rate")
-            vat_rate = Decimal(str(line_vat_rate if line_vat_rate is not None else self.settings.VAT_PERCENTAGE))
+            vat_rate = Decimal(str(line_vat_rate)) if line_vat_rate is not None else fallback_vat_rate
             sales = (qty * unit_price).quantize(Decimal("0.01"))
             vat_amount = (sales * vat_rate / Decimal("100")).quantize(Decimal("0.01"))
             sales_total += sales

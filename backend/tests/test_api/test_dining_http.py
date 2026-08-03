@@ -223,6 +223,34 @@ class TestDiningOrderHTTP:
         assert Decimal(str(body["vat_amount"])) == Decimal("22.40")
         assert Decimal(str(body["total"])) == Decimal("182.40")
 
+    def test_vat_and_service_charge_settings_are_live(self, client: TestClient, db, waiter_headers):
+        """2026-08-03: كان قبل كده settings.VAT_PERCENTAGE/SERVICE_CHARGE_
+        PERCENTAGE (env) بيتقروا مباشرة — تعديل مدير للنسبة من شاشة
+        الإعدادات مالوش أي أثر فعلي على أي طلب حقيقي. دلوقتي الفرع اللي
+        عنده صف Setting خاص بيه بيغيّر حساب الطلب فورًا (default: vat=14%،
+        service=12% — راجع make_branch_committed/conftest)."""
+        from app.modules.core.crud import upsert_setting
+
+        branch = make_branch_committed(db)
+        upsert_setting(db, "vat_percentage", "10", branch_id=branch.id)
+        upsert_setting(db, "service_charge_percentage", "5", branch_id=branch.id)
+        outlet = make_outlet_committed(db, branch)
+        item = make_item_committed(db, branch, outlet)
+
+        resp = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={"outlet_id": outlet.id, "order_type": "dine_in",
+                  "items": [{"item_id": item.id, "quantity": 2}]},
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        body = resp.json()
+        # subtotal=160 → vat=10%*160=16.00, svc=5%*160=8.00 (مش 14%/12%
+        # الافتراضية — إثبات إن قيمة Setting الفعلية هي اللي بتتقرا)
+        assert Decimal(str(body["subtotal"])) == Decimal("160.00")
+        assert Decimal(str(body["vat_amount"])) == Decimal("16.00")
+        assert Decimal(str(body["service_charge"])) == Decimal("8.00")
+
     def test_delivery_fee_added_to_total_and_survives_item_void(
         self, client: TestClient, db, waiter_headers, manager_headers,
     ):

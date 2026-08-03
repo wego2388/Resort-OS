@@ -16,11 +16,13 @@ import json
 import logging
 import secrets
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.modules.core import crud
 from app.modules.core.models import (
     Branch,
@@ -770,6 +772,44 @@ def upsert_setting(
     db.commit()
     db.refresh(row)
     return SettingRead.model_validate(row)
+
+
+def _effective_percentage_setting(
+    db: Session, key: str, branch_id: Optional[int], env_default: float,
+) -> Decimal:
+    """Helper مشترك لـget_effective_vat_percentage/get_effective_service_charge_percentage
+    (2026-08-03) — ⚠️ باج مالي صامت حقيقي كان هنا: شاشة الإعدادات (`PUT
+    /settings/vat_percentage` وغيرها) كانت بتكتب صف Setting حقيقي في
+    قاعدة البيانات، لكن dining/beach/eta_service كانوا بيقروا
+    settings.VAT_PERCENTAGE/SERVICE_CHARGE_PERCENTAGE من الـ env مباشرة —
+    يعني تعديل مدير للنسبة من الواجهة مالوش أي أثر فعلي على أي معاملة
+    حقيقية، بصمت تمامًا (لا خطأ، لا تحذير). القيمة الآن مقروءة من
+    get_setting_value() (نفس fallback الموجود أصلاً: صف الفرع → الصف
+    العام branch_id=None → env القديم)، مع تحقق سلامة (رقم صالح، ضمن
+    [0, 100]) يرفض أي قيمة تالفة أو خطأ إدخال بدل ما يكسر حساب فاتورة حي.
+    """
+    raw = get_setting_value(db, key, branch_id, default=str(env_default))
+    try:
+        value = Decimal(raw if raw is not None else str(env_default))
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(str(env_default))
+    if value < 0 or value > 100:
+        return Decimal(str(env_default))
+    return value
+
+
+def get_effective_vat_percentage(db: Session, branch_id: Optional[int]) -> Decimal:
+    """نسبة الضريبة الفعلية — راجع _effective_percentage_setting."""
+    return _effective_percentage_setting(db, "vat_percentage", branch_id, settings.VAT_PERCENTAGE)
+
+
+def get_effective_service_charge_percentage(db: Session, branch_id: Optional[int]) -> Decimal:
+    """نسبة رسم الخدمة العامة الفعلية (fallback بعد override المنفذ/القناة
+    — راجع dining.services._service_charge_pct) — راجع
+    _effective_percentage_setting."""
+    return _effective_percentage_setting(
+        db, "service_charge_percentage", branch_id, settings.SERVICE_CHARGE_PERCENTAGE,
+    )
 
 
 # ─────────────────────── Permission Matrix ───────────────────────────

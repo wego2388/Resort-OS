@@ -36,7 +36,6 @@ function activateTab(tab: Tab, syncRoute = true) {
     tabsLoaded.value.add(tab)
     if (tab === 'users') { loadUsers(); loadEmployees() }
     else if (tab === 'permissions') { loadCatalog(); loadUsersForPerms() }
-    else if (tab === 'settings') loadSettings()
     else if (tab === 'audit') loadAuditLogs()
   }
 }
@@ -337,39 +336,12 @@ const permStepUpDescription = computed(() => {
 // ══════════════════════════════════════════════════════════════════════
 // TAB 3 — SETTINGS
 // ══════════════════════════════════════════════════════════════════════
-interface SettingRow { id: number; key: string; value: string; branch_id: number | null; updated_at: string }
-const settings = ref<SettingRow[]>([])
-const settingsLoading = ref(false)
-const settingsError = ref('')
-interface PendingSettingEdit { row: SettingRow; newValue: string }
-const pendingSettingEdit = ref<PendingSettingEdit | null>(null)
-const settingStepUpError = ref('')
-const settingStepUpBusy = ref(false)
-
-async function loadSettings() {
-  settingsLoading.value = true; settingsError.value = ''
-  try { settings.value = (await api.get(ENDPOINTS.settings.get, { params: {} })).data }
-  catch { settingsError.value = t('backoffice.superAdmin.settings.loadError') }
-  finally { settingsLoading.value = false }
-}
-function openSettingEdit(row: SettingRow) { pendingSettingEdit.value = { row, newValue: row.value }; settingStepUpError.value = '' }
-async function onSettingStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string; reason: string }) {
-  const p = pendingSettingEdit.value; if (!p) return
-  settingStepUpBusy.value = true
-  try {
-    await api.put(ENDPOINTS.settings.set(p.row.key), { value: p.newValue, reason }, { headers: { 'X-Step-Up-Token': stepUpToken } })
-    toast.success(t('backoffice.superAdmin.settings.updateSuccess', { key: p.row.key }))
-    pendingSettingEdit.value = null; await loadSettings()
-  } catch (e: any) {
-    const code = e?.response?.data?.detail?.error_code
-    if (code === 'STEP_UP_INVALID') settingStepUpError.value = t('backoffice.stepUp.errorInvalidRestart')
-    else { toast.error(e?.response?.data?.detail?.message ?? t('backoffice.superAdmin.settings.updateError')); pendingSettingEdit.value = null }
-  } finally { settingStepUpBusy.value = false }
-}
-const settingStepUpIntent = computed(() => {
-  const p = pendingSettingEdit.value; if (!p) return {}
-  return { key: p.row.key, branch_id: p.row.branch_id, value: p.newValue }
-})
+// 2026-08-03: كان فيه شاشة إعدادات ثانية مكررة هنا (جدول key/value خام،
+// بدون أي توثيق لأي مفتاح "حي" فعليًا وأيهم بلا أثر — راجع core.services
+// وdining/beach/eta_service — وبدون فلترة فرع، global بس). اتشالت لصالح
+// رابط لـ/admin/settings (SettingsView.vue) اللي فيها نفس صلاحية التعديل
+// (step-up)، زائد شرح دقيق لكل مفتاح وفلترة فرع حقيقية — بدل صيانة مسارين
+// تعديل منفصلين ممكن يتفرقوا مع الوقت (نفس مبدأ منع التكرار، راجع CLAUDE.md §3.3).
 
 // ══════════════════════════════════════════════════════════════════════
 // TAB 4 — AUDIT LOGS
@@ -788,57 +760,15 @@ onMounted(() => {
 
     <!-- ═══ TAB: SETTINGS ═══ -->
     <div v-show="activeTab === 'settings'" class="space-y-4">
-      <p class="text-sm text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-3">
-        ⚠️ {{ t('backoffice.superAdmin.settings.globalNote') }}
-      </p>
-      <div v-if="settingsLoading" class="p-10 flex justify-center"><AppSpinner /></div>
-      <div v-else-if="settingsError" class="text-red-600 text-sm">⚠️ {{ settingsError }}
-        <button @click="loadSettings" class="ms-2 underline font-semibold">{{ t('backoffice.superAdmin.retry') }}</button>
-      </div>
-      <AppCard v-else-if="settings.length > 0" padding="none">
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-stone-50 dark:bg-gray-800/60">
-              <tr class="text-xs font-bold text-gray-500 uppercase tracking-wide">
-                <th class="px-4 py-3 text-start">{{ t('backoffice.superAdmin.settings.colKey') }}</th>
-                <th class="px-4 py-3 text-start">{{ t('backoffice.superAdmin.settings.colValue') }}</th>
-                <th class="px-4 py-3 text-start">{{ t('backoffice.superAdmin.settings.colScope') }}</th>
-                <th class="px-4 py-3 text-start">{{ t('backoffice.superAdmin.settings.colUpdated') }}</th>
-                <th class="px-4 py-3 text-start">{{ t('backoffice.superAdmin.users.colActions') }}</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-stone-100 dark:divide-border">
-              <tr v-for="row in settings" :key="row.id" class="hover:bg-stone-50 dark:hover:bg-gray-800/40 transition-colors">
-                <td class="px-4 py-3 font-mono text-xs text-gray-700 dark:text-gray-300">{{ row.key }}</td>
-                <td class="px-4 py-3 text-gray-800 dark:text-gray-200">{{ row.value }}</td>
-                <td class="px-4 py-3">
-                  <AppBadge size="sm" :variant="row.branch_id === null ? 'warning' : 'info'">
-                    {{ row.branch_id === null ? t('backoffice.superAdmin.settings.global') : `Branch ${row.branch_id}` }}
-                  </AppBadge>
-                </td>
-                <td class="px-4 py-3 text-xs text-gray-400">{{ new Date(row.updated_at).toLocaleString(locale) }}</td>
-                <td class="px-4 py-3">
-                  <button @click="openSettingEdit(row)" class="text-xs text-blue-600 hover:text-blue-800 font-semibold">
-                    {{ t('backoffice.superAdmin.settings.editBtn') }}
-                  </button>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+      <AppCard padding="md" class="text-center">
+        <div class="text-3xl mb-3">⚙️</div>
+        <p class="text-sm text-gray-600 dark:text-gray-400 mb-4 max-w-md mx-auto">
+          {{ t('backoffice.superAdmin.settings.movedNote') }}
+        </p>
+        <AppButton variant="primary" @click="router.push('/admin/settings')">
+          {{ t('backoffice.superAdmin.settings.goToSettings') }}
+        </AppButton>
       </AppCard>
-      <div v-else class="p-10 text-center text-gray-400"><div class="text-3xl mb-2">⚙️</div>{{ t('backoffice.superAdmin.settings.empty') }}</div>
-
-      <!-- Setting edit step-up -->
-      <div v-if="pendingSettingEdit" class="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-        <AppCard :title="t('backoffice.superAdmin.settings.editTitle', { key: pendingSettingEdit.row.key })" padding="sm" class="w-full max-w-md">
-          <AppInput v-model="pendingSettingEdit.newValue" :label="t('backoffice.superAdmin.settings.newValue')" class="mb-4" />
-          <StepUpConfirmModal purpose="setting_upsert" :intent="settingStepUpIntent"
-            :description="t('backoffice.superAdmin.settings.stepUpDesc', { key: pendingSettingEdit.row.key })"
-            :loading="settingStepUpBusy" :error-message="settingStepUpError"
-            @confirmed="onSettingStepUpConfirmed" @cancel="pendingSettingEdit = null; settingStepUpError = ''" />
-        </AppCard>
-      </div>
     </div>
 
     <!-- ═══ TAB: AUDIT ═══ -->

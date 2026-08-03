@@ -44,8 +44,12 @@ const QUICK_LINKS = [
 // بيقرا كل key بالظبط قبل ما تضيف/تعدّل سطر هنا:
 //   - beach.price.* → app/modules/beach/services.py::_get_base_prices()
 //   - no_show_deadline_hour → app/tasks/pms_tasks.py::process_no_shows()
-//   - الباقي (vat_percentage, service_charge_percentage, default_currency,
-//     timezone, beach.capacity_max, no_show_policy,
+//   - vat_percentage/service_charge_percentage (2026-08-03، بعد ما كانت
+//     "بلا أثر" هنا فعليًا) → core.services.get_effective_vat_percentage/
+//     get_effective_service_charge_percentage — بيتقروا في dining (POS)،
+//     beach، وeta_service (فاتورة إلكترونية) عبر نفس fallback الموجود
+//     أصلاً في get_setting_value (صف الفرع → الصف العام → env القديم).
+//   - الباقي (default_currency, timezone, beach.capacity_max, no_show_policy,
 //     discount_approval_threshold) — القيمة الفعلية دايمًا بتتاخد من متغيرات
 //     بيئة السيرفر (.env) أو من عمود تاني في الداتابيز، مش من الصف ده — تعديله
 //     من هنا مالوش أي أثر تشغيلي حاليًا (اتأكد بالبحث في الكود كله، مش افتراض).
@@ -93,17 +97,17 @@ const SETTINGS_META: Record<string, SettingMeta> = {
   },
   vat_percentage: {
     description: {
-      ar: 'نسبة ضريبة القيمة المضافة. تنبيه: النسبة الفعلية المُطبَّقة على كل الفواتير بتتحدد من إعداد سيرفر منفصل (متغير بيئة)، مش من هنا — تعديل القيمة دي حاليًا بلا أي أثر على الحسابات الفعلية.',
-      en: 'VAT percentage. Note: the rate actually applied to every invoice is set by a separate server-side (environment variable) setting, not this one — editing this value currently has no effect on real calculations.',
+      ar: 'نسبة ضريبة القيمة المضافة — بتُطبَّق فعليًا على كل فاتورة مطعم/كافيه، بيع شاطئ، وفاتورة إلكترونية (ETA) جديدة فور الحفظ. لو الفرع الحالي معندوش قيمة خاصة، بيتم استخدام القيمة العامة (بدون اختيار فرع)، وإلا القيمة الافتراضية من إعدادات السيرفر.',
+      en: 'VAT percentage — actually applied to every new dining order, beach sale, and e-invoice (ETA) as soon as it\'s saved. If the current branch has no override, the global value (no branch selected) is used, otherwise the server-side default.',
     },
-    live: false,
+    live: true,
   },
   service_charge_percentage: {
     description: {
-      ar: 'نسبة رسم الخدمة. تنبيه: النسبة الفعلية المُطبَّقة بتتحدد من إعداد سيرفر منفصل (متغير بيئة)، مش من هنا — تعديل القيمة دي حاليًا بلا أي أثر على الحسابات الفعلية.',
-      en: 'Service charge percentage. Note: the rate actually applied is set by a separate server-side (environment variable) setting, not this one — editing this value currently has no effect on real calculations.',
+      ar: 'نسبة رسم الخدمة العامة — بتُطبَّق فعليًا على أي منفذ/قناة (dine-in، takeaway، توصيل، خدمة الغرف) معندوش نسبة خاصة به في إعدادات المنفذ نفسه (تلك الأخيرة، لو موجودة، بتفوز عليها دايمًا).',
+      en: 'General service-charge percentage — actually applied to any outlet/channel (dine-in, takeaway, delivery, room service) that has no override configured on the outlet itself (an outlet-level override, when set, always wins).',
     },
-    live: false,
+    live: true,
   },
   default_currency: {
     description: {
