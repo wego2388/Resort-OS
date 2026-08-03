@@ -3885,6 +3885,8 @@
         "empty": "No records found",
         "filterAction": "Filter by action...",
         "filterEntity": "Filter by entity...",
+        "filterDateFrom": "From date",
+        "filterDateTo": "To date",
         "search": "Search",
         "colAction": "Action",
         "colEntity": "Entity",

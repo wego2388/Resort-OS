@@ -353,6 +353,53 @@ class TestAuditLogsEndpoint:
         assert resp.status_code == 200
         assert "total" in resp.json()
 
+    def test_date_range_filter(self, client: TestClient, db, manager_headers):
+        """2026-08-03: created_at مفهرس فعليًا بس مفيش أي فلترة بتاريخ كانت
+        موجودة خالص."""
+        from datetime import datetime, timedelta
+        from app.modules.core.models import AuditLog
+
+        old_row = AuditLog(
+            user_id=None, branch_id=None, action="date_range_test_old",
+            entity_type="test", entity_id=1,
+        )
+        recent_row = AuditLog(
+            user_id=None, branch_id=None, action="date_range_test_recent",
+            entity_type="test", entity_id=2,
+        )
+        db.add_all([old_row, recent_row])
+        db.flush()
+        old_row.created_at = datetime.utcnow() - timedelta(days=40)
+        recent_row.created_at = datetime.utcnow() - timedelta(days=1)
+        db.commit()
+
+        today = datetime.utcnow().date()
+        resp = client.get(
+            "/api/v1/audit-logs",
+            params={
+                "action": "date_range_test_old", "size": 200,
+                "date_from": str(today - timedelta(days=45)),
+                "date_to": str(today - timedelta(days=35)),
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        actions = [r["id"] for r in resp.json()["items"]]
+        assert old_row.id in actions
+
+        # نفس نطاق التاريخ ده — السطر الحديث برّه الفترة، لازم يترفض
+        resp2 = client.get(
+            "/api/v1/audit-logs",
+            params={
+                "action": "date_range_test_recent", "size": 200,
+                "date_from": str(today - timedelta(days=45)),
+                "date_to": str(today - timedelta(days=35)),
+            },
+            headers=manager_headers,
+        )
+        assert resp2.status_code == 200, resp2.text
+        assert resp2.json()["total"] == 0
+
 
 class TestUsersEndpoints:
     def test_list_allows_manager(self, client: TestClient, manager_headers):

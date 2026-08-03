@@ -10,7 +10,7 @@ CRUD خالص للـ Core Module — لا HTTPException، لا business logic
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -450,6 +450,8 @@ def list_audit_logs(
     entity_id: Optional[int] = None,
     user_id: Optional[int] = None,
     action: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
     skip: int = 0,
     limit: int = 50,
 ) -> tuple[list[AuditLog], int]:
@@ -464,6 +466,14 @@ def list_audit_logs(
         q = q.filter(AuditLog.user_id == user_id)
     if action:
         q = q.filter(AuditLog.action == action)
+    # 2026-08-03: created_at مفهرس فعليًا (AuditLog.created_at) بس مفيش أي
+    # فلترة بتاريخ كانت موجودة خالص — تحقيق حادثة أمنية ("وريني كل حاجة
+    # اليوزر ده لمسها الأسبوع اللي فات") كان مستحيل عمليًا من غير كده.
+    # date_to شامل لليوم نفسه بالكامل (< اليوم التالي)، مش نص الليل بالظبط.
+    if date_from is not None:
+        q = q.filter(AuditLog.created_at >= datetime.combine(date_from, datetime.min.time()))
+    if date_to is not None:
+        q = q.filter(AuditLog.created_at < datetime.combine(date_to + timedelta(days=1), datetime.min.time()))
 
     total = q.count()
     items = (

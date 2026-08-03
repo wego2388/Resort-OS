@@ -3885,6 +3885,8 @@
         "empty": "لا توجد سجلات",
         "filterAction": "فلتر بالإجراء...",
         "filterEntity": "فلتر بالكيان...",
+        "filterDateFrom": "من تاريخ",
+        "filterDateTo": "إلى تاريخ",
         "search": "بحث",
         "colAction": "الإجراء",
         "colEntity": "الكيان",

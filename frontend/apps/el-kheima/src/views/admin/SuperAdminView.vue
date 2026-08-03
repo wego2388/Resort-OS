@@ -36,7 +36,7 @@ function activateTab(tab: Tab, syncRoute = true) {
     tabsLoaded.value.add(tab)
     if (tab === 'users') { loadUsers(); loadEmployees() }
     else if (tab === 'permissions') { loadCatalog(); loadUsersForPerms() }
-    else if (tab === 'audit') loadAuditLogs()
+    else if (tab === 'audit') { loadAuditLogs(); if (!allUsersSnapshot.value.length) loadAllUsersSnapshot() }
   }
 }
 
@@ -413,6 +413,20 @@ const auditLoading = ref(false)
 const auditError = ref('')
 const auditActionFilter = ref('')
 const auditEntityFilter = ref('')
+// 2026-08-03: كان الباك إند بيدعم date_from/date_to فعليًا (created_at
+// مفهرس) بس الشاشة ما كانتش بتستخدمهم خالص — تحقيق حادثة أمنية ("وريني
+// كل حاجة اليوزر ده لمسها الأسبوع اللي فات") كان مستحيل عمليًا.
+const auditDateFrom = ref('')
+const auditDateTo = ref('')
+// الممثل (actor) كان بيتعرض كرقم user_id خام — بنستخدم نفس snapshot
+// المستخدمين المحمّل أصلاً لكارت "آخر super_admin نشط" (غير متأثر بالبحث).
+const userNameById = computed<Record<number, string>>(() =>
+  Object.fromEntries(allUsersSnapshot.value.map(u => [u.id, u.full_name])),
+)
+function actorLabel(userId: number | null): string {
+  if (userId === null) return '—'
+  return userNameById.value[userId] ?? `#${userId}`
+}
 
 async function loadAuditLogs() {
   auditLoading.value = true; auditError.value = ''
@@ -420,6 +434,8 @@ async function loadAuditLogs() {
     const params: Record<string, unknown> = { page: auditPage.value, size: 50 }
     if (auditActionFilter.value) params.action = auditActionFilter.value
     if (auditEntityFilter.value) params.entity_type = auditEntityFilter.value
+    if (auditDateFrom.value) params.date_from = auditDateFrom.value
+    if (auditDateTo.value) params.date_to = auditDateTo.value
     const res = await api.get(ENDPOINTS.core.auditLogs, { params })
     auditLogs.value = res.data.items; auditTotal.value = res.data.total
   } catch { auditError.value = t('backoffice.superAdmin.audit.loadError') }
@@ -848,6 +864,8 @@ onMounted(() => {
       <div class="flex flex-wrap items-center gap-3">
         <AppInput v-model="auditActionFilter" :placeholder="t('backoffice.superAdmin.audit.filterAction')" class="w-52" @keyup.enter="auditPage=1; loadAuditLogs()" />
         <AppInput v-model="auditEntityFilter" :placeholder="t('backoffice.superAdmin.audit.filterEntity')" class="w-52" @keyup.enter="auditPage=1; loadAuditLogs()" />
+        <AppInput v-model="auditDateFrom" type="date" :label="t('backoffice.superAdmin.audit.filterDateFrom')" class="w-40" @keyup.enter="auditPage=1; loadAuditLogs()" />
+        <AppInput v-model="auditDateTo" type="date" :label="t('backoffice.superAdmin.audit.filterDateTo')" class="w-40" @keyup.enter="auditPage=1; loadAuditLogs()" />
         <AppButton @click="auditPage=1; loadAuditLogs()" size="sm" variant="secondary">{{ t('backoffice.superAdmin.audit.search') }}</AppButton>
       </div>
       <div v-if="auditLoading" class="p-10 flex justify-center"><AppSpinner /></div>
@@ -870,7 +888,7 @@ onMounted(() => {
                 <td class="px-4 py-3 text-gray-400 text-xs">{{ log.id }}</td>
                 <td class="px-4 py-3"><span class="font-mono text-xs bg-stone-100 dark:bg-gray-700 px-2 py-0.5 rounded">{{ log.action }}</span></td>
                 <td class="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">{{ log.entity_type }}<span v-if="log.entity_id" class="text-gray-400"> #{{ log.entity_id }}</span></td>
-                <td class="px-4 py-3 text-xs text-gray-500">{{ log.user_id ?? '—' }}</td>
+                <td class="px-4 py-3 text-xs text-gray-500">{{ actorLabel(log.user_id) }}</td>
                 <td class="px-4 py-3 text-xs text-gray-400 whitespace-nowrap">{{ new Date(log.created_at).toLocaleString(locale) }}</td>
                 <td class="px-4 py-3 text-xs text-gray-400 max-w-xs truncate" :title="log.new_data ?? ''">
                   {{ log.new_data ? (JSON.parse(log.new_data)?.reason ?? log.new_data.slice(0, 60)) : '—' }}

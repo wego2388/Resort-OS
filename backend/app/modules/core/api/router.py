@@ -42,6 +42,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import (
@@ -458,6 +459,8 @@ def list_audit_logs(
     entity_id: Optional[int] = Query(None),
     user_id: Optional[int] = Query(None),
     action: Optional[str] = Query(None),
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
 ):
@@ -469,6 +472,8 @@ def list_audit_logs(
         entity_id=entity_id,
         user_id=user_id,
         action=action,
+        date_from=date_from,
+        date_to=date_to,
         skip=skip,
         limit=size,
     )
