@@ -587,6 +587,25 @@ def owner_portal_my_payments(
     }
 
 
+@router.get("/timeshare/public/my-contract/pdf", response_model=None)
+def owner_portal_my_contract_pdf(
+    db: DbDep, x_owner_token: str = Header(..., alias="X-Timeshare-Owner-Token"),
+):
+    """2026-08-04: نفس PDF العقد المتاح للموظف (generate_contract_pdf) —
+    مفيش نسخة للعميل نفسه خالص، رغم إنه أول حاجة عميل يتوقعها من بوابة
+    "تابع عقدك"."""
+    contract_id = _resolve_owner_token(x_owner_token)
+    try:
+        pdf = services.generate_contract_pdf(db, contract_id)
+        return Response(
+            content=pdf,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f"inline; filename=timeshare-{contract_id}.pdf"},
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
 @router.post("/timeshare/public/visit-requests", response_model=TimeshareVisitRequestRead,
              status_code=status.HTTP_201_CREATED)
 def owner_portal_create_visit_request(
