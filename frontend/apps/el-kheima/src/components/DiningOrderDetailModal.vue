@@ -404,6 +404,9 @@ function paymentMethodLabel(method: string): string {
           <div>
             <div class="text-2xl font-black">{{ order.order_number }}</div>
             <div class="text-primary-100 font-semibold mt-1">{{ tableLabel }}</div>
+            <div v-if="order.guest_name" class="text-white font-bold mt-1">
+              👤 {{ order.guest_name }}<span v-if="order.guest_phone" class="text-primary-200 font-semibold"> · {{ order.guest_phone }}</span>
+            </div>
             <div class="text-sm text-primary-200 mt-2">
               {{ formatDateTime(order.created_at) }}
               <span v-if="order.guests_count > 0"> · {{ t('backoffice.pos.orderDetail.guests', { count: order.guests_count }) }}</span>

@@ -322,6 +322,8 @@ def list_tables_with_orders(db: Session, branch_id: int) -> list[dict]:
             "active_covers":       None,
             "order_status":        None,
             "active_order_outlet_id": None,
+            "active_order_guest_name":  None,
+            "active_order_guest_phone": None,
         }
         o = order_by_table.get(t.id)
         if o:
@@ -331,6 +333,8 @@ def list_tables_with_orders(db: Session, branch_id: int) -> list[dict]:
             row["active_covers"]       = o.guests_count
             row["order_status"]        = o.status
             row["active_order_outlet_id"] = o.outlet_id
+            row["active_order_guest_name"]  = o.guest_name
+            row["active_order_guest_phone"] = o.guest_phone
         result.append(row)
     return result
 
@@ -583,6 +587,8 @@ def create_order_with_items(
     created_by: Optional[int] = None,
     guest_session_id: Optional[int] = None,
     guest_public_reference: Optional[str] = None,
+    guest_name: Optional[str] = None,
+    guest_phone: Optional[str] = None,
 ) -> DiningOrder:
     order = DiningOrder(
         branch_id=branch_id,
@@ -606,6 +612,8 @@ def create_order_with_items(
         delivery_fee=delivery_fee if delivery_fee is not None else Decimal("0"),
         guest_session_id=guest_session_id,
         guest_public_reference=guest_public_reference,
+        guest_name=guest_name,
+        guest_phone=guest_phone,
     )
     db.add(order)
     db.flush()

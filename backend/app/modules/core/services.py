@@ -1693,7 +1693,9 @@ def _assert_active_location(db: Session, location: ServiceLocationToken | None) 
     return location
 
 
-def create_guest_session(db: Session, qr_token: str) -> GuestSessionRead:
+def create_guest_session(
+    db: Session, qr_token: str, guest_name: str, guest_phone: str | None = None,
+) -> GuestSessionRead:
     location = _assert_active_location(db, crud.get_active_service_location_token(db, qr_token))
     from app.core.config import settings  # noqa: PLC0415
 
@@ -1705,6 +1707,8 @@ def create_guest_session(db: Session, qr_token: str) -> GuestSessionRead:
         token_hash=hashlib.sha256(raw_session_token.encode("utf-8")).hexdigest(),
         service_location_token_id=location.id,
         expires_at=expires_at,
+        guest_name=guest_name,
+        guest_phone=guest_phone,
     )
     db.commit()
     context = _service_location_read(db, location)

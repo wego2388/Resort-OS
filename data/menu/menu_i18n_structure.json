@@ -1,0 +1,866 @@
+{
+  "_meta": {
+    "purpose": "Template for multilingual menu translations",
+    "instructions": "Fill name_ru and name_it fields. name and name_ar are already correct.",
+    "languages": {
+      "en": "English — source (name field in DB)",
+      "ar": "Arabic — already in DB (name_ar field)",
+      "ru": "Russian — TO FILL (name_ru field, new column)",
+      "it": "Italian — TO FILL (name_it field, new column)"
+    },
+    "how_to_apply": "Run apply_translations() from seed_menu_2026.py after filling",
+    "last_updated": "2026-08-02"
+  },
+  "restaurant": {
+    "categories": [
+      {
+        "name": "Starters",
+        "name_ar": "المقبلات",
+        "name_ru": "Закуски",
+        "name_it": "Antipasti"
+      },
+      {
+        "name": "Sandwiches",
+        "name_ar": "الساندوتشات",
+        "name_ru": "Сэндвичи",
+        "name_it": "Panini e Wrap"
+      },
+      {
+        "name": "Main Course",
+        "name_ar": "الأطباق الرئيسية",
+        "name_ru": "Основные блюда",
+        "name_it": "Piatti Principali"
+      },
+      {
+        "name": "Salads",
+        "name_ar": "السلطات",
+        "name_ru": "Салаты",
+        "name_it": "Insalate"
+      },
+      {
+        "name": "Breakfast",
+        "name_ar": "الإفطار",
+        "name_ru": "Завтрак",
+        "name_it": "Colazione"
+      },
+      {
+        "name": "Seafood",
+        "name_ar": "المأكولات البحرية",
+        "name_ru": "Морепродукты",
+        "name_it": "Frutti di Mare"
+      },
+      {
+        "name": "Pizza",
+        "name_ar": "البيتزا",
+        "name_ru": "Пицца",
+        "name_it": "Pizza"
+      },
+      {
+        "name": "Pasta",
+        "name_ar": "الباستا",
+        "name_ru": "Паста",
+        "name_it": "Pasta"
+      }
+    ],
+    "items": [
+      {
+        "name": "Spicy Potato",
+        "name_ar": "بطاطس حارة",
+        "name_ru": "Острый картофель",
+        "name_it": "Patate Piccanti"
+      },
+      {
+        "name": "Chicken Wings",
+        "name_ar": "أجنحة دجاج",
+        "name_ru": "Куриные крылышки",
+        "name_it": "Ali di Pollo"
+      },
+      {
+        "name": "Bruschetta",
+        "name_ar": "بروشيتا",
+        "name_ru": "Брускетта",
+        "name_it": "Bruschetta"
+      },
+      {
+        "name": "Chips",
+        "name_ar": "بطاطس مقلية",
+        "name_ru": "Картофель фри",
+        "name_it": "Patatine Fritte"
+      },
+      {
+        "name": "Shish Tawook Sandwich",
+        "name_ar": "ساندوتش شيش طاووق",
+        "name_ru": "Сэндвич с шиш-тавуком",
+        "name_it": "Sandwich Shish Tawook"
+      },
+      {
+        "name": "Chicken Shawarma Sandwich",
+        "name_ar": "ساندوتش شاورما دجاج",
+        "name_ru": "Сэндвич с куриной шаурмой",
+        "name_it": "Sandwich Shawarma di Pollo"
+      },
+      {
+        "name": "Kofta Sandwich",
+        "name_ar": "ساندوتش كفتة",
+        "name_ru": "Сэндвич с кофтой",
+        "name_it": "Sandwich Kofta"
+      },
+      {
+        "name": "Fajita Sandwich",
+        "name_ar": "ساندوتش فاهيتا",
+        "name_ru": "Сэндвич фахита",
+        "name_it": "Sandwich Fajita"
+      },
+      {
+        "name": "Chicken Crispy Sandwich",
+        "name_ar": "ساندوتش دجاج كريسبي",
+        "name_ru": "Сэндвич с хрустящей курицей",
+        "name_it": "Sandwich Pollo Croccante"
+      },
+      {
+        "name": "Mexican Sandwich",
+        "name_ar": "ساندوتش مكسيكان",
+        "name_ru": "Мексиканский сэндвич",
+        "name_it": "Sandwich Messicano"
+      },
+      {
+        "name": "Crystal Sandwich",
+        "name_ar": "ساندوتش كريستال",
+        "name_ru": "Сэндвич Кристалл",
+        "name_it": "Sandwich Crystal"
+      },
+      {
+        "name": "Grilled Chicken Breast",
+        "name_ar": "صدر دجاج مشوي",
+        "name_ru": "Куриная грудка на гриле",
+        "name_it": "Petto di Pollo alla Griglia"
+      },
+      {
+        "name": "Chicken Breast with Mushroom Sauce",
+        "name_ar": "صدر دجاج بصوص المشروم",
+        "name_ru": "Куриная грудка в грибном соусе",
+        "name_it": "Petto di Pollo ai Funghi"
+      },
+      {
+        "name": "Grilled Whole Chicken",
+        "name_ar": "دجاجة مشوية كاملة",
+        "name_ru": "Целая курица на гриле",
+        "name_it": "Pollo Intero alla Griglia"
+      },
+      {
+        "name": "Grilled Half Chicken",
+        "name_ar": "نصف دجاجة مشوية",
+        "name_ru": "Половина курицы на гриле",
+        "name_it": "Mezzo Pollo alla Griglia"
+      },
+      {
+        "name": "Escalope Panne & Chips",
+        "name_ar": "إسكالوب بانيه مع بطاطس مقلية",
+        "name_ru": "Эскалоп в панировке с картофелем",
+        "name_it": "Scaloppina Impanata e Patatine"
+      },
+      {
+        "name": "Chicken Crispy & Chips",
+        "name_ar": "دجاج كريسبي مع بطاطس مقلية",
+        "name_ru": "Хрустящая курица с картофелем",
+        "name_it": "Pollo Croccante e Patatine"
+      },
+      {
+        "name": "Chicken Nuggets & Chips",
+        "name_ar": "ناجتس دجاج مع بطاطس مقلية",
+        "name_ru": "Куриные наггетсы с картофелем",
+        "name_it": "Nuggets di Pollo e Patatine"
+      },
+      {
+        "name": "Cheese Burger & Chips",
+        "name_ar": "تشيز برجر مع بطاطس مقلية",
+        "name_ru": "Чизбургер с картофелем",
+        "name_it": "Cheeseburger e Patatine"
+      },
+      {
+        "name": "Beef Burger & Chips",
+        "name_ar": "بيف برجر مع بطاطس مقلية",
+        "name_ru": "Говяжий бургер с картофелем",
+        "name_it": "Burger di Manzo e Patatine"
+      },
+      {
+        "name": "Chicken Burger & Chips",
+        "name_ar": "تشيكن برجر مع بطاطس مقلية",
+        "name_ru": "Куриный бургер с картофелем",
+        "name_it": "Burger di Pollo e Patatine"
+      },
+      {
+        "name": "Shish Tawook Platter",
+        "name_ar": "طبق شيش طاووق",
+        "name_ru": "Тарелка шиш-тавук",
+        "name_it": "Piatto Shish Tawook"
+      },
+      {
+        "name": "Peri-Peri Shish Tawook",
+        "name_ar": "شيش طاووق بيري بيري",
+        "name_ru": "Шиш-тавук пери-пери",
+        "name_it": "Shish Tawook Peri-Peri"
+      },
+      {
+        "name": "Kofta Platter",
+        "name_ar": "طبق كفتة",
+        "name_ru": "Тарелка кофта",
+        "name_it": "Piatto di Kofta"
+      },
+      {
+        "name": "Chicken Shawarma Platter",
+        "name_ar": "طبق شاورما دجاج",
+        "name_ru": "Тарелка куриной шаурмы",
+        "name_it": "Piatto Shawarma di Pollo"
+      },
+      {
+        "name": "Mixed Grill Platter",
+        "name_ar": "طبق مشويات مشكلة",
+        "name_ru": "Ассорти на гриле",
+        "name_it": "Grigliata Mista"
+      },
+      {
+        "name": "Caesar Salad",
+        "name_ar": "سلطة سيزر",
+        "name_ru": "Салат Цезарь",
+        "name_it": "Insalata Caesar"
+      },
+      {
+        "name": "Greek Salad",
+        "name_ar": "سلطة يونانية",
+        "name_ru": "Греческий салат",
+        "name_it": "Insalata Greca"
+      },
+      {
+        "name": "Tuna Salad",
+        "name_ar": "سلطة تونة",
+        "name_ru": "Салат с тунцом",
+        "name_it": "Insalata di Tonno"
+      },
+      {
+        "name": "Crystal Salad",
+        "name_ar": "سلطة كريستال",
+        "name_ru": "Салат Кристалл",
+        "name_it": "Insalata Crystal"
+      },
+      {
+        "name": "Fit Salad",
+        "name_ar": "سلطة دايت",
+        "name_ru": "Диетический салат",
+        "name_it": "Insalata Fit"
+      },
+      {
+        "name": "Tabbouleh",
+        "name_ar": "تبولة",
+        "name_ru": "Табуле",
+        "name_it": "Tabulè"
+      },
+      {
+        "name": "Fattoush",
+        "name_ar": "فتوش",
+        "name_ru": "Фаттуш",
+        "name_it": "Fattoush"
+      },
+      {
+        "name": "Mediterranean Salad",
+        "name_ar": "سلطة البحر المتوسط",
+        "name_ru": "Средиземноморский салат",
+        "name_it": "Insalata Mediterranea"
+      },
+      {
+        "name": "Scrambled Eggs",
+        "name_ar": "بيض مخفوق",
+        "name_ru": "Яичница болтунья",
+        "name_it": "Uova Strapazzate"
+      },
+      {
+        "name": "Fried Eggs with Cheese",
+        "name_ar": "بيض مقلي بالجبن",
+        "name_ru": "Яичница с сыром",
+        "name_it": "Uova Fritte con Formaggio"
+      },
+      {
+        "name": "Omelette",
+        "name_ar": "أومليت",
+        "name_ru": "Омлет",
+        "name_it": "Frittata"
+      },
+      {
+        "name": "Omelette with Vegetables",
+        "name_ar": "أومليت بالخضار",
+        "name_ru": "Омлет с овощами",
+        "name_it": "Frittata con Verdure"
+      },
+      {
+        "name": "Calamari",
+        "name_ar": "كاليماري",
+        "name_ru": "Кальмары",
+        "name_it": "Calamari"
+      },
+      {
+        "name": "Shrimps",
+        "name_ar": "جمبري",
+        "name_ru": "Креветки",
+        "name_it": "Gamberi"
+      },
+      {
+        "name": "Shrimps with Calamari",
+        "name_ar": "جمبري مع كاليماري",
+        "name_ru": "Креветки с кальмарами",
+        "name_it": "Gamberi e Calamari"
+      },
+      {
+        "name": "Fish & Chips",
+        "name_ar": "سمك مع بطاطس مقلية",
+        "name_ru": "Рыба с картофелем",
+        "name_it": "Pesce e Patatine"
+      },
+      {
+        "name": "Salami Pizza",
+        "name_ar": "بيتزا سلامي",
+        "name_ru": "Пицца с салями",
+        "name_it": "Pizza Salame"
+      },
+      {
+        "name": "Margherita Pizza",
+        "name_ar": "بيتزا مارجريتا",
+        "name_ru": "Пицца Маргарита",
+        "name_it": "Pizza Margherita"
+      },
+      {
+        "name": "Four Cheese Pizza",
+        "name_ar": "بيتزا أربع أنواع جبن",
+        "name_ru": "Пицца Четыре сыра",
+        "name_it": "Pizza Quattro Formaggi"
+      },
+      {
+        "name": "Chicken Pizza",
+        "name_ar": "بيتزا دجاج",
+        "name_ru": "Пицца с курицей",
+        "name_it": "Pizza Pollo"
+      },
+      {
+        "name": "Tuna Pizza",
+        "name_ar": "بيتزا تونة",
+        "name_ru": "Пицца с тунцом",
+        "name_it": "Pizza Tonno"
+      },
+      {
+        "name": "Vegetariana Pizza",
+        "name_ar": "بيتزا خضار",
+        "name_ru": "Вегетарианская пицца",
+        "name_it": "Pizza Vegetariana"
+      },
+      {
+        "name": "Frutti Di Mare Pizza",
+        "name_ar": "بيتزا فروتي دي ماري",
+        "name_ru": "Пицца с морепродуктами",
+        "name_it": "Pizza Frutti di Mare"
+      },
+      {
+        "name": "Shrimps Pizza",
+        "name_ar": "بيتزا جمبري",
+        "name_ru": "Пицца с креветками",
+        "name_it": "Pizza Gamberi"
+      },
+      {
+        "name": "Chicken Pasta",
+        "name_ar": "باستا دجاج",
+        "name_ru": "Паста с курицей",
+        "name_it": "Pasta al Pollo"
+      },
+      {
+        "name": "Bolognese Pasta",
+        "name_ar": "باستا بولونيز",
+        "name_ru": "Паста Болоньезе",
+        "name_it": "Pasta Bolognese"
+      },
+      {
+        "name": "Arrabiata Pasta",
+        "name_ar": "باستا أرابياتا",
+        "name_ru": "Паста Аррабьята",
+        "name_it": "Pasta all'Arrabbiata"
+      },
+      {
+        "name": "Loro Rosso Pasta",
+        "name_ar": "باستا لورو روسو",
+        "name_ru": "Паста Лоро Россо",
+        "name_it": "Pasta Loro Rosso"
+      },
+      {
+        "name": "Quattro Formaggi Pasta",
+        "name_ar": "باستا كواترو فورماجي",
+        "name_ru": "Паста Четыре сыра",
+        "name_it": "Pasta Quattro Formaggi"
+      },
+      {
+        "name": "Shrimp Pasta",
+        "name_ar": "باستا جمبري",
+        "name_ru": "Паста с креветками",
+        "name_it": "Pasta ai Gamberi"
+      }
+    ]
+  },
+  "cafe": {
+    "categories": [
+      {
+        "name": "Hot Beverages",
+        "name_ar": "المشروبات الساخنة",
+        "name_ru": "Горячие напитки",
+        "name_it": "Bevande Calde"
+      },
+      {
+        "name": "Fresh Juices",
+        "name_ar": "العصائر الطازجة",
+        "name_ru": "Свежевыжатые соки",
+        "name_it": "Succhi Freschi"
+      },
+      {
+        "name": "Mix Juices",
+        "name_ar": "العصائر المخلطة",
+        "name_ru": "Смешанные соки",
+        "name_it": "Centrifugati Misti"
+      },
+      {
+        "name": "Frappuccino & Iced Coffee",
+        "name_ar": "فرابتشينو وآيس كوفي",
+        "name_ru": "Фраппучино и холодный кофе",
+        "name_it": "Frappuccino e Caffè Freddo"
+      },
+      {
+        "name": "Milkshakes",
+        "name_ar": "الميلك شيك",
+        "name_ru": "Молочные коктейли",
+        "name_it": "Milkshake"
+      },
+      {
+        "name": "Mojito",
+        "name_ar": "موهيتو",
+        "name_ru": "Мохито",
+        "name_it": "Mojito"
+      },
+      {
+        "name": "Cold Drinks",
+        "name_ar": "المشروبات الباردة",
+        "name_ru": "Холодные напитки",
+        "name_it": "Bevande Fredde"
+      },
+      {
+        "name": "Fruit Salad",
+        "name_ar": "فروت سلاط",
+        "name_ru": "Фруктовый салат",
+        "name_it": "Macedonia di Frutta"
+      }
+    ],
+    "items": [
+      {
+        "name": "Espresso Single",
+        "name_ar": "إسبريسو سنجل",
+        "name_ru": "Эспрессо одинарный",
+        "name_it": "Espresso Singolo"
+      },
+      {
+        "name": "Espresso Double",
+        "name_ar": "إسبريسو دبل",
+        "name_ru": "Эспрессо двойной",
+        "name_it": "Espresso Doppio"
+      },
+      {
+        "name": "Cappuccino",
+        "name_ar": "كابتشينو",
+        "name_ru": "Капучино",
+        "name_it": "Cappuccino"
+      },
+      {
+        "name": "Latte",
+        "name_ar": "لاتيه",
+        "name_ru": "Латте",
+        "name_it": "Latte"
+      },
+      {
+        "name": "Macchiato",
+        "name_ar": "ماكياتو",
+        "name_ru": "Макиато",
+        "name_it": "Macchiato"
+      },
+      {
+        "name": "Nescafe with Milk",
+        "name_ar": "نسكافيه بالحليب",
+        "name_ru": "Нескафе с молоком",
+        "name_it": "Nescafé con Latte"
+      },
+      {
+        "name": "Nescafe Classic",
+        "name_ar": "نسكافيه كلاسيك",
+        "name_ru": "Нескафе классик",
+        "name_it": "Nescafé Classico"
+      },
+      {
+        "name": "Americano",
+        "name_ar": "أمريكانو",
+        "name_ru": "Американо",
+        "name_it": "Americano"
+      },
+      {
+        "name": "Hot Chocolate",
+        "name_ar": "هوت شوكليت",
+        "name_ru": "Горячий шоколад",
+        "name_it": "Cioccolata Calda"
+      },
+      {
+        "name": "Hot Cider",
+        "name_ar": "هوت سيدر",
+        "name_ru": "Горячий сидр",
+        "name_it": "Sidro Caldo"
+      },
+      {
+        "name": "Turkish Coffee",
+        "name_ar": "قهوة تركي",
+        "name_ru": "Турецкий кофе",
+        "name_it": "Caffè Turco"
+      },
+      {
+        "name": "French Coffee",
+        "name_ar": "قهوة فرنساوي",
+        "name_ru": "Французский кофе",
+        "name_it": "Caffè Francese"
+      },
+      {
+        "name": "Tea Anise Mint Hibiscus",
+        "name_ar": "شاي / ينسون / نعناع / كركديه",
+        "name_ru": "Чай / Анис / Мята / Каркаде",
+        "name_it": "Tè / Anice / Menta / Ibisco"
+      },
+      {
+        "name": "Milk Tea",
+        "name_ar": "شاي بالحليب",
+        "name_ru": "Чай с молоком",
+        "name_it": "Tè al Latte"
+      },
+      {
+        "name": "Mango Juice",
+        "name_ar": "مانجو",
+        "name_ru": "Сок манго",
+        "name_it": "Succo di Mango"
+      },
+      {
+        "name": "Strawberry Juice",
+        "name_ar": "فراولة",
+        "name_ru": "Клубничный сок",
+        "name_it": "Succo di Fragola"
+      },
+      {
+        "name": "Guava Juice",
+        "name_ar": "جوافة",
+        "name_ru": "Сок гуавы",
+        "name_it": "Succo di Guava"
+      },
+      {
+        "name": "Cantaloupe Juice",
+        "name_ar": "كنتالوب / شمام",
+        "name_ru": "Сок дыни",
+        "name_it": "Succo di Melone"
+      },
+      {
+        "name": "Pomegranate Juice",
+        "name_ar": "رمان",
+        "name_ru": "Гранатовый сок",
+        "name_it": "Succo di Melagrana"
+      },
+      {
+        "name": "Orange Juice",
+        "name_ar": "برتقال",
+        "name_ru": "Апельсиновый сок",
+        "name_it": "Succo d'Arancia"
+      },
+      {
+        "name": "Watermelon Juice",
+        "name_ar": "بطيخ",
+        "name_ru": "Арбузный сок",
+        "name_it": "Succo di Anguria"
+      },
+      {
+        "name": "Kiwi Juice",
+        "name_ar": "كيوي",
+        "name_ru": "Сок киви",
+        "name_it": "Succo di Kiwi"
+      },
+      {
+        "name": "Lemon Juice",
+        "name_ar": "ليمون",
+        "name_ru": "Лимонный сок",
+        "name_it": "Limonata"
+      },
+      {
+        "name": "Lemon Mint",
+        "name_ar": "ليمون بالنعناع",
+        "name_ru": "Лимон с мятой",
+        "name_it": "Limonata alla Menta"
+      },
+      {
+        "name": "Apple Juice",
+        "name_ar": "تفاح",
+        "name_ru": "Яблочный сок",
+        "name_it": "Succo di Mela"
+      },
+      {
+        "name": "Pineapple Juice",
+        "name_ar": "أناناس",
+        "name_ru": "Ананасовый сок",
+        "name_it": "Succo di Ananas"
+      },
+      {
+        "name": "Peach Juice",
+        "name_ar": "خوخ",
+        "name_ru": "Персиковый сок",
+        "name_it": "Succo di Pesca"
+      },
+      {
+        "name": "Avocado Juice",
+        "name_ar": "أفوكادو",
+        "name_ru": "Сок авокадо",
+        "name_it": "Succo di Avocado"
+      },
+      {
+        "name": "Avocado Honey Nuts",
+        "name_ar": "أفوكادو بالعسل والمكسرات",
+        "name_ru": "Авокадо с мёдом и орехами",
+        "name_it": "Avocado con Miele e Noci"
+      },
+      {
+        "name": "Dates Juice",
+        "name_ar": "تمر",
+        "name_ru": "Сок из фиников",
+        "name_it": "Succo di Datteri"
+      },
+      {
+        "name": "Pina Colada Mix",
+        "name_ar": "بينا كولادا",
+        "name_ru": "Пина Колада",
+        "name_it": "Piña Colada Mix"
+      },
+      {
+        "name": "Mango Kiwi Mix",
+        "name_ar": "مانجو كيوي",
+        "name_ru": "Манго с киви",
+        "name_it": "Mix Mango Kiwi"
+      },
+      {
+        "name": "Mango Plum Mix",
+        "name_ar": "مانجو بلز",
+        "name_ru": "Манго со сливой",
+        "name_it": "Mix Mango Prugna"
+      },
+      {
+        "name": "Mango Strawberry Mix",
+        "name_ar": "مانجو فراولة",
+        "name_ru": "Манго с клубникой",
+        "name_it": "Mix Mango Fragola"
+      },
+      {
+        "name": "Mango Cantaloupe Mix",
+        "name_ar": "مانجو كنتالوب",
+        "name_ru": "Манго с дыней",
+        "name_it": "Mix Mango Melone"
+      },
+      {
+        "name": "Kiwi Cantaloupe Mix",
+        "name_ar": "كيوي كنتالوب",
+        "name_ru": "Киви с дыней",
+        "name_it": "Mix Kiwi Melone"
+      },
+      {
+        "name": "Kiwi Pineapple Mix",
+        "name_ar": "كيوي أناناس",
+        "name_ru": "Киви с ананасом",
+        "name_it": "Mix Kiwi Ananas"
+      },
+      {
+        "name": "Mango Banana Mix",
+        "name_ar": "مانجو موز",
+        "name_ru": "Манго с бананом",
+        "name_it": "Mix Mango Banana"
+      },
+      {
+        "name": "Strawberry Banana Mix",
+        "name_ar": "فراولة موز",
+        "name_ru": "Клубника с бананом",
+        "name_it": "Mix Fragola Banana"
+      },
+      {
+        "name": "Khayma Mix",
+        "name_ar": "الخيمة ميكس",
+        "name_ru": "Микс Эль-Хейма",
+        "name_it": "Mix El Kheima"
+      },
+      {
+        "name": "Frappuccino Classic",
+        "name_ar": "فرابتشينو كلاسيك",
+        "name_ru": "Фраппучино классик",
+        "name_it": "Frappuccino Classico"
+      },
+      {
+        "name": "Frappuccino Vanilla",
+        "name_ar": "فرابتشينو فانيليا",
+        "name_ru": "Фраппучино ваниль",
+        "name_it": "Frappuccino Vaniglia"
+      },
+      {
+        "name": "Frappuccino Hazelnut",
+        "name_ar": "فرابتشينو بندق",
+        "name_ru": "Фраппучино лесной орех",
+        "name_it": "Frappuccino Nocciola"
+      },
+      {
+        "name": "Iced Coffee",
+        "name_ar": "آيس كوفي",
+        "name_ru": "Холодный кофе",
+        "name_it": "Caffè Freddo"
+      },
+      {
+        "name": "Iced Latte",
+        "name_ar": "آيس لاتيه",
+        "name_ru": "Холодный латте",
+        "name_it": "Latte Freddo"
+      },
+      {
+        "name": "Spanish Latte",
+        "name_ar": "سبانيش لاتيه",
+        "name_ru": "Испанский латте",
+        "name_it": "Latte Spagnolo"
+      },
+      {
+        "name": "Vanilla Milkshake",
+        "name_ar": "فانيليا",
+        "name_ru": "Молочный коктейль ваниль",
+        "name_it": "Milkshake Vaniglia"
+      },
+      {
+        "name": "Chocolate Milkshake",
+        "name_ar": "شوكولاتة",
+        "name_ru": "Молочный коктейль шоколад",
+        "name_it": "Milkshake Cioccolato"
+      },
+      {
+        "name": "Caramel Milkshake",
+        "name_ar": "كراميل",
+        "name_ru": "Молочный коктейль карамель",
+        "name_it": "Milkshake Caramello"
+      },
+      {
+        "name": "Oreo Milkshake",
+        "name_ar": "أوريو",
+        "name_ru": "Молочный коктейль Орео",
+        "name_it": "Milkshake Oreo"
+      },
+      {
+        "name": "Tonkeys Milkshake",
+        "name_ar": "تونكيز",
+        "name_ru": "Молочный коктейль Тонкис",
+        "name_it": "Milkshake Tonkeys"
+      },
+      {
+        "name": "Berries Milkshake",
+        "name_ar": "توت مشكل",
+        "name_ru": "Молочный коктейль с ягодами",
+        "name_it": "Milkshake Frutti di Bosco"
+      },
+      {
+        "name": "Mango Milkshake",
+        "name_ar": "مانجو ميلك شيك",
+        "name_ru": "Молочный коктейль манго",
+        "name_it": "Milkshake Mango"
+      },
+      {
+        "name": "Strawberry Milkshake",
+        "name_ar": "فراولة ميلك شيك",
+        "name_ru": "Молочный коктейль клубника",
+        "name_it": "Milkshake Fragola"
+      },
+      {
+        "name": "Mojito Classic",
+        "name_ar": "موهيتو كلاسيك",
+        "name_ru": "Мохито классик",
+        "name_it": "Mojito Classico"
+      },
+      {
+        "name": "Mojito Soda",
+        "name_ar": "موهيتو صودا",
+        "name_ru": "Мохито с содой",
+        "name_it": "Mojito Soda"
+      },
+      {
+        "name": "Mojito Sunshine",
+        "name_ar": "موهيتو صن شاين",
+        "name_ru": "Мохито Саншайн",
+        "name_it": "Mojito Sunshine"
+      },
+      {
+        "name": "Mojito Red Bull Special",
+        "name_ar": "مهيتو ريدبول اسبيشال",
+        "name_ru": "Мохито Ред Булл Спешл",
+        "name_it": "Mojito Red Bull Speciale"
+      },
+      {
+        "name": "Cola Fanta Sprite",
+        "name_ar": "كولا / فانتا / سبرايت",
+        "name_ru": "Кола / Фанта / Спрайт",
+        "name_it": "Cola / Fanta / Sprite"
+      },
+      {
+        "name": "Fayrouz",
+        "name_ar": "فيروز",
+        "name_ru": "Файруз",
+        "name_it": "Fayrouz"
+      },
+      {
+        "name": "Barrel",
+        "name_ar": "بريل",
+        "name_ru": "Баррел",
+        "name_it": "Barrel"
+      },
+      {
+        "name": "Red Bull",
+        "name_ar": "ريد بول",
+        "name_ru": "Ред Булл",
+        "name_it": "Red Bull"
+      },
+      {
+        "name": "Water Small",
+        "name_ar": "مياه صغيرة",
+        "name_ru": "Вода маленькая",
+        "name_it": "Acqua Piccola"
+      },
+      {
+        "name": "Water Large",
+        "name_ar": "مياه كبيرة",
+        "name_ru": "Вода большая",
+        "name_it": "Acqua Grande"
+      },
+      {
+        "name": "Fruit Salad Small",
+        "name_ar": "فروت سلاط صغير",
+        "name_ru": "Фруктовый салат маленький",
+        "name_it": "Macedonia Piccola"
+      },
+      {
+        "name": "Fruit Salad Large",
+        "name_ar": "فروت سلاط كبير",
+        "name_ru": "Фруктовый салат большой",
+        "name_it": "Macedonia Grande"
+      },
+      {
+        "name": "Watermelon Plate Small",
+        "name_ar": "طبق بطيخ صغير",
+        "name_ru": "Тарелка арбуза маленькая",
+        "name_it": "Piatto di Anguria Piccolo"
+      },
+      {
+        "name": "Watermelon Plate Large",
+        "name_ar": "طبق بطيخ كبير",
+        "name_ru": "Тарелка арбуза большая",
+        "name_it": "Piatto di Anguria Grande"
+      }
+    ]
+  }
+}

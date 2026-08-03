@@ -1,0 +1,276 @@
+{
+  "_meta": {
+    "purpose": "Patch for CHATBOT_KNOWLEDGE_BASE.json — updated menu data August 2026",
+    "source": "Menu images extracted August 2026",
+    "target_file": "03_chatbot/CHATBOT_KNOWLEDGE_BASE.json",
+    "instructions": "Merge this data into the existing knowledge base. Replace dining sections entirely.",
+    "last_updated": "2026-08-02"
+  },
+  "venue": {
+    "name_en": "El Kheima Beach",
+    "name_ar": "الخيمة بيتش",
+    "outlets": ["restaurant", "cafe_bar"]
+  },
+  "restaurant": {
+    "name": "El Kheima Beach Cafe & Restaurant",
+    "note": "All main course dishes served with salad and choice of rice or chips.",
+    "note_ar": "جميع الأطباق الرئيسية تُقدم مع سلطة والاختيار بين الأرز أو البطاطس المقلية.",
+    "categories": {
+      "Starters": {
+        "name_ar": "المقبلات",
+        "items": [
+          {"name": "Spicy Potato",      "name_ar": "بطاطس حارة",       "price": 110},
+          {"name": "Chicken Wings",     "name_ar": "أجنحة دجاج",       "price": 190, "note": "8 pieces"},
+          {"name": "Bruschetta",        "name_ar": "بروشيتا",          "price": 90,  "note": "2 pieces"},
+          {"name": "Chips",             "name_ar": "بطاطس مقلية",      "price": 80}
+        ]
+      },
+      "Sandwiches": {
+        "name_ar": "الساندوتشات",
+        "price_all": 260,
+        "items": [
+          {"name": "Shish Tawook Sandwich",     "name_ar": "ساندوتش شيش طاووق",       "price": 260},
+          {"name": "Chicken Shawarma Sandwich", "name_ar": "ساندوتش شاورما دجاج",     "price": 260},
+          {"name": "Kofta Sandwich",            "name_ar": "ساندوتش كفتة",            "price": 260},
+          {"name": "Fajita Sandwich",           "name_ar": "ساندوتش فاهيتا",          "price": 260},
+          {"name": "Chicken Crispy Sandwich",   "name_ar": "ساندوتش دجاج كريسبي",     "price": 260},
+          {"name": "Mexican Sandwich",          "name_ar": "ساندوتش مكسيكان",         "price": 260},
+          {"name": "Crystal Sandwich",          "name_ar": "ساندوتش كريستال",         "price": 260}
+        ]
+      },
+      "Main Course": {
+        "name_ar": "الأطباق الرئيسية",
+        "items": [
+          {"name": "Grilled Chicken Breast",              "name_ar": "صدر دجاج مشوي",               "price": 330},
+          {"name": "Chicken Breast with Mushroom Sauce",  "name_ar": "صدر دجاج بصوص المشروم",       "price": 330},
+          {"name": "Grilled Whole Chicken",               "name_ar": "دجاجة مشوية كاملة",           "price": 420},
+          {"name": "Grilled Half Chicken",                "name_ar": "نصف دجاجة مشوية",             "price": 280},
+          {"name": "Escalope Panne & Chips",              "name_ar": "إسكالوب بانيه مع بطاطس",      "price": 340},
+          {"name": "Chicken Crispy & Chips",              "name_ar": "دجاج كريسبي مع بطاطس",        "price": 290},
+          {"name": "Chicken Nuggets & Chips",             "name_ar": "ناجتس دجاج مع بطاطس",         "price": 190, "note": "8 pieces"},
+          {"name": "Cheese Burger & Chips",               "name_ar": "تشيز برجر مع بطاطس",          "price": 250},
+          {"name": "Beef Burger & Chips",                 "name_ar": "بيف برجر مع بطاطس",           "price": 230},
+          {"name": "Chicken Burger & Chips",              "name_ar": "تشيكن برجر مع بطاطس",         "price": 230},
+          {"name": "Shish Tawook Platter",                "name_ar": "طبق شيش طاووق",               "price": 320},
+          {"name": "Peri-Peri Shish Tawook",              "name_ar": "شيش طاووق بيري بيري",         "price": 330},
+          {"name": "Kofta Platter",                       "name_ar": "طبق كفتة",                    "price": 320},
+          {"name": "Chicken Shawarma Platter",            "name_ar": "طبق شاورما دجاج",             "price": 320},
+          {"name": "Mixed Grill Platter",                 "name_ar": "طبق مشويات مشكلة",            "price": 350}
+        ]
+      },
+      "Salads": {
+        "name_ar": "السلطات",
+        "items": [
+          {"name": "Caesar Salad",         "name_ar": "سلطة سيزر",            "price": 190},
+          {"name": "Greek Salad",          "name_ar": "سلطة يونانية",         "price": 180},
+          {"name": "Tuna Salad",           "name_ar": "سلطة تونة",            "price": 200},
+          {"name": "Crystal Salad",        "name_ar": "سلطة كريستال",         "price": 200},
+          {"name": "Fit Salad",            "name_ar": "سلطة دايت",            "price": 200},
+          {"name": "Tabbouleh",            "name_ar": "تبولة",                "price": 150},
+          {"name": "Fattoush",             "name_ar": "فتوش",                 "price": 150},
+          {"name": "Mediterranean Salad",  "name_ar": "سلطة البحر المتوسط",   "price": 120}
+        ]
+      },
+      "Breakfast": {
+        "name_ar": "الإفطار",
+        "available_until": "12:00",
+        "note": "Served till 12 PM only",
+        "note_ar": "يُقدم حتى 12 ظهراً فقط",
+        "items": [
+          {"name": "Scrambled Eggs",          "name_ar": "بيض مخفوق",          "price": 140},
+          {"name": "Fried Eggs with Cheese",  "name_ar": "بيض مقلي بالجبن",    "price": 140},
+          {"name": "Omelette",                "name_ar": "أومليت",             "price": 140},
+          {"name": "Omelette with Vegetables","name_ar": "أومليت بالخضار",     "price": 140}
+        ]
+      },
+      "Seafood": {
+        "name_ar": "المأكولات البحرية",
+        "items": [
+          {"name": "Calamari",               "name_ar": "كاليماري",              "price": 360, "note": "Fried or Grilled"},
+          {"name": "Shrimps",                "name_ar": "جمبري",                 "price": 420, "note": "Fried or Grilled"},
+          {"name": "Shrimps with Calamari",  "name_ar": "جمبري مع كاليماري",    "price": 490, "note": "Fried or Grilled"},
+          {"name": "Fish & Chips",           "name_ar": "سمك مع بطاطس مقلية",  "price": 320}
+        ]
+      },
+      "Pizza": {
+        "name_ar": "البيتزا",
+        "items": [
+          {"name": "Salami Pizza",        "name_ar": "بيتزا سلامي",         "price": 280},
+          {"name": "Margherita Pizza",    "name_ar": "بيتزا مارجريتا",      "price": 240},
+          {"name": "Four Cheese Pizza",   "name_ar": "بيتزا أربع أنواع جبن","price": 280},
+          {"name": "Chicken Pizza",       "name_ar": "بيتزا دجاج",          "price": 310},
+          {"name": "Tuna Pizza",          "name_ar": "بيتزا تونة",          "price": 290},
+          {"name": "Vegetariana Pizza",   "name_ar": "بيتزا خضار",          "price": 260},
+          {"name": "Frutti Di Mare Pizza","name_ar": "بيتزا فروتي دي ماري", "price": 360},
+          {"name": "Shrimps Pizza",       "name_ar": "بيتزا جمبري",         "price": 330}
+        ]
+      },
+      "Pasta": {
+        "name_ar": "الباستا",
+        "items": [
+          {"name": "Chicken Pasta",          "name_ar": "باستا دجاج",           "price": 190},
+          {"name": "Bolognese Pasta",        "name_ar": "باستا بولونيز",        "price": 190},
+          {"name": "Arrabiata Pasta",        "name_ar": "باستا أرابياتا",       "price": 160},
+          {"name": "Loro Rosso Pasta",       "name_ar": "باستا لورو روسو",      "price": 190},
+          {"name": "Quattro Formaggi Pasta", "name_ar": "باستا كواترو فورماجي", "price": 190},
+          {"name": "Shrimp Pasta",           "name_ar": "باستا جمبري",          "price": 260}
+        ]
+      }
+    }
+  },
+  "cafe_bar": {
+    "name": "الخيمة بيتش - كافيه وبار",
+    "name_en": "El Kheima Beach Cafe & Bar",
+    "categories": {
+      "Hot Beverages": {
+        "name_ar": "المشروبات الساخنة",
+        "items": [
+          {"name": "Espresso Single",          "name_ar": "إسبريسو سنجل",               "price": 65},
+          {"name": "Espresso Double",          "name_ar": "إسبريسو دبل",                "price": 75},
+          {"name": "Cappuccino",               "name_ar": "كابتشينو",                   "price": 110},
+          {"name": "Latte",                    "name_ar": "لاتيه",                      "price": 115},
+          {"name": "Macchiato",                "name_ar": "ماكياتو",                    "price": 80},
+          {"name": "Nescafe with Milk",        "name_ar": "نسكافيه بالحليب",            "price": 110},
+          {"name": "Nescafe Classic",          "name_ar": "نسكافيه كلاسيك",             "price": 80},
+          {"name": "Americano",                "name_ar": "أمريكانو",                   "price": 110},
+          {"name": "Hot Chocolate",            "name_ar": "هوت شوكليت",                 "price": 120},
+          {"name": "Hot Cider",                "name_ar": "هوت سيدر",                   "price": 100},
+          {"name": "Turkish Coffee",           "name_ar": "قهوة تركي",                  "price": 60},
+          {"name": "French Coffee",            "name_ar": "قهوة فرنساوي",               "price": 70},
+          {"name": "Tea Anise Mint Hibiscus",  "name_ar": "شاي / ينسون / نعناع / كركديه","price": 70},
+          {"name": "Milk Tea",                 "name_ar": "شاي بالحليب",                "price": 90}
+        ]
+      },
+      "Fresh Juices": {
+        "name_ar": "العصائر الطازجة",
+        "items": [
+          {"name": "Mango Juice",           "name_ar": "مانجو",                       "price": 130},
+          {"name": "Strawberry Juice",      "name_ar": "فراولة",                      "price": 130},
+          {"name": "Guava Juice",           "name_ar": "جوافة",                       "price": 130},
+          {"name": "Cantaloupe Juice",      "name_ar": "كنتالوب / شمام",              "price": 130},
+          {"name": "Pomegranate Juice",     "name_ar": "رمان",                        "price": 130},
+          {"name": "Orange Juice",          "name_ar": "برتقال",                      "price": 130},
+          {"name": "Watermelon Juice",      "name_ar": "بطيخ",                        "price": 150},
+          {"name": "Kiwi Juice",            "name_ar": "كيوي",                        "price": 150},
+          {"name": "Lemon Juice",           "name_ar": "ليمون",                       "price": 100},
+          {"name": "Lemon Mint",            "name_ar": "ليمون بالنعناع",              "price": 120},
+          {"name": "Apple Juice",           "name_ar": "تفاح",                        "price": 150},
+          {"name": "Pineapple Juice",       "name_ar": "أناناس",                      "price": 130},
+          {"name": "Peach Juice",           "name_ar": "خوخ",                         "price": 130},
+          {"name": "Avocado Juice",         "name_ar": "أفوكادو",                     "price": 150},
+          {"name": "Avocado Honey Nuts",    "name_ar": "أفوكادو بالعسل والمكسرات",   "price": 150},
+          {"name": "Dates Juice",           "name_ar": "تمر",                         "price": 130}
+        ]
+      },
+      "Mix Juices": {
+        "name_ar": "العصائر المخلطة",
+        "price_all": 150,
+        "items": [
+          {"name": "Pina Colada Mix",       "name_ar": "بينا كولادا",         "price": 150},
+          {"name": "Mango Kiwi Mix",        "name_ar": "مانجو كيوي",          "price": 150},
+          {"name": "Mango Plum Mix",        "name_ar": "مانجو بلز",           "price": 150},
+          {"name": "Mango Strawberry Mix",  "name_ar": "مانجو فراولة",        "price": 150},
+          {"name": "Mango Cantaloupe Mix",  "name_ar": "مانجو كنتالوب",       "price": 150},
+          {"name": "Kiwi Cantaloupe Mix",   "name_ar": "كيوي كنتالوب",        "price": 150},
+          {"name": "Kiwi Pineapple Mix",    "name_ar": "كيوي أناناس",         "price": 150},
+          {"name": "Mango Banana Mix",      "name_ar": "مانجو موز",           "price": 150},
+          {"name": "Strawberry Banana Mix", "name_ar": "فراولة موز",          "price": 150},
+          {"name": "Khayma Mix",            "name_ar": "الخيمة ميكس",         "price": 150}
+        ]
+      },
+      "Frappuccino & Iced Coffee": {
+        "name_ar": "فرابتشينو وآيس كوفي",
+        "price_all": 150,
+        "items": [
+          {"name": "Frappuccino Classic",   "name_ar": "فرابتشينو كلاسيك",    "price": 150},
+          {"name": "Frappuccino Vanilla",   "name_ar": "فرابتشينو فانيليا",   "price": 150},
+          {"name": "Frappuccino Hazelnut",  "name_ar": "فرابتشينو بندق",      "price": 150},
+          {"name": "Iced Coffee",           "name_ar": "آيس كوفي",            "price": 150},
+          {"name": "Iced Latte",            "name_ar": "آيس لاتيه",           "price": 150},
+          {"name": "Spanish Latte",         "name_ar": "سبانيش لاتيه",        "price": 150}
+        ]
+      },
+      "Milkshakes": {
+        "name_ar": "الميلك شيك",
+        "price_all": 150,
+        "items": [
+          {"name": "Vanilla Milkshake",     "name_ar": "فانيليا",             "price": 150},
+          {"name": "Chocolate Milkshake",   "name_ar": "شوكولاتة",            "price": 150},
+          {"name": "Caramel Milkshake",     "name_ar": "كراميل",              "price": 150},
+          {"name": "Oreo Milkshake",        "name_ar": "أوريو",               "price": 150},
+          {"name": "Tonkeys Milkshake",     "name_ar": "تونكيز",              "price": 150},
+          {"name": "Berries Milkshake",     "name_ar": "توت مشكل",            "price": 150},
+          {"name": "Mango Milkshake",       "name_ar": "مانجو ميلك شيك",      "price": 150},
+          {"name": "Strawberry Milkshake",  "name_ar": "فراولة ميلك شيك",     "price": 150}
+        ]
+      },
+      "Mojito": {
+        "name_ar": "موهيتو",
+        "items": [
+          {"name": "Mojito Classic",          "name_ar": "موهيتو كلاسيك",         "price": 110},
+          {"name": "Mojito Soda",             "name_ar": "موهيتو صودا",           "price": 115},
+          {"name": "Mojito Sunshine",         "name_ar": "موهيتو صن شاين",        "price": 115},
+          {"name": "Mojito Red Bull Special", "name_ar": "مهيتو ريدبول اسبيشال",  "price": 150}
+        ]
+      },
+      "Cold Drinks": {
+        "name_ar": "المشروبات الباردة",
+        "items": [
+          {"name": "Cola Fanta Sprite",  "name_ar": "كولا / فانتا / سبرايت", "price": 65},
+          {"name": "Fayrouz",            "name_ar": "فيروز",                  "price": 70},
+          {"name": "Barrel",             "name_ar": "بريل",                   "price": 70},
+          {"name": "Red Bull",           "name_ar": "ريد بول",                "price": 110},
+          {"name": "Water Small",        "name_ar": "مياه صغيرة",             "price": 25},
+          {"name": "Water Large",        "name_ar": "مياه كبيرة",             "price": 35}
+        ]
+      },
+      "Fruit Salad": {
+        "name_ar": "فروت سلاط",
+        "items": [
+          {"name": "Fruit Salad Small",       "name_ar": "فروت سلاط صغير",   "price": 120},
+          {"name": "Fruit Salad Large",       "name_ar": "فروت سلاط كبير",   "price": 200},
+          {"name": "Watermelon Plate Small",  "name_ar": "طبق بطيخ صغير",    "price": 120},
+          {"name": "Watermelon Plate Large",  "name_ar": "طبق بطيخ كبير",    "price": 200}
+        ]
+      }
+    }
+  },
+  "chatbot_qa_patches": {
+    "pricing_note": "All prices include VAT and service charge.",
+    "pricing_note_ar": "جميع الأسعار شاملة الضريبة وخدمة الخدمة.",
+    "breakfast_hours": "Breakfast is served until 12:00 PM.",
+    "breakfast_hours_ar": "الإفطار يُقدم حتى 12 ظهراً فقط.",
+    "common_questions": [
+      {
+        "q_en": "What is the price of cappuccino?",
+        "q_ar": "كم سعر الكابتشينو؟",
+        "a_en": "Cappuccino is 110 EGP.",
+        "a_ar": "الكابتشينو بـ 110 جنيه."
+      },
+      {
+        "q_en": "Do you serve breakfast?",
+        "q_ar": "عندكم إفطار؟",
+        "a_en": "Yes, breakfast is served until 12:00 PM. Items are priced at 140 EGP each.",
+        "a_ar": "نعم، الإفطار متاح حتى 12 ظهراً. كل أصناف الإفطار بـ 140 جنيه."
+      },
+      {
+        "q_en": "What is the most expensive item on the menu?",
+        "q_ar": "ما أغلى صنف في المنيو؟",
+        "a_en": "The most expensive item is Shrimps with Calamari at 490 EGP.",
+        "a_ar": "أغلى صنف هو جمبري مع كاليماري بـ 490 جنيه."
+      },
+      {
+        "q_en": "What sandwiches do you have?",
+        "q_ar": "عندكم إيه من الساندوتشات؟",
+        "a_en": "All sandwiches are 260 EGP: Shish Tawook, Chicken Shawarma, Kofta, Fajita, Chicken Crispy, Mexican, and Crystal Sandwich.",
+        "a_ar": "كل الساندوتشات بـ 260 جنيه: شيش طاووق، شاورما دجاج، كفتة، فاهيتا، دجاج كريسبي، مكسيكان، وكريستال."
+      },
+      {
+        "q_en": "What pizzas do you have?",
+        "q_ar": "عندكم إيه من البيتزا؟",
+        "a_en": "We have 8 pizza options: Salami (280), Margherita (240), Four Cheese (280), Chicken (310), Tuna (290), Vegetariana (260), Frutti Di Mare (360), and Shrimps Pizza (330). All prices in EGP.",
+        "a_ar": "عندنا 8 أنواع بيتزا: سلامي 280، مارجريتا 240، أربع أنواع جبن 280، دجاج 310، تونة 290، خضار 260، فروتي دي ماري 360، وجمبري 330. كل الأسعار بالجنيه."
+      }
+    ]
+  }
+}

@@ -101,7 +101,7 @@ def guest_session_headers(client: TestClient, db, branch, table) -> dict[str, st
         location_type="dining_table", location_id=table.id, created_by=None,
     )
     db.commit()
-    response = client.post("/api/v1/public/guest-sessions", json={"token": token})
+    response = client.post("/api/v1/public/guest-sessions", json={"token": token, "guest_name": "ضيف تست"})
     assert response.status_code == 201, response.text
     return {"X-Guest-Session": response.json()["session_token"]}
 
@@ -416,10 +416,14 @@ class TestPublicOrderEndpoint:
         }, headers=headers)
         assert resp.status_code == 400, resp.text
 
-    def test_item_from_different_outlet_rejected(self, client: TestClient, db):
-        """Gate 1 containment (جولة مراجعة Codex الثانية): item_id لازم
-        يتبع نفس outlet_id — منع ضيف يطلب صنف من منفذ تاني (بنفس الفرع)
-        عن طريق تمرير item_id مش تابع للـoutlet المُعلَن في الطلب."""
+    def test_item_from_different_outlet_within_branch_allowed(self, client: TestClient, db):
+        """Gate 1 containment القديم (item_id لازم يتبع نفس outlet_id) كان
+        بيمنع ضيف يطلب صنف من منفذ تاني بنفس الفرع — بطلب صريح من Mohamed
+        (2026-08-03) الضيف بقى بيتصفح منيو كل منافذ الفرع مدموجين في شاشة
+        واحدة من غير أي مفهوم "منفذ" ظاهر له، وبيقدر يحط في سلته أصناف من
+        منافذ متعددة. الطلب بقى مقبول (allow_cross_outlet=True — راجع
+        create_guest_order/services.create_order)، وكل بند بيحتفظ بـ
+        outlet_id الحقيقي بتاعه لتوزيع الإيراد الصح لاحقًا."""
         branch = make_branch(db)
         enable_self_order(db, branch)
         outlet       = make_outlet(db, branch)
@@ -433,7 +437,7 @@ class TestPublicOrderEndpoint:
             "outlet_id": outlet.id,
             "items": [{"item_id": foreign_item.id, "quantity": 1}],
         }, headers=headers)
-        assert resp.status_code == 400, resp.text
+        assert resp.status_code == 201, resp.text
 
     def test_item_from_different_branch_rejected(self, client: TestClient, db):
         """Gate 1 containment (جولة مراجعة Codex الثانية): item_id لازم
@@ -559,7 +563,7 @@ def guest_room_session_headers(client: TestClient, db, branch, room) -> dict[str
         location_type="room", location_id=room.id, created_by=None,
     )
     db.commit()
-    response = client.post("/api/v1/public/guest-sessions", json={"token": token})
+    response = client.post("/api/v1/public/guest-sessions", json={"token": token, "guest_name": "ضيف تست"})
     assert response.status_code == 201, response.text
     return {"X-Guest-Session": response.json()["session_token"]}
 
@@ -615,8 +619,10 @@ class TestPublicOrderRoomServiceEndpoint:
         assert room.name in order.notes
         assert "من غير بصل" in order.notes
 
-    def test_room_guest_cannot_order_cross_outlet(self, client: TestClient, db):
-        """Gate 1 containment لسه سارٍ برضو للأوضة — نفس قيد الطاولة بالظبط."""
+    def test_room_guest_can_order_cross_outlet(self, client: TestClient, db):
+        """راجع test_item_from_different_outlet_within_branch_allowed —
+        allow_cross_outlet=True في create_guest_order مش مشروط بنوع
+        الموقع (dining_table أو room)، فنفس القرار سارٍ على الأوضة برضو."""
         branch = make_branch(db)
         enable_self_order(db, branch)
         outlet_a = make_outlet(db, branch, name="مطعم أ")
@@ -630,7 +636,7 @@ class TestPublicOrderRoomServiceEndpoint:
             "outlet_id": outlet_a.id,
             "items": [{"item_id": item_b.id, "quantity": 1}],
         }, headers=headers)
-        assert resp.status_code == 400
+        assert resp.status_code == 201, resp.text
 
 
 class TestPublicOrderStatusEndpoint:

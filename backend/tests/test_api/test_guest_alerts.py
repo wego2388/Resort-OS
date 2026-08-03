@@ -68,7 +68,7 @@ def make_service_location_token(db, branch, location_id, location_type="dining_t
 
 
 def guest_session_headers(client: TestClient, token: str) -> dict[str, str]:
-    response = client.post("/api/v1/public/guest-sessions", json={"token": token})
+    response = client.post("/api/v1/public/guest-sessions", json={"token": token, "guest_name": "ضيف تست"})
     assert response.status_code == 201, response.text
     return {"X-Guest-Session": response.json()["session_token"]}
 
@@ -234,7 +234,7 @@ class TestCreateGuestAlertPublic:
         core_crud.deactivate_service_location_tokens(db, branch.id, "dining_table", table.id)
         db.commit()
 
-        resp = client.post("/api/v1/public/guest-sessions", json={"token": token})
+        resp = client.post("/api/v1/public/guest-sessions", json={"token": token, "guest_name": "ضيف تست"})
         assert resp.status_code == 404, resp.text
 
     def test_context_type_other_is_not_a_qr_location(self, client: TestClient, db):
@@ -242,7 +242,7 @@ class TestCreateGuestAlertPublic:
         branch = make_branch(db)
         enable_guest_alerts(db, branch)
         token = make_service_location_token(db, branch, 999999999, location_type="other")
-        resp = client.post("/api/v1/public/guest-sessions", json={"token": token})
+        resp = client.post("/api/v1/public/guest-sessions", json={"token": token, "guest_name": "ضيف تست"})
         assert resp.status_code == 404, resp.text
 
     def test_duplicate_alert_within_cooldown_returns_existing(self, client: TestClient, db):

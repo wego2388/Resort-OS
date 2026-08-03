@@ -614,6 +614,26 @@ class ServiceLocationRead(BaseModel):
 
 class GuestSessionCreate(BaseModel):
     token: str = Field(..., min_length=20, max_length=64)
+    # طلب Mohamed (2026-08-03): أول ما الضيف يصوّر QR، اسمه إجباري
+    # (شاشة ترحيب في الفرونت إند)، ورقم تليفونه اختياري — بيتنسخوا بعدين
+    # على أي DiningOrder ينشئه (راجع core.models.GuestSession.guest_name/
+    # guest_phone). نفس نمط _normalize_name/_normalize_phone تحت.
+    guest_name: str = Field(..., min_length=1, max_length=100)
+    guest_phone: Optional[str] = Field(None, max_length=30)
+
+    @field_validator("guest_name")
+    @classmethod
+    def _normalize_guest_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 1:
+            raise ValueError("اسم الضيف مطلوب")
+        return normalized
+
+    @field_validator("guest_phone")
+    @classmethod
+    def _normalize_guest_phone(cls, value: Optional[str]) -> Optional[str]:
+        normalized = (value or "").strip()
+        return normalized or None
 
 
 class GuestSessionRead(ServiceLocationRead):

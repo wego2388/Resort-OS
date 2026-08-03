@@ -31,6 +31,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.core.encryption import EncryptedString
 from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
 
@@ -478,6 +479,17 @@ class DiningOrder(Base, TimestampMixin):
     guest_public_reference:    Mapped[str | None] = mapped_column(
         String(48), nullable=True, unique=True, index=True,
     )
+    # هوية الضيف القاعد على الطلب ده (2026-08-03، طلب Mohamed) — لقطة
+    # (snapshot)، مش join على GuestSession/users، عشان (أ) تفضل موجودة
+    # حتى لو الجلسة انتهت، (ب) تشتغل برضو للطلبات اللي الكاشير بيفتحها
+    # يدويًا (مفيش guest_session_id خالص هناك). مصدرها: GuestSession.
+    # guest_name/guest_phone للطلب الذاتي عبر QR، أو إدخال الكاشير المباشر
+    # لطلبات dine_in المفتوحة يدويًا (راجع OrderCreate.guest_name).
+    # اسم إجباري وقت الالتقاط الأول (راجع GuestSessionCreate/الفرونت إند)،
+    # لكن العمود نفسه nullable — طلبات takeaway/delivery/room_service
+    # ومعظم الطلبات القديمة قبل هذا التعديل مالهاش هوية ضيف خالص.
+    guest_name:                Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
+    guest_phone:               Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
     legacy_module: Mapped[str | None] = mapped_column(String(20), nullable=True)
     legacy_id:     Mapped[int | None] = mapped_column(Integer, nullable=True)
 

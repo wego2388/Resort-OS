@@ -1,0 +1,117 @@
+{
+  "_meta": {
+    "description": "Updated restaurant menu for chatbot - extracted from new menu images August 2026",
+    "last_updated": "2026-08-02",
+    "note_prices": "All prices include VAT and service charge",
+    "note_platters": "All platters served with salad and choice of chips or rice",
+    "note_breakfast": "Breakfast served till 12 PM only"
+  },
+  "starters": {
+    "name": "Starters",
+    "name_ar": "المقبلات",
+    "items": [
+      {"id": 1,  "name": "Spicy Potato",           "name_ar": "بطاطس حارة",            "price": 110, "desc_ar": "مكعبات بطاطس متبلة بالبهارات والكزبرة"},
+      {"id": 2,  "name": "Chicken Wings (8 pcs)",  "name_ar": "أجنحة دجاج 8 قطع",     "price": 190},
+      {"id": 3,  "name": "Bruschetta (2 pcs)",     "name_ar": "بروشيتا 2 قطعة",       "price": 90,  "desc_ar": "خبز محمص مع الطماطم والثوم والأوريجانو"},
+      {"id": 4,  "name": "Chips",                  "name_ar": "بطاطس مقلية",           "price": 80}
+    ]
+  },
+  "sandwiches": {
+    "name": "Sandwiches",
+    "name_ar": "الساندوتشات",
+    "note": "All sandwiches 260 EGP",
+    "items": [
+      {"id": 5,    "name": "Shish Tawook Sandwich",      "name_ar": "ساندوتش شيش طاووق",      "price": 260, "desc_ar": "صدر دجاج مشوي متبل مع خس صوص الثوم ومخلل"},
+      {"id": 6,    "name": "Chicken Shawarma Sandwich",  "name_ar": "ساندوتش شاورما دجاج",    "price": 260, "desc_ar": "شاورما دجاج متبلة مع خس طماطم مخلل وصوص الثوم"},
+      {"id": 7,    "name": "Kofta Sandwich",             "name_ar": "ساندوتش كفتة",           "price": 260, "desc_ar": "كفتة مشوية مع طماطم بصل مخلل وصوص السمسم"},
+      {"id": 8,    "name": "Fajita Sandwich",            "name_ar": "ساندوتش فاهيتا",         "price": 260, "desc_ar": "شرائح دجاج مع فلفل ألوان بصل مخلل مايونيز وجبنة"},
+      {"id": 9,    "name": "Chicken Crispy Sandwich",    "name_ar": "ساندوتش دجاج كريسبي",    "price": 260, "desc_ar": "دجاج كريسبي مقرمش مع خس طماطم ومايونيز"},
+      {"id": 10,   "name": "Mexican Sandwich",           "name_ar": "ساندوتش مكسيكان",        "price": 260, "desc_ar": "صدر دجاج مع فلفل ألوان وبصل"},
+      {"id": "10x","name": "Crystal Sandwich",           "name_ar": "ساندوتش كريستال",        "price": 260, "desc_ar": "صدر دجاج بطاطس مقلية خس مخلل وصوص الثوم", "tag": "special"}
+    ]
+  },
+  "main_course": {
+    "name": "Main Course",
+    "name_ar": "الأطباق الرئيسية",
+    "note_ar": "جميع الأطباق تُقدم مع سلطة والاختيار بين الأرز أو البطاطس المقلية",
+    "items": [
+      {"id": 12, "name": "Grilled Chicken Breast",          "name_ar": "صدر دجاج مشوي",             "price": 330, "desc_ar": "يُقدم مع خضار مشوية"},
+      {"id": 13, "name": "Chicken Breast with Mushroom",    "name_ar": "صدر دجاج بصوص المشروم",     "price": 330},
+      {"id": 14, "name": "Grilled Whole Chicken",           "name_ar": "دجاجة مشوية كاملة",         "price": 420},
+      {"id": 15, "name": "Grilled Half Chicken",            "name_ar": "نصف دجاجة مشوية",           "price": 280},
+      {"id": 16, "name": "Escalope Panne & Chips",          "name_ar": "إسكالوب بانيه مع بطاطس",    "price": 340},
+      {"id": 17, "name": "Chicken Crispy & Chips",          "name_ar": "دجاج كريسبي مع بطاطس",      "price": 290},
+      {"id": 18, "name": "Chicken Nuggets & Chips (8 pcs)", "name_ar": "ناجتس دجاج 8 قطع مع بطاطس","price": 190},
+      {"id": 19, "name": "Cheese Burger & Chips",           "name_ar": "تشيز برجر مع بطاطس",        "price": 250},
+      {"id": 20, "name": "Beef Burger & Chips",             "name_ar": "بيف برجر مع بطاطس",         "price": 230},
+      {"id": 21, "name": "Chicken Burger & Chips",          "name_ar": "تشيكن برجر مع بطاطس",       "price": 230},
+      {"id": 22, "name": "Shish Tawook Platter",            "name_ar": "طبق شيش طاووق",             "price": 320},
+      {"id": 23, "name": "Peri-Peri Shish Tawook",          "name_ar": "شيش طاووق بيري بيري",       "price": 330},
+      {"id": 24, "name": "Kofta Platter",                   "name_ar": "طبق كفتة",                  "price": 320},
+      {"id": 25, "name": "Chicken Shawarma Platter",        "name_ar": "طبق شاورما دجاج",           "price": 320},
+      {"id": 26, "name": "Mixed Grill Platter",             "name_ar": "طبق مشويات مشكلة",          "price": 350}
+    ]
+  },
+  "salads": {
+    "name": "Salads",
+    "name_ar": "السلطات",
+    "items": [
+      {"id": 27, "name": "Caesar Salad",       "name_ar": "سلطة سيزر",         "price": 190, "desc": "Grilled chicken, lettuce, tomato, crispy bread, parmesan and Caesar sauce"},
+      {"id": 28, "name": "Greek Salad",        "name_ar": "سلطة يونانية",      "price": 180, "desc": "Feta cheese, lettuce, tomato, paprika, cucumber, onion and olive"},
+      {"id": 29, "name": "Tuna Salad",         "name_ar": "سلطة تونة",         "price": 200, "desc": "Tuna, lettuce, carrot, tomato, sweet corn, olive, onion with vinegar and lemon sauce"},
+      {"id": 30, "name": "Crystal Salad",      "name_ar": "سلطة كريستال",      "price": 200, "desc": "Grilled chicken breast, lettuce, tomato, rocca, white cheese, olive, cucumber and crystal special sauce"},
+      {"id": 31, "name": "Fit Salad",          "name_ar": "سلطة دايت",         "price": 200, "desc": "Iceberg lettuce, rocca, tomatoes, white cheese, cucumber, parsley, boiled egg and olive oil"},
+      {"id": 32, "name": "Tabbouleh",          "name_ar": "تبولة",             "price": 150, "desc": "Parsley, mint, tomato, onion, lemon juice and olive oil"},
+      {"id": 33, "name": "Fattoush",           "name_ar": "فتوش",              "price": 150, "desc": "Cucumber, tomato, lettuce, mint, lemon juice, olive oil, sumac and crispy bread"},
+      {"id": 34, "name": "Mediterranean Salad","name_ar": "سلطة البحر المتوسط","price": 120, "desc": "Cucumber, tomato, lettuce, lemon juice and olive oil"}
+    ]
+  },
+  "breakfast": {
+    "name": "Breakfast",
+    "name_ar": "الإفطار",
+    "availability": "till 12 PM",
+    "availability_ar": "حتى الساعة 12 ظهراً فقط",
+    "items": [
+      {"id": 35, "name": "Scrambled Eggs",          "name_ar": "بيض مخفوق",        "price": 140, "desc": "Scrambled eggs, lettuce, tomatoes, cucumber with 2 toasts"},
+      {"id": 36, "name": "Fried Eggs with Cheese",  "name_ar": "بيض مقلي بالجبن",  "price": 140, "desc": "Fried eggs, cheese, lettuce, tomatoes with 2 crunchy toasts"},
+      {"id": 37, "name": "Omelette",                "name_ar": "أومليت",           "price": 140, "desc": "Omelette with cucumber, tomatoes and 2 toasts"},
+      {"id": 38, "name": "Omelette with Vegetables","name_ar": "أومليت بالخضار",   "price": 140, "desc": "Vegetable omelette with cucumber, tomatoes, butter and 2 toasts"}
+    ]
+  },
+  "seafood": {
+    "name": "Seafood",
+    "name_ar": "المأكولات البحرية",
+    "items": [
+      {"id": 39, "name": "Calamari",               "name_ar": "كاليماري",          "price": 360, "desc_ar": "مقلي أو مشوي"},
+      {"id": 40, "name": "Shrimps",                "name_ar": "جمبري",             "price": 420, "desc_ar": "مقلي أو مشوي"},
+      {"id": 41, "name": "Shrimps with Calamari",  "name_ar": "جمبري مع كاليماري", "price": 490, "desc_ar": "مقلي أو مشوي"},
+      {"id": 42, "name": "Fish & Chips",           "name_ar": "سمك مع بطاطس مقلية","price": 320}
+    ]
+  },
+  "pizza": {
+    "name": "Pizza",
+    "name_ar": "البيتزا",
+    "items": [
+      {"id": 43, "name": "Salami Pizza",       "name_ar": "بيتزا سلامي",         "price": 280, "desc": "Beef salami, mozzarella and tomato sauce"},
+      {"id": 44, "name": "Margherita Pizza",   "name_ar": "بيتزا مارجريتا",      "price": 240, "desc": "Mozzarella, tomato sauce and garnish with basil"},
+      {"id": 45, "name": "Four Cheese Pizza",  "name_ar": "بيتزا أربع أنواع جبن","price": 280, "desc": "Mozzarella, gorgonzola, scamorza and mixed cheddar"},
+      {"id": 46, "name": "Chicken Pizza",      "name_ar": "بيتزا دجاج",          "price": 310, "desc": "Chicken, tomato sauce and mozzarella"},
+      {"id": 47, "name": "Tuna Pizza",         "name_ar": "بيتزا تونة",          "price": 290, "desc": "Mozzarella, red onion, tuna and black olives"},
+      {"id": 48, "name": "Vegetariana Pizza",  "name_ar": "بيتزا خضار",          "price": 260, "desc": "Tomato sauce, mozzarella and grilled vegetables"},
+      {"id": 49, "name": "Frutti Di Mare",     "name_ar": "بيتزا فروتي دي ماري", "price": 360, "desc": "Mixed seafood, oregano, mozzarella and tomato sauce"},
+      {"id": 50, "name": "Shrimps Pizza",      "name_ar": "بيتزا جمبري",         "price": 330, "desc": "Shrimps, oregano, mozzarella and tomato sauce"}
+    ]
+  },
+  "pasta": {
+    "name": "Pasta",
+    "name_ar": "الباستا",
+    "items": [
+      {"id": 51, "name": "Chicken Pasta",          "name_ar": "باستا دجاج",           "price": 190, "desc": "Chicken and mushroom with tomato sauce"},
+      {"id": 52, "name": "Bolognese Pasta",         "name_ar": "باستا بولونيز",        "price": 190, "desc": "Minced meat, tomato sauce, cheese and basil"},
+      {"id": 53, "name": "Arrabiata Pasta",         "name_ar": "باستا أرابياتا",       "price": 160, "desc": "Spaghetti or penne with spicy tomato sauce"},
+      {"id": 54, "name": "Loro Rosso Pasta",        "name_ar": "باستا لورو روسو",      "price": 190, "desc": "Grilled chicken, Loro Rosso sauce, spaghetti or penne"},
+      {"id": 55, "name": "Quattro Formaggi Pasta",  "name_ar": "باستا كواترو فورماجي", "price": 190, "desc": "Four cheese with cheese sauce"},
+      {"id": 56, "name": "Shrimp Pasta",            "name_ar": "باستا جمبري",          "price": 260, "desc": "Shrimp, celery, red onion, lemon juice, salt and pepper"}
+    ]
+  }
+}

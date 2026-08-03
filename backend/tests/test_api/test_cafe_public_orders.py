@@ -77,7 +77,7 @@ def guest_session_headers(client: TestClient, db, branch, table) -> dict[str, st
         location_type="dining_table", location_id=table.id, created_by=None,
     )
     db.commit()
-    response = client.post("/api/v1/public/guest-sessions", json={"token": token})
+    response = client.post("/api/v1/public/guest-sessions", json={"token": token, "guest_name": "ضيف تست"})
     assert response.status_code == 201, response.text
     return {"X-Guest-Session": response.json()["session_token"]}
 

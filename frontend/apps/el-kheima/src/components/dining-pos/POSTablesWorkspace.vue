@@ -185,6 +185,9 @@ function activate(table: VenueTable) {
             </div>
 
             <div v-if="table.active_order_id" class="space-y-1 text-sm w-full">
+              <div v-if="table.active_order_guest_name" class="font-black text-gray-900 dark:text-gray-100 truncate">
+                👤 {{ table.active_order_guest_name }}
+              </div>
               <div class="flex items-center justify-between gap-2">
                 <span class="font-semibold text-gray-700 dark:text-gray-300 truncate">{{ table.active_order_number }}</span>
                 <span v-if="table.occupied_at" class="text-gray-500 dark:text-gray-400 tabular-nums">{{ elapsed(table.occupied_at) }}</span>

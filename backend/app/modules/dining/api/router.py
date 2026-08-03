@@ -1244,7 +1244,20 @@ async def create_guest_order(
     فعلية)، order_type بقى "room_service"، ورقم الأوضة بيتحط في notes
     عشان النادل/المطبخ يعرفوا يوصّلوا فين — الطلب ده هيظهر لهم في "الطلبات
     النشطة" (POSActiveOrdersWorkspace.vue بيعرض tableLabel = نوع الطلب
-    المترجم لما table_id يبقى None، مش لازم تعديل فرونت إند إضافي)."""
+    المترجم لما table_id يبقى None، مش لازم تعديل فرونت إند إضافي).
+
+    ⚠️ قرار معماري اتغيّر صراحةً بطلب Mohamed (2026-08-03): الضيف بقى
+    بيتصفح منيو كل منافذ الفرع مدموجين في شاشة واحدة (QrOrder.vue) من
+    غير أي مفهوم "منفذ" ظاهر له خالص، وبيقدر يحط في سلته أصناف من
+    المطعم والكافيه مع بعض. Gate 1 containment القديم (راجع docstring
+    services.create_order) كان بيمنع الطلب الذاتي العام من عبور منفذ
+    واحد عمدًا — دلوقتي allow_cross_outlet=True زي طلبات النادل بالظبط،
+    نفس آلية DiningOrderItem.outlet_id + توزيع الإيراد per-outlet
+    الموجودة أصلاً وشغالة لموظفي الـPOS، مش مسار جديد. ملحوظة: القيد
+    uq_active_order_per_table (طلب نشط واحد بس لكل طاولة، بغض النظر عن
+    المنفذ) هو السبب الحقيقي اللي منع تصميم "طلب منفصل لكل منفذ" —
+    اتجرّب فعليًا وفشل بـ"الطاولة مشغولة" على الطلب التاني، فالحل الصح
+    هو طلب واحد بأصناف من منافذ متعددة، مش طلبات متعددة."""
     try:
         session, location = core_services.resolve_guest_session(db, x_guest_session)
         if location.location_type not in ("dining_table", "room"):
@@ -1270,11 +1283,17 @@ async def create_guest_order(
             guests_count=data.guests_count,
             notes=notes,
             items=[OrderItemCreate(**i.model_dump()) for i in data.items],
+            # هوية الضيف اتلقطت مرة واحدة وقت إنشاء الجلسة (GuestSessionCreate،
+            # اسم إجباري وقت المسح الأول) — بتتنسخ هنا على كل طلب ينشئه نفس
+            # الضيف، مش بتتاخد من data (الفرونت إند القديم ماكانش بيبعتها،
+            # ومش لازم يبعتها — الجلسة نفسها هي مصدر الحقيقة).
+            guest_name=session.guest_name,
+            guest_phone=session.guest_phone,
         )
         order = services.create_order(
             db, branch_id=location.branch_id, data=order_data, waiter_id=None,
             guest_session_id=session.id, guest_public_reference=f"ord_{secrets.token_urlsafe(18)}",
-            client_local_id=idempotency_key,
+            client_local_id=idempotency_key, allow_cross_outlet=True,
         )
         # ⚠️ باج حقيقي كان هنا وقت كتابة الإصلاح: لو create_order رجّعت طلب
         # قديم (replay بنفس idempotency_key)، الرد كان المفروض يستخدم

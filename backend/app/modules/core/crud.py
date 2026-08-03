@@ -669,6 +669,7 @@ def reset_pin_failures(db: Session, cred: PinCredential) -> PinCredential:
 def create_guest_session(
     db: Session, *, public_reference: str, token_hash: str,
     service_location_token_id: int, expires_at: datetime,
+    guest_name: str, guest_phone: str | None = None,
 ) -> GuestSession:
     now = datetime.utcnow()
     row = GuestSession(
@@ -677,6 +678,8 @@ def create_guest_session(
         service_location_token_id=service_location_token_id,
         expires_at=expires_at,
         last_seen_at=now,
+        guest_name=guest_name,
+        guest_phone=guest_phone,
     )
     db.add(row)
     db.flush()

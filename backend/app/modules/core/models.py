@@ -25,6 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.encryption import EncryptedString
 from app.core.kernel.models.mixins import TimestampMixin
 from app.core.database import Base
 
@@ -253,6 +254,13 @@ class GuestSession(Base, TimestampMixin):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime)
+    # هوية الضيف (2026-08-03، طلب Mohamed): بتتاخد مرة واحدة أول ما الضيف
+    # يصوّر الـQR (اسم إجباري، تليفون اختياري — راجع GuestSessionCreate)،
+    # وبعدين بتتنسخ (snapshot) على أي DiningOrder ينشئه نفس الضيف —
+    # نفس نمط DiningOrderItem.name_ar بالظبط (النسخة على الطلب هي مصدر
+    # العرض للموظف، مش join حي على الجلسة). PII حقيقية → EncryptedString.
+    guest_name:  Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
+    guest_phone: Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
 
 
 class GuestAlert(Base, TimestampMixin):

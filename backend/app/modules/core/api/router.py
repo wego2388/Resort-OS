@@ -1012,7 +1012,7 @@ def resolve_service_location(db: DbDep, token: str = Query(...)):
 def create_guest_session(data: GuestSessionCreate, db: DbDep):
     """Exchange a valid QR capability for a short-lived guest session."""
     try:
-        return services.create_guest_session(db, data.token)
+        return services.create_guest_session(db, data.token, data.guest_name, data.guest_phone)
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 

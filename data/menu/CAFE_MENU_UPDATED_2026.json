@@ -1,0 +1,126 @@
+{
+  "_meta": {
+    "description": "Updated menu prices for chatbot - extracted from new menu images August 2026",
+    "last_updated": "2026-08-02",
+    "note": "All prices include VAT and service charge"
+  },
+  "hot_beverages": {
+    "name": "Hot Beverages",
+    "name_ar": "المشروبات الساخنة",
+    "items": [
+      {"name": "Espresso Single",          "name_ar": "إسبريسو سنجل",           "price": 65},
+      {"name": "Espresso Double",          "name_ar": "إسبريسو دبل",            "price": 75},
+      {"name": "Cappuccino",               "name_ar": "كابتشينو",               "price": 110},
+      {"name": "Latte",                    "name_ar": "لاتيه",                  "price": 115},
+      {"name": "Macchiato",                "name_ar": "ماكياتو",                "price": 80},
+      {"name": "Nescafe with Milk",        "name_ar": "نسكافيه بالحليب",        "price": 110},
+      {"name": "Nescafe Classic",          "name_ar": "نسكافيه كلاسيك",         "price": 80},
+      {"name": "Americano",                "name_ar": "أمريكانو",               "price": 110},
+      {"name": "Hot Chocolate",            "name_ar": "هوت شوكليت",             "price": 120},
+      {"name": "Hot Cider",                "name_ar": "هوت سيدر",               "price": 100},
+      {"name": "Turkish Coffee",           "name_ar": "قهوة تركي",              "price": 60},
+      {"name": "French Coffee",            "name_ar": "قهوة فرنساوي",           "price": 70},
+      {"name": "Tea / Anise / Mint / Hibiscus", "name_ar": "شاي / ينسون / نعناع / كركديه", "price": 70},
+      {"name": "Milk Tea",                 "name_ar": "شاي بالحليب",            "price": 90}
+    ]
+  },
+  "fresh_juices": {
+    "name": "Fresh Juices",
+    "name_ar": "العصائر الطازجة",
+    "items": [
+      {"name": "Mango Juice",              "name_ar": "مانجو",                  "price": 130},
+      {"name": "Strawberry Juice",         "name_ar": "فراولة",                 "price": 130},
+      {"name": "Guava Juice",              "name_ar": "جوافة",                  "price": 130},
+      {"name": "Cantaloupe Juice",         "name_ar": "كنتالوب / شمام",         "price": 130},
+      {"name": "Pomegranate Juice",        "name_ar": "رمان",                   "price": 130},
+      {"name": "Orange Juice",             "name_ar": "برتقال",                 "price": 130},
+      {"name": "Watermelon Juice",         "name_ar": "بطيخ",                   "price": 150},
+      {"name": "Kiwi Juice",               "name_ar": "كيوي",                   "price": 150},
+      {"name": "Lemon Juice",              "name_ar": "ليمون",                  "price": 100},
+      {"name": "Lemon Mint",               "name_ar": "ليمون بالنعناع",         "price": 120},
+      {"name": "Apple Juice",              "name_ar": "تفاح",                   "price": 150},
+      {"name": "Pineapple Juice",          "name_ar": "أناناس",                 "price": 130},
+      {"name": "Peach Juice",              "name_ar": "خوخ",                    "price": 130},
+      {"name": "Avocado Juice",            "name_ar": "أفوكادو",                "price": 150},
+      {"name": "Avocado with Honey & Nuts","name_ar": "أفوكادو بالعسل والمكسرات","price": 150},
+      {"name": "Dates Juice",              "name_ar": "تمر",                    "price": 130}
+    ]
+  },
+  "mix_juices": {
+    "name": "Mix Juices",
+    "name_ar": "العصائر المخلطة",
+    "price": 150,
+    "items": [
+      {"name": "Pina Colada",              "name_ar": "بينا كولادا"},
+      {"name": "Mango Kiwi",               "name_ar": "مانجو كيوي"},
+      {"name": "Mango Plum",               "name_ar": "مانجو بلز"},
+      {"name": "Mango Strawberry",         "name_ar": "مانجو فراولة"},
+      {"name": "Mango Cantaloupe",         "name_ar": "مانجو كنتالوب"},
+      {"name": "Kiwi Cantaloupe",          "name_ar": "كيوي كنتالوب"},
+      {"name": "Kiwi Pineapple",           "name_ar": "كيوي أناناس"},
+      {"name": "Mango Banana",             "name_ar": "مانجو موز"},
+      {"name": "Strawberry Banana",        "name_ar": "فراولة موز"},
+      {"name": "Khayma Mix",               "name_ar": "الخيمة ميكس"}
+    ]
+  },
+  "frappuccino_iced_coffee": {
+    "name": "Frappuccino & Iced Coffee",
+    "name_ar": "فرابتشينو وآيس كوفي",
+    "price": 150,
+    "items": [
+      {"name": "Frappuccino Classic",      "name_ar": "فرابتشينو كلاسيك"},
+      {"name": "Frappuccino Vanilla",      "name_ar": "فرابتشينو فانيليا"},
+      {"name": "Frappuccino Hazelnut",     "name_ar": "فرابتشينو بندق"},
+      {"name": "Iced Coffee",              "name_ar": "آيس كوفي"},
+      {"name": "Iced Latte",               "name_ar": "آيس لاتيه"},
+      {"name": "Spanish Latte",            "name_ar": "سبانيش لاتيه"}
+    ]
+  },
+  "milkshakes": {
+    "name": "Milkshakes",
+    "name_ar": "الميلك شيك",
+    "price": 150,
+    "items": [
+      {"name": "Vanilla Milkshake",        "name_ar": "فانيليا"},
+      {"name": "Chocolate Milkshake",      "name_ar": "شوكولاتة"},
+      {"name": "Caramel Milkshake",        "name_ar": "كراميل"},
+      {"name": "Oreo Milkshake",           "name_ar": "أوريو"},
+      {"name": "Tonkeys Milkshake",        "name_ar": "تونكيز"},
+      {"name": "Berries Milkshake",        "name_ar": "توت مشكل"},
+      {"name": "Mango Milkshake",          "name_ar": "مانجو"},
+      {"name": "Strawberry Milkshake",     "name_ar": "فراولة"}
+    ]
+  },
+  "mojito": {
+    "name": "Mojito",
+    "name_ar": "موهيتو",
+    "items": [
+      {"name": "Mojito Classic",           "name_ar": "موهيتو كلاسيك",         "price": 110},
+      {"name": "Mojito Soda",              "name_ar": "موهيتو صودا",           "price": 115},
+      {"name": "Mojito Sunshine",          "name_ar": "موهيتو صن شاين",        "price": 115},
+      {"name": "Mojito Red Bull Special",  "name_ar": "مهيتو ريدبول اسبيشال",  "price": 150}
+    ]
+  },
+  "cold_drinks": {
+    "name": "Cold Drinks",
+    "name_ar": "المشروبات الباردة",
+    "items": [
+      {"name": "Cola / Fanta / Sprite",    "name_ar": "كولا / فانتا / سبرايت", "price": 65},
+      {"name": "Fayrouz",                  "name_ar": "فيروز",                 "price": 70},
+      {"name": "Barrel",                   "name_ar": "بريل",                  "price": 70},
+      {"name": "Red Bull",                 "name_ar": "ريد بول",               "price": 110},
+      {"name": "Water Small",              "name_ar": "مياه صغيرة",            "price": 25},
+      {"name": "Water Large",              "name_ar": "مياه كبيرة",            "price": 35}
+    ]
+  },
+  "fruit_salad": {
+    "name": "Fruit Salad",
+    "name_ar": "فروت سلاط",
+    "items": [
+      {"name": "Fruit Salad Small",        "name_ar": "فروت سلاط صغير",        "price": 120},
+      {"name": "Fruit Salad Large",        "name_ar": "فروت سلاط كبير",        "price": 200},
+      {"name": "Watermelon Plate Small",   "name_ar": "طبق بطيخ صغير",         "price": 120},
+      {"name": "Watermelon Plate Large",   "name_ar": "طبق بطيخ كبير",         "price": 200}
+    ]
+  }
+}

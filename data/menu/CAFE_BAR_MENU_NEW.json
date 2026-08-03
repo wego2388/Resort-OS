@@ -1,0 +1,141 @@
+{
+  "_meta": {
+    "source": "Menu images extracted August 2026",
+    "venue": "El Kheima Beach Cafe & Bar",
+    "venue_ar": "الخيمة بيتش / شاطئ الخيمة - كافيه وبار",
+    "social_media": "@ELKHEIMABEACH.EG",
+    "note": "All prices include VAT and service charge",
+    "note_ar": "جميع الأسعار شاملة الضريبة وخدمة الخدمة",
+    "last_updated": "2026-08-02"
+  },
+  "cafe_bar_menu": {
+    "hot_beverages": {
+      "name": "Hot Beverages",
+      "name_ar": "المشروبات الساخنة",
+      "items": [
+        {"id": "hb-01", "name": "Espresso Single",         "name_ar": "إسبريسو سنجل",           "price": 65,  "currency": "EGP"},
+        {"id": "hb-02", "name": "Espresso Double",         "name_ar": "إسبريسو دبل",            "price": 75,  "currency": "EGP"},
+        {"id": "hb-03", "name": "Cappuccino",              "name_ar": "كابتشينو",               "price": 110, "currency": "EGP"},
+        {"id": "hb-04", "name": "Latte",                   "name_ar": "لاتيه",                  "price": 115, "currency": "EGP"},
+        {"id": "hb-05", "name": "Macchiato",               "name_ar": "ماكياتو",                "price": 80,  "currency": "EGP"},
+        {"id": "hb-06", "name": "Nescafé with Milk",       "name_ar": "نسكافيه بالحليب",        "price": 110, "currency": "EGP"},
+        {"id": "hb-07", "name": "Nescafé Classic",         "name_ar": "نسكافيه كلاسيك",         "price": 80,  "currency": "EGP"},
+        {"id": "hb-08", "name": "Americano",               "name_ar": "أمريكانو",               "price": 110, "currency": "EGP"},
+        {"id": "hb-09", "name": "Hot Chocolate",           "name_ar": "هوت شوكليت",             "price": 120, "currency": "EGP"},
+        {"id": "hb-10", "name": "Hot Cider",               "name_ar": "هوت سيدر",               "price": 100, "currency": "EGP"},
+        {"id": "hb-11", "name": "Turkish Coffee",          "name_ar": "قهوة تركي",              "price": 60,  "currency": "EGP"},
+        {"id": "hb-12", "name": "French Coffee",           "name_ar": "قهوة فرنساوي",           "price": 70,  "currency": "EGP"},
+        {"id": "hb-13", "name": "Tea / Anise / Mint / Hibiscus", "name_ar": "شاي / ينسون / نعناع / كركديه", "price": 70, "currency": "EGP"},
+        {"id": "hb-14", "name": "Milk Tea",                "name_ar": "شاي بالحليب",            "price": 90,  "currency": "EGP"}
+      ]
+    },
+    "fresh_juices": {
+      "name": "Fresh Juices",
+      "name_ar": "العصائر الطازجة",
+      "items": [
+        {"id": "fj-01", "name": "Mango",                   "name_ar": "مانجو",                  "price": 130, "currency": "EGP"},
+        {"id": "fj-02", "name": "Strawberry",              "name_ar": "فراولة",                 "price": 130, "currency": "EGP"},
+        {"id": "fj-03", "name": "Guava",                   "name_ar": "جوافة",                  "price": 130, "currency": "EGP"},
+        {"id": "fj-04", "name": "Cantaloupe",              "name_ar": "كنتالوب / شمام",         "price": 130, "currency": "EGP"},
+        {"id": "fj-05", "name": "Pomegranate",             "name_ar": "رمان",                   "price": 130, "currency": "EGP"},
+        {"id": "fj-06", "name": "Orange",                  "name_ar": "برتقال",                 "price": 130, "currency": "EGP"},
+        {"id": "fj-07", "name": "Watermelon",              "name_ar": "بطيخ",                   "price": 150, "currency": "EGP"},
+        {"id": "fj-08", "name": "Kiwi",                    "name_ar": "كيوي",                   "price": 150, "currency": "EGP"},
+        {"id": "fj-09", "name": "Lemon",                   "name_ar": "ليمون",                  "price": 100, "currency": "EGP"},
+        {"id": "fj-10", "name": "Lemon Mint",              "name_ar": "ليمون بالنعناع",         "price": 120, "currency": "EGP"},
+        {"id": "fj-11", "name": "Apple",                   "name_ar": "تفاح",                   "price": 150, "currency": "EGP"},
+        {"id": "fj-12", "name": "Pineapple",               "name_ar": "أناناس",                 "price": 130, "currency": "EGP"},
+        {"id": "fj-13", "name": "Peach",                   "name_ar": "خوخ",                    "price": 130, "currency": "EGP"},
+        {"id": "fj-14", "name": "Avocado",                 "name_ar": "أفوكادو",                "price": 150, "currency": "EGP"},
+        {"id": "fj-15", "name": "Avocado with Honey & Nuts","name_ar": "أفوكادو بالعسل والمكسرات","price": 150,"currency": "EGP"},
+        {"id": "fj-16", "name": "Dates",                   "name_ar": "تمر",                    "price": 130, "currency": "EGP"}
+      ]
+    },
+    "mix_juices": {
+      "name": "Mix Juices",
+      "name_ar": "العصائر المخلطة",
+      "price_all": 150,
+      "currency": "EGP",
+      "note": "All mix juices 150 EGP",
+      "note_ar": "جميع العصائر المخلطة بـ 150 جنيه",
+      "flavors": [
+        {"id": "mj-01", "name": "Pina Colada",             "name_ar": "بينا كولادا"},
+        {"id": "mj-02", "name": "Mango Kiwi",              "name_ar": "مانجو كيوي"},
+        {"id": "mj-03", "name": "Mango Plum",              "name_ar": "مانجو بلز"},
+        {"id": "mj-04", "name": "Mango Strawberry",        "name_ar": "مانجو فراولة"},
+        {"id": "mj-05", "name": "Mango Cantaloupe",        "name_ar": "مانجو كنتالوب"},
+        {"id": "mj-06", "name": "Kiwi Cantaloupe",         "name_ar": "كيوي أناناس"},
+        {"id": "mj-07", "name": "Kiwi Pineapple",          "name_ar": "كيوي أناناس"},
+        {"id": "mj-08", "name": "Mango Banana",            "name_ar": "مانجو موز"},
+        {"id": "mj-09", "name": "Strawberry Banana",       "name_ar": "فراولة موز"},
+        {"id": "mj-10", "name": "Khayma Mix",              "name_ar": "الخيمة ميكس"}
+      ]
+    },
+    "frappuccino_iced_coffee": {
+      "name": "Frappuccino & Iced Coffee",
+      "name_ar": "فرابتشينو وآيس كوفي",
+      "price_all": 150,
+      "currency": "EGP",
+      "note": "All items 150 EGP",
+      "note_ar": "جميع الأصناف بـ 150 جنيه",
+      "flavors": [
+        {"id": "fc-01", "name": "Frappuccino Classic",     "name_ar": "فرابتشينو كلاسيك"},
+        {"id": "fc-02", "name": "Frappuccino Vanilla",     "name_ar": "فرابتشينو فانيليا"},
+        {"id": "fc-03", "name": "Frappuccino Hazelnut",    "name_ar": "فرابتشينو بندق"},
+        {"id": "fc-04", "name": "Iced Coffee",             "name_ar": "آيس كوفي"},
+        {"id": "fc-05", "name": "Iced Latte",              "name_ar": "آيس لاتيه"},
+        {"id": "fc-06", "name": "Spanish Latte",           "name_ar": "سبانيش لاتيه"}
+      ]
+    },
+    "milkshakes": {
+      "name": "Milkshakes",
+      "name_ar": "الميلك شيك",
+      "price_all": 150,
+      "currency": "EGP",
+      "note": "All milkshakes 150 EGP",
+      "note_ar": "جميع الميلك شيك بـ 150 جنيه",
+      "flavors": [
+        {"id": "ms-01", "name": "Vanilla",                 "name_ar": "فانيليا"},
+        {"id": "ms-02", "name": "Chocolate",               "name_ar": "شوكولاتة"},
+        {"id": "ms-03", "name": "Caramel",                 "name_ar": "كراميل"},
+        {"id": "ms-04", "name": "Oreo",                    "name_ar": "أوريو"},
+        {"id": "ms-05", "name": "Tonkeys",                 "name_ar": "تونكيز"},
+        {"id": "ms-06", "name": "Berries",                 "name_ar": "توت مشكل"},
+        {"id": "ms-07", "name": "Mango",                   "name_ar": "مانجو"},
+        {"id": "ms-08", "name": "Strawberry",              "name_ar": "فراولة"}
+      ]
+    },
+    "mojito": {
+      "name": "Mojito",
+      "name_ar": "موهيتو",
+      "items": [
+        {"id": "mo-01", "name": "Mojito Classic",          "name_ar": "موهيتو كلاسيك",         "price": 110, "currency": "EGP"},
+        {"id": "mo-02", "name": "Mojito Soda",             "name_ar": "موهيتو صودا",           "price": 115, "currency": "EGP"},
+        {"id": "mo-03", "name": "Mojito Sunshine",         "name_ar": "موهيتو صن شاين",        "price": 115, "currency": "EGP"},
+        {"id": "mo-04", "name": "Mojito Red Bull Special", "name_ar": "مهيتو ريدبول اسبيشال",  "price": 150, "currency": "EGP"}
+      ]
+    },
+    "cold_drinks": {
+      "name": "Cold Drinks",
+      "name_ar": "المشروبات الباردة",
+      "items": [
+        {"id": "cd-01", "name": "Cola / Fanta / Sprite",  "name_ar": "كولا / فانتا / سبرايت", "price": 65,  "currency": "EGP"},
+        {"id": "cd-02", "name": "Fayrouz",                 "name_ar": "فيروز",                 "price": 70,  "currency": "EGP"},
+        {"id": "cd-03", "name": "Barrel",                  "name_ar": "بريل",                  "price": 70,  "currency": "EGP"},
+        {"id": "cd-04", "name": "Red Bull",                "name_ar": "ريد بول",               "price": 110, "currency": "EGP"},
+        {"id": "cd-05", "name": "Water Small",             "name_ar": "مياه صغيرة",            "price": 25,  "currency": "EGP"},
+        {"id": "cd-06", "name": "Water Large",             "name_ar": "مياه كبيرة",            "price": 35,  "currency": "EGP"}
+      ]
+    },
+    "fruit_salad": {
+      "name": "Fruit Salad",
+      "name_ar": "فروت سلاط",
+      "items": [
+        {"id": "fs-01", "name": "Fruit Salad Small",       "name_ar": "فروت سلاط صغير",        "price": 120, "currency": "EGP"},
+        {"id": "fs-02", "name": "Fruit Salad Large",       "name_ar": "فروت سلاط كبير",        "price": 200, "currency": "EGP"},
+        {"id": "fs-03", "name": "Watermelon Plate Small",  "name_ar": "طبق بطيخ صغير",         "price": 120, "currency": "EGP"},
+        {"id": "fs-04", "name": "Watermelon Plate Large",  "name_ar": "طبق بطيخ كبير",         "price": 200, "currency": "EGP"}
+      ]
+    }
+  }
+}

@@ -1,0 +1,569 @@
+{
+  "_meta": {
+    "source": "Menu images extracted August 2026",
+    "venue": "El Kheima Beach Cafe & Restaurant",
+    "venue_ar": "الخيمة بيتش كافيه وبار",
+    "note": "All prices include VAT and service charge",
+    "note_ar": "جميع الأسعار تشمل الضريبة وخدمة الخدمة",
+    "last_updated": "2026-08-02"
+  },
+  "menu": {
+    "starters": {
+      "name": "Starters",
+      "name_ar": "المقبلات",
+      "items": [
+        {
+          "id": 1,
+          "name": "Spicy Potato",
+          "name_ar": "بطاطس حارة",
+          "description": "Potato cubes mixed with spices and coriander.",
+          "description_ar": "مكعبات بطاطس متبلة بالبهارات والكزبرة.",
+          "price": 110.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 2,
+          "name": "Chicken Wings (8 pcs)",
+          "name_ar": "أجنحة دجاج - 8 قطع",
+          "description": "8 pieces crispy chicken wings.",
+          "description_ar": "8 قطع أجنحة دجاج مقرمشة.",
+          "price": 190.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 3,
+          "name": "Bruschetta (2 pcs)",
+          "name_ar": "بروشيتا - 2 قطعة",
+          "description": "Bread topped with tomatoes, garlic and oregano.",
+          "description_ar": "خبز محمص مع الطماطم والثوم والأوريجانو.",
+          "price": 90.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 4,
+          "name": "Chips",
+          "name_ar": "بطاطس مقلية",
+          "description": "Crispy fried potato chips.",
+          "description_ar": "بطاطس مقلية مقرمشة.",
+          "price": 80.00,
+          "currency": "EGP"
+        }
+      ]
+    },
+    "sandwiches": {
+      "name": "Sandwiches",
+      "name_ar": "الساندوتشات",
+      "items": [
+        {
+          "id": 5,
+          "name": "Shish Tawook Sandwich",
+          "name_ar": "ساندوتش شيش طاووق",
+          "description": "Grilled marinated chicken breast, lettuce, cheese, garlic sauce and pickles.",
+          "description_ar": "صدر دجاج مشوي متبل مع خس، صوص الثوم، ومخلل.",
+          "price": 260.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 6,
+          "name": "Chicken Shawarma Sandwich",
+          "name_ar": "ساندوتش شاورما دجاج",
+          "description": "Marinated chicken with lettuce, tomato, pickles and garlic sauce.",
+          "description_ar": "شاورما دجاج متبلة مع خس، طماطم، مخلل، وصوص الثوم.",
+          "price": 260.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 7,
+          "name": "Kofta Sandwich",
+          "name_ar": "ساندوتش كفتة",
+          "description": "Grilled minced kofta, tomato, onion, pickles and sesame sauce.",
+          "description_ar": "كفتة مشوية مع طماطم، بصل، مخلل، وصوص السمسم.",
+          "price": 260.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 8,
+          "name": "Fajita Sandwich",
+          "name_ar": "ساندوتش فاهيتا",
+          "description": "Grilled sliced chicken, coloured pepper, onion, pickles, mayo sauce and cheese.",
+          "description_ar": "شرائح دجاج مشوية مع فلفل ألوان، بصل، مخلل، مايونيز، وجبنة.",
+          "price": 260.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 9,
+          "name": "Chicken Crispy Sandwich",
+          "name_ar": "ساندوتش دجاج كريسبي",
+          "description": "Fried crispy chicken, lettuce, tomato and mayo sauce.",
+          "description_ar": "دجاج كريسبي مقرمش مع خس، طماطم، ومايونيز.",
+          "price": 260.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 10,
+          "name": "Mexican Sandwich",
+          "name_ar": "ساندوتش مكسيكان",
+          "description": "Chicken breast with coloured pepper and onion.",
+          "description_ar": "صدر دجاج مع فلفل ألوان وبصل.",
+          "price": 260.00,
+          "currency": "EGP"
+        },
+        {
+          "id": "10-crystal",
+          "name": "Crystal Sandwich",
+          "name_ar": "ساندوتش كريستال",
+          "description": "Chicken breast, french fries, lettuce, pickles and garlic sauce.",
+          "description_ar": "صدر دجاج، بطاطس مقلية، خس، مخلل، وصوص الثوم.",
+          "price": 260.00,
+          "currency": "EGP",
+          "tag": "special"
+        }
+      ]
+    },
+    "main_course": {
+      "name": "Main Course",
+      "name_ar": "الأطباق الرئيسية",
+      "note": "All Platters are served with salad and a choice of chips or rice.",
+      "note_ar": "جميع الأطباق تُقدم مع سلطة والاختيار بين البطاطس المقلية أو الأرز.",
+      "items": [
+        {
+          "id": 12,
+          "name": "Grilled Chicken Breast",
+          "name_ar": "صدر دجاج مشوي",
+          "description": "Grilled chicken breast with grilled vegetables.",
+          "description_ar": "يُقدم مع خضار مشوية.",
+          "price": 330.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 13,
+          "name": "Chicken Breast with Mushroom Sauce",
+          "name_ar": "صدر دجاج بصوص المشروم",
+          "description": "Chicken breast with mushroom sauce.",
+          "description_ar": "صدر دجاج بصوص المشروم.",
+          "price": 330.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 14,
+          "name": "Grilled Whole Chicken",
+          "name_ar": "دجاجة مشوية كاملة",
+          "description": "Full grilled whole chicken.",
+          "description_ar": "دجاجة مشوية كاملة.",
+          "price": 420.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 15,
+          "name": "Grilled Half Chicken",
+          "name_ar": "نصف دجاجة مشوية",
+          "description": "Grilled half chicken.",
+          "description_ar": "نصف دجاجة مشوية.",
+          "price": 280.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 16,
+          "name": "Escalope Panne & Chips",
+          "name_ar": "إسكالوب بانيه مع بطاطس مقلية",
+          "description": "Escalope panne served with chips.",
+          "description_ar": "إسكالوب بانيه مع بطاطس مقلية.",
+          "price": 340.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 17,
+          "name": "Chicken Crispy & Chips",
+          "name_ar": "دجاج كريسبي مع بطاطس مقلية",
+          "description": "Crispy chicken with chips.",
+          "description_ar": "دجاج كريسبي مع بطاطس مقلية.",
+          "price": 290.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 18,
+          "name": "Chicken Nuggets & Chips",
+          "name_ar": "ناجتس دجاج مع بطاطس مقلية",
+          "description": "8 pieces chicken nuggets with chips.",
+          "description_ar": "8 قطع ناجتس دجاج مع بطاطس مقلية.",
+          "price": 190.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 19,
+          "name": "Cheese Burger & Chips",
+          "name_ar": "تشيز برجر مع بطاطس مقلية",
+          "description": "Cheese burger served with chips.",
+          "description_ar": "تشيز برجر مع بطاطس مقلية.",
+          "price": 250.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 20,
+          "name": "Beef Burger & Chips",
+          "name_ar": "بيف برجر مع بطاطس مقلية",
+          "description": "Beef burger served with chips.",
+          "description_ar": "بيف برجر مع بطاطس مقلية.",
+          "price": 230.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 21,
+          "name": "Chicken Burger & Chips",
+          "name_ar": "تشيكن برجر مع بطاطس مقلية",
+          "description": "Chicken burger served with chips.",
+          "description_ar": "تشيكن برجر مع بطاطس مقلية.",
+          "price": 230.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 22,
+          "name": "Shish Tawook Platter",
+          "name_ar": "طبق شيش طاووق",
+          "description": "Shish tawook platter with salad and choice of chips or rice.",
+          "description_ar": "طبق شيش طاووق مع سلطة وأرز أو بطاطس.",
+          "price": 320.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 23,
+          "name": "Peri-Peri Shish Tawook",
+          "name_ar": "شيش طاووق بيري بيري",
+          "description": "Peri-peri marinated shish tawook platter.",
+          "description_ar": "شيش طاووق بيري بيري مع سلطة وأرز أو بطاطس.",
+          "price": 330.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 24,
+          "name": "Kofta Platter",
+          "name_ar": "طبق كفتة",
+          "description": "Kofta platter with salad and choice of chips or rice.",
+          "description_ar": "طبق كفتة مع سلطة وأرز أو بطاطس.",
+          "price": 320.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 25,
+          "name": "Chicken Shawarma Platter",
+          "name_ar": "طبق شاورما دجاج",
+          "description": "Chicken shawarma platter with salad and choice of chips or rice.",
+          "description_ar": "طبق شاورما دجاج مع سلطة وأرز أو بطاطس.",
+          "price": 320.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 26,
+          "name": "Mixed Grill Platter",
+          "name_ar": "طبق مشويات مشكلة",
+          "description": "Mixed grill platter with salad and choice of chips or rice.",
+          "description_ar": "طبق مشويات مشكلة مع سلطة وأرز أو بطاطس.",
+          "price": 350.00,
+          "currency": "EGP"
+        }
+      ]
+    },
+    "salads": {
+      "name": "Salads",
+      "name_ar": "السلطات",
+      "items": [
+        {
+          "id": 27,
+          "name": "Caesar Salad",
+          "name_ar": "سلطة سيزر",
+          "description": "Grilled chicken, lettuce, tomato, crispy bread, parmesan and Caesar sauce.",
+          "description_ar": "دجاج مشوي، خس، طماطم، خبز مقرمش، جبن بارميزان وصوص السيزر.",
+          "price": 190.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 28,
+          "name": "Greek Salad",
+          "name_ar": "سلطة يونانية",
+          "description": "Feta cheese, lettuce, tomato, paprika, cucumber, onion and olive.",
+          "description_ar": "جبنة فيتا، خس، طماطم، فلفل ألوان، خيار، بصل وزيتون.",
+          "price": 180.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 29,
+          "name": "Tuna Salad",
+          "name_ar": "سلطة تونة",
+          "description": "Tuna, lettuce, carrot, tomato, sweet corn, olive, onion with vinegar and lemon sauce.",
+          "description_ar": "تونة، خس، جزر، طماطم، ذرة حلوة، زيتون، بصل مع صوص الليمون والخل.",
+          "price": 200.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 30,
+          "name": "Crystal Salad",
+          "name_ar": "سلطة كريستال",
+          "description": "Grilled chicken breast, lettuce, tomato, rocca, white cheese, olive, cucumber and crystal special sauce.",
+          "description_ar": "صدر دجاج مشوي، خس، طماطم، جرجير، جبنة بيضاء، زيتون، خيار، وصوص كريستال الخاص.",
+          "price": 200.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 31,
+          "name": "Fit Salad",
+          "name_ar": "سلطة دايت",
+          "description": "Iceberg lettuce, rocca, tomatoes, white cheese, cucumber, parsley, boiled egg and olive oil.",
+          "description_ar": "خس آيسبيرج، جرجير، طماطم، جبنة بيضاء، خيار، بقدونس، بيض مسلوق، وزيت زيتون.",
+          "price": 200.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 32,
+          "name": "Tabbouleh",
+          "name_ar": "تبولة",
+          "description": "Parsley, mint, tomato, onion, lemon juice and olive oil.",
+          "description_ar": "بقدونس، نعناع، طماطم، بصل، عصير ليمون، وزيت زيتون.",
+          "price": 150.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 33,
+          "name": "Fattoush",
+          "name_ar": "فتوش",
+          "description": "Cucumber, tomato, lettuce, mint, lemon juice, olive oil, sumac and crispy bread.",
+          "description_ar": "خيار، طماطم، خس، نعناع، عصير ليمون، زيت زيتون، سماق، وخبز مقرمش.",
+          "price": 150.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 34,
+          "name": "Mediterranean Salad",
+          "name_ar": "سلطة البحر المتوسط",
+          "description": "Cucumber, tomato, lettuce, lemon juice and olive oil.",
+          "description_ar": "خيار، طماطم، خس، عصير ليمون، وزيت زيتون.",
+          "price": 120.00,
+          "currency": "EGP"
+        }
+      ]
+    },
+    "breakfast": {
+      "name": "Breakfast",
+      "name_ar": "الإفطار",
+      "note": "Served till 12 PM",
+      "note_ar": "يُقدم حتى الساعة 12 ظهراً",
+      "items": [
+        {
+          "id": 35,
+          "name": "Scrambled Eggs",
+          "name_ar": "بيض مخفوق",
+          "description": "Scrambled eggs, lettuce, tomatoes, and cucumber with 2 toasts.",
+          "description_ar": "بيض مخفوق مع خس، طماطم، خيار، و2 توست.",
+          "price": 140.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 36,
+          "name": "Fried Eggs with Cheese",
+          "name_ar": "بيض مقلي بالجبن",
+          "description": "Fried eggs, cheese, lettuce, and tomatoes with two crunchy toasts.",
+          "description_ar": "بيض مقلي مع جبنة، خس، طماطم، و2 توست مقرمش.",
+          "price": 140.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 37,
+          "name": "Omelette",
+          "name_ar": "أومليت",
+          "description": "Eggs omelette, cucumber, and tomatoes, with two toasts.",
+          "description_ar": "بيض أومليت مع خيار، طماطم، و2 توست.",
+          "price": 140.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 38,
+          "name": "Omelette with Vegetables",
+          "name_ar": "أومليت بالخضار",
+          "description": "Eggs vegetables omelette, cucumber, tomatoes, and butter with two toasts.",
+          "description_ar": "بيض أومليت بالخضار مع خيار، طماطم، زبدة، و2 توست.",
+          "price": 140.00,
+          "currency": "EGP"
+        }
+      ]
+    },
+    "seafood": {
+      "name": "Seafood",
+      "name_ar": "المأكولات البحرية",
+      "items": [
+        {
+          "id": 39,
+          "name": "Calamari",
+          "name_ar": "كاليماري",
+          "description": "Calamari - fried or grilled.",
+          "description_ar": "كاليماري (مقلي أو مشوي).",
+          "price": 360.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 40,
+          "name": "Shrimps",
+          "name_ar": "جمبري",
+          "description": "Shrimps - fried or grilled.",
+          "description_ar": "جمبري (مقلي أو مشوي).",
+          "price": 420.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 41,
+          "name": "Shrimps with Calamari",
+          "name_ar": "جمبري مع كاليماري",
+          "description": "Shrimps with calamari - fried or grilled.",
+          "description_ar": "جمبري مع كاليماري (مقلي أو مشوي).",
+          "price": 490.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 42,
+          "name": "Fish & Chips",
+          "name_ar": "سمك مع بطاطس مقلية",
+          "description": "Fish with chips.",
+          "description_ar": "سمك مع بطاطس مقلية.",
+          "price": 320.00,
+          "currency": "EGP"
+        }
+      ]
+    },
+    "pizza": {
+      "name": "Pizza",
+      "name_ar": "البيتزا",
+      "items": [
+        {
+          "id": 43,
+          "name": "Salami Pizza",
+          "name_ar": "بيتزا سلامي",
+          "description": "Beef salami, mozzarella and tomato sauce.",
+          "description_ar": "سلامي بقري، جبنة موزاريلا، وصوص الطماطم.",
+          "price": 280.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 44,
+          "name": "Margherita Pizza",
+          "name_ar": "بيتزا مارجريتا",
+          "description": "Mozzarella, tomato sauce, and garnish with basil.",
+          "description_ar": "جبنة موزاريلا، صوص الطماطم، ومزينة بالريحان.",
+          "price": 240.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 45,
+          "name": "Four Cheese Pizza",
+          "name_ar": "بيتزا أربع أنواع جبن",
+          "description": "Mozzarella, gorgonzola, scamorza and mixed cheddar.",
+          "description_ar": "موزاريلا، جورجونزولا، سكامورزا، وشيدر مشكل.",
+          "price": 280.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 46,
+          "name": "Chicken Pizza",
+          "name_ar": "بيتزا دجاج",
+          "description": "Chicken, tomato sauce, and mozzarella.",
+          "description_ar": "دجاج، صوص الطماطم، وجبنة موزاريلا.",
+          "price": 310.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 47,
+          "name": "Tuna Pizza",
+          "name_ar": "بيتزا تونة",
+          "description": "Mozzarella, red onion, tuna and black olives.",
+          "description_ar": "جبنة موزاريلا، بصل أحمر، تونة، وزيتون أسود.",
+          "price": 290.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 48,
+          "name": "Vegetariana Pizza",
+          "name_ar": "بيتزا خضار",
+          "description": "Tomato sauce, mozzarella, and grilled vegetables.",
+          "description_ar": "صوص الطماطم، جبنة موزاريلا، وخضار مشوية.",
+          "price": 260.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 49,
+          "name": "Frutti Di Mare Pizza",
+          "name_ar": "بيتزا فروتي دي ماري",
+          "description": "Mixed seafood, oregano, mozzarella and tomato sauce.",
+          "description_ar": "مأكولات بحرية مشكلة، أوريجانو، جبنة موزاريلا، وصوص الطماطم.",
+          "price": 360.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 50,
+          "name": "Shrimps Pizza",
+          "name_ar": "بيتزا جمبري",
+          "description": "Shrimps, oregano, mozzarella, and tomato sauce.",
+          "description_ar": "جمبري، أوريجانو، جبنة موزاريلا، وصوص الطماطم.",
+          "price": 330.00,
+          "currency": "EGP"
+        }
+      ]
+    },
+    "pasta": {
+      "name": "Pasta",
+      "name_ar": "الباستا",
+      "items": [
+        {
+          "id": 51,
+          "name": "Chicken Pasta",
+          "name_ar": "باستا دجاج",
+          "description": "Chicken and mushroom with tomato sauce.",
+          "description_ar": "دجاج ومشروم مع صوص الطماطم.",
+          "price": 190.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 52,
+          "name": "Bolognese Pasta",
+          "name_ar": "باستا بولونيز",
+          "description": "Minced meat, tomato sauce, cheese, and basil.",
+          "description_ar": "لحم مفروم، صوص الطماطم، جبنة، وريحان.",
+          "price": 190.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 53,
+          "name": "Arrabiata Pasta",
+          "name_ar": "باستا أرابياتا",
+          "description": "Spaghetti or penne with spicy tomato sauce.",
+          "description_ar": "اسباجيتي أو بيني مع صوص الطماطم الحار.",
+          "price": 160.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 54,
+          "name": "Loro Rosso Pasta",
+          "name_ar": "باستا لورو روسو",
+          "description": "Grilled chicken, Loro Rosso sauce, spaghetti or penne.",
+          "description_ar": "دجاج مشوي مع صوص لورو روسو، اسباجيتي أو بيني.",
+          "price": 190.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 55,
+          "name": "Quattro Formaggi Pasta",
+          "name_ar": "باستا كواترو فورماجي",
+          "description": "Four cheese with cheese sauce.",
+          "description_ar": "أربع أنواع جبنة مع صوص الجبنة.",
+          "price": 190.00,
+          "currency": "EGP"
+        },
+        {
+          "id": 56,
+          "name": "Shrimp Pasta",
+          "name_ar": "باستا جمبري",
+          "description": "Shrimp, celery, red onion, lemon juice, salt, and pepper.",
+          "description_ar": "جمبري، كرفس، بصل أحمر، عصير ليمون، ملح، وفلفل.",
+          "price": 260.00,
+          "currency": "EGP"
+        }
+      ]
+    }
+  }
+}

@@ -4126,6 +4126,13 @@
           "load": "Could not load customers — try again."
         }
       },
+      "guestIdentity": {
+        "title": "Guest details — table {table}",
+        "nameLabel": "Guest name",
+        "namePlaceholder": "e.g. Ahmed Mohamed",
+        "phoneLabel": "Phone number (optional)",
+        "confirm": "Open table"
+      },
       "payment": {
         "title": "Collect payment",
         "amountDue": "Amount due",

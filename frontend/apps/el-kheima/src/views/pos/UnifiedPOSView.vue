@@ -21,6 +21,7 @@ import PinGuardModal from '../../components/PinGuardModal.vue'
 import POSActiveOrdersWorkspace from '../../components/dining-pos/POSActiveOrdersWorkspace.vue'
 import POSCartPanel from '../../components/dining-pos/POSCartPanel.vue'
 import POSCustomerModal from '../../components/dining-pos/POSCustomerModal.vue'
+import POSGuestIdentityModal from '../../components/dining-pos/POSGuestIdentityModal.vue'
 import POSPaymentModal from '../../components/dining-pos/POSPaymentModal.vue'
 import POSTablesWorkspace from '../../components/dining-pos/POSTablesWorkspace.vue'
 import type {
@@ -74,6 +75,13 @@ const selectedCustomer = ref<POSCustomer | null>(null)
 const extrasModalItem = ref<DiningItemRow | null>(null)
 const customerModalOpen = ref(false)
 const mobileCartOpen = ref(false)
+
+// هوية الضيف عند فتح طاولة جديدة يدويًا (2026-08-03، طلب Mohamed) — راجع
+// POSGuestIdentityModal.vue وstartTableOrder/confirmGuestIdentity تحت.
+const guestIdentityModalOpen = ref(false)
+const pendingIdentityTable = ref<VenueTable | null>(null)
+const guestName  = ref('')
+const guestPhone = ref('')
 
 const pendingOrderId = ref<number | null>(null)
 const pendingOrderNumber = ref('')
@@ -328,6 +336,11 @@ function buildOrderPayload() {
     guests_count: covers.value,
     notes: extraNote.value.trim() || undefined,
     customer_id: selectedCustomer.value?.id,
+    // اتلقطت من POSGuestIdentityModal وقت فتح الطاولة (راجع
+    // confirmGuestIdentity) — مفيش قيمة لطلبات takeaway/delivery/
+    // room_service (المودال ده بس لـdine_in).
+    guest_name: guestName.value.trim() || undefined,
+    guest_phone: guestPhone.value.trim() || undefined,
     items: cart.value.map(line => ({
       item_id: line.itemId,
       variant_id: line.variantId ?? undefined,
@@ -350,6 +363,8 @@ function resetDraft() {
   pendingOrderStatus.value = null
   pendingOrderSummary.value = null
   mobileCartOpen.value = false
+  guestName.value = ''
+  guestPhone.value = ''
 }
 
 async function cancelAndResetDraft(): Promise<boolean> {
@@ -564,6 +579,21 @@ async function startTableOrder(table: VenueTable) {
     })
     if (!accepted || !(await cancelAndResetDraft())) return
   }
+  // طاولة فاضية دايمًا (POSTablesWorkspace.activate بيوجّه طاولة فيها
+  // active_order_id لـ emit('open', ...) بدل 'start') — يعني هنا فعليًا
+  // "فتح طاولة جديدة"، فاسم الضيف إجباري قبل ما نكمل (راجع
+  // confirmGuestIdentity تحت لباقي المنطق الأصلي).
+  pendingIdentityTable.value = table
+  guestIdentityModalOpen.value = true
+}
+
+function confirmGuestIdentity({ name, phone }: { name: string; phone: string | undefined }) {
+  const table = pendingIdentityTable.value
+  guestIdentityModalOpen.value = false
+  pendingIdentityTable.value = null
+  if (!table) return
+  guestName.value = name
+  guestPhone.value = phone ?? ''
   orderType.value = 'dine_in'
   selectedTableId.value = table.id
   covers.value = Math.max(1, table.capacity > 0 ? Math.min(2, table.capacity) : 1)
@@ -952,6 +982,12 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       @close="customerModalOpen = false"
       @select="selectCustomer"
       @clear="clearCustomer"
+    />
+    <POSGuestIdentityModal
+      :open="guestIdentityModalOpen"
+      :table-number="pendingIdentityTable?.table_number ?? ''"
+      @close="guestIdentityModalOpen = false; pendingIdentityTable = null"
+      @confirm="confirmGuestIdentity"
     />
     <POSPaymentModal
       :open="paymentOpen"

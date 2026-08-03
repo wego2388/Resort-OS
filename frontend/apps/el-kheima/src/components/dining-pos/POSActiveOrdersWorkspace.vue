@@ -200,9 +200,12 @@ function orderUrgencyClass(order: { status: string; created_at: string }): strin
         >
           <div class="w-full">
             <div class="flex items-start justify-between gap-3">
-              <div>
+              <div class="min-w-0">
                 <div class="text-lg font-black text-gray-950 dark:text-gray-100">{{ order.order_number }}</div>
                 <div class="text-sm font-semibold text-gray-600 dark:text-gray-300 mt-1">{{ tableLabel(order) }}</div>
+                <div v-if="order.guest_name" class="text-sm font-black text-gray-900 dark:text-gray-100 mt-0.5 truncate">
+                  👤 {{ order.guest_name }}
+                </div>
               </div>
               <AppBadge :variant="statusVariant(order.status)">{{ statusLabel(order.status) }}</AppBadge>
             </div>

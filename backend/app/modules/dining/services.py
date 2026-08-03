@@ -601,14 +601,17 @@ def create_order(
         item = crud.get_item(db, item_req.item_id)
         if not item:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
-        # cross-outlet (staff POS فقط، allow_cross_outlet=True من الـcallers
-        # الداخليين): الصنف مسموح من أي outlet في نفس الفرع، مش لازم يطابق
+        # cross-outlet: الصنف مسموح من أي outlet في نفس الفرع، مش لازم يطابق
         # data.outlet_id — نفس الفاتورة تقدر تحمل مثلاً صنف مطعم وصنف كافيه
         # مع بعض. راجع docstring DiningOrderItem.outlet_id وnotes
         # _build_outlet_revenue_splits تحت لتوزيع الإيراد per-outlet.
-        # الطلب الذاتي العام (QR، guest_session_id) يفضل صارم عمدًا — Gate 1
-        # containment: ضيف من غير تسجيل دخول ميقدرش يطلب صنف من outlet
-        # مختلف عن اللي معلنه في الطلب (راجع create_guest_order في الراوتر).
+        # ⚠️ كان قاصر على طلبات النادل (POS الداخلي) بس قبل كده — الطلب
+        # الذاتي العام (QR، guest_session_id) كان صارم عمدًا (Gate 1
+        # containment: ضيف ميقدرش يطلب صنف من outlet مختلف عن المُعلن).
+        # اتغيّر بطلب صريح من Mohamed (2026-08-03): الضيف بقى بيتصفح كل
+        # منافذ الفرع مدموجين من غير أي مفهوم "منفذ" ظاهر له، فcreate_
+        # guest_order في الراوتر بقى بيبعت allow_cross_outlet=True زي
+        # النادل بالظبط — نفس الآلية دي، مش استثناء أمني جديد.
         if allow_cross_outlet:
             if item.branch_id != branch_id:
                 raise ValueError(f"الصنف {item_req.item_id} لا يتبع هذا الفرع")
@@ -693,6 +696,8 @@ def create_order(
             created_by=waiter_id,
             guest_session_id=guest_session_id,
             guest_public_reference=guest_public_reference,
+            guest_name=data.guest_name,
+            guest_phone=data.guest_phone,
             client_local_id=client_local_id,
         )
     except IntegrityError as exc:

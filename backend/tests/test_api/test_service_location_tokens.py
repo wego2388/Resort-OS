@@ -226,7 +226,7 @@ class TestResolveServiceLocationPublic:
         assert "location_id" not in body
 
         session = client.post(
-            "/api/v1/public/guest-sessions", json={"token": minted["token"]},
+            "/api/v1/public/guest-sessions", json={"token": minted["token"], "guest_name": "ضيف تست"},
         )
         assert session.status_code == 201, session.text
         assert len(session.json()["session_token"]) > 20
@@ -286,7 +286,7 @@ class TestResolveServiceLocationPublic:
             headers=headers,
         ).json()
         session_response = client.post(
-            "/api/v1/public/guest-sessions", json={"token": first["token"]},
+            "/api/v1/public/guest-sessions", json={"token": first["token"], "guest_name": "ضيف تست"},
         )
         raw_session = session_response.json()["session_token"]
         digest = hashlib.sha256(raw_session.encode("utf-8")).hexdigest()
@@ -338,4 +338,141 @@ class TestResolveServiceLocationPublic:
         ))
         with pytest.raises(IntegrityError):
             db.commit()
+
+
+class TestGuestIdentityCapture:
+    """طلب Mohamed (2026-08-03): أول ما الضيف يصوّر QR، اسمه إجباري
+    ورقم تليفونه اختياري — بيتنسخوا (snapshot) على أي DiningOrder ينشئه،
+    عشان يظهروا للموظف على خريطة الطاولات (راجع core.models.GuestSession.
+    guest_name/guest_phone وdining.models.DiningOrder.guest_name/guest_phone)."""
+
+    def test_guest_session_requires_name(self, client: TestClient, db):
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        headers = make_branch_linked_headers(db, branch, role="manager")
+        minted = client.post(
+            "/api/v1/service-location-tokens",
+            json={"branch_id": branch.id, "location_type": "dining_table", "location_id": table.id},
+            headers=headers,
+        ).json()
+
+        resp = client.post("/api/v1/public/guest-sessions", json={"token": minted["token"]})
+        assert resp.status_code == 422, resp.text
+
+        resp = client.post(
+            "/api/v1/public/guest-sessions",
+            json={"token": minted["token"], "guest_name": "   "},
+        )
+        assert resp.status_code == 422, resp.text
+
+    def test_guest_session_phone_is_optional(self, client: TestClient, db):
+        branch = make_branch(db)
+        table = make_dining_table(db, branch)
+        headers = make_branch_linked_headers(db, branch, role="manager")
+        minted = client.post(
+            "/api/v1/service-location-tokens",
+            json={"branch_id": branch.id, "location_type": "dining_table", "location_id": table.id},
+            headers=headers,
+        ).json()
+
+        resp = client.post(
+            "/api/v1/public/guest-sessions",
+            json={"token": minted["token"], "guest_name": "أحمد"},
+        )
+        assert resp.status_code == 201, resp.text
+
+    def test_guest_order_snapshots_name_and_phone_on_table_map(self, client: TestClient, db):
+        """الاسم/التليفون بيتاخدوا من الجلسة وقت إنشاء الطلب، ويظهروا على
+        خريطة الطاولات (GET /dining/tables's active_order_guest_name/phone)
+        من غير ما الفرونت إند يبعتهم تاني مع كل طلب."""
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.schemas import OutletCreate
+
+        branch = make_branch(db)
+        outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        table = make_dining_table(db, branch)
+
+        from app.modules.dining.models import DiningCategory, DiningItem
+        category = DiningCategory(branch_id=branch.id, outlet_id=outlet.id, name="مقبلات", name_ar="مقبلات")
+        db.add(category)
+        db.commit()
+        item = DiningItem(
+            branch_id=branch.id, outlet_id=outlet.id, category_id=category.id,
+            name="حمص", name_ar="حمص", price=Decimal("40.00"), is_available=True,
+        )
+        db.add(item)
+        db.commit()
+
+        from app.core.config import settings
+        from app.modules.core.crud import upsert_setting
+        settings.DINING_SELF_ORDER_ENABLED = True
+        upsert_setting(db, "dining.self_order_enabled", "true", branch_id=branch.id)
+        db.commit()
+
+        headers = make_branch_linked_headers(db, branch, role="manager")
+        minted = client.post(
+            "/api/v1/service-location-tokens",
+            json={"branch_id": branch.id, "location_type": "dining_table", "location_id": table.id},
+            headers=headers,
+        ).json()
+        session = client.post(
+            "/api/v1/public/guest-sessions",
+            json={"token": minted["token"], "guest_name": "محمد وجدي", "guest_phone": "01001234567"},
+        )
+        assert session.status_code == 201, session.text
+        guest_headers = {"X-Guest-Session": session.json()["session_token"]}
+
+        order_resp = client.post(
+            "/api/v1/dining/public/orders",
+            json={"outlet_id": outlet.id, "items": [{"item_id": item.id, "quantity": 1}]},
+            headers=guest_headers,
+        )
+        assert order_resp.status_code == 201, order_resp.text
+
+        tables_resp = client.get(f"/api/v1/dining/branches/{branch.id}/tables", headers=headers)
+        assert tables_resp.status_code == 200, tables_resp.text
+        row = next(t for t in tables_resp.json() if t["id"] == table.id)
+        assert row["active_order_guest_name"] == "محمد وجدي"
+        assert row["active_order_guest_phone"] == "01001234567"
+
+    def test_staff_order_accepts_optional_guest_name(self, client: TestClient, db):
+        """لما الكاشير يفتح طاولة جديدة يدويًا، الاسم بيتبعت مباشرة في
+        OrderCreate (مفيش guest_session خالص هنا) — الإجبارية نفسها قرار
+        UX في الفرونت إند، مش قيد schema."""
+        from app.modules.dining import services as dining_services
+        from app.modules.dining.schemas import OutletCreate
+
+        branch = make_branch(db)
+        outlet = dining_services.create_outlet(db, OutletCreate(
+            branch_id=branch.id, name="مطعم", outlet_type="restaurant",
+            revenue_account_code="4200",
+        ))
+        table = make_dining_table(db, branch)
+
+        from app.modules.dining.models import DiningCategory, DiningItem
+        category = DiningCategory(branch_id=branch.id, outlet_id=outlet.id, name="مقبلات", name_ar="مقبلات")
+        db.add(category)
+        db.commit()
+        item = DiningItem(
+            branch_id=branch.id, outlet_id=outlet.id, category_id=category.id,
+            name="حمص", name_ar="حمص", price=Decimal("40.00"), is_available=True,
+        )
+        db.add(item)
+        db.commit()
+
+        headers = make_branch_linked_headers(db, branch, role="waiter")
+        resp = client.post(
+            f"/api/v1/dining/outlets/{outlet.id}/orders",
+            json={
+                "outlet_id": outlet.id, "table_id": table.id,
+                "items": [{"item_id": item.id, "quantity": 1}],
+                "guest_name": "عميل ووك إن", "guest_phone": None,
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201, resp.text
+        assert resp.json()["guest_name"] == "عميل ووك إن"
         db.rollback()

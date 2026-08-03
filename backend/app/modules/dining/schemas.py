@@ -302,6 +302,10 @@ class DiningTableRead(BaseModel):
     # منيو منفذ تاني ويشوف الطاولة مشغولة (مثلاً طلب كافيه وهو واقف على
     # تاب المطعم)، عشان يعرف يفتح تفاصيل الطلب الصح بدل ما يفتره إنه فاضي.
     active_order_outlet_id: Optional[int] = None
+    # هوية الضيف القاعد على الطاولة دي (2026-08-03) — من DiningOrder.
+    # guest_name/guest_phone بتاعة الطلب النشط، نفس نمط active_order_* فوق.
+    active_order_guest_name:  Optional[str] = None
+    active_order_guest_phone: Optional[str] = None
 
 
 class DiningTableCreate(BaseModel):
@@ -348,6 +352,14 @@ class OrderCreate(BaseModel):
     notes:        Optional[str] = Field(None, max_length=500)
     customer_id:  Optional[int] = None
     items:        list[OrderItemCreate] = Field(..., min_length=1)
+    # هوية الضيف القاعد على الطاولة (2026-08-03، طلب Mohamed) — اختياريان
+    # هنا على مستوى الـschema عمدًا (OrderCreate بيغطي dine_in/takeaway/
+    # delivery/room_service كلهم)، الإجبارية الفعلية بتاعة "اسم عند فتح
+    # طاولة جديدة" قرار UX بيتفرض من الفرونت إند (UnifiedPOSView.vue's
+    # فورم فتح الطاولة)، مش من الـschema العام ده. للطلب الذاتي عبر QR،
+    # الراوتر بيملأهم من GuestSession.guest_name/guest_phone تلقائيًا.
+    guest_name:   Optional[str] = Field(None, max_length=100)
+    guest_phone:  Optional[str] = Field(None, max_length=30)
 
 
 class OrderItemVoidRequest(BaseModel):
@@ -417,6 +429,8 @@ class OrderRead(BaseModel):
     payment_method:            Optional[str] = None
     applied_discount_rule_id:  Optional[int]
     customer_id:                Optional[int]
+    guest_name:                 Optional[str] = None
+    guest_phone:                Optional[str] = None
     items:                      list[OrderItemRead] = []
     created_at:                 datetime
     updated_at:                 datetime

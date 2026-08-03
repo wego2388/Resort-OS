@@ -32,6 +32,10 @@ export interface VenueTable {
   occupied_at: string | null
   order_status: string | null
   active_order_outlet_id: number | null
+  // هوية الضيف القاعد على الطاولة دي (2026-08-03، طلب Mohamed) — من
+  // DiningOrder.guest_name/guest_phone بتاعة الطلب النشط.
+  active_order_guest_name: string | null
+  active_order_guest_phone: string | null
 }
 
 export interface DiningItemRow extends DiningExtrasItem {
@@ -67,6 +71,9 @@ export interface ActiveOrder {
   total: number | string
   guests_count: number
   created_at: string
+  // هوية الضيف (2026-08-03) — راجع VenueTable.active_order_guest_name
+  guest_name: string | null
+  guest_phone: string | null
 }
 
 export interface POSCustomer {
@@ -119,6 +126,9 @@ export interface DiningOrderDetail {
   refunded_amount: number | string
   total: number | string
   customer_id: number | null
+  // هوية الضيف (2026-08-03) — راجع VenueTable.active_order_guest_name
+  guest_name: string | null
+  guest_phone: string | null
   items: OrderItem[]
 }
 
