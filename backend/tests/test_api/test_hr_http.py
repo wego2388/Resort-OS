@@ -568,9 +568,19 @@ class TestEmployeeCrudHttp:
     def test_get_employee_by_id_success(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
         emp = make_employee_committed(db, branch)
-        resp = client.get(f"/api/v1/hr/employees/{emp.id}", headers=manager_headers)
+        resp = client.get(f"/api/v1/hr/employees/{emp.id}", headers=super_admin_headers_for_branch(branch))
         assert resp.status_code == 200, resp.text
         assert resp.json()["id"] == emp.id
+
+    def test_get_employee_by_id_requires_matching_branch(self, client: TestClient, db, manager_headers):
+        """⚠️ باج حقيقي اتصلح 2026-08-03: IDOR — أي مدير من أي فرع كان
+        يقدر يشوف بروفايل موظف فرع تاني بمجرد تخمين employee_id، من غير
+        أي فحص عزل فرع خالص (عكس update_employee المجاورة). manager_headers
+        (فيكستشر مشترك، بلا سياق فرع محدد) لازم يترفض دلوقتي."""
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.get(f"/api/v1/hr/employees/{emp.id}", headers=manager_headers)
+        assert resp.status_code == 403
 
     def test_get_employee_by_id_requires_manager(self, client: TestClient, db, waiter_headers):
         """A waiter/cashier must not be able to read another employee's salary
@@ -684,6 +694,55 @@ class TestPayslipCalculationHttp:
             headers=manager_headers,
         )
         assert resp.status_code == 400  # ValueError من calculate_employee_payroll يترجم 400
+
+
+class TestEmployeePayslipsHttp:
+    """GET /hr/employees/{id}/payslips — نسخة إدارية من /hr/me/payslips
+    (2026-08-03): كانت الدالة/الـschema جاهزين بالكامل للاستخدام الذاتي بس،
+    مفيش أي طريقة لمدير/HR يشوف تاريخ قسائم موظف تاني."""
+
+    def test_returns_only_non_draft_runs_for_own_branch(self, client: TestClient, db, super_admin_headers):
+        from app.modules.hr.models import PayrollLine, PayrollRun
+
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+
+        draft = PayrollRun(branch_id=branch.id, period_year=2026, period_month=1, status="draft",
+                            total_gross=Decimal("5000"), total_net=Decimal("4300"),
+                            total_tax=Decimal("300"), total_si=Decimal("400"))
+        approved = PayrollRun(branch_id=branch.id, period_year=2026, period_month=2, status="approved",
+                               total_gross=Decimal("5000"), total_net=Decimal("4300"),
+                               total_tax=Decimal("300"), total_si=Decimal("400"))
+        db.add_all([draft, approved])
+        db.flush()
+        for run in (draft, approved):
+            db.add(PayrollLine(
+                payroll_run_id=run.id, employee_id=emp.id,
+                basic_salary=Decimal("5000"), gross_salary=Decimal("5000"),
+                net_salary=Decimal("4300"), employee_si=Decimal("400"),
+                employer_si=Decimal("600"), monthly_tax=Decimal("300"),
+            ))
+        db.commit()
+
+        resp = client.get(
+            f"/api/v1/hr/employees/{emp.id}/payslips",
+            headers=super_admin_headers_for_branch(branch),
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["total"] == 1
+        assert body["items"][0]["period_month"] == 2
+        assert body["items"][0]["status"] == "approved"
+
+    def test_requires_matching_branch(self, client: TestClient, db, manager_headers):
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        resp = client.get(f"/api/v1/hr/employees/{emp.id}/payslips", headers=manager_headers)
+        assert resp.status_code == 403
+
+    def test_404_for_missing_employee(self, client: TestClient, db, super_admin_headers):
+        resp = client.get("/api/v1/hr/employees/999999/payslips", headers=super_admin_headers)
+        assert resp.status_code == 404
 
 
 class TestLeaderboardHttp:

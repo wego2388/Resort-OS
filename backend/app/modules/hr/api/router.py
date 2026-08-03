@@ -88,11 +88,56 @@ def create_employee(
 
 
 @router.get("/hr/employees/{employee_id}", response_model=EmployeeRead)
-def get_employee(employee_id: int, db: DbDep, _=Depends(get_manager_user)):
+def get_employee(employee_id: int, db: DbDep, user=Depends(get_manager_user)):
+    """⚠️ باج حقيقي كان هنا (2026-08-03): مفيش أي فحص عزل فرع خالص — أي
+    مدير (get_manager_user، مش شرط HR) من أي فرع كان يقدر يشوف بروفايل
+    موظف أي فرع تاني بمجرد تخمين employee_id (راتب + الرقم القومي بعد
+    فك التشفير)، عكس update_employee المجاورة اللي عندها الفحص ده من
+    الأساس. نفس فئة IDOR الموثّقة في §13 من CLAUDE.md."""
     emp = crud.get_employee(db, employee_id)
     if not emp:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"الموظف {employee_id} غير موجود")
+    try:
+        core_services.assert_branch_access(db, user, emp.branch_id, "عرض بيانات موظف")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return EmployeeRead.model_validate(emp)
+
+
+@router.get("/hr/employees/{employee_id}/payslips", response_model=PaginatedResponse)
+def get_employee_payslips(
+    employee_id: int, db: DbDep, user=Depends(get_manager_user),
+    page: int = Query(1, ge=1),
+    size: int = Query(24, ge=1, le=60),
+):
+    """نسخة إدارية من GET /hr/me/payslips (نفس crud.list_payslips_for_employee
+    بالظبط) — كانت موجودة للموظف نفسه بس، مفيش أي طريقة لمدير/HR يشوف
+    تاريخ قسائم موظف تاني، رغم إن الدالة والـschema (MyPayslipRead) جاهزين
+    بالكامل من الأساس."""
+    try:
+        emp = services.get_employee_or_404(db, employee_id)
+        core_services.assert_branch_access(db, user, emp.branch_id, "عرض قسائم موظف")
+    except PermissionError as exc:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+    lines, total = crud.list_payslips_for_employee(db, employee_id, skip=(page - 1) * size, limit=size)
+    items = [
+        MyPayslipRead(
+            id=line.id, payroll_run_id=line.payroll_run_id,
+            period_year=line.run.period_year, period_month=line.run.period_month,
+            status=line.run.status,
+            basic_salary=line.basic_salary, gross_salary=line.gross_salary, net_salary=line.net_salary,
+            employee_si=line.employee_si, monthly_tax=line.monthly_tax,
+            penalty_deduction=line.penalty_deduction,
+            late_penalty_deduction=line.late_penalty_deduction,
+            unpaid_leave_deduction=line.unpaid_leave_deduction,
+            holiday_bonus=line.holiday_bonus,
+            advance_deduction=line.advance_deduction,
+        )
+        for line in lines
+    ]
+    return PaginatedResponse(total=total, page=page, size=size, items=items)
 
 
 @router.patch("/hr/employees/{employee_id}", response_model=EmployeeRead)

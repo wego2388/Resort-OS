@@ -49,6 +49,14 @@ interface Allowance {
   is_taxable: boolean; is_pensionable: boolean; is_active: boolean
 }
 interface PenaltyType { id: number; name: string; name_ar?: string | null; penalty_days: number }
+interface Penalty {
+  id: number; employee_id: number; penalty_type_id: number | null
+  penalty_date: string; penalty_days: number; reason: string; created_at: string
+}
+interface Payslip {
+  id: number; payroll_run_id: number; period_year: number; period_month: number; status: string
+  net_salary: number; gross_salary: number
+}
 interface AttendancePolicy {
   late_grace_minutes: number | string; early_leave_grace_minutes: number | string
   standard_shift_start: string; standard_shift_end: string
@@ -401,6 +409,8 @@ const savingAllowance = ref(false)
 
 const penaltyModalEmployee = ref<Employee | null>(null)
 const penaltyTypes = ref<PenaltyType[]>([])
+const employeePenalties = ref<Penalty[]>([])
+const penaltiesLoading = ref(false)
 const penaltyForm = ref({ penalty_type_id: null as number | null, penalty_days: 1, reason: '' })
 const savingPenalty = ref(false)
 
@@ -449,6 +459,20 @@ async function openPenaltyModal(emp: Employee) {
   } catch (e) {
     toast.error(t('backoffice.hr.msg.loadPenaltyTypesError'))
   }
+  await loadEmployeePenalties(emp.id)
+}
+
+// 2026-08-03: GET /hr/penalties كان موجود بالكامل من غير أي caller خالص —
+// تسجيل جزاء كان ممكن (submitPenalty تحت) بس مفيش طريقة تشوف الجزاءات
+// المسجّلة قبل كده لنفس الموظف (write-only فعليًا).
+async function loadEmployeePenalties(employeeId: number) {
+  penaltiesLoading.value = true
+  try {
+    const res = await api.get('/api/v1/hr/penalties', { params: { branch_id: branchId.value, employee_id: employeeId } })
+    employeePenalties.value = res.data ?? []
+  } catch (e) {
+    toast.error(t('backoffice.hr.msg.loadPenaltiesError'))
+  } finally { penaltiesLoading.value = false }
 }
 
 function onPenaltyTypeChange() {
@@ -466,7 +490,7 @@ async function submitPenalty() {
   savingPenalty.value = true
   try {
     const empId = penaltyModalEmployee.value.id
-    await api.post('/api/v1/hr/penalties', {
+    const { data } = await api.post('/api/v1/hr/penalties', {
       employee_id: empId, branch_id: branchId.value,
       penalty_type_id: penaltyForm.value.penalty_type_id,
       penalty_date: localDateStr(new Date()),
@@ -474,8 +498,9 @@ async function submitPenalty() {
       reason: penaltyForm.value.reason,
       applied_by: auth.user?.id,
     })
+    employeePenalties.value = [data, ...employeePenalties.value]
+    penaltyForm.value = { penalty_type_id: null, penalty_days: 1, reason: '' }
     toast.success(t('backoffice.hr.msg.penaltyLogged'))
-    penaltyModalEmployee.value = null
   } catch (e: unknown) {
     toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.penaltySaveError'))
   } finally { savingPenalty.value = false }
@@ -591,6 +616,41 @@ async function changeEmployeeStatus(emp: Employee, newStatus: 'active' | 'on_lea
   } catch (e: unknown) {
     toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.statusUpdateError'))
   } finally { changingStatusEmployeeId.value = null }
+}
+
+// ── ملف موظف موحّد (حضور/رواتب/إجازات/جزاءات في مكان واحد) — كانت مقسّمة
+// عبر 5 مودالات منفصلة لكل صف، من غير أي شاشة تجمّعهم مع بعض. مودال
+// للقراءة فقط، بيستدعي نفس الـendpoints اللي كل مودال منفصل بيستخدمها
+// (زائد GET /hr/employees/{id}/payslips الجديد)، كل قسم مستقل عن التاني
+// (فشل تحميل قسم واحد ميوقفش الباقي).
+const profileModalEmployee = ref<Employee | null>(null)
+const profileLoading = ref(false)
+const profileAttendance = ref<AttendanceRecord[]>([])
+const profileLeaves = ref<LeaveRequest[]>([])
+const profilePenalties = ref<Penalty[]>([])
+const profilePayslips = ref<Payslip[]>([])
+
+async function openProfileModal(emp: Employee) {
+  profileModalEmployee.value = emp
+  profileAttendance.value = []
+  profileLeaves.value = []
+  profilePenalties.value = []
+  profilePayslips.value = []
+  profileLoading.value = true
+  const dateFrom = new Date()
+  dateFrom.setDate(dateFrom.getDate() - 30)
+  await Promise.all([
+    api.get('/api/v1/hr/attendance', {
+      params: { employee_id: emp.id, branch_id: branchId.value, date_from: localDateStr(dateFrom), size: 10 },
+    }).then(res => { profileAttendance.value = res.data.items ?? [] }).catch(() => {}),
+    api.get('/api/v1/hr/leaves', { params: { employee_id: emp.id, branch_id: branchId.value, size: 5 } })
+      .then(res => { profileLeaves.value = res.data.items ?? [] }).catch(() => {}),
+    api.get('/api/v1/hr/penalties', { params: { employee_id: emp.id, branch_id: branchId.value } })
+      .then(res => { profilePenalties.value = (res.data ?? []).slice(0, 10) }).catch(() => {}),
+    api.get(`/api/v1/hr/employees/${emp.id}/payslips`, { params: { size: 6 } })
+      .then(res => { profilePayslips.value = res.data.items ?? [] }).catch(() => {}),
+  ])
+  profileLoading.value = false
 }
 
 // ── wagdy.md H-01: سلفة راتب (قرض بأقساط شهرية ثابتة) ──────────────────
@@ -1016,6 +1076,7 @@ onMounted(fetchEmployees)
                 </td>
                 <td class="px-4 py-3">
                   <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <button @click="openProfileModal(emp)" class="text-xs font-semibold text-sky-700 hover:text-sky-900 dark:text-sky-300 dark:hover:text-sky-100">👤 {{ t('backoffice.hr.profileShort') }}</button>
                     <button v-if="canManageEmployeeRecords" @click="openEditModal(emp)" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200">✏️ {{ t('backoffice.hr.editShort') }}</button>
                     <button v-if="canManageEmployeeRecords" @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200">{{ t('backoffice.hr.addAllowanceShort') }}</button>
                     <button @click="openPenaltyModal(emp)" class="text-xs font-semibold text-red-600 hover:text-red-800 dark:text-red-300 dark:hover:text-red-200">{{ t('backoffice.hr.addPenaltyShort') }}</button>
@@ -1097,6 +1158,67 @@ onMounted(fetchEmployees)
       </template>
     </AppModal>
 
+    <!-- ملف الموظف الموحّد -->
+    <AppModal :open="!!profileModalEmployee" :title="t('backoffice.hr.profileTitle', { name: profileModalEmployee?.full_name ?? '' })"
+      size="xl" @close="profileModalEmployee = null">
+      <div v-if="profileLoading" class="flex justify-center py-10"><AppSpinner /></div>
+      <div v-else class="space-y-5">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+          <div><div class="text-xs text-gray-400">{{ t('backoffice.hr.position') }}</div><div class="font-semibold text-gray-800 dark:text-gray-200">{{ profileModalEmployee?.position }}</div></div>
+          <div><div class="text-xs text-gray-400">{{ t('backoffice.hr.department') }}</div><div class="font-semibold text-gray-800 dark:text-gray-200">{{ profileModalEmployee?.department ?? '—' }}</div></div>
+          <div><div class="text-xs text-gray-400">{{ t('backoffice.hr.salary') }}</div><div class="font-semibold text-gray-800 dark:text-gray-200">{{ formatNumber(profileModalEmployee?.basic_salary ?? 0) }} {{ t('backoffice.hr.egp') }}</div></div>
+          <div><div class="text-xs text-gray-400">{{ t('backoffice.hr.statusCol') }}</div><AppBadge size="sm" :variant="statusVariant[profileModalEmployee?.status ?? ''] ?? 'neutral'">{{ statusLabel(profileModalEmployee?.status ?? '') }}</AppBadge></div>
+        </div>
+
+        <div>
+          <h4 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-2">{{ t('backoffice.hr.profileAttendance') }}</h4>
+          <div v-if="profileAttendance.length" class="space-y-1">
+            <div v-for="rec in profileAttendance" :key="rec.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-1.5">
+              <span class="text-gray-700 dark:text-gray-300">{{ formatDate(rec.record_date) }}</span>
+              <AppBadge size="sm" :variant="statusVariant[rec.status] ?? 'neutral'">{{ statusLabel(rec.status) }}</AppBadge>
+            </div>
+          </div>
+          <p v-else class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.profileNoAttendance') }}</p>
+        </div>
+
+        <div>
+          <h4 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-2">{{ t('backoffice.hr.profileLeaves') }}</h4>
+          <div v-if="profileLeaves.length" class="space-y-1">
+            <div v-for="lv in profileLeaves" :key="lv.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-1.5">
+              <span class="text-gray-700 dark:text-gray-300">{{ formatDate(lv.start_date) }} — {{ formatDate(lv.end_date) }} ({{ t('backoffice.hr.dayCount', { count: lv.days_requested }) }})</span>
+              <AppBadge size="sm" :variant="statusVariant[lv.status] ?? 'neutral'">{{ statusLabel(lv.status) }}</AppBadge>
+            </div>
+          </div>
+          <p v-else class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.profileNoLeaves') }}</p>
+        </div>
+
+        <div>
+          <h4 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-2">{{ t('backoffice.hr.profilePenalties') }}</h4>
+          <div v-if="profilePenalties.length" class="space-y-1">
+            <div v-for="p in profilePenalties" :key="p.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-1.5">
+              <div>
+                <span class="text-gray-700 dark:text-gray-300">{{ p.reason }}</span>
+                <span class="text-xs text-gray-400 ms-1">({{ formatDate(p.penalty_date) }})</span>
+              </div>
+              <span class="text-red-600 dark:text-red-300 font-semibold">{{ t('backoffice.hr.dayCount', { count: p.penalty_days }) }}</span>
+            </div>
+          </div>
+          <p v-else class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.noPenalties') }}</p>
+        </div>
+
+        <div>
+          <h4 class="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-2">{{ t('backoffice.hr.profilePayslips') }}</h4>
+          <div v-if="profilePayslips.length" class="space-y-1">
+            <div v-for="slip in profilePayslips" :key="slip.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-1.5">
+              <span class="text-gray-700 dark:text-gray-300">{{ monthLabel(slip.period_year, slip.period_month) }}</span>
+              <span class="font-semibold text-gray-900 dark:text-gray-100">{{ formatNumber(slip.net_salary) }} {{ t('backoffice.hr.egp') }}</span>
+            </div>
+          </div>
+          <p v-else class="text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.profileNoPayslips') }}</p>
+        </div>
+      </div>
+    </AppModal>
+
     <!-- Allowance Modal -->
     <AppModal :open="!!allowanceModalEmployee" :title="t('backoffice.hr.allowancesTitle', { name: allowanceModalEmployee?.full_name ?? '' })"
       @close="allowanceModalEmployee = null">
@@ -1163,7 +1285,24 @@ onMounted(fetchEmployees)
     <!-- Penalty Modal -->
     <AppModal :open="!!penaltyModalEmployee" :title="t('backoffice.hr.penaltyTitle', { name: penaltyModalEmployee?.full_name ?? '' })"
       @close="penaltyModalEmployee = null">
-      <div class="space-y-3">
+      <div class="space-y-4">
+        <!-- 2026-08-03: GET /hr/penalties كان بلا أي caller — الجزاءات
+        كانت write-only فعليًا، تسجيلها ممكن بس مفيش طريقة تشوف اللي
+        اتسجّل قبل كده لنفس الموظف. -->
+        <div v-if="penaltiesLoading" class="text-center py-4 text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</div>
+        <div v-else-if="employeePenalties.length" class="space-y-2">
+          <div v-for="p in employeePenalties" :key="p.id" class="flex items-center justify-between text-sm bg-stone-50 dark:bg-gray-800/60 rounded-lg px-3 py-2">
+            <div>
+              <div class="font-medium text-gray-800 dark:text-gray-200">{{ p.reason }}</div>
+              <div class="text-xs text-gray-400 dark:text-gray-400">{{ formatDate(p.penalty_date) }}</div>
+            </div>
+            <span class="text-red-600 dark:text-red-300 font-semibold">{{ t('backoffice.hr.dayCount', { count: p.penalty_days }) }}</span>
+          </div>
+        </div>
+        <EmptyState v-else icon="⚠️" :title="t('backoffice.hr.noPenalties')" />
+
+        <div class="border-t border-stone-100 dark:border-border/50 pt-4 space-y-3">
+        <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">{{ t('backoffice.hr.logNewPenalty') }}</div>
         <select v-model="penaltyForm.penalty_type_id" @change="onPenaltyTypeChange"
           class="w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2 outline-none focus:border-primary-500">
           <option :value="null">{{ t('backoffice.hr.penaltyTypeOptional') }}</option>
@@ -1174,6 +1313,7 @@ onMounted(fetchEmployees)
         <AppButton :disabled="savingPenalty" @click="submitPenalty" variant="danger" size="sm">
           {{ savingPenalty ? t('backoffice.hr.saving') : t('backoffice.hr.logPenalty') }}
         </AppButton>
+        </div>
       </div>
     </AppModal>
 
