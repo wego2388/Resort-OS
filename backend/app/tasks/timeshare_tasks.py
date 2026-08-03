@@ -298,6 +298,60 @@ def send_installment_reminders(self):
         notify_task_failure("app.tasks.timeshare_tasks.send_installment_reminders", exc)
 
 
+@celery_app.task(name="app.tasks.timeshare_tasks.send_maintenance_due_reminders", bind=True)
+def send_maintenance_due_reminders(self):
+    """
+    كل يوم 9:30 صباحاً — تذكير رسوم الصيانة السنوية المستحقة خلال 7 أيام.
+
+    ⚠️ فجوة حقيقية كانت هنا (2026-08-03): الأقساط ليها تذكير واتساب قبل
+    الاستحقاق بـ7 أيام (send_installment_reminders فوق)، لكن رسوم الصيانة
+    (اللي بتجمّد حق الحجز فعليًا لو اتأخرت — راجع mark_overdue) مالهاش أي
+    تذكير قبلي خالص — أول تواصل مع العميل كان بيحصل بعد التجميد فعليًا،
+    مش قبله. نفس شكل send_installment_reminders بالظبط.
+    """
+    try:
+        from app.core.database import SessionLocal  # noqa: PLC0415
+        from datetime import timedelta              # noqa: PLC0415
+        today = business_today(settings.TIMEZONE)
+        remind_date = today + timedelta(days=7)
+
+        with SessionLocal() as db:
+            try:
+                from app.modules.timeshare.models import TimeshareMaintenanceDue  # noqa: PLC0415
+                from app.modules.timeshare.models import TimeshareContract  # noqa: PLC0415
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+
+                due_soon = (
+                    db.query(TimeshareMaintenanceDue)
+                    .filter(
+                        TimeshareMaintenanceDue.due_date == remind_date,
+                        TimeshareMaintenanceDue.status == "pending",
+                    )
+                    .all()
+                )
+                for due in due_soon:
+                    logger.info(
+                        "Maintenance due reminder: id=%s amount=%s due=%s",
+                        due.id, due.amount, due.due_date,
+                    )
+                    contract = db.query(TimeshareContract).filter(
+                        TimeshareContract.id == due.contract_id
+                    ).first()
+                    if contract and contract.customer_phone:
+                        send_whatsapp_message(
+                            contract.customer_phone,
+                            f"تذكير: رسوم صيانة بقيمة {due.amount:,.2f} ج.م مستحقة يوم {due.due_date:%Y-%m-%d} "
+                            f"— عقد رقم {contract.contract_number}. سدادها في الموعد يحافظ على حقك في الحجز.",
+                        )
+
+            except ImportError:
+                pass
+
+    except Exception as exc:
+        logger.error("send_maintenance_due_reminders failed: %s", exc)
+        notify_task_failure("app.tasks.timeshare_tasks.send_maintenance_due_reminders", exc)
+
+
 @celery_app.task(name="app.tasks.timeshare_tasks.send_visit_survey", bind=True, max_retries=3)
 def send_visit_survey(self, visit_id: int, branch_id: int):
     """

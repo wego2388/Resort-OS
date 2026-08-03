@@ -80,6 +80,20 @@ def _make_installment(db, contract, due_date, status="pending", amount=Decimal("
     return inst
 
 
+def _make_maintenance_due(db, contract, due_date, status="pending", amount=Decimal("2500")):
+    from app.modules.timeshare.models import TimeshareMaintenanceDue
+    due = TimeshareMaintenanceDue(
+        contract_id=contract.id,
+        fee_year=due_date.year,
+        due_date=due_date,
+        amount=amount,
+        status=status,
+    )
+    db.add(due)
+    db.commit()
+    return due
+
+
 def _make_ts_unit(db, branch, unit_type="2R", status="available", unit_number=None):
     from app.modules.timeshare.models import TimeshareUnit
     unit = TimeshareUnit(
@@ -207,6 +221,87 @@ class TestTimeshareInstallmentReminders:
             with patch("app.core.database.SessionLocal", return_value=ctx):
                 from app.tasks.timeshare_tasks import send_installment_reminders
                 send_installment_reminders()
+        finally:
+            wa_module.send_whatsapp_message = original
+
+
+# ─── send_maintenance_due_reminders logic ────────────────────────────────────
+
+class TestTimeshareMaintenanceDueReminders:
+    """2026-08-03: مالهاش تذكير قبلي خالص قبل كده — الأقساط بس اللي كانت
+    مغطاة (TestTimeshareInstallmentReminders فوق)."""
+
+    def _run(self, db):
+        from unittest.mock import MagicMock, patch
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.timeshare_tasks import send_maintenance_due_reminders
+            send_maintenance_due_reminders()
+
+    def test_whatsapp_sent_for_due_in_7_days(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        sent = []
+        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            contract = _make_ts_contract(db, branch, manager, phone="01088800000")
+            remind_date = date.today() + timedelta(days=7)
+            _make_maintenance_due(db, contract, due_date=remind_date)
+
+            self._run(db)
+
+            assert "01088800000" in sent
+        finally:
+            wa_module.send_whatsapp_message = original
+
+    def test_no_reminder_for_due_outside_window(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        sent = []
+        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            contract = _make_ts_contract(db, branch, manager, phone="01088800001")
+            _make_maintenance_due(db, contract, due_date=date.today() + timedelta(days=20))
+
+            self._run(db)
+
+            # ⚠️ db fixture بيعمل commit() حقيقي (مش savepoint)، فبيانات
+            # تستات سابقة في نفس الملف تفضل موجودة — لازم نتأكد إن رقمنا
+            # إحنا بالذات ملوش رسالة، مش إن القايمة كلها فاضية.
+            assert "01088800001" not in sent
+        finally:
+            wa_module.send_whatsapp_message = original
+
+    def test_no_reminder_for_already_paid_due(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        sent = []
+        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            contract = _make_ts_contract(db, branch, manager, phone="01088800002")
+            remind_date = date.today() + timedelta(days=7)
+            _make_maintenance_due(db, contract, due_date=remind_date, status="paid")
+
+            self._run(db)
+
+            assert "01088800002" not in sent
+        finally:
+            wa_module.send_whatsapp_message = original
+
+    def test_task_runs_without_error(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        wa_module.send_whatsapp_message = lambda *a, **kw: None
+        try:
+            self._run(db)
         finally:
             wa_module.send_whatsapp_message = original
 
