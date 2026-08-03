@@ -190,6 +190,73 @@ class TimeshareUnit(Base, TimestampMixin):
     notes:        Mapped[str | None] = mapped_column(String(300), nullable=True)
 
 
+class TimeshareVisitRequest(Base, TimestampMixin):
+    """طلب زيارة من صاحب العقد نفسه عبر بوابة العميل العامة (طلب Mohamed
+    2026-08-03) — مش حجز مباشر، مجرد طلب بتواريخ مفضّلة يراجعه موظف/مدير
+    ويوافق عليه (بيحدد التواريخ الفعلية والوحدة عبر services.create_visit
+    الموجودة بالفعل — نفس كل قواعدها: منع التعارض، منع الحجز على عقد مجمَّد/
+    ملغي/منتهي). لا نكرر منطق الحجز هنا خالص، بس نضيف طبقة "طلب ← موافقة"
+    فوقه."""
+    __tablename__ = "timeshare_visit_requests"
+
+    id:               Mapped[int]             = mapped_column(primary_key=True)
+    branch_id:        Mapped[int]             = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    contract_id:      Mapped[int]             = mapped_column(ForeignKey("timeshare_contracts.id", ondelete="CASCADE"), index=True)
+    preferred_start:  Mapped[date]            = mapped_column(Date)
+    preferred_end:    Mapped[date]            = mapped_column(Date)
+    notes:            Mapped[str | None]      = mapped_column(Text, nullable=True)
+    status:           Mapped[str]             = mapped_column(String(20), default="pending", index=True)
+    # pending|approved|rejected|cancelled
+    reviewed_by:      Mapped[int | None]      = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    reviewed_at:      Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    rejection_reason: Mapped[str | None]      = mapped_column(String(300), nullable=True)
+    # الزيارة الفعلية اللي اتعملت لما الطلب اتوافق عليه (services.create_visit)
+    visit_id:         Mapped[int | None]      = mapped_column(ForeignKey("timeshare_visits.id", ondelete="SET NULL"), nullable=True)
+
+    contract: Mapped["TimeshareContract"] = relationship("TimeshareContract")
+    visit:    Mapped["TimeshareVisit | None"] = relationship("TimeshareVisit", foreign_keys=[visit_id])
+
+
+class TimeshareSupportTicket(Base, TimestampMixin):
+    """دعم فني/خدمة عملاء خاص بمالكي عقود التايم شير — منفصل تمامًا عن
+    نظام استفسارات الموقع العام (crm.Lead عبر /hub/contact)، اللي كان
+    البديل الوحيد قبل كده وبيخلط شكاوى أصحاب العقود مع استفسارات عملاء
+    عاديين في نفس الصندوق بدون أي ربط بالعقد الحقيقي (طلب Mohamed
+    2026-08-03: "خاصة بنفسها في خدمة العملاء")."""
+    __tablename__ = "timeshare_support_tickets"
+
+    id:           Mapped[int]             = mapped_column(primary_key=True)
+    branch_id:    Mapped[int]             = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    contract_id:  Mapped[int]             = mapped_column(ForeignKey("timeshare_contracts.id", ondelete="CASCADE"), index=True)
+    subject:      Mapped[str]             = mapped_column(String(200))
+    status:       Mapped[str]             = mapped_column(String(20), default="open", index=True)
+    # open|in_progress|resolved|closed
+    assigned_to:  Mapped[int | None]      = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    resolved_at:  Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    contract: Mapped["TimeshareContract"] = relationship("TimeshareContract")
+    replies:  Mapped[list["TimeshareSupportTicketReply"]] = relationship(
+        "TimeshareSupportTicketReply", back_populates="ticket",
+        order_by="TimeshareSupportTicketReply.created_at", lazy="select",
+    )
+
+
+class TimeshareSupportTicketReply(Base, TimestampMixin):
+    """رسالة واحدة في محادثة التذكرة — من صاحب العقد نفسه (author_type=owner،
+    author_user_id=None) أو من موظف (author_type=staff). الرسالة الأولى
+    (subject/message الأصليين) بتتخزن كأول رد من النوع owner، مش حقل منفصل
+    على التذكرة — عشان المحادثة كلها تبقى في مكان واحد بالترتيب الزمني."""
+    __tablename__ = "timeshare_support_ticket_replies"
+
+    id:              Mapped[int]        = mapped_column(primary_key=True)
+    ticket_id:       Mapped[int]        = mapped_column(ForeignKey("timeshare_support_tickets.id", ondelete="CASCADE"), index=True)
+    author_type:     Mapped[str]        = mapped_column(String(10))  # owner|staff
+    author_user_id:  Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    message:         Mapped[str]        = mapped_column(Text)
+
+    ticket: Mapped["TimeshareSupportTicket"] = relationship("TimeshareSupportTicket", back_populates="replies")
+
+
 class TimeshareWaitlist(Base, TimestampMixin):
     """قائمة انتظار لأسابيع التايم شير العائم."""
     __tablename__ = "timeshare_waitlist"

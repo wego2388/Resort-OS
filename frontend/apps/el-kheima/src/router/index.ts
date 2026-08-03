@@ -8,6 +8,15 @@ declare module 'vue-router' {
     // Minimum role required, checked against the numeric ROLE_LEVELS map in
     // @resort-os/core's useAuthStore (mirrors backend app/core/deps.py).
     requiredRole?: string
+    // Exact-role allow-list — overrides requiredRole when present. Needed
+    // for modules isolated from the general role hierarchy (timeshare,
+    // 2026-08-03): a level-based requiredRole can't express "only
+    // timeshare_admin/timeshare_agent, not any manager" — timeshare_admin
+    // (level 55) would satisfy a plain 'manager' (60) check as false but a
+    // lower 'cashier' (40) check as true, while timeshare_agent (level 25)
+    // sits below every other operational role. super_admin always passes
+    // regardless (mirrors backend Decision 0003 invariant #1).
+    requiredRoles?: string[]
     // Server-evaluated permissions from /auth/bootstrap. Arrays require every
     // listed permission; unknown values fail closed in the auth store.
     requiredPermission?: PermissionKey | PermissionKey[]
@@ -195,8 +204,13 @@ const routes: RouteRecordRaw[] = [
       // لصفحته الرئيسية لو حاول يدخل /admin/timeshare مباشرة. باقي إجراءات
       // المدير (إلغاء عقد، تعليق، استيراد Excel) محمية أصلاً بـ
       // auth.hasRole('manager') داخل الشاشة نفسها، فتخفيض البوابة هنا آمن.
-      { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { requiredRole: 'cashier', titleKey: 'backoffice.nav.timeshare' } },
-      { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { titleKey: 'backoffice.nav.sales' } },
+      // requiredRoles (2026-08-03): وحدة التايم شير بقت معزولة تمامًا عن
+      // هرمية الأدوار العامة (طلب Mohamed — راجع app.core.deps.
+      // get_timeshare_user). requiredRole القديم (level-based) كان بيسمح
+      // لأي مدير/كاشير عام يدخل الشاشة يشوفها فاضية وتطلعله 403 على كل
+      // نداء API — requiredRoles allow-list صريح بديل بدل ما يعتمد على مستوى.
+      { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { requiredRoles: ['timeshare_admin', 'timeshare_agent'], titleKey: 'backoffice.nav.timeshare' } },
+      { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { requiredRoles: ['timeshare_admin', 'timeshare_agent'], titleKey: 'backoffice.nav.sales' } },
       { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { titleKey: 'backoffice.nav.beachLive' } },
       { path: 'beach-admin', name: 'admin-beach-admin', component: () => import('../views/admin/BeachAdminView.vue'), meta: { titleKey: 'backoffice.nav.beachAdmin' } },
       { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { titleKey: 'backoffice.nav.eInvoice' } },
@@ -327,7 +341,15 @@ router.beforeEach((to) => {
   }
 
   // 5. Role gate — redirect to the user's own home, not a raw 403 page.
-  if (to.meta.requiredRole && !auth.hasRole(to.meta.requiredRole)) {
+  // requiredRoles (exact allow-list) takes priority over requiredRole
+  // (level threshold) when both are present in the merged meta — see the
+  // RouteMeta.requiredRoles doc comment above for why isolated modules
+  // need this instead of a level check.
+  if (to.meta.requiredRoles) {
+    if (!to.meta.requiredRoles.includes(auth.role) && !auth.hasRole('super_admin')) {
+      return homeRouteFor(auth.role)
+    }
+  } else if (to.meta.requiredRole && !auth.hasRole(to.meta.requiredRole)) {
     return homeRouteFor(auth.role)
   }
 

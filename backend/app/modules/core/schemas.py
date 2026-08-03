@@ -26,7 +26,7 @@ _REASON_MIN_LENGTH = 3
 _REASON_MAX_LENGTH = 500
 PERMISSION_ACTION_PATTERN = (
     r"^(approve|check_in|check_out|collect|create|delete|early_late|edit|"
-    r"execute|generate|manage|run|update|update_status|view|void)$"
+    r"execute|generate|manage|respond|run|update|update_status|view|void)$"
 )
 
 
@@ -291,7 +291,17 @@ class StaffUserCreate(BaseModel):
     employee_id: Optional[int] = Field(None, gt=0)
     role: Literal[
         "admin", "accountant", "hr_manager", "manager", "supervisor",
-        "receptionist", "cashier", "waiter", "chef", "kitchen", "employee",
+        "receptionist", "cashier", "waiter", "chef", "kitchen",
+        # timeshare_agent (level=25): موظف تايم شير متخصص — راجع
+        # app.core.deps.get_timeshare_user وapp.modules.timeshare.api.router
+        # للـworkflow الكامل (الدور والصلاحيات كانوا موجودين بالكامل من قبل،
+        # بس مالوش أي طريقة فعلية ينضاف بيها حساب بيه — باج حقيقي اتصلح
+        # 2026-08-03). دلوقتي بيتنشأ عادةً عبر POST /timeshare/staff
+        # (timeshare_admin) مش هنا، بس السطر ده لسه لازم عشان super_admin
+        # يقدر ينشئ أول حساب لو محتاج.
+        # timeshare_admin (level=55): تحكم كامل في وحدة التايم شير، معزول
+        # عن باقي المنتجع بالكامل — راجع app.core.deps.get_timeshare_admin_user.
+        "timeshare_agent", "timeshare_admin", "employee",
     ]
     preferred_language: Literal["ar", "en"] = "ar"
     reason: str = Field(..., max_length=_REASON_MAX_LENGTH)

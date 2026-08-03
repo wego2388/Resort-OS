@@ -200,3 +200,132 @@ class ImportContractsResponse(BaseModel):
     imported: int
     skipped:  int
     errors:   list[str] = []
+
+
+# ── Owner Portal (بوابة صاحب العقد العامة، طلب Mohamed 2026-08-03) ───────────
+
+class TimeshareOwnerVerifyRequest(BaseModel):
+    """الخطوة ١: العميل بيكتب رقم عقده + رقم موبايله المسجّل — لو الاتنين
+    متطابقين، كود تحقق (OTP) بيتبعت واتساب. الرد دايمًا نفس الرسالة العامة
+    بغض النظر عن التطابق (راجع services.request_owner_otp) عشان محدّش
+    يقدر يكتشف أرقام عقود حقيقية بالتجربة."""
+    contract_number: str = Field(..., max_length=30)
+    phone:            str = Field(..., max_length=20)
+
+
+class TimeshareOwnerVerifyConfirm(BaseModel):
+    """الخطوة ٢: كود الـOTP اللي وصل واتساب."""
+    contract_number: str = Field(..., max_length=30)
+    otp_code:         str = Field(..., min_length=4, max_length=8)
+
+
+class TimeshareOwnerPortalToken(BaseModel):
+    token:            str
+    expires_in_minutes: int
+
+
+class TimeshareOwnerContractRead(BaseModel):
+    """نسخة مبسّطة ومحدودة من TimeshareContractRead لعرض العميل نفسه —
+    عمدًا بدون بيانات إدارية داخلية (رقم الدفعة/الفورمة/الإيصال، نسبة
+    الشريك، إلخ) وبدون هوية/جواز (مش لازمة لغرض المتابعة والحجز، وطلب
+    Mohamed كان صريح: "ما يكونش معقد")."""
+    model_config = ConfigDict(from_attributes=True)
+    id: int; contract_number: str; customer_name: str
+    room_type: str; week_number: Optional[int]; nights_per_year: int; season: str
+    status: str; booking_frozen: bool
+    start_date: date; end_date: Optional[date]
+    unit_number: Optional[str] = None  # يتملى من contract.unit.unit_number لو وحدة ثابتة
+
+
+class TimeshareVisitRequestCreate(BaseModel):
+    """طلب العميل نفسه — تواريخ مفضّلة بس، المدير هو اللي يحدد الفعلي عند
+    الموافقة (راجع TimeshareVisitRequestApprove)."""
+    preferred_start: date
+    preferred_end:   date
+    notes:           Optional[str] = Field(None, max_length=500)
+
+
+class TimeshareVisitRequestRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; contract_id: int
+    preferred_start: date; preferred_end: date; notes: Optional[str]
+    status: str; reviewed_at: Optional[datetime]; rejection_reason: Optional[str]
+    visit_id: Optional[int]
+    created_at: datetime
+    # بتتملى في القايمة الإدارية بس (join على العقد متاح هناك) — نفس نمط
+    # InstallmentRead.customer_name
+    customer_name:  Optional[str] = None
+    customer_phone: Optional[str] = None
+    contract_number: Optional[str] = None
+
+
+class TimeshareVisitRequestApprove(BaseModel):
+    """موافقة مدير — هو اللي بيحدد التواريخ الفعلية (طلب Mohamed الصريح:
+    "المسؤول هو اللي يحدد الأسبوع")، مش بالضرورة نفس تواريخ العميل
+    المفضّلة. بتمرّ بنفس services.create_visit الموجودة (منع تعارض/تجميد)."""
+    check_in:  date
+    check_out: date
+
+
+class TimeshareVisitRequestReject(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=300)
+
+
+class TimeshareSupportTicketCreate(BaseModel):
+    subject: str = Field(..., min_length=3, max_length=200)
+    message: str = Field(..., min_length=3, max_length=2000)
+
+
+class TimeshareTicketReplyCreate(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+
+
+class TimeshareTicketReplyRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; author_type: str; message: str; created_at: datetime
+
+
+class TimeshareSupportTicketRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; contract_id: int
+    subject: str; status: str; resolved_at: Optional[datetime]
+    created_at: datetime
+    replies: list[TimeshareTicketReplyRead] = []
+    # بتتملى في القايمة الإدارية بس
+    customer_name:  Optional[str] = None
+    contract_number: Optional[str] = None
+
+
+class TimeshareTicketStatusUpdate(BaseModel):
+    status: str = Field(..., pattern=r"^(open|in_progress|resolved|closed)$")
+
+
+# ── Timeshare Staff (مدير التايم شير بيدير موظفي وحدته، طلب Mohamed 2026-08-03) ──
+
+class TimeshareStaffCreate(BaseModel):
+    """role مش حقل هنا عمدًا — ثابت timeshare_agent دايمًا، مش قابل
+    للاختيار (راجع services.provision_timeshare_agent)."""
+    branch_id: int
+    email: str = Field(..., min_length=3, max_length=320)
+    full_name: str = Field(..., min_length=3, max_length=255)
+    phone: Optional[str] = None
+    preferred_language: str = Field("ar", pattern=r"^(ar|en)$")
+
+
+class TimeshareStaffProvisioned(BaseModel):
+    id: int
+    email: str
+    full_name: str
+    temporary_password: str
+    must_change_password: bool
+
+
+class TimeshareStaffRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; email: str; full_name: str; phone: Optional[str]
+    is_active: bool; must_change_password: bool
+    created_at: datetime
+
+
+class TimeshareStaffStatusUpdate(BaseModel):
+    is_active: bool

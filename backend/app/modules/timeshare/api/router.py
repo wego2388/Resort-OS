@@ -1,15 +1,28 @@
 """app/modules/timeshare/api/router.py
 
-نظام الصلاحيات:
-  - get_timeshare_user   : الحد الأدنى لأي endpoint في الوحدة
-                           (cashier+ تلقائياً، أو timeshare_agent مع permission صريح)
-  - get_manager_user     : عمليات الإدارة (إنشاء/تعديل/إلغاء/نقل وحدة/تقارير)
-  - require_permission   : عمليات حساسة تستحق override فردي
+نظام الصلاحيات (معزول تمامًا عن باقي المنتجع، طلب Mohamed 2026-08-03 —
+راجع docstring get_timeshare_user/get_timeshare_admin_user في deps.py
+للتفاصيل الكاملة، خصوصًا الباج القديم اللي كان بيدّي أي كاشير/مدير في أي
+موديول وصول تلقائي لبيانات عملاء التايم شير):
+  - get_timeshare_user       : الحد الأدنى لأي endpoint في الوحدة —
+                                super_admin، أو timeshare_admin، أو
+                                timeshare_agent مع permission صريح بس.
+                                مفيش أي bypass لمستوى عام (cashier/manager
+                                عاديين مبقاش عندهم وصول تلقائي خالص).
+  - get_timeshare_admin_user : عمليات الإدارة (إنشاء/تعديل/إلغاء/نقل وحدة/
+                                تقارير/الموافقة على طلبات الزيارة/إدارة
+                                موظفي التايم شير) — role='timeshare_admin'
+                                فقط (أو super_admin)، مش get_manager_user
+                                العام.
+  - require_permission       : عمليات حساسة تستحق override فردي
 
 timeshare_agent workflow:
-  1. admin ينشئ user بـ role='timeshare_agent'
-  2. admin يمنحه الصلاحيات المطلوبة عبر POST /api/v1/permissions:
-       timeshare.access / view          ← إلزامي (بوابة get_timeshare_user)
+  1. timeshare_admin (أو super_admin) ينشئ حساب عبر POST /timeshare/staff
+     (role='timeshare_agent' ثابت، مش قابل للاختيار — راجع
+     services.provision_timeshare_agent) — بيحصل تلقائيًا على
+     timeshare.access/view زي ما هو موضّح تحت.
+  2. صلاحيات إضافية اختيارية عبر POST /api/v1/permissions (timeshare_admin
+     أو super_admin بس):
        timeshare.contracts / view       ← عرض العقود
        timeshare.installments / view    ← عرض الأقساط
        timeshare.installments / collect ← تحصيل قسط (اختياري)
@@ -19,18 +32,33 @@ timeshare_agent workflow:
        timeshare.calendar / view        ← الكالندر
        timeshare.waitlist / view        ← قائمة الانتظار
        timeshare.waitlist / create      ← إضافة لقائمة الانتظار (اختياري)
-  3. العمليات الإدارية (إنشاء عقد، إلغاء، نقل وحدة، تقارير) تبقى manager فقط.
+       timeshare.visit_requests / view    ← عرض طلبات زيارة العملاء
+       timeshare.support_tickets / view    ← عرض تذاكر دعم العملاء
+       timeshare.support_tickets / respond ← الرد على تذكرة دعم
+  3. العمليات الإدارية (إنشاء عقد، إلغاء، نقل وحدة، تقارير، الموافقة/رفض
+     طلب زيارة، إدارة موظفي التايم شير) تبقى timeshare_admin فقط — طلب
+     Mohamed صريح: "المسؤول هو اللي يوافق ويحدد الأسبوع".
+
+الإيرادات المالية لسه بترحّل وتظهر للمحاسبة/الإدارة العامة زي ما هي بالظبط
+(post_simple_revenue_journal، حسابات 4600/4650) — العزل هنا للبيانات
+التشغيلية/بيانات العملاء بس، مش الأثر المحاسبي.
+
+بوابة العميل العامة (/timeshare/public/*، 2026-08-03): endpoints بدون auth
+خالص، محمية بـOTP (رقم عقد + رقم موبايل مسجّل → كود واتساب) بعدها JWT
+قصير العمر (X-Timeshare-Owner-Token header، مش query param — جلسة بتتعاد
+استخدامها لأكتر من نداء، مش رابط استُخدم مرة واحدة زي survey token). راجع
+services.py's "Owner Portal" section للتفاصيل الكاملة.
 """
 from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 
 from app.core.deps import (
     DbDep,
-    get_manager_user,
+    get_timeshare_admin_user,
     get_timeshare_user,
     require_permission,
 )
@@ -40,8 +68,15 @@ from app.modules.timeshare.schemas import (
     PayMaintenanceDueRequest, TimeshareMaintenanceDueRead,
     TimeshareCancelRequest, TimeshareUnitTransferRequest,
     TimeshareContractCreate, TimeshareContractRead, TimeshareContractUpdate,
+    TimeshareOwnerContractRead, TimeshareOwnerVerifyConfirm, TimeshareOwnerVerifyRequest,
+    TimeshareOwnerPortalToken,
+    TimeshareStaffCreate, TimeshareStaffProvisioned, TimeshareStaffRead, TimeshareStaffStatusUpdate,
+    TimeshareSupportTicketCreate, TimeshareSupportTicketRead,
+    TimeshareTicketReplyCreate, TimeshareTicketStatusUpdate,
     TimeshareUnitRead,
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
+    TimeshareVisitRequestApprove, TimeshareVisitRequestCreate,
+    TimeshareVisitRequestReject, TimeshareVisitRequestRead,
     WaitlistCreate, WaitlistRead,
     ImportContractsResponse,
 )
@@ -89,8 +124,8 @@ def list_contracts(
 
 @router.post("/timeshare/contracts", response_model=TimeshareContractRead,
              status_code=status.HTTP_201_CREATED,
-             dependencies=[Depends(require_permission("timeshare.contracts", "create", min_role_level=60))])
-def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_manager_user)):
+             dependencies=[Depends(require_permission("timeshare.contracts", "create", min_role_level=55))])
+def create_contract(data: TimeshareContractCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
     _assert_timeshare_branch(db, user, data.branch_id, "إنشاء عقد تايم شير")
     try:
         return services.create_contract(db, data, signed_by=user.id)
@@ -106,9 +141,9 @@ def get_contract(contract_id: int, db: DbDep, user=Depends(get_timeshare_user)):
 
 
 @router.patch("/timeshare/contracts/{contract_id}", response_model=TimeshareContractRead,
-              dependencies=[Depends(require_permission("timeshare.contracts", "edit", min_role_level=60))])
+              dependencies=[Depends(require_permission("timeshare.contracts", "edit", min_role_level=55))])
 def update_contract(contract_id: int, data: TimeshareContractUpdate, db: DbDep,
-                    user=Depends(get_manager_user)):
+                    user=Depends(get_timeshare_admin_user)):
     c = _get_contract_or_404(db, contract_id)
     _assert_timeshare_branch(db, user, c.branch_id, "تعديل عقد تايم شير")
     try:
@@ -165,7 +200,7 @@ def pay_installment(inst_id: int, req: PayInstallmentRequest, db: DbDep,
 @router.get("/timeshare/installments/monthly-report", response_model=None)
 def download_monthly_collection_report(
     db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_timeshare_admin_user),
     branch_id: int = Query(...),
     month: str = Query(..., pattern=r"^\d{4}-\d{2}$", description="YYYY-MM"),
 ):
@@ -241,9 +276,9 @@ def pay_maintenance_due(due_id: int, req: PayMaintenanceDueRequest, db: DbDep,
 
 
 @router.post("/timeshare/maintenance-dues/generate", response_model=None,
-             dependencies=[Depends(require_permission("timeshare.maintenance_dues", "generate", min_role_level=60))])
+             dependencies=[Depends(require_permission("timeshare.maintenance_dues", "generate", min_role_level=55))])
 def generate_maintenance_dues(
-    db: DbDep, user=Depends(get_manager_user),
+    db: DbDep, user=Depends(get_timeshare_admin_user),
     branch_id: int = Query(...),
     fee_year: int = Query(..., ge=2026, le=2100),
 ):
@@ -307,7 +342,7 @@ def get_sales_dashboard(db: DbDep, user=Depends(get_timeshare_user), branch_id: 
 
 
 @router.get("/timeshare/sales-dashboard/export", response_model=None)
-def download_sales_dashboard_excel(db: DbDep, user=Depends(get_manager_user), branch_id: int = Query(...)):
+def download_sales_dashboard_excel(db: DbDep, user=Depends(get_timeshare_admin_user), branch_id: int = Query(...)):
     _assert_timeshare_branch(db, user, branch_id, "تصدير لوحة المبيعات")
     xlsx = services.generate_sales_dashboard_excel(db, branch_id)
     return Response(
@@ -359,10 +394,10 @@ def get_stats(db: DbDep, user=Depends(get_timeshare_user), branch_id: int = Quer
 # ── Contract Actions (manager only) ─────────────────────────────────
 
 @router.post("/timeshare/contracts/{contract_id}/cancel", response_model=TimeshareContractRead,
-             dependencies=[Depends(require_permission("timeshare.cancel_contract", "execute", min_role_level=60))])
+             dependencies=[Depends(require_permission("timeshare.cancel_contract", "execute", min_role_level=55))])
 def cancel_contract(
     contract_id: int, data: TimeshareCancelRequest, db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_timeshare_admin_user),
 ):
     c = _get_contract_or_404(db, contract_id)
     _assert_timeshare_branch(db, user, c.branch_id, "إلغاء عقد تايم شير")
@@ -375,7 +410,7 @@ def cancel_contract(
 @router.post("/timeshare/contracts/{contract_id}/transfer-unit", response_model=TimeshareContractRead)
 def transfer_unit(
     contract_id: int, data: TimeshareUnitTransferRequest, db: DbDep,
-    user=Depends(get_manager_user),
+    user=Depends(get_timeshare_admin_user),
 ):
     c = _get_contract_or_404(db, contract_id)
     _assert_timeshare_branch(db, user, c.branch_id, "نقل وحدة عقد تايم شير")
@@ -444,7 +479,7 @@ def list_units(
 async def import_contracts_excel(
     file: UploadFile, db: DbDep,
     branch_id: int = Query(...),
-    user=Depends(get_manager_user),
+    user=Depends(get_timeshare_admin_user),
 ):
     _assert_timeshare_branch(db, user, branch_id, "استيراد عقود من Excel")
     try:
@@ -452,3 +487,265 @@ async def import_contracts_excel(
         return services.import_contracts_excel(db, branch_id, content, signed_by=user.id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Owner Portal — بوابة صاحب العقد العامة (بدون auth، محمية بـOTP + JWT)
+# راجع docstring services.py's "Owner Portal" section للتصميم الكامل.
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _resolve_owner_token(x_owner_token: str) -> int:
+    try:
+        return services.verify_owner_portal_token(x_owner_token)
+    except services.OwnerVerificationError as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, str(exc))
+
+
+@router.post("/timeshare/public/verify-request", response_model=None)
+def owner_portal_verify_request(data: TimeshareOwnerVerifyRequest, db: DbDep):
+    """⚠️ الرد دايمًا نفس الرسالة العامة بغض النظر عن صحة البيانات —
+    راجع services.request_owner_otp لمنطق الحماية من enumeration."""
+    services.request_owner_otp(db, data.contract_number.strip(), data.phone.strip())
+    return {"message": "لو البيانات صحيحة، وصلك كود تحقق على واتساب الآن"}
+
+
+@router.post("/timeshare/public/verify-confirm", response_model=TimeshareOwnerPortalToken)
+def owner_portal_verify_confirm(data: TimeshareOwnerVerifyConfirm, db: DbDep):
+    from app.core.config import settings  # noqa: PLC0415
+
+    try:
+        token = services.confirm_owner_otp(db, data.contract_number.strip(), data.otp_code.strip())
+    except services.OwnerVerificationError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    return TimeshareOwnerPortalToken(
+        token=token, expires_in_minutes=settings.TIMESHARE_PORTAL_TOKEN_TTL_MINUTES,
+    )
+
+
+@router.get("/timeshare/public/my-contract", response_model=TimeshareOwnerContractRead)
+def owner_portal_my_contract(
+    db: DbDep, x_owner_token: str = Header(..., alias="X-Timeshare-Owner-Token"),
+):
+    contract_id = _resolve_owner_token(x_owner_token)
+    contract = crud.get_contract(db, contract_id)
+    if not contract:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "العقد غير موجود")
+    read = TimeshareOwnerContractRead.model_validate(contract)
+    read.unit_number = contract.unit.unit_number if contract.unit else None
+    return read
+
+
+@router.get("/timeshare/public/my-payments", response_model=None)
+def owner_portal_my_payments(
+    db: DbDep, x_owner_token: str = Header(..., alias="X-Timeshare-Owner-Token"),
+):
+    contract_id = _resolve_owner_token(x_owner_token)
+    contract = crud.get_contract(db, contract_id)
+    if not contract:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "العقد غير موجود")
+    return {
+        "installments": [InstallmentRead.model_validate(i) for i in contract.installments_list],
+        "maintenance_dues": [TimeshareMaintenanceDueRead.model_validate(d) for d in contract.maintenance_dues_list],
+    }
+
+
+@router.post("/timeshare/public/visit-requests", response_model=TimeshareVisitRequestRead,
+             status_code=status.HTTP_201_CREATED)
+def owner_portal_create_visit_request(
+    data: TimeshareVisitRequestCreate, db: DbDep,
+    x_owner_token: str = Header(..., alias="X-Timeshare-Owner-Token"),
+):
+    contract_id = _resolve_owner_token(x_owner_token)
+    try:
+        return services.request_visit(db, contract_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/timeshare/public/visit-requests", response_model=list[TimeshareVisitRequestRead])
+def owner_portal_list_visit_requests(
+    db: DbDep, x_owner_token: str = Header(..., alias="X-Timeshare-Owner-Token"),
+):
+    contract_id = _resolve_owner_token(x_owner_token)
+    return [
+        TimeshareVisitRequestRead.model_validate(r)
+        for r in crud.list_visit_requests_for_contract(db, contract_id)
+    ]
+
+
+@router.post("/timeshare/public/support-tickets", response_model=TimeshareSupportTicketRead,
+             status_code=status.HTTP_201_CREATED)
+def owner_portal_create_support_ticket(
+    data: TimeshareSupportTicketCreate, db: DbDep,
+    x_owner_token: str = Header(..., alias="X-Timeshare-Owner-Token"),
+):
+    contract_id = _resolve_owner_token(x_owner_token)
+    try:
+        return services.submit_support_ticket(db, contract_id, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/timeshare/public/support-tickets", response_model=list[TimeshareSupportTicketRead])
+def owner_portal_list_support_tickets(
+    db: DbDep, x_owner_token: str = Header(..., alias="X-Timeshare-Owner-Token"),
+):
+    contract_id = _resolve_owner_token(x_owner_token)
+    return [
+        TimeshareSupportTicketRead.model_validate(t)
+        for t in crud.list_support_tickets_for_contract(db, contract_id)
+    ]
+
+
+@router.post("/timeshare/public/support-tickets/{ticket_id}/reply", response_model=TimeshareSupportTicketRead)
+def owner_portal_reply_to_ticket(
+    ticket_id: int, data: TimeshareTicketReplyCreate, db: DbDep,
+    x_owner_token: str = Header(..., alias="X-Timeshare-Owner-Token"),
+):
+    contract_id = _resolve_owner_token(x_owner_token)
+    ticket = crud.get_support_ticket(db, ticket_id)
+    if not ticket or ticket.contract_id != contract_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "التذكرة غير موجودة")
+    try:
+        services.reply_to_ticket(db, ticket_id, data.message, author_type="owner")
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    db.refresh(ticket)
+    return TimeshareSupportTicketRead.model_validate(ticket)
+
+
+# ── Visit Requests (staff review) ────────────────────────────────────
+
+@router.get("/timeshare/visit-requests", response_model=list[TimeshareVisitRequestRead],
+            dependencies=[Depends(require_permission("timeshare.visit_requests", "view", min_role_level=25))])
+def list_visit_requests(
+    db: DbDep, user=Depends(get_timeshare_user),
+    branch_id: int = Query(...),
+    status_filter: Optional[str] = Query(None, alias="status"),
+):
+    _assert_timeshare_branch(db, user, branch_id, "عرض طلبات زيارة العملاء")
+    result = []
+    for r in crud.list_visit_requests_for_branch(db, branch_id, status_filter):
+        read = TimeshareVisitRequestRead.model_validate(r)
+        if r.contract is not None:
+            read.customer_name = r.contract.customer_name
+            read.customer_phone = r.contract.customer_phone
+            read.contract_number = r.contract.contract_number
+        result.append(read)
+    return result
+
+
+@router.post("/timeshare/visit-requests/{request_id}/approve", response_model=TimeshareVisitRequestRead,
+             dependencies=[Depends(require_permission("timeshare.visit_requests", "approve", min_role_level=55))])
+def approve_visit_request(request_id: int, data: TimeshareVisitRequestApprove, db: DbDep,
+                          user=Depends(get_timeshare_admin_user)):
+    req = crud.get_visit_request(db, request_id)
+    if not req:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"طلب الزيارة {request_id} غير موجود")
+    _assert_timeshare_branch(db, user, req.branch_id, "الموافقة على طلب زيارة")
+    try:
+        return services.approve_visit_request(db, request_id, data.check_in, data.check_out, approved_by=user.id)
+    except services.VisitConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/timeshare/visit-requests/{request_id}/reject", response_model=TimeshareVisitRequestRead,
+             dependencies=[Depends(require_permission("timeshare.visit_requests", "approve", min_role_level=55))])
+def reject_visit_request(request_id: int, data: TimeshareVisitRequestReject, db: DbDep,
+                         user=Depends(get_timeshare_admin_user)):
+    req = crud.get_visit_request(db, request_id)
+    if not req:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"طلب الزيارة {request_id} غير موجود")
+    _assert_timeshare_branch(db, user, req.branch_id, "رفض طلب زيارة")
+    try:
+        return services.reject_visit_request(db, request_id, data.reason, reviewed_by=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Support Tickets (خدمة عملاء التايم شير، staff) ───────────────────
+
+@router.get("/timeshare/support-tickets", response_model=list[TimeshareSupportTicketRead],
+            dependencies=[Depends(require_permission("timeshare.support_tickets", "view", min_role_level=25))])
+def list_support_tickets(
+    db: DbDep, user=Depends(get_timeshare_user),
+    branch_id: int = Query(...),
+    status_filter: Optional[str] = Query(None, alias="status"),
+):
+    _assert_timeshare_branch(db, user, branch_id, "عرض تذاكر دعم التايم شير")
+    result = []
+    for t in crud.list_support_tickets_for_branch(db, branch_id, status_filter):
+        read = TimeshareSupportTicketRead.model_validate(t)
+        if t.contract is not None:
+            read.customer_name = t.contract.customer_name
+            read.contract_number = t.contract.contract_number
+        result.append(read)
+    return result
+
+
+@router.post("/timeshare/support-tickets/{ticket_id}/reply", response_model=TimeshareSupportTicketRead,
+             dependencies=[Depends(require_permission("timeshare.support_tickets", "respond", min_role_level=25))])
+def staff_reply_to_ticket(ticket_id: int, data: TimeshareTicketReplyCreate, db: DbDep,
+                          user=Depends(get_timeshare_user)):
+    ticket = crud.get_support_ticket(db, ticket_id)
+    if not ticket:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"تذكرة الدعم {ticket_id} غير موجودة")
+    _assert_timeshare_branch(db, user, ticket.branch_id, "الرد على تذكرة دعم")
+    try:
+        services.reply_to_ticket(db, ticket_id, data.message, author_type="staff", author_user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    db.refresh(ticket)
+    return TimeshareSupportTicketRead.model_validate(ticket)
+
+
+@router.patch("/timeshare/support-tickets/{ticket_id}", response_model=TimeshareSupportTicketRead,
+              dependencies=[Depends(require_permission("timeshare.support_tickets", "respond", min_role_level=25))])
+def update_support_ticket_status(ticket_id: int, data: TimeshareTicketStatusUpdate, db: DbDep,
+                                 user=Depends(get_timeshare_user)):
+    ticket = crud.get_support_ticket(db, ticket_id)
+    if not ticket:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"تذكرة الدعم {ticket_id} غير موجودة")
+    _assert_timeshare_branch(db, user, ticket.branch_id, "تعديل حالة تذكرة دعم")
+    try:
+        return services.update_ticket_status(db, ticket_id, data.status)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Timeshare Staff — مدير التايم شير بيدير موظفي وحدته (طلب Mohamed 2026-08-03).
+# timeshare_admin فقط (أو super_admin) — مفيش أي مسار تفويض لـtimeshare_agent
+# نفسه، فمفيش داعي لـrequire_permission override هنا زي باقي الـendpoints —
+# get_timeshare_admin_user وحدها كافية، نفس نمط download_contract_pdf.
+# ═══════════════════════════════════════════════════════════════════════════
+
+@router.post("/timeshare/staff", response_model=TimeshareStaffProvisioned,
+             status_code=status.HTTP_201_CREATED)
+def create_timeshare_staff(data: TimeshareStaffCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
+    _assert_timeshare_branch(db, user, data.branch_id, "إنشاء حساب موظف تايم شير")
+    try:
+        return services.provision_timeshare_agent(
+            db, email=data.email, full_name=data.full_name, phone=data.phone,
+            branch_id=data.branch_id, created_by=user.id,
+            preferred_language=data.preferred_language,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/timeshare/staff", response_model=list[TimeshareStaffRead])
+def list_timeshare_staff(db: DbDep, user=Depends(get_timeshare_admin_user), branch_id: int = Query(...)):
+    _assert_timeshare_branch(db, user, branch_id, "عرض موظفي التايم شير")
+    return [TimeshareStaffRead.model_validate(u) for u in services.list_timeshare_staff(db, branch_id)]
+
+
+@router.patch("/timeshare/staff/{staff_user_id}", response_model=TimeshareStaffRead)
+def update_timeshare_staff_status(staff_user_id: int, data: TimeshareStaffStatusUpdate, db: DbDep,
+                                  user=Depends(get_timeshare_admin_user)):
+    try:
+        return services.set_timeshare_staff_active(db, staff_user_id, data.is_active)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))

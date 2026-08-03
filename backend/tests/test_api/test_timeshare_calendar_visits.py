@@ -26,7 +26,7 @@ def _make_branch(db):
     db.add(b)
     db.commit()
     # Gate 4B: عمليات التايم شير بقت تفرض branch isolation server-side
-    # (2026-07-28) — manager_headers المشترك بيتربط (upsert) تلقائيًا بأحدث
+    # (2026-07-28) — timeshare_admin_headers المشترك بيتربط (upsert) تلقائيًا بأحدث
     # فرع اتعمل، زي test_timeshare_http.py's make_branch_committed بالظبط.
     # test_calendar_other_branch_isolated (بتعمل فرعين) بترجّع الربط يدويًا
     # لـbranch_a بعد إنشاء branch_b — راجع تعليقها هناك.
@@ -38,7 +38,7 @@ def _link_shared_users_to_branch(db, branch_id: int) -> None:
     from app.core.kernel.models.user import User
     from tests.conftest import assign_test_user_to_branch
 
-    user = db.query(User).filter(User.email == "manager@test.local").first()
+    user = db.query(User).filter(User.email == "timeshare-admin@test.local").first()
     if user:
         assign_test_user_to_branch(db, user.id, branch_id)
     db.commit()
@@ -90,7 +90,7 @@ def _make_visit(db, contract, branch_id, check_in, check_out, status="scheduled"
 class TestCalendarIncludesVisits:
     """الكالندر يعرض الزيارات الفعلية بجانب العقود الثابتة."""
 
-    def test_fixed_contract_appears_in_calendar(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_fixed_contract_appears_in_calendar(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """عقد ثابت (week_number=15) يظهر في الكالندر بـ source=contract."""
         branch = _make_branch(db)
         contract = _make_contract(db, branch.id, week_number=15)
@@ -99,7 +99,7 @@ class TestCalendarIncludesVisits:
         resp = client.get(
             "/api/v1/timeshare/calendar",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -114,7 +114,7 @@ class TestCalendarIncludesVisits:
         assert any(e["id"] == contract.id for e in contract_entries), \
             "العقد الثابت لم يظهر بـ source=contract في الكالندر"
 
-    def test_floating_visit_appears_in_calendar(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_floating_visit_appears_in_calendar(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """زيارة فعلية (عقد عائم) تظهر في الكالندر بـ source=visit."""
         branch = _make_branch(db)
         contract = _make_contract(db, branch.id, week_number=None)  # عائم
@@ -128,7 +128,7 @@ class TestCalendarIncludesVisits:
         resp = client.get(
             "/api/v1/timeshare/calendar",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -143,7 +143,7 @@ class TestCalendarIncludesVisits:
         assert len(visit_entries) >= 1, "الزيارة الفعلية لم تظهر في الكالندر"
         assert visit_entries[0]["visit_id"] is not None
 
-    def test_calendar_entry_has_booking_frozen_flag(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_calendar_entry_has_booking_frozen_flag(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """العقد المجمَّد يظهر بـ booking_frozen=True في الكالندر."""
         branch = _make_branch(db)
         contract = _make_contract(db, branch.id, week_number=30)
@@ -154,7 +154,7 @@ class TestCalendarIncludesVisits:
         resp = client.get(
             "/api/v1/timeshare/calendar",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -169,7 +169,7 @@ class TestCalendarIncludesVisits:
         assert frozen_entries, "العقد لم يظهر في الكالندر"
         assert frozen_entries[0]["booking_frozen"] is True
 
-    def test_calendar_visit_source_has_visit_status(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_calendar_visit_source_has_visit_status(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """زيارة بـ status=completed تظهر في الكالندر بـ visit_status=completed."""
         branch = _make_branch(db)
         contract = _make_contract(db, branch.id, week_number=None)
@@ -181,7 +181,7 @@ class TestCalendarIncludesVisits:
         resp = client.get(
             "/api/v1/timeshare/calendar",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -195,7 +195,7 @@ class TestCalendarIncludesVisits:
         visit_entries = [e for e in all_entries if e.get("source") == "visit"]
         assert any(e["visit_status"] == "completed" for e in visit_entries)
 
-    def test_cancelled_visit_excluded_from_calendar(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_cancelled_visit_excluded_from_calendar(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """زيارة ملغاة لا تظهر في الكالندر."""
         branch = _make_branch(db)
         contract = _make_contract(db, branch.id, week_number=None)
@@ -207,7 +207,7 @@ class TestCalendarIncludesVisits:
         resp = client.get(
             "/api/v1/timeshare/calendar",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -221,11 +221,11 @@ class TestCalendarIncludesVisits:
         assert not any(e.get("visit_id") == visit.id for e in all_entries), \
             "زيارة ملغاة ظهرت في الكالندر"
 
-    def test_calendar_other_branch_isolated(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_calendar_other_branch_isolated(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """زيارات فرع آخر لا تظهر في الكالندر."""
         branch_a = _make_branch(db)
         branch_b = _make_branch(db)
-        # _make_branch بتربط manager_headers تلقائيًا بأحدث فرع (branch_b) —
+        # _make_branch بتربط timeshare_admin_headers تلقائيًا بأحدث فرع (branch_b) —
         # هنا محتاجينه يستعلم عن branch_a تحديدًا فبنرجّع الربط له صراحةً.
         _link_shared_users_to_branch(db, branch_a.id)
         contract_b = _make_contract(db, branch_b.id, week_number=None)
@@ -236,7 +236,7 @@ class TestCalendarIncludesVisits:
         resp = client.get(
             "/api/v1/timeshare/calendar",
             params={"branch_id": branch_a.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -254,7 +254,7 @@ class TestCalendarIncludesVisits:
 class TestAvailableWeeks:
     """الأسابيع المتاحة للبيع = 52 - محجوزة بعقود ثابتة - محجوزة بزيارات فعلية."""
 
-    def test_empty_branch_all_weeks_available(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_empty_branch_all_weeks_available(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """فرع بدون عقود → كل الأسابيع متاحة."""
         branch = _make_branch(db)
         year = date.today().year
@@ -262,14 +262,14 @@ class TestAvailableWeeks:
         resp = client.get(
             "/api/v1/timeshare/available-weeks",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
         assert data["total_booked"] == 0
         assert data["total_available"] >= 52
 
-    def test_fixed_contract_reduces_available(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_fixed_contract_reduces_available(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """عقد ثابت في الأسبوع 10 يُقلّل الأسابيع المتاحة."""
         branch = _make_branch(db)
         _make_contract(db, branch.id, week_number=10)
@@ -278,7 +278,7 @@ class TestAvailableWeeks:
         resp = client.get(
             "/api/v1/timeshare/available-weeks",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
@@ -286,7 +286,7 @@ class TestAvailableWeeks:
         week_nums = [w["week"] for w in data["available_weeks"]]
         assert 10 not in week_nums
 
-    def test_floating_visit_reduces_available(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_floating_visit_reduces_available(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """زيارة مجدولة (عقد عائم) تُقلّل الأسابيع المتاحة."""
         branch = _make_branch(db)
         contract = _make_contract(db, branch.id, week_number=None)
@@ -297,14 +297,14 @@ class TestAvailableWeeks:
         resp = client.get(
             "/api/v1/timeshare/available-weeks",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()
         week_nums = [w["week"] for w in data["available_weeks"]]
         assert 22 not in week_nums
 
-    def test_room_type_filter(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_room_type_filter(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """فلتر room_type يعزل النتائج — عقد 2R لا يؤثر على متاح 4R."""
         branch = _make_branch(db)
         _make_contract(db, branch.id, week_number=5, room_type="2R")
@@ -313,12 +313,12 @@ class TestAvailableWeeks:
         resp_2r = client.get(
             "/api/v1/timeshare/available-weeks",
             params={"branch_id": branch.id, "year": year, "room_type": "2R"},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         resp_4r = client.get(
             "/api/v1/timeshare/available-weeks",
             params={"branch_id": branch.id, "year": year, "room_type": "4R"},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp_2r.status_code == 200
         assert resp_4r.status_code == 200
@@ -328,24 +328,24 @@ class TestAvailableWeeks:
         assert 5 not in avail_2r, "الأسبوع 5 يجب أن يكون محجوزاً في 2R"
         assert 5 in avail_4r, "الأسبوع 5 يجب أن يكون متاحاً في 4R"
 
-    def test_invalid_room_type_rejected(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_invalid_room_type_rejected(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """نوع غرفة غير صالح يُرفض بـ 422."""
         branch = _make_branch(db)
         resp = client.get(
             "/api/v1/timeshare/available-weeks",
             params={"branch_id": branch.id, "year": date.today().year, "room_type": "XXX"},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 422
 
-    def test_response_structure(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_response_structure(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """الـ response فيه الحقول المطلوبة كلها."""
         branch = _make_branch(db)
         year = date.today().year
         resp = client.get(
             "/api/v1/timeshare/available-weeks",
             params={"branch_id": branch.id, "year": year},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         data = resp.json()

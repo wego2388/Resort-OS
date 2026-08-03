@@ -98,7 +98,12 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "label_ar": "إلغاء عقد تايم شير",
         "label_en": "Cancel a timeshare contract",
         "module": "timeshare",
-        "min_role_level": 60,
+        # min_role_level=55 عمدًا (مش 60) — طلب Mohamed 2026-08-03: عمليات
+        # التايم شير الإدارية بقت gated بـget_timeshare_admin_user
+        # (role='timeshare_admin'، level=55 عمدًا) مش get_manager_user
+        # العام؛ لازم الرقم هنا يطابق عشان مدير التايم شير الفعلي (55) يعدي
+        # من الـrequire_permission fallback زي ما يعدي من بوابة الـrole.
+        "min_role_level": 55,
         "endpoint": "POST /timeshare/contracts/{contract_id}/cancel",
     },
     {
@@ -295,7 +300,7 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "label_ar": "إنشاء عقد تايم شير",
         "label_en": "Create a timeshare contract",
         "module": "timeshare",
-        "min_role_level": 60,
+        "min_role_level": 55,  # يطابق get_timeshare_admin_user — راجع تعليق timeshare.cancel_contract فوق
         "endpoint": "POST /timeshare/contracts",
     },
     {
@@ -304,7 +309,7 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "label_ar": "تعديل بيانات عقد تايم شير",
         "label_en": "Edit a timeshare contract",
         "module": "timeshare",
-        "min_role_level": 60,
+        "min_role_level": 55,
         "endpoint": "PATCH /timeshare/contracts/{contract_id}",
     },
     {
@@ -349,7 +354,7 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "label_ar": "توليد مستحقات الصيانة السنوية",
         "label_en": "Generate annual maintenance dues",
         "module": "timeshare",
-        "min_role_level": 60,
+        "min_role_level": 55,  # يطابق get_timeshare_admin_user — راجع تعليق timeshare.cancel_contract
         "endpoint": "POST /timeshare/maintenance-dues/generate",
     },
     {
@@ -405,6 +410,43 @@ PERMISSION_CATALOG: list[PermissionCatalogEntry] = [
         "module": "timeshare",
         "min_role_level": 25,
         "endpoint": "POST /timeshare/waitlist",
+    },
+    # ── Timeshare — بوابة العميل (طلبات الزيارة + خدمة العملاء، 2026-08-03) ──
+    {
+        "resource": "timeshare.visit_requests",
+        "action": "view",
+        "label_ar": "عرض طلبات زيارة العملاء",
+        "label_en": "View customer visit requests",
+        "module": "timeshare",
+        "min_role_level": 25,
+        "endpoint": "GET /timeshare/visit-requests",
+    },
+    {
+        "resource": "timeshare.visit_requests",
+        "action": "approve",
+        "label_ar": "الموافقة/رفض طلب زيارة",
+        "label_en": "Approve or reject a visit request",
+        "module": "timeshare",
+        "min_role_level": 55,  # يطابق get_timeshare_admin_user — راجع تعليق timeshare.cancel_contract
+        "endpoint": "POST /timeshare/visit-requests/{id}/approve|reject",
+    },
+    {
+        "resource": "timeshare.support_tickets",
+        "action": "view",
+        "label_ar": "عرض تذاكر دعم عملاء التايم شير",
+        "label_en": "View timeshare customer-service tickets",
+        "module": "timeshare",
+        "min_role_level": 25,
+        "endpoint": "GET /timeshare/support-tickets",
+    },
+    {
+        "resource": "timeshare.support_tickets",
+        "action": "respond",
+        "label_ar": "الرد على تذكرة دعم / تغيير حالتها",
+        "label_en": "Reply to a support ticket / change its status",
+        "module": "timeshare",
+        "min_role_level": 25,
+        "endpoint": "POST /timeshare/support-tickets/{id}/reply",
     },
 ]
 

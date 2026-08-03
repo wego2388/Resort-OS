@@ -76,7 +76,7 @@ const bootstrap = ref<BootstrapResult | null>(null)
 
 const roleValues = [
   'admin', 'accountant', 'hr_manager', 'manager', 'supervisor', 'receptionist',
-  'cashier', 'waiter', 'chef', 'kitchen', 'employee',
+  'cashier', 'waiter', 'chef', 'kitchen', 'timeshare_admin', 'timeshare_agent', 'employee',
 ]
 const roleOptions = computed(() => roleValues.map(role => ({
   value: role, label: t(`backoffice.permissions.roles.${role}`, role),

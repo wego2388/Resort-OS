@@ -3823,6 +3823,8 @@
         "waiter": "Waiter",
         "chef": "Chef",
         "kitchen": "Kitchen",
+        "timeshare_admin": "Timeshare Admin",
+        "timeshare_agent": "Timeshare Agent",
         "employee": "Employee"
       },
       "modules": {
@@ -5853,7 +5855,10 @@
         "calendar": "Calendar",
         "clients": "Clients",
         "installments": "Installments",
-        "maintenance": "Maintenance"
+        "maintenance": "Maintenance",
+        "requests": "Visit Requests",
+        "support": "Support",
+        "staff": "Staff"
       },
       "activeContracts": "Active contracts",
       "collectionRate": "Collection rate",
@@ -5999,7 +6004,22 @@
         "transferReasonRequired": "A transfer reason is required (at least 3 characters)",
         "unitTransferred": "Unit transferred",
         "transferError": "Couldn't transfer the unit",
-        "importError": "Import failed"
+        "importError": "Import failed",
+        "loadRequestsError": "Failed to load visit requests",
+        "requestApproved": "Visit request approved",
+        "requestApproveError": "Failed to approve the request",
+        "requestRejected": "Visit request rejected",
+        "requestRejectError": "Failed to reject the request",
+        "loadTicketsError": "Failed to load support tickets",
+        "replyError": "Failed to send the reply",
+        "ticketStatusUpdated": "Ticket status updated",
+        "ticketStatusError": "Failed to update ticket status",
+        "loadStaffError": "Failed to load timeshare staff",
+        "createStaffError": "Failed to create the staff account",
+        "staffStatusUpdated": "Staff account status updated",
+        "staffStatusError": "Failed to update staff account status",
+        "reportError": "Failed to download the report",
+        "pdfError": "Failed to download the PDF"
       },
       "scheduleVisit": {
         "btnLabel": "Schedule Visit",
@@ -6017,7 +6037,48 @@
         "statusUpdated": "Visit status updated",
         "statusError": "Failed to update status"
       },
-      "confirmStatusChange": "Confirm status change from {from} to {to}?"
+      "confirmStatusChange": "Confirm status change from {from} to {to}?",
+      "loadingRequests": "Loading visit requests...",
+      "loadingTickets": "Loading support tickets...",
+      "loadingStaff": "Loading timeshare staff...",
+      "approve": "Approve",
+      "reject": "Reject",
+      "approveRequestTitle": "Approve visit request",
+      "approveRequestHint": "You decide the actual dates and unit — they don't have to match the customer's preference.",
+      "confirmApprove": "Confirm approval",
+      "rejectRequestTitle": "Reject visit request",
+      "rejectionReason": "Reason for rejection",
+      "reasonTooShort": "The reason must be at least 3 characters",
+      "confirmReject": "Confirm rejection",
+      "requestStatus": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "rejected": "Rejected"
+      },
+      "ticketStatus": {
+        "open": "Open",
+        "in_progress": "In Progress",
+        "resolved": "Resolved",
+        "closed": "Closed"
+      },
+      "ticketFromOwner": "Owner",
+      "ticketFromStaff": "Staff",
+      "ticketReplyPlaceholder": "Type your reply...",
+      "send": "Send",
+      "newStaff": "New Staff Member",
+      "staffFullName": "Full name",
+      "staffEmail": "Email",
+      "staffPhone": "Phone",
+      "staffFormRequired": "Full name and email are required",
+      "createStaff": "Create Account",
+      "staffCredentialsWarning": "Save these credentials now — the temporary password won't be shown again.",
+      "staffTempPassword": "Temporary password",
+      "done": "Done",
+      "staffActive": "Active",
+      "staffInactive": "Inactive",
+      "deactivate": "Deactivate",
+      "downloadMonthlyReport": "Download Excel Report",
+      "downloadPdf": "Contract PDF"
     },
     "leasing": {
       "title": "Commercial Lease Contracts",

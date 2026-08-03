@@ -156,6 +156,19 @@ _LIMITED_ROUTES: dict[tuple[str, str], tuple[str, int, int]] = {
     ("POST", "/api/v1/chat/conversations/start"):    ("public", 30, 60),
     ("POST", "/api/v1/chat/conversations/rate"):     ("public", 20, 60),
     ("POST", "/api/v1/chat/conversations/end"):      ("public", 20, 60),
+    # بوابة عميل التايم شير العامة (2026-08-03) — طبقة حماية إضافية على
+    # مستوى IP فوق الحدود الداخلية بالفعل (per-contract/per-phone) في
+    # services.request_owner_otp/confirm_owner_otp. verify-request/confirm
+    # أضيق بكتير من التصفح العادي — كود OTP لازم يتحمى من التخمين بالقوة
+    # الغاشمة، مش مجرد قراءة قائمة مجانية.
+    ("POST", "/api/v1/timeshare/public/verify-request"): ("timeshare-otp", 5, 300),
+    ("POST", "/api/v1/timeshare/public/verify-confirm"): ("timeshare-otp", 10, 300),
+    ("GET",  "/api/v1/timeshare/public/my-contract"):     ("public", 30, 60),
+    ("GET",  "/api/v1/timeshare/public/my-payments"):     ("public", 30, 60),
+    ("POST", "/api/v1/timeshare/public/visit-requests"):  ("public", 20, 60),
+    ("GET",  "/api/v1/timeshare/public/visit-requests"):  ("public", 30, 60),
+    ("POST", "/api/v1/timeshare/public/support-tickets"): ("public", 20, 60),
+    ("GET",  "/api/v1/timeshare/public/support-tickets"): ("public", 30, 60),
 }
 
 

@@ -34,7 +34,7 @@ def _link_shared_users_to_branch(db, branch_id: int) -> None:
     from app.core.kernel.models.user import User
     from tests.conftest import assign_test_user_to_branch
 
-    for email in ("cashier@test.local", "manager@test.local"):
+    for email in ("cashier@test.local", "manager@test.local", "timeshare-admin@test.local"):
         user = db.query(User).filter(User.email == email).first()
         if user:
             assign_test_user_to_branch(db, user.id, branch_id)
@@ -113,7 +113,7 @@ def _make_installment(db, contract_id, due_date, amount=Decimal("5000"), status=
 class TestMonthlyCollectionReport:
     """اختبارات تقرير التحصيل الشهري."""
 
-    def test_returns_excel_content_type(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_returns_excel_content_type(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """الـ endpoint يُرجع ملف Excel."""
         branch = _make_branch(db)
         month = date.today().strftime("%Y-%m")
@@ -121,13 +121,13 @@ class TestMonthlyCollectionReport:
         resp = client.get(
             "/api/v1/timeshare/installments/monthly-report",
             params={"branch_id": branch.id, "month": month},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         assert "spreadsheetml" in resp.headers["content-type"]
         assert len(resp.content) > 0
 
-    def test_correct_filename_in_header(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_correct_filename_in_header(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """اسم الملف في الـ header يحتوي على الشهر."""
         branch = _make_branch(db)
         month = "2026-07"
@@ -135,28 +135,28 @@ class TestMonthlyCollectionReport:
         resp = client.get(
             "/api/v1/timeshare/installments/monthly-report",
             params={"branch_id": branch.id, "month": month},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         assert "2026-07" in resp.headers.get("content-disposition", "")
 
-    def test_invalid_month_format_rejected(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_invalid_month_format_rejected(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """صيغة شهر خاطئة تُرفض بـ 422."""
         branch = _make_branch(db)
         resp = client.get(
             "/api/v1/timeshare/installments/monthly-report",
             params={"branch_id": branch.id, "month": "07-2026"},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 422
 
-    def test_invalid_month_number_rejected(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_invalid_month_number_rejected(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """شهر 13 أو 00 يُرفض بـ 400."""
         branch = _make_branch(db)
         resp = client.get(
             "/api/v1/timeshare/installments/monthly-report",
             params={"branch_id": branch.id, "month": "2026-13"},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 400
 
@@ -170,18 +170,18 @@ class TestMonthlyCollectionReport:
         )
         assert resp.status_code == 403
 
-    def test_empty_month_returns_excel_not_error(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_empty_month_returns_excel_not_error(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """شهر بدون أقساط يُرجع Excel فارغ (مش 404 أو error)."""
         branch = _make_branch(db)
         resp = client.get(
             "/api/v1/timeshare/installments/monthly-report",
             params={"branch_id": branch.id, "month": "2010-01"},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
         assert "spreadsheetml" in resp.headers["content-type"]
 
-    def test_report_includes_installments_for_month(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_report_includes_installments_for_month(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """التقرير يشمل أقساط الشهر المطلوب — الـ Excel أكبر من التقرير الفارغ."""
         branch = _make_branch(db)
         manager = _make_manager(db)
@@ -194,13 +194,13 @@ class TestMonthlyCollectionReport:
         resp_with_data = client.get(
             "/api/v1/timeshare/installments/monthly-report",
             params={"branch_id": branch.id, "month": month},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         empty_branch = _make_branch(db)
         resp_empty = client.get(
             "/api/v1/timeshare/installments/monthly-report",
             params={"branch_id": empty_branch.id, "month": month},
-            headers=manager_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp_with_data.status_code == 200
         assert resp_empty.status_code == 200
@@ -213,7 +213,7 @@ class TestMonthlyCollectionReport:
 class TestInstallmentPaymentAuditLog:
     """تحصيل قسط يُسجّل AuditLog."""
 
-    def test_pay_installment_creates_audit_log(self, client: TestClient, db, fake_redis, cashier_headers):
+    def test_pay_installment_creates_audit_log(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """POST /timeshare/installments/{id}/pay يُنشئ سجل AuditLog."""
         branch = _make_branch(db)
         manager = _make_manager(db)
@@ -223,7 +223,7 @@ class TestInstallmentPaymentAuditLog:
         resp = client.post(
             f"/api/v1/timeshare/installments/{inst.id}/pay",
             json={"paid_amount": "2500.00", "payment_method": "cash"},
-            headers=cashier_headers,
+            headers=timeshare_admin_headers,
         )
         assert resp.status_code == 200
 
@@ -235,7 +235,7 @@ class TestInstallmentPaymentAuditLog:
         ).all()
         assert len(logs) >= 1, "لم يُنشأ AuditLog بعد تحصيل القسط"
 
-    def test_audit_log_has_correct_data(self, client: TestClient, db, fake_redis, cashier_headers):
+    def test_audit_log_has_correct_data(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """AuditLog يحتوي على new_data صحيحة (paid_amount + payment_method)."""
         import json
         branch = _make_branch(db)
@@ -246,7 +246,7 @@ class TestInstallmentPaymentAuditLog:
         client.post(
             f"/api/v1/timeshare/installments/{inst.id}/pay",
             json={"paid_amount": "3000.00", "payment_method": "card", "receipt_number": "RCP-001"},
-            headers=cashier_headers,
+            headers=timeshare_admin_headers,
         )
 
         from app.modules.core.models import AuditLog
@@ -260,7 +260,7 @@ class TestInstallmentPaymentAuditLog:
         assert new_data["receipt_number"] == "RCP-001"
         assert float(new_data["amount_paid_now"]) == 3000.0
 
-    def test_multiple_payments_create_multiple_logs(self, client: TestClient, db, fake_redis, cashier_headers):
+    def test_multiple_payments_create_multiple_logs(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """دفعتان على نفس القسط تُنشئان سجلّين منفصلَين."""
         from app.modules.core.models import AuditLog
         branch = _make_branch(db)
@@ -271,12 +271,12 @@ class TestInstallmentPaymentAuditLog:
         client.post(
             f"/api/v1/timeshare/installments/{inst.id}/pay",
             json={"paid_amount": "2000.00", "payment_method": "cash"},
-            headers=cashier_headers,
+            headers=timeshare_admin_headers,
         )
         client.post(
             f"/api/v1/timeshare/installments/{inst.id}/pay",
             json={"paid_amount": "2000.00", "payment_method": "bank_transfer"},
-            headers=cashier_headers,
+            headers=timeshare_admin_headers,
         )
 
         logs = db.query(AuditLog).filter(
@@ -286,7 +286,7 @@ class TestInstallmentPaymentAuditLog:
         ).all()
         assert len(logs) == 2
 
-    def test_audit_log_has_branch_id(self, client: TestClient, db, fake_redis, cashier_headers):
+    def test_audit_log_has_branch_id(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """AuditLog يحتوي على branch_id الصحيح."""
         from app.modules.core.models import AuditLog
         branch = _make_branch(db)
@@ -297,7 +297,7 @@ class TestInstallmentPaymentAuditLog:
         client.post(
             f"/api/v1/timeshare/installments/{inst.id}/pay",
             json={"paid_amount": "1000.00", "payment_method": "cash"},
-            headers=cashier_headers,
+            headers=timeshare_admin_headers,
         )
 
         log = db.query(AuditLog).filter(

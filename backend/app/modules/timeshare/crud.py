@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 
 from app.modules.timeshare.models import (
     TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
-    TimeshareUnit, TimeshareVisit, TimeshareWaitlist,
+    TimeshareSupportTicket, TimeshareSupportTicketReply,
+    TimeshareUnit, TimeshareVisit, TimeshareVisitRequest, TimeshareWaitlist,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate,
     PayInstallmentRequest, PayMaintenanceDueRequest,
-    TimeshareVisitCreate, TimeshareVisitUpdate, WaitlistCreate,
+    TimeshareSupportTicketCreate, TimeshareVisitCreate, TimeshareVisitRequestCreate,
+    TimeshareVisitUpdate, WaitlistCreate,
 )
 from app.core.config import settings
 from app.resort_os.timezone_utils import business_today
@@ -34,6 +36,12 @@ def _next_contract_number(db: Session) -> str:
 
 def get_contract(db: Session, contract_id: int) -> Optional[TimeshareContract]:
     return db.query(TimeshareContract).filter(TimeshareContract.id == contract_id).first()
+
+
+def get_contract_by_number(db: Session, contract_number: str) -> Optional[TimeshareContract]:
+    """بوابة العميل العامة (verify-request) — contract_number فريد عالميًا
+    (unique=True على العمود)، فمحتاجناش branch_id للبحث."""
+    return db.query(TimeshareContract).filter(TimeshareContract.contract_number == contract_number).first()
 
 
 def get_contract_by_form_number(db: Session, branch_id: int, form_number: str) -> Optional[TimeshareContract]:
@@ -715,3 +723,106 @@ def update_visit(db: Session, visit: TimeshareVisit, data: TimeshareVisitUpdate)
         setattr(visit, field, value)
     db.flush()
     return visit
+
+
+# ── Visit Requests (بوابة العميل العامة) ─────────────────────────────
+
+def create_visit_request(
+    db: Session, contract: TimeshareContract, data: TimeshareVisitRequestCreate,
+) -> TimeshareVisitRequest:
+    req = TimeshareVisitRequest(
+        branch_id=contract.branch_id, contract_id=contract.id,
+        preferred_start=data.preferred_start, preferred_end=data.preferred_end,
+        notes=data.notes,
+    )
+    db.add(req)
+    db.flush()
+    return req
+
+
+def get_visit_request(db: Session, request_id: int) -> Optional[TimeshareVisitRequest]:
+    return db.query(TimeshareVisitRequest).filter(TimeshareVisitRequest.id == request_id).first()
+
+
+def list_visit_requests_for_contract(db: Session, contract_id: int) -> list[TimeshareVisitRequest]:
+    return (
+        db.query(TimeshareVisitRequest)
+        .filter(TimeshareVisitRequest.contract_id == contract_id)
+        .order_by(TimeshareVisitRequest.created_at.desc())
+        .all()
+    )
+
+
+def list_visit_requests_for_branch(
+    db: Session, branch_id: int, status: Optional[str] = None,
+) -> list[TimeshareVisitRequest]:
+    from sqlalchemy.orm import contains_eager  # noqa: PLC0415
+
+    q = (
+        db.query(TimeshareVisitRequest)
+        .join(TimeshareContract, TimeshareContract.id == TimeshareVisitRequest.contract_id)
+        .options(contains_eager(TimeshareVisitRequest.contract))
+        .filter(TimeshareVisitRequest.branch_id == branch_id)
+    )
+    if status:
+        q = q.filter(TimeshareVisitRequest.status == status)
+    return q.order_by(TimeshareVisitRequest.created_at.desc()).all()
+
+
+# ── Support Tickets (بوابة العميل العامة) ────────────────────────────
+
+def create_support_ticket(
+    db: Session, contract: TimeshareContract, data: TimeshareSupportTicketCreate,
+) -> TimeshareSupportTicket:
+    ticket = TimeshareSupportTicket(
+        branch_id=contract.branch_id, contract_id=contract.id, subject=data.subject,
+    )
+    db.add(ticket)
+    db.flush()
+    reply = TimeshareSupportTicketReply(
+        ticket_id=ticket.id, author_type="owner", author_user_id=None, message=data.message,
+    )
+    db.add(reply)
+    db.flush()
+    return ticket
+
+
+def get_support_ticket(db: Session, ticket_id: int) -> Optional[TimeshareSupportTicket]:
+    return db.query(TimeshareSupportTicket).filter(TimeshareSupportTicket.id == ticket_id).first()
+
+
+def list_support_tickets_for_contract(db: Session, contract_id: int) -> list[TimeshareSupportTicket]:
+    return (
+        db.query(TimeshareSupportTicket)
+        .filter(TimeshareSupportTicket.contract_id == contract_id)
+        .order_by(TimeshareSupportTicket.created_at.desc())
+        .all()
+    )
+
+
+def list_support_tickets_for_branch(
+    db: Session, branch_id: int, status: Optional[str] = None,
+) -> list[TimeshareSupportTicket]:
+    from sqlalchemy.orm import contains_eager  # noqa: PLC0415
+
+    q = (
+        db.query(TimeshareSupportTicket)
+        .join(TimeshareContract, TimeshareContract.id == TimeshareSupportTicket.contract_id)
+        .options(contains_eager(TimeshareSupportTicket.contract))
+        .filter(TimeshareSupportTicket.branch_id == branch_id)
+    )
+    if status:
+        q = q.filter(TimeshareSupportTicket.status == status)
+    return q.order_by(TimeshareSupportTicket.created_at.desc()).all()
+
+
+def add_ticket_reply(
+    db: Session, ticket: TimeshareSupportTicket, message: str,
+    author_type: str, author_user_id: Optional[int] = None,
+) -> TimeshareSupportTicketReply:
+    reply = TimeshareSupportTicketReply(
+        ticket_id=ticket.id, author_type=author_type, author_user_id=author_user_id, message=message,
+    )
+    db.add(reply)
+    db.flush()
+    return reply

@@ -74,6 +74,25 @@ class Settings(CoreSettings):
     # ── Survey Token (مفتاح منفصل لعزل الأمان) ───────────────────────
     SURVEY_TOKEN_SECRET: str = ""
 
+    # ── Timeshare Owner Portal Token (مفتاح منفصل لعزل الأمان، زي
+    # SURVEY_TOKEN_SECRET بالظبط) — طلب Mohamed 2026-08-03: صفحة على الموقع
+    # العام يتحقق فيها صاحب عقد تايم شير من هويته (رقم العقد + رقم موبايله
+    # المسجّل + كود OTP يوصله واتساب)، وبعدين يشوف عقده/دفعاته ويطلب زيارة/
+    # يفتح تذكرة دعم. الـtoken ده session-like (بيتعاد استخدامه لأكتر من
+    # نداء، مش رابط استُخدم مرة واحدة زي survey token) — فبيتبعت كـheader
+    # مخصّص (X-Timeshare-Owner-Token) بنفس نمط Gate 8's X-Guest-Session،
+    # مش query param زي survey token.
+    TIMESHARE_PORTAL_TOKEN_SECRET: str = ""
+    # نفس افتراض Gate 8's GUEST_SESSION_TTL_MINUTES بالظبط (8 ساعات) —
+    # بيانات مالية حساسة (دفعات/أقساط)، فمش عايزينها تفضل صالحة أيام زي
+    # survey token (7 أيام، رابط استُخدم مرة واحدة بس).
+    TIMESHARE_PORTAL_TOKEN_TTL_MINUTES: int = 480
+    # OTP (كود التحقق المُرسَل واتساب) — 6 أرقام، صلاحية 5 دقايق، وحد أقصى
+    # محاولات إدخال قبل ما الكود يتلغى تلقائيًا (يمنع تخمين الكود بالقوة
+    # الغاشمة خلال نافذة الصلاحية — 6 أرقام = مليون احتمال، لازم حد منخفض).
+    TIMESHARE_OTP_TTL_SECONDS: int = 300
+    TIMESHARE_OTP_MAX_ATTEMPTS: int = 5
+
     # ── Public guest site (لبناء رابط /survey المُرسَل فعليًا للضيف عبر
     # واتساب — بدون / في الآخر). ⚠️ 2026-07-26: apps/public أُرشف واستُبدل
     # بموقع مستقل (elkheima-marketing-website) — BeachCheckinView.vue لم

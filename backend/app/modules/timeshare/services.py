@@ -1,19 +1,25 @@
 """app/modules/timeshare/services.py"""
 from __future__ import annotations
 
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import jwt
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.modules.timeshare import crud
 from app.modules.timeshare.models import (
-    TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue, TimeshareVisit,
+    TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
+    TimeshareSupportTicket, TimeshareVisit, TimeshareVisitRequest,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate, TimeshareUnitTransferRequest,
     PayInstallmentRequest, PayMaintenanceDueRequest,
-    TimeshareVisitCreate, TimeshareVisitUpdate, WaitlistCreate,
+    TimeshareSupportTicketCreate, TimeshareVisitCreate, TimeshareVisitRequestCreate,
+    TimeshareVisitUpdate, WaitlistCreate,
 )
 from app.resort_os.timeshare_engine import (
     generate_installment_schedule,
@@ -1175,3 +1181,340 @@ def import_contracts_excel(
             errors.append(f"صف {i}: {str(exc)[:120]}")
 
     return {"imported": imported, "skipped": skipped, "errors": errors[:20]}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Owner Portal — بوابة صاحب العقد العامة (طلب Mohamed 2026-08-03)
+#
+# صفحة على الموقع العام يتحقق فيها صاحب عقد تايم شير من هويته (رقم العقد +
+# رقم موبايله المسجّل على العقد + كود OTP يوصله واتساب — مفيش باسورد
+# ولا حساب دائم، وده عمدًا: "ما يكونش معقد" + "السرية"). بعد التحقق بيشوف
+# عقده وحالة دفعاته، ويقدر يقدّم طلب حجز زيارة (المدير هو اللي يوافق
+# ويحدد الأسبوع الفعلي فعليًا — راجع approve_visit_request تحت، بتنادي
+# create_visit الموجودة فوق فمفيش تكرار لمنطق التجميد/التعارض) أو يفتح
+# تذكرة دعم (نظام مستقل عن استفسارات الموقع العام، مش نفس صندوق CRM Lead).
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+class OwnerVerificationError(Exception):
+    """كود OTP غلط/منتهي/العدد المسموح للمحاولات اتخلص، أو JWT owner-portal
+    token غير صالح/منتهي."""
+
+
+def _hash_otp(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def _normalize_phone_for_match(phone: str) -> str:
+    """مقارنة أرقام الموبايل بعد تجريدها من أي رموز غير رقمية، ومقارنة آخر
+    10 أرقام بس — العميل ممكن يكتب رقمه بصيغة دولية (+20...) مختلفة شوية
+    عن الصيغة المسجّلة على العقد (01...)، من غير ما نطلب صيغة واحدة صارمة
+    (طلب Mohamed: "سهولة المستخدم")."""
+    digits = "".join(ch for ch in phone if ch.isdigit())
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def request_owner_otp(db: Session, contract_number: str, phone: str) -> None:
+    """⚠️ أمان (anti-enumeration): الدالة دايمًا "تنجح" بصمت (بدون أي
+    استثناء أو قيمة رجوع تكشف الفرق) بغض النظر عن تطابق رقم العقد/الموبايل
+    من عدمه — لو فرّقنا الرد هيبقى oracle يقدر أي حد يجرّب أرقام عقود
+    عشوائية ويكتشف أيها حقيقي بمجرد الفرق في رسالة الرد. الـOTP بيتبعت
+    فعليًا واتساب بس لو التطابق صحيح فعلاً."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.core.kernel.cache import rate_limit, set_cache  # noqa: PLC0415
+    from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+
+    # مفتاحان منفصلان (رقم العقد + رقم الموبايل) — يمنعوا (أ) قصف نفس رقم
+    # العقد بطلبات OTP متكررة، و(ب) محاولة تجربة أرقام عقود كتير مختلفة من
+    # نفس رقم الموبايل.
+    if not rate_limit(f"timeshare_otp_req_contract:{contract_number}", max_requests=3, window_seconds=600):
+        return
+    if not rate_limit(f"timeshare_otp_req_phone:{_normalize_phone_for_match(phone)}", max_requests=5, window_seconds=600):
+        return
+
+    contract = crud.get_contract_by_number(db, contract_number)
+    if not contract or not contract.customer_phone:
+        return
+    if _normalize_phone_for_match(contract.customer_phone) != _normalize_phone_for_match(phone):
+        return
+    if contract.status == "cancelled":
+        return
+
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    set_cache(
+        f"timeshare_otp:{contract_number}",
+        {"code_hash": _hash_otp(code), "attempts": 0, "contract_id": contract.id},
+        ttl=settings.TIMESHARE_OTP_TTL_SECONDS,
+    )
+    minutes = settings.TIMESHARE_OTP_TTL_SECONDS // 60
+    send_whatsapp_message(
+        contract.customer_phone,
+        f"كود التحقق لبوابة عقدك في El Kheima Beach Resort: {code}\n"
+        f"صالح لمدة {minutes} دقائق. لا تشارك هذا الكود مع أحد.",
+    )
+
+
+def _issue_owner_portal_token(contract_id: int) -> str:
+    from app.core.config import settings  # noqa: PLC0415
+
+    payload = {
+        "sub": str(contract_id),
+        "purpose": "timeshare_owner_portal",
+        "exp": datetime.now(timezone.utc) + timedelta(minutes=settings.TIMESHARE_PORTAL_TOKEN_TTL_MINUTES),
+    }
+    return jwt.encode(payload, settings.TIMESHARE_PORTAL_TOKEN_SECRET, algorithm="HS256")
+
+
+def confirm_owner_otp(db: Session, contract_number: str, otp_code: str) -> str:
+    """يتحقق من الكود المُدخَل مقابل المخزَّن في الكاش (مقارنة زمن ثابت،
+    نفس نمط TOTP consumption في kernel.auth.service)، ولو صح بيرجّع owner
+    portal token (JWT) جاهز. الكود يُستهلك (single-use) عند النجاح، ويُلغى
+    نهائيًا لو عدد المحاولات الخاطئة وصل الحد الأقصى (يمنع تخمين الكود
+    بالقوة الغاشمة خلال نافذة الصلاحية القصيرة)."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.core.kernel.cache import clear_cache, get_cache, set_cache  # noqa: PLC0415
+
+    cache_key = f"timeshare_otp:{contract_number}"
+    entry = get_cache(cache_key)
+    if not entry:
+        raise OwnerVerificationError("الكود منتهي الصلاحية أو غير موجود — اطلب كود جديد")
+
+    if not secrets.compare_digest(_hash_otp(otp_code), entry["code_hash"]):
+        entry["attempts"] = entry.get("attempts", 0) + 1
+        if entry["attempts"] >= settings.TIMESHARE_OTP_MAX_ATTEMPTS:
+            clear_cache(cache_key)
+            raise OwnerVerificationError("عدد محاولات خاطئة كبير — اطلب كود جديد")
+        set_cache(cache_key, entry, ttl=settings.TIMESHARE_OTP_TTL_SECONDS)
+        raise OwnerVerificationError("كود التحقق غير صحيح")
+
+    clear_cache(cache_key)
+    return _issue_owner_portal_token(entry["contract_id"])
+
+
+def verify_owner_portal_token(token: str) -> int:
+    """يرجّع contract_id لو التوكن صالح وموقّع صح، وإلا يرفع
+    OwnerVerificationError (الراوتر بيترجمها 401)."""
+    from app.core.config import settings  # noqa: PLC0415
+
+    try:
+        payload = jwt.decode(token, settings.TIMESHARE_PORTAL_TOKEN_SECRET, algorithms=["HS256"])
+    except Exception:
+        raise OwnerVerificationError("انتهت صلاحية الجلسة — تحقق من هويتك مرة أخرى")
+    if payload.get("purpose") != "timeshare_owner_portal":
+        raise OwnerVerificationError("جلسة غير صالحة")
+    return int(payload["sub"])
+
+
+def request_visit(db: Session, contract_id: int, data: TimeshareVisitRequestCreate) -> TimeshareVisitRequest:
+    """طلب العميل نفسه — تحقق مبكر (عقد نشط، مش مجمَّد) عشان العميل ياخد
+    رسالة واضحة فورًا بدل ما يقدّم طلب مصيره الرفض التلقائي عند المراجعة."""
+    contract = get_contract_or_404(db, contract_id)
+    if data.preferred_end <= data.preferred_start:
+        raise ValueError("تاريخ النهاية يجب أن يكون بعد تاريخ البداية")
+    if contract.status in ("cancelled", "expired"):
+        raise ValueError("هذا العقد غير نشط حاليًا — يرجى التواصل مع خدمة العملاء")
+    if contract.booking_frozen:
+        raise ValueError("الحجز مجمَّد حاليًا بسبب متأخرات على العقد — يرجى التواصل مع خدمة العملاء")
+    req = crud.create_visit_request(db, contract, data)
+    db.commit()
+    db.refresh(req)
+    return req
+
+
+def approve_visit_request(
+    db: Session, request_id: int, check_in, check_out, approved_by: int,
+) -> TimeshareVisitRequest:
+    """موافقة مدير — بيحدد التواريخ الفعلية بنفسه (مش بالضرورة نفس تفضيل
+    العميل)، وبتمرّ بنفس create_visit الموجودة فوق حرفيًا — صفر تكرار
+    لمنطق منع التعارض/التجميد/انتهاء العقد."""
+    req = crud.get_visit_request(db, request_id)
+    if not req:
+        raise ValueError(f"طلب الزيارة {request_id} غير موجود")
+    if req.status != "pending":
+        raise ValueError(f"طلب الزيارة {request_id} تمت مراجعته بالفعل ({req.status})")
+
+    visit = create_visit(db, TimeshareVisitCreate(
+        branch_id=req.branch_id, contract_id=req.contract_id,
+        check_in=check_in, check_out=check_out, notes=req.notes,
+    ))
+    req.status = "approved"
+    req.reviewed_by = approved_by
+    req.reviewed_at = datetime.now(timezone.utc)
+    req.visit_id = visit.id
+    db.commit()
+    db.refresh(req)
+    return req
+
+
+def reject_visit_request(db: Session, request_id: int, reason: str, reviewed_by: int) -> TimeshareVisitRequest:
+    req = crud.get_visit_request(db, request_id)
+    if not req:
+        raise ValueError(f"طلب الزيارة {request_id} غير موجود")
+    if req.status != "pending":
+        raise ValueError(f"طلب الزيارة {request_id} تمت مراجعته بالفعل ({req.status})")
+    req.status = "rejected"
+    req.reviewed_by = reviewed_by
+    req.reviewed_at = datetime.now(timezone.utc)
+    req.rejection_reason = reason
+    db.commit()
+    db.refresh(req)
+    return req
+
+
+def submit_support_ticket(
+    db: Session, contract_id: int, data: TimeshareSupportTicketCreate,
+) -> TimeshareSupportTicket:
+    contract = get_contract_or_404(db, contract_id)
+    ticket = crud.create_support_ticket(db, contract, data)
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+def reply_to_ticket(
+    db: Session, ticket_id: int, message: str,
+    author_type: str, author_user_id: Optional[int] = None,
+):
+    ticket = crud.get_support_ticket(db, ticket_id)
+    if not ticket:
+        raise ValueError(f"تذكرة الدعم {ticket_id} غير موجودة")
+    if ticket.status == "closed":
+        raise ValueError("التذكرة مغلقة — لا يمكن الرد عليها")
+    reply = crud.add_ticket_reply(db, ticket, message, author_type, author_user_id)
+    # رد موظف على تذكرة "مفتوحة" جديدة يحوّلها "قيد المعالجة" تلقائيًا —
+    # مؤشر بصري بسيط إنها اتشافت، من غير ما يحتاج الموظف يعدّل الحالة يدويًا
+    # كل مرة يرد فيها.
+    if author_type == "staff" and ticket.status == "open":
+        ticket.status = "in_progress"
+    db.commit()
+    db.refresh(reply)
+    return reply
+
+
+def update_ticket_status(db: Session, ticket_id: int, new_status: str) -> TimeshareSupportTicket:
+    ticket = crud.get_support_ticket(db, ticket_id)
+    if not ticket:
+        raise ValueError(f"تذكرة الدعم {ticket_id} غير موجودة")
+    ticket.status = new_status
+    if new_status in ("resolved", "closed"):
+        ticket.resolved_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Timeshare Staff — مدير التايم شير بيدير موظفي وحدته (طلب Mohamed 2026-08-03:
+# "يتحكم بالموظفين التيم شير وحساباتهم"). نسخة مبسّطة ومعزولة من
+# core.kernel.auth.service.AuthService.provision_staff_account — مقفولة على
+# super_admin+step-up عمدًا (Gate 2B3A، مناسبة لإنشاء أي دور بما فيه أدوار
+# حساسة)، مش مناسبة لمدير وحدة معزولة زي ده بيعمل حاجة واحدة بس (إنشاء
+# timeshare_agent). role هنا ثابت دايمًا، مش قيمة بييجي بيها الطلب.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def provision_timeshare_agent(
+    db: Session, *, email: str, full_name: str, phone: Optional[str],
+    branch_id: int, created_by: int, preferred_language: str = "ar",
+) -> dict:
+    """⚠️ باج توثيقي حقيقي اتصلح هنا: deps.py's get_timeshare_user كان
+    بيدّعي إن timeshare_agent "بيحصل على UserPermission صريح على
+    timeshare.access/view تلقائيًا عند إنشاء الحساب" — بس محدّش كان
+    بيعمل ده فعليًا في provision_staff_account خالص (صفر استخدام لـ
+    UserPermission هناك). هنا فعليًا بيتعمل، مش مجرد كومنت."""
+    import json  # noqa: PLC0415
+    import secrets as _secrets  # noqa: PLC0415
+
+    from sqlalchemy import func  # noqa: PLC0415
+
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+    from app.core.kernel.security import get_password_hash, validate_email_format  # noqa: PLC0415
+    from app.modules.core.models import AuditLog, Branch, UserBranchMembership, UserPermission  # noqa: PLC0415
+
+    normalized_email = (email or "").strip().casefold()
+    normalized_name = (full_name or "").strip()
+    normalized_phone = (phone or "").strip() or None
+
+    if not validate_email_format(normalized_email):
+        raise ValueError("بريد إلكتروني غير صالح")
+    if len(normalized_name) < 3:
+        raise ValueError("الاسم الكامل مطلوب")
+    if preferred_language not in {"ar", "en"}:
+        raise ValueError("لغة غير مدعومة")
+
+    branch = db.query(Branch).filter(Branch.id == branch_id, Branch.is_active.is_(True)).first()
+    if branch is None:
+        raise ValueError("الفرع غير موجود أو غير نشط")
+
+    existing = db.query(User).filter(func.lower(User.email) == normalized_email).first()
+    if existing is not None:
+        raise ValueError("يوجد حساب بهذا البريد الإلكتروني بالفعل")
+
+    temporary_password = _secrets.token_urlsafe(12)
+    user = User(
+        email=normalized_email,
+        password_hash=get_password_hash(temporary_password),
+        full_name=normalized_name,
+        phone=normalized_phone,
+        role="timeshare_agent",
+        is_active=True,
+        preferred_language=preferred_language,
+        must_change_password=True,
+        # timeshare_agent مش من MANDATORY_2FA_ROLES (super_admin/accountant
+        # بس) — مفيش داعي لرحلة enrollment token زي الأدوار الحساسة.
+        two_factor_enabled=False,
+        two_factor_bootstrap_required=False,
+    )
+    db.add(user)
+    db.flush()
+    db.add(UserBranchMembership(
+        user_id=user.id, branch_id=branch_id, is_default=True, is_active=True, created_by=created_by,
+    ))
+    db.add(UserPermission(
+        user_id=user.id, resource="timeshare.access", action="view",
+        allowed=True, branch_id=None, granted_by=created_by,
+    ))
+    db.add(AuditLog(
+        user_id=created_by, branch_id=branch_id, action="timeshare_agent_provisioned",
+        entity_type="user", entity_id=user.id, old_data=None,
+        new_data=json.dumps({"email": normalized_email, "full_name": normalized_name}, ensure_ascii=False),
+    ))
+    db.commit()
+    db.refresh(user)
+    return {
+        "id": user.id, "email": user.email, "full_name": user.full_name,
+        "temporary_password": temporary_password, "must_change_password": True,
+    }
+
+
+def list_timeshare_staff(db: Session, branch_id: int) -> list:
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+    from app.modules.core.models import UserBranchMembership  # noqa: PLC0415
+
+    return (
+        db.query(User)
+        .join(UserBranchMembership, UserBranchMembership.user_id == User.id)
+        .filter(
+            UserBranchMembership.branch_id == branch_id,
+            User.role == "timeshare_agent",
+        )
+        .order_by(User.full_name)
+        .all()
+    )
+
+
+def set_timeshare_staff_active(db: Session, staff_user_id: int, is_active: bool):
+    """تفعيل/تعطيل حساب موظف تايم شير — لازم revoke_user_tokens() (قاعدة
+    ❻ في CLAUDE.md: أي تغيير is_active لازم يُبطل التوكنات القديمة فورًا،
+    وإلا موظف اتعطّل حسابه يقدر يفضل شغال بتوكن قديم لحد ما ينتهي وحده)."""
+    from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    user = db.query(User).filter(User.id == staff_user_id, User.role == "timeshare_agent").first()
+    if not user:
+        raise ValueError(f"موظف التايم شير {staff_user_id} غير موجود")
+    user.is_active = is_active
+    db.commit()
+    revoke_user_tokens(user.id)
+    db.refresh(user)
+    return user

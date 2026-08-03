@@ -3823,6 +3823,8 @@
         "waiter": "جرسون",
         "chef": "شيف",
         "kitchen": "مطبخ",
+        "timeshare_admin": "مدير التايم شير",
+        "timeshare_agent": "موظف تايم شير",
         "employee": "موظف"
       },
       "modules": {
@@ -5853,7 +5855,10 @@
         "calendar": "الكالندر",
         "clients": "العملاء",
         "installments": "الأقساط",
-        "maintenance": "الصيانة"
+        "maintenance": "الصيانة",
+        "requests": "طلبات الزيارة",
+        "support": "خدمة العملاء",
+        "staff": "الموظفين"
       },
       "activeContracts": "عقود نشطة",
       "collectionRate": "نسبة التحصيل",
@@ -5999,7 +6004,22 @@
         "transferReasonRequired": "سبب النقل مطلوب (3 أحرف على الأقل)",
         "unitTransferred": "تم نقل الوحدة",
         "transferError": "تعذّر نقل الوحدة",
-        "importError": "فشل الاستيراد"
+        "importError": "فشل الاستيراد",
+        "loadRequestsError": "فشل تحميل طلبات الزيارة",
+        "requestApproved": "تمت الموافقة على طلب الزيارة",
+        "requestApproveError": "تعذّرت الموافقة على الطلب",
+        "requestRejected": "تم رفض طلب الزيارة",
+        "requestRejectError": "تعذّر رفض الطلب",
+        "loadTicketsError": "فشل تحميل تذاكر الدعم",
+        "replyError": "تعذّر إرسال الرد",
+        "ticketStatusUpdated": "تم تحديث حالة التذكرة",
+        "ticketStatusError": "تعذّر تحديث حالة التذكرة",
+        "loadStaffError": "فشل تحميل موظفي التايم شير",
+        "createStaffError": "تعذّر إنشاء حساب الموظف",
+        "staffStatusUpdated": "تم تحديث حالة حساب الموظف",
+        "staffStatusError": "تعذّر تحديث حالة حساب الموظف",
+        "reportError": "تعذّر تحميل التقرير",
+        "pdfError": "تعذّر تحميل ملف PDF"
       },
       "scheduleVisit": {
         "btnLabel": "جدولة زيارة",
@@ -6017,7 +6037,48 @@
         "statusUpdated": "تم تحديث حالة الزيارة",
         "statusError": "تعذّر تحديث الحالة"
       },
-      "confirmStatusChange": "تأكيد تغيير الحالة من {from} إلى {to}؟"
+      "confirmStatusChange": "تأكيد تغيير الحالة من {from} إلى {to}؟",
+      "loadingRequests": "جارٍ تحميل طلبات الزيارة...",
+      "loadingTickets": "جارٍ تحميل تذاكر الدعم...",
+      "loadingStaff": "جارٍ تحميل موظفي التايم شير...",
+      "approve": "موافقة",
+      "reject": "رفض",
+      "approveRequestTitle": "الموافقة على طلب زيارة",
+      "approveRequestHint": "انت اللي بتحدد التواريخ والوحدة الفعلية — مش لازم تطابق تفضيل العميل بالظبط.",
+      "confirmApprove": "تأكيد الموافقة",
+      "rejectRequestTitle": "رفض طلب زيارة",
+      "rejectionReason": "سبب الرفض",
+      "reasonTooShort": "السبب لازم يكون 3 أحرف على الأقل",
+      "confirmReject": "تأكيد الرفض",
+      "requestStatus": {
+        "pending": "قيد المراجعة",
+        "approved": "تمت الموافقة",
+        "rejected": "مرفوض"
+      },
+      "ticketStatus": {
+        "open": "مفتوحة",
+        "in_progress": "قيد المعالجة",
+        "resolved": "تم الحل",
+        "closed": "مغلقة"
+      },
+      "ticketFromOwner": "صاحب العقد",
+      "ticketFromStaff": "الموظف",
+      "ticketReplyPlaceholder": "اكتب ردك...",
+      "send": "إرسال",
+      "newStaff": "موظف تايم شير جديد",
+      "staffFullName": "الاسم الكامل",
+      "staffEmail": "البريد الإلكتروني",
+      "staffPhone": "رقم الموبايل",
+      "staffFormRequired": "الاسم الكامل والبريد الإلكتروني مطلوبين",
+      "createStaff": "إنشاء الحساب",
+      "staffCredentialsWarning": "احفظ البيانات دي دلوقتي — الباسورد المؤقت مش هيتعرض تاني.",
+      "staffTempPassword": "الباسورد المؤقت",
+      "done": "تم",
+      "staffActive": "نشط",
+      "staffInactive": "غير نشط",
+      "deactivate": "تعطيل",
+      "downloadMonthlyReport": "تحميل تقرير Excel",
+      "downloadPdf": "PDF العقد"
     },
     "leasing": {
       "title": "عقود الإيجار التجاري",
