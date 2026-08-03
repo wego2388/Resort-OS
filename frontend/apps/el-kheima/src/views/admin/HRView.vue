@@ -6,7 +6,7 @@ import { api, parseApiTimestamp, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 
 type ApiErr = { response?: { data?: { detail?: string; message?: string }; status?: number } }
-import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, AppInput, EmptyState, useToast, useConfirm } from '@resort-os/ui'
+import { AppCard, AppBadge, AppButton, AppSpinner, AppModal, AppInput, SearchInput, EmptyState, useToast, useConfirm } from '@resort-os/ui'
 
 const toast = useToast()
 const { confirm } = useConfirm()
@@ -228,10 +228,19 @@ const leaveTypeNameById = computed(() => {
   return m
 })
 
+// بحث سيرفر-سايد حقيقي (2026-08-03) — كانت الشاشة بتجيب أول 100 موظف بس
+// وتعرض تحذير "استخدم البحث" من غير ما يكون فيه أي بحث فعلي أصلاً.
+const employeeSearchQuery = ref('')
+
 async function fetchEmployees() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/hr/employees', { params: { branch_id: branchId.value, size: 100 } })
+    const res = await api.get('/api/v1/hr/employees', {
+      params: {
+        branch_id: branchId.value, size: 100,
+        search: employeeSearchQuery.value.trim() || undefined,
+      },
+    })
     employees.value = res.data.employees ?? res.data.items ?? res.data
     employeesTotal.value = res.data.total ?? employees.value.length
   } catch (e) {
@@ -468,6 +477,73 @@ async function submitComp() {
   } catch (e: unknown) {
     toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.compSaveError'))
   } finally { savingComp.value = false }
+}
+
+// ── تعديل بيانات الموظف الأساسية (اسم/وظيفة/قسم/تواصل) + تغيير حالة
+// الخدمة (نشط/إجازة/منتهي) — PATCH /hr/employees/{id} كان موجود بالكامل
+// من غير أي شاشة بتستخدمه لغير basic_salary/insurance/holiday_bonus
+// (compModal فوق). راجع hr.services.update_employee: تسجيل "منتهي
+// الخدمة" بيعطّل حساب الدخول المرتبط تلقائيًا (لو موجود) — التأكيد هنا
+// بيوضّح ده صراحةً قبل التنفيذ.
+const editModalEmployee = ref<Employee | null>(null)
+const employeeEditForm = ref({ full_name: '', position: '', department: '', phone: '', email: '' })
+const savingEdit = ref(false)
+
+function openEditModal(emp: Employee) {
+  editModalEmployee.value = emp
+  employeeEditForm.value = {
+    full_name: emp.full_name ?? '',
+    position: emp.position ?? '',
+    department: emp.department ?? '',
+    phone: emp.phone ?? '',
+    email: emp.email ?? '',
+  }
+}
+
+async function submitEdit() {
+  if (!editModalEmployee.value) return
+  if (!employeeEditForm.value.full_name.trim() || !employeeEditForm.value.position.trim()) {
+    toast.error(t('backoffice.hr.msg.editRequiredFields'))
+    return
+  }
+  savingEdit.value = true
+  try {
+    const empId = editModalEmployee.value.id
+    const { data } = await api.patch(`/api/v1/hr/employees/${empId}`, {
+      full_name: employeeEditForm.value.full_name.trim(),
+      position: employeeEditForm.value.position.trim(),
+      department: employeeEditForm.value.department.trim() || null,
+      phone: employeeEditForm.value.phone.trim() || null,
+      email: employeeEditForm.value.email.trim() || null,
+    })
+    employees.value = employees.value.map(e => (e.id === empId ? { ...e, ...data } : e))
+    toast.success(t('backoffice.hr.msg.editSaved'))
+    editModalEmployee.value = null
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.editSaveError'))
+  } finally { savingEdit.value = false }
+}
+
+const changingStatusEmployeeId = ref<number | null>(null)
+
+async function changeEmployeeStatus(emp: Employee, newStatus: 'active' | 'on_leave' | 'terminated') {
+  const messageKey = newStatus === 'terminated'
+    ? (emp.user_id ? 'backoffice.hr.msg.confirmTerminateWithAccount' : 'backoffice.hr.msg.confirmTerminate')
+    : newStatus === 'on_leave' ? 'backoffice.hr.msg.confirmOnLeave' : 'backoffice.hr.msg.confirmReactivate'
+  const ok = await confirm({
+    title: t('backoffice.hr.msg.confirmStatusTitle'),
+    message: t(messageKey, { name: emp.full_name }),
+    danger: newStatus === 'terminated',
+  })
+  if (!ok) return
+  changingStatusEmployeeId.value = emp.id
+  try {
+    const { data } = await api.patch(`/api/v1/hr/employees/${emp.id}`, { status: newStatus })
+    employees.value = employees.value.map(e => (e.id === emp.id ? { ...e, ...data } : e))
+    toast.success(t('backoffice.hr.msg.statusUpdated'))
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.hr.msg.statusUpdateError'))
+  } finally { changingStatusEmployeeId.value = null }
 }
 
 // ── wagdy.md H-01: سلفة راتب (قرض بأقساط شهرية ثابتة) ──────────────────
@@ -840,6 +916,12 @@ onMounted(fetchEmployees)
           <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">{{ t('backoffice.hr.onboarding.step3Body') }}</p>
         </div>
       </div>
+      <SearchInput
+        v-model="employeeSearchQuery"
+        :placeholder="t('backoffice.hr.searchPlaceholder')"
+        @search="fetchEmployees"
+        class="max-w-sm"
+      />
       <div v-if="loading" class="flex flex-col items-center justify-center gap-3 py-12">
         <AppSpinner size="md" />
         <span class="text-sm text-gray-400 dark:text-gray-400">{{ t('backoffice.hr.loading') }}</span>
@@ -887,12 +969,30 @@ onMounted(fetchEmployees)
                 </td>
                 <td class="px-4 py-3">
                   <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                    <button v-if="canManageEmployeeRecords" @click="openEditModal(emp)" class="text-xs font-semibold text-indigo-600 hover:text-indigo-800 dark:text-indigo-300 dark:hover:text-indigo-200">✏️ {{ t('backoffice.hr.editShort') }}</button>
                     <button v-if="canManageEmployeeRecords" @click="openAllowanceModal(emp)" class="text-xs font-semibold text-blue-600 hover:text-blue-800 dark:text-blue-300 dark:hover:text-blue-200">{{ t('backoffice.hr.addAllowanceShort') }}</button>
                     <button @click="openPenaltyModal(emp)" class="text-xs font-semibold text-red-600 hover:text-red-800 dark:text-red-300 dark:hover:text-red-200">{{ t('backoffice.hr.addPenaltyShort') }}</button>
                     <button v-if="canManageEmployeeRecords" @click="openAdvanceModal(emp)" class="text-xs font-semibold text-amber-600 hover:text-amber-800 dark:text-amber-300 dark:hover:text-amber-200">💰 {{ t('backoffice.hr.advanceShort') }}</button>
                     <button @click="openPaymentModal(emp)" class="text-xs font-semibold text-teal-600 hover:text-teal-800">📅 {{ t('backoffice.hr.paymentShort') }}</button>
                     <button @click="openBalanceModal(emp)" class="text-xs font-semibold text-purple-600 hover:text-purple-800 dark:text-purple-300 dark:hover:text-purple-200">📊 {{ t('backoffice.hr.leaveBalanceShort') }}</button>
-                    <button v-if="canManageEmployeeRecords" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:text-gray-100">✏️ {{ t('backoffice.hr.salaryShort') }}</button>
+                    <button v-if="canManageEmployeeRecords" @click="openCompModal(emp)" class="text-xs font-semibold text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:text-gray-100">💵 {{ t('backoffice.hr.salaryShort') }}</button>
+                    <template v-if="canManageEmployeeRecords">
+                      <button v-if="emp.status !== 'on_leave'" :disabled="changingStatusEmployeeId === emp.id"
+                        @click="changeEmployeeStatus(emp, 'on_leave')"
+                        class="text-xs font-semibold text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100 disabled:opacity-50">
+                        🌴 {{ t('backoffice.hr.setOnLeaveShort') }}
+                      </button>
+                      <button v-if="emp.status !== 'active'" :disabled="changingStatusEmployeeId === emp.id"
+                        @click="changeEmployeeStatus(emp, 'active')"
+                        class="text-xs font-semibold text-emerald-700 hover:text-emerald-900 dark:text-emerald-300 dark:hover:text-emerald-100 disabled:opacity-50">
+                        ✅ {{ t('backoffice.hr.reactivateShort') }}
+                      </button>
+                      <button v-if="emp.status !== 'terminated'" :disabled="changingStatusEmployeeId === emp.id"
+                        @click="changeEmployeeStatus(emp, 'terminated')"
+                        class="text-xs font-semibold text-red-700 hover:text-red-900 dark:text-red-300 dark:hover:text-red-100 disabled:opacity-50">
+                        🚫 {{ t('backoffice.hr.terminateShort') }}
+                      </button>
+                    </template>
                   </div>
                 </td>
               </tr>
@@ -975,6 +1075,21 @@ onMounted(fetchEmployees)
             {{ savingAllowance ? t('backoffice.hr.saving') : t('backoffice.hr.addAllowance') }}
           </AppButton>
         </div>
+      </div>
+    </AppModal>
+
+    <!-- تعديل بيانات الموظف الأساسية -->
+    <AppModal :open="!!editModalEmployee" :title="t('backoffice.hr.editTitle', { name: editModalEmployee?.full_name ?? '' })"
+      @close="editModalEmployee = null">
+      <div class="space-y-3">
+        <AppInput v-model="employeeEditForm.full_name" :label="t('backoffice.hr.fullName')" required />
+        <AppInput v-model="employeeEditForm.position" :label="t('backoffice.hr.position')" required />
+        <AppInput v-model="employeeEditForm.department" :label="t('backoffice.hr.department')" />
+        <AppInput v-model="employeeEditForm.phone" :label="t('backoffice.accounts.phone')" inputmode="tel" />
+        <AppInput v-model="employeeEditForm.email" :label="t('backoffice.accounts.email')" type="email" />
+        <AppButton :disabled="savingEdit" @click="submitEdit" variant="primary" size="sm">
+          {{ savingEdit ? t('backoffice.hr.saving') : t('backoffice.hr.save') }}
+        </AppButton>
       </div>
     </AppModal>
 

@@ -61,12 +61,23 @@ def list_employees(
     db: Session,
     branch_id: int,
     status: Optional[str] = None,
+    search: Optional[str] = None,
     skip: int = 0,
     limit: int = 50,
 ) -> tuple[list[Employee], int]:
     q = db.query(Employee).filter(Employee.branch_id == branch_id)
     if status:
         q = q.filter(Employee.status == status)
+    if search:
+        # الاسم/الكود/الوظيفة نص عادي — national_id مشفّر (EncryptedString)
+        # فمينفعش ILIKE عليه خالص، مقصود مش نسيان.
+        term = f"%{search.strip()}%"
+        from sqlalchemy import or_  # noqa: PLC0415
+        q = q.filter(or_(
+            Employee.full_name.ilike(term),
+            Employee.employee_code.ilike(term),
+            Employee.position.ilike(term),
+        ))
     total = q.count()
     items = q.order_by(Employee.full_name).offset(skip).limit(limit).all()
     return items, total

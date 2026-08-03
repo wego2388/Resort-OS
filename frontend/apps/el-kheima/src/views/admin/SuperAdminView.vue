@@ -5,7 +5,7 @@
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
-import { AppCard, AppBadge, AppSpinner, AppInput, AppButton, AppModal, AppSelect, useToast } from '@resort-os/ui'
+import { AppCard, AppBadge, AppSpinner, AppInput, AppButton, AppModal, AppSelect, SearchInput, useToast } from '@resort-os/ui'
 import { useI18n } from 'vue-i18n'
 import StepUpConfirmModal from '../../components/StepUpConfirmModal.vue'
 
@@ -87,31 +87,45 @@ const languageOptions = computed(() => [
 const employeeOptions = computed(() => employees.value
   .filter(e => e.user_id === null && e.status !== 'terminated')
   .map(e => ({ value: String(e.id), label: `${e.full_name} (${e.employee_code})` })))
-const activeUsersCount = computed(() => users.value.filter(user => user.is_active).length)
-const pendingSecurityCount = computed(() => users.value.filter(user =>
+// إحصائيات الكارت العلوي (نشط/بانتظار أمان/آخر super_admin) لازم تعكس كل
+// الحسابات دايمًا — مش بس نتيجة بحث ممكن تستبعد super_admin مثلًا وتخفي
+// تحذير "آخر super_admin نشط" بالغلط رغم إنه لسه فعليًا آخر واحد. عشان
+// كده snapshot منفصل غير متأثر بالبحث، بدل ما يتحسب من `users` (نتيجة
+// البحث المعروضة في الجدول).
+const allUsersSnapshot = ref<UserRow[]>([])
+const activeUsersCount = computed(() => allUsersSnapshot.value.filter(user => user.is_active).length)
+const pendingSecurityCount = computed(() => allUsersSnapshot.value.filter(user =>
   user.must_change_password || user.two_factor_bootstrap_required,
 ).length)
 const pendingEmployeeAccounts = computed(() => employees.value.filter(employee =>
   employee.user_id === null && employee.status !== 'terminated',
 ).length)
-const activeSuperAdminCount = computed(() => users.value.filter(user =>
+const activeSuperAdminCount = computed(() => allUsersSnapshot.value.filter(user =>
   user.role === 'super_admin' && user.is_active,
 ).length)
-const filteredUsers = computed(() => {
-  const q = usersSearch.value.trim().toLowerCase()
-  if (!q) return users.value
-  return users.value.filter(u =>
-    u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q) || u.role.toLowerCase().includes(q))
-})
 
+async function loadAllUsersSnapshot() {
+  try {
+    const res = await api.get(ENDPOINTS.users.list, { params: { page: 1, size: 100 } })
+    allUsersSnapshot.value = res.data.items
+  } catch { /* الكروت العلوية بتفضل بآخر قيمة معروفة — مش حرجة زي جدول المستخدمين نفسه */ }
+}
+
+// 2026-08-03: كان البحث بيفلتر أول 100 مستخدم متجابين بس (client-side) —
+// أي مستخدم برّه أول 100 (مرتّبين بـid) مستحيل يظهر في نتيجة البحث خالص
+// رغم إن الباك إند (GET /users?search=...) عنده بحث سيرفر-سايد حقيقي
+// جاهز من الأساس (core.crud.list_users). دلوقتي بيتقرأ فعليًا.
 async function loadUsers() {
   usersLoading.value = true; usersLoadError.value = ''
   try {
-    const res = await api.get(ENDPOINTS.users.list, { params: { page: 1, size: 100 } })
+    const res = await api.get(ENDPOINTS.users.list, {
+      params: { page: 1, size: 100, search: usersSearch.value.trim() || undefined },
+    })
     users.value = res.data.items
     usersTotal.value = res.data.total ?? res.data.items.length
   } catch { usersLoadError.value = t('backoffice.accounts.loadFailed') }
   finally { usersLoading.value = false }
+  await loadAllUsersSnapshot()
 }
 
 async function loadEmployees() {
@@ -191,6 +205,7 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
       }, { headers: { 'X-Step-Up-Token': stepUpToken } })
       bootstrap.value = res.data
       users.value = [...users.value, res.data.user]
+      allUsersSnapshot.value = [...allUsersSnapshot.value, res.data.user]
       employees.value = employees.value.map(employee =>
         String(employee.id) === form.value.employee_id
           ? { ...employee, user_id: res.data.user.id }
@@ -203,6 +218,7 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
         role: null, is_active: action.nextActive, reason,
       }, { headers: { 'X-Step-Up-Token': stepUpToken } })
       users.value = users.value.map(u => u.id === res.data.id ? res.data : u)
+      allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.id ? res.data : u)
       toast.success(t(action.nextActive ? 'backoffice.accounts.activated' : 'backoffice.accounts.deactivated'))
     }
     pending.value = null
@@ -532,7 +548,7 @@ onMounted(() => {
       <!-- Users list -->
       <AppCard :title="t('backoffice.accounts.listTitle')" padding="none">
         <div class="border-b border-stone-100 p-4 dark:border-border">
-          <AppInput v-model="usersSearch" type="search" :placeholder="t('backoffice.accounts.search')" />
+          <SearchInput v-model="usersSearch" :placeholder="t('backoffice.accounts.search')" @search="loadUsers" class="max-w-sm" />
         </div>
         <div v-if="usersLoading" class="flex justify-center p-10"><AppSpinner /></div>
         <div v-else-if="usersLoadError" class="p-6 text-center text-danger">{{ usersLoadError }}</div>
@@ -549,7 +565,7 @@ onMounted(() => {
               </tr>
             </thead>
             <tbody class="divide-y divide-stone-100 dark:divide-border">
-              <tr v-for="row in filteredUsers" :key="row.id">
+              <tr v-for="row in users" :key="row.id">
                 <td class="px-4 py-3">
                   <div class="font-semibold text-gray-800 dark:text-gray-100">{{ row.full_name }}</div>
                   <div class="text-xs text-gray-500">{{ row.email }}</div>

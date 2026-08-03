@@ -55,10 +55,11 @@ def list_employees(
     _=Depends(get_manager_user),
     branch_id: int = Query(...),
     status_filter: Optional[str] = Query(None, alias="status"),
+    search: Optional[str] = Query(None, max_length=100),
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
-    items, total = crud.list_employees(db, branch_id, status_filter,
+    items, total = crud.list_employees(db, branch_id, status_filter, search,
                                         skip=(page - 1) * size, limit=size)
     return PaginatedResponse(total=total, page=page, size=size,
                              items=[EmployeeRead.model_validate(e) for e in items])

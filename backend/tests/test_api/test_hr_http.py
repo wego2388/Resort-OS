@@ -473,6 +473,38 @@ class TestEmployeeCrudHttp:
         assert body["items"][0]["id"] == emp.id
         assert body["items"][0]["full_name"] == emp.full_name
 
+    def test_list_employees_search_filters_by_name_and_code(self, client: TestClient, db, manager_headers):
+        """2026-08-03: مفيش search param خالص كان موجود — الشاشة كانت
+        بتجيب أول 100 موظف وبس، بلا بحث سيرفر-سايد حقيقي."""
+        branch = make_branch_committed(db)
+        target = make_employee_committed(db, branch)  # "محمد كريم"
+        from app.modules.hr.models import Employee
+        other = Employee(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="سارة أحمد", position="Waiter", basic_salary=Decimal("3500.00"),
+            hire_date=date.today() - timedelta(days=100),
+        )
+        db.add(other)
+        db.commit()
+
+        by_name = client.get(
+            "/api/v1/hr/employees", params={"branch_id": branch.id, "search": "محمد"}, headers=manager_headers,
+        )
+        assert by_name.status_code == 200, by_name.text
+        assert by_name.json()["total"] == 1
+        assert by_name.json()["items"][0]["id"] == target.id
+
+        by_code = client.get(
+            "/api/v1/hr/employees", params={"branch_id": branch.id, "search": target.employee_code}, headers=manager_headers,
+        )
+        assert by_code.json()["total"] == 1
+        assert by_code.json()["items"][0]["id"] == target.id
+
+        no_match = client.get(
+            "/api/v1/hr/employees", params={"branch_id": branch.id, "search": "لا يوجد أحد بهذا الاسم"}, headers=manager_headers,
+        )
+        assert no_match.json()["total"] == 0
+
     def test_create_employee_success(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
         headers = super_admin_headers_for_branch(branch)
@@ -574,6 +606,57 @@ class TestEmployeeCrudHttp:
             headers=super_admin_headers,
         )
         assert resp.status_code == 404
+
+    def test_terminate_employee_deactivates_linked_login(self, client: TestClient, db, super_admin_headers):
+        """2026-08-03: كان تسجيل موظف "منتهي الخدمة" مالوش أي أثر على حساب
+        دخوله المرتبط — الحساب كان يفضل نشط وقادر يسجّل دخول عادي بعد
+        إنهاء الخدمة فعليًا. راجع hr.services.update_employee."""
+        from app.core.kernel.models.user import User
+        from tests.conftest import _create_test_user
+
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        user_id = _create_test_user(f"terminated-{uuid.uuid4().hex[:8]}@test.local", "waiter")
+        emp.user_id = user_id
+        db.commit()
+
+        resp = client.patch(
+            f"/api/v1/hr/employees/{emp.id}",
+            json={"status": "terminated"},
+            headers=super_admin_headers_for_branch(branch),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "terminated"
+
+        linked_user = db.query(User).filter(User.id == user_id).first()
+        db.refresh(linked_user)
+        assert linked_user.is_active is False
+
+    def test_terminate_employee_never_deactivates_a_super_admin_login(
+        self, client: TestClient, db, super_admin_headers,
+    ):
+        """دفاع إضافي: لو موظف اترتبط غلط بحساب super_admin، إنهاء خدمته
+        (عبر hr_manager/admin، مش الحماية الكاملة بتاعة update_user_role)
+        لازم ميلمسش is_active بتاعه خالص."""
+        from app.core.kernel.models.user import User
+        from tests.conftest import _create_test_user
+
+        branch = make_branch_committed(db)
+        emp = make_employee_committed(db, branch)
+        user_id = _create_test_user(f"sa-linked-{uuid.uuid4().hex[:8]}@test.local", "super_admin")
+        emp.user_id = user_id
+        db.commit()
+
+        resp = client.patch(
+            f"/api/v1/hr/employees/{emp.id}",
+            json={"status": "terminated"},
+            headers=super_admin_headers_for_branch(branch),
+        )
+        assert resp.status_code == 200, resp.text
+
+        linked_user = db.query(User).filter(User.id == user_id).first()
+        db.refresh(linked_user)
+        assert linked_user.is_active is True
 
 
 class TestPayslipCalculationHttp:

@@ -98,9 +98,44 @@ def update_employee(db: Session, employee_id: int, data: EmployeeUpdate, updated
             new_data=f'{{"basic_salary": "{changes["basic_salary"]}"}}',
         ))
 
+    # ⚠️ باج حقيقي كان هنا (2026-08-03): تسجيل موظف "منتهي الخدمة" مالوش
+    # أي أثر على حساب دخوله المرتبط (Employee.user_id) — الحساب كان بيفضل
+    # نشط وقادر يسجّل دخول عادي بعد إنهاء الخدمة فعليًا. راجع CLAUDE.md §13
+    # بند ❻: أي تغيير فعلي في is_active لازم revoke_user_tokens(). هنا
+    # الإلغاء نطاقه أضيق عمدًا من core.services.update_user_role (اللي
+    # مقفول على super_admin بحماية Gate 2A كاملة) — hr_manager مسموح له
+    # يلغي حساب موظف مربوط بيه بس، ومش بيلمس role/is_active لأي حساب
+    # super_admin خالص (دفاع إضافي ضد إنهاء خدمة "موظف" اتربط غلط بحساب
+    # صلاحيات أعلى).
+    just_terminated = (
+        changes.get("status") == "terminated" and emp.status != "terminated" and emp.user_id
+    )
+
     emp = crud.update_employee(db, emp, data)
+
+    deactivated_user_id: Optional[int] = None
+    if just_terminated:
+        from app.core.kernel.models.user import User  # noqa: PLC0415
+        from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+        from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+
+        linked_user = db.query(User).filter(User.id == emp.user_id).first()
+        if linked_user and linked_user.role != "super_admin" and linked_user.is_active:
+            linked_user.is_active = False
+            deactivated_user_id = linked_user.id
+            create_audit_log(db, AuditLogCreate(
+                user_id=updated_by, branch_id=emp.branch_id, action="deactivate_login_on_termination",
+                entity_type="user", entity_id=linked_user.id,
+                old_data='{"is_active": true}', new_data='{"is_active": false}',
+            ))
+
     db.commit()
     db.refresh(emp)
+
+    if deactivated_user_id is not None:
+        from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+        revoke_user_tokens(deactivated_user_id)
+
     return emp
 
 
