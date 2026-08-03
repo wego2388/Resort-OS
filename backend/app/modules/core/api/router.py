@@ -668,6 +668,46 @@ def force_reset_2fa(
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
+@router.get("/users/{user_id}/sessions")
+def list_user_sessions(user_id: int, db: DbDep, _user=Depends(get_super_admin_user)):
+    """2026-08-03: كان الأدمن يقدر يشوف/يلغي جلساته هو بس (/auth/sessions)
+    — النسخة الوحيدة المتاحة لإيقاف جلسة موظف تاني كانت تعطيل حسابه
+    بالكامل. list_active_sessions/revoke_session_by_ref كانا جاهزين
+    أصلاً ياخدوا أي user_id — مفيش أي endpoint إداري كان بيستخدمهم."""
+    from app.core.config import settings  # noqa: PLC0415
+    from app.core.kernel.auth.service import AuthService  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    auth = AuthService(db, User, settings)
+    return {"sessions": auth.list_active_sessions(user_id)}
+
+
+@router.delete("/users/{user_id}/sessions/{session_ref}")
+def revoke_user_session(
+    user_id: int,
+    session_ref: str,
+    db: DbDep,
+    request: Request,
+    user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    from app.core.config import settings  # noqa: PLC0415
+    from app.core.kernel.auth.service import AuthService  # noqa: PLC0415
+    from app.core.kernel.auth.step_up import admin_session_revoke_scope  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    scope_hash = admin_session_revoke_scope(target_user_id=user_id, session_ref=session_ref)
+    _consume_step_up_or_raise(
+        db, user, request,
+        purpose="admin_session_revoke", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    auth = AuthService(db, User, settings)
+    revoked = auth.revoke_session_by_ref(user_id, session_ref)
+    if not revoked:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "الجلسة غير موجودة أو منتهية بالفعل")
+    return {"revoked": True}
+
+
 # ─────────────────────── Permission Matrix ───────────────────────────
 # طبقة استثناءات فوق ROLE_LEVELS — انظر app/modules/core/models.py::UserPermission
 # و app/core/deps.py::require_permission للشرح الكامل.

@@ -1013,3 +1013,111 @@ class TestUserUnlockAndForce2FAReset:
             headers=mgr_headers,
         )
         assert resp.status_code == 403
+
+
+# ═════════════ Part H — Admin session view/revoke for another user ════════
+# 2026-08-03: كان الأدمن يقدر يشوف/يلغي جلساته هو بس (/auth/sessions) —
+# النسخة الوحيدة المتاحة لإيقاف جلسة موظف تاني كانت تعطيل حسابه بالكامل،
+# رغم إن AuthService.list_active_sessions/revoke_session_by_ref جاهزين
+# أصلاً ياخدوا أي user_id.
+
+def _new_family_for(user_id: int) -> str:
+    from app.core.kernel.auth.service import AuthService
+    from app.core.kernel.models.user import User
+    from tests.conftest import TestingSessionLocal
+    from app.core.config import settings as _settings
+
+    db = TestingSessionLocal()
+    try:
+        return AuthService(db, User, _settings).create_refresh_token(user_id)
+    finally:
+        db.close()
+
+
+def _session_ref_for(raw_token: str) -> str:
+    from app.core.kernel.auth.service import AuthService
+    from app.core.kernel.models.user import User
+    from tests.conftest import TestingSessionLocal
+    from app.core.config import settings as _settings
+
+    db = TestingSessionLocal()
+    try:
+        return AuthService(db, User, _settings).current_session(raw_token)[1]
+    finally:
+        db.close()
+
+
+class TestAdminSessionManagement:
+    def test_list_sessions_requires_super_admin(self, client: TestClient):
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        _mgr_id, mgr_headers = _fresh_manager_no_2fa("admin-sess-list-mgr")
+        resp = client.get(f"/api/v1/users/{target_id}/sessions", headers=mgr_headers)
+        assert resp.status_code == 403
+
+    def test_list_sessions_returns_target_users_families_only(self, client: TestClient):
+        sa_id, sa_headers, _secret = _fresh_super_admin("admin-sess-list")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        _new_family_for(target_id)
+        _new_family_for(target_id)
+        other_id = _create_test_user(f"other-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        _new_family_for(other_id)
+
+        resp = client.get(f"/api/v1/users/{target_id}/sessions", headers=sa_headers)
+        assert resp.status_code == 200, resp.text
+        sessions = resp.json()["sessions"]
+        assert len(sessions) == 2
+        for s in sessions:
+            assert "family_id" not in s
+            assert "token_hash" not in s
+
+    def test_revoke_session_requires_step_up_token(self, client: TestClient):
+        sa_id, sa_headers, _secret = _fresh_super_admin("admin-sess-revoke-missing")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        raw = _new_family_for(target_id)
+        ref = _session_ref_for(raw)
+        resp = client.delete(f"/api/v1/users/{target_id}/sessions/{ref}", headers=sa_headers)
+        assert resp.status_code == 428
+
+    def test_revoke_session_success(self, client: TestClient):
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("admin-sess-revoke-ok")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        raw = _new_family_for(target_id)
+        ref = _session_ref_for(raw)
+
+        token = _issue_step_up(
+            client, sa_headers, purpose="admin_session_revoke",
+            intent={"target_user_id": target_id, "session_ref": ref}, totp_secret=sa_secret,
+        )
+        resp = client.delete(
+            f"/api/v1/users/{target_id}/sessions/{ref}",
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["revoked"] is True
+
+        # اتلغت فعليًا — نفس المرجع مايظهرش تاني في القايمة
+        listing = client.get(f"/api/v1/users/{target_id}/sessions", headers=sa_headers)
+        assert ref not in [s["session_ref"] for s in listing.json()["sessions"]]
+
+    def test_revoke_unknown_session_ref_404(self, client: TestClient):
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("admin-sess-revoke-404")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        fake_ref = "0" * 32
+
+        token = _issue_step_up(
+            client, sa_headers, purpose="admin_session_revoke",
+            intent={"target_user_id": target_id, "session_ref": fake_ref}, totp_secret=sa_secret,
+        )
+        resp = client.delete(
+            f"/api/v1/users/{target_id}/sessions/{fake_ref}",
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 404
+
+    def test_revoke_session_requires_super_admin(self, client: TestClient):
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        raw = _new_family_for(target_id)
+        ref = _session_ref_for(raw)
+        _mgr_id, mgr_headers = _fresh_manager_no_2fa("admin-sess-revoke-mgr")
+        resp = client.delete(f"/api/v1/users/{target_id}/sessions/{ref}", headers=mgr_headers)
+        assert resp.status_code == 403

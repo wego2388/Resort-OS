@@ -141,6 +141,16 @@ def setting_upsert_scope(
     })
 
 
+def admin_session_revoke_scope(*, target_user_id: int, session_ref: str) -> str:
+    """2026-08-03: نسخة إدارية من session_revoke — super_admin بينهي جلسة
+    مستخدم تاني (مش جلسته هو)، بدل التعطيل الكامل للحساب زي ما كان
+    الوحيد المتاح قبل كده. مربوط بالمستخدم الهدف + مرجع الجلسة معًا،
+    عشان proof اتاخد لإنهاء جلسة مستخدم A مايشتغلش لمستخدم B."""
+    return build_step_up_scope("admin_session_revoke", {
+        "target_user_id": target_user_id, "session_ref": session_ref,
+    })
+
+
 def session_revoke_scope(*, session_ref: str) -> str:
     """Gate 2B3B — bind a step-up proof to revoking exactly one session
     (family) by its public reference, so a proof minted to revoke session A

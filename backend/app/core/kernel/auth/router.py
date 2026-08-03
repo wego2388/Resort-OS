@@ -213,6 +213,7 @@ _STEP_UP_PURPOSES = frozenset({
     # admin_bootstrap recover الـCLI.
     "user_unlock",
     "user_force_2fa_reset",
+    "admin_session_revoke",
 })
 
 
@@ -382,6 +383,13 @@ class _SessionRevokeIntent(BaseModel):
     session_ref: str = Field(min_length=1, max_length=32)
 
 
+class _AdminSessionRevokeIntent(BaseModel):
+    """2026-08-03: نسخة إدارية — super_admin بينهي جلسة مستخدم تاني."""
+    model_config = ConfigDict(extra="forbid")
+    target_user_id: int = Field(gt=0, strict=True)
+    session_ref: str = Field(min_length=1, max_length=32)
+
+
 class _OtherSessionsRevokeIntent(BaseModel):
     """Gate 2B3B — revoke every session except the caller's current one. The
     proof is bound to the current session's public reference so it cannot be
@@ -456,6 +464,7 @@ _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "dining_refund": _DiningRefundIntent,
     "user_unlock": _UserUnlockIntent,
     "user_force_2fa_reset": _UserForce2FAResetIntent,
+    "admin_session_revoke": _AdminSessionRevokeIntent,
 }
 
 
@@ -834,9 +843,13 @@ def build_auth_router(
             )
         elif payload.purpose == "user_unlock":
             scope_hash = step_up_scopes.user_unlock_scope(user_id=intent.user_id)
-        else:  # user_force_2fa_reset
+        elif payload.purpose == "user_force_2fa_reset":
             scope_hash = step_up_scopes.user_force_2fa_reset_scope(
                 user_id=intent.user_id, reason=intent.reason,
+            )
+        else:  # admin_session_revoke
+            scope_hash = step_up_scopes.admin_session_revoke_scope(
+                target_user_id=intent.target_user_id, session_ref=intent.session_ref,
             )
 
         access_token_hash = step_up_scopes.access_token_hash_from_request(request)

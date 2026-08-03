@@ -407,6 +407,8 @@ export const ENDPOINTS = {
     role: (id: number) => `/api/v1/users/${id}/role`,
     unlock: (id: number) => `/api/v1/users/${id}/unlock`,
     force2FAReset: (id: number) => `/api/v1/users/${id}/force-2fa-reset`,
+    sessions: (id: number) => `/api/v1/users/${id}/sessions`,
+    revokeSession: (id: number, sessionRef: string) => `/api/v1/users/${id}/sessions/${sessionRef}`,
   },
   finance_eta: {
     invoices: '/api/v1/finance/eta/invoices',

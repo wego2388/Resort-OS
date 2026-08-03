@@ -61,6 +61,7 @@ interface EmployeeOption {
 }
 type PendingAction = { kind: 'create' } | { kind: 'status'; user: UserRow; nextActive: boolean }
   | { kind: 'unlock'; user: UserRow } | { kind: 'force2fa'; user: UserRow }
+  | { kind: 'revoke_session'; user: UserRow; sessionRef: string }
 
 const users = ref<UserRow[]>([])
 const usersTotal = ref(0)
@@ -190,9 +191,10 @@ const stepUpPurpose = computed(() => {
   if (kind === 'status') return 'user_role_update' as const
   if (kind === 'unlock') return 'user_unlock' as const
   if (kind === 'force2fa') return 'user_force_2fa_reset' as const
+  if (kind === 'revoke_session') return 'admin_session_revoke' as const
   return 'user_provision' as const
 })
-const stepUpRequiresReason = computed(() => pending.value?.kind !== 'unlock')
+const stepUpRequiresReason = computed(() => pending.value?.kind !== 'unlock' && pending.value?.kind !== 'revoke_session')
 const stepUpIntent = computed<Record<string, unknown>>(() => {
   if (pending.value?.kind === 'status')
     return { user_id: pending.value.user.id, role: null, is_active: pending.value.nextActive }
@@ -200,6 +202,8 @@ const stepUpIntent = computed<Record<string, unknown>>(() => {
     return { user_id: pending.value.user.id }
   if (pending.value?.kind === 'force2fa')
     return { user_id: pending.value.user.id }
+  if (pending.value?.kind === 'revoke_session')
+    return { target_user_id: pending.value.user.id, session_ref: pending.value.sessionRef }
   return {
     email: form.value.email.trim().toLowerCase(),
     full_name: form.value.full_name.trim(),
@@ -217,6 +221,8 @@ const stepUpDescription = computed(() => {
     return t('backoffice.accounts.confirmUnlock', { name: pending.value.user.full_name })
   if (pending.value?.kind === 'force2fa')
     return t('backoffice.accounts.confirmForce2FAReset', { name: pending.value.user.full_name })
+  if (pending.value?.kind === 'revoke_session')
+    return t('backoffice.accounts.sessionsRevokeDescription', { name: pending.value.user.full_name })
   return t('backoffice.accounts.confirmCreate', { name: form.value.full_name.trim() })
 })
 
@@ -257,12 +263,17 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
       users.value = users.value.map(u => u.id === res.data.id ? res.data : u)
       allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.id ? res.data : u)
       toast.success(t('backoffice.accounts.unlocked'))
-    } else {
+    } else if (action.kind === 'force2fa') {
       const res = await api.post(ENDPOINTS.users.force2FAReset(action.user.id), { reason },
         { headers: { 'X-Step-Up-Token': stepUpToken } })
       users.value = users.value.map(u => u.id === res.data.id ? res.data : u)
       allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.id ? res.data : u)
       toast.success(t('backoffice.accounts.force2FAResetDone'))
+    } else {
+      await api.delete(ENDPOINTS.users.revokeSession(action.user.id, action.sessionRef),
+        { headers: { 'X-Step-Up-Token': stepUpToken } })
+      toast.success(t('backoffice.accounts.sessionsRevokeSuccess'))
+      if (sessionsTarget.value?.id === action.user.id) await fetchSessions(action.user.id)
     }
     pending.value = null
   } catch (e: any) {
@@ -510,6 +521,62 @@ async function submitSetPin() {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════
+// SESSION MANAGEMENT — super_admin يشوف/ينهي جلسات مستخدم تاني
+// Backend: GET/DELETE /api/v1/users/{user_id}/sessions[/{session_ref}]
+// 2026-08-03: AuthService.list_active_sessions/revoke_session_by_ref كانا
+// جاهزين أصلاً ياخدوا أي user_id — مفيش أي endpoint إداري كان بيستخدمهم،
+// نفس شكل الـDTO المستخدم في SessionsView.vue (self-service) بالظبط.
+// ══════════════════════════════════════════════════════════════════════
+interface SessionRow {
+  session_ref: string
+  started_at: string
+  last_active_at: string
+  expires_at: string
+  device: string | null
+  current: boolean
+}
+
+const sessionsTarget = ref<UserRow | null>(null)
+const sessions = ref<SessionRow[]>([])
+const sessionsLoading = ref(false)
+const sessionsError = ref('')
+
+async function fetchSessions(userId: number) {
+  sessionsLoading.value = true
+  sessionsError.value = ''
+  try {
+    const res = await api.get(ENDPOINTS.users.sessions(userId))
+    sessions.value = res.data.sessions ?? []
+  } catch {
+    sessionsError.value = t('backoffice.accounts.sessionsLoadError')
+  } finally {
+    sessionsLoading.value = false
+  }
+}
+
+function openSessionsModal(row: UserRow) {
+  sessionsTarget.value = row
+  sessions.value = []
+  fetchSessions(row.id)
+}
+
+function closeSessionsModal() {
+  sessionsTarget.value = null
+  sessions.value = []
+  sessionsError.value = ''
+}
+
+function requestRevokeSession(sessionRef: string) {
+  if (!sessionsTarget.value) return
+  stepUpError.value = ''
+  pending.value = { kind: 'revoke_session', user: sessionsTarget.value, sessionRef }
+}
+
+function deviceLabel(device: string | null): string {
+  return device && device.trim() ? device : t('backoffice.accounts.sessionsUnknownDevice')
+}
+
 // ── Init ──────────────────────────────────────────────────────────────
 onMounted(() => {
   const requested = String(route.query.tab ?? 'users')
@@ -674,6 +741,10 @@ onMounted(() => {
                       :disabled="stepUpBusy" @click="requestForce2FAReset(row)">
                       {{ t('backoffice.accounts.force2FAReset') }}
                     </button>
+                    <button class="font-semibold text-blue-700 hover:underline dark:text-blue-400"
+                      @click="openSessionsModal(row)">
+                      {{ t('backoffice.accounts.sessions') }}
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -764,6 +835,50 @@ onMounted(() => {
               {{ pinBusy ? t('backoffice.superAdmin.pin.saving') : t('backoffice.superAdmin.pin.confirm') }}
             </AppButton>
           </div>
+        </template>
+      </AppModal>
+
+      <!-- ── Sessions Modal ───────────────────────────────────────────── -->
+      <!-- super_admin يشوف/ينهي جلسات مستخدم تاني — نفس شكل SessionsView.vue -->
+      <AppModal
+        v-if="sessionsTarget"
+        :open="true"
+        :title="t('backoffice.accounts.sessionsModalTitle', { name: sessionsTarget.full_name })"
+        size="md"
+        @close="closeSessionsModal"
+      >
+        <div class="space-y-3">
+          <div v-if="sessionsLoading" class="flex justify-center py-6">
+            <AppSpinner size="sm" />
+          </div>
+          <p v-else-if="sessionsError" role="alert" class="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600 dark:bg-red-950/40 dark:text-red-300">
+            {{ sessionsError }}
+          </p>
+          <p v-else-if="sessions.length === 0" class="py-6 text-center text-sm text-gray-400 dark:text-gray-400">
+            {{ t('backoffice.accounts.sessionsEmpty') }}
+          </p>
+          <ul v-else class="space-y-2">
+            <li v-for="s in sessions" :key="s.session_ref"
+              class="rounded-lg border border-stone-200 dark:border-border p-3 flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <div class="font-semibold text-gray-800 dark:text-gray-100 truncate">{{ deviceLabel(s.device) }}</div>
+                <dl class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+                  <div><dt class="inline font-medium">{{ t('backoffice.accounts.sessionsStartedAt') }}:</dt> <dd class="inline">{{ new Date(s.started_at).toLocaleString(locale) }}</dd></div>
+                  <div><dt class="inline font-medium">{{ t('backoffice.accounts.sessionsLastActiveAt') }}:</dt> <dd class="inline">{{ new Date(s.last_active_at).toLocaleString(locale) }}</dd></div>
+                  <div><dt class="inline font-medium">{{ t('backoffice.accounts.sessionsExpiresAt') }}:</dt> <dd class="inline">{{ new Date(s.expires_at).toLocaleString(locale) }}</dd></div>
+                </dl>
+              </div>
+              <button class="flex-shrink-0 font-semibold text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
+                :disabled="stepUpBusy" @click="requestRevokeSession(s.session_ref)">
+                {{ t('backoffice.accounts.sessionsRevoke') }}
+              </button>
+            </li>
+          </ul>
+        </div>
+        <template #footer>
+          <AppButton variant="outline" class="w-full" @click="closeSessionsModal">
+            {{ t('backoffice.accounts.sessionsClose') }}
+          </AppButton>
         </template>
       </AppModal>
 
