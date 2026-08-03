@@ -342,3 +342,82 @@ def send_visit_survey(self, visit_id: int, branch_id: int):
             "app.tasks.timeshare_tasks.send_visit_survey", exc,
             extra={"visit_id": visit_id, "branch_id": branch_id},
         )
+
+
+@celery_app.task(name="app.tasks.timeshare_tasks.process_waitlist", bind=True)
+def process_waitlist(self):
+    """
+    كل يوم 10 صباحاً — قائمة الانتظار (TimeshareWaitlist) كانت موديل +
+    endpoints بدون أي معالجة فعلية خالص: عميل يتسجّل فيها ويفضل عليها
+    للأبد من غير أي حد يعرف إن وحدة اتفضت أو إن مهلة الرد فاتت.
+
+    خطوتان في نفس الـtask (نفس نمط mark_overdue's multi-concern pass):
+    ① notified فات معاد ردها (expires_at < دلوقتي) → expired، عشان الفرصة
+       تروح للتالي في الطابور من غير ما حد يحتاج يتابعها يدويًا.
+    ② waiting لسه معلّقة → فحص فعلي (find_available_unit، نفس منطق
+       create_visit) لو فيه وحدة من نوع العقد متاحة للفترة المطلوبة، وإن
+       وُجدت: notified + مهلة 48 ساعة للرد + تنبيه واتساب حقيقي.
+    """
+    try:
+        from app.core.database import SessionLocal  # noqa: PLC0415
+        from datetime import datetime, timedelta      # noqa: PLC0415
+
+        with SessionLocal() as db:
+            try:
+                from app.modules.timeshare.crud import find_available_unit  # noqa: PLC0415
+                from app.modules.timeshare.models import (  # noqa: PLC0415
+                    TimeshareContract, TimeshareWaitlist,
+                )
+                from app.core.kernel.whatsapp import send_whatsapp_message  # noqa: PLC0415
+
+                now = datetime.utcnow()
+
+                expired = (
+                    db.query(TimeshareWaitlist)
+                    .filter(TimeshareWaitlist.status == "notified", TimeshareWaitlist.expires_at < now)
+                    .all()
+                )
+                for entry in expired:
+                    entry.status = "expired"
+
+                waiting = (
+                    db.query(TimeshareWaitlist)
+                    .filter(TimeshareWaitlist.status == "waiting")
+                    .order_by(TimeshareWaitlist.position)
+                    .all()
+                )
+                notified_count = 0
+                for entry in waiting:
+                    contract = db.query(TimeshareContract).filter(
+                        TimeshareContract.id == entry.contract_id
+                    ).first()
+                    if not contract:
+                        continue
+                    unit = find_available_unit(
+                        db, entry.branch_id, contract.room_type,
+                        entry.requested_start, entry.requested_end,
+                    )
+                    if not unit:
+                        continue
+                    entry.status = "notified"
+                    entry.notified_at = now
+                    entry.expires_at = now + timedelta(hours=48)
+                    if contract.customer_phone:
+                        send_whatsapp_message(
+                            contract.customer_phone,
+                            f"خبر سار! توفّرت وحدة {contract.room_type} في الخيمة بيتش للفترة "
+                            f"من {entry.requested_start:%Y-%m-%d} إلى {entry.requested_end:%Y-%m-%d} — "
+                            f"كلّم خدمة العملاء خلال 48 ساعة لتأكيد الحجز، وإلا هتتاح للتالي في قائمة الانتظار.",
+                        )
+                    notified_count += 1
+
+                db.commit()
+                logger.info(
+                    "Waitlist processed: expired=%s notified=%s", len(expired), notified_count,
+                )
+            except ImportError:
+                logger.debug("Timeshare module not yet built — skipped")
+
+    except Exception as exc:
+        logger.error("process_waitlist failed: %s", exc)
+        notify_task_failure("app.tasks.timeshare_tasks.process_waitlist", exc)

@@ -62,6 +62,11 @@ interface SummaryData {
 }
 interface CalendarMonth { month: number; month_name: string; weeks: CalendarWeek[] }
 interface TimeshareUnit { id: number; branch_id: number; unit_number: string; unit_type: string; status: string; notes?: string | null }
+interface WaitlistEntry {
+  id: number; branch_id: number; contract_id: number
+  requested_start: string; requested_end: string; position: number
+  status: string; notified_at: string | null; expires_at: string | null
+}
 interface Visit {
   id: number; contract_id: number; unit_id: number | null
   check_in: string; check_out: string; nights: number; status: string
@@ -93,6 +98,7 @@ const TABS = computed(() => [
   // إدارة الموظفين نفسها timeshare_admin بس، زي باقي العمليات الإدارية.
   { id: 'requests', icon: '📝', label: t('backoffice.timeshare.tabs.requests') },
   { id: 'support', icon: '💬', label: t('backoffice.timeshare.tabs.support') },
+  { id: 'waitlist', icon: '⏳', label: t('backoffice.timeshare.tabs.waitlist') },
   ...(auth.hasRole('timeshare_admin') ? [
     { id: 'staff', icon: '🧑‍💼', label: t('backoffice.timeshare.tabs.staff') },
     { id: 'units', icon: '🏘️', label: t('backoffice.timeshare.tabs.units') },
@@ -121,6 +127,9 @@ const expandedClient = ref<number | null>(null)
 const units = ref<TimeshareUnit[]>([])
 const unitNumberById = computed<Record<number, string>>(() =>
   Object.fromEntries(units.value.map(u => [u.id, u.unit_number])),
+)
+const contractById = computed<Record<number, Contract>>(() =>
+  Object.fromEntries(allClients.value.map(c => [c.id, c])),
 )
 
 // ── Customer Profile (ملف عميل مجمّع — كل عقوده/زياراته/أقساطه/تقييماته) ──
@@ -206,6 +215,66 @@ async function toggleUnitMaintenance(unit: TimeshareUnit) {
   } catch (e: any) {
     toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.msg.unitSaveError'))
   } finally { togglingUnitId.value = null }
+}
+
+// ── قائمة الانتظار (2026-08-03) — كانت موديل + endpoints بدون أي شاشة
+// خالص (حتى للقراءة بس)، ومفيش مهمة مجدولة كانت بتنقل حد من "منتظر"
+// لـ"اتبلّغ" لما وحدة تفضى (راجع app.tasks.timeshare_tasks.process_waitlist
+// الجديدة). عميل كان ممكن يتسجّل ويفضل في القائمة للأبد من غير حد يعرف.
+const waitlist = ref<WaitlistEntry[]>([])
+const waitlistLoading = ref(false)
+const updatingWaitlistId = ref<number | null>(null)
+const newWaitlistModal = ref(false)
+const newWaitlistContract = ref<Contract | null>(null)
+const newWaitlistForm = ref({ requested_start: '', requested_end: '' })
+const savingWaitlist = ref(false)
+
+async function loadWaitlist() {
+  waitlistLoading.value = true
+  try {
+    const r = await api.get('/api/v1/timeshare/waitlist', { params: { branch_id: branchId.value } })
+    waitlist.value = r.data ?? []
+  } catch { toast.error(t('backoffice.timeshare.msg.loadWaitlistError')) }
+  finally { waitlistLoading.value = false }
+}
+
+function openNewWaitlistModal(c: Contract) {
+  newWaitlistContract.value = c
+  newWaitlistForm.value = { requested_start: '', requested_end: '' }
+  newWaitlistModal.value = true
+}
+
+async function submitNewWaitlist() {
+  if (!newWaitlistContract.value) return
+  if (!newWaitlistForm.value.requested_start || !newWaitlistForm.value.requested_end) {
+    toast.error(t('backoffice.timeshare.msg.waitlistDatesRequired'))
+    return
+  }
+  savingWaitlist.value = true
+  try {
+    const { data } = await api.post('/api/v1/timeshare/waitlist', {
+      branch_id: branchId.value,
+      contract_id: newWaitlistContract.value.id,
+      requested_start: newWaitlistForm.value.requested_start,
+      requested_end: newWaitlistForm.value.requested_end,
+    })
+    waitlist.value = [...waitlist.value, data]
+    toast.success(t('backoffice.timeshare.msg.waitlistAdded'))
+    newWaitlistModal.value = false
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.msg.waitlistSaveError'))
+  } finally { savingWaitlist.value = false }
+}
+
+async function updateWaitlistStatus(entry: WaitlistEntry, newStatus: 'confirmed' | 'cancelled') {
+  updatingWaitlistId.value = entry.id
+  try {
+    await api.patch(`/api/v1/timeshare/waitlist/${entry.id}`, { status: newStatus })
+    waitlist.value = waitlist.value.filter(w => w.id !== entry.id)
+    toast.success(t('backoffice.timeshare.msg.waitlistStatusUpdated'))
+  } catch (e: any) {
+    toast.error(e?.response?.data?.detail ?? t('backoffice.timeshare.msg.waitlistSaveError'))
+  } finally { updatingWaitlistId.value = null }
 }
 
 async function openProfile(c: Contract) {
@@ -780,7 +849,7 @@ async function loadMaintenanceDues() {
 async function refreshAll() {
   loading.value = true
   await Promise.all([
-    loadSummary(), loadCalendar(), loadClients(), loadInstallments(), loadMaintenanceDues(), loadUnits(),
+    loadSummary(), loadCalendar(), loadClients(), loadInstallments(), loadMaintenanceDues(), loadUnits(), loadWaitlist(),
     loadVisitRequests(), loadSupportTickets(), loadTimeshareStaff(),
   ])
   loading.value = false
@@ -1275,6 +1344,8 @@ onMounted(refreshAll)
                 class="min-h-[44px] px-4 py-2 rounded-xl bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 text-sm font-bold border border-green-200 dark:border-green-800 hover:bg-green-100 dark:hover:bg-green-950/60 disabled:opacity-40">▶️ {{ t('backoffice.timeshare.activate') }}</button>
               <button v-if="auth.hasRole('timeshare_admin') && c.unit_id && !['cancelled','expired'].includes(c.status)" @click="openTransferModal(c)"
                 class="min-h-[44px] px-4 py-2 rounded-xl bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300 text-sm font-bold border border-violet-200 dark:border-violet-800 hover:bg-violet-100 dark:hover:bg-violet-950/60">🔑 {{ t('backoffice.timeshare.transferUnit') }}</button>
+              <button v-if="!['cancelled','expired'].includes(c.status)" @click="openNewWaitlistModal(c)"
+                class="min-h-[44px] px-4 py-2 rounded-xl bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 text-sm font-bold border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-950/60">⏳ {{ t('backoffice.timeshare.joinWaitlist') }}</button>
               <AppButton v-if="auth.hasRole('timeshare_admin') && c.status !== 'cancelled'" variant="danger" class="min-h-[44px]" @click="cancelContract(c)">🗑️ {{ t('backoffice.timeshare.cancelAction') }}</AppButton>
             </div>
           </div>
@@ -1466,6 +1537,56 @@ onMounted(refreshAll)
         </div>
       </AppCard>
     </div>
+
+    <div v-if="activeTab === 'waitlist'" class="space-y-4">
+      <LoadingState v-if="waitlistLoading" :label="t('backoffice.timeshare.loadingWaitlist')" />
+      <AppCard v-else padding="none">
+        <EmptyState v-if="!waitlist.length" icon="⏳" :title="t('backoffice.timeshare.noResults')" />
+        <div v-else class="divide-y divide-stone-100 dark:divide-border">
+          <div v-for="entry in waitlist" :key="entry.id" class="p-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div class="font-bold text-gray-900 dark:text-gray-100">
+                {{ contractById[entry.contract_id]?.customer_name ?? `#${entry.contract_id}` }}
+                <span class="text-sm font-normal text-gray-500 dark:text-gray-400">— {{ contractById[entry.contract_id]?.contract_number }}</span>
+              </div>
+              <div class="text-sm text-gray-600 dark:text-gray-300">{{ formatDateValue(entry.requested_start) }} — {{ formatDateValue(entry.requested_end) }}</div>
+              <div v-if="entry.status === 'notified' && entry.expires_at" class="text-xs text-amber-600 dark:text-amber-400">
+                {{ t('backoffice.timeshare.waitlistExpiresAt', { date: formatDateValue(entry.expires_at) }) }}
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <AppBadge size="sm" :variant="entry.status === 'notified' ? 'warning' : 'info'">
+                {{ t(`backoffice.timeshare.waitlistStatus.${entry.status}`, entry.status) }}
+              </AppBadge>
+              <template v-if="auth.hasRole('timeshare_admin')">
+                <button @click="updateWaitlistStatus(entry, 'confirmed')" :disabled="updatingWaitlistId === entry.id"
+                  class="min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold border bg-green-50 text-green-700 dark:bg-green-950/40 dark:text-green-300 border-green-200 dark:border-green-800 hover:bg-green-100 disabled:opacity-40">
+                  ✅ {{ t('backoffice.timeshare.waitlistConfirm') }}
+                </button>
+                <button @click="updateWaitlistStatus(entry, 'cancelled')" :disabled="updatingWaitlistId === entry.id"
+                  class="min-h-[44px] px-3 py-2 rounded-xl text-xs font-bold border bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300 border-red-200 dark:border-red-800 hover:bg-red-100 disabled:opacity-40">
+                  ❌ {{ t('backoffice.timeshare.waitlistCancel') }}
+                </button>
+              </template>
+            </div>
+          </div>
+        </div>
+      </AppCard>
+    </div>
+
+    <!-- ══ NEW WAITLIST ENTRY MODAL ══ -->
+    <AppModal :open="newWaitlistModal" :title="`⏳ ${t('backoffice.timeshare.joinWaitlist')}`" size="sm" @close="newWaitlistModal = false">
+      <div v-if="newWaitlistContract" class="space-y-3">
+        <p class="text-sm text-gray-600 dark:text-gray-300">{{ newWaitlistContract.customer_name }} — {{ newWaitlistContract.contract_number }}</p>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.timeshare.scheduleVisit.checkIn') }}
+          <input v-model="newWaitlistForm.requested_start" type="date" class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
+        </label>
+        <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.timeshare.scheduleVisit.checkOut') }}
+          <input v-model="newWaitlistForm.requested_end" type="date" class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm" />
+        </label>
+        <AppButton class="w-full min-h-[44px]" :disabled="savingWaitlist" @click="submitNewWaitlist">{{ savingWaitlist ? t('backoffice.timeshare.saving') : t('backoffice.timeshare.save') }}</AppButton>
+      </div>
+    </AppModal>
 
     <div v-if="activeTab === 'units' && auth.hasRole('timeshare_admin')" class="space-y-4">
       <AppButton @click="openNewUnitModal">➕ {{ t('backoffice.timeshare.newUnit') }}</AppButton>

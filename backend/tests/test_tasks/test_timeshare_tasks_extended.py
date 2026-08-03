@@ -80,6 +80,33 @@ def _make_installment(db, contract, due_date, status="pending", amount=Decimal("
     return inst
 
 
+def _make_ts_unit(db, branch, unit_type="2R", status="available", unit_number=None):
+    from app.modules.timeshare.models import TimeshareUnit
+    unit = TimeshareUnit(
+        branch_id=branch.id, unit_type=unit_type, status=status,
+        unit_number=unit_number or f"U-{uuid.uuid4().hex[:6]}",
+    )
+    db.add(unit)
+    db.commit()
+    return unit
+
+
+def _make_waitlist_entry(db, branch, contract, start=None, end=None, status="waiting"):
+    from app.modules.timeshare import crud as ts_crud
+    from app.modules.timeshare.schemas import WaitlistCreate
+    today = date.today()
+    data = WaitlistCreate(
+        branch_id=branch.id, contract_id=contract.id,
+        requested_start=start or today + timedelta(days=30),
+        requested_end=end or today + timedelta(days=37),
+    )
+    entry = ts_crud.create_waitlist_entry(db, data)
+    if status != "waiting":
+        entry.status = status
+    db.commit()
+    return entry
+
+
 def _make_ts_visit(db, contract, branch, check_in=None, check_out=None):
     from app.modules.timeshare.models import TimeshareVisit
     today = date.today()
@@ -337,5 +364,87 @@ class TestTimeshareVisitSurvey:
             with patch("app.core.database.SessionLocal", return_value=ctx):
                 from app.tasks.timeshare_tasks import send_visit_survey
                 send_visit_survey(visit_id=visit.id, branch_id=branch.id)
+        finally:
+            wa_module.send_whatsapp_message = original
+
+
+# ─── process_waitlist logic ───────────────────────────────────────────────
+
+class TestTimeshareProcessWaitlist:
+    """2026-08-03: TimeshareWaitlist كان موديل + endpoints بدون أي معالجة
+    فعلية — عميل يتسجّل ويفضل عليها للأبد."""
+
+    def _run(self, db):
+        from unittest.mock import MagicMock, patch
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.timeshare_tasks import process_waitlist
+            process_waitlist()
+
+    def test_notifies_when_matching_unit_available(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        sent = []
+        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            contract = _make_ts_contract(db, branch, manager, phone="01055500000", week_number=None)
+            _make_ts_unit(db, branch, unit_type="2R", status="available")
+            entry = _make_waitlist_entry(db, branch, contract)
+
+            self._run(db)
+
+            from app.modules.timeshare.models import TimeshareWaitlist
+            refreshed = db.query(TimeshareWaitlist).filter(TimeshareWaitlist.id == entry.id).first()
+            assert refreshed.status == "notified"
+            assert refreshed.notified_at is not None
+            assert refreshed.expires_at is not None
+            assert "01055500000" in sent
+        finally:
+            wa_module.send_whatsapp_message = original
+
+    def test_stays_waiting_when_no_unit_available(self, db):
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        sent = []
+        wa_module.send_whatsapp_message = lambda phone, msg: sent.append(phone)
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            contract = _make_ts_contract(db, branch, manager, phone="01055500001", week_number=None)
+            # مفيش أي وحدة 2R خالص في الفرع ده
+            entry = _make_waitlist_entry(db, branch, contract)
+
+            self._run(db)
+
+            from app.modules.timeshare.models import TimeshareWaitlist
+            refreshed = db.query(TimeshareWaitlist).filter(TimeshareWaitlist.id == entry.id).first()
+            assert refreshed.status == "waiting"
+            assert sent == []
+        finally:
+            wa_module.send_whatsapp_message = original
+
+    def test_expires_stale_notified_entries(self, db):
+        from datetime import datetime, timedelta as _td
+        import app.core.kernel.whatsapp as wa_module
+        original = wa_module.send_whatsapp_message
+        wa_module.send_whatsapp_message = lambda *a, **kw: None
+        try:
+            branch = _make_branch(db)
+            manager = _make_manager(db)
+            contract = _make_ts_contract(db, branch, manager, phone=None, week_number=None)
+            entry = _make_waitlist_entry(db, branch, contract, status="notified")
+            entry.notified_at = datetime.utcnow() - _td(hours=72)
+            entry.expires_at = datetime.utcnow() - _td(hours=24)  # فاتت المهلة
+            db.commit()
+
+            self._run(db)
+
+            from app.modules.timeshare.models import TimeshareWaitlist
+            refreshed = db.query(TimeshareWaitlist).filter(TimeshareWaitlist.id == entry.id).first()
+            assert refreshed.status == "expired"
         finally:
             wa_module.send_whatsapp_message = original

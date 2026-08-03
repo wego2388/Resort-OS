@@ -5879,7 +5879,8 @@
         "requests": "طلبات الزيارة",
         "support": "خدمة العملاء",
         "staff": "الموظفين",
-        "units": "الوحدات"
+        "units": "الوحدات",
+        "waitlist": "قائمة الانتظار"
       },
       "activeContracts": "عقود نشطة",
       "collectionRate": "نسبة التحصيل",
@@ -6008,6 +6009,11 @@
         "unitAdded": "تمت إضافة الوحدة",
         "unitSaveError": "فشل حفظ الوحدة",
         "unitStatusUpdated": "تم تحديث حالة الوحدة",
+        "loadWaitlistError": "فشل تحميل قائمة الانتظار",
+        "waitlistDatesRequired": "تاريخ البداية والنهاية مطلوبان",
+        "waitlistAdded": "تمت الإضافة لقائمة الانتظار",
+        "waitlistSaveError": "فشل حفظ قائمة الانتظار",
+        "waitlistStatusUpdated": "تم تحديث حالة قائمة الانتظار",
         "loadProfileError": "فشل تحميل ملف العميل الشامل",
         "surveySent": "تم إرسال استبيان الرضا",
         "surveyError": "تعذّر إرسال الاستبيان",
@@ -6116,6 +6122,15 @@
         "available": "متاحة",
         "occupied": "مشغولة",
         "maintenance": "تحت الصيانة"
+      },
+      "loadingWaitlist": "جاري تحميل قائمة الانتظار...",
+      "joinWaitlist": "قائمة الانتظار",
+      "waitlistExpiresAt": "المهلة تنتهي: {date}",
+      "waitlistConfirm": "تأكيد الحجز",
+      "waitlistCancel": "إلغاء",
+      "waitlistStatus": {
+        "waiting": "في الانتظار",
+        "notified": "تم التبليغ — بانتظار الرد"
       }
     },
     "leasing": {

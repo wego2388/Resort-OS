@@ -165,6 +165,12 @@ class WaitlistRead(BaseModel):
     created_at: datetime
 
 
+class WaitlistStatusUpdate(BaseModel):
+    """تحكم يدوي من الموظف — confirmed (اتحجزله فعليًا) أو cancelled (العميل
+    ملوش نية)، مش waiting/notified (انتقالات نظامية بس عبر مهمة مجدولة)."""
+    status: str = Field(..., pattern=r"^(confirmed|cancelled)$")
+
+
 class TimeshareVisitCreate(BaseModel):
     branch_id:   int
     contract_id: int

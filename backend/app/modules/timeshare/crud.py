@@ -581,10 +581,17 @@ def create_waitlist_entry(db: Session, data: WaitlistCreate) -> TimeshareWaitlis
 
 
 def list_waitlist(db: Session, branch_id: int) -> list[TimeshareWaitlist]:
+    """waiting + notified بس — الحالتان اللي لسه محتاجتان متابعة/إجراء من
+    الموظف. confirmed/cancelled/expired حالات نهائية (تاريخية)، مش قائمة
+    عمل — استبعادها هنا مقصود، مش سهو."""
     return db.query(TimeshareWaitlist).filter(
         TimeshareWaitlist.branch_id == branch_id,
-        TimeshareWaitlist.status == "waiting",
+        TimeshareWaitlist.status.in_(["waiting", "notified"]),
     ).order_by(TimeshareWaitlist.position).all()
+
+
+def get_waitlist_entry(db: Session, waitlist_id: int) -> Optional[TimeshareWaitlist]:
+    return db.query(TimeshareWaitlist).filter(TimeshareWaitlist.id == waitlist_id).first()
 
 
 # ── Visits ────────────────────────────────────────────────────────────

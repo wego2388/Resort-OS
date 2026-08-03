@@ -47,6 +47,10 @@ celery_app.conf.beat_schedule = {
         "task": "app.tasks.timeshare_tasks.generate_annual_maintenance_dues",
         "schedule": crontab(hour=0, minute=5, month_of_year=1, day_of_month=1),
     },
+    "timeshare-process-waitlist": {
+        "task": "app.tasks.timeshare_tasks.process_waitlist",
+        "schedule": crontab(hour=10, minute=0),
+    },
 
     # ─── Leasing ──────────────────────────────────────────────────────
     "leasing-mark-overdue": {

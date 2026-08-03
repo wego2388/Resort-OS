@@ -77,7 +77,7 @@ from app.modules.timeshare.schemas import (
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
     TimeshareVisitRequestApprove, TimeshareVisitRequestCreate,
     TimeshareVisitRequestReject, TimeshareVisitRequestRead,
-    WaitlistCreate, WaitlistRead,
+    WaitlistCreate, WaitlistRead, WaitlistStatusUpdate,
     ImportContractsResponse,
 )
 from app.modules.core import services as core_services
@@ -306,6 +306,20 @@ def add_to_waitlist(data: WaitlistCreate, db: DbDep, user=Depends(get_timeshare_
     _assert_timeshare_branch(db, user, data.branch_id, "إضافة لقائمة الانتظار")
     try:
         return services.add_to_waitlist(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.patch("/timeshare/waitlist/{waitlist_id}", response_model=WaitlistRead)
+def update_waitlist_status(
+    waitlist_id: int, data: WaitlistStatusUpdate, db: DbDep, user=Depends(get_timeshare_admin_user),
+):
+    entry = crud.get_waitlist_entry(db, waitlist_id)
+    if not entry:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "عنصر قائمة الانتظار غير موجود")
+    _assert_timeshare_branch(db, user, entry.branch_id, "تحديث حالة قائمة الانتظار")
+    try:
+        return services.update_waitlist_status(db, waitlist_id, data.status)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 

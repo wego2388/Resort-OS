@@ -716,6 +716,69 @@ class TestTimeshareRouterMiscHttp:
         )
         assert resp.status_code == 400
 
+    def test_waitlist_status_update_by_staff(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=timeshare_admin_headers,
+        ).json()
+        add = client.post(
+            "/api/v1/timeshare/waitlist",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "requested_start": str(date.today() + timedelta(days=40)),
+                "requested_end": str(date.today() + timedelta(days=47)),
+            },
+            headers=timeshare_admin_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/timeshare/waitlist/{add['id']}",
+            json={"status": "cancelled"},
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["status"] == "cancelled"
+
+        # حالة نهائية بالفعل — مينفعش تتغيّر تاني
+        again = client.patch(
+            f"/api/v1/timeshare/waitlist/{add['id']}",
+            json={"status": "confirmed"},
+            headers=timeshare_admin_headers,
+        )
+        assert again.status_code == 400
+
+    def test_waitlist_status_update_404(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
+        resp = client.patch(
+            "/api/v1/timeshare/waitlist/999999",
+            json={"status": "cancelled"},
+            headers=timeshare_admin_headers,
+        )
+        assert resp.status_code == 404
+
+    def test_waitlist_status_update_requires_timeshare_admin(
+        self, client: TestClient, db, fake_redis, timeshare_admin_headers, cashier_headers,
+    ):
+        branch = make_branch_committed(db)
+        contract = client.post(
+            "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=timeshare_admin_headers,
+        ).json()
+        add = client.post(
+            "/api/v1/timeshare/waitlist",
+            json={
+                "branch_id": branch.id, "contract_id": contract["id"],
+                "requested_start": str(date.today() + timedelta(days=40)),
+                "requested_end": str(date.today() + timedelta(days=47)),
+            },
+            headers=timeshare_admin_headers,
+        ).json()
+
+        resp = client.patch(
+            f"/api/v1/timeshare/waitlist/{add['id']}",
+            json={"status": "cancelled"},
+            headers=cashier_headers,
+        )
+        assert resp.status_code == 403
+
     def test_download_contract_pdf(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         branch = make_branch_committed(db)
         contract = client.post(

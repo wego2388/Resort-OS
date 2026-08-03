@@ -5879,7 +5879,8 @@
         "requests": "Visit Requests",
         "support": "Support",
         "staff": "Staff",
-        "units": "Units"
+        "units": "Units",
+        "waitlist": "Waitlist"
       },
       "activeContracts": "Active contracts",
       "collectionRate": "Collection rate",
@@ -6008,6 +6009,11 @@
         "unitAdded": "Unit added",
         "unitSaveError": "Failed to save the unit",
         "unitStatusUpdated": "Unit status updated",
+        "loadWaitlistError": "Failed to load the waitlist",
+        "waitlistDatesRequired": "Start and end dates are required",
+        "waitlistAdded": "Added to the waitlist",
+        "waitlistSaveError": "Failed to save the waitlist entry",
+        "waitlistStatusUpdated": "Waitlist status updated",
         "loadProfileError": "Failed to load the full customer profile",
         "surveySent": "Satisfaction survey sent",
         "surveyError": "Couldn't send the survey",
@@ -6116,6 +6122,15 @@
         "available": "Available",
         "occupied": "Occupied",
         "maintenance": "Under maintenance"
+      },
+      "loadingWaitlist": "Loading waitlist...",
+      "joinWaitlist": "Waitlist",
+      "waitlistExpiresAt": "Expires: {date}",
+      "waitlistConfirm": "Confirm booking",
+      "waitlistCancel": "Cancel",
+      "waitlistStatus": {
+        "waiting": "Waiting",
+        "notified": "Notified — awaiting response"
       }
     },
     "leasing": {
