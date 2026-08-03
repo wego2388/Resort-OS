@@ -9,7 +9,7 @@
       "it": "Italian — TO FILL (name_it field, new column)"
     },
     "how_to_apply": "Run apply_translations() from seed_menu_2026.py after filling",
-    "last_updated": "2026-08-02"
+    "last_updated": "2026-08-03"
   },
   "restaurant": {
     "categories": [
@@ -450,6 +450,12 @@
         "name_ar": "فروت سلاط",
         "name_ru": "Фруктовый салат",
         "name_it": "Macedonia di Frutta"
+      },
+      {
+        "name": "Snacks",
+        "name_ar": "تسالي",
+        "name_ru": "Закуски",
+        "name_it": "Snack"
       }
     ],
     "items": [
@@ -860,6 +866,108 @@
         "name_ar": "طبق بطيخ كبير",
         "name_ru": "Тарелка арбуза большая",
         "name_it": "Piatto di Anguria Grande"
+      },
+      {
+        "name": "Popcorn",
+        "name_ar": "فشار",
+        "name_ru": "Попкорн",
+        "name_it": "Popcorn"
+      },
+      {
+        "name": "Cotton Candy",
+        "name_ar": "غزال بنات",
+        "name_ru": "Сахарная вата",
+        "name_it": "Zucchero Filato"
+      },
+      {
+        "name": "Mixed Snacks",
+        "name_ar": "تسالي مشكلة",
+        "name_ru": "Смешанные закуски",
+        "name_it": "Snack Misti"
+      },
+      {
+        "name": "Waffle",
+        "name_ar": "وفل",
+        "name_ru": "Вафли",
+        "name_it": "Waffle"
+      },
+      {
+        "name": "Freska",
+        "name_ar": "فريسكا",
+        "name_ru": "Фреска",
+        "name_it": "Freska"
+      },
+      {
+        "name": "Chips (Small)",
+        "name_ar": "شبسي",
+        "name_ru": "Чипсы (маленькие)",
+        "name_it": "Patatine (Piccole)"
+      },
+      {
+        "name": "Chips (Large)",
+        "name_ar": "شبسي كبير",
+        "name_ru": "Чипсы (большие)",
+        "name_it": "Patatine (Grandi)"
+      },
+      {
+        "name": "Fiory",
+        "name_ar": "فيوري",
+        "name_ru": "Фиори",
+        "name_it": "Fiory"
+      },
+      {
+        "name": "Estak",
+        "name_ar": "استنك",
+        "name_ru": "Естак",
+        "name_it": "Estak"
+      },
+      {
+        "name": "Indomie Noodles",
+        "name_ar": "اندومي",
+        "name_ru": "Лапша Индоми",
+        "name_it": "Noodle Indomie"
+      },
+      {
+        "name": "Mousy",
+        "name_ar": "موسى",
+        "name_ru": "Муси",
+        "name_it": "Mousy"
+      },
+      {
+        "name": "Juhayna Juice",
+        "name_ar": "عصير جهينة",
+        "name_ru": "Сок Джухейна",
+        "name_it": "Succo Juhayna"
+      },
+      {
+        "name": "Twist",
+        "name_ar": "تويست",
+        "name_ru": "Твист",
+        "name_it": "Twist"
+      },
+      {
+        "name": "Monster",
+        "name_ar": "مونستر",
+        "name_ru": "Монстр",
+        "name_it": "Monster"
+      },
+      {
+        "name": "Potato Chips",
+        "name_ar": "بطاطا",
+        "name_ru": "Картофельные чипсы",
+        "name_it": "Patatine"
+      },
+      {
+        "name": "Marshmallow",
+        "name_ar": "مرشملو",
+        "name_ru": "Маршмеллоу",
+        "name_it": "Marshmallow"
+      },
+      {
+        "name": "Lupini Beans (Termis)",
+        "name_ar": "ترمس",
+        "name_ru": "Люпин (термус)",
+        "name_it": "Lupini (Termis)"
       }
     ]
   }

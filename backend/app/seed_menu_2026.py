@@ -505,6 +505,10 @@ def _update_cafe_menu(db: Session) -> None:
         ("Mojito",                    "موهيتو",                  5),
         ("Cold Drinks",               "المشروبات الباردة",       6),
         ("Fruit Salad",               "فروت سلاط",               7),
+        ("Snacks",                    "تسالي",                   8),
+        # تسالي الخيمة — كشك شاطئ (فشار/شبسي/تسالي معبأة/مشروبات جاهزة)،
+        # مفيش تحضير حقيقي محتاج تتبّع KDS (قرار Mohamed 2026-08-03) —
+        # station="bar" زي باقي أصناف الكافيه بالظبط، صفر كود إضافي محتاج.
     ]
     cat_map: dict[str, int] = {}
     for name_en, name_ar, sort in CATEGORIES:
@@ -582,6 +586,26 @@ def _update_cafe_menu(db: Session) -> None:
         (66, "Fruit Salad",   "Fruit Salad Large",            "فروت سلاط كبير",                D("200")),
         (67, "Fruit Salad",   "Watermelon Plate Small",       "طبق بطيخ صغير",                 D("120")),
         (68, "Fruit Salad",   "Watermelon Plate Large",       "طبق بطيخ كبير",                 D("200")),
+        # تسالي الخيمة (2026-08-03) — أسماء البراندات (فريسكا/فيوري/استنك/
+        # تويست/موسى/مونستر/إندومي) عمدًا زي ما هي في كل اللغات (أسماء
+        # تجارية، مش بتتترجم — نفس قرار Fayrouz/Red Bull الموجود بالفعل).
+        (69, "Snacks", "Popcorn",              "فشار",          D("50")),
+        (70, "Snacks", "Cotton Candy",         "غزال بنات",     D("50")),
+        (71, "Snacks", "Mixed Snacks",         "تسالي مشكلة",   D("100")),
+        (72, "Snacks", "Waffle",               "وفل",           D("150")),
+        (73, "Snacks", "Freska",               "فريسكا",        D("70")),
+        (74, "Snacks", "Chips (Small)",        "شبسي",          D("30")),
+        (75, "Snacks", "Chips (Large)",        "شبسي كبير",     D("50")),
+        (76, "Snacks", "Fiory",                "فيوري",         D("70")),
+        (77, "Snacks", "Estak",                "استنك",         D("60")),
+        (78, "Snacks", "Indomie Noodles",      "اندومي",        D("50")),
+        (79, "Snacks", "Mousy",                "موسى",          D("70")),
+        (80, "Snacks", "Juhayna Juice",        "عصير جهينة",    D("50")),
+        (81, "Snacks", "Twist",                "تويست",         D("70")),
+        (82, "Snacks", "Monster",              "مونستر",        D("150")),
+        (83, "Snacks", "Potato Chips",         "بطاطا",         D("100")),
+        (84, "Snacks", "Marshmallow",          "مرشملو",        D("70")),
+        (85, "Snacks", "Lupini Beans (Termis)","ترمس",          D("50")),
     ]
 
     active_names: set[str] = set()
