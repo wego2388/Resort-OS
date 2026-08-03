@@ -140,25 +140,6 @@ class Setting(Base, TimestampMixin):
     # branch_id=X   → per-branch override
 
 
-# ────────────────────────── Notification ─────────────────────────────
-
-class Notification(Base, TimestampMixin):
-    __tablename__ = "notifications"
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    # list_notifications() always filters by user_id (and often is_read) then
-    # sorts by created_at — every one of those was a full table scan with no
-    # index at all beyond the primary key.
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    branch_id: Mapped[int | None] = mapped_column(ForeignKey("branches.id"), nullable=True, index=True)
-    title: Mapped[str] = mapped_column(String(200))
-    body: Mapped[str] = mapped_column(Text)
-    type: Mapped[str] = mapped_column(String(20), default="info")  # info|warning|alert
-    is_read: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    related_entity_type: Mapped[str | None] = mapped_column(String(50))
-    related_entity_id: Mapped[int | None] = mapped_column(Integer)
-
-
 # ────────────────────────── AuditLog ─────────────────────────────────
 
 class AuditLog(Base, TimestampMixin):

@@ -101,32 +101,6 @@ class SettingUpdate(BaseModel):
         return _validate_reason(v)
 
 
-# ─────────────────────── Notification ────────────────────────────────
-
-class NotificationRead(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id:                  int
-    user_id:             int
-    branch_id:           Optional[int]
-    title:               str
-    body:                str
-    type:                str
-    is_read:             bool
-    related_entity_type: Optional[str]
-    related_entity_id:   Optional[int]
-    created_at:          datetime
-
-
-class NotificationCreate(BaseModel):
-    """للاستخدام الداخلي من الـ services"""
-    user_id:             int
-    branch_id:           Optional[int] = None
-    title:               str = Field(..., max_length=200)
-    body:                str
-    type:                str = Field("info", pattern=r"^(info|warning|alert)$")
-    related_entity_type: Optional[str] = Field(None, max_length=50)
-    related_entity_id:   Optional[int] = None
 
 
 # ─────────────────────── AuditLog ────────────────────────────────────

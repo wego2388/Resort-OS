@@ -20,7 +20,6 @@ from app.modules.core.models import (
     Branch,
     GuestAlert,
     GuestSession,
-    Notification,
     PinCredential,
     ServiceLocationToken,
     Setting,
@@ -30,7 +29,6 @@ from app.modules.core.schemas import (
     AuditLogCreate,
     BranchCreate,
     BranchUpdate,
-    NotificationCreate,
     UserPermissionCreate,
 )
 
@@ -172,68 +170,6 @@ def upsert_setting(
     db.flush()
     return row
 
-
-# ─────────────────────── Notification ────────────────────────────────
-
-def get_notification(db: Session, notification_id: int) -> Optional[Notification]:
-    return db.query(Notification).filter(Notification.id == notification_id).first()
-
-
-def list_notifications(
-    db: Session,
-    user_id: int,
-    branch_id: Optional[int] = None,
-    unread_only: bool = False,
-    skip: int = 0,
-    limit: int = 50,
-) -> tuple[list[Notification], int]:
-    q = db.query(Notification).filter(Notification.user_id == user_id)
-    if branch_id is not None:
-        q = q.filter(Notification.branch_id == branch_id)
-    if unread_only:
-        q = q.filter(Notification.is_read.is_(False))
-    total = q.count()
-    items = (
-        q.order_by(Notification.created_at.desc())
-        .offset(skip)
-        .limit(limit)
-        .all()
-    )
-    return items, total
-
-
-def create_notification(db: Session, data: NotificationCreate) -> Notification:
-    notif = Notification(**data.model_dump())
-    db.add(notif)
-    db.flush()
-    return notif
-
-
-def mark_notification_read(
-    db: Session,
-    notification: Notification,
-) -> Notification:
-    notification.is_read = True
-    db.flush()
-    return notification
-
-
-def mark_all_notifications_read(
-    db: Session,
-    user_id: int,
-    branch_id: Optional[int] = None,
-) -> int:
-    """يُرجع عدد الـ rows المُحدَّثة"""
-    q = db.query(Notification).filter(
-        Notification.user_id == user_id,
-        Notification.is_read.is_(False),
-    )
-    if branch_id is not None:
-        q = q.filter(Notification.branch_id == branch_id)
-    count = q.count()
-    q.update({"is_read": True}, synchronize_session=False)
-    db.flush()
-    return count
 
 
 # ─────────────────────── Users ───────────────────────────────────────

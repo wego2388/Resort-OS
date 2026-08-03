@@ -14,10 +14,6 @@ Endpoints:
   GET    /api/v1/settings/{key}
   PUT    /api/v1/settings/{key}
 
-  GET    /api/v1/notifications
-  PATCH  /api/v1/notifications/{id}/read
-  POST   /api/v1/notifications/read-all
-
   GET    /api/v1/audit-logs
 
   GET    /api/v1/users
@@ -77,7 +73,6 @@ from app.modules.core.schemas import (
     GuestAlertStatusUpdate,
     GuestSessionCreate,
     GuestSessionRead,
-    NotificationRead,
     PaginatedResponse,
     PermissionCatalogEntryRead,
     PermissionRevokeRequest,
@@ -97,7 +92,6 @@ from app.modules.core.schemas import (
     UserRead,
     UserRoleUpdate,
     ForceTwoFactorResetRequest,
-    MarkedReadResponse,
 )
 
 router = APIRouter(tags=["core"])
@@ -383,66 +377,6 @@ def upsert_setting(
             status.HTTP_409_CONFLICT,
             {"error_code": "ACTOR_AUTHORIZATION_CHANGED", "message": str(exc)},
         )
-
-
-# ─────────────────────── Notifications ───────────────────────────────
-
-@router.get(
-    "/notifications",
-    response_model=PaginatedResponse,
-)
-def list_notifications(
-    db: DbDep,
-    user=Depends(get_current_active_user),
-    unread_only: bool = Query(False),
-    page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
-):
-    skip = (page - 1) * size
-    items, total = crud.list_notifications(
-        db,
-        user_id=user.id,
-        unread_only=unread_only,
-        skip=skip,
-        limit=size,
-    )
-    return PaginatedResponse(
-        total=total,
-        page=page,
-        size=size,
-        items=[NotificationRead.model_validate(n) for n in items],
-    )
-
-
-@router.patch(
-    "/notifications/{notification_id}/read",
-    response_model=NotificationRead,
-)
-def mark_notification_read(
-    notification_id: int,
-    db: DbDep,
-    user=Depends(get_current_active_user),
-):
-    try:
-        notif = services.mark_notification_read(db, notification_id, user.id)
-        return NotificationRead.model_validate(notif)
-    except ValueError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
-    except PermissionError as exc:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
-
-
-@router.post(
-    "/notifications/read-all",
-    response_model=MarkedReadResponse,
-)
-def mark_all_notifications_read(
-    db: DbDep,
-    user=Depends(get_current_active_user),
-    branch_id: Optional[int] = Query(None),
-):
-    count = services.mark_all_read(db, user.id, branch_id)
-    return {"marked_read": count}
 
 
 # ─────────────────────── Audit Logs ──────────────────────────────────

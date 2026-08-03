@@ -73,7 +73,7 @@ def _count_models(db: Session) -> dict[str, int]:
         BeachReservation,
         BeachTransaction,
     )
-    from app.modules.core.models import GuestAlert, Notification
+    from app.modules.core.models import GuestAlert
     from app.modules.crm.models import Campaign, Customer, Lead, Opportunity
     from app.modules.dining.models import (
         DiningCategory,
@@ -148,7 +148,6 @@ def _count_models(db: Session) -> dict[str, int]:
         "users": User,
         "warehouses": Warehouse,
         "work_orders": WorkOrder,
-        "notifications": Notification,
     }
     return {
         key: int(db.query(func.count(model.id)).scalar() or 0)
@@ -1296,7 +1295,6 @@ def seed_production_demo_dataset(
         "hub_online_bookings",
         "journal_entries",
         "lease_payments",
-        "notifications",
         "payments",
         "payroll_runs",
         "timeshare_installments",

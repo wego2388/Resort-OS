@@ -1,7 +1,7 @@
 """
 tests/test_api/test_core_http.py
 HTTP-level tests for the core module's router: branches CRUD, settings,
-notifications, audit logs, and user role management. No dedicated test
+audit logs, and user role management. No dedicated test
 file existed for this module before — router coverage was purely
 incidental from other modules' tests exercising branches/permissions.
 """
@@ -308,31 +308,6 @@ class TestSettingsEndpoints:
         resp = client.get("/api/v1/settings", headers=waiter_headers)
         assert resp.status_code == 403
 
-
-class TestNotificationsEndpoints:
-    def test_list_and_mark_read(self, client: TestClient, db, waiter_headers):
-        from tests.conftest import _create_test_user
-        from app.modules.core.models import Notification
-
-        user_id = _create_test_user("notif-user@test.local", "waiter")
-        notif = Notification(user_id=user_id, title="تنبيه اختباري", body="محتوى", is_read=False)
-        db.add(notif)
-        db.commit()
-
-        resp = client.get("/api/v1/notifications", params={"unread_only": True}, headers=waiter_headers)
-        assert resp.status_code == 200
-        # الفلترة على المستخدم الحالي (JWT) — user_id لازم يطابق نفس المستخدم
-        # اللي التوكن بتاعه (waiter@test.local) عشان يظهر — ده بيثبت العزل صح
-        assert resp.json()["total"] >= 0
-
-    def test_mark_read_for_missing_notification_404(self, client: TestClient, waiter_headers):
-        resp = client.patch("/api/v1/notifications/999999999/read", headers=waiter_headers)
-        assert resp.status_code == 404
-
-    def test_mark_all_read_returns_count(self, client: TestClient, waiter_headers):
-        resp = client.post("/api/v1/notifications/read-all", headers=waiter_headers)
-        assert resp.status_code == 200
-        assert "marked_read" in resp.json()
 
 
 class TestAuditLogsEndpoint:

@@ -28,7 +28,6 @@ from app.modules.core.models import (
     Branch,
     GuestAlert,
     GuestSession,
-    Notification,
     PinCredential,
     ServiceLocationToken,
     UserBranchMembership,
@@ -46,7 +45,6 @@ from app.modules.core.schemas import (
     GuestAlertPublicStatus,
     GuestServiceOutletRead,
     GuestSessionRead,
-    NotificationCreate,
     ServiceLocationRead,
     SettingRead,
     UserCreate,
@@ -1410,46 +1408,6 @@ def revoke_permission(
 
     crud.delete_user_permission(db, perm)
     db.commit()
-
-
-# ─────────────────────── Notification ────────────────────────────────
-
-def create_notification(
-    db: Session,
-    data: NotificationCreate,
-) -> Notification:
-    notif = crud.create_notification(db, data)
-    db.commit()
-    db.refresh(notif)
-    return notif
-
-
-def mark_notification_read(
-    db: Session,
-    notification_id: int,
-    requesting_user_id: int,
-) -> Notification:
-    """يتحقق أن المستخدم يملك الإشعار"""
-    notif = crud.get_notification(db, notification_id)
-    if not notif:
-        raise ValueError(f"الإشعار {notification_id} غير موجود")
-    if notif.user_id != requesting_user_id:
-        raise PermissionError("لا يمكنك تعديل إشعار لمستخدم آخر")
-
-    notif = crud.mark_notification_read(db, notif)
-    db.commit()
-    db.refresh(notif)
-    return notif
-
-
-def mark_all_read(
-    db: Session,
-    user_id: int,
-    branch_id: Optional[int] = None,
-) -> int:
-    count = crud.mark_all_notifications_read(db, user_id, branch_id)
-    db.commit()
-    return count
 
 
 # ─────────────────────── GuestAlert ──────────────────────────────────
