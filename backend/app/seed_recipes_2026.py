@@ -176,9 +176,13 @@ def seed_recipes_2026(db: Session) -> None:
 def _seed_new_ingredients_2026(db: Session) -> None:
     """upsert-by-SKU حقيقي (مش "شغّل مرة واحدة على قاعدة فاضية" زي
     app.seed._seed_inventory_recipes) — آمن يتشغّل على مخزون production
-    فيه بيانات فعلاً. مخزن NEW_INGREDIENTS بيروح لنفس "Main Kitchen
-    Store" الموجود أصلاً (بيتعمله get، مش create — لو مش موجود فده يعني
-    seed.py الأساسي عمره ما اتشغّل، لازم يتشغّل هو الأول)."""
+    فيه بيانات فعلاً. مخزن NEW_INGREDIENTS بيروح لأي مخزن موجود فعلاً
+    للفرع (بيتعمله get، مش create) — ⚠️ باج حقيقي اتصلح (2026-08-03):
+    كان بيدوّر على code="WH-KITCHEN" تحديدًا (كود app.seed's warehouse
+    الافتراضي)، فوقع فورًا على بيئة محلية حقيقية عندها مخزن بكود مختلف
+    (WHLIVE01) — أي بيئة اتزرعت بطريقة تانية غير app.seed كانت هتقع نفس
+    الوقعة. مفيش أي اعتماد فعلي على الكود نفسه في باقي الكود، بس محتاجين
+    مخزن موجود نربط بيه المنتجات الجديدة."""
     from datetime import datetime
     from app.modules.inventory.models import Product, StockMovement, Warehouse
     from app.modules.core.models import Branch
@@ -186,23 +190,30 @@ def _seed_new_ingredients_2026(db: Session) -> None:
     branch = db.query(Branch).first()
     if not branch:
         raise RuntimeError("No branch found — run main seed first.")
-    warehouse = db.query(Warehouse).filter(
-        Warehouse.branch_id == branch.id, Warehouse.code == "WH-KITCHEN",
-    ).first()
+    warehouse = db.query(Warehouse).filter(Warehouse.branch_id == branch.id).first()
     if not warehouse:
-        raise RuntimeError("Main Kitchen Store warehouse not found — run main seed first.")
+        raise RuntimeError("No warehouse found for this branch — run main seed first.")
 
     existing_skus = {
         sku for (sku,) in db.query(Product.sku).filter(Product.branch_id == branch.id).all()
     }
     inserted = 0
     for code, name_en, name_ar, unit, cost, stock in NEW_INGREDIENTS:
-        sku = f"ING-{code}"
-        if sku in existing_skus:
+        # الكود نفسه هو الـSKU مباشرة (مش بادئة ING- زي أول نسخة) — ⚠️ باج
+        # حقيقي اتصلح (2026-08-03): بيئة محلية حقيقية اتفحصت وقت التطبيق
+        # الفعلي كان عندها بالفعل 83/83 مكوّن مزروع بنفس أكواد الوصفات
+        # المختصرة دي كـSKU مباشر (بادئة ING- صفر استخدام حقيقي في أي
+        # بيئة حقيقية اتفحصت) — فالتصميم الأول كان هيزرع 62 منتج مكرر
+        # (ING-POTATO جنب POTATO الموجود بالفعل) بدل ما يلاقي الموجود
+        # ويستخدمه. الكود المختصر بقى الـSKU الحقيقي مباشرة، وSKU_ALIASES
+        # تحت بقت fallback بس للـ21 مكوّن اللي أسماؤهم مختلفة تمامًا في
+        # app.seed._seed_inventory_recipes (بيئة فاضية اتزرعت بـapp.seed
+        # لوحده بس، من غير أي زرع تاني فوقه).
+        if code in existing_skus:
             continue
         product = Product(
             branch_id=branch.id, warehouse_id=warehouse.id, name=name_en, name_ar=name_ar,
-            sku=sku, unit=unit, cost_price=cost,
+            sku=code, unit=unit, cost_price=cost,
             current_stock=stock, min_stock=D("2"), reorder_point=D("5"),
         )
         db.add(product)
@@ -217,11 +228,15 @@ def _seed_new_ingredients_2026(db: Session) -> None:
     print(f"  ✓ New ingredients 2026: {inserted} inserted, {len(NEW_INGREDIENTS) - inserted} already existed")
 
 
-def _resolve_sku(code: str) -> str:
-    """كود وصفة مختصر (POTATO/VEG-OIL/...) → SKU حقيقي. الـ21 المتراكب مع
-    المخزون الحالي عبر SKU_ALIASES، الباقي بادئة ING- (زرعها _seed_new_
-    ingredients_2026 فوق بنفس التحويل بالظبط)."""
-    return SKU_ALIASES.get(code, f"ING-{code}")
+def _resolve_product(prods: dict, code: str):
+    """كود وصفة مختصر (POTATO/VEG-OIL/...) → Product حقيقي. الكود نفسه
+    SKU مباشر أولاً (الاتفاقية الفعلية — راجع _seed_new_ingredients_2026)،
+    وSKU_ALIASES fallback بس للـ21 مكوّن اللي أسماؤهم مختلفة في app.seed
+    الأصلي (بيئة فاضية اتزرعت بـapp.seed لوحده، زي بيئات الاختبار المعزولة)."""
+    if code in prods:
+        return prods[code]
+    alias = SKU_ALIASES.get(code)
+    return prods.get(alias) if alias else None
 
 
 def _get_maps(db: Session, outlet_type: str):
@@ -253,11 +268,11 @@ def _apply_recipes(db: Session, outlet_type: str,
         new_lines = []
         missing = False
         for code, qty in lines:
-            prod = prods.get(_resolve_sku(code))
+            prod = _resolve_product(prods, code)
             if prod is None:
                 skipped_sku += 1
                 missing = True
-                print(f"    WARN SKU not found: \'{code}\' → \'{_resolve_sku(code)}\' (item \'{item_name}\')")
+                print(f"    WARN SKU not found: \'{code}\' (item \'{item_name}\')")
                 continue
             new_lines.append((prod.id, qty))
         if missing:
