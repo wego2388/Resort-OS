@@ -699,6 +699,95 @@ def update_user_role(
     return user
 
 
+# ─────────────────────── Account Recovery (Gate 2B3A) ─────────────────
+# 2026-08-03: كانت auth/service.py's login lockout و2FA بتضبط
+# failed_login_attempts/account_locked_until/two_factor_enabled فعليًا،
+# بس مفيش أي endpoint إداري كان بيقدر يعكسهم — موظف غلط كلمة السر
+# 5 مرات كان لازم يستنى LOCKOUT_MINUTES كاملة بلا أي تجاوز، وموظف فقد
+# جهاز/أكواد الـ2FA بتاعته كان عالق للأبد إلا لو حد يدخل السيرفر بنفسه
+# (admin_bootstrap recover، أداة CLI فقط). الدالتان دول أضيق عمدًا من
+# admin_bootstrap recover — مبيلمسوش كلمة السر ولا الهوية، بس نفس
+# الفحص (super_admin + step-up) زي أي عملية تانية في الـcontrol plane.
+
+def unlock_user_account(
+    db: Session, user_id: int, unlocked_by: int,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
+) -> "User":
+    """يفك قفل حساب بعد محاولات دخول فاشلة متكررة — عملية ضيّقة، مبتلمسش
+    role/is_active/password/2FA خالص."""
+    user = crud.lock_user_for_update(db, user_id)
+    if not user:
+        raise UserNotFoundError(f"المستخدم {user_id} غير موجود")
+
+    was_locked = bool(user.account_locked_until)
+    user.account_locked_until = None
+    user.failed_login_attempts = 0
+
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    create_audit_log(db, AuditLogCreate(
+        user_id=unlocked_by, branch_id=None, action="unlock_user_account",
+        entity_type="user", entity_id=user.id,
+        old_data=json.dumps({"was_locked": was_locked}),
+        new_data=json.dumps({
+            "unlocked": True,
+            **_step_up_audit_context(
+                step_up_public_reference=step_up_public_reference,
+                assurance_method=assurance_method,
+            ),
+        }),
+    ))
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def force_reset_2fa(
+    db: Session, user_id: int, reset_by: int, reason: str,
+    step_up_public_reference: Optional[str] = None,
+    assurance_method: Optional[str] = None,
+) -> "User":
+    """يمسح ربط 2FA الحالي (secret/آخر خطوة TOTP/أكواد الاسترجاع) لموظف
+    فقد جهازه، من غير ما يلمس كلمة السر أو أي بيانات هوية تانية — الحساب
+    يفضل نشط، وبيدخل بكلمة سره الحالية. two_factor_bootstrap_required
+    يفضل False عمدًا فالموظف بيعيد التسجيل عبر /2fa/setup العادي
+    (current_password، مش enrollment token الـCLI-only)."""
+    from app.core.deps import revoke_user_tokens  # noqa: PLC0415
+    from app.core.kernel.models.user import TwoFactorRecoveryCode  # noqa: PLC0415
+
+    user = crud.lock_user_for_update(db, user_id)
+    if not user:
+        raise UserNotFoundError(f"المستخدم {user_id} غير موجود")
+
+    user.two_factor_enabled = False
+    user.two_factor_secret = None
+    user.two_factor_last_used_step = None
+    db.query(TwoFactorRecoveryCode).filter(
+        TwoFactorRecoveryCode.user_id == user.id,
+    ).delete(synchronize_session=False)
+
+    from app.modules.core.crud import create_audit_log  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    create_audit_log(db, AuditLogCreate(
+        user_id=reset_by, branch_id=None, action="force_reset_2fa",
+        entity_type="user", entity_id=user.id,
+        new_data=json.dumps({
+            **_step_up_audit_context(
+                reason=reason,
+                step_up_public_reference=step_up_public_reference,
+                assurance_method=assurance_method,
+            ),
+        }),
+    ))
+    db.commit()
+    # التوكنات الحالية لازم تتجدد بعد تغيير أمني زي ده — نفس نمط أي
+    # تغيير role/is_active (راجع update_user_role فوق).
+    revoke_user_tokens(user.id)
+    db.refresh(user)
+    return user
+
+
 # ─────────────────────── Settings ────────────────────────────────────
 
 def get_setting_value(

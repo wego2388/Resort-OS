@@ -48,6 +48,7 @@ interface UserRow {
   role: string; is_active: boolean; two_factor_enabled: boolean
   must_change_password: boolean; two_factor_bootstrap_required: boolean
   preferred_language: 'ar' | 'en'
+  failed_login_attempts: number; account_locked_until: string | null
 }
 interface BootstrapResult {
   user: UserRow; temporary_password: string
@@ -59,6 +60,7 @@ interface EmployeeOption {
   status: string
 }
 type PendingAction = { kind: 'create' } | { kind: 'status'; user: UserRow; nextActive: boolean }
+  | { kind: 'unlock'; user: UserRow } | { kind: 'force2fa'; user: UserRow }
 
 const users = ref<UserRow[]>([])
 const usersTotal = ref(0)
@@ -167,11 +169,37 @@ function requestStatus(user: UserRow) {
   stepUpError.value = ''
 }
 
-const stepUpPurpose = computed(() =>
-  pending.value?.kind === 'status' ? 'user_role_update' as const : 'user_provision' as const)
+// 2026-08-03: failed_login_attempts/account_locked_until كانا موجودين على
+// الموديل من الأساس (auth/service.py's login lockout) بس مالهومش أي ظهور
+// في أي response schema — شاشة المستخدمين ما كانتش تقدر توضح "الحساب ده
+// مقفول" أصلاً، فضلًا عن فك القفل.
+function isLocked(user: UserRow): boolean {
+  return !!user.account_locked_until && new Date(user.account_locked_until) > new Date()
+}
+function requestUnlock(user: UserRow) {
+  pending.value = { kind: 'unlock', user }
+  stepUpError.value = ''
+}
+function requestForce2FAReset(user: UserRow) {
+  pending.value = { kind: 'force2fa', user }
+  stepUpError.value = ''
+}
+
+const stepUpPurpose = computed(() => {
+  const kind = pending.value?.kind
+  if (kind === 'status') return 'user_role_update' as const
+  if (kind === 'unlock') return 'user_unlock' as const
+  if (kind === 'force2fa') return 'user_force_2fa_reset' as const
+  return 'user_provision' as const
+})
+const stepUpRequiresReason = computed(() => pending.value?.kind !== 'unlock')
 const stepUpIntent = computed<Record<string, unknown>>(() => {
   if (pending.value?.kind === 'status')
     return { user_id: pending.value.user.id, role: null, is_active: pending.value.nextActive }
+  if (pending.value?.kind === 'unlock')
+    return { user_id: pending.value.user.id }
+  if (pending.value?.kind === 'force2fa')
+    return { user_id: pending.value.user.id }
   return {
     email: form.value.email.trim().toLowerCase(),
     full_name: form.value.full_name.trim(),
@@ -185,6 +213,10 @@ const stepUpDescription = computed(() => {
   if (pending.value?.kind === 'status')
     return t(pending.value.nextActive ? 'backoffice.accounts.confirmActivate' : 'backoffice.accounts.confirmDeactivate',
       { name: pending.value.user.full_name })
+  if (pending.value?.kind === 'unlock')
+    return t('backoffice.accounts.confirmUnlock', { name: pending.value.user.full_name })
+  if (pending.value?.kind === 'force2fa')
+    return t('backoffice.accounts.confirmForce2FAReset', { name: pending.value.user.full_name })
   return t('backoffice.accounts.confirmCreate', { name: form.value.full_name.trim() })
 })
 
@@ -213,13 +245,24 @@ async function onStepUpConfirmed({ stepUpToken, reason }: { stepUpToken: string;
       )
       form.value = { full_name: '', email: '', phone: '', employee_id: '', role: 'employee', preferred_language: 'ar' }
       toast.success(t('backoffice.accounts.created'))
-    } else {
+    } else if (action.kind === 'status') {
       const res = await api.patch(ENDPOINTS.users.role(action.user.id), {
         role: null, is_active: action.nextActive, reason,
       }, { headers: { 'X-Step-Up-Token': stepUpToken } })
       users.value = users.value.map(u => u.id === res.data.id ? res.data : u)
       allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.id ? res.data : u)
       toast.success(t(action.nextActive ? 'backoffice.accounts.activated' : 'backoffice.accounts.deactivated'))
+    } else if (action.kind === 'unlock') {
+      const res = await api.post(ENDPOINTS.users.unlock(action.user.id), {}, { headers: { 'X-Step-Up-Token': stepUpToken } })
+      users.value = users.value.map(u => u.id === res.data.id ? res.data : u)
+      allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.id ? res.data : u)
+      toast.success(t('backoffice.accounts.unlocked'))
+    } else {
+      const res = await api.post(ENDPOINTS.users.force2FAReset(action.user.id), { reason },
+        { headers: { 'X-Step-Up-Token': stepUpToken } })
+      users.value = users.value.map(u => u.id === res.data.id ? res.data : u)
+      allUsersSnapshot.value = allUsersSnapshot.value.map(u => u.id === res.data.id ? res.data : u)
+      toast.success(t('backoffice.accounts.force2FAResetDone'))
     }
     pending.value = null
   } catch (e: any) {
@@ -590,6 +633,7 @@ onMounted(() => {
                   <AppBadge :variant="row.is_active ? 'success' : 'danger'">
                     {{ t(row.is_active ? 'backoffice.accounts.active' : 'backoffice.accounts.inactive') }}
                   </AppBadge>
+                  <AppBadge v-if="isLocked(row)" variant="danger" class="ms-1">{{ t('backoffice.accounts.locked') }}</AppBadge>
                 </td>
                 <td class="px-4 py-3">
                   <div class="flex flex-wrap items-center gap-2">
@@ -602,6 +646,17 @@ onMounted(() => {
                       class="font-semibold text-amber-600 hover:underline dark:text-amber-400"
                       @click="openPinModal(row)">
                       {{ pinStatuses.get(row.id)?.has_pin ? t('backoffice.superAdmin.pin.reset') : t('backoffice.superAdmin.pin.set') }}
+                    </button>
+                    <!-- 2026-08-03: فك القفل/إعادة ضبط 2FA — كانا مالهومش أي
+                    مسار إداري خالص، موظف عالق كان لازم يستنى المهلة كاملة
+                    أو حد يدخل السيرفر مباشرة. -->
+                    <button v-if="isLocked(row)" class="font-semibold text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
+                      :disabled="stepUpBusy" @click="requestUnlock(row)">
+                      {{ t('backoffice.accounts.unlock') }}
+                    </button>
+                    <button v-if="row.two_factor_enabled" class="font-semibold text-orange-600 hover:underline disabled:opacity-50 dark:text-orange-400"
+                      :disabled="stepUpBusy" @click="requestForce2FAReset(row)">
+                      {{ t('backoffice.accounts.force2FAReset') }}
                     </button>
                   </div>
                 </td>
@@ -618,8 +673,9 @@ onMounted(() => {
         </div>
       </AppCard>
 
-      <!-- Step-up for create/status -->
+      <!-- Step-up for create/status/unlock/force2fa -->
       <StepUpConfirmModal v-if="pending" :purpose="stepUpPurpose" :intent="stepUpIntent"
+        :require-reason="stepUpRequiresReason"
         :description="stepUpDescription" :loading="stepUpBusy" :error-message="stepUpError"
         @confirmed="onStepUpConfirmed" @cancel="pending = null" />
 

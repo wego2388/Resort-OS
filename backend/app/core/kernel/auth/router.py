@@ -207,6 +207,12 @@ _STEP_UP_PURPOSES = frozenset({
     # أو مرتجع بعد الدفع، الاتنين آثار مالية حقيقية على دفاتر مقفولة جزئيًا.
     "payment_void",
     "dining_refund",
+    # 2026-08-03 — admin control-plane account-recovery actions (فك قفل
+    # حساب بعد محاولات دخول فاشلة، إعادة ضبط 2FA ضائع). راجع docstring
+    # step_up.user_unlock_scope/user_force_2fa_reset_scope للفرق عن
+    # admin_bootstrap recover الـCLI.
+    "user_unlock",
+    "user_force_2fa_reset",
 })
 
 
@@ -417,6 +423,27 @@ class _DiningRefundIntent(BaseModel):
         return normalized
 
 
+class _UserUnlockIntent(BaseModel):
+    """2026-08-03: فك قفل حساب بعد محاولات دخول فاشلة متكررة."""
+    model_config = ConfigDict(extra="forbid")
+    user_id: int = Field(gt=0, strict=True)
+
+
+class _UserForce2FAResetIntent(BaseModel):
+    """2026-08-03: إعادة ضبط 2FA لموظف فقد جهازه/أكواده الاحتياطية."""
+    model_config = ConfigDict(extra="forbid")
+    user_id: int = Field(gt=0, strict=True)
+    reason: str = Field(min_length=3, max_length=500)
+
+    @field_validator("reason")
+    @classmethod
+    def _normalize_reason(cls, value: str) -> str:
+        normalized = value.strip()
+        if len(normalized) < 3:
+            raise ValueError("Reason must contain at least 3 non-whitespace characters")
+        return normalized
+
+
 _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "user_provision": _UserProvisionIntent,
     "user_role_update": _UserRoleUpdateIntent,
@@ -427,6 +454,8 @@ _STEP_UP_INTENT_MODELS: dict[str, type[BaseModel]] = {
     "other_sessions_revoke": _OtherSessionsRevokeIntent,
     "payment_void": _PaymentVoidIntent,
     "dining_refund": _DiningRefundIntent,
+    "user_unlock": _UserUnlockIntent,
+    "user_force_2fa_reset": _UserForce2FAResetIntent,
 }
 
 
@@ -799,9 +828,15 @@ def build_auth_router(
             scope_hash = step_up_scopes.payment_void_scope(
                 payment_id=intent.payment_id, reason=intent.reason,
             )
-        else:  # dining_refund
+        elif payload.purpose == "dining_refund":
             scope_hash = step_up_scopes.dining_refund_scope(
                 order_id=intent.order_id, item_id=intent.item_id, reason=intent.reason,
+            )
+        elif payload.purpose == "user_unlock":
+            scope_hash = step_up_scopes.user_unlock_scope(user_id=intent.user_id)
+        else:  # user_force_2fa_reset
+            scope_hash = step_up_scopes.user_force_2fa_reset_scope(
+                user_id=intent.user_id, reason=intent.reason,
             )
 
         access_token_hash = step_up_scopes.access_token_hash_from_request(request)

@@ -232,6 +232,11 @@ class UserRead(BaseModel):
     two_factor_bootstrap_required: bool
     preferred_language: str
     created_at:          datetime
+    # 2026-08-03: كانا موجودين على الموديل من الأساس (auth/service.py's
+    # login lockout) لكن مالهومش أي ظهور في أي response schema — شاشة
+    # المستخدمين ما كانتش تقدر توضح "الحساب ده مقفول" أصلاً.
+    failed_login_attempts: int = 0
+    account_locked_until: Optional[datetime] = None
 
     @field_validator("preferred_language", mode="before")
     @classmethod
@@ -373,6 +378,18 @@ class UserRoleUpdate(BaseModel):
                     f"role غير معروف: '{v}' — لازم يكون واحد من: {', '.join(sorted(ROLE_LEVELS))}"
                 )
         return v
+
+
+class ForceTwoFactorResetRequest(BaseModel):
+    """super_admin فقط — إعادة ضبط ربط 2FA لموظف فقد جهازه/أكواده
+    الاحتياطية. Gate 2B3A: reason إجباري ومحمي بـstep-up، زي
+    UserRoleUpdate بالظبط."""
+    reason: str = Field(..., max_length=_REASON_MAX_LENGTH)
+
+    @field_validator("reason")
+    @classmethod
+    def _reason_must_be_real_text(cls, v: str) -> str:
+        return _validate_reason(v)
 
 
 # ─────────────────────── UserPermission ──────────────────────────────

@@ -95,6 +95,7 @@ from app.modules.core.schemas import (
     UserPermissionRead,
     UserRead,
     UserRoleUpdate,
+    ForceTwoFactorResetRequest,
     MarkedReadResponse,
 )
 
@@ -657,6 +658,75 @@ def update_user_role(
             status.HTTP_409_CONFLICT,
             {"error_code": "MANDATORY_2FA_ENROLLMENT_REQUIRED", "message": str(exc)},
         )
+
+
+# ─────────────────────── Account Recovery (Gate 2B3A) ─────────────────
+# 2026-08-03: كانت auth/service.py's login lockout و2FA بيضبطوا
+# failed_login_attempts/account_locked_until/two_factor_enabled فعليًا،
+# بس مفيش أي endpoint إداري كان بيقدر يعكسهم — راجع docstring
+# services.unlock_user_account/force_reset_2fa للفرق عن admin_bootstrap
+# recover الـCLI.
+
+@router.post(
+    "/users/{user_id}/unlock",
+    response_model=UserRead,
+)
+def unlock_user_account(
+    user_id: int,
+    db: DbDep,
+    request: Request,
+    user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    from app.core.kernel.auth.step_up import user_unlock_scope  # noqa: PLC0415
+
+    scope_hash = user_unlock_scope(user_id=user_id)
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="user_unlock", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        updated = services.unlock_user_account(
+            db, user_id, unlocked_by=user.id,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
+        )
+        return UserRead.model_validate(updated)
+    except services.UserNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+@router.post(
+    "/users/{user_id}/force-2fa-reset",
+    response_model=UserRead,
+)
+def force_reset_2fa(
+    user_id: int,
+    data: ForceTwoFactorResetRequest,
+    db: DbDep,
+    request: Request,
+    user=Depends(get_super_admin_user),
+    x_step_up_token: Optional[str] = Header(default=None, alias="X-Step-Up-Token"),
+):
+    """Gate 2B3A: step-up إجباري + reason إجباري — إعادة ضبط 2FA فعليًا
+    بيقفل صاحب الحساب برّه أي حاجة غير /auth/* لحد ما يعيد التسجيل، فلازم
+    نفس مستوى التأكيد اللي أي تغيير أمني مماثل محتاجه."""
+    from app.core.kernel.auth.step_up import user_force_2fa_reset_scope  # noqa: PLC0415
+
+    scope_hash = user_force_2fa_reset_scope(user_id=user_id, reason=data.reason)
+    step_up = _consume_step_up_or_raise(
+        db, user, request,
+        purpose="user_force_2fa_reset", scope_hash=scope_hash, x_step_up_token=x_step_up_token,
+    )
+    try:
+        updated = services.force_reset_2fa(
+            db, user_id, reset_by=user.id, reason=data.reason,
+            step_up_public_reference=step_up["public_reference"],
+            assurance_method=step_up["assurance_method"],
+        )
+        return UserRead.model_validate(updated)
+    except services.UserNotFoundError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 # ─────────────────────── Permission Matrix ───────────────────────────

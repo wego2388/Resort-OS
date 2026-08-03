@@ -84,6 +84,26 @@ def user_role_update_scope(
     })
 
 
+def user_unlock_scope(*, user_id: int) -> str:
+    """2026-08-03: فك قفل حساب بعد محاولات دخول فاشلة متكررة — عملية
+    ضيّقة (بترجّع failed_login_attempts/account_locked_until للصفر بس،
+    مش مثل user_role_update اللي بتغيّر role/is_active)، فبروفها مربوط
+    بالمستخدم الهدف بس، بلا حاجة لـreason (نفس مستوى session_revoke)."""
+    return build_step_up_scope("user_unlock", {"user_id": user_id})
+
+
+def user_force_2fa_reset_scope(*, user_id: int, reason: str) -> str:
+    """2026-08-03: إعادة ضبط 2FA لموظف فقد جهازه/أكواده الاحتياطية —
+    بيمسح two_factor_enabled/secret فقط (مش زي admin_bootstrap recover
+    الـCLI اللي بيعمل reset كامل للهوية+كلمة السر). الموظف بيدخل بكلمة
+    السر الحالية بتاعته ويعيد التسجيل عبر /2fa/setup العادي (current_
+    password، مش enrollment token)."""
+    return build_step_up_scope("user_force_2fa_reset", {
+        "user_id": user_id,
+        "reason_sha256": sha256_text(reason),
+    })
+
+
 def permission_override_upsert_scope(
     *,
     user_id: int,

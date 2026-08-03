@@ -881,3 +881,135 @@ class TestStepUpFailureAuditBounded:
         assert rejected_count < 30, (
             f"AuditLog لازم يكون محدود مش نسخة واحدة لكل محاولة رفض — rejected_count={rejected_count}"
         )
+
+
+# ═════════════ Part G — Account Recovery (unlock / force-2fa-reset) ═══════
+# 2026-08-03: كانت auth/service.py's login lockout و2FA بتضبط الحقول دي
+# فعليًا، بس مفيش أي endpoint إداري كان بيقدر يعكسهم (راجع docstring
+# core.services.unlock_user_account/force_reset_2fa).
+
+class TestUserUnlockAndForce2FAReset:
+    def test_unlock_requires_step_up_token(self, client: TestClient):
+        sa_id, sa_headers, _secret = _fresh_super_admin("unlock-missing")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        resp = client.post(f"/api/v1/users/{target_id}/unlock", headers=sa_headers)
+        assert resp.status_code == 428
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
+
+    def test_unlock_clears_lockout_fields(self, client: TestClient, db):
+        from datetime import datetime, timedelta, timezone
+        from app.core.kernel.models.user import User
+
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("unlock-ok")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        target = db.query(User).filter(User.id == target_id).first()
+        target.failed_login_attempts = 5
+        target.account_locked_until = datetime.now(timezone.utc) + timedelta(minutes=25)
+        db.commit()
+
+        token = _issue_step_up(
+            client, sa_headers, purpose="user_unlock",
+            intent={"user_id": target_id}, totp_secret=sa_secret,
+        )
+        resp = client.post(
+            f"/api/v1/users/{target_id}/unlock",
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert body["failed_login_attempts"] == 0
+        assert body["account_locked_until"] is None
+
+        db.refresh(target)
+        assert target.failed_login_attempts == 0
+        assert target.account_locked_until is None
+
+    def test_unlock_404_for_missing_user(self, client: TestClient):
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("unlock-404")
+        token = _issue_step_up(
+            client, sa_headers, purpose="user_unlock",
+            intent={"user_id": 999999}, totp_secret=sa_secret,
+        )
+        resp = client.post(
+            "/api/v1/users/999999/unlock",
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 404
+
+    def test_unlock_requires_super_admin(self, client: TestClient):
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "waiter")
+        _mgr_id, mgr_headers = _fresh_manager_no_2fa("unlock-mgr")
+        resp = client.post(f"/api/v1/users/{target_id}/unlock", headers=mgr_headers)
+        assert resp.status_code == 403
+
+    def test_force_2fa_reset_requires_step_up_token(self, client: TestClient):
+        sa_id, sa_headers, _secret = _fresh_super_admin("2fareset-missing")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "accountant")
+        resp = client.post(
+            f"/api/v1/users/{target_id}/force-2fa-reset",
+            json={"reason": "فقد جهاز الـ2FA"},
+            headers=sa_headers,
+        )
+        assert resp.status_code == 428
+        assert resp.json()["detail"]["error_code"] == "STEP_UP_REQUIRED"
+
+    def test_force_2fa_reset_clears_2fa_and_revokes_tokens(self, client: TestClient, db):
+        from app.core.kernel.auth.service import AuthService
+        from app.core.kernel.models.user import TwoFactorRecoveryCode, User
+
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("2fareset-ok")
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "accountant")
+        target = db.query(User).filter(User.id == target_id).first()
+        target.two_factor_enabled = True
+        target.two_factor_secret = "JBSWY3DPEHPK3PXP"
+        target.two_factor_last_used_step = 12345
+        db.add(TwoFactorRecoveryCode(
+            user_id=target_id, code_hash=AuthService._recovery_code_hash("some-recovery-code"),
+        ))
+        db.commit()
+
+        reason = "فقد الموظف جهاز الـ2FA والأكواد الاحتياطية"
+        token = _issue_step_up(
+            client, sa_headers, purpose="user_force_2fa_reset",
+            intent={"user_id": target_id, "reason": reason}, totp_secret=sa_secret,
+        )
+        resp = client.post(
+            f"/api/v1/users/{target_id}/force-2fa-reset",
+            json={"reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["two_factor_enabled"] is False
+
+        db.refresh(target)
+        assert target.two_factor_enabled is False
+        assert target.two_factor_secret is None
+        assert target.two_factor_last_used_step is None
+        remaining_codes = db.query(TwoFactorRecoveryCode).filter(
+            TwoFactorRecoveryCode.user_id == target_id,
+        ).count()
+        assert remaining_codes == 0
+
+    def test_force_2fa_reset_404_for_missing_user(self, client: TestClient):
+        sa_id, sa_headers, sa_secret = _fresh_super_admin("2fareset-404")
+        reason = "سبب اختباري"
+        token = _issue_step_up(
+            client, sa_headers, purpose="user_force_2fa_reset",
+            intent={"user_id": 999999, "reason": reason}, totp_secret=sa_secret,
+        )
+        resp = client.post(
+            "/api/v1/users/999999/force-2fa-reset",
+            json={"reason": reason},
+            headers={**sa_headers, "X-Step-Up-Token": token},
+        )
+        assert resp.status_code == 404
+
+    def test_force_2fa_reset_requires_super_admin(self, client: TestClient):
+        target_id = _create_test_user(f"target-{uuid.uuid4().hex[:6]}@test.local", "accountant")
+        _mgr_id, mgr_headers = _fresh_manager_no_2fa("2fareset-mgr")
+        resp = client.post(
+            f"/api/v1/users/{target_id}/force-2fa-reset",
+            json={"reason": "محاولة من غير صلاحية"},
+            headers=mgr_headers,
+        )
+        assert resp.status_code == 403
