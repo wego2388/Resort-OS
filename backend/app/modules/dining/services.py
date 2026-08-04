@@ -2515,36 +2515,60 @@ def update_kitchen_ticket_status(db: Session, ticket_id: int, new_status: str) -
     return _ticket_read_dict(ticket, _order_item_statuses(db, item_ids))
 
 
+_ORDER_TYPE_LABELS_AR = {
+    "dine_in": "صالة",
+    "takeaway": "تيك أواي",
+    "delivery": "دليفري",
+    "room_service": "خدمة الغرف",
+}
+
+
 def generate_receipt_pdf(db: Session, order_id: int) -> bytes:
     """راجع restaurant.services.generate_receipt_pdf — نفس شكل الإيصال
-    الحراري 80mm."""
+    الحراري 80mm.
+
+    2026-08-04 (طلب Mohamed بعد مراجعة إيصال حقيقي): كانت بتحط كل حاجة —
+    رقم الطلب، نوع الطلب، الأصناف، الضريبة — في نفس قائمة fields المسطّحة،
+    فمفيش أي تمييز بصري بين البيانات الوصفية والأصناف والملخص المالي (فوق
+    كده، كل النص العربي كان بيظهر كمربعات سودة أصلاً — راجع تعليق
+    _register_arabic_fonts في core/kernel/reports.py للباج الحقيقي).
+    دلوقتي بتستخدم الأقسام المنفصلة (items/summary) في receipt_pdf_thermal
+    عشان جدول أصناف حقيقي وملخص مالي واضح، ونوع الطلب بتسمية عربية مفهومة
+    بدل القيمة الخام (dine_in) اللي كانت بتتعرض للعميل زي ما هي."""
     from app.resort_os.report_builder import builder  # noqa: PLC0415
 
     order = _get_order_or_404(db, order_id)
-    table_label = order.table.table_number if order.table else "—"
 
-    fields = [
-        ("رقم الطلب",    order.order_number),
-        ("نوع الطلب",    order.order_type),
-        ("الطاولة",      table_label),
+    fields: list[tuple[str, str]] = [
+        (f"{_ORDER_TYPE_LABELS_AR.get(order.order_type, order.order_type)} · Order Type",
+         order.order_number),
     ]
-    for item in order.items:
-        fields.append((f"{item.quantity}× {item.name}", f"{item.unit_price:,.2f} EGP"))
-    fields += [
-        ("المجموع قبل الضريبة", f"{order.subtotal:,.2f} EGP"),
-        ("ضريبة (VAT)",  f"{order.vat_amount:,.2f} EGP"),
-        ("رسوم الخدمة",  f"{order.service_charge:,.2f} EGP"),
+    if order.table:
+        fields.append(("الطاولة · Table", order.table.table_number))
+
+    items = [
+        (item.name, item.quantity, float(item.unit_price), float(item.unit_price) * item.quantity)
+        for item in order.items
     ]
+
+    summary = [("المجموع قبل الضريبة · Subtotal", f"{order.subtotal:,.2f} EGP")]
+    if order.vat_amount:
+        summary.append(("ضريبة القيمة المضافة · VAT", f"{order.vat_amount:,.2f} EGP"))
+    if order.service_charge:
+        summary.append(("رسوم الخدمة · Service", f"{order.service_charge:,.2f} EGP"))
     if order.discount_amount and order.discount_amount > 0:
-        fields.append(("الخصم", f"-{order.discount_amount:,.2f} EGP"))
+        summary.append(("الخصم · Discount", f"-{order.discount_amount:,.2f} EGP"))
 
     return builder.receipt_pdf_thermal(
         reference=order.order_number,
-        title="إيصال الطلب",
+        title="إيصال الطلب · Order Receipt",
+        subtitle="El Kheima Beach Resort",
         fields=fields,
+        items=items,
+        summary=summary,
         total=float(order.total),
         currency="EGP",
-        note="شكراً لزيارتكم — الخيمة بيتش ريزورت",
+        note="شكراً لزيارتكم — نتمنى لكم إقامة سعيدة",
     )
 
 

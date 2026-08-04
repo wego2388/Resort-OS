@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 from typing import Optional
 
 
@@ -31,6 +32,95 @@ _DEFAULT_LIGHT = "#F8F9FA"
 _GRAY_TEXT = "#6B7280"
 _BORDER_COLOR = "#DDDDDD"
 
+# ── Arabic-capable fonts ──────────────────────────────────────────────────────
+# ⚠️ باج حقيقي اتصلح هنا (2026-08-04، طلب Mohamed بعد ما شاف إيصال حقيقي
+# كل نصه العربي مربعات سودة فاضية): _t() تحت كانت بتعمل reshape+bidi صح
+# للنص المنطقي، لكن الرسم الفعلي كان بيستخدم "Helvetica"/"Helvetica-Bold"
+# (خط PDF قياسي Type1 بترميز WinAnsi بس) اللي مالوش أي حرف عربي واحد فيه.
+#
+# الحل: خط TTF عربي حقيقي (Noto Sans Arabic، مرفق في app/assets/fonts/ —
+# مش خط نظام، عشان يشتغل جوه Docker container نضيف زي الإنتاج بالظبط).
+#
+# ⚠️ باج ثانٍ اتكشف أثناء الاختبار الحي (مش نظري): نسخة Noto Sans Arabic
+# المتاحة (حزمة Debian fonts-noto-core) مقسّمة بالسكريبت فعليًا — بتغطي
+# العربي + الأرقام + الترقيم الأساسي بس، من غير أي حرف لاتيني خالص (A-Z/
+# a-z كلهم غير موجودين في الخط). يعني أي كلمة إنجليزية جوه نص عربي
+# (Apple Juice, ORD-...) كانت هتختفي تمامًا (مش مربعات، مختفية) لو
+# استخدمنا الخط ده لوحده لكل حاجة. الحل: _draw_mixed() تحت بتقسّم أي
+# سطر (بعد reshape+bidi) لأجزاء عربي/غير عربي متتالية وترسم كل جزء
+# بالخط اللي فعليًا بيغطي حروفه — Noto Sans Arabic للعربي، Helvetica
+# (مدمج في PDF، تغطية لاتينية كاملة) لغير العربي. النتيجة: نص عربي
+# وإنجليزي مختلط في نفس السطر بيتـرسم صح الاتنين، مش استبدال خط بخط.
+
+_ASSETS_DIR = Path(__file__).resolve().parent.parent.parent / "assets"
+_FONT_DIR = _ASSETS_DIR / "fonts"
+_DEFAULT_LOGO_PATH = str(_ASSETS_DIR / "logo.png")
+
+ARABIC_FONT_AVAILABLE = False
+FONT_AR = "Helvetica"          # نص عربي (يقع رجوعًا لـHelvetica لو الخط مش موجود)
+FONT_AR_BOLD = "Helvetica-Bold"
+FONT_LATIN = "Helvetica"       # نص لاتيني/أرقام — Helvetica دايمًا كافي (base-14)
+FONT_LATIN_BOLD = "Helvetica-Bold"
+
+
+def _register_arabic_fonts() -> None:
+    global ARABIC_FONT_AVAILABLE, FONT_AR, FONT_AR_BOLD
+    reg_path = _FONT_DIR / "NotoSansArabic-Regular.ttf"
+    bold_path = _FONT_DIR / "NotoSansArabic-Bold.ttf"
+    if not (reg_path.is_file() and bold_path.is_file()):
+        return
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        pdfmetrics.registerFont(TTFont("NotoSansArabic", str(reg_path)))
+        pdfmetrics.registerFont(TTFont("NotoSansArabic-Bold", str(bold_path)))
+        FONT_AR = "NotoSansArabic"
+        FONT_AR_BOLD = "NotoSansArabic-Bold"
+        ARABIC_FONT_AVAILABLE = True
+    except Exception:
+        pass
+
+
+_register_arabic_fonts()
+
+
+def _is_arabic_char(ch: str) -> bool:
+    cp = ord(ch)
+    return (
+        0x0600 <= cp <= 0x06FF    # Arabic
+        or 0x0750 <= cp <= 0x077F  # Arabic Supplement
+        or 0x08A0 <= cp <= 0x08FF  # Arabic Extended-A
+        or 0xFB50 <= cp <= 0xFDFF  # Arabic Presentation Forms-A
+        or 0xFE70 <= cp <= 0xFEFF  # Arabic Presentation Forms-B
+    )
+
+
+def _split_script_runs(text: str) -> list[tuple[str, bool]]:
+    """يقسّم نص (بعد reshape+bidi، يعني بترتيب العرض البصري النهائي) لأجزاء
+    متتالية (عربي / مش عربي) — كل جزء يترسم بعدها بخط قادر فعليًا يرسم
+    حروفه. أرقام/مسافات/ترقيم شائع بتفضل ملتصقة بالجزء الحالي (متاحة في
+    الخطين الاتنين) عشان مايحصلش تقطيع زيادة عن اللزوم في نص زي "150.00"
+    أو "2026-08-04"."""
+    if not text:
+        return []
+    neutral = set(" \t-.,:%×/()#0123456789")
+    runs: list[tuple[str, bool]] = []
+    current = text[0]
+    current_is_ar = _is_arabic_char(text[0])
+    for ch in text[1:]:
+        if ch in neutral:
+            current += ch
+            continue
+        is_ar = _is_arabic_char(ch)
+        if is_ar == current_is_ar:
+            current += ch
+        else:
+            runs.append((current, current_is_ar))
+            current = ch
+            current_is_ar = is_ar
+    runs.append((current, current_is_ar))
+    return runs
+
 
 class ReportBuilder:
     """
@@ -40,7 +130,8 @@ class ReportBuilder:
         app_name:      Shown in PDF headers/footers and Excel titles.
         primary_color: Hex color for headers (default dark navy).
         accent_color:  Hex color for totals/highlights (default gold).
-        logo_path:     Absolute path to a PNG/JPG logo (optional).
+        logo_path:     Absolute path to a PNG/JPG logo (optional — defaults
+                       to app/assets/logo.png if present).
         rtl:           Right-to-left layout for Arabic reports (default True).
     """
 
@@ -55,7 +146,7 @@ class ReportBuilder:
         self.app_name = app_name
         self.primary_color = primary_color.lstrip("#")
         self.accent_color = accent_color.lstrip("#")
-        self.logo_path = logo_path
+        self.logo_path = logo_path or (_DEFAULT_LOGO_PATH if os.path.isfile(_DEFAULT_LOGO_PATH) else "")
         self.rtl = rtl
 
     # ── PDF: Table Report ─────────────────────────────────────────────────
@@ -98,28 +189,24 @@ class ReportBuilder:
         c.setFillColor(primary)
         c.rect(0, H - 75, W, 75, fill=True, stroke=False)
 
+        text_start_x = margin
         if self.logo_path and os.path.isfile(self.logo_path):
             try:
                 from reportlab.lib.utils import ImageReader
                 c.drawImage(ImageReader(self.logo_path), margin, H - 65, 50, 50,
                             preserveAspectRatio=True, mask="auto")
+                text_start_x = margin + 60
             except Exception:
                 pass
 
-        c.setFillColor(colors.HexColor(f"#{self.accent_color}"))
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(margin, H - 25, self._t(self.app_name))
-
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(margin, H - 48, self._t(title))
+        self._draw_mixed(c, text_start_x, H - 25, self.app_name, 11, bold=True,
+                          color=colors.HexColor(f"#{self.accent_color}"))
+        self._draw_mixed(c, text_start_x, H - 48, title, 16, bold=True, color=colors.white)
 
         if subtitle:
-            c.setFont("Helvetica", 9)
-            c.setFillColor(colors.HexColor("#AAAAAA"))
-            c.drawString(margin, H - 62, self._t(subtitle))
+            self._draw_mixed(c, text_start_x, H - 62, subtitle, 9, color=colors.HexColor("#AAAAAA"))
 
-        c.setFont("Helvetica", 8)
+        c.setFont(FONT_LATIN, 8)
         c.setFillColor(colors.HexColor("#AAAAAA"))
         ts = datetime.now().strftime("%Y-%m-%d %H:%M")
         c.drawRightString(W - margin, H - 20, ts)
@@ -136,12 +223,8 @@ class ReportBuilder:
             c.roundRect(margin, y - box_h - 6, usable, box_h + 12, 4, fill=True, stroke=True)
             for i, (label, val) in enumerate(summary[:4]):
                 bx = margin + i * box_w + 8
-                c.setFont("Helvetica", 7)
-                c.setFillColor(gray)
-                c.drawString(bx, y - 2, self._t(label.upper()))
-                c.setFont("Helvetica-Bold", 11)
-                c.setFillColor(primary)
-                c.drawString(bx, y - box_h + 2, self._t(str(val)))
+                self._draw_mixed(c, bx, y - 2, label.upper(), 7, color=gray)
+                self._draw_mixed(c, bx, y - box_h + 2, str(val), 11, bold=True, color=primary)
             y -= box_h + 22
 
         # ── Table ─────────────────────────────────────────────────────────
@@ -154,32 +237,24 @@ class ReportBuilder:
         row_h = 18
         head_h = 20
 
-        x = margin
-        c.setFillColor(primary)
-        c.rect(margin, y - head_h, usable, head_h, fill=True, stroke=False)
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 9)
-        for i, (hdr, w) in enumerate(zip(headers, widths)):
-            c.drawString(x + 4, y - head_h + 6, self._t(str(hdr)))
-            x += w
+        def _draw_head_row(yy):
+            xx = margin
+            c.setFillColor(primary)
+            c.rect(margin, yy - head_h, usable, head_h, fill=True, stroke=False)
+            for hdr, w in zip(headers, widths):
+                self._draw_mixed(c, xx + 4, yy - head_h + 6, str(hdr), 9, bold=True, color=colors.white)
+                xx += w
+
+        _draw_head_row(y)
         y -= head_h
 
-        c.setFont("Helvetica", 9)
         for ri, row in enumerate(rows):
             if y - row_h < 60:  # new page
                 self._add_footer(c, W, footer or self.app_name, accent)
                 c.showPage()
                 y = H - 40
-                x = margin
-                c.setFillColor(primary)
-                c.rect(margin, y - head_h, usable, head_h, fill=True, stroke=False)
-                c.setFillColor(colors.white)
-                c.setFont("Helvetica-Bold", 9)
-                for hdr, w in zip(headers, widths):
-                    c.drawString(x + 4, y - head_h + 6, self._t(str(hdr)))
-                    x += w
+                _draw_head_row(y)
                 y -= head_h
-                c.setFont("Helvetica", 9)
 
             row_bg = light if ri % 2 == 0 else colors.white
             c.setFillColor(row_bg)
@@ -189,10 +264,10 @@ class ReportBuilder:
             c.setLineWidth(0.3)
             c.line(margin, y - row_h, margin + usable, y - row_h)
 
-            c.setFillColor(colors.black)
             x = margin
             for val, w in zip(row, widths):
-                c.drawString(x + 4, y - row_h + 5, self._t(str(val) if val is not None else "—"))
+                self._draw_mixed(c, x + 4, y - row_h + 5,
+                                  str(val) if val is not None else "—", 9, color=colors.black)
                 x += w
             y -= row_h
 
@@ -233,46 +308,38 @@ class ReportBuilder:
         c.setFillColor(primary)
         c.rect(0, H - 85, W, 85, fill=True, stroke=False)
 
+        text_start_x = margin
         if self.logo_path and os.path.isfile(self.logo_path):
             try:
                 from reportlab.lib.utils import ImageReader
                 c.drawImage(ImageReader(self.logo_path), margin, H - 78, 55, 55,
                             preserveAspectRatio=True, mask="auto")
+                text_start_x = margin + 65
             except Exception:
                 pass
 
-        c.setFillColor(colors.HexColor(f"#{self.accent_color}"))
-        c.setFont("Helvetica-Bold", 13)
-        c.drawString(margin, H - 30, self._t(self.app_name))
+        self._draw_mixed(c, text_start_x, H - 30, self.app_name, 13, bold=True,
+                          color=colors.HexColor(f"#{self.accent_color}"))
+        self._draw_mixed(c, text_start_x, H - 55, title, 18, bold=True, color=colors.white)
 
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 18)
-        c.drawString(margin, H - 55, self._t(title))
-
-        c.setFont("Helvetica", 9)
+        c.setFont(FONT_LATIN, 9)
         c.setFillColor(colors.HexColor("#AAAAAA"))
-        c.drawString(margin, H - 70, datetime.now().strftime("%Y-%m-%d %H:%M"))
+        c.drawString(text_start_x, H - 70, datetime.now().strftime("%Y-%m-%d %H:%M"))
 
         y = H - 108
         c.setFillColor(colors.HexColor("#EEF2FF"))
         c.setStrokeColor(accent)
         c.setLineWidth(1.5)
         c.roundRect(margin, y - 10, W - 2 * margin, 30, 5, fill=True, stroke=True)
-        c.setFillColor(primary)
-        c.setFont("Helvetica-Bold", 13)
-        c.drawString(margin + 8, y + 8, self._t(f"# {reference}"))
+        self._draw_mixed(c, margin + 8, y + 8, f"# {reference}", 13, bold=True, color=primary)
 
         y -= 30
         c.setStrokeColor(colors.HexColor(_BORDER_COLOR))
         c.setLineWidth(0.5)
         for label, val in fields:
             y -= 22
-            c.setFont("Helvetica-Bold", 9)
-            c.setFillColor(colors.HexColor(_GRAY_TEXT))
-            c.drawString(margin, y, self._t(label) + ":")
-            c.setFont("Helvetica", 10)
-            c.setFillColor(colors.black)
-            c.drawString(margin + 5.5 * cm, y, self._t(str(val)))
+            self._draw_mixed(c, margin, y, label + ":", 9, bold=True, color=colors.HexColor(_GRAY_TEXT))
+            self._draw_mixed(c, margin + 5.5 * cm, y, str(val), 10, color=colors.black)
             c.line(margin, y - 4, W - margin, y - 4)
 
         y -= 28
@@ -280,17 +347,13 @@ class ReportBuilder:
         c.setStrokeColor(accent)
         c.setLineWidth(2)
         c.roundRect(margin, y - 18, W - 2 * margin, 50, 8, fill=True, stroke=True)
-        c.setFont("Helvetica-Bold", 11)
-        c.setFillColor(primary)
-        c.drawString(margin + 10, y + 20, self._t("الإجمالي / Total"))
-        c.setFont("Helvetica-Bold", 22)
+        self._draw_mixed(c, margin + 10, y + 20, "الإجمالي / Total", 11, bold=True, color=primary)
+        c.setFont(FONT_LATIN_BOLD, 22)
         c.setFillColor(accent)
         c.drawRightString(W - margin - 10, y + 12, f"{total:,.2f} {currency}")
 
         if note:
-            c.setFont("Helvetica", 8)
-            c.setFillColor(colors.HexColor(_GRAY_TEXT))
-            c.drawString(margin, y - 26, self._t(note))
+            self._draw_mixed(c, margin, y - 26, note, 8, color=colors.HexColor(_GRAY_TEXT))
 
         if qr_data:
             try:
@@ -321,12 +384,24 @@ class ReportBuilder:
         total: float,
         currency: str = "EGP",
         *,
+        items: Optional[list[tuple]] = None,
+        summary: Optional[list[tuple[str, str]]] = None,
+        subtitle: str = "",
         width_mm: float = 80.0,
         note: str = "",
         footer: str = "",
         qr_data: str = "",
+        show_logo: bool = True,
     ) -> bytes:
-        """Receipt PDF sized for thermal roll printers (80mm/58mm rolls)."""
+        """Receipt PDF sized for thermal roll printers (80mm/58mm rolls).
+
+        ``fields`` هي بيانات وصفية بسيطة بس (رقم الطلب، النوع، الطاولة...).
+        ``items`` (اختياري) — قائمة (اسم، كمية، سعر الوحدة، إجمالي السطر)
+        بتترسم كجدول أصناف حقيقي منفصل بصريًا عن البيانات الوصفية، بدل ما
+        تتلخبط كلها في نفس عمود label:value. ``summary`` (اختياري) —
+        الإجمالي قبل الضريبة/الضريبة/الخدمة/الخصم، مفصولين بصريًا عن
+        الأصناف. الاتنين لو اتسابوا None، السلوك زي الإصدار القديم بالظبط
+        (توافقية خلفية لباقي الموديولات — beach/leasing/timeshare/hr)."""
         try:
             from reportlab.pdfgen import canvas as rl_canvas
             from reportlab.lib import colors
@@ -335,73 +410,125 @@ class ReportBuilder:
             raise RuntimeError("pip install reportlab to use PDF generation")
 
         W = width_mm * mm
-        margin = 3 * mm
+        margin = 4 * mm
         line_h = 5.2 * mm
         primary = colors.HexColor(f"#{self.primary_color}")
         accent = colors.HexColor(f"#{self.accent_color}")
+        gray = colors.HexColor(_GRAY_TEXT)
 
-        qr_size = min(W * 0.5, 30 * mm) if qr_data else 0
-        base_units = 8.2 + len(fields) + (1 if note else 0)
+        has_logo = show_logo and bool(self.logo_path) and os.path.isfile(self.logo_path)
+        logo_h = 15 * mm if has_logo else 0
+
+        qr_size = min(W * 0.5, 28 * mm) if qr_data else 0
+        item_lines = len(items) if items else 0
+        summary_lines = len(summary) if summary else 0
+        field_lines = len(fields)
+
+        base_units = (
+            8.0
+            + (1.6 if subtitle else 0)
+            + field_lines
+            + (1.4 + item_lines * 1.8 if items else 0)
+            + (0.6 + summary_lines * 0.85 if summary else 0)
+            + (1 if note else 0)
+        )
         H = (
             2 * margin
+            + logo_h + (3 * mm if has_logo else 0)
             + base_units * line_h
             + (qr_size + 4 * mm if qr_data else 0)
-            + 14 * mm
+            + 16 * mm
         )
 
         buf = BytesIO()
         c = rl_canvas.Canvas(buf, pagesize=(W, H))
         y = H - margin
 
-        c.setFont("Helvetica-Bold", 10)
-        c.setFillColor(primary)
-        c.drawCentredString(W / 2, y, self._t(self.app_name))
+        # ── Header: logo + brand ─────────────────────────────────────────
+        if has_logo:
+            try:
+                from reportlab.lib.utils import ImageReader
+                c.drawImage(ImageReader(self.logo_path), (W - logo_h) / 2, y - logo_h,
+                            logo_h, logo_h, preserveAspectRatio=True, mask="auto")
+            except Exception:
+                has_logo = False
+            y -= logo_h + 3 * mm
+
+        self._draw_mixed(c, W / 2, y, self.app_name, 11, bold=True, color=primary, align="center")
         y -= line_h
 
-        c.setFont("Helvetica-Bold", 11)
-        c.setFillColor(colors.black)
-        c.drawCentredString(W / 2, y, self._t(title))
-        y -= line_h
+        if subtitle:
+            self._draw_mixed(c, W / 2, y, subtitle, 7, color=gray, align="center")
+            y -= line_h * 0.9
 
-        c.setFont("Helvetica", 7)
-        c.setFillColor(colors.HexColor(_GRAY_TEXT))
+        y -= line_h * 0.3
+        c.setStrokeColor(accent)
+        c.setLineWidth(1)
+        c.line(W * 0.28, y, W * 0.72, y)
+        y -= line_h * 1.1
+
+        # ── Title + reference + timestamp ────────────────────────────────
+        self._draw_mixed(c, W / 2, y, title, 10.5, bold=True, color=colors.black, align="center")
+        y -= line_h * 0.95
+
+        c.setFont(FONT_LATIN, 7)
+        c.setFillColor(gray)
         c.drawCentredString(W / 2, y, datetime.now().strftime("%Y-%m-%d %H:%M"))
-        y -= line_h * 1.3
+        y -= line_h * 1.15
 
-        c.setFont("Helvetica-Bold", 9)
-        c.setFillColor(primary)
-        c.drawCentredString(W / 2, y, self._t(f"# {reference}"))
-        y -= line_h * 1.3
-
-        c.setStrokeColor(colors.HexColor(_BORDER_COLOR))
-        c.setLineWidth(0.5)
-        c.line(margin, y, W - margin, y)
-        y -= line_h * 0.6
-
-        for label, val in fields:
-            c.setFont("Helvetica", 7)
-            c.setFillColor(colors.HexColor(_GRAY_TEXT))
-            c.drawString(margin, y, self._t(label) + ":")
-            c.setFont("Helvetica-Bold", 7)
-            c.setFillColor(colors.black)
-            c.drawRightString(W - margin, y, self._t(str(val)))
-            y -= line_h
-
-        c.line(margin, y, W - margin, y)
+        self._draw_mixed(c, W / 2, y, f"# {reference}", 9, bold=True, color=primary, align="center")
         y -= line_h * 1.2
 
-        c.setFont("Helvetica-Bold", 9)
-        c.setFillColor(primary)
-        c.drawString(margin, y, self._t("الإجمالي / Total"))
-        c.setFont("Helvetica-Bold", 13)
+        # ── Meta fields ───────────────────────────────────────────────────
+        if fields:
+            y = self._dashed_rule(c, margin, W - margin, y)
+            for label, val in fields:
+                self._draw_mixed(c, margin, y, label + ":", 7.3, color=gray, align="left")
+                self._draw_mixed(c, W - margin, y, str(val), 7.3, bold=True, color=colors.black, align="right")
+                y -= line_h
+
+        # ── Items ─────────────────────────────────────────────────────────
+        if items:
+            y = self._dashed_rule(c, margin, W - margin, y)
+            y -= line_h * 0.2
+            self._draw_mixed(c, margin, y, "الصنف", 6.5, color=gray, align="left")
+            self._draw_mixed(c, W - margin, y, "الإجمالي", 6.5, color=gray, align="right")
+            y -= line_h * 1.05
+            for row in items:
+                name, qty, unit_price, line_total = row
+                self._draw_mixed(c, margin, y, f"{qty}× {name}", 7.5, color=colors.black, align="left")
+                c.setFont(FONT_LATIN_BOLD, 7.5)
+                c.setFillColor(colors.black)
+                c.drawRightString(W - margin, y, f"{line_total:,.2f}")
+                y -= line_h * 0.85
+                c.setFont(FONT_LATIN, 6.3)
+                c.setFillColor(gray)
+                c.drawString(margin + 3 * mm, y, f"{unit_price:,.2f} {currency} × {qty}")
+                y -= line_h * 0.95
+
+        # ── Summary (subtotal / VAT / service / discount) ───────────────
+        if summary:
+            y = self._dashed_rule(c, margin, W - margin, y)
+            for label, val in summary:
+                self._draw_mixed(c, margin, y, label + ":", 6.8, color=gray, align="left")
+                self._draw_mixed(c, W - margin, y, str(val), 6.8, color=colors.HexColor("#374151"), align="right")
+                y -= line_h * 0.85
+
+        # ── Total ─────────────────────────────────────────────────────────
+        y -= line_h * 0.3
+        c.setStrokeColor(primary)
+        c.setLineWidth(1.2)
+        c.line(margin, y, W - margin, y)
+        y -= line_h * 1.3
+
+        self._draw_mixed(c, margin, y, "الإجمالي", 9.5, bold=True, color=primary, align="left")
+        c.setFont(FONT_LATIN_BOLD, 14)
         c.setFillColor(accent)
         c.drawRightString(W - margin, y - 1, f"{total:,.2f} {currency}")
-        y -= line_h * 1.8
+        y -= line_h * 1.9
 
         if note:
-            c.setFont("Helvetica", 6.5)
-            c.setFillColor(colors.HexColor(_GRAY_TEXT))
-            c.drawCentredString(W / 2, y, self._t(note))
+            self._draw_mixed(c, W / 2, y, note, 6.5, color=gray, align="center")
             y -= line_h
 
         if qr_data:
@@ -567,14 +694,58 @@ class ReportBuilder:
         except ImportError:
             return text
 
+    def _draw_mixed(
+        self, c, x: float, y: float, text: str, size: float, *,
+        bold: bool = False, color=None, align: str = "left",
+    ) -> None:
+        """يرسم سطر ممكن يحتوي عربي وإنجليزي مع بعض، كل جزء بالخط اللي
+        فعليًا بيغطي حروفه (راجع تعليق _split_script_runs فوق للسبب).
+        ``text`` نص منطقي خام (بيتم reshape+bidi هنا داخليًا) — الـ callers
+        متعمّلوش self._t() بأيديهم قبل ما يبعتوه هنا."""
+        if not text:
+            return
+        shaped = self._t(text) if self.rtl else text
+        runs = _split_script_runs(shaped)
+        if not runs:
+            return
+
+        def font_for(is_ar: bool) -> str:
+            if is_ar:
+                return FONT_AR_BOLD if bold else FONT_AR
+            return FONT_LATIN_BOLD if bold else FONT_LATIN
+
+        total_w = sum(c.stringWidth(r, font_for(a), size) for r, a in runs)
+        if align == "right":
+            cx = x - total_w
+        elif align == "center":
+            cx = x - total_w / 2
+        else:
+            cx = x
+
+        if color is not None:
+            c.setFillColor(color)
+        for run, is_ar in runs:
+            font = font_for(is_ar)
+            c.setFont(font, size)
+            c.drawString(cx, y, run)
+            cx += c.stringWidth(run, font, size)
+
     @staticmethod
-    def _add_footer(c, W, text: str, accent_color) -> None:
+    def _dashed_rule(c, x1: float, x2: float, y: float) -> float:
+        """رسم فاصل متقطع (نمط إيصالات حرارية قياسي)، ويرجّع الـy بعد الفاصل."""
+        from reportlab.lib import colors
+        c.setStrokeColor(colors.HexColor(_BORDER_COLOR))
+        c.setLineWidth(0.6)
+        c.setDash(2, 2)
+        c.line(x1, y, x2, y)
+        c.setDash()
+        return y - 3.6
+
+    def _add_footer(self, c, W, text: str, accent_color) -> None:
         from reportlab.lib import colors
         c.setFillColor(colors.HexColor("#1A1A2E"))
         c.rect(0, 0, W, 35, fill=True, stroke=False)
-        c.setFillColor(accent_color)
-        c.setFont("Helvetica", 8)
-        c.drawCentredString(W / 2, 20, text)
+        self._draw_mixed(c, W / 2, 20, text, 8, color=accent_color, align="center")
         c.setFillColor(colors.HexColor("#AAAAAA"))
-        c.setFont("Helvetica", 7)
+        c.setFont(FONT_LATIN, 7)
         c.drawCentredString(W / 2, 10, datetime.now().strftime("%Y-%m-%d %H:%M"))
