@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: ["main", "release/**"]
+    branches: ["main", "release/**", "claude/CX-02C-frontend-auth-bootstrap"]
   pull_request:
     branches: ["main", "release/**"]
+  workflow_dispatch: {}
 
 # منع تشغيل وظيفتين متوازيتين على نفس الفرع — لو جاء push جديد والسابق لسه
 # شغّال، يُلغى السابق ويُشغَّل الجديد.
@@ -23,6 +24,22 @@ jobs:
       run:
         working-directory: backend
 
+    # منفذ 6381 هنا يطابق REDIS_URL/CELERY_*_URL في backend/.env.example
+    # حرفيًا — مفيش أي sed للمنفذ نفسه، غير كده هنقع في نفس باج "شغّال
+    # عندي، أحمر على CI" اللي المراجعة كشفته. باقي المهام (Celery
+    # notify_critical_work_order وغيرها) بتحتاج Redis حي فعليًا وقت الطلب
+    # (.delay())، مش fake/eager — الـ service ده بيوفّر نفس السلوك الحقيقي.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6381:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -32,6 +49,12 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
+      - name: Install system dependencies
+        # poppler-utils يوفّر pdftotext — تستات إيصالات الإيجار/التايم شير
+        # بتتأكد من محتوى الـPDF الفعلي بيه (مش بس إنه اتولّد)، وده مفيش
+        # بديل بايثون خالص له في requirements.txt.
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends poppler-utils
+
       - name: Create venv and install dependencies
         run: |
           python -m venv .venv
@@ -40,13 +63,32 @@ jobs:
 
       - name: Prepare CI env
         # الـ tests بتشتغل بـ SQLite in-memory تلقائياً (conftest.py:34).
-        # نحتاج .env فقط لتهيئة الـ Settings object — SECRET_KEY لازم ≥32 char.
+        # القيم دي كلها وهمية وثابتة لـCI بس — مش أسرار حقيقية، ومفيش أي
+        # منها بيُستخدم على أي بيئة حقيقية. SECRET_KEY/SURVEY_TOKEN_SECRET/
+        # TIMESHARE_PORTAL_TOKEN_SECRET لازم تكون ≥32 حرف وخالية من كلمات
+        # زي CHANGE_ME (راجع Settings._validate_secret_key/
+        # _validate_token_signing_secrets في app/core/config.py) — قيم
+        # .env.example الافتراضية (CHANGE_ME_...) بتعدي بتحذير بس في test
+        # (مش fail)، لكن بنستبدلها هنا بقيم نضيفة عشان تشغيل CI يبقى مطابق
+        # تمامًا لتشغيل production الحقيقي بدون أي تحذير مموّه.
         run: |
           cp .env.example .env
           sed -i \
             -e 's|^ENVIRONMENT=.*|ENVIRONMENT=test|' \
             -e 's|^SECRET_KEY=.*|SECRET_KEY=ci-test-secret-key-not-for-production-32x|' \
+            -e 's|^SURVEY_TOKEN_SECRET=.*|SURVEY_TOKEN_SECRET=ci-test-survey-token-secret-not-for-prod-32x|' \
+            -e 's|^TIMESHARE_PORTAL_TOKEN_SECRET=.*|TIMESHARE_PORTAL_TOKEN_SECRET=ci-test-timeshare-portal-secret-not-for-prod-32x|' \
             .env
+
+      - name: Alembic single head
+        run: |
+          heads=$(.venv/bin/python -m alembic heads)
+          echo "$heads"
+          count=$(echo "$heads" | grep -c '(head)')
+          if [ "$count" -ne 1 ]; then
+            echo "::error::Expected exactly 1 Alembic head, found $count"
+            exit 1
+          fi
 
       - name: Run tests
         run: |
@@ -100,7 +142,10 @@ jobs:
         run: pnpm run type-check:all
 
       - name: Run frontend tests
-        run: pnpm --filter el-kheima run test:unit
+        # test:frontend (مش test:unit) — بتضيف فحص تطابق مفاتيح i18n
+        # عربي/إنجليزي (scripts/validate-i18n.mjs) زي بوابة الإصدار الرسمية
+        # في DEPLOYMENT.md بالظبط، مش نسخة أضعف منها.
+        run: pnpm --filter el-kheima run test:frontend
 
       - name: Build (all apps — production)
         run: pnpm run build:all
@@ -115,6 +160,10 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       PUBLIC_SITE_URL: https://public.example.invalid
+      # docker-compose.prod.yml يفرض DB_PASSWORD إجباري (نفس السلوك في
+      # الإنتاج الحقيقي — راجع scripts/deploy.sh) — قيمة وهمية هنا، الهدف
+      # التحقق من صحة الـcompose config بس، مش تشغيل حاويات فعلية.
+      DB_PASSWORD: ci-only-dummy-db-password-not-real
 
     steps:
       - uses: actions/checkout@v4
