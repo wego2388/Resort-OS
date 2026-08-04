@@ -1,11 +1,13 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-03 — نشر دفعة شاملة (23 commit): HR/الأدمن/التايم شير
-audits، إصلاح VAT/service charge، بوابة صاحب عقد التايم شير، جلسات إدارية،
-حذف نظام إشعارات ميت — بتفويض مباشر من Mohamed
+**آخر تحقق:** 2026-08-04 — REL-07: إصلاح جذري لفواتير/إيصالات PDF العربية
+(خط عربي + لوجو + تصميم)، مدونة حقيقية بمحتوى كامل (كانت فاضية)، إصلاح
+شامل لأخطاء console على الموقع التسويقي (نداءات API ميتة، باج انتقال
+صفحات، زر طلب وهمي) — بتفويض مباشر من Mohamed
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex (هذه الدفعة نُفذت ونُشرت مباشرة
-بتفويض صريح من Mohamed خارج دورة مراجعة Codex المعتادة)
+بتفويض صريح من Mohamed خارج دورة مراجعة Codex المعتادة — "انت القائد
+للنهاية... اعمل ما يلزم")
 
 هذا الملف يسجل الحقائق الحالية فقط. التاريخ السابق محفوظ في
 `docs/archive/2026-07-execution/`.
@@ -15,33 +17,94 @@ audits، إصلاح VAT/service charge، بوابة صاحب عقد التايم
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `821a718` |
-| Marketing source release | `1371975` من المستودع المستقل (`main` يطابق الالتزام، لم يتغيّر) |
-| remote | فرع العمل يحتوي `821a718` (23 commit جديد فوق `5b02010`، مدفوعة بالكامل) |
+| Resort OS source release | `5df8191` |
+| Marketing source release | `79130a6` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
+| remote | فرع العمل يحتوي `5df8191` (8 commit جديد فوق `821a718`، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/821a718` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/821a718` |
-| active Marketing release | `/opt/elkheima-marketing-releases/1371975` |
-| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/1371975` |
+| active Resort release | `/opt/resort-os-releases/5df8191` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/5df8191` |
+| active Marketing release | `/opt/elkheima-marketing-releases/79130a6` |
+| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/79130a6` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
+`/var/backups/resort-os/source-releases/5df8191.tar.gz`،
+SHA-256 `df209816d2ac9547d42cfc64c45c007a939d7d90f2a586832d30d1fde7e02963`.
+(أرشيف `821a718` وما قبله محفوظ كما هو.)
+
+أرشيف سابق (`821a718`):
 `/var/backups/resort-os/source-releases/821a718.tar.gz`،
 SHA-256
 `542cdaa35f7dfb6ae1dd6da68c825d65954da2606a57783ff177c479f35a4411`.
 (أرشيفات `5b02010`، `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1` السابقة ما زالت محفوظة كما هي.)
 
 أرشيف Marketing:
-`/var/backups/resort-os/marketing-source-releases/1371975.tar.gz`،
-SHA-256
-`21fbf305bc06e038464803e1c51703a3b7bcc899e97acfcc35717ac1b061b903`.
-(أرشيفات `16f8f2c`، `0b0321f`، `4fba5b6`، `53bf7a3` السابقة ما زالت محفوظة كما هي.)
+`/var/backups/resort-os/marketing-source-releases/79130a6.tar.gz`،
+SHA-256 `f8e454beb95a48ac8c72ec8705c36ca50948289f2e690587a9bb629ee4fe5a9f`.
+(أرشيفات `1371975`، `16f8f2c`، `0b0321f`، `4fba5b6`، `53bf7a3` السابقة ما زالت محفوظة كما هي.)
 
 مجلدا المصدر القديمان `/opt/resort-os` و
 `/opt/elkheima-marketing-website` محفوظان كما كانا، وغير مستخدمين كمصدر
 للإصدار الفعال ولم يُنظفا أو يُعاد ضبطهما.
 
 ## 2. الخدمات الفعالة
+
+- **2026-08-04 — REL-07: `5df8191` (8 commit فوق `821a718`) + Marketing
+  `79130a6` (بتفويض مباشر من Mohamed: "انت القائد للنهاية... اعمل ما
+  يلزم")**: `backend`, `celery_worker`, `celery_beat`, `el_kheima` اتبنوا
+  ونُشروا من `5df8191`؛ `marketing_site` اتبنى من `79130a6` (المستودع
+  المستقل) بنفس الدورة.
+  - **فواتير/إيصالات PDF عربية**: 3 باجات متسلسلة اتصلحوا في
+    `app/core/kernel/reports.py` — مفيش خط عربي متسجّل خالص (النص العربي
+    كان بيترسم بـHelvetica، صفر glyphs عربي)، الخط العربي المتاح مالوش
+    حروف لاتينية خالص (تسجيله لوحده كان هيمسح أي كلمة إنجليزية)،
+    والتذييل كان بيترسم من غير إعادة تشكيل (`_add_footer` مكنش بينادي
+    `_t()`). الحل: `_split_script_runs`/`_draw_mixed` يرسموا كل جزء
+    بالخط اللي بيغطّيه فعليًا، + لوجو المنتجع الحقيقي على الإيصال
+    الحراري (مكنش موجود خالص)، + تصميم أرقى (فواصل متقطّعة، تفصيل سعر،
+    قسم إجمالي واضح). الفونتات/اللوجو اتحطّوا في `app/assets/` عشان
+    يتنسخوا فعليًا لصورة الإنتاج (`python:3.11-slim` مفيهوش فونتات نظام).
+  - **مدونة حقيقية**: كانت skeleton كامل — endpoint قائمة بس (بدون
+    `body`/`cover_image`)، مفيش endpoint لمقال منفرد خالص، صفر مقالات
+    مزروعة. اتضاف `GET /hub/blog/posts/{slug}` (404 للمسودات/الناقص،
+    بيزوّد `views_count` فعليًا)، `cover_image` بقى متعرّض في القائمة،
+    و6 مقالات حقيقية (نص عربي منقول زي ما هو من مشروع
+    `elkheima-beach-resort` القديم بطلب صريح من Mohamed) اتزرعوا عبر
+    `app.seed._seed_blog_posts` (idempotent upsert بالـslug، نفس نمط
+    `_seed_chart_of_accounts` — محتوى حقيقي آمن للتشغيل المباشر على
+    الإنتاج، مش بيانات تجريبية).
+  - **إصلاح شامل للموقع التسويقي** (`elkheima-marketing-website`، commit
+    `79130a6`): حذف `useModulesStore`/`fetchModules` بالكامل (كان بينادي
+    `/modules/public` غير موجود خالص في resort-os — نظام تفعيل/تعطيل
+    الموديولات اتشال عمدًا من الباك إند، ومفيش أي مستهلك حقيقي لنتيجة
+    النداء أصلاً)، وقف نداء `/settings/public` المماثل في
+    `useMediaSettings` (نفس القصة — endpoint مش موجود، fallback بصمت).
+    إصلاح باج تصميم حقيقي في `Timeshare.vue`/`Booking.vue`: `<SEOHead>`
+    كان sibling قبل الـ`<div>` الجذر بدل ما يكون جواه — بيخلّي الكومبوننت
+    عنده root عنصرين، وده بالظبط سبب تحذير Vue "renders non-element root
+    node that cannot be animated" وخطأ `InvalidStateError` وقت الانتقال
+    بين الصفحات اللي Mohamed بعت سكرين شوت بيه. زرار "🏖️ اطلب من مكانك"
+    في صفحة الشاطئ العامة كان بيسمح لأي زائر موقع عشوائي يبعت "طلب" وهمي
+    (فعليًا رسالة تواصل يدوية بس، بدون أي تحقق حضور فعلي في المنتجع) —
+    بقى كارت وصف للخدمة بس، مش نموذج طلب حي.
+  - **اكتشاف جانبي أثناء المراجعة**: لقيت 147 ملف تعديل غير محفوظ (commit)
+    على `/opt/resort-os` (السيرفر) — راجعتها كلها، اتضح إن 100 منها مجرد
+    الفرق الطبيعي بين `main` والفرع التشغيلي (مفيش خطر)، والـ18 الباقية
+    (إصلاحات عزل فروع/تعارض دفعات/تشفير PII كانت موثّقة في بريف من وكيل
+    اسمه Kiro بتاريخ 29 يوليو) طلعت متعملة لها commit ونشر بالفعل قبل كده
+    (إصدار `258c99c`، موجود جوه `821a718`) — يعني مفيش حاجة ضاعت، الفولدر
+    ده مجرد نسخة قديمة مش مستخدمة في النشر أصلاً (موثّق في `DEPLOYMENT.md`
+    كـ"legacy source snapshot; not a deploy target").
+  - **بوابة الجودة**: `agent-check.sh`، pytest كامل (backend)، alembic
+    heads (head واحد `7b4d81dc08ee`، صفر migration جديدة هذه الدفعة)،
+    `pnpm type-check:all`، `pnpm --filter el-kheima test:frontend`
+    (95/95)، `pnpm build:all`، بناء الموقع التسويقي + type-check +
+    `validate:truth` — كله أخضر.
+  - **النشر**: نسخة احتياطية DB اتاتأكدت (`pg_restore --list`، 1408 TOC
+    entry)، rollback tags للـ6 خدمات، استبدال تدريجي (backend → celery →
+    el_kheima → nginx، وmarketing_site منفصل)، health check رسمي 14/14،
+    تحقق حي فعلي عبر متصفح Playwright على الدومين الحقيقي (صفر console
+    errors، صفر 404s، المدونة والفاتورة اشتغلوا صح).
 
 - **2026-08-03 — دفعة `821a718` (23 commit فوق `5b02010`، بتفويض مباشر من
   Mohamed خارج دورة Codex المعتادة)**: `backend`, `celery_worker`,
