@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
 
-from app.modules.hub.models import ContactForm, HubOffer, HubOnlineBooking, HubPage, HubSitemapLog
+from app.modules.hub.models import BlogPost, ContactForm, HubOffer, HubOnlineBooking, HubPage, HubSitemapLog
 from app.modules.hub.schemas import (
     HubOfferCreate, HubOfferUpdate,
     HubPageCreate, HubPageUpdate,
@@ -221,3 +221,25 @@ def list_contact_forms(
     total = q.count()
     items = q.order_by(ContactForm.created_at.desc()).offset(skip).limit(limit).all()
     return items, total
+
+
+# ── BlogPost (public read) ───────────────────────────────────────────────
+
+def list_published_blog_posts(db: Session, branch_id: int) -> list[BlogPost]:
+    return db.query(BlogPost).filter(
+        BlogPost.branch_id == branch_id,
+        BlogPost.status == "published",
+    ).order_by(BlogPost.published_at.desc()).all()
+
+
+def get_published_blog_post_by_slug(db: Session, branch_id: int, slug: str) -> Optional[BlogPost]:
+    return db.query(BlogPost).filter(
+        BlogPost.branch_id == branch_id,
+        BlogPost.status == "published",
+        BlogPost.slug == slug,
+    ).first()
+
+
+def increment_blog_post_views(db: Session, post: BlogPost) -> None:
+    post.views_count += 1
+    db.flush()

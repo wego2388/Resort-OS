@@ -286,12 +286,19 @@ class ContactFormListItem(BaseModel):
 # ── Simple fixed-shape response schemas ──────────────────────────────────────
 
 class BlogPostItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     id:           int
     title:        str
     slug:         str
     excerpt:      Optional[str]
-    published_at: Optional[str]
+    cover_image:  Optional[str]
+    published_at: Optional[datetime]
     views_count:  int
 
 class BlogPostsResponse(BaseModel):
     posts: list[BlogPostItem]
+
+class BlogPostDetail(BlogPostItem):
+    """نفس بيانات القائمة + النص الكامل — مقصود منفصل عن BlogPostItem
+    (مش body في كل عنصر قائمة، توفير bandwidth للمقالات الطويلة)."""
+    body: str

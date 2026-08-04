@@ -17,7 +17,8 @@ from app.modules.hub.schemas import (
     HubOfferCreate, HubOfferRead, HubOfferUpdate,
     HubPageCreate, HubPageRead, HubPageUpdate,
     OnlineBookingCreate, OnlineBookingRead,
-    ContactFormCreate, ContactFormResponse, ContactFormListItem, BlogPostsResponse,
+    ContactFormCreate, ContactFormResponse, ContactFormListItem,
+    BlogPostsResponse, BlogPostItem, BlogPostDetail,
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
@@ -319,14 +320,21 @@ async def list_blog_posts(
     branch_id: int = Query(...),
 ):
     """قائمة المقالات المنشورة للعرض العام."""
-    from app.modules.hub.models import BlogPost  # noqa: PLC0415
-    posts = db.query(BlogPost).filter(
-        BlogPost.branch_id == branch_id,
-        BlogPost.status == "published",
-    ).order_by(BlogPost.published_at.desc()).all()
-    return {"posts": [
-        {"id": p.id, "title": p.title, "slug": p.slug,
-         "excerpt": p.excerpt, "published_at": str(p.published_at),
-         "views_count": p.views_count}
-        for p in posts
-    ]}
+    posts = crud.list_published_blog_posts(db, branch_id)
+    return {"posts": [BlogPostItem.model_validate(p) for p in posts]}
+
+
+@router.get("/hub/blog/posts/{slug}", response_model=BlogPostDetail)
+async def get_blog_post(
+    db: DbDep,
+    slug: str,
+    branch_id: int = Query(...),
+):
+    """مقال واحد كامل (بما فيه body) للعرض العام — بيزوّد views_count."""
+    post = crud.get_published_blog_post_by_slug(db, branch_id, slug)
+    if not post:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "المقال غير موجود")
+    crud.increment_blog_post_views(db, post)
+    db.commit()
+    db.refresh(post)
+    return BlogPostDetail.model_validate(post)

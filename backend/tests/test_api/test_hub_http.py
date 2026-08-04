@@ -304,3 +304,53 @@ class TestBlogPosts:
         posts = resp.json()["posts"]
         assert any(p["title"] == "منشور" for p in posts)
         assert not any(p["title"] == "مسودة" for p in posts)
+
+    def test_get_post_by_slug_returns_full_body_and_increments_views(self, client: TestClient, db):
+        from app.modules.hub.models import BlogPost
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
+        branch = make_branch_committed(db)
+        author = User(email=f"author-{uuid.uuid4().hex[:6]}@test.local",
+                     password_hash=get_password_hash("Test@12345"),
+                     full_name="كاتب اختباري", role="admin", is_active=True)
+        db.add(author)
+        db.flush()
+        slug = f"post-{uuid.uuid4().hex[:6]}"
+        db.add(BlogPost(branch_id=branch.id, title="مقال كامل", slug=slug,
+                 excerpt="ملخص", body="النص الكامل للمقال هنا", cover_image="/images/x.webp",
+                 status="published", author_id=author.id, published_at=date.today(), views_count=3))
+        db.commit()
+
+        resp = client.get(f"/api/v1/hub/blog/posts/{slug}", params={"branch_id": branch.id})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["body"] == "النص الكامل للمقال هنا"
+        assert data["cover_image"] == "/images/x.webp"
+        assert data["views_count"] == 4
+
+        # نداء تاني بيزوّد العدّاد تاني — real increment مش idempotent by design
+        resp2 = client.get(f"/api/v1/hub/blog/posts/{slug}", params={"branch_id": branch.id})
+        assert resp2.json()["views_count"] == 5
+
+    def test_get_post_by_slug_404_for_draft(self, client: TestClient, db):
+        from app.modules.hub.models import BlogPost
+        from app.core.kernel.models.user import User
+        from app.core.kernel.security import get_password_hash
+        branch = make_branch_committed(db)
+        author = User(email=f"author-{uuid.uuid4().hex[:6]}@test.local",
+                     password_hash=get_password_hash("Test@12345"),
+                     full_name="كاتب اختباري", role="admin", is_active=True)
+        db.add(author)
+        db.flush()
+        slug = f"draft-{uuid.uuid4().hex[:6]}"
+        db.add(BlogPost(branch_id=branch.id, title="مسودة", slug=slug,
+                 body="...", status="draft", author_id=author.id))
+        db.commit()
+
+        resp = client.get(f"/api/v1/hub/blog/posts/{slug}", params={"branch_id": branch.id})
+        assert resp.status_code == 404
+
+    def test_get_post_by_slug_404_when_missing(self, client: TestClient, db):
+        branch = make_branch_committed(db)
+        resp = client.get("/api/v1/hub/blog/posts/does-not-exist", params={"branch_id": branch.id})
+        assert resp.status_code == 404
