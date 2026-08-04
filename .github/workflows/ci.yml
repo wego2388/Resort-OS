@@ -172,4 +172,10 @@ jobs:
         run: docker compose config --quiet
 
       - name: Validate prod compose
-        run: docker compose -f docker-compose.prod.yml config --quiet
+        # docker-compose.prod.yml's env_file: ./backend/.env.prod لازم يكون
+        # موجود فعليًا عشان compose يقدر يفسّر الملف (حتى لو فاضي) — الملف
+        # الحقيقي فيه أسرار إنتاج حقيقية ومش موجود في git أبدًا (gitignored)،
+        # فبننشئ نسخة فاضية هنا CI-only، مش بتتحفظ ولا بتتكوميت.
+        run: |
+          touch backend/.env.prod
+          docker compose -f docker-compose.prod.yml config --quiet
