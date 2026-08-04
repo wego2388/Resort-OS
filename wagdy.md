@@ -260,5 +260,5 @@ IPv6 فعلي.
 - المهمة الحالية: `docs/agent-workflow/EL_KHEIMA_EXECUTION_BOARD.md`
 - أحدث تسليم:
   `docs/agent-workflow/handoffs/2026-08-02_MKT-03_marketing_locale_nav_fix_handoff.md`
-- دليل الإدارة وتدريب الموظفين: `docs/STAFF_APP_GUIDE_AR.md`
-- دليل السوبر أدمن الأمني: `docs/SUPER_ADMIN_GUIDE_AR.md`
+- دليل الإدارة وتدريب الموظفين: `manual/02-دليل-الموظفين-والتدريب.md`
+- دليل السوبر أدمن الأمني: `manual/01-دليل-السوبر-أدمن.md`

@@ -1,9 +1,12 @@
 # Super Admin Guide — El Kheima Resort OS
 
 > **Audience:** Resort owner and designated super-admin operators.
-> **Version:** 2026-07
-> **Authoritative current guide:** `docs/SUPER_ADMIN_GUIDE_AR.md` (30 July
-> 2026). If a detail differs, follow the Arabic guide.
+> **Version:** 2026-07 — not updated since; several screens described here
+> are now outdated (account unlock, force-2FA-reset, admin session
+> management, audit log date filters, timeshare staff accounts).
+> **Authoritative current guide:** `manual/01-دليل-السوبر-أدمن.md` (Arabic,
+> updated 3 August 2026). This English file is not kept in sync — follow the
+> Arabic guide.
 
 ---
 

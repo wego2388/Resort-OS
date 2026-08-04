@@ -2,10 +2,12 @@
 
 > **Translation status:** This English guide is a legacy summary and does not
 > describe every current screen. The authoritative operating and training
-> guide dated 30 July 2026 is `docs/STAFF_APP_GUIDE_AR.md`. If the two differ,
-> follow the Arabic guide and record the English translation gap during UAT.
+> guide is `manual/02-دليل-الموظفين-والتدريب.md` (Arabic, updated 3 August
+> 2026 — covers Timeshare owner portal, HR search/status changes, payroll
+> downloads, and more that this English file does not). Follow the Arabic
+> guide and record the English translation gap during UAT.
 > Find your role below. Read only your section.
-> Arabic version: `docs/STAFF_APP_GUIDE_AR.md`
+> Arabic version: `manual/02-دليل-الموظفين-والتدريب.md`
 > App URL: `https://app.elkheima.com/login`
 
 ---
