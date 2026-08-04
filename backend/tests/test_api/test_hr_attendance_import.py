@@ -42,6 +42,19 @@ def branch(db: Session):
     return b
 
 
+def _manager_headers_for_branch(db, branch):
+    """2026-08-04: import-excel بقى فيه فحص فرع حقيقي (assert_branch_access)
+    كان غايب تمامًا قبل كده — manager_headers العادي (fixture عالمي) مالوش
+    عضوية فرع، فبيفشل بـ403 دلوقتي. نفس نمط role_headers_for_branch في
+    test_hr_http.py."""
+    from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+    email = f"hr-import-mgr-{uuid.uuid4().hex[:8]}@test.local"
+    user_id = _create_test_user(email, "manager")
+    assign_test_user_to_branch(db, user_id, branch.id)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email, branch_id=branch.id)}"}
+
+
 def _make_employee(db, branch, code=None, name="أحمد سمير"):
     from app.modules.hr.crud import create_employee
     from app.modules.hr.schemas import EmployeeCreate
@@ -262,7 +275,7 @@ class TestImportAttendanceExcelHttp:
         emp = _make_employee(db, branch, code="EMP-HTTP1")
         content = _build_workbook(["employee_code", 1, 2], [["EMP-HTTP1", "p", "u"]])
 
-        resp = self._upload(client, branch.id, 2026, 6, content, manager_headers)
+        resp = self._upload(client, branch.id, 2026, 6, content, _manager_headers_for_branch(db, branch))
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["imported"] == 2
@@ -282,11 +295,11 @@ class TestImportAttendanceExcelHttp:
         buf = io.BytesIO()
         wb.save(buf)
 
-        resp = self._upload(client, branch.id, 2026, 6, buf.getvalue(), manager_headers)
+        resp = self._upload(client, branch.id, 2026, 6, buf.getvalue(), _manager_headers_for_branch(db, branch))
         assert resp.status_code == 400
 
     def test_import_reports_unmatched_employees(self, client, db: Session, fake_redis, manager_headers, branch):
         content = _build_workbook(["employee_code", 1], [["GHOST-001", "p"]])
-        resp = self._upload(client, branch.id, 2026, 6, content, manager_headers)
+        resp = self._upload(client, branch.id, 2026, 6, content, _manager_headers_for_branch(db, branch))
         assert resp.status_code == 200
         assert resp.json()["unmatched_employees"] == ["GHOST-001"]

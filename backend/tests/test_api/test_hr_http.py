@@ -52,6 +52,23 @@ def super_admin_headers_for_branch(branch):
     }
 
 
+def role_headers_for_branch(db, branch, role="manager"):
+    """2026-08-04: helper جديد بعد إضافة assert_branch_access لعدد كبير من
+    endpoints الموديول (كان مفيش أي تحقق فرع عليهم خالص — راجع تعليقات
+    الباجات في hr/api/router.py). manager_headers/admin_headers العادية
+    (fixtures عالمية) مالهاش أي عضوية فرع، فبتفشل بـ403 "اختر فرعًا نشطًا"
+    على أي endpoint بقى محمي. هنا بننشئ مستخدم جديد بدور محدد ونربطه
+    بالفرع صراحةً (نفس نمط super_admin_headers_for_branch فوق، ونمط
+    _link_shared_users_to_branch في test_crm_endpoints_http.py)."""
+    from tests.conftest import _create_test_user, _make_token, assign_test_user_to_branch
+
+    email = f"hr-{role}-{uuid.uuid4().hex[:8]}@test.local"
+    user_id = _create_test_user(email, role)
+    assign_test_user_to_branch(db, user_id, branch.id)
+    db.commit()
+    return {"Authorization": f"Bearer {_make_token(email, branch_id=branch.id)}"}
+
+
 def make_leave_type_committed(db, branch):
     from app.modules.hr.models import LeaveType
     lt = LeaveType(branch_id=branch.id, name="Annual", name_ar="سنوية", max_days_per_year=21)
@@ -79,6 +96,7 @@ class TestHRPayrollRunsAlias:
 class TestHRLeaveRequestFlow:
     def test_create_list_approve_leave_via_leave_requests_path(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         employee = make_employee_committed(db, branch)
         leave_type = make_leave_type_committed(db, branch)
 
@@ -90,7 +108,7 @@ class TestHRLeaveRequestFlow:
                 "end_date": str(date.today() + timedelta(days=7)),
                 "reason": "سفر عائلي",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         req = create_resp.json()
@@ -100,7 +118,7 @@ class TestHRLeaveRequestFlow:
         approve_resp = client.patch(
             f"/api/v1/hr/leave-requests/{req['id']}/approve",
             json={"approved_by": 1},
-            headers=manager_headers,
+            headers=headers,
         )
         assert approve_resp.status_code == 200, approve_resp.text
         assert approve_resp.json()["status"] == "approved"
@@ -109,6 +127,7 @@ class TestHRLeaveRequestFlow:
         """Regression: GET /hr/leaves + PATCH /hr/leaves/{id} (used by
         HRView.vue) must work end-to-end, not 404."""
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         employee = make_employee_committed(db, branch)
         leave_type = make_leave_type_committed(db, branch)
 
@@ -119,24 +138,25 @@ class TestHRLeaveRequestFlow:
                 "start_date": str(date.today() + timedelta(days=1)),
                 "end_date": str(date.today() + timedelta(days=2)),
             },
-            headers=manager_headers,
+            headers=headers,
         ).json()
 
         list_resp = client.get(
-            "/api/v1/hr/leaves", params={"branch_id": branch.id, "status": "pending"}, headers=manager_headers,
+            "/api/v1/hr/leaves", params={"branch_id": branch.id, "status": "pending"}, headers=headers,
         )
         assert list_resp.status_code == 200, list_resp.text
         ids = [item["id"] for item in list_resp.json()["items"]]
         assert req["id"] in ids
 
         patch_resp = client.patch(
-            f"/api/v1/hr/leaves/{req['id']}", json={"status": "approved"}, headers=manager_headers,
+            f"/api/v1/hr/leaves/{req['id']}", json={"status": "approved"}, headers=headers,
         )
         assert patch_resp.status_code == 200, patch_resp.text
         assert patch_resp.json()["status"] == "approved"
 
     def test_leaves_alias_reject(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         employee = make_employee_committed(db, branch)
         leave_type = make_leave_type_committed(db, branch)
         req = client.post(
@@ -146,11 +166,11 @@ class TestHRLeaveRequestFlow:
                 "start_date": str(date.today() + timedelta(days=1)),
                 "end_date": str(date.today() + timedelta(days=1)),
             },
-            headers=manager_headers,
+            headers=headers,
         ).json()
 
         resp = client.patch(
-            f"/api/v1/hr/leaves/{req['id']}", json={"status": "rejected"}, headers=manager_headers,
+            f"/api/v1/hr/leaves/{req['id']}", json={"status": "rejected"}, headers=headers,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] == "rejected"
@@ -335,20 +355,21 @@ class TestHRPayrollApproval:
         self, client: TestClient, db, super_admin_headers,
     ):
         branch = make_branch_committed(db)
+        headers = super_admin_headers_for_branch(branch)
         make_employee_committed(db, branch)
 
         today = date.today()
         create_resp = client.post(
             "/api/v1/hr/payroll-runs",
             json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
-            headers=super_admin_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         run = create_resp.json()
         assert run["status"] == "draft"
 
         approve_resp = client.post(
-            f"/api/v1/hr/payroll-runs/{run['id']}/approve", headers=super_admin_headers,
+            f"/api/v1/hr/payroll-runs/{run['id']}/approve", headers=headers,
         )
         assert approve_resp.status_code == 200, approve_resp.text
         assert approve_resp.json()["status"] == "approved"
@@ -356,21 +377,25 @@ class TestHRPayrollApproval:
         # Approving twice must fail — same run can't be approved from a
         # non-"draft" state.
         second_resp = client.post(
-            f"/api/v1/hr/payroll-runs/{run['id']}/approve", headers=super_admin_headers,
+            f"/api/v1/hr/payroll-runs/{run['id']}/approve", headers=headers,
         )
         assert second_resp.status_code == 400
 
     def test_manager_cannot_approve_payroll_run(self, client: TestClient, db, manager_headers, super_admin_headers):
         branch = make_branch_committed(db)
+        admin_headers = super_admin_headers_for_branch(branch)
         make_employee_committed(db, branch)
         today = date.today()
         run = client.post(
             "/api/v1/hr/payroll-runs",
             json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
-            headers=super_admin_headers,
+            headers=admin_headers,
         ).json()
 
-        resp = client.post(f"/api/v1/hr/payroll-runs/{run['id']}/approve", headers=manager_headers)
+        resp = client.post(
+            f"/api/v1/hr/payroll-runs/{run['id']}/approve",
+            headers=role_headers_for_branch(db, branch),
+        )
         assert resp.status_code == 403
 
 
@@ -381,6 +406,7 @@ class TestHRRotaAndShiftSwap:
 
     def test_create_rota_assignment_and_fetch_week(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         employee = make_employee_committed(db, branch)
         shift = make_shift_committed(db, branch)
         week_start = date.today()
@@ -392,20 +418,21 @@ class TestHRRotaAndShiftSwap:
                 "branch_id": branch.id, "employee_id": employee.id, "shift_id": shift.id,
                 "assigned_date": str(week_start),
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
 
         rota_resp = client.get(
             "/api/v1/hr/rota",
             params={"branch_id": branch.id, "week_start": str(week_start), "week_end": str(week_end)},
-            headers=manager_headers,
+            headers=headers,
         )
         assert rota_resp.status_code == 200
         assert any(a["employee_id"] == employee.id for a in rota_resp.json())
 
     def test_shift_swap_request_and_approval_flow(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         requester = make_employee_committed(db, branch)
         target = make_employee_committed(db, branch)
         shift = make_shift_committed(db, branch)
@@ -415,13 +442,13 @@ class TestHRRotaAndShiftSwap:
             "/api/v1/hr/rota/assignments",
             json={"branch_id": branch.id, "employee_id": requester.id, "shift_id": shift.id,
                   "assigned_date": str(d1)},
-            headers=manager_headers,
+            headers=headers,
         ).json()
         a2 = client.post(
             "/api/v1/hr/rota/assignments",
             json={"branch_id": branch.id, "employee_id": target.id, "shift_id": shift.id,
                   "assigned_date": str(d2)},
-            headers=manager_headers,
+            headers=headers,
         ).json()
 
         swap_resp = client.post(
@@ -431,21 +458,21 @@ class TestHRRotaAndShiftSwap:
                 "from_assignment_id": a1["id"], "to_assignment_id": a2["id"],
                 "reason": "ظرف عائلي",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert swap_resp.status_code == 201, swap_resp.text
         swap = swap_resp.json()
         assert swap["status"] == "pending"
 
         approve_resp = client.patch(
-            f"/api/v1/hr/rota/swap-requests/{swap['id']}/approve", headers=manager_headers,
+            f"/api/v1/hr/rota/swap-requests/{swap['id']}/approve", headers=headers,
         )
         assert approve_resp.status_code == 200, approve_resp.text
         assert approve_resp.json()["status"] == "approved"
 
         # Approving an already-approved swap must be rejected.
         second_resp = client.patch(
-            f"/api/v1/hr/rota/swap-requests/{swap['id']}/approve", headers=manager_headers,
+            f"/api/v1/hr/rota/swap-requests/{swap['id']}/approve", headers=headers,
         )
         assert second_resp.status_code == 400
 
@@ -765,18 +792,19 @@ class TestLeaderboardHttp:
 class TestPayrollRunHttp:
     def test_create_payroll_run_duplicate_returns_400(self, client: TestClient, db, super_admin_headers):
         branch = make_branch_committed(db)
+        headers = super_admin_headers_for_branch(branch)
         make_employee_committed(db, branch)
         today = date.today()
         first = client.post(
             "/api/v1/hr/payroll-runs",
             json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
-            headers=super_admin_headers,
+            headers=headers,
         )
         assert first.status_code == 201, first.text
         second = client.post(
             "/api/v1/hr/payroll-runs",
             json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
-            headers=super_admin_headers,
+            headers=headers,
         )
         assert second.status_code == 400
         assert "موجود مسبقاً" in second.text
@@ -784,19 +812,21 @@ class TestPayrollRunHttp:
     def test_get_payroll_run_success_and_lines(self, client: TestClient, db, super_admin_headers, manager_headers):
         ensure_payroll_config_committed(db)
         branch = make_branch_committed(db)
+        admin_headers = super_admin_headers_for_branch(branch)
+        headers = role_headers_for_branch(db, branch)
         make_employee_committed(db, branch)
         today = date.today()
         run = client.post(
             "/api/v1/hr/payroll-runs",
             json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
-            headers=super_admin_headers,
+            headers=admin_headers,
         ).json()
 
-        get_resp = client.get(f"/api/v1/hr/payroll-runs/{run['id']}", headers=manager_headers)
+        get_resp = client.get(f"/api/v1/hr/payroll-runs/{run['id']}", headers=headers)
         assert get_resp.status_code == 200, get_resp.text
         assert get_resp.json()["id"] == run["id"]
 
-        lines_resp = client.get(f"/api/v1/hr/payroll-runs/{run['id']}/lines", headers=manager_headers)
+        lines_resp = client.get(f"/api/v1/hr/payroll-runs/{run['id']}/lines", headers=headers)
         assert lines_resp.status_code == 200, lines_resp.text
         assert len(lines_resp.json()) == 1  # موظف واحد فقط في الفرع
 
@@ -805,13 +835,19 @@ class TestPayrollRunHttp:
         assert resp.status_code == 404
 
     def test_approve_payroll_run_404_when_missing(self, client: TestClient, db, super_admin_headers):
+        # 2026-08-04: كان 400 (ValueError "غير موجود" من جوه الـ service) —
+        # لازم نجيب الـ run الأول دلوقتي عشان نتحقق من الفرع قبل الاعتماد
+        # (باج أمني حقيقي اتصلح، راجع تعليق approve_payroll_run في الراوتر)،
+        # فبقى فيه فحص 404 صريح زي get_payroll_run المجاورة بالظبط —
+        # أدق ومتسق أكتر، مش تغيير سلوك سلبي.
         resp = client.post("/api/v1/hr/payroll-runs/999999/approve", headers=super_admin_headers)
-        assert resp.status_code == 400  # ValueError "غير موجود" -> 400 (مش 404 — راجع الراوتر)
+        assert resp.status_code == 404
 
 
 class TestAttendanceHttp:
     def test_record_and_list_attendance(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         emp = make_employee_committed(db, branch)
         create_resp = client.post(
             "/api/v1/hr/attendance",
@@ -819,14 +855,14 @@ class TestAttendanceHttp:
                 "employee_id": emp.id, "branch_id": branch.id,
                 "record_date": str(date.today()), "status": "present",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
 
         list_resp = client.get(
             "/api/v1/hr/attendance",
             params={"employee_id": emp.id, "branch_id": branch.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert list_resp.status_code == 200, list_resp.text
         assert list_resp.json()["total"] == 1
@@ -834,6 +870,7 @@ class TestAttendanceHttp:
     def test_manager_can_correct_missing_checkout(self, client: TestClient, db, manager_headers):
         """wagdy.md #8: موظف نسي يبصم انصراف — مدير يصحّح السجل يدويًا."""
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         emp = make_employee_committed(db, branch)
         create_resp = client.post(
             "/api/v1/hr/attendance",
@@ -842,7 +879,7 @@ class TestAttendanceHttp:
                 "record_date": str(date.today()), "status": "present",
                 "check_in": "2026-07-09T09:00:00",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         record_id = create_resp.json()["id"]
@@ -851,7 +888,7 @@ class TestAttendanceHttp:
         patch_resp = client.patch(
             f"/api/v1/hr/attendance/{record_id}",
             json={"check_out": "2026-07-09T17:00:00", "notes": "نسي يبصم انصراف — صححها المدير"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert patch_resp.status_code == 200, patch_resp.text
         body = patch_resp.json()
@@ -924,7 +961,8 @@ class TestRotaTemplateHttp:
 
     def test_create_list_get_and_update_rota_template(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
-        dept = self._make_department(client, branch, manager_headers)
+        headers = role_headers_for_branch(db, branch)
+        dept = self._make_department(client, branch, headers)
 
         create_resp = client.post(
             "/api/v1/hr/rota/templates",
@@ -932,7 +970,7 @@ class TestRotaTemplateHttp:
                 "branch_id": branch.id, "department_id": dept["id"],
                 "name": "جدول الصيف", "week_pattern": {"mon": {"morning": 3}, "tue": {"evening": 2}},
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         template = create_resp.json()
@@ -940,7 +978,7 @@ class TestRotaTemplateHttp:
         assert template["week_pattern"]["mon"]["morning"] == 3
 
         list_resp = client.get(
-            "/api/v1/hr/rota/templates", params={"branch_id": branch.id}, headers=manager_headers,
+            "/api/v1/hr/rota/templates", params={"branch_id": branch.id}, headers=headers,
         )
         assert list_resp.status_code == 200
         ids = [t["id"] for t in list_resp.json()]
@@ -949,19 +987,19 @@ class TestRotaTemplateHttp:
         filtered_resp = client.get(
             "/api/v1/hr/rota/templates",
             params={"branch_id": branch.id, "department_id": dept["id"], "is_active": True},
-            headers=manager_headers,
+            headers=headers,
         )
         assert filtered_resp.status_code == 200
         assert template["id"] in [t["id"] for t in filtered_resp.json()]
 
-        get_resp = client.get(f"/api/v1/hr/rota/templates/{template['id']}", headers=manager_headers)
+        get_resp = client.get(f"/api/v1/hr/rota/templates/{template['id']}", headers=headers)
         assert get_resp.status_code == 200
         assert get_resp.json()["name"] == "جدول الصيف"
 
         update_resp = client.patch(
             f"/api/v1/hr/rota/templates/{template['id']}",
             json={"week_pattern": {"wed": {"morning": 4}}, "is_active": False},
-            headers=manager_headers,
+            headers=headers,
         )
         assert update_resp.status_code == 200, update_resp.text
         updated = update_resp.json()
@@ -1018,6 +1056,7 @@ class TestLeaveRequestValidationAndRejectHttp:
 
     def test_approve_leave_request_already_processed_returns_400(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         employee = make_employee_committed(db, branch)
         leave_type = make_leave_type_committed(db, branch)
         req = client.post(
@@ -1027,18 +1066,19 @@ class TestLeaveRequestValidationAndRejectHttp:
                 "start_date": str(date.today() + timedelta(days=1)),
                 "end_date": str(date.today() + timedelta(days=2)),
             },
-            headers=manager_headers,
+            headers=headers,
         ).json()
         client.patch(
-            f"/api/v1/hr/leave-requests/{req['id']}/approve", json={"approved_by": 1}, headers=manager_headers,
+            f"/api/v1/hr/leave-requests/{req['id']}/approve", json={"approved_by": 1}, headers=headers,
         )
         second = client.patch(
-            f"/api/v1/hr/leave-requests/{req['id']}/approve", json={"approved_by": 1}, headers=manager_headers,
+            f"/api/v1/hr/leave-requests/{req['id']}/approve", json={"approved_by": 1}, headers=headers,
         )
         assert second.status_code == 400
 
     def test_reject_leave_request_via_dedicated_endpoint(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         employee = make_employee_committed(db, branch)
         leave_type = make_leave_type_committed(db, branch)
         req = client.post(
@@ -1048,12 +1088,12 @@ class TestLeaveRequestValidationAndRejectHttp:
                 "start_date": str(date.today() + timedelta(days=1)),
                 "end_date": str(date.today() + timedelta(days=2)),
             },
-            headers=manager_headers,
+            headers=headers,
         ).json()
         resp = client.patch(
             f"/api/v1/hr/leave-requests/{req['id']}/reject",
             json={"reason": "لا يوجد بديل متاح"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["status"] == "rejected"
@@ -1063,19 +1103,23 @@ class TestLeaveRequestValidationAndRejectHttp:
         second = client.patch(
             f"/api/v1/hr/leave-requests/{req['id']}/reject",
             json={"reason": "محاولة تانية"},
-            headers=manager_headers,
+            headers=headers,
         )
         assert second.status_code == 400
 
     def test_leaves_alias_patch_404_underlying_value_error_returns_400(
         self, client: TestClient, db, manager_headers,
     ):
-        """PATCH /hr/leaves/{id} على request_id غير موجود — الـ ValueError من
-        services.approve_leave/reject_leave لازم يترجم 400 (مش 500)."""
+        """PATCH /hr/leaves/{id} على request_id غير موجود.
+
+        2026-08-04: كان 400 (ValueError من جوه approve_leave/reject_leave) —
+        دلوقتي الراوتر بيجيب الطلب صراحةً قبل ما يتحقق من الفرع (باج أمني
+        اتصلح، راجع update_leave_status_alias)، فبقى فيه فحص 404 صريح
+        أدق، مش 500 ولا 400 غامض."""
         resp = client.patch(
             "/api/v1/hr/leaves/999999", json={"status": "approved"}, headers=manager_headers,
         )
-        assert resp.status_code == 400
+        assert resp.status_code == 404
 
 
 class TestSelfServiceAttendanceHttp:
@@ -1124,6 +1168,7 @@ class TestSelfServiceAttendanceHttp:
 class TestPenaltyHttp:
     def test_create_and_list_penalties(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         emp = make_employee_committed(db, branch)
         create_resp = client.post(
             "/api/v1/hr/penalties",
@@ -1132,13 +1177,13 @@ class TestPenaltyHttp:
                 "penalty_date": str(date.today()), "penalty_days": 1,
                 "reason": "تأخير متكرر", "applied_by": 1,
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
 
         list_resp = client.get(
             "/api/v1/hr/penalties", params={"branch_id": branch.id, "employee_id": emp.id},
-            headers=manager_headers,
+            headers=headers,
         )
         assert list_resp.status_code == 200, list_resp.text
         assert len(list_resp.json()) == 1
@@ -1330,14 +1375,14 @@ class TestPayrollDownloadsHttp:
         run = client.post(
             "/api/v1/hr/payroll-runs",
             json={"branch_id": branch.id, "period_year": today.year, "period_month": today.month},
-            headers=super_admin_headers,
+            headers=super_admin_headers_for_branch(branch),
         ).json()
         return branch, emp, run
 
     def test_download_payslip_pdf_success(self, client: TestClient, db, super_admin_headers, manager_headers):
-        _, emp, run = self._make_approved_run(client, db, super_admin_headers)
+        branch, emp, run = self._make_approved_run(client, db, super_admin_headers)
         resp = client.get(
-            f"/api/v1/hr/payroll/{run['id']}/payslip/{emp.id}", headers=manager_headers,
+            f"/api/v1/hr/payroll/{run['id']}/payslip/{emp.id}", headers=role_headers_for_branch(db, branch),
         )
         assert resp.status_code == 200, resp.text
         assert resp.headers["content-type"] == "application/pdf"
@@ -1363,15 +1408,15 @@ class TestPayrollDownloadsHttp:
     def test_download_payslip_pdf_404_employee_not_in_run(
         self, client: TestClient, db, super_admin_headers, manager_headers,
     ):
-        _, _, run = self._make_approved_run(client, db, super_admin_headers)
+        branch, _, run = self._make_approved_run(client, db, super_admin_headers)
         resp = client.get(
-            f"/api/v1/hr/payroll/{run['id']}/payslip/999999", headers=manager_headers,
+            f"/api/v1/hr/payroll/{run['id']}/payslip/999999", headers=role_headers_for_branch(db, branch),
         )
         assert resp.status_code == 404
 
     def test_download_payroll_excel_success(self, client: TestClient, db, super_admin_headers, manager_headers):
-        _, _, run = self._make_approved_run(client, db, super_admin_headers)
-        resp = client.get(f"/api/v1/hr/payroll/{run['id']}/excel", headers=manager_headers)
+        branch, _, run = self._make_approved_run(client, db, super_admin_headers)
+        resp = client.get(f"/api/v1/hr/payroll/{run['id']}/excel", headers=role_headers_for_branch(db, branch))
         assert resp.status_code == 200, resp.text
         assert resp.headers["content-type"] == (
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -1522,6 +1567,7 @@ class TestAdvancePaymentHttp:
 
     def test_create_and_list_advance_payment(self, client: TestClient, db, manager_headers):
         branch = make_branch_committed(db)
+        headers = role_headers_for_branch(db, branch)
         emp = make_employee_committed(db, branch)
 
         create_resp = client.post(
@@ -1530,14 +1576,14 @@ class TestAdvancePaymentHttp:
                 "employee_id": emp.id, "branch_id": branch.id,
                 "amount": "200.00", "payment_date": "2026-06-10",
             },
-            headers=manager_headers,
+            headers=headers,
         )
         assert create_resp.status_code == 201, create_resp.text
         payment = create_resp.json()
         assert payment["deducted"] is False
 
         list_resp = client.get(
-            "/api/v1/hr/advance-payments", params={"employee_id": emp.id}, headers=manager_headers,
+            "/api/v1/hr/advance-payments", params={"employee_id": emp.id}, headers=headers,
         )
         assert list_resp.status_code == 200
         assert any(p["id"] == payment["id"] for p in list_resp.json())
