@@ -1,8 +1,11 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-02 بعد إصلاح سكرول أفقي عربي فقط في /contact (باج honeypot/RTL)
+**آخر تحقق:** 2026-08-03 — نشر دفعة شاملة (23 commit): HR/الأدمن/التايم شير
+audits، إصلاح VAT/service charge، بوابة صاحب عقد التايم شير، جلسات إدارية،
+حذف نظام إشعارات ميت — بتفويض مباشر من Mohamed
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
-**قائد التنفيذ والمراجع النهائي:** Codex
+**قائد التنفيذ والمراجع النهائي:** Codex (هذه الدفعة نُفذت ونُشرت مباشرة
+بتفويض صريح من Mohamed خارج دورة مراجعة Codex المعتادة)
 
 هذا الملف يسجل الحقائق الحالية فقط. التاريخ السابق محفوظ في
 `docs/archive/2026-07-execution/`.
@@ -12,21 +15,21 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `5b02010` |
-| Marketing source release | `1371975` من المستودع المستقل (`main` يطابق الالتزام) |
-| remote | فرع العمل يحتوي `5b02010` (يشمل `9579c2f`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1`، `5b02010`) |
+| Resort OS source release | `821a718` |
+| Marketing source release | `1371975` من المستودع المستقل (`main` يطابق الالتزام، لم يتغيّر) |
+| remote | فرع العمل يحتوي `821a718` (23 commit جديد فوق `5b02010`، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/5b02010` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/5b02010` |
+| active Resort release | `/opt/resort-os-releases/821a718` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/821a718` |
 | active Marketing release | `/opt/elkheima-marketing-releases/1371975` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/1371975` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 
 أرشيف Resort OS:
-`/var/backups/resort-os/source-releases/5b02010.tar.gz`،
+`/var/backups/resort-os/source-releases/821a718.tar.gz`،
 SHA-256
-`50538820d9b9e4ef9e3d724e45b09dfca4dfc86e25154a852fab98765900b673`.
-(أرشيفات `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1` السابقة ما زالت محفوظة كما هي.)
+`542cdaa35f7dfb6ae1dd6da68c825d65954da2606a57783ff177c479f35a4411`.
+(أرشيفات `5b02010`، `a3e8abb`، `ddfbaaa`، `4a0a777`، `8597535`، `b1db886`، `0d55717`، `4ca10c1` السابقة ما زالت محفوظة كما هي.)
 
 أرشيف Marketing:
 `/var/backups/resort-os/marketing-source-releases/1371975.tar.gz`،
@@ -40,14 +43,36 @@ SHA-256
 
 ## 2. الخدمات الفعالة
 
-- `backend`, `celery_worker`, `celery_beat` بُنوا ونُشروا من `5b02010`
-  (موديول Hub: `confirm_booking` كان فيه كود مكرر بعد كتلة if/else بيتنفذ
-  دايمًا — يسبب `UnboundLocalError` حقيقي (مبتلوع بصمت) لما مفيش غرف
-  متاحة للتأكيد التلقائي، ويتسجّل كـ"فشل" مربك بدل التحذير الصح. الحالة
-  النهائية العملية ماتغيّرتش، بس اللوجات كانت مضللة. مكتشف أثناء مراجعة
-  ذاتية شاملة طلبها Mohamed). `el_kheima` (frontend) لم يتغيّر في الجولة
-  دي، لسه من `b1db886`. صفر migration، Alembic head واحد لم يتغيّر
-  `88d1c505a9dc`.
+- **2026-08-03 — دفعة `821a718` (23 commit فوق `5b02010`، بتفويض مباشر من
+  Mohamed خارج دورة Codex المعتادة)**: `backend`, `celery_worker`,
+  `celery_beat`, `el_kheima` اتبنوا ونُشروا كلهم من `821a718`.
+  `marketing_site` اتبنى من نفس السياق الحالي (`1371975`، بدون تغيير في
+  مصدره) كجزء من أمر البناء الموحّد فقط.
+  - **HR/الأدمن**: بحث/فلترة حقيقية للموظفين والمستخدمين، تعديل/تغيير حالة
+    الموظف، تحميل الرواتب Excel/PDF وقسائم راتب فردية، ملف موظف موحّد،
+    إصلاح IDOR حقيقي في `GET /hr/employees/{id}` (كاشير فرع كان يقدر يقرا
+    بيانات موظف فرع تاني)، فك قفل حساب/إعادة ضبط 2FA إداري (step-up)،
+    إدارة جلسات مستخدم تاني (عرض/إنهاء، step-up)، فلترة سجل التدقيق بتاريخ
+    + اسم فاعل، حذف نظام إشعارات كان مبني بالكامل بدون أي مستهلك خالص.
+  - **مالي حقيقي**: `vat_percentage`/`service_charge_percentage` كانا
+    بيتقروا من env var بس مهما اتغيّروا في الإعدادات — بقوا فعليًا
+    DB-driven في dining/beach/finance الثلاثة.
+  - **تايم شير**: إدارة وحدات فعلية (CRUD)، قائمة انتظار حقيقية، تذكيرات
+    واتساب (صيانة مستحقة/انتهاء عقد)، نسبة إشغال في اللوحة، بوابة صاحب
+    عقد ذاتية كاملة (OTP، تحميل PDF العقد)، تنبيهات واتساب في الاتجاهين
+    لطلبات الزيارة وتذاكر الدعم (مكانتش موجودة خالص)، زرار توليد مستحقات
+    صيانة يدوي. **باج أمني حقيقي اتصلح قبل النشر مباشرة**: إنتاج فحص fail
+    -closed جديد لـ`TIMESHARE_PORTAL_TOKEN_SECRET`/`SURVEY_TOKEN_SECRET`
+    (بديل مفتاح فاضي/افتراضي كان ممكن يسمح بتزوير توكن بوابة عميل تايم
+    شير بمعرفة الكود العام على GitHub بس). `.env.prod` في هذا الإصدار
+    اتضاف له `TIMESHARE_PORTAL_TOKEN_SECRET` حقيقي (32+ حرف عشوائي) أول
+    مرة — مكانش موجود قبل كده، الميزة اتبنت بعد آخر نشر.
+  - **دايننج**: هوية ضيف + طلب ذاتي عابر للمنافذ + ملاحظات لكل صنف، منيو
+    ضيف بـ4 لغات (ar/en/ru/it)، idempotency لطلب الضيف + بث خريطة الطاولات
+    الحي، تسالي الكافيه.
+  - 4 migrations جديدة (`a7c3f0e9d5b2`، `f1e6c8b4a3d7`، `7e5e126360d5`،
+    `7b4d81dc08ee`) — Alembic head واحد `7b4d81dc08ee`، اتأكد `alembic
+    upgrade head` شغال نظيف على الإنتاج الحقيقي قبل الاستبدال.
 - `marketing_site` بُني ونُشر من `53bf7a3` — جولة مراجعة كاملة لباقي شاشات
   الموقع التسويقي (Rooms/Beach/Restaurant/Activities/Events/Packages/
   Products/FAQ/Home/Contact/Timeshare/booking modal) بعد إغلاق MKT-04،
@@ -407,6 +432,22 @@ SHA-256
   SHA-256
   `f2547e1b089c7e9706931536218be92868faf4622f0519e60c6870e364330f91`؛
   اجتازت `pg_restore --list` (تحقّق فعلي داخل حاوية الـDB نفسها).
+- أرشيف إصدار `821a718` (23 commit — راجع القسم 2 أعلاه للنطاق الكامل؛
+  `backend`/`celery_worker`/`celery_beat`/`el_kheima`/`marketing_site`
+  (سياق بدون تغيير مصدر) اتبنوا واتنشروا كلهم، 4 migrations):
+  `/var/backups/resort-os/source-releases/821a718.tar.gz`،
+  SHA-256
+  `542cdaa35f7dfb6ae1dd6da68c825d65954da2606a57783ff177c479f35a4411`.
+- صور ما قبل `821a718` (backend/celery_worker/celery_beat/el_kheima/
+  marketing_site/nginx، كانوا `5b02010`) محفوظة تحت
+  `resort-os-rollback/*:pre-821a718`، والـmanifest:
+  `/var/backups/resort-os/source-releases/821a718-rollback-images.txt`.
+- نسخة DB السابقة مباشرة لنشر `821a718`:
+  `/opt/resort-os-releases/5b02010/backups/resort_os_20260803_232155.dump`،
+  SHA-256
+  `e9eff9a27f3d81403de4f7589d385a4c5bdaebb141b19d297fe27e8852f1969b`؛
+  اجتازت `pg_restore --list` (1373 TOC entries، تحقّق فعلي داخل حاوية
+  الـDB نفسها).
 
 ## 9. الحالة المتبقية
 
