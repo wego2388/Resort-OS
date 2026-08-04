@@ -84,6 +84,8 @@ export interface POSCustomer {
   visits_count: number
   blacklisted: boolean
   blacklist_reason: string | null
+  group_name?: string | null
+  group_discount_percentage?: number | null
 }
 
 export interface OrderItemExtra {

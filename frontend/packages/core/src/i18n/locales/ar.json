@@ -4134,6 +4134,7 @@
         "change": "تغيير",
         "add": "إضافة عميل",
         "addHint": "بحث بالاسم أو الهاتف وتطبيق مجموعته تلقائيًا",
+        "groupDiscount": "خصم {pct}٪",
         "errors": {
           "load": "تعذّر تحميل العملاء — حاول مرة أخرى."
         }
@@ -4565,6 +4566,7 @@
       "nameEnglishRequired": "الاسم (إنجليزي) *",
       "nameArabic": "الاسم (عربي)",
       "segmentCol": "الفئة",
+      "searchCustomersPlaceholder": "ابحث بالاسم أو رقم الهاتف...",
       "discountGroup": "مجموعة الخصم",
       "visits": "الزيارات",
       "totalSpent": "إجمالي الإنفاق",

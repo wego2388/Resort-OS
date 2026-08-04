@@ -36,7 +36,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { formatMoney, name } = useStaffFormat()
+const { formatMoney, formatNumber, name } = useStaffFormat()
 const itemCount = computed(() => props.cart.reduce((sum, line) => sum + line.quantity, 0))
 const displayedTotal = computed(() => props.serverSummary?.total ?? props.itemSubtotal)
 const payPrimary = computed(() => props.orderType !== 'dine_in')
@@ -102,7 +102,12 @@ const cartGroups = computed(() => {
         <template v-if="customer">
           <div class="flex items-center justify-between gap-2">
             <div class="min-w-0">
-              <div class="text-xs text-primary-700 dark:text-primary-300">{{ t('backoffice.pos.customer.attached') }}</div>
+              <div class="flex items-center gap-1.5">
+                <span class="text-xs text-primary-700 dark:text-primary-300">{{ t('backoffice.pos.customer.attached') }}</span>
+                <AppBadge v-if="customer.group_discount_percentage" variant="success" size="sm">
+                  🏷️ {{ formatNumber(customer.group_discount_percentage) }}٪
+                </AppBadge>
+              </div>
               <div class="font-bold text-gray-900 dark:text-gray-100 truncate">{{ customer.full_name }}</div>
               <div v-if="customer.phone" class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ customer.phone }}</div>
             </div>

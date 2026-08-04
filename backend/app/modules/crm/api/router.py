@@ -93,8 +93,20 @@ def list_customers(
     _assert_crm_branch(db, user, branch_id, "عرض العملاء")
     items, total = crud.list_customers(db, branch_id, segment, search, blacklisted,
                                        skip=(page - 1) * size, limit=size)
-    return PaginatedResponse(total=total, page=page, size=size,
-                             items=[CustomerRead.model_validate(c) for c in items])
+    # تمكين الكاشير يشوف "العميل ده عنده خصم دائم X%" وقت الاختيار في POS،
+    # مش بعد ما يحسب الإجمالي بس (راجع services.get_customer_group_
+    # discount_percentage — مجموعة موقوفة = صفر خصم، فمفيش سبب نجيب غير
+    # المجموعات النشطة هنا أصلًا).
+    active_groups = {g.id: g for g in crud.list_customer_groups(db, branch_id, active_only=True)}
+    read_items = []
+    for c in items:
+        read = CustomerRead.model_validate(c)
+        group = active_groups.get(c.customer_group_id) if c.customer_group_id else None
+        if group:
+            read.group_name = group.name_ar or group.name
+            read.group_discount_percentage = group.discount_percentage
+        read_items.append(read)
+    return PaginatedResponse(total=total, page=page, size=size, items=read_items)
 
 
 @router.post("/crm/customers", response_model=CustomerRead,

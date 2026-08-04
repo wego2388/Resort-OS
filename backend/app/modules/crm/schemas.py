@@ -90,6 +90,12 @@ class CustomerRead(BaseModel):
     blacklist_reason: Optional[str]
     created_at:      datetime
     updated_at:      datetime
+    # يتملّى بس من GET /crm/customers (list_customers في الراوتر) — مش
+    # موجود على Customer نفسها (لازم join مع مجموعته)، وصفر لو مجموعته
+    # موقوفة (نفس منطق services.get_customer_group_discount_percentage
+    # بالظبط، عشان الكاشير يشوف بالظبط نفس النسبة اللي هتتطبق فعليًا).
+    group_name: Optional[str] = None
+    group_discount_percentage: Optional[Decimal] = None
 
 
 class BlacklistRequest(BaseModel):

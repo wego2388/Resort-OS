@@ -254,6 +254,59 @@ class TestAssignCustomerGroup:
         assert resp.status_code == 400
 
 
+class TestListCustomersGroupDiscountEnrichment:
+    """2026-08-04: GET /crm/customers (اللي شاشة اختيار العميل في POS
+    بتناديها) كانت بترجّع customer_group_id (رقم خام بس) من غير الاسم
+    أو النسبة — يعني الكاشير مالوش أي طريقة يشوف "العميل ده عنده خصم
+    دائم" وقت الاختيار، الخصم كان بيظهر في الإجمالي بس في الآخر."""
+
+    def test_customer_with_active_group_shows_name_and_percentage(
+        self, client: TestClient, db, waiter_headers, manager_headers, super_admin_headers,
+    ):
+        branch = make_branch_committed(db)
+        customer = create_customer(client, branch.id, waiter_headers)
+        group = create_customer_group(
+            client, branch.id, super_admin_headers_for_branch(db, branch),
+            name="VIP", name_ar="ضيوف مميزون", discount_percentage="15",
+        )
+        client.patch(
+            f"/api/v1/crm/customers/{customer['id']}/group",
+            json={"customer_group_id": group["id"]}, headers=manager_headers,
+        )
+
+        resp = client.get("/api/v1/crm/customers", params={"branch_id": branch.id}, headers=waiter_headers)
+        assert resp.status_code == 200, resp.text
+        row = next(c for c in resp.json()["items"] if c["id"] == customer["id"])
+        assert row["group_name"] == "ضيوف مميزون"
+        assert float(row["group_discount_percentage"]) == 15.0
+
+    def test_customer_with_inactive_group_shows_no_discount(
+        self, client: TestClient, db, waiter_headers, manager_headers, super_admin_headers,
+    ):
+        branch = make_branch_committed(db)
+        customer = create_customer(client, branch.id, waiter_headers)
+        admin_headers = super_admin_headers_for_branch(db, branch)
+        group = create_customer_group(client, branch.id, admin_headers, discount_percentage="20")
+        client.patch(
+            f"/api/v1/crm/customers/{customer['id']}/group",
+            json={"customer_group_id": group["id"]}, headers=manager_headers,
+        )
+        client.patch(f"/api/v1/crm/customer-groups/{group['id']}", json={"is_active": False}, headers=admin_headers)
+
+        resp = client.get("/api/v1/crm/customers", params={"branch_id": branch.id}, headers=waiter_headers)
+        row = next(c for c in resp.json()["items"] if c["id"] == customer["id"])
+        assert row["group_discount_percentage"] is None
+        assert row["group_name"] is None
+
+    def test_customer_without_group_shows_no_discount(self, client: TestClient, db, waiter_headers):
+        branch = make_branch_committed(db)
+        customer = create_customer(client, branch.id, waiter_headers)
+
+        resp = client.get("/api/v1/crm/customers", params={"branch_id": branch.id}, headers=waiter_headers)
+        row = next(c for c in resp.json()["items"] if c["id"] == customer["id"])
+        assert row["group_discount_percentage"] is None
+
+
 class TestInteractionsEndpoints:
     def test_log_and_list_interactions(self, client: TestClient, db, waiter_headers):
         branch = make_branch_committed(db)

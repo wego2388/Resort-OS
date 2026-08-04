@@ -107,8 +107,13 @@ function choose(customer: POSCustomer) {
             <AppBadge v-if="customer.blacklisted" variant="danger">{{ t('backoffice.pos.customer.blacklisted') }}</AppBadge>
             <AppBadge v-else-if="customer.segment === 'vip'" variant="warning">VIP</AppBadge>
           </div>
-          <div class="text-xs text-gray-400 mt-2">
-            {{ t('backoffice.pos.customer.visits', { count: formatNumber(customer.visits_count) }) }}
+          <div class="flex items-center gap-2 mt-2">
+            <span class="text-xs text-gray-400">
+              {{ t('backoffice.pos.customer.visits', { count: formatNumber(customer.visits_count) }) }}
+            </span>
+            <AppBadge v-if="customer.group_discount_percentage" variant="success">
+              🏷️ {{ t('backoffice.pos.customer.groupDiscount', { pct: formatNumber(customer.group_discount_percentage) }) }}
+            </AppBadge>
           </div>
           <div v-if="customer.blacklisted && customer.blacklist_reason" class="text-xs text-danger mt-1">
             {{ customer.blacklist_reason }}

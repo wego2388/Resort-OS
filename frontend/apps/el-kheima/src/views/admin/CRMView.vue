@@ -5,7 +5,7 @@ import { api, parseApiTimestamp, useAuthStore, ENDPOINTS } from '@resort-os/core
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 
 type ApiErr = { response?: { data?: { detail?: string; message?: string }; status?: number } }
-import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
+import { AppCard, AppBadge, AppButton, AppModal, AppSpinner, EmptyState, SearchInput, useToast } from '@resort-os/ui'
 
 const { t } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatDateTime: fmtDateTimeFn } = useStaffFormat()
@@ -60,6 +60,8 @@ interface GuestProfile {
 const leads = ref<Lead[]>([])
 const leadSources = ref<LeadSource[]>([])
 const customers = ref<Customer[]>([])
+const customersTotal = ref(0)
+const customerSearch = ref('')
 const opportunities = ref<Opportunity[]>([])
 const opportunitiesTotal = ref(0)
 const activities = ref<Activity[]>([])
@@ -245,8 +247,18 @@ async function loadLeads() {
 async function loadCustomers() {
   loading.value = true
   try {
-    const res = await api.get('/api/v1/crm/customers', { params: { branch_id: branchId.value } })
-    customers.value = res.data.customers ?? res.data.items ?? res.data
+    // 2026-08-04: كانت بتجيب أول 20 عميل بس بدون بحث ولا pagination —
+    // أي فرع عنده أكتر من 20 عميل، أي عميل بعد كده مستحيل توصله من
+    // الشاشة دي خالص (بما فيه تعيين مجموعة خصم له). باقي التابات في
+    // نفس الملف (opportunities/activities/campaigns) أصلًا بتبعت
+    // size:100 — التابين الوحيدين اللي كانوا ناقصينها هما ده والـleads
+    // (لكن leads مالهاش pagination في الباك إند أصلًا، مفيش حاجة تتصلح
+    // هناك).
+    const res = await api.get('/api/v1/crm/customers', {
+      params: { branch_id: branchId.value, search: customerSearch.value.trim() || undefined, page: 1, size: 100 },
+    })
+    customers.value = res.data.items ?? []
+    customersTotal.value = res.data.total ?? customers.value.length
     if (authStore.roleLevel >= 60) await loadGroups()
   } catch { toast.error(t('backoffice.crm.msg.loadCustomersError')) }
   finally { loading.value = false }
@@ -876,6 +888,13 @@ onMounted(loadLeads)
 
     <!-- Customers -->
     <div v-if="tab === 'customers'">
+      <SearchInput
+        v-model="customerSearch"
+        :placeholder="t('backoffice.crm.searchCustomersPlaceholder')"
+        :debounce-ms="300"
+        class="mb-3"
+        @search="loadCustomers"
+      />
       <AppCard v-if="showCustomerForm" class="mb-4">
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <input v-model="customerForm.full_name" type="text" :placeholder="t('backoffice.crm.fullNameRequired')"
@@ -947,6 +966,12 @@ onMounted(loadLeads)
           </tbody>
         </table>
       </AppCard>
+      <p
+        v-if="customersTotal > customers.length"
+        class="mt-2 px-4 py-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg"
+      >
+        ⚠️ {{ t('common.showingOf', { shown: customers.length, total: customersTotal }) }} — {{ t('common.useSearchToFilter') }}
+      </p>
     </div>
 
     <!-- Opportunities -->

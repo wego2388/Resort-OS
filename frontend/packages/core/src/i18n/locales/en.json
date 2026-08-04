@@ -4134,6 +4134,7 @@
         "change": "Change",
         "add": "Add customer",
         "addHint": "Search by name or phone; standing group rules apply automatically",
+        "groupDiscount": "{pct}% off",
         "errors": {
           "load": "Could not load customers — try again."
         }
@@ -4565,6 +4566,7 @@
       "nameEnglishRequired": "Name (English) *",
       "nameArabic": "Name (Arabic)",
       "segmentCol": "Segment",
+      "searchCustomersPlaceholder": "Search by name or phone...",
       "discountGroup": "Discount group",
       "visits": "Visits",
       "totalSpent": "Total spent",
