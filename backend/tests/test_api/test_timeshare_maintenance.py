@@ -7,7 +7,7 @@ TimeshareContract.maintenance_fee/maintenance_increase الخاملَين + اس
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import pytest
@@ -58,7 +58,10 @@ def make_contract_with_maintenance(db, branch, maintenance_fee=Decimal("2000"), 
         total_value=Decimal("120000"),
         down_payment=Decimal("20000"),
         installments=12, installment_period=1,
-        first_installment_date=date(2026, 8, 1),
+        # لازم يفضل في المستقبل دايمًا (مش تاريخ ثابت) — وإلا القسط الأول
+        # نفسه بيبقى متأخر بمرور الوقت ويكسر عزل سيناريوهات "الصيانة بس
+        # متأخرة" في TestFreezeUnfreezeInteraction (اتكشف 2026-08-04).
+        first_installment_date=date.today() + timedelta(days=180),
         partner_share_pct=Decimal("0"),
         start_date=start_date or date(2026, 1, 1),
         contract_date=contract_date,
