@@ -1,16 +1,10 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-05 — CI-01+TEST-ENV-01+DOC-SYNC-01: الفرع التشغيلي
-بقى عليه GitHub Actions حقيقي شغال (كان مقصور على `main` بس، وآخر 7
-تشغيلات على `main` كانت حمراء) — راجع §7.1. قبلها REL-07 (2026-08-04):
-إصلاح جذري لفواتير/إيصالات PDF العربية (خط عربي + لوجو + تصميم)، مدونة
-حقيقية بمحتوى كامل (كانت فاضية)، إصلاح شامل لأخطاء console على الموقع
-التسويقي (نداءات API ميتة، باج انتقال صفحات، زر طلب وهمي) — بتفويض
-مباشر من Mohamed
+**آخر تحقق:** 2026-08-05 — POS-03b: دعم الدفع بعملات متعددة للشاطئ (كاش دولار/يورو) + الفكة دايمًا بالجنيه
+— commit `f68b232` على الفرع التشغيلي. قبلها POS-03 (e2c31af) للمطعم/الكافيه.
+راجع §7.1 وأدناه.
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
-**قائد التنفيذ والمراجع النهائي:** Codex (هذه الدفعة نُفذت ونُشرت مباشرة
-بتفويض صريح من Mohamed خارج دورة مراجعة Codex المعتادة — "انت القائد
-للنهاية... اعمل ما يلزم")
+**قائد التنفيذ والمراجع النهائي:** Codex
 
 هذا الملف يسجل الحقائق الحالية فقط. التاريخ السابق محفوظ في
 `docs/archive/2026-07-execution/`.
@@ -20,15 +14,56 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release | `5df8191` |
+| Resort OS source release (منشور) | `5df8191` |
+| آخر commit على الفرع | `f68b232` — POS-03b beach multi-currency (غير منشور على VPS بعد، جاهز للنشر) |
 | Marketing source release | `79130a6` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
-| remote | فرع العمل يحتوي `5df8191` (8 commit جديد فوق `821a718`، مدفوعة بالكامل) |
+| remote | فرع العمل يحتوي `e2c31af` (9 commit فوق `821a718`، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
 | active Resort release | `/opt/resort-os-releases/5df8191` |
 | Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/5df8191` |
 | active Marketing release | `/opt/elkheima-marketing-releases/79130a6` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/79130a6` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
+| Alembic head | `52f4544e50d2` (POS-03: fx_rate على payments — صالح للمطعم والشاطئ، بدون migration إضافية) |
+
+## POS-03b — دعم الدفع بعملات متعددة للشاطئ (commit `f68b232`، 2026-08-05)
+
+قرار Mohamed: الشاطئ يدعم نفس الميزة + الفكة دايمًا بالجنيه.
+**غير منشور على VPS بعد — جاهز للنشر مع POS-03 (المطعم) في دفعة واحدة.**
+
+**ما اتعمل:**
+- `BeachSellRequest` يقبل `payment_currency`/`payment_fx_rate` اختياري مع validator (لو currency≠EGP بدون fx_rate → 422)
+- `_sell_ticket_no_commit`: يحفظ currency/fx_rate كـ transient attrs على tx
+- `_record_shift_payment`: يمرّر currency/fx_rate لـ `create_direct_payment` — Payment.amount دايمًا EGP-equivalent
+- الفكة دايمًا بالجنيه (قرار Mohamed 2026-08-05) — الشاشة تعرض "الفكة = X جنيه"
+- `BeachPOSView.vue`: أزرار اختيار عملة (EGP/USD/EUR)، عرض المطلوب بالأجنبية، حقل استلام، الفكة بالجنيه، `fetchFxRates` عند mount
+- ترجمات ar/en: 7 مفاتيح `beachPos` جديدة
+- 5 تستات جديدة (beach) + 3 schema validation: 2292 passed، صفر failure
+- type-check نظيف، build نظيف، agent-check passed، Alembic single head (بدون migration إضافية)
+
+**Gate (POS-03 + POS-03b مع بعض):** 2292 pytest passed، 95 frontend، type-check نظيف، build نظيف.
+
+## POS-03 — دعم الدفع بعملات متعددة للمطعم/الكافيه (commit `e2c31af`، 2026-08-05)
+
+بطلب صريح من Mohamed (بريف `docs/agent-workflow/POS-03_MULTI_CURRENCY_CASHIER_PLAN_AR.md`)
+— **غير منشور على VPS بعد، ينتظر قرار Go من Mohamed بعد مراجعة §3.3**.
+
+**ما اتعمل:**
+- `Payment.fx_rate` عمود جديد (migration `52f4544e50d2`) — سعر الصرف وقت الدفع
+- `create_direct_payment` بيقبل `currency`/`fx_rate` — دفعة كاش بعملة أجنبية تُسجَّل بالمعادل EGP في `amount` والعملة الأصلية في `currency`/`fx_rate`
+- `OrderStatusUpdate`/`SplitBillPayment` بيقبلوا `payment_currency`/`payment_fx_rate` (اختياري — لا يكسر أي بيع EGP حالي)
+- `build_shift_end_report`: `ForeignCurrencySummary` بيضيف `expected_amount`/`variance` لكل عملة أجنبية — الكاشير يشوف "معدود 70 USD — متوقع 70 USD — فرق 0" بدل رقم جنيه واحد مبلوع
+- `POSPaymentModal.vue`: اختيار عملة (EGP/USD/EUR)، عرض المطلوب بالعملة الأجنبية، حقل الاستلام، الفكة، سعر الصرف الحالي مباشر
+- `FinanceView.vue`: tab جديد "أسعار الصرف" — المدير يضيف ويشوف الأسعار من الواجهة (بديل Postman)
+- 10 تستات جديدة (`test_pos03_multi_currency.py`) — كلها أخضر
+
+**ما ينتظر قرار Mohamed (§3.3 في البريف):**
+- الشاطئ محتاج نفس الميزة ولا المطعم/الكافيه بس الأول؟
+- الباقي (فكة) بيترجع جنيه دايمًا ولا بنفس العملة؟
+- شاشة أسعار الصرف يدوية كافية ولا ربط تلقائي بمصدر خارجي؟
+- العملات المدعومة USD/EUR بس ولا نضيف غيرهم؟
+
+**Gate**: 2284 pytest passed، 95 frontend، type-check نظيف، build نظيف، migration تطبّق على prod بـ `alembic upgrade head`
 
 أرشيف Resort OS:
 `/var/backups/resort-os/source-releases/5df8191.tar.gz`،
