@@ -286,8 +286,19 @@ def _sell_ticket_no_commit(
         "client_local_id": data.local_id,
     })
 
+    # POS-03: نحفظ currency/fx_rate كـ transient attributes على الـ tx عشان
+    # _record_shift_payment تقدر تقرأهم. BeachTransaction مالوش عمودين دول
+    # (وده متعمّد — المبلغ المالي المسجّل دايمًا EGP-equivalent في total_amount).
+    # الأداة دي (setattr على instance بعد الإنشاء) آمنة في SQLAlchemy طالما
+    # الـ attribute مش عمود مُعرَّف في الـ mapper — بيتكون instance attribute
+    # عادي، مش بيتحفظ في الداتابيز.
+    if hasattr(data, "payment_currency") and data.payment_currency:
+        object.__setattr__(tx, "_payment_currency", data.payment_currency)
+    if hasattr(data, "payment_fx_rate") and data.payment_fx_rate:
+        object.__setattr__(tx, "_payment_fx_rate", data.payment_fx_rate)
+
     # قيد الإيراد يترحّل فورًا في الحالتين — بس لحساب مختلف حسب طريقة الدفع:
-    # كاش فوري → Dr Cash؛ محمّل على غرفة → Dr ذمم الفوليو (والكاش الحقيقي
+    # كاش فوري → Dr Cash؛ محمّل على غرمة → Dr ذمم الفوليو (والكاش الحقيقي
     # بيتسجّل لاحقًا وقت تسوية الفوليو، راجع finance.services.add_payment).
     #
     # ⚠️ باج حقيقي كان هنا (اتصلح 2026-07-07، فجوة معمارية موثّقة في
@@ -360,10 +371,19 @@ def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
     Payment حقيقي (folio_id=None) هنا — نفس نمط finance.services.add_payment
     بالظبط، بس بدون فوليو. الشاطئ مالوش تمييز كاش/كارت حقيقي في البيانات
     (نفس القيد المحاسبي فوق بيعامل كل بيع مباشر كـ"كاش" دايمًا)، فـ method
-    ثابتة "cash" هنا — نفس الافتراض المحاسبي الموجود بالفعل، مش افتراض جديد."""
+    ثابتة "cash" هنا — نفس الافتراض المحاسبي الموجود بالفعل، مش افتراض جديد.
+
+    POS-03: currency/fx_rate — لو الكاشير استلم كاش بعملة أجنبية، نمرّرهم
+    لـ create_direct_payment عشان يظهروا في تقرير نهاية الوردية مع variance
+    لكل عملة على حدة (راجع build_shift_end_report). amount دايمًا EGP-equivalent.
+    الفكة دايمًا بالجنيه (قرار Mohamed 2026-08-05)."""
     if not tx.shift_id and not tx.cashier_id:
         return  # مفيش وردية ولا كاشير مرتبط — مفيش حاجة تتسجّل (تسجيل يدوي/API مباشر)
     from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+
+    # POS-03: استخرج currency/fx_rate لو اتبعتوا في طلب البيع
+    currency = getattr(tx, "_payment_currency", None) or "EGP"
+    fx_rate  = getattr(tx, "_payment_fx_rate", None)
 
     finance_crud.create_direct_payment(
         db, branch_id=tx.branch_id,
@@ -372,6 +392,9 @@ def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
         posted_at=datetime.combine(tx.tx_date, datetime.min.time()),
         shift_id=tx.shift_id, cashier_id=tx.cashier_id,
         reference=f"BCH-{tx.id:06d}" if tx.id else None,
+        currency=currency,
+        fx_rate=fx_rate,
+        source="beach",
     )
 
 

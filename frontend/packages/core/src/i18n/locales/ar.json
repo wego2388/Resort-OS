@@ -5433,7 +5433,14 @@
       "payWallet": "محفظة",
       "clearOrder": "مسح الطلب",
       "processing": "جاري...",
-      "completeSale": "إتمام البيع"
+      "completeSale": "إتمام البيع",
+      "cashCurrency": "عملة الكاش",
+      "foreignCashHint": "المبلغ المطلوب بالعملة الأجنبية (الفكة دايمًا بالجنيه):",
+      "requiredInForeign": "{amount} {currency} مطلوب (سعر الصرف: {rate} ج)",
+      "foreignReceivedLabel": "المستلم فعليًا ({currency})",
+      "changeInEGP": "الفكة (جنيه)",
+      "noFxRate": "سعر صرف {currency} غير متوفر — اتواصل مع المدير",
+      "foreignInsufficient": "المبلغ المستلم أقل من المطلوب"
     },
     "finance": {
       "title": "المالية",

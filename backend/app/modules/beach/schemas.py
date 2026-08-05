@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BeachInventoryRead(BaseModel):
@@ -67,6 +67,23 @@ class BeachSellRequest(BaseModel):
     # راجع BeachTransaction.client_local_id. اختياري: بيع مباشر أونلاين
     # عادي (POS متصل) مش محتاجه، زي نفس نمط restaurant/cafe بالظبط.
     local_id:        Optional[str] = Field(None, max_length=60)
+    # POS-03: عملة الكاش المستلمة فعليًا — اختياري، افتراضي EGP (بدون breaking change).
+    # total_amount في BeachTransaction دايمًا EGP-equivalent؛ currency/fx_rate
+    # للتسجيل المحاسبي والتدقيق في تقرير نهاية الوردية.
+    # لو currency ≠ EGP وmethod="cash"، fx_rate إجباري (validator تحت).
+    # ملحوظة: الفكة دايمًا بالجنيه (قرار Mohamed 2026-08-05).
+    payment_currency: Optional[str]    = Field(None, pattern=r"^[A-Z]{3}$")
+    payment_fx_rate:  Optional[Decimal] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_fx(self) -> "BeachSellRequest":
+        cur = (self.payment_currency or "EGP").upper()
+        if cur != "EGP" and not self.payment_fx_rate:
+            raise ValueError(
+                "payment_fx_rate مطلوب لو payment_currency ≠ EGP — "
+                "مرّر سعر الصرف الحالي عبر GET /finance/exchange-rates"
+            )
+        return self
 
 
 class BeachTransactionRead(BaseModel):

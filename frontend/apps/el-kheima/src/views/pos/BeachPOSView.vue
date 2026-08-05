@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, ENDPOINTS , useAuthStore } from '@resort-os/core'
+import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { usePrintDocument, useOfflineQueue } from '@resort-os/core/composables'
 import { useToast } from '@resort-os/ui'
 
@@ -19,11 +19,7 @@ const { printBlob } = usePrintDocument()
 // بقى يتجاهل أي retry بنفس الـ local_id ويرجّع نفس المعاملة القديمة.
 const { isOnline, pendingCount, submitOrder: submitBeachSale } = useOfflineQueue('beach')
 
-// مطابق فعليًا لـ app/modules/beach/schemas.py::BeachInventoryRead — الشاطئ
-// عنده مجمّع سعة واحد (capacity_max/capacity_used) مش حصة منفصلة للبالغين
-// والأطفال؛ الأسعار (adult_price/...) وsurge_multiplier محسوبة سيرفر-سايد
-// ومُدمجة في نفس الرد (باج حقيقي كان هنا: الحقول دي كانت مش موجودة خالص في
-// الرد الحقيقي قبل كده، فكل سعر كان بيظهر "NaN" في الشاشة).
+// مطابق فعليًا لـ app/modules/beach/schemas.py::BeachInventoryRead
 interface BeachInventory {
   capacity_max: number
   capacity_used: number
@@ -40,6 +36,11 @@ interface BeachInventory {
   surge_multiplier: number
 }
 
+// ── POS-03: العملات المدعومة للكاش الأجنبي (نفس نمط POSPaymentModal) ──────────
+const FOREIGN_CURRENCIES = ['USD', 'EUR'] as const
+type CashCurrency = 'EGP' | typeof FOREIGN_CURRENCIES[number]
+interface FxRate { from_currency: string; to_currency: string; rate: string }
+
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
 const inventory = ref<BeachInventory | null>(null)
@@ -49,23 +50,66 @@ const successMsg = ref('')
 const errorMsg = ref('')
 
 // بعد أي تزامن ناجح (كامل أو جزئي)، سعة/إشغال الشاطئ المعروضة لازم تتحدّث
-// فورًا (مش تستنى الـ poll الدوري كل 30 ثانية). useOfflineQueue نفسه عام
-// ومالوش فكرة عن "inventory"، وبيعمل sync تلقائي لوحده (وقت reconnect + safety
-// poll داخلي) — فبنراقب pendingCount تفاعليًا (بغض النظر مين استدعى الـ sync)
-// بدل ما نلف حول syncPendingOrders بنفسنا ونفوّت مسارات الـ sync التلقائية.
+// فورًا (مش تستنى الـ poll الدوري كل 30 ثانية).
 watch(pendingCount, (curr, prev) => {
   if (curr < prev) fetchInventory()
 })
 
 // Cart state
-const adultQty = ref(0)
-const childQty = ref(0)
+const adultQty    = ref(0)
+const childQty    = ref(0)
 const residentQty = ref(0)
-const towelQty = ref(0)
-// UI-only for now — BeachSellRequest (backend) has no payment_method field,
-// beach cash reconciliation happens at cashier-shift level (see finance
-// module's shift close + cash count), not per-transaction. Kept as a visual
-// cue for the cashier, not sent to the server.
+const towelQty    = ref(0)
+
+// ── POS-03: حالة العملة ────────────────────────────────────────────────────────
+const cashCurrency   = ref<CashCurrency>('EGP')
+const fxRates        = ref<Record<string, number>>({})
+const fxLoading      = ref(false)
+// المبلغ الذي استلمه الكاشير فعليًا بالعملة الأجنبية (حقل الإدخال)
+const foreignReceived = ref('')
+
+const currentFxRate = computed(() =>
+  cashCurrency.value === 'EGP' ? 1 : (fxRates.value[cashCurrency.value] ?? 0),
+)
+
+/** المبلغ المطلوب بالعملة الأجنبية = total_EGP / fx_rate */
+const totalInForeign = computed(() => {
+  if (cashCurrency.value === 'EGP' || currentFxRate.value <= 0) return null
+  return +(total.value / currentFxRate.value).toFixed(2)
+})
+
+/** الفكة دايمًا بالجنيه (قرار Mohamed 2026-08-05):
+ *  لو الكاشير استلم USD/EUR، الفكة = (received × fx_rate − total) جنيه */
+const changeInEGP = computed(() => {
+  if (cashCurrency.value === 'EGP') return null   // مش مستخدم في EGP mode
+  if (currentFxRate.value <= 0) return null
+  const received = parseFloat(foreignReceived.value)
+  if (isNaN(received) || totalInForeign.value === null) return null
+  return +((received - totalInForeign.value) * currentFxRate.value).toFixed(2)
+})
+
+async function fetchFxRates() {
+  if (fxLoading.value) return
+  fxLoading.value = true
+  try {
+    const { data } = await api.get(
+      ENDPOINTS.finance?.exchangeRates ?? '/finance/exchange-rates',
+      { params: { to_currency: 'EGP' } },
+    )
+    const rates: Record<string, number> = {}
+    const items: FxRate[] = data?.items ?? data ?? []
+    for (const r of items) {
+      if (r.to_currency === 'EGP') rates[r.from_currency] = parseFloat(r.rate)
+    }
+    fxRates.value = rates
+  } catch {
+    // لو فشل نفضل EGP فقط بدون إظهار خطأ
+  } finally {
+    fxLoading.value = false
+  }
+}
+
+// UI-only — payment_method مش بيتبعت للسيرفر في عملية البيع العادية
 const paymentMethod = ref<'cash' | 'card' | 'wallet'>('cash')
 
 // Ref for auto-focus after sale
@@ -86,15 +130,13 @@ const total = computed(() =>
   adultQty.value * prices.value.adult +
   childQty.value * prices.value.child +
   residentQty.value * prices.value.resident +
-  towelQty.value * prices.value.towel
+  towelQty.value * prices.value.towel,
 )
 
 const hasItems = computed(() => total.value > 0)
 
-// الشاطئ عنده مجمّع سعة واحد بس (مفيش حصة منفصلة بالغ/طفل في الباك إند) —
-// available_slots/capacity_pct جايين جاهزين من السيرفر.
 const availableSlots = computed(() => inventory.value?.available_slots ?? 0)
-const occupancyPct = computed(() => inventory.value?.capacity_pct ?? 0)
+const occupancyPct   = computed(() => inventory.value?.capacity_pct ?? 0)
 
 function adjust(type: 'adult' | 'child' | 'resident' | 'towel', delta: number) {
   if (type === 'adult')    adultQty.value    = Math.max(0, adultQty.value + delta)
@@ -104,10 +146,11 @@ function adjust(type: 'adult' | 'child' | 'resident' | 'towel', delta: number) {
 }
 
 function clearCart() {
-  adultQty.value = 0
-  childQty.value = 0
+  adultQty.value    = 0
+  childQty.value    = 0
   residentQty.value = 0
-  towelQty.value = 0
+  towelQty.value    = 0
+  foreignReceived.value = ''
 }
 
 async function fetchInventory() {
@@ -159,18 +202,43 @@ async function printTicket(txId: number) {
 
 async function completeSale() {
   if (!hasItems.value || submitting.value) return
+
+  // POS-03: تحقق من سعر الصرف قبل الإرسال لو الكاشير اختار عملة أجنبية
+  if (cashCurrency.value !== 'EGP') {
+    if (currentFxRate.value <= 0) {
+      errorMsg.value = t('backoffice.beachPos.noFxRate', { currency: cashCurrency.value })
+      setTimeout(() => { errorMsg.value = '' }, 4000)
+      return
+    }
+    const received = parseFloat(foreignReceived.value)
+    if (totalInForeign.value !== null && (isNaN(received) || received < totalInForeign.value)) {
+      errorMsg.value = t('backoffice.beachPos.foreignInsufficient')
+      setTimeout(() => { errorMsg.value = '' }, 4000)
+      return
+    }
+  }
+
   submitting.value = true
   try {
     const lineItems = buildCartLineItems()
     const soldTxIds: number[] = []
     let anyQueued = false
 
+    // POS-03: payload إضافي للعملة — يُضاف لكل صنف في السلة
+    const fxPayload = cashCurrency.value !== 'EGP' && currentFxRate.value > 0
+      ? { payment_currency: cashCurrency.value, payment_fx_rate: currentFxRate.value }
+      : {}
+
     for (const item of lineItems) {
       // submitOrder بيرجّع null لو اتقفل في الطابور (offline أو انقطاع نت
       // لحظي)، ويرمي الخطأ نفسه لو السيرفر رفضه صراحة (زي تجاوز السعة) —
       // نوقف هنا في الحالة دي، الأصناف اللي اتباعت قبل كده فعلاً اتسجّلت
       // (مش rollback جماعي، كل عملية مستقلة).
-      const data = await submitBeachSale(branchId.value ?? 0, { tx_type: item.tx_type, quantity: item.quantity })
+      const data = await submitBeachSale(branchId.value ?? 0, {
+        tx_type: item.tx_type,
+        quantity: item.quantity,
+        ...fxPayload,
+      })
       if (data === null) { anyQueued = true; continue }
       soldTxIds.push(data.id)
     }
@@ -204,6 +272,7 @@ let refreshInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   fetchInventory()
+  fetchFxRates()  // POS-03: جلب أسعار الصرف عند فتح الشاشة
   refreshInterval = setInterval(fetchInventory, 30_000)
 })
 
@@ -471,7 +540,7 @@ onUnmounted(() => {
                 { val: 'wallet', label: t('backoffice.beachPos.payWallet'), icon: '📱' },
               ]"
               :key="m.val"
-              @click="paymentMethod = (m.val as 'cash' | 'card' | 'wallet')"
+              @click="paymentMethod = (m.val as 'cash' | 'card' | 'wallet'); cashCurrency = 'EGP'; foreignReceived = ''"
               :class="[
                 'py-2 rounded-lg text-sm font-medium transition-all border-2',
                 paymentMethod === m.val
@@ -479,6 +548,75 @@ onUnmounted(() => {
                   : 'border-stone-200 text-gray-600 hover:border-blue-300 hover:bg-gray-50 dark:border-border dark:text-gray-400 dark:hover:bg-gray-800',
               ]"
             >{{ m.icon }} {{ m.label }}</button>
+          </div>
+
+          <!-- POS-03: اختيار عملة الكاش (يظهر بس لو طريقة الدفع كاش) ──────── -->
+          <div v-if="paymentMethod === 'cash'" class="rounded-xl border border-stone-200 dark:border-border p-3 space-y-3">
+            <!-- أزرار اختيار العملة -->
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.beachPos.cashCurrency') }}:</span>
+              <button
+                v-for="cur in (['EGP', ...FOREIGN_CURRENCIES] as CashCurrency[])"
+                :key="cur"
+                type="button"
+                :aria-pressed="cashCurrency === cur"
+                :class="[
+                  'px-3 py-1 rounded-lg border-2 text-xs font-bold transition-colors',
+                  cashCurrency === cur
+                    ? 'border-blue-600 bg-blue-50 text-blue-700 dark:border-blue-500 dark:bg-blue-950/40 dark:text-blue-300'
+                    : 'border-stone-200 text-gray-600 hover:border-blue-300 dark:border-border dark:text-gray-400',
+                ]"
+                @click="cashCurrency = cur; foreignReceived = ''"
+              >
+                {{ cur === 'EGP' ? '🇪🇬 EGP' : cur === 'USD' ? '🇺🇸 USD' : '🇪🇺 EUR' }}
+              </button>
+              <span v-if="fxLoading" class="text-xs text-gray-400">...</span>
+              <span v-else-if="cashCurrency !== 'EGP' && currentFxRate > 0" class="text-xs text-gray-500 dark:text-gray-400">
+                1 {{ cashCurrency }} = {{ currentFxRate }} ج
+              </span>
+              <span v-else-if="cashCurrency !== 'EGP'" class="text-xs text-red-500">
+                {{ t('backoffice.beachPos.noFxRate', { currency: cashCurrency }) }}
+              </span>
+            </div>
+
+            <!-- حقل الاستلام بالعملة الأجنبية (يظهر بس لو مش EGP) -->
+            <template v-if="cashCurrency !== 'EGP' && currentFxRate > 0">
+              <div class="rounded-lg bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 px-3 py-2 text-xs space-y-0.5">
+                <div class="font-bold">{{ t('backoffice.beachPos.foreignCashHint') }}</div>
+                <div class="tabular-nums">
+                  {{ t('backoffice.beachPos.requiredInForeign', {
+                    amount: totalInForeign?.toFixed(2) ?? '—',
+                    currency: cashCurrency,
+                    rate: currentFxRate,
+                  }) }}
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-gray-600 dark:text-gray-300 mb-1">
+                  {{ t('backoffice.beachPos.foreignReceivedLabel', { currency: cashCurrency }) }}
+                </label>
+                <input
+                  v-model="foreignReceived"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputmode="decimal"
+                  class="w-full rounded-lg border-2 border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-base font-bold tabular-nums focus:outline-none focus:border-blue-500"
+                  :placeholder="totalInForeign?.toFixed(2) ?? '0.00'"
+                />
+              </div>
+              <!-- الفكة بالجنيه دايمًا (قرار Mohamed 2026-08-05) -->
+              <div
+                v-if="changeInEGP !== null"
+                :class="[
+                  'rounded-lg px-3 py-2 flex items-center justify-between text-sm font-bold',
+                  changeInEGP >= 0 ? 'bg-green-50 text-green-700 dark:bg-green-950/30 dark:text-green-300' : 'bg-red-50 text-red-700 dark:bg-red-950/30 dark:text-red-300',
+                ]"
+              >
+                <span>{{ t('backoffice.beachPos.changeInEGP') }}</span>
+                <span class="tabular-nums">{{ changeInEGP >= 0 ? `${changeInEGP.toFixed(2)} ج` : '—' }}</span>
+              </div>
+            </template>
           </div>
 
           <!-- Feedback messages -->

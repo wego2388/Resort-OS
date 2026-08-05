@@ -5433,7 +5433,14 @@
       "payWallet": "Wallet",
       "clearOrder": "Clear order",
       "processing": "Processing...",
-      "completeSale": "Complete sale"
+      "completeSale": "Complete sale",
+      "cashCurrency": "Cash currency",
+      "foreignCashHint": "Amount required in foreign currency (change always in EGP):",
+      "requiredInForeign": "{amount} {currency} required (rate: {rate} EGP)",
+      "foreignReceivedLabel": "Amount received ({currency})",
+      "changeInEGP": "Change (EGP)",
+      "noFxRate": "{currency} exchange rate not available — contact manager",
+      "foreignInsufficient": "Amount received is less than required"
     },
     "finance": {
       "title": "Finance",
