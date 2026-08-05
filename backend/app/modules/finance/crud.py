@@ -278,7 +278,10 @@ def list_direct_payments_for_order(db: Session, order_id: int) -> list[Payment]:
 def create_payment(
     db: Session, data: PaymentCreate, shift_id: Optional[int] = None, currency: str = "EGP",
 ) -> Payment:
-    payment = Payment(**data.model_dump(), shift_id=shift_id, currency=currency)
+    # currency: بيتأتى من folio.currency (مش من data) — data.currency اختياري وبيتتجاهل هنا
+    # عشان مسار الفوليو دايمًا بيورّث عملة الفوليو كمصدر حقيقة، راجع add_payment.
+    dump = data.model_dump(exclude={"currency", "fx_rate"})
+    payment = Payment(**dump, shift_id=shift_id, currency=currency, fx_rate=Decimal("1"))
     db.add(payment)
     db.flush()
     return payment
@@ -295,6 +298,7 @@ def create_direct_payment(
     reference: Optional[str] = None,
     ref_order_id: Optional[int] = None,
     currency: str = "EGP",
+    fx_rate: Optional[Decimal] = None,
     source: Optional[str] = None,
     original_payment_id: Optional[int] = None,
 ) -> Payment:
@@ -303,10 +307,15 @@ def create_direct_payment(
     الوردية (build_shift_end_report بيقرا Payment.shift_id بس — راجع تعليق
     Payment في models.py). دالة داخلية (مش عبر PaymentCreate العامة اللي
     folio_id فيها إجباري لمسار تسوية الفوليو)، مفيش HTTPException هنا زي
-    باقي crud.py."""
+    باقي crud.py.
+
+    POS-03: currency/fx_rate — amount دايمًا EGP-equivalent؛ لو الكاشير استلم
+    كاش بعملة أجنبية، amount = المعادل بالجنيه، currency = العملة الحقيقية،
+    fx_rate = سعر الصرف المستخدم. fx_rate=None تعني EGP (بيتحوّل لـ 1.0 تلقائيًا)."""
+    _fx = fx_rate if fx_rate is not None else Decimal("1")
     payment = Payment(
         folio_id=None, branch_id=branch_id, amount=amount, currency=currency,
-        method=method, reference=reference, posted_at=posted_at,
+        fx_rate=_fx, method=method, reference=reference, posted_at=posted_at,
         cashier_id=cashier_id, shift_id=shift_id, ref_order_id=ref_order_id,
         source=source, original_payment_id=original_payment_id,
     )

@@ -26,11 +26,18 @@ import {
   remainingMinor,
 } from './money'
 
+// ── POS-03: العملات المدعومة للكاش الأجنبي ────────────────────────────
+const FOREIGN_CURRENCIES = ['USD', 'EUR'] as const
+type CashCurrency = 'EGP' | typeof FOREIGN_CURRENCIES[number]
+
+interface FxRate { from_currency: string; to_currency: string; rate: string }
+
 interface SplitRow {
   key: number
   paymentMethod: PaymentMethod
   amount: string
   roomId: string
+  cashCurrency: CashCurrency
 }
 
 interface PMSRoom {
@@ -79,6 +86,60 @@ const pendingIntent = ref('')
 let nextSplitKey = 3
 const splitRows = ref<SplitRow[]>([])
 
+// ── POS-03: أسعار الصرف وحالة العملة ──────────────────────────────────
+const cashCurrency = ref<CashCurrency>('EGP')
+const fxRates = ref<Record<string, number>>({})
+const fxLoading = ref(false)
+
+const currentFxRate = computed(() =>
+  cashCurrency.value === 'EGP' ? 1 : (fxRates.value[cashCurrency.value] ?? 0),
+)
+
+/** المبلغ المطلوب بالعملة الأجنبية = total_EGP / fx_rate */
+const totalInForeignCurrency = computed(() => {
+  if (cashCurrency.value === 'EGP' || currentFxRate.value <= 0) return null
+  return +(Number(props.order!.total) / currentFxRate.value).toFixed(2)
+})
+
+/** المبلغ الاستلامي بالعملة الأجنبية (ما يكتبه الكاشير) */
+const foreignReceived = ref('')
+
+/** الفكة بالعملة الأجنبية */
+const foreignChangeMinor = computed(() => {
+  if (cashCurrency.value === 'EGP' || currentFxRate.value <= 0) return null
+  const received = parseFloat(foreignReceived.value)
+  if (isNaN(received) || totalInForeignCurrency.value === null) return null
+  return +(received - totalInForeignCurrency.value).toFixed(2)
+})
+
+const currencyOptions = computed<SelectOption[]>(() => [
+  { value: 'EGP', label: `🇪🇬 ${t('backoffice.pos.payment.currencies.EGP')}` },
+  ...FOREIGN_CURRENCIES.map(cur => ({
+    value: cur,
+    label: `${cur === 'USD' ? '🇺🇸' : '🇪🇺'} ${t(`backoffice.pos.payment.currencies.${cur}`, cur)}`,
+  })),
+])
+
+async function fetchFxRates() {
+  if (fxLoading.value) return
+  fxLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.finance?.exchangeRates ?? '/finance/exchange-rates', {
+      params: { to_currency: 'EGP' },
+    })
+    const rates: Record<string, number> = {}
+    const items: FxRate[] = data?.items ?? data ?? []
+    for (const r of items) {
+      if (r.to_currency === 'EGP') rates[r.from_currency] = parseFloat(r.rate)
+    }
+    fxRates.value = rates
+  } catch {
+    // لو فشل نفضل EGP فقط بدون إظهار خطأ
+  } finally {
+    fxLoading.value = false
+  }
+}
+
 const methodOptions = computed<Array<{ value: PaymentMethod; label: string; icon: string }>>(() => [
   { value: 'cash', label: t('backoffice.pos.payment.methods.cash'), icon: '💵' },
   { value: 'card', label: t('backoffice.pos.payment.methods.card'), icon: '💳' },
@@ -115,14 +176,16 @@ const roomOptions = computed<SelectOption[]>(() => checkedInRooms.value.map(room
 
 function initialSplitRows(): SplitRow[] {
   return [
-    { key: 1, paymentMethod: 'cash', amount: '', roomId: '' },
-    { key: 2, paymentMethod: 'card', amount: '', roomId: '' },
+    { key: 1, paymentMethod: 'cash', amount: '', roomId: '', cashCurrency: 'EGP' },
+    { key: 2, paymentMethod: 'card', amount: '', roomId: '', cashCurrency: 'EGP' },
   ]
 }
 
 function resetPaymentState() {
   mode.value = 'single'
   paymentMethod.value = 'cash'
+  cashCurrency.value = 'EGP'
+  foreignReceived.value = ''
   cashReceived.value = props.order ? String(props.order.total) : ''
   selectedRoomId.value = ''
   roomSearch.value = ''
@@ -138,6 +201,8 @@ watch(
     if (!open) return
     resetPaymentState()
     if (!roomsLoaded.value) loadCheckedInRooms()
+    // POS-03: جلب أسعار الصرف عند فتح المودال
+    fetchFxRates()
   },
   { immediate: true },
 )
@@ -260,6 +325,7 @@ function addSplitRow() {
     paymentMethod: 'cash',
     amount: '',
     roomId: '',
+    cashCurrency: 'EGP',
   })
 }
 
@@ -276,9 +342,23 @@ function fillSplitRemaining(row: SplitRow) {
 
 function validateSinglePayment(): { chargeToRoomId?: number } | null {
   if (paymentMethod.value === 'cash') {
-    if (receivedMinor.value === null || receivedMinor.value < totalMinor.value) {
-      paymentError.value = t('backoffice.pos.payment.errors.cashInsufficient')
-      return null
+    if (cashCurrency.value === 'EGP') {
+      // التحقق العادي بالجنيه
+      if (receivedMinor.value === null || receivedMinor.value < totalMinor.value) {
+        paymentError.value = t('backoffice.pos.payment.errors.cashInsufficient')
+        return null
+      }
+    } else {
+      // POS-03: تحقق بالعملة الأجنبية
+      if (currentFxRate.value <= 0) {
+        paymentError.value = t('backoffice.pos.payment.errors.noFxRate', { currency: cashCurrency.value })
+        return null
+      }
+      const received = parseFloat(foreignReceived.value)
+      if (isNaN(received) || totalInForeignCurrency.value === null || received < totalInForeignCurrency.value) {
+        paymentError.value = t('backoffice.pos.payment.errors.cashInsufficient')
+        return null
+      }
     }
   }
   if (paymentMethod.value === 'room') {
@@ -297,17 +377,25 @@ async function paySingle() {
   paymentError.value = ''
   const validation = validateSinglePayment()
   if (validation === null) return
-  const intent = `single:${props.order.id}:${paymentMethod.value}:${validation.chargeToRoomId ?? ''}`
+  const intent = `single:${props.order.id}:${paymentMethod.value}:${cashCurrency.value}:${validation.chargeToRoomId ?? ''}`
   const key = ensureIdempotencyKey(intent)
   busy.value = true
+
+  // POS-03: بناء payload مع العملة/سعر الصرف للكاش الأجنبي
+  const payload: Record<string, unknown> = {
+    status: 'paid',
+    payment_method: paymentMethod.value,
+    charge_to_room_id: validation.chargeToRoomId,
+  }
+  if (paymentMethod.value === 'cash' && cashCurrency.value !== 'EGP' && currentFxRate.value > 0) {
+    payload.payment_currency = cashCurrency.value
+    payload.payment_fx_rate = currentFxRate.value
+  }
+
   try {
     const { data } = await api.patch(
       ENDPOINTS.dining.orderStatus(props.order.id),
-      {
-        status: 'paid',
-        payment_method: paymentMethod.value,
-        charge_to_room_id: validation.chargeToRoomId,
-      },
+      payload,
       { headers: { 'Idempotency-Key': key } },
     )
     pendingKey.value = ''
@@ -326,6 +414,8 @@ function buildSplitPayments() {
     amount: string
     payment_method: PaymentMethod
     charge_to_room_id?: number
+    currency?: string
+    fx_rate?: number
   }> = []
   for (const row of splitRows.value) {
     const amountMinor = moneyToMinor(row.amount)
@@ -342,10 +432,18 @@ function buildSplitPayments() {
       }
       chargeToRoomId = roomId
     }
+    // POS-03: عملة الكاش الأجنبي
+    const rowCur = row.cashCurrency || 'EGP'
+    const rowFx = rowCur !== 'EGP' ? (fxRates.value[rowCur] ?? 0) : 0
+    if (row.paymentMethod === 'cash' && rowCur !== 'EGP' && rowFx <= 0) {
+      paymentError.value = t('backoffice.pos.payment.errors.noFxRate', { currency: rowCur })
+      return null
+    }
     payments.push({
       amount: minorToMoney(amountMinor),
       payment_method: row.paymentMethod,
       ...(chargeToRoomId ? { charge_to_room_id: chargeToRoomId } : {}),
+      ...(row.paymentMethod === 'cash' && rowCur !== 'EGP' ? { currency: rowCur, fx_rate: rowFx } : {}),
     })
   }
   if (splitRemainingMinor.value !== 0) {
@@ -453,35 +551,109 @@ function submitPayment() {
         </div>
 
         <div v-if="paymentMethod === 'cash'" class="rounded-2xl border border-stone-200 dark:border-border p-4 space-y-4">
-          <MoneyInput
-            v-model="cashReceived"
-            :label="t('backoffice.pos.payment.cashReceived')"
-            currency="EGP"
-          />
-          <div class="flex flex-wrap gap-2">
-            <button
-              v-for="preset in cashPresets"
-              :key="preset"
-              type="button"
-              class="min-h-[44px] px-4 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface font-bold tabular-nums hover:border-primary-400"
-              @click="selectCashPreset(preset)"
-            >
-              {{ formatMoney(minorToMoney(preset), currency) }}
-            </button>
-          </div>
-          <div
-            :class="[
-              'rounded-xl px-4 py-3 flex items-center justify-between font-bold',
-              cashChangeMinor !== null && cashChangeMinor >= 0
-                ? 'bg-success/10 text-success'
-                : 'bg-danger/10 text-danger',
-            ]"
-          >
-            <span>{{ t('backoffice.pos.payment.changeDue') }}</span>
-            <span class="text-xl tabular-nums">
-              {{ cashChangeMinor === null ? '—' : formatMoney(minorToMoney(Math.max(0, cashChangeMinor)), currency) }}
+          <!-- POS-03: اختيار عملة الكاش -->
+          <div class="flex flex-wrap gap-2 items-center">
+            <span class="text-sm font-semibold text-gray-700 dark:text-gray-300">{{ t('backoffice.pos.payment.cashCurrency') }}</span>
+            <div class="flex gap-2 flex-wrap">
+              <button
+                v-for="opt in currencyOptions"
+                :key="opt.value"
+                type="button"
+                :aria-pressed="cashCurrency === opt.value"
+                :class="[
+                  'px-3 py-1.5 rounded-lg border-2 text-sm font-bold transition-colors',
+                  cashCurrency === opt.value
+                    ? 'border-primary-700 bg-primary-50 text-primary-800'
+                    : 'border-stone-200 text-gray-600 hover:border-primary-300 dark:border-border dark:text-gray-300',
+                ]"
+                @click="cashCurrency = (opt.value as CashCurrency); foreignReceived = ''; paymentError = ''"
+              >
+                {{ opt.label }}
+              </button>
+            </div>
+            <span v-if="fxLoading" class="text-xs text-gray-400">{{ t('backoffice.pos.payment.loadingRate') }}</span>
+            <span v-else-if="cashCurrency !== 'EGP' && currentFxRate > 0" class="text-xs text-gray-500 dark:text-gray-400">
+              1 {{ cashCurrency }} = {{ currentFxRate }} EGP
+            </span>
+            <span v-else-if="cashCurrency !== 'EGP'" class="text-xs text-danger">
+              {{ t('backoffice.pos.payment.errors.noFxRate', { currency: cashCurrency }) }}
             </span>
           </div>
+
+          <!-- كاش EGP عادي -->
+          <template v-if="cashCurrency === 'EGP'">
+            <MoneyInput
+              v-model="cashReceived"
+              :label="t('backoffice.pos.payment.cashReceived')"
+              currency="EGP"
+            />
+            <div class="flex flex-wrap gap-2">
+              <button
+                v-for="preset in cashPresets"
+                :key="preset"
+                type="button"
+                class="min-h-[44px] px-4 rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface font-bold tabular-nums hover:border-primary-400"
+                @click="selectCashPreset(preset)"
+              >
+                {{ formatMoney(minorToMoney(preset), currency) }}
+              </button>
+            </div>
+            <div
+              :class="[
+                'rounded-xl px-4 py-3 flex items-center justify-between font-bold',
+                cashChangeMinor !== null && cashChangeMinor >= 0
+                  ? 'bg-success/10 text-success'
+                  : 'bg-danger/10 text-danger',
+              ]"
+            >
+              <span>{{ t('backoffice.pos.payment.changeDue') }}</span>
+              <span class="text-xl tabular-nums">
+                {{ cashChangeMinor === null ? '—' : formatMoney(minorToMoney(Math.max(0, cashChangeMinor)), currency) }}
+              </span>
+            </div>
+          </template>
+
+          <!-- POS-03: كاش بعملة أجنبية -->
+          <template v-else>
+            <div class="rounded-xl bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 px-4 py-3 text-sm space-y-1">
+              <div class="font-bold">{{ t('backoffice.pos.payment.foreignCashHint') }}</div>
+              <div class="tabular-nums">
+                {{ t('backoffice.pos.payment.requiredInForeign', {
+                  amount: totalInForeignCurrency?.toFixed(2) ?? '—',
+                  currency: cashCurrency,
+                  rate: currentFxRate,
+                }) }}
+              </div>
+            </div>
+            <div>
+              <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                {{ t('backoffice.pos.payment.foreignReceivedLabel', { currency: cashCurrency }) }}
+              </label>
+              <input
+                v-model="foreignReceived"
+                type="number"
+                step="0.01"
+                min="0"
+                class="w-full rounded-xl border-2 border-stone-200 dark:border-border bg-white dark:bg-surface px-4 py-3 text-lg font-bold tabular-nums focus:outline-none focus:border-primary-500"
+                :placeholder="totalInForeignCurrency?.toFixed(2) ?? '0.00'"
+                inputmode="decimal"
+              />
+            </div>
+            <div
+              v-if="foreignChangeMinor !== null"
+              :class="[
+                'rounded-xl px-4 py-3 flex items-center justify-between font-bold',
+                foreignChangeMinor >= 0 ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger',
+              ]"
+            >
+              <span>{{ t('backoffice.pos.payment.changeDueIn', { currency: 'EGP' }) }}</span>
+              <span class="text-xl tabular-nums">
+                {{ foreignChangeMinor >= 0
+                  ? formatMoney(String(+(foreignChangeMinor * currentFxRate).toFixed(2)), 'EGP')
+                  : '—' }}
+              </span>
+            </div>
+          </template>
         </div>
 
         <div v-if="paymentMethod === 'room'" class="rounded-2xl border border-stone-200 dark:border-border p-4 space-y-3">
@@ -558,7 +730,7 @@ function submitPayment() {
                 :model-value="row.paymentMethod"
                 :label="t('backoffice.pos.payment.method')"
                 :options="methodOptions.map(method => ({ value: method.value, label: `${method.icon} ${method.label}` }))"
-                @update:model-value="row.paymentMethod = ($event as PaymentMethod); row.roomId = ''; paymentError = ''"
+                @update:model-value="row.paymentMethod = ($event as PaymentMethod); row.roomId = ''; row.cashCurrency = 'EGP'; paymentError = ''"
               />
               <MoneyInput
                 v-model="row.amount"
@@ -568,6 +740,25 @@ function submitPayment() {
               <AppButton variant="outline" size="sm" class="min-h-[44px]" @click="fillSplitRemaining(row)">
                 {{ t('backoffice.pos.payment.fillRemaining') }}
               </AppButton>
+            </div>
+            <!-- POS-03: اختيار عملة الكاش في split -->
+            <div v-if="row.paymentMethod === 'cash'" class="mt-3 flex flex-wrap gap-2 items-center">
+              <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ t('backoffice.pos.payment.cashCurrency') }}:</span>
+              <button
+                v-for="opt in currencyOptions"
+                :key="opt.value"
+                type="button"
+                :aria-pressed="(row.cashCurrency || 'EGP') === opt.value"
+                :class="[
+                  'px-2 py-1 rounded-lg border text-xs font-bold transition-colors',
+                  (row.cashCurrency || 'EGP') === opt.value
+                    ? 'border-primary-700 bg-primary-50 text-primary-800'
+                    : 'border-stone-200 text-gray-600 hover:border-primary-300 dark:border-border dark:text-gray-300',
+                ]"
+                @click="row.cashCurrency = (opt.value as CashCurrency); paymentError = ''"
+              >
+                {{ opt.label }}
+              </button>
             </div>
             <AppSelect
               v-if="row.paymentMethod === 'room'"

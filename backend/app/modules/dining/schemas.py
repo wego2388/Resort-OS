@@ -440,6 +440,19 @@ class OrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
     charge_to_room_id: Optional[int] = None
     payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet)$")
+    # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP. لو currency ≠ EGP
+    # وpayment_method="cash"، يجب تمرير fx_rate (سعر الصرف الحالي).
+    payment_currency: Optional[str] = Field(None, pattern=r"^[A-Z]{3}$")
+    payment_fx_rate:  Optional[Decimal] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_fx(self) -> "OrderStatusUpdate":
+        cur = (self.payment_currency or "EGP").upper()
+        if cur != "EGP" and self.payment_method == "cash" and not self.payment_fx_rate:
+            raise ValueError(
+                "payment_fx_rate مطلوب لو payment_currency ≠ EGP وطريقة الدفع كاش"
+            )
+        return self
 
 
 class OrderTransferRequest(BaseModel):
@@ -462,6 +475,16 @@ class SplitBillPayment(BaseModel):
     amount: Decimal = Field(..., gt=0)
     payment_method: str = Field(..., pattern=r"^(cash|card|room|wallet)$")
     charge_to_room_id: Optional[int] = None  # لو payment_method = room
+    # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP
+    currency: Optional[str] = Field(None, pattern=r"^[A-Z]{3}$")
+    fx_rate:  Optional[Decimal] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_fx(self) -> "SplitBillPayment":
+        cur = (self.currency or "EGP").upper()
+        if cur != "EGP" and self.payment_method == "cash" and not self.fx_rate:
+            raise ValueError("fx_rate مطلوب لو currency ≠ EGP وطريقة الدفع كاش")
+        return self
 
 
 class SplitBillRequest(BaseModel):

@@ -110,6 +110,10 @@ class Payment(Base, TimestampMixin):
     # موروثة من folio.currency وقت إنشاء الدفعة (مش قابلة للتحديد من العميل
     # مباشرة) — عشان نضمن اتساق عملة الفوليو مع كل دفعاته. لدفعة POS مباشرة
     # (folio_id=None) العملة الافتراضية EGP.
+    fx_rate:   Mapped[Decimal]        = mapped_column(Numeric(12, 6), default=Decimal("1"), server_default="1")
+    # سعر الصرف وقت تسجيل الدفعة — 1.0 لـ EGP، وسعر الصرف الحقيقي لأي عملة
+    # أجنبية. amount دايمًا EGP-equivalent للاتساق المحاسبي؛ المبلغ الأصلي
+    # بالعملة الأجنبية = amount / fx_rate. للتدقيق التاريخي فقط.
     method:    Mapped[str]            = mapped_column(String(30))
     reference: Mapped[str | None]     = mapped_column(String(100), nullable=True)
     notes:     Mapped[str | None]     = mapped_column(String(500), nullable=True)

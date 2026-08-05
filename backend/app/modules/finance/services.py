@@ -662,7 +662,19 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
 
     cash_count_lines = crud.list_cash_count_lines(db, shift_id)
 
-    # ملخص العملات الأجنبية — نجمّع لكل عملة غير EGP
+    # POS-03: نحسب الكاش المتوقع لكل عملة أجنبية من الدفعات الفعلية.
+    # لو الكاشير استلم 50 USD كاش في بيع حقيقي → هيظهر Payment.currency="USD"
+    # وPayment.fx_rate يسجّل سعر الصرف. المبلغ الأصلي بالعملة الأجنبية =
+    # payment.amount / payment.fx_rate (لأن amount دايمًا EGP-equivalent).
+    expected_by_currency: dict[str, Decimal] = {}
+    for p in positive:
+        cur = (p.currency or "EGP").upper()
+        if cur != "EGP" and p.method == "cash":
+            fx = p.fx_rate if (hasattr(p, "fx_rate") and p.fx_rate and p.fx_rate != 0) else Decimal("1")
+            original_amount = (p.amount / fx).quantize(Decimal("0.01"))
+            expected_by_currency[cur] = expected_by_currency.get(cur, Decimal("0")) + original_amount
+
+    # ملخص العملات الأجنبية — نجمّع لكل عملة غير EGP من عدّ الكاش
     foreign: dict[str, dict] = {}
     counted_cash_egp = Decimal("0")
     for line in cash_count_lines:
@@ -675,9 +687,15 @@ def build_shift_end_report(db: Session, shift_id: int, requesting_user=None) -> 
                     "total_foreign": Decimal("0"),
                     "fx_rate": line.fx_rate,
                     "egp_equivalent": Decimal("0"),
+                    "expected_amount": expected_by_currency.get(cur),
                 }
             foreign[cur]["total_foreign"]  += line.subtotal
             foreign[cur]["egp_equivalent"] += line.egp_equivalent
+
+    # POS-03: أضف variance لكل عملة (total_foreign - expected_amount)
+    for cur, data in foreign.items():
+        if data["expected_amount"] is not None:
+            data["variance"] = data["total_foreign"] - data["expected_amount"]
 
     foreign_summary = [ForeignCurrencySummary(**v) for v in foreign.values()]
 

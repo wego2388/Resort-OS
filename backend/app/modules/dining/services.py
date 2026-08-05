@@ -1000,6 +1000,8 @@ def update_order_status(
     db: Session, order_id: int, new_status: str,
     charge_to_room_id: Optional[int] = None,
     payment_method: Optional[str] = None,
+    payment_currency: Optional[str] = None,
+    payment_fx_rate: Optional[Decimal] = None,
     settled_by: Optional[int] = None,
     acting_user_level: int = 100,
     idempotency_key: Optional[str] = None,
@@ -1010,6 +1012,8 @@ def update_order_status(
     محاسبي من غير أي بلع أخطاء صامت، وcommit واحد بس). باقي التحويلات
     سلوكها القديم زي ما هو بالظبط — مفيش أثر مالي فيهم غير تحرير الطاولة.
 
+    POS-03: payment_currency/payment_fx_rate للكاش بعملة أجنبية — اختياريان.
+
     ⚠️ transition state machine: التحويلات المسموحة بتتحقق من جدول واحد
     مركزي (ORDER_TRANSITIONS) بدل شرط ad-hoc — راجع assert_order_transition."""
     if new_status == "paid":
@@ -1017,6 +1021,8 @@ def update_order_status(
             db, order_id,
             charge_to_room_id=charge_to_room_id,
             payment_method=payment_method,
+            payment_currency=payment_currency,
+            payment_fx_rate=payment_fx_rate,
             settled_by=settled_by,
             acting_user_level=acting_user_level,
             idempotency_key=idempotency_key,
@@ -1148,7 +1154,14 @@ def settle_order(
             amount = order.total if t.get("amount") is None else Decimal(str(t["amount"])).quantize(Decimal("0.01"))
             if amount <= 0:
                 raise PaymentAllocationError(f"مبلغ tender غير صالح: {amount}")
-            norm.append({"method": method, "amount": amount, "charge_to_room_id": t.get("charge_to_room_id")})
+            norm.append({
+                "method": method,
+                "amount": amount,
+                "charge_to_room_id": t.get("charge_to_room_id"),
+                # POS-03: عملة/سعر الصرف للكاش بعملة أجنبية — بيتمرّر لـ _settle_direct_tender
+                "currency": (t.get("currency") or "EGP").upper(),
+                "fx_rate": t.get("fx_rate"),
+            })
 
         # M1 (جولة مراجعة Codex الأولى): مقارنة Decimal دقيقة بعد quantize
         # للطرفين — مش tolerance ± 0.01 اللي كان بيسمح بانحراف قرش كامل يعدّي
@@ -1407,18 +1420,23 @@ def _settle_direct_tender(
     outlet_splits: "list[tuple] | None" = None,
 ) -> None:
     """tender مباشر (cash/card/wallet) — Payment حقيقي + قيد Dr <حساب>/Cr إيراد.
-    outlet_splits: لو cross-outlet — قيود per-outlet بدل قيد واحد."""
+    outlet_splits: لو cross-outlet — قيود per-outlet بدل قيد واحد.
+    POS-03: tender يمكن أن يحتوي currency/fx_rate لدعم الكاش بعملة أجنبية.
+    amount في كل الأحوال EGP-equivalent؛ العملة/السعر الأصليين للتدقيق فقط."""
     from app.modules.finance import crud as finance_crud  # noqa: PLC0415
     from app.modules.finance import services as finance_services  # noqa: PLC0415
 
-    amount = tender["amount"]
-    method = tender["method"]
-    account = tender["account"]
+    amount   = tender["amount"]
+    method   = tender["method"]
+    account  = tender["account"]
+    currency = tender.get("currency", "EGP") or "EGP"
+    fx_rate  = tender.get("fx_rate")  # None → EGP, create_direct_payment يتعامل معها
 
     finance_crud.create_direct_payment(
         db, branch_id=order.branch_id, amount=amount, method=method,
         posted_at=datetime.utcnow(), shift_id=shift_id, cashier_id=cashier_id,
         reference=f"ORD-{order.order_number}", ref_order_id=order.id, source="dining",
+        currency=currency, fx_rate=fx_rate,
     )
 
     if not outlet_splits or len(outlet_splits) == 1:
@@ -1466,6 +1484,8 @@ def _mark_order_paid(
     *,
     charge_to_room_id: Optional[int],
     payment_method: Optional[str],
+    payment_currency: Optional[str] = None,
+    payment_fx_rate: Optional[Decimal] = None,
     settled_by: Optional[int] = None,
     acting_user_level: int = 100,
     idempotency_key: Optional[str] = None,
@@ -1474,7 +1494,8 @@ def _mark_order_paid(
     بيبني tender واحد ويمرّره لـ settle_order (المسار الموحّد). يحل طريقة
     الدفع النهائية من payment_method/charge_to_room_id/فوليو الطلب بنفس
     منطق Gate 1B بالظبط (peek غير مقفول لبناء الـ tender؛ settle_order بيعيد
-    القفل والتحقق كله تحت قفل صف الطلب)."""
+    القفل والتحقق كله تحت قفل صف الطلب).
+    POS-03: payment_currency/payment_fx_rate للكاش بعملة أجنبية."""
     order = crud.get_order(db, order_id)
     if not order:
         raise ValueError(f"الطلب {order_id} غير موجود")
@@ -1499,7 +1520,11 @@ def _mark_order_paid(
     else:
         method = "cash"
 
-    tender = {"method": method, "amount": None, "charge_to_room_id": charge_to_room_id}
+    tender: dict = {"method": method, "amount": None, "charge_to_room_id": charge_to_room_id}
+    # POS-03: نمرّر العملة/سعر الصرف فقط لو الدفع كاش بعملة أجنبية
+    if method == "cash" and payment_currency and (payment_currency or "EGP").upper() != "EGP":
+        tender["currency"] = payment_currency.upper()
+        tender["fx_rate"] = payment_fx_rate
     return settle_order(
         db, order_id, tenders=[tender], settled_by=settled_by,
         acting_user_level=acting_user_level, idempotency_key=idempotency_key,
@@ -2004,6 +2029,9 @@ def split_bill(
             "method": p["payment_method"],
             "amount": Decimal(str(p["amount"])),
             "charge_to_room_id": p.get("charge_to_room_id"),
+            # POS-03: عملة/سعر الصرف للكاش بعملة أجنبية
+            "currency": (p.get("currency") or "EGP").upper(),
+            "fx_rate": p.get("fx_rate"),
         }
         for p in payments
     ]

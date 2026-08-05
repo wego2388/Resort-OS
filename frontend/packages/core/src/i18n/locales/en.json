@@ -4160,7 +4160,18 @@
         },
         "cashReceived": "Cash received",
         "changeDue": "Change due",
+        "changeDueIn": "Change due in {currency}",
         "checkedInRoom": "Checked-in guest room",
+        "cashCurrency": "Cash currency",
+        "loadingRate": "Loading exchange rate...",
+        "foreignCashHint": "Foreign currency cash — amount will be converted to EGP at the current rate.",
+        "requiredInForeign": "Required: {amount} {currency} (at rate {rate} EGP)",
+        "foreignReceivedLabel": "Amount received in {currency}",
+        "currencies": {
+          "EGP": "Egyptian Pound",
+          "USD": "US Dollar",
+          "EUR": "Euro"
+        },
         "roomOnlyHint": "Only rooms attached to an active checked-in booking are shown.",
         "refreshRooms": "Refresh rooms",
         "searchRoom": "Search room number or guest name...",
@@ -4180,6 +4191,7 @@
         "confirmPayment": "Collect {amount}",
         "success": "Order {number} paid successfully ✓",
         "errors": {
+          "noFxRate": "No exchange rate found for {currency} — add it in the Exchange Rates screen.",
           "cashInsufficient": "Cash received is less than the order total.",
           "selectCheckedInRoom": "Select a room attached to a checked-in guest.",
           "selectRoomForEach": "Select a valid room for every room-charge tender.",
@@ -5433,8 +5445,24 @@
         "balanceSheet": "Balance Sheet",
         "depreciation": "Asset Depreciation",
         "bankReconciliation": "Bank Reconciliation",
-        "shifts": "Shifts"
+        "shifts": "Shifts",
+        "exchangeRates": "Exchange Rates"
       },
+      "fx": {
+        "addTitle": "Add Exchange Rate",
+        "fromCurrency": "From Currency",
+        "toCurrency": "To Currency",
+        "rate": "Rate",
+        "effectiveDate": "Effective Date",
+        "save": "Save Rate",
+        "hint": "The rate registered here is used for foreign-currency cash payments at the POS.",
+        "historyTitle": "Exchange Rate History",
+        "empty": "No exchange rates registered yet",
+        "loadError": "Failed to load exchange rates",
+        "saveError": "Failed to save exchange rate",
+        "saved": "Exchange rate saved ✓"
+      },
+      "refresh": "Refresh",
       "totalRevenue": "Total revenue",
       "totalExpense": "Total expenses",
       "netIncome": "Net income",

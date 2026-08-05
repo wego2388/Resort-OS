@@ -607,6 +607,8 @@ async def update_order_status(
             db, order_id, data.status,
             charge_to_room_id=data.charge_to_room_id,
             payment_method=data.payment_method,
+            payment_currency=data.payment_currency,
+            payment_fx_rate=data.payment_fx_rate,
             settled_by=user.id,
             acting_user_level=user_level(user),
             idempotency_key=idempotency_key,

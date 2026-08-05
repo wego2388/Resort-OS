@@ -4160,7 +4160,18 @@
         },
         "cashReceived": "المبلغ المستلم من العميل",
         "changeDue": "الباقي للعميل",
+        "changeDueIn": "الباقي بـ {currency}",
         "checkedInRoom": "غرفة نزيل مسجّل الدخول",
+        "cashCurrency": "عملة الكاش",
+        "loadingRate": "جاري تحميل سعر الصرف...",
+        "foreignCashHint": "الدفع بعملة أجنبية — المبلغ سيُحوَّل للجنيه بسعر الصرف الحالي.",
+        "requiredInForeign": "المطلوب: {amount} {currency} (بسعر {rate} جنيه)",
+        "foreignReceivedLabel": "المبلغ المستلم بالـ {currency}",
+        "currencies": {
+          "EGP": "جنيه مصري",
+          "USD": "دولار أمريكي",
+          "EUR": "يورو"
+        },
         "roomOnlyHint": "تظهر فقط الغرف المرتبطة بحجز checked-in نشط.",
         "refreshRooms": "تحديث الغرف",
         "searchRoom": "ابحث برقم الغرفة أو اسم النزيل...",
@@ -4180,6 +4191,7 @@
         "confirmPayment": "تحصيل {amount}",
         "success": "تم تحصيل الطلب {number} بنجاح ✓",
         "errors": {
+          "noFxRate": "لا يوجد سعر صرف مسجّل لـ {currency} — أضفه من شاشة أسعار الصرف.",
           "cashInsufficient": "المبلغ المستلم أقل من إجمالي الطلب.",
           "selectCheckedInRoom": "اختر غرفة مرتبطة بنزيل مسجّل الدخول.",
           "selectRoomForEach": "اختر غرفة صحيحة لكل جزء دفع على الغرفة.",
@@ -5433,8 +5445,24 @@
         "balanceSheet": "الميزانية العمومية",
         "depreciation": "إهلاك الأصول",
         "bankReconciliation": "التسوية البنكية",
-        "shifts": "الورديات"
+        "shifts": "الورديات",
+        "exchangeRates": "أسعار الصرف"
       },
+      "fx": {
+        "addTitle": "تسجيل سعر صرف جديد",
+        "fromCurrency": "العملة الأصلية",
+        "toCurrency": "العملة المستهدفة",
+        "rate": "سعر الصرف",
+        "effectiveDate": "تاريخ التطبيق",
+        "save": "حفظ السعر",
+        "hint": "السعر المسجّل هنا يُستخدم للكاش بعملة أجنبية في شاشة نقطة البيع.",
+        "historyTitle": "سجل أسعار الصرف",
+        "empty": "لا توجد أسعار صرف مسجّلة",
+        "loadError": "تعذّر تحميل أسعار الصرف",
+        "saveError": "تعذّر حفظ سعر الصرف",
+        "saved": "تم حفظ سعر الصرف ✓"
+      },
+      "refresh": "تحديث",
       "totalRevenue": "إجمالي الإيرادات",
       "totalExpense": "إجمالي المصروفات",
       "netIncome": "صافي الربح",

@@ -153,6 +153,21 @@ class PaymentCreate(BaseModel):
     notes:     Optional[str] = Field(None, max_length=500)
     posted_at: datetime
     cashier_id: Optional[int] = None
+    # POS-03: عملة الدفعة — اختياري، افتراضي EGP (بدون breaking change).
+    # لو currency ≠ EGP وmethod="cash"، يجب تمرير fx_rate (validator تحت).
+    # amount دايمًا EGP-equivalent؛ المبلغ الأصلي بالعملة الأجنبية = amount / fx_rate.
+    currency:  Optional[str] = Field(None, pattern=r"^[A-Z]{3}$")
+    fx_rate:   Optional[Decimal] = Field(None, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_fx(self) -> "PaymentCreate":
+        cur = (self.currency or "EGP").upper()
+        if cur != "EGP" and self.method == "cash" and not self.fx_rate:
+            raise ValueError(
+                "fx_rate مطلوب لو currency ≠ EGP وطريقة الدفع كاش — "
+                "مرّر سعر الصرف الحالي عبر GET /finance/exchange-rates"
+            )
+        return self
 
 
 class VoidPaymentRequest(BaseModel):
@@ -166,6 +181,7 @@ class PaymentRead(BaseModel):
     branch_id: int
     amount:    Decimal
     currency:  str
+    fx_rate:   Decimal = Decimal("1")  # POS-03: سعر الصرف وقت الدفع (1.0 = EGP)
     method:    str
     reference: Optional[str]
     notes:     Optional[str]
@@ -210,11 +226,16 @@ class CashCountLineRead(BaseModel):
 
 
 class ForeignCurrencySummary(BaseModel):
-    """ملخص العملة الأجنبية في عدّ الوردية — لكل عملة غير EGP."""
-    currency:       str
-    total_foreign:  Decimal   # إجمالي بالعملة الأصلية (مثلاً 110 USD)
-    fx_rate:        Decimal   # سعر الصرف المستخدم (مثلاً 48.00 EGP/USD)
-    egp_equivalent: Decimal   # إجمالي بالجنيه (مثلاً 5280 EGP)
+    """ملخص العملة الأجنبية في عدّ الوردية — لكل عملة غير EGP.
+    POS-03: أضفنا expected_amount/variance لكل عملة لحظة قفل الوردية.
+    expected_amount = إجمالي الدفعات كاش بهذه العملة (بالعملة الأصلية قبل التحويل).
+    variance        = total_foreign − expected_amount (موجب = زيادة، سالب = عجز)."""
+    currency:        str
+    total_foreign:   Decimal   # إجمالي بالعملة الأصلية (مثلاً 110 USD)
+    fx_rate:         Decimal   # سعر الصرف المستخدم (مثلاً 48.00 EGP/USD)
+    egp_equivalent:  Decimal   # إجمالي بالجنيه (مثلاً 5280 EGP)
+    expected_amount: Optional[Decimal] = None  # المتوقع بالعملة الأصلية — يُحسب وقت قفل الوردية
+    variance:        Optional[Decimal] = None  # = total_foreign − expected_amount
 
 
 class CashierShiftClose(BaseModel):
