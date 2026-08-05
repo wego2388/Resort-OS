@@ -101,8 +101,8 @@
 | Staff app | `https://app.elkheima.com` |
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../821a718` |
-| Marketing release | `/opt/elkheima-marketing-current -> .../1371975` |
+| Resort release | `/opt/resort-os-current -> .../5df8191` |
+| Marketing release | `/opt/elkheima-marketing-current -> .../79130a6` |
 | Database | Alembic `7b4d81dc08ee`؛ marker واحد؛ safety counts ثابتة |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
@@ -114,24 +114,24 @@
 ## أدلة التشغيل
 
 - Resort release archive:
-  `/var/backups/resort-os/source-releases/5b02010.tar.gz`
+  `/var/backups/resort-os/source-releases/5df8191.tar.gz`
 - Resort SHA-256:
-  `50538820d9b9e4ef9e3d724e45b09dfca4dfc86e25154a852fab98765900b673`
+  `df209816d2ac9547d42cfc64c45c007a939d7d90f2a586832d30d1fde7e02963`
 - Rollback image manifest:
-  `/var/backups/resort-os/source-releases/5b02010-rollback-images.txt`
-- Pre-deploy DB (`5b02010`):
-  `/var/backups/resort-os/database/resort_os_20260802_115042.dump`
+  `/var/backups/resort-os/source-releases/5df8191-rollback-images.txt`
+- Pre-deploy DB (`5df8191`):
+  `/opt/resort-os-releases/5df8191/backups/resort_os_20260804_204745.dump`
 - Marketing release archive:
-  `/var/backups/resort-os/marketing-source-releases/1371975.tar.gz`
+  `/var/backups/resort-os/marketing-source-releases/79130a6.tar.gz`
 - Marketing SHA-256:
-  `21fbf305bc06e038464803e1c51703a3b7bcc899e97acfcc35717ac1b061b903`
+  `f8e454beb95a48ac8c72ec8705c36ca50948289f2e690587a9bb629ee4fe5a9f`
 - Domain rollback directory:
   `/var/backups/resort-os-domain-cutover-aed94a0`
 - DNS rollback snapshot: `167902017`
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-02_MKT-06_contact_rtl_scroll_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-04_REL-07_claude_handoff.md`
 
 ## التحديث التالي المطلوب
 
