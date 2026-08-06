@@ -1,6 +1,6 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-06 — جولة مراجعة شاملة (Claude) + إصلاح اختبارات dining router coverage:
+**آخر تحقق:** 2026-08-06 — REL-09: نشر commit `fd105f6` (batch-load N+1 queries dining + 41 test جديدة + مراجعة دين تقني). جولة مراجعة شاملة (Claude) + إصلاح اختبارات dining router coverage:
 - N+1 queries في dining/services.py كانت اتصلحت بالفعل بـ batch-load في الـ worktree الحالي
 - إصلاح `test_dining_router_coverage.py` (41 test، كلهم بيعدّوا الآن) — AccountingPeriod model mismatch، outlet_id مفقود من request bodies، branch membership مفقودة في kitchen tickets tests
 - مراجعة الدين التقني الكاملة في `docs/audits/TECHNICAL_DEBT_AND_COVERAGE_AUDIT.md`
@@ -19,16 +19,44 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `7d00917` |
-| آخر commit على الفرع | `7d00917df41a396242e23403973353b6a1fb516b` — POS-03b beach multi-currency (منشور ✅) |
+| Resort OS source release (منشور) | `fd105f6` |
+| آخر commit على الفرع | `fd105f6` — REL-09: dining N+1 batch-load + 41 tests + tech debt audit (منشور ✅) |
 | Marketing source release | `79130a6` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/7d00917df41a396242e23403973353b6a1fb516b` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/7d00917df41a396242e23403973353b6a1fb516b` |
+| active Resort release | `/opt/resort-os-releases/fd105f6` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/fd105f6` |
 | active Marketing release | `/opt/elkheima-marketing-releases/79130a6` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/79130a6` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 | Alembic head (DB) | `52f4544e50d2` (POS-03: fx_rate على payments — مطبّق ✅) |
+
+## REL-09 — نشر 6 أغسطس 2026 (commit `fd105f6`)
+
+**dining N+1 batch-load + 41 test جديدة + مراجعة دين تقني**
+
+**ما اتنشر:**
+- `dining/services.py`: batch-load في `create_order`, `add_items_to_order`, `sync_offline_order`, `_deduct_inventory_for_order` — صفر N+1 queries داخل الـ loops
+- `dining/crud.py`: `get_items_by_ids()`, `get_variants_by_ids()` جديدتين
+- `inventory/crud.py`: `get_products_by_ids_any_branch()`, `get_warehouses_by_ids()` جديدتين
+- `test_dining_router_coverage.py`: 41 test جديدة (menu CRUD، tables، orders HTTP، kitchen/KDS، public endpoints)
+- `docs/audits/TECHNICAL_DEBT_AND_COVERAGE_AUDIT.md`: مراجعة دين تقني شاملة مرتبة بالأولوية
+- لا migration جديدة — Alembic head `52f4544e50d2` بدون تغيير
+- 2333 pytest passed، type-check نظيف، build نظيف
+
+**دورة النشر (REL-09، 2026-08-06 ~05:25 Cairo):**
+- ✅ نسخة احتياطية: `resort_os_20260806_021750.dump` (588K — مثبّت)
+- ✅ SHA-256 أرشيف مطابق على الطرفين: `a04aaf6b3d1cffacda5d55645fc4958b1e19f9da5209a1e57a6681f21ca1793c`
+- ✅ rollback tags: 5 خدمات مؤرشفة كـ `resort-os-rollback/<svc>:pre-fd105f6`
+- ✅ rollback manifest: `/var/backups/resort-os/source-releases/fd105f6-rollback-images.txt`
+- ✅ validate_prod_env: passed
+- ✅ بناء الصور: backend/celery_worker/celery_beat/el_kheima — Built بنجاح
+- ✅ preflight import: `✓ El Kheima Beach`
+- ✅ alembic heads: `52f4544e50d2` (head) — لا migration
+- ✅ استبدال تدريجي: backend → celery_worker/beat → el_kheima → nginx
+- ✅ health check: `{"status":"ok"}` — 8/8 حاويات running/healthy، restarts=0
+- ✅ app.elkheima.com: HTTP 200 / elkheima.com: HTTP 200 / www.elkheima.com: HTTP 200
+- ✅ symlink: `/opt/resort-os-current -> /opt/resort-os-releases/fd105f6`
+- ✅ logs نظيفة — صفر ERROR/CRITICAL
 
 ## REL-08 — نشر 5 أغسطس 2026 (commit `7d00917`)
 
