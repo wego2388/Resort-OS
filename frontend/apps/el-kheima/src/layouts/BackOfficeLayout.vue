@@ -50,6 +50,7 @@ interface NavItem {
   label: string
   icon: string
   requiredRole?: string
+  requiredRoles?: string[]          // exact allow-list — نفس منطق router guard
   requiredPermission?: PermissionKey | PermissionKey[]
 }
 interface NavSection {
@@ -91,14 +92,15 @@ const allSections = computed<NavSection[]>(() => [
     items: [
       { path: '/admin/hr',           label: t('backoffice.nav.hr'),             icon: '👥',  requiredRole: 'manager' },
       { path: '/admin/finance',      label: t('backoffice.nav.finance'),        icon: '💰',  requiredRole: 'manager' },
+      { path: '/pos/shift-monitor',  label: t('backoffice.nav.shiftMonitor'),   icon: '🖥️',  requiredRole: 'manager' },
       { path: '/admin/e-invoice',    label: t('backoffice.nav.eInvoice'),       icon: '🧾',  requiredRole: 'manager' },
     ],
   },
   {
     label: t('backoffice.nav.guestManagement'),
     items: [
-      { path: '/admin/timeshare',    label: t('backoffice.nav.timeshare'),      icon: '🏨',  requiredRole: 'cashier' },
-      { path: '/admin/sales',        label: t('backoffice.nav.sales'),          icon: '📞',  requiredRole: 'manager' },
+      { path: '/admin/timeshare',    label: t('backoffice.nav.timeshare'),      icon: '🏨',  requiredRoles: ['timeshare_admin', 'timeshare_agent', 'super_admin', 'admin'] },
+      { path: '/admin/sales',        label: t('backoffice.nav.sales'),          icon: '📞',  requiredRoles: ['timeshare_admin', 'timeshare_agent', 'super_admin', 'admin'] },
       { path: '/admin/crm',          label: t('backoffice.nav.crm'),            icon: '🤝',  requiredRole: 'manager' },
       { path: '/admin/beach-live',   label: t('backoffice.nav.beachLive'),      icon: '🏖️',  requiredRole: 'manager' },
       { path: '/admin/beach-admin',  label: t('backoffice.nav.beachAdmin'),     icon: '🏄',  requiredRole: 'manager' },
@@ -159,6 +161,10 @@ const navSections = computed(() =>
       ...section,
       items: section.items.filter(
         (item) => {
+          // exact allow-list (نفس منطق router guard لوحدات زي timeshare)
+          if (item.requiredRoles) {
+            return item.requiredRoles.includes(auth.role)
+          }
           if (item.requiredRole && !auth.hasRole(item.requiredRole)) return false
           if (!item.requiredPermission) return true
           const permissions = Array.isArray(item.requiredPermission)

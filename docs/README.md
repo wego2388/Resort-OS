@@ -30,6 +30,7 @@
 | `docs/decisions/` | قرارات منتج ثابتة | لا؛ invariants |
 | `docs/audits/` | أدلة ومراجعات فنية | لا، باستثناء الخطة النهائية |
 | `docs/agent-workflow/MKT-CMS-01_WEBSITE_CHATBOT_CONTROL_CENTER_PLAN_AR.md` | خطة مرشحة لمركز إدارة الموقع والشات | **لا؛ مقفلة حتى موافقة Mohamed الصريحة** |
+| `docs/audits/TECHNICAL_DEBT_AND_COVERAGE_AUDIT.md` | مراجعة الدين التقني وتغطية الاختبارات — نقاط محددة، كمية، مرتبة بالأولوية (Claude، 2026-08-06) | لا؛ مرجع جودة للتنفيذ التالي |
 | `docs/archive/` | تاريخ غير قابل للتنفيذ | **ممنوع التنفيذ منه** |
 
 ## القرارات الناسخة الحالية

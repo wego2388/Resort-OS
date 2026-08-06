@@ -605,8 +605,12 @@ def create_order(
     items_data = []
     subtotal = Decimal("0")
 
+    # ── batch-load كل الأصناف بـ query واحدة بدل N queries فردية ──────────
+    item_ids = [req.item_id for req in data.items]
+    items_map = crud.get_items_by_ids(db, item_ids)
+
     for item_req in data.items:
-        item = crud.get_item(db, item_req.item_id)
+        item = items_map.get(item_req.item_id)
         if not item:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
         # cross-outlet: الصنف مسموح من أي outlet في نفس الفرع، مش لازم يطابق
@@ -835,8 +839,13 @@ def add_items_to_order(db: Session, order_id: int, items: list, added_by: Option
     outlet = crud.get_outlet(db, order.outlet_id)
     added_subtotal = Decimal("0")
     new_items = []
+
+    # ── batch-load الأصناف بـ query واحدة ────────────────────────────────
+    item_ids = [req.item_id for req in items]
+    items_map = crud.get_items_by_ids(db, item_ids)
+
     for item_req in items:
-        item = crud.get_item(db, item_req.item_id)
+        item = items_map.get(item_req.item_id)
         if not item:
             raise ValueError(f"الصنف {item_req.item_id} غير موجود")
         # cross-outlet: نفس القرار في create_order فوق — الصنف مسموح من أي
@@ -945,8 +954,12 @@ def sync_offline_order(
     fulfilled_requests = []
     rejected_items = []
 
+    # batch-load الأصناف بـ query واحدة
+    item_ids  = [req.item_id for req in data.items]
+    items_map = crud.get_items_by_ids(db, item_ids)
+
     for item_req in data.items:
-        item = crud.get_item(db, item_req.item_id)
+        item = items_map.get(item_req.item_id)
         if not item or not item.is_available:
             rejected_items.append({
                 "item_id": item_req.item_id,
@@ -1560,21 +1573,49 @@ def _deduct_inventory_for_order(
         if strict:
             raise InventoryConfigurationError(strict_message)
 
-    for order_item in order.items:
-        if order_item.status == "cancelled":
+    active_items = [oi for oi in order.items if oi.status != "cancelled"]
+    if not active_items:
+        return
+
+    # ── batch-load كل الأصناف والـ variants بـ query واحدة لكل ──────────
+    # بدل N queries فردية (N = عدد أصناف الطلب × عدد مكوّنات الوصفة).
+    item_ids    = list({oi.item_id for oi in active_items})
+    variant_ids = list({oi.variant_id for oi in active_items if oi.variant_id})
+    items_map    = crud.get_items_by_ids(db, item_ids)
+    variants_map = crud.get_variants_by_ids(db, variant_ids)
+
+    # اجمع كل product_ids المطلوبة (من الوصفات + linked_product_id) قبل الـ loop
+    product_ids_needed: set[int] = set()
+    for order_item in active_items:
+        item = items_map.get(order_item.item_id)
+        if not item:
             continue
+        variant = variants_map.get(order_item.variant_id) if order_item.variant_id else None
+        recipe_lines = _effective_recipe(item, variant)
+        if recipe_lines:
+            for line in recipe_lines:
+                product_ids_needed.add(line.product_id)
+        elif item.linked_product_id:
+            product_ids_needed.add(item.linked_product_id)
+
+    products_map  = inventory_crud.get_products_by_ids_any_branch(db, list(product_ids_needed))
+    wh_ids_needed = {p.warehouse_id for p in products_map.values() if p.warehouse_id}
+    warehouses_map = inventory_crud.get_warehouses_by_ids(db, list(wh_ids_needed))
+
+    # ── الـ loop نفسه — صفر queries إضافية داخله ───────────────────────
+    for order_item in active_items:
         try:
-            item = crud.get_item(db, order_item.item_id)
+            item = items_map.get(order_item.item_id)
             if not item:
                 _skip_or_raise(
                     f"صنف الطلب #{order_item.id} بيشير لـDiningItem #{order_item.item_id} غير موجود"
                 )
                 continue
-            variant = crud.get_variant(db, order_item.variant_id) if order_item.variant_id else None
+            variant = variants_map.get(order_item.variant_id) if order_item.variant_id else None
             recipe_lines = _effective_recipe(item, variant)
             if recipe_lines:
                 for line in recipe_lines:
-                    product = inventory_crud.get_product(db, line.product_id)
+                    product = products_map.get(line.product_id)
                     if not product:
                         _skip_or_raise(
                             f"منتج الوصفة #{line.product_id} (لصنف #{item.id}) غير موجود"
@@ -1589,12 +1630,7 @@ def _deduct_inventory_for_order(
                     if not product.warehouse_id:
                         _skip_or_raise(f"منتج الوصفة #{product.id} من غير مخزن مرتبط")
                         continue
-                    # مراجعة Codex الثالثة: التحقق السابق كان بيتأكد من فرع
-                    # المنتج بس — منتج فرع A ممكن يتربط بمخزن فرع B فعليًا
-                    # (create_product مافيهاش أي تحقق إن warehouse_id بتاعه
-                    # نفس فرع المنتج). لازم نتأكد المخزن نفسه موجود وتابع
-                    # لفرع الطلب فعلاً قبل الخصم.
-                    warehouse = inventory_crud.get_warehouse(db, product.warehouse_id)
+                    warehouse = warehouses_map.get(product.warehouse_id)
                     if not warehouse:
                         _skip_or_raise(
                             f"مخزن منتج الوصفة #{product.id} (#{product.warehouse_id}) غير موجود"
@@ -1625,7 +1661,7 @@ def _deduct_inventory_for_order(
                 # الحالة الوحيدة المقصودة عمدًا تتجاوز حتى في strict=True —
                 # الصنف مفهوش وصفة ولا منتج مرتبط أصلاً (مش إعداد ناقص).
                 continue
-            product = inventory_crud.get_product(db, item.linked_product_id)
+            product = products_map.get(item.linked_product_id)
             if not product:
                 _skip_or_raise(f"المنتج المرتبط #{item.linked_product_id} (لصنف #{item.id}) غير موجود")
                 continue
@@ -1638,10 +1674,7 @@ def _deduct_inventory_for_order(
             if not product.warehouse_id:
                 _skip_or_raise(f"المنتج المرتبط #{product.id} من غير مخزن مرتبط")
                 continue
-            # مراجعة Codex الثالثة: نفس تحقق المخزن اللي اتضاف لفرع الوصفة
-            # فوق — منتج فرع A ممكن يتربط بمخزن فرع B فعليًا (create_product
-            # مافيهاش أي تحقق إن warehouse_id بتاعه نفس فرع المنتج).
-            warehouse = inventory_crud.get_warehouse(db, product.warehouse_id)
+            warehouse = warehouses_map.get(product.warehouse_id)
             if not warehouse:
                 _skip_or_raise(
                     f"مخزن المنتج المرتبط #{product.id} (#{product.warehouse_id}) غير موجود"

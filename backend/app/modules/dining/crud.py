@@ -99,6 +99,23 @@ def get_item(db: Session, item_id: int) -> Optional[DiningItem]:
     return db.query(DiningItem).filter(DiningItem.id == item_id).first()
 
 
+def get_items_by_ids(db: Session, item_ids: list[int]) -> dict[int, DiningItem]:
+    """جيب أصناف متعددة بـ query واحدة — تُستخدم في create_order وdeduct_inventory
+    بدل query منفردة لكل صنف (N+1). ترجع dict[item_id → DiningItem] للبحث O(1)."""
+    if not item_ids:
+        return {}
+    rows = db.query(DiningItem).filter(DiningItem.id.in_(item_ids)).all()
+    return {r.id: r for r in rows}
+
+
+def get_variants_by_ids(db: Session, variant_ids: list[int]) -> dict[int, DiningItemVariant]:
+    """جيب variants متعددة بـ query واحدة — نفس نمط get_items_by_ids."""
+    if not variant_ids:
+        return {}
+    rows = db.query(DiningItemVariant).filter(DiningItemVariant.id.in_(variant_ids)).all()
+    return {r.id: r for r in rows}
+
+
 def list_items(
     db: Session,
     outlet_id: int,

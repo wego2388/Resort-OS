@@ -1,8 +1,13 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-05 — POS-03b: دعم الدفع بعملات متعددة للشاطئ (كاش دولار/يورو) + الفكة دايمًا بالجنيه
-— commit `f68b232` على الفرع التشغيلي. قبلها POS-03 (e2c31af) للمطعم/الكافيه.
-راجع §7.1 وأدناه.
+**آخر تحقق:** 2026-08-06 — جولة مراجعة شاملة (Claude) + إصلاح اختبارات dining router coverage:
+- N+1 queries في dining/services.py كانت اتصلحت بالفعل بـ batch-load في الـ worktree الحالي
+- إصلاح `test_dining_router_coverage.py` (41 test، كلهم بيعدّوا الآن) — AccountingPeriod model mismatch، outlet_id مفقود من request bodies، branch membership مفقودة في kitchen tickets tests
+- مراجعة الدين التقني الكاملة في `docs/audits/TECHNICAL_DEBT_AND_COVERAGE_AUDIT.md`
+- **2333 test passed، صفر failures، coverage 86%**
+
+**السابق:** 2026-08-05 — REL-08: نشر commit `7d00917` (POS-03 + POS-03b: دعم الدفع بعملات متعددة
+للمطعم/الكافيه والشاطئ — كاش USD/EUR مع تقرير variance في نهاية الوردية، الفكة دايمًا بالجنيه).
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -14,22 +19,47 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `5df8191` |
-| آخر commit على الفرع | `f68b232` — POS-03b beach multi-currency (غير منشور على VPS بعد، جاهز للنشر) |
+| Resort OS source release (منشور) | `7d00917` |
+| آخر commit على الفرع | `7d00917df41a396242e23403973353b6a1fb516b` — POS-03b beach multi-currency (منشور ✅) |
 | Marketing source release | `79130a6` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
-| remote | فرع العمل يحتوي `e2c31af` (9 commit فوق `821a718`، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/5df8191` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/5df8191` |
+| active Resort release | `/opt/resort-os-releases/7d00917df41a396242e23403973353b6a1fb516b` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/7d00917df41a396242e23403973353b6a1fb516b` |
 | active Marketing release | `/opt/elkheima-marketing-releases/79130a6` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/79130a6` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
-| Alembic head | `52f4544e50d2` (POS-03: fx_rate على payments — صالح للمطعم والشاطئ، بدون migration إضافية) |
+| Alembic head (DB) | `52f4544e50d2` (POS-03: fx_rate على payments — مطبّق ✅) |
+
+## REL-08 — نشر 5 أغسطس 2026 (commit `7d00917`)
+
+**POS-03 + POS-03b: دعم الدفع بعملات متعددة (مطعم/كافيه + شاطئ)**
+
+**ما اتنشر:**
+- `Payment.fx_rate` عمود جديد (migration `52f4544e50d2`) — سعر الصرف وقت الدفع
+- المطعم/الكافيه: `OrderStatusUpdate`/`SplitBillPayment` بيقبلوا `payment_currency`/`payment_fx_rate`
+- الشاطئ: `BeachSellRequest` يقبل `payment_currency`/`payment_fx_rate` — الفكة دايمًا بالجنيه
+- `build_shift_end_report`: `ForeignCurrencySummary` لكل عملة أجنبية (expected/variance)
+- `POSPaymentModal.vue` + `BeachPOSView.vue`: اختيار عملة، عرض المطلوب بالأجنبية، الفكة
+- `FinanceView.vue`: tab أسعار الصرف (المدير يضيف/يشوف من الواجهة)
+- 2292 pytest passed، 95 frontend tests، type-check نظيف، build نظيف
+
+**دورة النشر (REL-08، 2026-08-05 ~17:39 Cairo):**
+- ✅ نسخة احتياطية: `resort_os_20260805_172441.dump` (584K، 1419 TOC entries — مثبّت)
+- ✅ SHA-256 أرشيف مطابق على الطرفين
+- ✅ validate_prod_env: passed
+- ✅ rollback tags: 6 خدمات مؤرشفة كـ `resort-os-rollback/<svc>:pre-7d00917...`
+- ✅ بناء الصور: backend/celery_worker/celery_beat/el_kheima — Built بنجاح
+- ✅ migration `52f4544e50d2`: applied (7b4d81dc08ee → 52f4544e50d2)
+- ✅ استبدال تدريجي: backend → celery_worker/beat → el_kheima → nginx
+- ✅ health check: `{"status":"ok","database":{"status":"ok"},"redis":{"status":"ok"}}`
+- ✅ app.elkheima.com: HTTP 200 / elkheima.com: HTTP 200
+- ✅ symlink: `/opt/resort-os-current -> /opt/resort-os-releases/7d00917...`
+- ✅ 8/8 حاويات running/healthy
 
 ## POS-03b — دعم الدفع بعملات متعددة للشاطئ (commit `f68b232`، 2026-08-05)
 
 قرار Mohamed: الشاطئ يدعم نفس الميزة + الفكة دايمًا بالجنيه.
-**غير منشور على VPS بعد — جاهز للنشر مع POS-03 (المطعم) في دفعة واحدة.**
+**منشور على VPS في REL-08 ✅**
 
 **ما اتعمل:**
 - `BeachSellRequest` يقبل `payment_currency`/`payment_fx_rate` اختياري مع validator (لو currency≠EGP بدون fx_rate → 422)

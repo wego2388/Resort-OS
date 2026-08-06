@@ -331,14 +331,14 @@ class TestFailureInjectionZeroSideEffects:
         order = make_order(db, branch, outlet, item, quantity=1)
 
         from app.modules.inventory import crud as inventory_crud
-        original_get_product = inventory_crud.get_product
+        original_get_products = inventory_crud.get_products_by_ids_any_branch
 
-        def _missing_product(db_arg, product_id):
-            if product_id == product.id:
-                return None
-            return original_get_product(db_arg, product_id)
+        def _missing_product(db_arg, product_ids):
+            result = original_get_products(db_arg, product_ids)
+            # نحاكي إن المنتج اتمسح بين الإنشاء والدفع
+            return {pid: p for pid, p in result.items() if pid != product.id}
 
-        monkeypatch.setattr(inventory_crud, "get_product", _missing_product)
+        monkeypatch.setattr(inventory_crud, "get_products_by_ids_any_branch", _missing_product)
 
         with pytest.raises(InventoryConfigurationError):
             services.update_order_status(db, order.id, "paid")
@@ -506,14 +506,14 @@ class TestFailureInjectionZeroSideEffects:
         order = make_order(db, branch, outlet, item, quantity=1)
 
         from app.modules.inventory import crud as inventory_crud
-        original_get_product = inventory_crud.get_product
+        original_get_products = inventory_crud.get_products_by_ids_any_branch
 
-        def _missing_recipe_product(db_arg, product_id):
-            if product_id == product.id:
-                return None
-            return original_get_product(db_arg, product_id)
+        def _missing_recipe_product(db_arg, product_ids):
+            result = original_get_products(db_arg, product_ids)
+            # نحاكي إن منتج الوصفة اتمسح بين الإنشاء والدفع
+            return {pid: p for pid, p in result.items() if pid != product.id}
 
-        monkeypatch.setattr(inventory_crud, "get_product", _missing_recipe_product)
+        monkeypatch.setattr(inventory_crud, "get_products_by_ids_any_branch", _missing_recipe_product)
 
         with pytest.raises(InventoryConfigurationError):
             services.update_order_status(db, order.id, "paid")

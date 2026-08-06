@@ -94,6 +94,23 @@ def get_products_by_ids(db: Session, branch_id: int, product_ids: list[int]) -> 
     )
 
 
+def get_products_by_ids_any_branch(db: Session, product_ids: list[int]) -> dict[int, Product]:
+    """جيب منتجات بدون فلتر فرع — تُستخدم في deduct_inventory_for_order
+    لما بنحتاج نتحقق من branch_id بنفسنا بعد الجلب. ترجع dict[id → Product]."""
+    if not product_ids:
+        return {}
+    rows = db.query(Product).filter(Product.id.in_(product_ids)).all()
+    return {r.id: r for r in rows}
+
+
+def get_warehouses_by_ids(db: Session, warehouse_ids: list[int]) -> dict[int, "Warehouse"]:
+    """جيب مخازن متعددة بـ query واحدة. ترجع dict[wh_id → Warehouse]."""
+    if not warehouse_ids:
+        return {}
+    rows = db.query(Warehouse).filter(Warehouse.id.in_(warehouse_ids)).all()
+    return {r.id: r for r in rows}
+
+
 def create_product(db: Session, data: ProductCreate) -> Product:
     obj = Product(**data.model_dump())
     db.add(obj)
