@@ -12,7 +12,7 @@ services:
   backend:
     environment:
       PUBLIC_SITE_URL: https://elkheima.com
-      CORS_ORIGINS: https://elkheima.com,https://www.elkheima.com,https://app.elkheima.com
+      CORS_ORIGINS: https://elkheima.com,https://www.elkheima.com,https://app.elkheima.com,https://owner.elkheima.com
       CHAT_PUBLIC_HOST_BRANCH_MAP: '{"elkheima.com":1,"www.elkheima.com":1}'
 
   celery_worker:
@@ -40,5 +40,6 @@ services:
       - "443:443"
     volumes:
       - ./deploy/nginx/edge-domain.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/owner.conf:/etc/nginx/conf.d/owner.conf:ro
       - /var/www/certbot:/var/www/certbot:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
