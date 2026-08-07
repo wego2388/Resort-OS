@@ -156,6 +156,12 @@ class PurchaseOrder(Base, TimestampMixin):
     received_at:   Mapped[date | None]     = mapped_column(Date, nullable=True)
     total_amount:  Mapped[Decimal]         = mapped_column(Numeric(12, 2), default=Decimal("0"))
     notes:         Mapped[str | None]      = mapped_column(Text, nullable=True)
+    # E-2 fix (Decision 0004): id طلب الشراء الأصلي الذي أنتج هذا الأمر
+    # عبر convert_to_purchase_order — nullable لأوامر الشراء المنشأة يدوياً
+    # أو القديمة قبل هذا التعديل.
+    source_request_id: Mapped[int | None]  = mapped_column(
+        ForeignKey("purchase_requests.id", ondelete="SET NULL"), nullable=True, index=True,
+    )
 
     supplier: Mapped["Supplier | None"] = relationship("Supplier", back_populates="purchase_orders")
     items: Mapped[list["PurchaseOrderItem"]] = relationship(

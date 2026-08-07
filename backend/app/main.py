@@ -42,7 +42,7 @@ class ChatNoStoreMiddleware(BaseHTTPMiddleware):
 _MODULE_KEYS = (
     "core", "finance", "inventory", "hr", "dining", "pms",
     "timeshare", "beach", "maintenance", "crm", "analytics", "hub", "leasing",
-    "chat",
+    "chat", "owner",
 )
 
 

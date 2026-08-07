@@ -1,11 +1,11 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-07 — POS-BEACH-01 (commit pending): فيتشر خريطة الشمسيات + الفنادق في كاشير الدايننج — إصلاح 5 مشاكل حقيقية (hotel_name mismatch، beach_location_label في الـ modal، cash presets، i18n beachMap، ShiftDashboard hotel label).
-- **50 backend tests passed، صفر failures**
-- **95 frontend tests passed، TypeScript نظيف**
-- migration جديدة: `a3f9c1d2e4b5` (b2b_contract_id + beach_location_id على dining_orders) — **لم تُطبَّق بعد على الـ VPS**
+**آخر تحديث:** 2026-08-07 — Decision 0004 Phase 3+4: Owner Intelligence Cockpit — Aggregation APIs + Owner PWA (commit pending بإذن محمد).
+- **2374 backend tests passed، صفر failures**
+- **TypeScript نظيف، owner PWA build نظيف**
+- **Alembic head:** `f8aa1f0fabba` (owner_module_phase2_and_pr_po_linkage — لا migration جديدة في Phase 3+4)
 
-**السابق:** 2026-08-06 — REL-09: نشر commit `fd105f6` (batch-load N+1 queries dining + 41 test + مراجعة دين تقني).
+**السابق:** 2026-08-07 — REL-10: POS-BEACH-01 beach map + hotel B2B dining POS (commit `427ae82` — منشور ✅)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 

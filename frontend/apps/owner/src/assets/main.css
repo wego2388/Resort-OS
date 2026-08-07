@@ -1,0 +1,219 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* DS tokens inline — نفس packages/ui/src/styles/tokens.css لكن بدون @import */
+:root {
+  --color-secondary: 201 150 60;
+  --color-success: 22 163 74;
+  --color-warning: 217 119 6;
+  --color-danger: 220 38 38;
+  --color-info: 37 99 235;
+  --color-surface: 255 255 255;
+  --color-border: 229 224 216;
+  --color-muted: 120 113 108;
+  --color-background: 249 247 244;
+  --color-dark: 28 25 23;
+  --color-light: 255 255 255;
+  --color-primary-ring: 11 79 138;
+}
+
+/*
+ * Owner PWA — Global styles
+ * Decision 0004: dark-first، mobile-first، لا light mode.
+ */
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  /* دايماً dark — مش class toggle */
+  background-color: #0A0908;
+}
+
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* تمنع الـ text selection العشوائية على موبايل */
+  -webkit-user-select: none;
+  user-select: none;
+  /* Momentum scroll على iOS */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+}
+
+/* Safe area padding للـ iPhone notch/Dynamic Island */
+.safe-top    { padding-top: env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-left   { padding-left: env(safe-area-inset-left); }
+.safe-right  { padding-right: env(safe-area-inset-right); }
+
+/*
+ * Touch targets — كل عنصر تفاعلي لازم 48×48px minimum
+ * Apple HIG + Material Design requirement
+ */
+.touch-target {
+  min-width: 48px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * Card base — shared across NowScreen & PerformanceScreen
+ */
+.owner-card {
+  background-color: #1C1B1A;
+  border: 1px solid #2C2B2A;
+  border-radius: 0.75rem;
+  padding: 1.25rem;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+  /* Lazy render للـ cards تحت الـ fold */
+  content-visibility: auto;
+  contain-intrinsic-size: 0 120px;
+}
+
+/*
+ * الرقم الكبير — A-number في كل بطاقة
+ */
+.metric-value {
+  font-size: clamp(1.75rem, 6vw, 2.5rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  /* يمنع الـ overflow على الأرقام الكبيرة */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Provisional badge
+ */
+.provisional-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 0.125rem 0.375rem;
+  border-radius: 9999px;
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #F59E0B;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+/*
+ * Sparkline SVG
+ */
+.sparkline {
+  width: 100%;
+  height: 2.5rem;
+  overflow: visible;
+}
+
+/*
+ * Bottom navigation
+ */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  background-color: #1C1B1A;
+  border-top: 1px solid #2C2B2A;
+  display: flex;
+  z-index: 50;
+}
+
+.bottom-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0.625rem 0;
+  min-height: 56px;
+  color: #A8A29E;
+  text-decoration: none;
+  transition: color 0.15s ease;
+  cursor: pointer;
+  /* touch feedback */
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bottom-nav-item.active {
+  color: #22C55E;
+}
+
+.bottom-nav-item span {
+  font-size: 0.625rem;
+  font-weight: 600;
+  margin-top: 0.25rem;
+  letter-spacing: 0.03em;
+}
+
+/*
+ * Pull-to-refresh indicator
+ */
+.ptr-indicator {
+  display: flex;
+  justify-content: center;
+  padding: 0.75rem;
+  color: #A8A29E;
+  font-size: 0.75rem;
+  transition: opacity 0.2s;
+}
+
+/*
+ * Delta badge — يوم/أسبوع/شهر مقارنة
+ */
+.delta-up   { color: #22C55E; }
+.delta-down { color: #EF4444; }
+.delta-flat { color: #A8A29E; }
+
+/*
+ * Section divider
+ */
+.section-label {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #A8A29E;
+  margin-bottom: 0.75rem;
+}
+
+/*
+ * Overdue badge
+ */
+.overdue-badge {
+  font-size: 0.625rem;
+  font-weight: 700;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  background-color: rgba(239, 68, 68, 0.15);
+  color: #EF4444;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+/*
+ * Skeleton loader
+ */
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%       { opacity: 0.8; }
+}
+
+.skeleton {
+  background-color: #2C2B2A;
+  border-radius: 0.375rem;
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}

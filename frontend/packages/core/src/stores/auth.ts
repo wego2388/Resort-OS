@@ -140,6 +140,12 @@ export const useAuthStore = defineStore('auth', () => {
     timeshare_admin: 55,
     timeshare_agent: 25,
     employee: 20,
+    // owner (Decision 0004 — 2026-08-07): المالك — قراءة عامة + كتابة
+    // محدودة لجداول owner فقط. level=10 أقل من employee=20 عمداً حتى لا
+    // يمرر أي hasRole() threshold موجود في el-kheima. الوصول الفعلي
+    // لتطبيق owner يُحدَّد بـ requiredRoles في router/index.ts الخاص به
+    // (frontend/apps/owner)، مش hasRole هنا.
+    owner: 10,
     customer: 0,
     guest: 0,
   }

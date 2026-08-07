@@ -560,6 +560,9 @@ def convert_to_purchase_order(db: Session, request_id: int, supplier_id: int) ->
         items=po_items,
     )
     po = crud.create_purchase_order(db, po_data)
+    # E-2 fix (Decision 0004 kpi-contracts.md §E-2): خزّن الـ PR الأصلي على
+    # أمر الشراء للسماح بحساب variance بين التقديري والفعلي لاحقاً.
+    po.source_request_id = request.id
     crud.update_pr_status(db, request, "converted")
     db.commit()
     db.refresh(po)

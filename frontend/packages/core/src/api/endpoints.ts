@@ -417,4 +417,13 @@ export const ENDPOINTS = {
   finance_eta: {
     invoices: '/api/v1/finance/eta/invoices',
   },
+  // Owner Intelligence Cockpit — Decision 0004, Phase 3+
+  owner: {
+    now:         '/api/v1/owner/now',
+    performance: '/api/v1/owner/performance',
+    watchlist:   '/api/v1/owner/watchlist',
+    allocationRules:      '/api/v1/owner/allocation-rules',
+    allocationRuleDraft:  '/api/v1/owner/allocation-rules/draft',
+    allocationRule:       (id: number) => `/api/v1/owner/allocation-rules/${id}`,
+  },
 }

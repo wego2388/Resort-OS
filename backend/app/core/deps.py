@@ -50,6 +50,13 @@ ROLE_LEVELS: dict[str, int] = {
     # get_timeshare_user/get_timeshare_admin_user تحت للتفاصيل الكاملة.
     "timeshare_admin": 55,
     "employee":     20,
+    # owner (Decision 0004 — 2026-08-07): دور المالك — قراءة فقط لكل
+    # المشروع + كتابة محدودة جداً (OwnerWatchlist، مسودات قواعد التوزيع).
+    # level=10 عمداً أقل من employee=20 — لا يمرر أي فحص >= N موجود في
+    # المشروع (get_waiter_user=30، get_cashier_user=40 ، get_manager_user=60...).
+    # الوصول لشاشات owner يتحقق بمطابقة اسم الدور مباشرة في get_owner_reader،
+    # مش بعتبة مستوى — نفس نمط timeshare_admin بالظبط.
+    "owner":        10,
     "customer":      0,
     "guest":         0,
 }
@@ -86,7 +93,7 @@ def settings_refresh_ttl_seconds() -> int:
 # every request from these roles is blocked until 2FA is turned on, except
 # the auth router's own endpoints (so the user can actually set it up).
 
-MANDATORY_2FA_ROLES = {"super_admin", "accountant"}
+MANDATORY_2FA_ROLES = {"super_admin", "accountant", "owner"}
 
 
 def _resolve_user_from_token(token: str, db: Session):
@@ -332,6 +339,29 @@ def get_timeshare_admin_user(user=Depends(get_current_active_user)):
     if user.role == "timeshare_admin":
         return user
     raise HTTPException(status.HTTP_403_FORBIDDEN, "يتطلب صلاحية مدير التايم شير")
+
+
+def get_owner_reader(user=Depends(get_current_active_user)):
+    """بوابة Owner Intelligence Cockpit — Decision 0004.
+
+    يقبل:
+      • role == "owner"     — المالك، وصول قراءة + كتابة محدودة لجداول owner فقط.
+      • user_level >= 100   — super_admin دايماً يعدي (Decision 0003 invariant #1).
+
+    لا يقبل أي دور آخر حتى لو مستواه الرقمي أعلى من owner=10 — الوصول
+    بمطابقة اسم الدور مباشرةً، مش بعتبة مستوى، نفس نمط get_timeshare_admin_user.
+
+    ملاحظة: لو قرار مستقبلي باستثناء super_admin من هذا السطح تحديداً،
+    يتطلب تعديل صريح في Decision 0003 أولاً — مش تعديل هنا بصمت.
+    """
+    if user_level(user) >= 100:  # super_admin — Decision 0003 invariant #1
+        return user
+    if user.role == "owner":
+        return user
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "هذه الواجهة مخصصة لحساب المالك فقط",
+    )
 
 
 def get_waiter_user(user=Depends(get_current_active_user)):
