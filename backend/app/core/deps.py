@@ -223,6 +223,21 @@ async def get_websocket_user(websocket, db: Session, min_level: int = 0):
         await websocket.close(code=4403)
         return None
 
+    # Decision 0004 — owner يُحظر صراحةً من كل WebSocket endpoints.
+    # الـ owner app لا تحتاج KDS stream أو beach live map — هي read-only
+    # analytics فقط. يُطبَّق هنا مباشرة لأن WebSocket endpoints غير موجودة
+    # في OpenAPI schema وبالتالي لا تصلها route-name allowlist check.
+    if user.role == "owner":
+        from app.modules.owner.owner_policy import OWNER_BLOCKED_WS_PATHS  # noqa: PLC0415
+        ws_path = websocket.url.path
+        # نتحقق بـ prefix matching لأن paths قد تحتوي branch_id parameter
+        for blocked in OWNER_BLOCKED_WS_PATHS:
+            # نحوّل path template إلى prefix: /dining/ws/kds/{branch_id} → /dining/ws/kds/
+            prefix = blocked.split("{")[0]
+            if ws_path.startswith(prefix) or ws_path == blocked:
+                await websocket.close(code=4403)
+                return None
+
     return user
 
 

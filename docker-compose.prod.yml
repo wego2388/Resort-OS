@@ -167,6 +167,21 @@ services:
       backend:
         condition: service_healthy
 
+  owner:
+    # Owner Intelligence Cockpit PWA — Decision 0004, Phase 4.
+    # Served from owner.elkheima.com (subdomain isolation — Decision 0004 §New
+    # engineering surface). Same Dockerfile as el-kheima — different APP_NAME.
+    # No VITE_PUBLIC_SITE_URL needed (owner app has no QR codes).
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: owner
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+
   marketing_site:
     # الموقع التسويقي الجديد — يحل محل public_site كموقع عام للدومين الرئيسي.
     # Build context: the independently versioned sibling repository.  The
@@ -203,6 +218,7 @@ services:
       - certbot_certs:/etc/letsencrypt:ro
     depends_on:
       - el_kheima
+      - owner
       - marketing_site
       - backend
 
