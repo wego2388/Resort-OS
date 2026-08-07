@@ -17,50 +17,45 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `fd105f6` |
-| آخر commit على الفرع | `fd105f6` — REL-09: dining N+1 batch-load + 41 tests + tech debt audit (منشور ✅) |
+| Resort OS source release (منشور) | `427ae82` |
+| آخر commit على الفرع | `427ae82` — REL-10: POS-BEACH-01 beach map + hotel B2B dining POS (منشور ✅) |
 | Marketing source release | `bc48f09` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/fd105f6` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/fd105f6` |
+| active Resort release | `/opt/resort-os-releases/427ae82` |
+| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/427ae82` |
 | active Marketing release | `/opt/elkheima-marketing-releases/bc48f09` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/bc48f09` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
-| Alembic head (DB) | `52f4544e50d2` (POS-03: fx_rate على payments — مطبّق ✅) |
-| migration معلّقة (لم تُطبَّق) | `a3f9c1d2e4b5` — b2b_contract_id + beach_location_id على dining_orders |
+| Alembic head (DB) | `a3f9c1d2e4b5` (b2b_contract_id + beach_location_id على dining_orders — مطبّق ✅) |
 
-## POS-BEACH-01 — في انتظار النشر (2026-08-07، commit pending)
+## REL-10 — نشر 7 أغسطس 2026 (commit `427ae82`)
 
-**فيتشر خريطة الشمسيات + الفنادق في كاشير الدايننج — إصلاحات وإضافات**
+**POS-BEACH-01: فيتشر خريطة الشمسيات + الفنادق في كاشير الدايننج + 5 إصلاحات**
 
-**ما اتعمل:**
+**ما اتنشر:**
+- `dining/models.py`: `b2b_contract_id` + `beach_location_id` على `DiningOrder`
+- `dining/api/router.py`: `_enrich_order/_enrich_order_list` — `hotel_name` + `beach_location_label` بـ 2 queries، GET `/dining/b2b-contracts`، GET `/dining/reports/hotel-consumption`
+- Migration `a3f9c1d2e4b5`: ADD COLUMN b2b_contract_id + beach_location_id + partial unique index
+- Frontend: إصلاح `hotel_name` mismatch، cash presets (50-500ج)، i18n beachMap، ShiftDashboard hotel label
+- `POSBeachMapWorkspace.vue` + `POSHotelSelector.vue`: components جديدة
+- 9 tests جديدة — 2342 backend passed، 95 frontend passed، TypeScript نظيف
 
-**Backend:**
-- `dining/models.py`: إضافة `b2b_contract_id` و`beach_location_id` على `DiningOrder`
-- `dining/schemas.py`: `OrderCreate` + `OrderRead` بيقبلوا/يرجّعوا الحقلين الجدد + `hotel_name` computed
-- `dining/api/router.py`: `_enrich_order` و`_enrich_order_list` — يحسبوا `hotel_name` و`beach_location_label` من relations بـ 2 queries (صفر N+1) + endpoint `GET /dining/b2b-contracts` + تقرير `GET /dining/reports/hotel-consumption`
-- `dining/crud.py`: `get_b2b_contracts_for_dining` + فلترة في `list_orders` بـ `b2b_contract_id`
-- `alembic/versions/a3f9c1d2e4b5_...`: migration جديدة — FK + index + partial unique index
-- `test_dining_router_coverage.py`: 9 tests جديدة (`TestHotelB2BFeature` + `TestBeachLocationFeature`) — كلها أخضر
-
-**Frontend:**
-- `types.ts`: إصلاح `b2b_hotel_name` → `hotel_name` في `ActiveOrder` و`DiningOrderDetail` (كان mismatch مع الباك إند)
-- `DiningOrderDetailModal.vue`: الهيدر يعرض `hotel_name` الصح + `beach_location_label` عبر `tableLabel` computed
-- `POSActiveOrdersWorkspace.vue`: كارت الطلب يعرض `hotel_name`
-- `ShiftDashboardView.vue`: إضافة `hotel_name` لنوع `LiveOrder` وعرضه في بطاقة كل طلب
-- `money.ts`: إصلاح cash presets — `steps` من `[50k,100k,200k,500k]` → `[5k,10k,20k,50k]` قرش (50-500 جنيه، مناسب للدايننج)
-- `ar.json` + `en.json`: إضافة `workspaceNav.beachMap` المفقود (كان يكسر i18n validation)
-- `POSBeachMapWorkspace.vue` (جديد): خريطة الشمسيات التفاعلية في الـ POS
-- `POSHotelSelector.vue` (جديد): اختيار الفندق المتعاقد من الـ cart
-
-**نتائج الاختبارات:**
-- Backend: 50 tests (dining router coverage) passed ✅ — صفر failures
-- Frontend: 95/95 tests passed ✅ — TypeScript نظيف ✅
-- Migration: `a3f9c1d2e4b5` — جاهزة للتطبيق، **لم تُطبَّق بعد على الـ VPS**
-
-**⚠️ ما ينتظر إذن Mohamed للنشر:**
-- migration `a3f9c1d2e4b5` تحتاج `alembic upgrade head` على الـ VPS
-- النشر يتبع DEPLOYMENT.md §5 المعتاد
+**دورة النشر (REL-10، 2026-08-07 ~07:25 Cairo):**
+- ✅ نسخة احتياطية: `resort_os_20260807_042156.dump` (588K، 1419 entries — مثبّت)
+- ✅ SHA-256 أرشيف مطابق على الطرفين: `4eb5f7f42e38af89e31e1b233ff48821de2cf393a38872cebbe2532e41485bbd`
+- ✅ rollback tags: 5 خدمات مؤرشفة كـ `resort-os-rollback/<svc>:pre-427ae82`
+- ✅ rollback manifest: `/var/backups/resort-os/source-releases/427ae82-rollback-images.txt`
+- ✅ validate_prod_env: passed
+- ✅ بناء الصور: backend/celery_worker/celery_beat/el_kheima — Built بنجاح
+- ✅ preflight import: `El Kheima Beach`
+- ✅ migration `a3f9c1d2e4b5`: applied (`52f4544e50d2 -> a3f9c1d2e4b5`)
+- ✅ استبدال تدريجي: backend → celery_worker/beat → el_kheima → nginx
+- ✅ health check: `{"status":"ok","database":{"status":"ok"},"redis":{"status":"ok"}}`
+- ✅ elkheima.com: HTTP 200 / www.elkheima.com: HTTP 200 / app.elkheima.com: HTTP 200
+- ✅ symlink: `/opt/resort-os-current -> /opt/resort-os-releases/427ae82`
+- ✅ Alembic current: `a3f9c1d2e4b5 (head)`
+- ✅ DB: columns `b2b_contract_id` + `beach_location_id` موجودتين في `dining_orders`
+- ✅ RestartCount=0 لكل الحاويات — لوجات نظيفة صفر ERROR/CRITICAL
 
 
 
