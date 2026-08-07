@@ -24,8 +24,11 @@ import POSCustomerModal from '../../components/dining-pos/POSCustomerModal.vue'
 import POSGuestIdentityModal from '../../components/dining-pos/POSGuestIdentityModal.vue'
 import POSPaymentModal from '../../components/dining-pos/POSPaymentModal.vue'
 import POSTablesWorkspace from '../../components/dining-pos/POSTablesWorkspace.vue'
+import POSBeachMapWorkspace from '../../components/dining-pos/POSBeachMapWorkspace.vue'
 import type {
   ActiveOrder,
+  B2BContractOption,
+  BeachLocation,
   CartLine,
   DiningCategory,
   DiningItemRow,
@@ -93,6 +96,15 @@ const selectedOrderId = ref<number | null>(null)
 const directPaymentOrder = ref<DiningOrderDetail | null>(null)
 const paymentOpen = ref(false)
 const searchInputEl = ref<InstanceType<typeof SearchInput> | null>(null)
+// ref للـ outlet select — للـ shortcut Ctrl+O
+const outletSelectEl = ref<HTMLElement | null>(null)
+
+// ── فيتشر الفنادق (2026-08-07) ─────────────────────────────────────
+const selectedContractId = ref<number | null>(null)
+
+// ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────────
+// beach_location_id المختارة لما الكاشير يفتح طلب من الخريطة
+const selectedBeachLocationId = ref<number | null>(null)
 
 const { status: wsStatus, onMessage: onWsMessage } = useResortWebSocket(ENDPOINTS.dining.tablesWs(branchId.value ?? 0))
 onWsMessage((message: any) => {
@@ -130,6 +142,11 @@ const filteredItems = computed(() => {
 })
 
 const cartContextLabel = computed(() => {
+  // شمسية/برجولة — يتحقق الأول قبل الطاولة
+  if (selectedBeachLocationId.value) {
+    // نرجع label محفوظ من وقت الاختيار
+    return beachLocationLabel.value
+  }
   if (orderType.value === 'dine_in' && selectedTableId.value) {
     const table = tables.value.find(item => item.id === selectedTableId.value)
     return table
@@ -145,6 +162,9 @@ const noteLabel = computed(() => {
   if (orderType.value === 'room_service') return t('backoffice.pos.roomNumber')
   return t('backoffice.pos.note')
 })
+
+// label محفوظ للشمسية/البرجولة المختارة — مثلاً "⛱️ شمسية 5"
+const beachLocationLabel = ref('')
 
 function localizedName(value: { name: string; name_ar: string | null }): string {
   return name(value)
@@ -341,6 +361,10 @@ function buildOrderPayload() {
     // room_service (المودال ده بس لـdine_in).
     guest_name: guestName.value.trim() || undefined,
     guest_phone: guestPhone.value.trim() || undefined,
+    // ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────
+    b2b_contract_id: selectedContractId.value || undefined,
+    // ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────
+    beach_location_id: selectedBeachLocationId.value || undefined,
     items: cart.value.map(line => ({
       item_id: line.itemId,
       variant_id: line.variantId ?? undefined,
@@ -365,6 +389,9 @@ function resetDraft() {
   mobileCartOpen.value = false
   guestName.value = ''
   guestPhone.value = ''
+  // ── فيتشر الفنادق + الشمسيات (2026-08-07) ──
+  selectedContractId.value = null
+  selectedBeachLocationId.value = null
 }
 
 async function cancelAndResetDraft(): Promise<boolean> {
@@ -395,7 +422,7 @@ async function requestClearDraft() {
 
 function validateDraft(): boolean {
   if (!hasItems.value || !selectedOutletId.value) return false
-  if (orderType.value === 'dine_in' && !selectedTableId.value) {
+  if (orderType.value === 'dine_in' && !selectedTableId.value && !selectedBeachLocationId.value) {
     toast.error(t('backoffice.pos.errors.selectTableRequired'))
     workspace.value = 'tables'
     return false
@@ -611,7 +638,9 @@ async function onOrderDetailClosed() {
 
 function openWorkspace(next: POSWorkspace) {
   workspace.value = next
-  if (next === 'active') loadActiveOrders()
+  // كلا الـ workspace 'active' و 'beach_map' يحتاجوا الطلبات النشطة محدّثة:
+  // 'active' → يعرضها مباشرة، 'beach_map' → يلوّن الشمسيات المشغولة بطلب دايننج.
+  if (next === 'active' || next === 'beach_map') loadActiveOrders()
 }
 
 function beginNewOrder() {
@@ -627,6 +656,56 @@ function selectCustomer(customer: POSCustomer) {
 function clearCustomer() {
   selectedCustomer.value = null
   customerModalOpen.value = false
+}
+
+// ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
+function onSelectHotel(contract: B2BContractOption | null) {
+  selectedContractId.value = contract?.id ?? null
+}
+
+// ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────────
+/**
+ * كاشير الدايننج ضغط على شمسية/برجولة من الخريطة —
+ * بيفتح منطقة الطلب ويضبط beach_location_id كبديل للطاولة.
+ *
+ * الشمسية مش محتاجة اسم ضيف — الـ label هو رقم الشمسية نفسه
+ * ("⛱️ شمسية 5") وده كافي كـ context للكاشير والمطبخ.
+ * لو الشمسية مشغولة بضيف شاطئ (has guest_name)، نستخدم اسمه تلقائياً.
+ */
+async function startBeachLocationOrder(location: BeachLocation) {
+  if ((hasItems.value || pendingOrderId.value !== null) && selectedBeachLocationId.value !== location.id) {
+    const accepted = await confirm({
+      title: t('backoffice.pos.tablesWorkspace.changeTableTitle'),
+      message: t('backoffice.pos.tablesWorkspace.changeTableMessage'),
+      confirmText: t('backoffice.pos.tablesWorkspace.changeTableConfirm'),
+      cancelText: t('backoffice.pos.cart.keepOrder'),
+      danger: true,
+    })
+    if (!accepted || !(await cancelAndResetDraft())) return
+  }
+
+  const ICONS: Record<string, string> = {
+    umbrella: '⛱️',
+    pergola: '🏕️',
+    sunbed: '🛋️',
+    cabana: '🏖️',
+  }
+  const icon = ICONS[location.location_type] ?? '📍'
+
+  // label واضح: "⛱️ Umbrella 5" — يظهر في الكارت بدل "طاولة"
+  beachLocationLabel.value = `${icon} ${location.location_type} ${location.number}`
+
+  selectedBeachLocationId.value = location.id
+  orderType.value = 'dine_in'
+  selectedTableId.value = null   // الشمسية بديل الطاولة
+  covers.value = Math.max(1, location.guests_count || 1)
+
+  // لو الضيف عنده اسم من تشيك-إن الشاطئ، استخدمه — وإلا اتركه فاضي
+  // (الكاشير مش مطلوب منه يدخل اسم للشمسيات، الرقم كافي)
+  guestName.value = location.guest_name ?? ''
+  guestPhone.value = location.guest_phone ?? ''
+
+  workspace.value = 'order'
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -646,6 +725,8 @@ function handleKeydown(event: KeyboardEvent) {
     if (mobileCartOpen.value) { mobileCartOpen.value = false; return }
     if (extrasModalItem.value) { extrasModalItem.value = null; return }
     if (customerModalOpen.value) { customerModalOpen.value = false; return }
+    // Escape من أي workspace غير tables → ارجع للطاولات
+    if (workspace.value !== 'tables') { workspace.value = 'tables'; return }
     return
   }
   if (isTypingTarget(event.target)) return
@@ -663,6 +744,21 @@ function handleKeydown(event: KeyboardEvent) {
   if (event.key === 'Enter' && event.ctrlKey && hasItems.value) {
     event.preventDefault()
     sendOrderToKitchen()
+    return
+  }
+  // ── Shortcuts جديدة (2026-08-07) ────────────────────────────────
+  // Alt+1..4 = تبديل الـ workspace
+  if (event.altKey && !event.ctrlKey && !event.shiftKey) {
+    if (event.key === '1') { event.preventDefault(); openWorkspace('tables'); return }
+    if (event.key === '2') { event.preventDefault(); beginNewOrder(); return }
+    if (event.key === '3') { event.preventDefault(); openWorkspace('active'); return }
+    if (event.key === '4') { event.preventDefault(); openWorkspace('beach_map'); return }
+    // Alt+O = focus على الـ outlet select
+    if (event.key === 'o' || event.key === 'O') {
+      event.preventDefault()
+      outletSelectEl.value?.querySelector<HTMLElement>('button, select, [role="combobox"]')?.focus()
+      return
+    }
   }
 }
 
@@ -699,7 +795,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
     </div>
 
     <header class="bg-white dark:bg-surface border-b border-stone-200 dark:border-border px-3 lg:px-4 py-2.5 flex items-center gap-3 flex-shrink-0 shadow-sm">
-      <div class="w-44 lg:w-56 flex-shrink-0">
+      <div class="w-44 lg:w-56 flex-shrink-0" ref="outletSelectEl">
         <AppSelect
           :model-value="selectedOutletId ?? ''"
           :options="outletOptions"
@@ -747,6 +843,18 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           <span>{{ t('backoffice.pos.workspaceNav.active') }}</span>
           <AppBadge v-if="activeOrders.length" variant="info" size="sm">{{ activeOrders.length }}</AppBadge>
         </button>
+        <button
+          type="button"
+          :aria-current="workspace === 'beach_map' ? 'page' : undefined"
+          :class="[
+            'min-h-[46px] px-3 rounded-xl font-bold text-sm whitespace-nowrap flex items-center gap-2 transition-colors',
+            workspace === 'beach_map' ? 'bg-primary-700 text-white' : 'text-gray-700 dark:text-gray-300 hover:bg-stone-100 dark:hover:bg-gray-800',
+          ]"
+          @click="openWorkspace('beach_map')"
+        >
+          <span aria-hidden="true">⛱️</span>
+          <span>{{ t('backoffice.pos.workspaceNav.beachMap') }}</span>
+        </button>
       </nav>
 
       <div class="ms-auto flex items-center gap-2 flex-shrink-0">
@@ -782,6 +890,15 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
         :initial-outlet-id="selectedOutletId"
         @open="openOrder"
         @refresh="loadActiveOrders"
+      />
+
+      <!-- ── فيتشر خريطة الشمسيات (2026-08-07) ─────────────────────── -->
+      <POSBeachMapWorkspace
+        v-else-if="workspace === 'beach_map'"
+        :branch-id="branchId"
+        :active-orders="activeOrders"
+        @start-order="startBeachLocationOrder"
+        @open-order="openOrder"
       />
 
       <div v-else class="pos-order-grid h-full min-h-0">
@@ -898,6 +1015,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           :applying-discount="applyingDiscount"
           :discount-error="discountError"
           :online="isOnline"
+          :branch-id="branchId"
+          :selected-contract-id="selectedContractId"
           @update:covers="covers = $event"
           @update:note="extraNote = $event"
           @quantity="adjustQuantity"
@@ -905,6 +1024,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           @clear="requestClearDraft"
           @discount="applyDiscountToCart"
           @customer="customerModalOpen = true"
+          @select-hotel="onSelectHotel"
           @send="sendOrderToKitchen"
           @pay="openDirectPayment"
         />
@@ -947,6 +1067,8 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 :applying-discount="applyingDiscount"
                 :discount-error="discountError"
                 :online="isOnline"
+                :branch-id="branchId"
+                :selected-contract-id="selectedContractId"
                 @update:covers="covers = $event"
                 @update:note="extraNote = $event"
                 @quantity="adjustQuantity"
@@ -954,6 +1076,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
                 @clear="requestClearDraft"
                 @discount="applyDiscountToCart"
                 @customer="customerModalOpen = true"
+                @select-hotel="onSelectHotel"
                 @send="sendOrderToKitchen"
                 @pay="openDirectPayment"
               />

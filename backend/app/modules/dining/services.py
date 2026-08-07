@@ -712,6 +712,8 @@ def create_order(
             guest_name=data.guest_name,
             guest_phone=data.guest_phone,
             client_local_id=client_local_id,
+            b2b_contract_id=getattr(data, "b2b_contract_id", None),
+            beach_location_id=getattr(data, "beach_location_id", None),
         )
     except IntegrityError as exc:
         db.rollback()

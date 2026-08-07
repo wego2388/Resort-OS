@@ -1,13 +1,11 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحقق:** 2026-08-06 — REL-09: نشر commit `fd105f6` (batch-load N+1 queries dining + 41 test جديدة + مراجعة دين تقني). جولة مراجعة شاملة (Claude) + إصلاح اختبارات dining router coverage:
-- N+1 queries في dining/services.py كانت اتصلحت بالفعل بـ batch-load في الـ worktree الحالي
-- إصلاح `test_dining_router_coverage.py` (41 test، كلهم بيعدّوا الآن) — AccountingPeriod model mismatch، outlet_id مفقود من request bodies، branch membership مفقودة في kitchen tickets tests
-- مراجعة الدين التقني الكاملة في `docs/audits/TECHNICAL_DEBT_AND_COVERAGE_AUDIT.md`
-- **2333 test passed، صفر failures، coverage 86%**
+**آخر تحديث:** 2026-08-07 — POS-BEACH-01 (commit pending): فيتشر خريطة الشمسيات + الفنادق في كاشير الدايننج — إصلاح 5 مشاكل حقيقية (hotel_name mismatch، beach_location_label في الـ modal، cash presets، i18n beachMap، ShiftDashboard hotel label).
+- **50 backend tests passed، صفر failures**
+- **95 frontend tests passed، TypeScript نظيف**
+- migration جديدة: `a3f9c1d2e4b5` (b2b_contract_id + beach_location_id على dining_orders) — **لم تُطبَّق بعد على الـ VPS**
 
-**السابق:** 2026-08-05 — REL-08: نشر commit `7d00917` (POS-03 + POS-03b: دعم الدفع بعملات متعددة
-للمطعم/الكافيه والشاطئ — كاش USD/EUR مع تقرير variance في نهاية الوردية، الفكة دايمًا بالجنيه).
+**السابق:** 2026-08-06 — REL-09: نشر commit `fd105f6` (batch-load N+1 queries dining + 41 test + مراجعة دين تقني).
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
@@ -21,16 +19,50 @@
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
 | Resort OS source release (منشور) | `fd105f6` |
 | آخر commit على الفرع | `fd105f6` — REL-09: dining N+1 batch-load + 41 tests + tech debt audit (منشور ✅) |
-| Marketing source release | `79130a6` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
+| Marketing source release | `bc48f09` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
 | active Resort release | `/opt/resort-os-releases/fd105f6` |
 | Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/fd105f6` |
-| active Marketing release | `/opt/elkheima-marketing-releases/79130a6` |
-| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/79130a6` |
+| active Marketing release | `/opt/elkheima-marketing-releases/bc48f09` |
+| Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/bc48f09` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
 | Alembic head (DB) | `52f4544e50d2` (POS-03: fx_rate على payments — مطبّق ✅) |
+| migration معلّقة (لم تُطبَّق) | `a3f9c1d2e4b5` — b2b_contract_id + beach_location_id على dining_orders |
 
-## REL-09 — نشر 6 أغسطس 2026 (commit `fd105f6`)
+## POS-BEACH-01 — في انتظار النشر (2026-08-07، commit pending)
+
+**فيتشر خريطة الشمسيات + الفنادق في كاشير الدايننج — إصلاحات وإضافات**
+
+**ما اتعمل:**
+
+**Backend:**
+- `dining/models.py`: إضافة `b2b_contract_id` و`beach_location_id` على `DiningOrder`
+- `dining/schemas.py`: `OrderCreate` + `OrderRead` بيقبلوا/يرجّعوا الحقلين الجدد + `hotel_name` computed
+- `dining/api/router.py`: `_enrich_order` و`_enrich_order_list` — يحسبوا `hotel_name` و`beach_location_label` من relations بـ 2 queries (صفر N+1) + endpoint `GET /dining/b2b-contracts` + تقرير `GET /dining/reports/hotel-consumption`
+- `dining/crud.py`: `get_b2b_contracts_for_dining` + فلترة في `list_orders` بـ `b2b_contract_id`
+- `alembic/versions/a3f9c1d2e4b5_...`: migration جديدة — FK + index + partial unique index
+- `test_dining_router_coverage.py`: 9 tests جديدة (`TestHotelB2BFeature` + `TestBeachLocationFeature`) — كلها أخضر
+
+**Frontend:**
+- `types.ts`: إصلاح `b2b_hotel_name` → `hotel_name` في `ActiveOrder` و`DiningOrderDetail` (كان mismatch مع الباك إند)
+- `DiningOrderDetailModal.vue`: الهيدر يعرض `hotel_name` الصح + `beach_location_label` عبر `tableLabel` computed
+- `POSActiveOrdersWorkspace.vue`: كارت الطلب يعرض `hotel_name`
+- `ShiftDashboardView.vue`: إضافة `hotel_name` لنوع `LiveOrder` وعرضه في بطاقة كل طلب
+- `money.ts`: إصلاح cash presets — `steps` من `[50k,100k,200k,500k]` → `[5k,10k,20k,50k]` قرش (50-500 جنيه، مناسب للدايننج)
+- `ar.json` + `en.json`: إضافة `workspaceNav.beachMap` المفقود (كان يكسر i18n validation)
+- `POSBeachMapWorkspace.vue` (جديد): خريطة الشمسيات التفاعلية في الـ POS
+- `POSHotelSelector.vue` (جديد): اختيار الفندق المتعاقد من الـ cart
+
+**نتائج الاختبارات:**
+- Backend: 50 tests (dining router coverage) passed ✅ — صفر failures
+- Frontend: 95/95 tests passed ✅ — TypeScript نظيف ✅
+- Migration: `a3f9c1d2e4b5` — جاهزة للتطبيق، **لم تُطبَّق بعد على الـ VPS**
+
+**⚠️ ما ينتظر إذن Mohamed للنشر:**
+- migration `a3f9c1d2e4b5` تحتاج `alembic upgrade head` على الـ VPS
+- النشر يتبع DEPLOYMENT.md §5 المعتاد
+
+
 
 **dining N+1 batch-load + 41 test جديدة + مراجعة دين تقني**
 

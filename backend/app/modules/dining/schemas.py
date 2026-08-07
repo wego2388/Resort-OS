@@ -360,6 +360,12 @@ class OrderCreate(BaseModel):
     # الراوتر بيملأهم من GuestSession.guest_name/guest_phone تلقائيًا.
     guest_name:   Optional[str] = Field(None, max_length=100)
     guest_phone:  Optional[str] = Field(None, max_length=30)
+    # ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
+    # اختياري — الكاشير/الويتر يختار الفندق المتعاقد لو الضيف من فندق.
+    b2b_contract_id:   Optional[int] = None
+    # ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────────
+    # اختياري — بديل table_id لما الطلب من شمسية/برجولة مش طاولة مطعم.
+    beach_location_id: Optional[int] = None
 
 
 class OrderItemVoidRequest(BaseModel):
@@ -431,6 +437,12 @@ class OrderRead(BaseModel):
     customer_id:                Optional[int]
     guest_name:                 Optional[str] = None
     guest_phone:                Optional[str] = None
+    # ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
+    b2b_contract_id:            Optional[int] = None
+    hotel_name:                 Optional[str] = None   # snapshot من b2b_contracts.hotel_name
+    # ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────────
+    beach_location_id:          Optional[int] = None
+    beach_location_label:       Optional[str] = None   # مثال: "⛱️ شمسية 5" — بيتحسب في الراوتر
     items:                      list[OrderItemRead] = []
     created_at:                 datetime
     updated_at:                 datetime
@@ -796,3 +808,44 @@ class OutletSalesReport(BaseModel):
     avg_order_value:  float
     payment_breakdown: dict[str, PaymentBreakdownItem] = Field(default_factory=dict)
     top_items:        list[TopSalesItem] = Field(default_factory=list)
+
+
+# ── Hotel (B2B) Consumption Report (2026-08-07) ──────────────────────────────
+
+class HotelOutletBreakdown(BaseModel):
+    """إيراد منفذ واحد (مطعم أو كافيه) لفندق محدد."""
+    outlet_id:    int
+    outlet_name:  str
+    outlet_type:  str
+    orders_count: int
+    revenue:      Decimal
+
+
+class HotelConsumptionRow(BaseModel):
+    """صف واحد في تقرير استهلاك الفنادق — فندق × فترة."""
+    contract_id:        int
+    hotel_name:         str
+    hotel_name_ar:      Optional[str] = None
+    # إجماليات
+    total_orders:       int
+    total_guests:       int           # مجموع guests_count على الطلبات
+    total_revenue:      Decimal
+    # مقارنة بقيمة العقد (entry_price × daily_quota × أيام الفترة)
+    # nullable لأن daily_quota/entry_price حقول الشاطئ مش الدايننج —
+    # بس بيديك فكرة: "الفندق ده بيكسبني ولا لا؟"
+    contract_daily_quota:    int
+    contract_entry_price:    Decimal
+    # تفصيل لكل منفذ (مطعم/كافيه) بشكل منفصل
+    by_outlet: list[HotelOutletBreakdown] = Field(default_factory=list)
+
+
+class HotelConsumptionReport(BaseModel):
+    """GET /dining/reports/hotel-consumption — تقرير استهلاك الفنادق."""
+    from_date:   date
+    to_date:     date
+    branch_id:   int
+    hotels:      list[HotelConsumptionRow] = Field(default_factory=list)
+    # إجمالي كل الفنادق معًا
+    grand_total_orders:  int
+    grand_total_guests:  int
+    grand_total_revenue: Decimal

@@ -75,6 +75,10 @@ const statusMap = computed(() => ({
 
 const tableLabel = computed(() => {
   if (!order.value) return ''
+  // شمسية/برجولة — أولوية قبل table_id
+  if (order.value.beach_location_id != null) {
+    return order.value.beach_location_label ?? `⛱️ #${order.value.beach_location_id}`
+  }
   if (!order.value.table_id) {
     const key = {
       dine_in: 'dineIn',
@@ -404,6 +408,9 @@ function paymentMethodLabel(method: string): string {
           <div>
             <div class="text-2xl font-black">{{ order.order_number }}</div>
             <div class="text-primary-100 font-semibold mt-1">{{ tableLabel }}</div>
+            <div v-if="order.hotel_name" class="text-primary-200 text-sm font-semibold mt-1">
+              🏨 {{ order.hotel_name }}
+            </div>
             <div v-if="order.guest_name" class="text-white font-bold mt-1">
               👤 {{ order.guest_name }}<span v-if="order.guest_phone" class="text-primary-200 font-semibold"> · {{ order.guest_phone }}</span>
             </div>

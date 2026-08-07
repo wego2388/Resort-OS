@@ -88,7 +88,7 @@ async function loadReport() {
 // واحد (/dining/orders) مجمّع حسب outlet_id فعليًا بدل موديول ثابت في
 // الكود، عشان يفضل يشتغل صح لأي outlet_type يتضاف مستقبلاً من غير تعديل
 // هنا (pagination كامل، status واحد لكل نداء — نفس نمط UnifiedPOSView) ──
-interface LiveOrder { id: number; order_number: string; status: string; table_id: number | null; order_type: string; total: number | string; outlet_id: number }
+interface LiveOrder { id: number; order_number: string; status: string; table_id: number | null; order_type: string; total: number | string; outlet_id: number; beach_location_id: number | null; beach_location_label: string | null; hotel_name: string | null }
 interface Outlet { id: number; name: string; name_ar: string | null }
 const outletsById = ref<Record<number, Outlet>>({})
 const ordersByOutlet = ref<{ outlet: Outlet; orders: LiveOrder[] }[]>([])
@@ -155,6 +155,7 @@ const STATUS_LABEL = computed<Record<string, string>>(() => ({
 const STATUS_VARIANT: Record<string, 'success' | 'warning' | 'info'> = { open: 'info', in_kitchen: 'warning', served: 'success' }
 
 function orderLabel(o: LiveOrder): string {
+  if (o.beach_location_id != null) return o.beach_location_label ?? `⛱️ #${o.beach_location_id}`
   return o.table_id ? t('backoffice.shiftDashboard.tableNumber', { number: o.table_id }) : t('backoffice.shiftDashboard.takeaway')
 }
 
@@ -395,6 +396,7 @@ onMounted(async () => {
                 <div class="flex-1 min-w-0">
                   <span class="text-sm font-semibold text-gray-800 dark:text-gray-200">{{ o.order_number }}</span>
                   <span class="text-xs text-gray-400 ms-2">{{ orderLabel(o) }}</span>
+                  <span v-if="o.hotel_name" class="text-xs font-semibold text-blue-700 dark:text-blue-300 ms-2">🏨 {{ o.hotel_name }}</span>
                 </div>
                 <div class="flex items-center gap-2 flex-shrink-0">
                   <span class="text-sm font-bold text-blue-700 dark:text-blue-300">{{ formatMoney(o.total, 'EGP') }}</span>

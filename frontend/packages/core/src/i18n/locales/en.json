@@ -4066,7 +4066,8 @@
         "tables": "Tables",
         "order": "New order",
         "active": "Active orders",
-        "live": "Live"
+        "live": "Live",
+        "beachMap": "Beach map"
       },
       "tablesWorkspace": {
         "title": "Table map",

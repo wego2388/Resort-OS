@@ -435,6 +435,22 @@ class DiningOrder(Base, TimestampMixin):
                 "('held','open','in_kitchen','served')"
             ),
         ),
+        # فيتشر خريطة الشمسيات (2026-08-07): نفس منطق uq_active_order_per_table
+        # بالظبط — طلب واحد نشط لكل موقع شاطئ. beach_location_id NULL مستبعد
+        # (الطلبات العادية من طاولات مالهاش موقع شاطئ).
+        Index(
+            "uq_active_order_per_beach_location",
+            "beach_location_id",
+            unique=True,
+            postgresql_where=text(
+                "beach_location_id IS NOT NULL AND status IN "
+                "('held','open','in_kitchen','served')"
+            ),
+            sqlite_where=text(
+                "beach_location_id IS NOT NULL AND status IN "
+                "('held','open','in_kitchen','served')"
+            ),
+        ),
     )
 
     id:                       Mapped[int]         = mapped_column(primary_key=True)
@@ -492,6 +508,26 @@ class DiningOrder(Base, TimestampMixin):
     guest_phone:               Mapped[str | None] = mapped_column(EncryptedString(255), nullable=True)
     legacy_module: Mapped[str | None] = mapped_column(String(20), nullable=True)
     legacy_id:     Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # ── فيتشر الفنادق (2026-08-07، طلب Mohamed) ──────────────────────────
+    # ربط الطلب بالفندق المتعاقد (b2b_contracts) — nullable، معظم الطلبات
+    # عادية بدون فندق. الكاشير/الويتر بيختار الفندق اختياريًا وقت الطلب.
+    # استخدام b2b_contracts نفسها (مش جدول جديد) لأن الفنادق المتعاقدة مع
+    # الشاطئ هي نفسها المتعاقدة مع المطعم/الكافيه في هذا المنتجع.
+    b2b_contract_id: Mapped[int | None] = mapped_column(
+        ForeignKey("b2b_contracts.id", ondelete="SET NULL", name="fk_dining_orders_b2b_contract_id"),
+        nullable=True, index=True,
+    )
+
+    # ── فيتشر خريطة الشمسيات (2026-08-07، طلب Mohamed) ──────────────────
+    # ربط الطلب بموقع شاطئ فعلي (شمسية/برجولة) — nullable، معظم الطلبات من
+    # طاولات عادية. لما كاشير الدايننج بيختار شمسية من الخريطة بدل طاولة،
+    # beach_location_id بيتسجّل هنا والـ table_id بيفضل NULL.
+    # SET NULL عند حذف الموقع — الطلب التاريخي لا يتأثر.
+    beach_location_id: Mapped[int | None] = mapped_column(
+        ForeignKey("beach_locations.id", ondelete="SET NULL", name="fk_dining_orders_beach_location_id"),
+        nullable=True, index=True,
+    )
 
     outlet: Mapped["Outlet"]      = relationship("Outlet")
     table:  Mapped["VenueTable"] = relationship("VenueTable", lazy="select")

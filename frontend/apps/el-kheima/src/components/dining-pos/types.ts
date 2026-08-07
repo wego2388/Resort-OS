@@ -2,7 +2,7 @@ import type { DiningExtrasItem } from '../DiningExtrasModal.vue'
 
 export type OrderType = 'dine_in' | 'takeaway' | 'delivery' | 'room_service'
 export type PaymentMethod = 'cash' | 'card' | 'room' | 'wallet'
-export type POSWorkspace = 'tables' | 'order' | 'active'
+export type POSWorkspace = 'tables' | 'order' | 'active' | 'beach_map'
 
 export interface DiningOutlet {
   id: number
@@ -74,6 +74,14 @@ export interface ActiveOrder {
   // هوية الضيف (2026-08-03) — راجع VenueTable.active_order_guest_name
   guest_name: string | null
   guest_phone: string | null
+  // ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────
+  beach_location_id: number | null
+  // computed في الـ backend بـ _enrich_order_list — مثلاً "⛱️ Umbrella 5"
+  beach_location_label: string | null
+  // ── فيتشر الفنادق (2026-08-07) — اسم الفندق/العقد في كارت الطلبات النشطة
+  // الباك إند يرجّع hotel_name (لا b2b_hotel_name) — راجع OrderRead.hotel_name
+  b2b_contract_id: number | null
+  hotel_name: string | null
 }
 
 export interface POSCustomer {
@@ -128,9 +136,16 @@ export interface DiningOrderDetail {
   refunded_amount: number | string
   total: number | string
   customer_id: number | null
-  // هوية الضيف (2026-08-03) — راجع VenueTable.active_order_guest_name
+  // هوية الضيف (2026-08-03)
   guest_name: string | null
   guest_phone: string | null
+  // ── فيتشر خريطة الشمسيات (2026-08-07) ──────────────────────────
+  beach_location_id: number | null
+  beach_location_label: string | null
+  // ── فيتشر الفنادق (2026-08-07) ───────────────────────────────────
+  // الباك إند يرجّع hotel_name (لا b2b_hotel_name) — راجع OrderRead.hotel_name
+  b2b_contract_id: number | null
+  hotel_name: string | null
   items: OrderItem[]
 }
 
@@ -140,4 +155,25 @@ export interface CheckedInRoom {
   guestName: string
   bookingNumber: string
   checkOut: string
+}
+
+// ── فيتشر الفنادق (2026-08-07) ───────────────────────────────────────
+export interface B2BContractOption {
+  id: number
+  hotel_name: string
+  hotel_name_ar: string | null
+}
+
+// ── فيتشر خريطة الشمسيات (2026-08-07) ───────────────────────────────
+export interface BeachLocation {
+  id: number
+  location_type: string   // umbrella|pergola|sunbed|cabana
+  number: string
+  status: string          // available|occupied|out_of_service
+  grid_row: number
+  grid_col: number
+  guest_name: string | null
+  guest_phone: string | null
+  guests_count: number
+  current_transaction_id: number | null
 }

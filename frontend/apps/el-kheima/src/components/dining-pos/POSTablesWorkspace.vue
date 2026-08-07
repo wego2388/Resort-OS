@@ -63,7 +63,13 @@ const groupedTables = computed(() => {
     if (!groups.has(section)) groups.set(section, [])
     groups.get(section)!.push(table)
   }
-  return [...groups.entries()].map(([section, tables]) => ({ section, tables }))
+  return [...groups.entries()].map(([section, tables]) => ({
+    section,
+    // ترتيب رقمي طبيعي: "طاولة 2" قبل "طاولة 10"
+    tables: [...tables].sort((a, b) =>
+      a.table_number.localeCompare(b.table_number, undefined, { numeric: true, sensitivity: 'base' }),
+    ),
+  }))
 })
 
 function outletName(id: number | null): string {

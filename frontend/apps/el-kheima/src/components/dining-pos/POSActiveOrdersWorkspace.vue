@@ -72,6 +72,10 @@ function outletName(outletId: number): string {
 }
 
 function tableLabel(order: ActiveOrder): string {
+  // شمسية/برجولة — يتحقق الأول
+  if (order.beach_location_id != null) {
+    return order.beach_location_label ?? `⛱️ #${order.beach_location_id}`
+  }
   if (!order.table_id) return t(`backoffice.pos.orderTypes.${orderTypeKey(order.order_type)}`)
   const table = props.tables.find(item => item.id === order.table_id)
   return table
@@ -205,6 +209,11 @@ function orderUrgencyClass(order: { status: string; created_at: string }): strin
                 <div class="text-sm font-semibold text-gray-600 dark:text-gray-300 mt-1">{{ tableLabel(order) }}</div>
                 <div v-if="order.guest_name" class="text-sm font-black text-gray-900 dark:text-gray-100 mt-0.5 truncate">
                   👤 {{ order.guest_name }}
+                </div>
+                <!-- ── فيتشر الفنادق (2026-08-07): اسم الفندق في كارت الطلب ── -->
+                <div v-if="order.hotel_name" class="text-xs font-semibold text-blue-700 dark:text-blue-300 mt-0.5 truncate flex items-center gap-1">
+                  <span aria-hidden="true">🏨</span>
+                  <span>{{ order.hotel_name }}</span>
                 </div>
               </div>
               <AppBadge :variant="statusVariant(order.status)">{{ statusLabel(order.status) }}</AppBadge>

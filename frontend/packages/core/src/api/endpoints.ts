@@ -74,6 +74,7 @@ export const ENDPOINTS = {
     locationUpdate: (id: number) => `/api/v1/beach/locations/${id}`,
     locationCheckin: (id: number) => `/api/v1/beach/locations/${id}/checkin`,
     locationCheckout: (id: number) => `/api/v1/beach/locations/${id}/checkout`,
+    mapWs: (branchId: number) => `/api/v1/beach/ws/map/${branchId}`,
   },
   // Unified dining module — replaced the old separate restaurant:/cafe:
   // blocks entirely (DINING_CUTOVER_PLAN.md Batch 6, 2026-07-13). outlet_id-
@@ -123,6 +124,9 @@ export const ENDPOINTS = {
     salesReport: (outletId: number) => `/api/v1/dining/outlets/${outletId}/reports/sales`,
     foodCostReport: (outletId: number) => `/api/v1/dining/outlets/${outletId}/reports/food-cost`,
     foodCostReportAll: '/api/v1/dining/reports/food-cost',
+    // ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────
+    b2bContracts: '/api/v1/dining/b2b-contracts',
+    hotelConsumptionReport: '/api/v1/dining/reports/hotel-consumption',
   },
   finance: {
     // WebSocket — بث لحظي لمدير+ لما دفعة ترتبط بوردية مفتوحة (بيع شاطئ

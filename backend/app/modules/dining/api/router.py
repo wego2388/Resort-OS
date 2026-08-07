@@ -46,6 +46,7 @@ from app.modules.dining.schemas import (
     PublicMenuCategoryRead, PublicMenuItemRead, PublicMenuResponse,
     PublicOutletRead,
     OutletSalesReport,
+    HotelConsumptionReport, HotelConsumptionRow, HotelOutletBreakdown,
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
@@ -73,6 +74,83 @@ def _assert_order_branch(db, user, order_id: int, action_desc: str):
     except PermissionError as exc:
         raise HTTPException(status.HTTP_403_FORBIDDEN, str(exc))
     return order
+
+
+def _enrich_order(db, order: "DiningOrder") -> "OrderRead":
+    """يحسب hotel_name وbeach_location_label لطلب واحد ثم يبني OrderRead.
+
+    للقوائم استخدم _enrich_order_list بدلاً منها لتجنب N+1 queries.
+    """
+    from app.modules.beach.models import B2BContract, BeachLocation  # noqa: PLC0415
+
+    LOCATION_TYPE_ICONS = {
+        "umbrella": "⛱️",
+        "pergola": "🏕️",
+        "sunbed": "🛋️",
+        "cabana": "🏖️",
+    }
+
+    hotel_name: Optional[str] = None
+    beach_location_label: Optional[str] = None
+
+    if order.b2b_contract_id:
+        contract = db.query(B2BContract).filter(B2BContract.id == order.b2b_contract_id).first()
+        if contract:
+            hotel_name = contract.hotel_name
+
+    if order.beach_location_id:
+        location = db.query(BeachLocation).filter(BeachLocation.id == order.beach_location_id).first()
+        if location:
+            icon = LOCATION_TYPE_ICONS.get(location.location_type, "📍")
+            beach_location_label = f"{icon} {location.location_type.capitalize()} {location.number}"
+
+    validated = OrderRead.model_validate(order)
+    validated.hotel_name = hotel_name
+    validated.beach_location_label = beach_location_label
+    return validated
+
+
+def _enrich_order_list(db, orders: list["DiningOrder"]) -> list["OrderRead"]:
+    """يحسب hotel_name وbeach_location_label لقائمة طلبات بـ 2 queries فقط.
+
+    بدلاً من N+1 queries (query لكل طلب)، بيجمع كل الـ IDs المطلوبة
+    ويعمل query واحدة لكل نوع (B2BContract وBeachLocation)، ثم يوزّعها.
+    """
+    from app.modules.beach.models import B2BContract, BeachLocation  # noqa: PLC0415
+
+    LOCATION_TYPE_ICONS = {
+        "umbrella": "⛱️",
+        "pergola": "🏕️",
+        "sunbed": "🛋️",
+        "cabana": "🏖️",
+    }
+
+    if not orders:
+        return []
+
+    # جمع الـ IDs الفريدة
+    contract_ids = {o.b2b_contract_id for o in orders if o.b2b_contract_id}
+    location_ids = {o.beach_location_id for o in orders if o.beach_location_id}
+
+    # query واحدة لكل نوع
+    contracts_map: dict[int, str] = {}
+    if contract_ids:
+        for c in db.query(B2BContract).filter(B2BContract.id.in_(contract_ids)).all():
+            contracts_map[c.id] = c.hotel_name
+
+    locations_map: dict[int, str] = {}
+    if location_ids:
+        for loc in db.query(BeachLocation).filter(BeachLocation.id.in_(location_ids)).all():
+            icon = LOCATION_TYPE_ICONS.get(loc.location_type, "📍")
+            locations_map[loc.id] = f"{icon} {loc.location_type.capitalize()} {loc.number}"
+
+    result = []
+    for order in orders:
+        validated = OrderRead.model_validate(order)
+        validated.hotel_name = contracts_map.get(order.b2b_contract_id) if order.b2b_contract_id else None
+        validated.beach_location_label = locations_map.get(order.beach_location_id) if order.beach_location_id else None
+        result.append(validated)
+    return result
 
 
 # ── WebSocket KDS Manager ──────────────────────────────────────────────
@@ -509,7 +587,7 @@ def list_orders(
     items, total = crud.list_orders(db, branch_id, outlet_id, status_filter, order_date,
                                     (page - 1) * size, size)
     return PaginatedResponse(total=total, page=page, size=size,
-                             items=[OrderRead.model_validate(o) for o in items])
+                             items=_enrich_order_list(db, items))
 
 
 @router.post("/dining/outlets/{outlet_id}/orders", response_model=OrderRead,
@@ -577,7 +655,7 @@ def sync_offline_order(outlet_id: int, data: OrderSyncRequest, db: DbDep, user=D
 @router.get("/dining/orders/{order_id}", response_model=OrderRead)
 def get_order(order_id: int, db: DbDep, user=Depends(get_current_active_user)):
     order = _assert_order_branch(db, user, order_id, "عرض هذا الطلب")
-    return OrderRead.model_validate(order)
+    return _enrich_order(db, order)
 
 
 @router.patch("/dining/orders/{order_id}/status", response_model=OrderRead)
@@ -1357,3 +1435,87 @@ def get_guest_order_status(
         )
     except ValueError as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+
+# ── Hotel Consumption Report (2026-08-07) ─────────────────────────────────────
+
+@router.get(
+    "/dining/reports/hotel-consumption",
+    response_model=HotelConsumptionReport,
+    summary="تقرير استهلاك الفنادق المتعاقدة — مطعم/كافيه منفصلين",
+)
+def hotel_consumption_report(
+    db: DbDep,
+    _=Depends(get_manager_user),
+    branch_id: int = Query(...),
+    from_date: date = Query(...),
+    to_date: date = Query(...),
+    contract_id: Optional[int] = Query(None, description="فلترة لفندق واحد بالاختياري"),
+):
+    """تقرير إيرادات الفنادق المتعاقدة من المطعم والكافيه.
+
+    لكل فندق يعرض:
+    - إجمالي الطلبات، عدد الضيوف، الإيراد
+    - تفصيل لكل منفذ (مطعم/كافيه) بشكل منفصل
+    - بيانات العقد (daily_quota + entry_price) للمقارنة
+
+    يتطلب مستوى مدير+.
+    """
+    if from_date > to_date:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "from_date لازم يكون قبل to_date")
+
+    rows = crud.get_hotel_consumption(db, branch_id, from_date, to_date, contract_id)
+
+    from decimal import Decimal as D
+    hotels = [
+        HotelConsumptionRow(
+            contract_id=r["contract_id"],
+            hotel_name=r["hotel_name"],
+            hotel_name_ar=r["hotel_name_ar"],
+            total_orders=r["total_orders"],
+            total_guests=r["total_guests"],
+            total_revenue=r["total_revenue"],
+            contract_daily_quota=r["contract_daily_quota"],
+            contract_entry_price=r["contract_entry_price"],
+            by_outlet=[
+                HotelOutletBreakdown(**outlet_row)
+                for outlet_row in r["by_outlet"]
+            ],
+        )
+        for r in rows
+    ]
+
+    grand_total_orders = sum(h.total_orders for h in hotels)
+    grand_total_guests = sum(h.total_guests for h in hotels)
+    grand_total_revenue = sum(h.total_revenue for h in hotels) if hotels else D("0")
+
+    return HotelConsumptionReport(
+        from_date=from_date,
+        to_date=to_date,
+        branch_id=branch_id,
+        hotels=hotels,
+        grand_total_orders=grand_total_orders,
+        grand_total_guests=grand_total_guests,
+        grand_total_revenue=grand_total_revenue,
+    )
+
+
+@router.get(
+    "/dining/b2b-contracts",
+    summary="قائمة الفنادق المتعاقدة — للكاشير/الويتر عند اختيار الفندق على الطلب",
+)
+def list_b2b_contracts_for_dining(
+    db: DbDep,
+    _=Depends(get_waiter_user),
+    branch_id: int = Query(...),
+):
+    """قائمة مختصرة للفنادق المتعاقدة النشطة — تُستخدم في dropdown الكاشير/الويتر.
+    يستخدم beach.crud مباشرة لأن b2b_contracts جدول مشترك بين الشاطئ والدايننج.
+    """
+    from app.modules.beach import crud as beach_crud
+    contracts = beach_crud.list_b2b_contracts(db, branch_id, active_only=True)
+    return [
+        {"id": c.id, "hotel_name": c.hotel_name, "hotel_name_ar": c.hotel_name_ar}
+        for c in contracts
+    ]

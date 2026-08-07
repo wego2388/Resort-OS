@@ -495,3 +495,266 @@ class TestPublicEndpoints:
         r = client.get("/api/v1/dining/public/orders/fake-ref",
                        headers={"X-Guest-Session": "invalid"})
         assert r.status_code in (400, 404)
+
+
+# ── Hotel & Beach-Location Features (2026-08-07) ──────────────────────────────
+
+def _b2b_contract(db, branch):
+    """ينشئ عقد فندق نشط للفرع المعطى."""
+    from datetime import date, timedelta
+    from app.modules.beach.models import B2BContract
+    today = date.today()
+    c = B2BContract(
+        branch_id=branch.id,
+        hotel_name=f"Hotel-{uuid.uuid4().hex[:6]}",
+        hotel_name_ar=None,
+        contact_phone="01000000000",
+        daily_quota=50,
+        entry_price=Decimal("100.00"),
+        valid_from=today - timedelta(days=30),
+        valid_until=today + timedelta(days=365),
+        is_active=True,
+    )
+    db.add(c); db.commit(); return c
+
+
+def _beach_location(db, branch, loc_type="umbrella", number=None):
+    """ينشئ موقع شاطئ (شمسية) للفرع المعطى."""
+    from app.modules.beach.models import BeachLocation
+    loc = BeachLocation(
+        branch_id=branch.id,
+        location_type=loc_type,
+        number=number or f"U-{uuid.uuid4().hex[:4]}",
+        grid_row=1,
+        grid_col=1,
+        status="available",
+    )
+    db.add(loc); db.commit(); return loc
+
+
+class TestHotelB2BFeature:
+    """فيتشر ١: ربط طلب الدايننج بفندق متعاقد."""
+
+    def test_list_b2b_contracts_for_dining(self, client, db):
+        """GET /dining/b2b-contracts يرجع قائمة الفنادق النشطة."""
+        br = _branch(db)
+        hdrs = _linked(db, br, role="waiter")
+        c = _b2b_contract(db, br)
+        r = client.get("/api/v1/dining/b2b-contracts",
+                       params={"branch_id": br.id}, headers=hdrs)
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data, list)
+        ids = [item["id"] for item in data]
+        assert c.id in ids
+
+    def test_create_order_with_b2b_contract(self, client, db):
+        """إنشاء طلب مع b2b_contract_id يتسجّل على الطلب."""
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        hdrs = _linked(db, br, role="waiter")
+        contract = _b2b_contract(db, br)
+
+        r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                        json={
+                            "outlet_id": o.id,
+                            "order_type": "takeaway",
+                            "guests_count": 2,
+                            "b2b_contract_id": contract.id,
+                            "items": [{"item_id": item.id, "quantity": 1,
+                                       "extra_ids": [], "extra_texts": {}}],
+                        }, headers=hdrs)
+        assert r.status_code == 201
+        body = r.json()
+        assert body["b2b_contract_id"] == contract.id
+
+    def test_hotel_consumption_report(self, client, db):
+        """GET /dining/reports/hotel-consumption يرجع تقرير الفنادق."""
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        mgr_hdrs = _linked(db, br, role="manager")
+        w_hdrs = _linked(db, br, role="waiter")
+        c_hdrs = _linked(db, br, role="cashier")
+        contract = _b2b_contract(db, br)
+
+        r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                        json={
+                            "outlet_id": o.id,
+                            "order_type": "takeaway",
+                            "guests_count": 3,
+                            "b2b_contract_id": contract.id,
+                            "items": [{"item_id": item.id, "quantity": 1,
+                                       "extra_ids": [], "extra_texts": {}}],
+                        }, headers=w_hdrs)
+        assert r.status_code == 201
+        order_id = r.json()["id"]
+
+        for s in ("in_kitchen", "served"):
+            client.patch(f"/api/v1/dining/orders/{order_id}/status",
+                         json={"status": s}, headers=c_hdrs)
+        pay_r = client.patch(f"/api/v1/dining/orders/{order_id}/status",
+                             json={"status": "paid", "payment_method": "cash"},
+                             headers=c_hdrs)
+        assert pay_r.status_code == 200
+
+        rpt = client.get("/api/v1/dining/reports/hotel-consumption",
+                         params={"branch_id": br.id,
+                                 "from_date": "2026-01-01",
+                                 "to_date": "2026-12-31"},
+                         headers=mgr_hdrs)
+        assert rpt.status_code == 200
+        body = rpt.json()
+        assert "hotels" in body
+        contract_ids = [h["contract_id"] for h in body["hotels"]]
+        assert contract.id in contract_ids
+
+    def test_hotel_consumption_by_outlet_breakdown(self, client, db):
+        """التقرير يفصّل الإيراد لكل منفذ في by_outlet."""
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        mgr_hdrs = _linked(db, br, role="manager")
+        w_hdrs = _linked(db, br, role="waiter")
+        c_hdrs = _linked(db, br, role="cashier")
+        contract = _b2b_contract(db, br)
+
+        r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                        json={"outlet_id": o.id, "order_type": "takeaway", "guests_count": 1,
+                              "b2b_contract_id": contract.id,
+                              "items": [{"item_id": item.id, "quantity": 1,
+                                         "extra_ids": [], "extra_texts": {}}]},
+                        headers=w_hdrs)
+        order_id = r.json()["id"]
+        for s in ("in_kitchen", "served"):
+            client.patch(f"/api/v1/dining/orders/{order_id}/status",
+                         json={"status": s}, headers=c_hdrs)
+        client.patch(f"/api/v1/dining/orders/{order_id}/status",
+                     json={"status": "paid", "payment_method": "cash"}, headers=c_hdrs)
+
+        rpt = client.get("/api/v1/dining/reports/hotel-consumption",
+                         params={"branch_id": br.id,
+                                 "from_date": "2026-01-01", "to_date": "2026-12-31",
+                                 "contract_id": contract.id},
+                         headers=mgr_hdrs)
+        assert rpt.status_code == 200
+        body = rpt.json()
+        assert body["hotels"]
+        hotel = body["hotels"][0]
+        assert hotel["contract_id"] == contract.id
+        assert isinstance(hotel["by_outlet"], list)
+        outlet_ids = [ob["outlet_id"] for ob in hotel["by_outlet"]]
+        assert o.id in outlet_ids
+
+    def test_hotel_consumption_date_validation(self, client, db):
+        """from_date > to_date يرجع 400."""
+        br = _branch(db)
+        mgr_hdrs = _linked(db, br, role="manager")
+        r = client.get("/api/v1/dining/reports/hotel-consumption",
+                       params={"branch_id": br.id,
+                               "from_date": "2026-12-31", "to_date": "2026-01-01"},
+                       headers=mgr_hdrs)
+        assert r.status_code == 400
+
+
+class TestBeachLocationFeature:
+    """فيتشر ٢: ربط طلب الدايننج بموقع شاطئ (شمسية/برجولة)."""
+
+    def test_create_order_with_beach_location(self, client, db):
+        """إنشاء طلب مع beach_location_id يتسجّل على الطلب."""
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        hdrs = _linked(db, br, role="waiter")
+        loc = _beach_location(db, br)
+
+        r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                        json={
+                            "outlet_id": o.id,
+                            "order_type": "dine_in",
+                            "guests_count": 2,
+                            "beach_location_id": loc.id,
+                            "items": [{"item_id": item.id, "quantity": 1,
+                                       "extra_ids": [], "extra_texts": {}}],
+                        }, headers=hdrs)
+        assert r.status_code == 201
+        body = r.json()
+        assert body["beach_location_id"] == loc.id
+
+    def test_get_order_returns_beach_location_label(self, client, db):
+        """GET /dining/orders/{id} يرجع beach_location_label فيه رقم الموقع."""
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        hdrs = _linked(db, br, role="waiter")
+        loc = _beach_location(db, br, loc_type="umbrella", number="7")
+
+        create_r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                               json={"outlet_id": o.id, "order_type": "dine_in",
+                                     "guests_count": 1, "beach_location_id": loc.id,
+                                     "items": [{"item_id": item.id, "quantity": 1,
+                                                "extra_ids": [], "extra_texts": {}}]},
+                               headers=hdrs)
+        order_id = create_r.json()["id"]
+
+        get_r = client.get(f"/api/v1/dining/orders/{order_id}", headers=hdrs)
+        assert get_r.status_code == 200
+        body = get_r.json()
+        assert body["beach_location_id"] == loc.id
+        assert body["beach_location_label"] is not None
+        assert "7" in body["beach_location_label"]
+
+    def test_get_order_returns_hotel_name(self, client, db):
+        """GET /dining/orders/{id} يرجع hotel_name لما الطلب مرتبط بعقد فندق."""
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        hdrs = _linked(db, br, role="waiter")
+        contract = _b2b_contract(db, br)
+
+        create_r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                               json={"outlet_id": o.id, "order_type": "takeaway",
+                                     "guests_count": 1,
+                                     "b2b_contract_id": contract.id,
+                                     "items": [{"item_id": item.id, "quantity": 1,
+                                                "extra_ids": [], "extra_texts": {}}]},
+                               headers=hdrs)
+        order_id = create_r.json()["id"]
+
+        get_r = client.get(f"/api/v1/dining/orders/{order_id}", headers=hdrs)
+        assert get_r.status_code == 200
+        body = get_r.json()
+        assert body["b2b_contract_id"] == contract.id
+        assert body["hotel_name"] == contract.hotel_name
+
+    def test_create_order_with_both_hotel_and_beach(self, client, db):
+        """طلب من شمسية مع ضيف فندق — b2b_contract_id + beach_location_id معًا."""
+        br = _branch(db)
+        _finance_accounts(db, br)
+        o = _outlet(db, br)
+        item = _item(db, br, o)
+        hdrs = _linked(db, br, role="waiter")
+        contract = _b2b_contract(db, br)
+        loc = _beach_location(db, br)
+
+        r = client.post(f"/api/v1/dining/outlets/{o.id}/orders",
+                        json={
+                            "outlet_id": o.id,
+                            "order_type": "dine_in",
+                            "guests_count": 4,
+                            "b2b_contract_id": contract.id,
+                            "beach_location_id": loc.id,
+                            "items": [{"item_id": item.id, "quantity": 1,
+                                       "extra_ids": [], "extra_texts": {}}],
+                        }, headers=hdrs)
+        assert r.status_code == 201
+        body = r.json()
+        assert body["b2b_contract_id"] == contract.id
+        assert body["beach_location_id"] == loc.id

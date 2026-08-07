@@ -3,7 +3,8 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppBadge, AppButton, AppTextarea, EmptyState, IconButton } from '@resort-os/ui'
-import type { CartLine, OrderType, POSCustomer } from './types'
+import type { CartLine, OrderType, POSCustomer, B2BContractOption } from './types'
+import POSHotelSelector from './POSHotelSelector.vue'
 
 const props = defineProps<{
   cart: CartLine[]
@@ -21,6 +22,9 @@ const props = defineProps<{
   applyingDiscount: boolean
   discountError: string
   online: boolean
+  // ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
+  branchId: number | null
+  selectedContractId: number | null
 }>()
 
 const emit = defineEmits<{
@@ -33,6 +37,8 @@ const emit = defineEmits<{
   customer: []
   send: []
   pay: []
+  // ── فيتشر الفنادق (2026-08-07) ──────────────────────────────────────
+  'selectHotel': [contract: B2BContractOption | null]
 }>()
 
 const { t } = useI18n()
@@ -119,6 +125,14 @@ const cartGroups = computed(() => {
           <div class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ t('backoffice.pos.customer.addHint') }}</div>
         </template>
       </button>
+
+      <!-- ── فيتشر الفنادق (2026-08-07) ─────────────────────────────── -->
+      <POSHotelSelector
+        :branch-id="branchId"
+        :selected-contract-id="selectedContractId"
+        :disabled="cartLocked"
+        @select="emit('selectHotel', $event)"
+      />
 
       <EmptyState
         v-if="cart.length === 0"

@@ -606,6 +606,8 @@ def create_order_with_items(
     guest_public_reference: Optional[str] = None,
     guest_name: Optional[str] = None,
     guest_phone: Optional[str] = None,
+    b2b_contract_id: Optional[int] = None,
+    beach_location_id: Optional[int] = None,
 ) -> DiningOrder:
     order = DiningOrder(
         branch_id=branch_id,
@@ -631,6 +633,8 @@ def create_order_with_items(
         guest_public_reference=guest_public_reference,
         guest_name=guest_name,
         guest_phone=guest_phone,
+        b2b_contract_id=b2b_contract_id,
+        beach_location_id=beach_location_id,
     )
     db.add(order)
     db.flush()
@@ -845,3 +849,102 @@ def get_paid_order_items_for_food_cost(
     if outlet_id is not None:
         q = q.filter(DiningOrder.outlet_id == outlet_id)
     return [tuple(row) for row in q.all()]
+
+
+# ── Hotel Consumption Report (2026-08-07) ─────────────────────────────
+
+def get_hotel_consumption(
+    db: Session,
+    branch_id: int,
+    from_date: date,
+    to_date: date,
+    contract_id: Optional[int] = None,
+) -> list[dict]:
+    """تقرير استهلاك الفنادق — كل فندق بطلباته + إيراده من كل منفذ.
+
+    يرجع قائمة من dicts، كل dict يمثّل فندقًا بالشكل:
+    {
+        contract_id, hotel_name, hotel_name_ar,
+        contract_daily_quota, contract_entry_price,
+        total_orders, total_guests, total_revenue,
+        by_outlet: [{ outlet_id, outlet_name, outlet_type,
+                      orders_count, revenue }, ...]
+    }
+    """
+    from sqlalchemy import func
+    from app.modules.beach.models import B2BContract
+    from datetime import datetime as _dt, time as _time
+
+    # مدى التاريخ — from_date بداية اليوم حتى to_date نهايته (UTC naive كما في DB)
+    range_start = _dt.combine(from_date, _time.min)
+    range_end   = _dt.combine(to_date,   _time.max)
+
+    # استعلام مجمّع: فندق × منفذ × مجاميع
+    rows = (
+        db.query(
+            DiningOrder.b2b_contract_id,
+            DiningOrder.outlet_id,
+            Outlet.name.label("outlet_name"),
+            Outlet.outlet_type,
+            func.count(DiningOrder.id).label("orders_count"),
+            func.sum(DiningOrder.guests_count).label("total_guests"),
+            func.sum(DiningOrder.total).label("revenue"),
+        )
+        .join(Outlet, DiningOrder.outlet_id == Outlet.id)
+        .filter(
+            DiningOrder.branch_id == branch_id,
+            DiningOrder.b2b_contract_id.isnot(None),
+            DiningOrder.status.in_(("paid", "refunded")),
+            DiningOrder.created_at >= range_start,
+            DiningOrder.created_at <= range_end,
+        )
+    )
+    if contract_id is not None:
+        rows = rows.filter(DiningOrder.b2b_contract_id == contract_id)
+    rows = rows.group_by(
+        DiningOrder.b2b_contract_id, DiningOrder.outlet_id,
+        Outlet.name, Outlet.outlet_type,
+    ).all()
+
+    if not rows:
+        return []
+
+    # جمع معلومات العقود
+    contract_ids = list({r.b2b_contract_id for r in rows})
+    contracts = {
+        c.id: c
+        for c in db.query(B2BContract).filter(B2BContract.id.in_(contract_ids)).all()
+    }
+
+    # تجميع النتائج لكل فندق
+    hotel_map: dict[int, dict] = {}
+    for r in rows:
+        cid = r.b2b_contract_id
+        if cid not in hotel_map:
+            c = contracts.get(cid)
+            hotel_map[cid] = {
+                "contract_id": cid,
+                "hotel_name": c.hotel_name if c else f"فندق #{cid}",
+                "hotel_name_ar": c.hotel_name_ar if c else None,
+                "contract_daily_quota": c.daily_quota if c else 0,
+                "contract_entry_price": c.entry_price if c else Decimal("0"),
+                "total_orders": 0,
+                "total_guests": 0,
+                "total_revenue": Decimal("0"),
+                "by_outlet": [],
+            }
+        hotel = hotel_map[cid]
+        rev = Decimal(str(r.revenue or 0))
+        guests = int(r.total_guests or 0)
+        hotel["total_orders"] += r.orders_count
+        hotel["total_guests"] += guests
+        hotel["total_revenue"] += rev
+        hotel["by_outlet"].append({
+            "outlet_id": r.outlet_id,
+            "outlet_name": r.outlet_name,
+            "outlet_type": r.outlet_type,
+            "orders_count": r.orders_count,
+            "revenue": rev,
+        })
+
+    return sorted(hotel_map.values(), key=lambda h: -h["total_revenue"])

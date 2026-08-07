@@ -35,8 +35,10 @@ export function remainingMinor(total: number | string, amounts: Array<number | s
 export function cashPresetMinorValues(total: number | string): number[] {
   const totalMinor = moneyToMinor(total)
   if (totalMinor === null) return []
+  // الـ steps بالقرش (minor units): 5_000 = 50ج، 10_000 = 100ج، 20_000 = 200ج، 50_000 = 500ج.
+  // أصغر preset فوق الإجمالي بيُحسب تلقائياً من ceil على كل step.
   const steps = [5_000, 10_000, 20_000, 50_000]
   const values = [totalMinor]
   for (const step of steps) values.push(Math.ceil(totalMinor / step) * step)
-  return [...new Set(values)].slice(0, 4)
+  return [...new Set(values)].filter(v => v >= totalMinor).slice(0, 4)
 }
