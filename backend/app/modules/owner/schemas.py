@@ -229,3 +229,162 @@ class OwnerPerformanceResponse(BaseModel):
     month_vs_prior_month:  PeriodComparison
     # timestamp موحّد للاستجابة كاملها
     computed_at:           datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 6 — Analytics Schemas (C, D, E groups from kpi-contracts.md)
+# ═══════════════════════════════════════════════════════════════════════
+
+# ── C: Sales / Product Performance ────────────────────────────────────
+
+class ItemMetricResponse(BaseModel):
+    """استجابة صنف واحد مع تصنيف ABC وهامش الربح."""
+    item_id:        int
+    name:           str
+    quantity_sold:  int
+    revenue:        Decimal
+    recipe_cost:    Optional[Decimal]   = None
+    margin_pct:     Optional[Decimal]   = None
+    margin_amount:  Optional[Decimal]   = None
+    abc_class:      Optional[str]       = None   # 'A' | 'B' | 'C'
+    cumulative_pct: Optional[Decimal]   = None
+
+
+class SalesPerformanceResponse(BaseModel):
+    """
+    GET /api/v1/owner/sales
+    أداء المبيعات: top items مرتّبة بالإيراد + تصنيف ABC + هامش.
+    """
+    period_from:    date
+    period_to:      date
+    outlet:         str             = Field(description="'dining' | 'beach' | 'all'")
+    items:          list[ItemMetricResponse]
+    total_revenue:  Decimal
+    is_provisional: bool
+    computed_at:    datetime
+
+
+class BeachTicketTypeRow(BaseModel):
+    """أداء نوع تذكرة شاطئ واحد."""
+    tx_type:        str
+    count:          int
+    total_amount:   Decimal
+    avg_unit_price: Decimal
+
+
+class BeachPerformanceResponse(BaseModel):
+    """
+    GET /api/v1/owner/beach-performance
+    أداء الشاطئ مقسّم بنوع التذكرة.
+    """
+    period_from:  date
+    period_to:    date
+    ticket_types: list[BeachTicketTypeRow]
+    total_revenue: Decimal
+    total_count:   int
+    computed_at:   datetime
+
+
+# ── C-4: B2B Channel Analytics ────────────────────────────────────────
+
+class ChannelContractRow(BaseModel):
+    """أداء عقد فندق B2B واحد — per hotel/contract, لا per guest (Decision 0004)."""
+    contract_id:      int
+    hotel_name:       str
+    period_checkins:  int
+    period_revenue:   Decimal   = Field(description="إيراد الشاطئ للفترة")
+    outstanding:      Decimal   = Field(description="الرصيد غير المسوّى الحالي")
+    is_overdue:       bool
+    credit_limit:     Optional[Decimal]
+    fnb_attach:       Decimal   = Field(description="إجمالي F&B للضيوف عبر هذا العقد في الفترة")
+    fnb_avg_per_checkin: Decimal = Field(description="متوسط F&B per check-in")
+
+
+class ChannelAnalyticsResponse(BaseModel):
+    """
+    GET /api/v1/owner/channel-analytics
+    أداء قنوات B2B — per hotel/contract فقط، لا per named guest.
+    """
+    period_from:    date
+    period_to:      date
+    contracts:      list[ChannelContractRow]
+    total_checkins: int
+    total_beach_revenue: Decimal
+    total_fnb_attach:    Decimal
+    computed_at:    datetime
+
+
+# ── D: Expense Analytics ───────────────────────────────────────────────
+
+class ExpenseLineResponse(BaseModel):
+    """سطر مصروف واحد مع مقارنة الفترتين."""
+    account_code:    str
+    account_name:    str
+    current_amount:  Decimal
+    prior_amount:    Decimal
+    current_pct:     Optional[Decimal]  = Field(default=None, description="% من الإيراد — الفترة الحالية")
+    prior_pct:       Optional[Decimal]  = Field(default=None, description="% من الإيراد — الفترة السابقة")
+    variance_flag:   bool               = False
+    variance_delta:  Optional[Decimal]  = Field(default=None, description="نقاط مئوية + = ارتفاع")
+
+
+class PayrollSummary(BaseModel):
+    """ملخص رواتب الشهر كنسبة من الإيراد — aggregate فقط، لا per employee."""
+    period_year:     int
+    period_month:    int
+    total_net:       Decimal
+    revenue:         Decimal
+    payroll_pct:     Optional[Decimal]  = None
+    status:          str
+
+
+class ExpenseAnalyticsResponse(BaseModel):
+    """
+    GET /api/v1/owner/expense-analytics
+    كل فئة مصروف كنسبة % من الإيراد مع variance flags.
+    """
+    period_from:     date
+    period_to:       date
+    prior_from:      date
+    prior_to:        date
+    current_revenue: Decimal
+    prior_revenue:   Decimal
+    expense_lines:   list[ExpenseLineResponse]
+    payroll:         Optional[PayrollSummary]   = None
+    is_provisional:  bool
+    computed_at:     datetime
+
+
+# ── E: Procurement Analytics ──────────────────────────────────────────
+
+class SupplierSpendRow(BaseModel):
+    """إنفاق مورّد واحد."""
+    supplier_id:          int
+    supplier_name:        str
+    total_spend:          Decimal
+    spend_pct:            Decimal
+    order_count:          int
+    concentration_flag:   bool
+
+
+class PRPOVarianceRow(BaseModel):
+    """مقارنة طلب شراء vs أمر شراء لصنف واحد."""
+    product_id:       int
+    product_name:     str
+    estimated_cost:   Decimal
+    actual_cost:      Decimal
+    variance_amount:  Decimal
+    variance_pct:     Optional[Decimal]
+
+
+class ProcurementAnalyticsResponse(BaseModel):
+    """
+    GET /api/v1/owner/procurement-analytics
+    تركّز الإنفاق بالموردين + فرق estimate vs actual.
+    """
+    period_from:    date
+    period_to:      date
+    total_spend:    Decimal
+    suppliers:      list[SupplierSpendRow]
+    pr_po_variance: list[PRPOVarianceRow]
+    computed_at:    datetime

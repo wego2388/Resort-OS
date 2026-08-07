@@ -11,7 +11,6 @@
   "dependencies": {
     "@resort-os/core": "workspace:*",
     "@resort-os/ui": "workspace:*",
-    "@vueuse/core": "^10.11.0",
     "axios": "^1.6.0",
     "pinia": "^2.1.0",
     "vue": "^3.4.0",
@@ -19,6 +18,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.0.0",
+    "@vueuse/core": "^10.11.0",
     "autoprefixer": "^10.4.0",
     "postcss": "^8.5.23",
     "tailwindcss": "^3.4.0",

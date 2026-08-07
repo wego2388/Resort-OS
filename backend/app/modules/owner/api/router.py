@@ -1,20 +1,19 @@
 """
 app/modules/owner/api/router.py
 ═══════════════════════════════════════════════════════════════════════
-Owner Intelligence Cockpit — API Router (Decision 0004, Phase 2+3).
-
-Phase 2: OwnerWatchlist + OwnerAllocationRule draft endpoints.
-Phase 3: Aggregation endpoints — /owner/now + /owner/performance.
+Owner Intelligence Cockpit — API Router (Decision 0004, Phase 2+3+6).
 
 قواعد ثابتة:
 • كل endpoint يستخدم get_owner_reader — يقبل owner أو super_admin فقط.
 • branch_id يُشتق دائماً من الـ session server-side — لا يُقبل من الـ client.
-• لا يوجد endpoint يقبل branch_id كـ query param على شاشات التجميع.
+• Cache-Control: no-store على كل financial endpoint.
 ═══════════════════════════════════════════════════════════════════════
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from datetime import date, timedelta
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.core.deps import DbDep, get_owner_reader
 from app.modules.owner import services
@@ -22,16 +21,38 @@ from app.modules.owner.schemas import (
     AllocationRuleDraftCreate,
     AllocationRuleDraftUpdate,
     AllocationRuleRead,
+    BeachPerformanceResponse,
+    ChannelAnalyticsResponse,
+    ExpenseAnalyticsResponse,
     OwnerNowResponse,
     OwnerPerformanceResponse,
     OwnerWatchlistCreate,
     OwnerWatchlistRead,
+    ProcurementAnalyticsResponse,
+    SalesPerformanceResponse,
 )
 
 router = APIRouter(prefix="/owner", tags=["owner"])
 
 _NO_STORE = "no-store, no-cache, must-revalidate, private"
-"""Cache-Control header للـ financial endpoints — Decision 0004 §New engineering surface."""
+
+
+def _get_branch(user) -> int:
+    """يشتق branch_id من الـ session — مشترك بين كل endpoints."""
+    branch_id: int | None = getattr(user, "_active_branch_id", None)
+    if branch_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "NO_ACTIVE_BRANCH",
+                    "message": "لا يوجد فرع نشط لهذه الجلسة — سجّل الدخول مجدداً"},
+        )
+    return branch_id
+
+
+def _default_range() -> tuple[date, date]:
+    """الشهر الحالي من 1 حتى اليوم."""
+    today = date.today()
+    return today.replace(day=1), today
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -43,41 +64,16 @@ _NO_STORE = "no-store, no-cache, must-revalidate, private"
     response_model=OwnerNowResponse,
     name="owner_now",
     summary="شاشة الآن — المقاييس السبعة الرئيسية (A-1 → A-7)",
-    description=(
-        "يعيد إيراد اليوم، كاش الأدراج، مصروفات اليوم، ذمم B2B، "
-        "ذمم تايم شير، إشغال الغرف، وسعة الشاطئ — كلها بتوقيت القاهرة. "
-        "branch_id يُشتق من الـ session، لا يُقبل من الـ client."
-    ),
 )
-def owner_now(
-    response: Response,
-    db: DbDep,
-    user=Depends(get_owner_reader),
-):
-    """
-    GET /api/v1/owner/now
-
-    المقاييس السبعة بتوقيت القاهرة الحالي.
-    كل رقم يحمل is_provisional — لا يُقدَّم رقم provisional كأنه نهائي.
-    """
-    # Cache-Control: no-store — بيانات مالية حساسة (Decision 0004)
+def owner_now(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+    """المقاييس السبعة بتوقيت القاهرة. كل رقم يحمل is_provisional."""
     response.headers["Cache-Control"] = _NO_STORE
-
-    # branch_id يُشتق حصراً من الـ session server-side — لا يُقبل من الـ client.
-    branch_id: int | None = getattr(user, "_active_branch_id", None)
-    if branch_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "NO_ACTIVE_BRANCH",
-                    "message": "لا يوجد فرع نشط لهذه الجلسة — سجّل الدخول مجدداً"},
-        )
+    branch_id = _get_branch(user)
     try:
         return services.get_owner_now(db, branch_id)
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "OWNER_NOW_FAILED", "message": str(exc)},
-        ) from exc
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_NOW_FAILED", "message": str(exc)}) from exc
 
 
 @router.get(
@@ -85,40 +81,163 @@ def owner_now(
     response_model=OwnerPerformanceResponse,
     name="owner_performance",
     summary="شاشة الأداء — مقارنة ثلاث فترات",
-    description=(
-        "اليوم vs أمس، الأسبوع الحالي vs الأسبوع الماضي، "
-        "الشهر الحالي vs الشهر الماضي — إيراد ومصروف وصافي دخل. "
-        "branch_id يُشتق من الـ session، لا يُقبل من الـ client."
-    ),
 )
-def owner_performance(
-    response: Response,
-    db: DbDep,
-    user=Depends(get_owner_reader),
-):
-    """
-    GET /api/v1/owner/performance
-
-    مقارنة ثلاث فترات. الـ delta والنسب محسوبة في owner services —
-    لا في finance module.
-    """
-    # Cache-Control: no-store — بيانات مالية حساسة (Decision 0004)
+def owner_performance(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+    """اليوم vs أمس، الأسبوع الحالي vs الماضي، الشهر الحالي vs الماضي."""
     response.headers["Cache-Control"] = _NO_STORE
-
-    branch_id: int | None = getattr(user, "_active_branch_id", None)
-    if branch_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "NO_ACTIVE_BRANCH",
-                    "message": "لا يوجد فرع نشط لهذه الجلسة — سجّل الدخول مجدداً"},
-        )
+    branch_id = _get_branch(user)
     try:
         return services.get_owner_performance(db, branch_id)
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"code": "OWNER_PERFORMANCE_FAILED", "message": str(exc)},
-        ) from exc
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_PERFORMANCE_FAILED", "message": str(exc)}) from exc
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 6 — Analytics Endpoints
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/sales",
+    response_model=SalesPerformanceResponse,
+    name="owner_sales",
+    summary="أداء المبيعات — top items + ABC Pareto + هامش",
+)
+def owner_sales(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+    outlet:    str  = Query(default="dining", description="dining | beach | all"),
+    limit:     int  = Query(default=50, ge=1, le=200),
+):
+    """
+    C-1 + C-2: أداء المبيعات مع تصنيف ABC وهامش الربح.
+    date_from/date_to اختياريان — الافتراضي: الشهر الحالي حتى اليوم.
+    branch_id من الـ session فقط.
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    if outlet not in ("dining", "beach", "all"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            detail={"code": "INVALID_OUTLET", "message": "outlet يجب أن يكون dining أو beach أو all"})
+    try:
+        return services.get_sales_performance(db, branch_id, date_from, date_to, outlet, limit)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_SALES_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/beach-performance",
+    response_model=BeachPerformanceResponse,
+    name="owner_beach_performance",
+    summary="أداء الشاطئ — مقسّم بنوع التذكرة",
+)
+def owner_beach_performance(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    """C-3: أداء الشاطئ — entry/entry_towel/towel_rent/towel_return."""
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_beach_performance(db, branch_id, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_BEACH_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/channel-analytics",
+    response_model=ChannelAnalyticsResponse,
+    name="owner_channel_analytics",
+    summary="تحليلات قنوات B2B — per hotel/contract",
+)
+def owner_channel_analytics(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    """
+    C-4: أداء الفنادق B2B — check-ins، إيراد، F&B attach.
+    لا بيانات ضيف فردية (Decision 0004 §Isolation model item 7).
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_channel_analytics(db, branch_id, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_CHANNEL_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/expense-analytics",
+    response_model=ExpenseAnalyticsResponse,
+    name="owner_expense_analytics",
+    summary="تحليل المصروفات — كل فئة كنسبة % من الإيراد",
+)
+def owner_expense_analytics(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    """
+    D-1 + D-2: المصروفات كنسبة % من الإيراد مع variance flags + رواتب aggregate.
+    رواتب: لا per employee — aggregate فقط (Decision 0004 §Isolation model item 7).
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_expense_analytics(db, branch_id, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_EXPENSE_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/procurement-analytics",
+    response_model=ProcurementAnalyticsResponse,
+    name="owner_procurement_analytics",
+    summary="تحليل المشتريات — تركّز الإنفاق + فرق PR vs PO",
+)
+def owner_procurement_analytics(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    """
+    E-1 + E-2: تركّز الإنفاق بالموردين + فرق estimate vs actual.
+    concentration_flag عند تجاوز 50% من إجمالي الإنفاق بمورّد واحد.
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_procurement_analytics(db, branch_id, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_PROCUREMENT_FAILED", "message": str(exc)}) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -126,12 +245,7 @@ def owner_performance(
 # ══════════════════════════════════════════════════════════════════════
 
 @router.get("/watchlist", response_model=list[OwnerWatchlistRead])
-def list_watchlist(
-    db: DbDep,
-    user=Depends(get_owner_reader),
-    branch_id: int = 1,
-):
-    """قائمة metrics المثبّتة للمالك."""
+def list_watchlist(db: DbDep, user=Depends(get_owner_reader), branch_id: int = 1):
     return services.get_watchlist(db, user.id, branch_id)
 
 
@@ -141,12 +255,7 @@ def list_watchlist(
     status_code=status.HTTP_201_CREATED,
     name="create_owner_watchlist_item",
 )
-def add_watchlist_item(
-    data: OwnerWatchlistCreate,
-    db: DbDep,
-    user=Depends(get_owner_reader),
-):
-    """إضافة metric للـ watchlist."""
+def add_watchlist_item(data: OwnerWatchlistCreate, db: DbDep, user=Depends(get_owner_reader)):
     try:
         return services.add_watchlist_item(db, data, user.id)
     except ValueError as e:
@@ -158,12 +267,7 @@ def add_watchlist_item(
     status_code=status.HTTP_204_NO_CONTENT,
     name="delete_owner_watchlist_item",
 )
-def remove_watchlist_item(
-    item_id: int,
-    db: DbDep,
-    user=Depends(get_owner_reader),
-):
-    """حذف metric من الـ watchlist."""
+def remove_watchlist_item(item_id: int, db: DbDep, user=Depends(get_owner_reader)):
     try:
         services.remove_watchlist_item(db, item_id, user.id)
     except ValueError as e:
@@ -175,12 +279,7 @@ def remove_watchlist_item(
 # ══════════════════════════════════════════════════════════════════════
 
 @router.get("/allocation-rules", response_model=list[AllocationRuleRead])
-def list_allocation_rules(
-    db: DbDep,
-    user=Depends(get_owner_reader),
-    branch_id: int = 1,
-):
-    """قائمة قواعد التخصيص (drafts + published)."""
+def list_allocation_rules(db: DbDep, user=Depends(get_owner_reader), branch_id: int = 1):
     return services.list_allocation_rules(db, branch_id)
 
 
@@ -190,12 +289,7 @@ def list_allocation_rules(
     status_code=status.HTTP_201_CREATED,
     name="create_owner_allocation_rule_draft",
 )
-def create_draft(
-    data: AllocationRuleDraftCreate,
-    db: DbDep,
-    user=Depends(get_owner_reader),
-):
-    """إنشاء مسودة قاعدة تخصيص جديدة."""
+def create_draft(data: AllocationRuleDraftCreate, db: DbDep, user=Depends(get_owner_reader)):
     try:
         return services.create_draft(db, data, user.id)
     except ValueError as e:
@@ -207,13 +301,7 @@ def create_draft(
     response_model=AllocationRuleRead,
     name="update_owner_allocation_rule_draft",
 )
-def update_draft(
-    rule_id: int,
-    data: AllocationRuleDraftUpdate,
-    db: DbDep,
-    user=Depends(get_owner_reader),
-):
-    """تعديل مسودة — published immutable."""
+def update_draft(rule_id: int, data: AllocationRuleDraftUpdate, db: DbDep, user=Depends(get_owner_reader)):
     try:
         return services.update_draft(db, rule_id, data, user.id)
     except ValueError as e:
@@ -225,12 +313,7 @@ def update_draft(
     status_code=status.HTTP_204_NO_CONTENT,
     name="delete_owner_allocation_rule_draft",
 )
-def delete_draft(
-    rule_id: int,
-    db: DbDep,
-    user=Depends(get_owner_reader),
-):
-    """حذف مسودة — published immutable."""
+def delete_draft(rule_id: int, db: DbDep, user=Depends(get_owner_reader)):
     try:
         services.delete_draft(db, rule_id, user.id)
     except ValueError as e:
