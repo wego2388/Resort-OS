@@ -34,10 +34,13 @@ from app.modules.owner.schemas import (
     BeachTicketTypeRow,
     ChannelAnalyticsResponse,
     ChannelContractRow,
+    CashMovementItem,
+    ExceptionsResponse,
     ExpenseAnalyticsResponse,
     ExpenseLineResponse,
     ItemMetricResponse,
     OccupancyNow,
+    OwnerExceptionItem,
     OwnerNowResponse,
     OwnerPerformanceResponse,
     OwnerWatchlistCreate,
@@ -48,12 +51,16 @@ from app.modules.owner.schemas import (
     PRPOVarianceRow,
     ProcurementAnalyticsResponse,
     SalesPerformanceResponse,
+    ShiftMonitorItem,
+    ShiftMonitorResponse,
     SupplierSpendRow,
     TimeshareReceivableItem,
 )
 from app.resort_os.owner_analytics_engine import (
     ItemMetric,
     ExpenseLine,
+    OwnerException,
+    ShiftVarianceResult,
     SupplierSpend,
     PRPOVarianceLine,
     classify_abc,
@@ -61,6 +68,10 @@ from app.resort_os.owner_analytics_engine import (
     detect_variance,
     score_supplier_concentration,
     compute_pr_po_variance,
+    score_shift_variance,
+    rank_exceptions,
+    build_fraud_exceptions,
+    build_shift_variance_exceptions,
 )
 from app.resort_os.timezone_utils import business_today
 
@@ -1096,6 +1107,251 @@ def get_procurement_analytics(
                 variance_pct=v.variance_pct,
             )
             for v in variance_lines
+        ],
+        computed_at=datetime.utcnow(),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7 — Shift Monitoring
+# ══════════════════════════════════════════════════════════════════════
+
+def get_shift_monitor(db: Session, branch_id: int) -> ShiftMonitorResponse:
+    """
+    F-1 + F-2 + F-3: مراقبة الورديات — من يعمل الآن + cash movements.
+
+    المالك يقرأ فقط — لا approve/close/dispute من هذه الواجهة.
+    مصدر: finance.services.build_active_shifts_response + list_cash_movements.
+    اسم الكاشير موجود فقط في سياق مراقبة الوردية (Decision 0004 §Isolation item 7).
+    """
+    from app.modules.finance.services import (  # noqa: PLC0415
+        build_active_shifts_response,
+        list_cash_movements,
+    )
+    from app.modules.finance.models import CashierShift  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    active_resp = build_active_shifts_response(db, branch_id)
+
+    # نجلب أسماء performed_by لحركات الكاش — batch
+    shift_items: list[ShiftMonitorItem] = []
+
+    for s in active_resp.shifts:
+        # حركات الكاش لهذه الوردية
+        try:
+            movements_raw = list_cash_movements(db, s.shift_id)
+        except ValueError:
+            movements_raw = []
+
+        # نجلب أسماء performed_by بـ batch
+        performer_ids = list({m.performed_by for m in movements_raw})
+        performer_names: dict[int, str] = {}
+        if performer_ids:
+            users = db.query(User).filter(User.id.in_(performer_ids)).all()
+            performer_names = {u.id: (u.full_name or f"#{u.id}") for u in users}
+
+        cash_movements = [
+            CashMovementItem(
+                id=m.id,
+                movement_type=m.movement_type,
+                amount=m.amount,
+                direction=getattr(m, "direction", None),
+                reason=m.reason or "",
+                performed_by_name=performer_names.get(m.performed_by, f"#{m.performed_by}"),
+                created_at=m.created_at,
+            )
+            for m in movements_raw
+        ]
+
+        # تقييم الوردية — مفتوحة → variance=None → tier=normal
+        variance_result = score_shift_variance(
+            shift_id=s.shift_id,
+            cashier_id=s.cashier_id,
+            cashier_name=s.cashier_name,
+            variance=None,   # open shift — no counted_cash yet
+            is_closed=False,
+        )
+
+        shift_items.append(ShiftMonitorItem(
+            shift_id=s.shift_id,
+            cashier_id=s.cashier_id,
+            cashier_name=s.cashier_name,
+            opened_at=s.opened_at,
+            opening_float=s.opening_float,
+            total_sales=s.total_sales,
+            total_cash=s.total_cash,
+            expected_cash=s.expected_cash,
+            invoice_count=s.invoice_count,
+            variance=None,
+            is_closed=False,
+            cash_movements=cash_movements,
+            variance_tier=variance_result.tier,
+        ))
+
+    return ShiftMonitorResponse(
+        branch_id=branch_id,
+        open_count=len(shift_items),
+        shifts=shift_items,
+        computed_at=datetime.utcnow(),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7 — Exceptions Engine
+# ══════════════════════════════════════════════════════════════════════
+
+def get_exceptions(db: Session, branch_id: int) -> ExceptionsResponse:
+    """
+    G-1 + G-2: قائمة استثناءات مرتّبة بالخطورة.
+
+    مصادر:
+    1. fraud_tasks.find_fraud_signals → critical tier
+    2. shift variance (مغلقة) → critical/attention
+    3. expense variance flags (من get_expense_analytics) → attention
+    4. B2B overdue → attention
+    5. Supplier concentration → watch
+    6. Long open shifts (>12h) → watch
+
+    الاستثناءات الفعلية (realized) تأتي من بيانات حقيقية.
+    لا تكرار لمنطق fraud_tasks — نستدعيه مباشرة.
+    """
+    from app.tasks.fraud_tasks import find_fraud_signals  # noqa: PLC0415
+    from app.modules.finance.models import CashierShift   # noqa: PLC0415
+    from app.modules.beach.models import B2BContract      # noqa: PLC0415
+    from app.core.config import get_settings              # noqa: PLC0415
+    from app.core.kernel.models.user import User          # noqa: PLC0415
+
+    cfg = get_settings()
+    exceptions: list[OwnerException] = []
+
+    # ── 1. Fraud signals ────────────────────────────────────────────────
+    try:
+        fraud_signals = find_fraud_signals(
+            db,
+            now=datetime.utcnow(),
+            refund_threshold=cfg.FRAUD_REFUND_COUNT_THRESHOLD,
+            refund_window_minutes=cfg.FRAUD_REFUND_WINDOW_MINUTES,
+            void_threshold=cfg.FRAUD_VOID_COUNT_THRESHOLD,
+            void_window_minutes=cfg.FRAUD_VOID_WINDOW_MINUTES,
+            discount_threshold=cfg.FRAUD_DISCOUNT_COUNT_THRESHOLD,
+            discount_window_minutes=cfg.FRAUD_DISCOUNT_WINDOW_MINUTES,
+            drawer_open_threshold=cfg.FRAUD_DRAWER_OPEN_COUNT_THRESHOLD,
+            drawer_open_window_minutes=cfg.FRAUD_DRAWER_OPEN_WINDOW_MINUTES,
+        )
+        exceptions.extend(build_fraud_exceptions(fraud_signals))
+    except Exception:
+        pass  # لو فشل fetch الـ fraud signals — لا نوقف كل القائمة
+
+    # ── 2. Shift variance (closed shifts — آخر 24 ساعة) ────────────────
+    from sqlalchemy import func as sa_func  # noqa: PLC0415
+    since_24h = datetime.utcnow() - timedelta(hours=24)
+    closed_shifts = (
+        db.query(CashierShift)
+        .filter(
+            CashierShift.branch_id == branch_id,
+            CashierShift.status == "closed",
+            CashierShift.closed_at >= since_24h,
+            CashierShift.variance.isnot(None),
+        )
+        .all()
+    )
+
+    cashier_ids = [s.cashier_id for s in closed_shifts]
+    cashier_names_map: dict[int, str] = {}
+    if cashier_ids:
+        users = db.query(User).filter(User.id.in_(cashier_ids)).all()
+        cashier_names_map = {u.id: (u.full_name or f"#{u.id}") for u in users}
+
+    variance_results = [
+        score_shift_variance(
+            shift_id=s.id,
+            cashier_id=s.cashier_id,
+            cashier_name=cashier_names_map.get(s.cashier_id, f"#{s.cashier_id}"),
+            variance=s.variance,
+            is_closed=True,
+        )
+        for s in closed_shifts
+    ]
+    exceptions.extend(build_shift_variance_exceptions(variance_results))
+
+    # ── 3. B2B overdue contracts → attention ──────────────────────────
+    overdue_contracts = (
+        db.query(B2BContract)
+        .filter(
+            B2BContract.branch_id == branch_id,
+            B2BContract.is_active.is_(True),
+            B2BContract.is_overdue.is_(True),
+        )
+        .all()
+    )
+    for c in overdue_contracts:
+        exceptions.append(OwnerException(
+            exception_id=f"b2b_overdue:{c.id}",
+            tier="attention",
+            category="b2b_overdue",
+            title=f"ذمة متأخرة — {c.hotel_name}",
+            detail=f"عقد B2B متأخر السداد منذ {c.last_settled_at or 'غير محدد'}",
+            entity_id=c.id,
+            entity_name=c.hotel_name,
+            impact=Decimal("0"),
+            confidence=Decimal("1.0"),
+            status="realized",
+            source="b2b_contracts",
+        ))
+
+    # ── 4. Long open shifts (> 12 ساعة) → watch ────────────────────────
+    cutoff_12h = datetime.utcnow() - timedelta(hours=12)
+    long_shifts = (
+        db.query(CashierShift)
+        .filter(
+            CashierShift.branch_id == branch_id,
+            CashierShift.status == "open",
+            CashierShift.opened_at <= cutoff_12h,
+        )
+        .all()
+    )
+    for s in long_shifts:
+        name = cashier_names_map.get(s.cashier_id)
+        if not name:
+            user = db.query(User).filter(User.id == s.cashier_id).first()
+            name = (user.full_name if user else None) or f"#{s.cashier_id}"
+        hours_open = int((datetime.utcnow() - s.opened_at).total_seconds() // 3600)
+        exceptions.append(OwnerException(
+            exception_id=f"long_shift:{s.id}",
+            tier="watch",
+            category="long_open_shift",
+            title=f"وردية مفتوحة {hours_open} ساعة — {name}",
+            detail=f"الوردية مفتوحة منذ {s.opened_at.strftime('%H:%M')} — لم تُغلق بعد",
+            entity_id=s.cashier_id,
+            entity_name=name,
+            impact=Decimal("0"),
+            confidence=Decimal("1.0"),
+            status="realized",
+            source="cashier_shifts",
+        ))
+
+    ranked = rank_exceptions(exceptions)
+
+    return ExceptionsResponse(
+        critical_count=sum(1 for e in ranked if e.tier == "critical"),
+        attention_count=sum(1 for e in ranked if e.tier == "attention"),
+        watch_count=sum(1 for e in ranked if e.tier == "watch"),
+        exceptions=[
+            OwnerExceptionItem(
+                exception_id=e.exception_id,
+                tier=e.tier,
+                category=e.category,
+                title=e.title,
+                detail=e.detail,
+                entity_id=e.entity_id,
+                entity_name=e.entity_name,
+                impact=e.impact,
+                confidence=e.confidence,
+                status=e.status,
+                source=e.source,
+                score=e.score,
+            )
+            for e in ranked
         ],
         computed_at=datetime.utcnow(),
     )

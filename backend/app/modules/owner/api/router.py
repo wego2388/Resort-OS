@@ -23,6 +23,7 @@ from app.modules.owner.schemas import (
     AllocationRuleRead,
     BeachPerformanceResponse,
     ChannelAnalyticsResponse,
+    ExceptionsResponse,
     ExpenseAnalyticsResponse,
     OwnerNowResponse,
     OwnerPerformanceResponse,
@@ -30,6 +31,7 @@ from app.modules.owner.schemas import (
     OwnerWatchlistRead,
     ProcurementAnalyticsResponse,
     SalesPerformanceResponse,
+    ShiftMonitorResponse,
 )
 
 router = APIRouter(prefix="/owner", tags=["owner"])
@@ -238,6 +240,50 @@ def owner_procurement_analytics(
     except Exception as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"code": "OWNER_PROCUREMENT_FAILED", "message": str(exc)}) from exc
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7 — Shift Monitoring & Exceptions
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/shifts",
+    response_model=ShiftMonitorResponse,
+    name="owner_shifts",
+    summary="مراقبة الورديات — من يعمل الآن + حركات الكاش",
+)
+def owner_shifts(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+    """
+    F-1 + F-2 + F-3: الورديات المفتوحة مع حركات الكاش.
+    المالك يقرأ فقط — لا approve/close/dispute.
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    try:
+        return services.get_shift_monitor(db, branch_id)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_SHIFTS_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/exceptions",
+    response_model=ExceptionsResponse,
+    name="owner_exceptions",
+    summary="قائمة الاستثناءات — مرتّبة بالخطورة",
+)
+def owner_exceptions(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+    """
+    G-1 + G-2: استثناءات مرتّبة: critical → attention → watch.
+    يستدعي fraud_tasks.find_fraud_signals مباشرة — لا تكرار للمنطق.
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    try:
+        return services.get_exceptions(db, branch_id)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_EXCEPTIONS_FAILED", "message": str(exc)}) from exc
 
 
 # ══════════════════════════════════════════════════════════════════════

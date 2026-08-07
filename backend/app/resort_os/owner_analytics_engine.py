@@ -34,6 +34,14 @@ ABC_A_THRESHOLD = Decimal("70")   # أعلى 70% من الإيراد → Class A
 ABC_B_THRESHOLD = Decimal("90")   # الـ 70-90% → Class B
 # ما تبقّى (90-100%) → Class C
 
+# ── Exception tiers ───────────────────────────────────────────────────
+EXCEPTION_TIERS = ("critical", "attention", "watch")
+# الترتيب داخل كل tier: impact × confidence (تنازلي)
+
+# عتبة فرق الكاش الافتراضية لـ critical exception (بالجنيه)
+SHIFT_VARIANCE_CRITICAL_EGP = Decimal("200")
+SHIFT_VARIANCE_ATTENTION_EGP = Decimal("50")
+
 
 # ══════════════════════════════════════════════════════════════════════
 # Data structures
@@ -297,3 +305,150 @@ def compute_pr_po_variance(lines: list[PRPOVarianceLine]) -> list[PRPOVarianceLi
             ).quantize(TWO, ROUND_HALF_UP)
 
     return sorted(lines, key=lambda x: -abs(x.variance_amount))
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7 — Shift Variance Scoring
+# ══════════════════════════════════════════════════════════════════════
+
+@dataclass
+class ShiftVarianceResult:
+    """نتيجة تقييم فرق كاش وردية واحدة."""
+    shift_id:       int
+    cashier_id:     int
+    cashier_name:   str
+    variance:       Decimal          # counted - expected (لو مغلقة) أو None→0
+    abs_variance:   Decimal
+    tier:           str              # 'critical' | 'attention' | 'normal'
+    is_closed:      bool
+
+
+def score_shift_variance(
+    shift_id: int,
+    cashier_id: int,
+    cashier_name: str,
+    variance: Optional[Decimal],
+    is_closed: bool,
+    critical_threshold: Decimal = SHIFT_VARIANCE_CRITICAL_EGP,
+    attention_threshold: Decimal = SHIFT_VARIANCE_ATTENTION_EGP,
+) -> ShiftVarianceResult:
+    """
+    يُصنّف فرق كاش وردية:
+      |variance| > critical_threshold (200 ج افتراضياً) → critical
+      |variance| > attention_threshold (50 ج) → attention
+      غير ذلك → normal
+
+    وردية مفتوحة (is_closed=False): لا variance → لا flag.
+    """
+    v = variance or ZERO
+    abs_v = abs(v)
+
+    if not is_closed or variance is None:
+        tier = "normal"
+    elif abs_v > critical_threshold:
+        tier = "critical"
+    elif abs_v > attention_threshold:
+        tier = "attention"
+    else:
+        tier = "normal"
+
+    return ShiftVarianceResult(
+        shift_id=shift_id,
+        cashier_id=cashier_id,
+        cashier_name=cashier_name,
+        variance=v,
+        abs_variance=abs_v,
+        tier=tier,
+        is_closed=is_closed,
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7 — Exception Ranking
+# ══════════════════════════════════════════════════════════════════════
+
+@dataclass
+class OwnerException:
+    """استثناء واحد في قائمة المالك."""
+    exception_id:   str              # unique key: rule:entity_id
+    tier:           str              # 'critical' | 'attention' | 'watch'
+    category:       str              # 'fraud' | 'shift_variance' | 'expense_variance' | 'b2b_overdue' | 'supplier_concentration' | 'pr_po_variance'
+    title:          str              # عنوان قصير
+    detail:         str              # تفاصيل
+    entity_id:      Optional[int]    # cashier_id / contract_id / supplier_id
+    entity_name:    Optional[str]    # اسم الكيان (كاشير/فندق/مورّد)
+    impact:         Decimal          # قيمة مالية تقديرية (0 لو مجهولة)
+    confidence:     Decimal          # 0-1 (1 = متأكد)
+    status:         str              # 'realized' | 'projected' | 'potential'
+    source:         str              # مصدر البيانات
+    score:          Decimal = field(default=ZERO)   # impact × confidence
+
+
+_TIER_ORDER = {"critical": 0, "attention": 1, "watch": 2}
+
+
+def rank_exceptions(exceptions: list[OwnerException]) -> list[OwnerException]:
+    """
+    يرتّب الاستثناءات:
+    1. Tier أولاً (critical → attention → watch)
+    2. داخل كل tier: score = impact × confidence (تنازلي)
+
+    يحسب score لكل استثناء قبل الترتيب.
+    """
+    for exc in exceptions:
+        exc.score = (exc.impact * exc.confidence).quantize(TWO, ROUND_HALF_UP)
+
+    return sorted(
+        exceptions,
+        key=lambda x: (_TIER_ORDER.get(x.tier, 99), -x.score),
+    )
+
+
+def build_fraud_exceptions(fraud_signals: list) -> list[OwnerException]:
+    """
+    يحوّل FraudSignal objects (من fraud_tasks.find_fraud_signals) إلى
+    OwnerException objects بـ tier=critical دائماً.
+
+    يستقبل list[FraudSignal] من fraud_tasks — لا يستورد fraud_tasks هنا
+    (pure engine — لا imports خارجية).
+    """
+    exceptions = []
+    for sig in fraud_signals:
+        exceptions.append(OwnerException(
+            exception_id=f"fraud:{sig.user_id}:{sig.rule}",
+            tier="critical",
+            category="fraud",
+            title=f"نشاط مشبوه — {sig.rule}",
+            detail=sig.message,
+            entity_id=sig.user_id,
+            entity_name=sig.user_name,
+            impact=ZERO,   # لا قيمة مالية محددة لإشارة احتيال
+            confidence=Decimal("0.8"),
+            status="potential",
+            source="fraud_tasks",
+        ))
+    return exceptions
+
+
+def build_shift_variance_exceptions(
+    results: list[ShiftVarianceResult],
+) -> list[OwnerException]:
+    """يحوّل ShiftVarianceResult objects إلى OwnerException — tier=critical/attention."""
+    exceptions = []
+    for r in results:
+        if r.tier == "normal":
+            continue
+        exceptions.append(OwnerException(
+            exception_id=f"shift_variance:{r.shift_id}",
+            tier=r.tier,
+            category="shift_variance",
+            title=f"فرق كاش في وردية {r.cashier_name}",
+            detail=f"الفرق: {r.variance:+.2f} ج — الوردية {'مغلقة' if r.is_closed else 'مفتوحة'}",
+            entity_id=r.cashier_id,
+            entity_name=r.cashier_name,
+            impact=r.abs_variance,
+            confidence=Decimal("1.0"),   # فرق كاش فعلي → confidence كاملة
+            status="realized",
+            source="cashier_shifts",
+        ))
+    return exceptions

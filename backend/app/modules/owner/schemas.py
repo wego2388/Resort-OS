@@ -388,3 +388,76 @@ class ProcurementAnalyticsResponse(BaseModel):
     suppliers:      list[SupplierSpendRow]
     pr_po_variance: list[PRPOVarianceRow]
     computed_at:    datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 7 — Shifts & Exceptions Schemas
+# ═══════════════════════════════════════════════════════════════════════
+
+class CashMovementItem(BaseModel):
+    """حركة كاش يدوية في وردية — read-only للمالك."""
+    id:            int
+    movement_type: str
+    amount:        Decimal
+    direction:     Optional[str]   = None
+    reason:        str
+    performed_by_name: str
+    created_at:    datetime
+
+
+class ShiftMonitorItem(BaseModel):
+    """وردية واحدة مع حركات الكاش — للمراقبة فقط، لا actions."""
+    shift_id:       int
+    cashier_id:     int
+    cashier_name:   str
+    opened_at:      datetime
+    opening_float:  Decimal
+    total_sales:    Decimal
+    total_cash:     Decimal
+    expected_cash:  Decimal
+    invoice_count:  int
+    variance:       Optional[Decimal]  = None   # None لو مفتوحة
+    is_closed:      bool
+    cash_movements: list[CashMovementItem]
+    variance_tier:  str                = "normal"   # 'critical'|'attention'|'normal'
+
+
+class ShiftMonitorResponse(BaseModel):
+    """
+    GET /api/v1/owner/shifts
+    كل الورديات المفتوحة الآن مع حركات الكاش.
+    المالك يقرأ فقط — لا approve/close/dispute.
+    """
+    branch_id:    int
+    open_count:   int
+    shifts:       list[ShiftMonitorItem]
+    computed_at:  datetime
+
+
+class OwnerExceptionItem(BaseModel):
+    """استثناء واحد في قائمة المالك."""
+    exception_id:  str
+    tier:          str        # 'critical' | 'attention' | 'watch'
+    category:      str
+    title:         str
+    detail:        str
+    entity_id:     Optional[int]   = None
+    entity_name:   Optional[str]   = None
+    impact:        Decimal
+    confidence:    Decimal
+    status:        str        # 'realized' | 'projected' | 'potential'
+    source:        str
+    score:         Decimal
+
+
+class ExceptionsResponse(BaseModel):
+    """
+    GET /api/v1/owner/exceptions
+    قائمة مرتّبة بالخطورة: critical → attention → watch.
+    داخل كل tier: impact × confidence تنازلي.
+    """
+    critical_count:   int
+    attention_count:  int
+    watch_count:      int
+    exceptions:       list[OwnerExceptionItem]
+    computed_at:      datetime
