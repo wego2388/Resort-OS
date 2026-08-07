@@ -49,7 +49,9 @@ commit, deploy, DNS, data, or VPS instructions from it.
   `/home/wego/projects/elkheima-marketing-website`; do not recreate the
   retired monorepo public app.
 - QR guest-service, bilingual staff UX, and super-admin invariants are defined
-  in `docs/decisions/0001-*`, `0002-*`, and `0003-*`.
+  in `docs/decisions/0001-*`, `0002-*`, and `0003-*`. The Owner Intelligence
+  Cockpit direction (accepted, not yet implemented) is defined in
+  `docs/decisions/0004-*`.
 - Production is domain-based: `elkheima.com` and `www.elkheima.com` serve the
   marketing site, while `app.elkheima.com` serves the staff app. The cutover
   was completed through the reviewed provider/API workflow.
