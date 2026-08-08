@@ -1,8 +1,9 @@
 # Decision 0005: Personal Credit Account (حساب آجل شخصي)
 
 - **Decision status:** Accepted.
-- **Implementation status:** Implemented and verified locally on 2026-08-08;
-  production deployment is intentionally pending Mohamed's approval.
+- **Implementation status:** Implemented, deployed, and production-verified on
+  2026-08-08 after Mohamed's approval. Active release `1d77e7b`; production
+  Alembic `c9d4e5f6a7b8 (head)`.
 - **Date:** 2026-08-08
 - **Owner:** Mohamed
 - **Product:** El Kheima Beach Resort OS
@@ -210,8 +211,15 @@ must-revalidate, private`. القوائم paginated، والردود المال�
 
 ## Deployment state
 
-لم يتم تشغيل migration أو رفع build على الـVPS بعد. النشر يبدأ فقط بعد عرض حالة
-الـgates على Mohamed وأخذ موافقته.
+وافق Mohamed على النشر، وطُبقت الـmigration
+`f8aa1f0fabba -> c9d4e5f6a7b8` على الإنتاج بعد dump متحقق وrollback tags.
+الإصدار الفعال `/opt/resort-os-releases/1d77e7b` (implementation `dd26a1f`)،
+والخدمات المتغيرة سليمة بلا restarts. جداول الحسابات والحركات بدأت فارغة،
+والفرع الفعال لديه GL `1160`. فحوصات health/ready والنطاقات الأربعة وNginx
+وsystemd healthcheck نجحت، ولم تُنشأ حركة مالية تجريبية على بيانات الإنتاج.
+
+تفاصيل النسخ والبصمات والصور ونتائج الـsmoke مسجلة في
+`docs/agent-workflow/handoffs/2026-08-08_CREDIT-0005_codex_handoff.md`.
 
 ## Revision history
 
@@ -219,3 +227,5 @@ must-revalidate, private`. القوائم paginated، والردود المال�
 - 2026-08-08: مراجعة التنفيذ؛ تصحيح GL من `1200` إلى `1160`، وتثبيت
   الـatomicity، locking، idempotency، reversal، exact roles، customer/employee POS، وحالة
   التنفيذ الفعلية.
+- 2026-08-08: موافقة Mohamed والنشر على production؛ migration إلى
+  `c9d4e5f6a7b8`، active release `1d77e7b`، ونجاح health/smoke/log gates.

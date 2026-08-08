@@ -1,11 +1,11 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-08 — CREDIT-0005 مكتمل محليًا؛ النشر متوقف عند
-بوابة موافقة Mohamed قبل لمس الـVPS
+**آخر تحديث:** 2026-08-08 — CREDIT-0005 منشور ومتحقق على الإنتاج
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**المرحلة الحالية:** CREDIT-0005 PRE-DEPLOY GATE + ACC-01 roster + UAT-01
-**قرار الإطلاق:** الإنتاج الحالي فعال ولم يتغير؛ CREDIT-0005 ينتظر موافقة صريحة
+**المرحلة الحالية:** ACC-01 roster + UAT-01 + production burn-in
+**قرار الإطلاق:** CREDIT-0005 DEPLOYED؛ قرار Go/No-Go التشغيلي العام ما زال
+مرتبطًا بالـUAT والبيانات الحقيقية
 
 > هذه اللوحة تعرض العمل الحالي فقط. التفاصيل في
 > `docs/audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`. أي لوحة قديمة تحت
@@ -48,7 +48,7 @@
 | MKT-06 — Arabic-only horizontal scroll on /contact (RTL honeypot offset bug) | COMPLETE | `1371975` فعال (Marketing)؛ sr-only بدل offset فيزيائي ضخم | — |
 | REL-06 — HR/admin/Timeshare audit batch (23 commits، تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE | `821a718` فعال؛ VAT/service-charge حقيقي، جلسات إدارية، بوابة تايم شير كاملة + تنبيهات واتساب، إصلاح fail-closed لـTIMESHARE_PORTAL_TOKEN_SECRET | — |
 | REL-07 — Arabic PDF invoice fix + real blog + marketing-site console-error sweep (8 commits + Marketing، تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE | `5df8191` فعال (Resort) + `79130a6` فعال (Marketing)؛ خط عربي/لوجو للفواتير، `GET /hub/blog/posts/{slug}` + 6 مقالات حقيقية، حذف نداءات API ميتة + إصلاح باج انتقال صفحات + كارت وصف بدل زر طلب وهمي | — |
-| CREDIT-0005 — personal customer/employee credit accounts | READY FOR DEPLOY APPROVAL | GL 1160 + immutable ledger + Dining/Beach + Staff/Owner UI؛ 21/21 acceptance و242/242 focused، PostgreSQL roundtrip ناجح | موافقة Mohamed قبل الـVPS |
+| CREDIT-0005 — personal customer/employee credit accounts | COMPLETE / DEPLOYED | `1d77e7b` فعال؛ Alembic `c9d4e5f6a7b8`؛ GL 1160 + immutable ledger + Dining/Beach + Staff/Owner UI؛ health/smoke/log gates ناجحة | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
@@ -68,6 +68,8 @@
 - [x] safety counts ثابتة؛ لا مستخدمين أو مدفوعات أو حجوزات أو رواتب demo.
 - [x] Chatbot live E2E بالعربية.
 - [x] rollback للصور وDB والشهادات قبل domain cutover.
+- [x] CREDIT-0005: DB backup + rollback images، build من exact source، migration
+  `c9d4e5f6a7b8`، استبدال تدريجي، 4/4 domains HTTP 200، صفر restarts/log errors.
 - [x] إصلاح backup retention واختبار nested protected rollback directory.
 - [x] Resort release `a3e8abb` وMarketing release `16f8f2c` مع SHA-256.
 - [x] Hostinger DNS snapshot `167902017`.
@@ -133,7 +135,7 @@
 
 ## آخر تسليم
 
-`docs/agent-workflow/handoffs/2026-08-04_REL-07_claude_handoff.md`
+`docs/agent-workflow/handoffs/2026-08-08_CREDIT-0005_codex_handoff.md`
 
 ## التحديث التالي المطلوب
 

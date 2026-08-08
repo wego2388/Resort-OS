@@ -1,15 +1,16 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-08 — Decision 0005 Personal Credit Account
-منفّذ محليًا وينتظر موافقة Mohamed قبل النشر على الـVPS.
-- **Production لم يتغيّر:** Alembic `f8aa1f0fabba`، والخدمات المنشورة كما هي.
-- **Local Alembic head:** `c9d4e5f6a7b8` (single head)؛ PostgreSQL 16
-  upgrade/downgrade/upgrade نجحت.
+**آخر تحديث:** 2026-08-08 — Decision 0005 Personal Credit Account منشور
+ومتحقق على الإنتاج بعد موافقة Mohamed.
+- **Production:** الإصدار الفعال `/opt/resort-os-releases/1d77e7b`؛ Alembic
+  `c9d4e5f6a7b8 (head)`؛ PostgreSQL وRedis وكل الخدمات المتغيرة سليمة.
+- **Migration:** PostgreSQL 16 local upgrade/downgrade/upgrade نجحت قبل النشر،
+  ثم production upgrade من `f8aa1f0fabba` إلى `c9d4e5f6a7b8` نجح.
 - **Credit acceptance:** 21/21 passed؛ Credit + Dining + Beach focused suite:
   242/242 passed؛ el-kheima وowner type-check/build passed؛ Staff frontend 95/95.
 - **Full repository gates:** backend 2565 collected وصل 100% بـexit 0 وصفر
-  failure؛ agent-check/Alembic/diff-check ناجحة. الحزمة جاهزة لقرار Mohamed
-  قبل النشر.
+  failure؛ agent-check/Alembic/diff-check ناجحة. health/ready والنطاقات الأربعة
+  وsystemd healthcheck نجحت بعد النشر، وصفر ERROR/CRITICAL/Traceback.
 
 **السابق:** 2026-08-08 — REL-11: Owner Intelligence Cockpit Phase 1-5 نشر على `owner.elkheima.com` (commit `719a432` + `74959e4` — منشور ✅)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
@@ -18,7 +19,7 @@
 هذا الملف يسجل الحقائق الحالية فقط. التاريخ السابق محفوظ في
 `docs/archive/2026-07-execution/`.
 
-## Decision 0005 — حساب آجل شخصي (محلي، غير منشور)
+## Decision 0005 — حساب آجل شخصي (منشور ✅)
 
 - موديول `credit` كامل: Customer/Employee accounts، limit/status،
   immutable ledger، cash/bank collections، partial sale refunds، exact reversal،
@@ -32,22 +33,44 @@
 - Staff App: `/admin/credit-accounts` للفتح/الكشف/التحصيل/الحالة/
   الحد/العكس حسب الصلاحيات.
 - Owner App: total/count في NowScreen + read-only receivables detail.
-- لا migration ولا build ولا كود من هذه الحزمة وصل إلى الـVPS حتى الآن.
+- نُشر implementation commit `dd26a1f`، ثم follow-up `1d77e7b` لإزالة تعريف
+  HTTP مكرر لـOwner في Nginx. الإصدار الفعال النهائي `1d77e7b`.
+- جداول الحسابات والحركات موجودة وفارغة مبدئيًا (`0 / 0`)؛ الفرع الوحيد لديه
+  GL `1160`؛ لم تُنشأ حركة مالية تجريبية على الإنتاج.
+
+### سجل نشر CREDIT-0005
+
+- DB backup verified:
+  `/var/backups/resort-os/database/resort_os_20260808_180257.dump`
+  (`609846` bytes، SHA-256
+  `1bd9d33edebb667eb4d42b53fd2f4040aaeaa9c90a9c69efec61ab6bc616d70d`).
+- Rollback images manifest:
+  `/var/backups/resort-os/source-releases/dd26a1f-rollback-images.txt`.
+- Final exact-source archive:
+  `/var/backups/resort-os/source-releases/1d77e7b.tar.gz`، SHA-256
+  `1ef3bea7541a2354b712faa6b4d0ec044978093746e501e66b7ff78365506827`.
+- build: backend/celery worker/celery beat/el-kheima/owner succeeded؛ الاستبدال
+  تم backend → worker/beat → Staff/Owner → Nginx، وكل الحاويات الجديدة
+  `running/healthy` و`RestartCount=0` (Nginx running وبدون healthcheck).
+- `https://elkheima.com` و`www` و`app` و`owner` رجعت HTTP `200`؛ HTTP Owner
+  رجع `301`؛ credit وowner protected probes رجعت `401` بلا توثيق كما يجب.
+- `nginx -t` و`resort-os-healthcheck.service` ناجحان، وفحص السجلات الصارم
+  بعد النشر صفر alerts.
 
 ## 1. المصدر والإصدار
 
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `74959e4` (+ تعديلات غير ملتزمة — Phase 6+7+7a) |
-| آخر commit على الفرع | `74959e4` — REL-11: Owner Intelligence Cockpit Phase 1-5 |
+| Resort OS source release (منشور) | `1d77e7b` — CREDIT-0005 + Owner Phase 6/7/7a + Nginx cleanup |
+| runtime code/config commit | `1d77e7b` — follow-up بعد implementation commit `dd26a1f` |
 | Marketing source release | `bc48f09` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-current` (live — تعديلات مباشرة على الـ VPS) |
+| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/1d77e7b` |
 | active Marketing release | `/opt/elkheima-marketing-releases/bc48f09` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/bc48f09` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
-| Alembic head (DB) | `f8aa1f0fabba` (owner_module_phase2_and_pr_po_linkage — مطبّق ✅) |
+| Alembic head (DB) | `c9d4e5f6a7b8` (personal credit accounts — مطبّق ✅) |
 
 ## Owner Cockpit Phase 6+7+7a — نشر 8 أغسطس 2026
 

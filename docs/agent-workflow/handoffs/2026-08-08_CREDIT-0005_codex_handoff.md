@@ -1,24 +1,25 @@
-# CREDIT-0005 — Personal Credit Account pre-deploy handoff
+# CREDIT-0005 — Personal Credit Account deployment handoff
 
 **Date:** 2026-08-08 (Africa/Cairo)
 **Owner:** Mohamed
 **Implementer / final reviewer:** Codex
-**Status:** READY_FOR_DEPLOY_APPROVAL / PRODUCTION_UNCHANGED
+**Status:** DEPLOYED / PRODUCTION_VERIFIED
 
 ## Outcome
 
-Decision 0005 is implemented locally for customer and employee personal credit
-accounts. Dining and Beach can settle against the account, accountants can collect
-cash/bank payments, managers can correct movements, Staff has a management screen,
-and Owner has read-only receivables visibility.
+Decision 0005 is implemented and deployed for customer and employee personal
+credit accounts. Dining and Beach can settle against the account, accountants can
+collect cash/bank payments, managers can correct movements, Staff has a management
+screen, and Owner has read-only receivables visibility.
 
 The original draft's GL `1200` was rejected because it is the live inventory
 account. Personal receivables use the new branch-scoped GL `1160`; folio
 receivables remain `1150`.
 
-No SSH, upload, migration, container restart, commit, push, or VPS write was made
-for this package. Production remains on Alembic `f8aa1f0fabba` and the currently
-active release.
+Mohamed approved the deployment. Implementation commit `dd26a1f` was pushed and
+deployed, followed by commit `1d77e7b` removing the duplicated Owner HTTP server
+block discovered by the production `nginx -t` preflight. Production is active at
+`/opt/resort-os-releases/1d77e7b` with Alembic `c9d4e5f6a7b8 (head)`.
 
 ## Financial and operational invariants
 
@@ -81,21 +82,35 @@ acceptance cases were complete: **2565 tests collected، progress reached 100%،
 process exit 0، zero failures**. Expected skips and test-only weak-secret warnings
 did not fail the gate.
 
-## Pre-deploy gate after Mohamed approves
+## Production deployment record
 
-1. Re-read `git status` and stage only reviewed project files; explicitly exclude
-   local artifacts such as `test.db` and unrelated handoffs.
-2. Create the release commit and record its SHA; do not deploy a dirty anonymous
-   tree.
-3. Validate production environment without printing secrets, then create and
-   structurally verify a timestamped PostgreSQL dump.
-4. Record current image IDs/digests and create rollback tags/manifest.
-5. Build the affected backend, worker/beat, Staff, and Owner images from the exact
-   release source; run import/config preflight.
-6. Apply Alembic `c9d4e5f6a7b8`, verify tables/constraints/index/GL `1160`, then
-   replace services in dependency order.
-7. Run internal and external health checks, authenticated credit smoke checks,
-   restart-count/log checks, and a short monitored canary.
+- Implementation commit: `dd26a1f7fb67a08d83306043c5660695fa8ea41c`.
+- Final release/config commit: `1d77e7b72a3fa3e5e52bbb9a92a8aa06608fbb45`.
+- Active symlink: `/opt/resort-os-current -> /opt/resort-os-releases/1d77e7b`.
+- Verified pre-deploy DB dump:
+  `/var/backups/resort-os/database/resort_os_20260808_180257.dump`, `609846`
+  bytes, SHA-256
+  `1bd9d33edebb667eb4d42b53fd2f4040aaeaa9c90a9c69efec61ab6bc616d70d`.
+- Rollback image manifest:
+  `/var/backups/resort-os/source-releases/dd26a1f-rollback-images.txt`.
+- Final exact-source archive:
+  `/var/backups/resort-os/source-releases/1d77e7b.tar.gz`, SHA-256
+  `1ef3bea7541a2354b712faa6b4d0ec044978093746e501e66b7ff78365506827`.
+- Production environment validation and Compose config validation passed without
+  printing secrets. New backend import and Alembic preflight passed.
+- Migration `f8aa1f0fabba -> c9d4e5f6a7b8` applied successfully. Both new tables
+  are present; initial credit-account/transaction row counts are `0 / 0`; branch
+  count and GL `1160` count are both `1`.
+- Images built from the exact release source: backend, Celery worker/beat, Staff,
+  and Owner. Replacement order was backend → worker/beat → Staff/Owner → Nginx.
+- Backend, worker, beat, Staff, and Owner are healthy with `RestartCount=0`;
+  Nginx is running with `RestartCount=0` and a clean `nginx -t`.
+- `/health` and `/health/ready` report production DB and Redis `ok`.
+  `elkheima.com`, `www`, `app`, and `owner` return HTTP `200`; Owner HTTP redirects
+  with `301`. Anonymous Credit and Owner protected probes return `401`, confirming
+  the routes are live and guarded. No production financial test row was created.
+- `resort-os-healthcheck.service` returned success. Strict post-deploy scans found
+  zero `ERROR`/`CRITICAL`/`Traceback` entries in the changed-service logs.
 
 ## Rollback rule
 
