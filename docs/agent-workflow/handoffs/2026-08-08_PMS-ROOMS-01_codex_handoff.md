@@ -1,8 +1,8 @@
 # PMS-ROOMS-01 — Real room inventory deployment handoff
 
-**Date:** 2026-08-08 (Africa/Cairo)  
-**Owner:** Mohamed  
-**Implementer / final reviewer:** Codex  
+**Date:** 2026-08-08 (Africa/Cairo)
+**Owner:** Mohamed
+**Implementer / final reviewer:** Codex
 **Status:** DEPLOYED / PRODUCTION_VERIFIED
 
 ## Outcome
