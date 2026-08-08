@@ -55,14 +55,20 @@ def _resolve_rate_plan(db: Session, data: BookingCreate, nights: int) -> Optiona
     return plan
 
 
-def _room_rate_for(room_type: "RoomType | None", plan: "RatePlan | None", room_type_id: int) -> Decimal:
+def _room_rate_for(
+    room_type: "RoomType | None",
+    plan: "RatePlan | None",
+    room_type_id: int,
+) -> Decimal | None:
     """السعر اليومي الفعلي لغرفة معيّنة: سعر الخطة (override أو multiplier)
     لو الخطة سارية وعامة (room_type_id=None) أو مطابقة لنوع الغرفة دي بالظبط،
     وإلا السعر الأساسي الخام لنوع الغرفة."""
-    base = room_type.base_rate if room_type else Decimal("0")
+    base = room_type.base_rate if room_type else None
     if plan and (plan.room_type_id is None or plan.room_type_id == room_type_id):
         if plan.base_rate_override is not None:
             return plan.base_rate_override
+        if base is None:
+            return None
         return (base * plan.rate_multiplier).quantize(Decimal("0.01"))
     return base
 
@@ -170,6 +176,10 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
             raise ValueError(f"نوع الغرفة المرتبط بالغرفة {room_id} لا ينتمي لهذا الفرع")
         applies = rate_plan and (rate_plan.room_type_id is None or rate_plan.room_type_id == room.room_type_id)
         daily_rate = _room_rate_for(room_type, rate_plan, room.room_type_id)
+        if daily_rate is None:
+            raise ValueError(
+                f"لم يتم تحديد سعر للغرفة {room.name}؛ اعتمد سعر النوع أو خطة سعر قبل الحجز"
+            )
         room_rates.append((room_id, daily_rate, nights, rate_plan.id if applies else None))
 
     booking_number = crud.generate_booking_number(db, data.branch_id)

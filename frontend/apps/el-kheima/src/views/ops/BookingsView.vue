@@ -68,6 +68,7 @@ interface RoomOption {
   floor: number
   room_type_id: number
   status: string
+  view_type: 'none' | 'side_sea' | 'sea'
 }
 
 interface RatePlanOption {
@@ -208,6 +209,10 @@ function roomLabel(booking: Booking): string {
   if (!roomId) return '—'
   const extra = (booking.rooms?.length ?? 0) > 1 ? ` (+${(booking.rooms!.length - 1)})` : ''
   return (allRoomsById.value[roomId]?.name ?? `#${roomId}`) + extra
+}
+
+function roomViewLabel(room: RoomOption): string {
+  return t(`backoffice.rooms.views.${room.view_type}`)
 }
 
 // الغرف المتاحة فعليًا لفترة الحجز المطلوبة تحديدًا — لازم الاتنين تاريخ
@@ -692,7 +697,7 @@ onMounted(() => {
                 v-model="form.room_ids"
                 class="rounded border-stone-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:text-blue-400"
               />
-              <span class="text-gray-800 dark:text-gray-200">{{ room.name }}</span>
+              <span class="text-gray-800 dark:text-gray-200">{{ room.name }} — {{ roomViewLabel(room) }}</span>
             </label>
           </div>
           <p v-if="!form.check_in || !form.check_out" class="mt-1 text-xs text-gray-400 dark:text-gray-400">{{ t('backoffice.bookings.selectDatesFirst') }}</p>

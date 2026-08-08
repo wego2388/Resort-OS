@@ -5247,6 +5247,13 @@
       "roomHash": "أوضة {name}",
       "type": "النوع",
       "floor": "الدور",
+      "groundFloor": "الدور الأرضي",
+      "view": "الإطلالة",
+      "views": {
+        "none": "بدون رؤية بحر",
+        "side_sea": "رؤية جانبية للبحر",
+        "sea": "رؤية البحر"
+      },
       "statusLabel": "الحالة",
       "currentBooking": "الحجز الحالي",
       "departureLabel": "مغادرة: {date}",

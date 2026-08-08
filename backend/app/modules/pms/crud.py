@@ -22,7 +22,7 @@ def list_room_types(db: Session, branch_id: int, active_only: bool = True) -> li
     q = db.query(RoomType).filter(RoomType.branch_id == branch_id)
     if active_only:
         q = q.filter(RoomType.is_active.is_(True))
-    return q.order_by(RoomType.base_rate).all()
+    return q.order_by(RoomType.base_rate.asc().nullslast(), RoomType.name).all()
 
 
 def get_room_type(db: Session, room_type_id: int) -> Optional[RoomType]:

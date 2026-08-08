@@ -12,8 +12,11 @@ class RoomTypeCreate(BaseModel):
     branch_id:     int
     name:          str = Field(..., max_length=100)
     name_ar:       Optional[str] = None
-    base_rate:     Decimal = Field(..., gt=0)
-    max_occupancy: int = Field(2, ge=1)
+    # None is an explicit "not approved yet" state, not a zero price/capacity.
+    base_rate:     Optional[Decimal] = Field(None, gt=0)
+    # Keep the existing API default for ordinary manual creates while still
+    # permitting an explicit unconfigured state for reviewed real inventory.
+    max_occupancy: Optional[int] = Field(2, ge=1)
     amenities:     Optional[str] = None
     is_active:     bool = True
 
@@ -29,6 +32,7 @@ class RoomCreate(BaseModel):
     room_type_id: int
     name:         str = Field(..., max_length=20)
     floor:        int = 1
+    view_type:    str = Field("none", pattern=r"^(none|side_sea|sea)$")
     notes:        Optional[str] = None
 
 

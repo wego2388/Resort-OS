@@ -10,7 +10,7 @@ import {
 } from '@resort-os/ui'
 
 const toast  = useToast()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { formatNumber, formatDate: fmtDateFn, formatTime: fmtTimeFn } = useStaffFormat()
 const auth   = useAuthStore()
 const branchId = computed(() => auth.branchId)
@@ -28,8 +28,9 @@ interface Room {
   floor: number
   status: 'available' | 'occupied' | 'reserved' | 'checkout_pending' | 'maintenance'
   room_type_id: number
+  view_type: 'none' | 'side_sea' | 'sea'
 }
-interface RoomTypeOption { id: number; name: string }
+interface RoomTypeOption { id: number; name: string; name_ar?: string | null }
 interface CurrentBookingInfo { booking_id: number; guest_name: string; check_out: string }
 
 interface Booking {
@@ -98,6 +99,7 @@ const filteredRooms = computed(() => {
   if (q) list = list.filter(r =>
     r.name.toLowerCase().includes(q) ||
     (roomTypesById.value[r.room_type_id]?.name ?? '').toLowerCase().includes(q) ||
+    roomViewLabel(r).toLowerCase().includes(q) ||
     (bookingByRoomId.value[r.id]?.guest_name ?? '').toLowerCase().includes(q)
   )
   return list
@@ -138,7 +140,13 @@ function roomName(booking: Booking): string {
   }).join(t('backoffice.reception.listSeparator'))
 }
 function roomTypeName(room: Room): string {
-  return roomTypesById.value[room.room_type_id]?.name ?? '—'
+  const roomType = roomTypesById.value[room.room_type_id]
+  if (!roomType) return '—'
+  return locale.value.startsWith('ar') ? (roomType.name_ar || roomType.name) : roomType.name
+}
+
+function roomViewLabel(room: Room): string {
+  return t(`backoffice.rooms.views.${room.view_type}`)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -332,7 +340,7 @@ const nbForm    = ref({
 const availableRoomOptions = computed<SelectOption[]>(() =>
   rooms.value
     .filter(r => r.status === 'available')
-    .map(r => ({ value: r.id, label: `${r.name} — ${roomTypeName(r)}` })))
+    .map(r => ({ value: r.id, label: `${r.name} — ${roomTypeName(r)} — ${roomViewLabel(r)}` })))
 
 const applicableRatePlans = computed<SelectOption[]>(() =>
   ratePlans.value.map(p => ({ value: p.id, label: p.name })))
@@ -589,6 +597,7 @@ onUnmounted(() => {
                   <span :class="['w-2 h-2 rounded-full flex-shrink-0', roomStatusConfig[room.status]?.dot ?? 'bg-gray-300']" />
                 </div>
                 <span class="text-xs text-muted truncate">{{ roomTypeName(room) }}</span>
+                <span class="text-xs text-muted truncate">{{ roomViewLabel(room) }}</span>
 
                 <!-- ضيف الغرفة إن كانت مشغولة -->
                 <template v-if="room.status === 'occupied' && bookingByRoomId[room.id]">

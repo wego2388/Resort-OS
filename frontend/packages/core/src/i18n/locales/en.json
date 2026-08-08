@@ -5247,6 +5247,13 @@
       "roomHash": "Room {name}",
       "type": "Type",
       "floor": "Floor",
+      "groundFloor": "Ground floor",
+      "view": "View",
+      "views": {
+        "none": "No sea view",
+        "side_sea": "Side sea view",
+        "sea": "Sea view"
+      },
       "statusLabel": "Status",
       "currentBooking": "Current booking",
       "departureLabel": "Departure: {date}",

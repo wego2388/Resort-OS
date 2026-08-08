@@ -24,7 +24,7 @@ import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppModal, AppSpinner, EmptyState, useToast } from '@resort-os/ui'
 
 const toast = useToast()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { formatNumber, formatDate: fmtDateFn } = useStaffFormat()
 const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
@@ -34,6 +34,8 @@ interface Room {
   id: number
   name: string
   floor: number
+  view_type: 'none' | 'side_sea' | 'sea'
+  notes?: string | null
   status: 'available' | 'occupied' | 'reserved' | 'checkout_pending' | 'maintenance'
   room_type_id: number
 }
@@ -41,6 +43,7 @@ interface Room {
 interface RoomTypeOption {
   id: number
   name: string
+  name_ar?: string | null
 }
 
 interface CurrentBookingInfo {
@@ -56,7 +59,17 @@ const selectedRoom = ref<Room | null>(null)
 const filterStatus = ref<string | null>(null)
 
 function roomTypeName(room: Room): string {
-  return roomTypesById.value[room.room_type_id]?.name ?? '—'
+  const roomType = roomTypesById.value[room.room_type_id]
+  if (!roomType) return '—'
+  return locale.value.startsWith('ar') ? (roomType.name_ar || roomType.name) : roomType.name
+}
+
+function roomViewLabel(room: Room): string {
+  return t(`backoffice.rooms.views.${room.view_type}`)
+}
+
+function roomFloorLabel(room: Room): string {
+  return room.floor === 0 ? t('backoffice.rooms.groundFloor') : formatNumber(room.floor)
 }
 
 // القيم دي لازم تطابق Room.status الحقيقي بالظبط (app/modules/pms/models.py):
@@ -324,6 +337,7 @@ onUnmounted(() => clearInterval(refreshInterval))
       >
         <div class="font-black text-lg text-gray-900 dark:text-gray-100">{{ room.name }}</div>
         <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ roomTypeName(room) }}</div>
+        <div class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ roomViewLabel(room) }}</div>
         <div :class="['text-xs font-semibold mt-1', statusConfig[room.status]?.color]">
           {{ statusConfig[room.status]?.label ?? room.status }}
         </div>
@@ -358,7 +372,11 @@ onUnmounted(() => clearInterval(refreshInterval))
             </div>
             <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
               <span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.floor') }}</span>
-              <span class="font-medium text-gray-900 dark:text-gray-100">{{ selectedRoom.floor }}</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{{ roomFloorLabel(selectedRoom) }}</span>
+            </div>
+            <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.view') }}</span>
+              <span class="font-medium text-gray-900 dark:text-gray-100">{{ roomViewLabel(selectedRoom) }}</span>
             </div>
             <div class="flex justify-between border-b border-stone-100 dark:border-border/50 pb-2">
               <span class="text-gray-500 dark:text-gray-400">{{ t('backoffice.rooms.statusLabel') }}</span>

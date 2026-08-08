@@ -9,7 +9,8 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint,
+    Boolean, CheckConstraint, Date, DateTime, ForeignKey, Integer, Numeric, String, Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -25,8 +26,12 @@ class RoomType(Base, TimestampMixin):
     branch_id:    Mapped[int]         = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
     name:         Mapped[str]         = mapped_column(String(100))
     name_ar:      Mapped[str | None]  = mapped_column(String(100), nullable=True)
-    base_rate:    Mapped[Decimal]     = mapped_column(Numeric(10, 2))
-    max_occupancy:Mapped[int]         = mapped_column(Integer, default=2)
+    # Real room inventory may be loaded before Mohamed approves commercial
+    # pricing/capacity.  ``None`` means deliberately unconfigured; it must never
+    # be coerced to zero because a zero-value booking would become a financial
+    # fact.  PMS booking services fail closed until a base/override rate exists.
+    base_rate:    Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    max_occupancy:Mapped[int | None]     = mapped_column(Integer, nullable=True)
     amenities:    Mapped[str | None]  = mapped_column(Text, nullable=True)   # JSON list
     is_active:    Mapped[bool]        = mapped_column(Boolean, default=True)
 
@@ -37,6 +42,10 @@ class Room(Base, TimestampMixin):
     __tablename__ = "rooms"
     __table_args__ = (
         UniqueConstraint("branch_id", "name", name="uq_room_branch_name"),
+        CheckConstraint(
+            "view_type IN ('none', 'side_sea', 'sea')",
+            name="ck_rooms_view_type_valid",
+        ),
     )
 
     id:           Mapped[int]        = mapped_column(primary_key=True)
@@ -44,6 +53,7 @@ class Room(Base, TimestampMixin):
     room_type_id: Mapped[int]        = mapped_column(ForeignKey("room_types.id", ondelete="RESTRICT"))
     name:         Mapped[str]        = mapped_column(String(20))     # "101", "A-204"
     floor:        Mapped[int]        = mapped_column(Integer, default=1)
+    view_type:    Mapped[str]        = mapped_column(String(20), default="none")
     status:       Mapped[str]        = mapped_column(String(30), default="available")
     # available|occupied|reserved|maintenance|checkout_pending
     notes:        Mapped[str | None] = mapped_column(String(300), nullable=True)
