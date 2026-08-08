@@ -1,16 +1,16 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-08 — Decision 0005 Personal Credit Account منشور
-ومتحقق على الإنتاج بعد موافقة Mohamed.
-- **Production:** الإصدار الفعال `/opt/resort-os-releases/1d77e7b`؛ Alembic
-  `c9d4e5f6a7b8 (head)`؛ PostgreSQL وRedis وكل الخدمات المتغيرة سليمة.
-- **Migration:** PostgreSQL 16 local upgrade/downgrade/upgrade نجحت قبل النشر،
-  ثم production upgrade من `f8aa1f0fabba` إلى `c9d4e5f6a7b8` نجح.
-- **Credit acceptance:** 21/21 passed؛ Credit + Dining + Beach focused suite:
-  242/242 passed؛ el-kheima وowner type-check/build passed؛ Staff frontend 95/95.
-- **Full repository gates:** backend 2565 collected وصل 100% بـexit 0 وصفر
-  failure؛ agent-check/Alembic/diff-check ناجحة. health/ready والنطاقات الأربعة
-  وsystemd healthcheck نجحت بعد النشر، وصفر ERROR/CRITICAL/Traceback.
+**آخر تحديث:** 2026-08-08 — مخزون غرف الخيمة الحقيقي منشور بلا أسعار.
+- **Production:** الإصدار الفعال `/opt/resort-os-releases/eda6617`؛ Alembic
+  `d0e1f2a3b4c5 (head)`؛ PostgreSQL وRedis والخدمات المتغيرة سليمة.
+- **Real PMS inventory:** 14 غرفة، نوعان، صفر خطط أسعار؛ 8 Chalet و6 Studio؛
+  7 بدون رؤية بحر، 2 رؤية جانبية، 5 رؤية بحر؛ كلها floor `0` وavailable.
+- **Migration:** PostgreSQL 16 fresh upgrade/downgrade/re-upgrade نجحت، ثم
+  production upgrade من `c9d4e5f6a7b8` إلى `d0e1f2a3b4c5` نجح.
+- **Full repository gates:** backend 2569 collected وصل 100% بـexit 0 وصفر
+  failure؛ PMS focused 86/86؛ Staff 95/95؛ type-check/build/agent-check ناجحة.
+  health/ready والنطاقات الأربعة وsystemd healthcheck نجحت بعد النشر، وصفر
+  ERROR/CRITICAL/Traceback في الخدمات المتغيرة.
 
 **السابق:** 2026-08-08 — REL-11: Owner Intelligence Cockpit Phase 1-5 نشر على `owner.elkheima.com` (commit `719a432` + `74959e4` — منشور ✅)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
@@ -18,6 +18,32 @@
 
 هذا الملف يسجل الحقائق الحالية فقط. التاريخ السابق محفوظ في
 `docs/archive/2026-07-execution/`.
+
+## PMS-ROOMS-01 — مخزون الغرف الحقيقي (منشور ✅)
+
+- مصدر البيانات: اعتماد Mohamed المباشر في 2026-08-08؛ لا أسعار.
+- حُذفت البيانات الصناعية فقط بعد إثبات أن `bookings` و`booking_rooms`
+  و`housekeeping_tasks` كلها صفر. الأداة dry-run افتراضيًا، لها confirmation
+  حرفي وPostgreSQL advisory transaction lock وAudit marker وidempotency.
+- النوعان `Chalet / شاليه` و`Studio / أستديو` بلا `base_rate` أو
+  `max_occupancy` أو `amenities` حتى اعتماد حقائقها. خدمة الحجز ترفض النوع
+  غير المسعّر بدل إنشاء حجز بصفر.
+- الواجهة تعرض النوع المترجم، الدور الأرضي، والإطلالة في الغرف والاستقبال
+  واختيار الغرفة بالحجز.
+- implementation/release commit: `eda66178762f44ad4661ab98f9cca442ba491bec`.
+- DB backup verified:
+  `/var/backups/resort-os/database/resort_os_20260808_193804.dump`
+  (`628499` bytes، SHA-256
+  `99d18514852543a26bb5b34f4e4289eacc5b140d84e825fe147a04f686ace65c`).
+- Rollback images manifest:
+  `/var/backups/resort-os/source-releases/eda6617-rollback-images-20260808_193823.txt`.
+- Exact-source archive:
+  `/var/backups/resort-os/source-releases/eda6617.tar.gz`، SHA-256
+  `4746a8319612177320746895b2f1b208fcd2e1da41f9f1192f4dc3bccbfd25dd`.
+- بعد النشر: `already_applied=true` في dry-run الثاني، marker واحد،
+  `RestartCount=0` للخدمات الأربع، public room types يعيدان `null` للسعر،
+  والمسار المحمي يعيد `401` بلا توثيق. حساب الأدمن الذي أنشأه Mohamed بقي
+  موجودًا ولم تتعامل معه عملية الغرف.
 
 ## Decision 0005 — حساب آجل شخصي (منشور ✅)
 
@@ -62,15 +88,15 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `1d77e7b` — CREDIT-0005 + Owner Phase 6/7/7a + Nginx cleanup |
-| runtime code/config commit | `1d77e7b` — follow-up بعد implementation commit `dd26a1f` |
+| Resort OS source release (منشور) | `eda6617` — real PMS room inventory فوق CREDIT-0005 |
+| runtime code/config commit | `eda6617` |
 | Marketing source release | `bc48f09` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/1d77e7b` |
+| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/eda6617` |
 | active Marketing release | `/opt/elkheima-marketing-releases/bc48f09` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/bc48f09` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
-| Alembic head (DB) | `c9d4e5f6a7b8` (personal credit accounts — مطبّق ✅) |
+| Alembic head (DB) | `d0e1f2a3b4c5` (real room inventory fields — مطبّق ✅) |
 
 ## Owner Cockpit Phase 6+7+7a — نشر 8 أغسطس 2026
 

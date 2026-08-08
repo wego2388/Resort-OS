@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-08 — CREDIT-0005 منشور ومتحقق على الإنتاج
+**آخر تحديث:** 2026-08-08 — PMS-ROOMS-01 منشور ومتحقق بلا أسعار
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + production burn-in
@@ -49,10 +49,11 @@
 | REL-06 — HR/admin/Timeshare audit batch (23 commits، تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE | `821a718` فعال؛ VAT/service-charge حقيقي، جلسات إدارية، بوابة تايم شير كاملة + تنبيهات واتساب، إصلاح fail-closed لـTIMESHARE_PORTAL_TOKEN_SECRET | — |
 | REL-07 — Arabic PDF invoice fix + real blog + marketing-site console-error sweep (8 commits + Marketing، تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE | `5df8191` فعال (Resort) + `79130a6` فعال (Marketing)؛ خط عربي/لوجو للفواتير، `GET /hub/blog/posts/{slug}` + 6 مقالات حقيقية، حذف نداءات API ميتة + إصلاح باج انتقال صفحات + كارت وصف بدل زر طلب وهمي | — |
 | CREDIT-0005 — personal customer/employee credit accounts | COMPLETE / DEPLOYED | `1d77e7b` فعال؛ Alembic `c9d4e5f6a7b8`؛ GL 1160 + immutable ledger + Dining/Beach + Staff/Owner UI؛ health/smoke/log gates ناجحة | — |
+| PMS-ROOMS-01 — approved real room inventory | COMPLETE / DEPLOYED | `eda6617` فعال؛ 14 وحدة حقيقية، نوعان، صفر خطط/أسعار؛ الإطلالة ظاهرة في Staff؛ health/log/idempotency gates ناجحة | — |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |
-| DATA-02 — approved real master data | PENDING REVIEW | استبدال demo بما تعتمده العمليات | المالك والتشغيل |
+| DATA-02 — approved real master data | PARTIAL — PMS ROOMS COMPLETE | الغرف الحقيقية منشورة؛ باقي master data ينتظر اعتماد العمليات | المالك والتشغيل لباقي البيانات |
 
 ## ما اكتمل
 
@@ -70,6 +71,9 @@
 - [x] rollback للصور وDB والشهادات قبل domain cutover.
 - [x] CREDIT-0005: DB backup + rollback images، build من exact source، migration
   `c9d4e5f6a7b8`، استبدال تدريجي، 4/4 domains HTTP 200، صفر restarts/log errors.
+- [x] PMS-ROOMS-01: backup + rollback images، migration `d0e1f2a3b4c5`،
+  استبدال ذري 52/5/4 → 14/2/0، بلا أسعار، 4/4 domains HTTP 200،
+  idempotency وhealth/log gates ناجحة.
 - [x] إصلاح backup retention واختبار nested protected rollback directory.
 - [x] Resort release `a3e8abb` وMarketing release `16f8f2c` مع SHA-256.
 - [x] Hostinger DNS snapshot `167902017`.
@@ -105,9 +109,9 @@
 | Staff app | `https://app.elkheima.com` |
 | Containers | 8 Running؛ healthchecks ناجحة |
 | Ports | 5436/6381/8005 loopback-only؛ 80/443 public |
-| Resort release | `/opt/resort-os-current -> .../5df8191` |
+| Resort release | `/opt/resort-os-current -> .../eda6617` |
 | Marketing release | `/opt/elkheima-marketing-current -> .../79130a6` |
-| Database | Alembic `7b4d81dc08ee`؛ marker واحد؛ safety counts ثابتة |
+| Database | Alembic `d0e1f2a3b4c5`؛ real-room marker واحد؛ 14 غرفة / نوعان / صفر rate plans |
 | TLS | Let's Encrypt SAN حتى `2026-10-28 02:21:34 UTC` |
 | DNS rollback | Hostinger snapshot `167902017` |
 | Chatbot | Active؛ live Gemini E2E passed من `elkheima.com` |

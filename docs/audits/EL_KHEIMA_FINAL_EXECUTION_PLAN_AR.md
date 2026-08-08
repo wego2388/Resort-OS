@@ -1,6 +1,6 @@
 # الخطة التنفيذية النهائية الحية — El Kheima Resort OS
 
-**آخر تحديث مثبت:** 2026-07-31 بعد نشر إصلاح تبديل منافذ الـPOS
+**آخر تحديث مثبت:** 2026-08-08 بعد نشر مخزون الغرف الحقيقي بلا أسعار
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **الحالة:** النشر والبيانات وChatbot وDNS ومسار الحسابات مكتملة؛ الحسابات
@@ -14,7 +14,7 @@
    `https://app.elkheima.com`.
 4. DNS cutover أُجيز صراحةً في 30 يوليو 2026 واكتمل. أي تعديل DNS جديد
    يحتاج نطاقًا واضحًا ونقطة تراجع؛ لا Reset DNS ولا AAAA دون IPv6 فعلي.
-5. مصدر الإنتاج Resort OS هو release immutable `a3e8abb`، ومصدر الموقع
+5. مصدر الإنتاج Resort OS هو release immutable `eda6617`، ومصدر الموقع
    التسويقي المستقل هو `16f8f2c`.
 6. لا `git pull` أو reset أو تنظيف أو rebuild فوق مجلدات المصدر القديمة.
 7. لا أسرار في Git أو logs أو handoffs؛ أسرار Compose تُشتق في الذاكرة.
@@ -28,11 +28,11 @@
 ### الكود
 
 - branch: `claude/CX-02C-frontend-auth-bootstrap`.
-- Resort source release: `a3e8abb`، مدفوع على فرع العمل.
+- Resort source release: `eda6617`، مدفوع على فرع العمل.
 - Marketing source release: `16f8f2c`، مدفوع على `main` في مستودعه المستقل.
 - `origin/main` في Resort OS بقي عند `598938e`.
-- Alembic single head: `88d1c505a9dc`.
-- full backend: 2181 passed و40 skipped من 2221 collected، صفر failure.
+- Alembic single head: `d0e1f2a3b4c5`.
+- full backend: 2569 collected وصل 100% بـexit 0، صفر failure.
 - onboarding/HR/auth focused backend: 228 passed و1 skipped؛ frontend:
   95/95.
 - Resort `agent-check` وtype-check/build وdiff-check: ناجحة.
@@ -43,12 +43,11 @@
 - SSH بالمفتاح كمستخدم `resortos` مع sudo وDocker.
 - root login وpassword auth مغلقان؛ UFW وFail2ban والـloopback bindings
   لم تُضعف.
-- `/opt/resort-os-current -> /opt/resort-os-releases/a3e8abb`.
+- `/opt/resort-os-current -> /opt/resort-os-releases/eda6617`.
 - `/opt/elkheima-marketing-current ->
   /opt/elkheima-marketing-releases/16f8f2c`.
-- تطبيق الموظفين والـedge يستخدمان release `a3e8abb`؛ Backend وCelery
-  بقيا على `679f76e` لأن الإصدار الأخير Frontend-only. Marketing يستخدم
-  مصدره المستقل `16f8f2c`.
+- تطبيق الموظفين وBackend وCelery يستخدمون release `eda6617`. الـedge لم
+  يتغير في PMS-ROOMS-01، وMarketing يستخدم مصدره المستقل.
 - الحاويات الثماني `restarts=0`، وكل healthchecks المعرّفة سليمة.
 - 8 حاويات تعمل؛ الخدمات ذات healthcheck سليمة.
 - PostgreSQL وRedis لم يُعاد إنشاؤهما أثناء النشر.
@@ -67,7 +66,7 @@
 | Gate 3 — chat/consent/truth | ACTIVE + LIVE VERIFIED | مراجعة دورية للحقائق والـprovider |
 | Gate 4 — content/SEO | TECHNICAL COMPLETE | اعتماد بيانات المالك الحقيقية |
 | Gate 5A — synthetic demo data | COMPLETE | importer idempotent + safety counts |
-| Gate 5B — real master data | PENDING REVIEW | اعتماد التشغيل والمالية |
+| Gate 5B — real master data | PARTIAL — PMS ROOMS DEPLOYED | اعتماد باقي بيانات التشغيل والمالية |
 | Gate 6 — VPS hardening | COMPLETE + VERIFIED | مراجعة دورية فقط |
 | Gate 7 — deploy/backup/monitoring | BASELINE COMPLETE | external alert channel وburn-in |
 | Gate 8 — TLS/domain | COMPLETE | تجديد ومراقبة دوريان |
@@ -100,8 +99,9 @@
 - frontend auth/bootstrap/permissions/route gates وsingle-branch UX مكتملة.
 - importer الإنتاجي dry-run افتراضي، confirmation حرفي، advisory lock،
   marker، وidempotency.
-- نُشرت بيانات المخزون والموردين والمطعم والغرف والصيانة وCRM وtimeshare
-  وlease وbeach وHub دون مستخدمين أو حجوزات أو مدفوعات أو رواتب تجريبية.
+- نُشرت بيانات المخزون والموردين والمطعم والصيانة وCRM وtimeshare وlease
+  وbeach وHub تجريبيًا دون مستخدمين أو حجوزات أو مدفوعات أو رواتب تجريبية.
+  وفي 2026-08-08 استُبدلت الغرف وحدها بـ14 وحدة حقيقية معتمدة بلا أسعار.
 - safety counts قبل/بعد متطابقة، وsecond apply أعاد `added={}`.
 
 ### P0-04 — النشر وChatbot
