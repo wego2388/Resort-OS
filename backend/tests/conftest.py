@@ -44,6 +44,10 @@ os.environ.setdefault("SERVICE_CHARGE_PERCENTAGE", "12.0")
 os.environ.setdefault("TIMEZONE", "Africa/Cairo")
 os.environ.setdefault("ETA_ENABLED", "false")
 os.environ.setdefault("SURVEY_TOKEN_SECRET", "test-survey-secret-minimum-32-chars-xx")
+os.environ.setdefault(
+    "TIMESHARE_PORTAL_TOKEN_SECRET",
+    "test-timeshare-portal-secret-minimum-32-chars-xxxx",
+)
 os.environ.setdefault("FIELD_ENCRYPTION_KEY", "9g2Hqbw0QQod3CiEaA9MMrWBpXmb3J3Hb6MEdwv2FeQ=")
 
 # ─── SQLite In-Memory Engine ──────────────────────────────────────────
@@ -90,6 +94,7 @@ def create_all_tables() -> None:
     import app.modules.analytics.models    # noqa: F401, PLC0415
     import app.modules.dining.models       # noqa: F401, PLC0415
     import app.modules.owner.models        # noqa: F401, PLC0415
+    import app.modules.credit.models       # noqa: F401, PLC0415
     Base.metadata.create_all(bind=engine)
 
 
@@ -207,7 +212,13 @@ def setup_db():
     yield
     # نظّف بعد كل tests
     from app.core.database import Base  # noqa: PLC0415
-    Base.metadata.drop_all(bind=engine)
+    # SQLite enforces self-referential ON DELETE actions while DROP TABLE is
+    # being evaluated. Disable FK enforcement only for the full schema
+    # teardown; constraints stay enabled for every test and are restored here.
+    with engine.connect() as connection:
+        connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        Base.metadata.drop_all(bind=connection)
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
 
 
 @pytest.fixture

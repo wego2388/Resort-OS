@@ -1,32 +1,97 @@
 # حالة المشروع الحالية — El Kheima Beach Resort OS
 
-**آخر تحديث:** 2026-08-07 — Decision 0004 Phase 3+4: Owner Intelligence Cockpit — Aggregation APIs + Owner PWA (commit pending بإذن محمد).
-- **2374 backend tests passed، صفر failures**
-- **TypeScript نظيف، owner PWA build نظيف**
-- **Alembic head:** `f8aa1f0fabba` (owner_module_phase2_and_pr_po_linkage — لا migration جديدة في Phase 3+4)
+**آخر تحديث:** 2026-08-08 — Decision 0005 Personal Credit Account
+منفّذ محليًا وينتظر موافقة Mohamed قبل النشر على الـVPS.
+- **Production لم يتغيّر:** Alembic `f8aa1f0fabba`، والخدمات المنشورة كما هي.
+- **Local Alembic head:** `c9d4e5f6a7b8` (single head)؛ PostgreSQL 16
+  upgrade/downgrade/upgrade نجحت.
+- **Credit acceptance:** 21/21 passed؛ Credit + Dining + Beach focused suite:
+  242/242 passed؛ el-kheima وowner type-check/build passed؛ Staff frontend 95/95.
+- **Full repository gates:** backend 2565 collected وصل 100% بـexit 0 وصفر
+  failure؛ agent-check/Alembic/diff-check ناجحة. الحزمة جاهزة لقرار Mohamed
+  قبل النشر.
 
-**السابق:** 2026-08-07 — REL-10: POS-BEACH-01 beach map + hotel B2B dining POS (commit `427ae82` — منشور ✅)
+**السابق:** 2026-08-08 — REL-11: Owner Intelligence Cockpit Phase 1-5 نشر على `owner.elkheima.com` (commit `719a432` + `74959e4` — منشور ✅)
 **البيئة:** Production — `elkheima.com` / VPS `191.218.161.133`
 **قائد التنفيذ والمراجع النهائي:** Codex
 
 هذا الملف يسجل الحقائق الحالية فقط. التاريخ السابق محفوظ في
 `docs/archive/2026-07-execution/`.
 
+## Decision 0005 — حساب آجل شخصي (محلي، غير منشور)
+
+- موديول `credit` كامل: Customer/Employee accounts، limit/status،
+  immutable ledger، cash/bank collections، partial sale refunds، exact reversal،
+  audit، pagination.
+- تصحيح محاسبي للبريف: الذمم الشخصية على `1160`؛ `1200`
+  يظل مخزونًا.
+- Dining وBeach POS يدعمان حساب عميل أو موظف، limit override
+  بـmanager PIN، وatomic posting بقيد محاسبي إلزامي.
+- Beach void يعكس المديونية بدل صناعة حركة كاش، وDining item refund يخفض
+  مديونية الحساب بنسبة الـtender مع cap وفروق تقريب محسومة.
+- Staff App: `/admin/credit-accounts` للفتح/الكشف/التحصيل/الحالة/
+  الحد/العكس حسب الصلاحيات.
+- Owner App: total/count في NowScreen + read-only receivables detail.
+- لا migration ولا build ولا كود من هذه الحزمة وصل إلى الـVPS حتى الآن.
+
 ## 1. المصدر والإصدار
 
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `427ae82` |
-| آخر commit على الفرع | `427ae82` — REL-10: POS-BEACH-01 beach map + hotel B2B dining POS (منشور ✅) |
+| Resort OS source release (منشور) | `74959e4` (+ تعديلات غير ملتزمة — Phase 6+7+7a) |
+| آخر commit على الفرع | `74959e4` — REL-11: Owner Intelligence Cockpit Phase 1-5 |
 | Marketing source release | `bc48f09` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-releases/427ae82` |
-| Resort current link | `/opt/resort-os-current -> /opt/resort-os-releases/427ae82` |
+| active Resort release | `/opt/resort-os-current` (live — تعديلات مباشرة على الـ VPS) |
 | active Marketing release | `/opt/elkheima-marketing-releases/bc48f09` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/bc48f09` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
-| Alembic head (DB) | `a3f9c1d2e4b5` (b2b_contract_id + beach_location_id على dining_orders — مطبّق ✅) |
+| Alembic head (DB) | `f8aa1f0fabba` (owner_module_phase2_and_pr_po_linkage — مطبّق ✅) |
+
+## Owner Cockpit Phase 6+7+7a — نشر 8 أغسطس 2026
+
+**ما اتضاف (بدون migration — قراءة فقط):**
+
+**Backend:**
+- `owner/schemas.py`: schemas جديدة للـ Phase 6+7+7a (`DaySnapshot`، `NowHistoryResponse`، `SalesPerformanceResponse`، `BeachPerformanceResponse`، `ChannelAnalyticsResponse`، `ExpenseAnalyticsResponse`، `ProcurementAnalyticsResponse`، `ShiftMonitorResponse`، `ExceptionsResponse`)
+- `owner/services.py`: `get_sales_performance`، `get_beach_performance`، `get_channel_analytics`، `get_expense_analytics`، `get_procurement_analytics`، `get_shift_monitor`، `get_exceptions`، `get_now_history`
+- `owner/api/router.py`: 7 endpoints جديدة (`/owner/sales`، `/owner/beach-performance`، `/owner/channel-analytics`، `/owner/expense-analytics`، `/owner/procurement-analytics`، `/owner/shifts`، `/owner/exceptions`، `/owner/now/history`)
+
+**Frontend:**
+- `SalesScreen.vue` — أداء المطعم (ABC + هامش) + الشاطئ (تذاكر بالنوع)
+- `ExpensesScreen.vue` — مصروفات كـ % من الإيراد + variance flags + مشتريات الموردين
+- `ShiftsScreen.vue` — تنبيهات (critical/attention/watch) + مراقبة الورديات
+- `NowScreen.vue` — sparklines حقيقية من `/owner/now/history?days=7`
+- `AppShell.vue` — bottom nav من 2 لـ 5 tabs
+- `router/index.ts` — 3 routes جديدة (sales/expenses/shifts)
+- `public/icon-192.png` + `public/icon-512.png` — PWA icons من الـ logo الأصلي
+
+**التحقق:**
+- ✅ 150 owner tests passed
+- ✅ TypeScript نظيف
+- ✅ Build: 16 entries precached
+- ✅ backend: running restarts=0
+- ✅ owner: running restarts=0
+- ✅ `https://owner.elkheima.com/icon-192.png` → HTTP 200
+- ✅ `https://owner.elkheima.com/icon-512.png` → HTTP 200
+- ✅ `GET /api/v1/owner/now/history` endpoint موجود في الـ router
+
+## Owner Cockpit — حالة المراحل
+
+| # | المرحلة | الحالة |
+|---|---|---|
+| 1 | Metric contracts | ✅ مكتمل |
+| 2 | Isolation + safety rails | ✅ مكتمل |
+| 3 | Aggregation APIs (now/performance) | ✅ مكتمل |
+| 4 | Owner PWA (Now + Performance) | ✅ مكتمل |
+| 5 | مراجعة الأرقام مع محمد | ✅ مكتمل (2026-08-08) |
+| 6 | Sales/Beach/Channel/Expense/Procurement analytics | ✅ مكتمل (2026-08-08) |
+| 7 | Shift monitoring + Exceptions engine | ✅ مكتمل (2026-08-08) |
+| 7a | PWA polish — icons + sparklines | ✅ مكتمل (2026-08-08) |
+| 8 | Security review + production gate | ⏳ التالي |
+| ~~9~~ | ~~Unit economics~~ | محذوف بقرار محمد |
+| ~~10~~ | ~~Scenario sandbox~~ | محذوف بقرار محمد |
 
 ## REL-10 — نشر 7 أغسطس 2026 (commit `427ae82`)
 

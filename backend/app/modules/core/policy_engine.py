@@ -51,6 +51,7 @@ SENSITIVE_ACTIONS: dict[str, SensitiveAction] = {
         SensitiveAction("apply_order_discount", "تطبيق خصم على طلب دايننج"),
         SensitiveAction("cash_movement", "حركة كاش يدوية (إيداع/سحب/تصحيح/فتح درج)"),
         SensitiveAction("view_other_cashier_shift_invoices", "عرض فواتير وردية كاشير تاني"),
+        SensitiveAction("override_credit_limit", "تجاوز حد حساب آجل شخصي", min_approver_level=60),
     ]
 }
 

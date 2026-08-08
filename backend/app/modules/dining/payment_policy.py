@@ -25,7 +25,7 @@ from app.core.config import settings
 # طرق الدفع المباشرة (بتحصّل كاش/مقاصّة فورًا في درج الوردية) مقابل room
 # (ذمّة على فوليو الغرفة، بتتسوّى وقت الـ checkout — مش tender مباشر).
 DIRECT_TENDER_METHODS = frozenset({"cash", "card", "wallet"})
-ALL_TENDER_METHODS = frozenset({"cash", "card", "wallet", "room"})
+ALL_TENDER_METHODS = frozenset({"cash", "card", "wallet", "room", "credit_account"})
 
 
 class PaymentMethodNotConfiguredError(Exception):

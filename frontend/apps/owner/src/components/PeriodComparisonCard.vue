@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
  * PeriodComparisonCard — بطاقة مقارنة فترتين.
- * تعرض: الإيراد + المصروف + صافي الدخل مع delta ونسبة التغيير.
+ * Phase 7e: collapsible outlet breakdown تحت الأرقام الرئيسية.
  */
+import { ref } from 'vue'
 import type { PeriodComparison } from '../api/types'
 import { formatMoney, formatPct, deltaClass, deltaArrow } from '../composables/useFormat'
 
@@ -11,6 +12,8 @@ defineProps<{
   comparison: PeriodComparison
   loading?: boolean
 }>()
+
+const showBreakdown = ref(false)
 </script>
 
 <template>
@@ -58,7 +61,6 @@ defineProps<{
             <div class="text-sm font-bold text-owner-text">
               {{ formatMoney(comparison.current.total_expense) }}
             </div>
-            <!-- للمصروف: الزيادة سيئة (عكس الإيراد) -->
             <div
               class="text-xs font-semibold flex items-center gap-1 justify-end"
               :class="deltaClass(typeof comparison.expense_delta === 'string'
@@ -78,9 +80,9 @@ defineProps<{
             <div
               class="text-base font-bold"
               :class="{
-                'text-owner-green': parseFloat(comparison.current.net_income) > 0,
-                'text-owner-red':   parseFloat(comparison.current.net_income) < 0,
-                'text-owner-muted': parseFloat(comparison.current.net_income) === 0,
+                'text-owner-green': parseFloat(String(comparison.current.net_income)) > 0,
+                'text-owner-red':   parseFloat(String(comparison.current.net_income)) < 0,
+                'text-owner-muted': parseFloat(String(comparison.current.net_income)) === 0,
               }"
             >
               {{ formatMoney(comparison.current.net_income) }}
@@ -92,6 +94,60 @@ defineProps<{
               <span>{{ deltaArrow(comparison.net_income_delta) }}</span>
               <span>{{ formatPct(comparison.net_income_pct) }}</span>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Phase 7e: Outlet Breakdown — collapsible -->
+      <div
+        v-if="comparison.breakdown"
+        class="mt-3 pt-3 border-t border-owner-border"
+      >
+        <button
+          class="w-full flex items-center justify-between text-xs text-owner-muted"
+          @click="showBreakdown = !showBreakdown"
+        >
+          <span>تفصيل الإيراد بالمنفذ</span>
+          <span>{{ showBreakdown ? '▲' : '▼' }}</span>
+        </button>
+
+        <div v-if="showBreakdown" class="mt-2 space-y-1.5">
+          <div
+            v-if="comparison.breakdown.dining_revenue != null"
+            class="flex items-center justify-between text-xs"
+          >
+            <span class="text-owner-muted">🍽 المطعم</span>
+            <span class="font-mono text-owner-text">{{ formatMoney(comparison.breakdown.dining_revenue) }}</span>
+          </div>
+          <div
+            v-if="comparison.breakdown.beach_revenue != null"
+            class="flex items-center justify-between text-xs"
+          >
+            <span class="text-owner-muted">🏖 الشاطئ</span>
+            <span class="font-mono text-owner-text">{{ formatMoney(comparison.breakdown.beach_revenue) }}</span>
+          </div>
+          <div
+            v-if="comparison.breakdown.rooms_revenue != null"
+            class="flex items-center justify-between text-xs"
+          >
+            <span class="text-owner-muted">🏨 الغرف</span>
+            <span class="font-mono text-owner-text">{{ formatMoney(comparison.breakdown.rooms_revenue) }}</span>
+          </div>
+          <div
+            v-if="comparison.breakdown.other_revenue != null"
+            class="flex items-center justify-between text-xs"
+          >
+            <span class="text-owner-muted">📦 أخرى</span>
+            <span class="font-mono text-owner-text">{{ formatMoney(comparison.breakdown.other_revenue) }}</span>
+          </div>
+          <div
+            v-if="!comparison.breakdown.dining_revenue &&
+                  !comparison.breakdown.beach_revenue &&
+                  !comparison.breakdown.rooms_revenue &&
+                  !comparison.breakdown.other_revenue"
+            class="text-xs text-owner-muted text-center py-2"
+          >
+            تفصيل المنافذ غير متاح لهذه الفترة
           </div>
         </div>
       </div>

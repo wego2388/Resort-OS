@@ -437,15 +437,149 @@ instructions" below. No phase includes a production deployment.
 7. **Shift monitoring and exceptions engine.** `OWNER_EXCEPTION_RULES`,
    tiered ranking, `fraud_tasks.py` integration, shift/cash-variance
    monitoring. This is the concrete theft/irregularity-detection deliverable.
-8. **Unit economics.** Only after Mohamed approves a real, published
-   allocation rule under "Unit economics governance."
-9. **Scenario sandbox.** Lowest priority; transparent, assumption-based
-   ranges only.
-10. **Independent security/authorization review and production readiness
+7a. **PWA polish — icon asset and sparklines.** Two known gaps to fix after
+    Phase 7 is complete and before Phase 8 begins:
+    - **`icon-192.png` (and `icon-512.png`) missing** — the PWA manifest
+      references `/icon-192.png` which currently returns 404. This prevents
+      the browser's "Add to Home Screen" / install prompt from working on
+      mobile. Fix: generate the two icon sizes from the resort logo and add
+      them to `frontend/apps/owner/public/`. This is a correctness issue for
+      a mobile-first PWA, not a cosmetic preference. Acceptance: no
+      `icon-192.png 404` in the console, and the install prompt appears on
+      Android Chrome.
+    - **Sparklines on NowScreen are wired but empty** — `MetricCard` has a
+      `sparkValues` prop and a `SparkLine` component, but `NowScreen.vue`
+      never passes data to them. Every card shows a flat line. Fix: add a
+      `GET /api/v1/owner/now/history?days=7` endpoint that returns the last
+      7 days of `[revenue_today, expense_today, cash_in_drawers,
+      occupancy_pct, beach_utilisation_pct]` as parallel arrays (one entry
+      per calendar day, `Decimal`/`int`, provisional days flagged). Wire the
+      frontend to pass the matching array to each `MetricCard`. Acceptance:
+      all seven cards on NowScreen display a 7-day sparkline with real
+      historical data. Rule: sparkline data is read-only, derived from the
+      same sources as the live metrics — no new tables, no double counting.
+7b. **UX completion — الواجهة المكتملة.** ست ثغرات UX محددة بعد مراجعة
+    محمد في 2026-08-08:
+    - **Logout button** — زرار خروج في header الـ AppShell. يستدعي
+      `auth.logout()` من `@resort-os/core` ويوجّه لـ `/login`.
+      أمان أساسي — لا owner app بدونه.
+    - **Date range picker** — كل شاشات Phase 6 (المبيعات/المصروفات/المشتريات)
+      تجيب الشهر الحالي فقط. المالك محتاج يشوف أمبارح/الأسبوع الماضي/شهر معين.
+      Fix: component بسيط `DateRangePicker.vue` — 4 أزرار سريعة (اليوم /
+      أمبارح / هذا الأسبوع / هذا الشهر) + date inputs للفترة الحرة.
+      يُضاف في أعلى كل شاشة Phase 6. الـ params `date_from`/`date_to`
+      تتحدث reactively وتعيد جلب البيانات.
+    - **PerformanceScreen breakdown** — الـ `/owner/performance` يرجع
+      revenue/expense/net فقط. إضافة `breakdown` field اختياري:
+      `dining_revenue / beach_revenue / rooms_revenue / other_revenue`
+      بـ `None` لو البيانات مش متاحة. Frontend: collapsible row تحت
+      الأرقام الرئيسية في `PeriodComparisonCard`.
+    - **Channel Analytics screen** — الـ backend جاهز
+      (`GET /owner/channel-analytics`) لكن مفيش شاشة frontend.
+      يُضاف كـ tab في `SalesScreen` (dining / beach / **فنادق B2B**).
+    - **Shift history (closed shifts)** — `ShiftsScreen` بتعرض الورديات
+      المفتوحة فقط. إضافة endpoint `GET /owner/shifts/history?days=7`
+      يرجع الورديات المغلقة لآخر N أيام مع variance + cash_movements.
+      Frontend: tab ثالث في `ShiftsScreen` (التنبيهات / مفتوحة / **تاريخ**).
+    - **2FA setup flow** — `TwoFactorSetupView.vue` حالياً stub. تكمل
+      الـ flow الحقيقي: عرض QR code + إدخال كود التحقق + تأكيد التفعيل،
+      مستخدماً الـ endpoints الموجودة (`/2fa/setup`, `/2fa/enable`).
+7c. **HR + Payroll visibility — موارد بشرية للمالك.**
+    المالك يحتاج يشوف موظفيه بأسمائهم وما يخصه من بيانات — لكن
+    بضوابط صارمة (Decision 0004 §Isolation model item 7 يُعدَّل صراحةً
+    لهذا الباب):
+    - **قائمة الموظفين** — الاسم + المسمى الوظيفي + القسم + تاريخ التعيين
+      + الحالة (active/on_leave/terminated). لا national_id لأنه مشفر ومحمي.
+      لا basic_salary هنا — الراتب في قسم منفصل.
+    - **ملخص الرواتب per employee** — استثناء صريح من القاعدة العامة
+      "لا payroll per employee": المالك يشوف اسم كل موظف +
+      net_salary + gross_salary + penalty_deduction + advance_deduction
+      لآخر كشف رواتب. هذا معلومة المالك عن عمّاله — ليس تحليلاً
+      اقتصادياً. لا يُعرض monthly_tax أو employee_si للكاشير.
+    - **حضور الشهر الحالي aggregate** — لكل موظف: أيام حضور / غياب /
+      تأخير / إجازة لهذا الشهر. لا raw timestamps.
+    - **Backend:** endpoint جديد `GET /owner/hr-summary` يرجع
+      قائمة موظفين مع آخر payroll_line لكل منهم + attendance aggregate
+      للشهر الحالي. مصدر: `Employee` + `PayrollLine` + `AttendanceRecord`.
+      branch_id من الـ session فقط.
+    - **Frontend:** شاشة `HRScreen.vue` تُضاف كـ tab سادس في bottom nav.
+    - **قاعدة لا تُخترق:** لا national_id، لا social_insurance details،
+      لا monthly_tax breakdown per employee على هذه الشاشة.
+7d. **Cashier discount & customer group analytics — تحليل الخصومات.**
+    المالك يحتاج يفهم الخصومات: كم اتخسر؟ مين أعطى أكثر خصم؟
+    عملاء المجموعات بيشتروا بكفاءة؟
+    - **Discount analytics** — aggregate لـ `ConditionalDiscount` usage:
+      إجمالي خصم مُعطى لكل نوع (conditional/customer_group/manual)،
+      نسبة الخصم من الإيراد، top 5 كاشير في إعطاء خصومات يدوية.
+      مصدر: `DiningOrder.discount_amount` + `audit_logs` لأحداث
+      `apply_discount`.
+    - **Customer group performance — بالاسم.** استثناء صريح من قاعدة
+      "لا بيانات فردية": عملاء المجموعات هم أشخاص اتفق معهم المنتجع على
+      خصم دائم — المالك له حق يشوفهم بأسمائهم.
+      لكل `CustomerGroup`:
+        * اسم المجموعة + نسبة الخصم + عدد الأعضاء
+        * لكل عميل في المجموعة: **الاسم** + عدد الفواتير هذا الشهر +
+          إجمالي المبيعات بعد الخصم
+      **ما لا يُعرض أبداً:** رقم هاتف، بريد إلكتروني، national_id،
+      عناوين، أي بيانات تواصل — الاسم فقط.
+      عملاء بدون مجموعة (زوار عشوائيين) لا يظهرون هنا إطلاقاً.
+    - **Manual discount leakage** — إجمالي خصم يدوي per cashier/shift
+      للشهر (aggregate — لا raw transactions).
+    - **Backend:** endpoint جديد `GET /owner/discount-analytics`.
+      مصدر: `CustomerGroup` + `Customer` (الاسم فقط) + `DiningOrder`
+      للفواتير والخصومات.
+    - **Frontend:** tab "الخصومات" في `SalesScreen`.
+    - **قاعدة لا تُخترق:** لا هاتف، لا email، لا national_id،
+      لا عملاء بدون مجموعة على هذه الشاشة.
+7e. **UX اكتمال + Performance breakdown — الطبقة الأخيرة.**
+    تُنفَّذ بعد 7c+7d لأن outlet breakdown يحتاج بيانات HR+Discount
+    لتكون متاحة أولاً:
+    - **PerformanceScreen outlet breakdown** — إضافة `breakdown` field
+      اختياري لـ `OwnerPerformanceResponse`:
+      `dining_revenue / beach_revenue / rooms_revenue / other_revenue`
+      بـ `None` لو البيانات مش متاحة.
+      Frontend: collapsible row تحت الأرقام الرئيسية في
+      `PeriodComparisonCard` — collapsed بـ default، tap لـ expand.
+      مصدر: نفس sources Phase 6 (get_income_statement + BeachTransaction
+      + PMS folios) — لا جداول جديدة.
+      Acceptance: كل breakdown figure يساوي output الـ outlet-level
+      service لنفس الفترة (`Decimal` equality في tests).
+    - **Logout button** — زرار خروج في header الـ AppShell. يستدعي
+      `auth.logout()` من `@resort-os/core` ويوجّه لـ `/login`.
+      (راجع 7b — مذكور هناك لكن لم يُنفَّذ بعد.)
+    - تشغيل `pnpm run type-check:all` + `pnpm run build:all` + pytest
+      كاملاً قبل إغلاق هذه المرحلة.
+8. **Independent security/authorization review and production readiness
     gate.** A dedicated review of the request-policy layer and the
     three-session database isolation specifically (mirroring Decision
     0003's own closing step), plus the complete validation contract in
     `AGENTS.md` §8.
+
+### PerformanceScreen breakdown (accepted addition, 2026-08-08)
+
+The current `/api/v1/owner/performance` returns revenue/expense/net income
+totals only. After Phase 6 is complete (when outlet-level analytics exist),
+`OwnerPerformanceResponse` is extended with an optional `breakdown` field:
+
+```
+breakdown: {
+  dining_revenue:  Decimal | None
+  beach_revenue:   Decimal | None
+  rooms_revenue:   Decimal | None
+  other_revenue:   Decimal | None
+}
+```
+
+Rules:
+- `None` for any outlet means its data is not yet available for the period
+  (provisional or no transactions), never zero-filled silently.
+- The frontend `PeriodComparisonCard` adds a collapsible breakdown row
+  below the main totals — collapsed by default, one tap to expand.
+- No new table or new aggregation function: `dining` revenue comes from
+  `get_income_statement`, beach from `BeachTransaction` sum, rooms from
+  PMS folio totals — the same sources Phase 6 will already have wired.
+- Acceptance: each breakdown figure equals its Phase 6 outlet-level service
+  output for the same period (`Decimal` equality in tests).
 
 ## Required tests and acceptance criteria
 
@@ -495,6 +629,53 @@ instructions" below. No phase includes a production deployment.
   upgrade/downgrade cycle, and `pnpm run type-check:all` /
   `pnpm run build:all` clean — before any phase is marked complete.
 
+### Tests added for Phases 7b–7e (2026-08-08)
+
+**Phase 7b — UX completion:**
+- `GET /owner/shifts/history?days=7` returns only closed shifts; open
+  shifts never appear in history results — asserted per item.
+- `date_from`/`date_to` params on all Phase 6 endpoints are honoured:
+  a seeded scenario with data in two disjoint periods returns only the
+  requested period's data in each case.
+- The 2FA setup flow (`/2fa/setup` + `/2fa/enable`) completes successfully
+  for an owner session with a valid TOTP code; an invalid code is rejected
+  with 400, not 500. (Backend contract — UI walkthrough per existing
+  project verification method.)
+
+**Phase 7c — HR visibility:**
+- `GET /owner/hr-summary` returns `full_name`, `position`, `department`,
+  `hire_date`, `status`, `net_salary`, `gross_salary`, `penalty_deduction`,
+  `advance_deduction` for each employee, and attendance aggregate counts
+  for the current month. A test asserts the response schema contains none
+  of: `national_id`, `employee_si`, `monthly_tax`, `phone`, `email`,
+  `basic_salary`.
+- `branch_id` is derived server-side; a request with a spoofed
+  `branch_id` query param returns data for the session's branch, not the
+  spoofed one.
+- An employee with `status == "terminated"` still appears if hired within
+  the current branch — inclusion/exclusion rule must be explicit in the
+  service and asserted.
+
+**Phase 7d — Discount analytics:**
+- `GET /owner/discount-analytics` response schema never contains
+  `phone`, `email`, `national_id`, or any contact field — asserted on
+  the Pydantic schema and the live response.
+- Customers with no `customer_group_id` (walk-ins) never appear in any
+  `customer_group.members` list — asserted with a seeded walk-in customer.
+- `manual_discount_per_cashier` is aggregate per cashier for the period,
+  never a list of individual transactions.
+- Discount totals (`DiningOrder.discount_amount` sum) match the raw SQL
+  aggregate for the same period and branch (`Decimal` equality).
+
+**Phase 7e — Performance breakdown + logout:**
+- Each outlet breakdown figure in `OwnerPerformanceResponse.breakdown`
+  equals the corresponding Phase 6 outlet-level service output for the same
+  period (`Decimal` equality).
+- `None` is returned for an outlet with no transactions in the period —
+  never `"0.00"` silently.
+- The logout route (`POST /auth/logout` or equivalent) is present in
+  `OWNER_WRITE_ALLOWLIST` — asserted in the policy registry test.
+
 ## Work instructions for the implementing agent
 
 - Read `AGENTS.md`, `CLAUDE.md`, and `docs/decisions/0003-super-admin-
@@ -541,4 +722,50 @@ experience, guest-privacy boundaries, and — in the final round — the
 explicit removal of any AI/chat capability and the addition of beach/B2B
 channel analytics and staff shift/theft monitoring. Independently reviewed
 by Codex on 2026-08-07; all ten findings from that review are incorporated.
-No implementation has started. The metric-contracts phase has not begun.
+
+**Phases 1–4: complete and deployed (REL-11, 2026-08-08).**
+- Metric contracts (`docs/owner/kpi-contracts.md`) — done.
+- Isolation and safety rails (`owner` role, `get_owner_reader`,
+  `MANDATORY_2FA_ROLES`, `owner_policy.py`, `OwnerWatchlist`,
+  `OwnerAllocationRule`) — done, 13 isolation tests green.
+- Aggregation APIs (`/owner/now`, `/owner/performance`) — done, 19 tests
+  green.
+- Owner PWA (`NowScreen`, `PerformanceScreen`, login with 2FA, PWA
+  manifest) — done, deployed on `owner.elkheima.com`.
+
+**Phase 5: complete.**
+Mohamed confirmed login works (2026-08-08 after 2FA login fix). Number
+review on real phone confirmed (2026-08-08) — figures are zero due to
+seed data, system reads correctly.
+
+**Phases 6+7+7a: complete and deployed (2026-08-08, via Kiro).**
+- Phase 6: SalesScreen، ExpensesScreen، ChannelAnalytics — 8 new endpoints wired
+- Phase 7: ShiftsScreen + Exceptions engine — 2 new endpoints wired
+- Phase 7a: icon-192/512 generated from logo, sparklines via `/owner/now/history`
+- 150 owner tests passed, TypeScript clean, build clean (16 precached entries)
+- owner.elkheima.com: HTTP 200, icons HTTP 200, restarts=0
+
+**Phases 7b+7c+7d+7e: complete (2026-08-08، via Kiro).**
+- 7b: Logout button في AppShell + DateRangePicker component مشترك لكل شاشات التحليل
+      + Channel Analytics tab في SalesScreen (فنادق B2B)
+      + Shift History endpoint (`GET /owner/shifts/history`) + tab في ShiftsScreen
+      + 2FA Setup Flow حقيقي (QR code + TOTP verify + تفعيل)
+- 7c: `GET /owner/hr-summary` + HRScreen.vue + tab سادس في bottom nav
+      (full_name/position/department/hire_date/status + net_salary/gross_salary +
+       penalty/advance deductions + attendance aggregate — لا national_id/si/tax/phone/email)
+- 7d: `GET /owner/discount-analytics` + tab "الخصومات" في SalesScreen
+      (discount types + manual per cashier + customer groups بالاسم فقط — لا هاتف/email)
+- 7e: PerformanceBreakdown (dining/beach/rooms/other) في PeriodComparison + PeriodComparisonCard
+      collapsible + logout مُضاف لـ OWNER_WRITE_ALLOWLIST
+- 109 owner tests passed (86 موجودة + 23 جديدة) — TypeScript clean — build clean (18 precached)
+
+**Phase 8 (Security review): الأخير.**
+
+**Accepted additions (2026-08-08, by Mohamed via Kiro):**
+- Phase 7a added (see "Controlled implementation sequence"): icon asset
+  fix + real sparklines — scheduled after Phase 7, before Phase 8.
+- PerformanceScreen outlet breakdown moved to Phase 7e (needs outlet-level
+  data from 7b/7c/7d to exist first — cannot be wired before that).
+- **Phases 8 (Unit economics) and 9 (Scenario sandbox) removed from scope**
+  by Mohamed's explicit decision (2026-08-08). The product ends at Phase 7e
+  + security review. No unit-economics or scenario features will be built.

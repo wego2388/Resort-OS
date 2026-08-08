@@ -2,17 +2,38 @@
 /**
  * AppShell — الغلاف الرئيسي للـ owner app.
  * - Safe area top/bottom (iPhone notch/Dynamic Island)
- * - Bottom navigation (Now + Performance)
+ * - Bottom navigation (Now + Performance + Sales + Expenses + Shifts + HR)
+ * - Logout button في الـ header (Decision 0004 §7b)
  * - RouterView في المنتصف
  */
-import { computed } from 'vue';
-import { useRoute, RouterView } from 'vue-router';
+import { computed, ref } from 'vue';
+import { useRoute, useRouter, RouterView } from 'vue-router';
+import { useAuthStore } from '@resort-os/core';
 const route = useRoute();
+const router = useRouter();
+const auth = useAuthStore();
 const navItems = [
     { name: 'now', label: 'الآن', icon: '⚡' },
     { name: 'performance', label: 'الأداء', icon: '📊' },
+    { name: 'sales', label: 'المبيعات', icon: '🛒' },
+    { name: 'expenses', label: 'المصروفات', icon: '💰' },
+    { name: 'shifts', label: 'الورديات', icon: '🔔' },
+    { name: 'hr', label: 'الموظفين', icon: '👥' },
 ];
 const activeNav = computed(() => route.name);
+const loggingOut = ref(false);
+async function handleLogout() {
+    if (loggingOut.value)
+        return;
+    loggingOut.value = true;
+    try {
+        await auth.logout();
+    }
+    finally {
+        loggingOut.value = false;
+    }
+    router.replace('/login');
+}
 function vibrate(ms = 6) {
     try {
         navigator.vibrate?.(ms);
@@ -34,9 +55,24 @@ __VLS_asFunctionalElement(__VLS_intrinsicElements.h1, __VLS_intrinsicElements.h1
     ...{ class: "text-sm font-bold text-owner-text" },
 });
 __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+    ...{ class: "flex items-center gap-3" },
+});
+__VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
     ...{ class: "text-xs text-owner-muted" },
 });
 (new Date().toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'short' }));
+__VLS_asFunctionalElement(__VLS_intrinsicElements.button, __VLS_intrinsicElements.button)({
+    ...{ onClick: (__VLS_ctx.handleLogout) },
+    ...{ class: "text-xs text-owner-muted hover:text-owner-red active:text-owner-red transition-colors touch-target px-1" },
+    disabled: (__VLS_ctx.loggingOut),
+    'aria-label': "تسجيل الخروج",
+});
+if (__VLS_ctx.loggingOut) {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
+}
+else {
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
+}
 __VLS_asFunctionalElement(__VLS_intrinsicElements.main, __VLS_intrinsicElements.main)({
     ...{ class: "flex-1 flex flex-col overflow-hidden" },
 });
@@ -80,11 +116,13 @@ for (const [item] of __VLS_getVForSourceType((__VLS_ctx.navItems))) {
     };
     __VLS_7.slots.default;
     __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
-        ...{ class: "text-xl leading-none" },
+        ...{ class: "text-lg leading-none" },
         'aria-hidden': "true",
     });
     (item.icon);
-    __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
+    __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+        ...{ class: "text-[10px]" },
+    });
     (item.label);
     var __VLS_7;
 }
@@ -104,16 +142,27 @@ for (const [item] of __VLS_getVForSourceType((__VLS_ctx.navItems))) {
 /** @type {__VLS_StyleScopedClasses['text-sm']} */ ;
 /** @type {__VLS_StyleScopedClasses['font-bold']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['gap-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
 /** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['hover:text-owner-red']} */ ;
+/** @type {__VLS_StyleScopedClasses['active:text-owner-red']} */ ;
+/** @type {__VLS_StyleScopedClasses['transition-colors']} */ ;
+/** @type {__VLS_StyleScopedClasses['touch-target']} */ ;
+/** @type {__VLS_StyleScopedClasses['px-1']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex-1']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex-col']} */ ;
 /** @type {__VLS_StyleScopedClasses['overflow-hidden']} */ ;
 /** @type {__VLS_StyleScopedClasses['bottom-nav']} */ ;
 /** @type {__VLS_StyleScopedClasses['bottom-nav-item']} */ ;
-/** @type {__VLS_StyleScopedClasses['text-xl']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-lg']} */ ;
 /** @type {__VLS_StyleScopedClasses['leading-none']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-[10px]']} */ ;
 var __VLS_dollars;
 const __VLS_self = (await import('vue')).defineComponent({
     setup() {
@@ -121,6 +170,8 @@ const __VLS_self = (await import('vue')).defineComponent({
             RouterView: RouterView,
             navItems: navItems,
             activeNav: activeNav,
+            loggingOut: loggingOut,
+            handleLogout: handleLogout,
             vibrate: vibrate,
         };
     },

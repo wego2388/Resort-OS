@@ -62,6 +62,9 @@ OWNER_WRITE_ALLOWLIST: frozenset[str] = frozenset({
     "create_owner_allocation_rule_draft",
     "update_owner_allocation_rule_draft",
     "delete_owner_allocation_rule_draft",
+    # NOTE: logout مُدرج صراحةً هنا لأنه write-equivalent (يُنهي الجلسة)
+    # وهو حق أساسي لكل مستخدم — Decision 0004 §7e.
+    "logout",
 })
 
 # ── WebSocket paths محظورة صراحةً على owner ──────────────────────────────────

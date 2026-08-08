@@ -62,6 +62,9 @@ class BeachTransaction(Base, TimestampMixin):
     surge_applied:   Mapped[bool]         = mapped_column(Boolean, default=False)
     tx_date:         Mapped[date]         = mapped_column(Date, index=True)
     cashier_id:      Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    # Persist the tender selected at sale time. Credit posting validates this
+    # source-of-truth field so a cash ticket cannot later be charged to credit.
+    payment_method:  Mapped[str | None]   = mapped_column(String(30), nullable=True)
     folio_id:        Mapped[int | None]   = mapped_column(ForeignKey("folios.id", ondelete="SET NULL"), nullable=True)
     b2b_contract_id: Mapped[int | None]   = mapped_column(ForeignKey("b2b_contracts.id", ondelete="SET NULL"), nullable=True)
     notes:           Mapped[str | None]   = mapped_column(String(300), nullable=True)

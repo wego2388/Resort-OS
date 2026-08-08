@@ -112,6 +112,8 @@ def _import_all_models() -> None:
     import app.modules.timeshare.models    # noqa: F401
     import app.modules.leasing.models      # noqa: F401
     import app.modules.analytics.models    # noqa: F401
+    import app.modules.owner.models        # noqa: F401
+    import app.modules.credit.models       # noqa: F401
 
 
 def _seed_branch(db: Session) -> None:
@@ -528,6 +530,7 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "4400", "name": "إيرادات الكافيه",              "account_type": "revenue"},
         {"code": "1100", "name": "الصندوق / النقدية",            "account_type": "asset"},
         {"code": "1150", "name": "ذمم الفوليو (نزلاء)",          "account_type": "asset"},
+        {"code": "1160", "name": "ذمم مدينة — حسابات آجلة شخصية", "account_type": "asset"},
         {"code": "1200", "name": "مخزون البضاعة",               "account_type": "asset"},
         {"code": "5200", "name": "تكلفة البضاعة المباعة (COGS)", "account_type": "expense"},
         {"code": "2300", "name": "إيرادات مؤجَّلة (تايم شير) — قديم، لا يُستخدم في قيود جديدة", "account_type": "liability"},

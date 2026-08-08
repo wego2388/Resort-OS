@@ -2,17 +2,33 @@
 /**
  * NowScreen — شاشة «الآن»
  * المقاييس السبعة (A-1 → A-7) من GET /api/v1/owner/now
+ * Sparklines من GET /api/v1/owner/now/history?days=7
  * Auto-refresh كل 60 ثانية + pull-to-refresh
  */
-import { ref } from 'vue'
-import { useOwnerNow } from '../composables/useOwnerData'
+import { ref, computed } from 'vue'
+import { useOwnerNow, useOwnerNowHistory, useOwnerCreditReceivables } from '../composables/useOwnerData'
 import { formatMoney, formatOccupancyPct } from '../composables/useFormat'
 import MetricCard from '../components/MetricCard.vue'
 import ErrorState from '../components/ErrorState.vue'
 import SkeletonCards from '../components/SkeletonCards.vue'
+import SparkLine from '../components/SparkLine.vue'
 
 const container = ref<HTMLElement | null>(null)
 const { data, loading, error, refreshing, reload } = useOwnerNow(container)
+const { data: historyData } = useOwnerNowHistory(7)
+const { data: creditData } = useOwnerCreditReceivables()
+
+/** يحوّل array من DaySnapshot لـ numbers لكل sparkline */
+const spark = computed(() => {
+  const days = historyData.value?.days ?? []
+  return {
+    revenue:   days.map(d => parseFloat(d.revenue)),
+    expense:   days.map(d => parseFloat(d.expense)),
+    cash:      days.map(d => parseFloat(d.cash_in_drawers)),
+    occupancy: days.map(d => parseFloat(d.occupancy_pct)),
+    beach:     days.map(d => parseFloat(d.beach_utilisation_pct)),
+  }
+})
 </script>
 
 <template>
@@ -35,6 +51,7 @@ const { data, loading, error, refreshing, reload } = useOwnerNow(container)
         label="إيراد اليوم"
         :value="formatMoney(data.revenue_today)"
         :is-provisional="data.period.is_provisional"
+        :spark-values="spark.revenue"
         color-scheme="green"
       />
 
@@ -43,6 +60,7 @@ const { data, loading, error, refreshing, reload } = useOwnerNow(container)
         label="كاش الأدراج المتوقع"
         :value="formatMoney(data.cash_in_drawers)"
         :subtitle="`${data.open_shift_count} وردية مفتوحة`"
+        :spark-values="spark.cash"
         color-scheme="default"
       />
 
@@ -51,6 +69,7 @@ const { data, loading, error, refreshing, reload } = useOwnerNow(container)
         label="مصروفات اليوم"
         :value="formatMoney(data.expense_today)"
         :is-provisional="data.period.is_provisional"
+        :spark-values="spark.expense"
         color-scheme="amber"
       />
 
@@ -103,6 +122,33 @@ const { data, loading, error, refreshing, reload } = useOwnerNow(container)
       </div>
 
       <!-- A-6: إشغال الغرف -->
+      <div class="owner-card" role="region" aria-label="ذمم الحسابات الآجلة الشخصية">
+        <div class="section-label">حسابات العملاء والموظفين الآجلة</div>
+        <div class="metric-value text-owner-amber mb-1">
+          {{ formatMoney(data.credit_account_outstanding) }}
+        </div>
+        <div class="text-xs text-owner-muted mb-3">
+          {{ data.credit_account_count }} حساب برصيد مستحق
+          <span v-if="creditData?.overdue_count"> · {{ creditData.overdue_count }} متأخر</span>
+        </div>
+        <div v-if="creditData?.accounts.length" class="space-y-2">
+          <div
+            v-for="account in creditData.accounts.slice(0, 5)"
+            :key="account.account_id"
+            class="flex items-center justify-between border-b border-owner-border py-1.5 text-xs last:border-0"
+          >
+            <div class="flex items-center gap-2">
+              <span class="font-semibold text-owner-text">{{ account.holder_name }}</span>
+              <span v-if="account.is_overdue" class="overdue-badge">متأخر</span>
+              <span v-if="account.status === 'suspended'" class="text-owner-amber">معلق</span>
+            </div>
+            <span class="font-mono text-owner-muted">{{ formatMoney(account.current_balance) }}</span>
+          </div>
+        </div>
+        <div v-else class="text-xs text-owner-muted">لا توجد ذمم شخصية مستحقة</div>
+      </div>
+
+      <!-- A-6: إشغال الغرف -->
       <div class="owner-card">
         <div class="section-label">إشغال الغرف الآن</div>
         
@@ -110,9 +156,11 @@ const { data, loading, error, refreshing, reload } = useOwnerNow(container)
           {{ formatOccupancyPct(data.occupancy.occupancy_pct) }}
         </div>
 
-        <div class="text-xs text-owner-muted">
+        <div class="text-xs text-owner-muted mb-2">
           {{ data.occupancy.occupied_rooms }} من {{ data.occupancy.total_rooms }} غرفة
         </div>
+
+        <SparkLine v-if="spark.occupancy.length > 1" :values="spark.occupancy" />
       </div>
 
       <!-- A-7: سعة الشاطئ -->
@@ -126,6 +174,8 @@ const { data, loading, error, refreshing, reload } = useOwnerNow(container)
         <div class="text-xs text-owner-muted mb-2">
           {{ data.beach_capacity.capacity_used }} / {{ data.beach_capacity.capacity_max }} تذكرة
         </div>
+
+        <SparkLine v-if="spark.beach.length > 1" :values="spark.beach" class="mb-2" />
 
         <div class="text-xs text-owner-amber flex items-start gap-1">
           <span>⚠</span>

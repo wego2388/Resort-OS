@@ -1,9 +1,9 @@
-# Owner Intelligence Cockpit — Handoff للمرحلة 5+
+# Owner Intelligence Cockpit — Handoff للمرحلة 8 (Security Review)
 
-**تاريخ:** 2026-08-07
+**تاريخ:** 2026-08-08
 **الفرع الحالي:** `claude/CX-02C-frontend-auth-bootstrap`
-**آخر Alembic head:** `f8aa1f0fabba` (owner_module_phase2_and_pr_po_linkage — لا migration في Phase 3+4)
-**Tests:** 2374 passed, 42 skipped — صفر فشل
+**آخر Alembic head:** `f8aa1f0fabba` (لا migration جديدة في Phase 6+7+7a)
+**Tests:** 150 owner passed — صفر فشل
 **قائد التنفيذ والمراجع النهائي:** Codex
 
 ---
@@ -17,76 +17,57 @@
 - `owner` role level=10، `get_owner_reader`، `MANDATORY_2FA_ROLES`
 - `owner_policy.py` — allowlist fail-closed
 - `OwnerWatchlist` + `OwnerAllocationRule` — نماذج DB
-- Migration `f8aa1f0fabba` — مطبّق محلياً
+- Migration `f8aa1f0fabba` — مطبّق
 - 13 اختبار عزل — كلها نجحت
 
 ### المرحلة 3 — Aggregation APIs ✅
-**الملفات:**
-- `backend/app/modules/owner/services.py` — `get_owner_now()` + `get_owner_performance()`
-- `backend/app/modules/owner/schemas.py` — `OwnerNowResponse` + `OwnerPerformanceResponse` + كل الـ schemas
-- `backend/app/modules/owner/api/router.py` — `GET /api/v1/owner/now` + `GET /api/v1/owner/performance`
-- `backend/tests/test_owner_phase3.py` — 19 اختبار ✅
-
-**المقاييس المنفّذة (A-1 → A-7):**
-- A-1: إيراد اليوم ← `get_income_statement(db, branch_id, today, today).total_revenue`
-- A-2: كاش الأدراج ← `build_active_shifts_response(db, branch_id)` مجموع expected_cash
-- A-3: مصروفات اليوم ← نفس استدعاء A-1 `.total_expense`
-- A-4: ذمم B2B ← `B2BContract` + `B2BContractDay` بعد `last_settled_at`
-- A-5: ذمم تايم شير ← `TimeshareInstallment` status IN (unpaid/overdue) due_date <= today
-- A-6: إشغال الغرف ← `Room.status='occupied'` / كل الغرف ما عدا maintenance/out_of_order
-- A-7: سعة الشاطئ ← `BeachInventory` لليوم الحالي (عدّاد تراكمي — موثّق في note)
-
-**الأداء:**
-- `GET /owner/now` → 7 مقاييس في طلب واحد — نداءان DB فقط (income_statement + shifts)
-- `GET /owner/performance` → 3 مقارنات في طلب واحد — 6 نداءات لـ `get_income_statement`
-- كل رقم يحمل `period.is_provisional` — لا رقم provisional يُعرض كأنه نهائي
+- `GET /api/v1/owner/now` — 7 مقاييس (A-1 → A-7)
+- `GET /api/v1/owner/performance` — 3 مقارنات (اليوم/أسبوع/شهر)
 
 ### المرحلة 4 — Owner PWA ✅
-**الملفات في `frontend/apps/owner/`:**
-- `src/views/NowScreen.vue` — شاشة "الآن" — 7 بطاقات مع sparklines
-- `src/views/PerformanceScreen.vue` — شاشة الأداء — مقارنة 3 فترات
-- `src/views/LoginView.vue` — تسجيل دخول مع 2FA
-- `src/views/AppShell.vue` — shell مع bottom navigation
-- `src/views/TwoFactorSetupView.vue` — إعداد TOTP
-- `src/components/MetricCard.vue` — بطاقة مقياس: رقم كبير + sparkline + لون
-- `src/components/SparkLine.vue` — رسم بياني SVG للاتجاه (7 أيام)
-- `src/components/PeriodComparisonCard.vue` — بطاقة مقارنة فترتين مع delta
-- `src/components/SkeletonCards.vue` + `ErrorState.vue` — loading/error states
-- `src/router/index.ts` — يرفض أي session غير `owner`/`super_admin` client-side
-- `src/composables/useOwnerData.ts` — جلب بيانات now+performance مع auto-refresh
-- `src/composables/useFormat.ts` — تنسيق عملة/تاريخ/نسبة RTL
-- `src/api/owner.ts` + `types.ts` — API client typed
-- `vite.config.ts` — PWA (generateSW) + mobile viewport + Cache-Control: no-store
-- `tailwind.config.js` — dark-first، touch targets 48×48px
-- **Build:** `✓ built in 2.92s — 11 entries precached`
+- `NowScreen.vue` + `PerformanceScreen.vue` + `LoginView.vue` + `AppShell.vue`
+- منشور على `owner.elkheima.com`
+
+### المرحلة 5 — مراجعة الأرقام ✅
+- محمد فتح التطبيق على الهاتف (2026-08-08)
+- الأرقام صفر بسبب seed data — النظام يقرأ صح
+- 2FA login fix: `LoginView.vue` يتعرف على `2FA_CODE_REQUIRED`
+
+### المرحلة 6 — Analytics ✅ (2026-08-08)
+**Endpoints:**
+- `GET /api/v1/owner/sales` — top items + ABC + هامش
+- `GET /api/v1/owner/beach-performance` — تذاكر بالنوع
+- `GET /api/v1/owner/channel-analytics` — B2B per hotel
+- `GET /api/v1/owner/expense-analytics` — مصروفات كـ % + variance
+- `GET /api/v1/owner/procurement-analytics` — موردون + PR/PO variance
+
+**Frontend:**
+- `SalesScreen.vue` — tab dining (ABC + هامش) / beach (تذاكر)
+- `ExpensesScreen.vue` — tab expenses (variance flags) / procurement (موردون)
+
+### المرحلة 7 — Shifts + Exceptions ✅ (2026-08-08)
+**Endpoints:**
+- `GET /api/v1/owner/shifts` — ورديات مفتوحة + حركات كاش + variance tier
+- `GET /api/v1/owner/exceptions` — critical/attention/watch مرتّبة
+
+**Frontend:**
+- `ShiftsScreen.vue` — tab exceptions (badge عدد حرجة) / shifts (قابل للطي)
+
+### المرحلة 7a — PWA Polish ✅ (2026-08-08)
+- `public/icon-192.png` + `public/icon-512.png` — من logo الأصلي
+- `GET /api/v1/owner/now/history?days=7` — sparklines endpoint
+- `NowScreen.vue` — sparklines حقيقية على A-1/A-2/A-3/A-6/A-7
+- Bottom nav: 5 tabs (الآن / الأداء / المبيعات / المصروفات / الورديات)
+- Build: 16 entries precached
 
 ---
 
-## قرارات محمد المسجّلة — لا تُعدَّل بدون إذنه الصريح
+## قرارات محمد المسجّلة
 
-(محفوظة كاملة في `handoff-phase3-onwards.md` قرارات 1-6)
-
-**ملخص:** `owner.elkheima.com` subdomain — cookie منفصلة SameSite=Strict — نفس دورة REL-XX — Documented live walkthrough (لا Playwright) — Vue+Vite+Tailwind+`@vueuse/core` فقط.
-
-**ما يلزم قبل Phase 4 على VPS (عند القرار بالنشر):**
-- إضافة DNS record + SSL cert + nginx config لـ `owner.elkheima.com`
-- هذا لا يحدث إلا بعد Phase 10 وبإذن صريح من محمد
-
----
-
-## المرحلة التالية — المرحلة 5 (توقف إلزامي)
-
-**المرحلة 5: مراجعة الأرقام مع محمد على الهاتف الحقيقي**
-
-هذه ليست مرحلة كود — هي human checkpoint إلزامي قبل أي شيء آخر.
-
-**ما يجب أن يحدث:**
-1. محمد يفتح الـ owner app على هاتفه (أو على staging لو أُعدّ)
-2. يتحقق أن الأرقام السبعة على شاشة "الآن" صحيحة
-3. يتحقق أن مقارنات الأداء منطقية
-4. يعطي موافقة صريحة أن الأرقام صح قبل بناء أي طبقة إضافية
-
-**لا تبدأ المرحلة 6 إلا بعد موافقة محمد الصريحة.**
+1. لا AI/LLM في أي مكان — نهائي
+2. `owner.elkheima.com` subdomain — cookie منفصلة SameSite=Strict
+3. **Phase 8 (Unit economics) و Phase 9 (Scenario sandbox) محذوفان** — قرار محمد 2026-08-08
+4. المنتج ينتهي عند Phase 7a + Security Review
 
 ---
 
@@ -94,50 +75,85 @@
 
 | # | الاسم | الحالة | ملاحظة |
 |---|---|---|---|
-| **5** | مراجعة الأرقام مع محمد | **التالي — توقف إلزامي** | هاتف حقيقي — لا تتخطاها |
-| 6 | تحليلات المبيعات/الشاطئ/القنوات/المشتريات/النفقات | بعد 5 | + `owner_analytics_engine.py` |
-| 7 | مراقبة الورديات + موتور الاستثناءات | بعد 6 | ربط `fraud_tasks.py` |
-| 8 | اقتصاديات الوحدة | بعد موافقة محمد | يتوقف على نشر قاعدة تخصيص حقيقية |
-| 9 | Scenario sandbox | أدنى أولوية | |
-| 10 | مراجعة أمنية مستقلة + بوابة الإنتاج | الأخير | قبل أي deploy على VPS |
+| **7b** | UX completion | **التالي** | logout + date range + channel screen + shift history + 2FA |
+| **7c** | HR + Payroll visibility | بعد 7b | موظفين + رواتب + حضور aggregate |
+| **7d** | Discount & customer group analytics | بعد 7c | خصومات كاشير + أداء المجموعات |
+| **8** | Security review + production gate | الأخير | مراجعة أمنية مستقلة |
+| ~~8~~ | ~~Unit economics~~ | **محذوف** | قرار محمد 2026-08-08 |
+| ~~9~~ | ~~Scenario sandbox~~ | **محذوف** | قرار محمد 2026-08-08 |
 
 ---
 
-## كيف تبدأ المرحلة 6 (بعد موافقة محمد في Phase 5)
+## Phase 7b — UX Completion (التفاصيل)
 
-اقرأ بالترتيب:
-1. `AGENTS.md` + `CLAUDE.md` + `docs/decisions/0004-owner-intelligence-cockpit.md`
-2. هذا الملف كاملاً
-3. `docs/owner/kpi-contracts.md` — الـ groups B-E لم تُبنَ بعد
+### 1. Logout button
+- زرار في header الـ `AppShell.vue`
+- يستدعي `auth.logout()` → redirect لـ `/login`
+- أمان أساسي
 
-**ما تبنيه في المرحلة 6:**
+### 2. Date range picker
+- Component `DateRangePicker.vue`: 4 أزرار سريعة (اليوم / أمبارح / هذا الأسبوع / هذا الشهر) + date inputs
+- يُضاف في أعلى `SalesScreen` + `ExpensesScreen`
+- `date_from`/`date_to` تتحدث reactively وتعيد جلب البيانات
 
-**`app/resort_os/owner_analytics_engine.py`** — pure engine بدون FastAPI/SQLAlchemy:
-- ABC/Pareto classification لـ items بـ `statistics` من stdlib
-- per-item margin = (sale_price - recipe_cost) / sale_price × 100 بـ `Decimal`
-- trend/variance detection بـ `statistics.mean` + `statistics.stdev`
-- لا AI، لا external call، لا pandas/numpy
+### 3. PerformanceScreen breakdown
+- Backend: `OwnerPerformanceResponse` + optional `breakdown` field: `dining_revenue / beach_revenue / rooms_revenue / other_revenue`
+- Frontend: collapsible row في `PeriodComparisonCard` — collapsed بـ default
 
-**Services جديدة:**
-- Sales performance service — يعمّم `top_items` query في `dining/api/router.py` ليشمل beach ticket types
-- Channel analytics service — `B2BContract` + beach transactions + dining orders → per-hotel aggregate F&B attach (لا guest data)
-- Expense analytics service — كل expense category كنسبة من الإيراد عبر الزمن
-- Procurement analytics service — spend concentration بـ supplier + price trend per product
+### 4. Channel Analytics screen
+- Backend جاهز: `GET /owner/channel-analytics`
+- Frontend: tab ثالث في `SalesScreen` (dining / beach / فنادق B2B)
 
-**قواعد لا تتغير في المرحلة 6:**
-- كل primary metric يُقرأ من مصدر الحقيقة مباشرةً — لا يُعاد حسابه
-- لا guest name/phone/email في أي response
-- لا payroll per employee — aggregate فقط
-- branch_id دائماً من الـ session
+### 5. Shift history
+- Backend: `GET /owner/shifts/history?days=7` — ورديات مغلقة مع variance + cash_movements
+- Frontend: tab ثالث في `ShiftsScreen` (التنبيهات / مفتوحة / **تاريخ**)
+- مصدر: `CashierShift` status='closed' + `CashMovement`
+
+### 6. 2FA setup flow
+- `TwoFactorSetupView.vue` حالياً stub
+- يُكمل: QR code + كود التحقق + تأكيد التفعيل
+- endpoints موجودة: `/2fa/setup`, `/2fa/enable`
 
 ---
 
-## قواعد لا تُخترق
+## Phase 7c — HR + Payroll (التفاصيل)
 
-1. **لا AI/LLM** في أي مكان في owner module — نهائي بقرار محمد.
-2. **لا deploy على VPS** في المراحل 5-9.
-3. **لا commit** إلا بإذن صريح من محمد لكل commit بعينه.
-4. **المرحلة 5 توقف إلزامي** — لا تبدأ المرحلة 6 إلا بعد تأكيد محمد.
-5. **لا بيانات ضيف فردية** — B2B فقط per hotel/contract.
-6. **لا payroll per employee** — aggregate فقط.
-7. **كل phase تمر بـ:** `pytest tests/ -v` + `alembic heads` + `pnpm run type-check:all` قبل الإعلان عن اكتمالها.
+**قاعدة:** استثناء صريح من "لا payroll per employee" — المالك يشوف موظفيه.
+**ما يُعرض:** الاسم + المسمى + net_salary + penalty + advance + حضور aggregate.
+**ما لا يُعرض:** national_id (مشفر) + monthly_tax + social_insurance تفاصيل.
+
+- Backend: `GET /owner/hr-summary` — قائمة موظفين + آخر PayrollLine + attendance هذا الشهر
+- Frontend: `HRScreen.vue` — tab سادس في bottom nav
+- مصدر: `Employee` + `PayrollLine` + `AttendanceRecord`
+
+---
+
+## Phase 7d — Discount Analytics (التفاصيل)
+
+- Aggregate: إجمالي خصم per type (conditional/customer_group/manual) + % من الإيراد
+- Per cashier: إجمالي خصم يدوي لهذا الشهر (لا raw transactions — aggregate فقط)
+- Customer groups: عدد عملاء + إجمالي مبيعات + إجمالي خصم + متوسط فاتورة per group
+- لا أسماء عملاء أفراد — aggregate per group فقط
+- Backend: `GET /owner/discount-analytics`
+- Frontend: tab في `SalesScreen` أو قسم في `ExpensesScreen`
+
+---
+
+## أوامر التحقق
+
+```bash
+# Backend
+cd backend && source .venv/bin/activate
+pytest tests/ -k "owner" -v          # 150 tests حالياً
+alembic heads                         # f8aa1f0fabba — single head
+
+# Frontend
+cd ../frontend
+pnpm --filter owner type-check        # نظيف
+pnpm --filter owner build             # 16 entries precached
+
+# Production
+curl https://owner.elkheima.com/icon-192.png -o /dev/null -w "%{http_code}"  # 200
+curl https://owner.elkheima.com/icon-512.png -o /dev/null -w "%{http_code}"  # 200
+curl https://owner.elkheima.com/login  -o /dev/null -w "%{http_code}"        # 200
+```

@@ -4,6 +4,9 @@ import { useI18n } from 'vue-i18n'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { usePrintDocument, useOfflineQueue } from '@resort-os/core/composables'
 import { useToast } from '@resort-os/ui'
+import POSCustomerModal from '../../components/dining-pos/POSCustomerModal.vue'
+import PinGuardModal from '../../components/PinGuardModal.vue'
+import type { POSCustomer } from '../../components/dining-pos/types'
 
 const toast = useToast()
 const { t } = useI18n()
@@ -48,6 +51,21 @@ const loading = ref(false)
 const submitting = ref(false)
 const successMsg = ref('')
 const errorMsg = ref('')
+const showCustomerModal = ref(false)
+const selectedCustomer = ref<POSCustomer | null>(null)
+const creditHolderType = ref<'customer' | 'employee'>('customer')
+const employeeCreditHolderId = ref('')
+const creditHolderOptions = ['customer', 'employee'] as const
+const creditAccount = ref<{
+  id: number
+  holder_name: string
+  current_balance: string
+  available_credit: string | null
+  status: string
+} | null>(null)
+const creditLoading = ref(false)
+const showCreditPinGuard = ref(false)
+const creditApprovalError = ref('')
 
 // بعد أي تزامن ناجح (كامل أو جزئي)، سعة/إشغال الشاطئ المعروضة لازم تتحدّث
 // فورًا (مش تستنى الـ poll الدوري كل 30 ثانية).
@@ -109,8 +127,46 @@ async function fetchFxRates() {
   }
 }
 
-// UI-only — payment_method مش بيتبعت للسيرفر في عملية البيع العادية
-const paymentMethod = ref<'cash' | 'card' | 'wallet'>('cash')
+type BeachPaymentMethod = 'cash' | 'card' | 'wallet' | 'credit_account'
+type Approval = { approverUserId: number | null; approverPin: string | null }
+const paymentMethod = ref<BeachPaymentMethod>('cash')
+
+async function selectCustomer(customer: POSCustomer) {
+  selectedCustomer.value = customer
+  creditHolderType.value = 'customer'
+  showCustomerModal.value = false
+  await loadCreditAccount()
+}
+
+function clearCustomer() {
+  selectedCustomer.value = null
+  creditAccount.value = null
+}
+
+async function loadCreditAccount() {
+  creditAccount.value = null
+  const holderId = creditHolderType.value === 'customer'
+    ? selectedCustomer.value?.id
+    : Number(employeeCreditHolderId.value)
+  if (!holderId || holderId <= 0) return
+  creditLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.credit.lookup, {
+      params: { holder_type: creditHolderType.value, holder_id: holderId },
+    })
+    creditAccount.value = data
+  } catch {
+    creditAccount.value = null
+  } finally {
+    creditLoading.value = false
+  }
+}
+
+function selectCreditHolderType(holderType: 'customer' | 'employee') {
+  creditHolderType.value = holderType
+  creditAccount.value = null
+  loadCreditAccount()
+}
 
 // Ref for auto-focus after sale
 const firstButtonRef = ref<HTMLButtonElement | null>(null)
@@ -200,8 +256,31 @@ async function printTicket(txId: number) {
   }
 }
 
-async function completeSale() {
+async function completeSale(approval: Approval | null = null) {
   if (!hasItems.value || submitting.value) return
+
+  if (paymentMethod.value === 'credit_account') {
+    if (!isOnline.value) {
+      errorMsg.value = t('backoffice.beachPos.creditOnlineOnly')
+      return
+    }
+    if (creditHolderType.value === 'customer' && !selectedCustomer.value) {
+      errorMsg.value = t('backoffice.beachPos.creditNeedsCustomer')
+      return
+    }
+    if (creditHolderType.value === 'employee' && Number(employeeCreditHolderId.value) <= 0) {
+      errorMsg.value = t('backoffice.beachPos.creditNeedsEmployee')
+      return
+    }
+    if (!creditAccount.value || creditAccount.value.status !== 'active') {
+      errorMsg.value = t('backoffice.beachPos.creditNotFound')
+      return
+    }
+    if (buildCartLineItems().length !== 1) {
+      errorMsg.value = t('backoffice.beachPos.creditOneTypeOnly')
+      return
+    }
+  }
 
   // POS-03: تحقق من سعر الصرف قبل الإرسال لو الكاشير اختار عملة أجنبية
   if (cashCurrency.value !== 'EGP') {
@@ -234,11 +313,29 @@ async function completeSale() {
       // لحظي)، ويرمي الخطأ نفسه لو السيرفر رفضه صراحة (زي تجاوز السعة) —
       // نوقف هنا في الحالة دي، الأصناف اللي اتباعت قبل كده فعلاً اتسجّلت
       // (مش rollback جماعي، كل عملية مستقلة).
-      const data = await submitBeachSale(branchId.value ?? 0, {
+      const payload = {
         tx_type: item.tx_type,
         quantity: item.quantity,
+        payment_method: paymentMethod.value,
+        ...(creditHolderType.value === 'customer' && selectedCustomer.value
+          ? { customer_id: selectedCustomer.value.id }
+          : {}),
+        ...(paymentMethod.value === 'credit_account' && creditAccount.value
+          ? { credit_account_id: creditAccount.value.id }
+          : {}),
+        ...(approval?.approverUserId ? {
+          approver_user_id: approval.approverUserId,
+          approver_pin: approval.approverPin,
+        } : {}),
         ...fxPayload,
-      })
+      }
+      // Credit-limit decisions and manager approval can never be replayed
+      // from an offline queue; submit this financial tender online only.
+      const data = paymentMethod.value === 'credit_account'
+        ? (await api.post(ENDPOINTS.beach.sell, payload, {
+            params: { branch_id: branchId.value },
+          })).data
+        : await submitBeachSale(branchId.value ?? 0, payload)
       if (data === null) { anyQueued = true; continue }
       soldTxIds.push(data.id)
     }
@@ -257,11 +354,26 @@ async function completeSale() {
     await nextTick()
     firstButtonRef.value?.focus()
   } catch (e: any) {
-    errorMsg.value = e?.response?.data?.detail ?? t('backoffice.beachPos.saleError')
+    const detail = e?.response?.data?.detail
+    if (detail?.code === 'CREDIT_LIMIT_EXCEEDED' && !approval) {
+      showCreditPinGuard.value = true
+      creditApprovalError.value = ''
+      errorMsg.value = ''
+    } else if (approval) {
+      creditApprovalError.value = typeof detail === 'string' ? detail : (detail?.message ?? t('backoffice.beachPos.saleError'))
+    } else {
+      errorMsg.value = typeof detail === 'string' ? detail : (detail?.message ?? t('backoffice.beachPos.saleError'))
+    }
     setTimeout(() => { errorMsg.value = '' }, 4000)
   } finally {
     submitting.value = false
   }
+}
+
+async function onCreditApproval(approval: Approval) {
+  creditApprovalError.value = ''
+  await completeSale(approval)
+  if (!creditApprovalError.value) showCreditPinGuard.value = false
 }
 
 // useOfflineQueue('beach') بيتكفّل بـ online/offline listeners والـ
@@ -532,15 +644,16 @@ onUnmounted(() => {
           </div>
 
           <!-- Payment method selector -->
-          <div class="grid grid-cols-3 gap-2">
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <button
               v-for="m in [
                 { val: 'cash',   label: t('backoffice.beachPos.payCash'),   icon: '💵' },
                 { val: 'card',   label: t('backoffice.beachPos.payCard'),  icon: '💳' },
                 { val: 'wallet', label: t('backoffice.beachPos.payWallet'), icon: '📱' },
+                { val: 'credit_account', label: t('backoffice.beachPos.payCredit'), icon: '📒' },
               ]"
               :key="m.val"
-              @click="paymentMethod = (m.val as 'cash' | 'card' | 'wallet'); cashCurrency = 'EGP'; foreignReceived = ''"
+              @click="paymentMethod = (m.val as BeachPaymentMethod); cashCurrency = 'EGP'; foreignReceived = ''"
               :class="[
                 'py-2 rounded-lg text-sm font-medium transition-all border-2',
                 paymentMethod === m.val
@@ -548,6 +661,54 @@ onUnmounted(() => {
                   : 'border-stone-200 text-gray-600 hover:border-blue-300 hover:bg-gray-50 dark:border-border dark:text-gray-400 dark:hover:bg-gray-800',
               ]"
             >{{ m.icon }} {{ m.label }}</button>
+          </div>
+
+          <div v-if="paymentMethod === 'credit_account'" class="rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-800 dark:bg-amber-950/20 space-y-2">
+            <div class="flex gap-2">
+              <button
+                v-for="holder in creditHolderOptions"
+                :key="holder"
+                type="button"
+                :class="[
+                  'min-h-[40px] flex-1 rounded-lg border-2 px-3 text-sm font-bold',
+                  creditHolderType === holder ? 'border-amber-600 bg-white text-amber-900' : 'border-amber-200 text-gray-600',
+                ]"
+                @click="selectCreditHolderType(holder)"
+              >
+                {{ t(`backoffice.beachPos.creditHolder.${holder}`) }}
+              </button>
+            </div>
+            <div v-if="creditHolderType === 'customer'" class="flex items-center justify-between gap-2">
+              <div>
+                <div class="text-xs text-gray-500">{{ t('backoffice.beachPos.creditCustomer') }}</div>
+                <div class="font-bold">{{ selectedCustomer?.full_name ?? t('backoffice.beachPos.noCreditCustomer') }}</div>
+              </div>
+              <button type="button" class="rounded-lg border border-amber-300 px-3 py-2 text-sm font-bold" @click="showCustomerModal = true">{{ selectedCustomer ? t('backoffice.beachPos.changeCustomer') : t('backoffice.beachPos.selectCustomer') }}</button>
+            </div>
+            <div v-else class="flex gap-2">
+              <input
+                v-model="employeeCreditHolderId"
+                type="number"
+                min="1"
+                class="min-h-[42px] flex-1 rounded-lg border border-amber-300 bg-white px-3 dark:bg-surface"
+                :placeholder="t('backoffice.beachPos.creditEmployeeId')"
+                @keyup.enter="loadCreditAccount"
+              >
+              <button type="button" class="rounded-lg border border-amber-300 px-3 py-2 text-sm font-bold" @click="loadCreditAccount">
+                {{ t('backoffice.beachPos.creditLookup') }}
+              </button>
+            </div>
+            <div v-if="creditLoading" class="text-xs text-gray-500">{{ t('backoffice.beachPos.creditLoading') }}</div>
+            <div v-else-if="(creditHolderType === 'customer' && selectedCustomer) || (creditHolderType === 'employee' && Number(employeeCreditHolderId))">
+              <div v-if="!creditAccount" class="text-xs font-semibold text-red-600">{{ t('backoffice.beachPos.creditNotFound') }}</div>
+              <div v-else class="space-y-1 text-xs">
+                <div class="font-black">{{ creditAccount.holder_name }}</div>
+                <div class="grid grid-cols-2 gap-2">
+                  <div><span class="text-gray-500">{{ t('backoffice.beachPos.creditBalance') }}</span><div class="font-black">{{ creditAccount.current_balance }} {{ t('backoffice.beachPos.egp') }}</div></div>
+                  <div><span class="text-gray-500">{{ t('backoffice.beachPos.creditAvailable') }}</span><div class="font-black">{{ creditAccount.available_credit ?? '∞' }} {{ creditAccount.available_credit === null ? '' : t('backoffice.beachPos.egp') }}</div></div>
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- POS-03: اختيار عملة الكاش (يظهر بس لو طريقة الدفع كاش) ──────── -->
@@ -641,7 +802,7 @@ onUnmounted(() => {
               class="rounded-xl border-2 border-stone-200 py-3 font-semibold text-gray-600 transition-colors hover:bg-gray-50 dark:bg-surface-2 disabled:opacity-40 dark:border-border dark:text-gray-300 dark:hover:bg-gray-800"
             >{{ t('backoffice.beachPos.clearOrder') }}</button>
             <button
-              @click="completeSale"
+              @click="completeSale()"
               :disabled="!hasItems || submitting"
               class="py-3 rounded-xl bg-blue-700 text-white font-bold hover:bg-blue-800 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
             >
@@ -658,6 +819,24 @@ onUnmounted(() => {
 
     </div>
   </div>
+  <POSCustomerModal
+    :open="showCustomerModal"
+    :branch-id="branchId"
+    :selected-customer-id="selectedCustomer?.id ?? null"
+    @close="showCustomerModal = false"
+    @select="selectCustomer"
+    @clear="clearCustomer(); showCustomerModal = false"
+  />
+  <PinGuardModal
+    v-if="showCreditPinGuard"
+    :min-level="60"
+    :title="t('backoffice.beachPos.creditApprovalTitle')"
+    :message="t('backoffice.beachPos.creditApprovalMessage')"
+    :loading="submitting"
+    :error-message="creditApprovalError"
+    @approved="onCreditApproval"
+    @cancel="showCreditPinGuard = false; creditApprovalError = ''"
+  />
 </template>
 
 <style scoped>

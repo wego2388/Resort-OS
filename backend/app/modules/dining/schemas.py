@@ -451,7 +451,10 @@ class OrderRead(BaseModel):
 class OrderStatusUpdate(BaseModel):
     status: str = Field(..., pattern=r"^(held|open|in_kitchen|served|paid|cancelled)$")
     charge_to_room_id: Optional[int] = None
-    payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet)$")
+    payment_method: Optional[str] = Field(None, pattern=r"^(cash|card|room|wallet|credit_account)$")
+    credit_account_id: Optional[int] = Field(None, gt=0)
+    approver_user_id: Optional[int] = Field(None, gt=0)
+    approver_pin: Optional[str] = Field(None, min_length=4, max_length=12)
     # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP. لو currency ≠ EGP
     # وpayment_method="cash"، يجب تمرير fx_rate (سعر الصرف الحالي).
     payment_currency: Optional[str] = Field(None, pattern=r"^[A-Z]{3}$")
@@ -464,6 +467,10 @@ class OrderStatusUpdate(BaseModel):
             raise ValueError(
                 "payment_fx_rate مطلوب لو payment_currency ≠ EGP وطريقة الدفع كاش"
             )
+        if (self.approver_user_id is None) != (self.approver_pin is None):
+            raise ValueError("بيانات موافقة المدير يجب أن تُرسل كاملة")
+        if self.credit_account_id and self.payment_method != "credit_account":
+            raise ValueError("credit_account_id يُستخدم فقط مع الدفع الآجل")
         return self
 
 
@@ -485,8 +492,9 @@ class WaiterTransferRequest(BaseModel):
 class SplitBillPayment(BaseModel):
     """جزء دفعة واحدة في تقسيم الفاتورة."""
     amount: Decimal = Field(..., gt=0)
-    payment_method: str = Field(..., pattern=r"^(cash|card|room|wallet)$")
+    payment_method: str = Field(..., pattern=r"^(cash|card|room|wallet|credit_account)$")
     charge_to_room_id: Optional[int] = None  # لو payment_method = room
+    credit_account_id: Optional[int] = Field(None, gt=0)
     # POS-03: عملة الدفع الكاش — اختيارية، افتراضية EGP
     currency: Optional[str] = Field(None, pattern=r"^[A-Z]{3}$")
     fx_rate:  Optional[Decimal] = Field(None, gt=0)
@@ -496,6 +504,8 @@ class SplitBillPayment(BaseModel):
         cur = (self.currency or "EGP").upper()
         if cur != "EGP" and self.payment_method == "cash" and not self.fx_rate:
             raise ValueError("fx_rate مطلوب لو currency ≠ EGP وطريقة الدفع كاش")
+        if self.credit_account_id and self.payment_method != "credit_account":
+            raise ValueError("credit_account_id يُستخدم فقط مع الدفع الآجل")
         return self
 
 
@@ -504,6 +514,14 @@ class SplitBillRequest(BaseModel):
     المجموع لازم يساوي order.total بفارق ≤ 0.01 جنيه (floating-point tolerance).
     مثال: فاتورة 300ج → كاش 200 + بطاقة 100."""
     payments: list[SplitBillPayment] = Field(..., min_length=2, max_length=10)
+    approver_user_id: Optional[int] = Field(None, gt=0)
+    approver_pin: Optional[str] = Field(None, min_length=4, max_length=12)
+
+    @model_validator(mode="after")
+    def _validate_approval(self) -> "SplitBillRequest":
+        if (self.approver_user_id is None) != (self.approver_pin is None):
+            raise ValueError("بيانات موافقة المدير يجب أن تُرسل كاملة")
+        return self
 
 
 class OrderItemStatusUpdate(BaseModel):

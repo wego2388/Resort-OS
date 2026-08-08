@@ -1,7 +1,7 @@
 import type { DiningExtrasItem } from '../DiningExtrasModal.vue'
 
 export type OrderType = 'dine_in' | 'takeaway' | 'delivery' | 'room_service'
-export type PaymentMethod = 'cash' | 'card' | 'room' | 'wallet'
+export type PaymentMethod = 'cash' | 'card' | 'room' | 'wallet' | 'credit_account'
 export type POSWorkspace = 'tables' | 'order' | 'active' | 'beach_map'
 
 export interface DiningOutlet {

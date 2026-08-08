@@ -21,7 +21,7 @@ async function submit() {
         const detail = e
             .response?.data?.detail;
         const code = typeof detail === 'object' ? detail?.code : '';
-        if (code === 'OTP_REQUIRED' || code === '2FA_REQUIRED') {
+        if (code === 'OTP_REQUIRED' || code === '2FA_REQUIRED' || code === '2FA_CODE_REQUIRED') {
             needsOtp.value = true;
             error.value = 'أدخل رمز التحقق من تطبيق المصادقة';
         }

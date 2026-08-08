@@ -25,8 +25,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 _REASON_MIN_LENGTH = 3
 _REASON_MAX_LENGTH = 500
 PERMISSION_ACTION_PATTERN = (
-    r"^(approve|check_in|check_out|collect|create|delete|early_late|edit|"
-    r"execute|generate|manage|respond|run|update|update_status|view|void)$"
+    r"^(approve|change_limit|change_status|charge|check_in|check_out|collect|"
+    r"create|delete|early_late|edit|execute|generate|lookup|manage|respond|"
+    r"reverse|run|update|update_status|view|void)$"
 )
 
 

@@ -35,22 +35,36 @@ from app.modules.owner.schemas import (
     ChannelAnalyticsResponse,
     ChannelContractRow,
     CashMovementItem,
+    CustomerGroupDiscountRow,
+    CustomerGroupMember,
+    DaySnapshot,
+    DiscountAnalyticsResponse,
+    DiscountTypeRow,
+    EmployeeAttendanceSummary,
+    EmployeePayrollSummary,
     ExceptionsResponse,
     ExpenseAnalyticsResponse,
     ExpenseLineResponse,
+    HREmployeeRow,
+    HRSummaryResponse,
     ItemMetricResponse,
+    ManualDiscountPerCashier,
+    NowHistoryResponse,
     OccupancyNow,
     OwnerExceptionItem,
     OwnerNowResponse,
     OwnerPerformanceResponse,
     OwnerWatchlistCreate,
     PayrollSummary,
+    PerformanceBreakdown,
     PeriodComparison,
     PeriodMeta,
     PeriodSnapshot,
     PRPOVarianceRow,
     ProcurementAnalyticsResponse,
     SalesPerformanceResponse,
+    ShiftHistoryItem,
+    ShiftHistoryResponse,
     ShiftMonitorItem,
     ShiftMonitorResponse,
     SupplierSpendRow,
@@ -220,6 +234,7 @@ def _build_period_snapshot(
 def _build_period_comparison(
     current: PeriodSnapshot,
     prior: PeriodSnapshot,
+    breakdown: "Optional[PerformanceBreakdown]" = None,
 ) -> PeriodComparison:
     """يحسب الـ delta والنسب — خارج finance module تماماً."""
     return PeriodComparison(
@@ -231,6 +246,55 @@ def _build_period_comparison(
         expense_pct=_safe_pct(current.total_expense, prior.total_expense),
         net_income_delta=current.net_income - prior.net_income,
         net_income_pct=_safe_pct(current.net_income, prior.net_income),
+        breakdown=breakdown,
+    )
+
+
+def _build_outlet_breakdown(
+    db: Session,
+    branch_id: int,
+    date_from: date,
+    date_to: date,
+) -> "PerformanceBreakdown":
+    """
+    Phase 7e: يحسب breakdown الإيراد per outlet للفترة.
+    مصدر: نفس مصادر Phase 6 — لا جداول جديدة.
+    None لو البيانات مش متاحة (provisional أو لا معاملات).
+    """
+    from app.modules.owner.schemas import PerformanceBreakdown  # noqa: PLC0415
+
+    # dining revenue من income statement
+    dining_rev: Optional[Decimal] = None
+    beach_rev: Optional[Decimal] = None
+    rooms_rev: Optional[Decimal] = None
+    other_rev: Optional[Decimal] = None
+
+    try:
+        from app.modules.finance.services import get_income_statement  # noqa: PLC0415
+        income = get_income_statement(db, branch_id, date_from, date_to)
+        # dining: cost centers أو revenue accounts تحتوي "dining"/"restaurant"/"cafe"
+        # نستخدم التقسيم المتاح في income statement
+        for line in getattr(income, 'revenue_lines', []):
+            code = getattr(line, 'account_code', '') or ''
+            name = getattr(line, 'account_name', '') or ''
+            amt  = getattr(line, 'amount', Decimal('0'))
+            low  = (code + name).lower()
+            if any(kw in low for kw in ('dining', 'restaurant', 'food', 'cafe', 'مطعم', 'كافيه')):
+                dining_rev = (dining_rev or Decimal('0')) + amt
+            elif any(kw in low for kw in ('beach', 'شاطئ')):
+                beach_rev = (beach_rev or Decimal('0')) + amt
+            elif any(kw in low for kw in ('room', 'hotel', 'pms', 'غرف', 'فندق')):
+                rooms_rev = (rooms_rev or Decimal('0')) + amt
+            else:
+                other_rev = (other_rev or Decimal('0')) + amt
+    except Exception:
+        pass  # لو income statement فشل، كل القيم تبقى None
+
+    return PerformanceBreakdown(
+        dining_revenue=dining_rev,
+        beach_revenue=beach_rev,
+        rooms_revenue=rooms_rev,
+        other_revenue=other_rev,
     )
 
 
@@ -464,6 +528,14 @@ def get_owner_now(db: Session, branch_id: int) -> OwnerNowResponse:
     # A-7: سعة الشاطئ
     beach_cap = _fetch_beach_capacity_today(db, branch_id, today)
 
+    # A-8: ذمم آجلة شخصية (Decision 0005)
+    from app.modules.credit.services import get_branch_outstanding  # noqa: PLC0415
+    from app.modules.credit import crud as credit_crud  # noqa: PLC0415
+    credit_outstanding = get_branch_outstanding(db, branch_id)
+    # Suspended accounts remain collectible receivables and must not disappear
+    # from the owner's exposure total/count.
+    credit_count = len(credit_crud.get_accounts_with_balance(db, branch_id))
+
     return OwnerNowResponse(
         revenue_today=income_stmt.total_revenue,
         cash_in_drawers=cash_in_drawers,
@@ -481,6 +553,8 @@ def get_owner_now(db: Session, branch_id: int) -> OwnerNowResponse:
             computed_at=computed_at,
         ),
         open_shift_count=shifts_resp.shift_count,
+        credit_account_outstanding=credit_outstanding,
+        credit_account_count=credit_count,
     )
 
 
@@ -545,7 +619,9 @@ def get_owner_performance(db: Session, branch_id: int) -> OwnerPerformanceRespon
     snap_prior_month = _build_period_snapshot(
         db, branch_id, prior_month_start, prior_month_end, "الشهر الماضي"
     )
-    month_comparison = _build_period_comparison(snap_this_month, snap_prior_month)
+    # Phase 7e: breakdown للشهر الحالي فقط (الأكثر فائدة)
+    month_breakdown = _build_outlet_breakdown(db, branch_id, month_start, today)
+    month_comparison = _build_period_comparison(snap_this_month, snap_prior_month, month_breakdown)
 
     return OwnerPerformanceResponse(
         today_vs_yesterday=day_comparison,
@@ -553,6 +629,74 @@ def get_owner_performance(db: Session, branch_id: int) -> OwnerPerformanceRespon
         month_vs_prior_month=month_comparison,
         computed_at=datetime.utcnow(),
     )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7a — Public API: get_now_history (Sparklines)
+# ══════════════════════════════════════════════════════════════════════
+
+def get_now_history(db: Session, branch_id: int, days: int = 7) -> NowHistoryResponse:
+    """
+    يرجع آخر N أيام من مقاييس شاشة "الآن" للـ sparklines.
+
+    كل يوم: revenue, expense, cash_in_drawers, occupancy_pct, beach_utilisation_pct
+    مصادر: نفس مصادر get_owner_now — لا حسابات جديدة.
+    الأيام مرتّبة تصاعدياً (الأقدم أولاً).
+    """
+    from app.modules.finance.services import (  # noqa: PLC0415
+        build_active_shifts_response,
+        get_income_statement,
+    )
+
+    today = _cairo_today()
+    days = max(1, min(days, 30))  # 1-30 يوم فقط
+    snapshots: list[DaySnapshot] = []
+
+    for i in range(days - 1, -1, -1):  # من الأقدم للأحدث
+        day = today - timedelta(days=i)
+        try:
+            income = get_income_statement(db, branch_id, day, day)
+            revenue = income.total_revenue
+            expense = income.total_expense
+        except Exception:
+            revenue = Decimal("0")
+            expense = Decimal("0")
+
+        # كاش الأدراج: فقط لليوم الحالي (الورديات المفتوحة)
+        # للأيام الماضية نرجع صفر (لا يوجد "وردية مفتوحة أمس")
+        cash = Decimal("0")
+        if i == 0:
+            try:
+                shifts_resp = build_active_shifts_response(db, branch_id)
+                cash = sum((s.expected_cash for s in shifts_resp.shifts), Decimal("0"))
+            except Exception:
+                cash = Decimal("0")
+
+        try:
+            occ = _fetch_occupancy_now(db, branch_id)
+            occupancy_pct = occ.occupancy_pct
+        except Exception:
+            occupancy_pct = Decimal("0")
+
+        try:
+            beach = _fetch_beach_capacity_today(db, branch_id, day)
+            beach_pct = beach.utilisation_pct
+        except Exception:
+            beach_pct = Decimal("0")
+
+        is_prov = _is_period_provisional(db, branch_id, day)
+
+        snapshots.append(DaySnapshot(
+            day=day,
+            revenue=revenue,
+            expense=expense,
+            cash_in_drawers=cash,
+            occupancy_pct=occupancy_pct,
+            beach_utilisation_pct=beach_pct,
+            is_provisional=is_prov,
+        ))
+
+    return NowHistoryResponse(days=snapshots, computed_at=datetime.utcnow())
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1353,5 +1497,434 @@ def get_exceptions(db: Session, branch_id: int) -> ExceptionsResponse:
             )
             for e in ranked
         ],
+        computed_at=datetime.utcnow(),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7b — Shift History
+# ══════════════════════════════════════════════════════════════════════
+
+def get_shift_history(db: Session, branch_id: int, days: int = 7) -> ShiftHistoryResponse:
+    """
+    الورديات المغلقة خلال آخر N أيام — للمراجعة التاريخية.
+    مصدر: CashierShift (status='closed') + CashMovement.
+    المالك يقرأ فقط — لا actions.
+    """
+    from app.modules.finance.models import CashierShift, CashMovement  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    cutoff = datetime.utcnow() - timedelta(days=max(1, min(days, 30)))
+
+    raw_shifts = (
+        db.query(CashierShift)
+        .filter(
+            CashierShift.branch_id == branch_id,
+            CashierShift.status == "closed",
+            CashierShift.closed_at >= cutoff,
+        )
+        .order_by(CashierShift.closed_at.desc())
+        .all()
+    )
+
+    # جلب أسماء الكاشيرين دفعة واحدة
+    cashier_ids = list({s.cashier_id for s in raw_shifts})
+    cashier_names: dict[int, str] = {}
+    if cashier_ids:
+        rows = db.query(User.id, User.full_name).filter(User.id.in_(cashier_ids)).all()
+        cashier_names = {r.id: r.full_name for r in rows}
+
+    shift_ids = [s.id for s in raw_shifts]
+    movements_map: dict[int, list[CashMovement]] = {sid: [] for sid in shift_ids}
+    if shift_ids:
+        mvs = (
+            db.query(CashMovement)
+            .filter(CashMovement.shift_id.in_(shift_ids))
+            .order_by(CashMovement.created_at)
+            .all()
+        )
+        # أسماء المنفذين
+        performer_ids = list({m.performed_by for m in mvs})
+        performer_names: dict[int, str] = {}
+        if performer_ids:
+            rows2 = db.query(User.id, User.full_name).filter(User.id.in_(performer_ids)).all()
+            performer_names = {r.id: r.full_name for r in rows2}
+        for mv in mvs:
+            movements_map[mv.shift_id].append(mv)
+    else:
+        performer_names = {}
+
+    result_shifts: list[ShiftHistoryItem] = []
+    for shift in raw_shifts:
+        mvs_list = movements_map.get(shift.id, [])
+        variance = shift.variance
+        if variance is not None:
+            from app.resort_os.owner_analytics_engine import score_shift_variance  # noqa: PLC0415
+            svr = score_shift_variance(float(variance))
+            variance_tier = svr.tier
+        else:
+            variance_tier = "normal"
+
+        result_shifts.append(ShiftHistoryItem(
+            shift_id=shift.id,
+            cashier_id=shift.cashier_id,
+            cashier_name=cashier_names.get(shift.cashier_id, f"كاشير {shift.cashier_id}"),
+            opened_at=shift.opened_at,
+            closed_at=shift.closed_at,
+            opening_float=shift.opening_float or Decimal("0"),
+            total_sales=shift.expected_cash or Decimal("0"),  # expected = total_sales في الورديات المغلقة
+            total_cash=shift.counted_cash or Decimal("0"),
+            expected_cash=shift.expected_cash or Decimal("0"),
+            invoice_count=0,  # لا يُحسب هنا — بيانات تاريخية
+            variance=variance,
+            variance_tier=variance_tier,
+            cash_movements=[
+                CashMovementItem(
+                    id=mv.id,
+                    movement_type=mv.movement_type,
+                    amount=mv.amount,
+                    direction=mv.direction,
+                    reason=mv.reason,
+                    performed_by_name=performer_names.get(mv.performed_by, f"مستخدم {mv.performed_by}"),
+                    created_at=mv.created_at,
+                )
+                for mv in mvs_list
+            ],
+        ))
+
+    return ShiftHistoryResponse(
+        branch_id=branch_id,
+        days=days,
+        shifts=result_shifts,
+        computed_at=datetime.utcnow(),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7c — HR Summary
+# Decision 0004 §7c: full_name/position/department/hire_date/status +
+# آخر payroll (net/gross/penalty/advance) + attendance aggregate.
+# لا national_id، لا employee_si، لا monthly_tax، لا phone، لا email.
+# ══════════════════════════════════════════════════════════════════════
+
+def get_hr_summary(db: Session, branch_id: int) -> HRSummaryResponse:
+    """
+    قائمة الموظفين مع آخر PayrollLine لكل منهم + حضور الشهر الحالي.
+    branch_id من الـ session فقط.
+    """
+    import calendar  # noqa: PLC0415
+    from app.modules.hr.models import Employee, PayrollLine, PayrollRun, AttendanceRecord  # noqa: PLC0415
+
+    today = date.today()
+    month_start = today.replace(day=1)
+    _, days_in_month = calendar.monthrange(today.year, today.month)
+    month_end = today.replace(day=days_in_month)
+
+    employees = (
+        db.query(Employee)
+        .filter(Employee.branch_id == branch_id)
+        .order_by(Employee.full_name)
+        .all()
+    )
+
+    # آخر PayrollRun approved/closed للفرع
+    latest_run = (
+        db.query(PayrollRun)
+        .filter(
+            PayrollRun.branch_id == branch_id,
+            PayrollRun.status.in_(["approved", "closed"]),
+        )
+        .order_by(PayrollRun.period_year.desc(), PayrollRun.period_month.desc())
+        .first()
+    )
+
+    # PayrollLines للـ run الأخير — keyed by employee_id
+    payroll_map: dict[int, PayrollLine] = {}
+    if latest_run:
+        lines = (
+            db.query(PayrollLine)
+            .filter(PayrollLine.payroll_run_id == latest_run.id)
+            .all()
+        )
+        payroll_map = {line.employee_id: line for line in lines}
+
+    # Attendance aggregate الشهر الحالي — keyed by employee_id
+    att_records = (
+        db.query(AttendanceRecord)
+        .filter(
+            AttendanceRecord.branch_id == branch_id,
+            AttendanceRecord.record_date >= month_start,
+            AttendanceRecord.record_date <= month_end,
+        )
+        .all()
+    )
+    att_map: dict[int, list[AttendanceRecord]] = {}
+    for rec in att_records:
+        att_map.setdefault(rec.employee_id, []).append(rec)
+
+    result_employees: list[HREmployeeRow] = []
+    total_net = Decimal("0")
+    active_count = 0
+    on_leave_count = 0
+
+    for emp in employees:
+        if emp.status == "active":
+            active_count += 1
+        elif emp.status == "on_leave":
+            on_leave_count += 1
+
+        # Payroll summary
+        payroll_summary: Optional[EmployeePayrollSummary] = None
+        if emp.id in payroll_map and latest_run:
+            pl = payroll_map[emp.id]
+            total_net += pl.net_salary
+            payroll_summary = EmployeePayrollSummary(
+                payroll_run_id=pl.payroll_run_id,
+                period_year=latest_run.period_year,
+                period_month=latest_run.period_month,
+                gross_salary=pl.gross_salary,
+                net_salary=pl.net_salary,
+                penalty_deduction=pl.penalty_deduction + pl.late_penalty_deduction,
+                advance_deduction=pl.advance_deduction,
+                # لا employee_si، لا monthly_tax — Decision 0004 §7c
+            )
+
+        # Attendance aggregate
+        att_summary: Optional[EmployeeAttendanceSummary] = None
+        emp_records = att_map.get(emp.id, [])
+        if emp_records:
+            present = sum(1 for r in emp_records if r.status == "present")
+            absent  = sum(1 for r in emp_records if r.status == "absent")
+            late    = sum(1 for r in emp_records if r.status == "late")
+            leave   = sum(1 for r in emp_records if r.status == "leave")
+            total_days = len(emp_records)
+            att_summary = EmployeeAttendanceSummary(
+                present_days=present,
+                absent_days=absent,
+                late_days=late,
+                leave_days=leave,
+                total_working_days=total_days,
+            )
+
+        result_employees.append(HREmployeeRow(
+            employee_id=emp.id,
+            full_name=emp.full_name,
+            position=emp.position,
+            department=emp.department,
+            hire_date=emp.hire_date,
+            status=emp.status,
+            payroll=payroll_summary,
+            attendance_this_month=att_summary,
+            # لا national_id، لا phone، لا email، لا basic_salary
+        ))
+
+    return HRSummaryResponse(
+        branch_id=branch_id,
+        employees=result_employees,
+        active_count=active_count,
+        on_leave_count=on_leave_count,
+        total_net_payroll=total_net,
+        period_year=today.year,
+        period_month=today.month,
+        computed_at=datetime.utcnow(),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7d — Discount Analytics
+# Decision 0004 §7d: أنواع خصم + يدوي per cashier + مجموعات بالاسم.
+# لا هاتف/email/national_id. لا عملاء بدون مجموعة.
+# ══════════════════════════════════════════════════════════════════════
+
+def get_discount_analytics(
+    db: Session,
+    branch_id: int,
+    date_from: date,
+    date_to: date,
+) -> DiscountAnalyticsResponse:
+    """
+    تحليل الخصومات: أنواع + يدوي per cashier + مجموعات بالاسم.
+    مصدر: DiningOrder + CustomerGroup + Customer (الاسم فقط).
+    """
+    from sqlalchemy import func, and_  # noqa: PLC0415
+    from app.modules.dining.models import DiningOrder  # noqa: PLC0415
+    from app.modules.crm.models import CustomerGroup, Customer  # noqa: PLC0415
+    from app.core.kernel.models.user import User  # noqa: PLC0415
+
+    # الطلبات المدفوعة في الفترة
+    paid_orders = (
+        db.query(DiningOrder)
+        .filter(
+            DiningOrder.branch_id == branch_id,
+            DiningOrder.status == "paid",
+            func.date(DiningOrder.created_at) >= date_from,
+            func.date(DiningOrder.created_at) <= date_to,
+        )
+        .all()
+    )
+
+    total_revenue = sum(o.subtotal + o.vat_amount + o.service_charge - o.discount_amount
+                        for o in paid_orders
+                        if hasattr(o, 'subtotal'))
+    if not total_revenue:
+        # fallback: مجموع الطلبات المدفوعة بدون subtotal
+        total_revenue = sum(getattr(o, 'total_amount', Decimal("0")) for o in paid_orders)
+
+    total_discount = sum(o.discount_amount for o in paid_orders)
+
+    # ── أنواع الخصم ──────────────────────────────────────────────────
+    # نوع 1: conditional (applied_discount_rule_id != None وليس customer_group)
+    # نوع 2: customer_group (discount من CustomerGroup)
+    # نوع 3: manual (discount_amount > 0 بدون rule أو group)
+    discount_types_data: dict[str, dict] = {
+        "conditional":    {"label": "خصم شرطي",       "count": 0, "amount": Decimal("0")},
+        "customer_group": {"label": "خصم مجموعة",     "count": 0, "amount": Decimal("0")},
+        "manual":         {"label": "خصم يدوي",        "count": 0, "amount": Decimal("0")},
+    }
+
+    manual_per_cashier_map: dict[int, dict] = {}
+
+    for order in paid_orders:
+        disc = getattr(order, 'discount_amount', Decimal("0"))
+        if disc <= 0:
+            continue
+        rule_id  = getattr(order, 'applied_discount_rule_id', None)
+        cust_id  = getattr(order, 'customer_id', None)
+        cashier_id = getattr(order, 'cashier_id', None)
+
+        # تحديد نوع الخصم
+        if rule_id:
+            dtype = "conditional"
+        elif cust_id:
+            # نتحقق لو العميل ده في مجموعة
+            cust = db.query(Customer.customer_group_id).filter(Customer.id == cust_id).first()
+            dtype = "customer_group" if (cust and cust.customer_group_id) else "manual"
+        else:
+            dtype = "manual"
+
+        discount_types_data[dtype]["count"] += 1
+        discount_types_data[dtype]["amount"] += disc
+
+        # manual per cashier
+        if dtype == "manual" and cashier_id:
+            if cashier_id not in manual_per_cashier_map:
+                manual_per_cashier_map[cashier_id] = {"count": 0, "amount": Decimal("0")}
+            manual_per_cashier_map[cashier_id]["count"] += 1
+            manual_per_cashier_map[cashier_id]["amount"] += disc
+
+    discount_pct = (total_discount / total_revenue * 100) if total_revenue > 0 else None
+
+    discount_type_rows = [
+        DiscountTypeRow(
+            type=k,
+            type_label=v["label"],
+            order_count=v["count"],
+            total_amount=v["amount"],
+            pct_of_revenue=(v["amount"] / total_revenue * 100) if total_revenue > 0 else None,
+        )
+        for k, v in discount_types_data.items()
+        if v["count"] > 0
+    ]
+
+    # cashier names
+    cashier_ids = list(manual_per_cashier_map.keys())
+    cashier_names: dict[int, str] = {}
+    if cashier_ids:
+        rows = db.query(User.id, User.full_name).filter(User.id.in_(cashier_ids)).all()
+        cashier_names = {r.id: r.full_name for r in rows}
+
+    manual_cashier_rows = sorted(
+        [
+            ManualDiscountPerCashier(
+                cashier_id=cid,
+                cashier_name=cashier_names.get(cid, f"كاشير {cid}"),
+                order_count=v["count"],
+                total_manual_discount=v["amount"],
+            )
+            for cid, v in manual_per_cashier_map.items()
+        ],
+        key=lambda x: x.total_manual_discount,
+        reverse=True,
+    )[:10]  # top 10 فقط
+
+    # ── مجموعات العملاء بالاسم ───────────────────────────────────────
+    # Decision 0004 §7d: الاسم فقط — لا هاتف/email/national_id
+    # لا عملاء بدون مجموعة
+    groups = (
+        db.query(CustomerGroup)
+        .filter(
+            CustomerGroup.branch_id == branch_id,
+            CustomerGroup.is_active == True,
+        )
+        .all()
+    )
+
+    # العملاء الذين لهم طلبات في الفترة
+    customer_ids_with_orders = {
+        getattr(o, 'customer_id', None)
+        for o in paid_orders
+        if getattr(o, 'customer_id', None)
+    }
+
+    group_rows: list[CustomerGroupDiscountRow] = []
+    for group in groups:
+        # أعضاء المجموعة
+        members = (
+            db.query(Customer.id, Customer.full_name)
+            .filter(
+                Customer.customer_group_id == group.id,
+                Customer.is_active == True,
+            )
+            .all()
+        )
+        member_ids = {m.id for m in members}
+        active_member_ids = member_ids & customer_ids_with_orders
+
+        if not active_member_ids:
+            continue  # مجموعة بدون أي نشاط في الفترة — لا تُعرض
+
+        # تجميع مبيعات كل عضو
+        member_sales: dict[int, dict] = {}
+        for order in paid_orders:
+            cid = getattr(order, 'customer_id', None)
+            if cid not in active_member_ids:
+                continue
+            if cid not in member_sales:
+                member_sales[cid] = {"invoices": 0, "sales": Decimal("0")}
+            member_sales[cid]["invoices"] += 1
+            member_sales[cid]["sales"] += getattr(order, 'total_amount',
+                order.subtotal + order.vat_amount + order.service_charge - order.discount_amount
+                if hasattr(order, 'subtotal') else Decimal("0"))
+
+        member_name_map = {m.id: m.full_name for m in members}
+        member_rows = [
+            CustomerGroupMember(
+                customer_id=cid,
+                full_name=member_name_map.get(cid, f"عميل {cid}"),
+                invoice_count=data["invoices"],
+                total_sales=data["sales"],
+            )
+            for cid, data in sorted(member_sales.items(), key=lambda x: x[1]["sales"], reverse=True)
+        ]
+
+        group_rows.append(CustomerGroupDiscountRow(
+            group_id=group.id,
+            group_name=group.name_ar or group.name,
+            discount_pct=group.discount_percentage,
+            member_count=len(members),
+            total_invoices=sum(d["invoices"] for d in member_sales.values()),
+            total_sales_after_discount=sum(d["sales"] for d in member_sales.values()),
+            members=member_rows,
+        ))
+
+    return DiscountAnalyticsResponse(
+        period_from=date_from.isoformat(),
+        period_to=date_to.isoformat(),
+        total_revenue=total_revenue,
+        total_discount=total_discount,
+        discount_pct_of_revenue=discount_pct,
+        discount_types=discount_type_rows,
+        manual_per_cashier=manual_cashier_rows,
+        customer_groups=sorted(group_rows, key=lambda x: x.total_sales_after_discount, reverse=True),
         computed_at=datetime.utcnow(),
     )

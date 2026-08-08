@@ -92,6 +92,7 @@ const allSections = computed<NavSection[]>(() => [
     items: [
       { path: '/admin/hr',           label: t('backoffice.nav.hr'),             icon: '👥',  requiredRole: 'manager' },
       { path: '/admin/finance',      label: t('backoffice.nav.finance'),        icon: '💰',  requiredRole: 'manager' },
+      { path: '/admin/credit-accounts', label: t('backoffice.nav.creditAccounts'), icon: '📒', requiredRoles: ['manager', 'accountant', 'admin', 'super_admin'], requiredPermission: 'credit.accounts:view' },
       { path: '/pos/shift-monitor',  label: t('backoffice.nav.shiftMonitor'),   icon: '🖥️',  requiredRole: 'manager' },
       { path: '/admin/e-invoice',    label: t('backoffice.nav.eInvoice'),       icon: '🧾',  requiredRole: 'manager' },
     ],

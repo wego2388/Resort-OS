@@ -26,12 +26,12 @@ from app.core.rate_limit import RateLimitMiddleware
 logger = logging.getLogger(__name__)
 
 
-class ChatNoStoreMiddleware(BaseHTTPMiddleware):
-    """Prevent browser/proxy caching for every chat response, including 4xx."""
+class SensitiveNoStoreMiddleware(BaseHTTPMiddleware):
+    """Prevent caching for chat and financial credit responses, including errors."""
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith("/api/v1/chat"):
+        if request.url.path.startswith(("/api/v1/chat", "/api/v1/credit")):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -42,7 +42,7 @@ class ChatNoStoreMiddleware(BaseHTTPMiddleware):
 _MODULE_KEYS = (
     "core", "finance", "inventory", "hr", "dining", "pms",
     "timeshare", "beach", "maintenance", "crm", "analytics", "hub", "leasing",
-    "chat", "owner",
+    "chat", "owner", "credit",
 )
 
 
@@ -99,7 +99,7 @@ def create_app() -> FastAPI:
     app.add_middleware(CorrelationMiddleware)
     app.add_middleware(RequestTimingMiddleware)
     app.add_middleware(RateLimitMiddleware)
-    app.add_middleware(ChatNoStoreMiddleware)
+    app.add_middleware(SensitiveNoStoreMiddleware)
 
     # ── Error Handling ─────────────────────────────────────────────────
     setup_error_handlers(app)

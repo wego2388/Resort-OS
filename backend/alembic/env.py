@@ -35,7 +35,7 @@ import app.modules.analytics.models   # noqa: F401
 import app.modules.dining.models      # noqa: F401
 import app.modules.chat.models        # noqa: F401
 import app.modules.owner.models       # noqa: F401
-import app.modules.owner.models       # noqa: F401
+import app.modules.credit.models      # noqa: F401
 
 # ⚠️ DINING_CUTOVER_PLAN.md Batch 6 (2026-07-13): restaurant/cafe.models
 # اتشالوا من هنا لأن الموديولين نفسهم اتحذفوا بالكامل من المشروع (dining هو

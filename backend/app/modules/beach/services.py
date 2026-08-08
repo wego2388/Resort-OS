@@ -184,6 +184,7 @@ def sell_ticket(
     branch_id: int,
     data: BeachSellRequest,
     tx_date: Optional[date] = None,
+    acting_user_level: int = 100,
 ) -> BeachTransaction:
     """⚠️ فجوة حقيقية اتصلحت هنا (wagdy.md #13/#37): BeachPOSView كان عنده
     offline queue محلي منفصل (localStorage) بيعيد إرسال نفس طلب البيع بدون
@@ -196,10 +197,16 @@ def sell_ticket(
         existing = crud.get_transaction_by_local_id(db, data.local_id)
         if existing:
             return existing
-    tx = _sell_ticket_no_commit(db, branch_id, data, tx_date)
-    db.commit()
-    db.refresh(tx)
-    return tx
+    try:
+        tx = _sell_ticket_no_commit(
+            db, branch_id, data, tx_date, acting_user_level=acting_user_level,
+        )
+        db.commit()
+        db.refresh(tx)
+        return tx
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _sell_ticket_no_commit(
@@ -207,6 +214,7 @@ def _sell_ticket_no_commit(
     branch_id: int,
     data: BeachSellRequest,
     tx_date: Optional[date] = None,
+    acting_user_level: int = 100,
 ) -> BeachTransaction:
     """جسم sell_ticket الفعلي، من غير commit/refresh نهائي — مفصولة عشان
     checkin_location (تحت) تقدر تدمجها في transaction واحدة أطول (قفل موقع +
@@ -217,8 +225,11 @@ def _sell_ticket_no_commit(
     أصلاً اتحط عشان يمنعها."""
     tx_date = tx_date or _business_today()
 
-    folio_id = data.folio_id
-    if not folio_id and data.room_id:
+    # Personal credit is its own receivable source; it must never create a
+    # folio charge even if a stale room/folio selection remains in the POS.
+    is_personal_credit = data.payment_method == "credit_account"
+    folio_id = None if is_personal_credit else data.folio_id
+    if not is_personal_credit and not folio_id and data.room_id:
         from app.modules.pms.services import find_active_folio_for_room  # noqa: PLC0415
         folio_id = find_active_folio_for_room(db, branch_id, data.room_id)
         if not folio_id:
@@ -277,6 +288,7 @@ def _sell_ticket_no_commit(
         "surge_applied":   surge_pct > 0,
         "tx_date":         tx_date,
         "cashier_id":      data.cashier_id,
+        "payment_method":  data.payment_method or ("room" if folio_id else "cash"),
         "folio_id":        folio_id,
         "b2b_contract_id": data.b2b_contract_id,
         "customer_id":     data.customer_id,
@@ -306,7 +318,44 @@ def _sell_ticket_no_commit(
     # تسوية الفوليو" — لكن التسوية (add_payment) عمرها ما كانت بترحّل أي
     # قيد خالص، يعني إيراد الشاطئ الحقيقي من كل عملية بيع محمّلة على غرفة
     # كان غايب تمامًا عن دفتر الأستاذ، نفس فئة الباج بالظبط في restaurant/cafe.
-    if tx.folio_id:
+    if is_personal_credit:
+        from app.modules.credit import crud as credit_crud  # noqa: PLC0415
+        from app.modules.credit import services as credit_services  # noqa: PLC0415
+
+        if data.credit_account_id:
+            credit_account = credit_crud.get_account(db, data.credit_account_id)
+            if not credit_account or credit_account.branch_id != branch_id:
+                raise ValueError("الحساب الآجل غير موجود في هذا الفرع")
+            if data.customer_id:
+                if (
+                    credit_account.holder_type != "customer"
+                    or credit_account.customer_id != data.customer_id
+                ):
+                    raise ValueError("الحساب الآجل لا يخص العميل المحدد")
+        else:
+            credit_account = credit_crud.get_account_for_customer(
+                db, data.customer_id, branch_id,
+            )
+        if not credit_account:
+            raise ValueError(
+                "لا يوجد حساب آجل مطابق في هذا الفرع"
+            )
+        charge_amount = (tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0"))
+        credit_services.charge_to_account(
+            db,
+            credit_account.id,
+            branch_id,
+            charge_amount,
+            data.cashier_id or 0,
+            ref_beach_tx_id=tx.id,
+            notes=f"بيع شاطئ {tx.tx_type} × {tx.quantity}",
+            revenue_allocations=[("4300", charge_amount, "BEACH")],
+            acting_user_level=acting_user_level,
+            approver_user_id=data.approver_user_id,
+            approver_pin=data.approver_pin,
+            commit=False,
+        )
+    elif tx.folio_id:
         from app.modules.finance import services as finance_services  # noqa: PLC0415
         from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
         # add_folio_charge بتقفل صف الفوليو (blocking) قبل الإدخال وتعيد
@@ -344,15 +393,19 @@ def _sell_ticket_no_commit(
 
 
 def _post_beach_revenue_journal(db: Session, tx: "BeachTransaction") -> None:
-    """Dr. Cash (1100) / Cr. Beach Revenue (4300) — دفع كاش فوري."""
+    """Direct tender journal, using the configured GL account for its method."""
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.modules.dining.payment_policy import resolve_direct_tender_account  # noqa: PLC0415
+
+    method = tx.payment_method or "cash"
+    debit_code = resolve_direct_tender_account(method)
 
     post_simple_revenue_journal(
         db, tx.branch_id, tx.tx_date,
-        debit_account_code="1100", credit_account_code="4300",
+        debit_account_code=debit_code, credit_account_code="4300",
         amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
         reference=f"BCH-{tx.id:06d}" if tx.id else "BCH-NEW",
-        description=f"إيرادات شاطئ — {tx.tx_type}",
+        description=f"إيرادات شاطئ ({method}) — {tx.tx_type}",
         source="beach", source_id=tx.id,
         cost_center_code="BEACH",
     )
@@ -388,7 +441,7 @@ def _record_shift_payment(db: Session, tx: "BeachTransaction") -> None:
     finance_crud.create_direct_payment(
         db, branch_id=tx.branch_id,
         amount=(tx.total_amount or Decimal("0")) + (tx.vat_amount or Decimal("0")),
-        method="cash",
+        method=tx.payment_method or "cash",
         posted_at=datetime.combine(tx.tx_date, datetime.min.time()),
         shift_id=tx.shift_id, cashier_id=tx.cashier_id,
         reference=f"BCH-{tx.id:06d}" if tx.id else None,
@@ -533,6 +586,17 @@ def b2b_checkin(
 
 
 def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> BeachTransaction:
+    """Void inventory, source settlement and journals as one database unit."""
+    try:
+        return _void_transaction_atomic(db, tx_id, voided_by, reason)
+    except Exception:
+        db.rollback()
+        raise
+
+
+def _void_transaction_atomic(
+    db: Session, tx_id: int, voided_by: int, reason: str,
+) -> BeachTransaction:
     """⚠️ باج محاسبي حقيقي كان هنا (اتصلح 2026-07-04): كان بيعكس المخزون بس —
     مايلمسش أي أثر مالي خالص. عملية كاش فوري كانت فضلة إيراد مسجّل في دفتر
     اليومية للأبد حتى بعد الإلغاء (مبالغة دائمة في الإيرادات)، وعملية محمّلة
@@ -557,8 +621,28 @@ def void_transaction(db: Session, tx_id: int, voided_by: int, reason: str) -> Be
     cap_delta, towel_delta = calculate_inventory_delta(tx.tx_type, tx.quantity)
     crud.apply_inventory_delta(db, inv_row, -cap_delta, -towel_delta)
 
-    # عكس الأثر المالي — نفس التفرّع اللي حصل وقت sell_ticket بالظبط
-    if tx.folio_id:
+    # عكس الأثر المالي — نفس التفرّع اللي حصل وقت sell_ticket بالظبط.
+    # الحساب الآجل له دفتر فرعي وقيد Dr 1160 مستقل؛ معاملته كبيع كاش هنا
+    # كانت ستنشئ Cr 1100 وهمي وتترك مديونية العميل كما هي.
+    if tx.payment_method == "credit_account":
+        from app.modules.credit import crud as credit_crud  # noqa: PLC0415
+        from app.modules.credit import services as credit_services  # noqa: PLC0415
+
+        charge = credit_crud.get_charge_for_source(db, ref_beach_tx_id=tx.id)
+        if not charge:
+            raise ValueError(
+                "حركة الحساب الآجل الأصلية غير موجودة — لا يمكن إلغاء البيع بأمان"
+            )
+        credit_services.reverse_transaction(
+            db,
+            charge.id,
+            tx.branch_id,
+            f"إلغاء عملية شاطئ: {reason}",
+            voided_by,
+            expected_account_id=charge.credit_account_id,
+            commit=False,
+        )
+    elif tx.folio_id:
         from app.modules.finance import crud as finance_crud  # noqa: PLC0415
 
         folio = finance_crud.get_folio(db, tx.folio_id)

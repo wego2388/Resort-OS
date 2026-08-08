@@ -23,16 +23,21 @@ from app.modules.owner.schemas import (
     AllocationRuleRead,
     BeachPerformanceResponse,
     ChannelAnalyticsResponse,
+    DiscountAnalyticsResponse,
     ExceptionsResponse,
     ExpenseAnalyticsResponse,
+    HRSummaryResponse,
+    NowHistoryResponse,
     OwnerNowResponse,
     OwnerPerformanceResponse,
     OwnerWatchlistCreate,
     OwnerWatchlistRead,
     ProcurementAnalyticsResponse,
     SalesPerformanceResponse,
+    ShiftHistoryResponse,
     ShiftMonitorResponse,
 )
+from app.modules.credit.schemas import CreditReceivablesResponse
 
 router = APIRouter(prefix="/owner", tags=["owner"])
 
@@ -76,6 +81,28 @@ def owner_now(response: Response, db: DbDep, user=Depends(get_owner_reader)):
     except Exception as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail={"code": "OWNER_NOW_FAILED", "message": str(exc)}) from exc
+
+
+@router.get(
+    "/now/history",
+    response_model=NowHistoryResponse,
+    name="owner_now_history",
+    summary="تاريخ مقاييس الآن — للـ sparklines (آخر N أيام)",
+)
+def owner_now_history(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    days: int = Query(default=7, ge=1, le=30, description="عدد الأيام — 1 إلى 30"),
+):
+    """آخر N أيام من revenue/expense/occupancy/beach للـ sparklines. لا caching."""
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    try:
+        return services.get_now_history(db, branch_id, days)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_HISTORY_FAILED", "message": str(exc)}) from exc
 
 
 @router.get(
@@ -287,6 +314,94 @@ def owner_exceptions(response: Response, db: DbDep, user=Depends(get_owner_reade
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Phase 7b — Shift History
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/shifts/history",
+    response_model=ShiftHistoryResponse,
+    name="owner_shifts_history",
+    summary="تاريخ الورديات المغلقة — آخر N أيام",
+)
+def owner_shifts_history(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    days: int = Query(default=7, ge=1, le=30, description="عدد الأيام — 1 إلى 30"),
+):
+    """
+    F-3: الورديات المغلقة خلال آخر N أيام.
+    المالك يقرأ فقط — لا approve/close/dispute.
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    try:
+        return services.get_shift_history(db, branch_id, days)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_SHIFT_HISTORY_FAILED", "message": str(exc)}) from exc
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7c — HR Summary
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/hr-summary",
+    response_model=HRSummaryResponse,
+    name="owner_hr_summary",
+    summary="ملخص الموارد البشرية — موظفين + رواتب + حضور",
+)
+def owner_hr_summary(response: Response, db: DbDep, user=Depends(get_owner_reader)):
+    """
+    H-1: قائمة الموظفين مع آخر PayrollLine + حضور الشهر الحالي.
+    Decision 0004 §7c: لا national_id، لا employee_si، لا monthly_tax،
+    لا phone، لا email.
+    branch_id من الـ session فقط.
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    try:
+        return services.get_hr_summary(db, branch_id)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_HR_FAILED", "message": str(exc)}) from exc
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 7d — Discount Analytics
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/discount-analytics",
+    response_model=DiscountAnalyticsResponse,
+    name="owner_discount_analytics",
+    summary="تحليل الخصومات — أنواع + يدوي per cashier + مجموعات بالاسم",
+)
+def owner_discount_analytics(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+    date_from: date = Query(default=None),
+    date_to:   date = Query(default=None),
+):
+    """
+    I-1 + I-2: تحليل الخصومات — aggregate بأنواعها + مجموعات العملاء
+    بالاسم فقط. لا هاتف/email/national_id. لا عملاء بدون مجموعة.
+    Decision 0004 §7d.
+    """
+    response.headers["Cache-Control"] = _NO_STORE
+    branch_id = _get_branch(user)
+    if date_from is None or date_to is None:
+        date_from, date_to = _default_range()
+    try:
+        return services.get_discount_analytics(db, branch_id, date_from, date_to)
+    except Exception as exc:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail={"code": "OWNER_DISCOUNT_FAILED", "message": str(exc)}) from exc
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Phase 2 — OwnerWatchlist
 # ══════════════════════════════════════════════════════════════════════
 
@@ -364,3 +479,28 @@ def delete_draft(rule_id: int, db: DbDep, user=Depends(get_owner_reader)):
         services.delete_draft(db, rule_id, user.id)
     except ValueError as e:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Phase 5 (Decision 0005) — Credit Receivables
+# ══════════════════════════════════════════════════════════════════════
+
+@router.get(
+    "/credit-receivables",
+    response_model=CreditReceivablesResponse,
+    name="owner_credit_receivables",
+    summary="ذمم شخصية آجلة — للأونر قراءة فقط",
+)
+def owner_credit_receivables(
+    response: Response,
+    db: DbDep,
+    user=Depends(get_owner_reader),
+):
+    """
+    قائمة الحسابات الآجلة الشخصية النشطة بالفرع — اسم + رصيد + آخر حركة.
+    الأونر يرى القراءة فقط — لا write على أي credit endpoint.
+    """
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, private"
+    branch_id = _get_branch(user)
+    from app.modules.credit.services import get_credit_receivables_for_owner  # noqa: PLC0415
+    return get_credit_receivables_for_owner(db, branch_id)

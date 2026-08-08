@@ -1,10 +1,11 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-04 بعد نشر REL-07 (فاتورة PDF عربية + مدونة حقيقية + إصلاح الموقع التسويقي، `5df8191`)
+**آخر تحديث:** 2026-08-08 — CREDIT-0005 مكتمل محليًا؛ النشر متوقف عند
+بوابة موافقة Mohamed قبل لمس الـVPS
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
-**المرحلة الحالية:** ACC-01 roster + UAT-01 + DATA-02 + OPS-01
-**قرار الإطلاق:** domain production فعال؛ Go/No-Go التشغيلي ينتظر UAT
+**المرحلة الحالية:** CREDIT-0005 PRE-DEPLOY GATE + ACC-01 roster + UAT-01
+**قرار الإطلاق:** الإنتاج الحالي فعال ولم يتغير؛ CREDIT-0005 ينتظر موافقة صريحة
 
 > هذه اللوحة تعرض العمل الحالي فقط. التفاصيل في
 > `docs/audits/EL_KHEIMA_FINAL_EXECUTION_PLAN_AR.md`. أي لوحة قديمة تحت
@@ -47,6 +48,7 @@
 | MKT-06 — Arabic-only horizontal scroll on /contact (RTL honeypot offset bug) | COMPLETE | `1371975` فعال (Marketing)؛ sr-only بدل offset فيزيائي ضخم | — |
 | REL-06 — HR/admin/Timeshare audit batch (23 commits، تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE | `821a718` فعال؛ VAT/service-charge حقيقي، جلسات إدارية، بوابة تايم شير كاملة + تنبيهات واتساب، إصلاح fail-closed لـTIMESHARE_PORTAL_TOKEN_SECRET | — |
 | REL-07 — Arabic PDF invoice fix + real blog + marketing-site console-error sweep (8 commits + Marketing، تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE | `5df8191` فعال (Resort) + `79130a6` فعال (Marketing)؛ خط عربي/لوجو للفواتير، `GET /hub/blog/posts/{slug}` + 6 مقالات حقيقية، حذف نداءات API ميتة + إصلاح باج انتقال صفحات + كارت وصف بدل زر طلب وهمي | — |
+| CREDIT-0005 — personal customer/employee credit accounts | READY FOR DEPLOY APPROVAL | GL 1160 + immutable ledger + Dining/Beach + Staff/Owner UI؛ 21/21 acceptance و242/242 focused، PostgreSQL roundtrip ناجح | موافقة Mohamed قبل الـVPS |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |

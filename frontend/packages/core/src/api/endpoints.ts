@@ -417,6 +417,16 @@ export const ENDPOINTS = {
   finance_eta: {
     invoices: '/api/v1/finance/eta/invoices',
   },
+  credit: {
+    accounts: '/api/v1/credit/accounts',
+    lookup: '/api/v1/credit/accounts/lookup',
+    account: (id: number) => `/api/v1/credit/accounts/${id}`,
+    statement: (id: number) => `/api/v1/credit/accounts/${id}/statement`,
+    status: (id: number) => `/api/v1/credit/accounts/${id}/status`,
+    limit: (id: number) => `/api/v1/credit/accounts/${id}/limit`,
+    payment: (id: number) => `/api/v1/credit/accounts/${id}/payment`,
+    reverse: (id: number) => `/api/v1/credit/accounts/${id}/reverse`,
+  },
   // Owner Intelligence Cockpit — Decision 0004, Phase 3+
   owner: {
     now:         '/api/v1/owner/now',

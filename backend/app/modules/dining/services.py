@@ -1015,10 +1015,13 @@ def update_order_status(
     db: Session, order_id: int, new_status: str,
     charge_to_room_id: Optional[int] = None,
     payment_method: Optional[str] = None,
+    credit_account_id: Optional[int] = None,
     payment_currency: Optional[str] = None,
     payment_fx_rate: Optional[Decimal] = None,
     settled_by: Optional[int] = None,
     acting_user_level: int = 100,
+    approver_user_id: Optional[int] = None,
+    approver_pin: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> DiningOrder:
     """يغيّر حالة الطلب. التحويل لـ "مدفوع" وحده بقى وحدة عمل صارمة منفصلة
@@ -1036,10 +1039,13 @@ def update_order_status(
             db, order_id,
             charge_to_room_id=charge_to_room_id,
             payment_method=payment_method,
+            credit_account_id=credit_account_id,
             payment_currency=payment_currency,
             payment_fx_rate=payment_fx_rate,
             settled_by=settled_by,
             acting_user_level=acting_user_level,
+            approver_user_id=approver_user_id,
+            approver_pin=approver_pin,
             idempotency_key=idempotency_key,
         )
 
@@ -1090,6 +1096,7 @@ def _settlement_intent_hash(order_id: int, tenders: list[dict]) -> str:
                 else str(Decimal(str(t["amount"])).quantize(Decimal("0.01")))
             ),
             "charge_to_room_id": t.get("charge_to_room_id"),
+            "credit_account_id": t.get("credit_account_id"),
         }
         for t in tenders
     ]
@@ -1108,6 +1115,8 @@ def settle_order(
     tenders: list[dict],
     settled_by: Optional[int] = None,
     acting_user_level: int = 100,
+    approver_user_id: Optional[int] = None,
+    approver_pin: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> DiningOrder:
     """وحدة العمل الصارمة الموحّدة لتحصيل طلب دايننج (Gate 4A) — المسار
@@ -1173,6 +1182,7 @@ def settle_order(
                 "method": method,
                 "amount": amount,
                 "charge_to_room_id": t.get("charge_to_room_id"),
+                "credit_account_id": t.get("credit_account_id"),
                 # POS-03: عملة/سعر الصرف للكاش بعملة أجنبية — بيتمرّر لـ _settle_direct_tender
                 "currency": (t.get("currency") or "EGP").upper(),
                 "fx_rate": t.get("fx_rate"),
@@ -1192,6 +1202,8 @@ def settle_order(
 
         direct = [t for t in norm if is_direct_method(t["method"])]
         room = [t for t in norm if t["method"] == "room"]
+        credit = [t for t in norm if t["method"] == "credit_account"]
+
         if len(room) > 1:
             raise PaymentAllocationError(
                 "تقسيم الدفع على أكثر من tender غرفة غير مدعوم بأمان؛ "
@@ -1248,6 +1260,40 @@ def settle_order(
                 "القيد المحاسبي لازم يتطابق مع طريقة الدفع"
             )
 
+        # حل credit account لكل credit tender — fail-fast قبل أي تعديل
+        if credit:
+            from app.modules.credit import crud as credit_crud  # noqa: PLC0415
+            if len(credit) > 1:
+                raise PaymentAllocationError(
+                    "استخدم جزء حساب آجل واحد فقط في الفاتورة المقسمة"
+                )
+            for t in credit:
+                if t.get("credit_account_id"):
+                    _credit_acc = credit_crud.get_account(db, t["credit_account_id"])
+                    if not _credit_acc or _credit_acc.branch_id != order.branch_id:
+                        raise InvalidPaymentMethodError(
+                            "الحساب الآجل غير موجود في هذا الفرع"
+                        )
+                    if _credit_acc.holder_type == "customer" and (
+                        not order.customer_id or _credit_acc.customer_id != order.customer_id
+                    ):
+                        raise InvalidPaymentMethodError(
+                            "حساب العميل الآجل لا يطابق العميل المربوط بالطلب"
+                        )
+                else:
+                    if not order.customer_id:
+                        raise InvalidPaymentMethodError(
+                            "حدد حساب الموظف الآجل أو اربط الطلب بعميل"
+                        )
+                    _credit_acc = credit_crud.get_account_for_customer(
+                        db, order.customer_id, order.branch_id
+                    )
+                    if not _credit_acc:
+                        raise InvalidPaymentMethodError(
+                            f"العميل {order.customer_id} ليس لديه حساب آجل في هذا الفرع"
+                        )
+                t["credit_account_id"] = _credit_acc.id
+
         # ── تنفيذ التسوية ────────────────────────────────────────────
         single_tender = len(norm) == 1
         if single_tender:
@@ -1283,6 +1329,15 @@ def settle_order(
                 cashier_id=settled_by, shift_id=shift_id,
                 outlet_splits=outlet_splits,
             )
+        for t in credit:
+            _settle_credit_tender(
+                db, order, t, revenue_account,
+                cashier_id=settled_by,
+                outlet_splits=outlet_splits,
+                acting_user_level=acting_user_level,
+                approver_user_id=approver_user_id,
+                approver_pin=approver_pin,
+            )
 
         # خصم المخزون مرة واحدة للطلب كله جوه المعاملة الصارمة.
         _deduct_inventory_for_order(db, order, commit=False, strict=True)
@@ -1304,6 +1359,7 @@ def settle_order(
                 "amount": str(t["amount"]),
                 **({"account": t["account"]} if t.get("account") else {}),
                 **({"folio_id": t["folio_id"]} if t.get("folio_id") else {}),
+                **({"credit_account_id": t["credit_account_id"]} if t.get("credit_account_id") else {}),
             }
             for t in norm
         ]
@@ -1493,16 +1549,72 @@ def _settle_direct_tender(
         remaining -= share
 
 
+def _settle_credit_tender(
+    db: Session, order: DiningOrder, tender: dict, revenue_account_code: str,
+    *, cashier_id: Optional[int], outlet_splits: "list[tuple] | None" = None,
+    acting_user_level: int = 100,
+    approver_user_id: Optional[int] = None,
+    approver_pin: Optional[str] = None,
+) -> None:
+    """tender حساب آجل شخصي — يُرحَّل على CreditAccount.
+    الـ credit_account_id تم حله وتخزينه في tender قبل استدعاء هذه الدالة.
+    يُنشئ CreditTransaction + JournalEntry (Dr 1160 / Cr revenue account(s)) بدون commit
+    — الـ commit الموحّد يتم في نهاية settle_order.
+    """
+    from app.modules.credit import services as credit_services  # noqa: PLC0415
+
+    amount = tender["amount"]
+    allocations: list[tuple[str, Decimal, str | None]] = []
+    if not outlet_splits or len(outlet_splits) == 1:
+        outlet = outlet_splits[0][0] if outlet_splits else None
+        allocations.append((
+            outlet.revenue_account_code if outlet else revenue_account_code,
+            amount,
+            _outlet_cost_center_code(outlet),
+        ))
+    else:
+        total_subtotal = sum(subtotal for _, subtotal in outlet_splits) or Decimal("1")
+        remaining = amount
+        for index, (outlet, subtotal) in enumerate(outlet_splits):
+            share = (
+                remaining
+                if index == len(outlet_splits) - 1
+                else (amount * subtotal / total_subtotal).quantize(Decimal("0.01"))
+            )
+            allocations.append((
+                outlet.revenue_account_code, share, _outlet_cost_center_code(outlet),
+            ))
+            remaining -= share
+
+    credit_services.charge_to_account(
+        db,
+        tender["credit_account_id"],
+        order.branch_id,
+        amount,
+        cashier_id or 0,
+        ref_order_id=order.id,
+        notes=f"طلب {order.order_number}",
+        revenue_allocations=allocations,
+        acting_user_level=acting_user_level,
+        approver_user_id=approver_user_id,
+        approver_pin=approver_pin,
+        commit=False,
+    )
+
+
 def _mark_order_paid(
     db: Session,
     order_id: int,
     *,
     charge_to_room_id: Optional[int],
     payment_method: Optional[str],
+    credit_account_id: Optional[int] = None,
     payment_currency: Optional[str] = None,
     payment_fx_rate: Optional[Decimal] = None,
     settled_by: Optional[int] = None,
     acting_user_level: int = 100,
+    approver_user_id: Optional[int] = None,
+    approver_pin: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> DiningOrder:
     """تحصيل طلب بـ tender واحد (المسار العادي من PATCH .../status=paid) —
@@ -1530,19 +1642,26 @@ def _mark_order_paid(
         method = payment_method
     elif order.folio_id or charge_to_room_id:
         method = "room"
-    elif order.payment_method and order.payment_method in ("cash", "card", "wallet", "room"):
+    elif order.payment_method and order.payment_method in ("cash", "card", "wallet", "room", "credit_account"):
         method = order.payment_method
     else:
         method = "cash"
 
-    tender: dict = {"method": method, "amount": None, "charge_to_room_id": charge_to_room_id}
+    tender: dict = {
+        "method": method,
+        "amount": None,
+        "charge_to_room_id": charge_to_room_id,
+        "credit_account_id": credit_account_id,
+    }
     # POS-03: نمرّر العملة/سعر الصرف فقط لو الدفع كاش بعملة أجنبية
     if method == "cash" and payment_currency and (payment_currency or "EGP").upper() != "EGP":
         tender["currency"] = payment_currency.upper()
         tender["fx_rate"] = payment_fx_rate
     return settle_order(
         db, order_id, tenders=[tender], settled_by=settled_by,
-        acting_user_level=acting_user_level, idempotency_key=idempotency_key,
+        acting_user_level=acting_user_level,
+        approver_user_id=approver_user_id, approver_pin=approver_pin,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -2051,6 +2170,8 @@ def split_bill(
     payments: list[dict],
     settled_by: Optional[int] = None,
     acting_user_level: int = 100,
+    approver_user_id: Optional[int] = None,
+    approver_pin: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> DiningOrder:
     """P-07 — تقسيم الفاتورة على أكثر من طريقة دفع (Gate 4A: بقى وحدة عمل
@@ -2064,6 +2185,7 @@ def split_bill(
             "method": p["payment_method"],
             "amount": Decimal(str(p["amount"])),
             "charge_to_room_id": p.get("charge_to_room_id"),
+            "credit_account_id": p.get("credit_account_id"),
             # POS-03: عملة/سعر الصرف للكاش بعملة أجنبية
             "currency": (p.get("currency") or "EGP").upper(),
             "fx_rate": p.get("fx_rate"),
@@ -2072,7 +2194,9 @@ def split_bill(
     ]
     return settle_order(
         db, order_id, tenders=tenders, settled_by=settled_by,
-        acting_user_level=acting_user_level, idempotency_key=idempotency_key,
+        acting_user_level=acting_user_level,
+        approver_user_id=approver_user_id, approver_pin=approver_pin,
+        idempotency_key=idempotency_key,
     )
 
 
@@ -2343,6 +2467,7 @@ def _post_refund_reversals(
     كله fail-closed (High 4a): أي فشل محاسبي بيرفع استثناء → refund_order_item
     بيعمل rollback كامل (حالة الطلب/الصنف + كل صفوف العكس)، مش يبتلع بصمت."""
     from app.modules.dining.payment_policy import resolve_direct_tender_account  # noqa: PLC0415
+    from app.modules.credit import crud as credit_crud  # noqa: PLC0415
     from app.modules.finance import crud as finance_crud  # noqa: PLC0415
     from app.modules.finance import services as finance_services  # noqa: PLC0415
 
@@ -2356,11 +2481,25 @@ def _post_refund_reversals(
     ]
     direct_total = sum((p.amount for p in direct_payments), Decimal("0"))
 
-    # بنود التوزيع بترتيب حتمي: المباشرة الأول (كل دفعة بند)، والغرفة آخر بند
-    # عشان الباقي (rounding remainder) يقع على حصة الغرفة.
-    parts: list[tuple[str, Decimal, object]] = [("direct", p.amount, p) for p in direct_payments]
+    credit_charge = credit_crud.get_charge_for_source(db, ref_order_id=order.id)
+    expects_credit = "credit_account" in (order.payment_method or "")
+    if expects_credit and not credit_charge:
+        raise ValueError(
+            "حركة الحساب الآجل الأصلية للطلب غير موجودة — لا يمكن تنفيذ المرتجع بأمان"
+        )
+    if credit_charge and credit_charge.branch_id != order.branch_id:
+        raise ValueError("حركة الحساب الآجل لا تنتمي لفرع الطلب")
+    credit_total = credit_charge.amount if credit_charge else Decimal("0")
+
+    # الحساب الآجل أولاً، ثم المدفوعات المباشرة، والغرفة آخر بند. وجود أي
+    # rounding متراكم في مرتجعات متعددة يُمتص في بند لاحق، بينما آخر مرتجع
+    # للحساب الآجل يأخذ المتبقي الحقيقي من حركة الترحيل الأصلية بالضبط.
+    parts: list[tuple[str, Decimal, object]] = []
+    if credit_charge:
+        parts.append(("credit", credit_total, credit_charge))
+    parts.extend(("direct", p.amount, p) for p in direct_payments)
     if order.folio_id:
-        room_total = max(Decimal("0"), order_total - direct_total)
+        room_total = max(Decimal("0"), order_total - direct_total - credit_total)
         if room_total > 0:
             parts.append(("room", room_total, None))
     if not parts:
@@ -2392,6 +2531,31 @@ def _post_refund_reversals(
     # cross-outlet: cost center برضو لازم يكون بتاع outlet الصنف نفسه، مش
     # المنفذ الأساسي للطلب (نفس السبب في اختيار revenue_account_code فوق).
     cost_center_code = _outlet_cost_center_code(outlet or crud.get_outlet(db, order.outlet_id))
+    credit_remaining = Decimal("0")
+    credit_refunded = Decimal("0")
+    credit_target_cumulative = Decimal("0")
+    final_order_refund = (order.refunded_amount or Decimal("0")) >= order_total
+    if credit_charge:
+        credit_refunded = sum(
+            (
+                adjustment.amount
+                for adjustment in credit_crud.list_adjustments_for_transaction(
+                    db, credit_charge.id,
+                )
+                if adjustment.txn_type == "refund"
+            ),
+            Decimal("0"),
+        )
+        credit_remaining = max(Decimal("0"), credit_charge.amount - credit_refunded)
+        credit_target_cumulative = (
+            credit_charge.amount
+            if final_order_refund
+            else (
+                (order.refunded_amount or Decimal("0"))
+                * credit_charge.amount
+                / order_total
+            ).quantize(Decimal("0.01"))
+        )
     allocated = Decimal("0")
     last_idx = len(parts) - 1
     for idx, (kind, amount, payment) in enumerate(parts):
@@ -2399,10 +2563,31 @@ def _post_refund_reversals(
             share = refund_amount - allocated
         else:
             share = (refund_amount * amount / order_total).quantize(Decimal("0.01"))
-            allocated += share
+        if kind == "credit":
+            # Allocate to the cumulative target, not by rounding every refund
+            # independently. This prevents many small item refunds from
+            # accumulating cents above/below the original credit tender.
+            share = min(
+                max(Decimal("0"), credit_target_cumulative - credit_refunded),
+                credit_remaining,
+                refund_amount - allocated,
+            )
         if share <= 0:
             continue
-        if kind == "direct":
+        if kind == "credit":
+            from app.modules.credit import services as credit_services  # noqa: PLC0415
+
+            credit_services.refund_charge(
+                db,
+                credit_charge.id,
+                order.branch_id,
+                share,
+                f"مرتجع صنف من طلب {order.order_number}",
+                refunded_by,
+                debit_allocations=[(revenue_account_code, share, cost_center_code)],
+                commit=False,
+            )
+        elif kind == "direct":
             # حساب الطريقة الأصلي نفسه — cash→1100، card/wallet→حساب المقاصّة
             # المهيّأ. لو الطريقة اتشالت تهيئتها بعد البيع، fail-closed (503).
             account = resolve_direct_tender_account(payment.method)
@@ -2423,6 +2608,7 @@ def _post_refund_reversals(
             )
         else:  # room
             _reduce_folio_charge_for_refund(db, order, share, revenue_account_code, outlet=outlet)
+        allocated += share
 
 
 def _reduce_folio_charge_for_refund(

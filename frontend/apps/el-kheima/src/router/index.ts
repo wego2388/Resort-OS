@@ -197,6 +197,11 @@ const routes: RouteRecordRaw[] = [
       { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { titleKey: 'backoffice.nav.analytics' } },
       { path: 'hr', name: 'admin-hr', component: () => import('../views/admin/HRView.vue'), meta: { titleKey: 'backoffice.nav.hr' } },
       { path: 'finance', name: 'admin-finance', component: () => import('../views/admin/FinanceView.vue'), meta: { titleKey: 'backoffice.nav.finance' } },
+      { path: 'credit-accounts', name: 'admin-credit-accounts', component: () => import('../views/admin/CreditAccountsView.vue'), meta: {
+        requiredRoles: ['manager', 'accountant', 'admin'],
+        requiredPermission: 'credit.accounts:view',
+        titleKey: 'backoffice.nav.creditAccounts',
+      } },
       // ⚠️ requiredRole كان 'supervisor' (level 50) — أعلى من الصلاحية اللي
       // الباك إند بيمنحها فعليًا لتسجيل تحصيل قسط (get_cashier_user، level 40،
       // اتصلحت اليوم من get_current_active_user). يعني الكاشير المفروض يقدر

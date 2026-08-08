@@ -25,6 +25,7 @@ import {
   moneyToMinor,
   remainingMinor,
 } from './money'
+import PinGuardModal from '../PinGuardModal.vue'
 
 // ── POS-03: العملات المدعومة للكاش الأجنبي ────────────────────────────
 const FOREIGN_CURRENCIES = ['USD', 'EUR'] as const
@@ -56,6 +57,19 @@ interface CheckedInBooking {
   rooms?: BookingRoom[]
 }
 
+interface CreditAccountLookup {
+  id: number
+  holder_type: 'customer' | 'employee'
+  holder_name: string
+  credit_limit: string
+  current_balance: string
+  available_credit: string | null
+  status: 'active' | 'suspended' | 'closed'
+}
+
+type Approval = { approverUserId: number | null; approverPin: string | null }
+const creditHolderOptions = ['customer', 'employee'] as const
+
 const props = defineProps<{
   open: boolean
   order: DiningOrderDetail | null
@@ -81,10 +95,20 @@ const roomsLoaded = ref(false)
 const roomsError = ref('')
 const busy = ref(false)
 const paymentError = ref('')
+const creditAccount = ref<CreditAccountLookup | null>(null)
+const creditHolderType = ref<'customer' | 'employee'>('customer')
+const employeeCreditHolderId = ref('')
+const creditLoading = ref(false)
+const creditLookupDone = ref(false)
+const showCreditPinGuard = ref(false)
+const creditApprovalError = ref('')
 const pendingKey = ref('')
 const pendingIntent = ref('')
 let nextSplitKey = 3
 const splitRows = ref<SplitRow[]>([])
+const usesCredit = computed(() => mode.value === 'single'
+  ? paymentMethod.value === 'credit_account'
+  : splitRows.value.some(row => row.paymentMethod === 'credit_account'))
 
 // ── POS-03: أسعار الصرف وحالة العملة ──────────────────────────────────
 const cashCurrency = ref<CashCurrency>('EGP')
@@ -145,6 +169,7 @@ const methodOptions = computed<Array<{ value: PaymentMethod; label: string; icon
   { value: 'card', label: t('backoffice.pos.payment.methods.card'), icon: '💳' },
   { value: 'room', label: t('backoffice.pos.payment.methods.room'), icon: '🛏️' },
   { value: 'wallet', label: t('backoffice.pos.payment.methods.wallet'), icon: '👛' },
+  { value: 'credit_account', label: t('backoffice.pos.payment.methods.creditAccount'), icon: '📒' },
 ])
 
 const totalMinor = computed(() => moneyToMinor(props.order?.total ?? null) ?? 0)
@@ -190,6 +215,10 @@ function resetPaymentState() {
   selectedRoomId.value = ''
   roomSearch.value = ''
   paymentError.value = ''
+  showCreditPinGuard.value = false
+  creditApprovalError.value = ''
+  creditHolderType.value = 'customer'
+  employeeCreditHolderId.value = ''
   pendingKey.value = ''
   pendingIntent.value = ''
   splitRows.value = initialSplitRows()
@@ -201,11 +230,43 @@ watch(
     if (!open) return
     resetPaymentState()
     if (!roomsLoaded.value) loadCheckedInRooms()
+    loadCreditAccount()
     // POS-03: جلب أسعار الصرف عند فتح المودال
     fetchFxRates()
   },
   { immediate: true },
 )
+
+async function loadCreditAccount() {
+  creditAccount.value = null
+  creditLookupDone.value = false
+  const holderId = creditHolderType.value === 'customer'
+    ? props.order?.customer_id
+    : Number(employeeCreditHolderId.value)
+  if (!holderId || holderId <= 0) {
+    creditLookupDone.value = true
+    return
+  }
+  creditLoading.value = true
+  try {
+    const { data } = await api.get(ENDPOINTS.credit.lookup, {
+      params: { holder_type: creditHolderType.value, holder_id: holderId },
+    })
+    creditAccount.value = data
+  } catch {
+    creditAccount.value = null
+  } finally {
+    creditLoading.value = false
+    creditLookupDone.value = true
+  }
+}
+
+function selectCreditHolderType(holderType: 'customer' | 'employee') {
+  creditHolderType.value = holderType
+  creditAccount.value = null
+  creditLookupDone.value = false
+  loadCreditAccount()
+}
 
 watch(
   () => props.branchId,
@@ -257,6 +318,9 @@ function paymentErrorMessage(error: any): string {
     FINANCIAL_CONFIGURATION_ERROR: 'financialConfiguration',
     INVALID_PAYMENT_METHOD: 'invalidMethod',
     INVALID_ORDER_TOTAL: 'invalidTotal',
+    CREDIT_LIMIT_EXCEEDED: 'creditLimitExceeded',
+    CREDIT_ACCOUNT_INACTIVE: 'creditInactive',
+    CREDIT_ACCOUNT_BUSY: 'creditBusy',
   }
   if (code && known[code]) return t(`backoffice.pos.payment.errors.${known[code]}`)
   if (typeof detail === 'string' && detail.trim()) return detail
@@ -369,10 +433,32 @@ function validateSinglePayment(): { chargeToRoomId?: number } | null {
     }
     return { chargeToRoomId: roomId }
   }
+  if (paymentMethod.value === 'credit_account') {
+    if (creditHolderType.value === 'customer' && !props.order?.customer_id) {
+      paymentError.value = t('backoffice.pos.payment.errors.creditNeedsCustomer')
+      return null
+    }
+    if (creditHolderType.value === 'employee' && Number(employeeCreditHolderId.value) <= 0) {
+      paymentError.value = t('backoffice.pos.payment.errors.creditNeedsEmployee')
+      return null
+    }
+    if (creditLoading.value || !creditLookupDone.value) {
+      paymentError.value = t('backoffice.pos.payment.errors.creditLoading')
+      return null
+    }
+    if (!creditAccount.value) {
+      paymentError.value = t('backoffice.pos.payment.errors.creditNotFound')
+      return null
+    }
+    if (creditAccount.value.status !== 'active') {
+      paymentError.value = t('backoffice.pos.payment.errors.creditInactive')
+      return null
+    }
+  }
   return {}
 }
 
-async function paySingle() {
+async function paySingle(approval: Approval | null = null) {
   if (!props.order) return
   paymentError.value = ''
   const validation = validateSinglePayment()
@@ -386,6 +472,13 @@ async function paySingle() {
     status: 'paid',
     payment_method: paymentMethod.value,
     charge_to_room_id: validation.chargeToRoomId,
+  }
+  if (paymentMethod.value === 'credit_account' && creditAccount.value) {
+    payload.credit_account_id = creditAccount.value.id
+  }
+  if (approval?.approverUserId) {
+    payload.approver_user_id = approval.approverUserId
+    payload.approver_pin = approval.approverPin
   }
   if (paymentMethod.value === 'cash' && cashCurrency.value !== 'EGP' && currentFxRate.value > 0) {
     payload.payment_currency = cashCurrency.value
@@ -403,7 +496,15 @@ async function paySingle() {
     emit('paid', data)
   } catch (error: any) {
     resetIdempotencyForFinalRejection(error)
-    paymentError.value = paymentErrorMessage(error)
+    const code = error?.response?.data?.detail?.error_code
+    if (code === 'CREDIT_LIMIT_EXCEEDED' && !approval) {
+      showCreditPinGuard.value = true
+      creditApprovalError.value = ''
+    } else if (approval) {
+      creditApprovalError.value = paymentErrorMessage(error)
+    } else {
+      paymentError.value = paymentErrorMessage(error)
+    }
   } finally {
     busy.value = false
   }
@@ -416,7 +517,22 @@ function buildSplitPayments() {
     charge_to_room_id?: number
     currency?: string
     fx_rate?: number
+    credit_account_id?: number
   }> = []
+  if (splitRows.value.some(row => row.paymentMethod === 'credit_account')) {
+    if (creditHolderType.value === 'customer' && !props.order?.customer_id) {
+      paymentError.value = t('backoffice.pos.payment.errors.creditNeedsCustomer')
+      return null
+    }
+    if (creditHolderType.value === 'employee' && Number(employeeCreditHolderId.value) <= 0) {
+      paymentError.value = t('backoffice.pos.payment.errors.creditNeedsEmployee')
+      return null
+    }
+    if (!creditAccount.value || creditAccount.value.status !== 'active') {
+      paymentError.value = t('backoffice.pos.payment.errors.creditNotFound')
+      return null
+    }
+  }
   for (const row of splitRows.value) {
     const amountMinor = moneyToMinor(row.amount)
     if (amountMinor === null || amountMinor <= 0) {
@@ -444,6 +560,9 @@ function buildSplitPayments() {
       payment_method: row.paymentMethod,
       ...(chargeToRoomId ? { charge_to_room_id: chargeToRoomId } : {}),
       ...(row.paymentMethod === 'cash' && rowCur !== 'EGP' ? { currency: rowCur, fx_rate: rowFx } : {}),
+      ...(row.paymentMethod === 'credit_account' && creditAccount.value
+        ? { credit_account_id: creditAccount.value.id }
+        : {}),
     })
   }
   if (splitRemainingMinor.value !== 0) {
@@ -453,7 +572,7 @@ function buildSplitPayments() {
   return payments
 }
 
-async function paySplit() {
+async function paySplit(approval: Approval | null = null) {
   if (!props.order) return
   paymentError.value = ''
   const payments = buildSplitPayments()
@@ -464,7 +583,13 @@ async function paySplit() {
   try {
     const { data } = await api.post(
       ENDPOINTS.dining.orderSplitBill(props.order.id),
-      { payments },
+      {
+        payments,
+        ...(approval?.approverUserId ? {
+          approver_user_id: approval.approverUserId,
+          approver_pin: approval.approverPin,
+        } : {}),
+      },
       { headers: { 'Idempotency-Key': key } },
     )
     pendingKey.value = ''
@@ -472,7 +597,15 @@ async function paySplit() {
     emit('paid', data)
   } catch (error: any) {
     resetIdempotencyForFinalRejection(error)
-    paymentError.value = paymentErrorMessage(error)
+    const code = error?.response?.data?.detail?.error_code
+    if (code === 'CREDIT_LIMIT_EXCEEDED' && !approval) {
+      showCreditPinGuard.value = true
+      creditApprovalError.value = ''
+    } else if (approval) {
+      creditApprovalError.value = paymentErrorMessage(error)
+    } else {
+      paymentError.value = paymentErrorMessage(error)
+    }
   } finally {
     busy.value = false
   }
@@ -481,6 +614,13 @@ async function paySplit() {
 function submitPayment() {
   if (mode.value === 'single') paySingle()
   else paySplit()
+}
+
+async function onCreditApproval(approval: Approval) {
+  creditApprovalError.value = ''
+  if (mode.value === 'single') await paySingle(approval)
+  else await paySplit(approval)
+  if (!creditApprovalError.value) showCreditPinGuard.value = false
 }
 </script>
 
@@ -531,7 +671,7 @@ function submitPayment() {
       </div>
 
       <template v-if="mode === 'single'">
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
           <button
             v-for="method in methodOptions"
             :key="method.value"
@@ -795,6 +935,47 @@ function submitPayment() {
         </div>
       </template>
 
+      <div v-if="usesCredit" class="rounded-2xl border border-amber-200 bg-amber-50/70 p-4 dark:border-amber-800 dark:bg-amber-950/20 space-y-3">
+        <div class="flex gap-2">
+          <button
+            v-for="holder in creditHolderOptions"
+            :key="holder"
+            type="button"
+            :class="[
+              'min-h-[42px] flex-1 rounded-xl border-2 px-3 font-bold',
+              creditHolderType === holder ? 'border-amber-600 bg-white text-amber-900' : 'border-amber-200 text-gray-600',
+            ]"
+            @click="selectCreditHolderType(holder)"
+          >
+            {{ t(`backoffice.pos.payment.creditHolder.${holder}`) }}
+          </button>
+        </div>
+        <div v-if="creditHolderType === 'employee'" class="flex gap-2">
+          <input
+            v-model="employeeCreditHolderId"
+            type="number"
+            min="1"
+            class="min-h-[44px] flex-1 rounded-xl border border-amber-300 bg-white px-3 dark:bg-surface"
+            :placeholder="t('backoffice.pos.payment.creditEmployeeId')"
+            @keyup.enter="loadCreditAccount"
+          >
+          <AppButton variant="outline" @click="loadCreditAccount">
+            {{ t('backoffice.pos.payment.creditLookup') }}
+          </AppButton>
+        </div>
+        <div v-if="creditLoading" class="text-sm text-gray-500">{{ t('backoffice.pos.payment.errors.creditLoading') }}</div>
+        <div v-else-if="creditHolderType === 'customer' && !order.customer_id" class="text-sm font-semibold text-danger">{{ t('backoffice.pos.payment.errors.creditNeedsCustomer') }}</div>
+        <div v-else-if="creditHolderType === 'employee' && !Number(employeeCreditHolderId)" class="text-sm font-semibold text-danger">{{ t('backoffice.pos.payment.errors.creditNeedsEmployee') }}</div>
+        <div v-else-if="!creditAccount" class="text-sm font-semibold text-danger">{{ t('backoffice.pos.payment.errors.creditNotFound') }}</div>
+        <div v-else class="space-y-2 text-sm">
+          <div class="font-black text-amber-950 dark:text-amber-100">{{ creditAccount.holder_name }}</div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><div class="text-gray-500">{{ t('backoffice.pos.payment.creditBalance') }}</div><div class="font-black">{{ formatMoney(creditAccount.current_balance, 'EGP') }}</div></div>
+            <div><div class="text-gray-500">{{ t('backoffice.pos.payment.creditAvailable') }}</div><div class="font-black">{{ creditAccount.available_credit === null ? t('backoffice.credit.unlimited') : formatMoney(creditAccount.available_credit, 'EGP') }}</div></div>
+          </div>
+        </div>
+      </div>
+
       <p v-if="paymentError" role="alert" class="rounded-xl bg-danger/10 text-danger px-4 py-3 text-sm font-semibold">
         {{ paymentError }}
       </p>
@@ -818,4 +999,14 @@ function submitPayment() {
       </div>
     </template>
   </AppModal>
+  <PinGuardModal
+    v-if="showCreditPinGuard"
+    :min-level="60"
+    :title="t('backoffice.pos.payment.creditApprovalTitle')"
+    :message="t('backoffice.pos.payment.creditApprovalMessage')"
+    :loading="busy"
+    :error-message="creditApprovalError"
+    @approved="onCreditApproval"
+    @cancel="showCreditPinGuard = false; creditApprovalError = ''"
+  />
 </template>

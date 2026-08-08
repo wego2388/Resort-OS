@@ -1,6 +1,12 @@
 /// <reference types="../../node_modules/.vue-global-types/vue_3.5_0_0_0.d.ts" />
+/**
+ * PeriodComparisonCard — بطاقة مقارنة فترتين.
+ * Phase 7e: collapsible outlet breakdown تحت الأرقام الرئيسية.
+ */
+import { ref } from 'vue';
 import { formatMoney, formatPct, deltaClass, deltaArrow } from '../composables/useFormat';
 const __VLS_props = defineProps();
+const showBreakdown = ref(false);
 debugger; /* PartiallyEnd: #3632/scriptSetup.vue */
 const __VLS_ctx = {};
 let __VLS_components;
@@ -96,9 +102,9 @@ else {
     __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
         ...{ class: "text-base font-bold" },
         ...{ class: ({
-                'text-owner-green': parseFloat(__VLS_ctx.comparison.current.net_income) > 0,
-                'text-owner-red': parseFloat(__VLS_ctx.comparison.current.net_income) < 0,
-                'text-owner-muted': parseFloat(__VLS_ctx.comparison.current.net_income) === 0,
+                'text-owner-green': parseFloat(String(__VLS_ctx.comparison.current.net_income)) > 0,
+                'text-owner-red': parseFloat(String(__VLS_ctx.comparison.current.net_income)) < 0,
+                'text-owner-muted': parseFloat(String(__VLS_ctx.comparison.current.net_income)) === 0,
             }) },
     });
     (__VLS_ctx.formatMoney(__VLS_ctx.comparison.current.net_income));
@@ -110,6 +116,85 @@ else {
     (__VLS_ctx.deltaArrow(__VLS_ctx.comparison.net_income_delta));
     __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
     (__VLS_ctx.formatPct(__VLS_ctx.comparison.net_income_pct));
+    if (__VLS_ctx.comparison.breakdown) {
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+            ...{ class: "mt-3 pt-3 border-t border-owner-border" },
+        });
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.button, __VLS_intrinsicElements.button)({
+            ...{ onClick: (...[$event]) => {
+                    if (!!(__VLS_ctx.loading))
+                        return;
+                    if (!(__VLS_ctx.comparison.breakdown))
+                        return;
+                    __VLS_ctx.showBreakdown = !__VLS_ctx.showBreakdown;
+                } },
+            ...{ class: "w-full flex items-center justify-between text-xs text-owner-muted" },
+        });
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
+        __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({});
+        (__VLS_ctx.showBreakdown ? '▲' : '▼');
+        if (__VLS_ctx.showBreakdown) {
+            __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                ...{ class: "mt-2 space-y-1.5" },
+            });
+            if (__VLS_ctx.comparison.breakdown.dining_revenue != null) {
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                    ...{ class: "flex items-center justify-between text-xs" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "text-owner-muted" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "font-mono text-owner-text" },
+                });
+                (__VLS_ctx.formatMoney(__VLS_ctx.comparison.breakdown.dining_revenue));
+            }
+            if (__VLS_ctx.comparison.breakdown.beach_revenue != null) {
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                    ...{ class: "flex items-center justify-between text-xs" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "text-owner-muted" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "font-mono text-owner-text" },
+                });
+                (__VLS_ctx.formatMoney(__VLS_ctx.comparison.breakdown.beach_revenue));
+            }
+            if (__VLS_ctx.comparison.breakdown.rooms_revenue != null) {
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                    ...{ class: "flex items-center justify-between text-xs" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "text-owner-muted" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "font-mono text-owner-text" },
+                });
+                (__VLS_ctx.formatMoney(__VLS_ctx.comparison.breakdown.rooms_revenue));
+            }
+            if (__VLS_ctx.comparison.breakdown.other_revenue != null) {
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                    ...{ class: "flex items-center justify-between text-xs" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "text-owner-muted" },
+                });
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.span, __VLS_intrinsicElements.span)({
+                    ...{ class: "font-mono text-owner-text" },
+                });
+                (__VLS_ctx.formatMoney(__VLS_ctx.comparison.breakdown.other_revenue));
+            }
+            if (!__VLS_ctx.comparison.breakdown.dining_revenue &&
+                !__VLS_ctx.comparison.breakdown.beach_revenue &&
+                !__VLS_ctx.comparison.breakdown.rooms_revenue &&
+                !__VLS_ctx.comparison.breakdown.other_revenue) {
+                __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
+                    ...{ class: "text-xs text-owner-muted text-center py-2" },
+                });
+            }
+        }
+    }
     if (__VLS_ctx.comparison.current.is_provisional) {
         __VLS_asFunctionalElement(__VLS_intrinsicElements.div, __VLS_intrinsicElements.div)({
             ...{ class: "mt-3 flex items-center gap-1 text-xs text-owner-amber" },
@@ -189,6 +274,50 @@ else {
 /** @type {__VLS_StyleScopedClasses['gap-1']} */ ;
 /** @type {__VLS_StyleScopedClasses['justify-end']} */ ;
 /** @type {__VLS_StyleScopedClasses['mt-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['pt-3']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-t']} */ ;
+/** @type {__VLS_StyleScopedClasses['border-owner-border']} */ ;
+/** @type {__VLS_StyleScopedClasses['w-full']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['space-y-1.5']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['flex']} */ ;
+/** @type {__VLS_StyleScopedClasses['items-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['justify-between']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['font-mono']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-text']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-xs']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-owner-muted']} */ ;
+/** @type {__VLS_StyleScopedClasses['text-center']} */ ;
+/** @type {__VLS_StyleScopedClasses['py-2']} */ ;
+/** @type {__VLS_StyleScopedClasses['mt-3']} */ ;
 /** @type {__VLS_StyleScopedClasses['flex']} */ ;
 /** @type {__VLS_StyleScopedClasses['items-center']} */ ;
 /** @type {__VLS_StyleScopedClasses['gap-1']} */ ;
@@ -202,6 +331,7 @@ const __VLS_self = (await import('vue')).defineComponent({
             formatPct: formatPct,
             deltaClass: deltaClass,
             deltaArrow: deltaArrow,
+            showBreakdown: showBreakdown,
         };
     },
     __typeProps: {},

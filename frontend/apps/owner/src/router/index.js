@@ -42,6 +42,30 @@ const router = createRouter({
                     component: () => import('../views/PerformanceScreen.vue'),
                     meta: { requiresAuth: true, title: 'الأداء' },
                 },
+                {
+                    path: 'sales',
+                    name: 'sales',
+                    component: () => import('../views/SalesScreen.vue'),
+                    meta: { requiresAuth: true, title: 'المبيعات' },
+                },
+                {
+                    path: 'expenses',
+                    name: 'expenses',
+                    component: () => import('../views/ExpensesScreen.vue'),
+                    meta: { requiresAuth: true, title: 'المصروفات' },
+                },
+                {
+                    path: 'shifts',
+                    name: 'shifts',
+                    component: () => import('../views/ShiftsScreen.vue'),
+                    meta: { requiresAuth: true, title: 'الورديات' },
+                },
+                {
+                    path: 'hr',
+                    name: 'hr',
+                    component: () => import('../views/HRScreen.vue'),
+                    meta: { requiresAuth: true, title: 'الموظفين' },
+                },
             ],
         },
         // fallback

@@ -14,8 +14,12 @@ from app.core.config import settings
 from app.core.deps import (
     DbDep, get_admin_user, get_cashier_user,
     get_current_active_user, get_manager_user, get_websocket_user, require_permission,
+    user_level,
 )
 from app.modules.beach import crud, services
+from app.modules.credit import services as credit_services
+from app.modules.dining import payment_policy
+from app.modules.finance import services as finance_services
 from app.modules.beach.schemas import (
     B2BCheckinRequest, B2BContractCreate, B2BContractRead, B2BContractUpdate,
     B2BSettleRequest, BeachDailySummary, BeachInventoryRead,
@@ -155,12 +159,36 @@ async def sell_ticket(
     branch_id: int = Query(...),
 ):
     _assert_beach_branch(db, user, branch_id, "بيع تذكرة شاطئ")
-    if not data.cashier_id:
-        data = data.model_copy(update={"cashier_id": user.id})
+    # Never trust a client-supplied actor id for a financial movement.
+    data = data.model_copy(update={"cashier_id": user.id})
     try:
-        tx = services.sell_ticket(db, branch_id, data)
+        tx = services.sell_ticket(
+            db, branch_id, data, acting_user_level=user_level(user),
+        )
     except services.BeachConcurrencyError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except credit_services.CreditConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {
+            "code": "CREDIT_ACCOUNT_BUSY", "message": str(exc),
+        })
+    except credit_services.CreditLimitExceededError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {
+            "code": "CREDIT_LIMIT_EXCEEDED", "message": str(exc),
+            "current_balance": str(exc.current), "credit_limit": str(exc.limit),
+            "requested": str(exc.requested),
+        })
+    except credit_services.CreditAccountInactiveError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {
+            "code": "CREDIT_ACCOUNT_INACTIVE", "message": str(exc),
+        })
+    except finance_services.FinancialConfigurationError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "FINANCIAL_CONFIGURATION_ERROR", "message": str(exc),
+        })
+    except payment_policy.PaymentMethodNotConfiguredError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {
+            "code": "METHOD_NOT_CONFIGURED", "message": str(exc),
+        })
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
     if tx.shift_id:

@@ -180,6 +180,9 @@ class OwnerNowResponse(BaseModel):
     period:                 PeriodMeta
     # عدد الورديات المفتوحة الآن (مرتبط بـ A-2)
     open_shift_count:       int
+    # A-8: ذمم شخصية آجلة (Decision 0005) — إجمالي الرصيد المستحق
+    credit_account_outstanding: Decimal = Decimal("0")
+    credit_account_count:       int     = 0
 
 
 # ── B: شاشة «الأداء» — مقارنة فترات ─────────────────────────────────
@@ -209,6 +212,8 @@ class PeriodComparison(BaseModel):
     expense_pct:     Optional[Decimal]
     net_income_delta: Decimal
     net_income_pct:  Optional[Decimal]
+    # Phase 7e: breakdown اختياري per outlet — None لو البيانات مش متاحة
+    breakdown: Optional["PerformanceBreakdown"] = None
 
 
 class OwnerPerformanceResponse(BaseModel):
@@ -461,3 +466,189 @@ class ExceptionsResponse(BaseModel):
     watch_count:      int
     exceptions:       list[OwnerExceptionItem]
     computed_at:      datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 7a — Now History (Sparklines)
+# ═══════════════════════════════════════════════════════════════════════
+
+class DaySnapshot(BaseModel):
+    """لقطة يوم واحد للـ sparklines — 5 متغيّرات فقط."""
+    day:                 date
+    revenue:             Decimal
+    expense:             Decimal
+    cash_in_drawers:     Decimal
+    occupancy_pct:       Decimal   = Field(description="0-100")
+    beach_utilisation_pct: Decimal = Field(description="0-100")
+    is_provisional:      bool
+
+
+class NowHistoryResponse(BaseModel):
+    """
+    GET /api/v1/owner/now/history?days=N
+    آخر N أيام من مقاييس الشاشة الرئيسية — للـ sparklines.
+    الأيام مرتّبة تصاعدياً (الأقدم أولاً).
+    """
+    days:        list[DaySnapshot]
+    computed_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 7b — Shift History
+# ═══════════════════════════════════════════════════════════════════════
+
+class ShiftHistoryItem(BaseModel):
+    """وردية مغلقة — تاريخية للمالك. قراءة فقط."""
+    shift_id:       int
+    cashier_id:     int
+    cashier_name:   str
+    opened_at:      datetime
+    closed_at:      datetime
+    opening_float:  Decimal
+    total_sales:    Decimal
+    total_cash:     Decimal
+    expected_cash:  Decimal
+    invoice_count:  int
+    variance:       Optional[Decimal] = None
+    cash_movements: list[CashMovementItem]
+    variance_tier:  str = "normal"
+
+
+class ShiftHistoryResponse(BaseModel):
+    """
+    GET /api/v1/owner/shifts/history?days=N
+    الورديات المغلقة خلال آخر N أيام — للمراجعة التاريخية.
+    """
+    branch_id:   int
+    days:        int
+    shifts:      list[ShiftHistoryItem]
+    computed_at: datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 7c — HR Summary
+# Decision 0004 §7c: الاسم + وظيفة + راتب صافي/إجمالي + جزاءات + سلف + حضور aggregate
+# لا national_id، لا employee_si، لا monthly_tax، لا phone، لا email
+# ═══════════════════════════════════════════════════════════════════════
+
+class EmployeePayrollSummary(BaseModel):
+    """آخر كشف رواتب للموظف — حقول المالك فقط."""
+    payroll_run_id:    int
+    period_year:       int
+    period_month:      int
+    gross_salary:      Decimal
+    net_salary:        Decimal
+    penalty_deduction: Decimal
+    advance_deduction: Decimal
+    # لا employee_si، لا monthly_tax — Decision 0004 §7c
+
+
+class EmployeeAttendanceSummary(BaseModel):
+    """aggregate حضور الشهر الحالي — لا raw timestamps."""
+    present_days:     int
+    absent_days:      int
+    late_days:        int
+    leave_days:       int
+    total_working_days: int
+
+
+class HREmployeeRow(BaseModel):
+    """موظف واحد للعرض على شاشة HR للمالك."""
+    employee_id:           int
+    full_name:             str
+    position:              str
+    department:            Optional[str] = None
+    hire_date:             date
+    status:                str
+    payroll:               Optional[EmployeePayrollSummary]      = None
+    attendance_this_month: Optional[EmployeeAttendanceSummary]   = None
+    # لا national_id، لا phone، لا email، لا basic_salary — Decision 0004 §7c
+
+
+class HRSummaryResponse(BaseModel):
+    """
+    GET /api/v1/owner/hr-summary
+    قائمة الموظفين + آخر payroll + حضور الشهر الحالي.
+    """
+    branch_id:       int
+    employees:       list[HREmployeeRow]
+    active_count:    int
+    on_leave_count:  int
+    total_net_payroll: Decimal
+    period_year:     int
+    period_month:    int
+    computed_at:     datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 7d — Discount Analytics
+# Decision 0004 §7d: خصومات + مجموعات بالاسم. لا هاتف/email/national_id.
+# ═══════════════════════════════════════════════════════════════════════
+
+class DiscountTypeRow(BaseModel):
+    """نوع خصم واحد — aggregate."""
+    type:           str
+    type_label:     str
+    order_count:    int
+    total_amount:   Decimal
+    pct_of_revenue: Optional[Decimal] = None
+
+
+class ManualDiscountPerCashier(BaseModel):
+    """خصومات يدوية per cashier — aggregate للشهر."""
+    cashier_id:            int
+    cashier_name:          str
+    order_count:           int
+    total_manual_discount: Decimal
+
+
+class CustomerGroupMember(BaseModel):
+    """عميل في مجموعة — الاسم فقط. لا هاتف/email/national_id."""
+    customer_id:  int
+    full_name:    str
+    invoice_count: int
+    total_sales:  Decimal
+
+
+class CustomerGroupDiscountRow(BaseModel):
+    """مجموعة عملاء مع أعضائها بالاسم فقط."""
+    group_id:                   int
+    group_name:                 str
+    discount_pct:               Decimal
+    member_count:               int
+    total_invoices:             int
+    total_sales_after_discount: Decimal
+    members:                    list[CustomerGroupMember]
+
+
+class DiscountAnalyticsResponse(BaseModel):
+    """
+    GET /api/v1/owner/discount-analytics
+    تحليل الخصومات: أنواع + يدوي per cashier + مجموعات بالاسم.
+    لا بيانات عميل غير مجموعة (زوار عشوائيين).
+    """
+    period_from:             str
+    period_to:               str
+    total_revenue:           Decimal
+    total_discount:          Decimal
+    discount_pct_of_revenue: Optional[Decimal] = None
+    discount_types:          list[DiscountTypeRow]
+    manual_per_cashier:      list[ManualDiscountPerCashier]
+    customer_groups:         list[CustomerGroupDiscountRow]
+    computed_at:             datetime
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Phase 7e — Performance Breakdown
+# ═══════════════════════════════════════════════════════════════════════
+
+class PerformanceBreakdown(BaseModel):
+    """تفصيل الإيراد per outlet — None لو البيانات مش متاحة."""
+    dining_revenue: Optional[Decimal] = None
+    beach_revenue:  Optional[Decimal] = None
+    rooms_revenue:  Optional[Decimal] = None
+    other_revenue:  Optional[Decimal] = None
+
+
+# resolve forward reference
+PeriodComparison.model_rebuild()

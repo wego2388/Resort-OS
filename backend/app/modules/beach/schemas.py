@@ -58,6 +58,7 @@ class BeachSellRequest(BaseModel):
     # (Charge to Room) — راجع pms.services.find_active_folio_for_room
     b2b_contract_id: Optional[int] = None
     customer_id:     Optional[int] = None
+    credit_account_id: Optional[int] = Field(None, gt=0)
     notes:           Optional[str] = None
     # الموقع الفعلي (خريطة الشاطئ الحية) اللي العملية دي متسجّلة عشانه —
     # None لبيع تذاكر عادي من POS من غير خريطة. services.checkin_location
@@ -74,6 +75,15 @@ class BeachSellRequest(BaseModel):
     # ملحوظة: الفكة دايمًا بالجنيه (قرار Mohamed 2026-08-05).
     payment_currency: Optional[str]    = Field(None, pattern=r"^[A-Z]{3}$")
     payment_fx_rate:  Optional[Decimal] = Field(None, gt=0)
+    # Decision 0005: الدفع على حساب آجل شخصي — يتطلب customer_id
+    # لو مش None: يتجاهل folio_id/room_id ويرحّل على CreditAccount العميل
+    payment_method:   Optional[str]    = Field(
+        None,
+        pattern=r"^(cash|card|wallet|room|credit_account)$",
+        description="طريقة الدفع — افتراضي: cash أو room (لو folio_id/room_id موجود)",
+    )
+    approver_user_id: Optional[int] = Field(None, gt=0)
+    approver_pin: Optional[str] = Field(None, min_length=4, max_length=12)
 
     @model_validator(mode="after")
     def _validate_fx(self) -> "BeachSellRequest":
@@ -83,6 +93,21 @@ class BeachSellRequest(BaseModel):
                 "payment_fx_rate مطلوب لو payment_currency ≠ EGP — "
                 "مرّر سعر الصرف الحالي عبر GET /finance/exchange-rates"
             )
+        if self.payment_method == "credit_account" and not (
+            self.customer_id or self.credit_account_id
+        ):
+            raise ValueError(
+                "customer_id أو credit_account_id مطلوب للدفع على حساب آجل"
+            )
+        if self.credit_account_id and self.payment_method != "credit_account":
+            raise ValueError("credit_account_id يُستخدم فقط مع payment_method = credit_account")
+        has_room_target = self.folio_id is not None or self.room_id is not None
+        if self.payment_method == "room" and not has_room_target:
+            raise ValueError("payment_method = room يتطلب folio_id أو room_id")
+        if has_room_target and self.payment_method not in (None, "room", "credit_account"):
+            raise ValueError("طريقة الدفع لا تطابق تحميل البيع على الغرفة")
+        if (self.approver_user_id is None) != (self.approver_pin is None):
+            raise ValueError("بيانات موافقة المدير يجب أن تُرسل كاملة")
         return self
 
 
@@ -98,6 +123,7 @@ class BeachTransactionRead(BaseModel):
     surge_applied:   bool
     tx_date:         date
     cashier_id:      Optional[int]
+    payment_method:  Optional[str] = None
     folio_id:        Optional[int]
     b2b_contract_id: Optional[int]
     customer_id:     Optional[int] = None

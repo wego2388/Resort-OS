@@ -50,6 +50,7 @@ from app.modules.dining.schemas import (
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
+from app.modules.credit import services as credit_services
 from app.modules.finance import services as finance_services
 from app.modules.inventory import services as inventory_services
 from app.resort_os.food_cost_engine import DEFAULT_FOOD_COST_THRESHOLD_PCT
@@ -685,10 +686,13 @@ async def update_order_status(
             db, order_id, data.status,
             charge_to_room_id=data.charge_to_room_id,
             payment_method=data.payment_method,
+            credit_account_id=data.credit_account_id,
             payment_currency=data.payment_currency,
             payment_fx_rate=data.payment_fx_rate,
             settled_by=user.id,
             acting_user_level=user_level(user),
+            approver_user_id=data.approver_user_id,
+            approver_pin=data.approver_pin,
             idempotency_key=idempotency_key,
         )
     except services.OrderPaymentConcurrencyError as exc:
@@ -703,6 +707,16 @@ async def update_order_status(
         raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc)})
     except services.PaymentAllocationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "PAYMENT_ALLOCATION_MISMATCH", "message": str(exc)})
+    except credit_services.CreditConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "CREDIT_ACCOUNT_BUSY", "message": str(exc)})
+    except credit_services.CreditLimitExceededError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {
+            "error_code": "CREDIT_LIMIT_EXCEEDED", "message": str(exc),
+            "current_balance": str(exc.current), "credit_limit": str(exc.limit),
+            "requested": str(exc.requested),
+        })
+    except credit_services.CreditAccountInactiveError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "CREDIT_ACCOUNT_INACTIVE", "message": str(exc)})
     except payment_policy.PaymentMethodNotConfiguredError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {"error_code": "METHOD_NOT_CONFIGURED", "message": str(exc)})
     except services.InvalidOrderTotalError as exc:
@@ -917,6 +931,8 @@ def split_bill(
             [p.model_dump() for p in data.payments],
             settled_by=user.id,
             acting_user_level=user_level(user),
+            approver_user_id=data.approver_user_id,
+            approver_pin=data.approver_pin,
             idempotency_key=idempotency_key,
         )
     except services.OrderPaymentConcurrencyError as exc:
@@ -931,6 +947,16 @@ def split_bill(
         raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "SHIFT_CLOSE_IN_PROGRESS", "message": str(exc)})
     except services.PaymentAllocationError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "PAYMENT_ALLOCATION_MISMATCH", "message": str(exc)})
+    except credit_services.CreditConcurrencyError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, {"error_code": "CREDIT_ACCOUNT_BUSY", "message": str(exc)})
+    except credit_services.CreditLimitExceededError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {
+            "error_code": "CREDIT_LIMIT_EXCEEDED", "message": str(exc),
+            "current_balance": str(exc.current), "credit_limit": str(exc.limit),
+            "requested": str(exc.requested),
+        })
+    except credit_services.CreditAccountInactiveError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, {"error_code": "CREDIT_ACCOUNT_INACTIVE", "message": str(exc)})
     except payment_policy.PaymentMethodNotConfiguredError as exc:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, {"error_code": "METHOD_NOT_CONFIGURED", "message": str(exc)})
     except services.InvalidPaymentMethodError as exc:
