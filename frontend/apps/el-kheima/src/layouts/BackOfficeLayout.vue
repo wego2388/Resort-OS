@@ -83,18 +83,18 @@ const allSections = computed<NavSection[]>(() => [
   {
     label: t('backoffice.nav.main'),
     items: [
-      { path: '/admin/dashboard', label: t('backoffice.nav.dashboard'), icon: '📊', requiredRole: 'manager' },
-      { path: '/admin/analytics', label: t('backoffice.nav.analytics'), icon: '📈', requiredRole: 'manager' },
+      { path: '/admin/dashboard', label: t('backoffice.nav.dashboard'), icon: '📊', requiredRoles: ['manager', 'admin', 'super_admin'] },
+      { path: '/admin/analytics', label: t('backoffice.nav.analytics'), icon: '📈', requiredRoles: ['manager', 'admin', 'super_admin'] },
     ],
   },
   {
     label: t('backoffice.nav.peopleAndFinance'),
     items: [
-      { path: '/admin/hr',           label: t('backoffice.nav.hr'),             icon: '👥',  requiredRole: 'manager' },
-      { path: '/admin/finance',      label: t('backoffice.nav.finance'),        icon: '💰',  requiredRole: 'manager' },
+      { path: '/admin/hr',           label: t('backoffice.nav.hr'),             icon: '👥',  requiredRoles: ['manager', 'hr_manager', 'admin', 'super_admin'] },
+      { path: '/admin/finance',      label: t('backoffice.nav.finance'),        icon: '💰',  requiredRoles: ['manager', 'accountant', 'admin', 'super_admin'] },
       { path: '/admin/credit-accounts', label: t('backoffice.nav.creditAccounts'), icon: '📒', requiredRoles: ['manager', 'accountant', 'admin', 'super_admin'], requiredPermission: 'credit.accounts:view' },
-      { path: '/pos/shift-monitor',  label: t('backoffice.nav.shiftMonitor'),   icon: '🖥️',  requiredRole: 'manager' },
-      { path: '/admin/e-invoice',    label: t('backoffice.nav.eInvoice'),       icon: '🧾',  requiredRole: 'manager' },
+      { path: '/pos/shift-monitor',  label: t('backoffice.nav.shiftMonitor'),   icon: '🖥️',  requiredRoles: ['manager', 'accountant', 'admin', 'super_admin'] },
+      { path: '/admin/e-invoice',    label: t('backoffice.nav.eInvoice'),       icon: '🧾',  requiredRoles: ['manager', 'accountant', 'admin', 'super_admin'] },
     ],
   },
   {
@@ -102,19 +102,19 @@ const allSections = computed<NavSection[]>(() => [
     items: [
       { path: '/admin/timeshare',    label: t('backoffice.nav.timeshare'),      icon: '🏨',  requiredRoles: ['timeshare_admin', 'timeshare_agent', 'super_admin', 'admin'] },
       { path: '/admin/sales',        label: t('backoffice.nav.sales'),          icon: '📞',  requiredRoles: ['timeshare_admin', 'timeshare_agent', 'super_admin', 'admin'] },
-      { path: '/admin/crm',          label: t('backoffice.nav.crm'),            icon: '🤝',  requiredRole: 'manager' },
-      { path: '/admin/beach-live',   label: t('backoffice.nav.beachLive'),      icon: '🏖️',  requiredRole: 'manager' },
-      { path: '/admin/beach-admin',  label: t('backoffice.nav.beachAdmin'),     icon: '🏄',  requiredRole: 'manager' },
-      { path: '/admin/maintenance',  label: t('backoffice.nav.maintenance'),    icon: '🔧',  requiredRole: 'supervisor' },
-      { path: '/admin/leasing',      label: t('backoffice.nav.leasing'),        icon: '🏢',  requiredRole: 'supervisor' },
+      { path: '/admin/crm',          label: t('backoffice.nav.crm'),            icon: '🤝',  requiredRoles: ['manager', 'admin', 'super_admin'] },
+      { path: '/admin/beach-live',   label: t('backoffice.nav.beachLive'),      icon: '🏖️',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/admin/beach-admin',  label: t('backoffice.nav.beachAdmin'),     icon: '🏄',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/admin/maintenance',  label: t('backoffice.nav.maintenance'),    icon: '🔧',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/admin/leasing',      label: t('backoffice.nav.leasing'),        icon: '🏢',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
     ],
   },
   {
     label: t('backoffice.nav.inventoryAndCost'),
     items: [
-      { path: '/admin/inventory',    label: t('backoffice.nav.inventory'),      icon: '📦',  requiredRole: 'manager' },
-      { path: '/admin/recipes',      label: t('backoffice.nav.recipes'),        icon: '🧾',  requiredRole: 'manager' },
-      { path: '/admin/food-cost',    label: t('backoffice.nav.foodCost'),       icon: '📉',  requiredRole: 'manager' },
+      { path: '/admin/inventory',    label: t('backoffice.nav.inventory'),      icon: '📦',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/admin/recipes',      label: t('backoffice.nav.recipes'),        icon: '🧾',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/admin/food-cost',    label: t('backoffice.nav.foodCost'),       icon: '📉',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
     ],
   },
   {
@@ -124,16 +124,16 @@ const allSections = computed<NavSection[]>(() => [
     // /pos/dining و/kds/dining من FieldLayout/KioskLayout مباشرة، مش من هنا.
     label: t('backoffice.nav.dining'),
     items: [
-      { path: '/admin/dining-menu', label: t('backoffice.nav.diningMenu'), icon: '🍽️', requiredRole: 'manager' },
-      { path: '/pos/dining',        label: t('backoffice.nav.diningPos'),  icon: '🧾', requiredRole: 'manager' },
-      { path: '/kds/dining',        label: t('backoffice.nav.diningKds'), icon: '👨‍🍳', requiredRole: 'manager' },
-      { path: '/admin/qr',          label: t('backoffice.nav.qrCodes'),   icon: '📱', requiredRole: 'manager' },
+      { path: '/admin/dining-menu', label: t('backoffice.nav.diningMenu'), icon: '🍽️', requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/pos/dining',        label: t('backoffice.nav.diningPos'),  icon: '🧾', requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/kds/dining',        label: t('backoffice.nav.diningKds'), icon: '👨‍🍳', requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
+      { path: '/admin/qr',          label: t('backoffice.nav.qrCodes'),   icon: '📱', requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
     ],
   },
   {
     label: t('backoffice.nav.hubSection'),
     items: [
-      { path: '/admin/hub', label: t('backoffice.nav.hubManagement'), icon: '🌐', requiredRole: 'manager' },
+      { path: '/admin/hub', label: t('backoffice.nav.hubManagement'), icon: '🌐', requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
     ],
   },
   {
@@ -162,11 +162,11 @@ const navSections = computed(() =>
       ...section,
       items: section.items.filter(
         (item) => {
-          // exact allow-list (نفس منطق router guard لوحدات زي timeshare)
-          if (item.requiredRoles) {
-            return item.requiredRoles.includes(auth.role)
-          }
-          if (item.requiredRole && !auth.hasRole(item.requiredRole)) return false
+          // 1. exact allow-list — نفس منطق router guard
+          if (item.requiredRoles && !item.requiredRoles.includes(auth.role)) return false
+          // 2. level-based role (يُستخدم بس لو requiredRoles مش موجود)
+          if (!item.requiredRoles && item.requiredRole && !auth.hasRole(item.requiredRole)) return false
+          // 3. fine-grained permission (يُفحص دايمًا بعد اجتياز role check)
           if (!item.requiredPermission) return true
           const permissions = Array.isArray(item.requiredPermission)
             ? item.requiredPermission

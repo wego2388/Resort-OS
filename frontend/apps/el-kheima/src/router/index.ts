@@ -190,13 +190,21 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin',
     component: () => import('../layouts/BackOfficeLayout.vue'),
-    meta: { requiresAuth: true, requiresBranch: true, requiredRole: 'manager' },
+    // requiredRole: 'manager' كان level-based (≥60) — كان يسمح لـ hr_manager
+    // (level 70) و accountant (level 70) بالدخول على /admin بدون قيد، ثم
+    // الـ child guard يمنعهم من الصفحات الفردية. لكن لو child ما عنده
+    // requiredRoles (مثل /admin/dining-menu أو /admin/hub) كانوا يشوفوها.
+    // requiredRoles allow-list صريح يضمن إن بس الأدوار المصرح بها تدخل
+    // /admin أصلاً، بغض النظر عن level.
+    meta: { requiresAuth: true, requiresBranch: true, requiredRoles: ['manager', 'accountant', 'hr_manager', 'supervisor', 'timeshare_admin', 'timeshare_agent', 'admin', 'super_admin'] },
     children: [
-      { path: '', redirect: '/admin/dashboard' },
-      { path: 'dashboard', name: 'admin-dashboard', component: () => import('../views/admin/DashboardView.vue'), meta: { titleKey: 'backoffice.nav.dashboard' } },
-      { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { titleKey: 'backoffice.nav.analytics' } },
-      { path: 'hr', name: 'admin-hr', component: () => import('../views/admin/HRView.vue'), meta: { titleKey: 'backoffice.nav.hr' } },
-      { path: 'finance', name: 'admin-finance', component: () => import('../views/admin/FinanceView.vue'), meta: { titleKey: 'backoffice.nav.finance' } },
+      // كل دور بيكون له landing page مختلفة — homeRouteFor بيحدد الصحيحة
+      // بدل redirect ثابت لـ /admin/dashboard اللي بعدين guard يرده.
+      { path: '', redirect: () => homeRouteFor(useAuthStore().role) },
+      { path: 'dashboard', name: 'admin-dashboard', component: () => import('../views/admin/DashboardView.vue'), meta: { requiredRoles: ['manager', 'admin', 'super_admin'], titleKey: 'backoffice.nav.dashboard' } },
+      { path: 'analytics', name: 'admin-analytics', component: () => import('../views/admin/AnalyticsView.vue'), meta: { requiredRoles: ['manager', 'admin', 'super_admin'], titleKey: 'backoffice.nav.analytics' } },
+      { path: 'hr', name: 'admin-hr', component: () => import('../views/admin/HRView.vue'), meta: { requiredRoles: ['manager', 'hr_manager', 'admin', 'super_admin'], titleKey: 'backoffice.nav.hr' } },
+      { path: 'finance', name: 'admin-finance', component: () => import('../views/admin/FinanceView.vue'), meta: { requiredRoles: ['manager', 'accountant', 'admin', 'super_admin'], titleKey: 'backoffice.nav.finance' } },
       { path: 'credit-accounts', name: 'admin-credit-accounts', component: () => import('../views/admin/CreditAccountsView.vue'), meta: {
         requiredRoles: ['manager', 'accountant', 'admin'],
         requiredPermission: 'credit.accounts:view',
@@ -216,15 +224,15 @@ const routes: RouteRecordRaw[] = [
       // نداء API — requiredRoles allow-list صريح بديل بدل ما يعتمد على مستوى.
       { path: 'timeshare', name: 'admin-timeshare', component: () => import('../views/admin/TimeshareView.vue'), meta: { requiredRoles: ['timeshare_admin', 'timeshare_agent'], titleKey: 'backoffice.nav.timeshare' } },
       { path: 'sales', name: 'admin-sales', component: () => import('../views/admin/SalesDashboardView.vue'), meta: { requiredRoles: ['timeshare_admin', 'timeshare_agent'], titleKey: 'backoffice.nav.sales' } },
-      { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { titleKey: 'backoffice.nav.beachLive' } },
-      { path: 'beach-admin', name: 'admin-beach-admin', component: () => import('../views/admin/BeachAdminView.vue'), meta: { titleKey: 'backoffice.nav.beachAdmin' } },
-      { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { titleKey: 'backoffice.nav.eInvoice' } },
-      { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { titleKey: 'backoffice.nav.inventory' } },
-      { path: 'recipes', name: 'admin-recipes', component: () => import('../views/admin/RecipesView.vue'), meta: { titleKey: 'backoffice.nav.recipes' } },
-      { path: 'food-cost', name: 'admin-food-cost', component: () => import('../views/admin/FoodCostReportView.vue'), meta: { titleKey: 'backoffice.nav.foodCost' } },
-      { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { titleKey: 'backoffice.nav.crm' } },
-      { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRole: 'supervisor', titleKey: 'backoffice.nav.maintenance' } },
-      { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRole: 'supervisor', titleKey: 'backoffice.nav.leasing' } },
+      { path: 'beach-live', name: 'admin-beach-live', component: () => import('../views/admin/BeachLiveDashboardView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.beachLive' } },
+      { path: 'beach-admin', name: 'admin-beach-admin', component: () => import('../views/admin/BeachAdminView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.beachAdmin' } },
+      { path: 'e-invoice', name: 'admin-e-invoice', component: () => import('../views/admin/EInvoiceView.vue'), meta: { requiredRoles: ['manager', 'accountant', 'admin', 'super_admin'], titleKey: 'backoffice.nav.eInvoice' } },
+      { path: 'inventory', name: 'admin-inventory', component: () => import('../views/admin/InventoryView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.inventory' } },
+      { path: 'recipes', name: 'admin-recipes', component: () => import('../views/admin/RecipesView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.recipes' } },
+      { path: 'food-cost', name: 'admin-food-cost', component: () => import('../views/admin/FoodCostReportView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.foodCost' } },
+      { path: 'crm', name: 'admin-crm', component: () => import('../views/admin/CRMView.vue'), meta: { requiredRoles: ['manager', 'admin', 'super_admin'], titleKey: 'backoffice.nav.crm' } },
+      { path: 'maintenance', name: 'admin-maintenance', component: () => import('../views/admin/MaintenanceView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.maintenance' } },
+      { path: 'leasing', name: 'admin-leasing', component: () => import('../views/admin/LeasingView.vue'), meta: { requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'], titleKey: 'backoffice.nav.leasing' } },
       { path: 'settings',    name: 'admin-settings',    component: () => import('../views/admin/SettingsView.vue'),    meta: { requiredRole: 'admin', titleKey: 'backoffice.nav.settings' } },
       { path: 'qr',          name: 'admin-qr',          component: () => import('../views/admin/QRGeneratorView.vue'),        meta: { titleKey: 'backoffice.nav.qrCodes' } },
       // DINING_CUTOVER_PLAN.md Batch 4 — dining-menu هو الافتراضي دلوقتي،
