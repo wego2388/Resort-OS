@@ -335,11 +335,52 @@ def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
 
     حساب الخصم يتحدد من booking.payment_method (كاش→1100، كارت→1110،
     حوالة→1120). لو مش محدد أو غير معروف: 1100 كافتراضي.
+
+    ⚠️ باج حقيقي اتصلح (2026-08-09، تأكيد صريح من محمد: "الاستقبال بيحصّل
+    كل حاجة مرة واحدة وقت الخروج"): كانت التسوية بتقفل بس `booking.
+    total_rate` (سعر الغرفة + أي رسوم وصول مبكر/مغادرة متأخرة، اللي
+    request_early_late بتضيفها لنفس الحقل مباشرة) — أي "شحن على حساب
+    الغرفة" من الشاطئ/الدايننج (`FolioCharge.charge_type` = beach/dining،
+    كل واحد منها عنده قيد إيراد منفصل خاص بيه اتسجّل وقت الشحن نفسه) كان
+    بيفضل قايم في حساب 1150 للأبد بعد الـcheckout، بصمت. دلوقتي بنجمع أي
+    شحنة beach/dining لسه مش settled على فوليو الحجز ونضيفها لمبلغ
+    التسوية، ونقفل الفوليو (`is_settled`/`status=closed`) عشان يعكس إن كل
+    حاجة اتحصّلت فعليًا. **مفيش استدعاء لـ finance.services.settle_folio**
+    عمدًا — `can_checkout` فيها بترفض أي فوليو عليه شحنة أصلاً (unsettled_
+    amount>0 قبل ما أي حاجة تتسوّى)، يعني الدالة دي مش موصولة بأي مسار
+    حقيقي فعليًا (فجوة منفصلة تمامًا، برّه نطاق الإصلاح ده).
     """
     from decimal import Decimal as _D  # noqa: PLC0415
     from app.core.config import settings  # noqa: PLC0415
+    from app.modules.finance import crud as finance_crud  # noqa: PLC0415
+    from app.modules.finance.models import FolioCharge  # noqa: PLC0415
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
     from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+
+    extra_folio_charges_total = _D("0")
+    if booking.folio_id:
+        # lock_folio_for_update بلوكينج (مش NOWAIT) — نفس القفل اللي
+        # add_folio_charge بتاخده قبل أي شحنة جديدة (beach/dining "charge
+        # to room"). لو شحنة شغالة دلوقتي بالظبط، الـcheckout هنا بينتظرها
+        # تخلص الأول بدل ما ياخد صورة ناقصة للفوليو ويقفله فوقها.
+        folio = finance_crud.lock_folio_for_update(db, booking.folio_id)
+        if folio:
+            unsettled = (
+                db.query(FolioCharge)
+                .filter(FolioCharge.folio_id == folio.id, FolioCharge.is_settled.is_(False))
+                .all()
+            )
+            for charge in unsettled:
+                if charge.charge_type in ("beach", "dining"):
+                    extra_folio_charges_total += (
+                        charge.amount + (charge.vat_amount or _D("0")) + (charge.service_charge or _D("0"))
+                    )
+                # room_extra متضمّن بالفعل في booking.total_rate — مش بيتضاف
+                # تاني هنا، بس بيتعلّم settled زي باقي الشحنات.
+                charge.is_settled = True
+            finance_crud.close_folio(db, folio)
+
+    total_amount = (booking.total_rate or _D("0")) + extra_folio_charges_total
 
     # اختيار حساب القبض حسب طريقة دفع الضيف المسجّلة عند check-in
     _METHOD_TO_ACCOUNT = {
@@ -350,13 +391,17 @@ def _post_checkout_journal(db: "Session", booking: "Booking") -> None:
     }
     debit_code = _METHOD_TO_ACCOUNT.get(booking.payment_method or "cash", "1100")
 
+    description = f"تسوية فوليو — {booking.booking_number}"
+    if extra_folio_charges_total > 0:
+        description += f" (شامل {extra_folio_charges_total:.2f} ج شحن على الغرفة)"
+
     post_simple_revenue_journal(
         db, booking.branch_id, local_today(settings.TIMEZONE),
         debit_account_code=debit_code,
         credit_account_code="1150",   # Cr. ذمم الفوليو — تسوية ما سبق تسجيله
-        amount=booking.total_rate or _D("0"),
+        amount=total_amount,
         reference=f"CHK-{booking.booking_number}",
-        description=f"تسوية فوليو — {booking.booking_number}",
+        description=description,
         source="pms", source_id=booking.id,
         cost_center_code="ROOM",
     )

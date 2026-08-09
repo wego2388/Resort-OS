@@ -5,7 +5,7 @@ Integration tests for PMS (Property Management System) module.
 from __future__ import annotations
 
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -272,6 +272,54 @@ class TestCheckinCheckout:
         db.refresh(room)
         # room moves to checkout_pending, awaiting housekeeping
         assert room.status == "checkout_pending"
+
+    def test_checkout_settles_room_charged_beach_and_dining_extras(self, db):
+        """تأكيد صريح من محمد (2026-08-09): الاستقبال بيحصّل كل حاجة —
+        سعر الغرفة + أي شحن على حساب الغرفة من الشاطئ/الدايننج — مرة واحدة
+        وقت الخروج. قبل الإصلاح، تسوية الـcheckout كانت بتقفل بس
+        booking.total_rate وتسيب أي FolioCharge (beach/dining) قايمة على
+        1150 للأبد بصمت."""
+        from app.modules.finance import crud as finance_crud, services as finance_services
+        from app.modules.finance.schemas import FolioChargeCreate
+
+        branch = make_branch(db)
+        cash, revenue = make_finance_accounts(db, branch)
+        rt = make_room_type(db, branch)
+        room = make_room(db, branch, rt)
+        booking = make_booking(db, branch, room)
+        checked_in = services.checkin_booking(db, booking.id)
+        assert checked_in.folio_id is not None
+        room_total = checked_in.total_rate
+
+        beach_charge = finance_services.add_folio_charge(db, checked_in.folio_id, FolioChargeCreate(
+            charge_type="beach", description="شمسية + مظلة",
+            amount=Decimal("300.00"), vat_amount=Decimal("42.00"),
+            posted_at=datetime.utcnow(),
+        ))
+        dining_charge = finance_services.add_folio_charge(db, checked_in.folio_id, FolioChargeCreate(
+            charge_type="dining", description="طلب غداء",
+            amount=Decimal("150.00"),
+            posted_at=datetime.utcnow(),
+        ))
+        db.commit()
+
+        services.checkout_booking(db, booking.id)
+
+        entries, _ = finance_crud.list_journal_entries(db, branch.id, source="pms")
+        checkout_entries = [e for e in entries if e.reference == f"CHK-{checked_in.booking_number}"]
+        assert len(checkout_entries) == 1
+        lines = checkout_entries[0].lines
+        debit_line = next(l for l in lines if l.debit > 0)
+        expected_total = room_total + Decimal("300.00") + Decimal("42.00") + Decimal("150.00")
+        assert debit_line.debit == expected_total
+
+        db.refresh(beach_charge)
+        db.refresh(dining_charge)
+        assert beach_charge.is_settled is True
+        assert dining_charge.is_settled is True
+
+        folio = finance_crud.get_folio(db, checked_in.folio_id)
+        assert folio.status == "closed"
 
     def test_request_early_late_on_closed_folio_leaves_zero_trace(self, db):
         """مراجعة Codex الثانية (Gate 1B): كان فيه except Exception يبتلع
