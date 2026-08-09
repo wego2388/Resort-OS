@@ -14,7 +14,8 @@ from sqlalchemy.orm import Session
 from app.modules.finance.schemas import (
     AccountCreate, CashCountLine, CashierShiftClose, CashierShiftOpen, CashMovementCreate,
     ConditionalDiscountCreate,
-    FolioCreate, FolioChargeCreate, JournalEntryCreate, JournalLineCreate, PaymentCreate,
+    FolioCreate, FolioChargeCreate, JournalEntryCreate, JournalEntryRead, JournalLineCreate,
+    PaymentCreate,
 )
 from app.modules.finance import services, crud
 
@@ -662,6 +663,31 @@ class TestCrudFilters:
         )
         assert total == 1
         assert items[0].reference == "JE-IN-RANGE"
+
+    def test_list_journal_entries_lines_include_account_code_and_name(
+        self, db: Session, branch, account, account2,
+    ):
+        """JournalLineRead.account_code/account_name — الفرونت إند (شاشة
+        دفتر اليومية) بيعرضهم مباشرة من غير أي join تاني، فلازم يوصلوا
+        صح من الـ account relationship (مش account_id بس)."""
+        entry_data = JournalEntryCreate(
+            branch_id=branch.id, entry_date=date(2026, 6, 15),
+            reference="JE-ACC-DISPLAY", description="test",
+            lines=[
+                JournalLineCreate(account_id=account.id, debit=Decimal("10"), credit=Decimal("0")),
+                JournalLineCreate(account_id=account2.id, debit=Decimal("0"), credit=Decimal("10")),
+            ],
+        )
+        services.post_journal_entry(db, entry_data, user_id=1)
+
+        items, _ = crud.list_journal_entries(db, branch.id, source=None)
+        entry = next(e for e in items if e.reference == "JE-ACC-DISPLAY")
+        read = JournalEntryRead.model_validate(entry)
+        by_account_id = {line.account_id: line for line in read.lines}
+        assert by_account_id[account.id].account_code == account.code
+        assert by_account_id[account.id].account_name == account.name
+        assert by_account_id[account2.id].account_code == account2.code
+        assert by_account_id[account2.id].account_name == account2.name
 
     def test_list_depreciation_entries_filters_by_asset(self, db: Session, branch):
         from app.modules.maintenance.models import Asset

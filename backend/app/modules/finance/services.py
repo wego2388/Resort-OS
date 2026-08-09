@@ -1,6 +1,7 @@
 """app/modules/finance/services.py — Business logic"""
 from __future__ import annotations
 
+import logging
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
@@ -42,6 +43,8 @@ from app.resort_os.timezone_utils import local_today, utc_naive_to_local_date
 
 if TYPE_CHECKING:
     from app.modules.finance.models import ConditionalDiscount
+
+logger = logging.getLogger(__name__)
 
 
 class FinancialConfigurationError(Exception):
@@ -1225,9 +1228,14 @@ def post_simple_revenue_journal(
         debit_acc = crud.get_account_by_code(db, branch_id, debit_account_code)
         credit_acc = crud.get_account_by_code(db, branch_id, credit_account_code)
         if not debit_acc or not credit_acc:
+            missing = debit_account_code if not debit_acc else credit_account_code
             if strict:
-                missing = debit_account_code if not debit_acc else credit_account_code
                 raise FinancialConfigurationError(f"حساب محاسبي غير معرّف للفرع: {missing}")
+            logger.error(
+                "post_simple_revenue_journal: missing account '%s' for branch=%s source=%s "
+                "source_id=%s reference=%s — journal entry NOT posted",
+                missing, branch_id, source, source_id, reference,
+            )
             return None
 
         cost_center_id = None
@@ -1248,6 +1256,11 @@ def post_simple_revenue_journal(
             if egp_amount <= 0:
                 if strict:
                     raise FinancialConfigurationError("فشل تحويل العملة لقيمة موجبة")
+                logger.error(
+                    "post_simple_revenue_journal: currency conversion failed (%s %s) for "
+                    "branch=%s source=%s source_id=%s reference=%s — journal entry NOT posted",
+                    amount, currency, branch_id, source, source_id, reference,
+                )
                 return None
             fx_rate = (egp_amount / amount).quantize(Decimal("0.000001"))
 
@@ -1273,6 +1286,11 @@ def post_simple_revenue_journal(
     except Exception:
         if strict:
             raise
+        logger.exception(
+            "post_simple_revenue_journal: unexpected failure for branch=%s source=%s "
+            "source_id=%s reference=%s — journal entry NOT posted",
+            branch_id, source, source_id, reference,
+        )
         return None
 
 

@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_today
@@ -676,7 +676,13 @@ def list_journal_entries(
     if source:
         q = q.filter(JournalEntry.source == source)
     total = q.count()
-    items = q.order_by(JournalEntry.entry_date.desc()).offset(skip).limit(limit).all()
+    items = (
+        q.options(selectinload(JournalEntry.lines).selectinload(JournalLine.account))
+        .order_by(JournalEntry.entry_date.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     return items, total
 
 

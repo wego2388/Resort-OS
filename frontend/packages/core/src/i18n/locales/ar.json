@@ -5547,7 +5547,8 @@
         "depreciation": "إهلاك الأصول",
         "bankReconciliation": "التسوية البنكية",
         "shifts": "الورديات",
-        "exchangeRates": "أسعار الصرف"
+        "exchangeRates": "أسعار الصرف",
+        "journal": "دفتر اليومية"
       },
       "fx": {
         "addTitle": "تسجيل سعر صرف جديد",
@@ -5628,6 +5629,25 @@
       "openingBalance": "الرصيد الافتتاحي",
       "saveAccount": "حفظ الحساب",
       "noBankAccountsYet": "لا توجد حسابات بنكية بعد",
+      "dateFrom": "من تاريخ",
+      "dateTo": "إلى تاريخ",
+      "prev": "السابق",
+      "next": "التالي",
+      "journal": {
+        "source": "المصدر",
+        "empty": "لا توجد قيود في هذه الفترة",
+        "emptyHint": "القيود تُسجَّل تلقائيًا عند كل عملية بيع/دفع مرتبطة بمراكز التكلفة",
+        "totalEntries": "{count} قيد",
+        "posted": "مرحَّل",
+        "draft": "مسودة",
+        "account": "الحساب",
+        "description": "البيان",
+        "debit": "مدين",
+        "credit": "دائن",
+        "total": "الإجمالي",
+        "page": "صفحة {page} من {total}",
+        "loadError": "فشل تحميل دفتر اليومية"
+      },
       "bookBalance": "رصيد الدفاتر",
       "statementBalance": "رصيد كشف الحساب",
       "difference": "الفرق",
@@ -5643,7 +5663,6 @@
       "shiftClosed": "مقفولة",
       "varianceOnlyFilter": "فرق &gt; 0 فقط",
       "totalShown": "إجمالي: {total} — معروض: {shown}",
-      "refresh": "تحديث",
       "cashier": "كاشير",
       "opened": "فُتحت",
       "closed": "أُغلقت",

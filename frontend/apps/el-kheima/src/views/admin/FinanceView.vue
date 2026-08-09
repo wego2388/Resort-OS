@@ -16,7 +16,7 @@ const auth = useAuthStore()
 // activeBranchId is null when requires_branch_selection=true — in that case
 // API calls carry no branch_id and the server returns 409 BRANCH_CONTEXT_REQUIRED.
 const branchId = computed(() => auth.activeBranchId)
-const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts' | 'exchange-rates'>('overview')
+const tab = ref<'overview' | 'checks' | 'accounts' | 'cost-centers' | 'balance-sheet' | 'depreciation' | 'bank-reconciliation' | 'shifts' | 'exchange-rates' | 'journal'>('overview')
 
 interface Check { id: number; check_number: string; amount: number; drawer_name: string; due_date: string; status: string; bank_name: string }
 interface Account { id: number; code: string; name: string; account_type: string; balance: number }
@@ -402,6 +402,7 @@ async function loadTab(tabId: typeof tab.value) {
   if (tabId === 'bank-reconciliation') { await loadBankAccounts(); return }
   if (tabId === 'balance-sheet') { await loadBalanceSheet(); return }
   if (tabId === 'exchange-rates') { await loadExchangeRates(); return }
+  if (tabId === 'journal') { journalPage.value = 1; await loadJournal(); return }
 
   loading.value = true
   try {
@@ -464,6 +465,72 @@ async function markCheckBounced(check: Check) {
   } catch { toast.error(t('backoffice.finance.updateCheckStatusError')) }
 }
 
+// ── دفتر اليومية (Journal Entries) ──────────────────────────────────
+interface JournalLine { account_id: number; account_code: string; account_name: string; debit: number; credit: number; description: string | null }
+interface JournalEntry {
+  id: number; entry_date: string; reference: string; description: string
+  status: string; source: string | null; created_by: number; currency: string
+  lines: JournalLine[]
+}
+const journalEntries   = ref<JournalEntry[]>([])
+const journalTotal     = ref(0)
+const journalPage      = ref(1)
+const journalDateFrom  = ref(firstOfMonth)
+const journalDateTo    = ref(today)
+const journalSource    = ref('')
+const journalLoading   = ref(false)
+const journalExpanded  = ref<number | null>(null)
+
+async function loadJournal() {
+  journalLoading.value = true
+  try {
+    const params: Record<string, unknown> = {
+      branch_id: branchId.value,
+      date_from: journalDateFrom.value,
+      date_to:   journalDateTo.value,
+      page: journalPage.value,
+      size: 30,
+    }
+    if (journalSource.value) params.source = journalSource.value
+    const { data } = await api.get(ENDPOINTS.finance.journalEntries, { params })
+    journalEntries.value = (data.items ?? []).map((e: Record<string, unknown>) => ({
+      ...e,
+      lines: (e.lines as JournalLine[] ?? []).map((l: JournalLine) => ({
+        ...l,
+        debit:  Number(l.debit  ?? 0),
+        credit: Number(l.credit ?? 0),
+      })),
+    }))
+    journalTotal.value = data.total ?? 0
+  } catch (e: unknown) {
+    toast.error((e as ApiErr)?.response?.data?.detail ?? t('backoffice.finance.journal.loadError'))
+  } finally {
+    journalLoading.value = false
+  }
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  beach:      '🏖️ شاطئ',
+  dining:     '🍽️ مطاعم',
+  folio:      '🛎️ فوليو',
+  payroll:    '💳 رواتب',
+  inventory:  '📦 مخزون',
+  depreciation: '📉 إهلاك',
+  manual:     '✍️ يدوي',
+}
+function journalSourceLabel(src: string | null): string {
+  if (!src) return '—'
+  return SOURCE_LABEL[src] ?? src
+}
+function journalStatusVariant(s: string): 'success' | 'warning' | 'neutral' {
+  if (s === 'posted') return 'success'
+  if (s === 'draft')  return 'warning'
+  return 'neutral'
+}
+function toggleJournalEntry(id: number) {
+  journalExpanded.value = journalExpanded.value === id ? null : id
+}
+
 onMounted(() => loadTab('overview'))
 
 const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
@@ -476,6 +543,7 @@ const tabsList = computed<{ val: typeof tab.value; label: string }[]>(() => [
   { val: 'bank-reconciliation',  label: t('backoffice.finance.tabs.bankReconciliation') },
   { val: 'shifts',               label: t('backoffice.finance.tabs.shifts') },
   { val: 'exchange-rates',       label: t('backoffice.finance.tabs.exchangeRates') },
+  { val: 'journal',              label: t('backoffice.finance.tabs.journal') },
 ])
 
 const shiftStatusList = computed<{ v: 'all' | 'open' | 'closed'; l: string }[]>(() => [
@@ -1228,6 +1296,117 @@ async function saveExchangeRate() {
               </tr>
             </tbody>
           </table>
+        </div>
+      </AppCard>
+    </div>
+
+    <!-- دفتر اليومية -->
+    <div v-if="tab === 'journal'" class="space-y-4">
+      <!-- فلاتر -->
+      <AppCard padding="md">
+        <div class="flex flex-wrap gap-3 items-end">
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.finance.dateFrom') }}</label>
+            <input v-model="journalDateFrom" type="date"
+              class="rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.finance.dateTo') }}</label>
+            <input v-model="journalDateTo" type="date"
+              class="rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm" />
+          </div>
+          <div>
+            <label class="block text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ t('backoffice.finance.journal.source') }}</label>
+            <select v-model="journalSource"
+              class="rounded-xl border border-stone-200 dark:border-border bg-white dark:bg-surface px-3 py-2 text-sm">
+              <option value="">{{ t('backoffice.finance.all') }}</option>
+              <option v-for="(label, src) in SOURCE_LABEL" :key="src" :value="src">{{ label }}</option>
+            </select>
+          </div>
+          <AppButton variant="primary" :loading="journalLoading" @click="() => { journalPage = 1; loadJournal() }">
+            {{ t('backoffice.finance.refresh') }}
+          </AppButton>
+        </div>
+      </AppCard>
+
+      <!-- جدول القيود -->
+      <AppCard padding="none">
+        <div v-if="journalLoading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+        <EmptyState v-else-if="!journalEntries.length" icon="📒"
+          :title="t('backoffice.finance.journal.empty')"
+          :description="t('backoffice.finance.journal.emptyHint')" />
+        <div v-else>
+          <div class="px-4 py-2 border-b border-stone-100 dark:border-border/50 text-xs text-gray-500 dark:text-gray-400">
+            {{ t('backoffice.finance.journal.totalEntries', { count: journalTotal }) }}
+          </div>
+          <div v-for="entry in journalEntries" :key="entry.id"
+            class="border-b border-stone-100 dark:border-border/50 last:border-0">
+            <!-- رأس القيد — قابل للطي -->
+            <button
+              class="w-full flex items-center gap-3 px-4 py-3 text-start hover:bg-stone-50 dark:hover:bg-gray-800/40 transition-colors"
+              @click="toggleJournalEntry(entry.id)">
+              <span class="text-gray-400 text-xs w-4 flex-shrink-0">{{ journalExpanded === entry.id ? '▼' : '▶' }}</span>
+              <span class="text-xs text-gray-400 w-24 flex-shrink-0 tabular-nums">{{ entry.entry_date }}</span>
+              <span class="font-mono text-xs text-gray-500 dark:text-gray-400 w-28 flex-shrink-0">{{ entry.reference }}</span>
+              <span class="flex-1 text-sm text-gray-800 dark:text-gray-200 truncate">{{ entry.description }}</span>
+              <span class="text-xs px-2">{{ journalSourceLabel(entry.source) }}</span>
+              <AppBadge :variant="journalStatusVariant(entry.status)" size="sm">
+                {{ entry.status === 'posted' ? t('backoffice.finance.journal.posted') : t('backoffice.finance.journal.draft') }}
+              </AppBadge>
+            </button>
+            <!-- سطور القيد -->
+            <div v-if="journalExpanded === entry.id" class="bg-stone-50 dark:bg-gray-800/30 border-t border-stone-100 dark:border-border/30">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="text-gray-500 dark:text-gray-400">
+                    <th class="px-6 py-2 text-start font-semibold">{{ t('backoffice.finance.journal.account') }}</th>
+                    <th class="px-4 py-2 text-start font-semibold">{{ t('backoffice.finance.journal.description') }}</th>
+                    <th class="px-4 py-2 text-end font-semibold">{{ t('backoffice.finance.journal.debit') }}</th>
+                    <th class="px-4 py-2 text-end font-semibold">{{ t('backoffice.finance.journal.credit') }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="line in entry.lines" :key="line.account_id"
+                    class="border-t border-stone-100 dark:border-border/20">
+                    <td class="px-6 py-1.5 font-mono">
+                      <span class="text-gray-500 dark:text-gray-400">{{ line.account_code }}</span>
+                      <span class="mx-1 text-gray-300">|</span>
+                      <span class="text-gray-800 dark:text-gray-200">{{ line.account_name }}</span>
+                    </td>
+                    <td class="px-4 py-1.5 text-gray-500 dark:text-gray-400">{{ line.description ?? '—' }}</td>
+                    <td class="px-4 py-1.5 text-end tabular-nums" :class="line.debit > 0 ? 'font-bold text-gray-900 dark:text-gray-100' : 'text-gray-300 dark:text-gray-600'">
+                      {{ line.debit > 0 ? formatNumber(line.debit) : '—' }}
+                    </td>
+                    <td class="px-4 py-1.5 text-end tabular-nums" :class="line.credit > 0 ? 'font-bold text-gray-900 dark:text-gray-100' : 'text-gray-300 dark:text-gray-600'">
+                      {{ line.credit > 0 ? formatNumber(line.credit) : '—' }}
+                    </td>
+                  </tr>
+                  <!-- إجمالي القيد -->
+                  <tr class="border-t-2 border-stone-200 dark:border-border/50 bg-white dark:bg-gray-800/20 font-bold">
+                    <td colspan="2" class="px-6 py-1.5 text-gray-500 dark:text-gray-400">{{ t('backoffice.finance.journal.total') }}</td>
+                    <td class="px-4 py-1.5 text-end tabular-nums text-gray-900 dark:text-gray-100">
+                      {{ formatNumber(entry.lines.reduce((s, l) => s + l.debit, 0)) }}
+                    </td>
+                    <td class="px-4 py-1.5 text-end tabular-nums text-gray-900 dark:text-gray-100">
+                      {{ formatNumber(entry.lines.reduce((s, l) => s + l.credit, 0)) }}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <!-- Pagination -->
+          <div v-if="journalTotal > 30" class="flex items-center justify-between px-4 py-3 border-t border-stone-100 dark:border-border/50">
+            <span class="text-xs text-gray-500 dark:text-gray-400">
+              {{ t('backoffice.finance.journal.page', { page: journalPage, total: Math.ceil(journalTotal / 30) }) }}
+            </span>
+            <div class="flex gap-2">
+              <AppButton variant="outline" size="sm" :disabled="journalPage <= 1"
+                @click="() => { journalPage--; loadJournal() }">{{ t('backoffice.finance.prev') }}</AppButton>
+              <AppButton variant="outline" size="sm" :disabled="journalPage * 30 >= journalTotal"
+                @click="() => { journalPage++; loadJournal() }">{{ t('backoffice.finance.next') }}</AppButton>
+            </div>
+          </div>
         </div>
       </AppCard>
     </div>

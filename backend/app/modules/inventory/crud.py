@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.core.config import settings
 from app.resort_os.timezone_utils import local_now
@@ -267,7 +267,13 @@ def list_purchase_orders(
     if status:
         q = q.filter(PurchaseOrder.status == status)
     total = q.count()
-    items = q.order_by(PurchaseOrder.ordered_at.desc()).offset(skip).limit(limit).all()
+    items = (
+        q.options(selectinload(PurchaseOrder.items))
+        .order_by(PurchaseOrder.ordered_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     return items, total
 
 
@@ -405,7 +411,13 @@ def list_purchase_requests(
     if status:
         q = q.filter(PurchaseRequest.status == status)
     total = q.count()
-    items = q.order_by(PurchaseRequest.created_at.desc()).offset(skip).limit(limit).all()
+    items = (
+        q.options(selectinload(PurchaseRequest.items), selectinload(PurchaseRequest.approvals))
+        .order_by(PurchaseRequest.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     return items, total
 
 
@@ -500,5 +512,11 @@ def list_stock_counts(
     if status:
         q = q.filter(StockCount.status == status)
     total = q.count()
-    items = q.order_by(StockCount.count_date.desc()).offset(skip).limit(limit).all()
+    items = (
+        q.options(selectinload(StockCount.lines))
+        .order_by(StockCount.count_date.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     return items, total

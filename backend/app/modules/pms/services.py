@@ -160,18 +160,28 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
         locked_rooms[room_id] = locked
 
     # التحقق من الغرف والتوفر — بعد القفل، فمفيش حد تاني يقدر يحجز نفس
-    # الغرفة لحد ما الـ transaction دي تخلص (commit/rollback)
+    # الغرفة لحد ما الـ transaction دي تخلص (commit/rollback). available_ids
+    # و room_type cache متجهزين مرة واحدة برّه الحلقة — كانوا بيتعادوا لكل
+    # غرفة (نفس الاستعلام بالظبط لـ get_available_rooms، وget_room_type
+    # ممكن يتكرر لو أكتر من غرفة نفس النوع).
+    available_ids = {
+        r.id for r in crud.get_available_rooms(db, data.branch_id, data.check_in, data.check_out)
+    }
+    room_type_cache: dict[int, RoomType] = {}
     room_rates: list[tuple[int, Decimal, int, Optional[int]]] = []
     for room_id in ordered_room_ids:
         room = locked_rooms[room_id]
         if room.branch_id != data.branch_id:
             raise ValueError(f"الغرفة {room_id} لا تنتمي لهذا الفرع")
 
-        available = crud.get_available_rooms(db, data.branch_id, data.check_in, data.check_out)
-        if room_id not in [r.id for r in available]:
+        if room_id not in available_ids:
             raise BookingConflictError(f"الغرفة {room.name} غير متاحة في هذه الفترة")
 
-        room_type = crud.get_room_type(db, room.room_type_id)
+        room_type = room_type_cache.get(room.room_type_id)
+        if room_type is None:
+            room_type = crud.get_room_type(db, room.room_type_id)
+            if room_type:
+                room_type_cache[room.room_type_id] = room_type
         if not room_type or room_type.branch_id != data.branch_id:
             raise ValueError(f"نوع الغرفة المرتبط بالغرفة {room_id} لا ينتمي لهذا الفرع")
         applies = rate_plan and (rate_plan.room_type_id is None or rate_plan.room_type_id == room.room_type_id)
@@ -185,11 +195,10 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
     booking_number = crud.generate_booking_number(db, data.branch_id)
     booking = crud.create_booking(db, booking_number, data, room_rates)
 
-    # تحديث حالة الغرف → reserved
+    # تحديث حالة الغرف → reserved — بنستخدم locked_rooms الموجودة بالفعل
+    # (نفس الصفوف المقفولة فوق) بدل ما نعيد نداء get_room لكل غرفة تاني.
     for room_id, _, _, _ in room_rates:
-        room = crud.get_room(db, room_id)
-        if room:
-            crud.update_room_status(db, room, "reserved")
+        crud.update_room_status(db, locked_rooms[room_id], "reserved")
 
     db.commit()
     db.refresh(booking)

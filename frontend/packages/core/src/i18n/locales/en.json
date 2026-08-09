@@ -5547,7 +5547,27 @@
         "depreciation": "Asset Depreciation",
         "bankReconciliation": "Bank Reconciliation",
         "shifts": "Shifts",
-        "exchangeRates": "Exchange Rates"
+        "exchangeRates": "Exchange Rates",
+        "journal": "Journal"
+      },
+      "dateFrom": "From date",
+      "dateTo": "To date",
+      "prev": "Previous",
+      "next": "Next",
+      "journal": {
+        "source": "Source",
+        "empty": "No journal entries in this period",
+        "emptyHint": "Entries are posted automatically on each sale/payment linked to a cost centre",
+        "totalEntries": "{count} entries",
+        "posted": "Posted",
+        "draft": "Draft",
+        "account": "Account",
+        "description": "Description",
+        "debit": "Debit",
+        "credit": "Credit",
+        "total": "Total",
+        "page": "Page {page} of {total}",
+        "loadError": "Failed to load journal"
       },
       "fx": {
         "addTitle": "Add Exchange Rate",
@@ -5643,7 +5663,6 @@
       "shiftClosed": "Closed",
       "varianceOnlyFilter": "Variance &gt; 0 only",
       "totalShown": "Total: {total} — Shown: {shown}",
-      "refresh": "Refresh",
       "cashier": "Cashier",
       "opened": "Opened",
       "closed": "Closed",

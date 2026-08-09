@@ -167,7 +167,12 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/ops',
     component: () => import('../layouts/BackOfficeLayout.vue'),
-    meta: { requiresAuth: true, requiresBranch: true },
+    // requiredRole: 'receptionist' (level 40) — الأب كان من غير أي حد أدنى
+    // للدور خالص، والحماية الوحيدة كانت requiredPermission على كل شاشة فرعية.
+    // يعني موظف level 20 أو نادل level 30 اتعطاله permission غلط بالخطأ
+    // (زي pms.rooms:view) كان يقدر يوصل للاستقبال/الغرف/الحجوزات كاملة —
+    // بوابة الدور دي طبقة دفاع تانية مستقلة عن الصلاحيات التفصيلية.
+    meta: { requiresAuth: true, requiresBranch: true, requiredRole: 'receptionist' },
     children: [
       { path: '', redirect: '/ops/reception' },
       { path: 'reception', name: 'ops-reception', component: () => import('../views/ops/ReceptionView.vue'), meta: {

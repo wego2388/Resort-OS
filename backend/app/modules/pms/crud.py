@@ -49,6 +49,7 @@ def lock_room_for_booking(db: Session, room_id: int) -> Optional[Room]:
     return (
         db.query(Room)
         .filter(Room.id == room_id)
+        .populate_existing()
         .with_for_update(nowait=True)
         .first()
     )

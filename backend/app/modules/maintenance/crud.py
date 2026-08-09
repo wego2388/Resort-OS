@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.modules.maintenance.models import Asset, PreventiveSchedule, WorkOrder, WorkOrderPart
 from app.modules.maintenance.schemas import (
@@ -102,7 +102,13 @@ def list_work_orders(
     if assigned_to:
         q = q.filter(WorkOrder.assigned_to == assigned_to)
     total = q.count()
-    items = q.order_by(WorkOrder.created_at.desc()).offset(skip).limit(limit).all()
+    items = (
+        q.options(selectinload(WorkOrder.parts))
+        .order_by(WorkOrder.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
     return items, total
 
 

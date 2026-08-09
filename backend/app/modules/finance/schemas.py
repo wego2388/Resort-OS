@@ -471,11 +471,29 @@ class JournalLineRead(BaseModel):
     id:              int
     entry_id:        int
     account_id:      int
+    account_code:    str = ""
+    account_name:    str = ""
     debit:           Decimal
     credit:          Decimal
     description:     Optional[str]
     cost_center_id:  Optional[int]
     created_at:      datetime
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_account_display_fields(cls, obj):
+        """account_code/account_name مش أعمدة حقيقية على JournalLine — نفس
+        نمط dining.schemas.DiningItemRead._inject_recipe_fields — بيتقروا من
+        العلاقة account (لازم تبقى متحمّلة مسبقًا عبر selectinload في
+        crud.list_journal_entries، وإلا N+1 حقيقي على كل سطر قيد)."""
+        if isinstance(obj, (dict, cls)):
+            return obj
+        data = {name: getattr(obj, name, None) for name in cls.model_fields
+                if name not in ("account_code", "account_name")}
+        account = getattr(obj, "account", None)
+        data["account_code"] = account.code if account else ""
+        data["account_name"] = account.name if account else ""
+        return data
 
 
 class JournalEntryCreate(BaseModel):
