@@ -285,6 +285,7 @@ export const ENDPOINTS = {
     blogPosts: '/api/v1/hub/blog/posts',
     blogPost: (id: number) => `/api/v1/hub/blog/posts/${id}`,
     contact: '/api/v1/hub/contact',
+    contactForms: '/api/v1/hub/contact-forms',
   },
   analytics: {
     // Note: there is no per-branch-id-in-path `/analytics/dashboard/{id}` route

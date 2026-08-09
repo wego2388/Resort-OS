@@ -223,21 +223,34 @@ async function deleteBlogPost(p: BlogPost) {
 }
 
 // ── Contact Messages ──────────────────────────────────────────────────
+// GET /hub/contact-forms (staff listing, ContactFormListItem) — not
+// /hub/contact, which is the public unauthenticated submit endpoint and
+// has no listing behaviour at all. There is no is_read/reviewed tracking
+// on the backend model; do not fabricate one client-side.
 interface ContactMessage {
-  id: number; name: string; email: string; phone?: string | null
-  subject?: string | null; message: string; is_read: boolean; created_at: string
+  id: number; public_reference: string
+  full_name: string | null; email: string | null; phone: string | null
+  subject: string | null; message: string | null
+  purpose: string; marketing_consent: boolean
+  status: string; created_at: string
 }
 const contactMessages = ref<ContactMessage[]>([])
-const contactUnread = ref(0)
+const contactTotal = ref(0)
+const contactError = ref(false)
 
 async function loadContactMessages() {
   loading.value = true
+  contactError.value = false
   try {
-    const { data } = await api.get(ENDPOINTS.hub.contact, { params: { branch_id: branchId.value, size: 50 } })
-    contactMessages.value = data.items ?? data ?? []
-    contactUnread.value = contactMessages.value.filter(m => !m.is_read).length
-  } catch { contactMessages.value = [] }
-  finally { loading.value = false }
+    const { data } = await api.get(ENDPOINTS.hub.contactForms, {
+      params: { branch_id: branchId.value, page: 1, size: 50 },
+    })
+    contactMessages.value = data.items ?? []
+    contactTotal.value = data.total ?? contactMessages.value.length
+  } catch {
+    contactMessages.value = []
+    contactError.value = true
+  } finally { loading.value = false }
 }
 
 // ── Booking Actions ────────────────────────────────────────────────────
@@ -770,23 +783,27 @@ onMounted(() => switchTab('bookings'))
     <div v-if="tab === 'contact'" class="space-y-4">
       <div class="flex items-center gap-3">
         <p class="text-sm text-gray-500 dark:text-gray-400">{{ t('backoffice.hub.contactDescription') }}</p>
-        <AppBadge v-if="contactUnread > 0" variant="warning" size="sm">{{ t('backoffice.hub.unreadCount', { count: contactUnread }) }}</AppBadge>
+        <AppBadge v-if="contactTotal > 0" size="sm">{{ formatNumber(contactTotal) }}</AppBadge>
       </div>
-      <div v-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
+      <div v-if="contactError" class="flex items-center justify-between rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+        <span>⚠️ {{ t('backoffice.hub.loadError') }}</span>
+        <button @click="loadContactMessages" class="font-semibold underline hover:no-underline">{{ t('backoffice.hub.retry') }}</button>
+      </div>
+      <div v-else-if="loading" class="flex justify-center py-12"><AppSpinner size="lg" /></div>
       <EmptyState v-else-if="!contactMessages.length" icon="📬" :title="t('backoffice.hub.noMessages')" />
       <div v-else class="space-y-3">
-        <AppCard v-for="m in contactMessages" :key="m.id" padding="md"
-          :class="!m.is_read ? 'border-e-4 border-e-amber-400' : ''">
+        <AppCard v-for="m in contactMessages" :key="m.id" padding="md">
           <div class="flex items-start justify-between gap-3">
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-bold text-gray-900 dark:text-gray-100">{{ m.name }}</span>
-                <span class="text-xs text-gray-400 dark:text-gray-400">{{ m.email }}</span>
-                <span v-if="m.phone" class="text-xs text-gray-400 dark:text-gray-400">{{ m.phone }}</span>
-                <AppBadge v-if="!m.is_read" size="sm" variant="warning">{{ t('backoffice.hub.newLabel') }}</AppBadge>
+                <span class="font-bold text-gray-900 dark:text-gray-100">{{ m.full_name || m.public_reference }}</span>
+                <span v-if="m.email" class="text-xs text-gray-400 dark:text-gray-400">{{ m.email }}</span>
+                <span v-if="m.phone" class="text-xs text-gray-400 dark:text-gray-400"><bdi dir="ltr">{{ m.phone }}</bdi></span>
+                <AppBadge size="sm" :variant="m.status === 'accepted' ? 'success' : m.status === 'spam' ? 'danger' : 'neutral'">{{ m.status }}</AppBadge>
+                <AppBadge v-if="m.marketing_consent" size="sm" variant="info">{{ t('backoffice.hub.marketingConsentLabel') }}</AppBadge>
               </div>
               <div v-if="m.subject" class="text-sm font-semibold text-gray-700 dark:text-gray-300 mt-1">{{ m.subject }}</div>
-              <p class="text-sm text-gray-600 dark:text-gray-400 mt-1 line-clamp-3">{{ m.message }}</p>
+              <p v-if="m.message" class="text-sm text-gray-600 dark:text-gray-400 mt-1 line-clamp-3">{{ m.message }}</p>
             </div>
             <div class="text-xs text-gray-400 dark:text-gray-400 shrink-0">{{ fmtDate(m.created_at) }}</div>
           </div>
