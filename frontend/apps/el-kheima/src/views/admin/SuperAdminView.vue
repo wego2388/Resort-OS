@@ -107,10 +107,20 @@ const activeSuperAdminCount = computed(() => allUsersSnapshot.value.filter(user 
   user.role === 'super_admin' && user.is_active,
 ).length)
 
+// كروت "نشط/بانتظار أمان/آخر super_admin" لازم تعكس كل حساب فعليًا مش أول
+// صفحة بس — نظام فيه أكتر من 100 حساب كان هيدّي عدد super_admin نشط غلط
+// (ممكن يخفي تحذير "آخر واحد نشط" بالغلط). اجلب كل الصفحات صراحةً.
 async function loadAllUsersSnapshot() {
   try {
-    const res = await api.get(ENDPOINTS.users.list, { params: { page: 1, size: 100 } })
-    allUsersSnapshot.value = res.data.items
+    const first = await api.get(ENDPOINTS.users.list, { params: { page: 1, size: 100 } })
+    const items: UserRow[] = [...first.data.items]
+    const total: number = first.data.total ?? items.length
+    const pages = Math.ceil(total / 100)
+    for (let page = 2; page <= pages; page++) {
+      const res = await api.get(ENDPOINTS.users.list, { params: { page, size: 100 } })
+      items.push(...res.data.items)
+    }
+    allUsersSnapshot.value = items
   } catch { /* الكروت العلوية بتفضل بآخر قيمة معروفة — مش حرجة زي جدول المستخدمين نفسه */ }
 }
 
@@ -318,11 +328,12 @@ const loadingUserPerms = ref(false)
 const permError = ref('')
 
 function catalogLabel(e: CatalogEntry) { return locale.value === 'ar' ? e.label_ar : e.label_en }
+// 2026-08-10: كان البحث هنا بيفلتر أول 100 مستخدم متجابين client-side بس
+// (نفس باج Users tab اللي اتصلح 2026-08-03) — أي مستخدم برّه أول صفحة
+// (مرتّبين بـid) مستحيل يظهر أو يدار من هنا خالص. بيستخدم دلوقتي نفس
+// بحث السيرفر الحقيقي اللي Users tab بيستخدمه (GET /users?search=...).
 const targetablePermUsers = computed(() => permUsers.value.filter(u => u.role !== 'super_admin'))
-const filteredPermUsers = computed(() => {
-  const q = permSearch.value.trim().toLowerCase()
-  return q ? targetablePermUsers.value.filter(u => u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q)) : targetablePermUsers.value
-})
+const filteredPermUsers = targetablePermUsers
 const catalogByModule = computed(() => {
   const g: Record<string, CatalogEntry[]> = {}
   for (const e of catalog.value) { (g[e.module] ??= []).push(e) }
@@ -352,8 +363,13 @@ async function loadCatalog() {
   finally { loadingCatalog.value = false }
 }
 async function loadUsersForPerms() {
-  loadingPermUsers.value = true
-  try { permUsers.value = (await api.get(ENDPOINTS.users.list, { params: { page: 1, size: 100 } })).data.items }
+  loadingPermUsers.value = true; permError.value = ''
+  try {
+    const res = await api.get(ENDPOINTS.users.list, {
+      params: { page: 1, size: 100, search: permSearch.value.trim() || undefined },
+    })
+    permUsers.value = res.data.items
+  }
   catch { permError.value = t('backoffice.permissions.loadErrorUsers') }
   finally { loadingPermUsers.value = false }
 }
@@ -912,7 +928,7 @@ onMounted(() => {
       <div class="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-5">
         <AppCard :title="t('backoffice.permissions.employees')" padding="none">
           <div class="p-3 border-b border-stone-100 dark:border-border/50">
-            <AppInput v-model="permSearch" :placeholder="t('backoffice.permissions.searchPlaceholder')" />
+            <SearchInput v-model="permSearch" :placeholder="t('backoffice.permissions.searchPlaceholder')" @search="loadUsersForPerms" />
           </div>
           <div v-if="loadingPermUsers" class="p-8 flex justify-center"><AppSpinner /></div>
           <div v-else-if="filteredPermUsers.length === 0" class="p-8 text-center text-gray-400 text-sm">
