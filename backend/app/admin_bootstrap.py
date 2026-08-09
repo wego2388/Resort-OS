@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo
 
 from app.core.config import settings
 from app.core.database import SessionLocal
-from app.core.kernel.auth.service import AuthService
+from app.core.kernel.auth.service import BOOTSTRAP_CREATABLE_ROLES, AuthService
 from app.core.kernel.models.user import User
 
 
@@ -286,9 +286,13 @@ def _parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    create = subparsers.add_parser("create", help="Create a separate named super-admin")
+    create = subparsers.add_parser("create", help="Create a separate named super-admin or owner")
     create.add_argument("--email", help="Non-secret account email (prompted when omitted)")
     create.add_argument("--full-name", help="Named operator (prompted when omitted)")
+    create.add_argument(
+        "--role", default="super_admin", choices=sorted(BOOTSTRAP_CREATABLE_ROLES),
+        help="Role to create (default: super_admin)",
+    )
 
     recover = subparsers.add_parser(
         "recover",
@@ -367,6 +371,7 @@ def main(argv: list[str] | None = None) -> int:
                 email=email,
                 full_name=full_name,
                 create=args.command == "create",
+                role=args.role if args.command == "create" else "super_admin",
             )
     except (EOFError, KeyboardInterrupt):
         print("\nCancelled; nothing was changed.", file=sys.stderr)
@@ -377,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nSecure bootstrap issued. Store these values separately and share them out-of-band.")
     print("They are shown once; the database stores only hashes where applicable.\n")
-    print(f"Account:          {result['email']} ({result['full_name']})")
+    print(f"Account:          {result['email']} ({result['full_name']}) — role={result['role']}")
     print(f"Temporary password: {result['temporary_password']}")
     print(f"Enrollment token:   {result['enrollment_token']}")
     print(f"Token expires:      {result['enrollment_expires_at'].isoformat()}")

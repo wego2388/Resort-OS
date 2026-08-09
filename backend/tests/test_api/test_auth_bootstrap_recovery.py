@@ -82,6 +82,52 @@ class TestPrivilegedBootstrap:
         finally:
             db.close()
 
+    def test_create_owner_issues_owner_role_account(self, setup_db):
+        """owner (Decision 0004) — نفس مسار bootstrap CLI بتاع super_admin،
+        نطاق موسّع صراحةً لـBOOTSTRAP_CREATABLE_ROLES بدل endpoint HTTP
+        (owner مش في STAFF_PROVISIONABLE_ROLES عمدًا — راجع service.py)."""
+        email = f"named-owner-{uuid.uuid4().hex}@test.local"
+        db = TestingSessionLocal()
+        try:
+            result = _service(db).provision_account_bootstrap(
+                email=email,
+                full_name="Named Owner Operator",
+                create=True,
+                role="owner",
+            )
+        finally:
+            db.close()
+
+        assert result["role"] == "owner"
+        db = TestingSessionLocal()
+        try:
+            user = db.query(User).filter(User.email == email).one()
+            assert user.role == "owner"
+            assert user.must_change_password is True
+            assert user.two_factor_bootstrap_required is True
+            audit = db.query(AuditLog).filter(
+                AuditLog.entity_id == user.id,
+                AuditLog.action == "owner_bootstrap_created",
+            ).one()
+            assert result["temporary_password"] not in (audit.new_data or "")
+        finally:
+            db.close()
+
+    def test_create_rejects_role_outside_bootstrap_creatable_set(self, setup_db):
+        email = f"named-rogue-{uuid.uuid4().hex}@test.local"
+        db = TestingSessionLocal()
+        try:
+            with pytest.raises(ValueError, match="Cannot bootstrap-create role"):
+                _service(db).provision_account_bootstrap(
+                    email=email,
+                    full_name="Should Not Exist",
+                    create=True,
+                    role="manager",
+                )
+            assert db.query(User).filter(User.email == email).first() is None
+        finally:
+            db.close()
+
     def test_recovery_preserves_a_lower_role_instead_of_escalating_it(self, setup_db):
         user_id, email, _password = _create_user(role="manager")
         db = TestingSessionLocal()

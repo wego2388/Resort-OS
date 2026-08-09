@@ -72,6 +72,11 @@ STAFF_PROVISIONABLE_ROLES = frozenset({
     "receptionist", "cashier", "waiter", "chef", "kitchen", "employee",
 })
 
+# روائح مقصودة برّه STAFF_PROVISIONABLE_ROLES عمدًا (super_admin وowner) —
+# نفس منطق provision_account_bootstrap: التحكم الوحيد فيها هو الـCLI
+# المحلي، مش أي endpoint HTTP، حتى لو جلسة سوبر أدمن على الويب اتخترقت.
+BOOTSTRAP_CREATABLE_ROLES = frozenset({"super_admin", "owner"})
+
 
 class BaseService:
     def __init__(self, db: Session):
@@ -1484,12 +1489,15 @@ class AuthService(BaseService):
         email: str,
         full_name: Optional[str],
         create: bool,
+        role: str = "super_admin",
     ) -> dict:
-        """Create a named super-admin or securely recover an existing account.
+        """Create a named super-admin/owner or securely recover an existing account.
 
         This method is intentionally not exposed through HTTP.  The local CLI
         is the control plane, so a compromised web super-admin session cannot
-        mint another super-admin or bypass Gate 2A.
+        mint another super-admin/owner or bypass Gate 2A. `role` only matters
+        for `create=True` — recovery always preserves the account's existing
+        role exactly (see the comment below).
         """
         from app.core.kernel.models.user import (  # noqa: PLC0415
             RefreshToken,
@@ -1506,23 +1514,25 @@ class AuthService(BaseService):
             self.repo.model.email == normalized_email,
         ).with_for_update().first()
         if create:
+            if role not in BOOTSTRAP_CREATABLE_ROLES:
+                raise ValueError(f"Cannot bootstrap-create role {role!r} through this CLI")
             if user:
                 raise ValueError("An account with this email already exists")
             if len(normalized_name) < 3:
-                raise ValueError("A named super-admin requires a full name")
+                raise ValueError("A named account requires a full name")
             user = self.repo.model(
                 email=normalized_email,
                 password_hash="pending-bootstrap-hash",
                 full_name=normalized_name,
-                role="super_admin",
+                role=role,
                 is_active=True,
             )
             self.db.add(user)
             self.db.flush()
-            action = "super_admin_bootstrap_created"
+            action = "super_admin_bootstrap_created" if role == "super_admin" else "owner_bootstrap_created"
         else:
             if not user or getattr(user, "deleted_at", None) is not None:
-                raise ValueError("Super-admin account not found")
+                raise ValueError("Account not found")
             # Recovery preserves the existing role exactly.  It may repair an
             # old accountant or other seeded staff identity, but it can never
             # turn that identity into a super-admin. Role changes remain owned
@@ -1564,6 +1574,7 @@ class AuthService(BaseService):
                 {
                     "email": normalized_email,
                     "full_name": user.full_name,
+                    "role": user.role,
                     "enrollment_expires_at": expires_at.isoformat(),
                     "requires_password_change": True,
                 },
@@ -1581,6 +1592,7 @@ class AuthService(BaseService):
             "user_id": user.id,
             "email": normalized_email,
             "full_name": user.full_name,
+            "role": user.role,
             "temporary_password": temporary_password,
             "enrollment_token": enrollment_token,
             "enrollment_expires_at": expires_at,
