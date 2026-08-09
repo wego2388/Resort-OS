@@ -382,7 +382,7 @@ def get_available_weeks(
     db: DbDep, user=Depends(get_timeshare_user),
     branch_id: int = Query(...),
     year: int = Query(..., ge=2020, le=2100),
-    room_type: Optional[str] = Query(None, pattern=r"^(2R|4R|6R)$"),
+    room_type: Optional[str] = Query(None, pattern=r"^(Studio|Chalet)$"),
 ):
     _assert_timeshare_branch(db, user, branch_id, "عرض الأسابيع المتاحة")
     return services.get_available_weeks(db, branch_id, year, room_type)

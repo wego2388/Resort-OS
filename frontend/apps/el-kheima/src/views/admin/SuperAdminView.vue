@@ -132,8 +132,10 @@ async function loadUsers() {
 }
 
 async function loadEmployees() {
+  const branchId = auth.branchId
+  if (branchId == null) { employees.value = []; return }
   try {
-    const res = await api.get(ENDPOINTS.hr.employees, { params: { branch_id: auth.branchId, page: 1, size: 100 } })
+    const res = await api.get(ENDPOINTS.hr.employees, { params: { branch_id: branchId, page: 1, size: 100 } })
     employees.value = res.data.items ?? []
     const requestedEmployee = String(route.query.employee ?? '')
     if (requestedEmployee && employees.value.some(employee =>
@@ -351,7 +353,7 @@ async function loadCatalog() {
 }
 async function loadUsersForPerms() {
   loadingPermUsers.value = true
-  try { permUsers.value = (await api.get(ENDPOINTS.users.list, { params: { page: 1, size: 200 } })).data.items }
+  try { permUsers.value = (await api.get(ENDPOINTS.users.list, { params: { page: 1, size: 100 } })).data.items }
   catch { permError.value = t('backoffice.permissions.loadErrorUsers') }
   finally { loadingPermUsers.value = false }
 }

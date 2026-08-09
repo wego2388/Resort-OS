@@ -821,7 +821,7 @@ def get_available_weeks(
 
     المنطق: (52 أسبوع ISO) - (أسابيع محجوزة بعقود ثابتة) - (أسابيع محجوزة
     بزيارات فعلية من عقود عائمة).
-    يدعم فلتر room_type اختياري (2R/4R/6R)."""
+    يدعم فلتر room_type اختياري (Studio/Chalet)."""
     from datetime import date as _date, timedelta as _timedelta  # noqa: PLC0415
 
     booked = crud.get_booked_week_numbers(db, branch_id, year, room_type)

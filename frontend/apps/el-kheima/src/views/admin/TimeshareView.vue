@@ -177,12 +177,12 @@ async function loadUnits() {
 // ── إدارة مخزون الوحدات (2026-08-03) — كان مفيش أي طريقة لإضافة وحدة
 // جديدة أو تعليمها "تحت الصيانة" غير التعديل المباشر في قاعدة البيانات.
 const newUnitModal = ref(false)
-const newUnitForm = ref({ unit_number: '', unit_type: '2R', notes: '' })
+const newUnitForm = ref({ unit_number: '', unit_type: 'Studio', notes: '' })
 const savingUnit = ref(false)
 const togglingUnitId = ref<number | null>(null)
 
 function openNewUnitModal() {
-  newUnitForm.value = { unit_number: '', unit_type: '2R', notes: '' }
+  newUnitForm.value = { unit_number: '', unit_type: 'Studio', notes: '' }
   newUnitModal.value = true
 }
 
@@ -709,7 +709,7 @@ function escapeHtml(s: string): string {
 
 function calContractPrintClass(c: CalendarContract): string {
   if (c.rci_included) return 'rci'
-  const m: Record<string, string> = { '2R': 'r2', '4R': 'r4', '6R': 'r6' }
+  const m: Record<string, string> = { 'Studio': 'studio', 'Chalet': 'chalet' }
   return m[c.room_type] || 'other'
 }
 
@@ -764,9 +764,8 @@ function printCalendarView() {
   .week-contracts { flex: 1; display: flex; flex-wrap: wrap; gap: 3px; }
   .tag { padding: 1px 5px; border-radius: 6px; font-weight: 700; border: 1px solid; }
   .tag.rci { background: #f3e8ff; color: #7e22ce; border-color: #e9d5ff; }
-  .tag.r2 { background: #e0f2fe; color: #0369a1; border-color: #bae6fd; }
-  .tag.r4 { background: #fef3c7; color: #b45309; border-color: #fde68a; }
-  .tag.r6 { background: #d1fae5; color: #047857; border-color: #a7f3d0; }
+  .tag.studio { background: #e0f2fe; color: #0369a1; border-color: #bae6fd; }
+  .tag.chalet { background: #fef3c7; color: #b45309; border-color: #fde68a; }
   .tag.other { background: #f5f5f4; color: #78716c; border-color: #e7e5e4; }
   .empty { color: #d6d3d1; }
   @media print {
@@ -784,9 +783,8 @@ function printCalendarView() {
     </div>
   </div>
   <div class="legend">
-    <span><span class="swatch" style="background:#bae6fd"></span> 2R</span>
-    <span><span class="swatch" style="background:#fde68a"></span> 4R</span>
-    <span><span class="swatch" style="background:#a7f3d0"></span> 6R</span>
+    <span><span class="swatch" style="background:#bae6fd"></span> ${escapeHtml(t('backoffice.timeshare.unitTypes.Studio'))}</span>
+    <span><span class="swatch" style="background:#fde68a"></span> ${escapeHtml(t('backoffice.timeshare.unitTypes.Chalet'))}</span>
     <span><span class="swatch" style="background:#e9d5ff"></span> RCI ✦</span>
   </div>
   <div class="grid">
@@ -1042,11 +1040,14 @@ async function submitImport() {
 // ── Badges ───────────────────────────────────────────────────────────────
 type BadgeVariant = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
+function roomTypeLabel(type: string): string {
+  return t(`backoffice.timeshare.unitTypes.${type}`, type)
+}
+
 function roomTypeBadge(type: string) {
   const m: Record<string, string> = {
-    '2R': 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300',
-    '4R': 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
-    '6R': 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300',
+    'Studio': 'bg-sky-100 text-sky-700 dark:bg-sky-950/60 dark:text-sky-300',
+    'Chalet': 'bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300',
   }
   return `text-xs px-2 py-1 rounded-full font-bold ${m[type] || 'bg-stone-100 dark:bg-gray-700 text-stone-600 dark:text-stone-300'}`
 }
@@ -1075,9 +1076,8 @@ function payLabel(s: string) {
 function calContractClass(c: CalendarContract) {
   if (c.rci_included) return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800'
   const m: Record<string, string> = {
-    '2R': 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800',
-    '4R': 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
-    '6R': 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800',
+    'Studio': 'bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/60 dark:text-sky-300 dark:border-sky-800',
+    'Chalet': 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800',
   }
   return m[c.room_type] || 'bg-stone-100 dark:bg-gray-700 text-stone-600 dark:text-stone-300 border-stone-200 dark:border-border'
 }
@@ -1161,7 +1161,7 @@ onMounted(refreshAll)
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1 flex-wrap">
                   <span class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ v.customer_name }}</span>
-                  <span v-if="v.room_type" :class="roomTypeBadge(v.room_type)">{{ v.room_type }}</span>
+                  <span v-if="v.room_type" :class="roomTypeBadge(v.room_type)">{{ roomTypeLabel(v.room_type) }}</span>
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.weekNumber', { week: v.week_number }) }} · {{ v.visit_start ? formatDateValue(v.visit_start) : '—' }}</div>
               </div>
@@ -1186,7 +1186,7 @@ onMounted(refreshAll)
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1 flex-wrap">
                   <span class="font-bold text-xs text-gray-900 dark:text-gray-100">{{ c.customer_name }}</span>
-                  <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
+                  <span :class="roomTypeBadge(c.room_type)">{{ roomTypeLabel(c.room_type) }}</span>
                 </div>
                 <div class="text-xs text-gray-500 dark:text-gray-400">{{ t('backoffice.timeshare.pendingInstallmentCount', { count: c.pending_count }) }}<span v-if="c.next_due"> · {{ t('backoffice.timeshare.dueOn', { date: formatDateValue(c.next_due) }) }}</span></div>
               </div>
@@ -1257,7 +1257,7 @@ onMounted(refreshAll)
         </select>
         <select v-model="clientRoomFilter" :aria-label="t('backoffice.timeshare.filterByRoomType')" class="min-h-[44px] bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2.5 outline-none">
           <option value="">{{ t('backoffice.timeshare.allTypes') }}</option>
-          <option value="2R">2R</option><option value="4R">4R</option><option value="6R">6R</option>
+          <option value="Studio">Studio</option><option value="Chalet">Chalet</option>
         </select>
       </div>
 
@@ -1283,7 +1283,7 @@ onMounted(refreshAll)
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-bold text-sm text-gray-900 dark:text-gray-100">{{ c.customer_name }}</span>
-                <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
+                <span :class="roomTypeBadge(c.room_type)">{{ roomTypeLabel(c.room_type) }}</span>
                 <span v-if="c.rci_included" class="text-xs px-2 py-1 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 font-bold">RCI</span>
                 <AppBadge size="sm" :variant="contractStatusVariant[c.status] ?? 'neutral'">{{ statusLabel(c.status) }}</AppBadge>
               </div>
@@ -1636,7 +1636,7 @@ onMounted(refreshAll)
         <div v-else class="divide-y divide-stone-100 dark:divide-border">
           <div v-for="u in units" :key="u.id" class="p-4 flex flex-wrap items-center justify-between gap-3">
             <div>
-              <div class="font-bold text-gray-900 dark:text-gray-100">{{ u.unit_number }} <span class="text-sm font-normal text-gray-500 dark:text-gray-400">({{ u.unit_type }})</span></div>
+              <div class="font-bold text-gray-900 dark:text-gray-100">{{ u.unit_number }} <span :class="roomTypeBadge(u.unit_type)">{{ roomTypeLabel(u.unit_type) }}</span></div>
               <div v-if="u.notes" class="text-sm text-gray-500 dark:text-gray-400">{{ u.notes }}</div>
             </div>
             <div class="flex items-center gap-2">
@@ -1662,9 +1662,8 @@ onMounted(refreshAll)
         </label>
         <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.timeshare.unitType') }}
           <select v-model="newUnitForm.unit_type" class="min-h-[44px] w-full mt-1 bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-700 dark:text-gray-300 text-sm rounded-xl px-3 py-2">
-            <option value="2R">2R</option>
-            <option value="4R">4R</option>
-            <option value="6R">6R</option>
+            <option value="Studio">Studio</option>
+            <option value="Chalet">Chalet</option>
           </select>
         </label>
         <label class="block text-sm font-bold text-gray-700 dark:text-gray-300">{{ t('backoffice.timeshare.unitNotesOptional') }}
@@ -1756,7 +1755,7 @@ onMounted(refreshAll)
           <span class="font-bold">{{ transferModal.contract.unit_id ? (unitNumberById[transferModal.contract.unit_id] ?? `#${transferModal.contract.unit_id}`) : '—' }}</span>
         </p>
         <select v-model="transferModal.new_unit_id" class="min-h-[44px] w-full bg-white dark:bg-surface border border-stone-200 dark:border-border text-gray-900 dark:text-gray-100 rounded-xl px-3 py-2 text-sm">
-          <option value="">{{ t('backoffice.timeshare.selectNewUnitOfType', { type: transferModal.contract.room_type }) }}</option>
+          <option value="">{{ t('backoffice.timeshare.selectNewUnitOfType', { type: roomTypeLabel(transferModal.contract.room_type) }) }}</option>
           <option v-for="u in transferCandidateUnits" :key="u.id" :value="u.id" :disabled="u.status === 'maintenance'">
             {{ u.unit_number }}{{ u.status === 'maintenance' ? ` (${t('backoffice.timeshare.underMaintenance')})` : '' }}
           </option>
@@ -1888,7 +1887,7 @@ onMounted(refreshAll)
             <div v-for="c in profileModal.contracts" :key="c.id" class="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-stone-50 dark:bg-gray-800/60 border border-stone-100 dark:border-border/50">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="font-bold text-gray-900 dark:text-gray-100">{{ c.contract_number }}</span>
-                <span :class="roomTypeBadge(c.room_type)">{{ c.room_type }}</span>
+                <span :class="roomTypeBadge(c.room_type)">{{ roomTypeLabel(c.room_type) }}</span>
                 <AppBadge size="sm" :variant="contractStatusVariant[c.status] ?? 'neutral'">{{ statusLabel(c.status) }}</AppBadge>
               </div>
               <span class="font-bold text-green-600 dark:text-green-300">{{ fmt(c.total_value) }}</span>

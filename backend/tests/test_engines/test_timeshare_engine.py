@@ -202,7 +202,7 @@ class TestGetUpcomingVisits:
             contract_id=1,
             customer_name="Test",
             customer_phone="01000000000",
-            room_type="2R",
+            room_type="Studio",
             week_number=week,
             nights_per_year=7,
             total_value=Decimal("100000"),

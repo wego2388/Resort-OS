@@ -43,7 +43,7 @@ class Room(Base, TimestampMixin):
     __table_args__ = (
         UniqueConstraint("branch_id", "name", name="uq_room_branch_name"),
         CheckConstraint(
-            "view_type IN ('none', 'side_sea', 'sea')",
+            "view_type IN ('none', 'garden_view', 'side_sea', 'sea')",
             name="ck_rooms_view_type_valid",
         ),
     )

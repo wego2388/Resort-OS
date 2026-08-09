@@ -49,7 +49,7 @@ def _make_ts_contract(db, branch, manager, phone=None, week_number=None, status=
         branch_id=branch.id,
         customer_name=f"TSCustomer-{uuid.uuid4().hex[:4]}",
         customer_phone=phone,
-        room_type="2R",
+        room_type="Studio",
         total_value=Decimal("60000"),
         down_payment=Decimal("10000"),
         installments=12,
@@ -94,7 +94,7 @@ def _make_maintenance_due(db, contract, due_date, status="pending", amount=Decim
     return due
 
 
-def _make_ts_unit(db, branch, unit_type="2R", status="available", unit_number=None):
+def _make_ts_unit(db, branch, unit_type="Studio", status="available", unit_number=None):
     from app.modules.timeshare.models import TimeshareUnit
     unit = TimeshareUnit(
         branch_id=branch.id, unit_type=unit_type, status=status,
@@ -566,7 +566,7 @@ class TestTimeshareProcessWaitlist:
             branch = _make_branch(db)
             manager = _make_manager(db)
             contract = _make_ts_contract(db, branch, manager, phone="01055500000", week_number=None)
-            _make_ts_unit(db, branch, unit_type="2R", status="available")
+            _make_ts_unit(db, branch, unit_type="Studio", status="available")
             entry = _make_waitlist_entry(db, branch, contract)
 
             self._run(db)

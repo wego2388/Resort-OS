@@ -34,7 +34,7 @@ interface Room {
   id: number
   name: string
   floor: number
-  view_type: 'none' | 'side_sea' | 'sea'
+  view_type: 'none' | 'garden_view' | 'side_sea' | 'sea'
   notes?: string | null
   status: 'available' | 'occupied' | 'reserved' | 'checkout_pending' | 'maintenance'
   room_type_id: number

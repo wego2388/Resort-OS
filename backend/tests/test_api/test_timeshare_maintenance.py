@@ -33,7 +33,7 @@ def branch(db: Session):
 @pytest.fixture
 def unit(db: Session, branch):
     from app.modules.timeshare.models import TimeshareUnit
-    u = TimeshareUnit(branch_id=branch.id, unit_number="A-201", unit_type="2R")
+    u = TimeshareUnit(branch_id=branch.id, unit_number="A-201", unit_type="Studio")
     db.add(u); db.flush()
     return u
 
@@ -54,7 +54,7 @@ def make_contract_with_maintenance(db, branch, maintenance_fee=Decimal("2000"), 
         branch_id=branch.id,
         customer_name="سارة عبد الرحمن",
         customer_phone="01000000002",
-        room_type="2R",
+        room_type="Studio",
         total_value=Decimal("120000"),
         down_payment=Decimal("20000"),
         installments=12, installment_period=1,

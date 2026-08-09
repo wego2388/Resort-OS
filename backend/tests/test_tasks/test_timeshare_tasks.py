@@ -36,7 +36,7 @@ class TestMarkOverdue:
         branch = make_branch(db)
         past_due = date.today() - timedelta(days=5)
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل متأخر", room_type="2R",
+            branch_id=branch.id, customer_name="عميل متأخر", room_type="Studio",
             total_value=Decimal("60000"), down_payment=Decimal("6000"),
             installments=6, installment_period=1,
             first_installment_date=past_due, start_date=date(2026, 1, 1),
@@ -55,7 +55,7 @@ class TestMarkOverdue:
         branch = make_branch(db)
         past_due = date.today() - timedelta(days=10)
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل مجمّد", room_type="2R",
+            branch_id=branch.id, customer_name="عميل مجمّد", room_type="Studio",
             total_value=Decimal("60000"), down_payment=Decimal("6000"),
             installments=6, installment_period=1,
             first_installment_date=past_due, start_date=date(2026, 1, 1),
@@ -76,7 +76,7 @@ class TestMarkOverdue:
         branch = make_branch(db)
         past_due = date.today() - timedelta(days=10)
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل سدد جزء", room_type="2R",
+            branch_id=branch.id, customer_name="عميل سدد جزء", room_type="Studio",
             total_value=Decimal("60000"), down_payment=Decimal("6000"),
             installments=6, installment_period=1,
             first_installment_date=past_due, start_date=date(2026, 1, 1),
@@ -105,7 +105,7 @@ class TestMarkOverdue:
         branch = make_branch(db)
         future_due = date.today() + timedelta(days=30)
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل ملتزم", room_type="2R",
+            branch_id=branch.id, customer_name="عميل ملتزم", room_type="Studio",
             total_value=Decimal("60000"), down_payment=Decimal("6000"),
             installments=6, installment_period=1,
             first_installment_date=future_due, start_date=date(2026, 1, 1),

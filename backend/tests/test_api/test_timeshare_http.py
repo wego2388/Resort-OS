@@ -45,7 +45,7 @@ def contract_payload(branch_id: int) -> dict:
     return {
         "branch_id": branch_id,
         "customer_name": "منى عبد الله",
-        "room_type": "2R",
+        "room_type": "Studio",
         "nights_per_year": 7,
         "season": "high",
         "total_value": "100000.00",
@@ -110,10 +110,10 @@ class TestTimeshareUnitTransfer:
 
     def _make_units(self, db, branch):
         from app.modules.timeshare.models import TimeshareUnit
-        old_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R", status="available")
-        new_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="2R", status="available")
-        other_type_unit = TimeshareUnit(branch_id=branch.id, unit_number="B-201", unit_type="4R", status="available")
-        maint_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-103", unit_type="2R", status="maintenance")
+        old_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio", status="available")
+        new_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="Studio", status="available")
+        other_type_unit = TimeshareUnit(branch_id=branch.id, unit_number="B-201", unit_type="Chalet", status="available")
+        maint_unit = TimeshareUnit(branch_id=branch.id, unit_number="A-103", unit_type="Studio", status="maintenance")
         db.add_all([old_unit, new_unit, other_type_unit, maint_unit])
         db.commit()
         return old_unit, new_unit, other_type_unit, maint_unit
@@ -267,7 +267,7 @@ class TestTimeshareVisitAndUnitsHttp:
     def test_create_visit_allocates_real_unit(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         from app.modules.timeshare.models import TimeshareUnit
         branch = make_branch_committed(db)
-        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
         db.add(unit); db.commit()
 
         contract = client.post(
@@ -310,7 +310,7 @@ class TestTimeshareVisitAndUnitsHttp:
         الزيارة الثانية لازم ترفض بـ 400 حقيقي عبر الـ API."""
         from app.modules.timeshare.models import TimeshareUnit
         branch = make_branch_committed(db)
-        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
         db.add(unit); db.commit()
 
         contract = client.post(
@@ -346,7 +346,7 @@ class TestTimeshareVisitAndUnitsHttp:
     def test_list_units_endpoint(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         from app.modules.timeshare.models import TimeshareUnit
         branch = make_branch_committed(db)
-        db.add(TimeshareUnit(branch_id=branch.id, unit_number="B-201", unit_type="4R"))
+        db.add(TimeshareUnit(branch_id=branch.id, unit_number="B-201", unit_type="Chalet"))
         db.commit()
 
         resp = client.get(f"/api/v1/timeshare/units?branch_id={branch.id}", headers=timeshare_admin_headers)
@@ -364,7 +364,7 @@ class TestTimeshareUnitCrud:
         branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/timeshare/units",
-            json={"branch_id": branch.id, "unit_type": "2R", "unit_number": "C-101"},
+            json={"branch_id": branch.id, "unit_type": "Studio", "unit_number": "C-101"},
             headers=timeshare_admin_headers,
         )
         assert resp.status_code == 201, resp.text
@@ -377,12 +377,12 @@ class TestTimeshareUnitCrud:
     ):
         from app.modules.timeshare.models import TimeshareUnit
         branch = make_branch_committed(db)
-        db.add(TimeshareUnit(branch_id=branch.id, unit_number="C-101", unit_type="2R"))
+        db.add(TimeshareUnit(branch_id=branch.id, unit_number="C-101", unit_type="Studio"))
         db.commit()
 
         resp = client.post(
             "/api/v1/timeshare/units",
-            json={"branch_id": branch.id, "unit_type": "4R", "unit_number": "C-101"},
+            json={"branch_id": branch.id, "unit_type": "Chalet", "unit_number": "C-101"},
             headers=timeshare_admin_headers,
         )
         assert resp.status_code == 400
@@ -391,7 +391,7 @@ class TestTimeshareUnitCrud:
     def test_update_unit_status_to_maintenance(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         from app.modules.timeshare.models import TimeshareUnit
         branch = make_branch_committed(db)
-        unit = TimeshareUnit(branch_id=branch.id, unit_number="C-102", unit_type="2R", status="available")
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="C-102", unit_type="Studio", status="available")
         db.add(unit)
         db.commit()
 
@@ -415,7 +415,7 @@ class TestTimeshareUnitCrud:
         branch = make_branch_committed(db)
         resp = client.post(
             "/api/v1/timeshare/units",
-            json={"branch_id": branch.id, "unit_type": "2R", "unit_number": "C-103"},
+            json={"branch_id": branch.id, "unit_type": "Studio", "unit_number": "C-103"},
             headers=cashier_headers,
         )
         assert resp.status_code == 403
@@ -508,10 +508,10 @@ class TestTimeshareReportingHttp:
         from app.modules.timeshare.models import TimeshareUnit, TimeshareVisit
 
         branch = make_branch_committed(db)
-        occupied_unit = TimeshareUnit(branch_id=branch.id, unit_number="OCC-1", unit_type="2R", status="available")
+        occupied_unit = TimeshareUnit(branch_id=branch.id, unit_number="OCC-1", unit_type="Studio", status="available")
         db.add(occupied_unit)
-        db.add(TimeshareUnit(branch_id=branch.id, unit_number="OCC-2", unit_type="2R", status="available"))
-        db.add(TimeshareUnit(branch_id=branch.id, unit_number="OCC-3", unit_type="2R", status="maintenance"))
+        db.add(TimeshareUnit(branch_id=branch.id, unit_number="OCC-2", unit_type="Studio", status="available"))
+        db.add(TimeshareUnit(branch_id=branch.id, unit_number="OCC-3", unit_type="Studio", status="maintenance"))
         db.flush()
 
         contract = client.post(
@@ -614,7 +614,7 @@ class TestTimeshareReportingHttp:
         v = mine[0]
         assert v["days_until"] >= 0
         assert v["week_number"] == future_week
-        assert v["room_type"] == "2R"
+        assert v["room_type"] == "Studio"
         assert "visit_start" in v and "visit_end" in v
 
     def test_upcoming_visits_excludes_cancelled_contract(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
@@ -657,7 +657,7 @@ class TestTimeshareReportingHttp:
         assert partner["total_down"] == 20000.0
         # 20000 * (1 - 30/100) = 14000
         assert partner["resort_share"] == 14000.0
-        assert any(r["room_type"] == "2R" for r in data["by_room_type"])
+        assert any(r["room_type"] == "Studio" for r in data["by_room_type"])
         assert any(b["batch_number"] == 7 for b in data["by_batch"])
         assert data["collection"]["collected"] == float(first_inst["amount"])
         assert data["collection"]["rate"] > 0
@@ -850,7 +850,7 @@ class TestTimeshareRouterMiscHttp:
         first = resp.json()["installments"][0]
         assert first["customer_name"] == "منى عبد الله"
         assert first["customer_phone"] == "01099887766"
-        assert first["room_type"] == "2R"
+        assert first["room_type"] == "Studio"
 
     def test_cancel_already_cancelled_returns_400(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         branch = make_branch_committed(db)
@@ -870,7 +870,7 @@ class TestTimeshareRouterMiscHttp:
     def test_list_visits_http(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         from app.modules.timeshare.models import TimeshareUnit
         branch = make_branch_committed(db)
-        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-301", unit_type="2R")
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-301", unit_type="Studio")
         db.add(unit); db.commit()
         contract = client.post(
             "/api/v1/timeshare/contracts", json=contract_payload(branch.id), headers=timeshare_admin_headers,
@@ -906,7 +906,7 @@ class TestTimeshareRouterMiscHttp:
             "installments", "start_date", "first_installment_date",
         ])
         ws.append([
-            "سميرة فؤاد", "4R", 80000, 16000, 6,
+            "سميرة فؤاد", "Chalet", 80000, 16000, 6,
             str(date.today()), str(date.today() + timedelta(days=30)),
         ])
         buf = io.BytesIO()
@@ -929,7 +929,7 @@ class TestTimeshareRouterMiscHttp:
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.append(["customer_name", "room_type"])  # أعمدة إلزامية ناقصة
-        ws.append(["ناقص", "2R"])
+        ws.append(["ناقص", "Studio"])
         buf = io.BytesIO()
         wb.save(buf)
         buf.seek(0)

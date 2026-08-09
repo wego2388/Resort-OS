@@ -341,11 +341,11 @@ class TestGuestReviewInsights:
         from app.modules.timeshare import services as ts_services
 
         branch = make_branch_committed(db)
-        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
         db.add(unit); db.commit()
 
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل تايم شير", room_type="2R",
+            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio",
             total_value=Decimal("120000"), down_payment=Decimal("20000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -408,10 +408,10 @@ class TestGuestReviewInsights:
 
         real_branch = make_branch_committed(db)
         other_branch = make_branch_committed(db)
-        unit = TimeshareUnit(branch_id=real_branch.id, unit_number="A-103", unit_type="2R")
+        unit = TimeshareUnit(branch_id=real_branch.id, unit_number="A-103", unit_type="Studio")
         db.add(unit); db.commit()
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=real_branch.id, customer_name="عميل تايم شير آخر", room_type="2R",
+            branch_id=real_branch.id, customer_name="عميل تايم شير آخر", room_type="Studio",
             total_value=Decimal("120000"), down_payment=Decimal("20000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -442,11 +442,11 @@ class TestGuestReviewInsights:
         from app.modules.timeshare import services as ts_services
 
         branch = make_branch_committed(db)
-        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="2R")
+        unit = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="Studio")
         db.add(unit); db.commit()
 
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل تايم شير", room_type="2R",
+            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio",
             customer_phone="+201001234567",
             total_value=Decimal("120000"), down_payment=Decimal("20000"),
             installments=12, installment_period=1,

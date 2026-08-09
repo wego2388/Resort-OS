@@ -13,11 +13,11 @@ def _make_timeshare_visit(db, branch):
     from app.modules.timeshare.schemas import TimeshareContractCreate, TimeshareVisitCreate
     from app.modules.timeshare import services as ts_services
 
-    unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+    unit = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
     db.add(unit); db.flush()
 
     contract = ts_services.create_contract(db, TimeshareContractCreate(
-        branch_id=branch.id, customer_name="عميل تايم شير", room_type="2R",
+        branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio",
         total_value=Decimal("120000"), down_payment=Decimal("20000"),
         installments=12, installment_period=1,
         first_installment_date=date(2026, 8, 1),

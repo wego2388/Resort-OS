@@ -320,12 +320,12 @@ class TestReviewsListEndpoint:
         from app.modules.timeshare import services as ts_services
 
         branch = make_branch_committed(db)
-        unit1 = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
-        unit2 = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="2R")
+        unit1 = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
+        unit2 = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="Studio")
         db.add_all([unit1, unit2]); db.commit()
 
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل تايم شير", room_type="2R",
+            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio",
             total_value=_D("120000"), down_payment=_D("20000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),

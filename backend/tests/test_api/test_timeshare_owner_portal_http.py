@@ -34,7 +34,7 @@ def make_owner_contract(db, branch, *, phone="01055512345", status="active"):
         contract_number=f"TS-OWNER-{uuid.uuid4().hex[:8].upper()}",
         customer_name="صاحب عقد اختباري",
         customer_phone=phone,
-        room_type="2R",
+        room_type="Studio",
         nights_per_year=7,
         season="high",
         total_value=Decimal("100000.00"),
@@ -154,7 +154,7 @@ class TestOwnerPortalContractPdf:
         assert resp.status_code == 401
 
 
-def make_unit(db, branch, *, unit_type="2R"):
+def make_unit(db, branch, *, unit_type="Studio"):
     from app.modules.timeshare.models import TimeshareUnit
     unit = TimeshareUnit(
         branch_id=branch.id, unit_number=f"U-{uuid.uuid4().hex[:6].upper()}",

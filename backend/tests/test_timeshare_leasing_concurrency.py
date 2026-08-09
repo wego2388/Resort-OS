@@ -99,7 +99,7 @@ def make_timeshare_contract_with_installment(db, branch, *, installment_amount=D
     from app.modules.timeshare.models import TimeshareContract, TimeshareInstallment
     contract = TimeshareContract(
         branch_id=branch.id, contract_number=f"TS-{uuid.uuid4().hex[:10].upper()}",
-        customer_name="عميل اختبار التزامن", room_type="2R",
+        customer_name="عميل اختبار التزامن", room_type="Studio",
         nights_per_year=7, season="high",
         total_value=Decimal("120000"), down_payment=Decimal("12000"),
         installments=12, installment_period=1,

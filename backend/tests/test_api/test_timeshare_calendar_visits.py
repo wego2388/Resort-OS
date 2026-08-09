@@ -44,7 +44,7 @@ def _link_shared_users_to_branch(db, branch_id: int) -> None:
     db.commit()
 
 
-def _make_contract(db, branch_id, week_number=None, status="active", room_type="2R"):
+def _make_contract(db, branch_id, week_number=None, status="active", room_type="Studio"):
     """ينشئ عقداً مع تسجيل signed_by = 0 (لا يحتاج مستخدم حقيقي في هذه الاختبارات)."""
     from app.modules.timeshare import crud as ts_crud
     from app.modules.timeshare.schemas import TimeshareContractCreate
@@ -307,17 +307,17 @@ class TestAvailableWeeks:
     def test_room_type_filter(self, client: TestClient, db, fake_redis, timeshare_admin_headers):
         """فلتر room_type يعزل النتائج — عقد 2R لا يؤثر على متاح 4R."""
         branch = _make_branch(db)
-        _make_contract(db, branch.id, week_number=5, room_type="2R")
+        _make_contract(db, branch.id, week_number=5, room_type="Studio")
         year = date.today().year
 
         resp_2r = client.get(
             "/api/v1/timeshare/available-weeks",
-            params={"branch_id": branch.id, "year": year, "room_type": "2R"},
+            params={"branch_id": branch.id, "year": year, "room_type": "Studio"},
             headers=timeshare_admin_headers,
         )
         resp_4r = client.get(
             "/api/v1/timeshare/available-weeks",
-            params={"branch_id": branch.id, "year": year, "room_type": "4R"},
+            params={"branch_id": branch.id, "year": year, "room_type": "Chalet"},
             headers=timeshare_admin_headers,
         )
         assert resp_2r.status_code == 200
@@ -507,12 +507,12 @@ class TestGetBookedWeekNumbers:
         db.add(b)
         db.commit()
 
-        _make_contract(db, b.id, week_number=12, room_type="2R")
-        _make_contract(db, b.id, week_number=15, room_type="4R")
+        _make_contract(db, b.id, week_number=12, room_type="Studio")
+        _make_contract(db, b.id, week_number=15, room_type="Chalet")
         year = date.today().year
 
-        booked_2r = ts_crud.get_booked_week_numbers(db, b.id, year, room_type="2R")
-        booked_4r = ts_crud.get_booked_week_numbers(db, b.id, year, room_type="4R")
+        booked_2r = ts_crud.get_booked_week_numbers(db, b.id, year, room_type="Studio")
+        booked_4r = ts_crud.get_booked_week_numbers(db, b.id, year, room_type="Chalet")
         assert 12 in booked_2r
         assert 15 not in booked_2r
         assert 15 in booked_4r

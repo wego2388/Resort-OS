@@ -68,7 +68,7 @@ interface RoomOption {
   floor: number
   room_type_id: number
   status: string
-  view_type: 'none' | 'side_sea' | 'sea'
+  view_type: 'none' | 'garden_view' | 'side_sea' | 'sea'
 }
 
 interface RatePlanOption {

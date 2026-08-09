@@ -30,7 +30,7 @@ def unit(db: Session, branch):
     """وحدة تايم شير حقيقية (2R) متاحة — لازمة عشان create_visit يقدر يخصّص
     وحدة فعلية (allocation logic حقيقي، مش مجرد سطر تاريخ من غير حجز حقيقي)."""
     from app.modules.timeshare.models import TimeshareUnit
-    u = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="2R")
+    u = TimeshareUnit(branch_id=branch.id, unit_number="A-101", unit_type="Studio")
     db.add(u); db.flush()
     return u
 
@@ -41,7 +41,7 @@ def contract(db: Session, branch):
         branch_id=branch.id,
         customer_name="أحمد محمد",
         customer_phone="01000000001",
-        room_type="2R",
+        room_type="Studio",
         week_number=28,
         nights_per_year=7,
         total_value=Decimal("120000"),
@@ -73,7 +73,7 @@ class TestTimeshareContract:
         data = TimeshareContractCreate(
             branch_id=branch.id,
             customer_name="عميل",
-            room_type="2R",
+            room_type="Studio",
             total_value=Decimal("50000"),
             down_payment=Decimal("60000"),  # أكبر من الإجمالي
             installments=12, installment_period=1,
@@ -91,7 +91,7 @@ class TestTimeshareContract:
         data = TimeshareContractCreate(
             branch_id=branch.id,
             customer_name="عميل",
-            room_type="2R",
+            room_type="Studio",
             total_value=Decimal("50000"),
             down_payment=Decimal("5000"),
             installments=12, installment_period=1,
@@ -107,7 +107,7 @@ class TestTimeshareContract:
         data = TimeshareContractCreate(
             branch_id=branch.id,
             customer_name="عميل",
-            room_type="2R",
+            room_type="Studio",
             total_value=Decimal("50000"),
             down_payment=Decimal("5000"),
             installments=12, installment_period=1,
@@ -123,7 +123,7 @@ class TestTimeshareContract:
         data = TimeshareContractCreate(
             branch_id=branch.id,
             customer_name="عميل",
-            room_type="2R",
+            room_type="Studio",
             total_value=Decimal("50000"),
             down_payment=Decimal("5000"),
             installments=12, installment_period=1,
@@ -272,7 +272,7 @@ class TestSalesDashboard:
         # عقد تاني في حالة draft
         data = TimeshareContractCreate(
             branch_id=branch.id, customer_name="Draft Guy", customer_phone="01111111111",
-            room_type="2R", nights_per_year=7, total_value=Decimal("100000"),
+            room_type="Studio", nights_per_year=7, total_value=Decimal("100000"),
             down_payment=Decimal("10000"), installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),
         )
@@ -349,7 +349,7 @@ class TestDeferredRevenueJournalPosting:
         cash, revenue = make_finance_accounts(db, branch)
 
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="سامي عادل", room_type="2R",
+            branch_id=branch.id, customer_name="سامي عادل", room_type="Studio",
             total_value=Decimal("80000"), down_payment=Decimal("15000"),
             installments=10, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -377,7 +377,7 @@ class TestDeferredRevenueJournalPosting:
         make_finance_accounts(db, branch)
 
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="بدون دفعة", room_type="2R",
+            branch_id=branch.id, customer_name="بدون دفعة", room_type="Studio",
             total_value=Decimal("50000"), down_payment=Decimal("0"),
             installments=10, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -394,7 +394,7 @@ class TestDeferredRevenueJournalPosting:
         from app.modules.finance import crud as finance_crud
 
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="بدون حسابات", room_type="2R",
+            branch_id=branch.id, customer_name="بدون حسابات", room_type="Studio",
             total_value=Decimal("60000"), down_payment=Decimal("10000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -586,7 +586,7 @@ class TestTimeshareVisit:
         from app.modules.timeshare.models import TimeshareUnit
         from app.modules.timeshare.schemas import TimeshareContractCreate, TimeshareVisitCreate
 
-        unit2 = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="2R")
+        unit2 = TimeshareUnit(branch_id=branch.id, unit_number="A-102", unit_type="Studio")
         db.add(unit2); db.flush()
 
         first_visit = services.create_visit(db, TimeshareVisitCreate(
@@ -596,7 +596,7 @@ class TestTimeshareVisit:
         assert first_visit.unit_id == unit.id
 
         contract2 = services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل ثاني", room_type="2R",
+            branch_id=branch.id, customer_name="عميل ثاني", room_type="Studio",
             total_value=Decimal("120000"), down_payment=Decimal("20000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -667,7 +667,7 @@ class TestExcelImport:
             "customer_name", "room_type", "total_value", "down_payment",
             "installments", "start_date", "first_installment_date",
         ]
-        rows = [["ياسمين علي", "2R", 90000, 10000, 10, "2026-07-01", "2026-08-01"]]
+        rows = [["ياسمين علي", "Studio", 90000, 10000, 10, "2026-07-01", "2026-08-01"]]
         content = self._build_workbook(headers, rows)
 
         result = services.import_contracts_excel(db, branch.id, content, signed_by=1)
@@ -677,7 +677,7 @@ class TestExcelImport:
 
     def test_import_missing_required_columns_raises(self, db: Session, branch):
         headers = ["customer_name", "room_type"]  # ناقص أعمدة إلزامية
-        rows = [["عميل", "2R"]]
+        rows = [["عميل", "Studio"]]
         content = self._build_workbook(headers, rows)
 
         with pytest.raises(ValueError, match="أعمدة إلزامية ناقصة"):
@@ -702,8 +702,8 @@ class TestExcelImport:
             "installments", "start_date", "first_installment_date", "form_number",
         ]
         rows = [
-            ["عميل واحد", "2R", 50000, 5000, 6, "2026-07-01", "2026-08-01", "FORM-100"],
-            ["عميل نفس الفورم", "2R", 60000, 6000, 6, "2026-07-01", "2026-08-01", "FORM-100"],
+            ["عميل واحد", "Studio", 50000, 5000, 6, "2026-07-01", "2026-08-01", "FORM-100"],
+            ["عميل نفس الفورم", "Studio", 60000, 6000, 6, "2026-07-01", "2026-08-01", "FORM-100"],
         ]
         content = self._build_workbook(headers, rows)
 
@@ -719,7 +719,7 @@ class TestExcelImport:
             "customer_name", "room_type", "total_value", "down_payment",
             "installments", "start_date", "first_installment_date",
         ]
-        rows = [["ياسمين علي", "2R", 90000, 10000, 10, "2026-07-01", "2026-08-01"]]
+        rows = [["ياسمين علي", "Studio", 90000, 10000, 10, "2026-07-01", "2026-08-01"]]
         content = self._build_workbook(headers, rows)
 
         first = services.import_contracts_excel(db, branch.id, content, signed_by=1)
@@ -744,8 +744,8 @@ class TestExcelImport:
             "installments", "start_date", "first_installment_date",
         ]
         rows = [
-            ["عميل فاسد", "2R", 10000, 90000, 6, "2026-07-01", "2026-08-01"],  # down_payment > total
-            ["عميل صحيح", "2R", 50000, 5000, 6, "2026-07-01", "2026-08-01"],
+            ["عميل فاسد", "Studio", 10000, 90000, 6, "2026-07-01", "2026-08-01"],  # down_payment > total
+            ["عميل صحيح", "Studio", 50000, 5000, 6, "2026-07-01", "2026-08-01"],
         ]
         content = self._build_workbook(headers, rows)
 
@@ -771,7 +771,7 @@ class TestTimeshareReports:
 
     def test_get_calendar_empty_when_no_week_number(self, db: Session, branch):
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="بدون أسبوع", room_type="2R",
+            branch_id=branch.id, customer_name="بدون أسبوع", room_type="Studio",
             total_value=Decimal("40000"), down_payment=Decimal("4000"),
             installments=6, installment_period=1,
             first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),
@@ -801,14 +801,14 @@ class TestTimeshareReports:
         stats = services.get_stats(db, branch.id)
         assert stats["collection"]["collected"] >= float(inst.amount)
         assert stats["collection"]["rate"] > 0
-        assert any(r["room_type"] == "2R" for r in stats["by_room_type"])
+        assert any(r["room_type"] == "Studio" for r in stats["by_room_type"])
 
     def test_get_stats_by_partner_includes_resort_net_share(self, db: Session, branch):
         """صافي حصة المنتجع بعد نصيب الشريك (resort_share) — خاصية حقيقية من
         elkheima-beach-resort (khayma_share) كانت محسوبة في الـ engine
         (calculate_partner_share) لكن غير مُستخدَمة في أي مكان."""
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل شريك", room_type="4R",
+            branch_id=branch.id, customer_name="عميل شريك", room_type="Chalet",
             total_value=Decimal("200000"), down_payment=Decimal("40000"),
             installments=10, installment_period=1,
             first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),

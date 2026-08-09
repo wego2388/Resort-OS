@@ -28,7 +28,7 @@ interface Room {
   floor: number
   status: 'available' | 'occupied' | 'reserved' | 'checkout_pending' | 'maintenance'
   room_type_id: number
-  view_type: 'none' | 'side_sea' | 'sea'
+  view_type: 'none' | 'garden_view' | 'side_sea' | 'sea'
 }
 interface RoomTypeOption { id: number; name: string; name_ar?: string | null }
 interface CurrentBookingInfo { booking_id: number; guest_name: string; check_out: string }

@@ -30,7 +30,7 @@ class TimeshareContract(Base, TimestampMixin):
     customer_phone:        Mapped[str | None]    = mapped_column(String(20), nullable=True)
     customer_email:        Mapped[str | None]    = mapped_column(String(150), nullable=True)
     customer_national_id:  Mapped[str | None]    = mapped_column(EncryptedString(255), nullable=True)
-    room_type:             Mapped[str]           = mapped_column(String(10))   # 2R|4R|6R
+    room_type:             Mapped[str]           = mapped_column(String(10))   # Studio|Chalet
     unit_id:               Mapped[int | None]    = mapped_column(ForeignKey("timeshare_units.id", ondelete="SET NULL"), nullable=True)
     # وحدة مخصَّصة بشكل دائم للعقد (نفس الوحدة كل سنة) — None=عائم (أي وحدة متاحة
     # من نفس room_type وقت الحجز، بنفس منطق week_number: 1-52 ثابت مقابل None=عائم)
@@ -184,7 +184,7 @@ class TimeshareUnit(Base, TimestampMixin):
     id:           Mapped[int]        = mapped_column(primary_key=True)
     branch_id:    Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
     unit_number:  Mapped[str]        = mapped_column(String(20))     # "A-101"
-    unit_type:    Mapped[str]        = mapped_column(String(10))     # 2R|4R|6R — يطابق TimeshareContract.room_type
+    unit_type:    Mapped[str]        = mapped_column(String(10))     # Studio|Chalet — يطابق TimeshareContract.room_type
     status:       Mapped[str]        = mapped_column(String(20), default="available")
     # available|occupied|maintenance
     notes:        Mapped[str | None] = mapped_column(String(300), nullable=True)

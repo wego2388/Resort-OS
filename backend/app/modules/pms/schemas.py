@@ -32,7 +32,7 @@ class RoomCreate(BaseModel):
     room_type_id: int
     name:         str = Field(..., max_length=20)
     floor:        int = 1
-    view_type:    str = Field("none", pattern=r"^(none|side_sea|sea)$")
+    view_type:    str = Field("none", pattern=r"^(none|garden_view|side_sea|sea)$")
     notes:        Optional[str] = None
 
 

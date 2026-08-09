@@ -30,13 +30,13 @@ CONFIRMATION_PHRASE = "REPLACE EL KHEIMA ROOMS WITH 14 REAL UNITS"
 _ADVISORY_LOCK_KEY = 4_502_026_080_814
 
 ROOM_SPECS: tuple[tuple[str, str, str], ...] = (
-    ("101A", "chalet", "none"),
-    ("102A", "chalet", "none"),
-    ("102S", "studio", "none"),
-    ("103A", "chalet", "none"),
-    ("124S", "studio", "none"),
-    ("111A", "chalet", "none"),
-    ("111S", "studio", "none"),
+    ("101A", "chalet", "garden_view"),
+    ("102A", "chalet", "garden_view"),
+    ("102S", "studio", "garden_view"),
+    ("103A", "chalet", "garden_view"),
+    ("124S", "studio", "garden_view"),
+    ("111A", "chalet", "garden_view"),
+    ("111S", "studio", "garden_view"),
     ("114A", "chalet", "side_sea"),
     ("124A", "chalet", "side_sea"),
     ("112S", "studio", "sea"),

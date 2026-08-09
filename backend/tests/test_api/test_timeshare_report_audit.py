@@ -79,7 +79,7 @@ def _make_contract(db, branch_id, manager_id):
         branch_id=branch_id,
         customer_name=f"عميل-{uuid.uuid4().hex[:4]}",
         customer_phone=f"010{uuid.uuid4().int % 100000000:08d}",
-        room_type="2R",
+        room_type="Studio",
         total_value=Decimal("60000"),
         down_payment=Decimal("10000"),
         installments=6,

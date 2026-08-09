@@ -14,7 +14,7 @@ class TimeshareContractCreate(BaseModel):
     customer_phone:         Optional[str] = None
     customer_email:         Optional[str] = None
     customer_national_id:   Optional[str] = None
-    room_type:              str = Field(..., pattern=r"^(2R|4R|6R)$")
+    room_type:              str = Field(..., pattern=r"^(Studio|Chalet)$")
     unit_id:                Optional[int] = None  # وحدة مخصَّصة دائمًا — None=عائم
     week_number:            Optional[int] = Field(None, ge=1, le=52)
     nights_per_year:        int = Field(7, ge=1)
@@ -204,13 +204,13 @@ class TimeshareUnitRead(BaseModel):
 class TimeshareUnitCreate(BaseModel):
     branch_id: int
     unit_number: str = Field(..., max_length=20)
-    unit_type: str = Field(..., pattern=r"^(2R|4R|6R)$")
+    unit_type: str = Field(..., pattern=r"^(Studio|Chalet)$")
     notes: Optional[str] = Field(None, max_length=300)
 
 
 class TimeshareUnitUpdate(BaseModel):
     unit_number: Optional[str] = Field(None, max_length=20)
-    unit_type: Optional[str] = Field(None, pattern=r"^(2R|4R|6R)$")
+    unit_type: Optional[str] = Field(None, pattern=r"^(Studio|Chalet)$")
     status: Optional[str] = Field(None, pattern=r"^(available|occupied|maintenance)$")
     notes: Optional[str] = Field(None, max_length=300)
 

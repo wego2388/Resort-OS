@@ -320,7 +320,7 @@ class TestTimeshareVisitRemindersWrapper:
                 branch_id=branch.id,
                 customer_name="Visit Reminder",
                 customer_phone="01077778888",
-                room_type="2R",
+                room_type="Studio",
                 total_value=Decimal("60000"),
                 down_payment=Decimal("10000"),
                 installments=12,

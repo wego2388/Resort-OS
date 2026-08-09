@@ -121,7 +121,7 @@ def _make_ts_contract(db, branch, manager):
     data = TimeshareContractCreate(
         branch_id=branch.id,
         customer_name=f"WR-{uuid.uuid4().hex[:4]}",
-        room_type="2R",
+        room_type="Studio",
         total_value=Decimal("50000"),
         down_payment=Decimal("5000"),
         installments=12,
