@@ -36,6 +36,7 @@
     "loginSuccess": "دخلت بنجاح!",
     "registerSuccess": "اتسجلت بنجاح!",
     "loginError": "الإيميل أو الباسورد غلط",
+    "loginRateLimited": "محاولات دخول كتيرة من نفس الشبكة — استنى شوية وحاول تاني",
     "registerError": "مقدرناش نسجلك",
     "logout": "اخرج",
     "register_2": "إنشاء حساب",
@@ -5251,6 +5252,7 @@
       "view": "الإطلالة",
       "views": {
         "none": "بدون رؤية بحر",
+        "garden_view": "إطلالة على الحديقة",
         "side_sea": "رؤية جانبية للبحر",
         "sea": "رؤية البحر"
       },
@@ -6142,7 +6144,7 @@
       "receiptNumberOptional": "رقم الإيصال (اختياري)",
       "confirmPayment": "تأكيد الدفع",
       "importContractsTitle": "استيراد عقود من Excel",
-      "importHint": "الصف الأول = أسماء الأعمدة (customer_name, room_type, total_value, down_payment, installments, start_date, first_installment_date إلزامية).",
+      "importHint": "الصف الأول = أسماء الأعمدة (customer_name, room_type, total_value, down_payment, installments, start_date, first_installment_date إلزامية). room_type يقبل: Studio أو Chalet.",
       "importedCount": "تم استيراد {count} عقد",
       "skippedCount": "تخطي {count} (مستورد سابقاً)",
       "importAction": "استيراد",
@@ -6294,6 +6296,10 @@
       "newUnit": "وحدة جديدة",
       "unitNumber": "رقم الوحدة",
       "unitType": "نوع الوحدة",
+      "unitTypes": {
+        "Studio": "أستديو",
+        "Chalet": "شاليه"
+      },
       "unitNotesOptional": "ملاحظات (اختياري)",
       "markAvailable": "إعادة تفعيل",
       "markMaintenance": "تحت الصيانة",

@@ -79,6 +79,15 @@ async function handleLogin() {
           ? t('backoffice.login.enrollmentNotProvisioned')
           : t('backoffice.login.enrollmentTokenInvalid'),
       )
+    } else if (e?.response?.status === 429) {
+      // Rate-limit middleware (app/core/rate_limit.py) returns a flat
+      // {code, message} body, not FastAPI's nested {detail: {code}} shape —
+      // falls through to the generic branch below without this check, and
+      // gets shown as "wrong email or password" even though the account and
+      // password are both fine (real incident: multiple staff testing their
+      // new accounts from the same office IP shared one 5-attempts/5-minute
+      // bucket keyed by IP, not by account).
+      toast.error(t('auth.loginRateLimited'))
     } else {
       toast.error(t('auth.loginError'))
     }

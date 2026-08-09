@@ -36,6 +36,7 @@
     "loginSuccess": "Login successful!",
     "registerSuccess": "Registration successful!",
     "loginError": "Invalid email or password",
+    "loginRateLimited": "Too many login attempts from this network — wait a moment and try again",
     "registerError": "Registration failed",
     "logout": "Logout",
     "register_2": "Register",
@@ -5251,6 +5252,7 @@
       "view": "View",
       "views": {
         "none": "No sea view",
+        "garden_view": "Garden view",
         "side_sea": "Side sea view",
         "sea": "Sea view"
       },
@@ -6142,7 +6144,7 @@
       "receiptNumberOptional": "Receipt number (optional)",
       "confirmPayment": "Confirm payment",
       "importContractsTitle": "Import contracts from Excel",
-      "importHint": "First row = column names (customer_name, room_type, total_value, down_payment, installments, start_date, first_installment_date are required).",
+      "importHint": "First row = column names (customer_name, room_type, total_value, down_payment, installments, start_date, first_installment_date are required). room_type accepts: Studio or Chalet.",
       "importedCount": "{count} contract(s) imported",
       "skippedCount": "{count} skipped (already imported)",
       "importAction": "Import",
@@ -6294,6 +6296,10 @@
       "newUnit": "New unit",
       "unitNumber": "Unit number",
       "unitType": "Unit type",
+      "unitTypes": {
+        "Studio": "Studio",
+        "Chalet": "Chalet"
+      },
       "unitNotesOptional": "Notes (optional)",
       "markAvailable": "Reactivate",
       "markMaintenance": "Under maintenance",
