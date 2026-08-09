@@ -88,11 +88,11 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `92aa769` — REL-11: أمان /ops + N+1 + دفتر يومية حقيقي (راجع REL-11 تحت) |
-| runtime code/config commit | `92aa769` |
+| Resort OS source release (منشور) | `403bbd7` — REL-12: إغلاق فجوة تسوية checkout/folio (راجع REL-12 تحت) |
+| runtime code/config commit | `403bbd7` |
 | Marketing source release | `bc48f09` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/92aa769` |
+| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/403bbd7` |
 | active Marketing release | `/opt/elkheima-marketing-releases/bc48f09` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/bc48f09` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
@@ -141,6 +141,50 @@
 | 8 | Security review + production gate | ⏳ التالي |
 | ~~9~~ | ~~Unit economics~~ | محذوف بقرار محمد |
 | ~~10~~ | ~~Scenario sandbox~~ | محذوف بقرار محمد |
+
+## REL-12 — نشر 9 أغسطس 2026 (commit `403bbd7`)
+
+**إغلاق فجوة PMS checkout/folio الموثّقة في REL-11 §8.1 — بتأكيد صريح من محمد**
+
+محمد أكّد: "الاستقبال بيحصّل كل حاجة مرة واحدة وقت الخروج" — يعني قرار
+سياسة التسوية واضح، مفيش لبس. `_post_checkout_journal` كانت بتقفل
+`booking.total_rate` (سعر الغرفة) بس مقابل حساب 1150، وأي "شحن على حساب
+الغرفة" من الشاطئ/الدايننج (`FolioCharge.charge_type` = beach/dining)
+كان بيفضل قايم على 1150 للأبد بعد الـcheckout بصمت.
+
+**الإصلاح**: بيجمع أي شحنة beach/dining لسه مش `is_settled` على فوليو
+الحجز (بما فيها VAT/service_charge) ويضيفها لمبلغ التسوية، يعلّم الشحنات
+دي settled، ويقفل الفوليو (`status=closed`). الـقفل بيتم عبر
+`finance.crud.lock_folio_for_update` (نفس القفل البلوكينج اللي
+`add_folio_charge` بتاخده) — يمنع سباق حقيقي لو شحنة جديدة بتتضاف بالظبط
+وقت الـcheckout. **قرار موثّق**: مفيش استدعاء لـ`finance.services.
+settle_folio` عمدًا — الدالة دي عندها `can_checkout` gate بيرفض أي فوليو
+عليه شحنة أصلاً قبل ما تتسوّى، يعني مش موصولة بأي مسار حقيقي فعليًا
+(فجوة منفصلة، برّه نطاق الإصلاح ده).
+
+تست جديد (`test_checkout_settles_room_charged_beach_and_dining_extras`)
+بيثبت: فوليو فيه شحنة شاطئ (300+42 ضريبة) وشحنة دايننج (150)، بعد
+checkout — القيد المحاسبي الواحد بيقفل `room_total + 300 + 42 + 150`
+بالظبط، الشحنتين بقوا `is_settled=True`، والفوليو `status=closed`.
+
+لا migration — Alembic head `d0e1f2a3b4c5` بدون تغيير.
+
+**دورة النشر (REL-12، 2026-08-09 ~15:47 Cairo):**
+- ✅ نسخة احتياطية: `resort_os_20260809_124603.dump` (620K، 1472 TOC entries — مثبّت)
+- ✅ SHA-256 أرشيف مطابق على الطرفين: `41835375faf327b836822f5aadfc90fd40e4a8114588f98dc799f342d6e5f78e`
+- ✅ rollback tags: 6 خدمات مؤرشفة كـ `resort-os-rollback/<svc>:pre-403bbd7`
+- ✅ rollback manifest: `/var/backups/resort-os/source-releases/403bbd7-rollback-images.txt`
+- ✅ validate_prod_env: passed
+- ✅ بناء الصور: backend/celery_worker/celery_beat/el_kheima — Built بنجاح
+- ✅ preflight import: `El Kheima Beach`
+- ✅ alembic heads/upgrade: `d0e1f2a3b4c5` (head) — لا migration
+- ✅ استبدال تدريجي: backend → celery_worker/beat → el_kheima → nginx (كل مرحلة healthy + RestartCount=0)
+- ✅ health check: `{"status":"ok","database":{"status":"ok","latency_ms":8.7},"redis":{"status":"ok","latency_ms":1.4}}`
+- ✅ elkheima.com/www/app: كلهم HTTP 200
+- ✅ symlink: `/opt/resort-os-current -> /opt/resort-os-releases/403bbd7`
+- ✅ DB sanity: `users=5, branches=1`
+- ✅ RestartCount=0 لكل الحاويات — لوجات نظيفة صفر traceback/critical/fatal
+- ✅ مفيش قاعدة بيانات استرجاع مؤقتة اتسابت
 
 ## REL-11 — نشر 9 أغسطس 2026 (commit `92aa769`)
 
@@ -856,8 +900,13 @@ Alembic single-head جديد، `touch backend/.env.prod` قبل فحص prod comp
   اجتازت `pg_restore --list` (1373 TOC entries، تحقّق فعلي داخل حاوية
   الـDB نفسها).
 
-## 8.1 فجوة محاسبية موثّقة (غير مُصلَحة عمدًا) — تسوية فوليو الـcheckout ما
-بتشملش الشحنات الإضافية المحمّلة على الغرفة (شاطئ/دايننج)
+## 8.1 فجوة محاسبية — تسوية فوليو الـcheckout ما بتشملش الشحنات الإضافية
+المحمّلة على الغرفة (شاطئ/دايننج) — **✅ اتصلحت REL-12 (2026-08-09)**
+
+> **الحالة**: اتصلحت فعليًا ومنشورة (commit `403bbd7`، راجع REL-12 فوق) —
+> محمد أكّد صراحةً "الاستقبال بيحصّل كل حاجة مرة واحدة وقت الخروج"،
+> فالتسوية بقت تشمل كل شحنات beach/dining على الفوليو مش سعر الغرفة بس.
+> القسم ده باقٍ كتوثيق تاريخي للاكتشاف الأصلي والتحليل الكامل.
 
 **اتكتشفت 2026-08-09 أثناء مراجعة PMS + Beach النهائية — قرار Mohamed مطلوب
 قبل أي إصلاح، مش bug عشوائي يتصلح لوحده.**
