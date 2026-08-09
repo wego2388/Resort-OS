@@ -1,6 +1,6 @@
 # لوحة التنفيذ الحية — El Kheima
 
-**آخر تحديث:** 2026-08-08 — PMS-ROOMS-01 منشور ومتحقق بلا أسعار
+**آخر تحديث:** 2026-08-09 — REL-11 منشور ومتحقق (أمان/N+1/دفتر يومية)
 **المالك:** Mohamed
 **قائد التنفيذ والمراجع النهائي:** Codex
 **المرحلة الحالية:** ACC-01 roster + UAT-01 + production burn-in
@@ -50,6 +50,7 @@
 | REL-07 — Arabic PDF invoice fix + real blog + marketing-site console-error sweep (8 commits + Marketing، تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE | `5df8191` فعال (Resort) + `79130a6` فعال (Marketing)؛ خط عربي/لوجو للفواتير، `GET /hub/blog/posts/{slug}` + 6 مقالات حقيقية، حذف نداءات API ميتة + إصلاح باج انتقال صفحات + كارت وصف بدل زر طلب وهمي | — |
 | CREDIT-0005 — personal customer/employee credit accounts | COMPLETE / DEPLOYED | `1d77e7b` فعال؛ Alembic `c9d4e5f6a7b8`؛ GL 1160 + immutable ledger + Dining/Beach + Staff/Owner UI؛ health/smoke/log gates ناجحة | — |
 | PMS-ROOMS-01 — approved real room inventory | COMPLETE / DEPLOYED | `eda6617` فعال؛ 14 وحدة حقيقية، نوعان، صفر خطط/أسعار؛ الإطلالة ظاهرة في Staff؛ health/log/idempotency gates ناجحة | — |
+| REL-11 — /ops role-gate + N+1 fixes + journal-entry logging + real journal entries admin view (تفويض مباشر من Mohamed خارج دورة Codex) | COMPLETE / DEPLOYED | `92aa769` فعال؛ راجع `docs/agent-workflow/handoffs/2026-08-09_REL-11_claude_handoff.md` — لا migration؛ فجوة محاسبية موثّقة في PMS checkout محتاجة قرار Mohamed (`PROJECT_STATUS.md` §8.1) | قرار محمد على سياسة تسوية checkout/folio |
 | ACC-01 — employee/account workflow | DEPLOYED؛ ACCOUNTS PENDING | HR record ثم حساب شخصي من مركز السوبر أدمن + super-admin احتياطي | قائمة أسماء/بريد/أدوار معتمدة |
 | OPS-01 — burn-in and alerting | BASELINE COMPLETE | مراقبة مستمرة + إرسال خارجي | اختيار قناة التنبيه |
 | UAT-01 — operational acceptance | PENDING | جهاز/دور/لغة/شبكة/مال | ممثلو التشغيل والمالية |

@@ -88,11 +88,11 @@
 | البند | القيمة المثبتة |
 |---|---|
 | فرع العمل الوحيد | `claude/CX-02C-frontend-auth-bootstrap` |
-| Resort OS source release (منشور) | `eda6617` — real PMS room inventory فوق CREDIT-0005 |
-| runtime code/config commit | `eda6617` |
+| Resort OS source release (منشور) | `92aa769` — REL-11: أمان /ops + N+1 + دفتر يومية حقيقي (راجع REL-11 تحت) |
+| runtime code/config commit | `92aa769` |
 | Marketing source release | `bc48f09` من المستودع المستقل (`main` يطابق الالتزام، مدفوعة بالكامل) |
 | `origin/main` | `598938e` — لم يُغيّر |
-| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/eda6617` |
+| active Resort release | `/opt/resort-os-current -> /opt/resort-os-releases/92aa769` |
 | active Marketing release | `/opt/elkheima-marketing-releases/bc48f09` |
 | Marketing current link | `/opt/elkheima-marketing-current -> /opt/elkheima-marketing-releases/bc48f09` |
 | Compose project / override | `resort-os-prod` / `docker-compose.prod.domain.yml` |
@@ -141,6 +141,66 @@
 | 8 | Security review + production gate | ⏳ التالي |
 | ~~9~~ | ~~Unit economics~~ | محذوف بقرار محمد |
 | ~~10~~ | ~~Scenario sandbox~~ | محذوف بقرار محمد |
+
+## REL-11 — نشر 9 أغسطس 2026 (commit `92aa769`)
+
+**فحص شامل نهائي قبل الإطلاق: إغلاق فجوة أمان /ops + N+1 + قيود يومية حقيقية + دفتر يومية إداري**
+
+**ما اتنشر:**
+- **أمان**: `/ops` (استقبال/غرف/حجوزات/تدبير منزلي) كان من غير `requiredRole` خالص
+  على مستوى الأب — الحماية الوحيدة كانت `requiredPermission` لكل شاشة فرعية.
+  اتضاف `requiredRole: 'receptionist'` كطبقة دفاع تانية مستقلة.
+- **N+1**: `inventory.list_purchase_orders/list_purchase_requests/list_stock_counts`،
+  `maintenance.list_work_orders`، و`finance.list_journal_entries` (`selectinload` بدل
+  lazy queries متكررة). `pms.create_booking` كان بيعيد نداء `get_available_rooms`
+  و`get_room_type` لكل غرفة في الحجز بدل مرة واحدة، وبيعيد `get_room` تاني رغم إن
+  الصف نفسه متقفول ومتاح بالفعل من `locked_rooms`.
+- **قفل PMS**: `lock_room_for_booking` كان ناقص `.populate_existing()` (نفس فئة
+  الباج الموثّقة في CLAUDE.md §13⓫).
+- **صمت محاسبي**: `post_simple_revenue_journal` كان بيبتلع فشل (حساب غير معرّف/فشل
+  تحويل عملة/استثناء غير متوقع) ويرجع `None` من غير أي `log` — بقى فيه `logger.error`/
+  `logger.exception` على المسارات التلاتة.
+- **دفتر اليومية**: تاب إداري جديد في `FinanceView.vue` (`GET /finance/journal-entries`،
+  مدير+) — فلترة بالتاريخ/المصدر، صفوف قابلة للطي بتعرض كل سطر مدين/دائن. باج حقيقي
+  اتصلح أثناء المراجعة: `JournalLineRead` مكانش فيه `account_code`/`account_name` خالص
+  (بس `account_id`) رغم إن الشاشة بترسمهم مباشرة — عمود "الحساب" كان هيفضل فاضي دايمًا.
+  اتضاف `@model_validator(mode="before")` (نفس نمط `dining.DiningItemRead`) + eager
+  loading لـ`.lines.account` في `list_journal_entries`. مفتاحين i18n مكررين بالغلط
+  (`tabs`, `refresh` داخل نفس كائن finance) اتشالوا، ومفتاح `loadJournalError` غلط
+  (الفعلي `journal.loadError`) اتصلح — اكتشفهم i18n validator نفسه (`validate-i18n.mjs`)
+  فعليًا وقت `test:frontend`.
+- **موثّق مش مُصلَح**: فجوة محاسبية حقيقية في `PMS checkout` — التسوية بتقفل رصيد سعر
+  الغرفة بس مقابل حساب 1150، مش أي شحنات "على حساب الغرفة" (شاطئ/دايننج) — تفاصيل
+  كاملة في §8.1 تحت، قرار سياسة تسوية لازم يرجع لمحمد.
+- لا migration — Alembic head `d0e1f2a3b4c5` بدون تغيير
+- تست جديد: `test_list_journal_entries_lines_include_account_code_and_name`
+- الباك إند الكامل عدّى 100% (صفر فشل)، `el-kheima` type-check/test:frontend
+  (95 اختبار)/build نظاف الكل، `agent-check.sh` أخضر
+
+**دورة النشر (REL-11، 2026-08-09 ~14:50 Cairo):**
+- ✅ نسخة احتياطية: `resort_os_20260809_115233.dump` (620K، 1472 TOC entries — مثبّت
+  فعليًا عبر `pg_restore --list` جوه الحاوية)
+- ✅ SHA-256 أرشيف مطابق على الطرفين: `90e5445d28fb6fb97d1993d98d896ec48e2195e0a98a0dc32a1af23b7e03d47c`
+- ✅ rollback tags: 6 خدمات مؤرشفة كـ `resort-os-rollback/<svc>:pre-92aa769`
+- ✅ rollback manifest: `/var/backups/resort-os/source-releases/92aa769-rollback-images.txt`
+- ✅ validate_prod_env: passed
+- ✅ بناء الصور: backend/celery_worker/celery_beat/el_kheima — Built بنجاح
+  (marketing_site/owner متلمسوش — برّه نطاق هذه الدفعة)
+- ✅ preflight import: `El Kheima Beach`
+- ✅ alembic heads/upgrade: `d0e1f2a3b4c5` (head) — لا migration
+- ✅ استبدال تدريجي: backend → celery_worker/beat → el_kheima → nginx (كل مرحلة
+  اتأكد منها healthy + RestartCount=0 قبل الانتقال للتالية)
+- ✅ health check: `{"status":"ok","database":{"status":"ok","latency_ms":1.7},"redis":{"status":"ok","latency_ms":1.3}}`
+- ✅ elkheima.com: HTTP 200 / www.elkheima.com: HTTP 200 / app.elkheima.com: HTTP 200
+- ✅ symlink: `/opt/resort-os-current -> /opt/resort-os-releases/92aa769`
+- ✅ TLS SAN: `app.elkheima.com, elkheima.com, owner.elkheima.com, www.elkheima.com`
+- ✅ DB/Redis: loopback-only (`127.0.0.1:5436`/`127.0.0.1:6381`) — بدون تغيير
+- ✅ DB sanity: `users=5, branches=1` — نفس البيانات الحقيقية، صفر تلاعب
+- ✅ `GET /api/v1/finance/journal-entries` بدون توكن → `401` (المسار الجديد حي ومحمي)
+- ✅ RestartCount=0 لكل الحاويات المستبدلة — لوجات نظيفة صفر traceback/critical/fatal
+- ✅ مفيش قاعدة بيانات استرجاع مؤقتة اتسابت
+- ملاحظة: جلسة مستخدم حقيقية شغالة (WebSocket alerts/shifts) وقت النشر — استمرت من
+  غير انقطاع ملحوظ في اللوج أثناء استبدال backend
 
 ## REL-10 — نشر 7 أغسطس 2026 (commit `427ae82`)
 
