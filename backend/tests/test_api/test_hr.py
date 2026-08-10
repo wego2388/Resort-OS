@@ -840,6 +840,54 @@ class TestAttendancePolicyAndAutoPayroll:
         assert line.penalty_deduction == Decimal("200.00")       # يدوي: يوم واحد × 6000/30
         assert line.late_penalty_deduction == Decimal("8.33")    # تلقائي: 20 دقيقة تأخير
 
+    def test_approved_unpaid_leave_reduces_payroll(
+        self, db, branch, employee, si_config, tax_brackets,
+    ):
+        """⚠️ باج حقيقي اتصلح (OPS-DATA-02، نفس فئة باج penalty_days الموثّق
+        فوق بالظبط): إجازة غير مدفوعة (LeaveType.is_paid=False) معتمدة
+        (approve_leave) عمرها ما كانت بتوصل لـ calculate_employee_payroll —
+        unpaid_leave_deduction كانت بتفضل صفر دايمًا حتى مع إجازة حقيقية
+        معتمدة، وبالتالي القيد المحاسبي عمره ما اتوازن بمراعاة الخصم ده."""
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
+        from app.modules.hr.schemas import LeaveTypeCreate
+
+        for code, acc_type in [
+            ("5100", "expense"),
+            ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        employee.basic_salary = Decimal("6000.00")
+        db.commit()
+
+        leave_type = crud.create_leave_type(db, LeaveTypeCreate(
+            branch_id=branch.id, name="Unpaid Leave", name_ar="إجازة بدون أجر", is_paid=False,
+        ))
+        db.commit()
+
+        leave = services.request_leave(
+            db, employee.id, branch.id, leave_type.id,
+            date(2026, 7, 8), date(2026, 7, 9), reason="ظرف شخصي",
+        )
+        services.approve_leave(db, leave.id, approved_by=1)
+
+        run = services.run_payroll_for_branch(db, branch.id, 2026, 7)
+        lines = crud.list_lines_for_run(db, run.id)
+        line = next(l for l in lines if l.employee_id == employee.id)
+
+        assert line.unpaid_leave_deduction == Decimal("400.00")  # 2 يوم × 6000/30
+
+        services.approve_payroll_run(db, run.id, approved_by=1)
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll", JournalEntry.source_id == run.id)
+            .first()
+        )
+        assert entry is not None
+        gl_lines = db.query(JournalLine).filter(JournalLine.entry_id == entry.id).all()
+        assert sum(l.debit for l in gl_lines) == sum(l.credit for l in gl_lines)
+
     def test_no_policy_means_zero_automatic_adjustments(
         self, db, branch, employee, si_config, tax_brackets,
     ):

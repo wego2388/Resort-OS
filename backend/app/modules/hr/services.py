@@ -583,6 +583,25 @@ def run_payroll_for_branch(
             penalties_by_employee.get(penalty.employee_id, 0) + penalty.penalty_days
         )
 
+    # ⚠️ باج حقيقي كان هنا (اتصلح — نفس فئة باج penalty_days الموثّق فوق
+    # بالظبط): LeaveRequest معتمدة (approve_leave) على LeaveType غير
+    # مدفوعة (is_paid=False) عمرها ما كانت بتوصل لـ calculate_employee_
+    # payroll خالص — unpaid_leave_days كانت بتفضل صفر دايمًا بغض النظر عن
+    # أي إجازة غير مدفوعة معتمدة فعليًا، يعني unpaid_leave_deduction عمره
+    # ما اتحسب في أي كشف رواتب حقيقي من أول ما الميزة دي اتعملت في
+    # hr_engine. بنحسب هنا تقاطع كل طلب مع فترة الرواتب (الطلب ممكن يعبر
+    # شهرين) ونجمعه لكل موظف، مرة واحدة للفرع كله قبل الحلقة.
+    period_end = date(period_year, period_month, calendar.monthrange(period_year, period_month)[1])
+    unpaid_leave_days_by_employee: dict[int, int] = {}
+    for leave in crud.list_approved_unpaid_leave_requests(db, branch_id):
+        overlap_start = max(leave.start_date, period_start)
+        overlap_end = min(leave.end_date, period_end)
+        if overlap_start <= overlap_end:
+            days = (overlap_end - overlap_start).days + 1
+            unpaid_leave_days_by_employee[leave.employee_id] = (
+                unpaid_leave_days_by_employee.get(leave.employee_id, 0) + days
+            )
+
     for emp in employees:
         # ⚠️ باج حقيقي: EmployeePenalty (POST /hr/penalties) كان بيتسجّل في
         # الداتابيز فعلاً، لكن run_payroll_for_branch كان بينادي
@@ -592,6 +611,7 @@ def run_payroll_for_branch(
         # الرقم يدويًا في GET /hr/employees/{id}/payslip?penalty_days=). دلوقتي
         # بنجمع جزاءات الشهر الفعلية المسجّلة للموظف ونبعتها فعليًا للحساب.
         penalty_days = penalties_by_employee.get(emp.id, 0)
+        unpaid_leave_days = unpaid_leave_days_by_employee.get(emp.id, 0)
 
         # حساب تلقائي جديد: overtime_amount/late_penalty_amount من بصمات
         # الحضور الفعلية + سياسة الفرع (لو موجودة) — يتخصم/يتضاف فوق الجزاءات
@@ -613,6 +633,7 @@ def run_payroll_for_branch(
                 net_before_advances = calculate_employee_payroll(
                     db, emp.id, period_year, period_month,
                     penalty_days=penalty_days,
+                    unpaid_leave_days=unpaid_leave_days,
                     overtime_amount=overtime_amount,
                     late_penalty_amount=late_penalty_amount,
                     advance_deduction_amount=Decimal("0"),
@@ -633,6 +654,7 @@ def run_payroll_for_branch(
             result = calculate_employee_payroll(
                 db, emp.id, period_year, period_month,
                 penalty_days=penalty_days,
+                unpaid_leave_days=unpaid_leave_days,
                 overtime_amount=overtime_amount,
                 late_penalty_amount=late_penalty_amount,
                 advance_deduction_amount=advance_deduction_amount,

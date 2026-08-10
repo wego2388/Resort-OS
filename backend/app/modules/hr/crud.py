@@ -695,6 +695,23 @@ def list_leave_requests(
     return items, total
 
 
+def list_approved_unpaid_leave_requests(db: Session, branch_id: int) -> list[LeaveRequest]:
+    """طلبات إجازة غير مدفوعة (LeaveType.is_paid=False) وموافَق عليها لكل
+    موظفي الفرع — راجع services.run_payroll_for_branch: بيحسب overlap كل
+    طلب مع فترة الرواتب بنفسه (الطلب ممكن يعبر شهرين)، فبنرجّع الكل من غير
+    فلترة تاريخ هنا، نفس فلسفة list_penalties البسيطة."""
+    return (
+        db.query(LeaveRequest)
+        .join(LeaveType, LeaveRequest.leave_type_id == LeaveType.id)
+        .filter(
+            LeaveRequest.branch_id == branch_id,
+            LeaveRequest.status == "approved",
+            LeaveType.is_paid.is_(False),
+        )
+        .all()
+    )
+
+
 def approve_leave_request(
     db: Session, request: LeaveRequest, approved_by: int
 ) -> LeaveRequest:
