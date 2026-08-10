@@ -100,6 +100,12 @@ def _hub_module(db: Session, ctx: ScenarioContext) -> dict:
     return generate_hub(db, ctx)
 
 
+def _inventory_module(db: Session, ctx: ScenarioContext) -> dict:
+    from app.hist_inventory import generate as generate_inventory  # noqa: PLC0415
+
+    return generate_inventory(db, ctx)
+
+
 SCENARIO_MODULES: list[ScenarioModule] = [
     ScenarioModule(name="pms_bookings", generate=_pms_bookings_module),
     ScenarioModule(name="leasing", generate=_leasing_module),
@@ -107,6 +113,7 @@ SCENARIO_MODULES: list[ScenarioModule] = [
     ScenarioModule(name="dining_beach", generate=_dining_beach_module),
     ScenarioModule(name="hub", generate=_hub_module),
     ScenarioModule(name="hr", generate=_hr_module),
+    ScenarioModule(name="inventory", generate=_inventory_module),
 ]
 # ⚠️ باقي الموديولات (Inventory/Assets/GL opening balance) هتتسجّل هنا
 # واحدة واحدة، كل واحدة دفعة منفصلة. dining_beach مسجَّل بعد pms_bookings
