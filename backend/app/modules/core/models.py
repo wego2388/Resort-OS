@@ -376,3 +376,33 @@ class PinCredential(Base, TimestampMixin):
     # user.id اللي ضبط/جدّد الـ PIN ده — للتدقيق (المدير اللي أنشأه، أو
     # الموظف نفسه لو غيّره بنفسه من إعداداته)
     created_by:      Mapped[int]            = mapped_column(Integer)
+
+
+# ────────────────────────── ImportBatch (HIST-01) ─────────────────────
+# OPS-DATA-02 §9.1/§9.3: مصدر حقيقة الاستيراد التاريخي (app.operational_
+# history_seed) — منع تشغيل نفس (فرع+نسخة+فترة) مرتين حتى بعد crash
+# (UniqueConstraint)، ومانifest كامل (counts/totals كـJSON) للتحقق
+# والـrollback. status="running" لحد ما الأداة تخلص فعليًا — batch لسه
+# running بعد crash يمنع rerun تلقائي (لازم تدخّل يدوي/فحص) بدل استئناف
+# غير آمن لعملية اتقطعت في نص الطريق.
+class ImportBatch(Base, TimestampMixin):
+    __tablename__ = "import_batches"
+    __table_args__ = (
+        UniqueConstraint("branch_id", "dataset_version", "period",
+                          name="uq_import_batch_branch_version_period"),
+    )
+
+    id:               Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:        Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    dataset_version:  Mapped[str]        = mapped_column(String(50))   # مثال: "july-2026-v1"
+    period:           Mapped[str]        = mapped_column(String(20))   # مثال: "2026-07"
+    checksum:         Mapped[str]        = mapped_column(String(64))   # SHA-256 لملف الـ manifest المصدر
+    status:           Mapped[str]        = mapped_column(String(20), default="running")
+    # running|completed|failed|rolled_back
+    actor:            Mapped[str]        = mapped_column(String(200))
+    # اسم/بريد المستخدم اللي شغّل الأداة — مش PII حقيقي لضيف/موظف
+    counts:           Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON: عدد الصفوف لكل نوع كيان
+    totals:           Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON: إجماليات مالية للمطابقة (§11.5)
+    started_at:       Mapped[datetime]   = mapped_column(DateTime)
+    completed_at:     Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    failure_reason:   Mapped[str | None] = mapped_column(Text, nullable=True)

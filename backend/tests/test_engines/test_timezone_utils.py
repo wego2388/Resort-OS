@@ -17,6 +17,8 @@ from datetime import date, datetime, timezone
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from app.resort_os import timezone_utils as tzu
 from app.resort_os.timezone_utils import business_today, local_date_to_utc_range, utc_naive_to_local_date
 
@@ -116,3 +118,78 @@ class TestLocalToday:
 
         monkeypatch.setattr(tzu, "datetime", FixedDateTime)
         assert tzu.local_today("Africa/Cairo") == date(2026, 7, 5)
+
+
+class TestScenarioClock:
+    """HIST-01 (OPS-DATA-02 §9.2) — resort_os.clock.scenario_clock بيحقن وقت
+    ثابت لكل نداءات local_now/local_today/business_today جوه الـ context،
+    بدون monkeypatch مؤقت أو تعديل SQL بعد الإنشاء."""
+
+    def test_local_now_uses_injected_scenario_time(self):
+        from app.resort_os.clock import scenario_clock
+
+        fixed = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo("Africa/Cairo"))
+        with scenario_clock(fixed):
+            assert tzu.local_now("Africa/Cairo") == fixed
+
+    def test_local_now_returns_real_time_outside_scenario(self):
+        from app.resort_os.clock import scenario_clock
+
+        fixed = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo("Africa/Cairo"))
+        with scenario_clock(fixed):
+            pass
+        # برّه الـ with block — رجع الوقت الحقيقي
+        real_now = tzu.local_now("Africa/Cairo")
+        assert real_now != fixed
+
+    def test_local_today_and_business_today_inherit_scenario(self):
+        from app.resort_os.clock import scenario_clock
+
+        fixed = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo("Africa/Cairo"))
+        with scenario_clock(fixed):
+            assert tzu.local_today("Africa/Cairo") == date(2026, 7, 15)
+            assert tzu.business_today("Africa/Cairo") == date(2026, 7, 15)
+
+    def test_scenario_time_converts_to_requested_timezone(self):
+        """الوقت المحقون بيتحول لتوقيت tz_name المطلوب — مش بيترجع خام."""
+        from app.resort_os.clock import scenario_clock
+
+        fixed_utc = datetime(2026, 7, 15, 21, 30, tzinfo=timezone.utc)
+        with scenario_clock(fixed_utc):
+            cairo_now = tzu.local_now("Africa/Cairo")
+            assert cairo_now.tzinfo is not None
+            # 21:30 UTC = 00:30 بتوقيت القاهرة (UTC+3) اليوم التالي
+            assert cairo_now.date() == date(2026, 7, 16)
+
+    def test_naive_datetime_rejected(self):
+        from app.resort_os.clock import scenario_clock
+
+        with pytest.raises(ValueError, match="tzinfo"):
+            with scenario_clock(datetime(2026, 7, 15, 10, 30)):
+                pass
+
+    def test_nested_scenario_clock_restores_outer_on_exit(self):
+        from app.resort_os.clock import scenario_clock
+
+        outer = datetime(2026, 7, 1, 8, 0, tzinfo=ZoneInfo("Africa/Cairo"))
+        inner = datetime(2026, 7, 20, 8, 0, tzinfo=ZoneInfo("Africa/Cairo"))
+        with scenario_clock(outer):
+            assert tzu.local_today("Africa/Cairo") == date(2026, 7, 1)
+            with scenario_clock(inner):
+                assert tzu.local_today("Africa/Cairo") == date(2026, 7, 20)
+            assert tzu.local_today("Africa/Cairo") == date(2026, 7, 1)
+
+    def test_scenario_clock_restores_on_exception(self):
+        from app.resort_os.clock import scenario_clock, get_scenario_now
+
+        fixed = datetime(2026, 7, 15, 10, 30, tzinfo=ZoneInfo("Africa/Cairo"))
+        with pytest.raises(RuntimeError):
+            with scenario_clock(fixed):
+                assert get_scenario_now() == fixed
+                raise RuntimeError("simulated failure mid-scenario")
+        assert get_scenario_now() is None
+
+    def test_get_scenario_now_none_outside_context(self):
+        from app.resort_os.clock import get_scenario_now
+
+        assert get_scenario_now() is None

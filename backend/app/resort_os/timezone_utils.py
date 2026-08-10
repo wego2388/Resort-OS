@@ -20,8 +20,12 @@ def business_today(tz_name: str) -> date:
     شغّال بتوقيت مختلف عن توقيت المنتجع (Africa/Cairo)، بيبقى فيه نافذة كل يوم
     (بمقدار فرق التوقيتين، عادةً 2-3 ساعات) بيرجع فيها تاريخ غلط بيوم كامل. نفس
     فئة الباج اللي ظهرت في تذاكر المطبخ (KDS) — هنا بتأثّر على "الأيام المتبقية
-    للزيارة القادمة"، تحديد القسط "المتأخر"، وتوقيت تذكيرات الواتساب."""
-    return datetime.now(ZoneInfo(tz_name)).date()
+    للزيارة القادمة"، تحديد القسط "المتأخر"، وتوقيت تذكيرات الواتساب.
+
+    بتنادي local_now بدل ما تكرر نداء datetime.now(ZoneInfo(...)) لوحدها —
+    عشان ترث دعم resort_os.clock.scenario_clock تلقائيًا (HIST-01، راجع
+    clock.py) من غير أي تكرار منطق."""
+    return local_now(tz_name).date()
 
 
 def local_date_to_utc_range(local_date: date, tz_name: str) -> tuple[datetime, datetime]:
@@ -63,7 +67,17 @@ def local_now(tz_name: str) -> datetime:
     """اللحظة الحالية بتوقيت المنتجع (tz_name) — بديل عن datetime.utcnow()/
     datetime.now() اللي بترجع توقيت السيرفر (UTC غالبًا في الإنتاج). استخدمها
     أي مكان بيحتاج يعرف الساعة المحلية الحقيقية (مثال: مقارنة "وصل الساعة كام
-    بتوقيت القاهرة" قبل ما نعتبر حجز no-show)."""
+    بتوقيت القاهرة" قبل ما نعتبر حجز no-show).
+
+    لو فيه scenario_clock نشط (راجع resort_os/clock.py — أداة استيراد
+    البيانات التاريخية HIST-01 بس)، بترجع الوقت المحقون بدل الوقت الحقيقي.
+    الاستيراد جوّه الدالة (مش أعلى الملف) لتفادي circular import — clock.py
+    module بسيط بلا أي اعتماد راجع على timezone_utils أصلاً، بس نفس نمط
+    lazy import المستخدم في باقي المشروع للوحدات النادر استخدامها."""
+    from app.resort_os.clock import get_scenario_now  # noqa: PLC0415
+    override = get_scenario_now()
+    if override is not None:
+        return override.astimezone(ZoneInfo(tz_name))
     return datetime.now(ZoneInfo(tz_name))
 
 
