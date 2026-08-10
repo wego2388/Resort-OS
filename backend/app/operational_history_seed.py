@@ -88,16 +88,23 @@ def _dining_beach_module(db: Session, ctx: ScenarioContext) -> dict:
     return generate_dining_beach(db, ctx)
 
 
+def _hr_module(db: Session, ctx: ScenarioContext) -> dict:
+    from app.hist_hr import generate as generate_hr  # noqa: PLC0415
+
+    return generate_hr(db, ctx)
+
+
 SCENARIO_MODULES: list[ScenarioModule] = [
     ScenarioModule(name="pms_bookings", generate=_pms_bookings_module),
     ScenarioModule(name="leasing", generate=_leasing_module),
     ScenarioModule(name="timeshare", generate=_timeshare_module),
     ScenarioModule(name="dining_beach", generate=_dining_beach_module),
+    ScenarioModule(name="hr", generate=_hr_module),
 ]
-# ⚠️ باقي الموديولات (Hub/HR/Inventory/Assets/GL opening balance) هتتسجّل
-# هنا واحدة واحدة، كل واحدة دفعة منفصلة. dining_beach مسجَّل بعد
-# pms_bookings عمدًا (مش قبله) — عشان سيناريو "الدفع على حساب الغرفة"
-# يقدر يلاقي فوليو مفتوح حقيقي لو الاتنين اشتغلوا في نفس الدفعة.
+# ⚠️ باقي الموديولات (Hub/Inventory/Assets/GL opening balance) هتتسجّل هنا
+# واحدة واحدة، كل واحدة دفعة منفصلة. dining_beach مسجَّل بعد pms_bookings
+# عمدًا (مش قبله) — عشان سيناريو "الدفع على حساب الغرفة" يقدر يلاقي فوليو
+# مفتوح حقيقي لو الاتنين اشتغلوا في نفس الدفعة.
 
 
 @dataclass
@@ -182,6 +189,11 @@ def _check_preconditions(db: Session, branch_id: int) -> list[str]:
         for code in ("1100", "1110", "2160", "2165", "4200", "4300", "4400"):
             if not get_account_by_code(db, branch_id, code):
                 problems.append(f"dining_beach requires account {code} for branch {branch_id}")
+
+    if any(m.name == "hr" for m in SCENARIO_MODULES):
+        for code in ("5100", "2100", "2110", "2120", "1180"):
+            if not get_account_by_code(db, branch_id, code):
+                problems.append(f"hr requires account {code} for branch {branch_id}")
 
     return problems
 
