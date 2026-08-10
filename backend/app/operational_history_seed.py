@@ -64,6 +64,12 @@ class ScenarioModule:
     generate: Callable[[Session, ScenarioContext], dict]
 
 
+def _gl_opening_balance_module(db: Session, ctx: ScenarioContext) -> dict:
+    from app.hist_gl_opening_balance import generate as generate_gl_opening_balance  # noqa: PLC0415
+
+    return generate_gl_opening_balance(db, ctx)
+
+
 def _pms_bookings_module(db: Session, ctx: ScenarioContext) -> dict:
     from app.hist_pms_bookings import generate as generate_pms_bookings  # noqa: PLC0415
 
@@ -113,6 +119,7 @@ def _fixed_assets_module(db: Session, ctx: ScenarioContext) -> dict:
 
 
 SCENARIO_MODULES: list[ScenarioModule] = [
+    ScenarioModule(name="gl_opening_balance", generate=_gl_opening_balance_module),
     ScenarioModule(name="pms_bookings", generate=_pms_bookings_module),
     ScenarioModule(name="leasing", generate=_leasing_module),
     ScenarioModule(name="timeshare", generate=_timeshare_module),
@@ -218,6 +225,15 @@ def _check_preconditions(db: Session, branch_id: int) -> list[str]:
         for code in ("5100", "2100", "2110", "2120", "1180"):
             if not get_account_by_code(db, branch_id, code):
                 problems.append(f"hr requires account {code} for branch {branch_id}")
+
+    if any(m.name == "gl_opening_balance" for m in SCENARIO_MODULES):
+        for code in (
+            "1100", "1110", "1150", "1170", "1200", "1210", "1500", "1510", "1515",
+            "1520", "1530", "1540", "1590", "2200", "2160", "2170", "2150", "2310",
+            "2180", "3100", "3200",
+        ):
+            if not get_account_by_code(db, branch_id, code):
+                problems.append(f"gl_opening_balance requires account {code} for branch {branch_id}")
 
     return problems
 
