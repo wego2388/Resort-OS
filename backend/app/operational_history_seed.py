@@ -70,11 +70,18 @@ def _pms_bookings_module(db: Session, ctx: ScenarioContext) -> dict:
     return generate_pms_bookings(db, ctx)
 
 
+def _leasing_module(db: Session, ctx: ScenarioContext) -> dict:
+    from app.hist_leasing import generate as generate_leasing  # noqa: PLC0415
+
+    return generate_leasing(db, ctx)
+
+
 SCENARIO_MODULES: list[ScenarioModule] = [
     ScenarioModule(name="pms_bookings", generate=_pms_bookings_module),
+    ScenarioModule(name="leasing", generate=_leasing_module),
 ]
-# ⚠️ باقي الموديولات (Hub/Dining/Beach/Leasing/Timeshare/HR/Inventory/
-# Assets/GL opening balance) هتتسجّل هنا واحدة واحدة، كل واحدة دفعة منفصلة.
+# ⚠️ باقي الموديولات (Hub/Dining/Beach/Timeshare/HR/Inventory/Assets/GL
+# opening balance) هتتسجّل هنا واحدة واحدة، كل واحدة دفعة منفصلة.
 
 
 @dataclass
@@ -144,6 +151,11 @@ def _check_preconditions(db: Session, branch_id: int) -> list[str]:
             problems.append(f"pms_bookings requires exactly 14 rooms; found {room_count}")
         if bundle_count != 5:
             problems.append(f"pms_bookings requires exactly 5 active room bundles; found {bundle_count}")
+
+    if any(m.name == "leasing" for m in SCENARIO_MODULES):
+        for code in ("1110", "1260", "2150", "4500"):
+            if not get_account_by_code(db, branch_id, code):
+                problems.append(f"leasing requires account {code} for branch {branch_id}")
 
     return problems
 
