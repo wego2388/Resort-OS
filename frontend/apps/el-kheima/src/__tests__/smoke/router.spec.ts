@@ -32,6 +32,8 @@ describe('homeRouteFor — role landing map', () => {
     ['receptionist', '/ops/reception'],
     ['manager', '/admin/dashboard'],
     ['super_admin', '/admin/dashboard'],
+    ['timeshare_admin', '/admin/timeshare'],
+    ['timeshare_agent', '/admin/timeshare'],
   ])('routes %s to %s', (role, expected) => {
     expect(homeRouteFor(role)).toBe(expected)
   })

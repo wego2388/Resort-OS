@@ -60,6 +60,14 @@ export function homeRouteFor(role: string): string {
       // Level 50 — below the manager (60) threshold most /admin/* routes
       // require server-side, but above cashier — front-desk/ops oversight.
       return '/ops/rooms'
+    case 'timeshare_admin':
+    case 'timeshare_agent':
+      // Isolated module roles (level 55/25, matched by name not threshold —
+      // see deps.py get_timeshare_user/get_timeshare_admin_user) — both
+      // land on the one screen /admin/timeshare's requiredRoles allows them.
+      // Previously fell through to the generic employee default below and
+      // landed on /portal/attendance, a screen these roles have no use for.
+      return '/admin/timeshare'
     case 'employee':
     case 'customer':
     case 'guest':

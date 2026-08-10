@@ -100,8 +100,14 @@ const allSections = computed<NavSection[]>(() => [
   {
     label: t('backoffice.nav.guestManagement'),
     items: [
-      { path: '/admin/timeshare',    label: t('backoffice.nav.timeshare'),      icon: '🏨',  requiredRoles: ['timeshare_admin', 'timeshare_agent', 'super_admin', 'admin'] },
-      { path: '/admin/sales',        label: t('backoffice.nav.sales'),          icon: '📞',  requiredRoles: ['timeshare_admin', 'timeshare_agent', 'super_admin', 'admin'] },
+      // backend deliberately isolates timeshare to timeshare_admin/timeshare_agent
+      // (+ super_admin, which always bypasses requiredRoles) — plain 'admin' has
+      // no access at all (see deps.py get_timeshare_user). Router requiredRoles
+      // for /admin/timeshare + /admin/sales already reflects that; keep this list
+      // matching it exactly so the nav never links a role into a page it will
+      // immediately get redirected out of (OPS-DATA-02 UX-API-01 §6.4).
+      { path: '/admin/timeshare',    label: t('backoffice.nav.timeshare'),      icon: '🏨',  requiredRoles: ['timeshare_admin', 'timeshare_agent', 'super_admin'] },
+      { path: '/admin/sales',        label: t('backoffice.nav.sales'),          icon: '📞',  requiredRoles: ['timeshare_admin', 'timeshare_agent', 'super_admin'] },
       { path: '/admin/crm',          label: t('backoffice.nav.crm'),            icon: '🤝',  requiredRoles: ['manager', 'admin', 'super_admin'] },
       { path: '/admin/beach-live',   label: t('backoffice.nav.beachLive'),      icon: '🏖️',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
       { path: '/admin/beach-admin',  label: t('backoffice.nav.beachAdmin'),     icon: '🏄',  requiredRoles: ['manager', 'supervisor', 'admin', 'super_admin'] },
