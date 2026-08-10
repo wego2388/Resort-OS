@@ -138,6 +138,35 @@ class TimeshareMaintenanceDueRead(BaseModel):
     room_type:      Optional[str] = None
 
 
+class TimeshareMaintenanceFeeRuleCreate(BaseModel):
+    branch_id:           int
+    version:             str = Field(..., max_length=60)
+    fee_year:            int = Field(..., ge=2026, le=2100)
+    contract_tier_from:  date
+    capacity:            int = Field(..., description="2 أو 4 أو 6")
+    fee:                 Decimal = Field(..., gt=0)
+    notes:               Optional[str] = None
+
+    @model_validator(mode="after")
+    def _validate_capacity(self):
+        if self.capacity not in (2, 4, 6):
+            raise ValueError("capacity يجب أن يكون 2 أو 4 أو 6")
+        return self
+
+
+class TimeshareMaintenanceFeeRuleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; version: str; fee_year: int
+    contract_tier_from: date; capacity: int; fee: Decimal
+    is_active: bool; notes: Optional[str]
+    created_at: datetime
+
+
+class MaintenanceFeeSuggestionResponse(BaseModel):
+    suggested_fee: Optional[Decimal]
+    rule_version:  Optional[str] = None
+
+
 class TimeshareContractRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; branch_id: int; contract_number: str

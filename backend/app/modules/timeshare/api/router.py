@@ -51,6 +51,7 @@ services.py's "Owner Portal" section للتفاصيل الكاملة.
 """
 from __future__ import annotations
 
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, UploadFile, status
@@ -66,6 +67,8 @@ from app.modules.timeshare import crud, services
 from app.modules.timeshare.schemas import (
     PayInstallmentRequest, InstallmentRead,
     PayMaintenanceDueRequest, TimeshareMaintenanceDueRead,
+    MaintenanceFeeSuggestionResponse,
+    TimeshareMaintenanceFeeRuleCreate, TimeshareMaintenanceFeeRuleRead,
     TimeshareCancelRequest, TimeshareUnitTransferRequest,
     TimeshareContractCreate, TimeshareContractRead, TimeshareContractUpdate,
     TimeshareOwnerContractRead, TimeshareOwnerVerifyConfirm, TimeshareOwnerVerifyRequest,
@@ -289,6 +292,68 @@ def generate_maintenance_dues(
     _assert_timeshare_branch(db, user, branch_id, "توليد مستحقات صيانة")
     created = services.generate_annual_maintenance_dues(db, branch_id, fee_year)
     return {"fee_year": fee_year, "created": created}
+
+
+# ── قواعد صيانة effective-dated/versioned (OPS-DATA-02 §8 نقطة 3) ────────
+
+@router.get("/timeshare/maintenance-fee-suggestion", response_model=MaintenanceFeeSuggestionResponse)
+def get_maintenance_fee_suggestion(
+    db: DbDep, user=Depends(get_timeshare_user),
+    branch_id: int = Query(...),
+    contract_date: date = Query(...),
+    unit_capacity: int = Query(..., description="2 أو 4 أو 6"),
+    fee_year: int = Query(2026, ge=2026, le=2100),
+):
+    """للعرض/التحقق فقط وقت إنشاء عقد جديد أو مراجعة عقد قديم — القرار
+    النهائي يفضل maintenance_fee المُدخَل يدويًا على العقد نفسه."""
+    _assert_timeshare_branch(db, user, branch_id, "استعلام مبلغ صيانة مقترح")
+    fee, version = services.get_recommended_maintenance_fee(db, branch_id, fee_year, contract_date, unit_capacity)
+    return MaintenanceFeeSuggestionResponse(suggested_fee=fee, rule_version=version)
+
+
+@router.get("/timeshare/maintenance-fee-rules", response_model=list[TimeshareMaintenanceFeeRuleRead])
+def list_maintenance_fee_rules(
+    db: DbDep, user=Depends(get_timeshare_user),
+    branch_id: int = Query(...), fee_year: Optional[int] = Query(None),
+):
+    _assert_timeshare_branch(db, user, branch_id, "عرض قواعد الصيانة")
+    return crud.list_maintenance_fee_rules(db, branch_id, fee_year, active_only=False)
+
+
+@router.post("/timeshare/maintenance-fee-rules", response_model=TimeshareMaintenanceFeeRuleRead,
+             status_code=status.HTTP_201_CREATED,
+             dependencies=[Depends(require_permission("timeshare.maintenance_fee_rules", "create", min_role_level=55))])
+def create_maintenance_fee_rule(
+    data: TimeshareMaintenanceFeeRuleCreate, db: DbDep, user=Depends(get_timeshare_admin_user),
+):
+    _assert_timeshare_branch(db, user, data.branch_id, "إضافة قاعدة صيانة")
+    rule = crud.create_maintenance_fee_rule(db, data, created_by=user.id)
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post("/timeshare/maintenance-fee-rules/{rule_id}/deactivate", response_model=TimeshareMaintenanceFeeRuleRead,
+             dependencies=[Depends(require_permission("timeshare.maintenance_fee_rules", "deactivate", min_role_level=55))])
+def deactivate_maintenance_fee_rule(rule_id: int, db: DbDep, user=Depends(get_timeshare_admin_user)):
+    """soft فقط — لا حذف حقيقي (راجع models.TimeshareMaintenanceFeeRule)."""
+    rule = crud.get_maintenance_fee_rule(db, rule_id)
+    if not rule:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"قاعدة الصيانة {rule_id} غير موجودة")
+    _assert_timeshare_branch(db, user, rule.branch_id, "إلغاء تفعيل قاعدة صيانة")
+    crud.deactivate_maintenance_fee_rule(db, rule)
+    db.commit()
+    db.refresh(rule)
+    return rule
+
+
+@router.post("/timeshare/maintenance-fee-rules/seed-2026", response_model=list[TimeshareMaintenanceFeeRuleRead],
+             dependencies=[Depends(require_permission("timeshare.maintenance_fee_rules", "create", min_role_level=55))])
+def seed_maintenance_fee_rules_2026(db: DbDep, user=Depends(get_timeshare_admin_user), branch_id: int = Query(...)):
+    """يزرع تعميم 2026 الرسمي (6 صفوف: قبل/بعد 1 مايو × 2/4/6 أفراد) —
+    idempotent، آمن يتنادى أكتر من مرة."""
+    _assert_timeshare_branch(db, user, branch_id, "زرع قواعد صيانة 2026")
+    return services.seed_2026_maintenance_fee_rules(db, branch_id, created_by=user.id)
 
 
 # ── Waitlist ─────────────────────────────────────────────────────────

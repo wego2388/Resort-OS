@@ -10,12 +10,14 @@ from sqlalchemy.orm import Session
 
 from app.modules.timeshare.models import (
     TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
+    TimeshareMaintenanceFeeRule,
     TimeshareSupportTicket, TimeshareSupportTicketReply,
     TimeshareUnit, TimeshareVisit, TimeshareVisitRequest, TimeshareWaitlist,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate,
     PayInstallmentRequest, PayMaintenanceDueRequest,
+    TimeshareMaintenanceFeeRuleCreate,
     TimeshareSupportTicketCreate, TimeshareUnitCreate, TimeshareUnitUpdate,
     TimeshareVisitCreate, TimeshareVisitRequestCreate,
     TimeshareVisitUpdate, WaitlistCreate,
@@ -203,6 +205,64 @@ def list_maintenance_dues(db: Session, contract_id: int) -> list[TimeshareMainte
         .order_by(TimeshareMaintenanceDue.fee_year.desc())
         .all()
     )
+
+
+# ── Maintenance fee rules (effective-dated/versioned — راجع models.py) ──
+
+def create_maintenance_fee_rule(
+    db: Session, data: TimeshareMaintenanceFeeRuleCreate, created_by: Optional[int],
+) -> TimeshareMaintenanceFeeRule:
+    rule = TimeshareMaintenanceFeeRule(**data.model_dump(), created_by=created_by)
+    db.add(rule)
+    db.flush()
+    return rule
+
+
+def get_maintenance_fee_rule(db: Session, rule_id: int) -> Optional[TimeshareMaintenanceFeeRule]:
+    return db.query(TimeshareMaintenanceFeeRule).filter(TimeshareMaintenanceFeeRule.id == rule_id).first()
+
+
+def list_maintenance_fee_rules(
+    db: Session, branch_id: int, fee_year: Optional[int] = None, active_only: bool = True,
+) -> list[TimeshareMaintenanceFeeRule]:
+    q = db.query(TimeshareMaintenanceFeeRule).filter(TimeshareMaintenanceFeeRule.branch_id == branch_id)
+    if fee_year is not None:
+        q = q.filter(TimeshareMaintenanceFeeRule.fee_year == fee_year)
+    if active_only:
+        q = q.filter(TimeshareMaintenanceFeeRule.is_active.is_(True))
+    return q.order_by(
+        TimeshareMaintenanceFeeRule.fee_year.desc(),
+        TimeshareMaintenanceFeeRule.capacity,
+        TimeshareMaintenanceFeeRule.contract_tier_from,
+    ).all()
+
+
+def find_maintenance_fee_rule(
+    db: Session, branch_id: int, fee_year: int, contract_date: date, capacity: int,
+) -> Optional[TimeshareMaintenanceFeeRule]:
+    """أحدث قاعدة نشطة (contract_tier_from <= contract_date) لنفس
+    (branch_id, fee_year, capacity) — التعريفة اللي كانت سارية وقت توقيع
+    العقد، مش أحدث تعريفة موجودة دلوقتي."""
+    return (
+        db.query(TimeshareMaintenanceFeeRule)
+        .filter(
+            TimeshareMaintenanceFeeRule.branch_id == branch_id,
+            TimeshareMaintenanceFeeRule.fee_year == fee_year,
+            TimeshareMaintenanceFeeRule.capacity == capacity,
+            TimeshareMaintenanceFeeRule.contract_tier_from <= contract_date,
+            TimeshareMaintenanceFeeRule.is_active.is_(True),
+        )
+        .order_by(TimeshareMaintenanceFeeRule.contract_tier_from.desc())
+        .first()
+    )
+
+
+def deactivate_maintenance_fee_rule(db: Session, rule: TimeshareMaintenanceFeeRule) -> TimeshareMaintenanceFeeRule:
+    """soft فقط — لا حذف حقيقي أبدًا لقاعدة ممكن تكون استُخدمت في اقتراح
+    سعر حقيقي قبل كده (راجع models.py docstring)."""
+    rule.is_active = False
+    db.flush()
+    return rule
 
 
 def pay_maintenance_due(

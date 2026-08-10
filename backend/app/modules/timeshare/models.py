@@ -165,6 +165,42 @@ class TimeshareMaintenanceDue(Base, TimestampMixin):
     )
 
 
+class TimeshareMaintenanceFeeRule(Base, TimestampMixin):
+    """قاعدة صيانة سنوية مُعتمَدة (تعميم رسمي) — effective-dated بحسب تاريخ
+    توقيع العقد (contract_tier_from) + السعة، بدل dict ثابت في الكود
+    بيتصحّح يدويًا كل سنة. راجع OPS-DATA-02 §8 نقطة 3: "لا hard-code سنة
+    2026 ثم تعدل contracts يدويًا سنويًا. أضف جدول قواعد effective-dated/
+    versioned حسب contract-date tier والسعة والسنة."
+
+    مثال: تعميم 2026 بيقول عقد اتوقّع قبل 1 مايو 2026 بسعة 4 أفراد يدفع
+    2000 ج، وعقد اتوقّع من 1 مايو بنفس السعة يدفع 3000 ج — كل واحد من دول
+    صف منفصل هنا (fee_year=2026، contract_tier_from مختلف). الدالة
+    services.get_recommended_maintenance_fee بتدوّر على أحدث صف
+    (contract_tier_from <= تاريخ توقيع العقد) لنفس (fee_year, capacity).
+
+    ده للعرض/التحقق فقط — القرار النهائي يفضل TimeshareContract.
+    maintenance_fee المُدخَل يدويًا (زي ما هو، مش تغيير سلوك). لا حذف
+    حقيقي أبدًا لقاعدة استُخدمت فعليًا في أي due — is_active بس."""
+    __tablename__ = "timeshare_maintenance_fee_rules"
+    __table_args__ = (
+        UniqueConstraint(
+            "branch_id", "fee_year", "contract_tier_from", "capacity",
+            name="uq_maintenance_fee_rule_branch_year_tier_capacity",
+        ),
+    )
+
+    id:                  Mapped[int]           = mapped_column(primary_key=True)
+    branch_id:           Mapped[int]           = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    version:             Mapped[str]           = mapped_column(String(60))
+    fee_year:            Mapped[int]           = mapped_column(Integer, index=True)
+    contract_tier_from:  Mapped[date]          = mapped_column(Date)
+    capacity:            Mapped[int]           = mapped_column(Integer)  # 2|4|6
+    fee:                 Mapped[Decimal]       = mapped_column(Numeric(10, 2))
+    is_active:           Mapped[bool]          = mapped_column(Boolean, default=True)
+    created_by:          Mapped[int | None]    = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    notes:               Mapped[str | None]    = mapped_column(String(300), nullable=True)
+
+
 class TimeshareVisit(Base, TimestampMixin):
     """زيارة فعلية لصاحب التايم شير — تحجز غرفة في PMS."""
     __tablename__ = "timeshare_visits"

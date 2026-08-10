@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Optional
 
 import jwt
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.modules.timeshare import crud
 from app.modules.timeshare.models import (
     TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
+    TimeshareMaintenanceFeeRule,
     TimeshareSupportTicket, TimeshareUnit, TimeshareVisit, TimeshareVisitRequest,
 )
 from app.modules.timeshare.schemas import (
@@ -422,6 +424,51 @@ def generate_annual_maintenance_dues(db: Session, branch_id: int, fee_year: int)
     created = _generate_annual_maintenance_dues(db, branch_id, fee_year)
     db.commit()
     return created
+
+
+# ── قواعد صيانة effective-dated/versioned (OPS-DATA-02 §8 نقطة 3) ────────
+
+# تعميم 2026 الرسمي — نسخة أولى تُزرع فعليًا عبر seed_2026_maintenance_fee_rules
+# بدل ما تكون dict ثابت مقروء مباشرة من الكود؛ لسه مصدر الأرقام نفسها هنا
+# عمدًا (بدل زرعها يدويًا في كل بيئة) — الفرق عن التصميم القديم إن التغيير
+# السنوي القادم بيبقى صف جديد في الجدول، مش تعديل الملف ده.
+MAINTENANCE_FEES_2026_VERSION = "EG-TIMESHARE-MAINT-2026.v1"
+_MAINTENANCE_FEES_2026 = {
+    "before_may_2026": (date(2000, 1, 1), {2: Decimal("1750"), 4: Decimal("2000"), 6: Decimal("2500")}),
+    "from_may_2026":   (date(2026, 5, 1), {2: Decimal("2000"), 4: Decimal("3000"), 6: Decimal("4000")}),
+}
+
+
+def seed_2026_maintenance_fee_rules(db: Session, branch_id: int, created_by: Optional[int] = None) -> list[TimeshareMaintenanceFeeRule]:
+    """idempotent — نفس نمط core.seed.py. تُنشئ 6 صفوف (2 tier × 3 سعات)
+    لو مش موجودة بالفعل لنفس (branch_id, fee_year=2026)."""
+    from app.modules.timeshare.schemas import TimeshareMaintenanceFeeRuleCreate  # noqa: PLC0415
+
+    existing = {
+        (r.contract_tier_from, r.capacity)
+        for r in crud.list_maintenance_fee_rules(db, branch_id, fee_year=2026, active_only=False)
+    }
+    created = []
+    for tier_from, capacities in _MAINTENANCE_FEES_2026.values():
+        for capacity, fee in capacities.items():
+            if (tier_from, capacity) in existing:
+                continue
+            rule = crud.create_maintenance_fee_rule(db, TimeshareMaintenanceFeeRuleCreate(
+                branch_id=branch_id, version=MAINTENANCE_FEES_2026_VERSION, fee_year=2026,
+                contract_tier_from=tier_from, capacity=capacity, fee=fee,
+            ), created_by=created_by)
+            created.append(rule)
+    db.commit()
+    return created
+
+
+def get_recommended_maintenance_fee(
+    db: Session, branch_id: int, fee_year: int, contract_date: "date", capacity: int,
+) -> tuple[Optional[Decimal], Optional[str]]:
+    """(المبلغ المقترح، نسخة القاعدة) — للعرض/التحقق فقط، زي ما التعميم
+    الأصلي بيقول. None لو مفيش قاعدة سارية للسنة/السعة/تاريخ التعاقد دول."""
+    rule = crud.find_maintenance_fee_rule(db, branch_id, fee_year, contract_date, capacity)
+    return (rule.fee, rule.version) if rule else (None, None)
 
 
 def add_to_waitlist(db: Session, data: WaitlistCreate) -> object:
