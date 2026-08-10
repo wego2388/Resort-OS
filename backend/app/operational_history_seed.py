@@ -76,12 +76,19 @@ def _leasing_module(db: Session, ctx: ScenarioContext) -> dict:
     return generate_leasing(db, ctx)
 
 
+def _timeshare_module(db: Session, ctx: ScenarioContext) -> dict:
+    from app.hist_timeshare import generate as generate_timeshare  # noqa: PLC0415
+
+    return generate_timeshare(db, ctx)
+
+
 SCENARIO_MODULES: list[ScenarioModule] = [
     ScenarioModule(name="pms_bookings", generate=_pms_bookings_module),
     ScenarioModule(name="leasing", generate=_leasing_module),
+    ScenarioModule(name="timeshare", generate=_timeshare_module),
 ]
-# ⚠️ باقي الموديولات (Hub/Dining/Beach/Timeshare/HR/Inventory/Assets/GL
-# opening balance) هتتسجّل هنا واحدة واحدة، كل واحدة دفعة منفصلة.
+# ⚠️ باقي الموديولات (Hub/Dining/Beach/HR/Inventory/Assets/GL opening
+# balance) هتتسجّل هنا واحدة واحدة، كل واحدة دفعة منفصلة.
 
 
 @dataclass
@@ -156,6 +163,11 @@ def _check_preconditions(db: Session, branch_id: int) -> list[str]:
         for code in ("1110", "1260", "2150", "4500"):
             if not get_account_by_code(db, branch_id, code):
                 problems.append(f"leasing requires account {code} for branch {branch_id}")
+
+    if any(m.name == "timeshare" for m in SCENARIO_MODULES):
+        for code in ("4600", "4650"):
+            if not get_account_by_code(db, branch_id, code):
+                problems.append(f"timeshare requires account {code} for branch {branch_id}")
 
     return problems
 
