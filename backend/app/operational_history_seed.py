@@ -94,17 +94,27 @@ def _hr_module(db: Session, ctx: ScenarioContext) -> dict:
     return generate_hr(db, ctx)
 
 
+def _hub_module(db: Session, ctx: ScenarioContext) -> dict:
+    from app.hist_hub import generate as generate_hub  # noqa: PLC0415
+
+    return generate_hub(db, ctx)
+
+
 SCENARIO_MODULES: list[ScenarioModule] = [
     ScenarioModule(name="pms_bookings", generate=_pms_bookings_module),
     ScenarioModule(name="leasing", generate=_leasing_module),
     ScenarioModule(name="timeshare", generate=_timeshare_module),
     ScenarioModule(name="dining_beach", generate=_dining_beach_module),
+    ScenarioModule(name="hub", generate=_hub_module),
     ScenarioModule(name="hr", generate=_hr_module),
 ]
-# ⚠️ باقي الموديولات (Hub/Inventory/Assets/GL opening balance) هتتسجّل هنا
+# ⚠️ باقي الموديولات (Inventory/Assets/GL opening balance) هتتسجّل هنا
 # واحدة واحدة، كل واحدة دفعة منفصلة. dining_beach مسجَّل بعد pms_bookings
 # عمدًا (مش قبله) — عشان سيناريو "الدفع على حساب الغرفة" يقدر يلاقي فوليو
-# مفتوح حقيقي لو الاتنين اشتغلوا في نفس الدفعة.
+# مفتوح حقيقي لو الاتنين اشتغلوا في نفس الدفعة. hub مسجَّل بعد pms_bookings
+# عمدًا برضو — راجع hist_hub.py's docstring: packer بتاع pms_bookings
+# بيستخدم occupied dict محلي فاضي من الأول (مش بيقرأ الداتابيز)، فلازم
+# يخلص حجزه الأول قبل ما Hub يحجز أي غرفة حقيقية.
 
 
 @dataclass
