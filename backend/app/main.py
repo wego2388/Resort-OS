@@ -68,7 +68,22 @@ def _register_all_routes(app: FastAPI) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """يُسجّل كل routes عند startup."""
+    """يُسجّل كل routes عند startup.
+
+    ⚠️ باج حقيقي حي (2026-08-10): `_register_all_routes` بيستورد كل
+    `api/router.py` بس — أي موديول models بيتسجل بس لو الـrouter بتاعه
+    استورده (مباشر أو transitively عبر services). ده معتمد على ترتيب/محتوى
+    استيرادات كل موديول، مش مضمون. لوحظ فعليًا: `GuestReview`'s
+    `relationship("ReviewCategory")` كان بيفشل 500 قصدي على `/auth/login`
+    و`/auth/refresh` في بعض الـworker processes بس (نفس الباج المكتشف قبل
+    كده في الأدوات المستقلة — راجع app.seed._import_all_models's توثيق)،
+    لأن SQLAlchemy's lazy `configure_mappers()` بيتنفذ أول query حقيقي في
+    أي endpoint، قبل ما `analytics.models` (المسجّلة الحادي عشر في
+    `_MODULE_KEYS`) تتستورد فعليًا في نفس العملية. الحل: نفس دالة الاستيراد
+    الحتمية الجاهزة، هنا كمان — قبل أي route registration، مش بعده.
+    """
+    from app.seed import _import_all_models  # noqa: PLC0415
+    _import_all_models()
     _register_all_routes(app)
     yield
 
