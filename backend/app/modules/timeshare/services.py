@@ -15,12 +15,12 @@ from app.modules.timeshare import crud
 from app.modules.timeshare.models import (
     TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
     TimeshareMaintenanceFeeRule,
-    TimeshareSupportTicket, TimeshareUnit, TimeshareVisit, TimeshareVisitRequest,
+    TimeshareSupportTicket, TimeshareUnit, TimeshareUnitPair, TimeshareVisit, TimeshareVisitRequest,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate, TimeshareUnitTransferRequest,
     PayInstallmentRequest, PayMaintenanceDueRequest,
-    TimeshareSupportTicketCreate, TimeshareUnitCreate, TimeshareUnitUpdate,
+    TimeshareSupportTicketCreate, TimeshareUnitCreate, TimeshareUnitPairCreate, TimeshareUnitUpdate,
     TimeshareVisitCreate, TimeshareVisitRequestCreate,
     TimeshareVisitUpdate, WaitlistCreate,
 )
@@ -1117,6 +1117,38 @@ def update_unit(db: Session, unit_id: int, data: TimeshareUnitUpdate) -> Timesha
     return unit
 
 
+def create_unit_pair(db: Session, data: TimeshareUnitPairCreate) -> TimeshareUnitPair:
+    """ربط شاليه+استوديو كزوج Family Compound معتمد — لازم قبل أي زيارة
+    استحقاق فعلية لعقد سعة 6 (راجع _create_entitlement_pair_visit تحت)."""
+    chalet = crud.get_unit(db, data.chalet_unit_id)
+    if not chalet or chalet.branch_id != data.branch_id:
+        raise ValueError(f"chalet_unit_id {data.chalet_unit_id} غير موجود في هذا الفرع")
+    if chalet.unit_type != "Chalet":
+        raise ValueError(f"الوحدة {chalet.unit_number} ليست من نوع Chalet")
+    studio = crud.get_unit(db, data.studio_unit_id)
+    if not studio or studio.branch_id != data.branch_id:
+        raise ValueError(f"studio_unit_id {data.studio_unit_id} غير موجود في هذا الفرع")
+    if studio.unit_type != "Studio":
+        raise ValueError(f"الوحدة {studio.unit_number} ليست من نوع Studio")
+    if crud.get_unit_pair_by_chalet_unit_id(db, data.chalet_unit_id):
+        raise ValueError(f"الوحدة {chalet.unit_number} مرتبطة بالفعل بزوج معتمد آخر")
+    pair = crud.create_unit_pair(db, data)
+    db.commit()
+    db.refresh(pair)
+    return pair
+
+
+def deactivate_unit_pair(db: Session, pair_id: int) -> TimeshareUnitPair:
+    """soft فقط — لا حذف حقيقي (نفس نمط TimesharePeakSeason/TimeshareMaintenanceFeeRule)."""
+    pair = crud.get_unit_pair(db, pair_id)
+    if not pair:
+        raise ValueError(f"زوج الوحدات {pair_id} غير موجود")
+    crud.deactivate_unit_pair(db, pair)
+    db.commit()
+    db.refresh(pair)
+    return pair
+
+
 # ── Visits ───────────────────────────────────────────────────────────
 
 def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
@@ -1162,6 +1194,13 @@ def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
         raise ValueError(f"الحجز مجمَّد لوجود {reason_text} — سدِّد المتأخرات أولاً")
     nights = (data.check_out - data.check_in).days
 
+    if contract.unit_capacity == 6:
+        # Family Compound entitlement — راجع _create_entitlement_pair_visit
+        # ومداخل contract.unit_capacity/TimeshareUnitPair (OPS-DATA-02 §8
+        # نقطة 11): شاليه+استوديو مقترنين في عملية ذرّية واحدة، مش وحدة
+        # واحدة عادية.
+        return _create_entitlement_pair_visit(db, contract, data, nights)
+
     if contract.unit_id:
         candidate_id = contract.unit_id
     else:
@@ -1188,6 +1227,58 @@ def create_visit(db: Session, data: TimeshareVisitCreate) -> TimeshareVisit:
         raise ValueError(f"الوحدة {unit.unit_number} محجوزة بالفعل في هذه الفترة")
 
     visit = crud.create_visit(db, data, nights, unit_id=unit.id)
+    db.commit()
+    db.refresh(visit)
+    return visit
+
+
+def _create_entitlement_pair_visit(
+    db: Session, contract: "TimeshareContract", data: TimeshareVisitCreate, nights: int,
+) -> TimeshareVisit:
+    """زيارة استحقاق Family Compound — عقد سعة 6 بياخد شاليه + استوديو
+    مقترنين معًا (نفس رقم الوحدة فعليًا، راجع TimeshareUnitPair) في عملية
+    ذرّية واحدة (كل الوحدتين أو ولا واحدة)، مش زيارتين منفصلتين ممكن ينجح
+    نص العملية ويفشل النص التاني. entitlement_visit=True دايمًا هنا — مفيش
+    رسم ليلة جديد (العقد مسدد بالكامل بقيمته، راجع OPS-DATA-02 §8 نقطة 11
+    وdocstring TimeshareVisit.entitlement_visit). قفل الوحدتين بترتيب ثابت
+    (crud.lock_unit_pair_for_visit) بنفس نمط pms.services._lock_and_price_rooms
+    لمنع deadlock بين محاولتين متزامنتين."""
+    if contract.unit_id:
+        pair = crud.get_unit_pair_by_chalet_unit_id(db, contract.unit_id)
+        if not pair:
+            raise ValueError(
+                f"الوحدة الثابتة للعقد {contract.contract_number} مالهاش زوج "
+                "معتمد (شاليه+استوديو) — سجّل الزوج أولاً عبر إدارة وحدات التايم شير"
+            )
+    else:
+        pair = crud.find_available_unit_pair(db, contract.branch_id, data.check_in, data.check_out)
+        if not pair:
+            raise ValueError("لا يوجد زوج وحدات (شاليه+استوديو) متاح في الفترة المطلوبة")
+
+    try:
+        crud.lock_unit_pair_for_visit(db, pair)
+    except OperationalError:
+        db.rollback()
+        raise VisitConflictError(f"زوج الوحدات {pair.id} مقفول الآن من عملية حجز أخرى — حاول مرة أخرى")
+
+    chalet = crud.get_unit(db, pair.chalet_unit_id)
+    studio = crud.get_unit(db, pair.studio_unit_id)
+    if not chalet or not studio:
+        raise ValueError("إحدى وحدتي الزوج لم تعد موجودة")
+    if chalet.status == "maintenance":
+        raise ValueError(f"الوحدة {chalet.unit_number} تحت الصيانة حاليًا")
+    if studio.status == "maintenance":
+        raise ValueError(f"الوحدة {studio.unit_number} تحت الصيانة حاليًا")
+
+    # إعادة التحقق من التعارض بعد القفل — نفس سبب create_visit العادية فوق
+    if crud.has_overlapping_visit(db, chalet.id, data.check_in, data.check_out):
+        raise ValueError(f"الوحدة {chalet.unit_number} محجوزة بالفعل في هذه الفترة")
+    if crud.has_overlapping_visit(db, studio.id, data.check_in, data.check_out):
+        raise ValueError(f"الوحدة {studio.unit_number} محجوزة بالفعل في هذه الفترة")
+
+    visit = crud.create_visit(
+        db, data, nights, unit_id=chalet.id, paired_unit_id=studio.id, entitlement_visit=True,
+    )
     db.commit()
     db.refresh(visit)
     return visit

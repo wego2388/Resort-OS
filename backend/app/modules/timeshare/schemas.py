@@ -288,7 +288,8 @@ class TimeshareVisitUpdate(BaseModel):
 class TimeshareVisitRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; branch_id: int; contract_id: int; booking_id: Optional[int]
-    unit_id: Optional[int]
+    unit_id: Optional[int]; paired_unit_id: Optional[int] = None
+    entitlement_visit: bool = False
     check_in: date; check_out: date; nights: int; status: str
     notes: Optional[str]
     created_at: datetime
@@ -313,6 +314,23 @@ class TimeshareUnitUpdate(BaseModel):
     unit_type: Optional[str] = Field(None, pattern=r"^(Studio|Chalet)$")
     status: Optional[str] = Field(None, pattern=r"^(available|occupied|maintenance)$")
     notes: Optional[str] = Field(None, max_length=300)
+
+
+class TimeshareUnitPairCreate(BaseModel):
+    """ربط وحدتين معتمدتين (شاليه + استوديو) كزوج Family Compound واحد —
+    مطلوب قبل ما أي عقد سعة 6 يقدر ياخد زيارة استحقاق فعلية (راجع
+    services.create_visit)."""
+    branch_id:      int
+    chalet_unit_id: int
+    studio_unit_id: int
+    notes:          Optional[str] = Field(None, max_length=300)
+
+
+class TimeshareUnitPairRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int; branch_id: int; chalet_unit_id: int; studio_unit_id: int
+    is_active: bool; notes: Optional[str]
+    created_at: datetime
 
 
 # ── Simple fixed-shape response schemas ──────────────────────────────────────

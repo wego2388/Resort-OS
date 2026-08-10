@@ -77,7 +77,8 @@ from app.modules.timeshare.schemas import (
     TimeshareStaffCreate, TimeshareStaffProvisioned, TimeshareStaffRead, TimeshareStaffStatusUpdate,
     TimeshareSupportTicketCreate, TimeshareSupportTicketRead,
     TimeshareTicketReplyCreate, TimeshareTicketStatusUpdate,
-    TimeshareUnitCreate, TimeshareUnitRead, TimeshareUnitUpdate,
+    TimeshareUnitCreate, TimeshareUnitPairCreate, TimeshareUnitPairRead,
+    TimeshareUnitRead, TimeshareUnitUpdate,
     TimeshareVisitCreate, TimeshareVisitRead, TimeshareVisitUpdate,
     TimeshareVisitRequestApprove, TimeshareVisitRequestCreate,
     TimeshareVisitRequestReject, TimeshareVisitRequestRead,
@@ -612,6 +613,42 @@ def update_unit(unit_id: int, data: TimeshareUnitUpdate, db: DbDep, user=Depends
         return services.update_unit(db, unit_id, data)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Unit Pairs — سعة 6 Family Compound entitlement (OPS-DATA-02 §8 نقطة 11) ──
+
+@router.get("/timeshare/unit-pairs", response_model=list[TimeshareUnitPairRead])
+def list_unit_pairs(
+    db: DbDep, user=Depends(get_timeshare_user),
+    branch_id: int = Query(...), active_only: bool = Query(True),
+):
+    _assert_timeshare_branch(db, user, branch_id, "عرض أزواج وحدات التايم شير")
+    return crud.list_unit_pairs(db, branch_id, active_only)
+
+
+@router.post("/timeshare/unit-pairs", response_model=TimeshareUnitPairRead,
+             status_code=status.HTTP_201_CREATED)
+def create_unit_pair(data: TimeshareUnitPairCreate, db: DbDep, user=Depends(get_timeshare_admin_user)):
+    """ربط شاليه+استوديو كزوج Family Compound معتمد — لازم قبل أي زيارة
+    استحقاق فعلية لعقد سعة 6 (راجع services._create_entitlement_pair_visit)."""
+    _assert_timeshare_branch(db, user, data.branch_id, "إضافة زوج وحدات تايم شير")
+    try:
+        return services.create_unit_pair(db, data)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.post("/timeshare/unit-pairs/{pair_id}/deactivate", response_model=TimeshareUnitPairRead)
+def deactivate_unit_pair(pair_id: int, db: DbDep, user=Depends(get_timeshare_admin_user)):
+    """soft فقط — لا حذف حقيقي (نفس نمط TimesharePeakSeason)."""
+    pair = crud.get_unit_pair(db, pair_id)
+    if not pair:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"زوج الوحدات {pair_id} غير موجود")
+    _assert_timeshare_branch(db, user, pair.branch_id, "إلغاء تفعيل زوج وحدات تايم شير")
+    try:
+        return services.deactivate_unit_pair(db, pair_id)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc))
 
 
 # ── Excel Import ──────────────────────────────────────────────────────

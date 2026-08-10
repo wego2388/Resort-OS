@@ -5,20 +5,21 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.modules.timeshare.models import (
     TimeshareContract, TimeshareInstallment, TimeshareMaintenanceDue,
     TimeshareMaintenanceFeeRule, TimesharePeakSeason,
     TimeshareSupportTicket, TimeshareSupportTicketReply,
-    TimeshareUnit, TimeshareVisit, TimeshareVisitRequest, TimeshareWaitlist,
+    TimeshareUnit, TimeshareUnitPair, TimeshareVisit, TimeshareVisitRequest, TimeshareWaitlist,
 )
 from app.modules.timeshare.schemas import (
     TimeshareContractCreate, TimeshareContractUpdate,
     PayInstallmentRequest, PayMaintenanceDueRequest,
     TimeshareMaintenanceFeeRuleCreate, TimesharePeakSeasonCreate,
-    TimeshareSupportTicketCreate, TimeshareUnitCreate, TimeshareUnitUpdate,
+    TimeshareSupportTicketCreate, TimeshareUnitCreate, TimeshareUnitPairCreate,
+    TimeshareUnitUpdate,
     TimeshareVisitCreate, TimeshareVisitRequestCreate,
     TimeshareVisitUpdate, WaitlistCreate,
 )
@@ -705,10 +706,16 @@ def get_waitlist_entry(db: Session, waitlist_id: int) -> Optional[TimeshareWaitl
 
 # ── Visits ────────────────────────────────────────────────────────────
 
-def create_visit(db: Session, data: TimeshareVisitCreate, nights: int, unit_id: Optional[int] = None) -> TimeshareVisit:
+def create_visit(
+    db: Session, data: TimeshareVisitCreate, nights: int,
+    unit_id: Optional[int] = None, paired_unit_id: Optional[int] = None,
+    entitlement_visit: bool = False,
+) -> TimeshareVisit:
     visit = TimeshareVisit(
         branch_id=data.branch_id, contract_id=data.contract_id,
-        booking_id=data.booking_id, unit_id=unit_id, check_in=data.check_in, check_out=data.check_out,
+        booking_id=data.booking_id, unit_id=unit_id, paired_unit_id=paired_unit_id,
+        entitlement_visit=entitlement_visit,
+        check_in=data.check_in, check_out=data.check_out,
         nights=nights, notes=data.notes,
     )
     db.add(visit)
@@ -812,9 +819,11 @@ def has_overlapping_visit(
 ) -> bool:
     """هل فيه زيارة أخرى (scheduled/active) على نفس الوحدة بتتقاطع مع
     الفترة المطلوبة؟ نفس منطق date-overlap subquery المستخدم في
-    pms.crud.get_available_rooms."""
+    pms.crud.get_available_rooms. بيفحص unit_id وpaired_unit_id الاتنين —
+    وحدة ممكن تبقى "الوحدة التانية" في زيارة استحقاق سعة 6 (راجع
+    TimeshareUnitPair)، فلازم تتحسب محجوزة برضو وقتها."""
     q = db.query(TimeshareVisit).filter(
-        TimeshareVisit.unit_id == unit_id,
+        or_(TimeshareVisit.unit_id == unit_id, TimeshareVisit.paired_unit_id == unit_id),
         TimeshareVisit.status.in_(["scheduled", "active"]),
         TimeshareVisit.check_in < check_out,
         TimeshareVisit.check_out > check_in,
@@ -828,14 +837,23 @@ def find_available_unit(
     db: Session, branch_id: int, unit_type: str, check_in: date, check_out: date,
 ) -> Optional[TimeshareUnit]:
     """يُرجع أول وحدة متاحة من نوع unit_type بدون أي زيارة متقاطعة مع
-    الفترة المطلوبة — لعقد عائم (بدون unit_id ثابت)."""
+    الفترة المطلوبة — لعقد عائم (بدون unit_id ثابت). booked_unit_ids بتشمل
+    unit_id وpaired_unit_id الاتنين لنفس سبب has_overlapping_visit فوق."""
     booked_unit_ids = (
-        db.query(TimeshareVisit.unit_id)
+        db.query(TimeshareVisit.unit_id.label("unit_id"))
         .filter(
             TimeshareVisit.unit_id.isnot(None),
             TimeshareVisit.status.in_(["scheduled", "active"]),
             TimeshareVisit.check_in < check_out,
             TimeshareVisit.check_out > check_in,
+        )
+        .union(
+            db.query(TimeshareVisit.paired_unit_id.label("unit_id")).filter(
+                TimeshareVisit.paired_unit_id.isnot(None),
+                TimeshareVisit.status.in_(["scheduled", "active"]),
+                TimeshareVisit.check_in < check_out,
+                TimeshareVisit.check_out > check_in,
+            )
         )
         .subquery()
     )
@@ -850,6 +868,64 @@ def find_available_unit(
         .order_by(TimeshareUnit.unit_number)
         .first()
     )
+
+
+# ── Unit Pairs — سعة 6 (Family Compound entitlement) ─────────────────
+
+def create_unit_pair(db: Session, data: TimeshareUnitPairCreate) -> TimeshareUnitPair:
+    pair = TimeshareUnitPair(**data.model_dump())
+    db.add(pair)
+    db.flush()
+    return pair
+
+
+def get_unit_pair(db: Session, pair_id: int) -> Optional[TimeshareUnitPair]:
+    return db.query(TimeshareUnitPair).filter(TimeshareUnitPair.id == pair_id).first()
+
+
+def list_unit_pairs(db: Session, branch_id: int, active_only: bool = True) -> list[TimeshareUnitPair]:
+    q = db.query(TimeshareUnitPair).filter(TimeshareUnitPair.branch_id == branch_id)
+    if active_only:
+        q = q.filter(TimeshareUnitPair.is_active.is_(True))
+    return q.order_by(TimeshareUnitPair.id).all()
+
+
+def deactivate_unit_pair(db: Session, pair: TimeshareUnitPair) -> TimeshareUnitPair:
+    pair.is_active = False
+    db.flush()
+    return pair
+
+
+def get_unit_pair_by_chalet_unit_id(db: Session, chalet_unit_id: int) -> Optional[TimeshareUnitPair]:
+    """الزوج المعتمد لعقد سعة 6 بوحدة ثابتة (contract.unit_id مربوط بشاليه
+    فعليًا) — None يعني الشاليه ده مالوش زوج معتمد أصلًا (خطأ إعداد لازم
+    يتصلح إداريًا عبر POST /timeshare/unit-pairs قبل أي زيارة استحقاق)."""
+    return db.query(TimeshareUnitPair).filter(
+        TimeshareUnitPair.chalet_unit_id == chalet_unit_id,
+        TimeshareUnitPair.is_active.is_(True),
+    ).first()
+
+
+def find_available_unit_pair(
+    db: Session, branch_id: int, check_in: date, check_out: date,
+) -> Optional[TimeshareUnitPair]:
+    """أول زوج معتمد ومفعّل عنده الوحدتين الاتنين متاحين للفترة المطلوبة —
+    لعقد سعة 6 عائم (بدون unit_id ثابت)."""
+    for pair in list_unit_pairs(db, branch_id, active_only=True):
+        if has_overlapping_visit(db, pair.chalet_unit_id, check_in, check_out):
+            continue
+        if has_overlapping_visit(db, pair.studio_unit_id, check_in, check_out):
+            continue
+        return pair
+    return None
+
+
+def lock_unit_pair_for_visit(db: Session, pair: TimeshareUnitPair) -> None:
+    """يقفل الوحدتين في ترتيب ثابت (الأصغر ID الأول) لمنع deadlock بين
+    محاولتين متزامنتين — نفس نمط pms.services._lock_and_price_rooms.
+    نفس تحذير .populate_existing() في lock_unit_for_visit ينطبق هنا."""
+    for unit_id in sorted([pair.chalet_unit_id, pair.studio_unit_id]):
+        db.query(TimeshareUnit).filter(TimeshareUnit.id == unit_id).populate_existing().with_for_update(nowait=True).first()
 
 
 def get_visit(db: Session, visit_id: int) -> Optional[TimeshareVisit]:

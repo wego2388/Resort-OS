@@ -243,6 +243,14 @@ class TimeshareVisit(Base, TimestampMixin):
     booking_id:      Mapped[int | None]     = mapped_column(ForeignKey("bookings.id",  ondelete="SET NULL"), nullable=True)
     unit_id:         Mapped[int | None]     = mapped_column(ForeignKey("timeshare_units.id", ondelete="SET NULL"), nullable=True)
     # الوحدة الفعلية المخصَّصة لهذه الزيارة تحديدًا — لعقد عائم ممكن تختلف كل سنة
+    paired_unit_id:  Mapped[int | None]     = mapped_column(ForeignKey("timeshare_units.id", ondelete="SET NULL"), nullable=True)
+    # الوحدة التانية في زوج Family Compound (لعقود سعة 6 بس) — راجع
+    # TimeshareUnitPair. None لأي زيارة عادية (سعة 2/4).
+    entitlement_visit: Mapped[bool]         = mapped_column(Boolean, default=False)
+    # True لزيارة استحقاق تعاقدي (العقد سعة 6 مسدد بالكامل بقيمة العقد، مفيش
+    # رسم ليلة جديد) — راجع OPS-DATA-02 §8 نقطة 11. create_visit عمرها ما
+    # كانت بترحّل إيراد غرف أصلًا (بتخصّص وحدة تايم شير بس، مش حجز PMS)،
+    # فالعمود ده بيوثّق الحقيقة دي صراحةً بدل ما تفضل ضمنية.
     check_in:        Mapped[date]           = mapped_column(Date)
     check_out:       Mapped[date]           = mapped_column(Date)
     nights:          Mapped[int]            = mapped_column(Integer)
@@ -252,6 +260,7 @@ class TimeshareVisit(Base, TimestampMixin):
 
     contract: Mapped["TimeshareContract"] = relationship("TimeshareContract")
     unit: Mapped["TimeshareUnit | None"] = relationship("TimeshareUnit", foreign_keys=[unit_id], lazy="select")
+    paired_unit: Mapped["TimeshareUnit | None"] = relationship("TimeshareUnit", foreign_keys=[paired_unit_id], lazy="select")
 
 
 class TimeshareUnit(Base, TimestampMixin):
@@ -271,6 +280,29 @@ class TimeshareUnit(Base, TimestampMixin):
     status:       Mapped[str]        = mapped_column(String(20), default="available")
     # available|occupied|maintenance
     notes:        Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+
+class TimeshareUnitPair(Base, TimestampMixin):
+    """زوج وحدات معتمد (شاليه + استوديو بنفس رقم الوحدة) لعقود سعة 6 —
+    Family Compound entitlement (راجع pms.RoomBundle لنفس المفهوم عند حجوزات
+    الضيوف العاديين؛ نسخة منفصلة عمدًا هنا لأن TimeshareUnit مخزون منفصل
+    تمامًا عن pms.Room — راجع docstring TimeshareUnit فوق). UniqueConstraint
+    يمنع نفس الوحدة تنضم لأكتر من زوج واحد بالغلط."""
+    __tablename__ = "timeshare_unit_pairs"
+    __table_args__ = (
+        UniqueConstraint("chalet_unit_id", name="uq_timeshare_unit_pair_chalet"),
+        UniqueConstraint("studio_unit_id", name="uq_timeshare_unit_pair_studio"),
+    )
+
+    id:              Mapped[int]        = mapped_column(primary_key=True)
+    branch_id:       Mapped[int]        = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    chalet_unit_id:  Mapped[int]        = mapped_column(ForeignKey("timeshare_units.id", ondelete="RESTRICT"))
+    studio_unit_id:  Mapped[int]        = mapped_column(ForeignKey("timeshare_units.id", ondelete="RESTRICT"))
+    is_active:       Mapped[bool]       = mapped_column(Boolean, default=True)
+    notes:           Mapped[str | None] = mapped_column(String(300), nullable=True)
+
+    chalet_unit: Mapped["TimeshareUnit"] = relationship("TimeshareUnit", foreign_keys=[chalet_unit_id])
+    studio_unit: Mapped["TimeshareUnit"] = relationship("TimeshareUnit", foreign_keys=[studio_unit_id])
 
 
 class TimeshareVisitRequest(Base, TimestampMixin):
