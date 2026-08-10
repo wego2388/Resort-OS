@@ -58,8 +58,13 @@ class ScenarioContext:
 class ScenarioModule:
     """مولّد بيانات واحد قابل للتسجيل (زي "pms_bookings" أو "dining_orders").
     `generate(db, ctx)` بيرجع {"counts": {...}, "totals": {...}} لتقرير الـ
-    manifest — مفروض يعمل flush بس (مش commit)، الـ CLI هو مالك الـ
-    transaction الواحدة الشاملة."""
+    manifest. مفروض يستخدم services حقيقية (زي كل المولّدات الموجودة
+    فعليًا) — أي db.commit() داخلي آمن تمامًا دلوقتي، لأن main() بيربط
+    الـSession بـconnection transaction خارجية عبر
+    join_transaction_mode="create_savepoint" (راجع main()'s توثيق)، فأي
+    commit داخلي بيقفل SAVEPOINT بس مش الـtransaction الفعلية — الـCLI
+    برضو هو مالك القرار النهائي (commit/rollback) بغض النظر عن عدد
+    الـcommits الداخلية دي."""
     name: str
     generate: Callable[[Session, ScenarioContext], dict]
 
@@ -256,11 +261,25 @@ def confirmation_phrase(branch_code: str, period: str) -> str:
     return f"SEED {branch_code}/{period}/{DATASET_VERSION}"
 
 
-def run_seed(
+@dataclass
+class _PreparedBatch:
+    """نتيجة `prepare_batch` — إما batch جديد لسه "running" (لسه محتاج
+    `run_modules`)، أو نتيجة نهائية جاهزة (batch سابق كان completed
+    بالفعل، مفيش حاجة تتنفذ)."""
+    batch: "object | None"  # ImportBatch | None
+    branch_id: "int | None"
+    ctx: "ScenarioContext | None"
+    already_completed_result: "SeedResult | None"
+
+
+def prepare_batch(
     db: Session, *, branch_code: str, period: str, actor_id: Optional[int] = None,
-) -> SeedResult:
-    """يشتغل جوه transaction المستدعي (staged بس، مش commit) — الـ caller
-    (main تحت) هو اللي بيقرر commit ولا rollback حسب --apply."""
+) -> _PreparedBatch:
+    """المرحلة الأولى بس: قفل + تحقق + إنشاء ImportBatch(status="running")
+    (flush بس هنا — الـ caller قرر يعمل commit فوري منفصل عشان علامة
+    "running" تفضل موجودة فعليًا حتى لو حصل crash حقيقي في المرحلة
+    التانية (`run_modules`) — راجع main()'s توثيق تحت لتفاصيل الـ
+    checkpoint المزدوج ده وليه محتاج يبقى منفصل عن باقي الشغل."""
     try:
         year_str, month_str = period.split("-")
         period_year, period_month = int(year_str), int(month_str)
@@ -273,9 +292,12 @@ def run_seed(
 
     existing = _existing_batch(db, branch.id, period)
     if existing and existing.status == "completed":
-        return SeedResult(
-            branch_code, period, DATASET_VERSION, "apply", True,
-            [], json.loads(existing.counts or "{}"), json.loads(existing.totals or "{}"),
+        return _PreparedBatch(
+            batch=None, branch_id=None, ctx=None,
+            already_completed_result=SeedResult(
+                branch_code, period, DATASET_VERSION, "apply", True,
+                [], json.loads(existing.counts or "{}"), json.loads(existing.totals or "{}"),
+            ),
         )
     if existing and existing.status == "running":
         raise RuntimeError(
@@ -306,13 +328,19 @@ def run_seed(
         branch_id=branch.id, period_year=period_year, period_month=period_month,
         tz_name=settings.TIMEZONE,
     )
+    return _PreparedBatch(batch=batch, branch_id=branch.id, ctx=ctx, already_completed_result=None)
+
+
+def run_modules(db: Session, batch, ctx: ScenarioContext) -> SeedResult:
+    """المرحلة التانية: تشغيل كل الموديولات المسجَّلة فعليًا. بتحدّث
+    `batch.counts/totals` **تدريجيًا بعد كل موديول** (flush بس) — مش في
+    الآخر بس زي قبل كده — عشان لو crash حقيقي حصل في نص التشغيلة، أي
+    استعلام manual على الـImportBatch (أو reset-dataset's guard تحت)
+    يقدر يعرف فعليًا وصل لحد فين، مش بس "failed" بلا تفاصيل."""
     counts: dict = {}
     totals: dict = {}
     modules_run: list[str] = []
-    # الساعة 8 صباحًا يوم 1 الشهر — بداية معقولة لسيناريو تشغيلي، كل مولّد
-    # بيحرّك الوقت بنفسه جوه الـ scenario_clock context لتوزيع الأحداث
-    # على الشهر (راجع resort_os/clock.py).
-    scenario_start = datetime(period_year, period_month, 1, 8, 0, tzinfo=ZoneInfo(settings.TIMEZONE))
+    scenario_start = datetime(ctx.period_year, ctx.period_month, 1, 8, 0, tzinfo=ZoneInfo(ctx.tz_name))
     try:
         with scenario_clock(scenario_start):
             for module in SCENARIO_MODULES:
@@ -320,6 +348,9 @@ def run_seed(
                 counts[module.name] = result.get("counts", {})
                 totals[module.name] = result.get("totals", {})
                 modules_run.append(module.name)
+                batch.counts = json.dumps(counts, sort_keys=True, default=str)
+                batch.totals = json.dumps(totals, sort_keys=True, default=str)
+                db.flush()
     except Exception as exc:
         batch.status = "failed"
         batch.failure_reason = str(exc)[:2000]
@@ -328,12 +359,36 @@ def run_seed(
         raise
 
     batch.status = "completed"
-    batch.counts = json.dumps(counts, sort_keys=True, default=str)
-    batch.totals = json.dumps(totals, sort_keys=True, default=str)
     batch.completed_at = datetime.now(timezone.utc)
     db.flush()
 
-    return SeedResult(branch_code, period, DATASET_VERSION, "apply", False, modules_run, counts, totals)
+    # branch_code مش متاح هنا (batch عنده branch_id بس) — الـ caller
+    # (main()/run_seed()) هو اللي عنده الـ string الأصلي ولازم يستخدمه
+    # هو في أي output نهائي، مش الحقل ده.
+    return SeedResult(
+        "", batch.period, DATASET_VERSION, "apply", False, modules_run, counts, totals,
+    )
+
+
+def run_seed(
+    db: Session, *, branch_code: str, period: str, actor_id: Optional[int] = None,
+) -> SeedResult:
+    """يشتغل جوه transaction المستدعي (staged بس، مش commit) — الـ caller
+    (main تحت) هو اللي بيقرر commit ولا rollback حسب --apply.
+
+    ⚠️ دي دالة راحة (convenience) بتجمّع `prepare_batch` + `run_modules` في
+    نداء واحد — مناسبة لـdry-run (كل حاجة جوه transaction واحدة هترجع
+    بالكامل beside الآخر) ولاستخدام مباشر/اختباري. لـ--apply الحقيقي في
+    main() تحت، المرحلتين بيتنادوا منفصلين عمدًا (commit فوري بعد
+    prepare_batch) — راجع main()'s توثيق."""
+    prepared = prepare_batch(db, branch_code=branch_code, period=period, actor_id=actor_id)
+    if prepared.already_completed_result:
+        return prepared.already_completed_result
+    result = run_modules(db, prepared.batch, prepared.ctx)
+    return SeedResult(
+        branch_code, period, DATASET_VERSION, "apply", False,
+        result.modules_run, result.counts, result.totals,
+    )
 
 
 def validate_only(db: Session, *, branch_code: str, period: str) -> dict:
@@ -390,56 +445,144 @@ def main() -> int:
     # ⚠️ باج أمان حقيقي اتصلح هنا: كل موديول HIST-01 بينادي services حقيقية
     # (create_employee/confirm_booking/receive_purchase_order/post_journal_
     # entry...)، وكل service بينادي db.commit() داخليًا — نفس اصطلاح
-    # المشروع كله (راجع أي services.py). يعني `db.rollback()` تحت في وضع
-    # dry-run (الافتراضي!) كان بيرجع بس آخر جزء لسه pending، مش أي حاجة
-    # اتكتبت فعليًا في التشغيلة كلها — "dry-run افتراضي" (§9.1، أول بند في
-    # الحزمة) كان مكسور فعليًا من أول commit لأي مولّد، وبيانات حقيقية
-    # كانت بتتكتب بصمت حتى من غير --apply خالص. اتأكد بريبرو حي ضد
+    # المشروع كله (راجع أي services.py). يعني `db.rollback()` القديمة في
+    # وضع dry-run (الافتراضي!) كانت بترجع بس آخر جزء لسه pending، مش أي
+    # حاجة اتكتبت فعليًا في التشغيلة كلها — "dry-run افتراضي" (§9.1، أول
+    # بند في الحزمة) كان مكسور فعليًا من أول commit لأي مولّد، وبيانات
+    # حقيقية كانت بتتكتب بصمت حتى من غير --apply خالص. اتأكد بريبرو حي ضد
     # PostgreSQL حقيقي قبل الإصلاح (14 موظف فضلوا في الداتابيز بعد
     # db.rollback() العادي)، وبعد الإصلاح (صفر بعد rollback الـconnection
     # الخارجية). الحل: نربط الـSession بـconnection واحدة صريحة عبر
     # join_transaction_mode="create_savepoint" — أي db.commit() داخل أي
     # service بقى بيقفل SAVEPOINT بس، مش الـtransaction الفعلية على مستوى
-    # الـconnection؛ الـrollback/commit النهائي هنا هو اللي بيحسم مصير كل
-    # حاجة اتكتبت طول التشغيلة، مهما كان عدد الـcommits الداخلية. الأداة
-    # دي بتشتغل بس على PostgreSQL حقيقي في الإنتاج (مش SQLite)، فمفيش
-    # حاجة لـpysqlite savepoint event-listener workaround هنا.
+    # الـconnection.
+    #
+    # ⚠️ لكن ده كشف تعارض حقيقي تاني مع متطلب منفصل من §9.1: "منع rerun
+    # حتى بعد crash باستخدام import batch/checkpoints" — لو كل التشغيلة
+    # (بما فيها إنشاء ImportBatch(status="running") نفسه) جوه transaction
+    # واحدة هترجع بالكامل عند أي استثناء، فأي crash حقيقي أثناء --apply
+    # هيمسح علامة "running"/"failed" نفسها كمان، ويرجع الحماية من الـrerun
+    # عديمة الفائدة بالظبط في اللحظة اللي محتاجينها فيها. الحل: لـ--apply
+    # بس، بنعمل checkpoint حقيقي منفصل — نلتزم (commit فوري) بعلامة
+    # "running" في transaction قصيرة لوحدها الأول، وبعدين نبدأ transaction
+    # تانية (savepoint mode برضو) للشغل الفعلي؛ لو فشلت، نفتح transaction
+    # ثالثة قصيرة تسجّل "failed" + السبب بشكل دائم. dry-run فضل زي ما هو
+    # (transaction واحدة، rollback شامل حتى لو للـbatch نفسه — دري-ران
+    # المفروض ميسيبش أي أثر خالص، مش حتى علامة).
     from app.core.database import get_engine  # noqa: PLC0415
+    from app.modules.core.models import ImportBatch  # noqa: PLC0415
 
-    connection = get_engine().connect()
-    outer_txn = connection.begin()
+    engine = get_engine()
+
+    if not args.apply:
+        connection = engine.connect()
+        outer_txn = connection.begin()
+        db = Session(bind=connection, join_transaction_mode="create_savepoint")
+        try:
+            result = run_seed(
+                db, branch_code=args.branch_code, period=args.period, actor_id=args.actor_id,
+            )
+            outer_txn.rollback()
+            _print_seed_result("dry-run", args, result)
+            return 0
+        except Exception:
+            outer_txn.rollback()
+            raise
+        finally:
+            db.close()
+            connection.close()
+
+    # ── --apply: مرحلة 1 — checkpoint حقيقي، commit فوري منفصل ──────────
+    connection = engine.connect()
+    checkpoint_txn = connection.begin()
+    checkpoint_db = Session(bind=connection)
+    try:
+        prepared = prepare_batch(
+            checkpoint_db, branch_code=args.branch_code, period=args.period, actor_id=args.actor_id,
+        )
+        checkpoint_txn.commit()
+    except Exception:
+        checkpoint_txn.rollback()
+        connection.close()
+        raise
+    finally:
+        checkpoint_db.close()
+
+    if prepared.already_completed_result:
+        connection.close()
+        _print_seed_result("apply", args, prepared.already_completed_result)
+        return 0
+
+    batch_id = prepared.batch.id
+    ctx = prepared.ctx
+
+    # ── مرحلة 2 — الشغل الفعلي، savepoint mode، transaction منفصلة ──────
+    # ⚠️ pg_advisory_xact_lock مربوط بعمر الـtransaction اللي اتاخد فيها —
+    # القفل اتحرر تلقائيًا لما checkpoint_txn.commit() فوق حصل. لازم نعيد
+    # أخذه هنا من جديد لحماية المرحلة الأطول والأهم (الشغل الفعلي) من أي
+    # تشغيلة تانية متزامنة — وإلا الحماية بتفضل شغالة بس في أقصر/أقل جزء
+    # حرج من العملية كلها.
+    work_txn = connection.begin()
     db = Session(bind=connection, join_transaction_mode="create_savepoint")
     try:
-        result = run_seed(
-            db, branch_code=args.branch_code, period=args.period, actor_id=args.actor_id,
-        )
-        if args.apply:
-            outer_txn.commit()
-        else:
-            outer_txn.rollback()
-        print(
-            json.dumps(
-                {
-                    "mode": "apply" if args.apply else "dry-run",
-                    "branch_code": result.branch_code,
-                    "period": result.period,
-                    "version": result.version,
-                    "already_applied": result.already_applied,
-                    "registered_modules": [m.name for m in SCENARIO_MODULES],
-                    "modules_run": result.modules_run,
-                    "counts": result.counts,
-                    "totals": result.totals,
-                },
-                ensure_ascii=False, sort_keys=True, default=str,
-            )
-        )
+        _acquire_lock(db)
+        batch = db.get(ImportBatch, batch_id)
+        result = run_modules(db, batch, ctx)
+        work_txn.commit()
+        _print_seed_result("apply", args, SeedResult(
+            args.branch_code, args.period, DATASET_VERSION, "apply", False,
+            result.modules_run, result.counts, result.totals,
+        ))
         return 0
-    except Exception:
-        outer_txn.rollback()
+    except Exception as exc:
+        work_txn.rollback()
+        # ── مرحلة 3 — تسجيل "failed" بشكل دائم في transaction قصيرة منفصلة ──
+        fail_txn = connection.begin()
+        fail_db = Session(bind=connection)
+        try:
+            failed_batch = fail_db.get(ImportBatch, batch_id)
+            failed_batch.status = "failed"
+            failed_batch.failure_reason = str(exc)[:2000]
+            failed_batch.completed_at = datetime.now(timezone.utc)
+            # ⚠️ باج حقيقي اتكشف واتصلح وقت كتابة test_apply_mode_survives_
+            # mid_run_crash: fail_txn.commit() (على مستوى الـTransaction
+            # الخام) بيلتزم بس بالـSQL اللي اتبعت فعليًا للـconnection —
+            # التعديلات على failed_batch فوق (ORM attribute assignment)
+            # كانت لسه staged جوه fail_db's unit-of-work، من غير flush،
+            # يعني fail_txn.commit() كان بيقفل transaction فاضية فعليًا،
+            # وعلامة "failed" عمرها ما كانت بتتسجّل حقيقي — بالظبط الباج
+            # اللي checkpoint marker المفروض يحميه منه. لازم flush صريح
+            # قبل الـcommit على مستوى الـTransaction.
+            fail_db.flush()
+            fail_txn.commit()
+        except Exception:
+            fail_txn.rollback()
+            raise
+        finally:
+            fail_db.close()
         raise
     finally:
         db.close()
         connection.close()
+
+
+def _print_seed_result(mode: str, args: argparse.Namespace, result: SeedResult) -> None:
+    print(
+        json.dumps(
+            {
+                "mode": mode,
+                "branch_code": args.branch_code,
+                "period": args.period,
+                "version": result.version,
+                "already_applied": result.already_applied,
+                "registered_modules": [m.name for m in SCENARIO_MODULES],
+                "modules_run": result.modules_run,
+                "counts": result.counts,
+                "totals": result.totals,
+            },
+            ensure_ascii=False, sort_keys=True, default=str,
+        )
+    )
 
 
 if __name__ == "__main__":

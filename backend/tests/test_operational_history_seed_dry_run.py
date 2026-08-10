@@ -208,3 +208,116 @@ class TestDryRunActuallyRollsBackServiceLevelCommits:
         finally:
             verify_session.close()
         engine.dispose()
+
+
+class TestApplyModeSurvivesMidRunCrash:
+    """main()'s --apply path uses a 3-phase checkpoint precisely because a
+    single all-in-one transaction (correct for dry-run) would also wipe
+    the ImportBatch(status="running") crash-recovery marker on any real
+    failure — silently defeating §9.1's "منع rerun حتى بعد crash" (prevent
+    rerun even after a crash) requirement. This replicates main()'s exact
+    phase-1/phase-2/phase-3 structure directly against operational_
+    history_seed.prepare_batch/run_modules (not through main() itself,
+    which binds to the app's real configured engine) using a module that
+    deliberately raises partway through."""
+
+    def test_failed_batch_status_persists_durably_while_partial_writes_roll_back(self, throwaway_db_url):
+        import sqlalchemy as sa
+        from sqlalchemy.orm import Session
+
+        from app.core.kernel.models.user import User, UserRole
+        from app.core.kernel.security import get_password_hash
+        from app.modules.core.models import Branch, ImportBatch
+        from app.modules.finance.models import Account
+        import app.operational_history_seed as seed_module
+
+        engine = sa.create_engine(throwaway_db_url)
+        _create_schema(engine)
+
+        setup_session = Session(bind=engine)
+        setup_session.add(User(
+            id=1, email="crash-actor@test.invalid", password_hash=get_password_hash("x"),
+            full_name="actor", role=UserRole.SUPER_ADMIN, is_active=True, two_factor_enabled=False,
+        ))
+        branch = Branch(name="Crash Test", name_ar="اختبار انهيار",
+                         code=f"CR-{uuid.uuid4().hex[:6].upper()}", timezone="Africa/Cairo", is_active=True)
+        setup_session.add(branch)
+        setup_session.commit()
+        branch_id = branch.id
+        branch_code = branch.code
+        # _check_preconditions يفحص الحسابات الأساسية دي بغض النظر عن أي
+        # موديولات مسجَّلة فعليًا (نفس منطق dining_beach/pms_bookings).
+        for code, name, acc_type in [
+            ("1100", "Cash", "asset"), ("2160", "VAT", "liability"),
+            ("2165", "Service", "liability"), ("4100", "Room Revenue", "revenue"),
+        ]:
+            setup_session.add(Account(branch_id=branch_id, code=code, name=name, account_type=acc_type))
+        setup_session.commit()
+        setup_session.close()
+
+        def _succeeding_module(db, ctx):
+            db.add(Account(branch_id=ctx.branch_id, code="9999", name="probe", account_type="asset"))
+            db.commit()  # savepoint only, per the fix
+            return {"counts": {"probes": 1}, "totals": {}}
+
+        def _failing_module(db, ctx):
+            raise RuntimeError("simulated crash mid-run")
+
+        original_modules = seed_module.SCENARIO_MODULES
+        seed_module.SCENARIO_MODULES = [
+            seed_module.ScenarioModule(name="probe_ok", generate=_succeeding_module),
+            seed_module.ScenarioModule(name="probe_fail", generate=_failing_module),
+        ]
+        try:
+            # ── phase 1: checkpoint, real commit ──
+            connection = engine.connect()
+            checkpoint_txn = connection.begin()
+            checkpoint_db = Session(bind=connection)
+            prepared = seed_module.prepare_batch(
+                checkpoint_db, branch_code=branch_code, period="2026-07", actor_id=1,
+            )
+            checkpoint_txn.commit()
+            checkpoint_db.close()
+            batch_id = prepared.batch.id
+
+            # ── phase 2: the actual work, fails ──
+            work_txn = connection.begin()
+            db = Session(bind=connection, join_transaction_mode="create_savepoint")
+            try:
+                batch = db.get(ImportBatch, batch_id)
+                seed_module.run_modules(db, batch, prepared.ctx)
+                work_txn.commit()
+                raise AssertionError("expected run_modules to raise")
+            except RuntimeError:
+                work_txn.rollback()
+                # ── phase 3: durable failure marker ──
+                fail_txn = connection.begin()
+                fail_db = Session(bind=connection)
+                failed_batch = fail_db.get(ImportBatch, batch_id)
+                failed_batch.status = "failed"
+                failed_batch.failure_reason = "simulated crash mid-run"
+                fail_db.flush()  # راجع الباج الحقيقي الموثّق في main()'s phase 3
+                fail_txn.commit()
+                fail_db.close()
+            finally:
+                db.close()
+            connection.close()
+        finally:
+            seed_module.SCENARIO_MODULES = original_modules
+
+        verify_session = Session(bind=engine)
+        try:
+            # الـbatch نفسه فضل موجود وبحالة "failed" حقيقية — الـcheckpoint نجا
+            persisted_batch = verify_session.query(ImportBatch).filter_by(id=batch_id).first()
+            assert persisted_batch is not None
+            assert persisted_batch.status == "failed"
+            assert "simulated crash" in persisted_batch.failure_reason
+
+            # لكن الشغل الجزئي اللي عمله probe_ok (اتعمله commit كـsavepoint
+            # بس) اترجع فعليًا — مفيش حساب 9999 باقي
+            assert verify_session.query(Account).filter_by(
+                branch_id=branch_id, code="9999",
+            ).count() == 0
+        finally:
+            verify_session.close()
+        engine.dispose()
