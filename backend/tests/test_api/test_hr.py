@@ -490,6 +490,129 @@ class TestPayroll:
         total_credit = sum(l.credit for l in lines)
         assert total_debit == total_credit, "القيد لازم يتوازن حتى مع بدل غير خاضع للضريبة"
 
+    def test_approve_payroll_run_with_penalty_deduction_posts_balanced_journal(
+        self, db, branch, si_config, tax_brackets,
+    ):
+        """⚠️ باج محاسبي حقيقي اتصلح (OPS-DATA-02 §12 Phase 6): penalty_
+        deduction/late_penalty_deduction/unpaid_leave_deduction بتقلل
+        total_net (وبالتالي سطر الدائن) من غير أي تقليل مقابل في سطر المدين
+        "مصروف رواتب" — القيد كان فعليًا غير متوازن (مدين > دائن) في أي كشف
+        فيه جزاء تأديبي. اتصلح بتقليل سطر المدين نفسه (الموظف كسب أقل فعليًا
+        هذا الشهر، مش سداد ذمة زي السلف)."""
+        from app.modules.hr.schemas import EmployeePenaltyCreate
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
+
+        for code, acc_type in [
+            ("5100", "expense"),
+            ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        emp = services.create_employee(db, EmployeeCreate(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="موظف بجزاء", position="نادل", basic_salary=Decimal("6000.00"),
+            hire_date=date(2020, 1, 1),
+        ))
+        crud.create_penalty(db, EmployeePenaltyCreate(
+            employee_id=emp.id, branch_id=branch.id,
+            penalty_date=date(2027, 3, 10), penalty_days=2,
+            reason="تأخر", applied_by=1,
+        ))
+        db.commit()
+
+        run = services.run_payroll_for_branch(db, branch.id, 2027, 3)
+        line = crud.list_lines_for_run(db, run.id)[0]
+        assert line.penalty_deduction > Decimal("0")
+
+        services.approve_payroll_run(db, run.id, approved_by=1)
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll", JournalEntry.source_id == run.id)
+            .first()
+        )
+        assert entry is not None
+        lines = db.query(JournalLine).filter(JournalLine.entry_id == entry.id).all()
+        total_debit  = sum(l.debit for l in lines)
+        total_credit = sum(l.credit for l in lines)
+        assert total_debit == total_credit, "القيد لازم يتوازن حتى مع خصم جزاء تأديبي"
+
+    def test_approve_payroll_run_with_salary_advance_deduction_posts_balanced_journal(
+        self, db, branch, si_config, tax_brackets,
+    ):
+        """⚠️ باج محاسبي حقيقي اتصلح (OPS-DATA-02 §12 Phase 6): خصم قسط سلفة
+        بيقلل total_net (وبالتالي سطر الدائن "صافي رواتب مستحقة") من غير أي
+        سطر مدين مقابل — القيد كان فعليًا غير متوازن (مدين > دائن) في أي كشف
+        فيه سلفة نشطة. اتصلح بترحيل سطر دائن منفصل لحساب "سلف موظفين
+        مستحقة" (1180) بقيمة القسط المخصوم، يوازن القيد صح."""
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
+
+        for code, acc_type in [
+            ("5100", "expense"), ("1100", "asset"), ("1180", "asset"),
+            ("2100", "liability"), ("2110", "liability"), ("2120", "liability"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        emp = services.create_employee(db, EmployeeCreate(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="موظف بسلفة", position="نادل", basic_salary=Decimal("6000.00"),
+            hire_date=date(2020, 1, 1),
+        ))
+        services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=emp.id, branch_id=branch.id,
+            amount=Decimal("3000.00"), disbursed_date=date(2027, 1, 1),
+            monthly_deduction_amount=Decimal("500.00"),
+        ), created_by=1)
+
+        run = services.run_payroll_for_branch(db, branch.id, 2027, 2)
+        assert run.total_advance_deduction == Decimal("500.00")
+
+        services.approve_payroll_run(db, run.id, approved_by=1)
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll", JournalEntry.source_id == run.id)
+            .first()
+        )
+        assert entry is not None
+        lines = db.query(JournalLine).filter(JournalLine.entry_id == entry.id).all()
+        total_debit  = sum(l.debit for l in lines)
+        total_credit = sum(l.credit for l in lines)
+        assert total_debit == total_credit, "القيد لازم يتوازن حتى مع خصم قسط سلفة"
+
+        line_by_account = {l.account.code: (l.debit, l.credit) for l in lines}
+        assert line_by_account["1180"] == (Decimal("0.00"), Decimal("500.00"))
+
+    def test_create_salary_advance_posts_disbursement_journal(self, db, branch):
+        """Dr سلف موظفين مستحقة (1180) / Cr الصندوق (1100) عند صرف السلفة
+        فعليًا — الطرف المقابل لسطر السداد في القيد المجمّع للرواتب."""
+        from app.modules.finance.models import Account, JournalEntry, JournalLine
+
+        for code, acc_type in [("1100", "asset"), ("1180", "asset")]:
+            db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
+        db.commit()
+
+        emp = services.create_employee(db, EmployeeCreate(
+            branch_id=branch.id, employee_code=f"EMP-{uuid.uuid4().hex[:6].upper()}",
+            full_name="موظف صرف سلفة", position="نادل", basic_salary=Decimal("6000.00"),
+            hire_date=date(2020, 1, 1),
+        ))
+        advance = services.create_salary_advance(db, SalaryAdvanceCreate(
+            employee_id=emp.id, branch_id=branch.id,
+            amount=Decimal("2000.00"), disbursed_date=date(2027, 1, 1),
+            monthly_deduction_amount=Decimal("400.00"),
+        ), created_by=1)
+
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "payroll_advance", JournalEntry.source_id == advance.id)
+            .first()
+        )
+        assert entry is not None
+        lines = {l.account.code: (l.debit, l.credit) for l in db.query(JournalLine).filter(JournalLine.entry_id == entry.id).all()}
+        assert lines["1180"] == (Decimal("2000.00"), Decimal("0.00"))
+        assert lines["1100"] == (Decimal("0.00"), Decimal("2000.00"))
+
     def test_new_tax_bracket_version_does_not_corrupt_current_period(
         self, db, employee, si_config, tax_brackets,
     ):

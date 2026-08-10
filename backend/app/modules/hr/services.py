@@ -706,18 +706,19 @@ def approve_payroll_run(
 def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
     """يُنشئ قيد مزدوج مجمّع لكشف الرواتب المعتمد.
 
-    ⚠️ فجوة محاسبية معروفة وموجودة من قبل (مش من هذا التعديل): penalty_
-    deduction/late_penalty_deduction/unpaid_leave_deduction — وwagdy.md
-    H-01/H-02 (advance_deduction) اتضاف بنفس النمط عمدًا — كل دول بيقللوا
-    total_net (وبالتالي القيد الدائن "صافي رواتب مستحقة" أوتوماتيك) من غير
-    أي قيد مدين مقابل. القيد بيفضل "متوازن" ظاهريًا بس لأن كل الخصومات دي
-    بتتشال من نفس الجانب (لا يوجد سطر مدين إضافي زيها زي holiday_bonus تحت)،
-    يعني إجمالي المدين/الدائن بيتساووا فقط لو مفيش أي خصم من الفئة دي في
-    الكشف. المعالجة الصحيحة محاسبيًا (خصوصًا advance_deduction) محتاجة حساب
-    أصول "سلف موظفين مستحقة" بيتقيّد عليه Dr وقت صرف السلفة وCr وقت الخصم من
-    الراتب — ده تصميم أكبر (حساب جديد + قيد عند POST /hr/salary-advances)
-    مؤجَّل عمدًا لنفس سبب فجوة إيراد الغرفة الموثّقة في CLAUDE.md §18 بند 0:
-    يستاهل مراجعة صريحة مع Mohamed قبل ما يتنفّذ، مش تعديل عابر وسط ميزة تانية."""
+    ⚠️ باج محاسبي حقيقي كان هنا (اتصلح، OPS-DATA-02 §12 Phase 6): القيد كان
+    فعليًا **غير متوازن** (مدين ≠ دائن) في أي كشف فيه أي خصم من
+    penalty_deduction/late_penalty_deduction/unpaid_leave_deduction/
+    advance_deduction — كل الخصومات دي بتقلل total_net (وبالتالي سطر الدائن
+    "صافي رواتب مستحقة") من غير أي سطر مدين مقابل يوازنها. اتصلح بتفريق
+    نوعين:
+    1. penalty/late_penalty/unpaid_leave — تقليل حقيقي في مصروف الرواتب
+       (الموظف كسب أقل فعليًا)، فبيقلّلوا سطر المدين "مصروف رواتب" نفسه.
+    2. advance_deduction — سداد سلفة سابقة (ذمة مستحقة على الموظف، مش تقليل
+       فيما كسبه)، فبيترحّل كسطر دائن منفصل لحساب أصول "سلف موظفين مستحقة"
+       (1180) بدل ما يفضل جزء ضايع من المعادلة — راجع create_salary_advance/
+       create_advance_payment تحت اللي بيرحّلوا الطرف التاني (Dr 1180 وقت
+       الصرف الفعلي)."""
     try:
         from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
         from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
@@ -726,7 +727,7 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
 
     # جلب الحسابات — نتجاهل القيد إذا لم تُوجد الحسابات
     accs: dict[str, int] = {}
-    for code in ("5100", "5110", "2100", "2110", "2120"):
+    for code in ("5100", "5110", "2100", "2110", "2120", "1180"):
         acc = get_account_by_code(db, run.branch_id, code)
         if acc:
             accs[code] = acc.id
@@ -761,10 +762,20 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
     # _post_payroll_journal هنا (القيد المجمّع الفعلي اللي بيترحّل للدفتر)
     # كان بيعيد حساب المدين من عمودين run-level بس (total_gross/total_
     # holiday_bonus) من غير ما يشوف الـ non_taxable_allowances خالص.
+    #
+    # خصومات penalty/late_penalty/unpaid_leave مفيهاش عمود إجمالي على مستوى
+    # الـ run (بعكس total_advance_deduction) — بتتجمّع من سطور الكشف مباشرة.
+    forfeited_earnings = sum(
+        (l.penalty_deduction or Decimal("0"))
+        + (l.late_penalty_deduction or Decimal("0"))
+        + (l.unpaid_leave_deduction or Decimal("0"))
+        for l in run.lines
+    )
     gross_debit = (
         (run.total_gross or Decimal("0"))
         + (run.total_holiday_bonus or Decimal("0"))
         + (run.total_non_taxable_allowances or Decimal("0"))
+        - forfeited_earnings
     )
     if "5100" in accs and gross_debit:
         lines.append(JournalLineCreate(
@@ -786,6 +797,14 @@ def _post_payroll_journal(db: Session, run: "PayrollRun", user_id: int) -> None:
             debit=Decimal("0"),
             credit=run.total_si,
             description=f"تأمينات اجتماعية مستحقة {period_str}",
+        ))
+    advance_total = run.total_advance_deduction or Decimal("0")
+    if "1180" in accs and advance_total:
+        lines.append(JournalLineCreate(
+            account_id=accs["1180"],
+            debit=Decimal("0"),
+            credit=advance_total,
+            description=f"سداد سلف موظفين عبر الراتب {period_str}",
         ))
     net_salaries = (run.total_net or Decimal("0"))
     if "2120" in accs and net_salaries:
@@ -823,9 +842,33 @@ def create_salary_advance(db: Session, data: SalaryAdvanceCreate, created_by: in
     if data.monthly_deduction_amount > data.amount:
         raise ValueError("القسط الشهري لا يمكن أن يكون أكبر من مبلغ السلفة نفسه")
     advance = crud.create_salary_advance(db, data, created_by)
+    _post_advance_disbursement_journal(db, data.branch_id, advance.id, "salary_advance", data.amount, created_by)
     db.commit()
     db.refresh(advance)
     return advance
+
+
+def _post_advance_disbursement_journal(
+    db: Session, branch_id: int, source_id: int, source_kind: str,
+    amount: Decimal, created_by: int,
+) -> None:
+    """Dr سلف موظفين مستحقة (1180) / Cr الصندوق (1100) — عند الصرف الفعلي
+    (نقدية بتخرج فعليًا للموظف). الطرف المقابل بيترحّل لاحقًا كسطر دائن
+    منفصل جوه _post_payroll_journal وقت خصم القسط من الراتب (سداد الذمة، مش
+    تقليل مصروف الرواتب — راجع docstring _post_payroll_journal)."""
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.resort_os.timezone_utils import local_today  # noqa: PLC0415
+    from app.core.config import settings  # noqa: PLC0415
+
+    post_simple_revenue_journal(
+        db, branch_id, local_today(settings.TIMEZONE),
+        debit_account_code="1180", credit_account_code="1100",
+        amount=amount,
+        reference=f"HR-ADV-{source_kind}-{source_id:06d}",
+        description="صرف سلفة موظف",
+        source="payroll_advance", source_id=source_id,
+        created_by=created_by,
+    )
 
 
 def cancel_salary_advance(db: Session, advance_id: int, reason: Optional[str] = None):
@@ -852,6 +895,7 @@ def cancel_salary_advance(db: Session, advance_id: int, reason: Optional[str] = 
 def create_advance_payment(db: Session, data: AdvancePaymentCreate, recorded_by: int):
     get_employee_or_404(db, data.employee_id)
     payment = crud.create_advance_payment(db, data, recorded_by)
+    _post_advance_disbursement_journal(db, data.branch_id, payment.id, "advance_payment", data.amount, recorded_by)
     db.commit()
     db.refresh(payment)
     return payment

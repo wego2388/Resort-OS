@@ -552,6 +552,11 @@ def _seed_chart_of_accounts(db: Session) -> None:
         {"code": "1120", "name": "حساب وسيط تحصيلات الكارت",     "account_type": "asset"},
         {"code": "1130", "name": "حساب وسيط تحصيلات إلكترونية",  "account_type": "asset"},
         {"code": "1170", "name": "ذمم أقساط التايم شير",         "account_type": "asset"},
+        # OPS-DATA-02 §12 Phase 6 (Payroll GL): سلف الموظفين (H-01/H-02) كانت
+        # بتتخصم من الراتب من غير أي حساب أصول مقابل — القيد المجمّع كان
+        # فعليًا غير متوازن (مدين ≠ دائن) في أي كشف فيه سلفة. راجع
+        # hr.services._post_payroll_journal.
+        {"code": "1180", "name": "سلف موظفين مستحقة",             "account_type": "asset"},
         {"code": "1210", "name": "مصروفات مدفوعة مقدمًا",        "account_type": "asset"},
         {"code": "1500", "name": "أرض",                          "account_type": "asset"},
         {"code": "1510", "name": "مباني",                         "account_type": "asset"},
