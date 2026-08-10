@@ -16,12 +16,14 @@
 - `reset-dataset`: batch وصل لـposting (completed) يرفض الحذف نهائيًا —
   الطريق الوحيد restore من backup. batch فشل قبل أي posting (modules_run
   فاضية) بس هو المؤهّل للحذف الآلي المحدود (صف ImportBatch نفسه بس).
-- `rebuild-trial`: بايبلاين حقيقي (backup→اختبار استعادة→DB جديدة→alembic
-  →دليل حسابات+فرع) لحد ما يوصل لخطوات محتاجة actor بشري حقيقي بالتصميم
-  (bootstrap admin تفاعلي — app.admin_bootstrap متعمد "لا أسرار في args/
-  env"، وبالتبعية غرف/أسعار/July seed كلهم محتاجين نفس الـactor ده،
-  والتحويل الذري النهائي) — بيوقف هناك بوضوح ويطبع الخطوات المتبقية، مش
-  أتمتة كاملة بلا مراجعة بشرية.
+- `rebuild-trial`: بايبلاين حقيقي (backup→اختبار استعادة→DB جديدة→alembic)
+  لحد ما يوصل لخطوات محتاجة actor بشري حقيقي بالتصميم — bootstrap admin +
+  إنشاء الفرع الأول تفاعليان عمدًا (app.admin_bootstrap.create/init-first-
+  branch، نفس نمط scripts/vps-init-first-branch.sh الحقيقي المُثبت على
+  VPS بالظبط — "لا أسرار في args/env"، وbootstrap_first_branch محتاج actor
+  موجود بالفعل)، وبالتبعية دليل حسابات/غرف/أسعار/July seed كلهم محتاجين
+  نفس الـactor ده، والتحويل الذري النهائي — بيوقف هناك بوضوح ويطبع الخطوات
+  المتبقية، مش أتمتة كاملة بلا مراجعة بشرية.
 - vps target: مفيش أي تنفيذ حقيقي ضد سيرفر بعيد في الأداة دي — backup/
   rebuild-trial لـvps بيرفضوا صراحةً ويوجّهوا المشغّل لتنفيذ SSH يدوي.
   قرار أمان متعمد: الأداة دي معمولة/متأكد منها بس ضد PostgreSQL محلي/
@@ -272,10 +274,10 @@ def cmd_rebuild_trial(target: TargetConfig, *, apply: bool, confirm: Optional[st
                 "2. test-restore that backup into a throwaway database (integrity check)",
                 f"3. CREATE DATABASE {new_db_name}",
                 "4. alembic upgrade head against the new database",
-                "5. seed chart of accounts + branch (automated — idempotent, no human actor needed)",
-                "6. STOP — print manual next steps (admin bootstrap, room inventory/pricing, "
-                "HIST-01 July seed, validation, and the atomic cutover all require a human "
-                "actor and are intentionally not automated here — see main() docstring)",
+                "5. STOP — print manual next steps (admin bootstrap create + init-first-branch, "
+                "chart of accounts, room inventory/pricing, HIST-01 July seed, validation, and "
+                "the atomic cutover all require a human actor and are intentionally not "
+                "automated here — see cmd_rebuild_trial's docstring)",
             ],
         }
 
@@ -313,50 +315,42 @@ def cmd_rebuild_trial(target: TargetConfig, *, apply: bool, confirm: Optional[st
     finally:
         _app_settings.DATABASE_URL = _original_database_url
 
-    # ── دليل الحسابات + الفرع — الجزء الآمن للأتمتة الكاملة (idempotent،
-    # مفيش أي حاجة تحتاج actor بشري حقيقي). راجع app.seed._seed_chart_of_
-    # accounts's توثيق: بتاخد db بس (بتلاقي الفرع الوحيد لوحدها عبر
-    # db.query(Branch).first()) — مطابق بالظبط لطريقة تشغيلها الحقيقية
-    # ضد production (راجع memory: "اتشغّلت مباشرة ضد production... فنكشن
-    # معزولة idempotent"). ──────────────────────────────────────────
-    engine = sa.create_engine(new_db_url)
-    try:
-        from sqlalchemy.orm import Session as _Session
-
-        from app.modules.core.models import Branch
-        from app.seed import _seed_chart_of_accounts  # noqa: PLC0415
-
-        with _Session(bind=engine) as db:
-            branch = Branch(
-                name="El Kheima Beach", name_ar="منتجع الخيمة بيتش",
-                code=target.branch_code, timezone="Africa/Cairo", is_active=True,
-            )
-            db.add(branch)
-            db.commit()
-            _seed_chart_of_accounts(db)
-            db.commit()
-    finally:
-        engine.dispose()
-
-    # ── متعمد: الأداة بتوقف هنا. غرف/أسعار/HIST-01 July seed كلهم
-    # بيحتاجوا actor_id حقيقي (super_admin موجود بالفعل) — و
-    # app.admin_bootstrap.create نفسها مصمَّمة تفاعلية عمدًا ("لا أسرار
-    # في args/env"، راجع CLAUDE.md §20). أتمتة كاملة هنا معناها إما نتخطى
-    # قيد الأمان ده أو نخترع actor وهمي — الاتنين مرفوضين. الخطوات
-    # المتبقية دي محتاجة إنسان عند الكونسول بالتصميم، مش قصور في الأداة.
+    # ⚠️ قرار تصميمي اتصحّح قبل أول تشغيل حقيقي: النسخة الأولى من الدالة
+    # دي كانت بتنشئ Branch مباشرة هنا (SQL/ORM خام) — بيتعارض مع
+    # app.admin_bootstrap.bootstrap_first_branch الحقيقية (اللي
+    # scripts/vps-init-first-branch.sh بيستخدمها فعليًا على VPS) لو
+    # المشغّل بعدين شغّل admin_bootstrap init-first-branch بأي name/
+    # name_ar مختلف عن اللي اتقفل هنا حرفيًا — bootstrap_first_branch
+    # بترفض صراحةً ("existing first branch conflicts with the requested
+    # values") لو فيه فرع واحد موجود بكود مطابق لكن باقي الحقول مختلفة.
+    # الحل الصح: منسيبش أي فرع هنا خالص — admin_bootstrap init-first-
+    # branch (خطوة يدوية تالية، مطابقة تمامًا لنمط VPS الحقيقي المُثبت)
+    # هي المسؤولة الوحيدة عن إنشاء الفرع الأول، ودليل الحسابات بيتزرع
+    # بعدها (idempotent، مش محتاج فرع معيّن بالاسم).
+    #
+    # ── متعمد: الأداة بتوقف هنا. bootstrap admin + إنشاء الفرع الأول
+    # كلاهما تفاعلي عمدًا (app.admin_bootstrap: "لا أسرار في args/env"،
+    # وbootstrap_first_branch محتاج actor موجود بالفعل) — وبالتبعية غرف/
+    # أسعار/HIST-01 July seed كلهم محتاجين نفس الـactor ده. أتمتة كاملة
+    # هنا معناها إما نتخطى قيد الأمان ده أو نخترع actor وهمي — الاتنين
+    # مرفوضين. الخطوات المتبقية دي محتاجة إنسان عند الكونسول بالتصميم.
     return {
         "mode": "apply", "target": target.name, "new_database": new_db_name,
         "status": "automated_steps_complete",
         "manual_next_steps": [
-            f"1. Point DATABASE_URL at {new_db_url} and run "
-            "`python -m app.admin_bootstrap create` interactively to name the first "
-            "super-admin (intentionally not automatable — no secrets in args/env).",
-            "2. Run room inventory + approved pricing activation "
+            f"1. DATABASE_URL={new_db_url} python -m app.admin_bootstrap create "
+            "--email <email> --full-name <name> (interactive — no secrets in args/env; "
+            "prints a one-time temp password + 2FA enrollment token, copy immediately).",
+            f"2. DATABASE_URL={new_db_url} python -m app.admin_bootstrap init-first-branch "
+            f"--email <same email> --code {target.branch_code} --name <branch name> "
+            "(interactive — creates the first branch, binds the admin, seeds nothing else).",
+            "3. Seed the chart of accounts (app.seed._seed_chart_of_accounts — idempotent, "
+            "finds the branch on its own) then room inventory + approved pricing "
             "(app.real_room_inventory.replace_room_inventory + "
             "app.approved_room_pricing.activate_room_pricing) with that admin's actor id.",
-            f"3. Run: python -m app.operational_history_seed --branch-code {target.branch_code} "
+            f"4. Run: python -m app.operational_history_seed --branch-code {target.branch_code} "
             "--period 2026-07 --apply --confirm '...' against the new database.",
-            "4. Validate, then perform the atomic cutover yourself "
+            "5. Validate, then perform the atomic cutover yourself "
             "(update DATABASE_URL, restart services) — this tool does not swap a live "
             "app's database connection out from under it unattended.",
         ],

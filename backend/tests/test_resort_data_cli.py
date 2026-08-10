@@ -152,12 +152,15 @@ class TestRebuildTrialSafety:
         with pytest.raises(ResetToolError, match="disabled"):
             cmd_rebuild_trial(target, apply=False, confirm=None)
 
-    def test_rebuild_trial_apply_creates_migrated_db_with_accounts_and_branch(self, monkeypatch):
+    def test_rebuild_trial_apply_creates_migrated_empty_db(self, monkeypatch):
         """الجزء الآمن للأتمتة الكاملة (CREATE DATABASE → alembic upgrade
-        head → دليل حسابات + فرع) — بيتأكد إن الـmigration فعليًا اشتغلت
-        ضد الـDB الجديدة (مش الـshared test DB، راجع الباج اللي
-        test_dining_migration.py's _upgrade_to موثّقه وrésort_data_cli.
-        cmd_rebuild_trial بيتفاداه بنفس الطريقة)."""
+        head) — بيتأكد إن الـmigration فعليًا اشتغلت ضد الـDB الجديدة
+        (مش الـshared test DB، راجع الباج اللي test_dining_migration.py's
+        _upgrade_to موثّقه وresort_data_cli.cmd_rebuild_trial بيتفاداه
+        بنفس الطريقة). مفيش فرع أو حسابات هنا عمدًا — دي بقت مسؤولية
+        admin_bootstrap init-first-branch اليدوية (راجع الباج التاني اللي
+        اتصلح: إنشاء فرع مباشر هنا كان بيتعارض مع bootstrap_first_branch
+        الحقيقية لو المشغّل بعدين استخدم اسم/name_ar مختلف)."""
         import sqlalchemy as sa
 
         from app.resort_data_cli import cmd_rebuild_trial
@@ -175,7 +178,8 @@ class TestRebuildTrialSafety:
             result = cmd_rebuild_trial(target, apply=True, confirm=expected_confirm)
             assert result["status"] == "automated_steps_complete"
             assert result["new_database"] == new_db_name
-            assert len(result["manual_next_steps"]) == 4
+            assert len(result["manual_next_steps"]) == 5
+            assert "init-first-branch" in result["manual_next_steps"][1]
 
             base_url = RESORT_DATA_CLI_TEST_ADMIN_URL.rsplit("/", 1)[0]
             new_engine = sa.create_engine(f"{base_url}/{new_db_name}")
@@ -183,13 +187,8 @@ class TestRebuildTrialSafety:
                 migration_head = conn.execute(sa.text("SELECT version_num FROM alembic_version")).scalar()
                 assert migration_head is not None
 
-                branch_row = conn.execute(
-                    sa.text("SELECT code FROM branches WHERE code = 'ELK-001'")
-                ).first()
-                assert branch_row is not None
-
-                account_count = conn.execute(sa.text("SELECT COUNT(*) FROM accounts")).scalar()
-                assert account_count > 0
+                branch_count = conn.execute(sa.text("SELECT COUNT(*) FROM branches")).scalar()
+                assert branch_count == 0  # لسه معمولش init-first-branch
             new_engine.dispose()
         finally:
             cleanup_engine = sa.create_engine(RESORT_DATA_CLI_TEST_ADMIN_URL, isolation_level="AUTOCOMMIT")
