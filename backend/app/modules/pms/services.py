@@ -203,7 +203,13 @@ def _lock_and_price_rooms(
     return locked_rooms, room_rates
 
 
-def create_booking(db: Session, data: BookingCreate) -> Booking:
+def create_booking(
+    db: Session, data: BookingCreate, *, rate_overrides: Optional[dict[int, Decimal]] = None,
+) -> Booking:
+    """rate_overrides: لو موجود، يفرض سعر صريح لغرفة بعينها بدل قراءة
+    RoomType.base_rate/RatePlan — بيستخدمها hub.services.confirm_booking
+    عشان يحصّل بالظبط السعر المتفق عليه في quote عام سابق (راجع OPS-DATA-02
+    §7.3 "quote drift")، مش سعر حي وقت التأكيد ممكن يكون اتغيّر."""
     # التحقق من التواريخ
     if data.check_out <= data.check_in:
         raise ValueError("check_out يجب أن يكون بعد check_in")
@@ -222,6 +228,7 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
 
     locked_rooms, room_rates = _lock_and_price_rooms(
         db, data.branch_id, data.room_ids, data.check_in, data.check_out, nights, rate_plan,
+        rate_overrides=rate_overrides,
     )
 
     booking_number = crud.generate_booking_number(db, data.branch_id)
@@ -237,18 +244,24 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
     return booking
 
 
-def create_bundle_booking(db: Session, data: "BundleBookingCreate") -> Booking:
+def create_bundle_booking(
+    db: Session, data: "BundleBookingCreate", *, price_override: Optional[Decimal] = None,
+) -> Booking:
     """حجز باقة Family Compound 6P: يحجز شاليه+استوديو الزوج المعتمد
     (RoomBundle) سوا في نفس الـtransaction، بنفس منطق القفل/التحقق
     المستخدم للحجز العادي (_lock_and_price_rooms) — عشان لو غرفة واحدة من
     الزوج اتقفلت والتانية فشلت (مش متاحة/مقفولة من transaction تانية)،
     الحجز كله يترفض بصفر أثر (مفيش حجز نص باقة أبدًا).
 
-    التسعير: صافي سعر الباقة (bundle.price) بيتوزّع تحليليًا على الغرفتين
-    بنسبة سعريهما المستقلين (RoomType.base_rate لكل من الشاليه/الاستوديو)
-    — الضيف والدفتر بيشوفوا إيراد باقة واحد يساوي bundle.price بالظبط
-    (مجموع BookingRoom.total للغرفتين == bundle.price × الليالي)، مفيش
-    ازدواج إيراد. راجع OPS-DATA-02 §7.1/§3."""
+    التسعير: صافي سعر الباقة (price_override لو موجود، وإلا bundle.price
+    الحي) بيتوزّع تحليليًا على الغرفتين بنسبة سعريهما المستقلين
+    (RoomType.base_rate لكل من الشاليه/الاستوديو) — الضيف والدفتر بيشوفوا
+    إيراد باقة واحد يساوي السعر المستخدم بالظبط (مجموع BookingRoom.total
+    للغرفتين == السعر × الليالي)، مفيش ازدواج إيراد. راجع OPS-DATA-02 §7.1/§3.
+
+    price_override: بيستخدمها hub.services.confirm_booking عشان يحصّل
+    بالظبط سعر الباقة المتفق عليه في quote عام سابق (راجع
+    create_booking's rate_overrides لنفس السبب/الحماية من "quote drift")."""
     from app.modules.pms.models import RoomBundle  # noqa: PLC0415
 
     if data.check_out <= data.check_in:
@@ -283,11 +296,14 @@ def create_bundle_booking(db: Session, data: "BundleBookingCreate") -> Booking:
         )
 
     # توزيع صافي سعر الباقة بنسبة السعرين المستقلين — الباقي (studio) بياخد
-    # الكسر المتبقي بعد التقريب عشان مجموع الحصتين يساوي bundle.price بالظبط
-    # حرفيًا، بدون أي فرق تقريب (نفس نمط "آخر حصة بتاخد الباقي" المستخدم في
+    # الكسر المتبقي بعد التقريب عشان مجموع الحصتين يساوي السعر المستخدم
+    # بالظبط، بدون أي فرق تقريب (نفس نمط "آخر حصة بتاخد الباقي" المستخدم في
     # تقسيم الطلبات متعددة المنافذ في dining.services).
-    chalet_share = (bundle.price * chalet_base / (chalet_base + studio_base)).quantize(Decimal("0.01"))
-    studio_share = bundle.price - chalet_share
+    effective_price = price_override if price_override is not None else bundle.price
+    if effective_price <= 0:
+        raise ValueError("سعر الباقة يجب أن يكون أكبر من صفر")
+    chalet_share = (effective_price * chalet_base / (chalet_base + studio_base)).quantize(Decimal("0.01"))
+    studio_share = effective_price - chalet_share
 
     locked_rooms, room_rates = _lock_and_price_rooms(
         db, data.branch_id,

@@ -77,6 +77,16 @@ class HubOffer(Base, TimestampMixin):
 class HubOnlineBooking(Base, TimestampMixin):
     """طلب حجز وارد من الموقع — ينتظر التأكيد من الفندق."""
     __tablename__ = "hub_online_bookings"
+    __table_args__ = (
+        Index(
+            "uq_hub_online_bookings_branch_idempotency",
+            "branch_id",
+            "idempotency_key_hash",
+            unique=True,
+            postgresql_where=text("idempotency_key_hash IS NOT NULL"),
+            sqlite_where=text("idempotency_key_hash IS NOT NULL"),
+        ),
+    )
 
     id:            Mapped[int]          = mapped_column(primary_key=True)
     branch_id:     Mapped[int]          = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
@@ -104,11 +114,38 @@ class HubOnlineBooking(Base, TimestampMixin):
     check_in:      Mapped[date | None]  = mapped_column(Date, nullable=True)
     check_out:     Mapped[date | None]  = mapped_column(Date, nullable=True)
     room_type_id:  Mapped[int | None]   = mapped_column(Integer, nullable=True)
+    # باقة Family Compound 6P المطلوبة (لو موجودة) — بديل room_type_id، مش
+    # معاها. راجع OPS-DATA-02 §7.3.
+    bundle_id:     Mapped[int | None]   = mapped_column(
+        ForeignKey("room_bundles.id", ondelete="SET NULL"), nullable=True,
+    )
     adults:        Mapped[int]          = mapped_column(Integer, default=1)
+    children:      Mapped[int]          = mapped_column(Integer, default=0)
     # الحجز الفعلي في PMS اللي اتنشأ عند التأكيد (None = لو الطلب بيانات ناقصة أو تأكيد يدوي)
     pms_booking_id: Mapped[int | None]  = mapped_column(
         ForeignKey("bookings.id", ondelete="SET NULL"), nullable=True,
     )
+
+    # ── لقطة عرض السعر (Quote Snapshot) — OPS-DATA-02 §7.3 ──────────────
+    # بتتسجّل وقت الطلب العام (submit_public_room_booking) بس، عشان التأكيد
+    # لاحقًا يستخدم نفس السعر المتفق عليه بالظبط (مش سعر حي وقت التأكيد —
+    # يحمي الضيف من "quote drift" لو الأسعار المعتمدة اتغيّرت في الفترة ما
+    # بين الطلب والتأكيد). None لطلبات staff-created العادية (مفيش quote).
+    quoted_nightly_rate: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    quoted_nights:        Mapped[int | None]     = mapped_column(Integer, nullable=True)
+    quoted_subtotal:      Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    quoted_vat_amount:    Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    quoted_service_amount: Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    quoted_total:          Mapped[Decimal | None] = mapped_column(Numeric(10, 2), nullable=True)
+    quoted_currency:       Mapped[str | None]     = mapped_column(String(5), nullable=True)
+    quoted_at:              Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    quote_version:          Mapped[str | None]     = mapped_column(String(40), nullable=True)
+
+    # ── حماية الطلب العام — نفس نمط ContactForm بالظبط (راجع hub/public_contact.py) ──
+    public_reference:      Mapped[str | None] = mapped_column(String(48), unique=True, index=True, nullable=True)
+    idempotency_key_hash:  Mapped[str | None] = mapped_column(String(64), nullable=True)
+    payload_hash:           Mapped[str | None] = mapped_column(String(64), nullable=True)
+    requester_hash:        Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     offer: Mapped["HubOffer | None"] = relationship("HubOffer", back_populates="online_bookings")
 

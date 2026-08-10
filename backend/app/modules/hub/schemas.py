@@ -112,7 +112,9 @@ class OnlineBookingCreate(BaseModel):
     check_in:       Optional[date] = None
     check_out:      Optional[date] = None
     room_type_id:   Optional[int]  = None
+    bundle_id:      Optional[int]  = None
     adults:         int = Field(1, ge=1)
+    children:       int = Field(0, ge=0)
     notes:          Optional[str] = None
     source:         str = Field("website", pattern=r"^(website|whatsapp|instagram|tiktok|other)$")
 
@@ -142,8 +144,19 @@ class OnlineBookingRead(BaseModel):
     check_in:        Optional[date] = None
     check_out:       Optional[date] = None
     room_type_id:    Optional[int]  = None
+    bundle_id:       Optional[int]  = None
     adults:          int = 1
+    children:        int = 0
     pms_booking_id:  Optional[int]  = None
+    public_reference: Optional[str] = None
+    quoted_nightly_rate: Optional[Decimal] = None
+    quoted_nights:        Optional[int] = None
+    quoted_subtotal:      Optional[Decimal] = None
+    quoted_vat_amount:    Optional[Decimal] = None
+    quoted_service_amount: Optional[Decimal] = None
+    quoted_total:          Optional[Decimal] = None
+    quoted_currency:       Optional[str] = None
+    quoted_at:              Optional[datetime] = None
     created_at:      datetime
     updated_at:      datetime
 
@@ -152,6 +165,42 @@ class OnlineBookingRead(BaseModel):
 
 SERVICE_CONTACT_DISCLOSURE_VERSION = "service-contact-2026-07-26.v1"
 MARKETING_CONSENT_VERSION = "marketing-contact-2026-07-26.v1"
+
+
+def _normalise_public_phone(value):
+    """مشتركة بين ContactFormCreate وPublicRoomBookingRequest — نفس منطق
+    تطبيع رقم التليفون الدولي بالظبط."""
+    if value is None:
+        return None
+    clean = re.sub(r"[\s().-]+", "", str(value))
+    if not clean:
+        return None
+    if clean.startswith("00"):
+        clean = f"+{clean[2:]}"
+    elif clean.startswith("01") and len(clean) == 11:
+        clean = f"+2{clean}"
+    elif clean.startswith("201") and len(clean) == 12:
+        clean = f"+{clean}"
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", clean):
+        raise ValueError("phone must be a valid international number")
+    return clean
+
+
+def _normalise_public_email(value):
+    """مشتركة بين ContactFormCreate وPublicRoomBookingRequest."""
+    if value is None:
+        return None
+    clean = str(value).strip().lower()
+    if not clean:
+        return None
+    if not re.fullmatch(
+        r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
+        r"@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+        r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
+        clean,
+    ):
+        raise ValueError("email must be valid")
+    return clean
 
 ContactPurpose = Literal[
     "general_inquiry",
@@ -196,37 +245,12 @@ class ContactFormCreate(BaseModel):
     @field_validator("phone", mode="before")
     @classmethod
     def normalise_phone(cls, value):
-        if value is None:
-            return None
-        clean = re.sub(r"[\s().-]+", "", str(value))
-        if not clean:
-            return None
-        if clean.startswith("00"):
-            clean = f"+{clean[2:]}"
-        elif clean.startswith("01") and len(clean) == 11:
-            clean = f"+2{clean}"
-        elif clean.startswith("201") and len(clean) == 12:
-            clean = f"+{clean}"
-        if not re.fullmatch(r"\+[1-9]\d{7,14}", clean):
-            raise ValueError("phone must be a valid international number")
-        return clean
+        return _normalise_public_phone(value)
 
     @field_validator("email", mode="before")
     @classmethod
     def normalise_email(cls, value):
-        if value is None:
-            return None
-        clean = str(value).strip().lower()
-        if not clean:
-            return None
-        if not re.fullmatch(
-            r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+"
-            r"@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-            r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+",
-            clean,
-        ):
-            raise ValueError("email must be valid")
-        return clean
+        return _normalise_public_email(value)
 
     @field_validator("full_name", "subject", "message")
     @classmethod
@@ -281,6 +305,92 @@ class ContactFormListItem(BaseModel):
     lead_id:             Optional[int]
     status:              str
     created_at:           datetime
+
+
+# ── Public room catalog + online booking request (OPS-DATA-02 §7.2/§7.3) ──
+
+ROOM_BOOKING_DISCLOSURE_VERSION = SERVICE_CONTACT_DISCLOSURE_VERSION
+
+
+class RoomCatalogEntryRead(BaseModel):
+    """راجع hub.public_catalog.CatalogEntry — نفس الحقول بالظبط."""
+    entry_type:         Literal["room_type", "bundle"]
+    id:                  int
+    name:                str
+    name_ar:             Optional[str] = None
+    capacity:            int
+    base_price:          Decimal
+    vat_amount:          Decimal
+    service_amount:      Decimal
+    total:               Decimal
+    currency:            str
+    price_unit:          str
+    effective_from:      date
+    includes_breakfast:  bool
+
+
+class RoomQuoteRead(BaseModel):
+    """لقطة سعر — نفس الشكل المحفوظ في HubOnlineBooking.quoted_* عند التأكيد."""
+    entry_type:      Literal["room_type", "bundle"]
+    room_type_id:    Optional[int] = None
+    bundle_id:        Optional[int] = None
+    nightly_rate:      Decimal
+    nights:            int
+    subtotal:          Decimal
+    vat_amount:        Decimal
+    service_amount:    Decimal
+    total:             Decimal
+    currency:          str
+    quoted_at:          datetime
+
+
+class PublicRoomBookingRequest(BaseModel):
+    """طلب حجز غرفة/باقة عام — بديل توجيه حجز الغرف لـ /hub/contact
+    (راجع OPS-DATA-02 §7.3). لسه مش حجز مؤكد؛ الفريق بيتواصل ويأكّد."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    guest_name:  str = Field(..., min_length=2, max_length=120)
+    guest_phone: str = Field(..., max_length=32)
+    guest_email: Optional[str] = Field(None, max_length=254)
+    check_in:    date
+    check_out:   date
+    adults:      int = Field(1, ge=1)
+    children:    int = Field(0, ge=0)
+    room_type_id: Optional[int] = None
+    bundle_id:    Optional[int] = None
+    notes:        Optional[str] = Field(None, max_length=1000)
+    language:     Literal["ar", "en", "ru", "it"] = "ar"
+    service_contact_authorized: Literal[True]
+    service_disclosure_version: Literal[ROOM_BOOKING_DISCLOSURE_VERSION]
+    # مقبول لكن مش بيتخزّن أبدًا — قيمة غير فاضية = إشارة بوت (راجع
+    # ContactFormCreate.website لنفس النمط بالظبط).
+    website: str = Field("", max_length=200)
+
+    @field_validator("guest_phone", mode="before")
+    @classmethod
+    def normalise_phone(cls, value):
+        result = _normalise_public_phone(value)
+        if result is None:
+            raise ValueError("guest_phone is required")
+        return result
+
+    @field_validator("guest_email", mode="before")
+    @classmethod
+    def normalise_email(cls, value):
+        return _normalise_public_email(value)
+
+    @model_validator(mode="after")
+    def _exactly_one_target(self):
+        if bool(self.room_type_id) == bool(self.bundle_id):
+            raise ValueError("حدد إما room_type_id أو bundle_id، وليس الاثنين معًا ولا بلا أي منهما")
+        return self
+
+
+class PublicRoomBookingResponse(BaseModel):
+    message:   str
+    reference: str
+    quote:      Optional[RoomQuoteRead] = None
 
 
 # ── Simple fixed-shape response schemas ──────────────────────────────────────

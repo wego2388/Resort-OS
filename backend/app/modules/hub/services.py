@@ -114,78 +114,151 @@ def create_online_booking(db: Session, data: OnlineBookingCreate) -> HubOnlineBo
     return obj
 
 
+def _confirm_room_type_leg(db: Session, booking: HubOnlineBooking, *, strict: bool) -> "int | None":
+    from app.modules.pms.crud import get_available_rooms                        # noqa: PLC0415
+    from app.modules.pms.schemas import BookingCreate                           # noqa: PLC0415
+    from app.modules.pms.services import BookingConflictError, create_booking as pms_create  # noqa: PLC0415
+
+    nights = (booking.check_out - booking.check_in).days
+    if nights <= 0:
+        if strict:
+            raise ValueError("تواريخ الإقامة في الطلب غير صحيحة")
+        logger.warning("Hub #%s: تواريخ إقامة غير صحيحة — تأكيد بدون PMS", booking.id)
+        return None
+
+    available = get_available_rooms(
+        db, branch_id=booking.branch_id, check_in=booking.check_in,
+        check_out=booking.check_out, room_type_id=booking.room_type_id,
+    )
+    if not available:
+        message = (
+            f"لا توجد غرف متاحة من النوع {booking.room_type_id} في الفترة "
+            f"{booking.check_in}→{booking.check_out}"
+        )
+        if strict:
+            raise ValueError(f"{message} — الطلب يفضل قيد الانتظار")
+        logger.warning("Hub #%s: %s", booking.id, message)
+        return None
+
+    chosen = available[0]
+    rate_overrides = (
+        {chosen.id: booking.quoted_nightly_rate} if booking.quoted_nightly_rate is not None else None
+    )
+    try:
+        pms_b = pms_create(db, BookingCreate(
+            branch_id=booking.branch_id, guest_name=booking.guest_name,
+            guest_phone=booking.guest_phone, guest_email=booking.guest_email,
+            check_in=booking.check_in, check_out=booking.check_out,
+            adults=booking.adults or 1, children=booking.children or 0,
+            room_ids=[chosen.id], source="online",
+            notes=f"حجز من الموقع — Hub #{booking.id}\n{booking.notes or ''}".strip(),
+        ), rate_overrides=rate_overrides)
+    except BookingConflictError:
+        if strict:
+            raise
+        logger.warning("Hub #%s: تعارض حجز غرفة وقت التأكيد — تأكيد بدون PMS", booking.id)
+        return None
+    except Exception:
+        if strict:
+            raise
+        logger.error(
+            "confirm_booking: فشل إنشاء PMS booking لـ Hub #%s — يحتاج إنشاء يدوي",
+            booking.id, exc_info=True,
+        )
+        return None
+
+    logger.info(
+        "Hub booking #%s → PMS booking #%s (room #%s) created", booking.id, pms_b.id, chosen.id,
+    )
+    return pms_b.id
+
+
+def _confirm_bundle_leg(db: Session, booking: HubOnlineBooking, *, strict: bool) -> "int | None":
+    from app.modules.pms.schemas import BundleBookingCreate                                     # noqa: PLC0415
+    from app.modules.pms.services import BookingConflictError, create_bundle_booking as pms_create_bundle  # noqa: PLC0415
+
+    if not booking.check_in or not booking.check_out:
+        if strict:
+            raise ValueError("الطلب ناقص بيانات الإقامة (check_in/check_out) ولا يمكن تأكيده تلقائيًا")
+        logger.warning("Hub #%s: طلب باقة بدون تواريخ إقامة — تأكيد بدون PMS", booking.id)
+        return None
+    if (booking.check_out - booking.check_in).days <= 0:
+        if strict:
+            raise ValueError("تواريخ الإقامة في الطلب غير صحيحة")
+        logger.warning("Hub #%s: تواريخ إقامة غير صحيحة — تأكيد بدون PMS", booking.id)
+        return None
+
+    try:
+        pms_b = pms_create_bundle(db, BundleBookingCreate(
+            branch_id=booking.branch_id, bundle_id=booking.bundle_id,
+            guest_name=booking.guest_name, guest_phone=booking.guest_phone,
+            guest_email=booking.guest_email, check_in=booking.check_in,
+            check_out=booking.check_out, adults=booking.adults or 1,
+            children=booking.children or 0, source="online",
+            notes=f"حجز باقة من الموقع — Hub #{booking.id}\n{booking.notes or ''}".strip(),
+        ), price_override=booking.quoted_nightly_rate)
+    except BookingConflictError:
+        if strict:
+            raise
+        logger.warning("Hub #%s: تعارض حجز باقة وقت التأكيد — تأكيد بدون PMS", booking.id)
+        return None
+    except ValueError:
+        if strict:
+            raise
+        logger.warning(
+            "Hub #%s: تعذّر إنشاء حجز الباقة (باقة غير نشطة/غير موجودة؟) — تأكيد بدون PMS", booking.id,
+        )
+        return None
+    except Exception:
+        if strict:
+            raise
+        logger.error(
+            "confirm_booking: فشل إنشاء حجز باقة PMS لـ Hub #%s — يحتاج إنشاء يدوي",
+            booking.id, exc_info=True,
+        )
+        return None
+
+    logger.info("Hub booking #%s → PMS bundle booking #%s created", booking.id, pms_b.id)
+    return pms_b.id
+
+
 def confirm_booking(db: Session, booking_id: int, confirmed_by: int) -> HubOnlineBooking:
     """يُؤكِّد طلب الحجز الأونلاين.
 
-    لو الطلب عنده check_in + check_out + room_type_id:
+    لو الطلب عنده check_in + check_out + (room_type_id أو bundle_id):
       → بيُنشئ PMS Booking تلقائياً ويحفظ pms_booking_id
       → الريسبشن يشوف الحجز فوراً في شاشة الحجوزات
     لو البيانات ناقصة:
       → بيُؤكِّد فقط بدون PMS — المدير يعمل الحجز يدوياً لاحقاً
 
-    ⚠️ باج حقيقي اتصلح (2026-08-02): كان فيه سطرين مكررين (pms_booking_id
-    = pms_b.id + logger.info) بعد كتلة if/else مباشرة بنفس مستوى الإزاحة
-    — بيتنفذوا دايمًا بغض النظر عن الفرع اللي اتنفذ فعليًا. لما مفيش غرف
-    متاحة (فرع "if not available" اللي المفروض يسجّل تحذير واضح ويكمل
-    عادي زي ما التوثيق فوق بيقول)، السطرين المكررين كانوا بيحاولوا
-    يستخدموا `pms_b` اللي أصلاً مالهاش قيمة في الفرع ده خالص —
-    UnboundLocalError حقيقي كان بيتبلع بصمت في except Exception الأوسع
-    تحت، ويتسجّل كـ"فشل إنشاء PMS booking" مربك بدل التحذير الواضح
-    "لا توجد غرف متاحة" اللي كان مفروض يظهر. النتيجة النهائية العملية
-    (booking يتأكد من غير pms_booking_id) ماتغيّرتش، بس اللوج كان بيضلل
-    تمامًا عن السبب الحقيقي."""
+    ⚠️ OPS-DATA-02 §7.3 — "ممنوع confirmed بلا pms_booking_id": الطلبات
+    اللي جاية من submit_public_room_booking (عندها quote حقيقي محفوظ —
+    public_reference/quoted_total) صارمة: فشل إنشاء الحجز (تعارض قفل، صفر
+    غرف متاحة، باقة مش متاحة) بيوقف التأكيد بالكامل ويرفع استثناء، والطلب
+    يفضل 'pending' — الضيف اتوعد بسعر معيّن، مينفعش يتأكد بدونه. طلبات
+    staff-created العادية (leads بيتش/مطعم/عروض عامة بدون quote) بتحافظ
+    على السلوك القديم بالظبط: تأكيد بهدوء حتى لو مفيش PMS booking، القرار
+    يدوي للمدير — عمدًا متلمسناهوش (test_confirm_booking_with_no_available_
+    rooms_logs_clean_warning_not_error بيثبت السلوك ده وموجود من قبل).
+
+    ⚠️ باج حقيقي اتصلح (2026-08-02، لسه ساري في المسار غير الصارم): كان
+    فيه سطرين مكررين (pms_booking_id = pms_b.id + logger.info) بعد كتلة
+    if/else مباشرة بنفس مستوى الإزاحة — بيتنفذوا دايمًا بغض النظر عن الفرع
+    اللي اتنفذ فعليًا. لما مفيش غرف متاحة، السطرين المكررين كانوا بيحاولوا
+    يستخدموا `pms_b` غير معرَّفة أصلًا في الفرع ده — UnboundLocalError
+    حقيقي كان بيتبلع بصمت. اتصلح بفصل منطق كل مسار (room_type/bundle) في
+    دالة مستقلة بترجّع pms_booking_id أو None بوضوح."""
     booking = get_booking_or_404(db, booking_id)
     if booking.status != "pending":
         raise ValueError(f"الحجز في حالة '{booking.status}' ولا يمكن تأكيده")
 
-    pms_booking_id = None
+    strict = booking.public_reference is not None and booking.quoted_total is not None
+    pms_booking_id: "int | None" = None
 
-    # محاولة إنشاء PMS booking تلقائياً لو البيانات مكتملة
-    if booking.check_in and booking.check_out and booking.room_type_id:
-        try:
-            from app.modules.pms.services import create_booking as pms_create  # noqa: PLC0415
-            from app.modules.pms.schemas import BookingCreate                  # noqa: PLC0415
-
-            nights = (booking.check_out - booking.check_in).days
-            if nights > 0:
-                # ابحث عن غرفة متاحة من هذا النوع في الفترة المطلوبة
-                from app.modules.pms.crud import get_available_rooms  # noqa: PLC0415
-                available = get_available_rooms(
-                    db,
-                    branch_id=booking.branch_id,
-                    check_in=booking.check_in,
-                    check_out=booking.check_out,
-                    room_type_id=booking.room_type_id,
-                )
-                if not available:
-                    logger.warning(
-                        "Hub #%s: لا توجد غرف متاحة من النوع %s في الفترة %s→%s",
-                        booking.id, booking.room_type_id, booking.check_in, booking.check_out,
-                    )
-                else:
-                    pms_b = pms_create(db, BookingCreate(
-                        branch_id=booking.branch_id,
-                        guest_name=booking.guest_name,
-                        guest_phone=booking.guest_phone,
-                        guest_email=booking.guest_email,
-                        check_in=booking.check_in,
-                        check_out=booking.check_out,
-                        adults=booking.adults or 1,
-                        children=0,
-                        room_ids=[available[0].id],
-                        source="online",
-                        notes=f"حجز من الموقع — Hub #{booking.id}\n{booking.notes or ''}".strip(),
-                    ))
-                    pms_booking_id = pms_b.id
-                    logger.info(
-                        "Hub booking #%s → PMS booking #%s (room #%s) created automatically",
-                        booking.id, pms_b.id, available[0].id,
-                    )
-        except Exception:
-            logger.error(
-                "confirm_booking: فشل إنشاء PMS booking لـ Hub #%s — يحتاج إنشاء يدوي",
-                booking.id, exc_info=True,
-            )
+    if booking.bundle_id:
+        pms_booking_id = _confirm_bundle_leg(db, booking, strict=strict)
+    elif booking.check_in and booking.check_out and booking.room_type_id:
+        pms_booking_id = _confirm_room_type_leg(db, booking, strict=strict)
 
     update = OnlineBookingUpdate(status="confirmed")
     obj = crud.update_online_booking(db, booking, update, confirmed_by=confirmed_by)

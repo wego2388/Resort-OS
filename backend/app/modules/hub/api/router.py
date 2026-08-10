@@ -19,6 +19,7 @@ from app.modules.hub.schemas import (
     OnlineBookingCreate, OnlineBookingRead,
     ContactFormCreate, ContactFormResponse, ContactFormListItem,
     BlogPostsResponse, BlogPostItem, BlogPostDetail,
+    RoomCatalogEntryRead, PublicRoomBookingRequest, PublicRoomBookingResponse,
 )
 from app.modules.core import services as core_services
 from app.modules.core.schemas import PaginatedResponse
@@ -211,10 +212,14 @@ def get_online_booking(booking_id: int, db: DbDep, user=Depends(get_current_acti
 @router.post("/hub/online-bookings/{booking_id}/confirm",
              response_model=OnlineBookingRead)
 def confirm_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
+    from app.modules.pms.services import BookingConflictError  # noqa: PLC0415
+
     b = _get_online_booking_or_404(db, booking_id)
     _assert_hub_branch(db, user, b.branch_id, "تأكيد حجز إلكتروني")
     try:
         return services.confirm_booking(db, booking_id, confirmed_by=user.id)
+    except BookingConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
 
@@ -228,6 +233,76 @@ def cancel_booking(booking_id: int, db: DbDep, user=Depends(get_manager_user)):
         return services.cancel_booking(db, booking_id)
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+# ── Public room catalog + online booking request ──────────────────────
+# OPS-DATA-02 §7.2/§7.3 — نفس نمط أمان /hub/contact بالظبط: الفرع مححدد
+# من Host (لا يوجد branch_id من العميل)، rate limited، idempotent.
+
+@router.get(
+    "/hub/public/room-catalog",
+    response_model=list[RoomCatalogEntryRead],
+)
+def get_public_room_catalog(db: DbDep, request: Request):
+    from app.modules.hub.public_catalog import get_public_catalog  # noqa: PLC0415
+    from app.modules.hub.public_contact import resolve_public_site_branch  # noqa: PLC0415
+
+    branch = resolve_public_site_branch(db, request.url.hostname)
+    if branch is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            {"code": "public_site_not_configured", "message": "Public site is not configured."},
+        )
+    entries = get_public_catalog(db, branch.id)
+    return [RoomCatalogEntryRead(**vars(e)) for e in entries]
+
+
+@router.post(
+    "/hub/public/room-bookings",
+    response_model=PublicRoomBookingResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def submit_public_room_booking(
+    db: DbDep,
+    data: PublicRoomBookingRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: str = Header(
+        ...,
+        alias="Idempotency-Key",
+        min_length=16,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9._:-]+$",
+    ),
+):
+    """طلب حجز غرفة/باقة عام — بديل توجيه حجز الغرف لـ /hub/contact
+    (راجع OPS-DATA-02 §7.3). لسه مش حجز مؤكد؛ الفريق بيتواصل ويأكّد
+    (POST /hub/online-bookings/{id}/confirm)."""
+    from app.core.rate_limit import _client_ip  # noqa: PLC0415
+    from app.modules.hub.public_contact import resolve_public_site_branch  # noqa: PLC0415
+    from app.modules.hub.public_room_booking import (  # noqa: PLC0415
+        RoomBookingSubmissionFailure, submit_public_room_booking as submit,
+    )
+
+    branch = resolve_public_site_branch(db, request.url.hostname)
+    if branch is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            {"code": "public_site_not_configured", "message": "Public booking site is not configured."},
+        )
+
+    try:
+        result = submit(
+            db, branch=branch, data=data,
+            idempotency_key=idempotency_key, client_ip=_client_ip(request),
+        )
+    except RoomBookingSubmissionFailure as exc:
+        raise HTTPException(exc.status_code, {"code": exc.code, "message": exc.message}) from exc
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 # ── Contact Form → CRM Lead ───────────────────────────────────────────
