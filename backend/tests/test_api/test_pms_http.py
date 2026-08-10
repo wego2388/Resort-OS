@@ -269,6 +269,123 @@ class TestBookingLifecycleHTTP:
         assert ok_resp.status_code == 201
 
 
+def make_room_bundle_committed(db, branch, chalet_room, studio_room, price=Decimal("4500.00")):
+    from app.modules.pms.models import RoomBundle
+    bundle = RoomBundle(
+        branch_id=branch.id, name="Family Compound 6P", name_ar="كومباوند عائلي",
+        chalet_room_id=chalet_room.id, studio_room_id=studio_room.id,
+        max_occupancy=6, price=price, is_active=True,
+    )
+    db.add(bundle)
+    db.commit()
+    return bundle
+
+
+class TestRoomBundleBookingHTTP:
+    """OPS-DATA-02 §7.1 — راجع أيضًا tests/test_approved_room_pricing.py
+    لتغطية المنطق الذري/التسعير على مستوى الـservice؛ هنا التركيز على
+    الـHTTP contract (routing/permission/response shape) بس."""
+
+    def _paired_rooms(self, db, branch):
+        chalet_type = make_room_type_committed(db, branch)
+        studio_type = make_room_type_committed(db, branch)
+        chalet = make_room_committed(db, branch, chalet_type, "102A")
+        studio = make_room_committed(db, branch, studio_type, "102S")
+        return chalet, studio
+
+    def test_list_room_bundles(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        chalet, studio = self._paired_rooms(db, branch)
+        make_room_bundle_committed(db, branch, chalet, studio)
+
+        resp = client.get(
+            "/api/v1/pms/room-bundles", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert len(body) == 1
+        assert body[0]["name"] == "Family Compound 6P"
+        assert Decimal(str(body[0]["price"])) == Decimal("4500.00")
+
+    def test_create_bundle_booking_reserves_both_units_atomically(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        chalet, studio = self._paired_rooms(db, branch)
+        bundle = make_room_bundle_committed(db, branch, chalet, studio)
+
+        resp = client.post(
+            "/api/v1/pms/bookings/bundle",
+            json={
+                "branch_id": branch.id, "bundle_id": bundle.id,
+                "guest_name": "عائلة كبيرة",
+                "check_in": str(date.today()), "check_out": str(date.today() + timedelta(days=1)),
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 201, resp.text
+        booking = resp.json()
+        assert booking["room_bundle_id"] == bundle.id
+        assert len(booking["rooms"]) == 2
+        assert Decimal(str(booking["total_rate"])) == Decimal("4500.00")
+
+        rooms_resp = client.get(
+            "/api/v1/pms/rooms", params={"branch_id": branch.id}, headers=manager_headers,
+        )
+        statuses = {r["id"]: r["status"] for r in rooms_resp.json()}
+        assert statuses[chalet.id] == "reserved"
+        assert statuses[studio.id] == "reserved"
+
+    def test_create_bundle_booking_conflict_when_one_unit_taken_returns_409(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        branch = make_branch_committed(db)
+        chalet, studio = self._paired_rooms(db, branch)
+        bundle = make_room_bundle_committed(db, branch, chalet, studio)
+        check_in, check_out = str(date.today()), str(date.today() + timedelta(days=1))
+
+        first = client.post(
+            "/api/v1/pms/bookings",
+            json={
+                "branch_id": branch.id, "guest_name": "ضيف سابق",
+                "check_in": check_in, "check_out": check_out,
+                "room_ids": [studio.id],
+            },
+            headers=manager_headers,
+        )
+        assert first.status_code == 201, first.text
+
+        resp = client.post(
+            "/api/v1/pms/bookings/bundle",
+            json={
+                "branch_id": branch.id, "bundle_id": bundle.id,
+                "guest_name": "عائلة اتأخرت",
+                "check_in": check_in, "check_out": check_out,
+            },
+            headers=manager_headers,
+        )
+        assert resp.status_code == 409, resp.text
+
+    def test_create_bundle_booking_requires_pms_branch_access(
+        self, client: TestClient, db, fake_redis, waiter_headers,
+    ):
+        """waiter (level 30) لازم يترفض — نفس required_permission لحجز عادي (40+)."""
+        branch = make_branch_committed(db)
+        chalet, studio = self._paired_rooms(db, branch)
+        bundle = make_room_bundle_committed(db, branch, chalet, studio)
+
+        resp = client.post(
+            "/api/v1/pms/bookings/bundle",
+            json={
+                "branch_id": branch.id, "bundle_id": bundle.id,
+                "guest_name": "ضيف",
+                "check_in": str(date.today()), "check_out": str(date.today() + timedelta(days=1)),
+            },
+            headers=waiter_headers,
+        )
+        assert resp.status_code == 403, resp.text
+
+
 class TestPMSPermissions:
     def test_create_room_type_requires_admin(self, client: TestClient, db, fake_redis, manager_headers):
         """manager (60) must not create room types — admin (80) required."""

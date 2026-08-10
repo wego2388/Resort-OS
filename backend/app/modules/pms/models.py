@@ -61,6 +61,37 @@ class Room(Base, TimestampMixin):
     room_type: Mapped["RoomType"] = relationship("RoomType", back_populates="rooms")
 
 
+class RoomBundle(Base, TimestampMixin):
+    """باقة ذرية قابلة للحجز — شاليه + استوديو لهما نفس رقم الوحدة يُباعان
+    كمنتج واحد (Family Compound 6P، OPS-DATA-02 §3/§7.1). عمداً مش RoomType
+    تالت: الغرفتين الحقيقيتين بيتحجزوا زي أي حجز متعدد الغرف عادي
+    (BookingRoom لكل واحدة، بنفس منطق قفل/تحقق create_booking — راجع
+    services._lock_and_price_rooms)، والصف ده بس بيعرّف الزوج المعتمد
+    وسعر الباقة الصافي. الـUniqueConstraint يمنع نفس الغرفة تنضم لأكتر من
+    باقة واحدة بالغلط."""
+    __tablename__ = "room_bundles"
+    __table_args__ = (
+        UniqueConstraint("chalet_room_id", name="uq_room_bundle_chalet_room"),
+        UniqueConstraint("studio_room_id", name="uq_room_bundle_studio_room"),
+    )
+
+    id:             Mapped[int]     = mapped_column(primary_key=True)
+    branch_id:      Mapped[int]     = mapped_column(ForeignKey("branches.id", ondelete="CASCADE"))
+    name:           Mapped[str]     = mapped_column(String(100))
+    name_ar:        Mapped[str | None] = mapped_column(String(100), nullable=True)
+    chalet_room_id: Mapped[int]     = mapped_column(ForeignKey("rooms.id", ondelete="RESTRICT"))
+    studio_room_id: Mapped[int]     = mapped_column(ForeignKey("rooms.id", ondelete="RESTRICT"))
+    max_occupancy:  Mapped[int]     = mapped_column(Integer, default=6)
+    # السعر الصافي المعلن للباقة (قبل VAT/الخدمة) — مش مجموع سعري الشاليه/
+    # الاستوديو المستقلين بالضرورة (4500 بينما 3500+2500=6000)، وده العرض
+    # المقصود فعليًا (راجع §3).
+    price:          Mapped[Decimal] = mapped_column(Numeric(10, 2))
+    is_active:      Mapped[bool]    = mapped_column(Boolean, default=True)
+
+    chalet_room: Mapped["Room"] = relationship("Room", foreign_keys=[chalet_room_id])
+    studio_room: Mapped["Room"] = relationship("Room", foreign_keys=[studio_room_id])
+
+
 class Booking(Base, TimestampMixin):
     __tablename__ = "bookings"
 
@@ -92,8 +123,17 @@ class Booking(Base, TimestampMixin):
     # رسوم الوصول المبكر + المغادرة المتأخرة — بتُضاف لـ total_rate وتُحمَّل على الفوليو
     payment_method:    Mapped[str | None]       = mapped_column(String(30), nullable=True)
     # cash|card|bank_transfer — بيتسجّل وقت الـ check-in ويُستخدم كمرجع للمحاسبة
+    room_bundle_id:    Mapped[int | None]        = mapped_column(
+        ForeignKey("room_bundles.id", ondelete="SET NULL"), nullable=True,
+    )
+    # لو الحجز ده شراء باقة (Family Compound 6P) — راجع RoomBundle تحت.
+    # nullable لأن أغلب الحجوزات غرفة/غرف منفردة عادية بدون باقة. الغرفتين
+    # الفعليتين لسه بيتسجلوا زي أي حجز متعدد الغرف عادي (BookingRoom عادي
+    # لكل غرفة) — العمود ده بس علشان التتبع/التقارير (تمييز باقة حقيقية عن
+    # صدفة حجز غرفتين مع بعض)، مش مصدر الحقيقة للسعر أو الإتاحة.
 
     rooms: Mapped[list["BookingRoom"]] = relationship("BookingRoom", back_populates="booking", lazy="select")
+    room_bundle: Mapped["RoomBundle | None"] = relationship("RoomBundle")
 
 
 class BookingRoom(Base, TimestampMixin):

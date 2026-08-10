@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.modules.pms.models import (
-    Booking, BookingRoom, HousekeepingTask, NightAuditLog, RatePlan, Room, RoomType,
+    Booking, BookingRoom, HousekeepingTask, NightAuditLog, RatePlan, Room, RoomBundle, RoomType,
 )
 from app.modules.pms.schemas import (
     BookingCreate, RatePlanCreate, RatePlanUpdate, RoomCreate, RoomTypeCreate,
@@ -127,6 +127,19 @@ def get_available_rooms(
     return q.order_by(Room.name).all()
 
 
+# ── RoomBundle ────────────────────────────────────────────────────────
+
+def get_room_bundle(db: Session, bundle_id: int) -> Optional[RoomBundle]:
+    return db.query(RoomBundle).filter(RoomBundle.id == bundle_id).first()
+
+
+def list_room_bundles(db: Session, branch_id: int, active_only: bool = True) -> list[RoomBundle]:
+    q = db.query(RoomBundle).filter(RoomBundle.branch_id == branch_id)
+    if active_only:
+        q = q.filter(RoomBundle.is_active.is_(True))
+    return q.order_by(RoomBundle.name).all()
+
+
 # ── Booking ───────────────────────────────────────────────────────────
 
 def get_booking(db: Session, booking_id: int) -> Optional[Booking]:
@@ -181,6 +194,7 @@ def create_booking(
     data: BookingCreate,
     room_rates: list[tuple[int, Decimal, int, Optional[int]]],
     # (room_id, daily_rate, nights, rate_plan_id لو اتطبّقت خطة على الغرفة دي)
+    room_bundle_id: Optional[int] = None,
 ) -> Booking:
     total_rate = sum(r * n for _, r, n, _ in room_rates)
     booking = Booking(
@@ -198,6 +212,7 @@ def create_booking(
         notes=data.notes,
         total_rate=total_rate,
         customer_id=data.customer_id,
+        room_bundle_id=room_bundle_id,
     )
     db.add(booking)
     db.flush()

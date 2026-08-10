@@ -14,8 +14,10 @@ logger = logging.getLogger(__name__)
 from sqlalchemy.orm import Session
 
 from app.modules.pms import crud
-from app.modules.pms.models import Booking, NightAuditLog, RatePlan, RoomType
-from app.modules.pms.schemas import BookingCreate, EarlyLateRequest, RatePlanCreate, RatePlanUpdate
+from app.modules.pms.models import Booking, NightAuditLog, RatePlan, Room, RoomType
+from app.modules.pms.schemas import (
+    BookingCreate, BundleBookingCreate, EarlyLateRequest, RatePlanCreate, RatePlanUpdate,
+)
 
 
 class BookingConflictError(Exception):
@@ -123,6 +125,84 @@ def update_rate_plan(db: Session, plan_id: int, data: RatePlanUpdate) -> RatePla
     return plan
 
 
+def _lock_and_price_rooms(
+    db: Session,
+    branch_id: int,
+    room_ids: list[int],
+    check_in: date,
+    check_out: date,
+    nights: int,
+    rate_plan: Optional["RatePlan"],
+    rate_overrides: Optional[dict[int, Decimal]] = None,
+) -> tuple[dict[int, "Room"], list[tuple[int, Decimal, int, Optional[int]]]]:
+    """يقفل الغرف المطلوبة بترتيب ثابت (يمنع deadlock) ويحسب سعرها — منطق
+    مشترك بين الحجز العادي (create_booking) وحجز الباقة الذرية
+    (create_bundle_booking)، عشان الاتنين يستخدموا بالظبط نفس ترتيب
+    القفل/التحقق بدل ما ينحرفوا عن بعض لو اتكرر الكود بشكل منفصل.
+
+    rate_overrides: لو موجود، يفرض سعر صريح للغرفة (بدل قراءة
+    RoomType.base_rate/RatePlan) — بيستخدمها حجز الباقة عشان يوزّع سعر
+    الباقة الصافي تحليليًا على الغرفتين (راجع create_bundle_booking)."""
+    # ترتيب ثابت لقفل الغرف — يمنع deadlock بين حجزين متزامنين بنفس الغرف
+    # بترتيب مختلف
+    ordered_room_ids = sorted(set(room_ids))
+
+    # SELECT FOR UPDATE NOWAIT على كل غرفة قبل أي تحقق — لو غرفة تانية
+    # ماسكاها transaction شغالة دلوقتي، تطلع OperationalError فوراً بدل
+    # ما الاتنين يعدّوا التحقق وين يتصادموا على الـ INSERT (race condition
+    # كلاسيكي بين SELECT availability والـ INSERT).
+    locked_rooms: dict[int, "Room"] = {}
+    for room_id in ordered_room_ids:
+        try:
+            locked = crud.lock_room_for_booking(db, room_id)
+        except OperationalError:
+            db.rollback()
+            raise BookingConflictError(f"الغرفة {room_id} مقفولة الآن من عملية حجز أخرى — حاول مرة أخرى")
+        if not locked:
+            raise ValueError(f"الغرفة {room_id} غير موجودة")
+        locked_rooms[room_id] = locked
+
+    # التحقق من الغرف والتوفر — بعد القفل، فمفيش حد تاني يقدر يحجز نفس
+    # الغرفة لحد ما الـ transaction دي تخلص (commit/rollback). available_ids
+    # و room_type cache متجهزين مرة واحدة برّه الحلقة — كانوا بيتعادوا لكل
+    # غرفة (نفس الاستعلام بالظبط لـ get_available_rooms، وget_room_type
+    # ممكن يتكرر لو أكتر من غرفة نفس النوع).
+    available_ids = {
+        r.id for r in crud.get_available_rooms(db, branch_id, check_in, check_out)
+    }
+    room_type_cache: dict[int, RoomType] = {}
+    room_rates: list[tuple[int, Decimal, int, Optional[int]]] = []
+    for room_id in ordered_room_ids:
+        room = locked_rooms[room_id]
+        if room.branch_id != branch_id:
+            raise ValueError(f"الغرفة {room_id} لا تنتمي لهذا الفرع")
+
+        if room_id not in available_ids:
+            raise BookingConflictError(f"الغرفة {room.name} غير متاحة في هذه الفترة")
+
+        if rate_overrides is not None and room_id in rate_overrides:
+            daily_rate: Optional[Decimal] = rate_overrides[room_id]
+            applied_rate_plan_id: Optional[int] = None
+        else:
+            room_type = room_type_cache.get(room.room_type_id)
+            if room_type is None:
+                room_type = crud.get_room_type(db, room.room_type_id)
+                if room_type:
+                    room_type_cache[room.room_type_id] = room_type
+            if not room_type or room_type.branch_id != branch_id:
+                raise ValueError(f"نوع الغرفة المرتبط بالغرفة {room_id} لا ينتمي لهذا الفرع")
+            applies = rate_plan and (rate_plan.room_type_id is None or rate_plan.room_type_id == room.room_type_id)
+            daily_rate = _room_rate_for(room_type, rate_plan, room.room_type_id)
+            applied_rate_plan_id = rate_plan.id if applies else None
+        if daily_rate is None:
+            raise ValueError(
+                f"لم يتم تحديد سعر للغرفة {room.name}؛ اعتمد سعر النوع أو خطة سعر قبل الحجز"
+            )
+        room_rates.append((room_id, daily_rate, nights, applied_rate_plan_id))
+
+    return locked_rooms, room_rates
+
+
 def create_booking(db: Session, data: BookingCreate) -> Booking:
     # التحقق من التواريخ
     if data.check_out <= data.check_in:
@@ -140,63 +220,103 @@ def create_booking(db: Session, data: BookingCreate) -> Booking:
     # تحقق من خطة الأسعار (لو اتبعتت) قبل أي قفل غرف
     rate_plan = _resolve_rate_plan(db, data, nights)
 
-    # ترتيب ثابت لقفل الغرف — يمنع deadlock بين حجزين متزامنين بنفس الغرف
-    # بترتيب مختلف
-    ordered_room_ids = sorted(set(data.room_ids))
-
-    # SELECT FOR UPDATE NOWAIT على كل غرفة قبل أي تحقق — لو غرفة تانية
-    # ماسكاها transaction شغالة دلوقتي، تطلع OperationalError فوراً بدل
-    # ما الاتنين يعدّوا التحقق وين يتصادموا على الـ INSERT (race condition
-    # كلاسيكي بين SELECT availability والـ INSERT).
-    locked_rooms = {}
-    for room_id in ordered_room_ids:
-        try:
-            locked = crud.lock_room_for_booking(db, room_id)
-        except OperationalError:
-            db.rollback()
-            raise BookingConflictError(f"الغرفة {room_id} مقفولة الآن من عملية حجز أخرى — حاول مرة أخرى")
-        if not locked:
-            raise ValueError(f"الغرفة {room_id} غير موجودة")
-        locked_rooms[room_id] = locked
-
-    # التحقق من الغرف والتوفر — بعد القفل، فمفيش حد تاني يقدر يحجز نفس
-    # الغرفة لحد ما الـ transaction دي تخلص (commit/rollback). available_ids
-    # و room_type cache متجهزين مرة واحدة برّه الحلقة — كانوا بيتعادوا لكل
-    # غرفة (نفس الاستعلام بالظبط لـ get_available_rooms، وget_room_type
-    # ممكن يتكرر لو أكتر من غرفة نفس النوع).
-    available_ids = {
-        r.id for r in crud.get_available_rooms(db, data.branch_id, data.check_in, data.check_out)
-    }
-    room_type_cache: dict[int, RoomType] = {}
-    room_rates: list[tuple[int, Decimal, int, Optional[int]]] = []
-    for room_id in ordered_room_ids:
-        room = locked_rooms[room_id]
-        if room.branch_id != data.branch_id:
-            raise ValueError(f"الغرفة {room_id} لا تنتمي لهذا الفرع")
-
-        if room_id not in available_ids:
-            raise BookingConflictError(f"الغرفة {room.name} غير متاحة في هذه الفترة")
-
-        room_type = room_type_cache.get(room.room_type_id)
-        if room_type is None:
-            room_type = crud.get_room_type(db, room.room_type_id)
-            if room_type:
-                room_type_cache[room.room_type_id] = room_type
-        if not room_type or room_type.branch_id != data.branch_id:
-            raise ValueError(f"نوع الغرفة المرتبط بالغرفة {room_id} لا ينتمي لهذا الفرع")
-        applies = rate_plan and (rate_plan.room_type_id is None or rate_plan.room_type_id == room.room_type_id)
-        daily_rate = _room_rate_for(room_type, rate_plan, room.room_type_id)
-        if daily_rate is None:
-            raise ValueError(
-                f"لم يتم تحديد سعر للغرفة {room.name}؛ اعتمد سعر النوع أو خطة سعر قبل الحجز"
-            )
-        room_rates.append((room_id, daily_rate, nights, rate_plan.id if applies else None))
+    locked_rooms, room_rates = _lock_and_price_rooms(
+        db, data.branch_id, data.room_ids, data.check_in, data.check_out, nights, rate_plan,
+    )
 
     booking_number = crud.generate_booking_number(db, data.branch_id)
     booking = crud.create_booking(db, booking_number, data, room_rates)
 
     # تحديث حالة الغرف → reserved — بنستخدم locked_rooms الموجودة بالفعل
     # (نفس الصفوف المقفولة فوق) بدل ما نعيد نداء get_room لكل غرفة تاني.
+    for room_id, _, _, _ in room_rates:
+        crud.update_room_status(db, locked_rooms[room_id], "reserved")
+
+    db.commit()
+    db.refresh(booking)
+    return booking
+
+
+def create_bundle_booking(db: Session, data: "BundleBookingCreate") -> Booking:
+    """حجز باقة Family Compound 6P: يحجز شاليه+استوديو الزوج المعتمد
+    (RoomBundle) سوا في نفس الـtransaction، بنفس منطق القفل/التحقق
+    المستخدم للحجز العادي (_lock_and_price_rooms) — عشان لو غرفة واحدة من
+    الزوج اتقفلت والتانية فشلت (مش متاحة/مقفولة من transaction تانية)،
+    الحجز كله يترفض بصفر أثر (مفيش حجز نص باقة أبدًا).
+
+    التسعير: صافي سعر الباقة (bundle.price) بيتوزّع تحليليًا على الغرفتين
+    بنسبة سعريهما المستقلين (RoomType.base_rate لكل من الشاليه/الاستوديو)
+    — الضيف والدفتر بيشوفوا إيراد باقة واحد يساوي bundle.price بالظبط
+    (مجموع BookingRoom.total للغرفتين == bundle.price × الليالي)، مفيش
+    ازدواج إيراد. راجع OPS-DATA-02 §7.1/§3."""
+    from app.modules.pms.models import RoomBundle  # noqa: PLC0415
+
+    if data.check_out <= data.check_in:
+        raise ValueError("check_out يجب أن يكون بعد check_in")
+    nights = (data.check_out - data.check_in).days
+
+    if data.customer_id is not None:
+        from app.modules.crm.models import Customer  # noqa: PLC0415
+
+        customer = db.query(Customer).filter(Customer.id == data.customer_id).first()
+        if not customer or customer.branch_id != data.branch_id:
+            raise ValueError("العميل لا ينتمي لهذا الفرع")
+
+    bundle = crud.get_room_bundle(db, data.bundle_id)
+    if not bundle or bundle.branch_id != data.branch_id:
+        raise ValueError(f"باقة {data.bundle_id} غير موجودة لهذا الفرع")
+    if not bundle.is_active:
+        raise ValueError(f"باقة '{bundle.name}' غير مفعّلة")
+
+    chalet_room = crud.get_room(db, bundle.chalet_room_id)
+    studio_room = crud.get_room(db, bundle.studio_room_id)
+    if not chalet_room or not studio_room:
+        raise ValueError("إحدى وحدتي الباقة غير موجودة")
+    chalet_type = crud.get_room_type(db, chalet_room.room_type_id)
+    studio_type = crud.get_room_type(db, studio_room.room_type_id)
+    chalet_base = chalet_type.base_rate if chalet_type else None
+    studio_base = studio_type.base_rate if studio_type else None
+    if chalet_base is None or studio_base is None or (chalet_base + studio_base) <= 0:
+        raise ValueError(
+            "سعر الشاليه/الاستوديو المستقلين لازم يكون معتمد قبل حجز الباقة "
+            "(يُستخدم لتوزيع إيراد الباقة تحليليًا على الوحدتين)"
+        )
+
+    # توزيع صافي سعر الباقة بنسبة السعرين المستقلين — الباقي (studio) بياخد
+    # الكسر المتبقي بعد التقريب عشان مجموع الحصتين يساوي bundle.price بالظبط
+    # حرفيًا، بدون أي فرق تقريب (نفس نمط "آخر حصة بتاخد الباقي" المستخدم في
+    # تقسيم الطلبات متعددة المنافذ في dining.services).
+    chalet_share = (bundle.price * chalet_base / (chalet_base + studio_base)).quantize(Decimal("0.01"))
+    studio_share = bundle.price - chalet_share
+
+    locked_rooms, room_rates = _lock_and_price_rooms(
+        db, data.branch_id,
+        [bundle.chalet_room_id, bundle.studio_room_id],
+        data.check_in, data.check_out, nights,
+        rate_plan=None,
+        rate_overrides={bundle.chalet_room_id: chalet_share, bundle.studio_room_id: studio_share},
+    )
+
+    booking_number = crud.generate_booking_number(db, data.branch_id)
+    booking_data = BookingCreate(
+        branch_id=data.branch_id,
+        guest_name=data.guest_name,
+        guest_phone=data.guest_phone,
+        guest_email=data.guest_email,
+        guest_national_id=data.guest_national_id,
+        check_in=data.check_in,
+        check_out=data.check_out,
+        adults=data.adults,
+        children=data.children,
+        source=data.source,
+        room_ids=[bundle.chalet_room_id, bundle.studio_room_id],
+        notes=data.notes,
+        customer_id=data.customer_id,
+    )
+    booking = crud.create_booking(
+        db, booking_number, booking_data, room_rates, room_bundle_id=bundle.id,
+    )
+
     for room_id, _, _, _ in room_rates:
         crud.update_room_status(db, locked_rooms[room_id], "reserved")
 

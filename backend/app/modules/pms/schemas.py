@@ -68,6 +68,37 @@ class BookingCreate(BaseModel):
     rate_plan_id:      Optional[int] = None
 
 
+class RoomBundleRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id:             int
+    branch_id:      int
+    name:           str
+    name_ar:        Optional[str] = None
+    chalet_room_id: int
+    studio_room_id: int
+    max_occupancy:  int
+    price:          Decimal
+    is_active:      bool
+
+
+class BundleBookingCreate(BaseModel):
+    """حجز باقة Family Compound 6P — بديل BookingCreate.room_ids، بيحوّل
+    bundle_id للزوج الحقيقي (شاليه+استوديو) داخل services.create_bundle_booking."""
+    branch_id:          int
+    bundle_id:          int
+    guest_name:         str = Field(..., max_length=200)
+    guest_phone:        Optional[str] = Field(None, max_length=20)
+    guest_email:        Optional[str] = Field(None, max_length=100)
+    guest_national_id:  Optional[str] = Field(None, max_length=20)
+    check_in:           date
+    check_out:          date
+    adults:             int = Field(6, ge=1)
+    children:           int = Field(0, ge=0)
+    source:             str = Field("direct", pattern=r"^(direct|online|b2b|phone)$")
+    notes:               Optional[str] = None
+    customer_id:         Optional[int] = None
+
+
 class BookingRoomRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id:           int
@@ -101,6 +132,7 @@ class BookingRead(BaseModel):
     payment_method:     Optional[str] = None
     early_checkin_at:   Optional[datetime] = None
     late_checkout_at:   Optional[datetime] = None
+    room_bundle_id:     Optional[int] = None
     rooms:              list[BookingRoomRead] = []
     created_at:         datetime
     updated_at:         datetime

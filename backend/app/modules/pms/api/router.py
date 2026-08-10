@@ -15,10 +15,10 @@ from app.core.deps import (
 from app.modules.pms import crud, services
 from app.modules.core import services as core_services
 from app.modules.pms.schemas import (
-    BookingCreate, BookingRead, CheckinRequest, EarlyLateRequest, HousekeepingTaskRead,
-    HousekeepingTaskStatusUpdate,
-    NightAuditLogRead, RatePlanCreate, RatePlanRead, RatePlanUpdate, RoomCreate, RoomRead,
-    RoomStatusUpdate, RoomTypeCreate, RoomTypeRead,
+    BookingCreate, BookingRead, BundleBookingCreate, CheckinRequest, EarlyLateRequest,
+    HousekeepingTaskRead, HousekeepingTaskStatusUpdate,
+    NightAuditLogRead, RatePlanCreate, RatePlanRead, RatePlanUpdate, RoomBundleRead, RoomCreate,
+    RoomRead, RoomStatusUpdate, RoomTypeCreate, RoomTypeRead,
 )
 from app.modules.core.schemas import PaginatedResponse
 
@@ -298,6 +298,46 @@ async def create_booking(
     _assert_pms_branch(db, user, data.branch_id, "إنشاء حجز")
     try:
         booking = services.create_booking(db, data)
+    except services.BookingConflictError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+    await pms_rooms_manager.broadcast(str(data.branch_id), {"type": "rooms_changed"})
+    return booking
+
+
+@router.get(
+    "/pms/room-bundles",
+    response_model=list[RoomBundleRead],
+    dependencies=[Depends(require_permission("pms.bookings", "view", min_role_level=40))],
+)
+def list_room_bundles(
+    db: DbDep,
+    branch_id: int = Query(...),
+    active_only: bool = Query(True),
+    user=Depends(get_current_active_user),
+):
+    _assert_pms_branch(db, user, branch_id, "عرض باقات الحجز")
+    bundles = crud.list_room_bundles(db, branch_id, active_only)
+    return [RoomBundleRead.model_validate(b) for b in bundles]
+
+
+@router.post(
+    "/pms/bookings/bundle",
+    response_model=BookingRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_permission("pms.bookings", "create", min_role_level=40))],
+)
+async def create_bundle_booking(
+    data: BundleBookingCreate,
+    db: DbDep,
+    user=Depends(get_current_active_user),
+):
+    """حجز باقة Family Compound 6P — راجع services.create_bundle_booking
+    للمنطق الذري الكامل (نفس مستوى صلاحية الحجز العادي، pms.bookings/create)."""
+    _assert_pms_branch(db, user, data.branch_id, "إنشاء حجز باقة")
+    try:
+        booking = services.create_bundle_booking(db, data)
     except services.BookingConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
     except ValueError as exc:
