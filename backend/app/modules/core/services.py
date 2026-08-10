@@ -1162,12 +1162,15 @@ def assert_branch_access(db: Session, user, target_branch_id: int, action_desc: 
 
 def build_auth_bootstrap(db: Session, user) -> AuthBootstrapRead:
     """Build the complete staff auth contract from live database state."""
+    from app.modules.hr.crud import get_employee_by_user_id  # noqa: PLC0415
+
     allowed = get_allowed_branches(db, user)
     allowed_ids = [branch.id for branch in allowed]
     default_branch_id = get_default_branch_id(db, user)
     active_branch_id = get_user_branch_id(db, user)
     if active_branch_id not in allowed_ids:
         active_branch_id = None
+    employee = get_employee_by_user_id(db, user.id)
     return AuthBootstrapRead(
         user=user,
         branches=allowed,
@@ -1180,6 +1183,7 @@ def build_auth_bootstrap(db: Session, user) -> AuthBootstrapRead:
             if active_branch_id is not None
             else []
         ),
+        employee_id=employee.id if employee else None,
     )
 
 

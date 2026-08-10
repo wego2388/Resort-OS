@@ -11,11 +11,15 @@
 //
 // Gate 2B3A: الكتابة (PUT) بقت محتاجة step-up token صالح (X-Step-Up-Token) +
 // reason إجباري — راجع StepUpConfirmModal.vue وdocs/audits/
-// gate-2b3a-step-up-control-plane.md. auth.branchId العام لسه بيرجع 1
-// افتراضيًا لأي حساب (مفيش عمود branch_id حقيقي على User خالص — قرار
-// معماري أكبر مؤجَّل، راجع CLAUDE.md §18) — هنا بس بنعرض تحذير واضح بدل
-// ما نفترض بصمت إن branch=1 صح دايمًا؛ مفيش تغيير على auth.branchId نفسه
-// ولا على أي شاشة تانية بتستخدمه (خارج نطاق Gate 2B3A).
+// gate-2b3a-step-up-control-plane.md.
+//
+// 2026-08-10 (OPS-DATA-02 UX-API-01 §6.6): التحذير تحت كان بيتحقق من
+// auth.user?.branch_id — عمود مش موجود خالص على app.core.kernel.models.
+// user.User (راجع CLAUDE.md §13⓾)، يعني كان دايمًا undefined وbيظهر
+// تحذير "لا يوجد سياق فرع حقيقي" حتى لما فيه سياق فرع حقيقي فعليًا من
+// CX-02C's session-scoped auth.branchId (الحقل ده اتغيّر تمامًا بعد ما
+// كُتب التعليق القديم — مفيش fallback لـ1 خالص دلوقتي، null صريح لو
+// مفيش سياق). التحذير بيستخدم مصدر الفرع الحقيقي الوحيد دلوقتي.
 import { ref, reactive, computed, onMounted } from 'vue'
 import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
@@ -30,13 +34,16 @@ const auth = useAuthStore()
 const branchId = computed(() => auth.branchId)
 // حساب بلا branch_id حقيقي في استجابة /auth/me — تحذير بس، مش حظر (نفس
 // السلوك القديم فعليًا لسه شغال، بدون ادّعاء إنه صحيح 100%).
-const hasRealBranchContext = computed(() => auth.user?.branch_id != null)
+const hasRealBranchContext = computed(() => branchId.value != null)
 
 // روابط سريعة لأقسام الإدارة ذات الصلة
+// 2026-08-10 (OPS-DATA-02 UX-API-01 §6.6): كانت 3 كروت منفصلة (Tables/Cafe
+// Menu/Restaurant Menu) لكل تلاتتهم /admin/tables و/admin/cafe-menu
+// و/admin/menu هم مجرد redirects قديمة لنفس /admin/dining-menu (dining حلّ
+// محل restaurant/cafe المنفصلين 2026-07-13) — 3 كروت مختلفة الشكل بتودّي
+// لنفس الصفحة بالظبط. دُمجوا في كارت واحد يشير مباشرة لـ/admin/dining-menu.
 const QUICK_LINKS = [
-  { path: '/admin/tables', labelKey: 'backoffice.settings.quickLinkTables', icon: '🪑', color: 'bg-orange-50 border-orange-200 hover:bg-orange-100 dark:bg-orange-950/40 dark:border-orange-900 dark:hover:bg-orange-950/60' },
-  { path: '/admin/cafe-menu', labelKey: 'backoffice.settings.quickLinkCafeMenu', icon: '☕', color: 'bg-cyan-50 border-cyan-200 hover:bg-cyan-100 dark:bg-cyan-950/40 dark:border-cyan-900 dark:hover:bg-cyan-950/60' },
-  { path: '/admin/menu', labelKey: 'backoffice.settings.quickLinkRestaurantMenu', icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/40 dark:border-amber-900 dark:hover:bg-amber-950/60' },
+  { path: '/admin/dining-menu', labelKey: 'backoffice.nav.diningMenu', icon: '🍽️', color: 'bg-amber-50 border-amber-200 hover:bg-amber-100 dark:bg-amber-950/40 dark:border-amber-900 dark:hover:bg-amber-950/60' },
   { path: '/admin/qr', labelKey: 'backoffice.nav.qrCodes', icon: '📱', color: 'bg-blue-50 border-blue-200 hover:bg-blue-100 dark:bg-blue-950/40 dark:border-blue-900 dark:hover:bg-blue-950/60' },
 ]
 

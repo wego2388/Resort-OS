@@ -52,6 +52,7 @@ interface NavItem {
   requiredRole?: string
   requiredRoles?: string[]          // exact allow-list — نفس منطق router guard
   requiredPermission?: PermissionKey | PermissionKey[]
+  requiresEmployee?: boolean        // needs a linked HR Employee record (auth.employeeId)
 }
 interface NavSection {
   label: string
@@ -152,9 +153,13 @@ const allSections = computed<NavSection[]>(() => [
   {
     label: t('backoffice.nav.portalSection'),
     items: [
-      { path: '/portal/attendance', label: t('backoffice.nav.attendance'), icon: '⏰' },
-      { path: '/portal/leaves',     label: t('backoffice.nav.leaves'),     icon: '🌴' },
-      { path: '/portal/payroll',    label: t('backoffice.nav.payroll'),    icon: '💳' },
+      // requiresEmployee: /hr/me/* backs these on Employee.user_id and
+      // 404s for any account with no linked HR record (e.g. the
+      // super_admin bootstrap account) — hide instead of linking into a
+      // guaranteed error (OPS-DATA-02 UX-API-01 §6.4).
+      { path: '/portal/attendance', label: t('backoffice.nav.attendance'), icon: '⏰', requiresEmployee: true },
+      { path: '/portal/leaves',     label: t('backoffice.nav.leaves'),     icon: '🌴', requiresEmployee: true },
+      { path: '/portal/payroll',    label: t('backoffice.nav.payroll'),    icon: '💳', requiresEmployee: true },
       { path: '/portal/profile',    label: t('backoffice.nav.profile'),    icon: '👤' },
       // Gate 2B3B — session & security self-service, reachable by any signed-in user.
       { path: '/account/sessions',  label: t('account.sessions.navLink'),  icon: '🔒' },
@@ -172,6 +177,8 @@ const navSections = computed(() =>
           if (item.requiredRoles && !item.requiredRoles.includes(auth.role)) return false
           // 2. level-based role (يُستخدم بس لو requiredRoles مش موجود)
           if (!item.requiredRoles && item.requiredRole && !auth.hasRole(item.requiredRole)) return false
+          // 2b. HR self-service links need a linked Employee record
+          if (item.requiresEmployee && auth.employeeId == null) return false
           // 3. fine-grained permission (يُفحص دايمًا بعد اجتياز role check)
           if (!item.requiredPermission) return true
           const permissions = Array.isArray(item.requiredPermission)

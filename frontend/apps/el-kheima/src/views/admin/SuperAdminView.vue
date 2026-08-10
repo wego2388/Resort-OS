@@ -4,7 +4,7 @@
 // plane so security behavior cannot drift between duplicate screens.
 import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { api, ENDPOINTS, useAuthStore } from '@resort-os/core'
+import { api, ENDPOINTS, useAuthStore, parseUserAgent } from '@resort-os/core'
 import { AppCard, AppBadge, AppSpinner, AppInput, AppButton, AppModal, AppSelect, SearchInput, useToast } from '@resort-os/ui'
 import { useI18n } from 'vue-i18n'
 import StepUpConfirmModal from '../../components/StepUpConfirmModal.vue'
@@ -591,8 +591,11 @@ function requestRevokeSession(sessionRef: string) {
   pending.value = { kind: 'revoke_session', user: sessionsTarget.value, sessionRef }
 }
 
+// device is the raw stored User-Agent (auth/service.py's `device` field is
+// literally RefreshToken.user_agent, unparsed) — parse it into something
+// readable instead of showing the raw string (OPS-DATA-02 UX-API-01 §6.6).
 function deviceLabel(device: string | null): string {
-  return device && device.trim() ? device : t('backoffice.accounts.sessionsUnknownDevice')
+  return parseUserAgent(device) ?? t('backoffice.accounts.sessionsUnknownDevice')
 }
 
 // ── Init ──────────────────────────────────────────────────────────────
@@ -879,7 +882,7 @@ onMounted(() => {
             <li v-for="s in sessions" :key="s.session_ref"
               class="rounded-lg border border-stone-200 dark:border-border p-3 flex items-center justify-between gap-3">
               <div class="min-w-0">
-                <div class="font-semibold text-gray-800 dark:text-gray-100 truncate">{{ deviceLabel(s.device) }}</div>
+                <div class="font-semibold text-gray-800 dark:text-gray-100 truncate"><bdi dir="ltr">{{ deviceLabel(s.device) }}</bdi></div>
                 <dl class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
                   <div><dt class="inline font-medium">{{ t('backoffice.accounts.sessionsStartedAt') }}:</dt> <dd class="inline">{{ new Date(s.started_at).toLocaleString(locale) }}</dd></div>
                   <div><dt class="inline font-medium">{{ t('backoffice.accounts.sessionsLastActiveAt') }}:</dt> <dd class="inline">{{ new Date(s.last_active_at).toLocaleString(locale) }}</dd></div>

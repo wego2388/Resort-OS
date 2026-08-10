@@ -62,6 +62,11 @@ export interface BootstrapData {
   allowed_branch_ids: number[]
   requires_branch_selection: boolean
   effective_permissions: EffectivePermission[]
+  // null = no linked HR Employee record (e.g. the super_admin bootstrap
+  // account) — every /hr/me/* self-service endpoint always 404s for this
+  // account by design. Lets screens/nav hide or explain that up front
+  // instead of discovering it via a failed request each time.
+  employee_id: number | null
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -92,6 +97,7 @@ export const useAuthStore = defineStore('auth', () => {
   const allowedBranchIds = ref<number[]>([])
   const effectivePermissions = ref<EffectivePermission[]>([])
   const requiresBranchSelection = ref(false)
+  const employeeId = ref<number | null>(null)
 
   // client.ts's 401→refresh-fails path calls this to clear our state without
   // importing this store back (that would be circular — see client.ts).
@@ -105,6 +111,7 @@ export const useAuthStore = defineStore('auth', () => {
     allowedBranchIds.value = []
     effectivePermissions.value = []
     requiresBranchSelection.value = false
+    employeeId.value = null
   })
 
   const isAuthenticated = computed(() => !!token.value && !!user.value)
@@ -202,6 +209,7 @@ export const useAuthStore = defineStore('auth', () => {
     allowedBranchIds.value = []
     effectivePermissions.value = []
     requiresBranchSelection.value = false
+    employeeId.value = null
   }
 
   function _applyBootstrap(data: BootstrapData) {
@@ -237,6 +245,7 @@ export const useAuthStore = defineStore('auth', () => {
       ? data.effective_permissions
       : []
     requiresBranchSelection.value = data.requires_branch_selection ?? false
+    employeeId.value = data.employee_id ?? null
   }
 
   async function fetchUser() {
@@ -385,6 +394,7 @@ export const useAuthStore = defineStore('auth', () => {
     // CX-02C — branch context from bootstrap (session-scoped, no ?? 1 fallback)
     activeBranchId, activeBranch, branches, allowedBranchIds,
     effectivePermissions, effectivePermissionKeys, requiresBranchSelection,
+    employeeId,
     pendingEnrollmentToken,
     login, logout, fetchUser, fetchBootstrap, switchActiveBranch, initAuth,
     hasRole, hasPermission, roleLevel,

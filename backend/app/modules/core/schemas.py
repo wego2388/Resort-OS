@@ -484,6 +484,13 @@ class AuthBootstrapRead(BaseModel):
     active_branch_id: Optional[int]
     requires_branch_selection: bool
     effective_permissions: list[EffectivePermission]
+    # None = this account has no linked HR Employee record (e.g. the
+    # super_admin bootstrap account) — /hr/me/* always 404s for it by
+    # design (hr/api/router.py's self-service surface is keyed off
+    # Employee.user_id). Lets the frontend hide/explain those links up
+    # front instead of discovering it via a failed request each time
+    # (OPS-DATA-02 UX-API-01 §6.4).
+    employee_id: Optional[int] = None
 
 
 # ─────────────────────── GuestAlert ──────────────────────────────────

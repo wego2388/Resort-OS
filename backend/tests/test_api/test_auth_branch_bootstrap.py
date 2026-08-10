@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
@@ -11,6 +12,7 @@ from app.core.kernel.auth.service import AuthService
 from app.core.kernel.models.user import RefreshToken, User
 from app.core.kernel.security import create_access_token, get_password_hash
 from app.modules.core.models import AuditLog, Branch, UserBranchMembership
+from app.modules.hr.models import Employee
 from tests.conftest import TestingSessionLocal
 
 
@@ -237,3 +239,39 @@ def test_pin_switch_cannot_cross_terminal_branch(client: TestClient):
     )
     assert denied.status_code == 403
     assert denied.json()["detail"]["error_code"] == "PIN_BRANCH_MISMATCH"
+
+
+def test_bootstrap_employee_id_reflects_hr_linkage(client: TestClient):
+    """OPS-DATA-02 UX-API-01 §6.4 — /auth/bootstrap must expose whether this
+    account has a linked HR Employee record, so the frontend can hide/skip
+    /hr/me/* self-service (which always 404s otherwise) instead of finding
+    out via a failed request. None for an unlinked account (e.g. the
+    super_admin bootstrap account), the real id once one exists."""
+    user_id, email, branch_ids = _user_and_branches(memberships=("a",))
+    headers, _session_ref = _session_headers(user_id, email)
+
+    unlinked = client.get("/api/v1/auth/bootstrap", headers=headers)
+    assert unlinked.status_code == 200, unlinked.text
+    assert unlinked.json()["employee_id"] is None
+
+    db = TestingSessionLocal()
+    try:
+        employee = Employee(
+            branch_id=branch_ids["a"],
+            employee_code=f"EMP-{uuid.uuid4().hex[:8].upper()}",
+            full_name="CX-02C Linked Employee",
+            position="Manager",
+            basic_salary=Decimal("10000.00"),
+            hire_date=date(2024, 1, 1),
+            user_id=user_id,
+        )
+        db.add(employee)
+        db.commit()
+        db.refresh(employee)
+        employee_id = employee.id
+    finally:
+        db.close()
+
+    linked = client.get("/api/v1/auth/bootstrap", headers=headers)
+    assert linked.status_code == 200, linked.text
+    assert linked.json()["employee_id"] == employee_id

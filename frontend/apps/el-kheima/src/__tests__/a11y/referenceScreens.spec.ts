@@ -9,8 +9,9 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import axe from 'axe-core'
-import { api } from '@resort-os/core'
+import { api, useAuthStore } from '@resort-os/core'
 import { staffI18n, staffLocale } from '@resort-os/core/i18n/staff'
 import ProfileView from '../../views/portal/ProfileView.vue'
 
@@ -30,10 +31,17 @@ const AXE_OPTIONS: axe.RunOptions = {
   resultTypes: ['violations'],
 }
 
-async function renderProfileIn(locale: string) {
+async function renderProfileIn(locale: string, employeeId: number | null = 1) {
   await staffLocale.setLocale(locale)
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const auth = useAuthStore()
+  // employeeId isn't set by a login flow in this unit test — set it
+  // directly so the "has a linked HR record" reference-screen path (the
+  // one FAKE_PROFILE below exercises) renders as before.
+  ;(auth as any).employeeId = employeeId
   const wrapper = mount(ProfileView, {
-    global: { plugins: [staffI18n] },
+    global: { plugins: [pinia, staffI18n] },
     attachTo: document.body,
   })
   // Let onMounted's api.get resolve and the DOM settle.
@@ -79,5 +87,23 @@ describe.each([
       console.error(violations.map((v) => `${v.id}: ${v.help}`).join('\n'))
     }
     expect(violations).toHaveLength(0)
+  })
+})
+
+// OPS-DATA-02 UX-API-01 §6.4: an account with no linked HR Employee record
+// (e.g. the super_admin bootstrap account) must not hit /hr/me/profile at
+// all, must not see a scary error, and must still be able to reach the
+// password/PIN sections below the notice.
+describe('ProfileView with no linked employee record', () => {
+  it('shows a neutral notice, skips the API call, and still renders password/PIN', async () => {
+    const wrapper = await renderProfileIn('en', null)
+    // fetchPinStatus() still legitimately calls GET /pins/me (PIN
+    // self-service needs no HR record) — only /hr/me/profile is skipped.
+    expect(api.get).not.toHaveBeenCalledWith('/api/v1/hr/me/profile')
+    const text = wrapper.text()
+    expect(text).not.toMatch(/backoffice\.profile\./)
+    expect(text).not.toContain('Mona Ali')
+    expect(text).toContain('Change Password')
+    expect(text).toContain('Operational PIN')
   })
 })

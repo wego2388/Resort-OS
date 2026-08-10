@@ -20,7 +20,7 @@
  */
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { api, ENDPOINTS } from '@resort-os/core'
+import { api, ENDPOINTS, parseUserAgent } from '@resort-os/core'
 import { useStaffFormat } from '@resort-os/core/i18n/staff'
 import { AppCard, AppButton, AppBadge, AppSpinner, EmptyState, Paginator, useToast } from '@resort-os/ui'
 import LanguageSwitcher from '../../components/LanguageSwitcher.vue'
@@ -110,8 +110,11 @@ function actionLabel(action: string): string {
 // Formatting is centralized in @resort-os/core's useStaffFormat (locale-aware,
 // tabular Latin digits, timezone-safe) — see formatDateTime above.
 
+// device is the raw stored User-Agent (auth/service.py's `device` field is
+// literally RefreshToken.user_agent, unparsed) — parse it into something
+// readable instead of showing the raw string (OPS-DATA-02 UX-API-01 §6.6).
 function deviceLabel(device: string | null): string {
-  return device && device.trim() ? device : t('account.sessions.unknownDevice')
+  return parseUserAgent(device) ?? t('account.sessions.unknownDevice')
 }
 
 // ── Step-up-gated revocation ────────────────────────────────────────────────
@@ -289,7 +292,7 @@ onMounted(() => {
           >
             <div class="min-w-0">
               <div class="flex items-center gap-2 flex-wrap">
-                <span class="font-semibold text-gray-800 dark:text-gray-100 truncate">{{ deviceLabel(s.device) }}</span>
+                <span class="font-semibold text-gray-800 dark:text-gray-100 truncate"><bdi dir="ltr">{{ deviceLabel(s.device) }}</bdi></span>
                 <AppBadge v-if="s.current" size="sm" variant="success">{{ t('account.sessions.thisDevice') }}</AppBadge>
               </div>
               <dl class="mt-1.5 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-1 text-xs text-gray-500 dark:text-gray-400">
@@ -360,8 +363,8 @@ onMounted(() => {
               <div class="min-w-0">
                 <span class="font-medium text-gray-800 dark:text-gray-100">{{ actionLabel(event.action) }}</span>
                 <div class="text-xs text-gray-400 dark:text-gray-400 mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5">
-                  <span v-if="event.ip_address">{{ t('account.securityActivity.ipLabel') }}: {{ event.ip_address }}</span>
-                  <span v-if="event.device">{{ t('account.securityActivity.deviceLabel') }}: {{ event.device }}</span>
+                  <span v-if="event.ip_address">{{ t('account.securityActivity.ipLabel') }}: <bdi dir="ltr">{{ event.ip_address }}</bdi></span>
+                  <span v-if="event.device">{{ t('account.securityActivity.deviceLabel') }}: <bdi dir="ltr">{{ parseUserAgent(event.device) ?? event.device }}</bdi></span>
                 </div>
               </div>
               <span class="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">{{ formatDateTime(event.at) }}</span>

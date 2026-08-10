@@ -5,6 +5,7 @@ export * from './stores/auth'
 export * from './composables/useWebSocket'
 export * from './composables/useTheme'
 export * from './utils/dates'
+export * from './utils/userAgent'
 // App-scoped i18n runtimes are deliberately NOT re-exported from this root
 // barrel. Re-exporting an initialized staff/public singleton evaluates it in
 // every app that imports any core utility, which can overwrite that app's

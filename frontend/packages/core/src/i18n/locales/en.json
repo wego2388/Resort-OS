@@ -3670,6 +3670,7 @@
       "title": "My Profile",
       "loading": "Loading...",
       "loadFailed": "Could not load your profile",
+      "noEmployeeRecord": "This account has no linked HR employee record, so there is no profile to show here. Password and PIN below still work.",
       "email": "Email",
       "phone": "Phone",
       "hireDate": "Hire date",
@@ -3961,10 +3962,7 @@
       "toastErrorCreate": "Could not create the new setting — try again",
       "reasonPromptSave": "Edit the value of setting \"{key}\"",
       "reasonPromptCreate": "Create new setting \"{key}\"",
-      "branchContextWarning": "Your account isn't formally linked to a specific branch yet — the settings shown here are for a default branch and may not reflect your actual branch. Contact an administrator to link your account to a branch.",
-      "quickLinkTables": "Manage Tables",
-      "quickLinkCafeMenu": "Cafe Menu",
-      "quickLinkRestaurantMenu": "Restaurant Menu"
+      "branchContextWarning": "Your account isn't formally linked to a specific branch yet — the settings shown here are for a default branch and may not reflect your actual branch. Contact an administrator to link your account to a branch."
     },
     "pos": {
       "selectOutlet": "Select outlet",
