@@ -64,8 +64,17 @@ class ScenarioModule:
     generate: Callable[[Session, ScenarioContext], dict]
 
 
-SCENARIO_MODULES: list[ScenarioModule] = []
-# ⚠️ فاضية عمدًا لحد دلوقتي — راجع docstring الملف فوق.
+def _pms_bookings_module(db: Session, ctx: ScenarioContext) -> dict:
+    from app.hist_pms_bookings import generate as generate_pms_bookings  # noqa: PLC0415
+
+    return generate_pms_bookings(db, ctx)
+
+
+SCENARIO_MODULES: list[ScenarioModule] = [
+    ScenarioModule(name="pms_bookings", generate=_pms_bookings_module),
+]
+# ⚠️ باقي الموديولات (Hub/Dining/Beach/Leasing/Timeshare/HR/Inventory/
+# Assets/GL opening balance) هتتسجّل هنا واحدة واحدة، كل واحدة دفعة منفصلة.
 
 
 @dataclass
@@ -109,15 +118,33 @@ def _resolve_actor(db: Session, actor_id: Optional[int]) -> str:
 
 
 def _check_preconditions(db: Session, branch_id: int) -> list[str]:
-    """يرجّع قايمة مشاكل تمنع الاستيراد — فاضية يعني كله جاهز. فحص أساسي
-    دلوقتي بس (دليل الحسابات الجوهري)؛ كل مولّد لاحق هيضيف فحوصه الخاصة
-    (غرف/أسعار/مينيو/مخزون/ممثلين) وقت ما يتسجّل في SCENARIO_MODULES."""
+    """يرجّع قايمة مشاكل تمنع الاستيراد — فاضية يعني كله جاهز. كل مولّد
+    مسجَّل في SCENARIO_MODULES بيضيف فحوصه الخاصة هنا وقت ما يتسجّل (فحص
+    مبكر وواضح، إضافةً لأي تحقق أدق داخل المولّد نفسه)."""
     from app.modules.finance.crud import get_account_by_code  # noqa: PLC0415
 
     problems = []
     for code in ("1100", "2160", "2165", "4100"):
         if not get_account_by_code(db, branch_id, code):
             problems.append(f"missing required account {code} for branch {branch_id}")
+
+    if any(m.name == "pms_bookings" for m in SCENARIO_MODULES):
+        from app.modules.pms.models import Room, RoomBundle, RoomType  # noqa: PLC0415
+
+        room_count = (
+            db.query(Room).join(RoomType, Room.room_type_id == RoomType.id)
+            .filter(Room.branch_id == branch_id).count()
+        )
+        bundle_count = (
+            db.query(RoomBundle)
+            .filter(RoomBundle.branch_id == branch_id, RoomBundle.is_active.is_(True))
+            .count()
+        )
+        if room_count != 14:
+            problems.append(f"pms_bookings requires exactly 14 rooms; found {room_count}")
+        if bundle_count != 5:
+            problems.append(f"pms_bookings requires exactly 5 active room bundles; found {bundle_count}")
+
     return problems
 
 

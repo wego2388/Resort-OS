@@ -21,10 +21,38 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Iterator, Optional
 
+from sqlalchemy import event
+from sqlalchemy.orm import Session
+
 _scenario_now: ContextVar[Optional[datetime]] = ContextVar("_scenario_now", default=None)
+
+
+def _stamp_scenario_timestamps(session: Session, _flush_context, _instances) -> None:
+    """SQLAlchemy `before_flush` — بيدمغ created_at/updated_at بوقت
+    السيناريو النشط (لو موجود) بدل ما يسيبهم لـserver_default=func.now()
+    (وقت تنفيذ الأداة الحقيقي، مش تاريخ الحدث التاريخي). راجع OPS-DATA-02
+    §9.2: "DB created_at/updated_at للأطفال والسجلات التابعة لا تبقى
+    بتاريخ التطبيق". مسجَّل globally على Session لكنه no-op تمامًا برّه
+    أي scenario_clock نشط (get_scenario_now() فاضية) — صفر تأثير على أي
+    استخدام عادي للتطبيق."""
+    now = get_scenario_now()
+    if now is None:
+        return
+    naive_now = now.astimezone(timezone.utc).replace(tzinfo=None)
+    for obj in session.new:
+        if hasattr(obj, "created_at"):
+            obj.created_at = naive_now
+        if hasattr(obj, "updated_at"):
+            obj.updated_at = naive_now
+    for obj in session.dirty:
+        if hasattr(obj, "updated_at"):
+            obj.updated_at = naive_now
+
+
+event.listen(Session, "before_flush", _stamp_scenario_timestamps)
 
 
 @contextmanager

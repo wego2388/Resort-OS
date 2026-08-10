@@ -1,9 +1,10 @@
 """tests/test_operational_history_seed.py — HIST-01 CLI mechanics (OPS-DATA-02 §9).
 
-مفيش أي مولّد بيانات فعلي هنا لأن SCENARIO_MODULES لسه فاضية (راجع
-operational_history_seed.py) — الاختبارات دي بتغطي هيكل الأداة نفسها بس:
-dry-run/apply عبر commit/rollback، منع rerun، تصادم مع batch "running"،
-وconfirmation phrase.
+الاختبارات دي بتغطي هيكل الأداة نفسها بس (dry-run/apply عبر commit/rollback،
+منع rerun، تصادم مع batch "running"، وconfirmation phrase) — معزولة عمدًا عن
+تفاصيل preconditions أي مولّد حقيقي مسجَّل (زي pms_bookings — راجع
+test_hist_pms_bookings.py لاختبارات المولّد نفسه end-to-end) عبر تفريغ
+SCENARIO_MODULES مؤقتًا (autouse fixture تحت).
 """
 from __future__ import annotations
 
@@ -12,9 +13,16 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
+import app.operational_history_seed as hist_seed
 from app.operational_history_seed import (
     DATASET_VERSION, confirmation_phrase, run_seed, validate_only,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_registered_modules(monkeypatch):
+    """معزول عمدًا عن أي مولّد حقيقي مسجَّل — راجع docstring الملف فوق."""
+    monkeypatch.setattr(hist_seed, "SCENARIO_MODULES", [])
 
 
 @pytest.fixture

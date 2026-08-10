@@ -193,3 +193,56 @@ class TestScenarioClock:
         from app.resort_os.clock import get_scenario_now
 
         assert get_scenario_now() is None
+
+
+class TestScenarioClockTimestampStamping:
+    """OPS-DATA-02 §9.2: "DB created_at/updated_at للأطفال والسجلات التابعة
+    لا تبقى بتاريخ التطبيق" — راجع resort_os/clock.py's before_flush
+    listener، مسجَّل globally بس no-op تمامًا برّه scenario_clock نشط."""
+
+    def test_new_row_created_at_stamped_with_scenario_time(self, db):
+        import uuid
+        from app.resort_os.clock import scenario_clock
+        from app.modules.core.models import Branch
+
+        fixed = datetime(2026, 7, 15, 20, 0, tzinfo=ZoneInfo("Africa/Cairo"))
+        with scenario_clock(fixed):
+            b = Branch(name="Scenario Branch", name_ar="فرع سيناريو",
+                       code=f"SCN-{uuid.uuid4().hex[:6].upper()}")
+            db.add(b)
+            db.commit()
+
+        expected_naive_utc = fixed.astimezone(timezone.utc).replace(tzinfo=None)
+        assert b.created_at == expected_naive_utc
+        assert b.updated_at == expected_naive_utc
+
+    def test_updated_row_updated_at_stamped_with_scenario_time_only(self, db):
+        import uuid
+        from app.resort_os.clock import scenario_clock
+        from app.modules.core.models import Branch
+
+        b = Branch(name="Real Branch", name_ar="فرع حقيقي",
+                   code=f"REAL-{uuid.uuid4().hex[:6].upper()}")
+        db.add(b)
+        db.commit()
+        real_created_at = b.created_at
+
+        fixed = datetime(2026, 7, 20, 9, 0, tzinfo=ZoneInfo("Africa/Cairo"))
+        with scenario_clock(fixed):
+            b.name = "Real Branch Renamed"
+            db.commit()
+
+        expected_naive_utc = fixed.astimezone(timezone.utc).replace(tzinfo=None)
+        assert b.updated_at == expected_naive_utc
+        assert b.created_at == real_created_at  # created_at ميتلمسش عند update
+
+    def test_row_created_outside_scenario_uses_real_server_time(self, db):
+        import uuid
+        from app.modules.core.models import Branch
+
+        before = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+        b = Branch(name="No Scenario", name_ar="بدون سيناريو",
+                   code=f"NOSC-{uuid.uuid4().hex[:6].upper()}")
+        db.add(b)
+        db.commit()
+        assert b.created_at >= before
