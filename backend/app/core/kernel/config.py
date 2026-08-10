@@ -70,8 +70,11 @@ class CoreSettings(BaseSettings):
     CELERY_RESULT_BACKEND: Optional[str] = None
 
     # ── Auth lockout ───────────────────────────────────────────────────────
-    MAX_LOGIN_ATTEMPTS: int = 5
-    LOCKOUT_MINUTES: int = 30
+    # 5/30 كانت ضيقة جدًا فعليًا لحساب واحد بيدخل من كذا جهاز (2026-08-10،
+    # Mohamed) — لسه فيه حماية حقيقية ضد التخمين الآلي، بس الفرق العملي:
+    # 10 محاولات (مش 5) قبل القفل، و5 دقايق (مش 30) لو حصل قفل فعلاً.
+    MAX_LOGIN_ATTEMPTS: int = 10
+    LOCKOUT_MINUTES: int = 5
 
     # ── Login-time 2FA ─────────────────────────────────────────────────────
     # When True, a 2FA-enabled account must submit a valid TOTP code at /login
