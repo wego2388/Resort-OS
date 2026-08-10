@@ -60,6 +60,50 @@ def _make_payment(db, contract, due_date, status="pending", amount=Decimal("5000
     return p
 
 
+# ─── accrue_due_rents task ────────────────────────────────────────────────
+
+class TestLeasingAccrueDueRentsTask:
+    """OPS-DATA-02 §10.5: الإيراد يتحقق (accrue) عند تاريخ الاستحقاق يوميًا
+    عبر كل الفروع، قبل مهمة mark_overdue (راجع celery_app.py's beat_schedule
+    — accrue الساعة 2:00، mark_overdue الساعة 2:30)."""
+
+    def _seed_accounts(self, db, branch):
+        from app.modules.finance.models import Account
+        for code, name, acc_type in [
+            ("1100", "Cash", "asset"), ("1260", "Tenant AR", "asset"),
+            ("4500", "Lease Revenue", "revenue"),
+        ]:
+            db.add(Account(branch_id=branch.id, code=code, name=name, account_type=acc_type))
+        db.commit()
+
+    def test_task_accrues_due_payment_across_branches(self, db):
+        from unittest.mock import patch, MagicMock
+        branch = _make_branch(db)
+        self._seed_accounts(db, branch)
+        contract = _make_contract(db, branch)
+        payment = _make_payment(db, contract, due_date=date.today() - timedelta(days=1))
+
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.leasing_tasks import accrue_due_rents
+            accrue_due_rents()
+
+        db.refresh(payment)
+        assert payment.accrued is True
+        assert payment.accrual_journal_entry_id is not None
+
+    def test_task_runs_without_error_when_nothing_due(self, db):
+        from unittest.mock import patch, MagicMock
+        ctx = MagicMock()
+        ctx.__enter__ = MagicMock(return_value=db)
+        ctx.__exit__ = MagicMock(return_value=False)
+        with patch("app.core.database.SessionLocal", return_value=ctx):
+            from app.tasks.leasing_tasks import accrue_due_rents
+            accrue_due_rents()
+
+
 # ─── mark_overdue logic ──────────────────────────────────────────────────────
 
 class TestLeasingMarkOverdueLogic:

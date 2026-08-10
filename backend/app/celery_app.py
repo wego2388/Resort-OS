@@ -61,6 +61,10 @@ celery_app.conf.beat_schedule = {
     },
 
     # ─── Leasing ──────────────────────────────────────────────────────
+    "leasing-accrue-due-rents": {
+        "task": "app.tasks.leasing_tasks.accrue_due_rents",
+        "schedule": crontab(hour=2, minute=0),
+    },
     "leasing-mark-overdue": {
         "task": "app.tasks.leasing_tasks.mark_overdue",
         "schedule": crontab(hour=2, minute=30),

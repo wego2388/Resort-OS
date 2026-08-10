@@ -9,7 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    Date, DateTime, ForeignKey, Integer,
+    Boolean, Date, DateTime, ForeignKey, Integer,
     Numeric, String, Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -42,6 +42,15 @@ class LeaseContract(Base, TimestampMixin):
     # draft|active|expired|terminated
     signed_by:        Mapped[int | None]    = mapped_column(Integer, nullable=True)
     notes:            Mapped[str | None]    = mapped_column(Text, nullable=True)
+
+    # التأمين ميترحّلش محاسبيًا إلا عند استلامه فعليًا (راجع OPS-DATA-02 §10.5:
+    # "لا تسجل security deposit كـCash بمجرد توقيع العقد؛ سجله عند receipt
+    # حقيقي") — deposit_received=False دايمًا وقت الإنشاء، بيتفعّل بس عبر
+    # services.confirm_deposit_received.
+    deposit_received:        Mapped[bool]          = mapped_column(Boolean, default=False)
+    deposit_received_at:     Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    deposit_payment_method:  Mapped[str | None]    = mapped_column(String(30), nullable=True)
+    deposit_received_by:     Mapped[int | None]    = mapped_column(Integer, nullable=True)
 
     payments: Mapped[list["LeasePayment"]] = relationship(
         "LeasePayment", back_populates="contract", lazy="select",
@@ -89,5 +98,14 @@ class LeasePayment(Base, TimestampMixin):
     receipt_number: Mapped[str | None]     = mapped_column(String(50), nullable=True)
     year_n:         Mapped[int]            = mapped_column(Integer, default=0)  # سنة العقد (للزيادة)
     notes:          Mapped[str | None]     = mapped_column(String(300), nullable=True)
+
+    # الإيراد بيتحقق (accrue) عند تاريخ الاستحقاق (Dr ذمم مستأجرين / Cr إيراد
+    # إيجارات) بغض النظر عن التحصيل الفعلي — راجع OPS-DATA-02 §10.5. accrued
+    # بيمنع ترحيل نفس قيد التحقق مرتين (idempotent، نفس نمط
+    # AssetDepreciationEntry.UniqueConstraint).
+    accrued:                  Mapped[bool]       = mapped_column(Boolean, default=False)
+    accrual_journal_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("journal_entries.id", ondelete="SET NULL"), nullable=True,
+    )
 
     contract: Mapped["LeaseContract"] = relationship("LeaseContract", back_populates="payments")

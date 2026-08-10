@@ -49,6 +49,9 @@ class LeaseContractRead(BaseModel):
     grace_months: int; payment_period: str; security_deposit: Decimal
     status: str; notes: Optional[str]
     payments: list[LeasePaymentRead] = []
+    deposit_received: bool = False
+    deposit_received_at: Optional[datetime] = None
+    deposit_payment_method: Optional[str] = None
     created_at: datetime; updated_at: datetime
     # أيام متبقية حتى نهاية العقد (سالب = العقد منتهي بالفعل بتاريخه) — بيتحسب
     # لحظيًا وقت الاستجابة (`app.resort_os.timezone_utils.local_today`)، مش عمود
@@ -64,6 +67,20 @@ class PayLeaseRequest(BaseModel):
     payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")
     receipt_number: Optional[str] = None
     notes:          Optional[str] = None
+
+
+class ConfirmDepositRequest(BaseModel):
+    payment_method: str = Field(..., pattern=r"^(cash|card|bank_transfer|other)$")
+
+
+class TenantAgingRow(BaseModel):
+    contract_id:      int
+    contract_number:  str
+    tenant_name:      str
+    outstanding:      Decimal
+    oldest_due_date:  date
+    days_overdue:     int
+    bucket:           str  # current|1-30|31-60|61-90|90+
 
 
 # ── TenantCashLog ─────────────────────────────────────────────────────

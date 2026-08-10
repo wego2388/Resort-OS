@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy.exc import OperationalError
@@ -40,6 +40,10 @@ def days_until_expiry(contract: LeaseContract, today: date | None = None) -> int
     return (contract.end_date - today).days
 
 
+def get_tenant_aging(db: Session, branch_id: int) -> list[dict]:
+    return crud.get_tenant_aging(db, branch_id, local_today(settings.TIMEZONE))
+
+
 def list_expiring_soon(db: Session, branch_id: int, within_days: int = 30) -> list[LeaseContract]:
     """عقود إيجار نشطة هتنتهي خلال `within_days` يوم القادمة — wagdy.md بند #28:
     عقود قربت تنتهي كانت من غير أي تنبيه، مدير الإيجارات بيكتشفها بالصدفة بس.
@@ -73,82 +77,154 @@ def create_contract(db: Session, data: LeaseContractCreate, signed_by: int) -> L
     )
     crud.create_payments(db, contract.id, schedule)
 
-    # قيد التأمين (12-TIMESHARE-COMPLETE.md § "قيود الإيجار التلقائية"):
-    # Dr. الصندوق (1100) / Cr. تأمينات مستأجرين (2150) — كان مفقود بالكامل
-    # قبل مراجعة Task B، فمالوش أي عقد إيجار قيد محاسبي رغم إنه موديول مالي.
-    _post_deposit_journal(db, contract)
+    # ⚠️ التأمين عمره ما بيترحّل هنا (راجع OPS-DATA-02 §10.5: "لا تسجل
+    # security deposit كـCash بمجرد توقيع العقد؛ سجله عند receipt حقيقي") —
+    # كان القيد بيترحّل هنا تلقائيًا بمجرد التوقيع حتى لو التأمين لسه ما
+    # استُلمش فعليًا (Dr Cash وهمي). التسجيل الحقيقي بقى صراحةً عبر
+    # confirm_deposit_received تحت، لما الكاشير/المدير يأكد الاستلام الفعلي.
 
     db.commit()
     db.refresh(contract)
     return contract
 
 
-def _post_deposit_journal(db: "Session", contract: "LeaseContract") -> None:
-    """Dr. الصندوق (1100) / Cr. تأمينات مستأجرين (2150) عند إنشاء عقد بتأمين."""
+# طريقة الدفع → الحساب المدين الصحيح عند استلام نقدية فعلية — راجع
+# OPS-DATA-02 §10.5: "لا تستخدم 1100 لكل طرق الدفع". "other" بترحّل لـ1100
+# افتراضيًا (نفس منطق cash) لأنها الأكثر تحفظًا محاسبيًا لطريقة غير محددة،
+# مش لأنها فعليًا نقدية.
+_PAYMENT_METHOD_DEBIT_ACCOUNT = {
+    "cash": "1100", "bank_transfer": "1110", "card": "1120", "other": "1100",
+}
+
+
+def confirm_deposit_received(
+    db: Session, contract_id: int, payment_method: str, received_by: int,
+) -> LeaseContract:
+    """يرحّل قيد التأمين فقط عند التأكيد الفعلي لاستلامه — Dr Cash/Bank/Card
+    (حسب طريقة الدفع الفعلية) / Cr تأمينات مستأجرين (2150). idempotent
+    (contract.deposit_received يمنع الترحيل مرتين)."""
+    contract = get_contract_or_404(db, contract_id)
+    if contract.deposit_received:
+        raise ValueError(f"تأمين العقد {contract.contract_number} مُسجَّل استلامه بالفعل")
+    if (contract.security_deposit or Decimal("0")) <= 0:
+        raise ValueError(f"العقد {contract.contract_number} بلا تأمين مطلوب")
+
     from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
+    debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method, "1100")
     post_simple_revenue_journal(
         db, contract.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code="2150",
-        amount=contract.security_deposit or Decimal("0"),
+        debit_account_code=debit_code, credit_account_code="2150",
+        amount=contract.security_deposit,
         reference=f"LC-DEP-{contract.contract_number}",
-        description=f"تأمين عقد إيجار — {contract.contract_number} ({contract.tenant_name})",
+        description=f"استلام تأمين عقد إيجار — {contract.contract_number} ({contract.tenant_name})",
         source="leasing", source_id=contract.id,
-        created_by=contract.signed_by or 0,
+        created_by=received_by, cost_center_code="LEASE",
     )
+    contract.deposit_received = True
+    contract.deposit_received_at = datetime.now(timezone.utc)
+    contract.deposit_payment_method = payment_method
+    contract.deposit_received_by = received_by
+    db.commit()
+    db.refresh(contract)
+    return contract
 
 
-def _post_rent_collection_journal(db: "Session", source_obj, contract: "LeaseContract", collected_amount: Decimal) -> None:
-    """قيدان عند تحصيل الإيجار (12-TIMESHARE-COMPLETE.md):
-    1) Dr. الصندوق (1100) / Cr. ذمم مستأجرين (1260) — تحصيل نقدي
-    2) Dr. ذمم مستأجرين (1260) / Cr. إيرادات إيجارات تجارية (4500) — إثبات الإيراد
+def _accrue_single_payment(db: "Session", payment: "LeasePayment", contract: "LeaseContract") -> None:
+    """Dr ذمم مستأجرين (1260) / Cr إيرادات إيجارات تجارية (4500) — يثبت
+    الإيراد عند الاستحقاق بغض النظر عن التحصيل الفعلي (OPS-DATA-02 §10.5).
+    idempotent عبر payment.accrued — استدعاء تاني على نفس الدفعة no-op."""
+    if payment.accrued:
+        return
+    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
-    `source_obj` أي صف عنده `.id` (LeasePayment أو TenantCashLog) — بيُستخدم
-    كمرجع بس في الـ reference/source_id.
-    """
+    entry = post_simple_revenue_journal(
+        db, contract.branch_id, payment.due_date,
+        debit_account_code="1260", credit_account_code="4500",
+        amount=payment.amount,
+        reference=f"LSE-ACR-{payment.id:06d}",
+        description=f"استحقاق إيجار — {contract.contract_number} ({contract.tenant_name})",
+        source="leasing", source_id=payment.id,
+        created_by=contract.signed_by or 0, cost_center_code="LEASE",
+    )
+    payment.accrued = True
+    if entry:
+        payment.accrual_journal_entry_id = entry.id
+    db.flush()
+
+
+def accrue_due_rents(db: Session, branch_id: int, as_of: date | None = None) -> list[LeasePayment]:
+    """يرحّل استحقاق كل دفعات الإيجار اللي وصل تاريخ استحقاقها ولسه ما
+    اتحقّقتش محاسبيًا (accrued=False) — بتُستدعى يوميًا من
+    app.tasks.leasing_tasks.accrue_due_rents، ومن pay_payment/record_cash_log
+    inline لو التحصيل حصل قبل ما المهمة اليومية تشتغل."""
+    today = as_of or local_today(settings.TIMEZONE)
+    due = crud.list_unaccrued_due_payments(db, branch_id, today)
+    for payment in due:
+        contract = crud.get_contract(db, payment.contract_id)
+        if contract:
+            _accrue_single_payment(db, payment, contract)
+    if due:
+        db.commit()
+    return due
+
+
+def _post_rent_receipt_journal(
+    db: "Session", source_obj, contract: "LeaseContract",
+    collected_amount: Decimal, payment_method: str | None,
+) -> None:
+    """Dr Cash/Bank/Card (حسب طريقة الدفع الفعلية) / Cr ذمم مستأجرين (1260)
+    — تحصيل فعلي بس، بعد ما الإيراد يكون اتحقّق (accrued) بالفعل. `source_obj`
+    أي صف عنده `.id` (LeasePayment أو TenantCashLog) — بيُستخدم كمرجع بس."""
     try:
-        from app.modules.finance.crud import get_account_by_code, create_journal_entry  # noqa: PLC0415
-        from app.modules.finance.schemas import JournalEntryCreate, JournalLineCreate  # noqa: PLC0415
-
         if collected_amount <= 0:
             return
+        from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
 
-        cash_acc    = get_account_by_code(db, contract.branch_id, "1100")
-        tenant_ar    = get_account_by_code(db, contract.branch_id, "1260")
-        revenue_acc = get_account_by_code(db, contract.branch_id, "4500")
-        if not cash_acc or not tenant_ar or not revenue_acc:
-            return
-
-        entry_date = local_today(settings.TIMEZONE)
-        ref = f"LSE-{source_obj.id:06d}"
-        create_journal_entry(db, JournalEntryCreate(
-            branch_id=contract.branch_id,
-            entry_date=entry_date,
-            reference=ref,
+        debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method or "cash", "1100")
+        post_simple_revenue_journal(
+            db, contract.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code=debit_code, credit_account_code="1260",
+            amount=collected_amount,
+            reference=f"LSE-RCV-{source_obj.id:06d}",
             description=f"تحصيل إيجار — {contract.contract_number} ({contract.tenant_name})",
-            source="leasing",
-            source_id=source_obj.id,
-            lines=[
-                JournalLineCreate(account_id=cash_acc.id, debit=collected_amount, credit=Decimal("0")),
-                JournalLineCreate(account_id=tenant_ar.id, debit=Decimal("0"), credit=collected_amount),
-            ],
-        ), contract.signed_by or 0)
-        create_journal_entry(db, JournalEntryCreate(
-            branch_id=contract.branch_id,
-            entry_date=entry_date,
-            reference=ref,
-            description=f"إثبات إيراد إيجار — {contract.contract_number}",
-            source="leasing",
-            source_id=source_obj.id,
-            lines=[
-                JournalLineCreate(account_id=tenant_ar.id, debit=collected_amount, credit=Decimal("0")),
-                JournalLineCreate(account_id=revenue_acc.id, debit=Decimal("0"), credit=collected_amount),
-            ],
-        ), contract.signed_by or 0)
+            source="leasing", source_id=source_obj.id,
+            created_by=contract.signed_by or 0, cost_center_code="LEASE",
+        )
     except Exception:
         logger.error(
-            "_post_rent_collection_journal فشل — عقد %s مبلغ %.2f — القيد المحاسبي يحتاج تسجيل يدوي",
+            "_post_rent_receipt_journal فشل — عقد %s مبلغ %.2f — القيد المحاسبي يحتاج تسجيل يدوي",
             getattr(contract, 'contract_number', contract.id), float(collected_amount), exc_info=True,
+        )
+
+
+def _post_direct_rent_journal(
+    db: "Session", source_obj, contract: "LeaseContract",
+    amount: Decimal, payment_method: str | None,
+) -> None:
+    """قيد واحد مباشر Dr Cash/Bank/Card / Cr إيراد — لتسويات كاش فورية
+    (TenantCashLog) بدون جدول استحقاق مسبق (مركز غوص/واتر سبورت بيدفعوا
+    حصة إيراد متغيّرة، مش قسط شهري ثابت له تاريخ استحقاق مسبق) — عمدًا
+    من غير أي عبور على 1260 لأن مفيش ذمة سبق إثباتها هنا أصلًا."""
+    try:
+        if amount <= 0:
+            return
+        from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+
+        debit_code = _PAYMENT_METHOD_DEBIT_ACCOUNT.get(payment_method or "cash", "1100")
+        post_simple_revenue_journal(
+            db, contract.branch_id, local_today(settings.TIMEZONE),
+            debit_account_code=debit_code, credit_account_code="4500",
+            amount=amount,
+            reference=f"LSE-CL-{source_obj.id:06d}",
+            description=f"تسوية كاش مستأجر — {contract.contract_number} ({contract.tenant_name})",
+            source="leasing", source_id=source_obj.id,
+            created_by=contract.signed_by or 0, cost_center_code="LEASE",
+        )
+    except Exception:
+        logger.error(
+            "_post_direct_rent_journal فشل — عقد %s مبلغ %.2f — القيد المحاسبي يحتاج تسجيل يدوي",
+            getattr(contract, 'contract_number', contract.id), float(amount), exc_info=True,
         )
 
 
@@ -249,8 +325,12 @@ def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePaym
             f"الدفعة ({remaining:,.2f} ج) — تحقّق من المبلغ قبل التسجيل"
         )
 
+    # الإيراد لازم يكون اتحقّق (accrued) قبل أي تحصيل — لو التحصيل حصل في نفس
+    # يوم/قبل ما مهمة accrue_due_rents اليومية تشتغل، بنحقّقه هنا inline
+    # (idempotent، مفيش خطر ترحيل مزدوج).
+    _accrue_single_payment(db, payment, contract)
     obj = crud.pay_payment(db, payment, req)
-    _post_rent_collection_journal(db, obj, contract, req.paid_amount)
+    _post_rent_receipt_journal(db, obj, contract, req.paid_amount, req.payment_method)
     db.commit()
     db.refresh(obj)
     return obj
@@ -259,7 +339,9 @@ def pay_payment(db: Session, payment_id: int, req: PayLeaseRequest) -> LeasePaym
 def record_cash_log(db: Session, data: TenantCashLogCreate, recorded_by: int) -> TenantCashLog:
     """تسجيل تسوية كاش يومية مع مستأجر (مركز غوص/واتر سبورت) — خارج دورة
     الاستحقاق الشهرية العادية. لو النوع rent_payment أو revenue_share، بيرحّل
-    قيد محاسبي زي تحصيل الإيجار العادي (نفس حسابات 1100/1260/4500).
+    قيد مباشر واحد (Dr Cash/Bank/Card / Cr 4500) — عمدًا من غير عبور على
+    1260 لأن مفيش جدول استحقاق مسبق لتحصيلات النوع ده (راجع
+    _post_direct_rent_journal).
 
     ⚠️ باج حقيقي اتصلح (2026-08-02): pay_payment (تحصيل الدفعة الشهرية
     العادية) بيرفض العقد terminated/expired، لكن المسار المواز ده — اللي
@@ -278,7 +360,7 @@ def record_cash_log(db: Session, data: TenantCashLogCreate, recorded_by: int) ->
     log = crud.create_cash_log(db, data, recorded_by)
 
     if data.activity_type in ("rent_payment", "revenue_share"):
-        _post_rent_collection_journal(db, log, contract, data.amount)
+        _post_direct_rent_journal(db, log, contract, data.amount, data.payment_method)
 
     db.commit()
     db.refresh(log)

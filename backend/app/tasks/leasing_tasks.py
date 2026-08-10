@@ -74,6 +74,39 @@ def mark_overdue(self):
         raise self.retry(exc=exc, countdown=600)
 
 
+@celery_app.task(name="app.tasks.leasing_tasks.accrue_due_rents", bind=True, max_retries=3)
+def accrue_due_rents(self):
+    """
+    كل يوم 2:00 صباحاً (قبل mark_overdue) — يثبت إيراد كل دفعات الإيجار اللي
+    وصل تاريخ استحقاقها اليوم أو قبل كده ولسه ما اتحقّقتش محاسبيًا (Dr ذمم
+    مستأجرين / Cr إيراد إيجارات — راجع OPS-DATA-02 §10.5). عبر كل الفروع،
+    idempotent (LeasePayment.accrued يمنع الترحيل مرتين).
+    """
+    try:
+        from app.core.config import settings                       # noqa: PLC0415
+        from app.core.database import SessionLocal                  # noqa: PLC0415
+        from app.resort_os.timezone_utils import local_today         # noqa: PLC0415
+        today = local_today(settings.TIMEZONE)
+
+        with SessionLocal() as db:
+            try:
+                from app.modules.core.models import Branch  # noqa: PLC0415
+                from app.modules.leasing.services import accrue_due_rents as _accrue  # noqa: PLC0415
+
+                total = 0
+                for branch in db.query(Branch).all():
+                    accrued = _accrue(db, branch.id, today)
+                    total += len(accrued)
+                logger.info("Leasing rent accrual processed: accrued=%s", total)
+
+            except ImportError:
+                logger.debug("Leasing module not yet built — skipped")
+
+    except Exception as exc:
+        logger.error("leasing accrue_due_rents failed: %s", exc)
+        raise self.retry(exc=exc, countdown=600)
+
+
 @celery_app.task(name="app.tasks.leasing_tasks.send_due_reminders", bind=True)
 def send_due_reminders(self):
     """

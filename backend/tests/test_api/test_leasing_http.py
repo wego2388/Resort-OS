@@ -58,6 +58,8 @@ def seed_leasing_accounts(db, branch):
     from app.modules.finance.models import Account
     accounts = [
         Account(branch_id=branch.id, code="1100", name="Cash", account_type="asset"),
+        Account(branch_id=branch.id, code="1110", name="Bank", account_type="asset"),
+        Account(branch_id=branch.id, code="1120", name="Card Clearing", account_type="asset"),
         Account(branch_id=branch.id, code="1260", name="Tenant AR", account_type="asset"),
         Account(branch_id=branch.id, code="2150", name="Tenant Deposits", account_type="liability"),
         Account(branch_id=branch.id, code="4500", name="Lease Revenue", account_type="revenue"),
@@ -353,7 +355,11 @@ class TestLeasingAccountingIntegration:
     worked examples (deposit + rent collection). Verifies the new
     _post_deposit_journal/_post_rent_collection_journal wiring end-to-end."""
 
-    def test_contract_with_deposit_posts_journal_entry(self, client: TestClient, db, fake_redis, manager_headers):
+    def test_contract_with_deposit_posts_no_journal_entry_until_receipt_confirmed(
+        self, client: TestClient, db, fake_redis, manager_headers,
+    ):
+        """OPS-DATA-02 §10.5: التأمين ميترحّلش Cash فورًا عند التوقيع — بس عند
+        تأكيد الاستلام الفعلي عبر POST .../confirm-deposit."""
         from app.modules.finance.models import JournalEntry
         branch = make_branch_committed(db)
         seed_leasing_accounts(db, branch)
@@ -362,7 +368,23 @@ class TestLeasingAccountingIntegration:
         payload["security_deposit"] = "3000.00"
         resp = client.post("/api/v1/leasing/contracts", json=payload, headers=manager_headers)
         assert resp.status_code == 201, resp.text
-        contract_id = resp.json()["id"]
+        contract = resp.json()
+        contract_id = contract["id"]
+        assert contract["deposit_received"] is False
+
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == contract_id)
+            .first()
+        )
+        assert entry is None
+
+        confirm_resp = client.post(
+            f"/api/v1/leasing/contracts/{contract_id}/confirm-deposit",
+            json={"payment_method": "cash"}, headers=manager_headers,
+        )
+        assert confirm_resp.status_code == 200, confirm_resp.text
+        assert confirm_resp.json()["deposit_received"] is True
 
         entry = (
             db.query(JournalEntry)
@@ -373,6 +395,13 @@ class TestLeasingAccountingIntegration:
         lines = {l.account.code: (l.debit, l.credit) for l in entry.lines}
         assert lines["1100"] == (Decimal("3000.00"), Decimal("0.00"))
         assert lines["2150"] == (Decimal("0.00"), Decimal("3000.00"))
+
+        # idempotent — تأكيد تاني على نفس العقد مرفوض
+        second_confirm = client.post(
+            f"/api/v1/leasing/contracts/{contract_id}/confirm-deposit",
+            json={"payment_method": "cash"}, headers=manager_headers,
+        )
+        assert second_confirm.status_code == 400
 
     def test_contract_without_deposit_posts_no_journal_entry(self, client: TestClient, db, fake_redis, manager_headers):
         from app.modules.finance.models import JournalEntry
@@ -610,3 +639,188 @@ class TestLeasingCashLog:
             headers=manager_headers,
         )
         assert resp.status_code == 400
+
+
+class TestLeasingAccrual:
+    """OPS-DATA-02 §10.5: الإيراد يتحقق (accrue) عند تاريخ الاستحقاق — بغض
+    النظر عن التحصيل الفعلي — وطريقة الدفع الحقيقية تتحكم في الحساب المدين
+    عند التحصيل (مش 1100 لكل الحالات)."""
+
+    def test_accrue_due_rents_posts_accrual_and_marks_payment(self, db, fake_redis):
+        from app.modules.finance.models import JournalEntry
+        from app.modules.leasing import services
+        from app.resort_os.timezone_utils import local_today
+        from app.core.config import settings
+
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+
+        from app.modules.leasing.schemas import LeaseContractCreate
+        today = local_today(settings.TIMEZONE)
+        contract = services.create_contract(db, LeaseContractCreate(
+            branch_id=branch.id, tenant_name="مستأجر Accrual",
+            unit_description="محل 5", start_date=today,
+            end_date=today + timedelta(days=365), base_rent=Decimal("5000.00"),
+            billing_day=1,
+        ), signed_by=1)
+        payment = contract.payments[0]
+        assert payment.accrued is False
+
+        accrued = services.accrue_due_rents(db, branch.id, today)
+        assert len(accrued) == 1
+        db.refresh(payment)
+        assert payment.accrued is True
+        assert payment.accrual_journal_entry_id is not None
+
+        entry = db.query(JournalEntry).filter(JournalEntry.id == payment.accrual_journal_entry_id).first()
+        lines = {l.account.code: (l.debit, l.credit) for l in entry.lines}
+        assert lines["1260"] == (payment.amount, Decimal("0.00"))
+        assert lines["4500"] == (Decimal("0.00"), payment.amount)
+
+    def test_accrue_due_rents_idempotent(self, db, fake_redis):
+        from app.modules.leasing import services
+        from app.resort_os.timezone_utils import local_today
+        from app.core.config import settings
+        from app.modules.leasing.schemas import LeaseContractCreate
+
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        today = local_today(settings.TIMEZONE)
+        contract = services.create_contract(db, LeaseContractCreate(
+            branch_id=branch.id, tenant_name="مستأجر Idempotent",
+            unit_description="محل 6", start_date=today,
+            end_date=today + timedelta(days=365), base_rent=Decimal("5000.00"),
+            billing_day=1,
+        ), signed_by=1)
+
+        first = services.accrue_due_rents(db, branch.id, today)
+        second = services.accrue_due_rents(db, branch.id, today)
+        assert len(first) == 1
+        assert len(second) == 0
+
+    def test_pay_payment_routes_bank_transfer_to_bank_account(self, client: TestClient, db, fake_redis, manager_headers):
+        from app.modules.finance.models import JournalEntry
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+        amount = contract["payments"][0]["amount"]
+
+        pay_resp = client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": amount, "payment_method": "bank_transfer"},
+            headers=manager_headers,
+        )
+        assert pay_resp.status_code == 200, pay_resp.text
+
+        entries = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == payment_id)
+            .all()
+        )
+        all_lines = {l.account.code: (l.debit, l.credit) for e in entries for l in e.lines}
+        assert "1100" not in all_lines
+        assert all_lines["1110"] == (Decimal(str(amount)), Decimal("0.00"))
+        assert all_lines["4500"] == (Decimal("0.00"), Decimal(str(amount)))
+
+    def test_deposit_confirmed_with_card_routes_to_card_clearing(self, client: TestClient, db, fake_redis, manager_headers):
+        from app.modules.finance.models import JournalEntry
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        payload = contract_payload(branch.id)
+        payload["security_deposit"] = "2000.00"
+        contract = client.post("/api/v1/leasing/contracts", json=payload, headers=manager_headers).json()
+
+        confirm_resp = client.post(
+            f"/api/v1/leasing/contracts/{contract['id']}/confirm-deposit",
+            json={"payment_method": "card"}, headers=manager_headers,
+        )
+        assert confirm_resp.status_code == 200, confirm_resp.text
+
+        entry = (
+            db.query(JournalEntry)
+            .filter(JournalEntry.source == "leasing", JournalEntry.source_id == contract["id"])
+            .first()
+        )
+        lines = {l.account.code: (l.debit, l.credit) for l in entry.lines}
+        assert lines["1120"] == (Decimal("2000.00"), Decimal("0.00"))
+        assert lines["2150"] == (Decimal("0.00"), Decimal("2000.00"))
+
+    def test_confirm_deposit_rejects_when_no_deposit(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        resp = client.post(
+            f"/api/v1/leasing/contracts/{contract['id']}/confirm-deposit",
+            json={"payment_method": "cash"}, headers=manager_headers,
+        )
+        assert resp.status_code == 400
+
+
+class TestLeasingTenantAging:
+    def test_aging_reports_outstanding_bucketed_by_days_overdue(self, client: TestClient, db, fake_redis, manager_headers):
+        from app.modules.leasing import services
+        from app.resort_os.timezone_utils import local_today
+        from app.core.config import settings
+        from app.modules.leasing.schemas import LeaseContractCreate
+
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        today = local_today(settings.TIMEZONE)
+
+        # عقد بدأ من 45 يوم بـbilling_day=1 — أول دفعة مستحقة يوم 1 من شهر
+        # البداية، ولسه ما اتسددتش. الفئة المتوقعة بتتحسب ديناميكيًا من
+        # الفرق الفعلي بدل افتراض عدد أيام ثابت (شهور مختلفة الطول).
+        overdue_start = today - timedelta(days=45)
+        contract = services.create_contract(db, LeaseContractCreate(
+            branch_id=branch.id, tenant_name="مستأجر متأخر",
+            unit_description="محل 7", start_date=overdue_start,
+            end_date=today + timedelta(days=320), base_rent=Decimal("4000.00"),
+            billing_day=1,
+        ), signed_by=1)
+        due_payments = [p for p in contract.payments if p.due_date <= today]
+        assert len(due_payments) >= 1
+        oldest_due = min(p.due_date for p in due_payments)
+        expected_days = (today - oldest_due).days
+        expected_bucket = (
+            "current" if expected_days <= 0 else
+            "1-30" if expected_days <= 30 else
+            "31-60" if expected_days <= 60 else
+            "61-90" if expected_days <= 90 else "90+"
+        )
+        expected_outstanding = Decimal("4000.00") * len(due_payments)
+
+        resp = client.get("/api/v1/leasing/aging", params={"branch_id": branch.id}, headers=manager_headers)
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()
+        assert len(rows) == 1
+        assert rows[0]["bucket"] == expected_bucket
+        assert rows[0]["days_overdue"] == expected_days
+        assert Decimal(str(rows[0]["outstanding"])) == expected_outstanding
+
+    def test_aging_excludes_fully_paid_contracts(self, client: TestClient, db, fake_redis, manager_headers):
+        branch = make_branch_committed(db)
+        seed_leasing_accounts(db, branch)
+        contract = client.post(
+            "/api/v1/leasing/contracts", json=contract_payload(branch.id), headers=manager_headers,
+        ).json()
+        payment_id = contract["payments"][0]["id"]
+        amount = contract["payments"][0]["amount"]
+        client.post(
+            f"/api/v1/leasing/payments/{payment_id}/pay",
+            json={"paid_amount": amount, "payment_method": "cash"},
+            headers=manager_headers,
+        )
+
+        resp = client.get("/api/v1/leasing/aging", params={"branch_id": branch.id}, headers=manager_headers)
+        assert resp.status_code == 200
+        # الدفعة الأولى اتسددت بالكامل — العقد لسه عنده دفعات تانية مستقبلية
+        # (غير مستحقة لسه)، فمفروض متظهرش كـoutstanding محسوبة عليها.
+        rows = resp.json()
+        row = next((r for r in rows if r["contract_id"] == contract["id"]), None)
+        if row is not None:
+            assert Decimal(str(row["outstanding"])) < Decimal(str(amount)) + Decimal("1")

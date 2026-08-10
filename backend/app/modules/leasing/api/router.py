@@ -10,8 +10,8 @@ from app.core.config import settings
 from app.core.deps import DbDep, get_cashier_user, get_current_active_user, get_manager_user
 from app.modules.leasing import crud, services
 from app.modules.leasing.schemas import (
-    LeaseContractCreate, LeaseContractRead, LeaseContractUpdate,
-    LeasePaymentRead, PayLeaseRequest, TenantCashLogCreate, TenantCashLogRead,
+    ConfirmDepositRequest, LeaseContractCreate, LeaseContractRead, LeaseContractUpdate,
+    LeasePaymentRead, PayLeaseRequest, TenantAgingRow, TenantCashLogCreate, TenantCashLogRead,
     ApplyPenaltiesResponse,
 )
 from app.modules.core import services as core_services
@@ -125,6 +125,26 @@ def apply_penalties(contract_id: int, db: DbDep, user=Depends(get_manager_user))
     _assert_leasing_branch(db, user, c.branch_id, "تطبيق غرامات تأخير")
     updated = services.apply_penalties(db, contract_id)
     return {"updated": len(updated)}
+
+
+@router.post("/leasing/contracts/{contract_id}/confirm-deposit", response_model=LeaseContractRead)
+def confirm_deposit_received(contract_id: int, data: ConfirmDepositRequest, db: DbDep,
+                             user=Depends(get_cashier_user)):
+    """يرحّل قيد التأمين فعليًا بس عند التأكيد الصريح للاستلام — راجع
+    OPS-DATA-02 §10.5: التأمين ميترحّلش تلقائيًا عند التوقيع."""
+    c = _get_contract_or_404(db, contract_id)
+    _assert_leasing_branch(db, user, c.branch_id, "تأكيد استلام تأمين إيجار")
+    try:
+        contract = services.confirm_deposit_received(db, contract_id, data.payment_method, received_by=user.id)
+        return _to_read(contract, local_today(settings.TIMEZONE))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+
+@router.get("/leasing/aging", response_model=list[TenantAgingRow])
+def get_tenant_aging(db: DbDep, user=Depends(get_manager_user), branch_id: int = Query(...)):
+    _assert_leasing_branch(db, user, branch_id, "عرض تقادم ذمم المستأجرين")
+    return services.get_tenant_aging(db, branch_id)
 
 
 # ── TenantCashLog ─────────────────────────────────────────────────────

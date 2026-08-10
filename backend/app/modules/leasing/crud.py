@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy.orm import Session, selectinload
@@ -54,6 +55,50 @@ def list_contracts(
         .order_by(LeaseContract.created_at.desc()).offset(skip).limit(limit).all()
     )
     return items, total
+
+
+def get_tenant_aging(db: Session, branch_id: int, as_of: date) -> list[dict]:
+    """رصيد مستحق (فعليًا واجب التحصيل، مش قيمة العقد المتبقية كلها) لكل عقد
+    عنده دفعات وصل تاريخ استحقاقها ولسه مش متسددة بالكامل (pending/partial/
+    overdue وdue_date <= as_of)، مقسّم لفئة تأخير حسب أقدم دفعة مستحقة —
+    راجع OPS-DATA-02 §10.5: "أظهر aging للمستأجرين". دفعات مستقبلية لسه ما
+    استحقتش عمدًا برّه الحساب — مش ذمة فعلية لحد ما تاريخ استحقاقها يجي."""
+    contracts = (
+        db.query(LeaseContract)
+        .filter(LeaseContract.branch_id == branch_id)
+        .options(selectinload(LeaseContract.payments))
+        .all()
+    )
+    rows: list[dict] = []
+    for c in contracts:
+        open_payments = [
+            p for p in c.payments
+            if p.status in ("pending", "partial", "overdue") and p.due_date <= as_of
+        ]
+        if not open_payments:
+            continue
+        outstanding = sum((p.amount + p.penalty - p.paid_amount for p in open_payments), start=Decimal("0"))
+        if outstanding <= 0:
+            continue
+        oldest_due = min(p.due_date for p in open_payments)
+        days_overdue = max(0, (as_of - oldest_due).days)
+        if days_overdue <= 0:
+            bucket = "current"
+        elif days_overdue <= 30:
+            bucket = "1-30"
+        elif days_overdue <= 60:
+            bucket = "31-60"
+        elif days_overdue <= 90:
+            bucket = "61-90"
+        else:
+            bucket = "90+"
+        rows.append({
+            "contract_id": c.id, "contract_number": c.contract_number,
+            "tenant_name": c.tenant_name, "outstanding": outstanding,
+            "oldest_due_date": oldest_due, "days_overdue": days_overdue, "bucket": bucket,
+        })
+    rows.sort(key=lambda r: r["days_overdue"], reverse=True)
+    return rows
 
 
 def list_contracts_expiring_soon(
@@ -123,6 +168,22 @@ def list_payments(db: Session, contract_id: int) -> list[LeasePayment]:
 
 def get_payment(db: Session, payment_id: int) -> Optional[LeasePayment]:
     return db.query(LeasePayment).filter(LeasePayment.id == payment_id).first()
+
+
+def list_unaccrued_due_payments(db: Session, branch_id: int, as_of: date) -> list[LeasePayment]:
+    """دفعات إيجار وصل تاريخ استحقاقها (due_date <= as_of) ولسه ما
+    اتحقّقتش محاسبيًا (accrued=False) — راجع services.accrue_due_rents."""
+    return (
+        db.query(LeasePayment)
+        .join(LeaseContract, LeaseContract.id == LeasePayment.contract_id)
+        .filter(
+            LeaseContract.branch_id == branch_id,
+            LeasePayment.due_date <= as_of,
+            LeasePayment.accrued.is_(False),
+        )
+        .order_by(LeasePayment.due_date)
+        .all()
+    )
 
 
 def lock_payment_for_update(db: Session, payment_id: int) -> Optional[LeasePayment]:
