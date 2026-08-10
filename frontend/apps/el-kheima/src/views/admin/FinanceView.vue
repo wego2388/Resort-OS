@@ -576,8 +576,12 @@ async function loadExchangeRates() {
   fxLoading.value = true
   fxError.value = ''
   try {
+    // GET /finance/exchange-rates لا يقبل branch_id (أسعار الصرف عالمية مش
+    // مربوطة بفرع) ولا limit (بس size، حد أقصى 200) — كانا بيتجاهَلوا بصمت
+    // وبيرجّع الـdefault الحالي (page=1/size=50) دايمًا، اللي طابق الغرض هنا
+    // بالصدفة بس لسه drift حقيقي عن الـcontract (OPS-DATA-02 §6.3).
     const { data } = await api.get('/finance/exchange-rates', {
-      params: { branch_id: branchId.value, limit: 50 },
+      params: { page: 1, size: 100 },
     })
     exchangeRates.value = data.items ?? data ?? []
   } catch {

@@ -161,6 +161,25 @@ async function fetchAll() {
   }
 }
 
+// GET /pms/bookings only accepts page/size (size<=100) and
+// check_in_from/check_in_to — it silently ignores unknown params like the
+// `limit`/`check_in_date` this file used to send, so it always fell back to
+// the default page=1/size=20 regardless of what was actually asked for
+// (OPS-DATA-02 UX-API-01 §6.3). Walk every page so a branch with more than
+// 100 checked-in bookings or today's arrivals still shows all of them.
+async function fetchAllBookings(params: Record<string, unknown>): Promise<Booking[]> {
+  const size = 100
+  const first = await api.get(ENDPOINTS.pms.bookings, { params: { ...params, page: 1, size } })
+  const items: Booking[] = first.data?.items ?? []
+  const total: number = first.data?.total ?? items.length
+  const pages = Math.ceil(total / size)
+  for (let page = 2; page <= pages; page++) {
+    const res = await api.get(ENDPOINTS.pms.bookings, { params: { ...params, page, size } })
+    items.push(...(res.data?.items ?? []))
+  }
+  return items
+}
+
 async function fetchRooms() {
   try {
     const [rRes, rtRes] = await Promise.all([
@@ -174,11 +193,9 @@ async function fetchRooms() {
     roomTypesById.value = rtMap
 
     // جلب الحجوزات الحالية (checked_in) لمعرفة من في أي غرفة
-    const biRes = await api.get(ENDPOINTS.pms.bookings, {
-      params: { branch_id: branchId.value, status: 'checked_in', limit: 200 },
-    })
+    const checkedIn = await fetchAllBookings({ branch_id: branchId.value, status: 'checked_in' })
     const biMap: Record<number, CurrentBookingInfo> = {}
-    for (const b of (biRes.data?.items ?? biRes.data ?? [])) {
+    for (const b of checkedIn) {
       for (const r of (b.rooms ?? [])) {
         biMap[r.room_id] = {
           booking_id: b.id,
@@ -194,19 +211,16 @@ async function fetchRooms() {
 async function fetchTodayBookings() {
   try {
     const today = new Date().toISOString().slice(0, 10)
-    const res = await api.get(ENDPOINTS.pms.bookings, {
-      params: { branch_id: branchId.value, check_in_date: today, limit: 100 },
+    todayBookings.value = await fetchAllBookings({
+      branch_id: branchId.value, check_in_from: today, check_in_to: today,
     })
-    todayBookings.value = res.data?.items ?? res.data ?? []
   } catch { /* silent */ }
 }
 
 async function fetchHKTasks() {
   try {
-    const res = await api.get(ENDPOINTS.pms.housekeeping, {
-      params: { branch_id: branchId.value, limit: 200 },
-    })
-    hkTasks.value = res.data?.items ?? res.data ?? []
+    const res = await api.get(ENDPOINTS.pms.housekeeping, { params: { branch_id: branchId.value } })
+    hkTasks.value = res.data ?? []
   } catch { /* silent */ }
 }
 

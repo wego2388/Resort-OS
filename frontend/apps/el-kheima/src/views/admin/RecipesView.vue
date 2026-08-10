@@ -107,10 +107,23 @@ async function fetchItems() {
   }
 }
 
+// GET /inventory/products لا يقبل limit — بس size (حد أقصى 100) — فكان
+// فعليًا بيرجّع أول صفحة افتراضية (page=1/size=20) بس دايمًا، مهما كان عدد
+// أصناف المخزون الحقيقي. نفس الباج اللي اتصلح في InventoryView.vue، ونفس
+// الحل: لف على كل الصفحات (OPS-DATA-02 UX-API-01 §6.3).
 async function fetchProducts() {
   try {
-    const res = await api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId.value, limit: 200 } })
-    products.value = res.data.products ?? res.data.items ?? res.data
+    const size = 100
+    let page = 1
+    let all: any[] = []
+    while (true) {
+      const res = await api.get(ENDPOINTS.inventory.products, { params: { branch_id: branchId.value, page, size } })
+      const items = res.data.items ?? []
+      all = all.concat(items)
+      if (all.length >= res.data.total || items.length < size) break
+      page += 1
+    }
+    products.value = all
   } catch {
     // غير حرج للعرض — بس هيفضل الاختيار في فورم الإضافة فاضي
   }
