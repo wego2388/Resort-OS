@@ -94,6 +94,8 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
     days_in_month = 31 if ctx.period_month == 7 else (
         date(ctx.period_year, ctx.period_month % 12 + 1, 1) - timedelta(days=1)
     ).day
+    if ctx.period_end_day is not None:
+        days_in_month = min(days_in_month, ctx.period_end_day)
 
     room_type = (
         db.query(RoomType).filter(RoomType.branch_id == branch_id).order_by(RoomType.id).first()

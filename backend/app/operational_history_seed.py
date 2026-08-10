@@ -52,6 +52,12 @@ class ScenarioContext:
     period_year: int
     period_month: int
     tz_name: str
+    # None = المولّدات تستخدم آخر يوم في الشهر التقويمي زي ما هو (الافتراضي
+    # المحلي/trial). لو محدَّد، بيحدّ آخر يوم يتولّد له نشاط — الحالة
+    # الحقيقية اللي احتجناها له: فرع VPS حي بيقفل الليالي أوتوماتيكيًا كل
+    # يوم فعلي (run_night_audit)، فمفيش طريقة نرجع نملأ يوم اتقفل فعليًا
+    # بالفعل. راجع hist_pms_bookings.py's days_in_month لأول نقطة استخدام.
+    period_end_day: Optional[int] = None
 
 
 @dataclass
@@ -274,6 +280,7 @@ class _PreparedBatch:
 
 def prepare_batch(
     db: Session, *, branch_code: str, period: str, actor_id: Optional[int] = None,
+    period_end_day: Optional[int] = None,
 ) -> _PreparedBatch:
     """المرحلة الأولى بس: قفل + تحقق + إنشاء ImportBatch(status="running")
     (flush بس هنا — الـ caller قرر يعمل commit فوري منفصل عشان علامة
@@ -326,7 +333,7 @@ def prepare_batch(
 
     ctx = ScenarioContext(
         branch_id=branch.id, period_year=period_year, period_month=period_month,
-        tz_name=settings.TIMEZONE,
+        tz_name=settings.TIMEZONE, period_end_day=period_end_day,
     )
     return _PreparedBatch(batch=batch, branch_id=branch.id, ctx=ctx, already_completed_result=None)
 
@@ -372,6 +379,7 @@ def run_modules(db: Session, batch, ctx: ScenarioContext) -> SeedResult:
 
 def run_seed(
     db: Session, *, branch_code: str, period: str, actor_id: Optional[int] = None,
+    period_end_day: Optional[int] = None,
 ) -> SeedResult:
     """يشتغل جوه transaction المستدعي (staged بس، مش commit) — الـ caller
     (main تحت) هو اللي بيقرر commit ولا rollback حسب --apply.
@@ -381,7 +389,10 @@ def run_seed(
     بالكامل beside الآخر) ولاستخدام مباشر/اختباري. لـ--apply الحقيقي في
     main() تحت، المرحلتين بيتنادوا منفصلين عمدًا (commit فوري بعد
     prepare_batch) — راجع main()'s توثيق."""
-    prepared = prepare_batch(db, branch_code=branch_code, period=period, actor_id=actor_id)
+    prepared = prepare_batch(
+        db, branch_code=branch_code, period=period, actor_id=actor_id,
+        period_end_day=period_end_day,
+    )
     if prepared.already_completed_result:
         return prepared.already_completed_result
     result = run_modules(db, prepared.batch, prepared.ctx)
@@ -428,6 +439,7 @@ def _parse_args() -> argparse.Namespace:
 
 def run_seed_against_engine(
     engine, *, branch_code: str, period: str, apply: bool, actor_id: Optional[int] = None,
+    period_end_day: Optional[int] = None,
 ) -> SeedResult:
     """المنطق القابل لإعادة الاستخدام (dry-run بـsavepoint mode، أو --apply
     بـcheckpoint حقيقي 3 مراحل) — بياخد `engine` صراحةً بدل ما يفترض
@@ -481,7 +493,10 @@ def run_seed_against_engine(
         outer_txn = connection.begin()
         db = Session(bind=connection, join_transaction_mode="create_savepoint")
         try:
-            result = run_seed(db, branch_code=branch_code, period=period, actor_id=actor_id)
+            result = run_seed(
+                db, branch_code=branch_code, period=period, actor_id=actor_id,
+                period_end_day=period_end_day,
+            )
             outer_txn.rollback()
             return result
         except Exception:
@@ -498,6 +513,7 @@ def run_seed_against_engine(
     try:
         prepared = prepare_batch(
             checkpoint_db, branch_code=branch_code, period=period, actor_id=actor_id,
+            period_end_day=period_end_day,
         )
         checkpoint_txn.commit()
     except Exception:

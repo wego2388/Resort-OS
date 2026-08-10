@@ -71,6 +71,8 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
     year, month = ctx.period_year, ctx.period_month
     month_start = date(year, month, 1)
     days_in_month = calendar.monthrange(year, month)[1]
+    if ctx.period_end_day is not None:
+        days_in_month = min(days_in_month, ctx.period_end_day)
     state = _RunningState()
 
     with scenario_clock(datetime(year, month, 1, 6, 0, tzinfo=tz)):

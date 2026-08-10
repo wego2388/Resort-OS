@@ -74,6 +74,8 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
     tz = ZoneInfo(ctx.tz_name)
     month_start = date(year, month, 1)
     days_in_month = calendar.monthrange(year, month)[1]
+    if ctx.period_end_day is not None:
+        days_in_month = min(days_in_month, ctx.period_end_day)
     month_end_exclusive = month_start + timedelta(days=days_in_month)
 
     rooms = (

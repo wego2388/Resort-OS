@@ -97,6 +97,8 @@ def generate(db: "Session", ctx: "ScenarioContext") -> dict:
     year, month = ctx.period_year, ctx.period_month
     month_start = date(year, month, 1)
     days_in_month = 31 if month == 7 else (date(year, month % 12 + 1, 1) - timedelta(days=1)).day
+    if ctx.period_end_day is not None:
+        days_in_month = min(days_in_month, ctx.period_end_day)
 
     with scenario_clock(datetime(year, month, 1, 6, 0, tzinfo=tz)):
         _ensure_global_payroll_config(db)

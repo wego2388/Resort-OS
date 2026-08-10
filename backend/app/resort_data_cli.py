@@ -109,6 +109,7 @@ def cmd_backup(target: TargetConfig, *, apply: bool) -> dict:
 def cmd_seed_july(
     target: TargetConfig, *, period: str, apply: bool, confirm: Optional[str],
     validate_only_mode: bool, actor_id: Optional[int],
+    period_end_day: Optional[int] = None,
 ) -> dict:
     import sqlalchemy as sa
 
@@ -131,6 +132,7 @@ def cmd_seed_july(
 
         result = run_seed_against_engine(
             engine, branch_code=target.branch_code, period=period, apply=apply, actor_id=actor_id,
+            period_end_day=period_end_day,
         )
         return {
             "mode": "apply" if apply else "dry-run",
@@ -423,6 +425,14 @@ def _build_parser() -> argparse.ArgumentParser:
         if name == "seed-july":
             p.add_argument("--validate-only", action="store_true")
             p.add_argument("--actor-id", type=int)
+            p.add_argument(
+                "--end-day", type=int, default=None,
+                help=(
+                    "آخر يوم في الشهر يتولّد له نشاط (افتراضيًا آخر يوم "
+                    "تقويمي). لازم لأي فرع حي بيقفل لياليه أوتوماتيكيًا "
+                    "كل يوم فعلي — مفيش رجوع نملأ يوم اتقفل بالفعل."
+                ),
+            )
 
     return parser
 
@@ -448,6 +458,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             result = cmd_seed_july(
                 target, period=args.period, apply=args.apply, confirm=args.confirm,
                 validate_only_mode=args.validate_only, actor_id=args.actor_id,
+                period_end_day=args.end_day,
             )
         elif args.command == "validate":
             result = cmd_validate(target, period=args.period)
