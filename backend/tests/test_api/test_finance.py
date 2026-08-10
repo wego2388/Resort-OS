@@ -1557,9 +1557,13 @@ class TestCostCenterReport:
         today = date.today()
         report = services.get_cost_center_report(db, branch.id, today, today)
         by_code = {l.code: l for l in report.lines}
-        assert by_code["REST"].revenue == order.total
+        # FIN-TAX-01: post_taxed_sale_journal بيرحّل الإيراد الصافي بس
+        # لحساب 4200 — الـVAT/الخدمة بيروحوا لـ2160/2165 (liability)، مش
+        # جزء من الإيراد المحاسبي. order.total (إجمالي شامل الضريبة/الخدمة)
+        # مش الرقم الصح للمقارنة بقى.
+        assert by_code["REST"].revenue == order.subtotal
         assert by_code["REST"].expense == Decimal("20.00")  # 1 * cost_price
-        assert by_code["REST"].net == order.total - Decimal("20.00")
+        assert by_code["REST"].net == order.subtotal - Decimal("20.00")
         assert by_code["CAFE"].revenue == Decimal("0")
         assert by_code["CAFE"].expense == Decimal("0")
 

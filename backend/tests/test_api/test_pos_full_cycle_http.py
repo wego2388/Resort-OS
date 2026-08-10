@@ -70,6 +70,8 @@ def make_finance_accounts(db, branch, revenue_code="4200"):
         "1150": ("ذمم الفوليو", "asset"),
         "1200": ("مخزون البضاعة", "asset"),
         "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
+        "2160": ("ضريبة القيمة المضافة مستحقة", "liability"),  # FIN-TAX-01
+        "2165": ("رسم خدمة مستحق", "liability"),
         revenue_code: ("Dining Revenue", "revenue"),
     }
     for code, (name, acc_type) in wanted.items():

@@ -1317,17 +1317,19 @@ def settle_order(
         # لو فيه أصناف من outlets مختلفة → كل outlet بيتقيّد إيراده منفصل.
         outlet_splits = _build_outlet_revenue_splits(db, order, order.outlet_id)
 
-        for t in room:
+        for tender_idx, t in enumerate(room):
             _settle_room_tender(
                 db, order, t, revenue_account,
                 single_tender=single_tender,
                 outlet_splits=outlet_splits,
+                tender_idx=tender_idx,
             )
-        for t in direct:
+        for tender_idx, t in enumerate(direct):
             _settle_direct_tender(
                 db, order, t, revenue_account,
                 cashier_id=settled_by, shift_id=shift_id,
                 outlet_splits=outlet_splits,
+                tender_idx=tender_idx,
             )
         for t in credit:
             _settle_credit_tender(
@@ -1389,10 +1391,16 @@ def _settle_room_tender(
     db: Session, order: DiningOrder, tender: dict, revenue_account_code: str,
     *, single_tender: bool,
     outlet_splits: "list[tuple] | None" = None,
+    tender_idx: int = 0,
 ) -> None:
     """جزء الطلب المحمّل على فوليو غرفة — شحنة فوليو + قيد Dr ذمم(1150)/Cr
     إيراد. outlet_splits: لو فيه cross-outlet — كل split بيتقيّد على حساب
-    الـ outlet الخاص به بدل حساب order.outlet فقط."""
+    الـ outlet الخاص به بدل حساب order.outlet فقط. tender_idx: ترتيب هذا
+    الـ tender بين عدة room tenders لنفس الطلب (نادر بس ممكن — تسوية مقسّمة
+    على أكتر من فوليو غرفة) — لازم يدخل في reference القيد المحاسبي (راجع
+    _post_folio_revenue_splits) وإلا الـ idempotency check الجديدة في
+    post_taxed_sale_journal هتعتبر تاني tender نفس القيد الأول وترجّعه من
+    غير ترحيل حقيقي (FIN-TAX-01، OPS-DATA-02 §11.2)."""
     from app.modules.finance import services as finance_services  # noqa: PLC0415
     from app.modules.finance.schemas import FolioChargeCreate  # noqa: PLC0415
 
@@ -1408,7 +1416,7 @@ def _settle_room_tender(
         )
         finance_services.add_folio_charge(db, folio_id, charge_data)
         # قيد الإيراد per-outlet
-        _post_folio_revenue_splits(db, order, outlet_splits, revenue_account_code)
+        _post_folio_revenue_splits(db, order, outlet_splits, revenue_account_code, tender_idx=tender_idx)
         return
 
     amount = tender["amount"]
@@ -1425,7 +1433,7 @@ def _settle_room_tender(
     # split tender — نوزّع القيد per-outlet بنسبة حصة الـ tender
     _post_folio_revenue_splits(
         db, order, outlet_splits, revenue_account_code,
-        tender_ratio=ratio,
+        tender_ratio=ratio, tender_idx=tender_idx,
     )
 
 
@@ -1434,12 +1442,27 @@ def _post_folio_revenue_splits(
     outlet_splits: "list[tuple] | None",
     fallback_revenue_code: str,
     tender_ratio: "Decimal | None" = None,
+    tender_idx: int = 0,
 ) -> None:
-    """يُرحّل قيود Dr.1150/Cr.إيراد per-outlet — يدعم single وsplit tenders.
-    tender_ratio=None → قيد كامل (single_tender). tender_ratio=X → نسبة X من كل split."""
+    """يُرحّل قيود Dr.1150/Cr.إيراد صافي + VAT/service payable per-outlet —
+    يدعم single وsplit tenders. tender_ratio=None → قيد كامل (single_tender).
+    tender_ratio=X → نسبة X من كل split.
+
+    OPS-DATA-02 §11.2 (FIN-TAX-01): كانت الدالة دي بترحّل total_share
+    (الإجمالي شامل VAT/service بعد الخصم) كله على حساب الإيراد — الفصل
+    (VAT→2160، service→2165) اتضاف هنا بدل post_taxed_sale_journal، والباقي
+    (نسب per-outlet/split-tender/الخصم/rounding) زي ما هو بالظبط.
+
+    reference لازم يكون فريد لكل قيد حقيقي مختلف داخل نفس الطلب (tender_idx
+    لتعدد room tenders النادر، outlet.id لcross-outlet) — post_taxed_sale_
+    journal الصارمة idempotent بـ(branch/source/source_id/reference)، فلو
+    قيدين مختلفين فعليًا استخدموا نفس reference كانت التانية هترجع نسخة
+    القيد الأولى بدل ما ترحّل فعليًا (باج حقيقي اتكشف واتصلح وقت كتابة
+    هذه الدفعة — راجع test_cross_outlet_order_posts_per_outlet_journals)."""
     from app.modules.finance import services as finance_services  # noqa: PLC0415
     one = Decimal("1")
     ratio = tender_ratio if tender_ratio is not None else one
+    ref_base = f"ORD-{order.order_number}" + (f"-T{tender_idx}" if tender_idx else "")
 
     if not outlet_splits or len(outlet_splits) == 1:
         # المسار العادي — قيد واحد
@@ -1449,16 +1472,18 @@ def _post_folio_revenue_splits(
         vat_share = (order.vat_amount * ratio).quantize(Decimal("0.01"))
         svc_share = (order.service_charge * ratio).quantize(Decimal("0.01"))
         disc_share = ((order.discount_amount or Decimal("0")) * ratio).quantize(Decimal("0.01"))
-        total_share = (base_amount * ratio + vat_share + svc_share - disc_share).quantize(Decimal("0.01"))
+        net_share = (base_amount * ratio - disc_share).quantize(Decimal("0.01"))
+        total_share = net_share + vat_share + svc_share
         if total_share > 0:
-            finance_services.post_simple_revenue_journal(
+            finance_services.post_taxed_sale_journal(
                 db, order.branch_id, local_today(settings.TIMEZONE),
-                debit_account_code="1150", credit_account_code=rev_code,
-                amount=total_share, reference=f"ORD-{order.order_number}",
+                debit_account_code="1150", revenue_account_code=rev_code,
+                net_revenue_amount=net_share, vat_amount=vat_share, service_charge_amount=svc_share,
+                reference=ref_base,
                 description=f"إيرادات دايننج (فوليو) — {order.order_number}",
                 source="dining_folio_charge", source_id=order.id,
                 cost_center_code=_outlet_cost_center_code(outlet),
-                commit_cost_centers=False, strict=True,
+                commit_cost_centers=False,
             )
         return
 
@@ -1469,19 +1494,20 @@ def _post_folio_revenue_splits(
         vat_share = (order.vat_amount * sub_ratio).quantize(Decimal("0.01"))
         svc_share = (order.service_charge * sub_ratio).quantize(Decimal("0.01"))
         disc_share = ((order.discount_amount or Decimal("0")) * sub_ratio).quantize(Decimal("0.01"))
-        amount_share = (sub * ratio + vat_share + svc_share - disc_share).quantize(Decimal("0.01"))
+        net_share = (sub * ratio - disc_share).quantize(Decimal("0.01"))
+        amount_share = net_share + vat_share + svc_share
         if amount_share <= 0:
             continue
-        finance_services.post_simple_revenue_journal(
+        finance_services.post_taxed_sale_journal(
             db, order.branch_id, local_today(settings.TIMEZONE),
             debit_account_code="1150",
-            credit_account_code=outlet.revenue_account_code,
-            amount=amount_share,
-            reference=f"ORD-{order.order_number}",
+            revenue_account_code=outlet.revenue_account_code,
+            net_revenue_amount=net_share, vat_amount=vat_share, service_charge_amount=svc_share,
+            reference=f"{ref_base}-OUT{outlet.id}",
             description=f"إيرادات دايننج (فوليو/{outlet.name}) — {order.order_number}",
             source="dining_folio_charge", source_id=order.id,
             cost_center_code=_outlet_cost_center_code(outlet),
-            commit_cost_centers=False, strict=True,
+            commit_cost_centers=False,
         )
 
 
@@ -1489,11 +1515,17 @@ def _settle_direct_tender(
     db: Session, order: DiningOrder, tender: dict, revenue_account_code: str,
     *, cashier_id: Optional[int], shift_id: Optional[int],
     outlet_splits: "list[tuple] | None" = None,
+    tender_idx: int = 0,
 ) -> None:
-    """tender مباشر (cash/card/wallet) — Payment حقيقي + قيد Dr <حساب>/Cr إيراد.
+    """tender مباشر (cash/card/wallet) — Payment حقيقي + قيد Dr <حساب>/Cr
+    إيراد صافي + VAT/service payable (FIN-TAX-01، OPS-DATA-02 §11.2).
     outlet_splits: لو cross-outlet — قيود per-outlet بدل قيد واحد.
     POS-03: tender يمكن أن يحتوي currency/fx_rate لدعم الكاش بعملة أجنبية.
-    amount في كل الأحوال EGP-equivalent؛ العملة/السعر الأصليين للتدقيق فقط."""
+    amount في كل الأحوال EGP-equivalent؛ العملة/السعر الأصليين للتدقيق فقط.
+
+    tender["amount"] نسبة من order.total (زي split-tender) — نفس نمط
+    _settle_room_tender: نستنتج نصيب VAT/service من نسبة amount/order.total
+    (order.total لسه هو الإجمالي شامل الضريبة/الخدمة الحقيقي)."""
     from app.modules.finance import crud as finance_crud  # noqa: PLC0415
     from app.modules.finance import services as finance_services  # noqa: PLC0415
 
@@ -1510,43 +1542,64 @@ def _settle_direct_tender(
         currency=currency, fx_rate=fx_rate,
     )
 
+    tender_ratio = (amount / order.total) if order.total > 0 else Decimal("0")
+    vat_share = (order.vat_amount * tender_ratio).quantize(Decimal("0.01"))
+    svc_share = (order.service_charge * tender_ratio).quantize(Decimal("0.01"))
+    net_amount = amount - vat_share - svc_share
+    # reference فريد لكل tender/outlet حقيقي — راجع تعليق _post_folio_
+    # revenue_splits لسبب الحاجة لده مع post_taxed_sale_journal الـidempotent.
+    ref_base = f"ORD-{order.order_number}" + (f"-T{tender_idx}" if tender_idx else "")
+
     if not outlet_splits or len(outlet_splits) == 1:
         # المسار العادي — قيد واحد
         outlet = outlet_splits[0][0] if outlet_splits else None
         rev_code = outlet.revenue_account_code if outlet else revenue_account_code
         cost_cc = _outlet_cost_center_code(outlet)
-        finance_services.post_simple_revenue_journal(
+        finance_services.post_taxed_sale_journal(
             db, order.branch_id, local_today(settings.TIMEZONE),
-            debit_account_code=account, credit_account_code=rev_code,
-            amount=amount, reference=f"ORD-{order.order_number}",
+            debit_account_code=account, revenue_account_code=rev_code,
+            net_revenue_amount=net_amount, vat_amount=vat_share, service_charge_amount=svc_share,
+            reference=ref_base,
             description=f"إيرادات دايننج ({method}) — {order.order_number}",
             source="dining", source_id=order.id,
             cost_center_code=cost_cc,
-            commit_cost_centers=False, strict=True,
+            commit_cost_centers=False,
         )
         return
 
-    # cross-outlet — نوزّع القيد per-outlet بنسبة الـ subtotals
+    # cross-outlet — نوزّع القيد per-outlet بنسبة الـ subtotals، وVAT/service
+    # كل واحد بنفس نسبة نصيبه من net_amount (آخر outlet بياخد الباقي
+    # لتجنب فروق التقريب، لكل من الصافي والضريبة/الخدمة كل على حدة).
     total_subtotal = sum(s for _, s in outlet_splits) or Decimal("1")
-    remaining = amount
+    remaining_net = net_amount
+    remaining_vat = vat_share
+    remaining_svc = svc_share
     for idx, (outlet, sub) in enumerate(outlet_splits):
         is_last = idx == len(outlet_splits) - 1
-        # آخر outlet بياخد الباقي لتجنب فروق التقريب
-        share = remaining if is_last else (amount * sub / total_subtotal).quantize(Decimal("0.01"))
+        if is_last:
+            net_share, vat_out_share, svc_out_share = remaining_net, remaining_vat, remaining_svc
+        else:
+            outlet_ratio = (sub / total_subtotal).quantize(Decimal("0.0001"))
+            net_share = (net_amount * outlet_ratio).quantize(Decimal("0.01"))
+            vat_out_share = (vat_share * outlet_ratio).quantize(Decimal("0.01"))
+            svc_out_share = (svc_share * outlet_ratio).quantize(Decimal("0.01"))
+        share = net_share + vat_out_share + svc_out_share
         if share <= 0:
             continue
-        finance_services.post_simple_revenue_journal(
+        finance_services.post_taxed_sale_journal(
             db, order.branch_id, local_today(settings.TIMEZONE),
             debit_account_code=account,
-            credit_account_code=outlet.revenue_account_code,
-            amount=share,
-            reference=f"ORD-{order.order_number}",
+            revenue_account_code=outlet.revenue_account_code,
+            net_revenue_amount=net_share, vat_amount=vat_out_share, service_charge_amount=svc_out_share,
+            reference=f"{ref_base}-OUT{outlet.id}",
             description=f"إيرادات دايننج ({method}/{outlet.name}) — {order.order_number}",
             source="dining", source_id=order.id,
             cost_center_code=_outlet_cost_center_code(outlet),
-            commit_cost_centers=False, strict=True,
+            commit_cost_centers=False,
         )
-        remaining -= share
+        remaining_net -= net_share
+        remaining_vat -= vat_out_share
+        remaining_svc -= svc_out_share
 
 
 def _settle_credit_tender(
@@ -1826,52 +1879,6 @@ def _deduct_inventory_for_order(
             if strict:
                 raise
             continue
-
-
-def _post_order_revenue_journal(
-    db: Session, order: DiningOrder, revenue_account_code: str,
-    *, commit_cost_centers: bool = True, strict: bool = False,
-) -> None:
-    """Dr. Cash (1100) / Cr. إيراد المنفذ (outlet.revenue_account_code) —
-    دفع كاش/كارت فوري. commit_cost_centers/strict: راجع
-    finance.post_simple_revenue_journal — الافتراضي بيحافظ على السلوك
-    القديم (بيبتلع الفشل)، والنداء الصارم (دفع طلب دايننج) بيرفع
-    FinancialConfigurationError بدل ما يبتلع."""
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
-
-    outlet = crud.get_outlet(db, order.outlet_id)
-    post_simple_revenue_journal(
-        db, order.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code="1100", credit_account_code=revenue_account_code,
-        amount=order.total or Decimal("0"),
-        reference=f"ORD-{order.order_number}",
-        description=f"إيرادات دايننج — {order.order_number}",
-        source="dining", source_id=order.id,
-        cost_center_code=_outlet_cost_center_code(outlet),
-        commit_cost_centers=commit_cost_centers, strict=strict,
-    )
-
-
-def _post_order_folio_charge_journal(
-    db: Session, order: DiningOrder, revenue_account_code: str,
-    *, commit_cost_centers: bool = True, strict: bool = False,
-) -> None:
-    """Dr. ذمم الفوليو (1150) / Cr. إيراد المنفذ — طلب محمّل على فوليو
-    غرفة. راجع restaurant.services._post_order_folio_charge_journal.
-    commit_cost_centers/strict: نفس _post_order_revenue_journal بالظبط."""
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
-
-    outlet = crud.get_outlet(db, order.outlet_id)
-    post_simple_revenue_journal(
-        db, order.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code="1150", credit_account_code=revenue_account_code,
-        amount=order.total or Decimal("0"),
-        reference=f"ORD-{order.order_number}",
-        description=f"إيرادات دايننج (محمّل على الغرفة) — {order.order_number}",
-        source="dining_folio_charge", source_id=order.id,
-        commit_cost_centers=commit_cost_centers, strict=strict,
-        cost_center_code=_outlet_cost_center_code(outlet),
-    )
 
 
 def void_order_item(
@@ -2389,7 +2396,7 @@ def _refund_order_item_locked(
     # ⚠️ باج محاسبي حقيقي اتصلح: كان بيحسب refund_amount = item_gross + نصيب
     # الـ VAT/service_charge بس — من غير أي نصيب من order.discount_amount.
     # القيد الأصلي وقت الدفع بيرحّل order.total (صافي بعد الخصم —
-    # _post_order_revenue_journal)، فمرتجع صنف واحد من طلب عليه خصم كان بيعكس
+    # _post_folio_revenue_splits)، فمرتجع صنف واحد من طلب عليه خصم كان بيعكس
     # إيراد أكتر مما اترحّل فعليًا لنفس الصنف ده، وبيسيب باقي الطلب بقيمة أقل
     # من الصح في دفتر الأستاذ (ولنفس السبب في رصيد شحنة الفوليو). النصيب من
     # الخصم لازم يتناسب بنفس share_ratio (الخصم بيتحسب على subtotal زي الـ
@@ -2556,6 +2563,16 @@ def _post_refund_reversals(
                 / order_total
             ).quantize(Decimal("0.01"))
         )
+    # FIN-TAX-01 (OPS-DATA-02 §11.2): كل share هنا لازم يترد بنفس الفصل
+    # (إيراد صافي/VAT/service) اللي اترحّل بيه وقت البيع، مش يعكس كله على
+    # حساب الإيراد كأنه "مصروف عكسي" واحد. order.vat_amount/service_charge
+    # نسبة إلى order.total ثابتة على مستوى الطلب كله (بتتحدد وقت الإنشاء
+    # ومابتتغيّرش بعد كده)، فبتتطبّق على أي share جزئي هنا بنفس النسبة —
+    # net_share = share - vat_share - svc_share بالباقي (متوازن دايمًا
+    # بالضبط بحكم الطرح، مش بحاجة remainder tracking عبر الأجزاء).
+    vat_ratio = (order.vat_amount / order_total) if order.vat_amount else Decimal("0")
+    svc_ratio = (order.service_charge / order_total) if order.service_charge else Decimal("0")
+
     allocated = Decimal("0")
     last_idx = len(parts) - 1
     for idx, (kind, amount, payment) in enumerate(parts):
@@ -2574,9 +2591,17 @@ def _post_refund_reversals(
             )
         if share <= 0:
             continue
+        vat_share = (share * vat_ratio).quantize(Decimal("0.01"))
+        svc_share = (share * svc_ratio).quantize(Decimal("0.01"))
+        net_share = share - vat_share - svc_share
         if kind == "credit":
             from app.modules.credit import services as credit_services  # noqa: PLC0415
 
+            debit_allocations = [(revenue_account_code, net_share, cost_center_code)]
+            if vat_share > 0:
+                debit_allocations.append(("2160", vat_share, cost_center_code))
+            if svc_share > 0:
+                debit_allocations.append(("2165", svc_share, cost_center_code))
             credit_services.refund_charge(
                 db,
                 credit_charge.id,
@@ -2584,7 +2609,7 @@ def _post_refund_reversals(
                 share,
                 f"مرتجع صنف من طلب {order.order_number}",
                 refunded_by,
-                debit_allocations=[(revenue_account_code, share, cost_center_code)],
+                debit_allocations=debit_allocations,
                 commit=False,
             )
         elif kind == "direct":
@@ -2597,23 +2622,29 @@ def _post_refund_reversals(
                 reference=f"ORD-REFUND-{order.order_number}", ref_order_id=order.id,
                 source="dining_refund", original_payment_id=payment.id,
             )
-            finance_services.post_simple_revenue_journal(
+            finance_services.reverse_taxed_sale_journal(
                 db, order.branch_id, local_today(settings.TIMEZONE),
-                debit_account_code=revenue_account_code, credit_account_code=account,
-                amount=share, reference=f"ORD-REFUND-{order.order_number}",
+                debit_account_code=account, revenue_account_code=revenue_account_code,
+                net_revenue_amount=net_share, vat_amount=vat_share, service_charge_amount=svc_share,
+                reference=f"ORD-REFUND-{order.order_number}-{payment.id}",
                 description=f"مرتجع بعد الدفع ({payment.method}) — {order.order_number}",
                 source="dining_refund", source_id=order.id,
                 cost_center_code=cost_center_code,
-                commit_cost_centers=False, strict=True,
+                commit_cost_centers=False,
             )
         else:  # room
-            _reduce_folio_charge_for_refund(db, order, share, revenue_account_code, outlet=outlet)
+            _reduce_folio_charge_for_refund(
+                db, order, share, revenue_account_code,
+                vat_amount=vat_share, service_charge_amount=svc_share, outlet=outlet,
+            )
         allocated += share
 
 
 def _reduce_folio_charge_for_refund(
     db: Session, order: DiningOrder, refund_amount: Decimal,
-    revenue_account_code: str, outlet: Optional[Outlet] = None,
+    revenue_account_code: str, *,
+    vat_amount: Decimal = Decimal("0"), service_charge_amount: Decimal = Decimal("0"),
+    outlet: Optional[Outlet] = None,
 ) -> None:
     """يقلّل شحنة فوليو الطلب بحصة الغرفة من المرتجع + قيد عكسي Dr إيراد / Cr
     1150. Gate 4 (High 4a): fail-closed — لو الشحنة مش موجودة أو الفوليو
@@ -2649,27 +2680,35 @@ def _reduce_folio_charge_for_refund(
     charge.service_charge = (charge.service_charge * ratio).quantize(Decimal("0.01"))
     db.flush()
     finance_crud.recalculate_folio_total(db, folio)
-    _post_order_folio_refund_reversal_journal(db, order, refund_amount, revenue_account_code, outlet=outlet)
+    _post_order_folio_refund_reversal_journal(
+        db, order, refund_amount, revenue_account_code,
+        vat_amount=vat_amount, service_charge_amount=service_charge_amount, outlet=outlet,
+    )
 
 
 def _post_order_folio_refund_reversal_journal(
     db: Session, order: DiningOrder, refund_amount: Decimal,
-    revenue_account_code: str, outlet: Optional[Outlet] = None,
+    revenue_account_code: str, *,
+    vat_amount: Decimal = Decimal("0"), service_charge_amount: Decimal = Decimal("0"),
+    outlet: Optional[Outlet] = None,
 ) -> None:
-    from app.modules.finance.services import post_simple_revenue_journal  # noqa: PLC0415
+    from app.modules.finance.services import reverse_taxed_sale_journal  # noqa: PLC0415
 
     outlet = outlet or crud.get_outlet(db, order.outlet_id)
-    # Gate 4 (High 4a): strict=True — فشل ترحيل القيد بيرفع بدل ما يرجّع None
-    # بصمت، عشان عكس شحنة الفوليو والقيد المقابل يفشلوا كوحدة واحدة.
-    post_simple_revenue_journal(
+    net_amount = refund_amount - vat_amount - service_charge_amount
+    # Gate 4 (High 4a) + FIN-TAX-01 (OPS-DATA-02 §11.2): fail-closed — فشل
+    # ترحيل القيد بيرفع بدل ما يرجّع None بصمت، عشان عكس شحنة الفوليو
+    # والقيد المقابل يفشلوا كوحدة واحدة. القيد بيعكس نفس فصل الإيراد/VAT/
+    # service الأصلي بدل Dr Revenue بالإجمالي.
+    reverse_taxed_sale_journal(
         db, order.branch_id, local_today(settings.TIMEZONE),
-        debit_account_code=revenue_account_code, credit_account_code="1150",
-        amount=refund_amount,
+        debit_account_code="1150", revenue_account_code=revenue_account_code,
+        net_revenue_amount=net_amount, vat_amount=vat_amount, service_charge_amount=service_charge_amount,
         reference=f"ORD-REFUND-{order.order_number}",
         description=f"مرتجع بعد الدفع (محمّل على الغرفة) — {order.order_number}",
         source="dining_folio_refund", source_id=order.id,
         cost_center_code=_outlet_cost_center_code(outlet),
-        commit_cost_centers=False, strict=True,
+        commit_cost_centers=False,
     )
 
 

@@ -789,10 +789,12 @@ class TestDiningWaiterTransferHTTP:
 def _make_split_finance_accounts(db, branch, revenue_code="4200"):
     """Gate 4A: settle_order (split) بيرحّل قيود بـ strict=True — لازم حسابات
     GL موجودة فعليًا: 1100 كاش، 1150 ذمم، 1120 مقاصّة بطاقة (المهيّأ في
-    DINING_CARD_SETTLEMENT_ACCOUNT للتست ده)، وحساب الإيراد."""
+    DINING_CARD_SETTLEMENT_ACCOUNT للتست ده)، وحساب الإيراد. زائد 2160/2165
+    (FIN-TAX-01، OPS-DATA-02 §11.2) — post_taxed_sale_journal محتاجاهم."""
     from app.modules.finance.models import Account
     for code, acc_type in [
-        ("1100", "asset"), ("1150", "asset"), ("1120", "asset"), (revenue_code, "revenue"),
+        ("1100", "asset"), ("1150", "asset"), ("1120", "asset"),
+        ("2160", "liability"), ("2165", "liability"), (revenue_code, "revenue"),
     ]:
         if not db.query(Account).filter_by(branch_id=branch.id, code=code).first():
             db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))

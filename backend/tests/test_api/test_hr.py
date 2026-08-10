@@ -844,7 +844,10 @@ class TestLeaderboard:
         # حسابات الأستاذ اللي معاملة الدفع الصارمة (Gate 1B) محتاجاها فعليًا
         # — idempotent (query-or-create) عشان الدالة دي بتتنادى أكتر من مرة
         # بنفس الـ branch fixture.
-        for code, acc_type in [("1100", "asset"), ("4200", "revenue")]:
+        for code, acc_type in [
+            ("1100", "asset"), ("4200", "revenue"),
+            ("2160", "liability"), ("2165", "liability"),  # FIN-TAX-01
+        ]:
             if not db.query(Account).filter_by(branch_id=branch.id, code=code).first():
                 db.add(Account(branch_id=branch.id, code=code, name=code, account_type=acc_type))
         db.commit()

@@ -38,7 +38,7 @@ def _table(db, branch):
 def _finance_accounts(db, branch):
     from app.modules.finance.models import Account, AccountingPeriod
     for code, name, kind in [("1100","كاش","asset"),("4200","إيراد","revenue"),
-                              ("2100","ضريبة","liability"),("2200","خدمة","liability")]:
+                              ("2160","ضريبة","liability"),("2165","خدمة","liability")]:
         db.add(Account(branch_id=branch.id, code=code, name=name, account_type=kind))
     # AccountingPeriod بيستخدم year/month/status (مش name/start_date/end_date)
     existing = db.query(AccountingPeriod).filter_by(

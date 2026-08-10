@@ -82,13 +82,17 @@ def make_finance_accounts(db, branch, revenue_code="4200"):
     بقت مطلوبة فعليًا دلوقتي لأن post_simple_revenue_journal/_post_cogs_journal
     بيرفعوا FinancialConfigurationError (503) بدل ما يبتلعوا الفشل بصمت
     وقت الدفع الصارم — idempotent (query-or-create) عشان النداء المتكرر
-    بنفس الفرع/الكود آمن."""
+    بنفس الفرع/الكود آمن. زائد 2160/2165 (FIN-TAX-01، OPS-DATA-02 §11.2) —
+    post_taxed_sale_journal محتاجاهم لأي طلب فيه VAT/service (كل طلب دايننج
+    حقيقي)."""
     from app.modules.finance.models import Account
     wanted = {
         "1100": ("Cash", "asset"),
         "1150": ("ذمم الفوليو", "asset"),
         "1200": ("مخزون البضاعة", "asset"),
         "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
+        "2160": ("ضريبة القيمة المضافة مستحقة", "liability"),
+        "2165": ("رسم خدمة مستحق", "liability"),
         revenue_code: ("Dining Revenue", "revenue"),
     }
     accounts = {}
@@ -576,9 +580,15 @@ class TestVoidAndRefund:
         طلب صنفين منفصلين (100 ج لكل واحد، subtotal=200)، خصم مجموعة عميل
         10% (=20 ج)، VAT 14% (=28)، خدمة 12% (=24) → order.total = 232.
         مرتجع صنف واحد (نصيب 50%): نصيب الخصم = 10، فالمرتجع الصح =
-        100 - 10 + 14 + 12 = 116 (مش 126 كان قبل الإصلاح). ورصيد إيراد
-        المنفذ المتبقي في الدفتر بعد المرتجع لازم يبقى 232 - 116 = 116
-        بالظبط — نفس قيمة الصنف التاني المتبقي فعليًا."""
+        100 - 10 + 14 + 12 = 116 (مش 126 كان قبل الإصلاح).
+
+        FIN-TAX-01 (OPS-DATA-02 §11.2): بعد فصل الإيراد الصافي عن VAT/
+        service، القيد الأصلي وقت الدفع بيرحّل صافي 232-28-24=180 على 4200
+        بس (مش 232). المرتجع (116) بينقسم بنفس نسبة الطلب (VAT=28/232،
+        service=24/232) → net=90، vat=14، service=12 بالظبط (90+14+12=116).
+        الرصيد المتبقي الصح: إيراد صافي 180-90=90، VAT payable 28-14=14،
+        service payable 24-12=12 — مش "232-116=116" على حساب الإيراد لوحده
+        زي الافتراض القديم قبل فصل الضريبة."""
         from app.modules.crm import services as crm_services
         from app.modules.crm.schemas import CustomerCreate, CustomerGroupCreate
         from app.modules.finance import crud as finance_crud
@@ -614,11 +624,16 @@ class TestVoidAndRefund:
         updated = services.refund_order_item(db, order.id, target_item.id, "سبب", refunded_by=1)
         assert updated.refunded_amount == Decimal("116.00")
 
-        revenue_acc = finance_crud.get_account_by_code(db, branch.id, "4200")
         sums = finance_crud.sum_journal_lines_by_account(db, branch.id, None, datetime.now().date())
-        debit_sum, credit_sum = sums.get(revenue_acc.id, (Decimal("0"), Decimal("0")))
-        net_revenue_remaining = credit_sum - debit_sum
-        assert net_revenue_remaining == Decimal("116.00")
+
+        def remaining(code: str) -> Decimal:
+            acc = finance_crud.get_account_by_code(db, branch.id, code)
+            debit_sum, credit_sum = sums.get(acc.id, (Decimal("0"), Decimal("0")))
+            return credit_sum - debit_sum
+
+        assert remaining("4200") == Decimal("90.00")
+        assert remaining("2160") == Decimal("14.00")
+        assert remaining("2165") == Decimal("12.00")
 
 
 class TestVariants:
@@ -1810,8 +1825,12 @@ class TestCrossOutletRevenueAllocation:
         )
         assert len(reversal_entries) == 1
         debit_codes = {line.account.code for line in reversal_entries[0].lines if line.debit > 0}
-        assert debit_codes == {"4400"}, (
-            f"مرتجع صنف الكافيه لازم يعكس حساب الكافيه (4400) بس، الموجود {debit_codes}"
+        # FIN-TAX-01 (OPS-DATA-02 §11.2): the reversal now also debits
+        # 2160/2165 (VAT/service payable) alongside the item's own outlet
+        # revenue account — 4200 (restaurant) must still never appear here,
+        # confirming the outlet-correctness fix and the tax-split coexist.
+        assert debit_codes == {"4400", "2160", "2165"}, (
+            f"مرتجع صنف الكافيه لازم يعكس حساب الكافيه (4400) + VAT/service، مش 4200، الموجود {debit_codes}"
         )
 
     def test_null_outlet_id_on_item_falls_back_to_order_outlet(self, db):

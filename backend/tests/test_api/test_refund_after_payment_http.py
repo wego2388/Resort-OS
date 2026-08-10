@@ -63,6 +63,8 @@ def make_finance_accounts(db, branch, revenue_code="4200"):
         "1150": ("ذمم الفوليو", "asset"),
         "1200": ("مخزون البضاعة", "asset"),
         "5200": ("تكلفة البضاعة المباعة (COGS)", "expense"),
+        "2160": ("ضريبة القيمة المضافة مستحقة", "liability"),  # FIN-TAX-01
+        "2165": ("رسم خدمة مستحق", "liability"),
         revenue_code: ("Restaurant Revenue", "revenue"),
     }
     accounts = {}
@@ -379,10 +381,20 @@ class TestDiningRefundAfterPayment:
         total_credit = sum(l.credit for l in entry.lines)
         assert total_debit == total_credit
         db.refresh(cash); db.refresh(rest_rev)
+        # FIN-TAX-01: reverse_taxed_sale_journal بيقسّم عكس القيد لثلاثة
+        # أسطر مدين (إيراد صافي + 2160 VAT + 2165 خدمة) مقابل سطر دائن كاش
+        # واحد — مش سطرين بس زي قبل، فمجموع أسطر المدين هو اللي لازم يساوي
+        # كاش، مش سطر الإيراد لوحده.
+        from app.modules.finance.models import Account
+        vat_acc = db.query(Account).filter_by(branch_id=branch.id, code="2160").first()
+        svc_acc = db.query(Account).filter_by(branch_id=branch.id, code="2165").first()
         cash_line = next(l for l in entry.lines if l.account_id == cash.id)
         rev_line = next(l for l in entry.lines if l.account_id == rest_rev.id)
+        vat_line = next((l for l in entry.lines if l.account_id == vat_acc.id), None)
+        svc_line = next((l for l in entry.lines if l.account_id == svc_acc.id), None)
         assert cash_line.credit == total_debit  # كاش خرج
-        assert rev_line.debit == total_debit    # إيراد اتعكس
+        debit_sum = rev_line.debit + (vat_line.debit if vat_line else 0) + (svc_line.debit if svc_line else 0)
+        assert debit_sum == total_debit  # إيراد صافي + الضريبة/الخدمة اتعكسوا كلهم
 
     def test_refund_by_shiftless_manager_attributes_to_the_sole_open_shift(
         self, client: TestClient, db,
