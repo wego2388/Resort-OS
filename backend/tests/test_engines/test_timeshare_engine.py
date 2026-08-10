@@ -139,16 +139,17 @@ class TestCalculatePartnerShare:
 class TestCalculateVisitWindow:
 
     def test_week_28_2026(self):
-        """الأسبوع 28 من 2026 = الإثنين 6 يوليو 2026."""
+        """الأسبوع 28 من 2026 = السبت 11 يوليو 2026 (بداية الأسبوع من
+        السبت، مش الإثنين — راجع OPS-DATA-02 §8 TIMESHARE-01)."""
         window = calculate_visit_window(28, 7, 2026, today=date(2026, 6, 1))
         assert window is not None
-        assert window.visit_start == date(2026, 7, 6)
+        assert window.visit_start == date(2026, 7, 11)
         assert window.nights == 7
-        assert window.visit_end == date(2026, 7, 12)
+        assert window.visit_end == date(2026, 7, 17)
 
     def test_days_until_positive(self):
         window = calculate_visit_window(28, 7, 2026, today=date(2026, 6, 1))
-        assert window.days_until == (date(2026, 7, 6) - date(2026, 6, 1)).days
+        assert window.days_until == (date(2026, 7, 11) - date(2026, 6, 1)).days
 
     def test_past_visit(self):
         window = calculate_visit_window(1, 7, 2026, today=date(2026, 12, 1))
@@ -159,7 +160,7 @@ class TestCalculateVisitWindow:
         assert calculate_visit_window(53, 7, 2026) is None
 
     def test_is_today(self):
-        today = date(2026, 7, 6)
+        today = date(2026, 7, 11)
         window = calculate_visit_window(28, 7, 2026, today=today)
         assert window.is_today
 
@@ -185,14 +186,14 @@ class TestFindNextVisit:
         """باج حقيقي (اتصلح 2026-07-07): الشرط كان visit_start >= today —
         زيارة جارية دلوقتي (بدأت أمس، لسه في نص الإقامة) كانت بتختفي فجأة
         من "الزيارات القادمة" وتقفز الدالة لحساب زيارة السنة الجاية بدل ما
-        تفضل ظاهرة لحد ما تخلص فعليًا. أسبوع 28 / 2026 = بداية 6 يوليو،
-        7 ليالي = نهاية 12 يوليو — يوم بعد البداية لازم يفضل يرجّع نفس
-        زيارة 2026، مش يقفز لـ 2027."""
-        today = date(2026, 7, 7)  # يوم واحد بعد بداية الزيارة (6 يوليو)
+        تفضل ظاهرة لحد ما تخلص فعليًا. أسبوع 28 / 2026 = بداية 11 يوليو
+        (السبت)، 7 ليالي = نهاية 17 يوليو — يوم بعد البداية لازم يفضل يرجّع
+        نفس زيارة 2026، مش يقفز لـ 2027."""
+        today = date(2026, 7, 12)  # يوم واحد بعد بداية الزيارة (11 يوليو)
         window = find_next_visit(28, 7, today=today)
         assert window is not None
         assert window.year == 2026
-        assert window.days_until == -1  # بدأت أمس، لسه ما خلصتش (تنتهي 12 يوليو)
+        assert window.days_until == -1  # بدأت أمس، لسه ما خلصتش (تنتهي 17 يوليو)
 
 
 class TestGetUpcomingVisits:
@@ -215,17 +216,17 @@ class TestGetUpcomingVisits:
         )
 
     def test_returns_only_within_days(self):
-        today = date(2026, 7, 1)
-        c1 = self._make_contract(28)   # starts 6 Jul — 5 days away
+        today = date(2026, 7, 6)
+        c1 = self._make_contract(28)   # starts 11 Jul (Saturday) — 5 days away
         c2 = self._make_contract(40)   # Oct — far
         results = get_upcoming_visits([c1, c2], within_days=7, today=today)
         assert len(results) == 1
         assert results[0][0].week_number == 28
 
     def test_sorted_by_days_until(self):
-        today = date(2026, 6, 30)
-        c1 = self._make_contract(28)   # 6 Jul
-        c2 = self._make_contract(27)   # 29 Jun — already passed? test ascending
+        today = date(2026, 7, 5)
+        c1 = self._make_contract(28)   # 11 Jul
+        c2 = self._make_contract(27)   # 4 Jul — already passed? test ascending
         results = get_upcoming_visits([c1, c2], within_days=30, today=today)
         if len(results) > 1:
             assert results[0][1].days_until <= results[1][1].days_until
@@ -235,7 +236,7 @@ class TestGetUpcomingVisits:
         كان بيتشال من النتيجة بسبب الحد الأدنى صفر على days_until، رغم إن
         الزيارة لسه مستمرة فعليًا — راجع تعليق find_next_visit/
         get_upcoming_visits لتفاصيل الباج."""
-        today = date(2026, 7, 7)  # يوم واحد بعد بداية زيارة أسبوع 28 (6 يوليو)
+        today = date(2026, 7, 12)  # يوم واحد بعد بداية زيارة أسبوع 28 (11 يوليو)
         contract = self._make_contract(28)
         results = get_upcoming_visits([contract], within_days=30, today=today)
         assert len(results) == 1

@@ -159,6 +159,12 @@ def _post_deferred_revenue_journal(db: "Session", contract: "TimeshareContract")
 
 def update_contract(db: Session, contract_id: int, data: TimeshareContractUpdate) -> TimeshareContract:
     contract = get_contract_or_404(db, contract_id)
+    if data.unit_capacity is not None:
+        effective_room_type = contract.room_type
+        if effective_room_type == "Studio" and data.unit_capacity != 2:
+            raise ValueError("Studio دايمًا سعة 2 أفراد")
+        if effective_room_type == "Chalet" and data.unit_capacity not in (4, 6):
+            raise ValueError("Chalet سعة 4 أو 6 أفراد (6 = باقة Family Compound)")
     obj = crud.update_contract(db, contract, data)
     db.commit()
     db.refresh(obj)
@@ -1211,6 +1217,7 @@ def import_contracts_excel(
         raise ValueError(f"أعمدة إلزامية ناقصة: {', '.join(sorted(missing))}")
 
     imported, skipped, errors = 0, 0, []
+    unknown_capacity_rows: list[int] = []
 
     for i, row in enumerate(rows[1:], start=2):
         row_dict = {h: v for h, v in zip(headers, row) if h}
@@ -1221,6 +1228,17 @@ def import_contracts_excel(
             for field, raw_value in row_dict.items():
                 if field in valid_fields:
                     payload[field] = _coerce_cell(field, raw_value)
+
+            # OPS-DATA-02 §8 نقطة 2: unit_capacity مش عمود متوقَّع في ملفات
+            # Excel القديمة. Studio يُستنتَج بأمان 100% (مفيش أي التباس).
+            # Chalet كان قديمًا 4R أو 6R — الفرق ضاع فعليًا وقت توحيدهم في
+            # migration سابقة، فمفيش استنتاج آمن؛ يفضل None ويتسجّل الصف في
+            # unknown_capacity_rows بدل تخمين 4 أو 6 عشوائيًا.
+            if payload.get("unit_capacity") is None:
+                if payload.get("room_type") == "Studio":
+                    payload["unit_capacity"] = 2
+                else:
+                    unknown_capacity_rows.append(i)
 
             form_number = payload.get("form_number")
             if form_number and crud.get_contract_by_form_number(db, branch_id, str(form_number)):
@@ -1244,7 +1262,10 @@ def import_contracts_excel(
         except Exception as exc:
             errors.append(f"صف {i}: {str(exc)[:120]}")
 
-    return {"imported": imported, "skipped": skipped, "errors": errors[:20]}
+    return {
+        "imported": imported, "skipped": skipped, "errors": errors[:20],
+        "unknown_capacity_rows": unknown_capacity_rows,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1371,7 +1392,14 @@ def verify_owner_portal_token(token: str) -> int:
 
 def request_visit(db: Session, contract_id: int, data: TimeshareVisitRequestCreate) -> TimeshareVisitRequest:
     """طلب العميل نفسه — تحقق مبكر (عقد نشط، مش مجمَّد) عشان العميل ياخد
-    رسالة واضحة فورًا بدل ما يقدّم طلب مصيره الرفض التلقائي عند المراجعة."""
+    رسالة واضحة فورًا بدل ما يقدّم طلب مصيره الرفض التلقائي عند المراجعة.
+
+    OPS-DATA-02 §8 نقطة 1: terms_accepted/booking_rules_accepted بوليان
+    مؤقت مش كافي كإثبات موافقة — data.terms_version/booking_rules_version
+    (Literal مطابق للنسخة الحالية بالظبط، schemas.py) بيتخزنوا كلقطة دائمة
+    على الصف نفسه (crud.create_visit_request) + AuditLog صريح هنا، عشان
+    ثبوت "وافق على أي نص بالظبط ومتى" ميعتمدش على بوليان وحيد قابل للتفسير
+    بعد سنين. لا يوجد user_id (العميل بيستخدم بوابة OTP، مش حساب staff)."""
     contract = get_contract_or_404(db, contract_id)
     if data.preferred_end <= data.preferred_start:
         raise ValueError("تاريخ النهاية يجب أن يكون بعد تاريخ البداية")
@@ -1380,6 +1408,23 @@ def request_visit(db: Session, contract_id: int, data: TimeshareVisitRequestCrea
     if contract.booking_frozen:
         raise ValueError("الحجز مجمَّد حاليًا بسبب متأخرات على العقد — يرجى التواصل مع خدمة العملاء")
     req = crud.create_visit_request(db, contract, data)
+
+    from app.modules.core import crud as core_crud  # noqa: PLC0415
+    from app.modules.core.schemas import AuditLogCreate  # noqa: PLC0415
+    import json  # noqa: PLC0415
+    core_crud.create_audit_log(db, AuditLogCreate(
+        user_id=None, branch_id=contract.branch_id,
+        action="timeshare_visit_request_terms_accepted",
+        entity_type="timeshare_visit_request", entity_id=req.id,
+        new_data=json.dumps({
+            "contract_id": contract.id, "contract_number": contract.contract_number,
+            "terms_version": req.terms_version, "terms_accepted_at": req.terms_accepted_at.isoformat(),
+            "booking_rules_version": req.booking_rules_version,
+            "booking_rules_accepted_at": req.booking_rules_accepted_at.isoformat(),
+        }, ensure_ascii=False, sort_keys=True),
+        ip_address=None, user_agent=None,
+    ))
+
     db.commit()
     db.refresh(req)
     # 2026-08-04: مفيش أي تنبيه كان بيوصل لحد لما عميل يقدّم طلب زيارة — لازم

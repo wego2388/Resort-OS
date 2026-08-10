@@ -49,7 +49,7 @@ def _make_ts_contract(db, branch, manager, phone=None, week_number=None, status=
         branch_id=branch.id,
         customer_name=f"TSCustomer-{uuid.uuid4().hex[:4]}",
         customer_phone=phone,
-        room_type="Studio",
+        room_type="Studio", unit_capacity=2,
         total_value=Decimal("60000"),
         down_payment=Decimal("10000"),
         installments=12,

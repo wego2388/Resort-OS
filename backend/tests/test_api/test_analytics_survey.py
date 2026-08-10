@@ -17,7 +17,7 @@ def _make_timeshare_visit(db, branch):
     db.add(unit); db.flush()
 
     contract = ts_services.create_contract(db, TimeshareContractCreate(
-        branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio",
+        branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio", unit_capacity=2,
         total_value=Decimal("120000"), down_payment=Decimal("20000"),
         installments=12, installment_period=1,
         first_installment_date=date(2026, 8, 1),

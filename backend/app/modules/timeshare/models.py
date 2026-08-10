@@ -31,6 +31,21 @@ class TimeshareContract(Base, TimestampMixin):
     customer_email:        Mapped[str | None]    = mapped_column(String(150), nullable=True)
     customer_national_id:  Mapped[str | None]    = mapped_column(EncryptedString(255), nullable=True)
     room_type:             Mapped[str]           = mapped_column(String(10))   # Studio|Chalet
+    # عدد الأفراد: 2 (Studio) أو 4/6 (Chalet — 6 = باقة Family Compound).
+    # nullable عمدًا (OPS-DATA-02 §8 نقطة 2): عقود مستوردة قديمة كان
+    # room_type بتاعها 2R/4R/6R قبل migration f2a3b4c5d6e7 اللي وحّدت
+    # 4R/6R في "Chalet" واحد — يعني السعة الحقيقية (4 ولا 6) ضاعت وقتها
+    # لعقود Chalet القديمة، ومفيش استنتاج آمن ممكن من البيانات الحالية
+    # لوحدها. Studio دايمًا 2 (استنتاج آمن 100%، اتعمل في migration
+    # الـbackfill). عقود Chalet القديمة تفضل None لحد ما تُراجَع يدويًا —
+    # صفر default=2 عشوائي بيغيّر مبلغ الصيانة المستحق بصمت.
+    unit_capacity:         Mapped[int | None]    = mapped_column(Integer, nullable=True)
+    beneficiary_name:      Mapped[str | None]    = mapped_column(String(200), nullable=True)
+    # اسم الزوجة/المستفيد الآخر — من نموذج الحجز الداخلي
+    customer_phone_work:   Mapped[str | None]    = mapped_column(String(20), nullable=True)
+    customer_phone_home:   Mapped[str | None]    = mapped_column(String(20), nullable=True)
+    mailing_address:       Mapped[str | None]    = mapped_column(String(300), nullable=True)
+    # عنوان المراسلة — قد يختلف عن address (عنوان الإقامة الموجود بالفعل)
     unit_id:               Mapped[int | None]    = mapped_column(ForeignKey("timeshare_units.id", ondelete="SET NULL"), nullable=True)
     # وحدة مخصَّصة بشكل دائم للعقد (نفس الوحدة كل سنة) — None=عائم (أي وحدة متاحة
     # من نفس room_type وقت الحجز، بنفس منطق week_number: 1-52 ثابت مقابل None=عائم)
@@ -204,6 +219,12 @@ class TimeshareVisitRequest(Base, TimestampMixin):
     contract_id:      Mapped[int]             = mapped_column(ForeignKey("timeshare_contracts.id", ondelete="CASCADE"), index=True)
     preferred_start:  Mapped[date]            = mapped_column(Date)
     preferred_end:    Mapped[date]            = mapped_column(Date)
+    # حتى بديلين إضافيين (نموذج الحجز الداخلي: 3 فترات — الثالثة =
+    # preferred_start/end نفسهم). العميل حر في اختيارهم، مش لازم يبدأوا سبت.
+    alt_start_1:      Mapped[date | None]     = mapped_column(Date, nullable=True)
+    alt_end_1:        Mapped[date | None]     = mapped_column(Date, nullable=True)
+    alt_start_2:      Mapped[date | None]     = mapped_column(Date, nullable=True)
+    alt_end_2:        Mapped[date | None]     = mapped_column(Date, nullable=True)
     notes:            Mapped[str | None]      = mapped_column(Text, nullable=True)
     status:           Mapped[str]             = mapped_column(String(20), default="pending", index=True)
     # pending|approved|rejected|cancelled
@@ -212,6 +233,14 @@ class TimeshareVisitRequest(Base, TimestampMixin):
     rejection_reason: Mapped[str | None]      = mapped_column(String(300), nullable=True)
     # الزيارة الفعلية اللي اتعملت لما الطلب اتوافق عليه (services.create_visit)
     visit_id:         Mapped[int | None]      = mapped_column(ForeignKey("timeshare_visits.id", ondelete="SET NULL"), nullable=True)
+
+    # ── إثبات موافقة (OPS-DATA-02 §8 نقطة 1) — راجع schemas.py للتفاصيل ──
+    # الصف ده immutable بعد الإنشاء (زي preferred_start/notes)، فالأعمدة
+    # دي لقطة دائمة لحظة تقديم الطلب — مش قابلة للتعديل لاحقًا.
+    terms_version:            Mapped[str]           = mapped_column(String(60))
+    terms_accepted_at:         Mapped[datetime]      = mapped_column(DateTime)
+    booking_rules_version:     Mapped[str]           = mapped_column(String(60))
+    booking_rules_accepted_at: Mapped[datetime]      = mapped_column(DateTime)
 
     contract: Mapped["TimeshareContract"] = relationship("TimeshareContract")
     visit:    Mapped["TimeshareVisit | None"] = relationship("TimeshareVisit", foreign_keys=[visit_id])

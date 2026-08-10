@@ -41,7 +41,7 @@ def contract(db: Session, branch):
         branch_id=branch.id,
         customer_name="أحمد محمد",
         customer_phone="01000000001",
-        room_type="Studio",
+        room_type="Studio", unit_capacity=2,
         week_number=28,
         nights_per_year=7,
         total_value=Decimal("120000"),
@@ -73,7 +73,7 @@ class TestTimeshareContract:
         data = TimeshareContractCreate(
             branch_id=branch.id,
             customer_name="عميل",
-            room_type="Studio",
+            room_type="Studio", unit_capacity=2,
             total_value=Decimal("50000"),
             down_payment=Decimal("60000"),  # أكبر من الإجمالي
             installments=12, installment_period=1,
@@ -91,7 +91,7 @@ class TestTimeshareContract:
         data = TimeshareContractCreate(
             branch_id=branch.id,
             customer_name="عميل",
-            room_type="Studio",
+            room_type="Studio", unit_capacity=2,
             total_value=Decimal("50000"),
             down_payment=Decimal("5000"),
             installments=12, installment_period=1,
@@ -107,7 +107,7 @@ class TestTimeshareContract:
         data = TimeshareContractCreate(
             branch_id=branch.id,
             customer_name="عميل",
-            room_type="Studio",
+            room_type="Studio", unit_capacity=2,
             total_value=Decimal("50000"),
             down_payment=Decimal("5000"),
             installments=12, installment_period=1,
@@ -123,7 +123,7 @@ class TestTimeshareContract:
         data = TimeshareContractCreate(
             branch_id=branch.id,
             customer_name="عميل",
-            room_type="Studio",
+            room_type="Studio", unit_capacity=2,
             total_value=Decimal("50000"),
             down_payment=Decimal("5000"),
             installments=12, installment_period=1,
@@ -272,7 +272,7 @@ class TestSalesDashboard:
         # عقد تاني في حالة draft
         data = TimeshareContractCreate(
             branch_id=branch.id, customer_name="Draft Guy", customer_phone="01111111111",
-            room_type="Studio", nights_per_year=7, total_value=Decimal("100000"),
+            room_type="Studio", unit_capacity=2, nights_per_year=7, total_value=Decimal("100000"),
             down_payment=Decimal("10000"), installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),
         )
@@ -349,7 +349,7 @@ class TestDeferredRevenueJournalPosting:
         cash, revenue = make_finance_accounts(db, branch)
 
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="سامي عادل", room_type="Studio",
+            branch_id=branch.id, customer_name="سامي عادل", room_type="Studio", unit_capacity=2,
             total_value=Decimal("80000"), down_payment=Decimal("15000"),
             installments=10, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -377,7 +377,7 @@ class TestDeferredRevenueJournalPosting:
         make_finance_accounts(db, branch)
 
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="بدون دفعة", room_type="Studio",
+            branch_id=branch.id, customer_name="بدون دفعة", room_type="Studio", unit_capacity=2,
             total_value=Decimal("50000"), down_payment=Decimal("0"),
             installments=10, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -394,7 +394,7 @@ class TestDeferredRevenueJournalPosting:
         from app.modules.finance import crud as finance_crud
 
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="بدون حسابات", room_type="Studio",
+            branch_id=branch.id, customer_name="بدون حسابات", room_type="Studio", unit_capacity=2,
             total_value=Decimal("60000"), down_payment=Decimal("10000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -596,7 +596,7 @@ class TestTimeshareVisit:
         assert first_visit.unit_id == unit.id
 
         contract2 = services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل ثاني", room_type="Studio",
+            branch_id=branch.id, customer_name="عميل ثاني", room_type="Studio", unit_capacity=2,
             total_value=Decimal("120000"), down_payment=Decimal("20000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -771,7 +771,7 @@ class TestTimeshareReports:
 
     def test_get_calendar_empty_when_no_week_number(self, db: Session, branch):
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="بدون أسبوع", room_type="Studio",
+            branch_id=branch.id, customer_name="بدون أسبوع", room_type="Studio", unit_capacity=2,
             total_value=Decimal("40000"), down_payment=Decimal("4000"),
             installments=6, installment_period=1,
             first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),
@@ -808,7 +808,7 @@ class TestTimeshareReports:
         elkheima-beach-resort (khayma_share) كانت محسوبة في الـ engine
         (calculate_partner_share) لكن غير مُستخدَمة في أي مكان."""
         data = TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل شريك", room_type="Chalet",
+            branch_id=branch.id, customer_name="عميل شريك", room_type="Chalet", unit_capacity=4,
             total_value=Decimal("200000"), down_payment=Decimal("40000"),
             installments=10, installment_period=1,
             first_installment_date=date(2026, 8, 1), start_date=date(2026, 7, 1),

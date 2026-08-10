@@ -46,6 +46,7 @@ def contract_payload(branch_id: int) -> dict:
         "branch_id": branch_id,
         "customer_name": "منى عبد الله",
         "room_type": "Studio",
+        "unit_capacity": 2,
         "nights_per_year": 7,
         "season": "high",
         "total_value": "100000.00",

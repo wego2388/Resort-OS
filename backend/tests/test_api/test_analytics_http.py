@@ -345,7 +345,7 @@ class TestGuestReviewInsights:
         db.add(unit); db.commit()
 
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio",
+            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio", unit_capacity=2,
             total_value=Decimal("120000"), down_payment=Decimal("20000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -411,7 +411,7 @@ class TestGuestReviewInsights:
         unit = TimeshareUnit(branch_id=real_branch.id, unit_number="A-103", unit_type="Studio")
         db.add(unit); db.commit()
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=real_branch.id, customer_name="عميل تايم شير آخر", room_type="Studio",
+            branch_id=real_branch.id, customer_name="عميل تايم شير آخر", room_type="Studio", unit_capacity=2,
             total_value=Decimal("120000"), down_payment=Decimal("20000"),
             installments=12, installment_period=1,
             first_installment_date=date(2026, 8, 1),
@@ -446,7 +446,7 @@ class TestGuestReviewInsights:
         db.add(unit); db.commit()
 
         contract = ts_services.create_contract(db, TimeshareContractCreate(
-            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio",
+            branch_id=branch.id, customer_name="عميل تايم شير", room_type="Studio", unit_capacity=2,
             customer_phone="+201001234567",
             total_value=Decimal("120000"), down_payment=Decimal("20000"),
             installments=12, installment_period=1,

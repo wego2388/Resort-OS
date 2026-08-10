@@ -198,7 +198,7 @@ class TestVisitRequestNotifications:
         contract = make_owner_contract(db, branch)
         resp = client.post(
             "/api/v1/timeshare/public/visit-requests",
-            json={"preferred_start": "2027-01-10", "preferred_end": "2027-01-17"},
+            json={"preferred_start": "2027-01-10", "preferred_end": "2027-01-17", "terms_accepted": True, "terms_version": "timeshare-terms-2026-08-10.v1", "booking_rules_accepted": True, "booking_rules_version": "timeshare-booking-rules-2026-08-10.v1"},
             headers={"X-Timeshare-Owner-Token": owner_token(contract.id)},
         )
         assert resp.status_code == 201, resp.text
@@ -221,7 +221,7 @@ class TestVisitRequestNotifications:
         make_unit(db, branch, unit_type=contract.room_type)
         create_resp = client.post(
             "/api/v1/timeshare/public/visit-requests",
-            json={"preferred_start": "2027-01-10", "preferred_end": "2027-01-17"},
+            json={"preferred_start": "2027-01-10", "preferred_end": "2027-01-17", "terms_accepted": True, "terms_version": "timeshare-terms-2026-08-10.v1", "booking_rules_accepted": True, "booking_rules_version": "timeshare-booking-rules-2026-08-10.v1"},
             headers={"X-Timeshare-Owner-Token": owner_token(contract.id)},
         )
         request_id = create_resp.json()["id"]
@@ -250,7 +250,7 @@ class TestVisitRequestNotifications:
         contract = make_owner_contract(db, branch)
         create_resp = client.post(
             "/api/v1/timeshare/public/visit-requests",
-            json={"preferred_start": "2027-01-10", "preferred_end": "2027-01-17"},
+            json={"preferred_start": "2027-01-10", "preferred_end": "2027-01-17", "terms_accepted": True, "terms_version": "timeshare-terms-2026-08-10.v1", "booking_rules_accepted": True, "booking_rules_version": "timeshare-booking-rules-2026-08-10.v1"},
             headers={"X-Timeshare-Owner-Token": owner_token(contract.id)},
         )
         request_id = create_resp.json()["id"]
@@ -359,7 +359,7 @@ class TestCsSummaryPendingCounts:
         contract = make_owner_contract(db, branch)
         client.post(
             "/api/v1/timeshare/public/visit-requests",
-            json={"preferred_start": "2027-01-10", "preferred_end": "2027-01-17"},
+            json={"preferred_start": "2027-01-10", "preferred_end": "2027-01-17", "terms_accepted": True, "terms_version": "timeshare-terms-2026-08-10.v1", "booking_rules_accepted": True, "booking_rules_version": "timeshare-booking-rules-2026-08-10.v1"},
             headers={"X-Timeshare-Owner-Token": owner_token(contract.id)},
         )
         client.post(

@@ -3,9 +3,18 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# ── إثبات موافقة (OPS-DATA-02 §8 نقطة 1) ────────────────────────────────
+# terms_accepted/booking_rules_accepted بوليان مؤقت مش كافي — لازم نعرف
+# بالظبط أي نسخة نص العميل وافق عليها. نص جديد = version جديد، ومفيش أي
+# نص قديم بيتكتب فوقه (الصف نفسه immutable بعد الإنشاء). النصوص هنا مستخرجة
+# من نموذج الحجز الداخلي/اللوائح (راجع TIMESHARE-01_FULL_PLAN_AR.md §2.1/٢.٢) —
+# نسخة أولى للـTrial، مش نص قانوني نهائي معتمد.
+TIMESHARE_TERMS_VERSION = "timeshare-terms-2026-08-10.v1"
+TIMESHARE_BOOKING_RULES_VERSION = "timeshare-booking-rules-2026-08-10.v1"
 
 
 class TimeshareContractCreate(BaseModel):
@@ -15,6 +24,18 @@ class TimeshareContractCreate(BaseModel):
     customer_email:         Optional[str] = None
     customer_national_id:   Optional[str] = None
     room_type:              str = Field(..., pattern=r"^(Studio|Chalet)$")
+    # None = غير معروف بعد (نفس فلسفة RoomType.base_rate في pms — None قيمة
+    # صريحة "مش موافَق عليها/مش معروفة"، مش صفر). العميل (شاشة إنشاء عقد
+    # يدوي) بيحدده دايمًا فعليًا؛ الاستيراد الجماعي (import_contracts_excel)
+    # هو المسار الوحيد اللي بيسمح None فعليًا — بيستنتج Studio=2 بأمان
+    # ويسيب Chalet None + يبلّغه في تقرير "unknown_capacity" بدل تخمين 4
+    # أو 6 عشوائيًا (راجع OPS-DATA-02 §8 نقطة 2). راجع
+    # _validate_capacity_matches_room_type للتحقق لو اتحدد فعلاً.
+    unit_capacity:          Optional[int] = Field(None, description="عدد الأفراد: 2 (Studio) أو 4/6 (Chalet)")
+    beneficiary_name:       Optional[str] = Field(None, max_length=200)
+    customer_phone_work:    Optional[str] = Field(None, max_length=20)
+    customer_phone_home:    Optional[str] = Field(None, max_length=20)
+    mailing_address:        Optional[str] = Field(None, max_length=300)
     unit_id:                Optional[int] = None  # وحدة مخصَّصة دائمًا — None=عائم
     week_number:            Optional[int] = Field(None, ge=1, le=52)
     nights_per_year:        int = Field(7, ge=1)
@@ -50,6 +71,18 @@ class TimeshareContractCreate(BaseModel):
     years_count:            int = 99
     payment_type:           str = Field("installment", pattern=r"^(installment|cash)$")
 
+    @model_validator(mode="after")
+    def _validate_capacity_matches_room_type(self):
+        if self.unit_capacity is None:
+            return self
+        if self.unit_capacity not in (2, 4, 6):
+            raise ValueError("unit_capacity يجب أن يكون 2 أو 4 أو 6")
+        if self.room_type == "Studio" and self.unit_capacity != 2:
+            raise ValueError("Studio دايمًا سعة 2 أفراد")
+        if self.room_type == "Chalet" and self.unit_capacity not in (4, 6):
+            raise ValueError("Chalet سعة 4 أو 6 أفراد (6 = باقة Family Compound)")
+        return self
+
 
 class TimeshareContractUpdate(BaseModel):
     customer_phone:    Optional[str]  = None
@@ -61,6 +94,15 @@ class TimeshareContractUpdate(BaseModel):
     notes:             Optional[str]  = None
     nationality:       Optional[str]  = None
     address:           Optional[str]  = None
+    # مراجعة/تصحيح سعة عقد قديم (backfill يدوي بعد مراجعة — OPS-DATA-02 §8
+    # نقطة 2) — مش موجود في Create لعقد جديد بيتفرض من هناك، هنا فرصة تصحيح
+    # عقود قديمة كانت None. لو room_type=Studio لازم يفضل 2 (يترفض غير كده
+    # في services.update_contract).
+    unit_capacity:        Optional[int] = Field(None, ge=2, le=6)
+    beneficiary_name:     Optional[str] = Field(None, max_length=200)
+    customer_phone_work:  Optional[str] = Field(None, max_length=20)
+    customer_phone_home:  Optional[str] = Field(None, max_length=20)
+    mailing_address:      Optional[str] = Field(None, max_length=300)
     # rسم الصيانة السنوي — كان موجود في الموديل بدون أي طريقة للتعديل عبر الـ
     # API خالص (باج حقيقي: الحقل موجود ومُخزَّن من وقت الاستيراد، لكن محدّش كان
     # يقدر يحدّثه لما تعميم صيانة جديد يصدر). ge=0 عشان مايتحطش سالب بالغلط.
@@ -101,7 +143,11 @@ class TimeshareContractRead(BaseModel):
     id: int; branch_id: int; contract_number: str
     customer_name: str; customer_phone: Optional[str]; customer_email: Optional[str]
     customer_national_id: Optional[str]
-    room_type: str; unit_id: Optional[int]; week_number: Optional[int]; nights_per_year: int; season: str
+    room_type: str; unit_capacity: Optional[int] = None
+    beneficiary_name: Optional[str] = None
+    customer_phone_work: Optional[str] = None; customer_phone_home: Optional[str] = None
+    mailing_address: Optional[str] = None
+    unit_id: Optional[int]; week_number: Optional[int]; nights_per_year: int; season: str
     total_value: Decimal; down_payment: Decimal; installments: int
     installment_period: int; first_installment_date: date
     partner_share_pct: Decimal; partner_company: Optional[str]
@@ -220,6 +266,10 @@ class ImportContractsResponse(BaseModel):
     imported: int
     skipped:  int
     errors:   list[str] = []
+    # صفوف Chalet استُوردت بنجاح لكن سعتها (4 أو 6) غير معروفة من الملف —
+    # عمدًا مش مخمّنة (راجع OPS-DATA-02 §8 نقطة 2). لازم مراجعة يدوية
+    # (PATCH /timeshare/contracts/{id} بـunit_capacity الصح).
+    unknown_capacity_rows: list[int] = []
 
 
 # ── Owner Portal (بوابة صاحب العقد العامة، طلب Mohamed 2026-08-03) ───────────
@@ -258,19 +308,56 @@ class TimeshareOwnerContractRead(BaseModel):
 
 
 class TimeshareVisitRequestCreate(BaseModel):
-    """طلب العميل نفسه — تواريخ مفضّلة بس، المدير هو اللي يحدد الفعلي عند
-    الموافقة (راجع TimeshareVisitRequestApprove)."""
+    """طلب العميل نفسه — تواريخ مفضّلة + حتى تاريخين بديلين (نموذج الحجز
+    الداخلي: "يرجى كتابة ثلاث فترات بديلة" — preferred_* هي الأولى، البديل
+    التالت من غير حاجة صريحة زيادة). المدير هو اللي يحدد الفعلي عند
+    الموافقة (راجع TimeshareVisitRequestApprove).
+
+    terms_accepted/booking_rules_accepted لازم يكونوا True حرفيًا، والنسخة
+    المرسلة لازم تطابق النسخة الحالية بالظبط (Literal) — عميل بنسخة قديمة
+    من الواجهة (نص اتغيّر من تحته) يترفض بـ422 صريح بدل قبول موافقة على
+    نص قديم من غير علم."""
     preferred_start: date
     preferred_end:   date
+    alt_start_1: Optional[date] = None
+    alt_end_1:   Optional[date] = None
+    alt_start_2: Optional[date] = None
+    alt_end_2:   Optional[date] = None
     notes:           Optional[str] = Field(None, max_length=500)
+    terms_accepted:          Literal[True]
+    terms_version:           Literal[TIMESHARE_TERMS_VERSION]
+    booking_rules_accepted:  Literal[True]
+    booking_rules_version:   Literal[TIMESHARE_BOOKING_RULES_VERSION]
+
+    @model_validator(mode="after")
+    def _validate_alt_dates(self):
+        for start, end, label in (
+            (self.alt_start_1, self.alt_end_1, "الأول"),
+            (self.alt_start_2, self.alt_end_2, "الثاني"),
+        ):
+            if (start is None) != (end is None):
+                raise ValueError(f"التاريخ البديل {label}: لازم تحدد البداية والنهاية معًا")
+            if start is not None and end <= start:
+                raise ValueError(f"التاريخ البديل {label}: النهاية يجب أن تكون بعد البداية")
+        return self
 
 
 class TimeshareVisitRequestRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int; branch_id: int; contract_id: int
     preferred_start: date; preferred_end: date; notes: Optional[str]
+    alt_start_1: Optional[date] = None
+    alt_end_1:   Optional[date] = None
+    alt_start_2: Optional[date] = None
+    alt_end_2:   Optional[date] = None
     status: str; reviewed_at: Optional[datetime]; rejection_reason: Optional[str]
     visit_id: Optional[int]
+    terms_version:          Optional[str] = None
+    terms_accepted_at:       Optional[datetime] = None
+    booking_rules_version:   Optional[str] = None
+    booking_rules_accepted_at: Optional[datetime] = None
+    is_peak:            bool = False
+    peak_season_names:  list[str] = []
     created_at: datetime
     # بتتملى في القايمة الإدارية بس (join على العقد متاح هناك) — نفس نمط
     # InstallmentRead.customer_name

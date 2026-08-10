@@ -217,13 +217,19 @@ def calculate_visit_window(
 ) -> Optional[VisitWindow]:
     """
     يحسب نافذة الزيارة من رقم الأسبوع ISO.
-    الأسبوع 28 من 2026 = الإثنين 6 يوليو 2026.
+    الأسبوع يبدأ السبت (weekday=6 في fromisocalendar) — إقامات المنتجع
+    بتبدأ السبت دايمًا، مش الإثنين. الأسبوع 28 من 2026 = السبت 11 يوليو 2026.
+
+    ⚠️ باج حقيقي اتصلح (OPS-DATA-02 §8 TIMESHARE-01، 2026-08-10): كان
+    بيستخدم weekday=1 (الإثنين ISO) — كل نافذة زيارة كانت بتتحسب بتاريخ غلط
+    (بداية أسبوع خطأ)، يأثر على calculate_visit_window/find_next_visit وكل
+    مكان تاني بيعتمد عليهم (CS dashboard، calendar، حساب قواعد الذروة).
     """
     today = today or date.today()
     if not week_number or not (1 <= week_number <= 52):
         return None
     try:
-        visit_start = date.fromisocalendar(year, week_number, 1)
+        visit_start = date.fromisocalendar(year, week_number, 6)
     except (ValueError, AttributeError):
         return None
 

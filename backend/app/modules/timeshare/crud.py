@@ -783,10 +783,15 @@ def update_visit(db: Session, visit: TimeshareVisit, data: TimeshareVisitUpdate)
 def create_visit_request(
     db: Session, contract: TimeshareContract, data: TimeshareVisitRequestCreate,
 ) -> TimeshareVisitRequest:
+    now = datetime.utcnow()
     req = TimeshareVisitRequest(
         branch_id=contract.branch_id, contract_id=contract.id,
         preferred_start=data.preferred_start, preferred_end=data.preferred_end,
+        alt_start_1=data.alt_start_1, alt_end_1=data.alt_end_1,
+        alt_start_2=data.alt_start_2, alt_end_2=data.alt_end_2,
         notes=data.notes,
+        terms_version=data.terms_version, terms_accepted_at=now,
+        booking_rules_version=data.booking_rules_version, booking_rules_accepted_at=now,
     )
     db.add(req)
     db.flush()
