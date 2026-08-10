@@ -376,45 +376,70 @@ def main() -> int:
     if args.apply and args.validate_only:
         raise SystemExit("--apply and --validate-only are mutually exclusive")
 
-    with SessionLocal() as db:
-        if args.validate_only:
+    if args.validate_only:
+        with SessionLocal() as db:
             report = validate_only(db, branch_code=args.branch_code, period=args.period)
             db.rollback()
             print(json.dumps(report, ensure_ascii=False, sort_keys=True, default=str))
             return 0
 
-        expected_confirm = confirmation_phrase(args.branch_code, args.period)
-        if args.apply and args.confirm != expected_confirm:
-            raise SystemExit(f"--apply requires --confirm {expected_confirm!r}")
+    expected_confirm = confirmation_phrase(args.branch_code, args.period)
+    if args.apply and args.confirm != expected_confirm:
+        raise SystemExit(f"--apply requires --confirm {expected_confirm!r}")
 
-        try:
-            result = run_seed(
-                db, branch_code=args.branch_code, period=args.period, actor_id=args.actor_id,
+    # ⚠️ باج أمان حقيقي اتصلح هنا: كل موديول HIST-01 بينادي services حقيقية
+    # (create_employee/confirm_booking/receive_purchase_order/post_journal_
+    # entry...)، وكل service بينادي db.commit() داخليًا — نفس اصطلاح
+    # المشروع كله (راجع أي services.py). يعني `db.rollback()` تحت في وضع
+    # dry-run (الافتراضي!) كان بيرجع بس آخر جزء لسه pending، مش أي حاجة
+    # اتكتبت فعليًا في التشغيلة كلها — "dry-run افتراضي" (§9.1، أول بند في
+    # الحزمة) كان مكسور فعليًا من أول commit لأي مولّد، وبيانات حقيقية
+    # كانت بتتكتب بصمت حتى من غير --apply خالص. اتأكد بريبرو حي ضد
+    # PostgreSQL حقيقي قبل الإصلاح (14 موظف فضلوا في الداتابيز بعد
+    # db.rollback() العادي)، وبعد الإصلاح (صفر بعد rollback الـconnection
+    # الخارجية). الحل: نربط الـSession بـconnection واحدة صريحة عبر
+    # join_transaction_mode="create_savepoint" — أي db.commit() داخل أي
+    # service بقى بيقفل SAVEPOINT بس، مش الـtransaction الفعلية على مستوى
+    # الـconnection؛ الـrollback/commit النهائي هنا هو اللي بيحسم مصير كل
+    # حاجة اتكتبت طول التشغيلة، مهما كان عدد الـcommits الداخلية. الأداة
+    # دي بتشتغل بس على PostgreSQL حقيقي في الإنتاج (مش SQLite)، فمفيش
+    # حاجة لـpysqlite savepoint event-listener workaround هنا.
+    from app.core.database import get_engine  # noqa: PLC0415
+
+    connection = get_engine().connect()
+    outer_txn = connection.begin()
+    db = Session(bind=connection, join_transaction_mode="create_savepoint")
+    try:
+        result = run_seed(
+            db, branch_code=args.branch_code, period=args.period, actor_id=args.actor_id,
+        )
+        if args.apply:
+            outer_txn.commit()
+        else:
+            outer_txn.rollback()
+        print(
+            json.dumps(
+                {
+                    "mode": "apply" if args.apply else "dry-run",
+                    "branch_code": result.branch_code,
+                    "period": result.period,
+                    "version": result.version,
+                    "already_applied": result.already_applied,
+                    "registered_modules": [m.name for m in SCENARIO_MODULES],
+                    "modules_run": result.modules_run,
+                    "counts": result.counts,
+                    "totals": result.totals,
+                },
+                ensure_ascii=False, sort_keys=True, default=str,
             )
-            if args.apply:
-                db.commit()
-            else:
-                db.rollback()
-            print(
-                json.dumps(
-                    {
-                        "mode": "apply" if args.apply else "dry-run",
-                        "branch_code": result.branch_code,
-                        "period": result.period,
-                        "version": result.version,
-                        "already_applied": result.already_applied,
-                        "registered_modules": [m.name for m in SCENARIO_MODULES],
-                        "modules_run": result.modules_run,
-                        "counts": result.counts,
-                        "totals": result.totals,
-                    },
-                    ensure_ascii=False, sort_keys=True, default=str,
-                )
-            )
-            return 0
-        except Exception:
-            db.rollback()
-            raise
+        )
+        return 0
+    except Exception:
+        outer_txn.rollback()
+        raise
+    finally:
+        db.close()
+        connection.close()
 
 
 if __name__ == "__main__":
